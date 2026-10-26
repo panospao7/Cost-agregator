@@ -9,7 +9,8 @@ import com.yourname.expensetracker.domain.ai.model.FinancialQueryInterpretationI
 import com.yourname.expensetracker.domain.ai.policy.AiPolicy
 import com.yourname.expensetracker.domain.common.sha256Prefix
 import com.yourname.expensetracker.domain.config.AppConfig
-import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
+import com.yourname.expensetracker.domain.ai.model.AssistantMessageRole
+import com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver
 import com.yourname.expensetracker.domain.util.TimeProvider
 import javax.inject.Inject
 
@@ -18,18 +19,23 @@ class FinancialQueryInterpretationInputBuilder @Inject constructor(
     private val expenseRepository: ExpenseRepository,
     private val timeProvider: TimeProvider,
     private val aiPolicy: AiPolicy,
-    private val privacySettingsRepository: PrivacySettingsRepository
+    private val effectiveCloudAiPolicyResolver: EffectiveCloudAiPolicyResolver
 ) {
 
+    /**
+     * Sole constructor of [FinancialQueryInterpretationInput]. [priorMessages] is the raw
+     * persisted message list (prior to the current turn); only the last
+     * [AppConfig.Ai.MAX_QUERY_HISTORY_USER_TURNS_FOR_MODEL] USER rows reach the model, oldest first.
+     * Redaction source is [EffectiveCloudAiPolicyResolver] (cloud-allowed route only).
+     */
     suspend fun build(
         rawQuery: String,
         settings: AiSettings,
-        conversationHistory: List<AiChatMessage> = emptyList()
+        priorMessages: List<AiChatMessage> = emptyList()
     ): FinancialQueryInterpretationInput {
         val shouldRedact =
             aiPolicy.canUseCloudFor(settings, AiCapability.QUERY_INTERPRETATION) &&
-                (aiPolicy.shouldRedact(settings, AiCapability.QUERY_INTERPRETATION) ||
-                    privacySettingsRepository.getSettings().redactBeforeCloud)
+                effectiveCloudAiPolicyResolver.resolve().redactBeforeCloud
         val categories = categoryRepository.getAll()
         val merchants = expenseRepository.getRecentMerchantNames()
         val merchantAliases = mutableMapOf<String, String>()
@@ -94,26 +100,21 @@ class FinancialQueryInterpretationInputBuilder @Inject constructor(
             categoryLookupMap = categoryLookup,
             categoryAliasMap = categoryAliases,
             categoryNameToIdMap = categoryNameToId,
-            conversationHistory = conversationHistory
-                .takeLast(AppConfig.Ai.MAX_QUERY_HISTORY_TURNS_FOR_MODEL)
+            priorUserQueries = priorMessages
+                .filter { it.role == AssistantMessageRole.USER }
+                .takeLast(AppConfig.Ai.MAX_QUERY_HISTORY_USER_TURNS_FOR_MODEL)
                 .map { message ->
-                    if (!shouldRedact) {
-                        message
-                    } else {
-                        message.copy(
-                            text = sanitizeFreeText(
-                                sanitizeQueryContext(
-                                    message.text,
-                                    shouldRedact,
-                                    merchantAliasesByRawName,
-                                    categoryAliasesByRawName
-                                ),
-                                shouldRedact
-                            ),
-                            payloadJson = null
-                        )
-                    }
+                    sanitizeFreeText(
+                        sanitizeQueryContext(
+                            message.text,
+                            shouldRedact,
+                            merchantAliasesByRawName,
+                            categoryAliasesByRawName
+                        ),
+                        shouldRedact
+                    )
                 }
+                .filter { it.isNotBlank() }
         )
     }
 

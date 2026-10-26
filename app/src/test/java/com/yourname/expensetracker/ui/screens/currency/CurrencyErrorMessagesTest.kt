@@ -28,6 +28,10 @@ class CurrencyErrorMessagesTest {
             R.string.currency_error_unsupported_home,
             currencyErrorMessageRes("UNSUPPORTED_HOME_CURRENCY")
         )
+        assertEquals(
+            R.string.currency_home_switch_error_write_failed,
+            currencyErrorMessageRes("HOME_SWITCH_WRITE_FAILED")
+        )
     }
 
     @Test

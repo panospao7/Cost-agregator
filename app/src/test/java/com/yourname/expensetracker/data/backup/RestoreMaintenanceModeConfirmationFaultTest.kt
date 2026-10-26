@@ -178,6 +178,7 @@ class RestoreMaintenanceModeConfirmationFaultTest {
     ): AppStartupCoordinator = AppStartupCoordinator(
         appContext = context,
         backgroundLifecycleObserver = mockk(relaxed = true),
+        foregroundStateObserver = mockk(relaxed = true),
         syncProactiveBriefingWorkUseCase = mockk(relaxed = true),
         restoreJournal = RestoreJournal(context, FakeTimeProvider(fixedTime)),
         restoreMaintenanceMode = mode,

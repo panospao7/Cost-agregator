@@ -2,7 +2,6 @@ package com.yourname.expensetracker.domain.core.money
 
 import java.math.BigDecimal
 import java.math.RoundingMode
-import java.util.Currency
 
 object SourceCurrencyAllocation {
     data class Result(val requested: MoneyAmount, val shares: List<MoneyAmount>)
@@ -26,12 +25,8 @@ object SourceCurrencyAllocation {
         ) {
             throw MoneyDisplayUnavailableException(MoneyDisplayUnavailableReasonCode.INVALID_AMOUNT)
         }
-        val digits = try {
-            Currency.getInstance(amount.currency.code).defaultFractionDigits.takeIf { it >= 0 }
-                ?: throw MoneyDisplayUnavailableException(MoneyDisplayUnavailableReasonCode.INVALID_SOURCE_CURRENCY)
-        } catch (failure: IllegalArgumentException) {
-            throw MoneyDisplayUnavailableException(MoneyDisplayUnavailableReasonCode.INVALID_SOURCE_CURRENCY)
-        }
+        val digits = CurrencyFractionDigits.of(amount.currency)
+            ?: throw MoneyDisplayUnavailableException(MoneyDisplayUnavailableReasonCode.INVALID_SOURCE_CURRENCY)
         val requested = BigDecimal.valueOf(amount.amount).setScale(digits, RoundingMode.HALF_EVEN)
         val totalWeight = weights.fold(BigDecimal.ZERO) { total, weight -> total.add(BigDecimal.valueOf(weight)) }
         if (requested.signum() > 0 && totalWeight.signum() <= 0) {

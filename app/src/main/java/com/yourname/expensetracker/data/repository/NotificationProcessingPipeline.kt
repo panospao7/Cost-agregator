@@ -913,7 +913,6 @@ class NotificationProcessingPipeline @Inject constructor(
 
     internal companion object {
         private const val DEFAULT_RECOMMENDATION_USER_ID = "default_user"
-        private const val RECOMMENDATION_JOB_TIMEOUT_MS = 3_000L
         private const val SUBSCRIPTION_DETECTION_TIMEOUT_MS = 5_000L
         private const val MAX_CONCURRENT_RECOMMENDATION_JOBS = 2
         private const val SUBSCRIPTION_LOOKBACK_DAYS = 120
@@ -1739,22 +1738,25 @@ private val AMOUNT_TOKEN_REGEX = Regex(
         asyncScope.launch {
             recommendationSemaphore.withPermit {
                 try {
-                    withTimeoutOrNull(RECOMMENDATION_JOB_TIMEOUT_MS) {
+                    withTimeoutOrNull(AppConfig.Ai.RECOMMENDATION_JOB_TIMEOUT_MS) {
                         val aiSettings = aiSettingsRepository.settings().first()
                         if (aiSettings.aiEnabled) {
-                            val aiArtifact = generateTransactionInsightUseCase(expense)
+                            // The use case never throws except for cancellation; a Skipped
+                            // outcome yields a null artifact and deterministic
+                            // recommendations are still generated and saved (INV-18).
+                            val outcome = generateTransactionInsightUseCase(expense)
 
                             val recommendations = dashboardFollowThroughEngine.generateRecommendations(
                                 transaction = expense,
-                                aiArtifact = aiArtifact,
+                                aiArtifact = outcome.artifactOrNull,
                                 userId = DEFAULT_RECOMMENDATION_USER_ID
                             )
                             recommendationRepository.saveAll(recommendations)
                         }
-                    } ?: Timber.w("Recommendation generation timed out after ${RECOMMENDATION_JOB_TIMEOUT_MS}ms")
+                    } ?: Timber.w("Recommendation generation timed out after ${AppConfig.Ai.RECOMMENDATION_JOB_TIMEOUT_MS}ms")
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
-                Timber.w(e, "Recommendation generation failed for expenseId=${expense.id}")
+                Timber.w("Recommendation generation failed class=%s", e.javaClass.simpleName)
             }
             }
         }

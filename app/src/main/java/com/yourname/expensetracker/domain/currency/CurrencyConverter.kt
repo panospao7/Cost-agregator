@@ -234,7 +234,8 @@ class CurrencyConverter @Inject constructor(
             }
         }
 
-        Timber.w("No exchange rate available for $fromCurrency to $toCurrency (%s)", FailedConversion.MISSING_RATE)
+        // MC G2-8: bounded log only — no currency pair and no amount.
+        Timber.w("CurrencyConverter: MISSING_RATE stage=latest_conversion")
         null
     }
 

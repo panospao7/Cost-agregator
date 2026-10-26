@@ -53,6 +53,8 @@ UPDATE expense:
   → TransactionLifecycleCoordinator.updateCategory/updateMerchant/updateType/etc.
   → TransactionEvent with LifecycleEventType.UPDATED
   → Post-update side effects via TransactionSideEffectPlanner.planUpdated()
+  → Full-row update re-snapshots against current H (TransactionLifecycleCoordinator.updateExpense
+    recomputes baseAmount/baseCurrency/exchangeRateUsed; see "SNAPSHOT rounding" under Money / Currency)
 
 FORBIDDEN:
   ❌ ExpenseDao.update() from repositories directly
@@ -404,8 +406,33 @@ CLOUD AI call:
   → If redactBeforeCloud: apply CloudPayloadPolicy via DefaultCloudPayloadPolicy.prepareText()
     / prepareReceiptAssist() / prepareBankStatementValidation() (no generic prepare())
   → PreparedCloudPayload contract used by all 8 cloud providers
-    (data/ai/provider/Cloud*Service)
+    (data/ai/provider/Cloud*Service). CloudWarrantyExtractionService remains one of the 8 but has
+    no production caller (retired from the warranty path by ai-fixes B1a; only di/AiModule.kt may
+    reference it, enforced by SourceScanningArchitectureGuardTest)
   → Audit via CompositePrivacyGate final decision
+
+On-device-only capabilities (NOTIFICATION_PARSE, REVIEW_PRIORITIZATION, SEMANTIC_DEDUPE,
+TRANSACTION_INSIGHT):
+  → AiPolicyImpl.canUseCloudFor is false for every settings combination
+  → the router reaches CLOUD only via DefaultAiCapabilityRouter.canUseCloud →
+    AiPolicy.canUseCloudFor, which is false for these, so it never returns CLOUD for them
+    (additionally, none is in CLOUD_FIRST_CAPABILITIES)
+  → TRANSACTION_INSIGHT has no PrivacyCapability / CloudPayloadPurpose / EffectiveCloudAiPolicy
+    row (ai-fixes B2a)
+
+Transaction insight (GenerateTransactionInsightUseCase, ai-fixes B2d):
+  → on-device only: gated by aiEnabled AND transactionInsightEnabled AND allowOnDeviceAi,
+    then a foreground-only short-circuit (AppForegroundState) BEFORE any router or AICore call,
+    then router.decide(TRANSACTION_INSIGHT); a CLOUD decision is rejected (ROUTE_REJECTED) with
+    zero provider calls; input is unredacted because nothing leaves the device
+  → uses OnDeviceDashboardBriefingService only; it must not reference HybridDashboardBriefingService or
+    CloudDashboardBriefingService (SourceScanningArchitectureGuardTest)
+  → returns TransactionInsightOutcome (Generated | Skipped(reason)); never written to ai_artifacts:
+    the artifact is an in-memory hand-off to DashboardFollowThroughEngine only; its summaryText may
+    become recommendation text persisted via the existing RecommendationRepository.saveAll path
+    (7-day expiresAt, INV-20); recommendations are generated for every outcome when aiEnabled by the
+    existing caller path (ManualExpenseRepository / NotificationProcessingPipeline)
+  → diagnostics: bounded reason code only (recordInteraction("transaction_insight", reason.name))
 
 RAW DATA storage:
   → Check RawStorageMode (STORE_RAW / STORE_REDACTED / STORE_METADATA_ONLY / DO_NOT_STORE)
@@ -432,9 +459,10 @@ PRIVACY BLOCKED states:
     OverpassDisabled, DebugDataPersistenceDisabled, ExchangeRateDownloadDisabled, Custom
   → PrivacyDecision.FailClosed: never proceed; blocks execution unconditionally
   → toPrivacyBlocked() maps any denial + capability to a typed PrivacyBlocked
-  → 39 call sites across 27 files use blocksExecution() before proceeding
+  → 38 call sites across 26 files use blocksExecution() before proceeding
     (blocksExecution() metric; `PrivacyGate.check(...)` itself is invoked from
-    51 call sites across 34 production files — different metric, both current)
+    50 call sites across 33 production files — different metric; both reduced by one by
+    ai-fixes B1a removing the AutoCreateWarrantyFromReceiptUseCase cloud gate)
 
 FORBIDDEN:
   ❌ Cloud HTTP without privacy gate check (must pass through CompositePrivacyGate)
@@ -444,6 +472,10 @@ FORBIDDEN:
   ❌ Using raw strings instead of typed PrivacyBlocked for UI states
   ❌ Silently proceeding when PrivacyDecision.FailClosed is returned
   ❌ Gating non-AI network calls by CLOUD_AI_* capabilities
+  ❌ ASSISTANT/SYSTEM turns or app-computed answers in any query-interpretation prompt
+     (model history = prior USER queries, shaped only by FinancialQueryInterpretationInputBuilder)
+  ❌ Assistant query interpretation reading PrivacySettings.redactBeforeCloud directly or OR-ing
+     redaction flags outside EffectiveCloudAiPolicyResolver
 ```
 
 ---
@@ -551,7 +583,20 @@ EVERY worker:
   → WorkerRunLogger records RUNNING → SUCCESS/FAILED/SKIPPED/RETRY
   → Checkpoint before long loops (ensureActive / writeBarrier.checkWritesAllowed)
   → Guard enforces requiresNotificationPermission via NotificationPermissionChecker
-       (durable skip: NOTIFICATION_PERMISSION_DENIED)
+       (durable skip: NOTIFICATION_PERMISSION_DENIED) for workers whose whole purpose is
+       a notification
+  → Optional-notification pattern (PR12K-3; ReceiptMatchingWorker, DailyBriefingWorker,
+       WarrantyExpirationWorker): requiresNotificationPermission = false, and the worker
+       checks notificationPermissionChecker.areNotificationsEnabled() locally immediately
+       before posting. Core work (receipt matching, briefing generation + persistence,
+       warranty expiry reconciliation via reconcileExpiredItems) never depends on
+       notification permission. When denied: no post, no notification count, run still
+       SUCCESS. DailyBriefingWorker and WarrantyExpirationWorker additionally record a
+       bounded NOTIFICATION_PERMISSION_DENIED skip diagnostic (DailyBriefingWorker only when
+       DeliverProactiveBriefingNotificationUseCase reports that outcome, i.e. after its
+       settings, dedupe and artifact checks).
+       (ai-fixes INV-24, INV-27, INV-29; enforced by SourceScanningArchitectureGuardTest
+       notification_posting_workers_require_permission_flag)
   → PrivacyRuntimeWorkerPolicy checks per-worker privacy consent
 
 RETRY CONTRACT:
@@ -604,10 +649,81 @@ DASHBOARD display:
   → Propagate quality through adapter chain
   → Show warning when isPartial=true
 
+COMPARE (sort / min-max filter / excluded count of an expense list by amount in the home currency H):
+  → Rule owner: ComparableHomeValue (domain/core/money) — pure, read-only;
+    comparableValue(expense, H) = ComparableValue.Value | None(NoComparableValueReason),
+    snapshotValue(expense) for the mixed-currency date header, comparator(H, direction), withinBounds
+  → SQL mirror: ExpenseDao.COMPARABLE_HOME_VALUE_E_SQL (ExpenseDao companion, next to
+    EFFECTIVE_AMOUNT_E_SQL); exactly two '?' placeholders, both bound to H
+  → Parity test: ComparableHomeValueSqlParityTest, with ComparableHomeValueFixture shared by the
+    Kotlin owner test; neither mirror changes without the fixture
+  → Shared builder: ExpenseRepository.buildExpenseDynamicQueryParts takes a required AmountSemantics
+    (RawEffective | HomeComparable(H) | AmountOpsDisabled); HomeComparable emits CV >= ? / CV <= ?,
+    (CV IS NULL) ASC amount ordering with a date/id tiebreak, args in textual '?' order; list =
+    ExpenseRepository.getExpensesPagedDynamic(..., amountSemantics)
+  → Excluded count: ExpenseRepository.countExpensesWithoutHomeValue(filter, home) →
+    ExpenseDao.countExpensesWithoutHomeValueDynamic (read-classified @RawQuery); same non-amount WHERE
+    plus CV IS NULL, ignores min/max and sort, returns an integer only
+  → Assistant queries stay on raw EFFECTIVE_AMOUNT_E_SQL (pinned by ExpenseRepositoryAssistantSqlGoldenTest)
+  → H comes from the typed read-time resolution CurrencySettingsRepository.observeReadHomeCurrency()
+    (ReadHomeCurrencyState: Loading | Available(code) | Unavailable(ReadHomeFailure)), bound as a
+    parameter. TransactionsViewModel prepends Loading and applies a 5 s timeout (Unavailable(TIMEOUT));
+    Available(H) → AmountSemantics.HomeComparable(H) (ALL tab) and ComparableHomeValue (time-range tabs
+    in memory); Loading/Unavailable → AmountSemantics.AmountOpsDisabled / date order, min/max not
+    applied, no count. The ViewModel never uses AmountSemantics.RawEffective (assistant-only).
+
+SNAPSHOT rounding (a converted amount stored in the home currency H; sole consumer = TransactionLifecycleCoordinator create and updateExpense):
+  → Rule owner: roundSnapshot(value, home) (domain/core/money/SnapshotRounding.kt) =
+    SnapshotRounding.Rounded(amount) | Unavailable(NON_FINITE_OR_NON_POSITIVE | DIGITS_UNAVAILABLE);
+    HALF_EVEN on BigDecimal.valueOf(value), H minor-unit digits, a positive value never stores 0
+    (one minor unit minimum); pure, no logging
+  → Digits: CurrencyFractionDigits.of(code) (domain/core/money) is the single accessor over the JDK
+    currency digits (null for unknown or negative); SourceCurrencyAllocation delegates to it
+  → Writer (TransactionLifecycleCoordinator only; createExpense and updateExpense share
+    convertedSnapshot): a converted create or update stores the rounded amount (roundSnapshot) in
+    baseAmount, the home currency in baseCurrency and the UNROUNDED rate in exchangeRateUsed
+  → No conversion, or roundSnapshot Unavailable: stores the sentinel 0.0 / "" / 0.0 and emits one
+    best-effort DiagnosticReasonCode.MISSING_RATE (metadata operation + reason only; reason =
+    MISSING_RATE or SNAPSHOT_ROUNDING_UNAVAILABLE); the update emit happens outside
+    database.withTransaction
+  → Home currency Failed (HomeCurrencyResolution.Failed): sentinel 0.0 / "" / 0.0 on create and
+    one best-effort HOME_CURRENCY_UNAVAILABLE diagnostic (also emitted on update); never a
+    fabricated default home
+  → Identity (expense currency == H) stores amount / H / 1.0 unchanged (no rounding)
+  → Existing rows are never rewritten or migrated; only new converted writes use HALF_EVEN rounding
+
+FORBIDDEN (SNAPSHOT rounding):
+  ❌ A second snapshot rounding rule (any other code rounding a stored base/home snapshot amount)
+  ❌ A second minor-unit digits accessor in domain/core/money
+
+HOME CURRENCY SWITCH (Currency Management screen):
+  → home write = CurrencySettingsRepository.setHomeCurrency only via CurrencyManagementViewModel.confirm()
+    after request(code) produced HomeSwitchUi.PendingConfirm (both entry points call request, never write)
+  → the warning (PendingConfirm) is shown while H is Loading or Unavailable (ReadHomeCurrencyState from
+    observeReadHomeCurrency), never skipped; the only no-op is a request equal to an Available H
+    (unsupported codes give UNSUPPORTED_HOME_CURRENCY, no dialog, no write)
+  → the dialog opens immediately with static text; the optional predicted count
+    (ExpenseRepository.countExpensesWithoutHomeValue(empty filter, candidate H)) is added when it
+    arrives and omitted when unreadable or slow; confirm = exactly one setHomeCurrency, then the
+    classifier invalidation
+
 FORBIDDEN:
+  ❌ Calling CurrencySettingsRepository.setHomeCurrency from the Currency Management screen/ViewModel
+     other than in CurrencyManagementViewModel.confirm() (no unconfirmed home-currency write)
   ❌ sumOf { effectiveAmount } across currencies without conversion
   ❌ Raw Double totals in public domain/UI models without currency context
   ❌ Dropping MoneyAggregate.isPartial/warningMessage in adapter mapping
+  ❌ Raw-amount fallback when comparing a foreign-currency row without a valid snapshot for H
+     (it has no comparable value; it sorts last and is excluded by min/max)
+  ❌ Interpolating H (a currency code) into SQL; bind it as a parameter
+  ❌ A second Kotlin or SQL implementation of the comparable-home-value rule
+  ❌ Amount operations (sort, min/max, count) against a placeholder or guessed home currency
+     (the "EUR" stateIn default, an untyped homeCurrency() string, or a Loading/Unavailable state)
+  ❌ Expense.normalizedEffectiveAmount in a sort, filter or count (it is the date-header snapshot
+     value only and delegates to ComparableHomeValue.snapshotValue)
+  ❌ Writing base fields (baseAmount/baseCurrency/exchangeRateUsed) outside TLC (Rescue restore
+     excepted: identity/sentinel only, via FinancialRescueCoordinator.rescueSnapshotFields)
+  ❌ Substituting a literal currency for an unavailable home currency in any displayed total
 ```
 
 ---
@@ -751,7 +867,8 @@ CREATE system expense AND link to group (atomic):
 
 RECORD settlement:
   → REMOVED — no production settlement writer exists; GroupSettlementDao is
-    read-only (consumed by GroupBalanceCalculator / SettlementCalculator)
+    read-only (consumed for display by GroupSettlementBalancePolicy.displayedBalances;
+    GroupBalanceCalculator / SettlementCalculator have no production caller)
 
 ARCHIVE / RESTORE / DELETE group:
   → SharedExpenseManager.archiveGroup() / restoreGroup() / deleteGroup()
@@ -761,11 +878,13 @@ ARCHIVE / RESTORE / DELETE group:
       GroupMemberDao + ExpenseGroupDao), clears shared-expense flags on linked
       system expenses, writes TransactionLifecycleEvent (BULK_UPDATED)
 
-CALCULATE balances:
-  → GroupBalanceCalculator.calculateMemberBalance(groupId, memberId)
-  → Read-only: sums paidTotal, owedShareTotal via SplitCalculator, settlements
-  → Returns GroupMemberBalance (isSettled when |netBalance| <= 0.01)
-  → SharedExpenseManager.calculateBalances() for the all-member snapshot
+CALCULATE balances (display):
+  → GroupSettlementBalancePolicy.displayedBalances(groupId, groupCurrency, expenses, members, settlements)
+  → Read-only, pure. Includes only rows/settlements in the group currency; excludes and counts the rest.
+  → Returns availability (AVAILABLE/PARTIAL/UNAVAILABLE), included-only total, balances, excluded counts.
+  → Suggested settlement plan only when AVAILABLE.
+  GroupBalanceCalculator.calculateMemberBalance / SharedExpenseManager.calculateBalances():
+  → no production caller; no new callers; pending owner decision (Inc 3).
 
 FORBIDDEN:
   ❌ ExpenseGroupDao.insert() outside GroupTransactionCoordinator
@@ -778,6 +897,8 @@ FORBIDDEN:
   ❌ Any group mutation without a barrier-checked entry (SharedExpenseManager
      facade or GroupTransactionCoordinator)
   ❌ Hard-deleting a group without checking for linked system expenses
+  ❌ Summing group amounts or calling SplitCalculator.calculateBalances for display outside
+     GroupSettlementBalancePolicy
 
 ENFORCEMENT:
   • The domain `GroupTransactionCoordinator` interface is implemented by
@@ -1063,21 +1184,56 @@ FORBIDDEN:
 
 ```
 AUTO-CREATE warranty from receipt:
-  → AutoCreateWarrantyFromReceiptUseCase.execute(receiptId, ocrText)
-  → WarrantyTextExtractor extracts warranty terms via regex patterns
-  → Confidence threshold: high ≥ 70%, medium ≥ 40%, low < 40%
-  → Checks existing warranties on same receipt (dedup)
-  → High confidence → auto-create Warranty record
-  → Low/medium confidence → creates WarrantyReviewDraft for user approval
+  → ReceiptSideEffectPlanner (Policy A: ephemeral raw OCR only) →
+    AutoCreateWarrantyFromReceiptUseCase.execute(receiptId, ephemeralOcrText)
+  → WarrantyTextExtractor extracts warranty terms via regex patterns (local only)
+  → Confidence bands (independent of cloud/privacy settings):
+      c ≥ 0.70          → Warranty with status=ACTIVE, needsReview=false
+      0.40 ≤ c < 0.70   → Warranty with status=PENDING_REVIEW, needsReview=true,
+                          extractionSource="ocr" (no separate draft entity)
+      c < 0.40          → nothing persisted
+  → Checks existing warranties on same receipt (dedup; AlreadyExists only upserts the return window)
   → Half-open (exclusive) end-date semantics
-  → PrivacyGate.check() before accessing receipt data
+  → Receipt OCR text reaches the use case only as ephemeral raw text via
+    ReceiptSideEffectPlanner Policy A. There is no fallback to persisted or sanitized text; when
+    the ephemeral text is unavailable the side effect is Skipped (SIDE_EFFECT_SKIPPED_PRIVACY) and
+    the use case is not invoked. Receipt rows are read only through ReceiptRepository.
+    No PrivacyGate capability applies to local regex extraction. Any future cloud or model step
+    requires PrivacyGate.check(CLOUD_AI_*) before data leaves the device.
+  → WarrantyTrackerRepository is the sole warranty writer (addWarrantyIgnoreConflicts → WarrantyDao)
+
+RETURN WINDOW (receipt-driven):
+  → WarrantyTrackerRepository.upsertReturnWindowForReceipt(receiptId, warranty?)
+  → writeBarrier.checkWritesAllowed → structured receipt fields via ReceiptRepository
+    (parsedMerchant, parsedDate/createdAt, expenseId, sourceType, documentType, processingStatus)
+  → returnDays = merchant default table (Amazon 30, Best Buy 15, Apple 14, else 30);
+    returnConditions / returnPolicyUrl are never produced (null on insert)
+  → insert, or update preserving status, returnedAt, refundAmount, createdAt and existing
+    conditions / policy URL
+
+CONFIRM / EXPIRE (review lifecycle):
+  → WarrantyTrackerRepository.confirmWarranty(warrantyId): barrier check first → one transaction:
+    fresh read by id → NotFound | AlreadyConfirmed (no write, no event) | needsReview=false,
+    status = EXPIRED if already EXPIRED or warrantyEndDate < now, else ACTIVE → CONFIRMED
+    lifecycle event (fail-closed in transaction). Never moves EXPIRED → ACTIVE.
+  → WarrantyTrackerRepository.reconcileExpiredItems(now): barrier check first → sole writer of any
+    transition into EXPIRED: status ACTIVE/PENDING_REVIEW with warrantyEndDate < now → EXPIRED
+    (needsReview unchanged; expired pending = "expired unconfirmed"); one batch EXPIRED event with
+    counts only; idempotent
+  → rejectAutoDetectedWarranty (existing): deletes warranty + return window atomically
+  → Review state for UI is derived only by WarrantyReviewState.of(warranty, now)
+  → Reminders consider status='ACTIVE' only (PENDING_REVIEW / EXPIRED never get reminders)
 
 FORBIDDEN:
+  ❌ Warranty promotion out of review (needsReview=false / status ACTIVE / PENDING_REVIEW→ACTIVE) by any path other than WarrantyTrackerRepository (confirmWarranty, or promoteReviewDraft which applies a content-only edit to a fresh in-transaction read and then runs confirmWarranty in the same transaction) (F-AI-1; AutoCreateWarrantyFromReceiptUseCase calls promoteReviewDraft only; WarrantyPromotionBypassGuardTest enforces that no function outside WarrantyTrackerRepository.kt pairs an updateWarranty call with a promotion write; DAO writes are covered by the db_access ownership guards)
   ❌ Creating warranty without confidence assessment
-  ❌ Auto-creating warranty below 70% confidence threshold
+  ❌ Auto-creating an ACTIVE warranty below 70% confidence threshold
   ❌ Creating duplicate warranties for same receipt
-  ❌ Accessing receipt data without PrivacyGate check
   ❌ Using inclusive end-date semantics for warranty expiry
+  ❌ Cloud/AI extraction in the warranty or return-window path
+  ❌ Reminders for non-ACTIVE warranties
+  ❌ Reading persisted rawOcrText for warranty or return-window derivation
+  ❌ ViewModel-built warranty status/needsReview changes (use confirm/reject/claim)
 ```
 
 ---
@@ -1398,4 +1554,52 @@ FORBIDDEN:
   ❌ SpendingChallengeRepository.deactivateChallenges() without a write-barrier check
   ❌ Adding new raw Double SUM aggregation paths for challenge progress
      (must migrate to MultiCurrencyRepository — ownership- and currency-safe)
+```
+
+---
+
+## Assistant / Financial Query
+
+```
+SUBMIT assistant query (no expense/receipt/recurring writes; the only writes are the
+chat rows via AiChatRepository.appendMessage, which checks the write barrier):
+  → AssistantViewModel.submitQuery
+      snapshots prior chat rows BEFORE persisting the current user turn
+      (only when AiSettings.storeConversationHistory is on AND a session id exists;
+      otherwise empty)
+  → InterpretFinancialQueryUseCase (passes the raw prior rows through unchanged;
+    falls back to local interpretation when no provider answers)
+  → FinancialQueryInterpretationInputBuilder (SOLE constructor of
+    FinancialQueryInterpretationInput):
+      priorUserQueries = USER rows only, last
+      AppConfig.Ai.MAX_QUERY_HISTORY_USER_TURNS_FOR_MODEL, oldest first,
+      each sanitized, blanks dropped; no ASSISTANT/SYSTEM text, no payloadJson
+      redaction = AiPolicy.canUseCloudFor(QUERY_INTERPRETATION)
+                  && EffectiveCloudAiPolicyResolver.resolve().redactBeforeCloud
+  → HybridRouter / providers
+      on-device: OnDeviceQueryInterpretationService (renders "- USER: <text>" lines)
+      cloud: CloudQueryInterpretationService → CloudAiPrivacyGate →
+             DefaultCloudPayloadPolicy.prepareText → audit
+  → ExecuteFinancialQueryUseCase (read-only)
+
+Clarification completion (structured clarification option tap; in-memory pending state only):
+  → AssistantViewModel.onClarificationOptionSelected(itemId, optionIndex)
+      consume the live pending clarification FIRST, then execute
+  → CompleteFinancialQueryClarificationUseCase (pure slot fill; PERIOD via AssistantPeriodResolver)
+  → ExecuteFinancialQueryUseCase (read-only; no re-interpretation)
+  retryLast on a completed turn re-executes the completed intent the same way.
+
+Assistant period ranges and comparison cue only via AssistantPeriodResolver.
+
+FORBIDDEN:
+  ❌ Constructing FinancialQueryInterpretationInput outside FinancialQueryInterpretationInputBuilder
+  ❌ ASSISTANT/SYSTEM turns, app-computed answers or message payloadJson in any
+     query-interpretation prompt (on-device or cloud)
+  ❌ AssistantViewModel (or any UI layer) shaping, filtering or redacting model history
+  ❌ Assistant query interpretation reading PrivacySettings.redactBeforeCloud directly or OR-ing
+     redaction flags outside EffectiveCloudAiPolicyResolver
+  ❌ Re-interpreting a structured clarification tap (calling InterpretFinancialQueryUseCase with the
+     option label)
+  ❌ Calling providers or the network on clarification completion
+  ❌ Persisting pending clarification state (it is in-memory only; restored transcripts never regain it)
 ```

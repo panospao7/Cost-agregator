@@ -28,7 +28,9 @@ import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.ui.components.asString
+import com.yourname.expensetracker.ui.screens.subscription.SubscriptionTotalStatus
 import com.yourname.expensetracker.ui.theme.SemanticColors
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.ui.util.UiTimeUtils
@@ -139,7 +141,14 @@ fun ManualRecurringExpenseScreen(
                         
                         // Total Monthly Card
                         item {
-                            TotalMonthlyCard(totalMonthly = uiState.totalMonthly, homeCurrency = homeCurrency)
+                            // INV-14: the label comes from the same code that decided inclusion,
+                            // never from the separate homeCurrency flow above.
+                            TotalMonthlyCard(
+                                totalMonthly = uiState.totalMonthly,
+                                totalCurrency = uiState.totalCurrency,
+                                totalStatus = uiState.totalStatus,
+                                excludedRuleCount = uiState.excludedRuleCount
+                            )
                         }
                         
                         val activeExpenses = uiState.recurringExpenses.filter { it.isActive }
@@ -353,8 +362,13 @@ private fun SummaryCard(
 }
 
 @Composable
-private fun TotalMonthlyCard(totalMonthly: Double, homeCurrency: String) {
-    
+private fun TotalMonthlyCard(
+    totalMonthly: Double?,
+    totalCurrency: String?,
+    totalStatus: SubscriptionTotalStatus,
+    excludedRuleCount: Int
+) {
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
@@ -375,12 +389,35 @@ private fun TotalMonthlyCard(totalMonthly: Double, homeCurrency: String) {
             
             Spacer(modifier = Modifier.height(8.dp))
             
-            Text(
-                text = CurrencyFormatter.formatMoney(totalMonthly, homeCurrency),
-                style = MaterialTheme.typography.headlineSmall,
-                color = SemanticColors.PrimaryIndigo,
-                fontWeight = FontWeight.Bold
-            )
+            // INV-13: an unavailable total is never rendered as an amount (no 0).
+            if (totalStatus == SubscriptionTotalStatus.UNAVAILABLE || totalMonthly == null || totalCurrency == null) {
+                Text(
+                    text = stringResource(R.string.recurring_total_unavailable),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = SemanticColors.TextSecondary
+                )
+            } else {
+                Text(
+                    text = CurrencyFormatter.formatMoney(totalMonthly, totalCurrency),
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = SemanticColors.PrimaryIndigo,
+                    fontWeight = FontWeight.Bold
+                )
+
+                // INV-12: left-out rules are counted, not named; the notice carries only the count.
+                if (totalStatus == SubscriptionTotalStatus.PARTIAL && excludedRuleCount > 0) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = pluralStringResource(
+                            R.plurals.money_total_partial_notice,
+                            excludedRuleCount,
+                            excludedRuleCount
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = SemanticColors.TextSecondary
+                    )
+                }
+            }
         }
     }
 }

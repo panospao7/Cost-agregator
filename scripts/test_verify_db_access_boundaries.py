@@ -5618,7 +5618,11 @@ def test_checked_in_structural_only_manifest_contract_via_production_apis():
     from scripts.db_guard.source_roots import load_source_root_manifest
 
     entries = load_db_ownership_policy()
-    assert len(entries) == 430
+    # ai-fixes B1a (owner-approved 2026-10-22): -1 dead toWarrantyEntityOrNull
+    # identity, +2 exact confirmWarranty(Long) identities: 430 -> 431.
+    # ai-fixes Z2 review fix: +1 exact promoteReviewDraft identity
+    # (warrantyDao.updateWarranty): 431 -> 432.
+    assert len(entries) == 432
     sweep_path = (
         "app/src/main/java/com/yourname/expensetracker/data/repository/"
         "SavingsSweepAcceptanceCoordinator.kt"
@@ -6095,8 +6099,12 @@ def test_current_db_gate_activated_policy_real_config_pipeline(tmp_path, monkeyp
     # (RecurringLifecycleCoordinator.updateOccurrenceStatus /
     # plannedExpenseDao.updateStatus + reminderDeliveryDao.
     # suppressOpenDeliveriesForOccurrence), yielding 430.
+    # ai-fixes B1a (owner-approved 2026-10-22): -1 dead toWarrantyEntityOrNull
+    # identity, +2 exact confirmWarranty(Long) identities: 430 -> 431.
+    # ai-fixes Z2 review fix: +1 exact promoteReviewDraft identity
+    # (warrantyDao.updateWarranty): 431 -> 432.
     # Re-derived per the checked-in-manifest contract pin above.
-    assert len(entries) == 430
+    assert len(entries) == 432
 
     # The structural gate really ran (post-activation it is no longer
     # short-circuited by a loader block) and stayed clean.

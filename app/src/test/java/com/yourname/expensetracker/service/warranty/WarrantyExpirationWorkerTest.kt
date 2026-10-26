@@ -15,13 +15,19 @@ import com.yourname.expensetracker.data.database.entity.WarrantyReminderDelivery
 import com.yourname.expensetracker.data.database.entity.WarrantyStatus
 import com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
 import com.yourname.expensetracker.data.repository.WarrantyTrackerRepository.ExpiryReconciliationResult
+import com.yourname.expensetracker.domain.diagnostics.AppPipeline
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
+import com.yourname.expensetracker.domain.diagnostics.EventOutcome
 import com.yourname.expensetracker.domain.service.NotificationService
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.domain.workers.NotificationPermissionChecker
 import com.yourname.expensetracker.domain.workers.RetryableWorkerException
 import com.yourname.expensetracker.domain.workers.WorkerCheckpointBlockedException
 import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
+import com.yourname.expensetracker.domain.workers.WorkerGuardRequest
 import com.yourname.expensetracker.domain.workers.WorkerGuardResult
 import com.yourname.expensetracker.domain.workers.WorkerRunContext
 import io.mockk.coEvery
@@ -60,6 +66,9 @@ class WarrantyExpirationWorkerTest {
     private lateinit var executionGuard: WorkerExecutionGuard
     private lateinit var timeProvider: FakeTimeProvider
     private lateinit var lastRunContext: WorkerRunContext
+    private lateinit var lastGuardRequest: WorkerGuardRequest
+    private lateinit var notificationPermissionChecker: NotificationPermissionChecker
+    private lateinit var diagnosticEventWriter: DiagnosticEventWriter
     private val blockedCheckpointLabels = mutableSetOf<String>()
 
     @Before
@@ -72,6 +81,10 @@ class WarrantyExpirationWorkerTest {
         warrantyRepository = mockk()
         notificationService = mockk(relaxed = true)
         executionGuard = mockk()
+        // INV-29: permission is checked locally by the worker; default is allowed.
+        notificationPermissionChecker = mockk()
+        every { notificationPermissionChecker.areNotificationsEnabled() } returns true
+        diagnosticEventWriter = mockk(relaxed = true)
         timeProvider = FakeTimeProvider(1_750_000_000_000L)
         // Faithful guard stub: mirror WorkerExecutionGuard's catch precedence exactly —
         // CancellationException rethrown (highest), then an explicit RetryableWorkerException
@@ -84,6 +97,7 @@ class WarrantyExpirationWorkerTest {
                 any<suspend (WorkerRunContext) -> Any>()
             )
         } coAnswers {
+            lastGuardRequest = firstArg<WorkerGuardRequest>()
             val block = secondArg<suspend (WorkerRunContext) -> Any>()
             val ctx = mockk<WorkerRunContext>(relaxed = true)
             // Models WorkerExecutionGuard.checkpoint: a denied write barrier surfaces as
@@ -141,7 +155,7 @@ class WarrantyExpirationWorkerTest {
         assertEquals(Result.success(), buildWorker().doWork())
 
         verify(exactly = 0) { notificationService.sendBudgetAlert(any(), any(), any()) }
-        verify(exactly = 0) { lastRunContext.addNotificationsSent() }
+        verify(exactly = 0) { lastRunContext.addNotificationsSent(any()) }
         val row = requireNotNull(deliveryDao.getByKey(warranty.id, 7, warranty.warrantyEndDate))
         assertEquals("SCHEDULED", row.status)
         assertEquals(0, row.attemptCount)
@@ -167,7 +181,7 @@ class WarrantyExpirationWorkerTest {
         assertEquals(Result.success(), buildWorker().doWork())
 
         verify(exactly = 0) { notificationService.sendBudgetAlert(any(), any(), any()) }
-        verify(exactly = 0) { lastRunContext.addNotificationsSent() }
+        verify(exactly = 0) { lastRunContext.addNotificationsSent(any()) }
         val row = requireNotNull(actualDao.getByKey(warranty.id, 7, warranty.warrantyEndDate))
         assertEquals("FAILED", row.status)
         assertEquals("warranty_parent_not_eligible", row.failureReason)
@@ -190,7 +204,7 @@ class WarrantyExpirationWorkerTest {
         assertEquals(Result.success(), buildWorker().doWork())
 
         verify(exactly = 0) { notificationService.sendBudgetAlert(any(), any(), any()) }
-        verify(exactly = 0) { lastRunContext.addNotificationsSent() }
+        verify(exactly = 0) { lastRunContext.addNotificationsSent(any()) }
         assertThat(actualDao.getByKey(warranty.id, 7, warranty.warrantyEndDate)).isNull()
     }
 
@@ -210,6 +224,8 @@ class WarrantyExpirationWorkerTest {
                         deliveryDao = deliveryDao,
                         executionGuard = executionGuard,
                         timeProvider = timeProvider,
+                        notificationPermissionChecker = notificationPermissionChecker,
+                        diagnosticEventWriter = diagnosticEventWriter,
                     )
                 }
             })
@@ -398,17 +414,66 @@ class WarrantyExpirationWorkerTest {
     }
 
     @Test
-    fun `warranty run skipped when notifications disabled does not notify`() = runTest {
-        // The guard owns the notification-permission gate (S1): when notifications are
-        // disabled it short-circuits with a durable SKIPPED run and never invokes the
-        // worker block, so no notification is sent.
+    fun `guard request does not require notification permission (INV-29)`() = runTest {
+        buildWorker().doWork()
+
+        assertThat(lastGuardRequest.workerName).isEqualTo("warranty_expiration_check")
+        assertThat(lastGuardRequest.requiresNotificationPermission).isFalse()
+    }
+
+    @Test
+    fun `AE-51 notifications denied still reconciles, posts no reminders and succeeds`() = runTest {
+        val warranty = seedWarranty()
+        coEvery { warrantyRepository.reconcileExpiredItems(any<Long>()) } returns ExpiryReconciliationResult(1, 0)
+        coEvery { warrantyRepository.getWarrantiesExpiringSoon(7) } returns listOf(warranty)
+        coEvery { warrantyRepository.getWarrantiesExpiringSoon(30) } returns emptyList()
+        every { notificationPermissionChecker.areNotificationsEnabled() } returns false
+
+        val result = buildWorker().doWork()
+
+        assertEquals(Result.success(), result)
+        // Reconciliation is independent of notification permission.
+        io.mockk.coVerify(exactly = 1) { warrantyRepository.reconcileExpiredItems(any<Long>()) }
+        verify(exactly = 1) { lastRunContext.addRowsUpdated(1) }
+        // No reminder is looked up, seeded, claimed, sent or counted.
+        io.mockk.coVerify(exactly = 0) { warrantyRepository.getWarrantiesExpiringSoon(any()) }
+        verify(exactly = 0) { notificationService.sendBudgetAlert(any(), any(), any()) }
+        verify(exactly = 0) { lastRunContext.addNotificationsSent(any()) }
+        assertThat(deliveryDao.getByKey(warranty.id, 7, warranty.warrantyEndDate)).isNull()
+        // Exactly one bounded skip diagnostic: reason code only.
+        val events = mutableListOf<DiagnosticEvent>()
+        io.mockk.coVerify(exactly = 1) { diagnosticEventWriter.emit(capture(events)) }
+        val event = events.single()
+        assertThat(event.reasonCode).isEqualTo(DiagnosticReasonCode.NOTIFICATION_PERMISSION_DENIED)
+        assertThat(event.outcome).isEqualTo(EventOutcome.SKIPPED)
+        assertThat(event.pipeline).isEqualTo(AppPipeline.WORKER)
+        assertThat(event.entityType).isEqualTo("WarrantyExpirationWorker")
+    }
+
+    @Test
+    fun `notifications enabled emits no permission-denied diagnostic`() = runTest {
+        val warranty = seedWarranty()
+        coEvery { warrantyRepository.getWarrantiesExpiringSoon(7) } returns listOf(warranty)
+        coEvery { warrantyRepository.getWarrantiesExpiringSoon(30) } returns emptyList()
+
+        assertEquals(Result.success(), buildWorker().doWork())
+
+        verify(exactly = 1) { notificationService.sendBudgetAlert(any(), any(), any()) }
+        io.mockk.coVerify(exactly = 0) { diagnosticEventWriter.emit(any()) }
+    }
+
+    @Test
+    fun `warranty run skipped by a non-permission guard gate does not notify`() = runTest {
+        // Other guard gates (privacy, restore, write barrier) can still short-circuit with a
+        // durable SKIPPED run without invoking the worker block, so no notification is sent.
+        // Notification permission is no longer one of them (INV-29): see the AE-51 test.
         coEvery {
             executionGuard.runGuardedWithContext(
                 any(),
                 any<suspend (WorkerRunContext) -> Any>()
             )
         } returns
-            WorkerGuardResult.Skipped(DiagnosticReasonCode.NOTIFICATION_PERMISSION_DENIED.name)
+            WorkerGuardResult.Skipped(DiagnosticReasonCode.PRIVACY_DENIED.name)
 
         val result = buildWorker().doWork()
 
@@ -431,7 +496,7 @@ class WarrantyExpirationWorkerTest {
 
         assertEquals(Result.retry(), result)
         verify(exactly = 0) { notificationService.sendBudgetAlert(any(), any(), any()) }
-        verify(exactly = 0) { lastRunContext.addNotificationsSent() }
+        verify(exactly = 0) { lastRunContext.addNotificationsSent(any()) }
         assertThat(deliveryDao.getByKey(warranty.id, 7, warranty.warrantyEndDate)).isNull()
     }
 
@@ -445,7 +510,7 @@ class WarrantyExpirationWorkerTest {
         val result = buildWorker().doWork()
 
         assertEquals(Result.retry(), result)
-        verify(exactly = 0) { lastRunContext.addNotificationsSent() }
+        verify(exactly = 0) { lastRunContext.addNotificationsSent(any()) }
         val row = requireNotNull(deliveryDao.getByKey(warranty.id, 7, warranty.warrantyEndDate))
         // The outcome write was denied: the row stays CLAIMED (recovered by recoverStaleClaimed).
         assertThat(row.status).isEqualTo("CLAIMED")

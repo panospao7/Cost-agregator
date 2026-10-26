@@ -288,6 +288,7 @@ Owns startup wiring, service lifecycle recovery, and background runtime jobs.
 - `startup/AppStartupDelegate.kt`
 - `startup/AppStartupCoordinator.kt`
 - `startup/AppBackgroundLifecycleObserver.kt`
+- `startup/ProcessAppForegroundState.kt` — process-lifecycle observer (onStart → true, onStop → false, default false) implementing the `domain/ai/service/AppForegroundState` port (ai-fixes B2c); registered only in `AppStartupCoordinator.registerLifecycleObserver`; bound by `di/AppForegroundModule.kt`; no consumer until B2d
 - `data/ai/worker/DailyBriefingWorker.kt`
 - `data/location/LocationBackfillWorker.kt`
 - `data/location/MerchantKeyBackfillWorker.kt`
@@ -298,7 +299,7 @@ Owns startup wiring, service lifecycle recovery, and background runtime jobs.
 - `domain/workers/WorkerExecutionGuard.kt` — Structured guarded execution with restore check, `RetryableWorkerException` retry contract, and notification-permission gate
 - `domain/workers/WorkerRegistry.kt` — Single-source-of-truth registry for all 7 workers (specName + schedule lambda); replaces hardcoded lists in RestoreMaintenanceMode/AppStartupCoordinator
 - `domain/workers/RetryableWorkerException.kt` — Typed retry signal; guard catch precedence: CancellationException → RetryableWorkerException (Retry) → classifyTransient → otherwise permanent Failed
-- `domain/workers/NotificationPermissionChecker.kt` — Guard-enforced notification-permission gate for WarrantyExpirationWorker
+- `domain/workers/NotificationPermissionChecker.kt` — Notification-permission check: guard-enforced for BillReminderWorker; called directly by the optional-notification workers (ReceiptMatchingWorker, DailyBriefingWorker, WarrantyExpirationWorker — ai-fixes B3a)
 - `domain/workers/PrivacyRuntimeWorkerPolicy.kt` — Maps privacy toggles to gated workers; PrivacySettingsRepositoryImpl.applyPrivacyChange() is policy-driven
 - `domain/workers/WorkerDrainController.kt` — Worker drain lifecycle controller
 - `domain/workers/WorkerLease.kt` / `WorkerLeaseRegistry.kt` / `WorkerLeaseRegistryImpl.kt` — Worker lease acquisition for exclusive execution
@@ -379,6 +380,11 @@ Owns currency normalization, exchange-rate handling, multi-currency calculations
 - `domain/core/money/BucketDatePolicy.kt` — Policy for bucket date assignment
 - `domain/core/money/HomeCurrencyForMoneyMath.kt` — Home currency resolution for money math
 - `domain/core/money/TransactionTypeFilter.kt` — Filter for transaction type in aggregates
+- `domain/core/money/ComparableHomeValue.kt` — Sole Kotlin owner of the comparable-home-value (CV) rule for amount sort/filter/count against home currency H; SQL mirror `ExpenseDao.COMPARABLE_HOME_VALUE_E_SQL`
+- `domain/core/money/ComparableValue.kt` — Sealed `Value` / `None(NoComparableValueReason)` result of the CV rule
+- `domain/core/money/CurrencyFractionDigits.kt` — Single accessor for a currency's minor-unit digits (null when unknown or negative); delegated to by `SourceCurrencyAllocation` and `roundSnapshot`
+- `domain/core/money/SnapshotRounding.kt` — Sole snapshot rounding rule `roundSnapshot(value, home)` (HALF_EVEN, one-minor-unit floor) with sealed `Rounded` / `Unavailable(reason)`
+- `domain/currency/ReadHomeCurrencyState.kt` — Typed read-time home currency (`Loading` / `Available` / `Unavailable(ReadHomeFailure)`), source of H for the CV rule; bounded failure codes only
 
 **Representative files — legacy + new**
 - `domain/currency/CurrencyConverter.kt` — Currency conversion engine
@@ -455,9 +461,22 @@ Owns the app-wide AI platform surface: policy, assistant sheet, AI settings, pro
 - `domain/ai/policy/AiPolicy.kt`
 - `domain/ai/HybridRouter.kt` — Consolidates routing logic previously duplicated across 6 hybrid AI services (cloud/on-device/fallback routing; AID-4)
 - `ui/screens/assistant/AssistantSheet.kt`
+- `ui/screens/assistant/AssistantViewModel.kt` — snapshots prior chat rows before persisting the current turn; does not shape or redact model history
+- `domain/ai/usecase/FinancialQueryInterpretationInputBuilder.kt` — sole constructor of `FinancialQueryInterpretationInput`; model history = prior USER queries only (last `MAX_QUERY_HISTORY_USER_TURNS_FOR_MODEL` = 4), redaction source = `EffectiveCloudAiPolicyResolver`
+- `domain/ai/usecase/AssistantPeriodResolver.kt` — the only assistant period lexicon: EN phrase precedence, model `periodKeyword` (incl. `LAST_WEEK`/`LAST_QUARTER`/`LAST_YEAR`), clarification period choices, the single comparison cue, and calendar-aware `previousEquivalent`; pure (explicit `nowMs` and zone), returns plain values (callers wrap into their own range type)
+- `domain/ai/usecase/CompleteFinancialQueryClarificationUseCase.kt` — pure completion of a structured clarification (`ClarificationCompletion` on the executor period clarification and the fallback presentation clarification): PERIOD sets period and granularity via `AssistantPeriodResolver.resolveChoice`, BREAKDOWN → TOTAL, TRANSACTION_LIST → LIST + grouping NONE; no interpreter/provider/network
+- `ui/components/ai/AssistantClarificationChoiceText.kt` — single exhaustive `ClarificationChoice` → `@StringRes` label mapping (card, sheet and the VM transcript turn); `AssistantViewModel` holds the in-memory live pending clarification (consume-first, expires on new query/result/error/clear; stale options render disabled; never persisted)
+- `data/ai/provider/OnDeviceQueryInterpretationService.kt` / `CloudQueryInterpretationService.kt` — share `buildPrompt`; history rendered as `- USER:` lines only
+- `domain/ai/model/AssistantUnsupportedReason.kt` — closed 7-code enum; the only value `Unsupported` results carry (optional bounded `DiagnosticReasonCode`, never rendered or persisted; the producing site logs it); the model's own unsupported text is discarded
+- `ui/components/ai/AssistantUnsupportedReasonText.kt` — single exhaustive reason → `@StringRes` mapping, used by `AssistantResultCard` and `AssistantViewModel` (persisted text; payload `{"type":"unsupported","reason":"<CODE_NAME>"}`)
 - `domain/ai/model/AssistantHistoryMode.kt` — Enum (OFF/REDACTED/RAW) for conversation history redaction in AiChatRepositoryImpl
 - `ui/screens/aisettings/AiSettingsScreen.kt`
 - `data/ai/provider/DefaultAiEnvironmentMonitor.kt`
+- `data/repository/AiSettingsRepositoryImpl.kt` — `ai_settings` DataStore; `produceMigrations` registers the sole resolver of `ai_transaction_insight_enabled`
+- `data/repository/AiInsightSettingsMigration.kt` — the one never-throwing `DataMigration` (INV-23): stored briefing value wins, else `InstallProvenance` (NEW_INSTALL → on, UPGRADE/UNKNOWN → off); runs before first read and first edit; never overwrites an existing key
+- `domain/ai/service/InstallProvenance.kt` — port (`InstallOrigin` NEW_INSTALL/UPGRADE/UNKNOWN); `data/repository/PackageInstallProvenance.kt` — own-package install/update times only, any failure → UNKNOWN; not Hilt-bound (built from the application context inside `produceMigrations`)
+- `domain/ai/service/AppForegroundState.kt` — port (`isAppInForeground()`, default false = fail-safe skip) for the INV-17 foreground short-circuit; impl `startup/ProcessAppForegroundState.kt` (Segment 12); consumed by `domain/ai/usecase/GenerateTransactionInsightUseCase.kt` (B2d); its registration is pinned by `SourceScanningArchitectureGuardTest`
+- `domain/ai/usecase/GenerateTransactionInsightUseCase.kt` + `TransactionInsightOutcome.kt` — on-device only, foreground-only, never written to `ai_artifacts`; `summaryText` may become recommendation text persisted via the existing `RecommendationRepository.saveAll` path (7-day `expiresAt`, INV-20); recommendations are generated for every outcome when `aiEnabled` (B2d, INV-15..21); returns `Generated`/`Skipped(reason)`; callers `ManualExpenseRepository` and `NotificationProcessingPipeline` consume `outcome.artifactOrNull`
 - `data/ai/provider/StrictAiJsonParsing.kt`
 - `data/ai/provider/DashboardBriefingPromptFormatter.kt`
 - `data/ai/provider/DashboardBriefingResponseParser.kt`
@@ -667,7 +686,9 @@ Owns global configuration, hot-path performance helpers, and accessibility polis
 Owns warranty tracking, subscription management, bill negotiation, and price protection surfaces.
 
 **Representative files**
-- `data/repository/WarrantyTrackerRepository.kt`
+- `data/repository/WarrantyTrackerRepository.kt` — sole warranty writer (`confirmWarranty`, `reconcileExpiredItems`); no AI/cloud dependency (ai-fixes B1a)
+- `domain/usecase/warranty/AutoCreateWarrantyFromReceiptUseCase.kt` — local-only extraction, no `PrivacyGate`
+- `domain/usecase/warranty/WarrantyReviewState.kt` — single derived review state (`NOT_IN_REVIEW`/`AWAITING_REVIEW`/`EXPIRED_UNCONFIRMED`); never persisted
 - `ui/screens/warranty/WarrantyTrackerScreen.kt`
 - `data/repository/SubscriptionManagementRepository.kt`
 - `ui/screens/subscription/SubscriptionManagementScreen.kt`

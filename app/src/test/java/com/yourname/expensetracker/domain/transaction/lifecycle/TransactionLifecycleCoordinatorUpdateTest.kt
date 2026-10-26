@@ -243,7 +243,212 @@ class TransactionLifecycleCoordinatorUpdateTest {
         assertMoneyExact(0.0, persisted.baseAmount, "baseAmount should be 0.0 after conversion failure")
         assertTrue("baseCurrency should be empty after conversion failure, was '${persisted.baseCurrency}'", persisted.baseCurrency.isEmpty())
         assertTrue("exchangeRateUsed should be 0.0 after conversion failure, was ${persisted.exchangeRateUsed}", persisted.exchangeRateUsed == 0.0)
+        // MC INV-15: exactly one MISSING_RATE for the attempt (stage updateExpense, entityId set).
+        coVerify(exactly = 1) {
+            diagnosticEventWriter.emit(
+                match {
+                    it.reasonCode == DiagnosticReasonCode.MISSING_RATE &&
+                        it.stage == "updateExpense" &&
+                        it.entityId == 1L &&
+                        it.exception == null
+                }
+            )
+        }
     }
+
+    // ── Money-correctness 1b-2: update snapshot rounding + MISSING_RATE (INV-14/15/17) ──
+
+    private fun usdExpense(amount: Double = 13.5) = Expense(
+        id = 1L,
+        amount = amount,
+        currency = "USD",
+        merchant = "Test",
+        merchantKey = "test",
+        transactionType = TransactionType.PURCHASE,
+        date = now,
+        baseAmount = 45.0,       // stale
+        baseCurrency = "EUR",    // stale
+        exchangeRateUsed = 0.9,  // stale
+        dedupeKey = "test-key"
+    )
+
+    private fun conversion(convertedAmount: Double, rate: Double, to: String = "EUR") =
+        com.yourname.expensetracker.domain.currency.ConversionResult(
+            originalAmount = 0.0,
+            originalCurrency = "USD",
+            convertedAmount = convertedAmount,
+            targetCurrency = to,
+            rateUsed = rate,
+            timestamp = now
+        )
+
+    private suspend fun updateUsdAndCapture(
+        newAmount: Double,
+        conversion: com.yourname.expensetracker.domain.currency.ConversionResult?
+    ): Expense {
+        val existing = usdExpense()
+        coEvery { expenseDao.getById(1L) } returns existing
+        coEvery {
+            currencyConverter.convertAsOf(any<Double>(), "USD", "EUR", any<Long>())
+        } returns conversion
+        val updatedSlot = slot<Expense>()
+        coEvery { expenseDao.update(capture(updatedSlot)) } returns Unit
+        coEvery { transactionEventDao.insert(any()) } returns 1L
+        coordinator.updateExpense(existing.copy(amount = newAmount), reason = "amount change")
+        return updatedSlot.captured
+    }
+
+    @Test
+    fun `AE-18 update rounds 10 125 half-even to 10 12 and stores the rate unrounded`() =
+        runTest(timeout = 60.seconds) {
+            val persisted = updateUsdAndCapture(13.5, conversion(13.5 * 0.75, 0.75))
+
+            assertTrue("was ${persisted.baseAmount}", persisted.baseAmount == 10.12)
+            assertEquals("EUR", persisted.baseCurrency)
+            assertEquals(0.75, persisted.exchangeRateUsed, 0.0)
+            coVerify(exactly = 0) { diagnosticEventWriter.emit(any()) }
+        }
+
+    @Test
+    fun `AE-23 update rounds 2 03 times 0 5 to 1 02 with unrounded rate 0 923456`() =
+        runTest(timeout = 60.seconds) {
+            val half = updateUsdAndCapture(2.03, conversion(2.03 * 0.5, 0.5))
+            assertTrue("was ${half.baseAmount}", half.baseAmount == 1.02)
+
+            buildHarness()
+            val rate = updateUsdAndCapture(10.0, conversion(9.23456, 0.923456))
+            assertTrue("was ${rate.baseAmount}", rate.baseAmount == 9.23)
+            assertTrue("rate must be unrounded, was ${rate.exchangeRateUsed}", rate.exchangeRateUsed == 0.923456)
+        }
+
+    @Test
+    fun `AE-23 update rounding unavailable stores the sentinel and emits MISSING_RATE with rounding reason`() =
+        runTest(timeout = 60.seconds) {
+            val persisted = updateUsdAndCapture(13.5, conversion(0.0, 0.5))
+
+            assertTrue(persisted.baseAmount == 0.0)
+            assertTrue(persisted.baseCurrency.isEmpty())
+            assertTrue(persisted.exchangeRateUsed == 0.0)
+            coVerify(exactly = 1) {
+                diagnosticEventWriter.emit(
+                    match {
+                        it.reasonCode == DiagnosticReasonCode.MISSING_RATE &&
+                            it.stage == "updateExpense" &&
+                            it.entityId == 1L &&
+                            org.json.JSONObject(it.metadata.toJson()).getString("reason") ==
+                            "SNAPSHOT_ROUNDING_UNAVAILABLE"
+                    }
+                )
+            }
+        }
+
+    @Test
+    fun `AE-22 update after home switch with no rate stores the sentinel and one MISSING_RATE with bounded metadata`() =
+        runTest(timeout = 60.seconds) {
+            coEvery { currencySettingsRepository.resolveHomeCurrency() } returns
+                HomeCurrencyResolution.Resolved(CurrencyCode("GBP"))
+            val existing = usdExpense()
+            coEvery { expenseDao.getById(1L) } returns existing
+            coEvery {
+                currencyConverter.convertAsOf(any<Double>(), "USD", "GBP", any<Long>())
+            } returns null
+            val updatedSlot = slot<Expense>()
+            coEvery { expenseDao.update(capture(updatedSlot)) } returns Unit
+            coEvery { transactionEventDao.insert(any()) } returns 1L
+
+            coordinator.updateExpense(existing.copy(amount = 14.0), reason = "amount change")
+
+            val persisted = updatedSlot.captured
+            assertTrue(persisted.baseAmount == 0.0)
+            assertTrue(persisted.baseCurrency.isEmpty())
+            assertTrue(persisted.exchangeRateUsed == 0.0)
+            val events = mutableListOf<com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent>()
+            coVerify(exactly = 1) { diagnosticEventWriter.emit(capture(events)) }
+            val event = events.single()
+            assertEquals(DiagnosticReasonCode.MISSING_RATE, event.reasonCode)
+            assertEquals("updateExpense", event.stage)
+            assertEquals(1L, event.entityId)
+            val metadata = org.json.JSONObject(event.metadata.toJson())
+            assertEquals(setOf("operation", "reason"), metadata.keys().asSequence().toSet())
+            assertEquals("updateExpense", metadata.getString("operation"))
+            assertEquals("MISSING_RATE", metadata.getString("reason"))
+        }
+
+    @Test
+    fun `AE-19 update of a legacy precision identity row keeps the amount exact`() =
+        runTest(timeout = 60.seconds) {
+            val legacy = expense().copy(amount = 10.125, categoryId = 1L)
+            coEvery { expenseDao.getById(1L) } returns legacy
+            val updatedSlot = slot<Expense>()
+            coEvery { expenseDao.update(capture(updatedSlot)) } returns Unit
+            coEvery { transactionEventDao.insert(any()) } returns 1L
+
+            coordinator.updateExpense(legacy.copy(categoryId = 2L), reason = "category edit")
+
+            val persisted = updatedSlot.captured
+            assertTrue(persisted.baseAmount == 10.125)
+            assertEquals("EUR", persisted.baseCurrency)
+            assertEquals(1.0, persisted.exchangeRateUsed, 0.0)
+            coVerify(exactly = 0) { diagnosticEventWriter.emit(any()) }
+        }
+
+    @Test
+    fun `update emits MISSING_RATE before the transaction opens`() = runTest(timeout = 60.seconds) {
+        var insideTransaction = false
+        var emittedInsideTransaction: Boolean? = null
+        coEvery { database.withTransaction(any<suspend () -> Any>()) } coAnswers {
+            insideTransaction = true
+            try {
+                secondArg<suspend () -> Any>().invoke()
+            } finally {
+                insideTransaction = false
+            }
+        }
+        coEvery { diagnosticEventWriter.emit(any()) } coAnswers {
+            emittedInsideTransaction = insideTransaction
+        }
+
+        updateUsdAndCapture(13.5, null)
+
+        assertEquals(false, emittedInsideTransaction)
+    }
+
+    @Test
+    fun `update converter cancellation propagates and sink cancellation propagates`() =
+        runTest(timeout = 60.seconds) {
+            coEvery { expenseDao.getById(1L) } returns usdExpense()
+            coEvery {
+                currencyConverter.convertAsOf(any<Double>(), "USD", "EUR", any<Long>())
+            } throws CancellationException("Cancelled")
+            assertFailsWith<CancellationException> { coordinator.updateExpense(usdExpense(14.0)) }
+            // Verified BEFORE buildHarness() rebuilds the mocks: these are the exact sink and DAO
+            // mocks the cancelled coordinator was built with. Converter cancellation emits no
+            // MISSING_RATE and never reaches expenseDao.update.
+            coVerify(exactly = 0) {
+                diagnosticEventWriter.emit(match { it.reasonCode == DiagnosticReasonCode.MISSING_RATE })
+            }
+            coVerify(exactly = 0) { expenseDao.update(any()) }
+
+            buildHarness()
+            coEvery { expenseDao.getById(1L) } returns usdExpense()
+            coEvery {
+                currencyConverter.convertAsOf(any<Double>(), "USD", "EUR", any<Long>())
+            } returns null
+            coEvery { diagnosticEventWriter.emit(any()) } throws CancellationException("Cancelled")
+            assertFailsWith<CancellationException> { coordinator.updateExpense(usdExpense(14.0)) }
+            coVerify(exactly = 0) { expenseDao.update(any()) }
+        }
+
+    @Test
+    fun `update missing-rate sink failure is best effort and the update completes`() =
+        runTest(timeout = 60.seconds) {
+            coEvery { diagnosticEventWriter.emit(any()) } throws java.io.IOException("sink down")
+
+            val persisted = updateUsdAndCapture(13.5, null)
+
+            assertTrue(persisted.baseAmount == 0.0)
+            assertTrue(persisted.baseCurrency.isEmpty())
+        }
 
     // ── P2-005: changed -> writes exactly one event; dispatches per kind ─────
 

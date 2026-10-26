@@ -13,9 +13,13 @@ class SyncProactiveBriefingWorkUseCase @Inject constructor(
 
     suspend operator fun invoke(settingsOverride: AiSettings? = null) {
         val settings = settingsOverride ?: aiSettingsRepository.settings().first()
+        // INV-25: armed iff aiEnabled and briefing and (allowCloudAi or proactive).
+        // Cloud-route users generate the daily artifact regardless of proactive posting;
+        // allowCloudAi=false users keep today's behavior (proactive arms the fallback path).
+        // INV-26: this predicate never reads or writes privacy settings.
         val shouldSchedule = settings.aiEnabled &&
             settings.dashboardBriefingEnabled &&
-            settings.proactiveBriefingsEnabled
+            (settings.allowCloudAi || settings.proactiveBriefingsEnabled)
 
         if (shouldSchedule) {
             aiWorkScheduler.scheduleDailyBriefing()

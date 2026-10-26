@@ -172,6 +172,7 @@ class RestoreCancelAfterSwapRecoveryTest {
         AppStartupCoordinator(
             appContext = context,
             backgroundLifecycleObserver = mockk(relaxed = true),
+            foregroundStateObserver = mockk(relaxed = true),
             syncProactiveBriefingWorkUseCase = mockk(relaxed = true),
             restoreJournal = journal,
             restoreMaintenanceMode = mode,

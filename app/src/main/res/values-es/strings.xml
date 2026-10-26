@@ -31,6 +31,7 @@
     <string name="action_create">Crear</string>
     <string name="action_update">Actualizar</string>
     <string name="action_retry">Reintentar</string>
+    <string name="action_got_it">Entendido</string>
     <string name="action_ok">Aceptar</string>
     <string name="action_confirm">Confirmar</string>
     <string name="action_dismiss">Descartar</string>
@@ -217,6 +218,34 @@
 
     <!-- Screen Titles -->
     <string name="ai_settings_title">Configuración de IA</string>
+    <!-- ai-fixes Part A (INV-2): mensajes de IA acotados y localizados. Ninguna clave recibe argumentos de excepción. -->
+    <string name="ai_cloud_blocked_format">IA en la nube bloqueada: %1$s</string>
+    <string name="ai_cloud_active">La IA en la nube está activa</string>
+    <string name="ai_blocked_ai_off">La IA está desactivada</string>
+    <string name="ai_blocked_cloud_off">La IA en la nube está desactivada en los ajustes</string>
+    <string name="ai_blocked_no_key">No hay clave de API configurada</string>
+    <string name="ai_blocked_no_network">Sin conexión de red</string>
+    <string name="ai_blocked_wifi_only">Se requiere Wi-Fi (modo solo Wi-Fi)</string>
+    <string name="ai_blocked_privacy">Bloqueado por los ajustes de privacidad</string>
+    <string name="ai_error_settings_save_failed">No se pudieron guardar los ajustes. Inténtalo de nuevo.</string>
+    <string name="ai_key_too_short">La clave de API parece demasiado corta</string>
+    <string name="ai_key_format_invalid">El formato de la clave de API no parece válido para Gemini</string>
+    <string name="ai_key_enter_valid_before_save">Introduce una clave de API válida antes de guardar.</string>
+    <string name="ai_key_enter_new_or_remove">Introduce una clave nueva o usa Eliminar clave para borrar la clave guardada.</string>
+    <string name="ai_key_test_before_save">Realiza una prueba de conexión correcta antes de guardar esta clave de API.</string>
+    <string name="ai_key_saved">Clave de API guardada de forma segura.</string>
+    <string name="ai_key_removed">Clave de API eliminada.</string>
+    <string name="ai_key_required_cloud">Se requiere una clave de API para el proveedor en la nube.</string>
+    <string name="ai_key_enter_before_test">Introduce una clave de API antes de probar la conexión.</string>
+    <string name="ai_key_enter_valid_before_test">Introduce una clave de API válida antes de probar la conexión.</string>
+    <string name="ai_key_enable_ai_first">Activa primero la IA y vuelve a ejecutar la prueba de conexión.</string>
+    <string name="ai_key_enable_cloud_to_test">Activa la IA en la nube para probar la conectividad del proveedor.</string>
+    <string name="ai_test_no_network">Sin conexión de red. Comprueba tu conexión a internet y vuelve a intentarlo.</string>
+    <string name="ai_test_wifi_only">La IA en la nube está limitada a Wi-Fi según los ajustes.</string>
+    <string name="ai_test_status_unavailable">No se pudo cargar el estado de ejecución. Inténtalo de nuevo.</string>
+    <string name="ai_test_cloud_unavailable">La IA en la nube no está disponible en este momento.</string>
+    <string name="ai_test_passed">Prueba de conexión superada. El proveedor en la nube está configurado y accesible.</string>
+    <string name="ai_test_failed">Falló la prueba de conexión. Inténtalo de nuevo.</string>
     <string name="screen_manage_categories">Gestionar Categorías</string>
     <string name="analytics_screen_title">Informes Financieros</string>
     <string name="recurring_screen_title">Gestionar Recurrentes</string>
@@ -318,13 +347,33 @@
     <string name="receipt_reopened_existing_notice">Este recibo ya fue escaneado. Se muestra el recibo guardado.</string>
     <string name="budget_currency_display_format">Moneda: %1$s</string>
     <string name="budget_confirm_currency_action">Confirmar moneda</string>
+    <string name="budget_effective_spend_unavailable">El gasto efectivo no está disponible</string>
+    <string name="budget_remaining_unavailable">El restante no está disponible</string>
+    <string name="budget_usage_unavailable">El uso y el estado no están disponibles</string>
+    <string name="budget_cd_spend_unavailable_format">Presupuesto %1$s, %2$s, gasto no disponible</string>
     <string name="financial_runway_review_budget">Revisar presupuesto</string>
     <string name="backup_restore_receipt_images_skipped_format">No se pudieron restaurar %1$d imágenes de recibos.</string>
     <string name="restart_required_database_operation">La aplicación debe reiniciarse para terminar una operación de la base de datos. Los cambios están en pausa hasta que se reinicie.</string>
     <!-- R18b: user-started write attempted while backup/restore/reset holds the write barrier -->
     <string name="ui_write_blocked_maintenance">Los cambios están en pausa mientras se realiza una copia de seguridad o una restauración. Inténtalo de nuevo en un momento.</string>
     <string name="groups_suggested_transfers_hint">Pagos sugeridos para equilibrar los saldos. Los pagos no se registran en la aplicación.</string>
+    <string name="groups_total_unavailable">No disponible</string>
+    <string name="groups_balances_unavailable">Los saldos no están disponibles</string>
+    <string name="groups_currency_not_selected">Selecciona una moneda</string>
     <string name="warranty_mutation_failed">No se pudo guardar el cambio. Inténtalo de nuevo.</string>
+    <!-- ai-fixes B1b: warranty review states, reject confirmation, filtered-empty states, bounded errors -->
+    <string name="warranty_badge_expired_unconfirmed">Caducada: sin confirmar</string>
+    <string name="warranty_expired_date">Caducó el %1$s</string>
+    <string name="warranty_action_keep_expired">Conservar en el historial</string>
+    <string name="warranty_expired_unconfirmed_count">Caducadas sin confirmar: %1$d</string>
+    <string name="warranty_reject_confirm_title">¿Eliminar esta garantía?</string>
+    <string name="warranty_reject_confirm_body">Se eliminará de tus garantías. Tu recibo no se verá afectado.</string>
+    <string name="warranty_reject_confirm_action">Eliminar</string>
+    <string name="warranty_empty_filtered_title">Nada por aquí</string>
+    <string name="warranty_empty_filtered_message">Ninguna garantía coincide con este filtro.</string>
+    <string name="warranty_empty_review_message">No queda nada por revisar.</string>
+    <string name="warranty_error_confirm_failed">No se pudo confirmar esta garantía. Inténtalo de nuevo.</string>
+    <string name="warranty_error_not_found">Esta garantía ya no existe.</string>
     <string name="recurring_mark_paid_dialog_title">Marcar factura como pagada</string>
     <string name="recurring_mark_paid_dialog_body">¿Quieres registrar un pago de %2$s para %1$s o este pago ya estaba registrado?</string>
     <string name="recurring_mark_paid_creates_expense">Marcar como pagada (crea un gasto)</string>
@@ -333,8 +382,81 @@
     <string name="recurring_advanced_only_info">No se añadió ningún gasto nuevo. La próxima fecha se adelantó.</string>
     <string name="recurring_error_currency_unavailable">No se pudo leer tu moneda principal, por lo que el gasto recurrente no se guardó. Inténtalo de nuevo.</string>
     <string name="recurring_error_generic">Algo salió mal. Inténtalo de nuevo.</string>
+    <string name="recurring_total_unavailable">El total mensual no está disponible</string>
+    <plurals name="money_total_partial_notice">
+        <item quantity="one">%1$d elemento queda fuera del total</item>
+        <item quantity="many">%1$d de elementos quedan fuera del total</item>
+        <item quantity="other">%1$d elementos quedan fuera del total</item>
+    </plurals>
     <!-- R24b: notification permission dialog button when the system will no longer ask -->
     <string name="notification_open_settings_button">Abrir ajustes</string>
     <!-- R24c: shown when the receipt currency could not be read and the home currency was assumed -->
     <string name="receipt_currency_unverified_warning">No pudimos leer la moneda de este recibo. Compruébala antes de guardar.</string>
+    <!-- MC 1a-3b: Transactions amount ordering. Best-effort translation, pending native review. -->
+    <string name="transactions_filter_min_money_format">Mín.: %1$s</string>
+    <string name="transactions_filter_max_money_format">Máx.: %1$s</string>
+    <string name="transactions_filter_paused_suffix">" (en pausa)"</string>
+    <string name="transactions_empty_filtered_title">Ninguna transacción coincide con los filtros</string>
+    <string name="transactions_empty_filtered_subtitle">Quita un filtro para ver más.</string>
+    <plurals name="transactions_amount_notice_sort">
+        <item quantity="one">%1$d transacción sin valor en %2$s se muestra al final</item>
+        <item quantity="many">%1$d de transacciones sin valor en %2$s se muestran al final</item>
+        <item quantity="other">%1$d transacciones sin valor en %2$s se muestran al final</item>
+    </plurals>
+    <plurals name="transactions_amount_notice_filter">
+        <item quantity="one">%1$d transacción sin valor en %2$s no se muestra</item>
+        <item quantity="many">%1$d de transacciones sin valor en %2$s no se muestran</item>
+        <item quantity="other">%1$d transacciones sin valor en %2$s no se muestran</item>
+    </plurals>
+    <string name="transactions_amount_notice_filter_unknown">Puede que se oculten transacciones porque no tienen valor en %1$s</string>
+    <string name="transactions_amount_notice_action_cd">Por qué algunas transacciones no tienen valor en %1$s</string>
+    <string name="transactions_amount_divider">Sin valor en %1$s</string>
+    <string name="transactions_amount_explain_title">Sin valor en %1$s</string>
+    <string name="transactions_amount_explain_body">Estas transacciones se registraron en una moneda distinta de %1$s y no hay un tipo de cambio guardado a %1$s. La ordenación y los filtros de mínimo/máximo solo usan importes en %1$s, por eso aparecen al final o se omiten. Los importes y monedas originales no cambian.</string>
+    <string name="transactions_amount_paused_loading">Comprobando tu moneda principal. Se muestran primero las más recientes.</string>
+    <string name="transactions_amount_paused_unavailable">Ahora no se puede leer tu moneda principal. La ordenación por importe y los filtros de mínimo/máximo están en pausa. Se muestran primero las más recientes.</string>
+    <string name="transactions_sort_amount_disabled_hint">Requiere tu moneda principal</string>
+    <string name="transactions_sort_amount_disabled_cd">Ordenar por %1$s, no disponible, requiere tu moneda principal</string>
+    <!-- MC 1a-4: home-currency switch warning. Best-effort translation, pending native review. -->
+    <string name="currency_home_switch_title">¿Cambiar la moneda principal a %1$s?</string>
+    <string name="currency_home_switch_body">A partir de ahora, la ordenación y los filtros de mínimo/máximo usan importes en %1$s. Las transacciones en otras monedas y su historial no tendrán un valor comparable hasta que vuelvas a usar su moneda como moneda principal. Tus transacciones conservan sus importes y monedas originales.</string>
+    <plurals name="currency_home_switch_count">
+        <item quantity="one">%1$d transacción no tiene valor en %2$s por ahora. Se mostrará al final o se omitirá en los filtros de mínimo/máximo.</item>
+        <item quantity="many">%1$d de transacciones no tienen valor en %2$s por ahora. Se mostrarán al final o se omitirán en los filtros de mínimo/máximo.</item>
+        <item quantity="other">%1$d transacciones no tienen valor en %2$s por ahora. Se mostrarán al final o se omitirán en los filtros de mínimo/máximo.</item>
+    </plurals>
+    <string name="currency_home_switch_confirm">Cambiar a %1$s</string>
+    <string name="currency_home_switch_writing">Cambiando la moneda principal…</string>
+    <string name="currency_home_switch_loading">Comprobando tu moneda principal…</string>
+    <string name="currency_home_switch_unavailable">Ahora no se puede leer tu moneda principal. Aun así, puedes elegir una nueva; primero se te pedirá confirmación.</string>
+    <string name="currency_home_switch_error_write_failed">No se pudo cambiar tu moneda principal. Inténtalo de nuevo.</string>
+    <!-- ai-fixes B3b. Best-effort translation, pending native review. -->
+    <string name="ai_toggle_proactive">Avisarme cuando mi resumen diario esté listo</string>
+    <string name="ai_cloud_briefing_disclosure">Mientras Enable AI, Dashboard briefing y Allow cloud AI estén activados, el resumen diario se genera en segundo plano con IA en la nube.</string>
+    <string name="ai_proactive_desc">Desactivar esto no oculta tu resumen. Sigue apareciendo en Inicio. Solo controla la notificación. Mientras Enable AI, Dashboard briefing y Allow cloud AI estén activados, el resumen diario se genera en segundo plano con IA en la nube, tengas esto activado o no.</string>
+    <string name="ai_proactive_notifications_blocked">Las notificaciones están bloqueadas para esta app en los ajustes del sistema, así que no se mostrará ningún aviso. Tu resumen sigue apareciendo en Inicio.</string>
+    <string name="ai_warranty_local_note">Los periodos de garantía se leen en tu dispositivo a partir del texto del recibo. No se usa IA ni la nube para las garantías.</string>
+    <!-- Assistant unsupported reasons. Best-effort translation, pending native review. -->
+    <string name="assistant_unsupported_interpretation_disabled">El asistente está desactivado en los ajustes de IA.</string>
+    <string name="assistant_unsupported_interpretation_failed">Algo salió mal al leer tu pregunta. Inténtalo de nuevo.</string>
+    <string name="assistant_unsupported_provider_unavailable">El asistente no está disponible en este momento. Inténtalo de nuevo más tarde.</string>
+    <string name="assistant_unsupported_response_invalid">No pude entender la respuesta del asistente. Prueba a reformular tu pregunta.</string>
+    <string name="assistant_unsupported_model_declined">Este tipo de pregunta aún no es compatible.</string>
+    <string name="assistant_unsupported_metric_not_supported">Este tipo de consulta aún no es compatible.</string>
+    <string name="assistant_unsupported_no_matching_transactions">No se encontraron transacciones coincidentes.</string>
+    <!-- Assistant structured clarification options. Best-effort translation, pending native review. -->
+    <string name="assistant_clarification_period_this_month">Este mes</string>
+    <string name="assistant_clarification_period_this_week">Esta semana</string>
+    <string name="assistant_clarification_period_last_month">El mes pasado</string>
+    <string name="assistant_clarification_presentation_breakdown">Desglose</string>
+    <string name="assistant_clarification_presentation_transaction_list">Lista de transacciones</string>
+    <!-- Assistant MIN result title. Best-effort translation, pending native review. -->
+    <string name="domain_ai_smallest_purchase">Compra más pequeña</string>
+    <!-- AI capability label (transaction insight). Best-effort translation, pending native review. -->
+    <string name="ai_capability_transaction_insight">Análisis de transacción</string>
+    <!-- B2e insight row. Best-effort translations, pending native review. -->
+    <string name="ai_insight_label">Análisis de transacción (en el dispositivo)</string>
+    <string name="ai_insight_desc">Añade una frase generada en el dispositivo a una nueva recomendación cuando registras un gasto mientras la app está abierta. Nunca usa la nube.</string>
+    <string name="ai_insight_needs_ai">Activa la IA arriba para usar esto.</string>
+    <string name="ai_insight_needs_on_device">Activa la IA en el dispositivo arriba para usar esto.</string>
 </resources>

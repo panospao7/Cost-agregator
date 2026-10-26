@@ -4,6 +4,7 @@ import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.yourname.expensetracker.data.database.AppDatabase
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.util.TimeProvider
 import org.json.JSONArray
 import org.json.JSONObject
@@ -315,8 +316,12 @@ class FinancialRescueCoordinator(
     /**
      * Creates a fresh Room database (which will run all migrations from scratch
      * on an empty file) and imports the rescued snapshot inside a transaction.
+     *
+     * [home] is the resolved home currency, if the caller has one. Rows whose currency equals
+     * [home] are restored with an identity base snapshot; every other row (and every row when
+     * [home] is null) is restored with the "not converted" sentinel. See [rescueSnapshotFields].
      */
-    fun createFreshRoomDatabaseAndImport(snapshot: FinancialRescueSnapshot) {
+    fun createFreshRoomDatabaseAndImport(snapshot: FinancialRescueSnapshot, home: CurrencyCode? = null) {
         // Build a fresh Room database — this will create all tables at latest schema
         val dbFile = context.getDatabasePath(AppDatabase.DATABASE_NAME)
         val roomDb = AppDatabase.fileBuilder(context).build()
@@ -332,7 +337,7 @@ class FinancialRescueCoordinator(
             supportDb.beginTransaction()
             try {
                 importCategories(supportDb, snapshot.categories)
-                importExpenses(supportDb, snapshot.expenses, validCategoryIds)
+                importExpenses(supportDb, snapshot.expenses, validCategoryIds, home)
                 importExpenseGroups(supportDb, snapshot.expenseGroups)
                 val actualMemberIds = importGroupMembers(supportDb, snapshot.groupMembers)
                 importGroupExpenses(supportDb, snapshot.groupExpenses, validGroupIds, actualMemberIds, validExpenseIds)
@@ -360,7 +365,12 @@ class FinancialRescueCoordinator(
         }
     }
 
-    private fun importExpenses(db: SupportSQLiteDatabase, expenses: List<RescueExpense>, validCategoryIds: Set<Long>) {
+    private fun importExpenses(
+        db: SupportSQLiteDatabase,
+        expenses: List<RescueExpense>,
+        validCategoryIds: Set<Long>,
+        home: CurrencyCode?
+    ) {
         val nulledCount = expenses.count { it.categoryId != null && it.categoryId !in validCategoryIds }
         if (expenses.isEmpty()) {
             log("No expenses to import")
@@ -388,6 +398,7 @@ class FinancialRescueCoordinator(
         val sql = "INSERT OR REPLACE INTO expenses ($columnNames) VALUES ($placeholders)"
 
         for (exp in expenses) {
+            val baseFields = rescueSnapshotFields(exp.currency, exp.amount, home)
             val values = mutableListOf<Any?>()
             for (col in availableCols) {
                 values.add(when (col) {
@@ -415,9 +426,9 @@ class FinancialRescueCoordinator(
                     // Override by spec:
                     "rawNotificationId" -> null
                     "dedupeKey" -> null
-                    "baseAmount" -> exp.amount
-                    "baseCurrency" -> exp.currency
-                    "exchangeRateUsed" -> 1.0
+                    "baseAmount" -> baseFields.baseAmount
+                    "baseCurrency" -> baseFields.baseCurrency
+                    "exchangeRateUsed" -> baseFields.exchangeRateUsed
                     else -> null
                 })
             }
@@ -917,6 +928,32 @@ class FinancialRescueCoordinator(
         }
     }
 }
+
+/** Base-currency snapshot columns written for one rescued expense row. */
+internal data class RescueSnapshotFields(
+    val baseAmount: Double,
+    val baseCurrency: String,
+    val exchangeRateUsed: Double
+)
+
+/**
+ * Pure rule for the base-snapshot columns of a rescued expense (INV-20).
+ *
+ * - Identity (`amount` / home / `1.0`) only when a resolved [home] is supplied and the row's
+ *   [currency] equals it. Never converts and never writes a foreign snapshot.
+ * - Sentinel (`0.0` / `""` / `0.0`, "not converted") for every other row, and for every row
+ *   when [home] is null.
+ */
+internal fun rescueSnapshotFields(
+    currency: String,
+    amount: Double,
+    home: CurrencyCode?
+): RescueSnapshotFields =
+    if (home != null && currency == home.code) {
+        RescueSnapshotFields(baseAmount = amount, baseCurrency = home.code, exchangeRateUsed = 1.0)
+    } else {
+        RescueSnapshotFields(baseAmount = 0.0, baseCurrency = "", exchangeRateUsed = 0.0)
+    }
 
 /** Result of a rescue attempt. */
 sealed class RescueResult {

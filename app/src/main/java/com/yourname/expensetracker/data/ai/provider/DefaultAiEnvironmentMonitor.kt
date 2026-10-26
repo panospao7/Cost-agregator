@@ -14,6 +14,7 @@ import com.yourname.expensetracker.domain.ai.model.OnDeviceModelStatus
 import com.yourname.expensetracker.domain.ai.service.AiEnvironmentMonitor
 import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CancellationException
 import timber.log.Timber
 import java.util.concurrent.atomic.AtomicReference
 import javax.inject.Inject
@@ -77,12 +78,20 @@ class DefaultAiEnvironmentMonitor @Inject constructor(
             Timber.d("DefaultAiEnvironmentMonitor: ML Kit status=%d -> %s", featureStatus, mapped)
             return mapped
         } catch (e: GenAiException) {
-            Timber.w(e, "DefaultAiEnvironmentMonitor: checkStatus failed (code=%d)", e.errorCode)
+            Timber.w(
+                "DefaultAiEnvironmentMonitor: checkStatus failed (type=%s, code=%d)",
+                e.javaClass.simpleName,
+                e.errorCode,
+            )
             val mapped = cachedFeatureStatus.get()?.status ?: OnDeviceModelStatus.UNAVAILABLE
             cacheStatus(mapped, now)
             return mapped
         } catch (e: Exception) {
-            Timber.w(e, "DefaultAiEnvironmentMonitor: checkStatus failed unexpectedly")
+            if (e is CancellationException) throw e
+            Timber.w(
+                "DefaultAiEnvironmentMonitor: checkStatus failed unexpectedly (type=%s)",
+                e.javaClass.simpleName,
+            )
             val mapped = cachedFeatureStatus.get()?.status ?: OnDeviceModelStatus.UNKNOWN
             cacheStatus(mapped, now)
             return mapped

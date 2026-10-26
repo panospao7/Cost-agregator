@@ -1425,6 +1425,7 @@ def test_default_raw_query_policy_classifies_production_raw_query_as_read(tmp_pa
             @RawQuery fun getExpensesDynamic(query: SupportSQLiteQuery)
             @RawQuery fun getAssistantExpensesDynamic(query: SupportSQLiteQuery)
             @RawQuery fun getAssistantExpenseCountDynamic(query: SupportSQLiteQuery)
+            @RawQuery fun countExpensesWithoutHomeValueDynamic(query: SupportSQLiteQuery): Int
         }
         """,
     )

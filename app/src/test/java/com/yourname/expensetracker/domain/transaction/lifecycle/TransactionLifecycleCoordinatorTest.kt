@@ -313,11 +313,22 @@ class TransactionLifecycleCoordinatorTest {
                 atMillis = any<Long>()
             )
         } throws IOException("offline")
+        val insertedSlot = slot<Expense>()
+        coEvery { expenseDao.insertAtomic(capture(insertedSlot)) } returns 42L
 
         val result = coordinator.createExpense(usdCreateRequest())
 
         assertTrue("Expected Created, got $result", result is CreateExpenseResult.Created)
         coVerify(exactly = 1) { expenseDao.insertAtomic(any()) }
+        // MC INV-14/15: explicit sentinel triple (never the entity default 'EUR')
+        // plus exactly one bounded MISSING_RATE for the attempt.
+        val inserted = insertedSlot.captured
+        assertTrue("baseAmount must be sentinel 0.0", inserted.baseAmount == 0.0)
+        assertTrue("baseCurrency must be empty, was '${inserted.baseCurrency}'", inserted.baseCurrency.isEmpty())
+        assertTrue("exchangeRateUsed must be sentinel 0.0", inserted.exchangeRateUsed == 0.0)
+        coVerify(exactly = 1) {
+            diagnosticEventWriter.emit(match { it.reasonCode == DiagnosticReasonCode.MISSING_RATE })
+        }
     }
 
     /** CE subclass mirroring TimeoutCancellationException (whose constructor is internal). */
@@ -638,6 +649,199 @@ class TransactionLifecycleCoordinatorTest {
                 currencyConverter.convertAsOf(any<Double>(), any<String>(), any<String>(), any<Long>())
             }
             coVerify(exactly = 0) { diagnosticEventWriter.emit(any()) }
+        }
+
+    // ── Money-correctness 1b-2: snapshot rounding + MISSING_RATE (INV-14/15/17, AE-18..23) ──
+
+    private fun usdToEur(convertedAmount: Double, rate: Double) =
+        com.yourname.expensetracker.domain.currency.ConversionResult(
+            originalAmount = 0.0,
+            originalCurrency = "USD",
+            convertedAmount = convertedAmount,
+            targetCurrency = "EUR",
+            rateUsed = rate,
+            timestamp = now
+        )
+
+    private suspend fun createUsdAndCaptureBase(
+        amount: Double,
+        conversion: com.yourname.expensetracker.domain.currency.ConversionResult?
+    ): Expense {
+        coEvery {
+            currencyConverter.convertAsOf(any<Double>(), "USD", "EUR", any<Long>())
+        } returns conversion
+        val insertedSlot = slot<Expense>()
+        coEvery { expenseDao.insertAtomic(capture(insertedSlot)) } returns 42L
+        val result = coordinator.createExpense(request(currency = "USD").copy(amount = amount))
+        assertTrue("Expected Created, got $result", result is CreateExpenseResult.Created)
+        return insertedSlot.captured
+    }
+
+    @Test
+    fun `AE-18 create rounds 10 125 half-even to 10 12 with no diagnostic`() = runTest(timeout = 60.seconds) {
+        val inserted = createUsdAndCaptureBase(13.5, usdToEur(13.5 * 0.75, 0.75))
+
+        assertTrue("was ${inserted.baseAmount}", inserted.baseAmount == 10.12)
+        assertTrue(inserted.baseCurrency == "EUR")
+        assertTrue(inserted.exchangeRateUsed == 0.75)
+        coVerify(exactly = 0) { diagnosticEventWriter.emit(any()) }
+    }
+
+    @Test
+    fun `AE-23 create rounds 2 03 times 0 5 to 1 02`() = runTest(timeout = 60.seconds) {
+        val inserted = createUsdAndCaptureBase(2.03, usdToEur(2.03 * 0.5, 0.5))
+
+        assertTrue("was ${inserted.baseAmount}", inserted.baseAmount == 1.02)
+        assertTrue(inserted.exchangeRateUsed == 0.5)
+    }
+
+    @Test
+    fun `AE-23 create stores the exchange rate unrounded`() = runTest(timeout = 60.seconds) {
+        val inserted = createUsdAndCaptureBase(10.0, usdToEur(9.23456, 0.923456))
+
+        assertTrue("was ${inserted.baseAmount}", inserted.baseAmount == 9.23)
+        assertTrue("rate must be unrounded, was ${inserted.exchangeRateUsed}", inserted.exchangeRateUsed == 0.923456)
+        assertTrue(inserted.baseCurrency == "EUR")
+    }
+
+    @Test
+    fun `AE-23 create positive amount below one minor unit stores one minor unit`() = runTest(timeout = 60.seconds) {
+        val inserted = createUsdAndCaptureBase(1.0, usdToEur(0.0025, 0.0025))
+
+        assertTrue("was ${inserted.baseAmount}", inserted.baseAmount == 0.01)
+    }
+
+    @Test
+    fun `AE-19 identity create stores the amount bit for bit`() = runTest(timeout = 60.seconds) {
+        val insertedSlot = slot<Expense>()
+        coEvery { expenseDao.insertAtomic(capture(insertedSlot)) } returns 42L
+
+        coordinator.createExpense(request(currency = "EUR").copy(amount = 10.125))
+
+        assertTrue(insertedSlot.captured.baseAmount == 10.125)
+        assertTrue(insertedSlot.captured.baseCurrency == "EUR")
+        assertTrue(insertedSlot.captured.exchangeRateUsed == 1.0)
+        coVerify(exactly = 0) { diagnosticEventWriter.emit(any()) }
+    }
+
+    @Test
+    fun `AE-21 create without a rate stores the sentinel and emits one MISSING_RATE with bounded metadata`() =
+        runTest(timeout = 60.seconds) {
+            val inserted = createUsdAndCaptureBase(20.0, null)
+
+            assertTrue(inserted.baseAmount == 0.0)
+            assertTrue("baseCurrency must be empty, was '${inserted.baseCurrency}'", inserted.baseCurrency.isEmpty())
+            assertTrue(inserted.exchangeRateUsed == 0.0)
+            val events = mutableListOf<com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent>()
+            coVerify(exactly = 1) { diagnosticEventWriter.emit(capture(events)) }
+            val event = events.single()
+            assertTrue(event.reasonCode == DiagnosticReasonCode.MISSING_RATE)
+            assertTrue(event.stage == "createExpense")
+            assertTrue(event.exception == null)
+            val metadata = org.json.JSONObject(event.metadata.toJson())
+            assertTrue("keys were ${metadata.keys().asSequence().toList()}", metadata.keys().asSequence().toSet() == setOf("operation", "reason"))
+            assertTrue(metadata.getString("operation") == "createExpense")
+            assertTrue(metadata.getString("reason") == "MISSING_RATE")
+        }
+
+    @Test
+    fun `AE-23 create rounding unavailable stores the sentinel and emits MISSING_RATE with rounding reason`() =
+        runTest(timeout = 60.seconds) {
+            val inserted = createUsdAndCaptureBase(10.0, usdToEur(0.0, 0.5))
+
+            assertTrue(inserted.baseAmount == 0.0)
+            assertTrue(inserted.baseCurrency.isEmpty())
+            assertTrue(inserted.exchangeRateUsed == 0.0)
+            coVerify(exactly = 1) {
+                diagnosticEventWriter.emit(
+                    match {
+                        it.reasonCode == DiagnosticReasonCode.MISSING_RATE &&
+                            it.stage == "createExpense" &&
+                            org.json.JSONObject(it.metadata.toJson()).getString("reason") ==
+                            "SNAPSHOT_ROUNDING_UNAVAILABLE"
+                    }
+                )
+            }
+        }
+
+    @Test
+    fun `AE-23 create non-finite converted amount is rounding unavailable`() = runTest(timeout = 60.seconds) {
+        val inserted = createUsdAndCaptureBase(10.0, usdToEur(Double.NaN, 0.5))
+
+        assertTrue(inserted.baseAmount == 0.0)
+        assertTrue(inserted.baseCurrency.isEmpty())
+        coVerify(exactly = 1) {
+            diagnosticEventWriter.emit(match { it.reasonCode == DiagnosticReasonCode.MISSING_RATE })
+        }
+    }
+
+    @Test
+    fun `AE-20 failed home currency emits no MISSING_RATE`() = runTest(timeout = 60.seconds) {
+        coEvery { currencySettingsRepository.resolveHomeCurrency() } returns
+            HomeCurrencyResolution.Failed("Timeout")
+
+        coordinator.createExpense(request(currency = "USD"))
+
+        coVerify(exactly = 0) {
+            diagnosticEventWriter.emit(match { it.reasonCode == DiagnosticReasonCode.MISSING_RATE })
+        }
+    }
+
+    @Test
+    fun `missing-rate diagnostic sink cancellation propagates`() = runTest(timeout = 60.seconds) {
+        coEvery {
+            currencyConverter.convertAsOf(any<Double>(), "USD", "EUR", any<Long>())
+        } returns null
+        coEvery { diagnosticEventWriter.emit(any()) } throws CancellationException("Cancelled")
+
+        assertFailsWith<CancellationException> {
+            coordinator.createExpense(request(currency = "USD"))
+        }
+        coVerify(exactly = 0) { expenseDao.insertAtomic(any()) }
+    }
+
+    @Test
+    fun `missing-rate diagnostic sink failure is best effort and the create completes`() =
+        runTest(timeout = 60.seconds) {
+            coEvery {
+                currencyConverter.convertAsOf(any<Double>(), "USD", "EUR", any<Long>())
+            } returns null
+            coEvery { diagnosticEventWriter.emit(any()) } throws IOException("sink down")
+
+            val result = coordinator.createExpense(request(currency = "USD"))
+
+            assertTrue("Expected Created, got $result", result is CreateExpenseResult.Created)
+            coVerify(exactly = 1) { expenseDao.insertAtomic(any()) }
+        }
+
+    @Test
+    fun `AE-21 create without a rate logs no currency pair amount or home currency`() =
+        runTest(timeout = 60.seconds) {
+            coEvery {
+                currencyConverter.convertAsOf(any<Double>(), "USD", "EUR", any<Long>())
+            } returns null
+            coEvery { diagnosticEventWriter.emit(any()) } throws IOException("sink down")
+            val logs = mutableListOf<Pair<Throwable?, String>>()
+            val tree = object : timber.log.Timber.Tree() {
+                override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
+                    logs += t to message
+                }
+            }
+            timber.log.Timber.plant(tree)
+            try {
+                coordinator.createExpense(request(currency = "USD").copy(amount = 20.0))
+            } finally {
+                timber.log.Timber.uproot(tree)
+            }
+
+            val forbidden = listOf("USD", "20", "EUR")
+            // AE-21: assert over ALL logs captured from the step (no message filter). The failing
+            // sink guarantees at least one best-effort failure log, so an empty capture fails.
+            assertTrue("step must have logged at least the sink failure", logs.isNotEmpty())
+            assertTrue(
+                "step logged: ${logs.map { it.second }}",
+                logs.all { (throwable, message) -> throwable == null && forbidden.none { message.contains(it) } }
+            )
         }
 }
 

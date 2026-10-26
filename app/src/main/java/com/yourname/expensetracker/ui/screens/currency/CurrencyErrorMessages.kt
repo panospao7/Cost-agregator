@@ -15,5 +15,6 @@ internal fun currencyErrorMessageRes(errorCode: String): Int = when (errorCode) 
     "CURRENCY_CONVERSION_UNAVAILABLE" -> R.string.currency_error_conversion_unavailable
     "CURRENCY_DATA_UNAVAILABLE" -> R.string.currency_error_data_unavailable
     "UNSUPPORTED_HOME_CURRENCY" -> R.string.currency_error_unsupported_home
+    "HOME_SWITCH_WRITE_FAILED" -> R.string.currency_home_switch_error_write_failed
     else -> R.string.currency_error_data_unavailable
 }

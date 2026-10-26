@@ -11,10 +11,14 @@ import androidx.datastore.preferences.preferencesDataStore
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
+import com.yourname.expensetracker.domain.currency.ReadHomeCurrencyState
+import com.yourname.expensetracker.domain.currency.ReadHomeFailure
 import com.yourname.expensetracker.domain.util.TimeProvider
 import timber.log.Timber
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withTimeoutOrNull
@@ -116,4 +120,18 @@ class CurrencySettingsRepositoryImpl @Inject constructor(
             HomeCurrencyResolution.Failed(e.message ?: "DataStore read error")
         }
     }
+
+    /**
+     * MC 1a-3a: reads the stored preference directly so "unset" is distinguishable
+     * (EUR with firstRunDefault = true) from a stored value. Emits only bounded
+     * codes (no raw message/value); never emits Loading/TIMEOUT (consumer-applied).
+     * CancellationException is rethrown.
+     */
+    override fun observeReadHomeCurrency(): Flow<ReadHomeCurrencyState> =
+        context.currencyDataStore.data
+            .map { prefs -> ReadHomeCurrencyState.fromStoredValue(prefs[HOME_CURRENCY_KEY]) }
+            .catch { e ->
+                if (e is CancellationException) throw e
+                emit(ReadHomeCurrencyState.Unavailable(ReadHomeFailure.READ_ERROR))
+            }
 }

@@ -85,7 +85,7 @@
 
 ### AssistantViewModel
 **File:** `ui/screens/assistant/AssistantViewModel.kt`
-**Injections:** Application, AiSettingsRepository, AiChatRepository, GetAiRuntimeStatusUseCase, InterpretFinancialQueryUseCase, ExecuteFinancialQueryUseCase, MapFinancialQueryToNavigationUseCase, PrivacySettingsRepository, MonotonicTimeProvider
+**Injections:** Application, AiSettingsRepository, AiChatRepository, GetAiRuntimeStatusUseCase, InterpretFinancialQueryUseCase, ExecuteFinancialQueryUseCase, CompleteFinancialQueryClarificationUseCase, MapFinancialQueryToNavigationUseCase, MonotonicTimeProvider
 **Complexity:** 🟡 Medium (9 dependencies)
 
 ---

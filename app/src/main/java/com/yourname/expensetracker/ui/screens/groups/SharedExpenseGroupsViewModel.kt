@@ -9,8 +9,6 @@ import com.yourname.expensetracker.data.database.entity.SplitType
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.GroupsRepository
-import com.yourname.expensetracker.domain.core.money.CurrencyCode
-import com.yourname.expensetracker.domain.core.money.MoneyAmount
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.data.repository.ManualExpenseRepository
 import com.yourname.expensetracker.domain.logic.CustomSplitMode
@@ -25,12 +23,15 @@ import com.yourname.expensetracker.domain.groups.usecase.AddGroupExpenseUseCase
 import com.yourname.expensetracker.domain.groups.usecase.DeleteGroupUseCase
 import com.yourname.expensetracker.domain.logic.CustomSplitJsonCodec
 import com.yourname.expensetracker.domain.logic.SplitCalculator
+import com.yourname.expensetracker.domain.util.CancellationSafe
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -45,19 +46,27 @@ data class GroupsUiState(
     val creatingGroup: Boolean = false,
     val addingMember: Boolean = false,
     val addingExpense: Boolean = false,
-    /** Placeholder default; overridden by [CurrencySettingsRepository.homeCurrency] during init. */
-    val homeCurrency: String = "EUR"
+    /**
+     * Home currency code as read by the last load, or null when it was not read yet or could not
+     * be read (INV-10). Never a literal fallback; only used to pre-select the create-group currency.
+     */
+    val homeCurrency: String? = null
 )
 
+/**
+ * A group as shown on screen. [displayed] is the single result of
+ * [GroupSettlementBalancePolicy.displayedBalances]: the included-only total, member balances
+ * (memberId -> net, positive = owed), availability and left-out counts. The ViewModel does no
+ * balance or total math of its own (INV-1).
+ */
 data class GroupWithDetails(
     val group: ExpenseGroup,
     val members: List<GroupMember>,
     val expenses: List<GroupExpenseWithDetails>,
-    val totalSpent: Double,
-    val memberBalances: Map<Long, Double>, // memberId -> balance (positive = owed, negative = owes)
-    val currency: String = group.defaultCurrency,
+    val displayed: GroupSettlementBalancePolicy.DisplayedBalances,
 ) {
-    val moneyTotalSpent: MoneyAmount get() = MoneyAmount(totalSpent, CurrencyCode(currency))
+    /** Currency of every amount in [displayed]; the group's stored currency (OPEN-1). */
+    val currency: String get() = displayed.currency
     val activeMembers: List<GroupMember> get() = members.filter { it.leftAt == null }
 }
 
@@ -87,7 +96,8 @@ class SharedExpenseGroupsViewModel @Inject constructor(
     
     private fun loadGroups() {
         viewModelScope.launch {
-            val homeCurrency = currencySettingsRepository.homeCurrency().first()
+            // INV-10: own failure boundary, separate from the groups load below.
+            val homeCurrency = readHomeCurrencyCode()
             val previousState = _uiState.value
             _uiState.value = previousState.copy(isLoading = true, homeCurrency = homeCurrency)
             
@@ -108,12 +118,13 @@ class SharedExpenseGroupsViewModel @Inject constructor(
                             group = aggregate.group,
                             members = aggregate.members,
                             expenses = expensesWithDetails,
-                            totalSpent = aggregate.expenses.sumOf { it.totalAmount },
-                            memberBalances = GroupSettlementBalancePolicy.applyToBalances(
-                                calculateBalances(aggregate.expenses, aggregate.members),
-                                aggregate.settlements, aggregate.group.id, aggregate.group.defaultCurrency
+                            displayed = GroupSettlementBalancePolicy.displayedBalances(
+                                groupId = aggregate.group.id,
+                                groupCurrency = aggregate.group.defaultCurrency,
+                                expenses = aggregate.expenses,
+                                members = aggregate.members,
+                                settlements = aggregate.settlements
                             ),
-                            currency = aggregate.group.defaultCurrency,
                         )
                     }
                 
@@ -145,13 +156,21 @@ class SharedExpenseGroupsViewModel @Inject constructor(
         return SplitCalculator.calculateSplitAmounts(expense, members)
     }
     
-    private fun calculateBalances(
-        expenses: List<GroupExpense>,
-        members: List<GroupMember>
-    ): Map<Long, Double> {
-        return SplitCalculator.calculateBalances(expenses, members)
+    /**
+     * INV-10/INV-20: the home currency code, or null when the read failed (other than by
+     * cancellation) or resolved as [com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.Failed].
+     * Cancellation always propagates. No literal fallback is ever substituted.
+     */
+    private suspend fun readHomeCurrencyCode(): String? {
+        val resolution = CancellationSafe.runCatchingCancellable {
+            currencySettingsRepository.resolveHomeCurrency()
+        }.getOrNull()
+        // The repository implementation catches Exception and reports Failed, so a cancelled
+        // coroutine must not carry on with an "unavailable" result.
+        currentCoroutineContext().ensureActive()
+        return resolution?.currencyOrNull?.code
     }
-    
+
     /**
      * Create a new group.
      */

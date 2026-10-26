@@ -491,4 +491,61 @@ class AnomalyAlertOrchestratorTest {
         coVerify(exactly = 0) { anomalyAlertDao.insert(any()) }
         verify(exactly = 0) { notificationService.postAnomalyAlert(any(), any(), any(), any()) }
     }
+
+    // AE-19 (INV-19, INV-20): a CancellationException from the home-currency read propagates,
+    // no alert is written or sent, and the expense id is removed from the in-flight set.
+    @Test
+    fun `AE-19 home currency read cancellation propagates, writes no alert and clears in-flight state`() = runTest {
+        val expense = expenseWithCategory(id = 820L, merchant = "Home Cancel Shop", categoryId = 12L, categoryName = "Misc")
+        val anomaly = anomalyFor(expense.expense, deviation = 9.0f, method = AnomalyMethod.MAD)
+
+        coEvery { expenseDao.getExpensesByCategory(eq(12L), any(), any()) } returns emptyList()
+        every { currencySettingsRepository.homeCurrency() } throws CancellationException("home read cancelled")
+        every { anomalyDetector.detect(any(), any(), any(), any()) } returns listOf(anomaly)
+        coEvery { anomalyAlertDao.getLastAlertForExpense(820L) } returns null
+        coEvery { anomalyAlertDao.getLastAlertForMerchant("Home Cancel Shop", any()) } returns null
+        coEvery { anomalyAlertDao.getLastAlertForCategory("Misc", any()) } returns null
+        coEvery { anomalyAlertDao.getLooksNormalCountForMerchant("Home Cancel Shop") } returns 0
+        coEvery { anomalyAlertDao.insert(any()) } returns 9820L
+
+        try {
+            orchestrator.checkAndAlert(expense)
+            fail("Expected CancellationException to propagate from the home currency read")
+        } catch (e: CancellationException) {
+            // expected - cancellation must not be converted into the expense-currency fallback
+        }
+
+        // No normalization, detection, persistence or notification happened.
+        coVerify(exactly = 0) { analyticsCurrencyNormalizer.normalizeSnapshots(any(), any()) }
+        verify(exactly = 0) { anomalyDetector.detect(any(), any(), any(), any()) }
+        coVerify(exactly = 0) { anomalyAlertDao.insert(any()) }
+        verify(exactly = 0) { notificationService.postAnomalyAlert(any(), any(), any(), any()) }
+
+        // In-flight state was cleared: a retry for the same expense id is processed, not skipped.
+        every { currencySettingsRepository.homeCurrency() } returns kotlinx.coroutines.flow.flowOf("EUR")
+
+        orchestrator.checkAndAlert(expense)
+
+        verify(exactly = 1) { anomalyDetector.detect(any(), any(), any(), any()) }
+        coVerify(exactly = 1) { anomalyAlertDao.insert(any()) }
+        verify(exactly = 1) { notificationService.postAnomalyAlert(any(), any(), any(), 820L) }
+    }
+
+    // AE-19 (INV-19): any non-cancellation failure keeps today's fallback to the expense currency.
+    @Test
+    fun `AE-19 home currency read IOException falls back to the expense currency`() = runTest {
+        val base = expenseWithCategory(id = 821L, merchant = "Home IO Shop", categoryId = 13L, categoryName = "Misc")
+        val expense = base.copy(expense = base.expense.copy(currency = "USD"))
+
+        coEvery { expenseDao.getExpensesByCategory(eq(13L), any(), any()) } returns emptyList()
+        every { currencySettingsRepository.homeCurrency() } throws java.io.IOException("home read failed")
+        every { anomalyDetector.detect(any(), any(), any(), any()) } returns emptyList()
+
+        orchestrator.checkAndAlert(expense)
+
+        coVerify(exactly = 1) { analyticsCurrencyNormalizer.normalizeSnapshots(any(), eq("USD")) }
+        verify(exactly = 1) { anomalyDetector.detect(any(), any(), any(), eq("USD")) }
+        coVerify(exactly = 0) { anomalyAlertDao.insert(any()) }
+        verify(exactly = 0) { notificationService.postAnomalyAlert(any(), any(), any(), any()) }
+    }
 }

@@ -29,6 +29,7 @@ import javax.inject.Singleton
 class AppStartupCoordinator @Inject constructor(
     @dagger.hilt.android.qualifiers.ApplicationContext private val appContext: Context,
     private val backgroundLifecycleObserver: AppBackgroundLifecycleObserver,
+    private val foregroundStateObserver: ProcessAppForegroundState,
     private val syncProactiveBriefingWorkUseCase: SyncProactiveBriefingWorkUseCase,
     private val restoreJournal: RestoreJournal,
     private val restoreMaintenanceMode: RestoreMaintenanceMode,
@@ -711,6 +712,7 @@ class AppStartupCoordinator @Inject constructor(
 
     private fun registerLifecycleObserver() {
         ProcessLifecycleOwner.get().lifecycle.addObserver(backgroundLifecycleObserver)
+        ProcessLifecycleOwner.get().lifecycle.addObserver(foregroundStateObserver)
     }
 
     /**

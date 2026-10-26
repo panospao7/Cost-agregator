@@ -8,6 +8,7 @@ import com.yourname.expensetracker.domain.ai.model.AiServiceError
 import com.yourname.expensetracker.domain.ai.model.AiServiceResult
 import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.ai.model.AiTargetType
+import com.yourname.expensetracker.domain.ai.model.AssistantUnsupportedReason
 import com.yourname.expensetracker.domain.ai.model.CategorizationAssistInput
 import com.yourname.expensetracker.domain.ai.model.CategoryAssistSuggestion
 import com.yourname.expensetracker.domain.ai.model.CategoryOption
@@ -88,7 +89,7 @@ class HybridRoutingTest {
                 confidence = 0.91f,
                 rationale = "cloud"
             ),
-            queryResult = FinancialQueryInterpretationResult.Unsupported("cloud")
+            queryResult = FinancialQueryInterpretationResult.Unsupported(AssistantUnsupportedReason.PROVIDER_UNAVAILABLE)
         ),
         DelegationRow(
             name = "ON_DEVICE route (on-device mode)",
@@ -104,7 +105,7 @@ class HybridRoutingTest {
                 confidence = 0.88f,
                 rationale = "on-device"
             ),
-            queryResult = FinancialQueryInterpretationResult.Unsupported("on-device")
+            queryResult = FinancialQueryInterpretationResult.Unsupported(AssistantUnsupportedReason.PROVIDER_RESPONSE_INVALID)
         ),
         DelegationRow(
             name = "DETERMINISTIC_FALLBACK route (auto mode)",
@@ -115,7 +116,7 @@ class HybridRoutingTest {
             target = Target.NO_OP,
             receiptResult = AiServiceResult.Failure(AiServiceError.Disabled("fallback")),
             categorizationResult = null,
-            queryResult = FinancialQueryInterpretationResult.Unsupported("fallback")
+            queryResult = FinancialQueryInterpretationResult.Unsupported(AssistantUnsupportedReason.INTERPRETATION_FAILED)
         ),
         DelegationRow(
             name = "DISABLED route (ai disabled)",
@@ -126,7 +127,7 @@ class HybridRoutingTest {
             target = Target.NO_OP,
             receiptResult = AiServiceResult.Failure(AiServiceError.Disabled("disabled")),
             categorizationResult = null,
-            queryResult = FinancialQueryInterpretationResult.Unsupported("disabled"),
+            queryResult = FinancialQueryInterpretationResult.Unsupported(AssistantUnsupportedReason.INTERPRETATION_DISABLED),
             verifySettingsReadOnce = true
         )
     )

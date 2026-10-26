@@ -260,18 +260,18 @@ class ExpenseRepositoryTest {
             limit = 20,
             offset = 0,
             searchQuery = "Coffee",
-            sortOrder = SortOrder.AMOUNT_DESC
+            sortOrder = SortOrder.AMOUNT_DESC,
+            amountSemantics = AmountSemantics.RawEffective
         )
-        
+
         // Assert
         val capturedQuery = querySlot.captured
         val sql = capturedQuery.sql
-        
+
         assertTrue("Contains search clause", sql.contains("e.merchant LIKE ? OR e.categoryId IN (SELECT id FROM categories WHERE name LIKE ?)"))
-        // A.1 changed AMOUNT_DESC to use the effective-amount CASE expression,
-        // so we assert the expression appears somewhere in the ORDER BY clause.
-        assertTrue("Contains sort clause with effective-amount expression",
-            sql.contains("ORDER BY") && sql.contains("DESC"))
+        // RawEffective orders by the full SortOrder.sql text (effective-amount CASE expression).
+        assertTrue("Contains the full AMOUNT_DESC ORDER BY text",
+            sql.contains("ORDER BY ${SortOrder.AMOUNT_DESC.sql}"))
         assertTrue("Contains pagination", sql.contains("LIMIT ? OFFSET ?"))
     }
 
@@ -291,7 +291,7 @@ class ExpenseRepositoryTest {
         val querySlot = slot<androidx.sqlite.db.SupportSQLiteQuery>()
         coEvery { expenseDao.getExpensesDynamic(capture(querySlot)) } returns emptyList()
 
-        repository.getExpensesPagedDynamic(limit = 10, offset = 0)
+        repository.getExpensesPagedDynamic(limit = 10, offset = 0, amountSemantics = AmountSemantics.RawEffective)
 
         val sql = querySlot.captured.sql
         // Must contain the wildcard projection — NOT a hand-enumerated column list.
@@ -337,7 +337,7 @@ class ExpenseRepositoryTest {
         coEvery { expenseDao.getExpensesDynamic(any()) } returns stubResult
 
         // Act
-        val results = repository.getExpensesPagedDynamic(limit = 10, offset = 0)
+        val results = repository.getExpensesPagedDynamic(limit = 10, offset = 0, amountSemantics = AmountSemantics.RawEffective)
 
         // Assert: the repository must return the DAO result without stripping fields.
         assertEquals(1, results.size)

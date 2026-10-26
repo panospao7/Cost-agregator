@@ -71,13 +71,33 @@
     <string name="receipt_reopened_existing_notice">Αυτή η απόδειξη έχει ήδη σαρωθεί. Εμφανίζεται η αποθηκευμένη απόδειξη.</string>
     <string name="budget_currency_display_format">Νόμισμα: %1$s</string>
     <string name="budget_confirm_currency_action">Επιβεβαίωση νομίσματος</string>
+    <string name="budget_effective_spend_unavailable">Η πραγματική δαπάνη δεν είναι διαθέσιμη</string>
+    <string name="budget_remaining_unavailable">Το υπόλοιπο δεν είναι διαθέσιμο</string>
+    <string name="budget_usage_unavailable">Η χρήση και η κατάσταση δεν είναι διαθέσιμες</string>
+    <string name="budget_cd_spend_unavailable_format">Προϋπολογισμός %1$s, %2$s, η δαπάνη δεν είναι διαθέσιμη</string>
     <string name="financial_runway_review_budget">Έλεγχος προϋπολογισμού</string>
     <string name="backup_restore_receipt_images_skipped_format">Δεν ήταν δυνατή η επαναφορά %1$d εικόνων αποδείξεων.</string>
     <string name="restart_required_database_operation">Η εφαρμογή πρέπει να επανεκκινηθεί για να ολοκληρωθεί μια λειτουργία της βάσης δεδομένων. Οι αλλαγές είναι σε παύση μέχρι την επανεκκίνηση.</string>
     <!-- R18b: user-started write attempted while backup/restore/reset holds the write barrier -->
     <string name="ui_write_blocked_maintenance">Οι αλλαγές είναι σε παύση όσο εκτελείται αντίγραφο ασφαλείας ή επαναφορά. Δοκιμάστε ξανά σε λίγο.</string>
     <string name="groups_suggested_transfers_hint">Προτεινόμενες πληρωμές για την εξισορρόπηση των υπολοίπων. Οι πληρωμές δεν καταγράφονται στην εφαρμογή.</string>
+    <string name="groups_total_unavailable">Μη διαθέσιμο</string>
+    <string name="groups_balances_unavailable">Τα υπόλοιπα δεν είναι διαθέσιμα</string>
+    <string name="groups_currency_not_selected">Επιλέξτε νόμισμα</string>
     <string name="warranty_mutation_failed">Δεν ήταν δυνατή η αποθήκευση της αλλαγής. Δοκιμάστε ξανά.</string>
+    <!-- ai-fixes B1b: warranty review states, reject confirmation, filtered-empty states, bounded errors -->
+    <string name="warranty_badge_expired_unconfirmed">Έληξε - δεν επιβεβαιώθηκε</string>
+    <string name="warranty_expired_date">Έληξε στις %1$s</string>
+    <string name="warranty_action_keep_expired">Διατήρηση στο ιστορικό</string>
+    <string name="warranty_expired_unconfirmed_count">Έληξαν χωρίς επιβεβαίωση: %1$d</string>
+    <string name="warranty_reject_confirm_title">Αφαίρεση αυτής της εγγύησης;</string>
+    <string name="warranty_reject_confirm_body">Θα διαγραφεί από τις εγγυήσεις σας. Η απόδειξή σας δεν επηρεάζεται.</string>
+    <string name="warranty_reject_confirm_action">Αφαίρεση</string>
+    <string name="warranty_empty_filtered_title">Δεν υπάρχει τίποτα εδώ</string>
+    <string name="warranty_empty_filtered_message">Καμία εγγύηση δεν ταιριάζει με αυτό το φίλτρο.</string>
+    <string name="warranty_empty_review_message">Δεν απομένει τίποτα προς έλεγχο.</string>
+    <string name="warranty_error_confirm_failed">Δεν ήταν δυνατή η επιβεβαίωση αυτής της εγγύησης. Δοκιμάστε ξανά.</string>
+    <string name="warranty_error_not_found">Αυτή η εγγύηση δεν υπάρχει πλέον.</string>
     <string name="recurring_mark_paid_dialog_title">Σήμανση λογαριασμού ως πληρωμένου</string>
     <string name="recurring_mark_paid_dialog_body">Θέλετε να καταγράψετε πληρωμή %2$s για %1$s ή η πληρωμή έχει ήδη καταγραφεί;</string>
     <string name="recurring_mark_paid_creates_expense">Πληρωμένο (δημιουργεί έξοδο)</string>
@@ -86,10 +106,108 @@
     <string name="recurring_advanced_only_info">Δεν προστέθηκε νέο έξοδο. Η επόμενη ημερομηνία μετακινήθηκε μπροστά.</string>
     <string name="recurring_error_currency_unavailable">Δεν ήταν δυνατή η ανάγνωση του βασικού σας νομίσματος, γι\' αυτό το επαναλαμβανόμενο έξοδο δεν αποθηκεύτηκε. Δοκιμάστε ξανά.</string>
     <string name="recurring_error_generic">Κάτι πήγε στραβά. Δοκιμάστε ξανά.</string>
+    <string name="recurring_total_unavailable">Το μηνιαίο σύνολο δεν είναι διαθέσιμο</string>
+    <plurals name="money_total_partial_notice">
+        <item quantity="one">%1$d στοιχείο έμεινε εκτός του συνόλου</item>
+        <item quantity="other">%1$d στοιχεία έμειναν εκτός του συνόλου</item>
+    </plurals>
     <string name="feature_privacy_settings">Ρυθμίσεις απορρήτου</string>
     <string name="feature_privacy_settings_desc">Ελέγξτε πώς χρησιμοποιούνται τα δεδομένα σας</string>
+    <!-- ai-fixes Part A (INV-2): bounded, localized AI settings messages. Best-effort translation, pending owner review. -->
+    <string name="ai_cloud_blocked_format">Το cloud AI είναι αποκλεισμένο: %1$s</string>
+    <string name="ai_cloud_active">Το cloud AI είναι ενεργό</string>
+    <string name="ai_blocked_ai_off">Το AI είναι απενεργοποιημένο</string>
+    <string name="ai_blocked_cloud_off">Το cloud AI είναι απενεργοποιημένο στις ρυθμίσεις</string>
+    <string name="ai_blocked_no_key">Δεν έχει ρυθμιστεί κλειδί API</string>
+    <string name="ai_blocked_no_network">Δεν υπάρχει σύνδεση δικτύου</string>
+    <string name="ai_blocked_wifi_only">Απαιτείται Wi-Fi (λειτουργία μόνο Wi-Fi)</string>
+    <string name="ai_blocked_privacy">Αποκλείστηκε από τις Ρυθμίσεις απορρήτου</string>
+    <string name="ai_error_settings_save_failed">Δεν ήταν δυνατή η αποθήκευση των ρυθμίσεων. Δοκιμάστε ξανά.</string>
+    <string name="ai_key_too_short">Το κλειδί API φαίνεται πολύ σύντομο</string>
+    <string name="ai_key_format_invalid">Η μορφή του κλειδιού API δεν φαίνεται έγκυρη για το Gemini</string>
+    <string name="ai_key_enter_valid_before_save">Εισαγάγετε έγκυρο κλειδί API πριν την αποθήκευση.</string>
+    <string name="ai_key_enter_new_or_remove">Εισαγάγετε νέο κλειδί ή χρησιμοποιήστε την Αφαίρεση κλειδιού για να διαγράψετε το αποθηκευμένο κλειδί.</string>
+    <string name="ai_key_test_before_save">Εκτελέστε μια επιτυχημένη δοκιμή σύνδεσης πριν αποθηκεύσετε αυτό το κλειδί API.</string>
+    <string name="ai_key_saved">Το κλειδί API αποθηκεύτηκε με ασφάλεια.</string>
+    <string name="ai_key_removed">Το κλειδί API αφαιρέθηκε.</string>
+    <string name="ai_key_required_cloud">Απαιτείται κλειδί API για τον πάροχο cloud.</string>
+    <string name="ai_key_enter_before_test">Εισαγάγετε κλειδί API πριν τη δοκιμή σύνδεσης.</string>
+    <string name="ai_key_enter_valid_before_test">Εισαγάγετε έγκυρο κλειδί API πριν τη δοκιμή σύνδεσης.</string>
+    <string name="ai_key_enable_ai_first">Ενεργοποιήστε πρώτα το AI και εκτελέστε ξανά τη δοκιμή σύνδεσης.</string>
+    <string name="ai_key_enable_cloud_to_test">Ενεργοποιήστε το cloud AI για να δοκιμάσετε τη συνδεσιμότητα του παρόχου.</string>
+    <string name="ai_test_no_network">Δεν υπάρχει σύνδεση δικτύου. Ελέγξτε το διαδίκτυο και δοκιμάστε ξανά.</string>
+    <string name="ai_test_wifi_only">Το cloud AI περιορίζεται σε Wi-Fi βάσει των ρυθμίσεων.</string>
+    <string name="ai_test_status_unavailable">Δεν ήταν δυνατή η φόρτωση της κατάστασης λειτουργίας. Δοκιμάστε ξανά.</string>
+    <string name="ai_test_cloud_unavailable">Το cloud AI δεν είναι διαθέσιμο αυτή τη στιγμή.</string>
+    <string name="ai_test_passed">Η δοκιμή σύνδεσης ολοκληρώθηκε. Ο πάροχος cloud έχει ρυθμιστεί και είναι προσβάσιμος.</string>
+    <string name="ai_test_failed">Η δοκιμή σύνδεσης απέτυχε. Δοκιμάστε ξανά.</string>
     <!-- R24b: notification permission dialog button when the system will no longer ask -->
     <string name="notification_open_settings_button">Άνοιγμα ρυθμίσεων</string>
     <!-- R24c: shown when the receipt currency could not be read and the home currency was assumed -->
     <string name="receipt_currency_unverified_warning">Δεν μπορέσαμε να διαβάσουμε το νόμισμα της απόδειξης. Ελέγξτε το πριν την αποθήκευση.</string>
+    <!-- MC 1a-3b: Transactions amount ordering. Best-effort translation, pending owner review. -->
+    <string name="action_got_it">Εντάξει</string>
+    <string name="transactions_filter_min_money_format">Ελάχ.: %1$s</string>
+    <string name="transactions_filter_max_money_format">Μέγ.: %1$s</string>
+    <string name="transactions_filter_paused_suffix">" (σε παύση)"</string>
+    <string name="transactions_empty_filtered_title">Καμία συναλλαγή δεν ταιριάζει με τα φίλτρα</string>
+    <string name="transactions_empty_filtered_subtitle">Καθαρίστε ένα φίλτρο για περισσότερα.</string>
+    <plurals name="transactions_amount_notice_sort">
+        <item quantity="one">%1$d συναλλαγή χωρίς τιμή σε %2$s εμφανίζεται τελευταία</item>
+        <item quantity="other">%1$d συναλλαγές χωρίς τιμή σε %2$s εμφανίζονται τελευταίες</item>
+    </plurals>
+    <plurals name="transactions_amount_notice_filter">
+        <item quantity="one">%1$d συναλλαγή χωρίς τιμή σε %2$s δεν εμφανίζεται</item>
+        <item quantity="other">%1$d συναλλαγές χωρίς τιμή σε %2$s δεν εμφανίζονται</item>
+    </plurals>
+    <string name="transactions_amount_notice_filter_unknown">Ορισμένες συναλλαγές μπορεί να κρύβονται επειδή δεν έχουν τιμή σε %1$s</string>
+    <string name="transactions_amount_notice_action_cd">Γιατί ορισμένες συναλλαγές δεν έχουν τιμή σε %1$s</string>
+    <string name="transactions_amount_divider">Χωρίς τιμή σε %1$s</string>
+    <string name="transactions_amount_explain_title">Χωρίς τιμή σε %1$s</string>
+    <string name="transactions_amount_explain_body">Αυτές οι συναλλαγές καταγράφηκαν σε νόμισμα διαφορετικό από %1$s και δεν υπάρχει αποθηκευμένη ισοτιμία προς %1$s. Η ταξινόμηση και τα φίλτρα ελάχιστου/μέγιστου χρησιμοποιούν μόνο ποσά σε %1$s, γι\' αυτό εμφανίζονται τελευταίες ή παραλείπονται. Τα αρχικά ποσά και νομίσματα δεν αλλάζουν.</string>
+    <string name="transactions_amount_paused_loading">Έλεγχος του κύριου νομίσματος. Εμφάνιση πρώτα των πιο πρόσφατων.</string>
+    <string name="transactions_amount_paused_unavailable">Δεν είναι δυνατή η ανάγνωση του κύριου νομίσματος. Η ταξινόμηση ποσού και τα φίλτρα ελάχιστου/μέγιστου έχουν παύσει. Εμφάνιση πρώτα των πιο πρόσφατων.</string>
+    <string name="transactions_sort_amount_disabled_hint">Απαιτεί το κύριο νόμισμα</string>
+    <string name="transactions_sort_amount_disabled_cd">Ταξινόμηση κατά %1$s, μη διαθέσιμη, απαιτεί το κύριο νόμισμα</string>
+    <!-- MC 1a-4: home-currency switch warning. Best-effort translation, pending owner review. -->
+    <string name="currency_home_switch_title">Αλλαγή κύριου νομίσματος σε %1$s;</string>
+    <string name="currency_home_switch_body">Από εδώ και πέρα, η ταξινόμηση και τα φίλτρα ελάχιστου/μέγιστου χρησιμοποιούν ποσά σε %1$s. Οι συναλλαγές σε άλλα νομίσματα και το ιστορικό τους δεν θα έχουν συγκρίσιμη αξία μέχρι να επαναφέρετε ως κύριο το νόμισμά τους. Οι συναλλαγές σας διατηρούν τα αρχικά τους ποσά και νομίσματα.</string>
+    <plurals name="currency_home_switch_count">
+        <item quantity="one">%1$d συναλλαγή δεν έχει τιμή σε %2$s προς το παρόν. Θα εμφανίζεται τελευταία ή θα παραλείπεται από τα φίλτρα ελάχιστου/μέγιστου.</item>
+        <item quantity="other">%1$d συναλλαγές δεν έχουν τιμή σε %2$s προς το παρόν. Θα εμφανίζονται τελευταίες ή θα παραλείπονται από τα φίλτρα ελάχιστου/μέγιστου.</item>
+    </plurals>
+    <string name="currency_home_switch_confirm">Αλλαγή σε %1$s</string>
+    <string name="currency_home_switch_writing">Αλλαγή κύριου νομίσματος…</string>
+    <string name="currency_home_switch_loading">Έλεγχος του κύριου νομίσματος…</string>
+    <string name="currency_home_switch_unavailable">Δεν είναι δυνατή η ανάγνωση του κύριου νομίσματος αυτή τη στιγμή. Μπορείτε να επιλέξετε νέο· θα σας ζητηθεί πρώτα επιβεβαίωση.</string>
+    <string name="currency_home_switch_error_write_failed">Δεν ήταν δυνατή η αλλαγή του κύριου νομίσματος. Δοκιμάστε ξανά.</string>
+    <!-- ai-fixes B3b. Best-effort translation, pending owner review. -->
+    <string name="ai_toggle_proactive">Ειδοποίησέ με όταν είναι έτοιμη η ημερήσια ενημέρωσή μου</string>
+    <string name="ai_cloud_briefing_disclosure">Όσο είναι ενεργά το Enable AI, το Dashboard briefing και το Allow cloud AI, η ημερήσια ενημέρωση δημιουργείται στο παρασκήνιο με cloud AI.</string>
+    <string name="ai_proactive_desc">Η απενεργοποίηση δεν κρύβει την ενημέρωσή σας. Εμφανίζεται κανονικά στην Αρχική. Ελέγχει μόνο την ειδοποίηση. Όσο είναι ενεργά το Enable AI, το Dashboard briefing και το Allow cloud AI, η ημερήσια ενημέρωση δημιουργείται στο παρασκήνιο με cloud AI, είτε αυτή η επιλογή είναι ενεργή είτε όχι.</string>
+    <string name="ai_proactive_notifications_blocked">Οι ειδοποιήσεις είναι αποκλεισμένες για αυτή την εφαρμογή στις ρυθμίσεις συστήματος, επομένως δεν θα εμφανιστεί ειδοποίηση. Η ενημέρωσή σας εμφανίζεται κανονικά στην Αρχική.</string>
+    <string name="ai_warranty_local_note">Οι περίοδοι εγγύησης διαβάζονται στη συσκευή σας από το κείμενο της απόδειξης. Δεν χρησιμοποιείται AI ή cloud για τις εγγυήσεις.</string>
+    <!-- Assistant unsupported reasons. Best-effort translation, pending owner review. -->
+    <string name="assistant_unsupported_interpretation_disabled">Ο βοηθός είναι απενεργοποιημένος στις ρυθμίσεις AI.</string>
+    <string name="assistant_unsupported_interpretation_failed">Παρουσιάστηκε πρόβλημα κατά την ανάγνωση της ερώτησής σας. Δοκιμάστε ξανά.</string>
+    <string name="assistant_unsupported_provider_unavailable">Ο βοηθός δεν είναι διαθέσιμος αυτή τη στιγμή. Δοκιμάστε ξανά αργότερα.</string>
+    <string name="assistant_unsupported_response_invalid">Δεν κατάλαβα την απάντηση του βοηθού. Δοκιμάστε να αναδιατυπώσετε την ερώτησή σας.</string>
+    <string name="assistant_unsupported_model_declined">Αυτός ο τύπος ερώτησης δεν υποστηρίζεται ακόμη.</string>
+    <string name="assistant_unsupported_metric_not_supported">Αυτός ο τύπος αναζήτησης δεν υποστηρίζεται ακόμη.</string>
+    <string name="assistant_unsupported_no_matching_transactions">Δεν βρέθηκαν αντίστοιχες συναλλαγές.</string>
+    <!-- Assistant structured clarification options. Best-effort translation, pending owner review. -->
+    <string name="assistant_clarification_period_this_month">Αυτόν τον μήνα</string>
+    <string name="assistant_clarification_period_this_week">Αυτή την εβδομάδα</string>
+    <string name="assistant_clarification_period_last_month">Τον προηγούμενο μήνα</string>
+    <string name="assistant_clarification_presentation_breakdown">Ανάλυση</string>
+    <string name="assistant_clarification_presentation_transaction_list">Λίστα συναλλαγών</string>
+    <!-- Assistant MIN result title. Best-effort translation, pending owner review. -->
+    <string name="domain_ai_smallest_purchase">Μικρότερη αγορά</string>
+    <!-- AI capability label (transaction insight). Best-effort translation, pending owner review. -->
+    <string name="ai_capability_transaction_insight">Ανάλυση συναλλαγής</string>
+    <!-- B2e insight row. Best-effort translations, pending owner review. -->
+    <string name="ai_insight_label">Ανάλυση συναλλαγής (στη συσκευή)</string>
+    <string name="ai_insight_desc">Προσθέτει μία φράση που δημιουργείται στη συσκευή σε μια νέα πρόταση ενέργειας όταν προσθέτετε μια δαπάνη ενώ η εφαρμογή είναι ανοιχτή. Δεν χρησιμοποιεί ποτέ το cloud.</string>
+    <string name="ai_insight_needs_ai">Ενεργοποιήστε το AI παραπάνω για να το χρησιμοποιήσετε.</string>
+    <string name="ai_insight_needs_on_device">Ενεργοποιήστε το AI στη συσκευή παραπάνω για να το χρησιμοποιήσετε.</string>
 </resources>

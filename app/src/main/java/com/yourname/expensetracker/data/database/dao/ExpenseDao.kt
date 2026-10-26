@@ -86,6 +86,37 @@ interface ExpenseDao {
             "WHEN e.isSharedExpense = 1 AND e.myShareAmount IS NOT NULL THEN e.myShareAmount " +
             "WHEN e.isSharedExpense = 1 AND e.mySharePercentage IS NOT NULL THEN e.amount * e.mySharePercentage / 100.0 " +
             "ELSE e.amount END"
+
+        /**
+         * SQL mirror of the comparable-home-value (CV) rule. The Kotlin rule owner is
+         * [com.yourname.expensetracker.domain.core.money.ComparableHomeValue.comparableValue];
+         * the two must not diverge (shared fixture + parity test:
+         * `ComparableHomeValueSqlParityTest`).
+         *
+         * First matching branch wins; a row that matches none yields NULL (no comparable
+         * value). A row is never compared by its raw amount unless its currency is the home
+         * currency:
+         *  1. isNotMine = 1                                   → 0.0
+         *  2. e.currency = H                                  → [EFFECTIVE_AMOUNT_E_SQL] (snapshot ignored)
+         *  3. valid snapshot for H (baseAmount > 0, baseCurrency = H, exchangeRateUsed > 0)
+         *     shared + myShareAmount                          → myShareAmount * exchangeRateUsed
+         *     shared + mySharePercentage                      → baseAmount * mySharePercentage / 100.0
+         *     otherwise                                       → baseAmount
+         *  4. otherwise                                       → NULL
+         *
+         * Contains exactly two `?` placeholders (branch 2 currency, branch 3 baseCurrency),
+         * both bound to the home currency code, in that textual order. The home currency is
+         * always a bound argument, never interpolated into SQL. Aliased as `e`. Do not use
+         * `NULLS LAST` with it (SQLite 3.30+ only); order with `(CV IS NULL) ASC` instead.
+         */
+        const val COMPARABLE_HOME_VALUE_E_SQL: String =
+            "(CASE WHEN e.isNotMine = 1 THEN 0.0 " +
+            "WHEN e.currency = ? THEN ($EFFECTIVE_AMOUNT_E_SQL) " +
+            "WHEN e.baseAmount > 0 AND e.baseCurrency = ? AND e.exchangeRateUsed > 0 THEN (CASE " +
+            "WHEN e.isSharedExpense = 1 AND e.myShareAmount IS NOT NULL THEN e.myShareAmount * e.exchangeRateUsed " +
+            "WHEN e.isSharedExpense = 1 AND e.mySharePercentage IS NOT NULL THEN e.baseAmount * e.mySharePercentage / 100.0 " +
+            "ELSE e.baseAmount END) " +
+            "ELSE NULL END)"
     }
     @Query("SELECT * FROM expenses WHERE id = :id")
     suspend fun getById(id: Long): Expense?
@@ -155,6 +186,15 @@ interface ExpenseDao {
      */
     @RawQuery
     suspend fun getAssistantExpenseCountDynamic(query: SupportSQLiteQuery): Int
+
+    /**
+     * Read-only count of rows without a comparable home value (CV IS NULL, see
+     * [COMPARABLE_HOME_VALUE_E_SQL]) under the shared non-amount WHERE. Built only by
+     * `ExpenseRepository.countExpensesWithoutHomeValue`; the home currency is a bound
+     * argument and the result is a single integer.
+     */
+    @RawQuery
+    suspend fun countExpensesWithoutHomeValueDynamic(query: SupportSQLiteQuery): Int
 
     @Transaction
     @Query("""

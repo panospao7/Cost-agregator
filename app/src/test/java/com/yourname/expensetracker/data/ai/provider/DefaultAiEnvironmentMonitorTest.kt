@@ -13,9 +13,11 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkObject
 import io.mockk.unmockkObject
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -113,5 +115,32 @@ class DefaultAiEnvironmentMonitorTest {
         assertEquals(OnDeviceModelStatus.AVAILABLE, refreshed)
 
         coVerify(exactly = 2) { model.checkStatus() }
+    }
+
+    @Test
+    fun `cancellation during checkStatus is rethrown and does not populate the cache`() = runTest {
+        coEvery { model.checkStatus() } throws CancellationException("cancelled")
+
+        try {
+            monitor.getOnDeviceModelStatus(AiCapability.DASHBOARD_BRIEFING)
+            fail("CancellationException must propagate out of getOnDeviceModelStatus")
+        } catch (expected: CancellationException) {
+            // expected: the broad catch must not convert cancellation into UNKNOWN
+        }
+
+        // Nothing was cached by the cancelled call: the next call within the TTL queries again.
+        coEvery { model.checkStatus() } returns FeatureStatus.AVAILABLE
+        assertEquals(OnDeviceModelStatus.AVAILABLE, monitor.getOnDeviceModelStatus(AiCapability.DASHBOARD_BRIEFING))
+        coVerify(exactly = 2) { model.checkStatus() }
+    }
+
+    @Test
+    fun `a non-cancellation failure still maps to UNKNOWN`() = runTest {
+        coEvery { model.checkStatus() } throws IllegalStateException("boom")
+
+        assertEquals(
+            OnDeviceModelStatus.UNKNOWN,
+            monitor.getOnDeviceModelStatus(AiCapability.DASHBOARD_BRIEFING)
+        )
     }
 }

@@ -19,6 +19,8 @@ import javax.inject.Singleton
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.core.money.MoneyAggregate
 import com.yourname.expensetracker.domain.core.money.MoneyAggregateBuilder
+import com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableException
+import com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableReasonCode
 
 /**
  * Calculates effective budget spend on an accrual basis.
@@ -76,7 +78,8 @@ class SharedExpenseBudgetOffsetEngine @Inject constructor(
     ): BudgetSpendBreakdown = withContext(ioDispatcher) {
         val homeCurrency = try { currencySettingsRepository.homeCurrency().first() } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
-            "EUR"
+            // INV-15: never substitute a literal currency; effective spend is unavailable.
+            throw MoneyDisplayUnavailableException(MoneyDisplayUnavailableReasonCode.HOME_CURRENCY_UNAVAILABLE)
         }
         val allPeriodExpenses = expenseRepository.getExpensesBetween(periodStart, periodEnd)
         val expenseCategoryMap = allPeriodExpenses.associateBy { it.id }

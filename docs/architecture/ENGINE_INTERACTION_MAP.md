@@ -36,13 +36,17 @@
 | **WorkerExecutionGuard** | ALL workers (all 10 CoroutineWorkers run through it, incl. `NotificationIntakeWorker` + snooze/dismiss reminder action workers), 7 (Backup restore gating) | 🟡 HIGH |
 | **WorkerRegistry** | 12 (Startup scheduling), 7 (Backup resume via spec lookup) | 🟢 LOW |
 | **SharedExpenseManager** | Groups, shared expenses (domain facade over `SharedExpenseDataPort` → `SharedExpenseDataPortAdapter` → `GroupTransactionCoordinator`; the GroupLifecycleCoordinator wrapper was removed, GR-14u36) | 🟡 HIGH |
-| **GroupBalanceCalculator** | Groups, Settlements | 🟢 LOW |
+| **GroupSettlementBalancePolicy** | Groups screen (displayed totals/balances, settlement plan gate), Settlements | 🟢 LOW |
+| **GroupBalanceCalculator** | none in production (no caller; pending owner decision, Inc 3) | 🟢 LOW |
 | **HybridRouter** | 8 (AI cloud/on-device routing), 10 (Bank statement), 3 (Receipt) | 🟡 HIGH |
 | **AccountingExportPolicy** | 12 (Export), Tax reports | 🟢 LOW |
 | **NetCashflowBalanceProvider** | 6 (Budget/Forecast/Cashflow) | 🟢 LOW |
 | **AdvancedAnalyticsEngine** | 6 (Analytics views: category/merchant/pattern/statistical insights) — requires `NormalizedAnalyticsInput` | 🟡 HIGH |
 | **TotalsAggregationEngine** | 5 (Dashboard totals) — aggregation routes through `MultiCurrencyRepository` | 🟡 HIGH |
 | **MoneyNormalizationEngine** | Money pipelines (conversion outcomes, rate basis, bucket policy) via `domain/core/money/` | 🟡 HIGH |
+| **ComparableHomeValue** | Transactions amount sort/filter/count in home currency (read-only rule owner in `domain/core/money/`; SQL mirror `ExpenseDao.COMPARABLE_HOME_VALUE_E_SQL`; parity-tested). Assistant queries (`getAssistantExpensesFiltered`/`getAssistantExpenseCountFiltered`) stay on raw `EFFECTIVE_AMOUNT_E_SQL`. Shared builder semantics: `ExpenseRepository.buildExpenseDynamicQueryParts` requires `AmountSemantics` (`RawEffective` for the assistant = byte-identical SQL/args, unescaped search; `HomeComparable(H)` = CV WHERE/ORDER BY + tiebreak + escaped search; `AmountOpsDisabled` = no amount SQL); excluded count = `ExpenseRepository.countExpensesWithoutHomeValue`. Consumer: `TransactionsViewModel` (ALL tab via `AmountSemantics`; time-range tabs in memory via `ComparableHomeValue`; reads repositories only, no writes); `Expense.normalizedEffectiveAmount` delegates to `ComparableHomeValue.snapshotValue` (date header only) | 🟡 HIGH |
+| **roundSnapshot / CurrencyFractionDigits** (`domain/core/money`) | Sole snapshot rounding rule (HALF_EVEN on `BigDecimal.valueOf`, home minor-unit digits, one-minor-unit floor, `Unavailable(NON_FINITE_OR_NON_POSITIVE \| DIGITS_UNAVAILABLE)`) and the single minor-unit digits accessor; pure, no logging. Consumers (F9): `TransactionLifecycleCoordinator` is the sole consumer of `roundSnapshot` (create and `updateExpense` converted outcomes via `convertedSnapshot`: rounded amount + home currency + unrounded rate; Unavailable or no rate stores the sentinel `0.0`/`""`/`0.0` plus one best-effort `MISSING_RATE`, home Failed gives `HOME_CURRENCY_UNAVAILABLE`); `SourceCurrencyAllocation` delegates its digits lookup. No other code rounds a snapshot | 🟡 HIGH |
+| **ReadHomeCurrencyState** (`CurrencySettingsRepository.observeReadHomeCurrency`) | Typed read-time home currency for Transactions amount ordering: `Loading` (consumer-prepended) / `Available(code)` / `Unavailable(reason)` with reason READ_ERROR, TIMEOUT or INVALID_CODE; bounded codes only, no raw reason text. `TransactionsViewModel` prepends `Loading`, applies a 5 s `TIMEOUT`, drops same-code `Available` repeats, and maps non-Available to `AmountOpsDisabled` (INV-9) | 🟡 HIGH |
 | **SubscriptionManagerEngine** | Subscriptions (validate/create, price history, usage, candidates, health, savings) | 🟡 HIGH |
 | **SynthesisEngine** | 6 (Month-end forecast, read-only) | 🟢 LOW |
 | **BudgetForecastingEngine** | 5/6 (Budget forecast generation + `BudgetForecastDao` persistence via `insertForecast`/`insertWithDeactivation`) | 🟢 LOW |
@@ -72,7 +76,9 @@ CurrencyConverter.convert() / convertAsOf()
   ├── FinancialStressForecastEngine (starting balance)
   ├── BudgetForecastingEngine (limit conversion)
   ├── ExpenseExportMapper (conversion audit fields)
-  └── TransactionLifecycleCoordinator (create-time snapshot)
+  └── TransactionLifecycleCoordinator (create-time snapshot; update re-snapshots against current H;
+        converted amount rounded via roundSnapshot, rate stored unrounded, no-rate/rounding-Unavailable
+        stores sentinel 0.0/""/0.0 + one best-effort MISSING_RATE)
 ```
 
 ### MerchantNormalizer changes affect:
@@ -156,13 +162,16 @@ SharedExpenseManager.createGroup() / addMember() / removeMember() / addExpense()
   ├── GroupTransactionCoordinator (atomic group/member/expense writes via DomainTransactionRunner)
   ├── TransactionLifecycleCoordinator (createExpenseDbOnlyV2 + updateOwnershipDbOnlyV2)
   ├── PostCommitActionRunner (post-commit side effects)
-  └── GroupBalanceCalculator / SplitCalculator (read-time balances)
+  └── GroupSettlementBalancePolicy.displayedBalances (read-time display balances; uses SplitCalculator;
+      GroupBalanceCalculator has no production caller, Inc 3)
 ```
 
 ### HybridRouter changes affect:
 ```
 HybridRouter.execute()
-  ├── HybridDashboardBriefingService (cloud/on-device/fallback)
+  ├── HybridDashboardBriefingService (cloud/on-device/fallback; DASHBOARD_BRIEFING only - the per-transaction
+  │     insight no longer uses it: GenerateTransactionInsightUseCase is on-device only via
+  │     OnDeviceDashboardBriefingService, ai-fixes B2d)
   ├── HybridCategorizationAssistService
   ├── HybridDedupeJudgeService
   ├── HybridQueryInterpretationService
@@ -190,9 +199,12 @@ PrivacyGate.check(capability, context)
   ├── LocationBackfillWorker (background location)
   ├── DataRetentionWorker (data purging)
   └── DailyBriefingWorker (AI briefing)
-  ↑ PrivacyDecision.FailClosed: 39 call sites across 27 files now use blocksExecution()
-    (blocksExecution() metric; `PrivacyGate.check(...)` itself: 51 call sites
-    across 34 production files — different metric, both current)
+  (AutoCreateWarrantyFromReceiptUseCase no longer calls PrivacyGate: ai-fixes B1a removed the
+   CLOUD_AI_WARRANTY_EXTRACTION gate; warranty extraction is local-only and guarded upstream by
+   ReceiptSideEffectPlanner Policy A. CloudWarrantyExtractionService has no production caller.)
+  ↑ PrivacyDecision.FailClosed: 38 call sites across 26 files now use blocksExecution()
+    (blocksExecution() metric; `PrivacyGate.check(...)` itself: 50 call sites
+    across 33 production files — different metric; both reduced by one by ai-fixes B1a)
     which returns true for both Denied and FailClosed variants,
     providing consistent fail-closed behavior across all pipelines.
 ```

@@ -6,6 +6,7 @@ import androidx.room.ForeignKey
 import androidx.room.Ignore
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import com.yourname.expensetracker.domain.core.money.ComparableHomeValue
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.core.money.MoneyAmount
 import com.yourname.expensetracker.domain.intelligence.DuplicateDetectionPolicy
@@ -169,20 +170,17 @@ data class Expense(
         }
 
     /**
-     * S5-008R: Ownership-adjusted amount in home currency (normalized at save time).
-     * Uses [baseAmount]/[exchangeRateUsed] when available, falls back to [effectiveAmount].
-     * Use this for cross-currency sort/filter/totals.
+     * Ownership-adjusted snapshot amount in the currency the snapshot was recorded in
+     * ([baseCurrency]), or null when the row has no usable snapshot (`baseAmount <= 0` or
+     * `exchangeRateUsed <= 0`). Delegates to the single rule owner
+     * [ComparableHomeValue.snapshotValue]; it never falls back to the raw [effectiveAmount].
+     *
+     * Only for the mixed-currency date-header total, which has already checked that the group
+     * shares one [baseCurrency]. Sorting, min/max filters and counts must use
+     * [ComparableHomeValue.comparableValue] against the read-time home currency instead.
      */
-    val normalizedEffectiveAmount: Double
-        get() = when {
-            isNotMine -> 0.0
-            baseAmount <= 0.0 -> effectiveAmount // legacy row — fall back to raw
-            isSharedExpense && myShareAmount != null && exchangeRateUsed > 0.0 ->
-                myShareAmount * exchangeRateUsed
-            isSharedExpense && mySharePercentage != null ->
-                baseAmount * mySharePercentage / 100.0
-            else -> baseAmount
-        }
+    val normalizedEffectiveAmount: Double?
+        get() = ComparableHomeValue.snapshotValue(this)
 
     val hasConflictingOwnershipFlags: Boolean
         get() = isNotMine && isSharedExpense

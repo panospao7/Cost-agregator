@@ -14,6 +14,8 @@ import com.yourname.expensetracker.domain.budget.BudgetCalculator
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.core.money.ConversionOutcome
 import com.yourname.expensetracker.domain.core.money.ConversionPath
+import com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableException
+import com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableReasonCode
 import com.yourname.expensetracker.domain.core.money.RateBasis
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
@@ -214,6 +216,59 @@ class BudgetRepositoryHistoricalStatusTest {
 
         // Falls back gracefully; monitor uses gross spend.
         assertThat(status.adjustedSpendBreakdown).isNull()
+    }
+
+    // AE-16 (INV-16): the typed "home currency unavailable" signal maps to a null breakdown, the single
+    // effective-spend-unavailable signal. Percent and health stay repository-owned and unchanged (R3).
+    @Suppress("DEPRECATION_ERROR")
+    @Test
+    fun `AE-16 typed unavailable from offset engine yields null breakdown and unchanged percent and health`() = runTest(UnconfinedTestDispatcher()) {
+        val budget = budget(amount = 1_000.0, categoryId = null)
+        val evaluationTime = utcMs(2026, Calendar.MARCH, 15)
+        val start = utcMs(2026, Calendar.MARCH, 1)
+        val end = utcMs(2026, Calendar.APRIL, 1)
+
+        coEvery { budgetDao.getActiveBudgets() } returns listOf(budget)
+        coEvery { categoryDao.getAll() } returns emptyList()
+        every { budgetCalculator.calculatePeriodRange(budget, evaluationTime) } returns (start to end)
+        coEvery { expenseDao.getTotalForPeriod(start, end) } returns 500.0
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(start, end) } returns listOf(CurrencyTotal("EUR", 500.0, 1))
+        coEvery { offsetEngine.calculateEffectiveBudgetSpend(start, end, null) } throws
+            MoneyDisplayUnavailableException(MoneyDisplayUnavailableReasonCode.HOME_CURRENCY_UNAVAILABLE)
+
+        val status = repository.getBudgetStatusesAt(evaluationTime).single()
+
+        assertThat(status.adjustedSpendBreakdown).isNull()
+        // R3: repository-computed gross percent/health are unchanged; the card simply does not show them.
+        assertMoneyExact(500.0, status.spentAmount, "gross spentAmount pass-through")
+        assertThat(status.percentUsed).isWithin(1e-6f).of(0.5f)
+        assertThat(status.healthStatus).isEqualTo(BudgetHealthStatus.ON_TRACK)
+        assertThat(status.percentKnown).isTrue()
+    }
+
+    @Suppress("DEPRECATION_ERROR")
+    @Test
+    fun `AE-16 offset engine cancellation propagates instead of becoming a null breakdown`() = runTest(UnconfinedTestDispatcher()) {
+        val budget = budget(amount = 1_000.0, categoryId = null)
+        val evaluationTime = utcMs(2026, Calendar.MARCH, 15)
+        val start = utcMs(2026, Calendar.MARCH, 1)
+        val end = utcMs(2026, Calendar.APRIL, 1)
+
+        coEvery { budgetDao.getActiveBudgets() } returns listOf(budget)
+        coEvery { categoryDao.getAll() } returns emptyList()
+        every { budgetCalculator.calculatePeriodRange(budget, evaluationTime) } returns (start to end)
+        coEvery { expenseDao.getTotalForPeriod(start, end) } returns 0.0
+        coEvery { offsetEngine.calculateEffectiveBudgetSpend(start, end, null) } throws
+            kotlinx.coroutines.CancellationException("cancelled")
+
+        var propagated: kotlinx.coroutines.CancellationException? = null
+        try {
+            repository.getBudgetStatusesAt(evaluationTime)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            propagated = e
+        }
+
+        assertThat(propagated).isNotNull()
     }
 
     private enum class WriteOp { ADD, UPDATE }

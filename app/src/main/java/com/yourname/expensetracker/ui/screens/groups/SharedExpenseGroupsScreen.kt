@@ -25,10 +25,12 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.data.database.entity.GroupMember
 import com.yourname.expensetracker.data.database.entity.SplitType
+import com.yourname.expensetracker.domain.groups.GroupSettlementBalancePolicy
 import com.yourname.expensetracker.domain.logic.SplitCalculator
 import com.yourname.expensetracker.domain.currency.SupportedCurrency
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.ui.theme.SemanticColors
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
 import java.time.Instant
@@ -47,8 +49,7 @@ fun SharedExpenseGroupsScreen(
     viewModel: SharedExpenseGroupsViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
-    val groupCurrency = uiState.selectedGroup?.currency ?: uiState.homeCurrency
-    
+
     Scaffold(
         containerColor = SemanticColors.BaseNavy,
         topBar = {
@@ -147,7 +148,6 @@ fun SharedExpenseGroupsScreen(
                     // Group Detail View
                     GroupDetailContent(
                         group = uiState.selectedGroup!!,
-                        groupCurrency = groupCurrency,
                         onDeleteGroup = { viewModel.deleteGroup(it) }
                     )
                 }
@@ -155,7 +155,6 @@ fun SharedExpenseGroupsScreen(
                     // Groups List View
                     GroupsListContent(
                         groups = uiState.groups,
-                        groupCurrency = groupCurrency,
                         onGroupClick = { viewModel.selectGroup(it) }
                     )
                 }
@@ -204,7 +203,6 @@ fun SharedExpenseGroupsScreen(
 @Composable
 private fun GroupsListContent(
     groups: List<GroupWithDetails>,
-    groupCurrency: String,
     onGroupClick: (GroupWithDetails) -> Unit
 ) {
     if (groups.isEmpty()) {
@@ -219,7 +217,6 @@ private fun GroupsListContent(
             items(groups, key = { it.group.id }) { group ->
                 GroupCard(
                     group = group,
-                    groupCurrency = groupCurrency,
                     onClick = { onGroupClick(group) }
                 )
             }
@@ -230,7 +227,6 @@ private fun GroupsListContent(
 @Composable
 private fun GroupCard(
     group: GroupWithDetails,
-    groupCurrency: String,
     onClick: () -> Unit
 ) {
     Card(
@@ -295,8 +291,10 @@ private fun GroupCard(
                 }
                 
                 Column(horizontalAlignment = Alignment.End) {
+                    // Each card is labelled with its own group currency (OPEN-1), never the home
+                    // currency. UNAVAILABLE reads "unavailable", never zero.
                     Text(
-                        text = CurrencyFormatter.formatMoney(group.totalSpent, groupCurrency),
+                        text = displayedTotalText(group.displayed),
                         style = MaterialTheme.typography.titleMedium,
                         color = SemanticColors.PrimaryIndigo,
                         fontWeight = FontWeight.Bold
@@ -308,14 +306,67 @@ private fun GroupCard(
                     )
                 }
             }
+            LeftOutNotice(group.displayed)
         }
     }
 }
 
+/** The group total in the group currency, or "unavailable" when it could not be computed. */
+@Composable
+private fun displayedTotalText(displayed: GroupSettlementBalancePolicy.DisplayedBalances): String {
+    val includedTotal = displayed.includedTotal
+    return if (includedTotal == null) {
+        stringResource(R.string.groups_total_unavailable)
+    } else {
+        CurrencyFormatter.formatMoney(includedTotal, displayed.currency)
+    }
+}
+
+/**
+ * INV-8: one combined notice, shown only when PARTIAL. Count only; no description, amount,
+ * member name or currency wording.
+ */
+@Composable
+private fun LeftOutNotice(displayed: GroupSettlementBalancePolicy.DisplayedBalances) {
+    val leftOut = leftOutItemCount(displayed)
+    if (displayed.availability != GroupSettlementBalancePolicy.Availability.PARTIAL || leftOut <= 0) return
+    Spacer(modifier = Modifier.height(8.dp))
+    Text(
+        text = pluralStringResource(R.plurals.money_total_partial_notice, leftOut, leftOut),
+        style = MaterialTheme.typography.bodySmall,
+        color = SemanticColors.TextSecondary
+    )
+}
+
+/** INV-8: N = excluded expenses + excluded considered settlements. */
+internal fun leftOutItemCount(displayed: GroupSettlementBalancePolicy.DisplayedBalances): Int =
+    displayed.excludedExpenseCount + displayed.excludedSettlementCount
+
+/**
+ * INV-7: the suggested transfers, or null when the plan must not be composed (PARTIAL or
+ * UNAVAILABLE). The solver itself is unchanged.
+ */
+internal fun suggestedSettlementTransfers(
+    displayed: GroupSettlementBalancePolicy.DisplayedBalances
+): List<Triple<Long, Long, Double>>? =
+    if (displayed.settlementPlanAllowed) {
+        SplitCalculator.simplifyBalances(displayed.memberBalances)
+    } else {
+        null
+    }
+
+/** INV-11: the home currency pre-selects only when it is a supported currency; otherwise nothing. */
+internal fun initialGroupCurrencySelection(homeCurrency: String?): String? =
+    homeCurrency?.let { SupportedCurrency.fromCode(it)?.code }
+
+/** INV-11: Create needs a name and an explicitly selected supported currency. */
+internal fun canCreateGroup(name: String, selectedCurrency: String?): Boolean =
+    name.isNotBlank() && selectedCurrency != null &&
+        SupportedCurrency.fromCode(selectedCurrency)?.code == selectedCurrency
+
 @Composable
 private fun GroupDetailContent(
     group: GroupWithDetails,
-    groupCurrency: String,
     onDeleteGroup: (Long) -> Unit
 ) {
     LazyColumn(
@@ -345,11 +396,12 @@ private fun GroupDetailContent(
                         color = SemanticColors.TextSecondary
                     )
                     Text(
-                        text = CurrencyFormatter.formatMoney(group.totalSpent, groupCurrency),
+                        text = displayedTotalText(group.displayed),
                         style = MaterialTheme.typography.headlineMedium,
                         color = SemanticColors.PrimaryIndigo,
                         fontWeight = FontWeight.Bold
                     )
+                    LeftOutNotice(group.displayed)
                 }
             }
         }
@@ -364,20 +416,33 @@ private fun GroupDetailContent(
             )
         }
         
-        items(group.members, key = { it.id }) { member ->
-            MemberBalanceCard(
-                member = member,
-                balance = group.memberBalances[member.id] ?: 0.0,
-                groupCurrency = groupCurrency
-            )
+        if (group.displayed.availability == GroupSettlementBalancePolicy.Availability.UNAVAILABLE) {
+            // No balances exist to show; an absent balance must never read as "settled up".
+            item {
+                Text(
+                    text = stringResource(R.string.groups_balances_unavailable),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = SemanticColors.TextSecondary
+                )
+            }
+        } else {
+            items(group.members, key = { it.id }) { member ->
+                MemberBalanceCard(
+                    member = member,
+                    balance = group.displayed.memberBalances[member.id] ?: 0.0,
+                    groupCurrency = group.currency
+                )
+            }
         }
 
-        item {
-            SettlementPlanSection(
-                members = group.members,
-                memberBalances = group.memberBalances,
-                groupCurrency = groupCurrency
-            )
+        // INV-7: composed only for an AVAILABLE group.
+        if (group.displayed.settlementPlanAllowed) {
+            item {
+                SettlementPlanSection(
+                    members = group.members,
+                    displayed = group.displayed
+                )
+            }
         }
         
         // Expenses Section
@@ -395,7 +460,7 @@ private fun GroupDetailContent(
             items(group.expenses, key = { it.expense.id }) { expense ->
                 ExpenseCard(
                     expense = expense,
-                    groupCurrency = groupCurrency
+                    groupCurrency = group.currency
                 )
             }
         }
@@ -422,14 +487,14 @@ private fun GroupDetailContent(
 @Composable
 private fun SettlementPlanSection(
     members: List<GroupMember>,
-    memberBalances: Map<Long, Double>,
-    groupCurrency: String
+    displayed: GroupSettlementBalancePolicy.DisplayedBalances
 ) {
     val memberNames = remember(members) { members.associate { it.id to it.name } }
 
-    val settlementTransfers = remember(memberBalances) {
-        SplitCalculator.simplifyBalances(memberBalances)
-    }
+    // The key is the whole result, so a PARTIAL/AVAILABLE change can never reuse a stale plan.
+    val settlementTransfers = remember(displayed) { suggestedSettlementTransfers(displayed) }
+        ?: return
+    val groupCurrency = displayed.currency
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
@@ -665,12 +730,12 @@ private fun EmptyGroupsState() {
 private fun CreateGroupDialog(
     onDismiss: () -> Unit,
     onCreate: (String, String?, String) -> Unit,
-    /** Placeholder default. Production callers should pass explicit currency. */
-    homeCurrency: String = "EUR"
+    /** Null when the home currency is unknown: nothing is pre-selected (INV-11). */
+    homeCurrency: String?
 ) {
     var name by remember { mutableStateOf("") }
     var description by remember { mutableStateOf("") }
-    var currency by remember { mutableStateOf(homeCurrency) }
+    var currency by remember { mutableStateOf(initialGroupCurrencySelection(homeCurrency)) }
     val currencies = SupportedCurrency.values().map { it.code }
     
     AlertDialog(
@@ -700,10 +765,11 @@ private fun CreateGroupDialog(
                     onExpandedChange = { expanded = it }
                 ) {
                     OutlinedTextField(
-                        value = currency,
+                        value = currency.orEmpty(),
                         onValueChange = {},
                         readOnly = true,
                         label = { Text(stringResource(R.string.label_currency)) },
+                        placeholder = { Text(stringResource(R.string.groups_currency_not_selected)) },
                         trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
                         modifier = Modifier.fillMaxWidth().menuAnchor()
                     )
@@ -723,8 +789,12 @@ private fun CreateGroupDialog(
         },
         confirmButton = {
             Button(
-                onClick = { onCreate(name, description.takeIf { it.isNotBlank() }, currency) },
-                enabled = name.isNotBlank()
+                onClick = {
+                    currency?.let { selected ->
+                        onCreate(name, description.takeIf { it.isNotBlank() }, selected)
+                    }
+                },
+                enabled = canCreateGroup(name, currency)
             ) {
                 Text(stringResource(R.string.groups_create_button))
             }

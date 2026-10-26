@@ -43,6 +43,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
@@ -56,8 +57,11 @@ import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiCapabilityRuntimeStatus
 import com.yourname.expensetracker.domain.ai.model.AiMode
 import com.yourname.expensetracker.domain.ai.model.AiSettings
+import com.yourname.expensetracker.domain.ai.model.OnDeviceModelStatus
 import com.yourname.expensetracker.domain.ai.model.routeDisplayText
+import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
+import com.yourname.expensetracker.ui.components.asString
 import com.yourname.expensetracker.ui.theme.SemanticColors
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -122,11 +126,11 @@ fun AiSettingsScreen(
                     description = stringResource(R.string.ai_section_general_desc)
                 ) {
                     ToggleRow(stringResource(R.string.ai_toggle_enable), settings.aiEnabled, viewModel::setAiEnabled)
-                    ToggleRow(stringResource(R.string.ai_toggle_cloud), settings.allowCloudAi, viewModel::setAllowCloudAi)
+                    CloudAiToggleWithDisclosure(settings.allowCloudAi, viewModel::setAllowCloudAi)
                     // S11-002: Show effective cloud policy status
                     uiState.effectiveCloudBlocked?.let { reason ->
                         Text(
-                            text = "⚠ Cloud AI blocked: $reason",
+                            text = "⚠ " + stringResource(R.string.ai_cloud_blocked_format, reason.asString()),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.error,
                             modifier = androidx.compose.ui.Modifier.padding(start = 16.dp, bottom = 4.dp)
@@ -134,7 +138,7 @@ fun AiSettingsScreen(
                     }
                     if (uiState.effectiveCloudBlocked == null && settings.allowCloudAi && settings.aiEnabled) {
                         Text(
-                            text = "✓ Cloud AI is active",
+                            text = "✓ " + stringResource(R.string.ai_cloud_active),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.primary,
                             modifier = androidx.compose.ui.Modifier.padding(start = 16.dp, bottom = 4.dp)
@@ -143,7 +147,7 @@ fun AiSettingsScreen(
                     // S11-007: Show settings write error
                     uiState.settingsWriteError?.let { err ->
                         Text(
-                            text = err,
+                            text = err.asString(),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.error,
                             modifier = androidx.compose.ui.Modifier
@@ -227,6 +231,16 @@ fun AiSettingsScreen(
                         runtime = uiState.runtimeSummary.capabilities.find { it.capability == AiCapability.DASHBOARD_BRIEFING },
                         cloudFallbackAvailable = settings.aiEnabled && settings.allowCloudAi
                     )
+                    // B2e (UX 2.1/2.2, INV-15/16): on-device only; independent of the briefing switch.
+                    TransactionInsightRow(
+                        state = transactionInsightRowState(
+                            settings = settings,
+                            runtime = uiState.runtimeSummary.capabilities
+                                .find { it.capability == AiCapability.TRANSACTION_INSIGHT }
+                        ),
+                        checked = settings.transactionInsightEnabled,
+                        onCheckedChange = viewModel::setTransactionInsightEnabled
+                    )
                     CapabilityMatrixRow(
                         label = stringResource(R.string.ai_capability_review),
                         enabled = settings.reviewExplanationEnabled,
@@ -239,13 +253,6 @@ fun AiSettingsScreen(
                         enabled = settings.receiptAssistEnabled,
                         onEnabledChange = viewModel::setReceiptAssistEnabled,
                         runtime = uiState.runtimeSummary.capabilities.find { it.capability == AiCapability.RECEIPT_EXTRACTION },
-                        cloudFallbackAvailable = settings.aiEnabled && settings.allowCloudAi
-                    )
-                    CapabilityMatrixRow(
-                        label = stringResource(R.string.ai_capability_warranty_extraction),
-                        enabled = settings.warrantyExtractionEnabled,
-                        onEnabledChange = viewModel::setWarrantyExtractionEnabled,
-                        runtime = uiState.runtimeSummary.capabilities.find { it.capability == AiCapability.WARRANTY_EXTRACTION },
                         cloudFallbackAvailable = settings.aiEnabled && settings.allowCloudAi
                     )
                     ToggleRow(
@@ -280,6 +287,13 @@ fun AiSettingsScreen(
                         runtime = uiState.runtimeSummary.capabilities.find { it.capability == AiCapability.RECEIPT_ITEM_CATEGORIZATION },
                         cloudFallbackAvailable = settings.aiEnabled && settings.allowCloudAi
                     )
+                    // INV-7: warranty detection is local-only; the former toggle gated no data flow, so the
+                    // row is hidden and replaced by this static caption (UX 2.3). The stored flag is untouched.
+                    Text(
+                        text = stringResource(R.string.ai_warranty_local_note),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
 
@@ -304,6 +318,21 @@ fun AiSettingsScreen(
                         settings.proactiveBriefingsEnabled,
                         viewModel::setProactiveBriefingsEnabled
                     )
+                    // B3b (UX 2.4, INV-24/25): the toggle controls only the notification; the briefing
+                    // itself is generated in the background whenever the arming predicate holds.
+                    Text(
+                        text = stringResource(R.string.ai_proactive_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    // G2-10 / UX-Q-3: caption only. No permission request, no settings deep link, no button.
+                    if (uiState.notificationsBlocked) {
+                        Text(
+                            text = stringResource(R.string.ai_proactive_notifications_blocked),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                     ToggleRow(
                         stringResource(R.string.ai_toggle_quick_save),
                         settings.receiptQuickSaveEnabled,
@@ -432,9 +461,9 @@ private fun ProviderAndApiKeySection(
     providerName: String,
     apiKeyInput: String,
     hasStoredApiKey: Boolean,
-    apiKeyValidationMessage: String?,
+    apiKeyValidationMessage: UiText?,
     isTestingConnection: Boolean,
-    connectionTestMessage: String?,
+    connectionTestMessage: UiText?,
     isConnectionTestSuccess: Boolean?,
     onApiKeyChange: (String) -> Unit,
     onSaveApiKey: () -> Unit,
@@ -501,7 +530,7 @@ private fun ProviderAndApiKeySection(
 
             apiKeyValidationMessage?.let {
                 Text(
-                    text = it,
+                    text = it.asString(),
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.error
                 )
@@ -529,7 +558,7 @@ private fun ProviderAndApiKeySection(
                     null -> MaterialTheme.colorScheme.onSurfaceVariant
                 }
                 Text(
-                    text = message,
+                    text = message.asString(),
                     style = MaterialTheme.typography.bodySmall,
                     color = feedbackColor
                 )
@@ -553,6 +582,26 @@ private fun SettingsSection(
         )
         content()
     }
+}
+
+internal const val CLOUD_AI_DISCLOSURE_TAG = "ai_cloud_briefing_disclosure"
+
+/**
+ * ai-fixes INV-25 (Z2): the "Allow cloud AI" toggle with the background-briefing disclosure
+ * shown directly under it, so the consequence is visible where the user grants consent.
+ */
+@Composable
+internal fun CloudAiToggleWithDisclosure(
+    allowCloudAi: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    ToggleRow(stringResource(R.string.ai_toggle_cloud), allowCloudAi, onCheckedChange)
+    Text(
+        text = stringResource(R.string.ai_cloud_briefing_disclosure),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.testTag(CLOUD_AI_DISCLOSURE_TAG)
+    )
 }
 
 @Composable
@@ -666,6 +715,125 @@ private fun CapabilityMatrixRow(
     }
 }
 
+internal enum class TransactionInsightRowStatus {
+    READY,
+    NEEDS_AI,
+    NEEDS_ON_DEVICE,
+    DISABLED,
+    NOT_LOADED,
+    NEEDS_ATTENTION
+}
+
+internal data class TransactionInsightRowState(
+    val status: TransactionInsightRowStatus,
+    /** False only for a permanent platform limit (UX 2.2); the stored value is never rewritten. */
+    val switchEnabled: Boolean,
+    /** Bounded on-device status text; only set for [TransactionInsightRowStatus.NEEDS_ATTENTION]. */
+    val attentionMessage: String?
+)
+
+/**
+ * UX 2.2 state table for the insight row. Deliberately ignores the router's route reason (which
+ * may mention cloud) and uses only the on-device status, because the insight never uses the cloud.
+ */
+internal fun transactionInsightRowState(
+    settings: AiSettings,
+    runtime: AiCapabilityRuntimeStatus?
+): TransactionInsightRowState {
+    val permanentLimit = runtime != null && (
+        runtime.status == OnDeviceModelStatus.UNSUPPORTED_DEVICE ||
+            runtime.status == OnDeviceModelStatus.UNSUPPORTED_ANDROID_VERSION
+        )
+    return when {
+        permanentLimit -> TransactionInsightRowState(
+            TransactionInsightRowStatus.NEEDS_ATTENTION,
+            switchEnabled = false,
+            attentionMessage = runtime?.onDeviceMessage
+        )
+        !settings.aiEnabled -> TransactionInsightRowState(TransactionInsightRowStatus.NEEDS_AI, true, null)
+        !settings.allowOnDeviceAi -> TransactionInsightRowState(TransactionInsightRowStatus.NEEDS_ON_DEVICE, true, null)
+        !settings.transactionInsightEnabled -> TransactionInsightRowState(TransactionInsightRowStatus.DISABLED, true, null)
+        runtime == null -> TransactionInsightRowState(TransactionInsightRowStatus.NOT_LOADED, true, null)
+        runtime.status == OnDeviceModelStatus.AVAILABLE -> TransactionInsightRowState(TransactionInsightRowStatus.READY, true, null)
+        else -> TransactionInsightRowState(
+            TransactionInsightRowStatus.NEEDS_ATTENTION,
+            switchEnabled = true,
+            attentionMessage = runtime.onDeviceMessage
+        )
+    }
+}
+
+@Composable
+private fun TransactionInsightRow(
+    state: TransactionInsightRowState,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    val label = stringResource(R.string.ai_insight_label)
+    val enabledText = stringResource(if (checked) R.string.ai_toggle_enabled else R.string.ai_toggle_disabled)
+    val statusText = when (state.status) {
+        TransactionInsightRowStatus.READY -> stringResource(R.string.ai_status_ready)
+        TransactionInsightRowStatus.NEEDS_AI -> stringResource(R.string.ai_insight_needs_ai)
+        TransactionInsightRowStatus.NEEDS_ON_DEVICE -> stringResource(R.string.ai_insight_needs_on_device)
+        TransactionInsightRowStatus.DISABLED -> stringResource(R.string.ai_status_disabled)
+        TransactionInsightRowStatus.NOT_LOADED -> stringResource(R.string.ai_status_not_loaded)
+        TransactionInsightRowStatus.NEEDS_ATTENTION ->
+            state.attentionMessage ?: stringResource(R.string.ai_status_needs_attention)
+    }
+    val accessibilityDescription = stringResource(
+        R.string.ai_capability_cd_format,
+        label,
+        enabledText,
+        statusText
+    )
+
+    ElevatedCard {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp)
+                .semantics { contentDescription = accessibilityDescription },
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text(label, style = MaterialTheme.typography.bodyLarge)
+                    when (state.status) {
+                        TransactionInsightRowStatus.READY -> RuntimeBadge(isReady = true)
+                        TransactionInsightRowStatus.NEEDS_ATTENTION -> RuntimeBadge(isReady = false)
+                        else -> Unit
+                    }
+                }
+                Switch(
+                    checked = checked,
+                    onCheckedChange = onCheckedChange,
+                    enabled = state.switchEnabled
+                )
+            }
+
+            Text(
+                text = statusText,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            // UX 8: permanent description as its own text node. Honest on-device copy; no route
+            // line and no cloud-fallback hint is ever rendered for this row (INV-16).
+            Text(
+                text = stringResource(R.string.ai_insight_desc),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
 @Composable
 private fun RuntimeBadge(isReady: Boolean) {
     Surface(
@@ -747,4 +915,5 @@ private fun AiCapability.label(): String = when (this) {
     AiCapability.REVIEW_PRIORITIZATION -> stringResource(R.string.ai_capability_review_prioritization)
     AiCapability.SEMANTIC_DEDUPE -> stringResource(R.string.ai_capability_semantic_dedupe)
     AiCapability.RECEIPT_ITEM_CATEGORIZATION -> stringResource(R.string.ai_capability_receipt_item_cat)
+    AiCapability.TRANSACTION_INSIGHT -> stringResource(R.string.ai_capability_transaction_insight)
 }

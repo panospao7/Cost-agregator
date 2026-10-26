@@ -1,7 +1,7 @@
 # Feature plan: ai-fixes
 
 Author: feature-planner (stage 6, attempt 2; attempt 1 hit its turn limit with no output). Persisted by the orchestrator. Date 2026-10-16.
-Status: AWAITING OWNER PLAN APPROVAL (Gate 3). Implementation only after Release 1.0 accepted + `release-1.0-wt` merged.
+Status: PLAN APPROVED 2026-10-16 (Gate 3; header corrected 2026-10-21 by orchestrator, see handoff). Guard regeneration (B1a) approved by owner 2026-10-22 (build/release-lead-notes/owner-approvals-20261022.md). Implementation only after Release 1.0 accepted + `release-1.0-wt` merged.
 
 - Risk tier: **T3 overall** (Part A T1 with mild T2 edge: CE rethrow in 2 VMs; B1, B2, B3, OD-2 each T3).
 - Basis: `docs/features/ai-fixes/impact-map.md` (trusted), `gate2-decisions.md` (all DECIDED = Recommended), `domain-spec.md` §2/§4–§9, `ux-flows.md`.
@@ -107,7 +107,8 @@ Order: S0 → A → B1a → B1b → B1c → B2a → B2b/B2c → B2d → B2e → 
 ### B2b — Insight key + DataMigration + InstallProvenance (T3)
 - INV-23, INV-22 (new field). AE-33..38 (extended).
 - Source: `AiModels.kt` `transactionInsightEnabled=false`; `AiSettingsRepositoryImpl.kt` key `ai_transaction_insight_enabled`, `produceMigrations` on `preferencesDataStore(name="ai_settings")` (:24-27) with one never-throwing `DataMigration` per spec §4 (no startup coroutine), `update()` writes key (:79-103); NEW `InstallProvenance` port + impl (NEW_INSTALL/UPGRADE/UNKNOWN; own-package `PackageManager` install/update times only; no new permission, no `QUERY_ALL_PACKAGES`, no network; failure → UNKNOWN); migration extracted into testable internal class taking `InstallProvenance` (DI binding only if injected).
-- Tests: `AiSettingsRepositoryImplTest` AE-33..37 + migration-before-first-edit; NEW `InstallProvenanceTest`.
+- Orchestrator amendment (B2a review, spec §1.6 / INV-15): also `domain/ai/policy/AiPolicyImpl.kt` and `domain/ai/policy/DefaultAiCapabilityRouter.kt` — switch the `TRANSACTION_INSIGHT` arms (`shouldAllowOnDevice`, `isCapabilityEnabled`) from `settings.aiEnabled` to `settings.transactionInsightEnabled`.
+- Tests: `AiSettingsRepositoryImplTest` AE-33..37 + migration-before-first-edit; NEW `InstallProvenanceTest`; amendment tests in `AiPolicyTest` and `DefaultAiCapabilityRouterTest` (insight off → DISABLED / `shouldAllowOnDevice` false; briefing off with insight on → not DISABLED).
 - Docs: `CODEBASE_SEGMENTS.md` Segment 20; `hilt-bindings-map.md` if binding.
 - Legal path: `produceMigrations` sole resolver; explicit values never overwritten.
 - Gates: PSG, AG, RS. Validation: `targeted-unit-test` `"*AiSettingsRepositoryImplTest*"`, `"*InstallProvenance*"`.
@@ -162,7 +163,8 @@ Order: S0 → A → B1a → B1b → B1c → B2a → B2b/B2c → B2d → B2e → 
 | New guard (a): cloud warranty service referenced only from DI | B1a |
 | GR-08 `db_ownership_policy.yml` rows + R7 Pattern E regeneration | B1a only (serialize with loan-installments regeneration) |
 | New guard (c): VM does not build status | B1b |
-| New guard (b): insight imports | B2d |
+| New guard (b): insight imports (forbids Hybrid/Cloud briefing services and the bare `DashboardBriefingService` interface via `\bDashboardBriefingService\b`) | B2d |
+| B2c registration pin: foreground observer registered once in `AppStartupCoordinator.registerLifecycleObserver` (`SourceScanningArchitectureGuardTest`; added in B2d; strengthening) | B2d |
 | `SourceScanning:408` allowlist (both workers) + expired broad-catch removal | B3a |
 | CancellationSafety KNOWN_VIOLATIONS | removals only, by the slice fixing the file (D-1) |
 New guards are `@Test`s in the existing `SourceScanningArchitectureGuardTest.kt`.

@@ -7,12 +7,18 @@ import com.yourname.expensetracker.data.database.entity.BudgetTrend
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.domain.budget.BudgetAutopilotEngine
+import com.yourname.expensetracker.domain.budget.AdjustedSpendBreakdown
 import com.yourname.expensetracker.domain.budget.BudgetAutopilotRecommendations
+import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.budget.BudgetRecommendationQuality
+import com.yourname.expensetracker.domain.budget.BudgetStatus
 import com.yourname.expensetracker.domain.budget.CategoryBudgetRecommendation
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.core.money.MoneyAmount
+import com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableException
+import com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableReasonCode
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.groups.BudgetSpendBreakdown
 import com.yourname.expensetracker.domain.groups.SharedExpenseBudgetOffsetEngine
 import com.yourname.expensetracker.domain.model.Result
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -27,6 +33,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -263,6 +270,105 @@ class BudgetViewModelCurrencyProvenanceTest : ViewModelTestUtils() {
         assertEquals("EUR", written.captured.currency)
         assertEquals("USER_CONFIRMED", written.captured.currencyAssumption)
     }
+
+    // ---- AE-16 (INV-16, INV-20): the VM fallback engine call mirrors the repository mapping ----
+
+    @Test
+    fun `AE-16 fallback maps non-cancellation engine failures to a null breakdown`() = runTest(testDispatcher) {
+        val failures = listOf<Throwable>(
+            java.io.IOException("settings read failed"),
+            RuntimeException("engine failed"),
+            MoneyDisplayUnavailableException(MoneyDisplayUnavailableReasonCode.HOME_CURRENCY_UNAVAILABLE)
+        )
+        for (failure in failures) {
+            coEvery { offsetEngine.calculateEffectiveBudgetSpend(any(), any(), any()) } throws failure
+            val vm = viewModelEmitting(listOf(statusWithoutBreakdown()))
+
+            val state = vm.uiState.first { it.budgets.isNotEmpty() }
+
+            assertEquals(1, state.budgets.size)
+            assertNull(state.budgets.single().adjustedSpendBreakdown)
+            assertNull(state.error)
+        }
+    }
+
+    @Test
+    fun `AE-16 fallback still populates the breakdown when the engine succeeds`() = runTest(testDispatcher) {
+        coEvery { offsetEngine.calculateEffectiveBudgetSpend(any(), any(), any()) } returns BudgetSpendBreakdown(
+            totalPersonalSpend = 60.0,
+            totalSharedSpend = 10.0,
+            totalReimbursed = 0.0,
+            netSharedLiability = 10.0,
+            effectiveBudgetSpend = 70.0,
+            displayCurrency = "USD"
+        )
+        val vm = viewModelEmitting(listOf(statusWithoutBreakdown()))
+
+        val state = vm.uiState.first { it.budgets.isNotEmpty() }
+
+        assertEquals(70.0, state.budgets.single().adjustedSpendBreakdown!!.effectiveSpend, 0.0001)
+    }
+
+    @Test
+    fun `AE-16 fallback does not call the engine when the repository already supplied a breakdown`() =
+        runTest(testDispatcher) {
+            val supplied = AdjustedSpendBreakdown(
+                personalSpend = 10.0,
+                sharedSpend = 0.0,
+                reimbursedAmount = 0.0,
+                netSharedLiability = 0.0,
+                effectiveSpend = 10.0,
+                pendingReimbursements = 0.0
+            )
+            val vm = viewModelEmitting(listOf(statusWithoutBreakdown().copy(adjustedSpendBreakdown = supplied)))
+
+            val state = vm.uiState.first { it.budgets.isNotEmpty() }
+
+            assertEquals(10.0, state.budgets.single().adjustedSpendBreakdown!!.effectiveSpend, 0.0001)
+            coVerify(exactly = 0) { offsetEngine.calculateEffectiveBudgetSpend(any(), any(), any()) }
+        }
+
+    @Test
+    fun `AE-16 fallback engine cancellation propagates and never becomes a null-breakdown status`() =
+        runTest(testDispatcher) {
+            coEvery { offsetEngine.calculateEffectiveBudgetSpend(any(), any(), any()) } throws
+                CancellationException("cancelled")
+            val vm = viewModelEmitting(listOf(statusWithoutBreakdown()))
+            val observed = mutableListOf<BudgetUiState>()
+            backgroundScope.launch { vm.uiState.collect { observed += it } }
+
+            advanceUntilIdle()
+
+            // Before the fix the catch-all turned cancellation into a null breakdown (gross spend shown).
+            assertEquals(emptyList<BudgetStatus>(), observed.flatMap { it.budgets })
+            coVerify(atLeast = 1) { offsetEngine.calculateEffectiveBudgetSpend(any(), any(), any()) }
+        }
+
+    private fun viewModelEmitting(statuses: List<BudgetStatus>): BudgetViewModel {
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(statuses)
+        return BudgetViewModel(
+            budgetRepository = budgetRepository,
+            categoryRepository = categoryRepository,
+            offsetEngine = offsetEngine,
+            autopilotEngine = autopilotEngine,
+            timeProvider = timeProvider,
+            currencySettingsRepository = currencySettingsRepository,
+            database = mockk()
+        )
+    }
+
+    private fun statusWithoutBreakdown(): BudgetStatus = BudgetStatus(
+        budget = budget(id = 1L, currency = "USD", assumption = "EXPLICIT_HOME_CURRENCY"),
+        category = null,
+        spentAmount = 80.0,
+        remainingAmount = 20.0,
+        percentUsed = 0.8f,
+        healthStatus = BudgetHealthStatus.WARNING,
+        periodStart = 1_700_000_000_000L,
+        periodEnd = 1_702_592_000_000L,
+        effectiveLimit = 100.0,
+        adjustedSpendBreakdown = null
+    )
 
     private suspend fun currentError(): String? = viewModel.uiState.first { !it.isLoading }.error
 

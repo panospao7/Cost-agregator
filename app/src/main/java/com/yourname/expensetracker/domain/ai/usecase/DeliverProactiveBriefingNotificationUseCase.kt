@@ -23,32 +23,50 @@ class DeliverProactiveBriefingNotificationUseCase @Inject constructor(
     private val aiRuntimeDiagnostics: AiRuntimeDiagnostics
 ) {
 
-    suspend operator fun invoke(dateKey: String, startedAt: Long, notificationId: Int) {
+    /**
+     * [notificationsAllowed] is the caller's local notification-permission check result. It is
+     * evaluated only AFTER the settings, dedupe and fresh-artifact checks pass, so a denied
+     * permission never masks (or is recorded instead of) a skip that has another cause.
+     */
+    suspend operator fun invoke(
+        dateKey: String,
+        startedAt: Long,
+        notificationId: Int,
+        notificationsAllowed: Boolean
+    ): BriefingDeliveryOutcome {
         val settings = aiSettingsRepository.settings().first()
         if (!settings.aiEnabled || !settings.dashboardBriefingEnabled || !settings.proactiveBriefingsEnabled) {
-            return
+            return BriefingDeliveryOutcome.SKIPPED_SETTINGS_OFF
         }
 
         val targetKey = "dashboard_home:$dateKey"
         val lastDeliveredKey = aiEngagementRepository.getLastDeliveredDashboardBriefingKey()
         val lastOpenedKey = aiEngagementRepository.getLastOpenedDashboardBriefingKey()
         if (targetKey == lastDeliveredKey || targetKey == lastOpenedKey) {
-            return
+            return BriefingDeliveryOutcome.SKIPPED_DUPLICATE
         }
 
-        val artifact = aiArtifactRepository.getLatest(targetKey, AiCapability.DASHBOARD_BRIEFING) ?: return
-        if (artifact.status != AiArtifactStatus.READY) return
-        if (artifact.updatedAt < startedAt) return
+        val artifact = aiArtifactRepository.getLatest(targetKey, AiCapability.DASHBOARD_BRIEFING)
+            ?: return BriefingDeliveryOutcome.SKIPPED_NO_FRESH_ARTIFACT
+        if (artifact.status != AiArtifactStatus.READY) return BriefingDeliveryOutcome.SKIPPED_NO_FRESH_ARTIFACT
+        if (artifact.updatedAt < startedAt) return BriefingDeliveryOutcome.SKIPPED_NO_FRESH_ARTIFACT
 
-        val summary = artifact.summaryText?.trim()?.takeIf { it.isNotBlank() } ?: return
+        val summary = artifact.summaryText?.trim()?.takeIf { it.isNotBlank() }
+            ?: return BriefingDeliveryOutcome.SKIPPED_NO_FRESH_ARTIFACT
+        // INV-24/INV-27: permission gates posting only, and only a delivery that would
+        // otherwise have been attempted is reported as permission-denied.
+        if (!notificationsAllowed) return BriefingDeliveryOutcome.NOTIFICATION_PERMISSION_DENIED
         val deliveryResult = notificationService.sendAiBriefingReadyWithResult(
             notificationId = notificationId,
             title = BRIEFING_NOTIFICATION_TITLE,
             message = summary.take(180),
             targetKey = targetKey
         )
-        if (deliveryResult != NotificationService.DeliveryResult.DELIVERED) {
-            return
+        // Exhaustive on purpose (no else branch): a new DeliveryResult value must be
+        // mapped here explicitly (merge with the app-lock kind-aware results).
+        when (deliveryResult) {
+            NotificationService.DeliveryResult.DELIVERED -> Unit
+            NotificationService.DeliveryResult.NOT_DELIVERED -> return BriefingDeliveryOutcome.NOT_DELIVERED
         }
 
         aiEngagementRepository.setLastDeliveredDashboardBriefingKey(targetKey)
@@ -58,6 +76,7 @@ class DeliverProactiveBriefingNotificationUseCase @Inject constructor(
             type = "phase4_delivery",
             message = "dashboard_briefing delivered via notification ($providerLabel/$modelLabel)"
         )
+        return BriefingDeliveryOutcome.DELIVERED
     }
 
     companion object {

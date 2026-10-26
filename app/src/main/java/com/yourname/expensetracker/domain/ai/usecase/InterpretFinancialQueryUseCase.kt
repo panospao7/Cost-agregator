@@ -3,9 +3,14 @@ package com.yourname.expensetracker.domain.ai.usecase
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.domain.ai.model.AiChatMessage
+import com.yourname.expensetracker.domain.ai.model.AssistantUnsupportedReason
+import com.yourname.expensetracker.domain.ai.model.ClarificationChoice
+import com.yourname.expensetracker.domain.ai.model.ClarificationCompletion
+import com.yourname.expensetracker.domain.ai.model.ClarificationSlot
 import com.yourname.expensetracker.domain.ai.model.ExpenseQueryFilters
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryIntent
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryInterpretationResult
+import com.yourname.expensetracker.domain.ai.model.PresentationChoice
 import com.yourname.expensetracker.domain.ai.model.QueryComparison
 import com.yourname.expensetracker.domain.ai.model.QueryGrouping
 import com.yourname.expensetracker.domain.ai.model.QueryMetric
@@ -13,7 +18,6 @@ import com.yourname.expensetracker.domain.ai.model.QueryOwnershipScope
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.service.QueryInterpretationService
 import com.yourname.expensetracker.domain.model.PeriodRange
-import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import kotlinx.coroutines.flow.first
 import timber.log.Timber
 import java.util.Locale
@@ -29,25 +33,30 @@ class InterpretFinancialQueryUseCase @Inject constructor(
 
     suspend operator fun invoke(
         rawQuery: String,
-        conversationHistory: List<AiChatMessage> = emptyList()
+        priorMessages: List<AiChatMessage> = emptyList()
     ): FinancialQueryInterpretationResult {
         val settings = aiSettingsRepository.settings().first()
         if (!settings.aiEnabled || !settings.assistantEnabled || !settings.queryInterpretationEnabled) {
             return FinancialQueryInterpretationResult.Unsupported(
-                "Assistant query interpretation is disabled"
+                AssistantUnsupportedReason.INTERPRETATION_DISABLED
             )
         }
 
-        val input = inputBuilder.build(rawQuery, settings, conversationHistory)
+        val input = inputBuilder.build(rawQuery, settings, priorMessages)
 
         val providerResult = try {
             queryInterpretationService.interpret(input)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            Timber.w(e, "InterpretFinancialQueryUseCase: query interpretation provider failed")
+            // Bounded log: code + exception class only (never the throwable or its message).
+            Timber.w(
+                "InterpretFinancialQueryUseCase: %s class=%s",
+                AssistantUnsupportedReason.INTERPRETATION_FAILED.name,
+                e::class.java.simpleName
+            )
             FinancialQueryInterpretationResult.Unsupported(
-                e.message ?: "Query interpretation failed"
+                AssistantUnsupportedReason.INTERPRETATION_FAILED
             )
         }
 
@@ -88,8 +97,14 @@ class InterpretFinancialQueryUseCase @Inject constructor(
         val normalized = rawQuery.trim().lowercase(Locale.getDefault())
         val filters = intent.filters
 
-        // --- Fill period if provider left it null ---
-        val enrichedPeriod = filters.period ?: resolvePeriod(normalized, nowMs)
+        // --- Fill period (and its granularity) if provider left it null ---
+        val resolvedPeriod = if (filters.period == null) {
+            AssistantPeriodResolver.resolveText(normalized, nowMs).period
+        } else {
+            null
+        }
+        val enrichedPeriod = filters.period ?: resolvedPeriod?.toPeriodRange()
+        val enrichedGranularity = if (resolvedPeriod != null) resolvedPeriod.granularity else filters.periodGranularity
 
         // --- Fill categoryIds if provider left them empty ---
         val enrichedCategoryIds = if (filters.categoryIds.isEmpty()) {
@@ -125,7 +140,7 @@ class InterpretFinancialQueryUseCase @Inject constructor(
 
         // --- Fill comparison if provider returned NONE and local cues suggest comparison ---
         val enrichedComparison = if (intent.comparison == QueryComparison.NONE) {
-            if (normalized.contains("compare") || normalized.contains("vs") || normalized.contains("previous")) {
+            if (AssistantPeriodResolver.isComparisonRequested(normalized)) {
                 QueryComparison.PREVIOUS_EQUIVALENT_PERIOD
             } else {
                 QueryComparison.NONE
@@ -140,6 +155,7 @@ class InterpretFinancialQueryUseCase @Inject constructor(
 
         val enrichedFilters = filters.copy(
             period = enrichedPeriod,
+            periodGranularity = enrichedGranularity,
             categoryIds = enrichedCategoryIds,
             transactionTypes = enrichedTypes,
             ownership = enrichedOwnership,
@@ -172,34 +188,20 @@ class InterpretFinancialQueryUseCase @Inject constructor(
             )
         }
 
-        when {
-            isBarePeriodOnlyQuery(normalized, "this month", "current month") -> return FinancialQueryInterpretationResult.Structured(
+        val isBarePeriod = isBarePeriodOnlyQuery(normalized, "this month", "current month") ||
+            isBarePeriodOnlyQuery(normalized, "last month", "previous month") ||
+            isBarePeriodOnlyQuery(normalized, "this week", "current week")
+        if (isBarePeriod) {
+            // Bare period-only queries resolve through the single assistant period lexicon.
+            val barePeriod = AssistantPeriodResolver.resolveText(normalized, now).period
+            return FinancialQueryInterpretationResult.Structured(
                 FinancialQueryIntent(
                     rawQuery = rawQuery,
                     normalizedQuery = normalized,
-                    filters = ExpenseQueryFilters(period = PeriodRange(TimePeriodUtils.getStartOfMonth(now), TimePeriodUtils.getEndOfMonth(now))),
-                    metric = QueryMetric.TOTAL,
-                    grouping = QueryGrouping.NONE,
-                    comparison = QueryComparison.NONE
-                )
-            )
-            isBarePeriodOnlyQuery(normalized, "last month", "previous month") -> return FinancialQueryInterpretationResult.Structured(
-                FinancialQueryIntent(
-                    rawQuery = rawQuery,
-                    normalizedQuery = normalized,
-                    // S11-018: Use TimePeriodUtils instead of Calendar.getInstance()
-                    filters = ExpenseQueryFilters(period = TimePeriodUtils.getMonthRange(now, -1).let { (s, e) -> PeriodRange(s, e) }),
-                    metric = QueryMetric.TOTAL,
-                    grouping = QueryGrouping.NONE,
-                    comparison = QueryComparison.NONE
-                )
-            )
-            isBarePeriodOnlyQuery(normalized, "this week", "current week") -> return FinancialQueryInterpretationResult.Structured(
-                FinancialQueryIntent(
-                    rawQuery = rawQuery,
-                    normalizedQuery = normalized,
-                    // S11-018: Use TimePeriodUtils.getWeekRange instead of Calendar.getInstance()
-                    filters = ExpenseQueryFilters(period = TimePeriodUtils.getWeekRange(now, 0).let { (s, e) -> PeriodRange(s, e) }),
+                    filters = ExpenseQueryFilters(
+                        period = barePeriod.toPeriodRange(),
+                        periodGranularity = barePeriod.granularity
+                    ),
                     metric = QueryMetric.TOTAL,
                     grouping = QueryGrouping.NONE,
                     comparison = QueryComparison.NONE
@@ -220,11 +222,11 @@ class InterpretFinancialQueryUseCase @Inject constructor(
             else -> null
         }
 
-        val period = resolvePeriod(normalized, now)
+        val textPeriod = AssistantPeriodResolver.resolveText(normalized, now)
         val ownership = resolveOwnership(normalized)
         val metric = resolveMetric(normalized)
         val grouping = resolveGrouping(normalized, metric)
-        val comparison = if (normalized.contains("compare") || normalized.contains("vs") || normalized.contains("previous")) {
+        val comparison = if (AssistantPeriodResolver.isComparisonRequested(normalized)) {
             QueryComparison.PREVIOUS_EQUIVALENT_PERIOD
         } else {
             QueryComparison.NONE
@@ -234,7 +236,8 @@ class InterpretFinancialQueryUseCase @Inject constructor(
             rawQuery = rawQuery,
             normalizedQuery = normalized,
             filters = ExpenseQueryFilters(
-                period = period,
+                period = textPeriod.period.toPeriodRange(),
+                periodGranularity = textPeriod.period.granularity,
                 categoryIds = matchedCategory?.id?.let(::setOf) ?: emptySet(),
                 transactionTypes = matchedType?.let(::setOf) ?: emptySet(),
                 ownership = ownership
@@ -250,6 +253,7 @@ class InterpretFinancialQueryUseCase @Inject constructor(
             metric == QueryMetric.COUNT -> true
             metric == QueryMetric.AVERAGE -> true
             metric == QueryMetric.MAX -> true
+            metric == QueryMetric.MIN -> true
             grouping == QueryGrouping.MERCHANT -> true
             grouping == QueryGrouping.CATEGORY -> true
             else -> false
@@ -257,14 +261,23 @@ class InterpretFinancialQueryUseCase @Inject constructor(
 
         if (!supported) {
             return FinancialQueryInterpretationResult.Unsupported(
-                "This kind of query is not supported yet"
+                AssistantUnsupportedReason.METRIC_NOT_SUPPORTED
             )
         }
 
         if (grouping != QueryGrouping.NONE && metric !in setOf(QueryMetric.TOTAL, QueryMetric.LIST)) {
             return FinancialQueryInterpretationResult.Clarification(
                 prompt = "Do you want a total breakdown or a transaction list?",
-                options = listOf("Breakdown", "Transaction list")
+                options = listOf("Breakdown", "Transaction list"),
+                // C4: typed completion so a tap fills the presentation slot without re-interpretation.
+                completion = ClarificationCompletion(
+                    baseIntent = intent,
+                    slot = ClarificationSlot.PRESENTATION,
+                    choices = listOf(
+                        ClarificationChoice.Presentation(PresentationChoice.BREAKDOWN),
+                        ClarificationChoice.Presentation(PresentationChoice.TRANSACTION_LIST)
+                    )
+                )
             )
         }
 
@@ -273,6 +286,8 @@ class InterpretFinancialQueryUseCase @Inject constructor(
 
     private fun resolveMetric(query: String): QueryMetric = when {
         query.contains("largest") || query.contains("biggest") || query.contains("highest") -> QueryMetric.MAX
+        // C5 (INV-C17): MIN is answered by the executor, never re-mapped to TOTAL.
+        query.contains("smallest") || query.contains("cheapest") || query.contains("lowest") || query.contains("minimum") -> QueryMetric.MIN
         query.contains("average") || query.contains("avg") || query.contains("mean") -> QueryMetric.AVERAGE
         query.contains("count") || query.contains("how many") || query.contains("number of") -> QueryMetric.COUNT
         query.contains("show me") || query.contains("list") || query.contains("show ") -> QueryMetric.LIST
@@ -294,18 +309,8 @@ class InterpretFinancialQueryUseCase @Inject constructor(
         else -> QueryOwnershipScope.ALL
     }
 
-    private fun resolvePeriod(query: String, now: Long): PeriodRange? {
-        val pair = when {
-            query.contains("today") -> TimePeriodUtils.getStartOfDay(now) to now
-            query.contains("this week") || query.contains("week") -> TimePeriodUtils.getWeekRange(now, 0).let { (start, end) -> start to end }
-            query.contains("this month") || query.contains("month") -> TimePeriodUtils.getMonthRange(now, 0)
-            query.contains("last month") || query.contains("previous month") -> TimePeriodUtils.getMonthRange(now, -1)
-            query.contains("this quarter") || query.contains("quarter") -> TimePeriodUtils.getStartOfQuarter(now) to now
-            query.contains("this year") || query.contains("year") -> TimePeriodUtils.getStartOfYear(now) to now
-            else -> TimePeriodUtils.getMonthRange(now, 0)
-        }
-        return PeriodRange(start = pair.first, end = pair.second)
-    }
+    /** Wraps the resolver's plain values into the (allowlisted-here) [PeriodRange]. */
+    private fun AssistantPeriod.toPeriodRange(): PeriodRange = PeriodRange(start = startMs, end = endMs)
 
     /**
      * Validates and clamps an amount bound returned by the AI provider.
@@ -315,16 +320,16 @@ class InterpretFinancialQueryUseCase @Inject constructor(
     private fun validateAmountBound(value: Double?, fieldName: String): Double? {
         if (value == null) return null
         if (value.isNaN() || value.isInfinite()) {
-            Timber.w("InterpretFinancialQueryUseCase: AI returned invalid %s=%s — rejecting", fieldName, value)
+            Timber.w("InterpretFinancialQueryUseCase: AI returned invalid %s — rejecting", fieldName)
             return null
         }
         if (value < 0.0) {
-            Timber.w("InterpretFinancialQueryUseCase: AI returned negative %s=%.2f — clamping to 0", fieldName, value)
+            Timber.w("InterpretFinancialQueryUseCase: AI returned negative %s — clamping to 0", fieldName)
             return 0.0
         }
         val MAX_AMOUNT = 1_000_000_000.0
         if (value > MAX_AMOUNT) {
-            Timber.w("InterpretFinancialQueryUseCase: AI returned excessive %s=%.2f — clamping to %.0f", fieldName, value, MAX_AMOUNT)
+            Timber.w("InterpretFinancialQueryUseCase: AI returned excessive %s — clamping to maximum", fieldName)
             return MAX_AMOUNT
         }
         return value
@@ -346,6 +351,10 @@ class InterpretFinancialQueryUseCase @Inject constructor(
             "largest",
             "biggest",
             "highest",
+            "smallest",
+            "cheapest",
+            "lowest",
+            "minimum",
             "average",
             "avg",
             "count",
@@ -369,8 +378,7 @@ class InterpretFinancialQueryUseCase @Inject constructor(
             "mine",
             "not mine",
             "compare",
-            "vs",
-            "previous"
+            "vs"
         )
         return keywords.any(query::contains)
     }

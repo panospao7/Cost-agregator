@@ -13,7 +13,9 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
+import timber.log.Timber
 
 class CurrencyConverterEdgeCaseTest {
 
@@ -30,6 +32,33 @@ class CurrencyConverterEdgeCaseTest {
 
         // Assert
         assertNull(result)
+    }
+
+    @Test
+    fun `missing rate on legacy convert logs no currency pair and no amount`() = runTest {
+        // MC G2-8: the missing-rate log is a bounded marker only.
+        coEvery { exchangeRateStore.getRate(any(), any()) } returns null
+        val logs = mutableListOf<Pair<Throwable?, String>>()
+        val tree = object : Timber.Tree() {
+            override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
+                logs += t to message
+            }
+        }
+        Timber.plant(tree)
+        try {
+            val result = converter.convert(12345.67, "USD", "CHF")
+
+            assertNull(result)
+        } finally {
+            Timber.uproot(tree)
+        }
+
+        val forbidden = listOf("USD", "CHF", "12345", "67")
+        assertTrue("expected a missing-rate log", logs.any { it.second.contains("MISSING_RATE") })
+        assertTrue(
+            "logs were ${logs.map { it.second }}",
+            logs.all { (throwable, message) -> throwable == null && forbidden.none { message.contains(it) } }
+        )
     }
 
     @Test

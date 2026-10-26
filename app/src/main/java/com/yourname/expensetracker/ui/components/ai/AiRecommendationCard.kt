@@ -21,7 +21,9 @@ fun AiRecommendationCard(
     recommendation: String,
     onApply: () -> Unit,
     onDismiss: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    /** C4: false disables Apply (for example a stale clarification option). */
+    applyEnabled: Boolean = true
 ) {
     Card(
         modifier = modifier.fillMaxWidth(),
@@ -40,7 +42,7 @@ fun AiRecommendationCard(
                 style = MaterialTheme.typography.bodyMedium
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = onApply) { Text(stringResource(R.string.ai_receipt_apply)) }
+                OutlinedButton(onClick = onApply, enabled = applyEnabled) { Text(stringResource(R.string.ai_receipt_apply)) }
                 OutlinedButton(onClick = onDismiss) { Text(stringResource(R.string.action_dismiss)) }
             }
         }

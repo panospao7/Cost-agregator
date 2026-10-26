@@ -2,7 +2,9 @@ package com.yourname.expensetracker.ui.screens.transactions
 
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.repository.*
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.currency.ReadHomeCurrencyState
 import com.yourname.expensetracker.domain.location.GeocodingService
 import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.provenance.SourceLinkQueryService
@@ -61,14 +63,20 @@ class TransactionsViewModelTest : ViewModelTestUtils() {
         super.setup()
         Timber.plant(logTree)
         every { categories.allCategories } returns flowOf(emptyList())
+        // MC 1a-3b: the VM reads the typed observable (a relaxed mock would never emit).
+        val currencySettings = mockk<CurrencySettingsRepository>(relaxed = true)
+        every { currencySettings.observeReadHomeCurrency() } returns
+            flowOf(ReadHomeCurrencyState.Available(CurrencyCode.EUR, firstRunDefault = false))
         model = TransactionsViewModel(
             mockk<NotificationRepository>(relaxed = true), expenses, categories,
             recurring,
             mockk<MerchantLocationRepository>(relaxed = true),
             mockk<TimeProvider>(relaxed = true), mockk<GeocodingService>(relaxed = true),
-            mockk<CurrencySettingsRepository>(relaxed = true), sourceLinks,
+            currencySettings, sourceLinks,
             transactionLifecycleCoordinator
         )
+        // Resolve Available(EUR) before any test action so ALL-tab loads use one stable key.
+        testDispatcher.scheduler.runCurrent()
     }
 
     private val originalLocale: java.util.Locale = java.util.Locale.getDefault()
@@ -268,7 +276,7 @@ class TransactionsViewModelTest : ViewModelTestUtils() {
     }
 
     @Test fun `initial page failure emits bounded load error`() = runTest(testDispatcher) {
-        coEvery { expenses.getExpensesPagedDynamic(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } throws hostile
+        coEvery { expenses.getExpensesPagedDynamic(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } throws hostile
         model.error.test {
             model.selectTab(TransactionsViewModel.TransactionTab.ALL)
             assertEquals("Failed to load transactions (TRANSACTION_LOAD_FAILED)", (awaitItem() as UiText.DynamicString).value)
@@ -279,7 +287,7 @@ class TransactionsViewModelTest : ViewModelTestUtils() {
 
     @Test fun `next page failure emits bounded load error`() = runTest(testDispatcher) {
         val firstPage = CompletableDeferred<Unit>()
-        coEvery { expenses.getExpensesPagedDynamic(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } answers {
+        coEvery { expenses.getExpensesPagedDynamic(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } answers {
             if (secondArg<Int>() != 0) throw hostile
             firstPage.complete(Unit)
             List(TransactionsViewModel.PAGE_SIZE) { mockk<ExpenseWithCategory>(relaxed = true) }

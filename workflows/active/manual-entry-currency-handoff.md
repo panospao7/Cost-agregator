@@ -98,6 +98,13 @@ PARKED: S0 at its global-order position (after Release 1.0, ai-fixes, money-corr
 | D | ACCEPTED 2026-10-16 — reviewer-strict ACCEPT-WITH-NOTES (2 minor slice-reference errors S6a→S7a / S6a→S3, inherited from plan §D + G2-6; fixed in loan handoff + plan; reviewer: substance needs no re-review). Review iterations used: 1/2 |
 | S0, A1, A2, B0?, B1, B2, C, Z | planned |
 
+## Notice from money-correctness Z (2026-10-22): apply RF-10 at MEC S0
+money-correctness 1b is implemented and gate-passed on branch feature/money-correctness (not yet merged). Once merged, MEC S0 must:
+- update MEC domain-spec AE-21, AE-29 and §5 ("keep today's defaults until money-correctness lands") to expect `baseCurrency=""`, `baseAmount=0.0`, `exchangeRateUsed=0.0` plus one `MISSING_RATE` for no-rate rows (not 'EUR');
+- update MEC INV-12 owner text: owner = money-correctness `CurrencyFractionDigits` + `roundSnapshot` in `domain/core/money` (OD-1 A);
+- end the MEC INV-15 interim.
+MEC A1 dependency ("money-correctness 1b landed") is met only after the merge.
+
 ## Cross-feature notes from money-correctness domain-spec (2026-10-16)
 - After money-correctness 1b, unconverted no-rate rows store baseCurrency="" (not 'EUR') → this feature's domain-spec AE-21, AE-29, §5 must be updated at MEC S0.
 - DECIDED (money-correctness Gate 2 G2-1, 2026-10-16): money-correctness 1b creates the fraction-digits accessor + HALF_EVEN rounding helper in domain/core/money; MEC A1's CurrencyAmountPolicy REUSES it (MEC A1 dependency becomes "money-correctness 1b landed").

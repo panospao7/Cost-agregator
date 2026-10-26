@@ -1,5 +1,7 @@
 // P8-P1-06: Retention scope expanded to cover AI artifacts and email receipt sources.
-// Remaining gaps: chat messages (AiChatMessageDao), debug diagnostics (ServiceDiagnostics).
+// Chat messages (ai_chat_messages) and pipeline diagnostic events (pipeline_diagnostic_events)
+// are covered below (30-day cutoffs). Not a retention target: ServiceDiagnostics, which keeps
+// only service-lifecycle counters and timestamps (no user content) in SharedPreferences.
 // RP-14: retention perimeter completion — explicit two-stage transaction-event
 // targets, receipt structured-field purge, operation-run/receipt-event/audit
 // targets, typed failure classification, and strict checkpoint terminal semantics.

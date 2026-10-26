@@ -18,6 +18,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -27,6 +28,7 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.currency.ConversionResult
+import com.yourname.expensetracker.domain.currency.ReadHomeCurrencyState
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import com.yourname.expensetracker.ui.util.AmountInputSanitizer
 import java.text.NumberFormat
@@ -48,6 +50,20 @@ internal fun shouldShowAmountError(amount: String, interacted: Boolean): Boolean
     if (!interacted) return false
     return !isAmountParseableAndPositive(amount)
 }
+
+/**
+ * Status text for the home card while the home currency is Loading or Unavailable, or null when
+ * it is Available. The switch picker stays usable in every state (the warning is shown while the
+ * home currency is unknown, G2-6); this only controls what the card says.
+ */
+internal fun homeStateStatusMessageRes(homeState: ReadHomeCurrencyState): Int? = when (homeState) {
+    is ReadHomeCurrencyState.Available -> null
+    is ReadHomeCurrencyState.Loading -> R.string.currency_home_switch_loading
+    is ReadHomeCurrencyState.Unavailable -> R.string.currency_home_switch_unavailable
+}
+
+/** The predicted-count line is shown only for a known, positive count; null (unknown) is omitted. */
+internal fun homeSwitchCountToShow(predictedCount: Int?): Int? = predictedCount?.takeIf { it > 0 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -107,7 +123,7 @@ fun CurrencyManagementScreen(
     ) { padding ->
         val showInitialLoading = uiState.isLoading &&
             uiState.exchangeRates.isEmpty() &&
-            uiState.supportedCurrencies.isEmpty()
+            !uiState.ratesLoaded
 
         Box(
             modifier = Modifier
@@ -178,10 +194,10 @@ fun CurrencyManagementScreen(
                         // Home Currency Card
                         item {
                             HomeCurrencyCard(
-                                homeCurrency = uiState.homeCurrency,
+                                homeState = uiState.homeState,
                                 supportedCurrencies = uiState.supportedCurrencies,
                                 onCurrencySelected = { code ->
-                                    viewModel.setHomeCurrency(code)
+                                    viewModel.request(code)
                                 }
                             )
                         }
@@ -318,7 +334,7 @@ fun CurrencyManagementScreen(
                                         isHomeCurrency = currency.code == uiState.homeCurrency,
                                         modifier = Modifier.weight(1f),
                                         onClick = {
-                                            viewModel.setHomeCurrency(currency.code)
+                                            viewModel.request(currency.code)
                                         }
                                     )
                                 }
@@ -342,17 +358,31 @@ fun CurrencyManagementScreen(
                 }
             )
         }
+
+        // Home-switch warning (MC 1a-4): the only way a home-currency write is started.
+        when (val homeSwitch = uiState.homeSwitch) {
+            is HomeSwitchUi.PendingConfirm -> HomeSwitchDialog(
+                target = homeSwitch.target.code,
+                predictedCount = homeSwitch.predictedCount,
+                onConfirm = { viewModel.confirm() },
+                onDismiss = { viewModel.cancel() }
+            )
+            is HomeSwitchUi.Writing -> HomeSwitchWritingDialog()
+            is HomeSwitchUi.Idle,
+            is HomeSwitchUi.Error -> Unit // errors are shown by the error banner / snackbar
+        }
     }
 }
 
 @Composable
 private fun HomeCurrencyCard(
-    homeCurrency: String,
+    homeState: ReadHomeCurrencyState,
     supportedCurrencies: List<CurrencyInfo>,
     onCurrencySelected: (String) -> Unit
 ) {
+    val homeCurrency = (homeState as? ReadHomeCurrencyState.Available)?.code?.code
     val currentCurrency = supportedCurrencies.find { it.code == homeCurrency }
-    
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
@@ -372,34 +402,45 @@ private fun HomeCurrencyCard(
             )
             
             Spacer(modifier = Modifier.height(8.dp))
-            
-            Row(
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+
+            val statusMessageRes = homeStateStatusMessageRes(homeState)
+            if (homeCurrency == null || statusMessageRes != null) {
+                // Loading / Unavailable: show the state, never a placeholder currency. The picker
+                // below stays usable: a switch request shows the warning while the home is unknown.
                 Text(
-                    text = currentCurrency?.flag ?: "💱",
-                    fontSize = 32.sp
+                    text = stringResource(statusMessageRes ?: R.string.currency_home_switch_unavailable),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = SemanticColors.TextSecondary
                 )
-                
-                Spacer(modifier = Modifier.width(12.dp))
-                
-                Column {
+            } else {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     Text(
-                        text = homeCurrency,
-                        style = MaterialTheme.typography.headlineSmall,
-                        color = SemanticColors.TextPrimary,
-                        fontWeight = FontWeight.Bold
+                        text = currentCurrency?.flag ?: "💱",
+                        fontSize = 32.sp
                     )
-                    Text(
-                        text = currentCurrency?.name ?: stringResource(R.string.label_unknown),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = SemanticColors.TextSecondary
-                    )
+
+                    Spacer(modifier = Modifier.width(12.dp))
+
+                    Column {
+                        Text(
+                            text = homeCurrency,
+                            style = MaterialTheme.typography.headlineSmall,
+                            color = SemanticColors.TextPrimary,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = currentCurrency?.name ?: stringResource(R.string.label_unknown),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = SemanticColors.TextSecondary
+                        )
+                    }
                 }
             }
-            
+
             Spacer(modifier = Modifier.height(12.dp))
-            
+
             var expanded by remember { mutableStateOf(false) }
             
             ExposedDropdownMenuBox(
@@ -792,6 +833,77 @@ private fun ConversionDialog(
         dismissButton = {
             TextButton(onClick = onDismiss) {
                 Text(stringResource(R.string.action_cancel))
+            }
+        }
+    )
+}
+
+/**
+ * Home-switch warning (MC 1a-4), modelled on [ConversionDialog]. The predicted-count line is
+ * omitted when the count is unknown or zero; the explanation says "for now" because a missing
+ * home value can be filled once an exchange rate is available.
+ */
+@Composable
+private fun HomeSwitchDialog(
+    target: String,
+    predictedCount: Int?,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val countToShow = homeSwitchCountToShow(predictedCount)
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                stringResource(R.string.currency_home_switch_title, target),
+                fontWeight = FontWeight.Bold
+            )
+        },
+        text = {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(stringResource(R.string.currency_home_switch_body, target))
+                if (countToShow != null) {
+                    Text(
+                        text = pluralStringResource(
+                            R.plurals.currency_home_switch_count,
+                            countToShow,
+                            countToShow,
+                            target
+                        ),
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = onConfirm) {
+                Text(stringResource(R.string.currency_home_switch_confirm, target))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.action_cancel))
+            }
+        }
+    )
+}
+
+/** Shown while the single home-currency write is in flight; not dismissible. */
+@Composable
+private fun HomeSwitchWritingDialog() {
+    AlertDialog(
+        onDismissRequest = {},
+        confirmButton = {},
+        text = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                CircularProgressIndicator(color = SemanticColors.PrimaryIndigo)
+                Text(stringResource(R.string.currency_home_switch_writing))
             }
         }
     )
