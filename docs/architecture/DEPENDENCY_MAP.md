@@ -454,7 +454,14 @@ BillReminderSettingsRepository             [domain/reminder/BillReminderSettings
   │
   ▼
 BillReminderWorker                         [service/reminder/BillReminderWorker.kt]
-  └──► Checks runtime settings before dispatching notifications
+  ├──► Checks runtime settings before dispatching notifications
+  ├──► NotificationPresentationResolver.resolve(BILL, SDK_INT) → NotificationPresentationApplier.apply()
+  └──► exposes `internal const CHANNEL_ID`, imported const-only (compiler-inlined) by
+       data/service/NotificationKindClassifier — the only permitted member import (S8 ruling)
+
+AndroidNotificationService                 [data/service/AndroidNotificationService.kt]
+  └──► ui/MainActivity (explicit component `Intent(context, MainActivity::class.java)` for
+       notification taps; data/service → ui edge approved under TECH-6, architecture-guardian G1a)
 
 TransactionLifecycleCoordinator
    └──► RecurringLifecycleCoordinator.linkExpenseToOccurrence()  — auto-link hook
@@ -478,7 +485,7 @@ SnoozeReminderReceiver / DismissReminderReceiver
 | `FinancialWeatherRepository` | `data/repository/FinancialWeatherRepository.kt` | `RecurringExpenseRepository`, `PlannedExpenseRepository` |
 | `CashFlowCalculator` | `domain/cashflow/CashFlowCalculator.kt` | `RecurringLifecycleCoordinator` |
 | `ForecastInputAssembler` | `domain/forecasting/ForecastInputAssembler.kt` | `RecurringLifecycleCoordinator` |
-| `BillReminderWorker` | `service/reminder/BillReminderWorker.kt` | `RecurringLifecycleCoordinator.getDueReminders()`, `BillReminderSettingsRepository` |
+| `BillReminderWorker` | `service/reminder/BillReminderWorker.kt` | `RecurringLifecycleCoordinator.getDueReminders()`, `BillReminderSettingsRepository`, `NotificationPresentationResolver`, `NotificationPresentationApplier` |
 | `BillRemindersViewModel` | `ui/screens/reminder/BillRemindersViewModel.kt` | `BillReminderManager`, `CurrencySettingsRepository` |
 | `RecurringRuleLifecycleCoordinator` | `domain/recurring/lifecycle/RecurringRuleLifecycleCoordinator.kt` | Single writer for rule CRUD (consumed by ViewModel) |
 | `RecurringArchitectureGuardTest` | `test/.../RecurringArchitectureGuardTest.kt` | 19 static enforcements for single-writer + typed results |
@@ -895,7 +902,8 @@ MainApplication (@HiltAndroidApp)
                     │     └──► RawNotificationDao, ScannedReceiptDao, PrivacyAuditDao
                     │
                     ├── BillReminderWorker                [service/reminder/BillReminderWorker.kt]
-                    │     └──► RecurringLifecycleCoordinator, NotificationService
+                    │     └──► RecurringLifecycleCoordinator, NotificationPresentationResolver,
+                    │          NotificationPresentationApplier (builds its own notification; does not use NotificationService)
                     │
                     └── ReceiptMatchingWorker             [service/receiptmatching/ReceiptMatchingWorker.kt]
                           └──► ReceiptRepository, ExpenseRepository

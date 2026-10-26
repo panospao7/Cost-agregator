@@ -1,0 +1,63 @@
+# Release note: app lock & privacy, increment 1a (owner review pending)
+
+Status: DRAFT for APP-4. Owner review pending. Adapted from the uncommitted
+orchestrator draft. The ai-fixes B3a paragraph (briefing and warranty
+reminders when notifications are off) is intentionally not here; it belongs to the ai-fixes release note.
+
+Corrections made while adapting, checked against source on 2026-10-24:
+- The lock-screen text is the generic pair "Reminder" / "Open the app to see details." (`notif_public_title`,
+  `notif_public_text`), not "Expense Tracker".
+- The setting is the "Discreet notifications" switch in the "App lock & privacy" section of the Privacy settings
+  screen (`privacy_section_app_lock`, `privacy_toggle_discreet_notifications`).
+
+## User-facing text
+
+**Private notifications**
+- If your phone hides sensitive notification content on the lock screen, the lock screen now shows only a generic
+  "Reminder" notice; details appear after you unlock. For no details anywhere, turn on Discreet notifications.
+- New setting: Privacy settings, "App lock & privacy", "Discreet notifications". When it is on, budget, bill,
+  warranty, receipt, unusual-charge and briefing notifications show only a generic title and text (for example
+  "Bill due" or "Budget alert"), even after you unlock. Turning it on also updates the notifications already in
+  your notification shade, one notification at a time. With many notifications this takes a few seconds, and the
+  switch stays unavailable until it finishes. Rarely, a notification may keep its details; dismiss it to remove
+  them. A notification you dismiss during the update may reappear in discreet form. New notifications are always
+  discreet.
+- If the app cannot read this setting, it behaves as if discreet notifications were on, and the Privacy settings
+  screen says so. If the saved setting is damaged, the screen asks you to review and save your choice.
+
+**Bill reminders (Android 12 and later)**
+- The Snooze and Dismiss buttons on bill reminders now ask you to unlock your phone first. This applies to
+  everyone, whether or not discreet notifications are on. On Android 11 and earlier the buttons behave as before.
+- The button labels now appear in your language (Greek and Spanish). They were English only before.
+
+**Links**
+- Links in web browsers no longer open the app. Tapping a notification works as before. Links are also checked
+  more strictly: unknown or malformed links open the home screen, and a link never creates or fills in an expense.
+
+## Notes for the owner (not for users)
+
+- Greek and Spanish copy for the new strings is best effort and needs an owner spot-check
+  (`strings_notification_presentation.xml`, `strings_privacy_section.xml`, plus the added `action_dismiss` and
+  `notification_briefing_ready_title` entries).
+- Wording constraint (APP-4): say "links from web browsers no longer open the app", not "links can't open the
+  app". Other installed apps can still send a VIEW intent; validation is the boundary, not the manifest.
+- The bill reminder title "Bill due" and its body remain English only in normal (non-discreet) mode. Pre-existing;
+  tracked as a follow-up, not part of this release.
+- Known accepted residuals (spec 4.6), all closed or narrowed by G1b post-sweep verification where noted:
+  - (a) A post by other app code within about 300 ms of a sweep update (including several budget alerts back to
+    back) can still make the platform drop that update silently, leaving FULL content on that notification.
+    The G1b post-sweep verification closes this.
+  - (b) A notification the user dismisses during the sweep window (up to N x 300 ms, about 15 s at 50
+    notifications) is re-posted as a fresh notification. The content is discreet, but it may make a sound on a
+    high-importance channel.
+  - (c) Turning discreet on keeps the switch disabled for the duration of the sweep (seconds with a full shade).
+  - (d) A FULL decision resolved just before the setting commit but posted after the sweep's single query stays
+    FULL (a millisecond window; `postForKind` and `BillReminderWorker`). G1b verification closes it.
+  - (e) Process death mid-sweep leaves the remaining notifications FULL until they are replaced.
+  - G1b verification re-posts any sweep-kind notification whose presentation token is not "D" (an absent token
+    counts), which is how (a), (d) and marker-less originals are covered.
+  - User-facing copy must not promise that every notification updates instantly.
+- Device checks at G1a. Done: AE-16 (browser link is unresolvable by the app), FG-22 (10 malformed links, no
+  crash), NotificationPresentationDeviceTest 11/11 on API 35 and API 26, covering AE-14, AE-15, AE-102, AE-112
+  (simulated marker-less path), AE-32 and INV-10 (auth required). Owed or optional: real lock-screen rendering,
+  tapping Snooze/Dismiss on a locked API 31+ phone, and a real pre-1a to 1a upgrade smoke.

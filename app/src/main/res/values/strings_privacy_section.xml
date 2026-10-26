@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- S12: 1a "App lock & privacy" section (discreet row only). No lock/PIN/secure-screen copy in 1a. -->
+    <string name="privacy_section_app_lock">App lock &amp; privacy</string>
+    <string name="privacy_toggle_discreet_notifications">Discreet notifications</string>
+    <string name="privacy_discreet_notifications_support">Notifications say \"Bill due\" or \"Budget alert\" instead of amounts, merchants and product names. Also applies to smartwatches and car displays.</string>
+    <string name="privacy_discreet_notifications_unreadable">Shown as discreet until the setting can be read.</string>
+    <string name="privacy_app_lock_checking">Checking…</string>
+    <string name="privacy_section_unreadable">Can\'t read your privacy settings. Notifications are shown as discreet until the settings can be read.</string>
+    <string name="privacy_app_lock_retry">Try again</string>
+    <string name="privacy_review_card_title">Review your privacy settings</string>
+    <string name="privacy_review_card_body">The app couldn\'t read your saved privacy settings, so it is using the safest options. Choose your settings below, then save.</string>
+    <string name="privacy_review_card_save">Save settings</string>
+    <string name="privacy_review_saved">Settings saved</string>
+    <string name="privacy_setting_save_failed">Couldn\'t save the setting. Try again.</string>
+</resources>

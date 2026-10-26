@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Greek notification presentation copy (app-lock-privacy-mode, S5a).
+  DRAFT, owner spot-check required before release. Same constraints as the English file: kind only,
+  no amount, merchant, product, severity, date, count or AI text, and no emoji.
+-->
+<resources>
+    <string name="notif_discreet_bill_title">Λογαριασμός προς πληρωμή</string>
+    <string name="notif_discreet_bill_text">Ανοίξτε την εφαρμογή για λεπτομέρειες.</string>
+
+    <string name="notif_discreet_anomaly_title">Εντοπίστηκε ασυνήθιστη χρέωση</string>
+    <string name="notif_discreet_anomaly_text">Ανοίξτε την εφαρμογή για έλεγχο.</string>
+
+    <string name="notif_discreet_budget_title">Ειδοποίηση προϋπολογισμού</string>
+    <string name="notif_discreet_budget_text">Ένας προϋπολογισμός χρειάζεται την προσοχή σας. Ανοίξτε την εφαρμογή για έλεγχο.</string>
+
+    <string name="notif_discreet_warranty_title">Υπενθύμιση εγγύησης</string>
+    <string name="notif_discreet_warranty_text">Μια εγγύηση χρειάζεται την προσοχή σας. Ανοίξτε την εφαρμογή για έλεγχο.</string>
+
+    <string name="notif_discreet_receipt_match_title">Η απόδειξη αντιστοιχίστηκε</string>
+    <string name="notif_discreet_receipt_match_text">Ανοίξτε την εφαρμογή για έλεγχο.</string>
+
+    <!-- Translation of the existing English notification_briefing_ready_title (used for Normal and Discreet) -->
+    <string name="notification_briefing_ready_title">Η ενημέρωσή σας από την τεχνητή νοημοσύνη είναι έτοιμη</string>
+    <string name="notif_discreet_briefing_text">Ανοίξτε την εφαρμογή για να τη διαβάσετε.</string>
+
+    <string name="notif_public_title">Υπενθύμιση</string>
+    <string name="notif_public_text">Ανοίξτε την εφαρμογή για λεπτομέρειες.</string>
+
+    <string name="notif_action_snooze">Αναβολή</string>
+
+    <!-- Missing el entry for the existing action_dismiss (ux-flows 9.4) -->
+    <string name="action_dismiss">Απόρριψη</string>
+</resources>

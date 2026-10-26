@@ -77,5 +77,37 @@ enum class DiagnosticReasonCode {
 
     // RP-17 17-E: connection was disconnected when a token write was attempted
     // (conditional update affected zero rows).
-    CONNECTION_DISCONNECTED
+    CONNECTION_DISCONNECTED,
+
+    // app-lock-privacy-mode S2 (OD-12a): controlled privacy-pipeline codes, emitted only through
+    // PrivacyDiagnosticsEmitter (typed metadata, never payload-derived). Append-only: persisted by
+    // name as TEXT and parsed with runCatching readers, so older builds tolerate unknown names.
+    // Notification content policy (spec 10).
+    NOTIF_POLICY_SETTINGS_UNREADABLE,
+    NOTIF_POLICY_FALLBACK_EXCEPTION,
+    NOTIF_ACTIONS_SUPPRESSED_LOCK,
+    NOTIF_REPOSTED_DISCREET,
+    NOTIF_REPOST_FAILED,
+
+    // Deep-link policy (spec 5.7, closed set).
+    DL_APPLIED,
+    DL_HELD_LOCKED,
+    DL_HELD_REPLACED,
+    DL_HELD_EXPIRED,
+    DL_REJECTED_ACTION,
+    DL_REJECTED_MALFORMED,
+    DL_REJECTED_UNKNOWN_HOST,
+    DL_REJECTED_BANK_HOST,
+    DL_PARAM_UNKNOWN_DROPPED,
+    DL_PARAM_INVALID_DROPPED,
+    DL_BRIEFING_KEY_NOT_DELIVERED,
+    DL_BRIEFING_STATE_UNREADABLE,
+    DL_TARGET_NOT_FOUND,
+    DL_TARGET_READ_BLOCKED,
+    DL_DIAGNOSTICS_SUPPRESSED,
+
+    // App-lock settings durability (spec 10; AMD-1, AMD-10).
+    LOCK_SETTING_PERSIST_FAILED,
+    LOCK_SETTINGS_UNREADABLE,
+    LOCK_SETTINGS_REVIEW_SAVED
 }

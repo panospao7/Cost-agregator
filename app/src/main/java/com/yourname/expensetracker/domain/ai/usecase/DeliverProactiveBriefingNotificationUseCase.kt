@@ -7,6 +7,7 @@ import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.ai.service.AiEngagementRepository
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
+import com.yourname.expensetracker.domain.notification.presentation.NotificationKind
 import com.yourname.expensetracker.domain.service.NotificationService
 import kotlinx.coroutines.flow.first
 import javax.inject.Inject
@@ -56,17 +57,23 @@ class DeliverProactiveBriefingNotificationUseCase @Inject constructor(
         // INV-24/INV-27: permission gates posting only, and only a delivery that would
         // otherwise have been attempted is reported as permission-denied.
         if (!notificationsAllowed) return BriefingDeliveryOutcome.NOTIFICATION_PERMISSION_DENIED
-        val deliveryResult = notificationService.sendAiBriefingReadyWithResult(
+        // S6 (INV-4, INV-12): declare the BRIEFING kind. Only DELIVERED records lastDelivered
+        // (PERMISSION_DENIED, TECH-9, is never a delivery); targetKey and the id are unchanged.
+        val deliveryResult = notificationService.sendAiBriefingReadyForKind(
+            kind = NotificationKind.BRIEFING,
             notificationId = notificationId,
             title = BRIEFING_NOTIFICATION_TITLE,
             message = summary.take(180),
             targetKey = targetKey
         )
         // Exhaustive on purpose (no else branch): a new DeliveryResult value must be
-        // mapped here explicitly (merge with the app-lock kind-aware results).
+        // mapped here explicitly (merge with the app-lock kind-aware results). PERMISSION_DENIED
+        // (post refused by a SecurityException, TECH-9) maps to NOTIFICATION_PERMISSION_DENIED.
         when (deliveryResult) {
             NotificationService.DeliveryResult.DELIVERED -> Unit
             NotificationService.DeliveryResult.NOT_DELIVERED -> return BriefingDeliveryOutcome.NOT_DELIVERED
+            NotificationService.DeliveryResult.PERMISSION_DENIED ->
+                return BriefingDeliveryOutcome.NOTIFICATION_PERMISSION_DENIED
         }
 
         aiEngagementRepository.setLastDeliveredDashboardBriefingKey(targetKey)

@@ -1,6 +1,6 @@
 # Legal Paths — Architecture Law
 
-> **Last updated:** 2026-10-13 (schema/savings delta verified against code: DB v151; prior guarded-worker/CI verification retained)
+> **Last updated:** 2026-10-24 (app-lock-privacy-mode 1a: NOTIFICATION PRESENTATION, DEEP LINKS and APP LOCK SETTINGS WRITE PATH sections added; DISPATCH reminder and Anomaly Alerting steps corrected). Earlier: 2026-10-13 (schema/savings delta verified against code: DB v151; prior guarded-worker/CI verification retained)
 >
 > **Purpose:** Define the ONE allowed implementation path for each major operation.  
 > **Rule:** Any code that uses a different path is a bug, regardless of whether it "works."  
@@ -375,6 +375,12 @@ RECONCILE linked expenses after bulk update:
 DISPATCH reminder:
   → BillReminderWorker → RecurringLifecycleCoordinator.getDispatchableClaimedReminder()
   → Post-claim revalidation: verify occurrence still PLANNED
+  → Per reminder, after claim + revalidation and immediately before the post:
+    NotificationPresentationResolver.resolve(NotificationKind.BILL, Build.VERSION.SDK_INT)
+    (bounded read, fail-closed to DISCREET; CancellationException propagates, nothing is posted)
+  → sendNotification(..., decision) builds channel/icon/priority itself, then
+    NotificationPresentationApplier.apply(...) sets title/text, PRIVATE visibility, the generic
+    public version, the action policy and the BILL kind marker (see NOTIFICATION PRESENTATION)
   → sendNotification() returns NotificationSendResult.Sent/Failed
   → Runtime settings check (enabled/quiet hours via BillReminderSettingsRepository)
 
@@ -1137,7 +1143,8 @@ CHECK AND ALERT:
   → Cooldown check: 24h per merchant, 12h per category
   → Dedup check against recent alerts (same expenseId)
   → Severity filter: only HIGH severity triggers notification
-  → NotificationService.send() if all checks pass
+  → NotificationService.postAnomalyAlertForKind(ANOMALY, ...) if all checks pass
+    (kind-aware path only; see NOTIFICATION PRESENTATION)
   → AnomalyAlertDao.insert for audit trail
 
 FORBIDDEN:
@@ -1602,4 +1609,247 @@ FORBIDDEN:
      option label)
   ❌ Calling providers or the network on clarification completion
   ❌ Persisting pending clarification state (it is in-memory only; restored transcripts never regain it)
+```
+
+---
+
+## Notification Presentation (app-lock-privacy-mode, increment 1a)
+
+```
+SCOPE:
+  Every app-built notification of the six kinds BILL, ANOMALY, BUDGET, WARRANTY, BRIEFING,
+  RECEIPT_MATCH (domain/notification/presentation/NotificationKind, closed registry, INV-12).
+  The capture foreground-service notification (NotificationCaptureService) is NOT a kind: it keeps
+  its constant generic text and never goes through the policy.
+
+POST an app notification (one path):
+  → caller (BudgetMonitor, AnomalyAlertOrchestrator, DeliverProactiveBriefingNotificationUseCase,
+    WarrantyExpirationWorker, ReceiptMatchingWorker) passes its own kind to a kind-aware method:
+    NotificationService.sendBudgetAlertForKind / postBudgetAlertForKind /
+    sendAiBriefingReadyForKind / sendAnomalyAlertForKind / postAnomalyAlertForKind
+    (there is no kind-less method; the legacy send*/post* forms were removed in S9a, INV-12)
+  → AndroidNotificationService.postForKind (areNotificationsEnabled check first, so a disabled app
+    never reads the settings)
+  → NotificationPresentationResolver.resolve(kind, Build.VERSION.SDK_INT)   [@Singleton]
+      one bounded read of AppLockSettingsRepository.getLoadState() (withTimeoutOrNull, T_read 500 ms,
+      no runBlocking); unreadable / timeout / unexpected exception → DISCREET (fail-closed) with a
+      bounded NOTIF_POLICY_SETTINGS_UNREADABLE(cause) or NOTIF_POLICY_FALLBACK_EXCEPTION(exception
+      class) diagnostic launched on @ApplicationScope and never awaited;
+      CancellationException is rethrown before the fallback catch
+  → NotificationContentPolicy.decide(kind, loadState, sdkInt)   [pure domain object; the single
+    owner of mode FULL/DISCREET, expanded-style permission and the action policy
+    UNCHANGED / AUTH_REQUIRED / NONE; BILL actions are AUTH_REQUIRED on API 31+, UNCHANGED on API 30
+    and below in 1a]
+  → NotificationPresentationApplier.apply(builder, decision, channelId, smallIcon, title, text, actions)
+      [@Singleton, data/service; the ONE place a decision is applied to a builder]
+      PRIVATE visibility always (never PUBLIC); generic public version always attached (no actions,
+      no style, no marker, no content intent); FULL shows caller text, DISCREET shows only the
+      kind's resource constants (NotificationPresentationTexts) and never reads the detailed text;
+      BigText only in FULL for BRIEFING/ANOMALY; actions per policy; the hidden kind marker is
+      stamped on the PRIVATE version only (NotificationKindMarker, extras key
+      com.yourname.expensetracker.extra.NOTIFICATION_KIND, value = NotificationKind.stableToken)
+  → NotificationManager.notify(id, notification)
+      SecurityException → DeliveryResult.PERMISSION_DENIED (bounded Log.w: kind token + class only);
+      every other exception, including CancellationException, propagates to the caller
+
+BUILDER OWNERS (exactly two; both call the applier, neither sets title/text/style/actions/marker itself):
+  1. AndroidNotificationService — postForKind (live posts) and rebuildDiscreet (re-post sweep)
+  2. BillReminderWorker — resolves the BILL decision inside the guard lambda per reminder, after
+     claim and revalidation, then applies it in sendNotification (still no content intent)
+
+RE-POST sweep (turning discreet on, see APP LOCK SETTINGS WRITE PATH):
+  → NotificationService.repostActiveAsDiscreet() → AndroidNotificationService
+  → ONE NotificationManager.activeNotifications query (SecurityException → RepostResult(0, 1) +
+    NOTIF_REPOST_FAILED(EXCEPTION_CLASS))
+  → per notification, inside one try (CancellationException rethrown first; any other Exception
+    counts failed++, Log.w class name only, NOTIF_REPOST_FAILED(EXCEPTION_CLASS), the sweep goes on):
+      • skip Notification.FLAG_GROUP_SUMMARY (system ranker_group summary; the app never posts
+        summaries; neither reposted nor failed)
+      • NotificationKindClassifier.classify(channelId, notificationId, rawMarker)
+          1. marker first — only when present, a known stableToken, AND allowed on that channel
+             (budget_alerts: BUDGET/WARRANTY/RECEIPT_MATCH; bill_reminders: BILL; anomaly_alerts:
+             ANOMALY; ai_briefings: BRIEFING)
+          2. else channel / id-range fallback for marker-less (pre-1a) notifications:
+             bill_reminders = BILL, anomaly_alerts = ANOMALY, ai_briefings = BRIEFING;
+             budget_alerts id 10000..19999 = WARRANTY, 20000..29999 = RECEIPT_MATCH, other = BUDGET
+          3. any other channel (including the capture channel) → null → skipped
+      • NotificationContentPolicy.decideDiscreet(kind, sdkInt) (no second settings read)
+      • fresh builder → NotificationPresentationApplier.apply (stamps the kind marker again);
+        from the original it reuses only id, tag, channel, content intent, action PendingIntents
+        (BILL only, mapped by position onto resource-titled templates) and the post time;
+        setOnlyAlertOnce(true); copies no text, extra, style, group, sort key or large icon
+  → PACING: before EVERY re-post (including the first) SweepPacer.pause(SWEEP_REPOST_SPACING_MS = 300)
+    runs, so the platform's per-app post rate limit does not silently drop sweep updates. The pause
+    is cancellable (CancellationException propagates). Skipped notifications (group summary, null kind,
+    failed classify) are not paused. The window is N x 300 ms (about 15 s at 50 notifications).
+  → NOTIF_REPOSTED_DISCREET(COUNT) when at least one was re-posted
+  Accepted residuals (spec 4.6):
+    • a notification dismissed between the query and its re-post (up to N x 300 ms) comes back as a
+      new post and can alert on a HIGH-importance channel; the content is discreet
+    • a post by other code within about 300 ms of a sweep update, including BillReminderWorker's
+      direct post and back-to-back budget alerts, can still make the platform drop that update
+      silently, leaving FULL content
+    • reposted / NOTIF_REPOSTED_DISCREET count accepted notify() calls, not displayed updates
+    • a FULL decision resolved just before the setting commit but posted after the sweep's single query
+      stays FULL (millisecond window; postForKind / BillReminderWorker)
+    • process death mid-sweep leaves the remaining notifications FULL until they are replaced
+  G1b carry-forward (binding, plan "Orchestrator carry-forwards from the G1a reviews"): post-sweep
+  verification via a content-free presentation-mode token (D / F) next to NotificationKindMarker.EXTRA_KEY,
+  a settle of at least 500 ms, one paced re-post of every sweep-kind notification whose token is NOT "D"
+  (an absent token counts: pre-1a / marker-less originals and the residuals above), one COUNT-only
+  diagnostic (NOTIF_REPOST_UNCONFIRMED); the token stays off the public version; it never blocks cleanup.
+  Triggers: per-field discreet write (UpdateDiscreetNotificationsUseCase) and a committed review-save
+  (AppLockPrivacySettingsViewModel, before value "was off"); both go through DiscreetRepostTrigger.
+
+FORBIDDEN:
+  ❌ Any kind-less notification method on NotificationService (INV-12)
+  ❌ A third builder owner, or setting title/text/style/actions/visibility/public version/marker
+     outside NotificationPresentationApplier
+  ❌ Choosing FULL/DISCREET or the action policy anywhere but NotificationContentPolicy
+  ❌ VISIBILITY_PUBLIC on an app notification
+  ❌ Stamping the kind marker anywhere but the applier, or putting it on the public version
+  ❌ Putting merchant/amount/product/OCR text in a log, diagnostic or the marker (diagnostics carry
+     bounded codes, kind tokens, counts and exception class names only)
+  ❌ A new non-service importer of BillReminderWorker from NotificationKindClassifier: the classifier
+     may import ONLY the const-inlined `internal const val CHANNEL_ID` (S8 architecture ruling;
+     follow-up: move the BILL channel/shape/action templates into one data/service holder)
+  ❌ Running the sweep on a failed or rejected write, or when discreet turns off (see below)
+  ❌ Calling DiscreetRepostTrigger without NonCancellable (a committed ON must not miss its sweep)
+  ❌ Re-posting in the sweep without the SweepPacer pause, or a non-cancellable pause
+  ❌ Swallowing CancellationException anywhere in resolve / post / sweep
+```
+
+---
+
+## Deep Links (app-lock-privacy-mode, increment 1a)
+
+```
+ENTRY (the only one):
+  → MainActivity.handleIntent(intent)
+  → DeepLinkPolicy.evaluate(intent.action, intent.dataString)   [ui/navigation, object in
+    DeepLinkParser.kt; pure, no IO, never throws, never logs; the ONLY parser of expensetracker://]
+  → NotADeepLink → handleIntent returns false (not a link at all)
+  → otherwise lifecycleScope.launch { DeepLinkApplier.apply(result, mainViewModel) }   (true = the
+    intent data is consumed one-shot, even for a rejected link)
+
+EVERY expensetracker: URI is untrusted, internal notification taps included (F9). The manifest is
+not the security boundary: the exported launcher activity accepts any URI, so validation here is.
+
+POLICY (spec 5):
+  • action must be ACTION_VIEW, else Rejected(ACTION) → ignored, no navigation
+  • raw data string > 2048 chars → Rejected(MALFORMED) before parsing
+  • not hierarchical, any '#', non-ASCII before the query, userinfo, port, or a path other than
+    empty or "/" → Rejected(MALFORMED)
+  • host: exact-case closed set DeepLinkHost = home, dashboard, activity, review, plan, add,
+    analytics, map; bank hosts → Rejected(BANK_HOST); any other host → Rejected(UNKNOWN_HOST)
+  • one allowed parameter per host, everything else dropped and counted:
+      home/dashboard: briefingKey = "dashboard_home:" + real yyyy-MM-dd (<= 32 chars)
+      activity: expenseId = 1..Long.MAX_VALUE (1..19 ASCII digits)
+      analytics: period from TimePeriodTokens (shared allowlist)
+      map: location, trimmed, 1..100 chars, no control/format characters
+      review/plan/add: none (no link creates or prefills data, INV-17)
+    duplicate or invalid values are dropped to the host default
+  • result carries DeepLinkRequest (host + validated fields; toString names the host only) — no raw
+    URI, host string or parameter value exists after this point
+
+APPLIER (ui/navigation/DeepLinkApplier, the only code that acts on a link):
+  • Rejected(ACTION) → no navigation; every other rejection → Home
+  • navigates only through MainViewModel's existing methods
+  • home/dashboard with a validated briefingKey → MarkDashboardBriefingOpenedUseCase: writes
+    lastOpenedDashboardBriefingKey ONLY when the key equals the persisted last delivered key (read
+    at apply time) — the single persistent write reachable from a link (INV-16, closes advisory C4)
+  • activity with a valid expenseId → read-only ExpenseRepository.getExpenseById; not found,
+    read failure or no id degrades to Transactions with a bounded code; CancellationException propagates
+  • add → opens an empty add sheet (never prefilled)
+  • diagnostics: bounded DL_* codes (host / parameter enums, booleans, counts, exception class)
+    launched on @ApplicationScope, never awaited; no raw URI, host string, briefingKey or parameter
+    value in any log, diagnostic or AiRuntimeDiagnostics message (INV-18)
+  • 1a has no lock, so links apply immediately (afterUnlock = false); the held-link gate belongs
+    to increment 1b
+
+MANIFEST (INV-20, OD-3a):
+  • MainActivity VIEW filter: action VIEW + category DEFAULT + 8 <data> entries for the scheme
+    expensetracker (hosts above). NO BROWSABLE category: links from web browsers no longer open
+    the app. Other installed apps can still send VIEW; DeepLinkPolicy is the boundary.
+  • Notification taps use an explicit MainActivity component + ACTION_VIEW + FLAG_IMMUTABLE
+    (built only in AndroidNotificationService; BillReminderWorker builds no content intent)
+
+FORBIDDEN:
+  ❌ Parsing, matching or logging an expensetracker: URI anywhere outside DeepLinkPolicy
+  ❌ Acting on a link anywhere but DeepLinkApplier
+  ❌ A link that creates, edits, deletes or prefills data (INV-17)
+  ❌ A persistent write from a link other than MarkDashboardBriefingOpenedUseCase (equals-last-delivered)
+  ❌ Re-adding android.intent.category.BROWSABLE to the expensetracker filter
+  ❌ Raw URI / host / briefingKey / parameter values in logs or diagnostics
+  ❌ Swallowing CancellationException in the applier
+```
+
+---
+
+## App Lock Settings Write Path (app-lock-privacy-mode, increment 1a)
+
+```
+STORE:
+  AppLockSettingsRepository (domain/privacy/applock; impl data/privacy/applock, own DataStore,
+  device-local, never Room, never in .costbackup) is the ONLY reader and writer of the app-lock /
+  privacy settings (INV-1). Consumers observe committed state only (INV-46): no optimistic value.
+  Unreadable states never render or evaluate as Off (INV-2): the effective discreet value is
+  fail-closed (on) via EffectivePrivacyValues.
+
+READ for a notification: NotificationPresentationResolver (see NOTIFICATION PRESENTATION).
+READ for the UI: AppLockPrivacySettingsViewModel ← AppLockSettingsRepository.observeLoadState().
+
+WRITE 1 — per-field discreet toggle (1a, the only per-field writer):
+  → AppLockPrivacySection (UI) → AppLockPrivacySettingsViewModel.setDiscreetNotifications
+     (ignored unless Ready and idle, INV-44)
+  → appScope.launch (@ApplicationScope, IO) { withContext(NonCancellable) {
+        AppLockSettingsWriteSerializer.withExclusiveWrite { ... } } }
+  → UpdateDiscreetNotificationsUseCase(enabled)
+      1. before = effective discreet from getLoadState() (trusted only for Loaded / FirstRunDefault;
+         Unreadable counts as was-off)
+      2. AppLockSettingsRepository.setDiscreetNotifications(enabled)
+         (Rejected(UNREADABLE) when the store is unreadable; Failed(DISCREET) when the commit fails)
+      3. on Committed ONLY → DiscreetRepostTrigger.onCommittedWrite(before, after)
+            sweeps only on the false → true edge: NotificationService.repostActiveAsDiscreet()
+            (see NOTIFICATION PRESENTATION); off never re-posts; on → on is not an edge;
+            SWEEP_FAILED is returned only when the sweep itself throws (non-cancellation): recorded as
+            NOTIF_REPOST_FAILED(EXCEPTION_CLASS); the committed write is NOT failed; CancellationException
+            rethrown. Per-notification failures, and a SecurityException on the active-notification query,
+            come back as RepostResult.failed with their own NOTIF_REPOST_FAILED and the trigger returns SWEPT
+      4. Failed → the use case records LOCK_SETTING_PERSIST_FAILED(FIELD=DISCREET) (the repository
+         leaves diagnostics to its caller); Rejected records nothing and sweeps nothing
+  → the committed value reaches the UI only through the store observer; Failed and Rejected show the
+    SAVE_FAILED notice (owner decision 2026-10-24)
+
+WRITE 2 — review-save (1a; replaces a CORRUPTED / INVALID_VALUE store):
+  → AppLockPrivacySettingsViewModel.saveReview (review card; the only write accepted in that state)
+  → same scope + NonCancellable + AppLockSettingsWriteSerializer wrapper as WRITE 1
+  → AppLockSettingsRepository.reviewSave(AppLockPrivacySettings(discreet = choice))
+     (one atomic whole-record write, marker NORMAL; the only write that clears the sentinel, only on success)
+  → 1a has no lock, so no authentication applies (INV-45, 1a note); 1b moves authorisation into
+    AppLockController
+  → diagnostics are owned by the ViewModel in 1a (INTERIM, retired at S18):
+      Committed → LOCK_SETTINGS_REVIEW_SAVED; Failed / Rejected / unexpected exception →
+      LOCK_SETTING_PERSIST_FAILED(FIELD=REVIEW_SAVE); every emit is wrapped so a diagnostics failure
+      cannot turn a committed save into a reported failure
+  → on Committed → DiscreetRepostTrigger.onCommittedWrite(false, after), inside the same serializer /
+    NonCancellable block; Failed, Rejected or thrown saves never reach it
+
+SERIALISATION (INTERIM): AppLockSettingsWriteSerializer (@Singleton, ui/screens/privacysettings, a
+process-wide Mutex) so a write started by an earlier ViewModel instance still excludes the next
+one's before-read / write / sweep. S18 moves it to the domain owner before any new writer is added
+(domain code cannot depend on the ui package) and takes over review-save diagnostics.
+
+FORBIDDEN:
+  ❌ Writing the settings store anywhere but AppLockSettingsRepositoryImpl
+  ❌ A per-field write while the store is Unreadable (INV-44); only reviewSave clears it
+  ❌ Running the re-post sweep before the write is committed, or on a failed / rejected write (INV-46, AE-105)
+  ❌ Re-posting when discreet turns off, or on an on → on write
+  ❌ Failing or rolling back a committed write because the sweep failed
+  ❌ A settings write outside the serializer, or launched in viewModelScope (a committed ON would then
+     miss its sweep when the screen is left)
+  ❌ Optimistic UI state not derived from the committed load state
+  ❌ A second diagnostics owner for review-save in 1a (the ViewModel is the interim owner until S18)
+  ❌ Calling DiscreetRepostTrigger without NonCancellable and the serializer (review-save included)
+  ❌ Raw settings text, paths or stack traces in diagnostics (bounded codes + FIELD enum only)
 ```

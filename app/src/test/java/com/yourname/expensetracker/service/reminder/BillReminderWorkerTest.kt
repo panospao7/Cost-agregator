@@ -9,7 +9,14 @@ import androidx.work.WorkerParameters
 import androidx.work.testing.TestListenableWorkerBuilder
 import com.yourname.expensetracker.data.database.entity.RecurringOccurrence
 import com.yourname.expensetracker.data.database.entity.RecurringReminderDelivery
+import com.yourname.expensetracker.data.service.NotificationPresentationApplier
+import com.yourname.expensetracker.data.service.NotificationPresentationTexts
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
+import com.yourname.expensetracker.domain.notification.presentation.NotificationActionPolicy
+import com.yourname.expensetracker.domain.notification.presentation.NotificationKind
+import com.yourname.expensetracker.domain.notification.presentation.NotificationPresentationDecision
+import com.yourname.expensetracker.domain.notification.presentation.NotificationPresentationMode
+import com.yourname.expensetracker.domain.notification.presentation.NotificationPresentationResolver
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
 import com.yourname.expensetracker.domain.reminder.BillReminderSettings
@@ -58,6 +65,7 @@ class BillReminderWorkerTest {
     private lateinit var diagnosticEventWriter: DiagnosticEventWriter
     private lateinit var reminderSettingsRepository: BillReminderSettingsRepository
     private lateinit var timeProvider: FakeTimeProvider
+    private lateinit var presentationResolver: NotificationPresentationResolver
 
     @Before
     fun setup() {
@@ -67,6 +75,15 @@ class BillReminderWorkerTest {
         diagnosticEventWriter = mockk(relaxed = true)
         reminderSettingsRepository = mockk()
         timeProvider = FakeTimeProvider(0L)
+        // The legacy behaviour tests below run in FULL mode (today's visible text, UNCHANGED actions);
+        // the DISCREET / AUTH_REQUIRED contract is in BillReminderWorkerNotificationPresentationTest.
+        presentationResolver = mockk()
+        coEvery { presentationResolver.resolve(any(), any()) } returns NotificationPresentationDecision(
+            kind = NotificationKind.BILL,
+            mode = NotificationPresentationMode.FULL,
+            expandedStyleAllowed = false,
+            actionPolicy = NotificationActionPolicy.UNCHANGED
+        )
 
         // Default guard setup: runs the block (can be overridden per test)
         coEvery { executionGuard.runGuardedWithContext(any(), any<suspend (WorkerRunContext) -> Any>()) } coAnswers {
@@ -109,7 +126,9 @@ class BillReminderWorkerTest {
                         executionGuard,
                         diagnosticEventWriter,
                         reminderSettingsRepository,
-                        timeProvider
+                        timeProvider,
+                        presentationResolver,
+                        NotificationPresentationApplier(context, NotificationPresentationTexts(context))
                     )
                 }
             })

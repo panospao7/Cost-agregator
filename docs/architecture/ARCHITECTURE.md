@@ -36,7 +36,7 @@
 - ~1075 production Kotlin source files (~1758 including unit tests) across domain, data, ui, di, util, service, startup, and worker packages
 - 68 DAOs (64 in DaoModule + 3 in AiModule + 1 unbound), 70 entities registered in AppDatabase
 - 42 @HiltViewModel (41 *ViewModel.kt files + 1 inline in RecurringExpensesScreen.kt)
-- 34 @Module Hilt modules
+- 35 @Module Hilt modules
 - SimpleDateFormat → DateTimeFormatter: migration **substantially complete but not 100%** — one production usage remains (chart axis day label in `ui/screens/analytics/AnalyticsScreen.kt`); other matches in main source are KDoc/comments only. Residual `java.util.Calendar` usage is concentrated in `domain/util`, UI screens, `domain/logic` (SynthesisEngine), and debug/diagnostics helpers.
 - Time handling seam: `TimeProvider` (`domain/util/TimeProvider.kt`, epoch-millis `now()`) bound via `TimeModule` to `SystemTimeProvider`; `MonotonicTimeProvider` → `SystemMonotonicTimeProvider`. Callers derive `LocalDate`/`Instant` from `timeProvider.now()` (see `TIME_SEMANTICS.md`). The T1–T4C java.time migration series replaced `Calendar`/`SimpleDateFormat` boundary math with java.time + injected `TimeProvider` in analytics, budget, cashflow, and dashboard pipelines; direct wall-clock reads are policed by the G-TIME-01 guard `scripts/verify_time_boundaries.py` with exact-exception policy `config/guards/time_boundary_exceptions.yml` (4 entries).
 - REPLACE → IGNORE: **14 of 14 DAOs converted** (3 kept with KDoc: ExchangeRateDao ×2, AiArtifactDao ×1) (verified 2026-09-07)
@@ -893,14 +893,14 @@ FinancialWeatherRepository
 
 ## Dependency Injection
 
-### Hilt Modules (34 total)
+### Hilt Modules (35 total)
 - **Core:** `DatabaseModule`, `DaoModule`, `DispatchersModule`, `ApplicationScope`, `TimeModule`, `ServiceModule`, `WorkerModule`, `AppForegroundModule`
 - **AI:** `AiModule`, `OcrImprovementsModule`, `NaturalLanguageModule`
 - **Dashboard:** `DashboardContractsModule`, `DashboardAnomalyModule`
 - **Finance:** `CashFlowModule`, `SavingsModule`, `SavingsRepositoryBindingsModule`, `CurrencyModule`, `TaxModule`, `ExportModule`
 - **Shared expense / groups:** `GroupsModule`, `BackupRepositoryModule`
 - **Location / network:** `LocationResolverPortsModule`, `NetworkModule`
-- **Security & privacy:** `SecurityModule`, `PrivacyModule`, `ParserModule`, `ReceiptParsingModule`, `EmptyStateModule`, `EmptyStatePresentationModule`, `EmailIngestionModule`
+- **Security & privacy:** `SecurityModule`, `PrivacyModule`, `AppLockModule`, `ParserModule`, `ReceiptParsingModule`, `EmptyStateModule`, `EmptyStatePresentationModule`, `EmailIngestionModule`
 - **Negotiation:** `NegotiationModule` (market rate provider bindings)
 - **Specialized:** `RetentionModule` (retention targets), `DiagnosticsModule` (pipeline diagnostics), `ProvenanceModule` (data provenance), `ReminderSettingsModule` (bill reminder dispatch settings)
 

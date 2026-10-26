@@ -6,7 +6,14 @@ import androidx.work.ListenableWorker.Result
 import androidx.work.WorkerFactory
 import androidx.work.WorkerParameters
 import androidx.work.testing.TestListenableWorkerBuilder
+import com.yourname.expensetracker.data.service.NotificationPresentationApplier
+import com.yourname.expensetracker.data.service.NotificationPresentationTexts
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
+import com.yourname.expensetracker.domain.notification.presentation.NotificationActionPolicy
+import com.yourname.expensetracker.domain.notification.presentation.NotificationKind
+import com.yourname.expensetracker.domain.notification.presentation.NotificationPresentationDecision
+import com.yourname.expensetracker.domain.notification.presentation.NotificationPresentationMode
+import com.yourname.expensetracker.domain.notification.presentation.NotificationPresentationResolver
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
 import com.yourname.expensetracker.domain.reminder.BillReminderSettings
 import com.yourname.expensetracker.domain.reminder.BillReminderSettingsRepository
@@ -39,6 +46,7 @@ class BillReminderWorkerTimeProviderTest {
     private lateinit var diagnosticEventWriter: DiagnosticEventWriter
     private lateinit var reminderSettingsRepository: BillReminderSettingsRepository
     private lateinit var timeProvider: FakeTimeProvider
+    private lateinit var presentationResolver: NotificationPresentationResolver
 
     @Before
     fun setup() {
@@ -48,6 +56,13 @@ class BillReminderWorkerTimeProviderTest {
         diagnosticEventWriter = mockk(relaxed = true)
         reminderSettingsRepository = mockk()
         timeProvider = FakeTimeProvider(0L)
+        presentationResolver = mockk()
+        coEvery { presentationResolver.resolve(any(), any()) } returns NotificationPresentationDecision(
+            kind = NotificationKind.BILL,
+            mode = NotificationPresentationMode.FULL,
+            expandedStyleAllowed = false,
+            actionPolicy = NotificationActionPolicy.UNCHANGED
+        )
 
         coEvery { executionGuard.runGuardedWithContext(any(), any<suspend (WorkerRunContext) -> Any>()) } coAnswers {
             val block = secondArg<suspend (WorkerRunContext) -> Any>()
@@ -71,7 +86,9 @@ class BillReminderWorkerTimeProviderTest {
                         executionGuard,
                         diagnosticEventWriter,
                         reminderSettingsRepository,
-                        timeProvider
+                        timeProvider,
+                        presentationResolver,
+                        NotificationPresentationApplier(context, NotificationPresentationTexts(context))
                     )
                 }
             })

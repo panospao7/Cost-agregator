@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- S12: 1a "App lock & privacy" section. Best-effort translation, owner review pending. -->
+    <string name="privacy_section_app_lock">Κλείδωμα εφαρμογής και απόρρητο</string>
+    <string name="privacy_toggle_discreet_notifications">Διακριτικές ειδοποιήσεις</string>
+    <string name="privacy_discreet_notifications_support">Οι ειδοποιήσεις γράφουν «Λογαριασμός προς πληρωμή» ή «Ειδοποίηση προϋπολογισμού» αντί για ποσά, καταστήματα και ονόματα προϊόντων. Ισχύει και για έξυπνα ρολόγια και οθόνες αυτοκινήτου.</string>
+    <string name="privacy_discreet_notifications_unreadable">Εμφανίζονται ως διακριτικές μέχρι να διαβαστεί η ρύθμιση.</string>
+    <string name="privacy_app_lock_checking">Έλεγχος…</string>
+    <string name="privacy_section_unreadable">Δεν είναι δυνατή η ανάγνωση των ρυθμίσεων απορρήτου. Οι ειδοποιήσεις εμφανίζονται ως διακριτικές μέχρι να διαβαστούν οι ρυθμίσεις.</string>
+    <string name="privacy_app_lock_retry">Δοκιμάστε ξανά</string>
+    <string name="privacy_review_card_title">Ελέγξτε τις ρυθμίσεις απορρήτου</string>
+    <string name="privacy_review_card_body">Η εφαρμογή δεν μπόρεσε να διαβάσει τις αποθηκευμένες ρυθμίσεις απορρήτου, γι\' αυτό χρησιμοποιεί τις ασφαλέστερες επιλογές. Επιλέξτε τις ρυθμίσεις σας παρακάτω και αποθηκεύστε.</string>
+    <string name="privacy_review_card_save">Αποθήκευση ρυθμίσεων</string>
+    <string name="privacy_review_saved">Οι ρυθμίσεις αποθηκεύτηκαν</string>
+    <string name="privacy_setting_save_failed">Δεν ήταν δυνατή η αποθήκευση της ρύθμισης. Δοκιμάστε ξανά.</string>
+</resources>

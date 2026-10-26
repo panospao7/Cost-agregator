@@ -3,6 +3,7 @@ package com.yourname.expensetracker.domain.budget
 import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
 import com.yourname.expensetracker.data.repository.BudgetRepository
+import com.yourname.expensetracker.domain.notification.presentation.NotificationKind
 import com.yourname.expensetracker.domain.service.NotificationService
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.di.IoDispatcher
@@ -466,7 +467,7 @@ class BudgetMonitor @Inject constructor(
     /**
      * @return true if the notification was delivered, false otherwise.
      */
-    private fun sendNotification(
+    private suspend fun sendNotification(
         notificationId: Int,
         budget: Budget,
         spent: Double,
@@ -507,7 +508,14 @@ class BudgetMonitor @Inject constructor(
             partialQualifier
         )
 
-        return notificationService.sendBudgetAlert(notificationId, title, content) ==
-            com.yourname.expensetracker.domain.service.NotificationService.DeliveryResult.DELIVERED
+        // S6 (INV-4, INV-12): declare the BUDGET kind; the id stays the raw budget id (TECH-12 (a)).
+        // Only DELIVERED advances the cooldown write; NOT_DELIVERED and PERMISSION_DENIED (TECH-9)
+        // both leave the cooldown untouched, exactly like the legacy NOT_DELIVERED path.
+        return notificationService.sendBudgetAlertForKind(
+            kind = NotificationKind.BUDGET,
+            notificationId = notificationId,
+            title = title,
+            message = content
+        ) == com.yourname.expensetracker.domain.service.NotificationService.DeliveryResult.DELIVERED
     }
 }

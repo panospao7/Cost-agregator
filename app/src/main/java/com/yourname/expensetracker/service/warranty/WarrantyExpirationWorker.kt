@@ -12,6 +12,7 @@ import com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
 import com.yourname.expensetracker.domain.diagnostics.EventOutcome
+import com.yourname.expensetracker.domain.notification.presentation.NotificationKind
 import com.yourname.expensetracker.domain.service.NotificationService
 import com.yourname.expensetracker.domain.util.NotificationIdGenerator
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -49,6 +50,7 @@ import timber.log.Timber
  *          notificationId; this is the ONLY transition into SENT and only from CLAIMED).
  *        - NOT_DELIVERED → [WarrantyReminderDeliveryDao.markFailed] (records the reason;
  *          the row stays re-claimable on a later run).
+ *        - PERMISSION_DENIED → markFailed, same as NOT_DELIVERED (TECH-9).
  *
  * Crash recovery: any CLAIMED row whose claim is older than [STALE_CLAIM_MS] is reset to
  * SCHEDULED at the start of each run ([WarrantyReminderDeliveryDao.recoverStaleClaimed]),
@@ -202,6 +204,7 @@ class WarrantyExpirationWorker @AssistedInject constructor(
      *
      * - A row already SENT in a previous run is skipped (claim returns 0) — durable dedup.
      * - DELIVERED → SENT (persists notificationId). NOT_DELIVERED → FAILED (re-claimable).
+     *   PERMISSION_DENIED → markFailed, same as NOT_DELIVERED (TECH-9).
      *
      * Every delivery-state write is preceded by a [WorkerRunContext.checkpoint]
      * (write-barrier + stop-request check) in this function, as required by the
@@ -268,7 +271,10 @@ class WarrantyExpirationWorker @AssistedInject constructor(
 
         // 3. Send and record the outcome. Mark SENT only when delivery actually succeeds.
         val notificationId = NotificationIdGenerator.forWarranty(warranty.id, windowDays)
-        val deliveryResult = notificationService.sendBudgetAlert(
+        // S7 (INV-4/INV-12): the worker declares its kind; the presentation decision is resolved inside
+        // the service. PERMISSION_DENIED (TECH-9) is a non-delivery and takes the same FAILED path.
+        val deliveryResult = notificationService.sendBudgetAlertForKind(
+            kind = NotificationKind.WARRANTY,
             notificationId = notificationId,
             title = title,
             message = message

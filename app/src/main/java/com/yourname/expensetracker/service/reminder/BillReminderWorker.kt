@@ -5,12 +5,18 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.hilt.work.HiltWorker
 import androidx.work.*
 import com.yourname.expensetracker.R
+import com.yourname.expensetracker.data.service.NotificationActionSpec
+import com.yourname.expensetracker.data.service.NotificationPresentationApplier
+import com.yourname.expensetracker.domain.notification.presentation.NotificationKind
+import com.yourname.expensetracker.domain.notification.presentation.NotificationPresentationDecision
+import com.yourname.expensetracker.domain.notification.presentation.NotificationPresentationResolver
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
 import com.yourname.expensetracker.domain.util.NotificationId
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -30,6 +36,12 @@ import kotlinx.coroutines.CancellationException
  *
  * The worker is scheduled every [PERIOD_INTERVAL_HOURS] hours and processes
  * all pending deliveries returned by [RecurringLifecycleCoordinator.getDueReminders].
+ *
+ * Presentation (app-lock privacy mode, INV-4): the worker declares the post as [NotificationKind.BILL],
+ * resolves the [NotificationPresentationDecision] through [NotificationPresentationResolver] inside the
+ * guarded block (a suspend read, no blocking bridge), and hands it to the non-suspend [sendNotification].
+ * [NotificationPresentationApplier] owns the title, text, actions policy, public version and the kind
+ * marker; the worker keeps the channel, small icon, priority, id, tag and the action PendingIntents.
  */
 @HiltWorker
 class BillReminderWorker @AssistedInject constructor(
@@ -39,7 +51,9 @@ class BillReminderWorker @AssistedInject constructor(
     private val executionGuard: WorkerExecutionGuard,
     private val diagnosticEventWriter: com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter,
     private val reminderSettingsRepository: com.yourname.expensetracker.domain.reminder.BillReminderSettingsRepository,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val presentationResolver: NotificationPresentationResolver,
+    private val presentationApplier: NotificationPresentationApplier
 ) : CoroutineWorker(appContext, workerParams) {
 
     override suspend fun doWork(): Result {
@@ -118,7 +132,12 @@ class BillReminderWorker @AssistedInject constructor(
 
                     val title = "Bill due"
                     val body = buildNotificationBody(snapshot)
-                    val result = sendNotification(reminder, title, body)
+                    // INV-4 / TECH-2 (a): the decision is resolved here, inside the guard, after the
+                    // claim and the revalidation and immediately before the post. A cancellation during
+                    // the bounded read propagates (nothing is posted); any read failure is already a
+                    // DISCREET decision inside the resolver. The resolver never touches claim/mark state.
+                    val decision = presentationResolver.resolve(NotificationKind.BILL, Build.VERSION.SDK_INT)
+                    val result = sendNotification(reminder, title, body, decision)
 
                     when (result) {
                         is NotificationSendResult.Sent -> {
@@ -224,13 +243,18 @@ class BillReminderWorker @AssistedInject constructor(
      * allocation boundary ([NotificationId.forBill] → NotificationIdGenerator),
      * never from raw `(delivery.id % Int.MAX_VALUE)` arithmetic.
      *
+     * Presentation: [title] and [body] are the detailed (FULL) copy. [decision] is resolved by the caller
+     * and applied by [NotificationPresentationApplier], which sets the visible title and text, the public
+     * version, the action policy and the kind marker. The Snooze and Dismiss titles are string resources.
+     *
      * @return [NotificationSendResult.Sent] with the notificationId on success,
      *         or [NotificationSendResult.Failed] with a reason on failure.
      */
     private fun sendNotification(
         delivery: com.yourname.expensetracker.data.database.entity.RecurringReminderDelivery,
         title: String,
-        body: String
+        body: String,
+        decision: NotificationPresentationDecision
     ): NotificationSendResult {
         ensureChannelExists()
 
@@ -264,15 +288,22 @@ class BillReminderWorker @AssistedInject constructor(
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val notification = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
-            .setContentTitle(title)
-            .setContentText(body)
+        val builder = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
+            .setSmallIcon(SMALL_ICON)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setAutoCancel(true)
-            .addAction(R.drawable.ic_snooze, "Snooze", snoozePendingIntent)
-            .addAction(R.drawable.ic_dismiss, "Dismiss", dismissPendingIntent)
-            .build()
+        val notification = presentationApplier.apply(
+            builder = builder,
+            decision = decision,
+            channelId = CHANNEL_ID,
+            smallIcon = SMALL_ICON,
+            detailedTitle = title,
+            detailedText = body,
+            actions = listOf(
+                NotificationActionSpec(R.drawable.ic_snooze, R.string.notif_action_snooze, snoozePendingIntent),
+                NotificationActionSpec(R.drawable.ic_dismiss, R.string.action_dismiss, dismissPendingIntent)
+            )
+        ).build()
 
         return try {
             NotificationManagerCompat.from(applicationContext).notify(notificationId.value, notification)
@@ -306,7 +337,9 @@ class BillReminderWorker @AssistedInject constructor(
         const val TAG = "BillReminderWorker"
         const val WORK_NAME = "bill_reminder_periodic"
 
-        private const val CHANNEL_ID = "bill_reminders"
+        /** Channel id of the bill reminder notifications; value unchanged. Read by the re-post sweep classifier (S9). */
+        internal const val CHANNEL_ID = "bill_reminders"
+        private const val SMALL_ICON = android.R.drawable.ic_dialog_info
         private const val CHANNEL_NAME = "Bill Reminders"
         private const val CHANNEL_DESCRIPTION = "Notifications for due bill payments"
 

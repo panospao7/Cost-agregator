@@ -7,6 +7,7 @@ import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
 import com.yourname.expensetracker.domain.diagnostics.EventOutcome
+import com.yourname.expensetracker.domain.notification.presentation.NotificationKind
 import com.yourname.expensetracker.domain.service.NotificationService
 import com.yourname.expensetracker.domain.util.PinnedUtcTimeZoneRule
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -14,7 +15,7 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
-import io.mockk.verify
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -79,7 +80,7 @@ class BudgetMonitorTest {
     fun setUp() {
         emittedEvents.clear()
         coEvery { diagnosticEventWriter.emit(capture(emittedEvents)) } returns Unit
-        every { notificationService.sendBudgetAlert(any(), any(), any()) } returns
+        coEvery { notificationService.sendBudgetAlertForKind(any(), any(), any(), any()) } returns
             NotificationService.DeliveryResult.DELIVERED
         monitor = BudgetMonitor(
             budgetRepository = budgetRepository,
@@ -112,7 +113,7 @@ class BudgetMonitorTest {
 
         init {
             coEvery { writer.emit(capture(events)) } returns Unit
-            every { notifications.sendBudgetAlert(any(), any(), any()) } returns
+            coEvery { notifications.sendBudgetAlertForKind(any(), any(), any(), any()) } returns
                 NotificationService.DeliveryResult.DELIVERED
             monitor = BudgetMonitor(
                 budgetRepository = repo,
@@ -237,8 +238,10 @@ class BudgetMonitorTest {
                     coVerify(exactly = 0) { f.repo.updateCriticalNotification(any(), any()) }
                 }
             }
-            verify(exactly = 1) { f.notifications.sendBudgetAlert(row.id.toInt(), row.title, row.content) }
-            verify(exactly = 1) { f.notifications.sendBudgetAlert(any(), any(), any()) }
+            coVerify(exactly = 1) {
+                f.notifications.sendBudgetAlertForKind(NotificationKind.BUDGET, row.id.toInt(), row.title, row.content)
+            }
+            coVerify(exactly = 1) { f.notifications.sendBudgetAlertForKind(any(), any(), any(), any()) }
         }
     }
 
@@ -294,7 +297,7 @@ class BudgetMonitorTest {
             )
             assertEquals("no STATUS_COMPUTED for a no-op status", 0, f.events.count { it.stage == "STATUS_COMPUTED" })
             // No alert and no timestamp update should ever happen for a no-op status.
-            verify(exactly = 0) { f.notifications.sendBudgetAlert(any(), any(), any()) }
+            coVerify(exactly = 0) { f.notifications.sendBudgetAlertForKind(any(), any(), any(), any()) }
             coVerify(exactly = 0) { f.repo.updateWarningNotification(any(), any()) }
             coVerify(exactly = 0) { f.repo.updateCriticalNotification(any(), any()) }
             coVerify(exactly = 0) { f.repo.updateExceededNotification(any(), any()) }
@@ -348,12 +351,12 @@ class BudgetMonitorTest {
 
             if (row.expectNotify) {
                 coVerify(exactly = 1) { f.repo.updateWarningNotification(id, now) }
-                verify(exactly = 1) { f.notifications.sendBudgetAlert(any(), any(), any()) }
+                coVerify(exactly = 1) { f.notifications.sendBudgetAlertForKind(any(), any(), any(), any()) }
                 assertEquals("WARNING decision event", 1, f.events.count { it.stage == "WARNING" })
                 assertEquals("no throttled event", 0, f.events.count { it.stage == "WARNING_THROTTLED" })
             } else {
                 coVerify(exactly = 0) { f.repo.updateWarningNotification(any(), any()) }
-                verify(exactly = 0) { f.notifications.sendBudgetAlert(any(), any(), any()) }
+                coVerify(exactly = 0) { f.notifications.sendBudgetAlertForKind(any(), any(), any(), any()) }
                 assertEquals("WARNING_THROTTLED decision event", 1, f.events.count { it.stage == "WARNING_THROTTLED" })
                 assertEquals("no sent event", 0, f.events.count { it.stage == "WARNING" })
             }
@@ -394,7 +397,7 @@ class BudgetMonitorTest {
             // every check that actually runs raises (and records) exactly one more warning alert;
             // a skipped check raises none.
             val expectedAlerts = if (row.expectSecondRead) 2 else 1
-            verify(exactly = expectedAlerts) { f.notifications.sendBudgetAlert(any(), any(), any()) }
+            coVerify(exactly = expectedAlerts) { f.notifications.sendBudgetAlertForKind(any(), any(), any(), any()) }
             assertEquals("WARNING decision events", expectedAlerts, f.events.count { it.stage == "WARNING" })
             coVerify(exactly = 1) { f.repo.updateWarningNotification(5L, now) }
             coVerify(exactly = if (row.expectSecondRead) 1 else 0) {
@@ -424,14 +427,15 @@ class BudgetMonitorTest {
 
         coVerify(exactly = 1) { budgetRepository.getBudgetStatuses() }
         coVerify(exactly = 1) { budgetRepository.updateWarningNotification(6L, now) }
-        verify(exactly = 1) {
-            notificationService.sendBudgetAlert(
+        coVerify(exactly = 1) {
+            notificationService.sendBudgetAlertForKind(
+                NotificationKind.BUDGET,
                 6,
                 "Budget Warning",
                 "You've spent €60.00 (60%) of your Groceries budget (€100.00)."
             )
         }
-        verify(exactly = 1) { notificationService.sendBudgetAlert(any(), any(), any()) }
+        coVerify(exactly = 1) { notificationService.sendBudgetAlertForKind(any(), any(), any(), any()) }
     }
 
     private data class BackgroundRow(
@@ -480,7 +484,7 @@ class BudgetMonitorTest {
 
             // The second check ran only 5s after the first: it is allowed because onBackground reset the throttle.
             coVerify(exactly = 2) { f.repo.getBudgetStatuses() }
-            verify(exactly = 0) { f.notifications.sendBudgetAlert(any(), any(), any()) }
+            coVerify(exactly = 0) { f.notifications.sendBudgetAlertForKind(any(), any(), any(), any()) }
             coVerify(exactly = 0) { f.repo.updateWarningNotification(any(), any()) }
             coVerify(exactly = 0) { f.repo.updateCriticalNotification(any(), any()) }
             coVerify(exactly = 0) { f.repo.updateExceededNotification(any(), any()) }
@@ -502,7 +506,7 @@ class BudgetMonitorTest {
         testDispatcher.scheduler.advanceUntilIdle()
 
         coVerify(exactly = 0) { budgetRepository.getBudgetStatuses() }
-        verify(exactly = 0) { notificationService.sendBudgetAlert(any(), any(), any()) }
+        coVerify(exactly = 0) { notificationService.sendBudgetAlertForKind(any(), any(), any(), any()) }
     }
 
     @Test
@@ -514,7 +518,7 @@ class BudgetMonitorTest {
         testDispatcher.scheduler.advanceUntilIdle()
 
         coVerify(exactly = 1) { budgetRepository.getBudgetStatuses() }
-        verify(exactly = 0) { notificationService.sendBudgetAlert(any(), any(), any()) }
+        coVerify(exactly = 0) { notificationService.sendBudgetAlertForKind(any(), any(), any(), any()) }
         coVerify(exactly = 0) { budgetRepository.updateCriticalNotification(any(), any()) }
     }
 
@@ -539,9 +543,11 @@ class BudgetMonitorTest {
         coVerify(exactly = 5) { budgetRepository.updateCriticalNotification(any(), any()) }
         for (id in spentById.keys) {
             coVerify(exactly = 1) { budgetRepository.updateCriticalNotification(id, now) }
-            verify(exactly = 1) { notificationService.sendBudgetAlert(id.toInt(), "Critical Budget Warning", any()) }
+            coVerify(exactly = 1) {
+                notificationService.sendBudgetAlertForKind(NotificationKind.BUDGET, id.toInt(), "Critical Budget Warning", any())
+            }
         }
-        verify(exactly = 5) { notificationService.sendBudgetAlert(any(), any(), any()) }
+        coVerify(exactly = 5) { notificationService.sendBudgetAlertForKind(any(), any(), any(), any()) }
     }
 
     // ============================================================================
@@ -630,7 +636,7 @@ class BudgetMonitorTest {
         monitor.checkBudgets()
         testDispatcher.scheduler.advanceUntilIdle()
 
-        verify(exactly = 0) { notificationService.sendBudgetAlert(any(), any(), any()) }
+        coVerify(exactly = 0) { notificationService.sendBudgetAlertForKind(any(), any(), any(), any()) }
         coVerify(exactly = 0) { budgetRepository.updateWarningNotification(any(), any()) }
         coVerify(exactly = 0) { budgetRepository.updateCriticalNotification(any(), any()) }
         coVerify(exactly = 0) { budgetRepository.updateExceededNotification(any(), any()) }
@@ -669,7 +675,7 @@ class BudgetMonitorTest {
         monitor.checkBudgets()
         testDispatcher.scheduler.advanceUntilIdle()
 
-        verify(exactly = 0) { notificationService.sendBudgetAlert(any(), any(), any()) }
+        coVerify(exactly = 0) { notificationService.sendBudgetAlertForKind(any(), any(), any(), any()) }
         coVerify(exactly = 0) { budgetRepository.updateExceededNotification(any(), any()) }
         assertEquals(1, emittedEvents.count { it.stage == "STATUS_SKIPPED" })
     }
@@ -698,7 +704,7 @@ class BudgetMonitorTest {
         val parsed = org.json.JSONObject(skipped.single().metadata.toJson())
         assertEquals("PERCENT_UNKNOWN", parsed.getString("reason"))
         assertEquals(true, parsed.getBoolean("grossFallback"))
-        verify(exactly = 0) { notificationService.sendBudgetAlert(any(), any(), any()) }
+        coVerify(exactly = 0) { notificationService.sendBudgetAlertForKind(any(), any(), any(), any()) }
     }
 
     @Test
@@ -722,8 +728,9 @@ class BudgetMonitorTest {
         testDispatcher.scheduler.advanceUntilIdle()
 
         coVerify(exactly = 1) { budgetRepository.updateCriticalNotification(94L, now) }
-        verify(exactly = 1) {
-            notificationService.sendBudgetAlert(
+        coVerify(exactly = 1) {
+            notificationService.sendBudgetAlertForKind(
+                NotificationKind.BUDGET,
                 94,
                 "Critical Budget Warning",
                 "You've spent €95.00 (95%) of your Groceries budget (€100.00)."
@@ -756,13 +763,13 @@ class BudgetMonitorTest {
         monitor.checkBudgets()
         testDispatcher.scheduler.advanceUntilIdle()
         coVerify(exactly = 0) { budgetRepository.updateCriticalNotification(any(), any()) }
-        verify(exactly = 0) { notificationService.sendBudgetAlert(any(), any(), any()) }
+        coVerify(exactly = 0) { notificationService.sendBudgetAlertForKind(any(), any(), any(), any()) }
 
         monitor.checkBudgets()
         testDispatcher.scheduler.advanceUntilIdle()
 
         coVerify(exactly = 1) { budgetRepository.updateCriticalNotification(95L, second) }
-        verify(exactly = 1) { notificationService.sendBudgetAlert(any(), any(), any()) }
+        coVerify(exactly = 1) { notificationService.sendBudgetAlertForKind(any(), any(), any(), any()) }
     }
 
     @Test
@@ -782,7 +789,7 @@ class BudgetMonitorTest {
         monitor.checkBudgets()
         testDispatcher.scheduler.advanceUntilIdle()
 
-        verify(exactly = 0) { notificationService.sendBudgetAlert(any(), any(), any()) }
+        coVerify(exactly = 0) { notificationService.sendBudgetAlertForKind(any(), any(), any(), any()) }
         coVerify(exactly = 0) { budgetRepository.updateWarningNotification(any(), any()) }
         coVerify(exactly = 0) { budgetRepository.updateCriticalNotification(any(), any()) }
         coVerify(exactly = 0) { budgetRepository.updateExceededNotification(any(), any()) }
@@ -807,15 +814,16 @@ class BudgetMonitorTest {
         // Delivery must be pinned explicitly: MockK's relaxed default for an enum
         // return type is not DeliveryResult.DELIVERED, and the monitor only records
         // the notification timestamp after a real delivered result (BUD-3).
-        every { notificationService.sendBudgetAlert(any(), any(), any()) } returns
+        coEvery { notificationService.sendBudgetAlertForKind(any(), any(), any(), any()) } returns
             NotificationService.DeliveryResult.DELIVERED
 
         monitor.checkBudgets()
         testDispatcher.scheduler.advanceUntilIdle()
 
         coVerify(exactly = 1) { budgetRepository.updateWarningNotification(77L, now) }
-        verify(exactly = 1) {
-            notificationService.sendBudgetAlert(
+        coVerify(exactly = 1) {
+            notificationService.sendBudgetAlertForKind(
+                NotificationKind.BUDGET,
                 77,
                 "Budget Warning",
                 "You've spent €80.00 (80%) of your Groceries budget (€100.00)." +
@@ -845,6 +853,159 @@ class BudgetMonitorTest {
         val parsed = org.json.JSONObject(computed!!.metadata.toJson())
         assertTrue("STATUS_COMPUTED must include partialData flag", parsed.has("partialData"))
         assertTrue("partialData must be true for a partial status", parsed.getBoolean("partialData"))
+    }
+
+    // ============================================================================
+    // S6 / AE-11, AE-13 (INV-12): PERMISSION_DENIED parity and cancellation
+    // ============================================================================
+
+    private data class DenialRow(
+        val name: String,
+        val id: Long,
+        val spent: Double,
+        val percentUsed: Float,
+        val alertStage: String,
+        val title: String
+    )
+
+    /** Runs one check cycle on [f] with the service returning [result]; returns a comparable event summary. */
+    private fun runOneAlertCycle(
+        f: Fixture,
+        row: DenialRow,
+        result: NotificationService.DeliveryResult
+    ): List<String> {
+        val now = atDateTime(2026, 4, 10, 9, 0)
+        every { f.time.now() } returns now
+        coEvery { f.notifications.sendBudgetAlertForKind(any(), any(), any(), any()) } returns result
+        every { f.repo.getBudgetStatuses() } returns flowOf(
+            listOf(
+                budgetStatus(
+                    budget = budget(id = row.id, period = BudgetPeriod.MONTHLY),
+                    spentAmount = row.spent,
+                    percentUsed = row.percentUsed,
+                    periodStart = at(2026, 4, 1)
+                )
+            )
+        )
+
+        f.monitor.checkBudgets()
+        f.settle()
+
+        // The service is always asked exactly once, with the BUDGET kind and the raw budget id (AE-13, INV-12).
+        coVerify(exactly = 1) {
+            f.notifications.sendBudgetAlertForKind(NotificationKind.BUDGET, row.id.toInt(), row.title, any())
+        }
+        coVerify(exactly = 1) { f.notifications.sendBudgetAlertForKind(any(), any(), any(), any()) }
+        return f.events.map {
+            "${it.stage}|${it.outcome}|${it.entityType}|${it.entityId}|${it.metadata.toJson()}"
+        }
+    }
+
+    private fun verifyNoCooldownWrite(f: Fixture) {
+        coVerify(exactly = 0) { f.repo.updateWarningNotification(any(), any()) }
+        coVerify(exactly = 0) { f.repo.updateCriticalNotification(any(), any()) }
+        coVerify(exactly = 0) { f.repo.updateExceededNotification(any(), any()) }
+    }
+
+    @Test
+    fun `INV-12 AE-11 PERMISSION_DENIED writes no cooldown and matches the NOT_DELIVERED diagnostic outcome table`() = runTest(testDispatcher) {
+        val rows = listOf(
+            DenialRow("warning", 11L, spent = 80.0, percentUsed = 0.80f, alertStage = "WARNING", title = "Budget Warning"),
+            DenialRow("critical", 22L, spent = 95.0, percentUsed = 0.95f, alertStage = "CRITICAL", title = "Critical Budget Warning"),
+            DenialRow("exceeded", 33L, spent = 130.0, percentUsed = 1.30f, alertStage = "EXCEEDED", title = "Budget Exceeded!")
+        )
+        val alertStages = setOf("WARNING", "WARNING_THROTTLED", "CRITICAL", "CRITICAL_THROTTLED", "EXCEEDED", "EXCEEDED_THROTTLED")
+
+        forEachRow("permission-denied", 3, rows, { it.name }) { row, f ->
+            val denied = runOneAlertCycle(f, row, NotificationService.DeliveryResult.PERMISSION_DENIED)
+            verifyNoCooldownWrite(f)
+            val deniedAlertEvents = f.events.filter { it.stage in alertStages }
+            assertEquals("one alert decision event for PERMISSION_DENIED", 1, deniedAlertEvents.size)
+            assertEquals(row.alertStage, deniedAlertEvents.single().stage)
+            assertEquals("PERMISSION_DENIED is not a delivery", EventOutcome.SKIPPED, deniedAlertEvents.single().outcome)
+            assertEquals(row.id, deniedAlertEvents.single().entityId)
+
+            val notDelivered = Fixture()
+            try {
+                val refused = runOneAlertCycle(notDelivered, row, NotificationService.DeliveryResult.NOT_DELIVERED)
+                verifyNoCooldownWrite(notDelivered)
+                assertEquals("PERMISSION_DENIED must produce the same diagnostics as NOT_DELIVERED", refused, denied)
+            } finally {
+                notDelivered.monitor.destroy()
+            }
+
+            // Control: a DELIVERED result does write exactly its own cooldown and records COMPLETED.
+            val delivered = Fixture()
+            try {
+                val sent = runOneAlertCycle(delivered, row, NotificationService.DeliveryResult.DELIVERED)
+                val sentAlertEvents = delivered.events.filter { it.stage in alertStages }
+                assertEquals(1, sentAlertEvents.size)
+                assertEquals(row.alertStage, sentAlertEvents.single().stage)
+                assertEquals(EventOutcome.COMPLETED, sentAlertEvents.single().outcome)
+                assertTrue("DELIVERED must differ from PERMISSION_DENIED in the diagnostics", sent != denied)
+                val now = atDateTime(2026, 4, 10, 9, 0)
+                when (row.alertStage) {
+                    "WARNING" -> coVerify(exactly = 1) { delivered.repo.updateWarningNotification(row.id, now) }
+                    "CRITICAL" -> coVerify(exactly = 1) { delivered.repo.updateCriticalNotification(row.id, now) }
+                    else -> coVerify(exactly = 1) { delivered.repo.updateExceededNotification(row.id, now) }
+                }
+            } finally {
+                delivered.monitor.destroy()
+            }
+        }
+    }
+
+    @Test
+    fun `INV-12 PERMISSION_DENIED leaves the cooldown open so the next cycle retries the alert`() = runTest(testDispatcher) {
+        val first = atDateTime(2026, 4, 10, 9, 0)
+        val second = first + MIN_CHECK_INTERVAL_MS
+        every { timeProvider.now() } returnsMany listOf(first, second)
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(
+            listOf(budgetStatus(budget(id = 12L, period = BudgetPeriod.MONTHLY), spentAmount = 80.0, percentUsed = 0.80f, periodStart = at(2026, 4, 1)))
+        )
+        coEvery { notificationService.sendBudgetAlertForKind(any(), any(), any(), any()) } returnsMany listOf(
+            NotificationService.DeliveryResult.PERMISSION_DENIED,
+            NotificationService.DeliveryResult.DELIVERED
+        )
+
+        monitor.checkBudgets()
+        testDispatcher.scheduler.advanceUntilIdle()
+        coVerify(exactly = 0) { budgetRepository.updateWarningNotification(any(), any()) }
+
+        monitor.checkBudgets()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        coVerify(exactly = 2) {
+            notificationService.sendBudgetAlertForKind(NotificationKind.BUDGET, 12, "Budget Warning", any())
+        }
+        coVerify(exactly = 1) { budgetRepository.updateWarningNotification(12L, second) }
+        coVerify(exactly = 1) { budgetRepository.updateWarningNotification(any(), any()) }
+    }
+
+    @Test
+    fun `budget alert send cancellation propagates, aborts the cycle and writes no cooldown or failure event`() = runTest(testDispatcher) {
+        val now = atDateTime(2026, 4, 10, 9, 0)
+        every { timeProvider.now() } returns now
+        val statuses = listOf(71L, 72L).map { id ->
+            budgetStatus(budget(id = id, period = BudgetPeriod.MONTHLY), spentAmount = 80.0, percentUsed = 0.80f, periodStart = at(2026, 4, 1))
+        }
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(statuses)
+        coEvery { notificationService.sendBudgetAlertForKind(any(), any(), any(), any()) } throws
+            CancellationException("send cancelled")
+
+        monitor.checkBudgets()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        // Swallowing the CancellationException would continue to budget 72 and/or retry the cycle.
+        coVerify(exactly = 1) { notificationService.sendBudgetAlertForKind(any(), any(), any(), any()) }
+        coVerify(exactly = 1) { notificationService.sendBudgetAlertForKind(NotificationKind.BUDGET, 71, any(), any()) }
+        coVerify(exactly = 1) { budgetRepository.getBudgetStatuses() }
+        coVerify(exactly = 0) { budgetRepository.updateWarningNotification(any(), any()) }
+        coVerify(exactly = 0) { budgetRepository.updateCriticalNotification(any(), any()) }
+        coVerify(exactly = 0) { budgetRepository.updateExceededNotification(any(), any()) }
+        assertEquals("no CHECK_FAILED event for a cancellation", 0, emittedEvents.count { it.stage == "CHECK_FAILED" })
+        val alertStages = setOf("WARNING", "WARNING_THROTTLED", "CRITICAL", "CRITICAL_THROTTLED", "EXCEEDED", "EXCEEDED_THROTTLED")
+        assertEquals("no alert decision event once cancelled", 0, emittedEvents.count { it.stage in alertStages })
     }
 
     // ============================================================================
