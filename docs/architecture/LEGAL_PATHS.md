@@ -600,7 +600,8 @@ EVERY worker:
        SUCCESS. DailyBriefingWorker and WarrantyExpirationWorker additionally record a
        bounded NOTIFICATION_PERMISSION_DENIED skip diagnostic (DailyBriefingWorker only when
        DeliverProactiveBriefingNotificationUseCase reports that outcome, i.e. after its
-       settings, dedupe and artifact checks).
+       settings, dedupe and artifact checks, or when an attempted post was refused by a
+       SecurityException).
        (ai-fixes INV-24, INV-27, INV-29; enforced by SourceScanningArchitectureGuardTest
        notification_posting_workers_require_permission_flag)
   → PrivacyRuntimeWorkerPolicy checks per-worker privacy consent

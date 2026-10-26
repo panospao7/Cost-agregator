@@ -205,7 +205,14 @@ class DeliverProactiveBriefingNotificationUseCaseTest {
                 diagnostics
             )
 
-            perResultUseCase(dateKey = "2026-03-17", startedAt = 1_000L, notificationId = 40123, notificationsAllowed = true)
+            val outcome = perResultUseCase(dateKey = "2026-03-17", startedAt = 1_000L, notificationId = 40123, notificationsAllowed = true)
+
+            val expectedOutcome = when (result) {
+                DeliveryResult.NOT_DELIVERED -> BriefingDeliveryOutcome.NOT_DELIVERED
+                DeliveryResult.PERMISSION_DENIED -> BriefingDeliveryOutcome.NOTIFICATION_PERMISSION_DENIED
+                DeliveryResult.DELIVERED -> BriefingDeliveryOutcome.DELIVERED
+            }
+            assertEquals(expectedOutcome, outcome)
 
             // The notification service mock is shared, so its call count accumulates one per iteration.
             coVerify(exactly = index + 1) {

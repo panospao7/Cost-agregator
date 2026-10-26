@@ -162,7 +162,8 @@ class DailyBriefingWorker @AssistedInject constructor(
 
     /**
      * INV-27: durable, bounded diagnostic for a delivery that was not attempted because
-     * notification permission is missing. Carries only the reason code; no text or keys.
+     * notification permission is missing, or that was attempted and refused by the platform
+     * with a SecurityException. Carries only the reason code; no text or keys.
      * The diagnostic writer owns write-failure fallback and rethrows cancellation.
      */
     private suspend fun recordNotificationPermissionDenied() {
