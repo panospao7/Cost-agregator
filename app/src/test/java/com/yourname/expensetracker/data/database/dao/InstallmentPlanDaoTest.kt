@@ -653,6 +653,126 @@ class InstallmentPlanDaoTest {
         assertEquals(0, dao.countEntriesForPlanByStatus(7777L, "SCHEDULED"))
     }
 
+    // ── S6b compare-and-set writes ───────────────────────────────
+
+    @Test
+    fun updatePaidEntryToReversedIfLinkedTo_reverses_a_paid_entry_and_keeps_the_link() = runTest {
+        val id = scheduledEntry("rev-1")
+        assertEquals(1, dao.claimEntryForExpense(id, 990L, "USER_CONFIRMED", false, NOW + 1))
+
+        assertEquals(1, dao.updatePaidEntryToReversedIfLinkedTo(id, 990L, NOW + 5))
+
+        val after = dao.getEntryById(id)!!
+        assertEquals("REVERSED", after.status)
+        assertEquals(990L, after.linkedExpenseId)
+        assertNull(after.statusReason)
+        assertEquals(NOW + 5, after.statusChangedAt)
+        // Second reversal is a lost compare-and-set.
+        assertEquals(0, dao.updatePaidEntryToReversedIfLinkedTo(id, 990L, NOW + 6))
+    }
+
+    @Test
+    fun updatePaidEntryToReversedIfLinkedTo_returns_0_for_the_wrong_expense_or_a_non_paid_entry() = runTest {
+        val paid = scheduledEntry("rev-2")
+        assertEquals(1, dao.claimEntryForExpense(paid, 991L, "USER_CONFIRMED", false, NOW + 1))
+        val paidBefore = dao.getEntryById(paid)!!
+
+        assertEquals(0, dao.updatePaidEntryToReversedIfLinkedTo(paid, 992L, NOW + 5))
+        assertEquals(paidBefore, dao.getEntryById(paid))
+
+        val scheduled = scheduledEntry("rev-3")
+        val scheduledBefore = dao.getEntryById(scheduled)!!
+        assertEquals(0, dao.updatePaidEntryToReversedIfLinkedTo(scheduled, 991L, NOW + 5))
+        assertEquals(scheduledBefore, dao.getEntryById(scheduled))
+        assertEquals(0, dao.updatePaidEntryToReversedIfLinkedTo(31337L, 991L, NOW))
+    }
+
+    @Test
+    fun updatePlanDetailsIfEditable_edits_every_field_of_an_active_plan_before_any_payment() = runTest {
+        val id = dao.insertPlan(plan(uuid = "det-1", status = "ACTIVE"))
+        dao.insertEntries(listOf(entry(id, seq = 1)))
+
+        assertEquals(1, dao.updatePlanDetailsIfEditable(id, "Renamed", "Lender", 5L, "AUTO_RECORD", "USD", NOW + 9))
+
+        val after = dao.getPlanById(id)!!
+        assertEquals("Renamed", after.displayName)
+        assertEquals("Lender", after.lenderLabel)
+        assertEquals(5L, after.categoryId)
+        assertEquals("AUTO_RECORD", after.fulfilmentMode)
+        assertEquals("USD", after.currency)
+        assertEquals(NOW + 9, after.updatedAt)
+    }
+
+    @Test
+    fun updatePlanDetailsIfEditable_locks_the_currency_once_an_entry_is_paid_or_reversed() = runTest {
+        val id = dao.insertPlan(plan(uuid = "det-2", status = "ACTIVE"))
+        val paid = dao.insertEntries(listOf(entry(id, seq = 1), entry(id, seq = 2))).first()
+        assertEquals(1, dao.claimEntryForExpense(paid, 993L, "USER_CONFIRMED", false, NOW + 1))
+        val before = dao.getPlanById(id)!!
+
+        assertEquals(0, dao.updatePlanDetailsIfEditable(id, "X", null, null, "CONFIRM", "USD", NOW + 9))
+        assertEquals(before, dao.getPlanById(id))
+
+        // A name edit that keeps the currency still applies.
+        assertEquals(1, dao.updatePlanDetailsIfEditable(id, "X", null, null, "CONFIRM", "EUR", NOW + 9))
+        assertEquals("X", dao.getPlanById(id)!!.displayName)
+
+        // REVERSED locks the currency too.
+        assertEquals(1, dao.updatePaidEntryToReversedIfLinkedTo(paid, 993L, NOW + 10))
+        assertEquals(0, dao.updatePlanDetailsIfEditable(id, "X", null, null, "CONFIRM", "USD", NOW + 11))
+        assertEquals("EUR", dao.getPlanById(id)!!.currency)
+    }
+
+    @Test
+    fun updatePlanDetailsIfEditable_on_a_completed_plan_allows_name_lender_category_only() = runTest {
+        val id = dao.insertPlan(plan(uuid = "det-3", status = "COMPLETED"))
+        val before = dao.getPlanById(id)!!
+
+        assertEquals(0, dao.updatePlanDetailsIfEditable(id, "X", null, null, "AUTO_RECORD", "EUR", NOW + 9))
+        assertEquals(0, dao.updatePlanDetailsIfEditable(id, "X", null, null, "CONFIRM", "USD", NOW + 9))
+        assertEquals(before, dao.getPlanById(id))
+
+        assertEquals(1, dao.updatePlanDetailsIfEditable(id, "Renamed", "Lender", 5L, "CONFIRM", "EUR", NOW + 9))
+        val after = dao.getPlanById(id)!!
+        assertEquals("Renamed", after.displayName)
+        assertEquals("Lender", after.lenderLabel)
+        assertEquals(5L, after.categoryId)
+        assertEquals("CONFIRM", after.fulfilmentMode)
+        assertEquals("EUR", after.currency)
+        assertEquals("COMPLETED", after.status)
+    }
+
+    @Test
+    fun updatePlanDetailsIfEditable_returns_0_for_terminal_and_missing_plans() = runTest {
+        for (status in listOf("CANCELLED", "REFUNDED", "PAID_OFF")) {
+            val id = dao.insertPlan(plan(uuid = "det-$status", status = status))
+            val before = dao.getPlanById(id)!!
+
+            assertEquals(0, dao.updatePlanDetailsIfEditable(id, "X", null, null, "CONFIRM", "EUR", NOW + 9))
+            assertEquals(before, dao.getPlanById(id))
+        }
+        assertEquals(0, dao.updatePlanDetailsIfEditable(31337L, "X", null, null, "CONFIRM", "EUR", NOW))
+    }
+
+    @Test
+    fun updatePlanShapeIfActive_applies_to_an_active_plan_only() = runTest {
+        val active = dao.insertPlan(plan(uuid = "shape-1", status = "ACTIVE"))
+        assertEquals(1, dao.updatePlanShapeIfActive(active, 5, 20, NOW + 9))
+        val after = dao.getPlanById(active)!!
+        assertEquals(5, after.installmentCount)
+        assertEquals(20, after.anchorDayOfMonth)
+        assertEquals(NOW + 9, after.updatedAt)
+
+        for (status in listOf("COMPLETED", "CANCELLED", "REFUNDED", "PAID_OFF")) {
+            val id = dao.insertPlan(plan(uuid = "shape-$status", status = status))
+            val before = dao.getPlanById(id)!!
+
+            assertEquals(0, dao.updatePlanShapeIfActive(id, 5, 20, NOW + 9))
+            assertEquals(before, dao.getPlanById(id))
+        }
+        assertEquals(0, dao.updatePlanShapeIfActive(31337L, 5, 20, NOW))
+    }
+
     // ── helpers ──────────────────────────────────────────────────
 
     private suspend fun scheduledEntry(uuid: String): Long {

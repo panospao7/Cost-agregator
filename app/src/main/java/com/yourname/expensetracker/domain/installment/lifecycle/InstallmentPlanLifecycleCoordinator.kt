@@ -15,6 +15,7 @@ import com.yourname.expensetracker.domain.installment.model.EntryTransitionConte
 import com.yourname.expensetracker.domain.installment.model.EntryTransitionResult
 import com.yourname.expensetracker.domain.installment.model.EntryTrigger
 import com.yourname.expensetracker.domain.installment.model.InstallmentAdjustReason
+import com.yourname.expensetracker.domain.installment.model.InstallmentCurrency
 import com.yourname.expensetracker.domain.installment.model.InstallmentEntryKind
 import com.yourname.expensetracker.domain.installment.model.InstallmentEntryStatus
 import com.yourname.expensetracker.domain.installment.model.InstallmentFrequency
@@ -29,6 +30,7 @@ import com.yourname.expensetracker.domain.installment.model.InstallmentResidualP
 import com.yourname.expensetracker.domain.installment.model.InstallmentSplitMethod
 import com.yourname.expensetracker.domain.installment.model.InstallmentStatusReason
 import com.yourname.expensetracker.domain.installment.model.PaidBeforeTrackingCandidate
+import com.yourname.expensetracker.domain.installment.model.PlanEntryOperation
 import com.yourname.expensetracker.domain.installment.model.PlanTransitionResult
 import com.yourname.expensetracker.domain.installment.model.PlanTrigger
 import com.yourname.expensetracker.domain.installment.schedule.GeneratedSchedule
@@ -528,6 +530,505 @@ class InstallmentPlanLifecycleCoordinator @Inject constructor(
                     InstallmentOpResult.Refused(InstallmentRefusalCode.ILLEGAL_TRANSITION)
             }
         }
+
+    // ------------------------------------------------------------------ end and edit operations (S6b)
+
+    /**
+     * Stop (spec 7.1, INV-20): ACTIVE -> CANCELLED(USER_STOP). SCHEDULED entries (overdue ones
+     * included) become CANCELLED(PLAN_STOPPED); PAID, PAID_BEFORE_TRACKING and SKIPPED entries and
+     * every expense are untouched. A retry on a CANCELLED plan is [InstallmentOpResult.AlreadyInState].
+     */
+    suspend fun stop(planId: Long): InstallmentOpResult<InstallmentPlanRef> =
+        writeTxn("InstallmentPlanLifecycleCoordinator.stop") {
+            endPlan(planId, PlanTrigger.STOP, PlanEntryOperation.STOP)
+        }
+
+    /**
+     * Refund / return (spec 7.2). [refundAlreadyRecorded] = true means the bank credit was captured
+     * as its own transaction, so reversing the installments too would double count: the answer
+     * runs the [stop] body instead (ACTIVE -> CANCELLED). A COMPLETED plan has nothing left to
+     * stop and has already ended, so that answer is [InstallmentOpResult.AlreadyInState] there,
+     * never an illegal transition. Otherwise ACTIVE or COMPLETED -> REFUNDED(USER_REFUND):
+     * SCHEDULED entries become CANCELLED(PLAN_REFUNDED), PAID entries become REVERSED and each
+     * linked expense is flagged INSTALLMENT_REVERSED through TLC in the same transaction (INV-2).
+     * No expense is deleted (INV-23). The flag batches are returned in
+     * [InstallmentOpResult.Done.postCommit].
+     */
+    suspend fun refund(planId: Long, refundAlreadyRecorded: Boolean): InstallmentOpResult<InstallmentPlanRef> =
+        writeTxn("InstallmentPlanLifecycleCoordinator.refund") {
+            if (refundAlreadyRecorded) {
+                endPlan(planId, PlanTrigger.STOP, PlanEntryOperation.STOP, completedIsAlreadyEnded = true)
+            } else {
+                endPlan(planId, PlanTrigger.REFUND, PlanEntryOperation.REFUND)
+            }
+        }
+
+    /**
+     * Early payoff (spec 7.3): ACTIVE -> PAID_OFF(USER_PAYOFF). [amount] null means the default,
+     * the sum of the SCHEDULED entries; an explicit amount is normalised to minor units (HALF_UP,
+     * 2 dp) and must be positive (a discount or a fee is the user's choice). [payoffEpochDay] must
+     * be a supported day, not after [todayEpochDay] and not before the latest due date among PAID
+     * and PAID_BEFORE_TRACKING entries (otherwise INVALID_DATE). SCHEDULED entries become
+     * CANCELLED(PAID_OFF_EARLY), the payoff expense is created through TLC with the STRICT key
+     * `installment:<planUuid>:PAYOFF:0:0` at 12:00 [zone] on the payoff date, and one PAYOFF entry
+     * (seq 0) is inserted PAID and linked to it, all in one transaction.
+     */
+    suspend fun payOff(
+        planId: Long,
+        amount: Double?,
+        payoffEpochDay: Long,
+        todayEpochDay: Long,
+        zone: ZoneId
+    ): InstallmentOpResult<InstallmentPlanRef> = writeTxn("InstallmentPlanLifecycleCoordinator.payOff") {
+        val now = timeProvider.now()
+        val plan = loadPlan(planId)
+        val goneOnPayOff = purchaseGoneRefusal(plan)
+        if (goneOnPayOff != null) return@writeTxn goneOnPayOff
+        val move = when (val t = InstallmentPlanTransitions.planTransition(planStatusOf(plan), PlanTrigger.PAY_OFF)) {
+            is PlanTransitionResult.AlreadyInState ->
+                return@writeTxn InstallmentOpResult.AlreadyInState(InstallmentPlanRef(plan.id, t.status))
+            is PlanTransitionResult.Illegal -> return@writeTxn InstallmentOpResult.Refused(t.code)
+            PlanTransitionResult.Delete ->
+                return@writeTxn InstallmentOpResult.Refused(InstallmentRefusalCode.ILLEGAL_TRANSITION)
+            is PlanTransitionResult.Move -> t
+        }
+        val entries = planDao.getEntriesForPlan(plan.id)
+        val scheduledMinor = scheduledRegular(entries).sumOf { minorOf(it) }
+        val payoffMinor = if (amount == null) scheduledMinor else InstallmentMinorUnits.toMinorOrNull(amount)
+        if (payoffMinor == null || payoffMinor <= 0L) {
+            return@writeTxn InstallmentOpResult.Refused(InstallmentRefusalCode.INVALID_AMOUNT)
+        }
+        val latestSettledDue = entries
+            .filter {
+                it.status == InstallmentEntryStatus.PAID.name ||
+                    it.status == InstallmentEntryStatus.PAID_BEFORE_TRACKING.name
+            }
+            .maxOfOrNull { it.dueDate }
+        val dateOk = InstallmentScheduleCalculator.isSupportedDay(payoffEpochDay) &&
+            payoffEpochDay <= todayEpochDay &&
+            (latestSettledDue == null || payoffEpochDay >= latestSettledDue)
+        if (!dateOk) return@writeTxn InstallmentOpResult.Refused(InstallmentRefusalCode.INVALID_DATE)
+
+        for (entry in entries) {
+            val effect = InstallmentPlanTransitions.entryEffect(PlanEntryOperation.PAY_OFF, entryStatusOf(entry)) ?: continue
+            val reason = effect.reason ?: throw conflict()
+            cancelScheduledEntry(entry, reason, now)
+        }
+        val payoffEntry = InstallmentEntry(
+            planId = plan.id,
+            seq = 0,
+            kind = InstallmentEntryKind.PAYOFF.name,
+            dueDate = payoffEpochDay,
+            scheduledAmount = InstallmentMinorUnits.fromMinor(payoffMinor),
+            status = InstallmentEntryStatus.PAID.name,
+            statusChangedAt = now
+        )
+        val recorded = recordEntryExpense(plan, payoffEntry, zone)
+        insertEntryRow(
+            payoffEntry.copy(
+                linkedExpenseId = recorded.expenseId,
+                linkOrigin = InstallmentLinkOrigin.USER_CONFIRMED.name
+            )
+        )
+        moveEndedPlan(plan, move.to, move.reason, now)
+        InstallmentOpResult.Done(InstallmentPlanRef(plan.id, move.to), listOf(recorded.batch))
+    }
+
+    /**
+     * Edit of the plan details (spec 7.4 E3): display name, lender label, category, fulfilment mode
+     * and, while no entry is PAID or REVERSED, the currency (otherwise CURRENCY_LOCKED, INV-16).
+     * Every argument is the full new value (pass the current one to leave it). An ACTIVE plan
+     * accepts every field. A COMPLETED plan accepts the display name, lender label and category
+     * only: a currency or fulfilment mode change on it is ILLEGAL_TRANSITION. Any other status is
+     * ILLEGAL_TRANSITION. Switching the mode from CONFIRM to AUTO_RECORD is refused
+     * (ILLEGAL_TRANSITION) while a SCHEDULED entry is due on or before [todayEpochDay]: the user
+     * confirms or skips those first, so the later catch-up never records an entry the user never
+     * confirmed. Recorded expenses are unchanged; the new values apply to expenses created
+     * afterwards. A STANDALONE plan needs a category (INV-33); a given category must exist.
+     * Changing nothing is [InstallmentOpResult.AlreadyInState].
+     */
+    suspend fun editDetails(
+        planId: Long,
+        displayName: String,
+        lenderLabel: String?,
+        categoryId: Long?,
+        fulfilmentMode: InstallmentFulfilmentMode,
+        currency: String,
+        todayEpochDay: Long
+    ): InstallmentOpResult<InstallmentPlanRef> = writeTxn("InstallmentPlanLifecycleCoordinator.editDetails") {
+        val now = timeProvider.now()
+        val plan = loadPlan(planId)
+        val goneOnEdit = purchaseGoneRefusal(plan)
+        if (goneOnEdit != null) return@writeTxn goneOnEdit
+        val status = planStatusOf(plan)
+        if (status != InstallmentPlanStatus.ACTIVE && status != InstallmentPlanStatus.COMPLETED) {
+            return@writeTxn InstallmentOpResult.Refused(InstallmentRefusalCode.ILLEGAL_TRANSITION)
+        }
+        val target = InstallmentCurrency.fromCodeOrNull(currency)
+            ?: return@writeTxn InstallmentOpResult.Refused(InstallmentRefusalCode.UNSUPPORTED_CURRENCY)
+        val modeChanged = fulfilmentMode.name != plan.fulfilmentMode
+        if (status == InstallmentPlanStatus.COMPLETED && (modeChanged || target.code != plan.currency)) {
+            return@writeTxn InstallmentOpResult.Refused(InstallmentRefusalCode.ILLEGAL_TRANSITION)
+        }
+        if (categoryId == null && plan.kind == InstallmentPlanKind.STANDALONE.name) {
+            return@writeTxn InstallmentOpResult.Refused(InstallmentRefusalCode.CATEGORY_REQUIRED)
+        }
+        if (categoryId != null && !factsReader.categoryExists(categoryId)) {
+            return@writeTxn InstallmentOpResult.Refused(InstallmentRefusalCode.CATEGORY_NOT_FOUND)
+        }
+        if (target.code != plan.currency) {
+            val paidCount = planDao.countEntriesForPlanByStatus(plan.id, InstallmentEntryStatus.PAID.name)
+            val reversedCount = planDao.countEntriesForPlanByStatus(plan.id, InstallmentEntryStatus.REVERSED.name)
+            if (paidCount + reversedCount > 0) {
+                return@writeTxn InstallmentOpResult.Refused(InstallmentRefusalCode.CURRENCY_LOCKED)
+            }
+        }
+        if (modeChanged && fulfilmentMode == InstallmentFulfilmentMode.AUTO_RECORD) {
+            val planEntries = planDao.getEntriesForPlan(plan.id)
+            val hasDueUnconfirmed = planEntries.any {
+                it.status == InstallmentEntryStatus.SCHEDULED.name && it.dueDate <= todayEpochDay
+            }
+            if (hasDueUnconfirmed) {
+                return@writeTxn InstallmentOpResult.Refused(InstallmentRefusalCode.ILLEGAL_TRANSITION)
+            }
+        }
+        val unchanged = displayName == plan.displayName &&
+            lenderLabel == plan.lenderLabel &&
+            categoryId == plan.categoryId &&
+            !modeChanged &&
+            target.code == plan.currency
+        if (unchanged) return@writeTxn InstallmentOpResult.AlreadyInState(InstallmentPlanRef(plan.id, status))
+        val rows = planDao.updatePlanDetailsIfEditable(
+            plan.id, displayName, lenderLabel, categoryId, fulfilmentMode.name, target.code, now
+        )
+        if (rows != 1) throw conflict()
+        InstallmentOpResult.Done(InstallmentPlanRef(plan.id, status))
+    }
+
+    /**
+     * Extend (spec 7.4 E2): appends [additionalCount] REGULAR SCHEDULED entries after the last
+     * REGULAR seq. Their due dates continue monthly from the last non-cancelled REGULAR entry
+     * (no gap after a shorten): the entry at position p among the non-cancelled REGULAR entries is
+     * due on the plan's anchor day in the month p-1 months after the first due date, clamped to
+     * the month end. A FIXED_PAYMENT plan appends the fixed payment and needs [respread] = false. An
+     * EQUAL_SPLIT plan needs [respread] = true: the sum of the SCHEDULED entries is split again
+     * over the old plus new count (INV-9, the plan's residual placement), so the total never
+     * changes; the re-spread entries keep their first amount in `originalScheduledAmount`. Only an
+     * ACTIVE plan is extendable, and the REGULAR count stays within 2..480.
+     */
+    suspend fun extend(
+        planId: Long,
+        additionalCount: Int,
+        respread: Boolean
+    ): InstallmentOpResult<InstallmentPlanRef> = writeTxn("InstallmentPlanLifecycleCoordinator.extend") {
+        val now = timeProvider.now()
+        val plan = loadPlan(planId)
+        val goneOnExtend = purchaseGoneRefusal(plan)
+        if (goneOnExtend != null) return@writeTxn goneOnExtend
+        if (planStatusOf(plan) != InstallmentPlanStatus.ACTIVE) {
+            return@writeTxn InstallmentOpResult.Refused(InstallmentRefusalCode.ILLEGAL_TRANSITION)
+        }
+        val equalSplit = plan.splitMethod == InstallmentSplitMethod.EQUAL_SPLIT.name
+        if (equalSplit != respread) {
+            return@writeTxn InstallmentOpResult.Refused(InstallmentRefusalCode.ILLEGAL_TRANSITION)
+        }
+        val entries = planDao.getEntriesForPlan(plan.id)
+        val regular = entries.filter { it.kind == InstallmentEntryKind.REGULAR.name }
+        val lastSeq = regular.maxOfOrNull { it.seq } ?: 0
+        // Dates continue from the last non-cancelled REGULAR entry: a cancelled tail (after a
+        // shorten) leaves no gap. The seq still continues after the highest seq of any status.
+        val livePositions = regular.count { it.status != InstallmentEntryStatus.CANCELLED.name }
+        val maxCount = InstallmentScheduleCalculator.MAX_COUNT
+        if (additionalCount < 1 || additionalCount > maxCount || lastSeq + additionalCount > maxCount) {
+            return@writeTxn InstallmentOpResult.Refused(InstallmentRefusalCode.INVALID_COUNT)
+        }
+        requireSchedulableAnchors(plan)
+        val newDues = List(additionalCount) { index ->
+            InstallmentScheduleCalculator.dueDateEpochDay(plan.firstDueDate, plan.anchorDayOfMonth, livePositions + index)
+        }
+        if (newDues.any { !InstallmentScheduleCalculator.isSupportedDay(it) }) {
+            return@writeTxn InstallmentOpResult.Refused(InstallmentRefusalCode.INVALID_DATE)
+        }
+        val scheduled = scheduledRegular(entries)
+        val newAmounts: List<Long>
+        if (equalSplit) {
+            val total = scheduled.sumOf { minorOf(it) }
+            val split = InstallmentScheduleCalculator.splitEqually(
+                total, scheduled.size + additionalCount, residualPlacementOf(plan)
+            ) ?: return@writeTxn InstallmentOpResult.Refused(InstallmentRefusalCode.AMOUNT_TOO_SMALL_FOR_COUNT)
+            for ((index, entry) in scheduled.withIndex()) {
+                if (split[index] != minorOf(entry)) {
+                    rescheduleEntry(entry, split[index], entry.dueDate, InstallmentAdjustReason.RESPREAD, now)
+                }
+            }
+            newAmounts = split.drop(scheduled.size)
+        } else {
+            val fixedMinor = InstallmentMinorUnits.toMinorOrNull(plan.fixedPaymentAmount ?: throw conflict())
+            if (fixedMinor == null || fixedMinor <= 0L) throw conflict()
+            newAmounts = List(additionalCount) { fixedMinor }
+        }
+        for (index in 0 until additionalCount) {
+            insertEntryRow(
+                InstallmentEntry(
+                    planId = plan.id,
+                    seq = lastSeq + index + 1,
+                    kind = InstallmentEntryKind.REGULAR.name,
+                    dueDate = newDues[index],
+                    scheduledAmount = InstallmentMinorUnits.fromMinor(newAmounts[index]),
+                    status = InstallmentEntryStatus.SCHEDULED.name,
+                    statusChangedAt = now
+                )
+            )
+        }
+        updatePlanShape(plan, lastSeq + additionalCount, plan.anchorDayOfMonth, now)
+        InstallmentOpResult.Done(InstallmentPlanRef(plan.id, InstallmentPlanStatus.ACTIVE))
+    }
+
+    /**
+     * Shorten (spec 7.4 E2): keeps the first [remainingCount] SCHEDULED REGULAR entries (by seq)
+     * and cancels the trailing ones as CANCELLED(SHORTENED). With [respread] (EQUAL_SPLIT only) the
+     * sum of all SCHEDULED entries before the cut is split again over [remainingCount] (INV-9, the
+     * plan's residual placement), so the total is conserved (AE-21). Without it the kept entries
+     * keep their amounts. [remainingCount] must be at least 1 (ending the plan is [stop]) and at
+     * most the SCHEDULED count. `installmentCount` is unchanged: cancelled entries stay as rows.
+     * Only an ACTIVE plan can be shortened. Nothing to change is [InstallmentOpResult.AlreadyInState].
+     */
+    suspend fun shorten(
+        planId: Long,
+        remainingCount: Int,
+        respread: Boolean
+    ): InstallmentOpResult<InstallmentPlanRef> = writeTxn("InstallmentPlanLifecycleCoordinator.shorten") {
+        val now = timeProvider.now()
+        val plan = loadPlan(planId)
+        val goneOnShorten = purchaseGoneRefusal(plan)
+        if (goneOnShorten != null) return@writeTxn goneOnShorten
+        if (planStatusOf(plan) != InstallmentPlanStatus.ACTIVE) {
+            return@writeTxn InstallmentOpResult.Refused(InstallmentRefusalCode.ILLEGAL_TRANSITION)
+        }
+        if (respread && plan.splitMethod != InstallmentSplitMethod.EQUAL_SPLIT.name) {
+            return@writeTxn InstallmentOpResult.Refused(InstallmentRefusalCode.ILLEGAL_TRANSITION)
+        }
+        val entries = planDao.getEntriesForPlan(plan.id)
+        val scheduled = scheduledRegular(entries)
+        if (remainingCount < 1 || remainingCount > scheduled.size) {
+            return@writeTxn InstallmentOpResult.Refused(InstallmentRefusalCode.INVALID_COUNT)
+        }
+        val kept = scheduled.take(remainingCount)
+        val dropped = scheduled.drop(remainingCount)
+        val split: List<Long>? = if (respread) {
+            InstallmentScheduleCalculator.splitEqually(
+                scheduled.sumOf { minorOf(it) }, remainingCount, residualPlacementOf(plan)
+            ) ?: return@writeTxn InstallmentOpResult.Refused(InstallmentRefusalCode.AMOUNT_TOO_SMALL_FOR_COUNT)
+        } else {
+            null
+        }
+        var changed = 0
+        for (entry in dropped) {
+            val effect = InstallmentPlanTransitions.entryEffect(PlanEntryOperation.SHORTEN, entryStatusOf(entry)) ?: continue
+            val reason = effect.reason ?: throw conflict()
+            cancelScheduledEntry(entry, reason, now)
+            changed++
+        }
+        if (split != null) {
+            for ((index, entry) in kept.withIndex()) {
+                if (split[index] != minorOf(entry)) {
+                    rescheduleEntry(entry, split[index], entry.dueDate, InstallmentAdjustReason.RESPREAD, now)
+                    changed++
+                }
+            }
+        }
+        val ref = InstallmentPlanRef(plan.id, InstallmentPlanStatus.ACTIVE)
+        if (changed == 0) InstallmentOpResult.AlreadyInState(ref) else InstallmentOpResult.Done(ref)
+    }
+
+    /**
+     * Change the due day (spec 7.4 E4). Each SCHEDULED REGULAR entry is recomputed from the plan's
+     * first due date by its position p among the non-cancelled REGULAR entries (the same rule as
+     * [extend]): it is due [newDayOfMonth] (clamped to the month end) in the month p-1 months
+     * after the first due date. PAID, SKIPPED, PAID_BEFORE_TRACKING, CANCELLED and REVERSED
+     * entries are untouched (INV-19). The plan's `anchorDayOfMonth` is updated. Only an ACTIVE
+     * plan. If any recomputed date falls before the plan's declaration date, or outside the
+     * supported range, nothing is written (INVALID_DATE). A result that changes nothing is
+     * [InstallmentOpResult.AlreadyInState].
+     */
+    suspend fun changeDueDay(
+        planId: Long,
+        newDayOfMonth: Int
+    ): InstallmentOpResult<InstallmentPlanRef> = writeTxn("InstallmentPlanLifecycleCoordinator.changeDueDay") {
+        val now = timeProvider.now()
+        val plan = loadPlan(planId)
+        val goneOnDueDay = purchaseGoneRefusal(plan)
+        if (goneOnDueDay != null) return@writeTxn goneOnDueDay
+        if (planStatusOf(plan) != InstallmentPlanStatus.ACTIVE) {
+            return@writeTxn InstallmentOpResult.Refused(InstallmentRefusalCode.ILLEGAL_TRANSITION)
+        }
+        if (newDayOfMonth !in 1..31) return@writeTxn InstallmentOpResult.Refused(InstallmentRefusalCode.INVALID_DATE)
+        val entries = planDao.getEntriesForPlan(plan.id)
+        val scheduled = scheduledRegular(entries)
+        val ref = InstallmentPlanRef(plan.id, InstallmentPlanStatus.ACTIVE)
+        if (scheduled.isEmpty()) return@writeTxn InstallmentOpResult.AlreadyInState(ref)
+        requireSchedulableAnchors(plan)
+        val positionById = entries
+            .filter { it.kind == InstallmentEntryKind.REGULAR.name && it.status != InstallmentEntryStatus.CANCELLED.name }
+            .sortedBy { it.seq }
+            .withIndex()
+            .associate { (index, entry) -> entry.id to index }
+        val newDues = scheduled.map {
+            val position = positionById[it.id] ?: throw conflict()
+            InstallmentScheduleCalculator.dueDateEpochDay(plan.firstDueDate, newDayOfMonth, position)
+        }
+        if (newDues.any { !InstallmentScheduleCalculator.isSupportedDay(it) || it < plan.declaredOnDate }) {
+            return@writeTxn InstallmentOpResult.Refused(InstallmentRefusalCode.INVALID_DATE)
+        }
+        var changed = 0
+        for ((index, entry) in scheduled.withIndex()) {
+            if (newDues[index] != entry.dueDate) {
+                rescheduleEntry(entry, minorOf(entry), newDues[index], InstallmentAdjustReason.DUE_DAY_CHANGED, now)
+                changed++
+            }
+        }
+        if (changed == 0 && newDayOfMonth == plan.anchorDayOfMonth) {
+            return@writeTxn InstallmentOpResult.AlreadyInState(ref)
+        }
+        updatePlanShape(plan, plan.installmentCount, newDayOfMonth, now)
+        InstallmentOpResult.Done(ref)
+    }
+
+    /**
+     * Shared body of [stop] and [refund]: pure plan transition, then the entry effects of the
+     * plan-ending operation, then the plan move, all inside the caller's transaction. A lost
+     * compare-and-set anywhere rolls the whole operation back (CONFLICT). A refunded PAID entry
+     * whose expense row is gone aborts with EXPENSE_NOT_FOUND (reconcile repairs it first).
+     * [completedIsAlreadyEnded] answers a COMPLETED plan with AlreadyInState instead of an illegal
+     * transition (the stop answer of a refund whose credit was captured separately).
+     */
+    private suspend fun endPlan(
+        planId: Long,
+        trigger: PlanTrigger,
+        operation: PlanEntryOperation,
+        completedIsAlreadyEnded: Boolean = false
+    ): InstallmentOpResult<InstallmentPlanRef> {
+        val now = timeProvider.now()
+        val plan = loadPlan(planId)
+        val gone = purchaseGoneRefusal(plan)
+        if (gone != null) return gone
+        if (completedIsAlreadyEnded && planStatusOf(plan) == InstallmentPlanStatus.COMPLETED) {
+            return InstallmentOpResult.AlreadyInState(InstallmentPlanRef(plan.id, InstallmentPlanStatus.COMPLETED))
+        }
+        val move = when (val t = InstallmentPlanTransitions.planTransition(planStatusOf(plan), trigger)) {
+            is PlanTransitionResult.AlreadyInState ->
+                return InstallmentOpResult.AlreadyInState(InstallmentPlanRef(plan.id, t.status))
+            is PlanTransitionResult.Illegal -> return InstallmentOpResult.Refused(t.code)
+            PlanTransitionResult.Delete -> return InstallmentOpResult.Refused(InstallmentRefusalCode.ILLEGAL_TRANSITION)
+            is PlanTransitionResult.Move -> t
+        }
+        val batches = ArrayList<PostCommitActionBatch>()
+        val entries = planDao.getEntriesForPlan(plan.id)
+        for (entry in entries) {
+            val effect = InstallmentPlanTransitions.entryEffect(operation, entryStatusOf(entry)) ?: continue
+            when (effect.to) {
+                InstallmentEntryStatus.CANCELLED -> {
+                    val reason = effect.reason ?: throw conflict()
+                    cancelScheduledEntry(entry, reason, now)
+                }
+                InstallmentEntryStatus.REVERSED -> {
+                    val linked = entry.linkedExpenseId ?: throw conflict()
+                    reverseSettledEntry(entry, linked, now)
+                    if (effect.flagExpenseReversed) {
+                        val flagBatch = setPurchaseFlag(linked, SpendingExclusionReason.INSTALLMENT_REVERSED, abortIfMissing = true)
+                        if (flagBatch != null) batches += flagBatch
+                    }
+                }
+                else -> throw conflict()
+            }
+        }
+        moveEndedPlan(plan, move.to, move.reason, now)
+        return InstallmentOpResult.Done(InstallmentPlanRef(plan.id, move.to), batches)
+    }
+
+    /** SCHEDULED -> CANCELLED with a plan-operation reason (stop, refund, payoff, shorten), compare-and-set. */
+    private suspend fun cancelScheduledEntry(entry: InstallmentEntry, reason: InstallmentStatusReason, now: Long) {
+        val rows = planDao.updateEntryStatusIfCurrent(
+            entry.id,
+            InstallmentEntryStatus.SCHEDULED.name,
+            InstallmentEntryStatus.CANCELLED.name,
+            reason.name,
+            now
+        )
+        if (rows != 1) throw conflict()
+    }
+
+    /** PAID -> REVERSED (refund), compare-and-set on the entry still being linked to [expenseId]. */
+    private suspend fun reverseSettledEntry(entry: InstallmentEntry, expenseId: Long, now: Long) {
+        val rows = planDao.updatePaidEntryToReversedIfLinkedTo(entry.id, expenseId, now)
+        if (rows != 1) throw conflict()
+    }
+
+    /** Plan to a terminal status (CANCELLED, REFUNDED, PAID_OFF), compare-and-set on the status read in the transaction. */
+    private suspend fun moveEndedPlan(
+        plan: InstallmentPlan,
+        to: InstallmentPlanStatus,
+        reason: InstallmentStatusReason?,
+        now: Long
+    ) {
+        val rows = planDao.updatePlanStatusIfCurrent(
+            planId = plan.id,
+            expectedStatus = plan.status,
+            newStatus = to.name,
+            statusReason = reason?.name,
+            terminalAt = now,
+            now = now
+        )
+        if (rows != 1) throw conflict()
+    }
+
+    /** Inserts one entry row (payoff entry, extension entry); a unique-key hit surfaces as CONSTRAINT_VIOLATION. */
+    private suspend fun insertEntryRow(entry: InstallmentEntry) {
+        val ids = planDao.insertEntries(listOf(entry))
+        if (ids.size != 1) throw conflict()
+    }
+
+    /** New amount (exact 2 dp from minor units) and due date of one SCHEDULED entry, compare-and-set. */
+    private suspend fun rescheduleEntry(
+        entry: InstallmentEntry,
+        amountMinor: Long,
+        dueEpochDay: Long,
+        reason: InstallmentAdjustReason,
+        now: Long
+    ) {
+        val rows = planDao.updateEntryScheduleIfScheduled(
+            entry.id, InstallmentMinorUnits.fromMinor(amountMinor), dueEpochDay, reason.name, now
+        )
+        if (rows != 1) throw conflict()
+    }
+
+    /** Count and anchor day of an ACTIVE plan after extend or a due-day change, compare-and-set. */
+    private suspend fun updatePlanShape(plan: InstallmentPlan, installmentCount: Int, anchorDayOfMonth: Int, now: Long) {
+        val rows = planDao.updatePlanShapeIfActive(plan.id, installmentCount, anchorDayOfMonth, now)
+        if (rows != 1) throw conflict()
+    }
+
+    private fun scheduledRegular(entries: List<InstallmentEntry>): List<InstallmentEntry> =
+        entries
+            .filter {
+                it.kind == InstallmentEntryKind.REGULAR.name && it.status == InstallmentEntryStatus.SCHEDULED.name
+            }
+            .sortedBy { it.seq }
+
+    // A stored amount that does not convert fails closed as a conflict; nothing is guessed.
+    private fun minorOf(entry: InstallmentEntry): Long =
+        InstallmentMinorUnits.toMinorOrNull(entry.scheduledAmount) ?: throw conflict()
+
+    // A stored first due date or anchor day that dueDateEpochDay would reject fails closed as a
+    // conflict, so its require() can never escape the transaction.
+    private fun requireSchedulableAnchors(plan: InstallmentPlan) {
+        if (!InstallmentScheduleCalculator.isSupportedDay(plan.firstDueDate) || plan.anchorDayOfMonth !in 1..31) {
+            throw conflict()
+        }
+    }
+
+    private fun residualPlacementOf(plan: InstallmentPlan): InstallmentResidualPlacement =
+        InstallmentResidualPlacement.entries.firstOrNull { it.name == plan.residualPlacement } ?: throw conflict()
 
     // ------------------------------------------------------------------ reactions and reconcile
 

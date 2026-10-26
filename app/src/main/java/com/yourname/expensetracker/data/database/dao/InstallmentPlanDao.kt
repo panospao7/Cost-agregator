@@ -267,4 +267,83 @@ interface InstallmentPlanDao {
         expectedPurchaseExpenseId: Long,
         now: Long
     ): Int
+
+    /**
+     * PAID -> REVERSED (refund, spec 7.2, INV-2). Compare-and-set on status PAID AND
+     * `linkedExpenseId = [expectedExpenseId]`. The link is kept: a REVERSED entry still references
+     * its refunded expense (reconcile R2/R3 read it). The expense itself is never touched here.
+     * Returns affected rows (1 = reversed, 0 = not PAID or linked to a different expense).
+     */
+    @Query("""
+        UPDATE installment_entries
+        SET status = 'REVERSED',
+            statusReason = NULL,
+            statusChangedAt = :now
+        WHERE id = :entryId
+          AND status = 'PAID'
+          AND linkedExpenseId = :expectedExpenseId
+    """)
+    suspend fun updatePaidEntryToReversedIfLinkedTo(
+        entryId: Long,
+        expectedExpenseId: Long,
+        now: Long
+    ): Int
+
+    /**
+     * Edit of the plan details (spec 7.4 E3, plus the currency change allowed before any payment),
+     * compare-and-set on the plan status. An ACTIVE plan accepts every field. A COMPLETED plan
+     * accepts the display name, lender label and category only: its currency and fulfilment mode
+     * must equal the stored ones. A currency change additionally requires that the plan has no
+     * PAID or REVERSED entry (`CURRENCY_LOCKED`); the guards are part of the same statement so a
+     * concurrent claim cannot slip between a read and this write. Returns affected rows
+     * (1 = applied, 0 = plan not editable, currency locked, or currency / mode change on a
+     * COMPLETED plan).
+     */
+    @Query("""
+        UPDATE installment_plans
+        SET displayName = :displayName,
+            lenderLabel = :lenderLabel,
+            categoryId = :categoryId,
+            fulfilmentMode = :fulfilmentMode,
+            currency = :currency,
+            updatedAt = :now
+        WHERE id = :planId
+          AND (status = 'ACTIVE'
+               OR (status = 'COMPLETED'
+                   AND fulfilmentMode = :fulfilmentMode
+                   AND currency = :currency))
+          AND (currency = :currency
+               OR NOT EXISTS (
+                   SELECT 1 FROM installment_entries
+                   WHERE planId = :planId AND status IN ('PAID', 'REVERSED')))
+    """)
+    suspend fun updatePlanDetailsIfEditable(
+        planId: Long,
+        displayName: String,
+        lenderLabel: String?,
+        categoryId: Long?,
+        fulfilmentMode: String,
+        currency: String,
+        now: Long
+    ): Int
+
+    /**
+     * Schedule shape of an ACTIVE plan after extend (new `installmentCount`) or a due-day change
+     * (new `anchorDayOfMonth`), compare-and-set on `status = 'ACTIVE'`. Returns affected rows
+     * (1 = applied, 0 = plan not ACTIVE).
+     */
+    @Query("""
+        UPDATE installment_plans
+        SET installmentCount = :installmentCount,
+            anchorDayOfMonth = :anchorDayOfMonth,
+            updatedAt = :now
+        WHERE id = :planId
+          AND status = 'ACTIVE'
+    """)
+    suspend fun updatePlanShapeIfActive(
+        planId: Long,
+        installmentCount: Int,
+        anchorDayOfMonth: Int,
+        now: Long
+    ): Int
 }

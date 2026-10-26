@@ -404,6 +404,7 @@ class HookedPlanDao(private val d: InstallmentPlanDao) : InstallmentPlanDao by d
     var scheduleResult: Int? = null
     var statusResult: Int? = null
     var planStatusResult: Int? = null
+    var planStatusHook: (suspend () -> Unit)? = null
 
     override suspend fun getPlanById(planId: Long): InstallmentPlan? {
         getPlanByIdHook?.invoke(planId)
@@ -455,7 +456,10 @@ class HookedPlanDao(private val d: InstallmentPlanDao) : InstallmentPlanDao by d
         statusReason: String?,
         terminalAt: Long?,
         now: Long
-    ): Int = planStatusResult ?: d.updatePlanStatusIfCurrent(planId, expectedStatus, newStatus, statusReason, terminalAt, now)
+    ): Int {
+        planStatusHook?.invoke()
+        return planStatusResult ?: d.updatePlanStatusIfCurrent(planId, expectedStatus, newStatus, statusReason, terminalAt, now)
+    }
 }
 
 /** Real facts reader with injectable post-processing (stored-facts drift, concurrent change after the orphan scan). */

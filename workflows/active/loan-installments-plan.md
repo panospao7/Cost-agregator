@@ -686,6 +686,11 @@ Authority: MEC Gate 2 G2-6 (pre-approved plan edits), loan gate2 IM-3/IM-4, S0 r
 
 **A7. Dependency summary**: `[Release 1.0 merged: satisfied] + S10a,S9,S4d + MEC B2 + MEC C → S11`.
 
+**A8. S6b review amendment (2026-10-26; orchestrator, owner standing approval)**
+- **Spec 7.3 "link a captured charge as the payoff" is NOT implemented in S6b.** It is owned by S10 (the payoff UI) plus a new coordinator op `linkPayoff(planId, expenseId, payoffEpochDay, ...)`, to be added in that slice. The op must follow the same rules as `payOff` (cancel the SCHEDULED entries, insert the PAYOFF entry PAID and linked to the existing expense, plan to PAID_OFF, one transaction) but without creating an expense, and must use the existing exclusivity checks (spending type, same currency, not linked elsewhere).
+- **BINDING before any payoff UI ships:** until `linkPayoff` exists, the payoff UI must not offer a flow that lets the user keep a captured payoff debit AND run `payOff` (which creates the PAYOFF expense): that double counts the payoff. S10 must either ship `linkPayoff` with the payoff UI or leave the payoff entry point hidden.
+- S6b operation semantics changed by the review (details in the handoff section "S6b review fixes"): `refund(true)` on a COMPLETED plan is AlreadyInState (D-a); `editDetails` may edit name/lender/category of a COMPLETED plan, currency and mode stay ACTIVE-only, and gained a `todayEpochDay` parameter (D-b); CONFIRM -> AUTO_RECORD is refused while a SCHEDULED entry is due on or before today, which S7a may rely on (D-c, BINDING S7a note); `extend` / `changeDueDay` place entries by position among non-cancelled REGULAR entries from `firstDueDate`, and `changeDueDay` refuses a date before `declaredOnDate` (D-d).
+
 Owner decisions from this amendment: only the A6 test-shards.json edit (at S5). Everything else falls under G2-6 / IM-3 / IM-4.
 
 **A8. Carry-forwards from the S1 privacy-security-guardian review (2026-10-23; binding on later slices)**
