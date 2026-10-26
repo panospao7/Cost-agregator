@@ -89,6 +89,36 @@ internal class FakeAppLockSettingsRepository(var loadState: AppLockSettingsLoadS
         writeAttempts++
         return AppLockSettingsWriteResult.Failed(AppLockSettingField.REVIEW_SAVE)
     }
+
+    // --- S18 (i-a): the lock-flag write of the enable / disable apply. Counted apart from [writeAttempts], which
+    // only the controller-must-not-write pins read (the controller itself still never writes).
+
+    /** Every `setAppLockEnabled` call, in order. */
+    val lockWrites = mutableListOf<Boolean>()
+
+    /** When set, decides the result of a lock write; the default commits and updates [loadState]. */
+    var lockWriteResult: ((Boolean) -> AppLockSettingsWriteResult)? = null
+
+    /** When set, a lock write throws it (a non-IO failure of the store). */
+    var lockWriteFailure: Throwable? = null
+
+    /** When set, a lock write suspends on it before committing (a slow durable write). */
+    var lockWriteGate: CompletableDeferred<Unit>? = null
+
+    override suspend fun setAppLockEnabled(enabled: Boolean): AppLockSettingsWriteResult {
+        lockWrites += enabled
+        lockWriteGate?.await()
+        lockWriteFailure?.let { throw it }
+        lockWriteResult?.let { return it(enabled) }
+        val base = when (val state = loadState) {
+            is AppLockSettingsLoadState.Loaded -> state.settings
+            is AppLockSettingsLoadState.FirstRunDefault -> state.settings
+            is AppLockSettingsLoadState.Unreadable -> return AppLockSettingsWriteResult.Rejected(AppLockWriteRejection.UNREADABLE)
+        }
+        val next = base.copy(appLockEnabled = enabled)
+        loadState = AppLockSettingsLoadState.Loaded(next)
+        return AppLockSettingsWriteResult.Committed(next)
+    }
 }
 
 internal object AppLockTestSettings {

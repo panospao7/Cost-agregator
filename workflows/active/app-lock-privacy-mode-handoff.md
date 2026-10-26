@@ -1297,3 +1297,130 @@ BINDING S18 (Issue 4): starting the apply is the handler's LAST statement. The h
   - reviewer-strict ACCEPT-WITH-CONDITIONS: issues 2 and 3 fixed; issues 1 and 4 recorded as BINDING for S20/S18.
   - Review iteration limit reached; accepted on validation.
 - The controller is still DORMANT. Next: S18 (settings requests: T17–T19, T26–T29; binds startOpenOriginAttempt and onOpenOriginApplyCompleted).
+
+## S18 part (i-a) — implemented
+
+Status (2026-10-26, implementer): written, NOT validated (nothing was run). Still DORMANT (no UI caller of `AppLockSettingsOperations`). No schema/DB impact, no new Hilt module, no new user-visible string.
+M = app/src/main/java/com/yourname/expensetracker, T = app/src/test/java/com/yourname/expensetracker.
+
+Files:
+- NEW M/domain/privacy/applock/AppLockSettingsOperations.kt: `@Singleton`, `@ApplicationScope` scope; `requestEnable()` (T26 capability check, then ENABLE), `requestDisable()`; the success handler; `SettingsRequestResult` (STARTED, ALREADY_IN_FLIGHT, NOT_IN_ORIGIN, REFUSED_UNAVAILABLE). The ONLY production caller of `startOpenOriginAttempt`, `onOpenOriginApplyCompleted` and the two new controller entries.
+- M/domain/privacy/applock/AppLockController.kt: two new public entries (below); `routeNotAvailable` resolves its `TODO(S18)` (NO_CREDENTIAL and UNSUPPORTED_API are now `Closing.EnableRefused` with their own codes); `claimEnableRefusal` / `claimCodeCause` over `claimedCodeCauses`; `TODO(S18-i-b)` and `TODO(S18-ii)` left.
+- M/domain/privacy/applock/PrivacyDiagnosticsEmitter.kt: entries `LOCK_UNAVAILABLE_NOT_SECURE`, `LOCK_UNAVAILABLE_API` (CAUSE only), `LOCK_ENABLED`, `LOCK_DISABLED` (no keys).
+- M/domain/privacy/applock/AppLockSettingsRepository.kt: `AppLockSettingField.APP_LOCK_ENABLED`; `setAppLockEnabled(enabled)` (see DEVIATION 1).
+- M/data/privacy/applock/AppLockSettingsRepositoryImpl.kt: `setAppLockEnabled` (one atomic DataStore edit, Unreadable gives `Rejected`, IO failure gives `Failed(APP_LOCK_ENABLED)`).
+- Tests: T/domain/privacy/applock/AppLockControllerEnableDisableTest.kt (new; holds the shared `SettingsOperationsRig`), AppLockControllerOpenOriginSuccessTest.kt (new), AppLockControllerTestFixtures.kt (fake `setAppLockEnabled`: `lockWrites`, `lockWriteResult`, `lockWriteFailure`, `lockWriteGate`), AppLockControllerIllegalTransitionTest.kt (pins), PrivacyDiagnosticsEmitterTest.kt (new pin test), AppLockControllerPromptOutcomeTest.kt (the NO_CREDENTIAL / UNSUPPORTED_API ENABLE `NotAvailable` test now expects the new codes instead of `LOCK_AUTH_ERROR(OTHER)`).
+
+Transitions:
+- T26: `onEnableRefusedAtRequest(capability)`: from exactly DISABLED with no attempt; claims `LOCK_UNAVAILABLE_NOT_SECURE` (NO_CREDENTIAL), `LOCK_UNAVAILABLE_API` (UNSUPPORTED_API) or `LOCK_UNAVAILABLE_CAPABILITY` (HW_UNAVAILABLE, UNKNOWN; CHECK_FAILED as UNKNOWN) once per (code, cause); no state change.
+- T17 / T18 (by T33): ONE new entry `onOpenOriginSettingApplied(prompt, committed)`, called after the durable write and before `onOpenOriginApplyCompleted`. Re-checks under `stateLock`. Committed: `loadState` takes the new flag, `LOCK_ENABLED` / `LOCK_DISABLED`, and the state moves only from exactly DISABLED to UNLOCKED (ENABLE) or UNLOCKED to DISABLED (DISABLE) with no open attempt. Not committed (Failed, Rejected or an exception): no state change, `LOCK_SETTING_PERSIST_FAILED(FIELD = APP_LOCK_ENABLED)`. `CHANGE` is a no-op (S18-i-b). The unlock-equivalent discard is NOT repeated (the close already did it).
+- Apply order in `AppLockSettingsOperations`: handler (last statement: `scope.launch`) -> [enable: read effective discreet before] -> write (`NonCancellable`) -> `onOpenOriginSettingApplied` -> [enable and committed: `DiscreetRepostTrigger.onCommittedWrite(before, after)`, INV-13] -> `finally { onOpenOriginApplyCompleted(attemptId) }`. Cancellation is rethrown by the unwinding; write exceptions other than cancellation become a failed write (class name only in the log).
+
+AEs covered by the new tests: AE-36, AE-37 (T26 refusals), AE-102 (lock-enable trigger args), AE-113, AE-114 (DISABLE copy, success, write failure, cancel/error/lockout), AE-117 (ENABLE variant, both callback orders; the M5 variant is S18-i-b), AE-116 cancel half for DISABLE (nothing written, UNLOCKED); T33 gate and link release (hold, none before completion, apply after, also after a failed write); cancelled write and cancelled scope; no content in diagnostics.
+
+Decisions (please confirm):
+- D1. T14 gap: a lock that lands between the hand-off and the write leaves the state LOCKED (never turned into DISABLED without an unlock); the committed flag is still recorded in the controller's view and `LOCK_DISABLED` is emitted. The state is then LOCKED with the lock off in storage until the next unlock/cold start. Residual: after that unlock the state is UNLOCKED with the lock off (no auto DISABLED).
+- D2. The reverse gap for ENABLE (a background between the close and the T17 move, state DISABLED records no background) is not tracked: no pending background is set by T17. Residual (the window is the length of one DataStore write).
+- D3. `LOCK_ENABLED`, `LOCK_DISABLED` and `LOCK_SETTING_PERSIST_FAILED` are events, not once-per-process claims (the emitter's 60 s per-code rate limit is the backstop). The T26 refusals ARE claimed once per (code, cause).
+- D4. Two new public controller entries instead of one: the T26 claim lives in the controller because `claimedCodeCauses` is private. Pin changes: method set gains both; allowed parameter types gain `DeviceAuthCapability` and `Boolean`; the single-caller scan now allows exactly `AppLockSettingsOperations.kt` for `startOpenOriginAttempt`, `onOpenOriginApplyCompleted` and the two new names.
+- D5. [SUPERSEDED by architecture finding 4 (ATOMIC start), see "S18 part (i-a) — architecture review" below and the final gate section.] The scope is launched with the default start: a scope that is already cancelled at the hand-off never runs the apply (so no completion; the controller's F8/`T_held` lapse covers the gate). The application scope is not cancelled in production.
+- D6. `onLockQuery()` is not called before the start (S16 question (a)): S20 must deliver `APP_FOREGROUNDED` before the first tap. INV-45 for INERT stays S18-ii.
+
+DEVIATIONS from the brief / plan (outside the controller + Operations write set):
+1. The S14 repository had NO lock-flag write (only `setDiscreetNotifications` and `reviewSave`). Added `setAppLockEnabled` (interface with a fail-closed default `Failed(APP_LOCK_ENABLED)`, so the 5 other fakes still compile and can never report a commit; override in the Impl), plus the `APP_LOCK_ENABLED` field enum value. Needed tests for the Impl are NOT written (test-author).
+2. BINDING S12 carry-forward not done: `AppLockSettingsWriteSerializer` (ui) is not moved to the domain owner and the ViewModel is not edited (UI edits are out of this brief). The lock write is a per-field atomic store edit, so the store stays consistent; only the discreet trigger's before/after read can race a concurrent discreet write (benign: the sweep is idempotent). Must be done before S18-ii (review-save) or S19/S20 wiring.
+3. Existing test `AppLockControllerPromptOutcomeTest` (ENABLE NotAvailable with NO_CREDENTIAL / UNSUPPORTED_API) was changed to the new codes: it pinned the superseded `LOCK_AUTH_ERROR(OTHER)` behaviour.
+
+Test-author to add: `AppLockSettingsRepositoryImplTest` cases for `setAppLockEnabled` (commit, Rejected on each Unreadable cause, IO failure Failed(APP_LOCK_ENABLED), sentinel untouched); the other fakes of the repository need no change (default method).
+
+Validation to request (validation-runner, serial): `compile`; `targeted-unit-test` `*AppLockController*,*AppLockSettingsOperations*,*PrivacyDiagnosticsEmitter*,*DiscreetRepost*` (suggest adding `*AppLockSettingsRepositoryImpl*`); shard `domain-n-z` (and `data`, because of the Impl); `registered-guard` `cancellation`, `known_good_state`.
+Likeliest findings: mockk of the final `DiscreetRepostTrigger`; the `when (val view = loadState)` with `is Unreadable, null`; a lambda ending in an assignment in the failure-map test; other existing tests that still expect `LOCK_AUTH_ERROR(OTHER)` for NO_CREDENTIAL / UNSUPPORTED_API on an ENABLE `NotAvailable`.
+
+### S18 part (i-a) — privacy-review fixes (ACCEPT-WITH-CONDITIONS)
+
+Status (2026-10-26, implementer): written, NOT validated (nothing was run). Still DORMANT. No schema impact. M = app/src/main/java/com/yourname/expensetracker/domain/privacy/applock, T = app/src/test/java/com/yourname/expensetracker/domain/privacy/applock.
+
+Fixed in this pass:
+- F1 (INV-13 regression): M/AppLockSettingsOperations.kt:155-169 (`readEffectiveDiscreetBeforeWrite`) now uses the same `when` as `UpdateDiscreetNotificationsUseCase.kt:63-67`: Loaded/FirstRunDefault give `effectiveDiscreet(before)`, `Unreadable` gives false (a thrown read was already false). Test: T/AppLockControllerEnableDisableTest.kt:367 (store Unreadable(IO_ERROR), lock write commits, trigger called with (false, true)).
+- F2 (runtime binding of T17/T18): M/AppLockController.kt:1190-1192 (close of the OpenOriginSuccess records a one-shot token: attempt id + that attempt's `OpenOriginPrompt`, under `stateLock`; new fields next to `applyGateAttemptId`, which lapses; the token does not). `onOpenOriginSettingApplied(attemptId: Long, committed: Boolean)` at :657 derives ENABLE/DISABLE from the recorded prompt, is a no-op unless the id matches the unconsumed token, then consumes it. The token is also dropped by `onOpenOriginApplyCompleted(id)` and by the failed-hand-off `clearApplyGate(id)` (id-bound). `InFlightAttempt` gained a trailing defaulted `prompt` parameter. Operations passes the attempt id (M/AppLockSettingsOperations.kt:131). Pins (T/AppLockControllerIllegalTransitionTest.kt): `Boolean` removed from the global parameter allow-list and allowed ONLY for the method `onOpenOriginSettingApplied` (it is still needed there as `committed`, so it cannot be removed outright); the signature pin now asserts `(long, boolean) -> void` for that method; the source-scan exemptions for `AppLockController.kt` and `AppLockSettingsOperations.kt` are path-based (`invariantSeparatorsPath.endsWith("domain/privacy/applock/...kt")`). `Long` was already allowed. Test: AppLockControllerEnableDisableTest.kt:388 (no prior success, wrong id, reused id: no state change, no codes).
+- F5: M/AppLockSettingsOperations.kt:90-146 (`applyRunning`, set before `scope.launch`, cleared in the inner `finally` after `onOpenOriginApplyCompleted`); `requestEnable` (:94, before the capability read) and `requestDisable` (:105) return `ALREADY_IN_FLIGHT` while set. Test: AppLockControllerEnableDisableTest.kt:422.
+- F6: M/AppLockController.kt:711 (ENABLE move). DEVIATION from the brief (needed for AE-117): the condition is "the app was in the foreground when the prompt CLOSED (token field `pendingApplyForegroundAtClose`) and is not now", then `lastBackgroundedAtMillis = clock.elapsedRealtimeMillis()`. A plain "not in foreground at the move" would turn the AE-117 OEM-stop case (background during the prompt, discarded as unlock-equivalent) into a LOCKED(TIMEOUT) on the next foreground. Only set when the state really moved to UNLOCKED and no background is pending. Residual: a background AND foreground both inside the write window is not seen. Tests: AppLockControllerEnableDisableTest.kt:440 (measured, next foreground locks) and :459 (prompt background or none sets nothing; the two AE-117 tests in AppLockControllerOpenOriginSuccessTest.kt are unchanged).
+- F8 (spec section 10 "once per process per cause"; supersedes D3 above): M/AppLockController.kt:716 `LOCK_ENABLED` / `LOCK_DISABLED` through `claim(code)` (`claimedDiagnosticCodes`); M/AppLockController.kt:685 `LOCK_SETTING_PERSIST_FAILED(FIELD)` through `claimedCodeCauses` keyed by (code, `AppLockSettingField`) (the set's cause type widened from `DeviceAuthCapability` to `Enum<*>`; `claimCodeCause` takes `Enum<*>`). Test: AppLockControllerEnableDisableTest.kt:479. Note the consequence: a second enable in the same process records no second `LOCK_ENABLED`.
+- D2 above (no pending background set by T17) is superseded by F6; D4 above: the `Boolean` pin is now method-scoped.
+
+BLOCKING for ANY wiring of `AppLockSettingsOperations` (S18-ii, S19, S20):
+- F3: `AndroidNotificationService.kt:314` `decideDiscreet` must pass `actionsSuppressed` per the S18 / G1b binding (the committed lock state, `EffectivePrivacyValues.effectiveLockEnabled(<committed state>)`); otherwise a re-posted BILL on API 30 keeps its actions after the lock is enabled (see the S14 carry-forward).
+- F4: move `AppLockSettingsWriteSerializer` from the ui package into the domain, and run the discreet pre-read, the write and the trigger call INSIDE it, shared with `AppLockPrivacySettingsViewModel`; OR have the repository return the pre-edit settings from the same atomic `store.edit`. This fixes (a) the stale-review-save fail-open (a review save built from a stale read can overwrite the lock flag) and (b) the discreet before/after race.
+- Correction of DEVIATION 2 above: it is NOT "benign". The unshared serializer allows both the stale review-save overwrite of `appLockEnabled` (privacy fail-open) and a wrong before value for the INV-13 trigger. It is dormant only because nothing calls the Operations yet.
+
+Carry-forward (record for G1b):
+- F7: if the lock write throws `CancellationException` inside `NonCancellable`, the durable outcome is unknown (the edit may have committed). Re-read the store in that case and decide the state move, the trigger and the code from the re-read, instead of treating it as not committed. Today the apply ends cancelled, no code, no move, the gate closes. Not done here.
+- [SUPERSEDED by architecture finding 4 (ATOMIC start)] D5 stays: a scope cancelled at the hand-off never runs the apply, so the `applyRunning` flag would stay set (the application scope is not cancelled in production). With ATOMIC the apply body and its finally always run, so the flag is cleared.
+
+Test-author / validation: `AppLockControllerEnableDisableTest` gained 6 tests (F1, F2, F5, F6 x2, F8); `AppLockControllerIllegalTransitionTest` pins changed as above. Validation to request (serial): `compile`; `targeted-unit-test` `*AppLockController*,*AppLockSettingsOperations*,*PrivacyDiagnosticsEmitter*,*DiscreetRepost*`; shard `domain-n-z`; `registered-guard` `cancellation`, `known_good_state`.
+
+Corrections to the S18 (i-a) entries above (2026-10-27):
+- The signature of the state move is now `onOpenOriginSettingApplied(attemptId: Long, committed: Boolean)` (id-bound; the direction is derived from the prompt recorded for that id). Any earlier mention of a direction or a bare `committed` argument is superseded.
+- The 16 `setAppLockEnabled` repository tests exist (`AppLockSettingsRepositoryImpl` coverage); the "needed tests for the Impl are NOT written" note under DEVIATION 1 is superseded.
+- The token field `pendingApplyForegroundAtClose` is renamed `pendingApplyForegroundSinceClose` (F6 residual "a background AND foreground inside the write window is not seen" is closed by architecture finding 3 below).
+
+### S18 part (i-a) — architecture review (ACCEPT-WITH-CONDITIONS) and fixes (2026-10-27)
+
+Status: fixes written by the implementer, NOT validated (nothing was run). Still DORMANT, now pinned by a source scan. No schema impact. M = app/src/main/java/com/yourname/expensetracker/domain/privacy/applock, T = app/src/test/java/com/yourname/expensetracker/domain/privacy/applock.
+
+Findings and what was done:
+1. Docs: docs/architecture/LEGAL_PATHS.md gained "WRITE 3 — lock flag (S18 i-a, DORMANT)" (:1691; owner AppLockSettingsOperations; steps T26 -> prompt -> T33 token -> NonCancellable `setAppLockEnabled` -> `onOpenOriginSettingApplied(attemptId, committed)` -> `DiscreetRepostTrigger` on enable -> completion; "not legal to wire until F3, F4, F7 and findings 3/4/8 are closed"); the "only per-field writer" claim (:1654) and the SERIALISATION rule (:1716-1721) now name the dormant writer and the blocking condition. docs/architecture/CODEBASE_SEGMENTS.md lists the dormant writer in the app-lock segment.
+2. Dormancy pin (test only): T/AppLockControllerIllegalTransitionTest.kt:680 allows ZERO production references to `AppLockSettingsOperations`, `requestEnable`, `requestDisable` outside AppLockSettingsOperations.kt (no DI module exists for it: `@Singleton @Inject constructor`). Comment lines (KDoc links) are skipped. Lifting it needs F3, F4, F7 and findings 3/4/8.
+3. Fail-open window: M/AppLockController.kt:492 (`onAppForegrounded`, inside the synchronized block) sets `pendingApplyForegroundSinceClose = true` while a setting-move token is open; the field (:345, was `pendingApplyForegroundAtClose`) and the move parameter are renamed to "foregroundSinceClose" semantics (:671, :1200). Test: T/AppLockControllerEnableDisableTest.kt:479 (closed in the background, foreground then background during the write, the move lands: the pending background is recorded; the next foreground after the timeout locks).
+4. M/AppLockSettingsOperations.kt:119 `startApply`: `scope.launch(start = CoroutineStart.ATOMIC)` inside `try { ... } catch (t: Throwable) { applyRunning.set(false); throw t }`; `CancellationException` is a Throwable and is rethrown unchanged.
+5. Exact source-scan exemptions: T/AppLockControllerIllegalTransitionTest.kt:662 and :665 compare `file.relativeTo(root).invariantSeparatorsPath == "com/yourname/expensetracker/domain/privacy/applock/<File>.kt"` against the real scanned root (replaces the `endsWith` suffix match); same helper used by the dormancy pin (:691).
+6. Tests: T/AppLockControllerEnableDisableTest.kt:502 (after `onOpenOriginApplyCompleted(id)` a late `onOpenOriginSettingApplied(id, true)` is a no-op) and :517 (after a throwing handler, `clearApplyGate`, the same call is a no-op).
+7. Not itemised in the brief given to the implementer; no change made for it here (orchestrator to confirm what it covered).
+8. `setAppLockEnabled` (M/AppLockSettingsRepository.kt:75) has a fail-closed DEFAULT body so the other fakes compile; it must become ABSTRACT once the fakes are updated, so a fake can never silently report a failed lock write. Not done here (BLOCKING before wiring).
+9. This handoff: the corrections above (signature `(attemptId, committed)`; the 16 `setAppLockEnabled` repository tests exist).
+
+Validation PASS run IDs on the PRE-FIX tree (these do NOT cover the fixes above; re-run on this tree): targeted vr-20261026-203021-d2c692c8; cancellation vr-20261026-203455-095ec8fc; known_good_state vr-20261026-203513-f92f0174; domain-n-z vr-20261026-203814-a889f29f.
+
+BLOCKING before ANY wiring of `AppLockSettingsOperations` (S18-ii, S19, S20): F3 (`decideDiscreet` `actionsSuppressed`), F4 (domain-owned write serialiser, pre-read, write and trigger inside it), F7 (re-read the store after a `CancellationException` inside `NonCancellable`), and finding 8 (`setAppLockEnabled` abstract once the fakes are updated). Findings 3 and 4 above are fixed in this pass, pending validation.
+
+Validation to request (serial): `compile`; `targeted-unit-test` `*AppLockController*,*AppLockSettingsOperations*`; shard `domain-n-z`; `registered-guard` `cancellation`, `known_good_state`.
+
+### S18 part (i-a) — final gate (reviewer-strict ACCEPT-WITH-CONDITIONS) and fixes
+
+Status (2026-10-27): fixes written (tests and docs only, NO production code), NOT validated (nothing was run). Still DORMANT. No schema impact. T = app/src/test/java/com/yourname/expensetracker/domain/privacy/applock.
+
+Findings and what was done:
+1. (NEW, wiring blocker) INV-45: the review record must start from F for every 1b field and go through the controller's auth/capability check (plan :1494) before any wiring. Today the 1a review card writes lock=false with no authentication (`AppLockPrivacySettingsViewModel.kt:195/:200`). Added to the BLOCKING list (docs and dormancy-pin comment); not fixed (S18-ii).
+2. Pins (test only), T/AppLockControllerIllegalTransitionTest.kt: new `assertSingleProductionCaller` helper (exact relative path under every production root via `relativeToRoot`, comment lines skipped, and the allowed file must really contain the call). Two tests: the call site `.setAppLockEnabled(` is allowed only in `com/yourname/expensetracker/domain/privacy/applock/AppLockSettingsOperations.kt`; `.reviewSave(` is pinned to its single current caller `com/yourname/expensetracker/ui/screens/privacysettings/AppLockPrivacySettingsViewModel.kt` (grep of main showed exactly these two call sites). Moving the reviewSave caller behind the controller (INV-45) changes the second pin deliberately.
+3. Stale D5 text: D5 (:1326) and its carry-forward (:1358) are marked SUPERSEDED by architecture finding 4 (ATOMIC start: the apply body and its finally always run, so the flag clears).
+4. Wiring conditions made identical in LEGAL_PATHS WRITE 3, CODEBASE_SEGMENTS.md:603 and the dormancy-pin comment, and the unshared serializer is now attributed only to F4 (not to architecture finding 8) in LEGAL_PATHS SERIALISATION. (Finding numbers 3 and 4 follow the order of the orchestrator brief: docs/handoff items.)
+5. Test: T/AppLockControllerOpenOriginSuccessTest.kt `ATOMIC start - a scope cancelled right after the hand-off ...`: deferred rig, success delivered, `rig.job.cancel()` BEFORE `settle()`; asserts the write (`lockWrites == [true]`), the move to UNLOCKED, `LOCK_ENABLED`, no uncaught, and that `requestDisable()` is `STARTED` afterwards (completion and flag clear ran). Risk to check on first run: ATOMIC launch under a cancelled parent on the StandardTestDispatcher; if the test dispatcher refuses to dispatch for a cancelled job the assertion shows it (that would be a real finding).
+6. Test: T/AppLockControllerEnableDisableTest.kt `a sweep failure after the commit does not undo the enable` now also asserts `rig.uncaught.single() is IllegalStateException` and that `requestDisable()` is `STARTED` (not ALREADY_IN_FLIGHT: completion and flag clear ran).
+
+FINAL BLOCKING list before ANY wiring of `AppLockSettingsOperations` (S18-ii, S19, S20); supersedes the lists at :1351-1354 and :1384:
+- F3: the whole plan :1490-1493 binding: remove the `decideDiscreet` default, pass `actionsSuppressed`, add the SDK <= 30 lock-on parity row, decide `NOTIF_ACTIONS_SUPPRESSED_LOCK`.
+- F4: the domain write serializer shared with the ViewModel.
+- F7: a store re-read after a cancelled NonCancellable write.
+- Finding 8: `setAppLockEnabled` becomes abstract.
+- INV-45 (final gate finding 1): the review record starts from F for every 1b field and goes through the controller's auth/capability check (plan :1494).
+
+Residual notes (accepted, not fixed):
+- F6 undercount: the foreground-since-close tracking can undercount in some interleavings (no false lock, only a possibly missed pending background); recorded as a residual of the F6 timer rule.
+- `requestEnable` order is capability-first: the `applyRunning` check is first, then the capability read, so a refused enable (T26) is reported even while another prompt is open; the controller's own gate (INV-54) still decides the start.
+- D1 residual: a lock that lands between the hand-off and the write leaves LOCKED with the lock off in storage until the next unlock or cold start; after that unlock the state is UNLOCKED with the lock off (no auto DISABLED).
+
+Test-author: nothing further beyond the tests above. Validation to request (serial): `compile`; `targeted-unit-test` `*AppLockController*,*AppLockSettingsOperations*`; shard `domain-n-z`; `registered-guard` `cancellation`, `known_good_state`.
+
+### S18 part (i-a) — accepted (2026-10-27)
+- Final tree (serial, PASS): targeted vr-20261026-221202-74fde420. The edits after the production-code runs below were test and docs only.
+- Production-code runs on the post-architecture-fix tree (PASS):
+  - targeted vr-20261026-213800-235fec07
+  - cancellation vr-20261026-214248-0afa451e
+  - known_good_state vr-20261026-214307-db4654c0
+  - domain-n-z vr-20261026-214608-fa231566
+- Gates:
+  - privacy-security-guardian (lead) ACCEPT-WITH-CONDITIONS, fixed;
+  - architecture-guardian ACCEPT-WITH-CONDITIONS, fixed;
+  - reviewer-strict ACCEPT-WITH-CONDITIONS, fixed (single-caller pins for setAppLockEnabled and reviewSave; INV-45 added to the BLOCKING list).
+- DORMANT. BLOCKING before any wiring of AppLockSettingsOperations: F3, F4, F7, finding 8, INV-45 (see the final-gate section).
+- Next: S18 part (i-b): timeout change, weakening (INV-3), TECH-13, forced values.

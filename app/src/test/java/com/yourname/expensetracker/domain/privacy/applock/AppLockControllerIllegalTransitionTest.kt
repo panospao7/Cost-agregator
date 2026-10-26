@@ -509,8 +509,13 @@ class AppLockControllerIllegalTransitionTest {
             OpenOriginPrompt::class.java,
             OpenOriginSuccessHandler::class.java,
             // S17, exact addition: the already validated, bounded S3 link type of onLockQuery(link). No Android type.
-            DeepLinkRequest::class.java
+            DeepLinkRequest::class.java,
+            // S18 (i-a), exact addition: the bounded capability enum of onEnableRefusedAtRequest (T26). It carries
+            // no text or platform detail. The committed flag of onOpenOriginSettingApplied (T17, T18) is a Boolean,
+            // which is NOT allowed globally (privacy review F2): it is allowed for that one method only, below.
+            DeviceAuthCapability::class.java
         )
+        val committedFlagMethod = "onOpenOriginSettingApplied"
         // Only compiler-generated accessors (`access$...`, first parameter = the controller) are not API.
         // Any other synthetic method on the controller is unexpected and fails the test below.
         val declared = AppLockController::class.java.declaredMethods
@@ -519,7 +524,12 @@ class AppLockControllerIllegalTransitionTest {
 
         val offending = AppLockController::class.java.methods
             .filter { it.declaringClass == AppLockController::class.java && !it.name.startsWith("access\$") }
-            .filter { method -> method.parameterTypes.any { it !in allowedParameterTypes && !it.name.startsWith("kotlin.coroutines") } }
+            .filter { method ->
+                method.parameterTypes.any {
+                    it !in allowedParameterTypes && !it.name.startsWith("kotlin.coroutines") &&
+                        !(it == Boolean::class.javaPrimitiveType && method.name == committedFlagMethod)
+                }
+            }
             .map { it.name }
 
         assertEquals(emptyList<String>(), offending)
@@ -547,7 +557,11 @@ class AppLockControllerIllegalTransitionTest {
                 // S17, exact additions (onLockQuery gains an overload with the same name): pull release of the held
                 // link, and the id-bound T33 apply completion that S18 calls.
                 "releaseHeldLink",
-                "onOpenOriginApplyCompleted"
+                "onOpenOriginApplyCompleted",
+                // S18 (i-a), exact additions: the T26 request-time refusal claim and the T17 / T18 state move of the
+                // enable / disable apply. Both have exactly one production caller, AppLockSettingsOperations.kt.
+                "onEnableRefusedAtRequest",
+                "onOpenOriginSettingApplied"
             ),
             production
         )
@@ -592,6 +606,15 @@ class AppLockControllerIllegalTransitionTest {
         assertEquals(1, completed.size)
         assertEquals(listOf<Class<*>>(Long::class.javaPrimitiveType!!), completed.single().parameterTypes.toList())
         assertEquals(Void.TYPE, completed.single().returnType)
+
+        // S18 (i-a) privacy review F2: the state move is bound to the attempt id; the direction is not an argument.
+        val applied = own.filter { it.name == "onOpenOriginSettingApplied" }
+        assertEquals(1, applied.size)
+        assertEquals(
+            listOf<Class<*>>(Long::class.javaPrimitiveType!!, Boolean::class.javaPrimitiveType!!),
+            applied.single().parameterTypes.toList()
+        )
+        assertEquals(Void.TYPE, applied.single().returnType)
     }
 
     @Test
@@ -619,21 +642,124 @@ class AppLockControllerIllegalTransitionTest {
             "onOpenOriginApplyCompleted",
             // S17 final gate (Issue 3), exact addition: the link decision `onLockQuery(link)` has no production caller
             // yet. S20 allows exactly the host Activity file as its caller (with releaseHeldLink) and nothing else.
-            "onLockQuery"
+            "onLockQuery",
+            // S18 (i-a), exact additions: the T26 refusal claim and the T17 / T18 state move.
+            "onEnableRefusedAtRequest",
+            "onOpenOriginSettingApplied"
+        )
+        // S18 (i-a): these four have exactly one production caller, the settings operations file, and nothing else.
+        val settingsOperationsOnly = setOf(
+            "startOpenOriginAttempt",
+            "onOpenOriginApplyCompleted",
+            "onEnableRefusedAtRequest",
+            "onOpenOriginSettingApplied"
         )
         val offenders = roots.flatMap { root ->
             root.walkTopDown()
                 .filter { it.isFile && (it.extension == "kt" || it.extension == "java") }
-                .filter { it.name != "AppLockController.kt" }
+                // Arch review F5: the exemptions are the EXACT path under the source root (not a suffix match), so a
+                // same-named file in another package, or a longer path ending the same way, gets none.
+                .filter { relativeToRoot(it, root) != "$APPLOCK_PACKAGE_PATH/AppLockController.kt" }
                 .filter { file ->
                     val text = file.readText()
-                    forbidden.any { text.contains(it) }
+                    val allowed = if (relativeToRoot(file, root) == "$APPLOCK_PACKAGE_PATH/AppLockSettingsOperations.kt") {
+                        settingsOperationsOnly
+                    } else {
+                        emptySet()
+                    }
+                    (forbidden - allowed).any { text.contains(it) }
                 }
                 .map { it.path }
                 .toList()
         }
 
         assertEquals(emptyList<String>(), offenders)
+    }
+
+    @Test
+    fun `S18 i-a dormancy - AppLockSettingsOperations, requestEnable and requestDisable have no production caller outside their own file`() {
+        // DORMANT pin (arch review F2). The enable and disable requests exist and are tested, but nothing in
+        // production may call them yet: no ViewModel, Activity, module or screen. There is no DI module for the class
+        // (it is `@Singleton @Inject constructor`), so the single exempt file is AppLockSettingsOperations.kt itself.
+        // Lifting this pin (allowing the settings UI as a caller) needs the BLOCKING list closed first (see
+        // LEGAL_PATHS.md, WRITE 3, and the handoff):
+        //   F3: the whole plan :1490-1493 binding - remove the decideDiscreet default, pass actionsSuppressed, add
+        //       the SDK <= 30 lock-on parity row, decide NOTIF_ACTIONS_SUPPRESSED_LOCK;
+        //   F4: the domain write serializer shared with the ViewModel;
+        //   F7: a store re-read after a cancelled NonCancellable write;
+        //   finding 8: setAppLockEnabled becomes abstract;
+        //   INV-45 (final gate finding 1): the review record starts from F for every 1b field and goes through the
+        //       controller's auth/capability check (plan :1494) before any wiring. Today the 1a review card writes
+        //       lock=false with no authentication (AppLockPrivacySettingsViewModel.kt:195/:200).
+        // The scan skips comment lines (KDoc links such as [AppLockSettingsOperations] are not calls).
+        val dormant = listOf("AppLockSettingsOperations", "requestEnable", "requestDisable")
+        val offenders = locateProductionSourceRoots().flatMap { root ->
+            root.walkTopDown()
+                .filter { it.isFile && (it.extension == "kt" || it.extension == "java") }
+                .filter { relativeToRoot(it, root) != "$APPLOCK_PACKAGE_PATH/AppLockSettingsOperations.kt" }
+                .filter { file ->
+                    file.readLines()
+                        .map { it.trim() }
+                        .filterNot { it.startsWith("*") || it.startsWith("/*") || it.startsWith("//") }
+                        .any { line -> dormant.any { line.contains(it) } }
+                }
+                .map { it.path }
+                .toList()
+        }
+
+        assertEquals(emptyList<String>(), offenders)
+    }
+
+    @Test
+    fun `S18 i-a final gate F2 - the lock flag write has exactly one production call site, AppLockSettingsOperations`() {
+        // Pins the call site `.setAppLockEnabled(` (the declaration `fun setAppLockEnabled(` has no leading dot and
+        // is not a call). Exact relative path under each production root, comment lines skipped.
+        assertSingleProductionCaller(".setAppLockEnabled(", "$APPLOCK_PACKAGE_PATH/AppLockSettingsOperations.kt")
+    }
+
+    @Test
+    fun `S18 i-a final gate F2 - reviewSave keeps its single production caller, the 1a privacy settings ViewModel`() {
+        // Pinned to the current single caller (1a review card). Moving it behind the controller (INV-45, S18-ii)
+        // changes this expectation deliberately.
+        assertSingleProductionCaller(
+            ".reviewSave(",
+            "com/yourname/expensetracker/ui/screens/privacysettings/AppLockPrivacySettingsViewModel.kt"
+        )
+    }
+
+    private fun assertSingleProductionCaller(callSite: String, allowedRelativePath: String) {
+        val roots = locateProductionSourceRoots()
+        val offenders = roots.flatMap { root ->
+            root.walkTopDown()
+                .filter { it.isFile && (it.extension == "kt" || it.extension == "java") }
+                .filter { relativeToRoot(it, root) != allowedRelativePath }
+                .filter { file ->
+                    file.readLines()
+                        .map { it.trim() }
+                        .filterNot { it.startsWith("*") || it.startsWith("/*") || it.startsWith("//") }
+                        .any { it.contains(callSite) }
+                }
+                .map { it.path }
+                .toList()
+        }
+        assertEquals("callers of $callSite outside $allowedRelativePath", emptyList<String>(), offenders)
+        // The allowed file must really contain the call, so a moved or renamed caller fails the pin instead of
+        // silently leaving it vacuous.
+        val allowedCalls = roots.count { root ->
+            File(root, allowedRelativePath).let { f ->
+                f.isFile && f.readLines().map { it.trim() }
+                    .filterNot { it.startsWith("*") || it.startsWith("/*") || it.startsWith("//") }
+                    .any { it.contains(callSite) }
+            }
+        }
+        assertEquals("the allowed caller of $callSite", 1, allowedCalls)
+    }
+
+    /** The file's path under its source root, with `/` separators on every platform. */
+    private fun relativeToRoot(file: File, root: File): String = file.relativeTo(root).invariantSeparatorsPath
+
+    private companion object {
+        const val APPLOCK_PACKAGE_PATH = "com/yourname/expensetracker/domain/privacy/applock"
     }
 
     /**

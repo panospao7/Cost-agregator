@@ -929,8 +929,13 @@ class AppLockControllerPromptOutcomeTest {
     }
 
     @Test
-    fun `ENABLE NotAvailable with NO_CREDENTIAL or UNSUPPORTED_API is a bounded OTHER error, stays DISABLED, writes nothing and is never LOCK_UNAVAILABLE_CAPABILITY`() {
-        // TODO(S18) owns LOCK_UNAVAILABLE_NOT_SECURE / LOCK_UNAVAILABLE_API for these two causes.
+    fun `ENABLE NotAvailable with NO_CREDENTIAL or UNSUPPORTED_API refuses with its own code, stays DISABLED, writes nothing and is never LOCK_UNAVAILABLE_CAPABILITY`() {
+        // S18 (i-a) resolved the former TODO(S18): NO_CREDENTIAL is LOCK_UNAVAILABLE_NOT_SECURE and UNSUPPORTED_API is
+        // LOCK_UNAVAILABLE_API, each with the bounded capability name under CAUSE.
+        val codes = mapOf(
+            DeviceAuthCapability.NO_CREDENTIAL to PrivacyDiagnosticCode.LOCK_UNAVAILABLE_NOT_SECURE,
+            DeviceAuthCapability.UNSUPPORTED_API to PrivacyDiagnosticCode.LOCK_UNAVAILABLE_API
+        )
         for (capability in listOf(DeviceAuthCapability.NO_CREDENTIAL, DeviceAuthCapability.UNSUPPORTED_API)) {
             val (h, controller) = disabledControllerFor()
             h.emitted.clear()
@@ -943,13 +948,14 @@ class AppLockControllerPromptOutcomeTest {
 
             assertEquals("$capability", AppLockState.Disabled, controller.state.value)
             assertNull("$capability", controller.inFlightAttemptId)
-            assertEquals("$capability", listOf(PrivacyDiagnosticCode.LOCK_AUTH_ERROR), h.emitted)
+            assertEquals("$capability", listOf(codes.getValue(capability)), h.emitted)
             assertEquals(
                 "$capability",
-                mapOf<PrivacyDiagnosticKey, Any>(PrivacyDiagnosticKey.CAUSE to DeviceAuthErrorBucket.OTHER),
+                mapOf<PrivacyDiagnosticKey, Any>(PrivacyDiagnosticKey.CAUSE to capability),
                 h.emittedMetadata.single().entries
             )
             assertFalse("$capability", h.emitted.contains(PrivacyDiagnosticCode.LOCK_UNAVAILABLE_CAPABILITY))
+            assertFalse("$capability", h.emitted.contains(PrivacyDiagnosticCode.LOCK_AUTH_ERROR))
             assertTrue("$capability", handler.delivered.isEmpty())
             assertEquals("$capability", 0, h.repository.writeAttempts)
         }

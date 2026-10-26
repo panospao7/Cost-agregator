@@ -1651,7 +1651,8 @@ STORE:
 READ for a notification: NotificationPresentationResolver (see NOTIFICATION PRESENTATION).
 READ for the UI: AppLockPrivacySettingsViewModel ← AppLockSettingsRepository.observeLoadState().
 
-WRITE 1 — per-field discreet toggle (1a, the only per-field writer):
+WRITE 1 — per-field discreet toggle (1a; the only WIRED per-field writer. WRITE 3 is a second,
+DORMANT per-field writer that nothing may call yet):
   → AppLockPrivacySection (UI) → AppLockPrivacySettingsViewModel.setDiscreetNotifications
      (ignored unless Ready and idle, INV-44)
   → appScope.launch (@ApplicationScope, IO) { withContext(NonCancellable) {
@@ -1687,10 +1688,46 @@ WRITE 2 — review-save (1a; replaces a CORRUPTED / INVALID_VALUE store):
   → on Committed → DiscreetRepostTrigger.onCommittedWrite(false, after), inside the same serializer /
     NonCancellable block; Failed, Rejected or thrown saves never reach it
 
+WRITE 3 — lock flag (S18 part (i-a), DORMANT: implemented and tested, no production caller):
+  OWNER: AppLockSettingsOperations (domain/privacy/applock, @Singleton, @ApplicationScope). The only
+  production caller of AppLockController.startOpenOriginAttempt / onOpenOriginApplyCompleted /
+  onEnableRefusedAtRequest / onOpenOriginSettingApplied (source-scan pinned).
+  → requestEnable() / requestDisable() (no ViewModel, Activity, Compose or Android type)
+      1. T26 (enable only): capability read; anything but AVAILABLE (a failed read = CHECK_FAILED) →
+         onEnableRefusedAtRequest, REFUSED_UNAVAILABLE, no prompt, nothing written
+      2. ENABLE / DISABLE prompt (AppLockController.startOpenOriginAttempt; INV-54 one prompt in flight)
+      3. T33 one-shot token: on a matching success the controller closes the attempt, returns to the
+         origin state and hands the attempt id to the operations' handler, which only starts the apply
+         (ATOMIC launch on the application scope); the token is consumed by exactly that id
+      4. withContext(NonCancellable) { enable: effective discreet pre-read (Unreadable / failed read =
+         not discreet); AppLockSettingsRepository.setAppLockEnabled(enabled) (one atomic per-field edit) }
+      5. AppLockController.onOpenOriginSettingApplied(attemptId, committed): re-checks the origin state
+         under the monitor and moves DISABLED → UNLOCKED (T17) or UNLOCKED → DISABLED (T18); a write that
+         did not commit moves nothing and records LOCK_SETTING_PERSIST_FAILED(APP_LOCK_ENABLED)
+      6. enable and committed ONLY → DiscreetRepostTrigger.onCommittedWrite(before, after); disable
+         never re-posts
+      7. completion: onOpenOriginApplyCompleted(attemptId) in a finally (also on failure or
+         cancellation, which is rethrown), after the state move; releases the T33 gate
+  DORMANT / NOT LEGAL TO WIRE until ALL of these BLOCKING items are closed:
+    F3: the whole plan :1490-1493 binding - remove the decideDiscreet default, pass actionsSuppressed,
+        add the SDK <= 30 lock-on parity row, decide NOTIF_ACTIONS_SUPPRESSED_LOCK;
+    F4: the domain write serializer shared with the ViewModel;
+    F7: a store re-read after a cancelled NonCancellable write;
+    finding 8: setAppLockEnabled becomes abstract;
+    INV-45 (final gate finding 1): the review record starts from F for every 1b field and goes through
+        the controller's auth/capability check (plan :1494) before any wiring. Today the 1a review card
+        writes lock=false with no authentication (AppLockPrivacySettingsViewModel.kt:195/:200).
+  Source-scan tests allow zero callers of AppLockSettingsOperations, requestEnable and requestDisable
+  outside AppLockSettingsOperations.kt, exactly one call site of setAppLockEnabled (that file) and exactly
+  one of reviewSave (the 1a ViewModel); lifting them needs the items above.
+
 SERIALISATION (INTERIM): AppLockSettingsWriteSerializer (@Singleton, ui/screens/privacysettings, a
 process-wide Mutex) so a write started by an earlier ViewModel instance still excludes the next
-one's before-read / write / sweep. S18 moves it to the domain owner before any new writer is added
-(domain code cannot depend on the ui package) and takes over review-save diagnostics.
+one's before-read / write / sweep. S18 moves it to the domain owner before any new writer is WIRED
+(domain code cannot depend on the ui package) and takes over review-save diagnostics. WRITE 3 is
+implemented but does NOT share this serializer (only the per-field atomic store edit keeps it from
+interleaving at the store), so it may not be wired until the serialiser is domain-owned and WRITE 3
+runs inside it (blocking: privacy review F4).
 
 FORBIDDEN:
   ❌ Writing the settings store anywhere but AppLockSettingsRepositoryImpl

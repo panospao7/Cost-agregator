@@ -90,7 +90,8 @@ fun interface OpenOriginSuccessHandler {
  * attempts (`ENABLE` from `DISABLED`, `CONFIRM_CHANGE` from `UNLOCKED`): their start API, the prompt
  * background (T32), the success hand-off (T33, delivered to the S18 handler without applying anything) and
  * the non-success return to the origin with the timer hand-off (T34). S17 adds the held deep link (T20 to
- * T22, see "The held link" below). `TODO(S18)` marks the settings operations.
+ * T22, see "The held link" below). S18 part (i-a) adds the enable / disable apply (T17, T18, T26) driven by
+ * [AppLockSettingsOperations]; `TODO(S18-i-b)` and `TODO(S18-ii)` mark the rest of the settings operations.
  *
  * ## The held link (S17: T20, T21, T22, INV-30, INV-31, OD-7a)
  *
@@ -229,7 +230,8 @@ class AppLockController @Inject constructor(
      * [DeviceAuthCapability] of `LOCK_UNAVAILABLE_CAPABILITY` (`HW_UNAVAILABLE` or `UNKNOWN`). Null for every other
      * code. For the deep-link codes (S17: `DL_HELD_LOCKED`, `DL_HELD_REPLACED`, `DL_HELD_EXPIRED`) [metadata] is
      * the ready-made bounded host metadata under the closed `HOST` key (the deep-link host enums only, never link
-     * content) and [cause] is null; the two are mutually exclusive.
+     * content) and [cause] is null; the two are mutually exclusive. `LOCK_SETTING_PERSIST_FAILED` (S18) uses
+     * [metadata] too: the closed `FIELD` key with the [AppLockSettingField] enum name only.
      */
     private class PendingDiagnostic(
         val code: PrivacyDiagnosticCode,
@@ -255,7 +257,9 @@ class AppLockController @Inject constructor(
         val originLockCause: LockCause?,
         val copy: AuthPromptCopy,
         /** For ENABLE and CONFIRM_CHANGE: where a matching success is handed (T33). Null for UNLOCK. */
-        val successHandler: OpenOriginSuccessHandler?
+        val successHandler: OpenOriginSuccessHandler?,
+        /** For ENABLE and CONFIRM_CHANGE: the closed prompt selector the attempt was started with. Null for UNLOCK. */
+        val prompt: OpenOriginPrompt? = null
     ) : DeviceAuthCallback {
         /**
          * T32: the first `APP_BACKGROUNDED` during an open-origin attempt (monotonic). Bound to this attempt, so
@@ -327,12 +331,28 @@ class AppLockController @Inject constructor(
      */
     private var applyGateAttemptId: Long? = null
     private var applyGateSinceMillis = 0L
+
+    /**
+     * The one-shot token of the open-origin success whose setting move ([onOpenOriginSettingApplied]) has not
+     * happened yet (S18 i-a, privacy review F2): the attempt id and that attempt's prompt, recorded by the close
+     * under [stateLock]. Separate from [applyGateAttemptId], which lapses after `T_held`. The move consumes it
+     * only for the exact id; a call with no token, a wrong id or a reused id changes nothing and records nothing.
+     * [pendingApplyForegroundSinceClose] is whether the app was in the foreground at the close or came to the
+     * foreground at any time since, while the token is open (F6, arch review F3).
+     */
+    private var pendingApplyAttemptId: Long? = null
+    private var pendingApplyPrompt: OpenOriginPrompt? = null
+    private var pendingApplyForegroundSinceClose = false
     private val claimedDiagnosticCodes: MutableSet<PrivacyDiagnosticCode> =
         EnumSet.noneOf(PrivacyDiagnosticCode::class.java)
     private val claimedAuthErrorBuckets: MutableSet<DeviceAuthErrorBucket> =
         EnumSet.noneOf(DeviceAuthErrorBucket::class.java)
-    /** Once-per-process claims keyed by (code, cause), so one code's claim never silences another code's cause. */
-    private val claimedCodeCauses: MutableSet<Pair<PrivacyDiagnosticCode, DeviceAuthCapability>> = HashSet()
+    /**
+     * Once-per-process claims keyed by (code, cause), so one code's claim never silences another code's cause.
+     * The cause is a closed enum: a [DeviceAuthCapability], or an [AppLockSettingField] for
+     * `LOCK_SETTING_PERSIST_FAILED(FIELD)`.
+     */
+    private val claimedCodeCauses: MutableSet<Pair<PrivacyDiagnosticCode, Enum<*>>> = HashSet()
 
     // Written only under publishLock; read without it for the cheap staleness pre-check.
     @Volatile private var publishedVersion = 0L
@@ -464,7 +484,13 @@ class AppLockController @Inject constructor(
      * (AWAITING_PRIOR_TERMINAL, the adapter's ON_START).
      */
     fun onAppForegrounded() {
-        synchronized(stateLock) { appInForeground = true } // P6: before the early return for AUTHENTICATING
+        synchronized(stateLock) {
+            appInForeground = true // P6: before the early return for AUTHENTICATING
+            // Arch review F3: a foreground after the close and before the move counts as "foreground since close", so a
+            // success that closed in the background, then saw foreground and background during the write, still
+            // records the pending background at the move (no fail-open window).
+            if (pendingApplyAttemptId != null) pendingApplyForegroundSinceClose = true
+        }
         nudgeAwaitingLaunch()
         evaluateForeground(ForegroundTrigger.APP_FOREGROUNDED)
     }
@@ -574,7 +600,7 @@ class AppLockController @Inject constructor(
             // A lapsed gate is not cleared here, so a link still held is dropped as expired by the next release (F2).
             if (applyGateWithinBoundLocked(clock.elapsedRealtimeMillis())) return@transition OpenOriginStartResult.NotInOrigin
             val attemptId = ++lastIssuedAttemptId
-            val attempt = InFlightAttempt(attemptId, purpose, null, prompt.copy, onSuccess)
+            val attempt = InFlightAttempt(attemptId, purpose, null, prompt.copy, onSuccess, prompt)
             inFlight = attempt // open BEFORE any authenticate call (S15 binding)
             setState(AppLockState.Authenticating(attemptId, purpose))
             opened = attempt
@@ -584,8 +610,122 @@ class AppLockController @Inject constructor(
         return result
     }
 
-    // TODO(S18): SETTINGS_REREAD (T28, T29), ENABLE / DISABLE / WEAKENING requests (T17 to T19, T26, T27),
-    //  and LockNotice derivation (INV-51).
+    // --- Enable and disable (S18 part (i-a): T17, T18, T26, T33) ----------------------------------------
+
+    /**
+     * T26: the request-time refusal of an ENABLE request (capability not `AVAILABLE`, or an API that cannot
+     * authenticate). The caller ([AppLockSettingsOperations], the only production caller) has already read the
+     * capability and starts no prompt. From exactly `DISABLED` with no open attempt it records the refusal code
+     * for [capability], once per process per (code, cause) through [claimedCodeCauses]: `NO_CREDENTIAL` is
+     * `LOCK_UNAVAILABLE_NOT_SECURE`, `UNSUPPORTED_API` is `LOCK_UNAVAILABLE_API`, `HW_UNAVAILABLE`, `UNKNOWN` and
+     * `CHECK_FAILED` (as `UNKNOWN`) are `LOCK_UNAVAILABLE_CAPABILITY`. The state does not change. `AVAILABLE` and
+     * any other state change nothing and record nothing.
+     */
+    fun onEnableRefusedAtRequest(capability: DeviceAuthCapability) {
+        val diagnostic = transition {
+            if (current != AppLockState.Disabled || inFlight != null || capability == DeviceAuthCapability.AVAILABLE) {
+                null
+            } else {
+                claimEnableRefusal(capability)
+            }
+        }
+        record(diagnostic)
+    }
+
+    /**
+     * The state move of an ENABLE or DISABLE apply (T17, T18 by T33), called by the settings operation AFTER its
+     * durable write returned and BEFORE it calls [onOpenOriginApplyCompleted]. [committed] is true only for a
+     * write that returned a durable commit; a failure, a refusal or an exception is false. The caller is the only
+     * production caller ([AppLockSettingsOperations]); the call carries no text and no platform detail.
+     *
+     * Runtime binding (S18 i-a privacy review F2): the direction (enable or disable) is NOT a caller argument. It
+     * is derived from the prompt that the close of attempt [attemptId] recorded in a one-shot token under
+     * [stateLock]. Unless [attemptId] matches the unconsumed token, the call is a no-op (no state change, no
+     * code); a match consumes the token, so a repeat is a no-op too. The token does not lapse with the T33 gate.
+     *
+     * Everything is re-checked under [stateLock] (the state may have moved since the hand-off, AE-114):
+     * - not committed: no state change, `LOCK_SETTING_PERSIST_FAILED(APP_LOCK_ENABLED)` (AE-114: `UNLOCKED` stays;
+     *   the same for ENABLE, which stays `DISABLED`), once per process per (code, field) (spec 10, F8);
+     * - committed: the controller's settings view takes the new lock flag, `LOCK_ENABLED` or `LOCK_DISABLED` is
+     *   recorded (once per process per code, F8), and the state moves only from exactly the origin with no open
+     *   attempt: `DISABLED` to `UNLOCKED`
+     *   for [OpenOriginPrompt.ENABLE] (T17), `UNLOCKED` to `DISABLED` for [OpenOriginPrompt.DISABLE] (T18). On the
+     *   ENABLE move, if the app was in the foreground when the prompt closed and is not now (it left during the
+     *   write), or was in the background at the close, came to the foreground and left again during the write (arch
+     *   review F3), the pending background is set to now (monotonic) so the next foreground measures it (F6). If the
+     *   state is something else (for example a foreground evaluation locked it between the hand-off and the write,
+     *   T14) it is NOT moved: a `LOCKED` state stays `LOCKED` until a real unlock (fail closed), and the next cold
+     *   start resolves from the committed store.
+     * - [OpenOriginPrompt.CHANGE] is not an enable or disable and changes nothing (TODO(S18-i-b)).
+     *
+     * The unlock-equivalent discard (T33: `promptBackgroundAt` and `lastBackgroundedAt`) was done by the close
+     * that handed the success over and is not repeated here. The held link is not released here either: it waits
+     * for [onOpenOriginApplyCompleted].
+     */
+    fun onOpenOriginSettingApplied(attemptId: Long, committed: Boolean) {
+        val diagnostic = transition {
+            // F2: the prompt (and so ENABLE or DISABLE) is the one recorded by the close of THIS attempt. No token
+            // (no prior success, or already consumed) or a different id: a no-op, nothing recorded.
+            val prompt = pendingApplyPrompt
+            if (prompt == null || pendingApplyAttemptId != attemptId) return@transition null
+            val foregroundSinceClose = pendingApplyForegroundSinceClose
+            pendingApplyAttemptId = null
+            pendingApplyPrompt = null
+            pendingApplyForegroundSinceClose = false
+            applyOpenOriginSettingLocked(prompt, committed, foregroundSinceClose)
+        }
+        record(diagnostic)
+    }
+
+    /** Must be called with [stateLock] held. */
+    private fun applyOpenOriginSettingLocked(
+        prompt: OpenOriginPrompt,
+        committed: Boolean,
+        foregroundSinceClose: Boolean
+    ): PendingDiagnostic? {
+        val enable = when (prompt) {
+            OpenOriginPrompt.ENABLE -> true
+            OpenOriginPrompt.DISABLE -> false
+            OpenOriginPrompt.CHANGE -> return null
+        }
+        if (!committed) {
+            // Once per process per (code, FIELD) (spec 10, F8).
+            return if (claimedCodeCauses.add(PrivacyDiagnosticCode.LOCK_SETTING_PERSIST_FAILED to AppLockSettingField.APP_LOCK_ENABLED)) {
+                PendingDiagnostic(
+                    PrivacyDiagnosticCode.LOCK_SETTING_PERSIST_FAILED,
+                    null,
+                    PrivacyDiagnosticMetadata.builder().put(PrivacyDiagnosticKey.FIELD, AppLockSettingField.APP_LOCK_ENABLED).build()
+                )
+            } else {
+                null
+            }
+        }
+        // The committed flag becomes the controller's view of the store. An unreadable or missing view is left as it
+        // is (it stays fail-closed record F); a committed per-field write cannot start from one.
+        when (val view = loadState) {
+            is AppLockSettingsLoadState.Loaded ->
+                loadState = AppLockSettingsLoadState.Loaded(view.settings.copy(appLockEnabled = enable))
+            is AppLockSettingsLoadState.FirstRunDefault ->
+                loadState = AppLockSettingsLoadState.Loaded(view.settings.copy(appLockEnabled = enable))
+            is AppLockSettingsLoadState.Unreadable, null -> Unit
+        }
+        val origin = if (enable) AppLockState.Disabled else AppLockState.Unlocked
+        if (current == origin && inFlight == null) {
+            setState(if (enable) AppLockState.Unlocked else AppLockState.Disabled)
+            // F6: the app left the foreground while the durable write ran (the prompt had closed in the
+            // foreground). `DISABLED` records no background, so the time away is measured from now (monotonic):
+            // the next foreground evaluates it. A background during the PROMPT is not this case: that one is
+            // unlock-equivalent and discarded by the close (AE-117).
+            if (enable && foregroundSinceClose && !appInForeground && lastBackgroundedAtMillis == null) {
+                lastBackgroundedAtMillis = clock.elapsedRealtimeMillis()
+            }
+        }
+        // Once per process per cause (spec 10, F8): neither code has a cause, so the code is the claim.
+        return claim(if (enable) PrivacyDiagnosticCode.LOCK_ENABLED else PrivacyDiagnosticCode.LOCK_DISABLED)
+    }
+
+    // TODO(S18-i-b): timeout change, INV-3 weakening write, TECH-13 (INERT weakening rejection), forced values.
+    // TODO(S18-ii): review-save (T27), SETTINGS_REREAD (T28, T29) and LockNotice derivation (INV-51).
 
     // --- The held deep link (T20, T21, T22; S17) --------------------------------------------------
 
@@ -658,6 +798,17 @@ class AppLockController @Inject constructor(
     fun onOpenOriginApplyCompleted(attemptId: Long) {
         synchronized(stateLock) {
             if (applyGateAttemptId == attemptId) applyGateAttemptId = null
+            // The apply is over: its setting move can no longer be applied (the move runs before this call).
+            clearPendingApplyLocked(attemptId)
+        }
+    }
+
+    /** Drops the one-shot setting-move token when it belongs to [attemptId]. Must be called with [stateLock] held. */
+    private fun clearPendingApplyLocked(attemptId: Long) {
+        if (pendingApplyAttemptId == attemptId) {
+            pendingApplyAttemptId = null
+            pendingApplyPrompt = null
+            pendingApplyForegroundSinceClose = false
         }
     }
 
@@ -912,7 +1063,7 @@ class AppLockController @Inject constructor(
      *   records `LOCK_UNAVAILABLE_CAPABILITY` with the re-check's bounded cause, once per process per
      *   (code, cause). A failed check ([DeviceAuthCapability.CHECK_FAILED]) refuses too, as cause `UNKNOWN`:
      *   enabling never proceeds on an unknown capability (fail closed). `NO_CREDENTIAL` and `UNSUPPORTED_API`
-     *   are a bounded error (`OTHER`) that also stays `DISABLED` with nothing written (`TODO(S18)` below).
+     *   refuse the same way with `LOCK_UNAVAILABLE_NOT_SECURE` / `LOCK_UNAVAILABLE_API` (S18 i-a).
      * - CONFIRM_CHANGE: T34 has no INERT row. The attempt returns to `UNLOCKED` as a bounded error, and T16
      *   applies at the next foreground.
      * - Otherwise (the re-check says AVAILABLE, or the UNLOCK check failed, R3: transient) the attempt returns to
@@ -934,11 +1085,10 @@ class AppLockController @Inject constructor(
             attempt.purpose == AuthPurpose.ENABLE -> when (capability) {
                 DeviceAuthCapability.HW_UNAVAILABLE, DeviceAuthCapability.UNKNOWN -> Closing.EnableRefused(capability)
                 DeviceAuthCapability.CHECK_FAILED -> Closing.EnableRefused(DeviceAuthCapability.UNKNOWN)
-                // TODO(S18): NO_CREDENTIAL and UNSUPPORTED_API get their own bounded codes
-                //  (LOCK_UNAVAILABLE_NOT_SECURE, LOCK_UNAVAILABLE_API). Until S18 adds them they are a bounded
-                //  error (OTHER) and never LOCK_UNAVAILABLE_CAPABILITY, which is for HW_UNAVAILABLE and UNKNOWN only.
+                // S18 (i-a): NO_CREDENTIAL and UNSUPPORTED_API are T26-style refusals with their own bounded codes
+                // (LOCK_UNAVAILABLE_NOT_SECURE, LOCK_UNAVAILABLE_API), claimed per (code, cause) like the others.
                 DeviceAuthCapability.NO_CREDENTIAL,
-                DeviceAuthCapability.UNSUPPORTED_API,
+                DeviceAuthCapability.UNSUPPORTED_API -> Closing.EnableRefused(capability)
                 DeviceAuthCapability.AVAILABLE -> Closing.Error(DeviceAuthErrorBucket.OTHER)
             }
             else -> Closing.Error(DeviceAuthErrorBucket.OTHER)
@@ -1043,11 +1193,16 @@ class AppLockController @Inject constructor(
                     // it waits for onOpenOriginApplyCompleted(attemptId) (S18's apply completed or failed).
                     applyGateAttemptId = attempt.attemptId
                     applyGateSinceMillis = clock.elapsedRealtimeMillis()
+                    // F2: the one-shot token of the setting move (id plus this attempt's prompt). The gate lapses;
+                    // this does not. F6: whether the app was in the foreground when the prompt closed.
+                    pendingApplyAttemptId = attempt.attemptId
+                    pendingApplyPrompt = attempt.prompt
+                    pendingApplyForegroundSinceClose = appInForeground
                     null
                 }
                 is Closing.EnableRefused -> {
                     setState(originState(attempt))
-                    claimCapabilityCause(closing.cause)
+                    claimEnableRefusal(closing.cause)
                 }
                 Closing.Cancelled, Closing.Abandoned -> {
                     setState(originState(attempt))
@@ -1150,6 +1305,7 @@ class AppLockController @Inject constructor(
     private fun clearApplyGate(attemptId: Long) {
         synchronized(stateLock) {
             if (applyGateAttemptId == attemptId) applyGateAttemptId = null
+            clearPendingApplyLocked(attemptId)
         }
     }
 
@@ -1314,11 +1470,23 @@ class AppLockController @Inject constructor(
      * Must be called with [stateLock] held.
      */
     private fun claimCapabilityCause(cause: DeviceAuthCapability): PendingDiagnostic? =
-        if (claimedCodeCauses.add(PrivacyDiagnosticCode.LOCK_UNAVAILABLE_CAPABILITY to cause)) {
-            PendingDiagnostic(PrivacyDiagnosticCode.LOCK_UNAVAILABLE_CAPABILITY, cause)
-        } else {
-            null
-        }
+        claimCodeCause(PrivacyDiagnosticCode.LOCK_UNAVAILABLE_CAPABILITY, cause)
+
+    /**
+     * The T26 refusal code for [cause] (S18 i-a): `NO_CREDENTIAL` is `LOCK_UNAVAILABLE_NOT_SECURE`,
+     * `UNSUPPORTED_API` is `LOCK_UNAVAILABLE_API`, every other cause (`HW_UNAVAILABLE`, `UNKNOWN`, and
+     * `CHECK_FAILED` as `UNKNOWN`) is `LOCK_UNAVAILABLE_CAPABILITY`. Claimed once per process per (code, cause)
+     * through [claimedCodeCauses]. Must be called with [stateLock] held.
+     */
+    private fun claimEnableRefusal(cause: DeviceAuthCapability): PendingDiagnostic? = when (cause) {
+        DeviceAuthCapability.NO_CREDENTIAL -> claimCodeCause(PrivacyDiagnosticCode.LOCK_UNAVAILABLE_NOT_SECURE, cause)
+        DeviceAuthCapability.UNSUPPORTED_API -> claimCodeCause(PrivacyDiagnosticCode.LOCK_UNAVAILABLE_API, cause)
+        DeviceAuthCapability.CHECK_FAILED -> claimCapabilityCause(DeviceAuthCapability.UNKNOWN)
+        else -> claimCapabilityCause(cause)
+    }
+
+    private fun claimCodeCause(code: PrivacyDiagnosticCode, cause: Enum<*>): PendingDiagnostic? =
+        if (claimedCodeCauses.add(code to cause)) PendingDiagnostic(code, cause) else null
 
     /**
      * Maps the capability to the inert reason, or null when the lock may stay active: the device can

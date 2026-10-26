@@ -203,6 +203,26 @@ enum class PrivacyDiagnosticCode(
     LOCK_UNAVAILABLE_CAPABILITY(
         DiagnosticReasonCode.LOCK_UNAVAILABLE_CAPABILITY, EventOutcome.SKIPPED, EventSeverity.WARNING,
         setOf(PrivacyDiagnosticKey.CAUSE)
+    ),
+
+    // App-lock controller (S18 part (i-a)): the T26 request-time refusals for the two causes that have their
+    // own code (spec 10), and the enable / disable results (T17, T18). The refusals carry the bounded
+    // DeviceAuthCapability enum name under the closed CAUSE key; LOCK_ENABLED and LOCK_DISABLED carry nothing.
+    LOCK_UNAVAILABLE_NOT_SECURE(
+        DiagnosticReasonCode.LOCK_UNAVAILABLE_NOT_SECURE, EventOutcome.SKIPPED, EventSeverity.WARNING,
+        setOf(PrivacyDiagnosticKey.CAUSE)
+    ),
+    LOCK_UNAVAILABLE_API(
+        DiagnosticReasonCode.LOCK_UNAVAILABLE_API, EventOutcome.SKIPPED, EventSeverity.WARNING,
+        setOf(PrivacyDiagnosticKey.CAUSE)
+    ),
+    LOCK_ENABLED(
+        DiagnosticReasonCode.LOCK_ENABLED, EventOutcome.COMPLETED, EventSeverity.INFO,
+        emptySet()
+    ),
+    LOCK_DISABLED(
+        DiagnosticReasonCode.LOCK_DISABLED, EventOutcome.COMPLETED, EventSeverity.INFO,
+        emptySet()
     )
 }
 

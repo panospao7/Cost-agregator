@@ -667,6 +667,253 @@ class AppLockSettingsRepositoryImplTest {
         assertEquals(AppLockSettingsLoadState.Loaded(committed), repository.getLoadState())
     }
 
+    // ---------------------------------------------------------------------------------
+    // S18 (i-a): setAppLockEnabled (INV-3, INV-44, INV-46)
+    // ---------------------------------------------------------------------------------
+
+    @Test
+    fun setAppLockEnabled_true_commits_and_reads_back_enabled() = runBlocking {
+        val result = repository.setAppLockEnabled(true)
+
+        assertEquals(
+            AppLockSettingsWriteResult.Committed(AppLockPrivacySettings(appLockEnabled = true)),
+            result
+        )
+        assertEquals(
+            AppLockSettingsLoadState.Loaded(AppLockPrivacySettings(appLockEnabled = true)),
+            repository.getLoadState()
+        )
+        assertEquals(true, real.data.first()[lockKey])
+        assertEquals("NORMAL", real.data.first()[markerKey])
+    }
+
+    @Test
+    fun setAppLockEnabled_false_after_true_commits_and_reads_back_disabled() = runBlocking {
+        repository.setAppLockEnabled(true)
+
+        val result = repository.setAppLockEnabled(false)
+
+        assertEquals(
+            AppLockSettingsWriteResult.Committed(AppLockPrivacySettings(appLockEnabled = false)),
+            result
+        )
+        assertEquals(
+            AppLockSettingsLoadState.Loaded(AppLockPrivacySettings(appLockEnabled = false)),
+            repository.getLoadState()
+        )
+        assertEquals(false, real.data.first()[lockKey])
+    }
+
+    @Test
+    fun setAppLockEnabled_false_on_first_run_still_writes_marker_so_it_is_loaded_not_first_run() = runBlocking {
+        val result = repository.setAppLockEnabled(false)
+
+        assertEquals(
+            AppLockSettingsWriteResult.Committed(AppLockPrivacySettings(appLockEnabled = false)),
+            result
+        )
+        assertEquals(
+            AppLockSettingsLoadState.Loaded(AppLockPrivacySettings(appLockEnabled = false)),
+            repository.getLoadState()
+        )
+    }
+
+    @Test
+    fun setAppLockEnabled_from_first_run_writes_only_the_lock_flag_and_the_normal_marker() = runBlocking {
+        repository.setAppLockEnabled(true)
+
+        assertEquals(
+            mapOf(
+                "_app_lock_load_state" to "NORMAL",
+                "app_lock_enabled" to true
+            ),
+            real.data.first().asMap().mapKeys { it.key.name }
+        )
+    }
+
+    @Test
+    fun setAppLockEnabled_leaves_the_other_fields_untouched() = runBlocking {
+        val record = AppLockPrivacySettings(
+            discreetNotifications = true,
+            appLockEnabled = false,
+            autoLockTimeout = AutoLockTimeout.M15,
+            secureScreen = true
+        )
+        repository.reviewSave(record)
+
+        val result = repository.setAppLockEnabled(true)
+
+        assertEquals(AppLockSettingsWriteResult.Committed(record.copy(appLockEnabled = true)), result)
+        assertEquals(
+            mapOf(
+                "_app_lock_load_state" to "NORMAL",
+                "discreet_notifications" to true,
+                "app_lock_enabled" to true,
+                "auto_lock_timeout" to "M15",
+                "secure_screen" to true
+            ),
+            real.data.first().asMap().mapKeys { it.key.name }
+        )
+    }
+
+    @Test
+    fun setDiscreet_leaves_the_lock_flag_untouched_after_setAppLockEnabled() = runBlocking {
+        repository.setAppLockEnabled(true)
+
+        val result = repository.setDiscreetNotifications(true)
+
+        assertEquals(
+            AppLockSettingsWriteResult.Committed(
+                AppLockPrivacySettings(discreetNotifications = true, appLockEnabled = true)
+            ),
+            result
+        )
+    }
+
+    @Test
+    fun setAppLockEnabled_while_sentinel_present_is_rejected_unreadable_and_writes_nothing() = runBlocking {
+        real.edit { it[markerKey] = "CORRUPTED" }
+        val before = real.data.first().asMap()
+
+        val result = repository.setAppLockEnabled(true)
+
+        assertEquals(AppLockSettingsWriteResult.Rejected(AppLockWriteRejection.UNREADABLE), result)
+        assertEquals(before, real.data.first().asMap())
+        assertEquals(
+            AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.CORRUPTED),
+            repository.getLoadState()
+        )
+    }
+
+    @Test
+    fun setAppLockEnabled_while_marker_is_invalid_is_rejected_unreadable_and_writes_nothing() = runBlocking {
+        real.edit { it[markerKey] = "BOGUS" }
+        val before = real.data.first().asMap()
+
+        val result = repository.setAppLockEnabled(true)
+
+        assertEquals(AppLockSettingsWriteResult.Rejected(AppLockWriteRejection.UNREADABLE), result)
+        assertEquals(before, real.data.first().asMap())
+        assertEquals(
+            AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.INVALID_VALUE),
+            repository.getLoadState()
+        )
+    }
+
+    @Test
+    fun setAppLockEnabled_while_lock_flag_is_invalid_is_rejected_and_does_not_overwrite_it() = runBlocking {
+        real.edit {
+            it[markerKey] = "NORMAL"
+            it[stringPreferencesKey("app_lock_enabled")] = "yes"
+        }
+        val before = real.data.first().asMap()
+
+        val result = repository.setAppLockEnabled(false)
+
+        assertEquals(AppLockSettingsWriteResult.Rejected(AppLockWriteRejection.UNREADABLE), result)
+        assertEquals(before, real.data.first().asMap())
+        assertEquals(
+            AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.INVALID_VALUE),
+            repository.getLoadState()
+        )
+    }
+
+    @Test
+    fun setAppLockEnabled_when_the_read_fails_with_io_error_is_rejected_unreadable() = runBlocking {
+        faulty.failRead = IOException("disk")
+        faulty.failWrite = IOException("disk")
+
+        val result = repository.setAppLockEnabled(true)
+
+        assertEquals(AppLockSettingsWriteResult.Rejected(AppLockWriteRejection.UNREADABLE), result)
+    }
+
+    @Test
+    fun setAppLockEnabled_write_io_failure_while_sentinel_present_is_rejected_not_failed_and_keeps_the_sentinel() = runBlocking {
+        real.edit { it[markerKey] = "CORRUPTED" }
+        val before = real.data.first().asMap()
+        faulty.failWrite = IOException("disk full")
+
+        val result = repository.setAppLockEnabled(true)
+
+        assertEquals(AppLockSettingsWriteResult.Rejected(AppLockWriteRejection.UNREADABLE), result)
+        faulty.failWrite = null
+        assertEquals(before, real.data.first().asMap())
+    }
+
+    @Test
+    fun setAppLockEnabled_write_io_failure_is_typed_failed_and_keeps_the_committed_value() = runBlocking {
+        repository.setAppLockEnabled(false)
+        val before = real.data.first().asMap()
+        faulty.failWrite = IOException("disk full")
+
+        val result = repository.setAppLockEnabled(true)
+
+        assertEquals(AppLockSettingsWriteResult.Failed(AppLockSettingField.APP_LOCK_ENABLED), result)
+        faulty.failWrite = null
+        assertEquals(before, real.data.first().asMap())
+        assertEquals(false, real.data.first()[lockKey])
+        assertEquals(
+            AppLockSettingsLoadState.Loaded(AppLockPrivacySettings(appLockEnabled = false)),
+            repository.getLoadState()
+        )
+    }
+
+    @Test
+    fun setAppLockEnabled_write_io_failure_from_first_run_writes_nothing() = runBlocking {
+        faulty.failWrite = IOException("disk full")
+
+        val result = repository.setAppLockEnabled(true)
+
+        assertEquals(AppLockSettingsWriteResult.Failed(AppLockSettingField.APP_LOCK_ENABLED), result)
+        faulty.failWrite = null
+        assertEquals(emptyMap<Preferences.Key<*>, Any>(), real.data.first().asMap())
+        assertEquals(
+            AppLockSettingsLoadState.FirstRunDefault(AppLockPrivacySettings.DEFAULTS),
+            repository.getLoadState()
+        )
+    }
+
+    @Test
+    fun setAppLockEnabled_write_io_failure_then_retry_commits() = runBlocking {
+        faulty.failWrite = IOException("disk full")
+        repository.setAppLockEnabled(true)
+        faulty.failWrite = null
+
+        val retry = repository.setAppLockEnabled(true)
+
+        assertEquals(
+            AppLockSettingsWriteResult.Committed(AppLockPrivacySettings(appLockEnabled = true)),
+            retry
+        )
+    }
+
+    @Test
+    fun setAppLockEnabled_cancellation_during_write_propagates_and_is_not_a_typed_failure() = runBlocking {
+        faulty.failWrite = CancellationException("cancelled")
+
+        var propagated = false
+        try {
+            repository.setAppLockEnabled(true)
+        } catch (e: CancellationException) {
+            propagated = true
+        }
+        assertTrue("CancellationException must propagate from setAppLockEnabled", propagated)
+    }
+
+    @Test
+    fun setAppLockEnabled_non_io_write_failure_propagates() = runBlocking {
+        faulty.failWrite = IllegalStateException("boom")
+
+        var thrown: Throwable? = null
+        try {
+            repository.setAppLockEnabled(true)
+        } catch (e: IllegalStateException) {
+            thrown = e
+        }
+        assertTrue("non-IO write failure must propagate", thrown is IllegalStateException)
+    }
+
     /** Wraps a real store so reads and/or writes can be made to fail on demand. */
     private class FaultyStore(private val delegate: DataStore<Preferences>) : DataStore<Preferences> {
         @Volatile

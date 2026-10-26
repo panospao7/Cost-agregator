@@ -4,11 +4,12 @@ import kotlinx.coroutines.flow.Flow
 
 /**
  * Closed field enum for a failed settings write (spec 10: `LOCK_SETTING_PERSIST_FAILED(field)`).
- * Later slices add the 1b/2 fields (`APP_LOCK_ENABLED`, ...).
+ * [APP_LOCK_ENABLED] is the lock flag written by the T17 / T18 apply (S18). Later slices add the rest.
  */
 enum class AppLockSettingField {
     DISCREET,
-    REVIEW_SAVE
+    REVIEW_SAVE,
+    APP_LOCK_ENABLED
 }
 
 /** Why a settings write was refused before touching the store. */
@@ -61,4 +62,16 @@ interface AppLockSettingsRepository {
      * only on success. Authorisation (INV-45) is the caller's concern, not the store's.
      */
     suspend fun reviewSave(record: AppLockPrivacySettings): AppLockSettingsWriteResult
+
+    /**
+     * Per-field write of `appLockEnabled` (T17, T18; INV-3, INV-44, INV-46). Same contract as
+     * [setDiscreetNotifications]: `Rejected(UNREADABLE)` and nothing written for any `Unreadable` state;
+     * `Failed(APP_LOCK_ENABLED)` if the commit fails; `Committed` only after the durable commit. Authorisation
+     * (the fresh prompt) is the caller's concern.
+     *
+     * The default fails closed (`Failed(APP_LOCK_ENABLED)`, nothing written), so an implementation that does not
+     * support the write can never report a commit. The real store overrides it.
+     */
+    suspend fun setAppLockEnabled(enabled: Boolean): AppLockSettingsWriteResult =
+        AppLockSettingsWriteResult.Failed(AppLockSettingField.APP_LOCK_ENABLED)
 }
