@@ -226,6 +226,16 @@ sealed interface BulkMarkResult {
  */
 object InstallmentPlanTransitions {
 
+    // ------------------------------------------------------------------ plan name (INV-34)
+
+    /**
+     * The single INV-34 predicate: a plan name is usable when it has at least one non-whitespace
+     * character. Used by `recordDueEntries`, confirm and payoff (recording preconditions, refused
+     * with PLAN_NAME_REQUIRED before any expense create) and by the declare, create-standalone and
+     * edit-details input checks (refused with INVALID_VALUE before any write).
+     */
+    fun isPlanNameUsable(displayName: String): Boolean = displayName.isNotBlank()
+
     // ------------------------------------------------------------------ plan level
 
     /**
@@ -440,20 +450,51 @@ object InstallmentPlanTransitions {
      */
     fun autoRecordDecision(context: EntryTransitionContext, hasCandidateCharge: Boolean): AutoRecordDecision {
         val c = context
-        val today = c.todayEpochDay ?: return AutoRecordDecision.NotApplicable
-        val applicable = c.planStatus == InstallmentPlanStatus.ACTIVE &&
-            c.fulfilmentMode == InstallmentFulfilmentMode.AUTO_RECORD &&
-            c.entryStatus == InstallmentEntryStatus.SCHEDULED &&
-            c.entryKind == InstallmentEntryKind.REGULAR &&
-            !c.hasLinkedExpense &&
-            !c.autoRecordConsumed &&
-            c.dueEpochDay >= c.declaredOnEpochDay &&
-            c.dueEpochDay <= today
+        val applicable = isAutoRecordApplicable(
+            planStatus = c.planStatus,
+            fulfilmentMode = c.fulfilmentMode,
+            entryStatus = c.entryStatus,
+            entryKind = c.entryKind,
+            hasLinkedExpense = c.hasLinkedExpense,
+            autoRecordConsumed = c.autoRecordConsumed,
+            dueEpochDay = c.dueEpochDay,
+            declaredOnEpochDay = c.declaredOnEpochDay,
+            todayEpochDay = c.todayEpochDay
+        )
         return when {
             !applicable -> AutoRecordDecision.NotApplicable
             hasCandidateCharge -> AutoRecordDecision.Defer(InstallmentDeferralReason.AUTO_RECORD_DEFERRED_CANDIDATE)
             else -> AutoRecordDecision.Record
         }
+    }
+
+    /**
+     * The one statement of the auto-record applicability rule (INV-12, INV-14, INV-32): plan
+     * ACTIVE, mode AUTO_RECORD, entry SCHEDULED + REGULAR + unlinked, `autoRecordConsumed` false,
+     * and `declaredOn <= due <= today`. An unknown [todayEpochDay] or [fulfilmentMode] fails closed
+     * to false. Pure and total: it never throws, so a caller may use it as a pre-filter on stored
+     * values as well as inside a transaction.
+     */
+    fun isAutoRecordApplicable(
+        planStatus: InstallmentPlanStatus,
+        fulfilmentMode: InstallmentFulfilmentMode?,
+        entryStatus: InstallmentEntryStatus,
+        entryKind: InstallmentEntryKind,
+        hasLinkedExpense: Boolean,
+        autoRecordConsumed: Boolean,
+        dueEpochDay: Long,
+        declaredOnEpochDay: Long,
+        todayEpochDay: Long?
+    ): Boolean {
+        val today = todayEpochDay ?: return false
+        return planStatus == InstallmentPlanStatus.ACTIVE &&
+            fulfilmentMode == InstallmentFulfilmentMode.AUTO_RECORD &&
+            entryStatus == InstallmentEntryStatus.SCHEDULED &&
+            entryKind == InstallmentEntryKind.REGULAR &&
+            !hasLinkedExpense &&
+            !autoRecordConsumed &&
+            dueEpochDay >= declaredOnEpochDay &&
+            dueEpochDay <= today
     }
 
     /**

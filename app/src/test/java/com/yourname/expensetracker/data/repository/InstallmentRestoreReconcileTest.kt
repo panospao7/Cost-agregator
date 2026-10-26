@@ -392,7 +392,8 @@ class InstallmentRestoreReconcileTest {
             lifecycle,
             facts,
             barrier,
-            time
+            time,
+            InstallmentCandidateChargeProbeImpl(facts, database.installmentPlanDao())
         )
     }
 

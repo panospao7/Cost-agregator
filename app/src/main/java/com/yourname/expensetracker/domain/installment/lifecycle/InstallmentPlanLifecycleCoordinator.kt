@@ -2,6 +2,7 @@ package com.yourname.expensetracker.domain.installment.lifecycle
 
 import android.database.sqlite.SQLiteConstraintException
 import androidx.room.withTransaction
+import com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException
 import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.AppDatabase
@@ -10,12 +11,14 @@ import com.yourname.expensetracker.data.database.entity.InstallmentEntry
 import com.yourname.expensetracker.data.database.entity.InstallmentPlan
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.installment.model.AutoRecordDecision
 import com.yourname.expensetracker.domain.installment.model.BulkMarkResult
 import com.yourname.expensetracker.domain.installment.model.EntryTransitionContext
 import com.yourname.expensetracker.domain.installment.model.EntryTransitionResult
 import com.yourname.expensetracker.domain.installment.model.EntryTrigger
 import com.yourname.expensetracker.domain.installment.model.InstallmentAdjustReason
 import com.yourname.expensetracker.domain.installment.model.InstallmentCurrency
+import com.yourname.expensetracker.domain.installment.model.InstallmentDeferralReason
 import com.yourname.expensetracker.domain.installment.model.InstallmentEntryKind
 import com.yourname.expensetracker.domain.installment.model.InstallmentEntryStatus
 import com.yourname.expensetracker.domain.installment.model.InstallmentFrequency
@@ -115,7 +118,9 @@ class InstallmentPlanLifecycleCoordinator @Inject constructor(
     private val transactionLifecycleCoordinator: TransactionLifecycleCoordinator,
     private val factsReader: InstallmentExpenseFactsReader,
     private val writeBarrier: DatabaseWriteBarrier,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    /** Bounded boolean for the auto-record candidate deferral (AE-17); never exposes expense money. */
+    private val candidateChargeProbe: InstallmentCandidateChargeProbe
 ) {
 
     // ------------------------------------------------------------------ declare / create
@@ -130,6 +135,9 @@ class InstallmentPlanLifecycleCoordinator @Inject constructor(
         terms: InstallmentPlanTerms,
         zone: ZoneId
     ): InstallmentOpResult<InstallmentPlanRef> = writeTxn("InstallmentPlanLifecycleCoordinator.declareOnExpense") {
+        if (!InstallmentPlanTransitions.isPlanNameUsable(terms.displayName)) {
+            return@writeTxn InstallmentOpResult.Refused(InstallmentRefusalCode.INVALID_VALUE)
+        }
         val now = timeProvider.now()
         planDao.getPlanByUuid(terms.planUuid)?.let { existing ->
             return@writeTxn if (existing.purchaseExpenseId == expenseId) {
@@ -182,6 +190,9 @@ class InstallmentPlanLifecycleCoordinator @Inject constructor(
         entryZone: ZoneId,
         terms: InstallmentPlanTerms
     ): InstallmentOpResult<InstallmentPlanRef> = writeTxn("InstallmentPlanLifecycleCoordinator.declareWithNewExpense") {
+        if (!InstallmentPlanTransitions.isPlanNameUsable(terms.displayName)) {
+            return@writeTxn InstallmentOpResult.Refused(InstallmentRefusalCode.INVALID_VALUE)
+        }
         val now = timeProvider.now()
         planDao.getPlanByUuid(terms.planUuid)?.let { existing ->
             return@writeTxn InstallmentOpResult.AlreadyInState(InstallmentPlanRef(existing.id, planStatusOf(existing)))
@@ -267,6 +278,9 @@ class InstallmentPlanLifecycleCoordinator @Inject constructor(
         categoryId: Long?,
         paymentMethod: PaymentMethod
     ): InstallmentOpResult<InstallmentPlanRef> = writeTxn("InstallmentPlanLifecycleCoordinator.createStandalone") {
+        if (!InstallmentPlanTransitions.isPlanNameUsable(terms.displayName)) {
+            return@writeTxn InstallmentOpResult.Refused(InstallmentRefusalCode.INVALID_VALUE)
+        }
         val now = timeProvider.now()
         planDao.getPlanByUuid(terms.planUuid)?.let { existing ->
             return@writeTxn InstallmentOpResult.AlreadyInState(InstallmentPlanRef(existing.id, planStatusOf(existing)))
@@ -311,6 +325,9 @@ class InstallmentPlanLifecycleCoordinator @Inject constructor(
         }
         if (!InstallmentScheduleCalculator.isSupportedDay(entry.dueDate)) {
             return@writeTxn InstallmentOpResult.Refused(InstallmentRefusalCode.INVALID_DATE)
+        }
+        if (!InstallmentPlanTransitions.isPlanNameUsable(plan.displayName)) {
+            return@writeTxn InstallmentOpResult.Refused(InstallmentRefusalCode.PLAN_NAME_REQUIRED)
         }
         val recorded = recordEntryExpense(plan, entry, zone)
         claimEntry(entry, recorded.expenseId, InstallmentLinkOrigin.USER_CONFIRMED, now)
@@ -608,6 +625,9 @@ class InstallmentPlanLifecycleCoordinator @Inject constructor(
             payoffEpochDay <= todayEpochDay &&
             (latestSettledDue == null || payoffEpochDay >= latestSettledDue)
         if (!dateOk) return@writeTxn InstallmentOpResult.Refused(InstallmentRefusalCode.INVALID_DATE)
+        if (!InstallmentPlanTransitions.isPlanNameUsable(plan.displayName)) {
+            return@writeTxn InstallmentOpResult.Refused(InstallmentRefusalCode.PLAN_NAME_REQUIRED)
+        }
 
         for (entry in entries) {
             val effect = InstallmentPlanTransitions.entryEffect(PlanEntryOperation.PAY_OFF, entryStatusOf(entry)) ?: continue
@@ -656,6 +676,9 @@ class InstallmentPlanLifecycleCoordinator @Inject constructor(
         currency: String,
         todayEpochDay: Long
     ): InstallmentOpResult<InstallmentPlanRef> = writeTxn("InstallmentPlanLifecycleCoordinator.editDetails") {
+        if (!InstallmentPlanTransitions.isPlanNameUsable(displayName)) {
+            return@writeTxn InstallmentOpResult.Refused(InstallmentRefusalCode.INVALID_VALUE)
+        }
         val now = timeProvider.now()
         val plan = loadPlan(planId)
         val goneOnEdit = purchaseGoneRefusal(plan)
@@ -1253,6 +1276,204 @@ class InstallmentPlanLifecycleCoordinator @Inject constructor(
             InstallmentOpResult.Done(report, batches)
         }
 
+    // ------------------------------------------------------------------ due-entry recording (S7a-1)
+
+    /**
+     * Auto-record catch-up (domain spec 5.2, INV-12, INV-13, INV-14, INV-34, AE-1, AE-17, AE-31).
+     * Runs [reconcile] first (D-18) and carries its report and batches into the result. Then, for
+     * every ACTIVE AUTO_RECORD plan, each SCHEDULED, unlinked, unconsumed REGULAR entry with
+     * `declaredOn <= due <= today` is handled in its own transaction:
+     * - a blank plan name counts each such entry as [InstallmentRefusalCode.PLAN_NAME_REQUIRED] and
+     *   writes nothing (INV-34);
+     * - inside the transaction the plan and entry are re-read and the candidate fact is read from
+     *   [InstallmentCandidateChargeProbe]; [InstallmentPlanTransitions.autoRecordDecision] then
+     *   decides (the D-c no-bypass rule);
+     * - a candidate charge defers the entry (INV-13); otherwise the expense is created through TLC
+     *   with no user-present rate flag, the entry is claimed AUTO_RECORDED (this latches
+     *   `autoRecordConsumed`, INV-12) and the plan status is settled.
+     *
+     * A failed, refused or throwing entry rolls back that entry only and is counted by enum; the
+     * run goes on. The batches of committed entries are returned in [InstallmentOpResult.Done.postCommit]
+     * for the caller to dispatch after commit. Cancellation is rethrown and discards the in-memory batches.
+     * A closed write barrier ([DatabaseAccessBlockedException]) stops the run without throwing
+     * (owner approval 39(a)): the report carries [InstallmentDueRunReport.stoppedByBarrier], both
+     * loops end, the remaining entries are not touched and are picked up by the next run, and the
+     * result is still `Done(report, batches)` with ALL batches collected so far (reconcile's and
+     * those of entries committed earlier in the run), so follow-up work of committed entries is
+     * never dropped. Callers map the marker to a retry. Read failures of the run-level reads
+     * (`getPlansByStatus`, `getEntriesForPlan`) are not contained here and abort the run.
+     */
+    suspend fun recordDueEntries(
+        todayEpochDay: Long,
+        zone: ZoneId
+    ): InstallmentOpResult<InstallmentDueRunReport> {
+        val acc = DueRunAccumulator()
+        val reconciled = reconcile()
+        if (reconciled is InstallmentOpResult.Done) {
+            acc.report = acc.report.copy(reconcile = reconciled.value)
+            acc.batches += reconciled.postCommit
+        }
+        val activePlans = planDao.getPlansByStatus(InstallmentPlanStatus.ACTIVE.name)
+        val autoRecordPlans = activePlans.filter { it.fulfilmentMode == InstallmentFulfilmentMode.AUTO_RECORD.name }
+        for (plan in autoRecordPlans) {
+            recordDueEntriesOfPlan(plan, todayEpochDay, zone, acc)
+            if (acc.report.stoppedByBarrier) break
+        }
+        logDueRun(acc)
+        return InstallmentOpResult.Done(acc.report, acc.batches)
+    }
+
+    /** Counts, post-commit batches and the first contained exception class of one due-entry run. */
+    private class DueRunAccumulator {
+        var report = InstallmentDueRunReport()
+        val batches = ArrayList<PostCommitActionBatch>()
+        var failureClass: String? = null
+
+        fun noteFailure(e: Exception) {
+            if (failureClass == null) failureClass = e.javaClass.simpleName
+        }
+    }
+
+    /** What one due-entry transaction did: recorded, deferred for a reason, or neither (not applicable). */
+    private class DueEntryOutcome(val recorded: Boolean, val deferral: InstallmentDeferralReason?)
+
+    private suspend fun recordDueEntriesOfPlan(
+        plan: InstallmentPlan,
+        todayEpochDay: Long,
+        zone: ZoneId,
+        acc: DueRunAccumulator
+    ) {
+        val entries = planDao.getEntriesForPlan(plan.id)
+        val dueEntries = entries.filter { isDueAutoRecordCandidate(plan, it, todayEpochDay) }
+        if (dueEntries.isEmpty()) return
+        // INV-34: the name check runs before any TLC call; a blank name writes nothing.
+        if (!InstallmentPlanTransitions.isPlanNameUsable(plan.displayName)) {
+            repeat(dueEntries.size) {
+                acc.report = acc.report.withRefused(InstallmentRefusalCode.PLAN_NAME_REQUIRED)
+            }
+            return
+        }
+        for (entry in dueEntries) {
+            recordOneDueEntry(plan.id, entry.id, todayEpochDay, zone, acc)
+            if (acc.report.stoppedByBarrier) return
+        }
+    }
+
+    // Cheap pre-filter on stored values only, using the same pure rule as the in-transaction decision.
+    // It builds its inputs without context() (which throws AbortSignal outside writeTxn): a stored
+    // code that does not parse is simply not a candidate.
+    private fun isDueAutoRecordCandidate(plan: InstallmentPlan, entry: InstallmentEntry, todayEpochDay: Long): Boolean {
+        val planStatus = InstallmentPlanStatus.fromCodeOrNull(plan.status) ?: return false
+        val entryStatus = InstallmentEntryStatus.fromCodeOrNull(entry.status) ?: return false
+        val entryKind = InstallmentEntryKind.fromCodeOrNull(entry.kind) ?: return false
+        return InstallmentPlanTransitions.isAutoRecordApplicable(
+            planStatus = planStatus,
+            fulfilmentMode = InstallmentFulfilmentMode.fromCodeOrNull(plan.fulfilmentMode),
+            entryStatus = entryStatus,
+            entryKind = entryKind,
+            hasLinkedExpense = entry.linkedExpenseId != null,
+            autoRecordConsumed = entry.autoRecordConsumed,
+            dueEpochDay = entry.dueDate,
+            declaredOnEpochDay = plan.declaredOnDate,
+            todayEpochDay = todayEpochDay
+        )
+    }
+
+    /**
+     * One entry, one transaction. A failure, refusal or unmapped exception is counted by enum and
+     * the caller's loop continues; the committed batch of a recorded entry is kept in [acc].
+     * A closed write barrier ([DatabaseAccessBlockedException]: restore, reset or maintenance) is
+     * not a per-entry failure: it sets [InstallmentDueRunReport.stoppedByBarrier] (owner approval
+     * 39(a)) and the callers leave both loops. Nothing is thrown, so the batches of entries
+     * committed earlier in the run stay in [acc] and are returned. Cancellation is still rethrown.
+     */
+    private suspend fun recordOneDueEntry(
+        planId: Long,
+        entryId: Long,
+        todayEpochDay: Long,
+        zone: ZoneId,
+        acc: DueRunAccumulator
+    ) {
+        val result = try {
+            recordDueEntry(planId, entryId, todayEpochDay, zone)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: DatabaseAccessBlockedException) {
+            acc.report = acc.report.copy(stoppedByBarrier = true)
+            return
+        } catch (e: Exception) {
+            acc.noteFailure(e)
+            acc.report = acc.report.withFailed(InstallmentOpFailure.RECORD_FAILED)
+            return
+        }
+        when (result) {
+            is InstallmentOpResult.Done -> {
+                val outcome = result.value
+                if (outcome.recorded) {
+                    acc.report = acc.report.withRecorded()
+                    acc.batches += result.postCommit
+                }
+                val reason = outcome.deferral
+                if (reason != null) acc.report = acc.report.withDeferred(reason)
+            }
+            is InstallmentOpResult.AlreadyInState -> Unit
+            is InstallmentOpResult.Refused -> acc.report = acc.report.withRefused(result.code)
+            is InstallmentOpResult.RateRefused ->
+                acc.report = acc.report.withFailed(InstallmentOpFailure.RECORD_FAILED)
+            is InstallmentOpResult.Failed -> acc.report = acc.report.withFailed(result.failure)
+        }
+    }
+
+    private suspend fun recordDueEntry(
+        planId: Long,
+        entryId: Long,
+        todayEpochDay: Long,
+        zone: ZoneId
+    ): InstallmentOpResult<DueEntryOutcome> = writeTxn("InstallmentPlanLifecycleCoordinator.recordDueEntry") {
+        val now = timeProvider.now()
+        val plan = loadPlan(planId)
+        val entry = loadEntry(entryId)
+        val gone = purchaseGoneRefusal(plan)
+        if (gone != null) return@writeTxn gone
+        if (!InstallmentPlanTransitions.isPlanNameUsable(plan.displayName)) {
+            return@writeTxn InstallmentOpResult.Refused(InstallmentRefusalCode.PLAN_NAME_REQUIRED)
+        }
+        val ctx = context(plan, entry, todayEpochDay)
+        val notApplicable = InstallmentOpResult.AlreadyInState(DueEntryOutcome(recorded = false, deferral = null))
+        if (InstallmentPlanTransitions.autoRecordDecision(ctx, hasCandidateCharge = false) == AutoRecordDecision.NotApplicable) {
+            return@writeTxn notApplicable
+        }
+        // The candidate read happens inside this transaction, so it sees the same snapshot as the claim.
+        val hasCandidateCharge = candidateChargeProbe.hasCandidate(plan, entry, zone)
+        when (val decision = InstallmentPlanTransitions.autoRecordDecision(ctx, hasCandidateCharge)) {
+            AutoRecordDecision.NotApplicable -> notApplicable
+            is AutoRecordDecision.Defer ->
+                InstallmentOpResult.Done(DueEntryOutcome(recorded = false, deferral = decision.reason))
+            AutoRecordDecision.Record -> {
+                if (!InstallmentScheduleCalculator.isSupportedDay(entry.dueDate)) {
+                    return@writeTxn InstallmentOpResult.Refused(InstallmentRefusalCode.INVALID_DATE)
+                }
+                val recorded = recordEntryExpense(plan, entry, zone)
+                claimEntry(entry, recorded.expenseId, InstallmentLinkOrigin.AUTO_RECORDED, now)
+                settlePlanStatus(plan.id, now)
+                InstallmentOpResult.Done(DueEntryOutcome(recorded = true, deferral = null), listOf(recorded.batch))
+            }
+        }
+    }
+
+    /** Integer counts and, when an exception was contained, its class simple name only (INV-31). */
+    private fun logDueRun(acc: DueRunAccumulator) {
+        val report = acc.report
+        val deferred = report.deferred.values.sum()
+        val refused = report.refused.values.sum()
+        val failed = report.failed.values.sum()
+        if (report.recorded + deferred + refused + failed == 0 && !report.stoppedByBarrier) return
+        Timber.i(
+            "InstallmentDueRun recorded=%d deferred=%d refused=%d failed=%d stoppedByBarrier=%b cause=%s",
+            report.recorded, deferred, refused, failed, report.stoppedByBarrier, acc.failureClass ?: "none"
+        )
+    }
+
     // ------------------------------------------------------------------ transaction scaffolding
 
     /** Thrown inside a transaction to roll everything back, then mapped to its typed result. */
@@ -1470,7 +1691,13 @@ class InstallmentPlanLifecycleCoordinator @Inject constructor(
     private fun idempotencyKey(planUuid: String, entry: InstallmentEntry): String =
         "installment:$planUuid:${entry.kind}:${entry.seq}:${entry.recordGeneration}"
 
-    /** SCHEDULED -> PAID with the link, compare-and-set; a lost race rolls the operation back. */
+    /**
+     * SCHEDULED -> PAID with the link, compare-and-set; a lost race rolls the operation back. Every
+     * claim, whatever the [origin] (AUTO_RECORDED, USER_CONFIRMED, USER_LINKED), latches
+     * `autoRecordConsumed` (INV-12, owner approval 39(b)): once an entry has been paid or linked,
+     * auto-record never re-creates it after the user deletes that expense. The signature and the
+     * DAO policy row stay unchanged.
+     */
     private suspend fun claimEntry(
         entry: InstallmentEntry,
         expenseId: Long,
@@ -1481,7 +1708,7 @@ class InstallmentPlanLifecycleCoordinator @Inject constructor(
             entryId = entry.id,
             expenseId = expenseId,
             linkOrigin = origin.name,
-            markAutoRecordConsumed = false,
+            markAutoRecordConsumed = true,
             now = now
         )
         if (rows != 1) throw conflict()

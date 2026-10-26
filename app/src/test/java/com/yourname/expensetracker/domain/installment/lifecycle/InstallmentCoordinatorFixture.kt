@@ -14,6 +14,7 @@ import com.yourname.expensetracker.data.database.entity.InstallmentPlan
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.data.database.entity.RecurringOccurrence
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.data.repository.InstallmentCandidateChargeProbeImpl
 import com.yourname.expensetracker.data.repository.InstallmentExpenseFactsReaderImpl
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
@@ -83,7 +84,10 @@ class InstallmentCoordinatorFixture private constructor(
         reader: InstallmentExpenseFactsReader = facts,
         lifecycle: TransactionLifecycleCoordinator = tlc
     ): InstallmentPlanLifecycleCoordinator =
-        InstallmentPlanLifecycleCoordinator(db, dao, lifecycle, reader, barrier, time)
+        InstallmentPlanLifecycleCoordinator(
+            db, dao, lifecycle, reader, barrier, time,
+            InstallmentCandidateChargeProbeImpl(reader, dao)
+        )
 
     // ------------------------------------------------------------------ raw SQL helpers
 

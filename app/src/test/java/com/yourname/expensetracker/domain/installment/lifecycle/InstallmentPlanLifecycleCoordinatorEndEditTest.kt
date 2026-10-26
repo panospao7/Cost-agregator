@@ -4,6 +4,7 @@ import androidx.test.core.app.ApplicationProvider
 import com.yourname.expensetracker.data.database.dao.RestrictedExpenseDaoMutation
 import com.yourname.expensetracker.data.database.entity.InstallmentEntry
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
+import com.yourname.expensetracker.data.repository.InstallmentCandidateChargeProbeImpl
 import com.yourname.expensetracker.data.repository.InstallmentPlanReadRepositoryImpl
 import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentCoordinatorFixture.Companion.ATHENS
 import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentCoordinatorFixture.Companion.athensMillis
@@ -80,7 +81,12 @@ class InstallmentPlanLifecycleCoordinatorEndEditTest {
     private suspend fun statuses(planId: Long): List<String> = fx.entries(planId).map { it.status }
 
     private suspend fun financingCost(planId: Long): InstallmentAmount =
-        InstallmentPlanReadRepositoryImpl(fx.planDao, fx.facts, fx.time).loadDetail(planId)!!.financingCost
+        InstallmentPlanReadRepositoryImpl(
+            fx.planDao,
+            fx.facts,
+            fx.time,
+            InstallmentCandidateChargeProbeImpl(fx.facts, fx.planDao)
+        ).loadDetail(planId)!!.financingCost
 
     /** AE-1 with all 12 entries confirmed as of 2028-03-10: the plan is COMPLETED. */
     private suspend fun completedAe1(): Long {
@@ -764,6 +770,56 @@ class InstallmentPlanLifecycleCoordinatorEndEditTest {
         assertEquals("COMPLETED", plan.status)
         assertEquals("AUTO_RECORD", plan.fulfilmentMode)
         assertEquals("EUR", plan.currency)
+    }
+
+    // ------------------------------------------------------------------ INV-34 / owner item 33: blank name
+
+    @Test
+    fun `payoff of a plan with an empty or whitespace name is refused PLAN_NAME_REQUIRED and writes nothing`() = runBlocking {
+        for ((index, name) in listOf("", "  \t ").withIndex()) {
+            val planId = fx.seedPlan(
+                uuid = "blank-payoff-$index",
+                entries = listOf(
+                    InstallmentCoordinatorFixture.SeedEntry(seq = 1, dueEpochDay = day(2027, 4, 10)),
+                    InstallmentCoordinatorFixture.SeedEntry(seq = 2, dueEpochDay = day(2027, 5, 10))
+                ),
+                displayName = name
+            )
+            val entriesBefore = fx.entries(planId)
+            val tablesBefore = fx.tableCounts()
+            val eventsBefore = fx.eventTypes()
+
+            val result = coordinator.payOff(planId, null, today0705, today0705, ATHENS)
+
+            assertEquals(InstallmentOpResult.Refused(InstallmentRefusalCode.PLAN_NAME_REQUIRED), result)
+            assertEquals(entriesBefore, fx.entries(planId))
+            assertEquals("ACTIVE", fx.planDao.getPlanById(planId)!!.status)
+            fx.assertTablesUnchanged(tablesBefore)
+            assertEquals(eventsBefore, fx.eventTypes())
+        }
+    }
+
+    @Test
+    fun `edit details with an empty or whitespace name is refused INVALID_VALUE and the rename to a real name restores recording`() = runBlocking {
+        val planId = fx.seedPlan(
+            uuid = "blank-edit",
+            entries = listOf(InstallmentCoordinatorFixture.SeedEntry(seq = 1, dueEpochDay = day(2027, 4, 10))),
+            displayName = ""
+        )
+        val before = fx.planDao.getPlanById(planId)!!
+
+        for (name in listOf("", "   ")) {
+            assertEquals(
+                InstallmentOpResult.Refused(InstallmentRefusalCode.INVALID_VALUE),
+                coordinator.editDetails(planId, name, null, fx.categoryId, InstallmentFulfilmentMode.CONFIRM, "EUR", today0705)
+            )
+        }
+        assertEquals(before, fx.planDao.getPlanById(planId))
+
+        val renamed = coordinator.editDetails(planId, "Laptop", null, fx.categoryId, InstallmentFulfilmentMode.CONFIRM, "EUR", today0705)
+
+        assertTrue(renamed is InstallmentOpResult.Done)
+        assertEquals("Laptop", fx.planDao.getPlanById(planId)!!.displayName)
     }
 
     // ------------------------------------------------------------------ CONFIRM -> AUTO_RECORD with due entries (D-c)

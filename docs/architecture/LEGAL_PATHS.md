@@ -708,14 +708,24 @@ FORBIDDEN:
 ```
 
 ```
-INSTALLMENT DUE RECORDING (planned — loan-installments S7a; no worker exists yet):
-  → A dedicated InstallmentDueRecordingWorker (CoroutineWorker) with its own WorkerRegistry entry,
+INSTALLMENT DUE RECORDING (coordinator entry point implemented — loan-installments S7a-1; worker S7a-2 and
+overview S10 callers still planned; no worker exists yet):
+  → A dedicated InstallmentDueRecordingWorker (CoroutineWorker) with its own WorkerRegistry entry (PLANNED, S7a-2),
     routed through WorkerExecutionGuard.runGuarded() like every worker; the production worker count
     above grows by one when it lands
-  → worker or foreground catch-up trigger → InstallmentPlanLifecycleCoordinator.recordDueEntries(today)
-    → reconcile() first, then one transaction per entry (writeBarrier.runWrite + database.withTransaction),
+  → worker (S7a-2) or foreground catch-up trigger (overview, S10; both still pending)
+    → InstallmentPlanLifecycleCoordinator.recordDueEntries(today, zone) (implemented, S7a-1)
+    → reconcile() first (its batches are returned in Done.postCommit for the CALLER to dispatch after commit),
+      then one transaction per entry (writeBarrier.runWrite + database.withTransaction),
       expense created via TransactionLifecycleCoordinator.createExpenseDbOnlyV2 (STRICT_EXTERNAL_ID)
       and the entry compare-and-set to PAID in the same transaction
+    → the candidate-charge deferral (INV-13) reads InstallmentCandidateChargeProbe (read-only boolean port) inside
+      that transaction; a blank plan name refuses before any TLC call (INV-34)
+    → a closed write barrier (DatabaseAccessBlockedException) stops the run without throwing: the report carries
+      stoppedByBarrier = true and the result is still Done(report, all batches so far), so the batches of entries
+      already committed are never dropped; the rest are picked up by the next run (the caller retries; owner 39(a))
+    → every entry claim (auto-record, confirm, link) latches autoRecordConsumed, so a deleted payment is never
+      re-created by auto-record (owner 39(b))
   → Cancellation propagates (never swallowed); retries use RetryableWorkerException
   → Reminders for due installments reuse the existing BillReminderManager / BillReminderWorker
     (existing enabled / quiet-hours settings, delivery dedupe key per entry); no new reminder system
@@ -908,18 +918,19 @@ EXPENSE LIFECYCLE → INSTALLMENT PLAN reaction (implemented — loan-installmen
     PAYMENT_CORE; `installment_expense_deleted` is planned for every single-expense delete via
     TLC.deleteExpense / the dispatcher. SPENDING_INCLUSION never reacts
     (loop breaker for the coordinator's own flag writes); CATEGORY_ONLY, LOCATION_ONLY, BUSINESS_FLAGS_ONLY,
-    MERCHANT, AMOUNT, DATE and OWNERSHIP do not react (reconcile is the backstop; reconcile-at-recordDueEntries
-    is PLANNED, binding on S7a (D-18 option (b)); recordDueEntries does not exist yet)
+    MERCHANT, AMOUNT, DATE and OWNERSHIP do not react (reconcile is the backstop; reconcile-at-recordDueEntries:
+    coordinator part implemented in S7a-1 (D-18 option (b)); the worker call site (S7a-2) is still pending)
   → Bulk updates (planBulkUpdated, incl. TYPE/CURRENCY bulk changes) and deleteAll/wipe paths plan no installment
     reaction; reconcile is the backstop, which today runs only before a .costbackup export (see the S7a note below)
   → Each Done.postCommit batch the reaction returns is dispatched through the same runner (re-entrant,
     stateless); batches are dispatched BEFORE the report is judged
   → In every reacting update batch recurring_reconcile runs before installment_expense_changed, so an expense
     unlinked by rule R4 is re-offered to recurring matching only on its next edit
-  → The plan reconcile() (rules R1..R6) is PLANNED to back this up at the start of every S7a recordDueEntries run
-    (PLANNED, binding on S7a (D-18 option (b)); recordDueEntries does not exist yet; see "after restore" below).
-    Until S7a, the only reconcile() caller is InstallmentPreBackupReconciler; restored or orphaned data is not
-    repaired until the next .costbackup export or until S7a lands. A lost in-memory post-commit batch (for example budget re-check actions)
+  → The plan reconcile() (rules R1..R6) backs this up at the start of every recordDueEntries run (coordinator part
+    implemented in S7a-1, D-18 option (b); the worker call site, S7a-2, is still pending; see "after restore" below).
+    Until the S7a-2 worker or the S10 overview calls recordDueEntries, the only production reconcile() caller is
+    InstallmentPreBackupReconciler; restored or orphaned data is not repaired until the next .costbackup export or
+    until that worker runs. A lost in-memory post-commit batch (for example budget re-check actions)
     is NOT recovered by reconcile; the next budget trigger is the backstop
   → The reaction never deletes or edits the expense; expense removal is always the standard
     TransactionLifecycleCoordinator.deleteExpense path chosen by the user
@@ -965,14 +976,15 @@ INV-29 PATTERN DETECTOR exclusion (implemented — loan-installments S6c-3):
     without a plan row is not excluded; harmless because effectiveAmount = 0; reconcile R1 clears it)
   → The subscription-candidate detector (NotificationSubscriptionDetector) is OUTSIDE INV-29 (follow-up)
 
-AFTER RESTORE (decision D-18, option (b); PLANNED, binding on S7a; recordDueEntries does not exist yet):
-  → There is NO startup hook. Reconcile is to run at the start of EVERY S7a recordDueEntries run, and the run
-    is to dispatch the returned batches. A restored store would then be repaired on the first due-recording run.
-  → Until S7a, the only reconcile() caller is InstallmentPreBackupReconciler; restored or orphaned data is not
-    repaired until the next .costbackup export or until S7a lands.
+AFTER RESTORE (decision D-18, option (b); coordinator part implemented in S7a-1, worker call site S7a-2 pending):
+  → There is NO startup hook. recordDueEntries runs reconcile at its start on EVERY run and returns the batches
+    in Done.postCommit; the caller (S7a-2 worker, S10 overview) dispatches them after commit. A restored store
+    is then repaired on the first due-recording run, once a caller exists.
+  → Until a caller exists, the only production reconcile() caller is InstallmentPreBackupReconciler; restored or
+    orphaned data is not repaired until the next .costbackup export or until the S7a-2 worker lands.
   → InstallmentRestoreReconcileTest pins the restore half of AE-12: a .costbackup round trip with nothing to
     repair (non-redacted and redacted) keeps table counts, expense and plan rows and month totals equal;
-    reconcile() on the restored DB reports all zero and changes no row. The S7a call site is not tested yet.
+    reconcile() on the restored DB reports all zero and changes no row. The S7a-2 worker call site is not tested yet.
 
 FORBIDDEN:
   ❌ Plan code reacting to expense changes by writing expenses or calling deleteExpense
@@ -1735,14 +1747,18 @@ OPERATIONS (all on InstallmentPlanLifecycleCoordinator):
                               → coordinator ops; refund also calls TLC setSpendingExclusionDbOnly(…,
                                  INSTALLMENT_REVERSED) per paid expense in the same txn; delete calls
                                  setSpendingExclusionDbOnly(purchase, null)
-  recordDueEntries(today)     → worker / foreground trigger (see "Workers / Background Jobs"); one txn per entry
+  recordDueEntries(today, zone)
+                              → implemented in S7a-1 (coordinator); callers are the S7a-2 worker and the S10
+                                 overview, both still pending (see "Workers / Background Jobs"); one txn per entry;
+                                 reconcile runs first and its batches are returned for the caller to dispatch;
+                                 candidate deferral via InstallmentCandidateChargeProbe (read-only)
   onExpenseChanged / onExpenseDeleted (implemented, S6c-1)
                               → TLC PostCommitActionRunner actions `installment_expense_changed` /
                                  `installment_expense_deleted` planned by TransactionSideEffectPlanner
                                  (see "Lifecycle Events")
-  reconcile()                 → PLANNED, binding on S7a (D-18 option (b); recordDueEntries does not exist yet):
-                                 start of each recordDueEntries run (this is also the "after restore" path: no
-                                 startup hook); implemented today: immediately before a .costbackup export
+  reconcile()                 → at the start of each recordDueEntries run (coordinator part implemented in S7a-1,
+                                 D-18 option (b); worker call site S7a-2 pending; this is also the "after restore"
+                                 path: no startup hook); also immediately before a .costbackup export
                                  enters maintenance (InstallmentPreBackupReconciler, S6c-4) (rules R1..R6)
                                  + orphan-flag clear (second halves of R1/R3): an expense flagged
                                  INSTALLMENT_PURCHASE / INSTALLMENT_REVERSED that no plan purchase and no entry

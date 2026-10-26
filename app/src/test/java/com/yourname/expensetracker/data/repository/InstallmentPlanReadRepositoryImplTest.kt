@@ -64,7 +64,12 @@ class InstallmentPlanReadRepositoryImplTest {
         planDao = mockk()
         reader = FakeFactsReader()
         nowMillis = noonUtc(due)
-        repo = InstallmentPlanReadRepositoryImpl(planDao, reader, timeProvider)
+        repo = InstallmentPlanReadRepositoryImpl(
+            planDao,
+            reader,
+            timeProvider,
+            InstallmentCandidateChargeProbeImpl(reader, planDao)
+        )
     }
 
     @After

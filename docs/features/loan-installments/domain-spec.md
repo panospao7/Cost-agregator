@@ -38,6 +38,27 @@ The owner approved the slice plan (`workflows/active/loan-installments-plan.md`:
 11.1, and INV-14, INV-20, INV-33. There are no new invariants and no schema impact. The Delete source set is
 OWNER CONFIRMED 2026-10-23 (section 7.5). Each change carries the tag `[amended S5-R, 2026-10-23]`.
 
+## Amendment log (2026-10-26, pre-S7a reconciliation)
+
+[Amended 2026-10-26 (A2)] These edits align the spec with plan amendment A2 (S7a) in
+`workflows/active/loan-installments-plan.md` (G2-6 convergence, MEC AE-29) and with the binding S7a notes in
+`workflows/active/loan-installments-s7a-discovery.md` sections 4 to 6. Each change carries the tag
+`[Amended 2026-10-26 (A2)]`. Changed: sections 5.2 and 6 Q9. New INV-34 and AE-31. Schema impact: none.
+- **FX deferral removed.** `AUTO_RECORD_DEFERRED_FX` no longer exists. Plan-created expenses never set the
+  user-present rate flag (`userPresentRate = null`; only `declareWithNewExpense` sets it, plan A1), so TLC never
+  refuses them for a missing rate. A USD expense recorded without a rate is a sentinel row, excluded from
+  comparable-home-value totals; its display is plan risk R17 / slice S8b (section 6 Q9).
+  `AUTO_RECORD_DEFERRED_CANDIDATE` (INV-13) is unchanged.
+- **Blank plan name (INV-34, AE-31).** A plan whose `displayName` is blank (in practice a plan restored from a
+  redacted backup, IM-9) records no expense until the user renames it. Auto-record, confirm and payoff use the
+  bounded reason `PLAN_NAME_REQUIRED`. There is no fallback merchant.
+- **Foreground trigger (D-19).** The foreground catch-up trigger is overview-open only. There is no startup hook and
+  no persisted marker. Until the overview exists (S10), only the worker runs catch-up (section 5.2).
+- **Proposed follow-up (orchestrator; not decided here):** declare, create-standalone and the E3 edit currently accept
+  a blank `displayName` (S6a open question 7, S6b decision 1). Refusing a blank name there with `INVALID_VALUE`
+  would make INV-34 reachable only through a redacted restore. Recommended, but it changes implemented S6a/S6b
+  behaviour, so it needs an explicit decision.
+
 Source facts re-checked for this spec (beyond those cited in the brief/critique):
 - `Expense.effectiveAmount` / `normalizedEffectiveAmount` (`data/database/entity/Expense.kt:163-185`) zero
   `isNotMine`; there is no other "does not count" dimension today.
@@ -426,8 +447,31 @@ name, OD-1). "TLC" means `TransactionLifecycleCoordinator`. AE-n refers to secti
   diagnostics, logs, reason-code payloads or cloud payloads. Diagnostics carry bounded codes and integer counts
   only. Owner: plan coordinator (diagnostics it emits); cloud payload assemblers (exclusion, guard test). (AE-23)
 
-(Invariants are listed by group, not in numeric order. All of INV-1…INV-33 are present: 33 invariants. INV-32 and
-INV-33 were added by the 2026-10-16 amendment.)
+**Recording preconditions** [Amended 2026-10-26 (A2)]
+
+- **INV-34 A plan needs a name to record.** The plan coordinator creates no installment expense (auto-record,
+  confirm or payoff) for a plan whose `displayName` is blank (empty or whitespace only). In practice this is a plan
+  restored from a redacted backup (IM-9 blanks `displayName` and `lenderLabel`). The check runs before any TLC
+  call, so TLC is not called and writes nothing (no expense, no `transaction_events` row).
+  - Auto-record skips every due entry of that plan in this run with reason `PLAN_NAME_REQUIRED`. Each entry stays
+    SCHEDULED, and `autoRecordConsumed` and `recordGeneration` are unchanged. The run reports an integer count per
+    reason. Every later run checks again.
+  - Confirm and payoff are refused with `PLAN_NAME_REQUIRED` and write nothing (this replaces today's
+    `RECORD_FAILED` for this case).
+  - There is no fallback merchant: not `lenderLabel` (also blanked by IM-9), not the purchase merchant, not a fixed
+    text. The restored data deliberately lost the name, and the app neither rebuilds nor replaces it.
+  - Operations that create no expense stay allowed: link, skip, adjust, stop, refund, delete and the E3 rename.
+    After a rename to a non-blank name (E3, ACTIVE plans only), the next run records every still-eligible entry,
+    each dated on its own due date. INV-12, INV-13 and INV-14 apply unchanged at that time.
+  - TLC's merchant validation (`MERCHANT_BLANK`, `MERCHANT_PLACEHOLDER`) is unchanged and stays the single owner of
+    expense merchant validity. INV-34 is a plan precondition ("a plan with no name is not recordable") that
+    short-circuits only the blank case before TLC. Every other TLC refusal, including a placeholder name such as
+    "Unknown", stays `RECORD_FAILED`.
+  - Diagnostics carry the code and integer counts only, never a name, amount or date (INV-31).
+  - Owner: plan coordinator. One predicate is used by `recordDueEntries`, confirm and payoff. (AE-31)
+
+(Invariants are listed by group, not in numeric order. All of INV-1…INV-34 are present: 34 invariants. INV-32 and
+INV-33 were added by the 2026-10-16 amendment. INV-34 was added 2026-10-26 [Amended 2026-10-26 (A2)].)
 
 ## 5. Ownership & legal paths
 
@@ -461,7 +505,7 @@ All plan coordinator writes check `writeBarrier.checkWritesAllowed(...)` on entr
 | Unlink | plan coordinator `unlinkExpense` → [txn: entry → SCHEDULED, `recordGeneration`+1]. The expense is untouched |
 | Skip / unskip / adjust / edit / extend / shorten | plan coordinator ops (section 7.4) |
 | Stop / refund / pay off / delete | plan coordinator ops (section 7). Refund also calls TLC `setSpendingExclusionDbOnly(…, INSTALLMENT_REVERSED)` per paid expense in the same txn. Delete calls TLC `setSpendingExclusionDbOnly(purchase, null)` |
-| Record due installments | worker/foreground trigger → plan coordinator `recordDueEntries(today)` (per-entry txn, INV-12/13) |
+| Record due installments | worker/foreground trigger → plan coordinator `recordDueEntries(today)` (per-entry txn, INV-12/13/34). [Amended 2026-10-26 (A2)] Every run calls `reconcile()` first and dispatches its batches (D-18). The foreground trigger is overview-open only (D-19): no startup hook and no persisted marker (either one is stop-and-ask). Until the overview exists (S10), only the daily worker runs catch-up; S7a exposes the coordinator entry point that the overview calls later |
 | React to expense update/delete | TLC post-commit side effects (`TransactionSideEffectPlanner.planUpdated/planDeleted`) → plan coordinator `onExpenseChanged/onExpenseDeleted` (unlink/reopen/detach). Reconcile R2/R4 backs this up |
 | Integrity reconcile | plan coordinator `reconcile()` at the start of each `recordDueEntries` run and after restore |
 
@@ -603,8 +647,13 @@ trail lives on entry rows (`statusReason`, `originalScheduledAmount`, `adjustRea
 INV-17). A purchase-attached plan may have a plan currency different from the purchase currency (for example a USD
 purchase turned into EUR card installments). Financing cost is then unavailable (OD-14). Installment expenses in
 USD get their home-currency `baseAmount` through TLC's existing conversion at creation (existing expense
-behaviour). If TLC refuses creation because the home-currency rate is unavailable, the entry stays SCHEDULED with
-reason `AUTO_RECORD_DEFERRED_FX` and is retried on the next run.
+behaviour). [Amended 2026-10-26 (A2)] Plan-created expenses (auto-record, confirm, payoff) never set the
+user-present rate flag (`userPresentRate = null`; only `declareWithNewExpense` sets it, plan A1). TLC therefore never
+refuses them for a missing rate, and there is no `AUTO_RECORD_DEFERRED_FX` deferral. A USD installment recorded
+with an empty rate table is Created with the sentinel triple (0.0 / "" / 0.0) and exactly one MISSING_RATE
+diagnostic. There is no RateRefusal and no MANUAL_SAVE_BLOCKED_NO_RATE (MEC AE-29), and the entry becomes PAID as
+usual. The row is excluded from comparable-home-value totals; how it is displayed is plan risk R17 / slice S8b. Any
+future loan-local FX deferral must call `RateEligibilityEvaluator` (never re-implement the rule) and needs the owner.
 
 ### Q10 Schema and backup
 
@@ -1267,6 +1316,24 @@ The following examples were added by the 2026-10-16 amendment (AMD-1…AMD-3).
   installment expenses have a null category. No category is assigned or created.
 - Given a standalone plan, when an E3 edit sets the category to null, then it is refused with `CATEGORY_REQUIRED`.
 
+**AE-31 Blank plan name after a redacted restore (INV-34, INV-12, INV-31; A2)** [Amended 2026-10-26 (A2)]
+- Given an ACTIVE AUTO_RECORD EUR plan restored from a redacted backup (`displayName = ""`, `lenderLabel = null`),
+  with `declaredOnDate` = 2027-03-01, entries 3 (due 2027-05-10) and 4 (due 2027-06-10) SCHEDULED at 50.00 with
+  `autoRecordConsumed = false`, no candidate charge, and today = 2027-06-12.
+- When `recordDueEntries` runs, then:
+  - TLC is not called: no expense is created and no `transaction_events` row is written;
+  - entries 3 and 4 stay SCHEDULED, with `autoRecordConsumed = false` and `recordGeneration` unchanged;
+  - the run reports `PLAN_NAME_REQUIRED` = 2, and no diagnostic contains a name, amount, date or ID.
+- When the user confirms entry 3, or pays off the plan, then it is refused with `PLAN_NAME_REQUIRED` and nothing is
+  written.
+- When the user links captured expense C = 50.00 EUR dated 2027-05-10 to entry 3, then entry 3 is PAID (USER_LINKED).
+- When the user then renames the plan to "Laptop" (E3) and the next run happens on 2027-06-12, then exactly one
+  expense is created, for entry 4: merchant "Laptop", 50.00 EUR, dated 2027-06-10 at noon local, key
+  `installment:<uuid>:REGULAR:4:0`. Entry 4 is PAID and plan spending(2027-06) = 50.00.
+- Given instead `displayName = "   "` (whitespace only), then the same outcomes apply.
+- Given instead a CONFIRM-mode plan with the blank name, then `recordDueEntries` does nothing for it (INV-12), and
+  confirming any entry is refused with `PLAN_NAME_REQUIRED`.
+
 ## 14. Owner decisions (DECIDED 2026-10-16)
 
 **Decision status (owner, 2026-10-16, after approving the slice plan):**
@@ -1306,10 +1373,13 @@ The table is kept for traceability. "Recommended" is now the decided option.
 
 ## Summary for orchestrator
 
-- **Invariants:** 33 (INV-1…INV-33). INV-32 and INV-33 are new (2026-10-16). INV-6, 15, 17, 20, 21 and 26 were
-  amended.
+- **Invariants:** 34 (INV-1…INV-34). INV-32 and INV-33 are new (2026-10-16). INV-34 is new [Amended 2026-10-26
+  (A2)]. INV-6, 15, 17, 20, 21 and 26 were amended.
+- [Amended 2026-10-26 (A2)] `AUTO_RECORD_DEFERRED_FX` is removed (section 6 Q9). The foreground trigger is
+  overview-open only (D-19, section 5.2). Proposed follow-up for the orchestrator: refuse a blank `displayName` at
+  declare/create/E3 (2026-10-26 amendment log).
 - **Schema impact:** additive. 2 new tables, 1 nullable expense column, a version bump, migration, snapshot,
   migration tests, and verifier tiers + 5 orphan checks. `PAID_BEFORE_TRACKING` is a TEXT status value with no DDL.
   Nothing destructive.
 - **Open decisions:** none. OD-1…OD-15 are DECIDED. OD-15 is conditional on D-10.
-- **Acceptance examples:** AE-1…AE-30 (AE-26…AE-30 are new).
+- **Acceptance examples:** AE-1…AE-31 (AE-26…AE-30 are new; AE-31 is new [Amended 2026-10-26 (A2)]).

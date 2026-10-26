@@ -901,3 +901,114 @@ Common rules:
   - S6c-1 F3: an InstallmentPlanArchitectureGuardTest allow-list, so plan code calls only the TLC DbOnly ops (planted self-check).
   - S6c-2 finding 5: pin the new port/impl in READ_ONLY_IMPL_PATHS / DOMAIN_PORT_PATHS.
   - Proposed for S6c-5; not done without approval.
+
+
+## A14 — S7a split into S7a-1 / S7a-2 (feature-planner 2026-10-26; binding; replaces the S7a bullets at ~:348-370 and A2 ~:654-656)
+Inputs: workflows/active/loan-installments-s7a-discovery.md; the domain-spec amendment log (2026-10-26), INV-34 and AE-31; owner-approvals items 28–33. Approved by the orchestrator under the owner's standing instruction.
+
+**Scope**
+- Invariants: INV-12, 13, 14, 18, 21, 31, 34; FG-10/11/13.
+- Excluded: schema changes, a startup hook or persisted marker (D-19), and FX deferral (A2).
+- S7a-2 depends on S7a-1. The write sets are disjoint and the two run serially.
+
+**Code facts the plan rests on**
+- `claimEntry` (coordinator ~:1474) hardcodes `markAutoRecordConsumed = false`. Deriving the flag from `origin == AUTO_RECORDED` keeps the signature, so the policy row (~:4203) is unchanged and the pins stay at 452.
+- `InstallmentPlanTransitions.autoRecordDecision(ctx, hasCandidateCharge)` (~:441-457) already exists. `entryTransition(AUTO_RECORD)` passes `false`, so the coordinator must call `autoRecordDecision` directly with the real value.
+- No new DAO methods are needed. The reads exist: getPlansByStatus, getEntriesForPlan, getEntriesByStatusDueOnOrBefore.
+- `InstallmentRefusalCode` lacks PLAN_NAME_REQUIRED and INVALID_VALUE.
+- There is no candidate-charge reader in main. Only the pure window `InstallmentPlanReadModel.mayHaveCandidate` (~:397) exists. Sourcing `hasCandidateCharge` is the open implementation check (see the stop trigger below).
+
+### S7a-1 — coordinator `recordDueEntries(todayEpochDay, zone)`
+1. Call `reconcile()` first and dispatch its batches (D-18).
+2. Load the ACTIVE plans and keep only AUTO_RECORD ones.
+3. Run the INV-34 name check per plan before any TLC call. A blank name counts each applicable entry as PLAN_NAME_REQUIRED and writes nothing.
+4. Use one `writeTxn` per entry:
+   - re-read the plan and the entry;
+   - call `autoRecordDecision(ctx, hasCandidateCharge)`. Its `declaredOn ≤ due ≤ today` and `!autoRecordConsumed` checks are the D-c no-bypass rule.
+   - On Defer, add to the AUTO_RECORD_DEFERRED_CANDIDATE count (INV-13).
+   - On Record, call recordEntryExpense (STRICT_EXTERNAL_ID, userPresentRate = null), then `claimEntry(…, AUTO_RECORDED, …)` (CAS), then settlePlanStatus, then dispatch the batch after commit.
+5. A Failed, Refused or CAS-conflict result rolls back only that entry. Count it by enum and continue. Rethrow CancellationException.
+
+Other source changes:
+- `claimEntry` derives `markAutoRecordConsumed` from the origin.
+- Add one shared pure name check in InstallmentPlanTransitions:
+  - confirm and payoff refuse with PLAN_NAME_REQUIRED before TLC;
+  - declareOnExpense, declareWithNewExpense, createStandalone and editDetails (E3) refuse a blank name with INVALID_VALUE before any write (owner item 33);
+  - restore is untouched.
+- Add PLAN_NAME_REQUIRED and INVALID_VALUE to InstallmentRefusalCode.
+- New domain/installment/model/InstallmentDueRunReport.kt: enum-keyed counts plus the reconcile report.
+- Read the INV-13 candidate fact only through the coordinator's facts-reader port, never through ExpenseDao from plan code.
+
+Tests:
+- New T:domain/installment/lifecycle/InstallmentRecordDueEntriesTest.kt (real Room plus the TLC fixture), covering:
+  - AE-1, AE-10a/c, AE-15a/b/c, AE-16 (the latch: no re-create), AE-17 (candidate deferral only), AE-19 (DST);
+  - AE-29: null rate flag; USD with an empty rate table gives a sentinel row with one MISSING_RATE and no refusal;
+  - AE-31 in full;
+  - reconcile runs first;
+  - entries fail independently;
+  - the report and diagnostics carry no name, amount, date or id.
+- Extend the confirm, payoff, declare, create and edit suites with blank-name refusals that write nothing.
+
+Rules and gates:
+- db_ownership_policy: no change, pins stay at 452. Writes go through the existing claimEntry and settlePlanStatus rows. Prove it with `registered-guard db_access`.
+- Gates: architecture-guardian, privacy-security, reviewer-strict.
+- Validation:
+  1. targeted `*InstallmentRecordDueEntries*` plus the touched coordinator suites;
+  2. `registered-guard db_access`;
+  3. shard domain-a-m.
+
+### S7a-2 — InstallmentDueRecordingWorker
+- Source:
+  - New service/installment/InstallmentDueRecordingWorker.kt (RecurringHorizonWorker template):
+    - WorkerExecutionGuard and barriers;
+    - today and zone from TimeProvider;
+    - calls only recordDueEntries;
+    - bounded Result; never catches CancellationException.
+  - Registrations:
+    - WorkerRegistry;
+    - WorkerSpec.DEFAULTS (daily periodic, no network);
+    - WorkerGuardVerifier (the map plus findWorkerClasses);
+    - WorkerSpecScheduler.listAllWorkerNames;
+    - PrivacyRuntimeWorkerPolicy (existing local-only classification).
+  - A Workers row in LEGAL_PATHS.
+- Tests:
+  - New InstallmentDueRecordingWorkerTest:
+    - guard denied → no call;
+    - success → exactly one call;
+    - CancellationException propagates;
+    - failure → bounded result.
+  - WorkerContractTest 8→9 plus the key set.
+  - WorkerGuardStaticVerificationTest 11→12.
+  - The PrivacyRuntimeWorkerPolicy test, if it enumerates workers.
+- No db_ownership change. No G-WORKER-01 allowlist entry.
+- Gates: architecture-guardian, privacy-security, reviewer-strict.
+- Validation:
+  1. targeted `*InstallmentDueRecordingWorker*,*WorkerContract*,*WorkerGuardStaticVerification*,*PrivacyRuntimeWorkerPolicy*`;
+  2. shards runtime-ui, then architecture-contracts.
+
+### S7a candidate (once, after both): static-guards, then app-check.
+
+### Stop and ask if
+- a db_ownership row is new or changed, or the pins move off 452;
+- a G-WORKER-01 allowlist entry is needed;
+- a startup hook, an AppStartupCoordinator edit or a persisted marker is needed;
+- a new privacy-policy category is needed;
+- FX deferral or a RateEligibilityEvaluator change is needed;
+- a fallback merchant, or relaxed TLC merchant validation, is needed;
+- the INV-13 candidate rule would duplicate S9's matcher, or needs a new expense query outside the facts-reader port;
+- a D-c bypass is needed;
+- a test would be deleted or ignored (updating an assertion to the approved INVALID_VALUE behaviour is in scope);
+- 2 review plus 2 debug iterations are exhausted.
+
+### Superseded
+- S7a at ~:349: INV-34 added.
+- ~:351: the FX bullet is gone.
+- ~:354: no startup hook; the trigger is overview-open, in S10.
+- ~:356: no reuse option.
+- ~:358-360: the test list is replaced by this amendment.
+- ~:362: IM-7, D-1 and D-19 are resolved.
+- ~:365-369: the profiles and the worker-count ratchet stop. The counts are additive test pins, owner-approved on 2026-10-22.
+- A2 ~:654-656: folded into this amendment.
+- D-1: "7 workers" should read 8.
+- The ux-flows FX lines were updated on 2026-10-26.
+- The stale "7" comment at AppStartupCoordinator ~:721 is deliberately left alone, so S7a does not touch the startup file.

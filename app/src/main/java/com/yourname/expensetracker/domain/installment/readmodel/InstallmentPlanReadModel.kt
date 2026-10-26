@@ -395,10 +395,18 @@ object InstallmentPlanReadModel {
      * started. An entry whose window starts after [todayEpochDay] cannot have a captured charge yet.
      */
     fun mayHaveCandidate(mode: InstallmentFulfilmentMode, entry: EntrySnapshot, todayEpochDay: Long): Boolean =
-        entry.money.status == InstallmentEntryStatus.SCHEDULED &&
-            entry.money.kind == InstallmentEntryKind.REGULAR &&
-            entry.linkedExpenseId == null &&
+        entryMayHaveCandidate(entry.money.status, entry.money.kind, entry.linkedExpenseId) &&
             InstallmentCandidateRule.windowStartEpochDay(mode, entry.money.dueEpochDay) <= todayEpochDay
+
+    /**
+     * The entry-side part of [mayHaveCandidate], without the clock: only a SCHEDULED, unlinked
+     * REGULAR entry can have a candidate charge. The single definition, shared with the candidate
+     * charge probe of the coordinator (S7a).
+     */
+    fun entryMayHaveCandidate(status: InstallmentEntryStatus, kind: InstallmentEntryKind, linkedExpenseId: Long?): Boolean =
+        status == InstallmentEntryStatus.SCHEDULED &&
+            kind == InstallmentEntryKind.REGULAR &&
+            linkedExpenseId == null
 
     private fun dueOf(plan: PlanSnapshot, entryId: Long): Long =
         plan.entries.firstOrNull { it.entryId == entryId }?.money?.dueEpochDay ?: Long.MAX_VALUE

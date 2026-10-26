@@ -815,11 +815,14 @@ class InstallmentPlanArchitectureGuardTest {
     }
 
     /**
-     * F6 / check 8. The plan read repository and the projection port read the plan DAO and the facts
-     * port only; they never reference the expense, recurring-occurrence or category DAOs.
+     * F6 / check 8. The plan read repository, the projection port and the candidate charge probe
+     * (owner item 34) read the plan DAO and the facts port only; they never reference the expense,
+     * recurring-occurrence or category DAOs.
      */
     private fun readImplExpenseStoreReferences(rel: String, raw: String): List<Hit> {
-        if (rel != READ_REPOSITORY_IMPL_PATH && rel != PROJECTION_PORT_IMPL_PATH) return emptyList()
+        if (rel != READ_REPOSITORY_IMPL_PATH && rel != PROJECTION_PORT_IMPL_PATH && rel != CANDIDATE_PROBE_IMPL_PATH) {
+            return emptyList()
+        }
         return lineHits(
             "READ_IMPL_EXPENSE_STORE_REFERENCE",
             Regex("""(?:Expense|RecurringOccurrence|Category)Dao""", RegexOption.IGNORE_CASE),
@@ -977,7 +980,7 @@ class InstallmentPlanArchitectureGuardTest {
             "class R(private val categoryDao: CategoryDao)",
             "suspend fun f() = database.expenseDao().getById(1L)"
         )
-        for (path in listOf(READ_REPOSITORY_IMPL_PATH, PROJECTION_PORT_IMPL_PATH)) {
+        for (path in listOf(READ_REPOSITORY_IMPL_PATH, PROJECTION_PORT_IMPL_PATH, CANDIDATE_PROBE_IMPL_PATH)) {
             for (snippet in violating) {
                 assertFlagged("$path :: $snippet", readImplExpenseStoreReferences(path, snippet), "READ_IMPL_EXPENSE_STORE_REFERENCE")
             }
@@ -1072,8 +1075,21 @@ class InstallmentPlanArchitectureGuardTest {
 
         const val PROJECTION_PORT_IMPL_PATH = "$ROOT/data/repository/InstallmentProjectionPortImpl.kt"
 
-        /** Exact paths of the three read-only data-layer implementations (never basenames). */
-        val READ_ONLY_IMPL_PATHS = listOf(FACTS_READER_IMPL_PATH, READ_REPOSITORY_IMPL_PATH, PROJECTION_PORT_IMPL_PATH)
+        const val CANDIDATE_PROBE_IMPL_PATH = "$ROOT/data/repository/InstallmentCandidateChargeProbeImpl.kt"
+
+        const val ENTRY_LINK_READER_IMPL_PATH = "$ROOT/data/repository/InstallmentEntryLinkReaderImpl.kt"
+
+        /**
+         * Exact paths of the read-only data-layer implementations (never basenames). The candidate
+         * charge probe (S7a-1) and the entry link reader (owner approval item 36) are read-only seams too.
+         */
+        val READ_ONLY_IMPL_PATHS = listOf(
+            FACTS_READER_IMPL_PATH,
+            READ_REPOSITORY_IMPL_PATH,
+            PROJECTION_PORT_IMPL_PATH,
+            CANDIDATE_PROBE_IMPL_PATH,
+            ENTRY_LINK_READER_IMPL_PATH
+        )
 
         const val READMODEL_PREFIX = "$ROOT/domain/installment/readmodel/"
 
@@ -1081,7 +1097,9 @@ class InstallmentPlanArchitectureGuardTest {
         val DOMAIN_PORT_PATHS = listOf(
             "$ROOT/domain/installment/lifecycle/InstallmentExpenseFactsReader.kt",
             "$ROOT/domain/installment/InstallmentPlanReadRepository.kt",
-            "$ROOT/domain/installment/projection/InstallmentProjectionPort.kt"
+            "$ROOT/domain/installment/projection/InstallmentProjectionPort.kt",
+            "$ROOT/domain/installment/lifecycle/InstallmentCandidateChargeProbe.kt",
+            "$ROOT/domain/installment/lifecycle/InstallmentEntryLinkReader.kt"
         )
 
         const val COORDINATOR_PATH =

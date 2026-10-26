@@ -1012,3 +1012,132 @@ Status: S6c-1 to S6c-5 complete pending that validation and the S6c candidate re
   - S6c-4 finding 8: redacted restored plans have a blank displayName used as the merchant.
   - The bulk/deleteAll gap is closed by that reconcile.
 - Owner decisions pending: guard strengthening (a), InsightsEngine anomaly suppression (b), the UNKNOWN-type alignment (c), the subscription detector (d).
+
+## S7a planning (2026-10-26)
+- Discovery: workflows/active/loan-installments-s7a-discovery.md (scout).
+- The domain spec was amended before S7a (domain-modeler): FX deferral removed (A2), INV-34 and AE-31 added for blank plan names, D-19 foreground trigger is overview-open only. Owner-approvals item 33 records this.
+- Plan amendment A14 (feature-planner) is appended to the plan: S7a-1 is the coordinator recordDueEntries plus the INV-34 name rules; S7a-2 is the worker plus its registrations.
+- Next: S7a-1 implementer.
+
+## S7a-1 — implemented (PARTIAL: recordDueEntries held at a stop-and-ask, 2026-10-26)
+
+Status: the INV-34 / owner-item-33 name rules, the claimEntry derivation, the refusal codes and the report type are in place. `recordDueEntries` itself is NOT implemented, because sourcing `hasCandidateCharge` hits the A14 stop trigger. Nothing was compiled or run.
+
+### hasCandidateCharge sourcing decision (STOP, owner/orchestrator decision needed)
+- The pure window `InstallmentPlanReadModel.mayHaveCandidate` and `InstallmentCandidateRule` (windows, currency, 1-minor-unit amount match) exist, but the rule needs the candidate expense's gross amount and date, and then the eligibility check (not a plan purchase record, not linked to an entry or occurrence, spending type).
+- The only facts-port method that returns amounts is `findExpenseMoneyBetween`. `InstallmentPlanArchitectureGuardTest` (S6a, `coordinatorMoneyReads`, COORDINATOR_EXPENSE_MONEY_READ) forbids ANY `findExpenseMoney*` reference in the coordinator file. Using it needs a guard change; renaming a new port method to dodge the regex would evade the guard's intent. Both are stop-and-ask.
+- The matcher + eligibility orchestration that already exists lives in the data layer, `InstallmentPlanReadRepositoryImpl.suggestionsOf` / `isEligible`. A coordinator-side or port-side `hasCandidateCharge` would duplicate it.
+- Options for the orchestrator/owner:
+  1. Extract the candidate scan (suggestionsOf's per-entry query + `InstallmentCandidateRule.matches` + `isEligible`) into one shared owner and expose a single bounded boolean on a new domain port (for example `InstallmentCandidateChargeProbe.hasCandidate(plan, entry, zone)`), used by both the read repository and the coordinator. No new DAO method needed (it reuses the facts reader and plan DAO reads). The coordinator then calls only the boolean; the guard stays intact. Needs a new port + Hilt binding + constructor param (fixture `coordinator()` factory update) and a pin in the architecture guard path lists (owner approval for guard-list edits).
+  2. Owner approves narrowing the S6a guard so the coordinator may call one named probe.
+  3. Owner accepts an interim fail-closed rule (never record while any unlinked same-currency expense lies in the window), which is stricter than INV-13 and contradicts AE-17 ("candidate deferral only").
+- Also decide: the coordinator has no post-commit runner (reconcile() returns batches and its caller dispatches them). The proposed `recordDueEntries` returns `InstallmentOpResult.Done(InstallmentDueRunReport, batches)` for the caller (S7a-2 worker) to dispatch after each commit, matching reconcile(). The A14 text "dispatch the post-commit batch" per entry would otherwise need a runner constructor dependency.
+
+### Files changed (all in C:\Users\panos\Desktop\Cost-agregator-mec)
+- main: domain/installment/model/InstallmentRefusalCode.kt (PLAN_NAME_REQUIRED, INVALID_VALUE); domain/installment/model/InstallmentPlanTransitions.kt (`isPlanNameUsable`, the single INV-34 predicate); domain/installment/lifecycle/InstallmentPlanLifecycleCoordinator.kt (blank-name refusals; `claimEntry` derives `markAutoRecordConsumed = origin == AUTO_RECORDED`); domain/installment/lifecycle/InstallmentDueRunReport.kt (new; in lifecycle/, not model/, because it uses InstallmentReconcileReport and InstallmentOpFailure which live in lifecycle).
+- tests: InstallmentPlanLifecycleCoordinatorDeclareTest (declareOnExpense, declareWithNewExpense, createStandalone blank-name), ...LinkConfirmTest (confirm blank-name PLAN_NAME_REQUIRED, link still allowed on a blank-name plan), ...EndEditTest (payoff blank-name, editDetails blank-name then rename).
+- Not created: InstallmentRecordDueEntriesTest (blocked with the function).
+
+### Behaviour
+- confirm: PLAN_NAME_REQUIRED after the transition/AlreadyInState and INVALID_DATE checks, immediately before recordEntryExpense (TLC not called).
+- payOff: PLAN_NAME_REQUIRED after the date check, before any entry cancel or TLC call.
+- declareOnExpense, declareWithNewExpense, createStandalone, editDetails: INVALID_VALUE as the first statement of the transaction, before any read or write. Restore paths untouched.
+- No new DAO methods, no db_ownership_policy rows (pins stay 452), no schema change.
+
+### AEs covered so far
+- AE-31 partial: confirm and payoff refused PLAN_NAME_REQUIRED writing nothing; link allowed; rename (E3) works. Not yet: the recordDueEntries parts (count PLAN_NAME_REQUIRED = 2, post-rename record).
+- Owner item 33: INVALID_VALUE for declare/create/edit.
+- Not yet: AE-1, 10a/c, 15a/b/c, 16, 17, 19, 29 recorder parts, reconcile-first, independent entry failure, report privacy.
+
+### Changed existing assertions
+None. No existing test used a blank name, so no assertion needed updating.
+
+### Risks
+- editDetails now refuses a blank name even when the plan is already blank and the name is not being changed (a mode-only edit of a redacted plan needs a real name). This follows owner item 33; the UI should require a name.
+- The ordering of PLAN_NAME_REQUIRED relative to INVALID_DATE in confirm/payoff is mine (name check last); the spec only says before TLC.
+- `InstallmentDueRunReport` is unused until recordDueEntries lands.
+- Unverified by compile or test.
+
+### Validation to request (after recordDueEntries is completed, or now for the partial)
+- targeted `*InstallmentRecordDueEntries*,*InstallmentPlanLifecycleCoordinator*,*InstallmentPlanDaoTest*,*DbGuardPolicyFixtureTest*` (the first pattern matches nothing until the test exists; the coordinator suites exercise the changes made so far)
+- registered-guard db_access
+- shard domain-a-m
+
+### S7a-1 part A — candidate probe (2026-10-26; reconstructed from the code after the first agent died on an API error; uncommitted)
+Resolves the hasCandidateCharge stop above with option 1 (owner-approvals items 34/35): one shared owner for the candidate scan, exposed to the coordinator as a single boolean.
+- Files (main):
+  - domain/installment/lifecycle/InstallmentCandidateChargeProbe.kt (new read-only port: `suspend fun hasCandidate(plan, entry, zone): Boolean`; fails closed to true on unreadable stored values; returns no amount, id or text);
+  - data/repository/InstallmentCandidateChargeProbeImpl.kt (new; the single scan: window query, `InstallmentCandidateRule`, then expense eligibility; `collectCandidates` + `ScanState` are shared with the read repository);
+  - data/repository/InstallmentPlanReadRepositoryImpl.kt (refactor: `suggestionsOf` now delegates the scan to the probe impl; constructor gets a defaulted `candidateScan` parameter so existing call sites still compile);
+  - di/InstallmentModule.kt (binds the port to the impl);
+  - InstallmentPlanLifecycleCoordinator.kt (new last constructor parameter `candidateChargeProbe`).
+- Files (tests): InstallmentCoordinatorFixture.coordinator() passes `InstallmentCandidateChargeProbeImpl(reader, dao)`; DatabaseBackupRepositoryPreReconcileTest and InstallmentRestoreReconcileTest construct the coordinator with the probe; new data/repository/InstallmentCandidateChargeProbeImplTest.
+- Guard path additions (InstallmentPlanArchitectureGuardTest): `CANDIDATE_PROBE_IMPL_PATH` (data/repository/InstallmentCandidateChargeProbeImpl.kt) added to `READ_ONLY_IMPL_PATHS`; domain/installment/lifecycle/InstallmentCandidateChargeProbe.kt added to `DOMAIN_PORT_PATHS`. The S6a coordinator money-read ban (`COORDINATOR_EXPENSE_MONEY_READ`) is unchanged.
+- No new DAO method, no db_ownership row (pins stay 452), no schema change.
+- Validation: targeted PASS, run vr-20261026-171318-61e59593.
+
+### S7a-1 part B — recordDueEntries (2026-10-26; uncommitted; nothing compiled, run or validated)
+- Main file changed: domain/installment/lifecycle/InstallmentPlanLifecycleCoordinator.kt only. New public `suspend fun recordDueEntries(todayEpochDay, zone): InstallmentOpResult<InstallmentDueRunReport>` plus private helpers (`DueRunAccumulator`, `DueEntryOutcome`, `recordDueEntriesOfPlan`, `isDueAutoRecordCandidate`, `recordOneDueEntry`, `recordDueEntry`, `logDueRun`). Reuses `recordEntryExpense`, `claimEntry`, `settlePlanStatus`, `context`, `purchaseGoneRefusal`, `writeTxn`. No new DAO method, no db_ownership row, no schema change. Imports added: AutoRecordDecision, InstallmentDeferralReason.
+- Behaviour:
+  1. `reconcile()` first; its report goes into `InstallmentDueRunReport.reconcile`, its batches into `Done.postCommit` (D-18). The caller dispatches all batches after commit.
+  2. `getPlansByStatus(ACTIVE)` filtered to AUTO_RECORD; per plan `getEntriesForPlan`, pre-filtered on stored values (SCHEDULED, REGULAR, unlinked, not consumed, `declaredOn <= due <= today`).
+  3. A blank name (`isPlanNameUsable`) counts PLAN_NAME_REQUIRED once per pre-filtered entry and writes nothing; TLC is not called.
+  4. One `writeTxn` per entry: re-read plan and entry, `purchaseGoneRefusal`, name re-check, `autoRecordDecision(ctx, false)` (NotApplicable returns without a probe read), then `candidateChargeProbe.hasCandidate` inside the transaction and `autoRecordDecision(ctx, hasCandidate)`. Defer counts AUTO_RECORD_DEFERRED_CANDIDATE. Record: supported-day check, `recordEntryExpense` (userPresentRate null, STRICT key), `claimEntry(AUTO_RECORDED)` (CAS, latches autoRecordConsumed), `settlePlanStatus`, batch collected.
+  5. Failed or Refused result: counted by enum, that entry rolled back, loop continues. An unmapped non-cancellation exception is counted as `InstallmentOpFailure.RECORD_FAILED` and only its class simple name is logged. CancellationException is rethrown.
+  6. One log line `InstallmentDueRun recorded= deferred= refused= failed= cause=` (integers and a class simple name only), none when all counts are zero.
+- Tests: new domain/installment/lifecycle/InstallmentRecordDueEntriesTest.kt (real Room + TLC fixture) covers AE-1, AE-10a/c, AE-15a/b/c, AE-16 (latch, reconcile reopen, no re-create), AE-17 (deferral with a real candidate charge; other amount and out-of-window charge do not defer; link then accepted), AE-19, AE-29 (request userPresentRate null via a spied TLC; USD with a null-rate converter gives a sentinel row, one MISSING_RATE, no refusal, evaluator never called), AE-31 in full (empty and whitespace names, recorder count via spy, confirm/payoff refused, link, rename, next run records entry 4 only; CONFIRM-mode blank plan), reconcile-first with batches, independent per-entry failure, contained unmapped exception, non-AUTO/non-ACTIVE plans untouched, report and log privacy. Parity tests (read-repo suggestion vs probe) added to data/repository/InstallmentCandidateChargeProbeImplTest.
+- Risks:
+  - AE-15b is covered sequentially (second run after the first), not with two truly concurrent runs; the per-entry CAS and the in-transaction re-read are the concurrency guarantee.
+  - Tests use `spyk(fx.tlc)` and a hand-built TLC with a mocked converter; if mockk cannot spy the final TLC class, those tests (AE-29 x2, AE-31 x3) need a different capture.
+  - A reconcile that reopens a COMPLETED plan lets that plan be recorded in the same run (reconcile runs first by design).
+  - The pre-filter and `autoRecordDecision` use the same rule; a plan with an unparsable stored code fails that entry as CONFLICT, not the run.
+  - The plan and entry reads outside the per-entry transactions (`getPlansByStatus`, `getEntriesForPlan`) are not wrapped: a failure there propagates out of `recordDueEntries`; the S7a-2 worker's bounded Result must cover it.
+  - The USD-plan INVALID_DATE refusal path (unsupported due day) is not tested.
+- Deviations from A14: none. The caller (S7a-2 worker) dispatches the returned batches after commit instead of the coordinator dispatching per entry (owner-approvals item 35).
+- Validation to request (serial):
+  1. targeted `*InstallmentRecordDueEntries*,*InstallmentCandidateChargeProbe*,*InstallmentPlanLifecycleCoordinator*,*DbGuardPolicyFixtureTest*,*InstallmentPlanArchitectureGuardTest*`
+  2. registered-guard db_access
+  3. shard domain-a-m, then shard data
+- (2026-10-26) The S7a-1 targeted run vr-20261026-174104-5ae0b044 FAILED in the two AE-29 tests only. Cause: mockk `any()` cannot generate the inline value class CurrencyCode in `evaluator.evaluate(any(), …)` (a known lesson). Test-only fix (debug iteration 1): `coVerify { fx.evaluator wasNot Called }` on the strict mock, which is equally strong.
+
+### S7a-1 — architecture review (ACCEPT-WITH-CONDITIONS) and fixes (2026-10-26; uncommitted; nothing compiled, run or validated after these fixes)
+Paths are under app/src/main/java/com/yourname/expensetracker (main) and app/src/test/java/com/yourname/expensetracker (test). No schema change, no new DAO method, no db_ownership row (pins stay 452).
+- Validation that PASSED before these fixes (the pre-fix tree): targeted vr-20261026-180650-a9c9cec1; shard domain-a-m vr-20261026-180937-d0ba83eb; shard data vr-20261026-181053-bd187fa0; registered-guard db_access vr-20261026-175354-1b46f8b4; known_good_state vr-20261026-175658-3086dee4. The fixes below are NOT covered by those runs; a fresh serial targeted run, db_access, domain-a-m and data are needed.
+- F1: recorded as reported by the review (no code change in this pass). The `ENTRY_LINK_READER_IMPL_PATH` pin in `READ_ONLY_IMPL_PATHS` (test/architecture/InstallmentPlanArchitectureGuardTest.kt :1077, :1088) is approved under owner item 36(b).
+- F2 (fixed): the auto-record applicability rule existed twice (coordinator pre-filter `isDueAutoRecordCandidate`, and `autoRecordDecision`). New pure helper `InstallmentPlanTransitions.isAutoRecordApplicable(...)` (domain/installment/model/InstallmentPlanTransitions.kt :478) is now used by `autoRecordDecision` (:451) and by `isDueAutoRecordCandidate` (domain/installment/lifecycle/InstallmentPlanLifecycleCoordinator.kt :1358). The pre-filter builds its inputs from `fromCodeOrNull` (no `context()`, which throws AbortSignal outside writeTxn); a code that does not parse is not a candidate. Behaviour unchanged (the caller already filters ACTIVE + AUTO_RECORD plans).
+- F3 (fixed, additive; owner item 34): `CANDIDATE_PROBE_IMPL_PATH` added to the check-8 condition `readImplExpenseStoreReferences` (test/architecture/InstallmentPlanArchitectureGuardTest.kt :822) and to its self-check loop, so the probe impl may not reference ExpenseDao, RecurringOccurrenceDao or CategoryDao. The probe impl has no such reference today.
+- F4 (fixed, decision fail-closed/stop): `recordOneDueEntry` (InstallmentPlanLifecycleCoordinator.kt :1394) rethrows `DatabaseAccessBlockedException` (restore, reset, maintenance) before the generic catch, so it stops the whole run instead of counting RECORD_FAILED for each remaining entry. This matches `reconcile()`, whose barrier check at the top propagates (no bounded Failed mapping exists there, so no new `InstallmentOpFailure` value was added). Entries already committed stay committed; the in-memory batches of this run are discarded with the propagated exception (the next run reconciles and picks up the untouched entries). Note: a barrier that closes in the middle of `reconcilePlans` is still counted per plan as plansFailed (existing behaviour, not changed here).
+- F5 (fixed): the default value of `candidateScan` in the `@Inject` constructor of data/repository/InstallmentPlanReadRepositoryImpl.kt (:58) is removed; Hilt builds `InstallmentCandidateChargeProbeImpl` through its own `@Inject` constructor. Test call sites updated: InstallmentPlanReadRepositoryImplTest, InstallmentCandidateChargeProbeImplTest, InstallmentPlanLifecycleCoordinatorEndEditTest.
+- F6 (docs, fixed): CODEBASE_SEGMENTS.md segment 40 (probe port and impl, recordDueEntries entry point, helper); LEGAL_PATHS.md (INSTALLMENT DUE RECORDING block, the lifecycle-reaction and AFTER RESTORE blocks and the coordinator table: the coordinator part of reconcile-at-recordDueEntries is implemented in S7a-1, reconcile runs first and its batches are returned for the caller to dispatch, the S7a-2 worker and the S10 overview callers are pending); ENGINE_INTERACTION_MAP.md (new probe + recordDueEntries section, backstop note updated).
+- F7 (tests, added to domain/installment/lifecycle/InstallmentRecordDueEntriesTest.kt :639-:790): (a) `RecordingProbe` asserts `fx.db.inTransaction()` on every call; (b) a blank-name plan with a candidate charge counts PLAN_NAME_REQUIRED x2, the probe is never called, tables and transaction_events unchanged; (c) an entry due on 2201-01-01 (past MAX_EPOCH_DAY) is refused INVALID_DATE, nothing written; plus the F4 test: the barrier is closed after the first claim (RESTORE_STAGING), the run throws DatabaseAccessBlockedException, entry 1 stays PAID, entries 2 and 3 are untouched, no RECORD_FAILED is logged, and after reopening the next run records the other two.
+- F8: accepted as reported by the review (no change).
+- A14 :940 (facts-reader port) is superseded by owner item 34 (probe port).
+- Residual risk: post-commit batches of entries committed before a barrier stop are lost (see F4); S7a-2's worker must treat DatabaseAccessBlockedException as a bounded retry/skip outcome, never as a crash. (SUPERSEDED by the final-gate fix below: no throw, batches kept.)
+
+### S7a-1 — final gate (reviewer-strict ACCEPT-WITH-CONDITIONS) and fixes (2026-10-26; uncommitted; nothing compiled, run or validated after these fixes)
+Paths are under app/src/main/java/com/yourname/expensetracker (main) and app/src/test/java/com/yourname/expensetracker (test). No schema change, no new DAO method, no db_ownership row (pins stay 452). Decisions are owner-approvals item 39 (a), (b), (c).
+- Decision 39(a): a write barrier closing mid-run (for example a backup export starting) stops `recordDueEntries` with a bounded marker and still returns `Done(report, batches)`; it does not throw, so committed follow-up work (budget, cache, recurring) is never dropped. The worker retries later. Decision 39(b): the auto-record latch is set on EVERY claim (recorded, confirmed or linked); once an entry has been paid or linked once, auto-record never re-creates it after the user deletes that expense (extends AE-16 to USER_CONFIRMED and USER_LINKED; the user can still confirm manually). Decision 39(c): corrupt stored data in the candidate probe keeps the fail-closed AUTO_RECORD_DEFERRED_CANDIDATE answer (no new reason code; no code change).
+- Item 1 (39(a), supersedes F4 and its residual risk): `InstallmentDueRunReport` gains `stoppedByBarrier: Boolean = false` (domain/installment/lifecycle/InstallmentDueRunReport.kt). `recordOneDueEntry` catches `DatabaseAccessBlockedException` (before the generic catch, after CancellationException), sets the marker and returns; `recordDueEntriesOfPlan` and `recordDueEntries` leave their loops on it. The result is `Done(report, acc.batches)` with all batches so far: reconcile's plus those of entries committed earlier in the run. CancellationException is still rethrown. The log line is now `InstallmentDueRun recorded= deferred= refused= failed= stoppedByBarrier= cause=` and is also written when only the marker is set. KDoc of `recordDueEntries`, `recordOneDueEntry` and the report updated. A barrier already closed at the top of `reconcile()` still throws out of `recordDueEntries` (nothing was committed, so no batch can be dropped; unchanged).
+- Item 2 (39(b)): `claimEntry` passes `markAutoRecordConsumed = true` for every origin (signature and the db_ownership row unchanged). Tests updated to the approved behaviour: InstallmentPlanLifecycleCoordinatorLinkConfirmTest `confirm_creates_the_installment_expense_at_noon_on_the_due_date_and_claims_the_entry` (:103, consumed now true) and `a_link_on_a_blank_name_plan_is_still_allowed_because_it_creates_no_expense` (consumed now true). The AE-27 revert test (consumed stays false, the entry was never claimed) is unchanged. New tests in InstallmentRecordDueEntriesTest: `owner39b_a_user_confirmed_entry_...` and `owner39b_a_user_linked_entry_...` (AUTO_RECORD plan, user confirms or links, the expense is deleted, reconcile reopens, recordDueEntries records 0 and creates no expense; the confirm test also confirms manually afterwards).
+- Item 3 (finding 1, MAJOR test gap): a DAO wrapper `StaleSnapshotDao` returns the entries captured earlier from `getEntriesForPlan` (armed by the `getPlansByStatus` call, so reconcile still reads live rows). Tests `a_stale_snapshot_entry_that_another_run_already_recorded_is_not_recorded_again` (entry now PAID) and `a_stale_snapshot_entry_in_the_AE16_state_consumed_then_reopened_is_not_re_created`: recorded 0, failed/refused/deferred empty, no new expense row, `RecordingProbe.calls == 0`.
+- Item 4 (finding 3): `reconcile_first_detaches_a_plan_whose_purchase_was_deleted_so_the_due_entry_still_records` pins D-18: an AUTO_RECORD PURCHASE_ATTACHED plan whose purchase row was deleted; r5Detached = 1, then the entry records (recorded = 1), plan STANDALONE.
+- Item 5 (finding 4): the vacuous `tree.lines.none { it.contains("RECORD_FAILED") }` in the barrier test is replaced by assertions on the run's single log line (`recorded=1`, `stoppedByBarrier=true`, `failed=0`). The barrier test now expects `Done` with `stoppedByBarrier = true`, entry 1 PAID and its batch in `postCommit` (size 1), entries 2 and 3 untouched, and the next run after reopening records them (`stoppedByBarrier` false). A second test pins that a stop returns the reconcile batch plus the earlier entry's batch (size 2). The privacy-log regex now includes `stoppedByBarrier=(true|false)`.
+- Correction of stale risk text: the S7a-1 part B risk "a plan with an unparsable stored code fails that entry as CONFLICT, not the run" is out of date. After F2 the pre-filter (`isDueAutoRecordCandidate`, built on `fromCodeOrNull`) skips such an entry silently; it is neither recorded nor counted.
+- Note for S7a-2: run-level read failures (`getPlansByStatus` and `getEntriesForPlan`, outside the per-entry transactions) still abort the run with the exception, so the worker's bounded Result must cover them. The worker maps `stoppedByBarrier` to a retry (and still dispatches the returned batches after commit).
+- Validation to request (serial): targeted `*InstallmentRecordDueEntries*,*InstallmentPlanLifecycleCoordinator*,*InstallmentRestoreReconcile*,*InstallmentExpenseReaction*`, then registered-guard db_access, shard domain-a-m, shard data.
+
+### S7a-1 — accepted (2026-10-26)
+- Final tree (serial, all PASS):
+  - targeted vr-20261026-191645-db9029cc
+  - db_access vr-20261026-192950-aa104292 (pins 452)
+  - domain-a-m vr-20261026-193252-bd8b8dc6
+  - data vr-20261026-193408-07621fa9
+  - earlier: known_good_state vr-20261026-175658-3086dee4
+- Gates:
+  - architecture-guardian ACCEPT-WITH-CONDITIONS (fixed)
+  - reviewer-strict ACCEPT-WITH-CONDITIONS (C1 met; C2 test added; C3 decided by owner-approvals item 39)
+  - Review iteration limit reached; accepted on validation.
+- Committed. Next: S7a-2 (InstallmentDueRecordingWorker + registrations). The worker must:
+  - map stoppedByBarrier to a retry;
+  - cover run-level read failures and a barrier closed at reconcile start with a bounded Result;
+  - dispatch the Done.postCommit batches after the call returns.

@@ -100,7 +100,8 @@ class InstallmentPlanLifecycleCoordinatorLinkConfirmTest {
         assertEquals("USER_CONFIRMED", stored.linkOrigin)
         assertEquals(done.value.linkedExpenseId, stored.linkedExpenseId)
         assertEquals(0, stored.recordGeneration)
-        assertEquals(false, stored.autoRecordConsumed)
+        // Owner approval 39(b): every claim latches autoRecordConsumed, a user confirm included.
+        assertEquals(true, stored.autoRecordConsumed)
         val expense = fx.expenseDao.getById(stored.linkedExpenseId!!)!!
         assertEquals(50.0, expense.amount, 0.0)
         assertEquals("EUR", expense.currency)
@@ -921,5 +922,49 @@ class InstallmentPlanLifecycleCoordinatorLinkConfirmTest {
 
         assertNotNull(fx.planDao.getPlanById(planId))
         assertEquals(before, fx.entries(planId))
+    }
+
+    // ------------------------------------------------------------------ INV-34 / AE-31: blank name
+
+    @Test
+    fun confirm_of_a_plan_with_an_empty_or_whitespace_name_is_refused_PLAN_NAME_REQUIRED_and_writes_nothing() = runTest {
+        for ((index, name) in listOf("", "   ").withIndex()) {
+            val planId = fx.seedPlan(
+                uuid = "blank-name-$index",
+                entries = listOf(
+                    InstallmentCoordinatorFixture.SeedEntry(seq = 1, dueEpochDay = day(2027, 4, 10)),
+                    InstallmentCoordinatorFixture.SeedEntry(seq = 2, dueEpochDay = day(2027, 5, 10))
+                ),
+                mode = "AUTO_RECORD",
+                displayName = name
+            )
+            val entriesBefore = fx.entries(planId)
+            val tablesBefore = fx.tableCounts()
+            val eventsBefore = fx.eventTypes()
+
+            val result = coordinator.confirmEntry(entriesBefore.first { it.seq == 1 }.id, today, ATHENS)
+
+            assertEquals(InstallmentOpResult.Refused(InstallmentRefusalCode.PLAN_NAME_REQUIRED), result)
+            assertEquals(entriesBefore, fx.entries(planId))
+            fx.assertTablesUnchanged(tablesBefore)
+            assertEquals(eventsBefore, fx.eventTypes())
+        }
+    }
+
+    @Test
+    fun a_link_on_a_blank_name_plan_is_still_allowed_because_it_creates_no_expense() = runTest {
+        val planId = fx.seedPlan(
+            uuid = "blank-name-link",
+            entries = listOf(InstallmentCoordinatorFixture.SeedEntry(seq = 1, dueEpochDay = day(2027, 5, 10))),
+            displayName = ""
+        )
+        val charge = fx.seedCharge(athensMillis(2027, 5, 10))
+
+        val result = coordinator.linkExpense(entryId(planId, 1), charge)
+
+        assertTrue(result is InstallmentOpResult.Done)
+        assertEquals("USER_LINKED", entry(planId, 1).linkOrigin)
+        // Owner approval 39(b): every claim latches autoRecordConsumed, a user link included.
+        assertEquals(true, entry(planId, 1).autoRecordConsumed)
     }
 }

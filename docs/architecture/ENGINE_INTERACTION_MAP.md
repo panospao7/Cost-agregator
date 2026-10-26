@@ -165,10 +165,25 @@ TransactionSideEffectPlanner.planUpdated() / planDeleted()
         → InstallmentPlanLifecycleCoordinator.onExpenseChanged / onExpenseDeleted (coordinator decides applicability)
         → plan Done.postCommit batches re-dispatched through the same runner (budget re-check etc.)
         Backstops: plan reconcile() before a .costbackup export (InstallmentPreBackupReconciler, implemented);
-        reconcile at the start of each recordDueEntries run is PLANNED, binding on S7a (D-18 option (b));
-        recordDueEntries does not exist yet. Until S7a, the only reconcile() caller is InstallmentPreBackupReconciler;
-        restored or orphaned data is not repaired until the next .costbackup export or until S7a lands.
+        reconcile at the start of each recordDueEntries run: coordinator part implemented in S7a-1 (D-18 option (b)),
+        worker call site (S7a-2) pending. Until a caller exists, the only production reconcile() caller is
+        InstallmentPreBackupReconciler; restored or orphaned data is not repaired until the next .costbackup export
+        or until the S7a-2 worker lands.
         Lost in-memory batches are backstopped by the next budget trigger
+```
+
+### InstallmentPlanLifecycleCoordinator.recordDueEntries and InstallmentCandidateChargeProbe (implemented — loan-installments S7a-1):
+```
+recordDueEntries(today, zone)   (callers S7a-2 worker and S10 overview: pending)
+  ├── reconcile() first (D-18); its report and batches are carried in Done.postCommit for the caller to dispatch
+  ├── one writeTxn per due AUTO_RECORD entry:
+  │     ├── InstallmentCandidateChargeProbe.hasCandidate (read-only boolean port, called inside the entry transaction;
+  │     │     impl data/repository/InstallmentCandidateChargeProbeImpl: plan DAO reads + facts reader; shares the
+  │     │     candidate scan with InstallmentPlanReadRepositoryImpl suggestions; no amount or id crosses the port)
+  │     └── TransactionLifecycleCoordinator.createExpenseDbOnlyV2 (STRICT_EXTERNAL_ID) + entry claim in the same txn
+  └── closed write barrier (DatabaseAccessBlockedException) stops the run: report.stoppedByBarrier = true, still
+      Done(report, all batches so far), no throw (owner item 39(a)); the caller maps the marker to a retry
+NOT: any DAO write from the probe; any cloud payload (INV-31); any worker scheduling (S7a-2)
 ```
 
 ### Installment exclusion from recurring link / generation / pattern detection (implemented — S6c-2, S6c-2b, S6c-3):

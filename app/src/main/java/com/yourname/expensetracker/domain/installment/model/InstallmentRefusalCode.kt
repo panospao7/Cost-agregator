@@ -43,7 +43,19 @@ enum class InstallmentRefusalCode {
     INVALID_DATE,
 
     /** The purchase expense does not exist (checked inside the declaration transaction). */
-    PURCHASE_NOT_FOUND;
+    PURCHASE_NOT_FOUND,
+
+    /**
+     * INV-34: confirm or payoff of a plan whose display name is blank (empty or whitespace only),
+     * in practice a plan restored from a redacted backup. Refused before any expense create.
+     */
+    PLAN_NAME_REQUIRED,
+
+    /**
+     * A free-text input that must not be blank is blank (owner item 33): the plan display name of
+     * declare, create-standalone and edit-details. Refused before any write.
+     */
+    INVALID_VALUE;
 
     companion object {
         fun fromCodeOrNull(code: String?): InstallmentRefusalCode? = entries.firstOrNull { it.name == code }

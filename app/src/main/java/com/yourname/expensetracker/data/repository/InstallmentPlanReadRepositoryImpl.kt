@@ -5,7 +5,6 @@ import com.yourname.expensetracker.data.database.entity.InstallmentEntry
 import com.yourname.expensetracker.data.database.entity.InstallmentPlan
 import com.yourname.expensetracker.domain.installment.InstallmentPlanReadRepository
 import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentExpenseFactsReader
-import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentLinkRelations
 import com.yourname.expensetracker.domain.installment.model.InstallmentCurrency
 import com.yourname.expensetracker.domain.installment.model.InstallmentEntryKind
 import com.yourname.expensetracker.domain.installment.model.InstallmentEntryStatus
@@ -13,10 +12,8 @@ import com.yourname.expensetracker.domain.installment.model.InstallmentFulfilmen
 import com.yourname.expensetracker.domain.installment.model.InstallmentMinorUnits
 import com.yourname.expensetracker.domain.installment.model.InstallmentPlanKind
 import com.yourname.expensetracker.domain.installment.model.InstallmentPlanStatus
-import com.yourname.expensetracker.domain.installment.readmodel.CandidateExpense
 import com.yourname.expensetracker.domain.installment.readmodel.EntryMoney
 import com.yourname.expensetracker.domain.installment.readmodel.EntrySnapshot
-import com.yourname.expensetracker.domain.installment.readmodel.InstallmentCandidateRule
 import com.yourname.expensetracker.domain.installment.readmodel.InstallmentHistoryItem
 import com.yourname.expensetracker.domain.installment.readmodel.InstallmentLinkSuggestion
 import com.yourname.expensetracker.domain.installment.readmodel.InstallmentOverview
@@ -25,11 +22,8 @@ import com.yourname.expensetracker.domain.installment.readmodel.InstallmentPlanR
 import com.yourname.expensetracker.domain.installment.readmodel.LinkedExpenseMoney
 import com.yourname.expensetracker.domain.installment.readmodel.PlanSnapshot
 import com.yourname.expensetracker.domain.installment.readmodel.PurchaseMoney
-import com.yourname.expensetracker.domain.schedule.ExpenseScheduleLinkPolicy
-import com.yourname.expensetracker.domain.schedule.ScheduleLinkDecision
 import com.yourname.expensetracker.domain.util.TimeProvider
 import java.time.Instant
-import java.time.LocalDate
 import java.time.ZoneId
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -60,7 +54,8 @@ import kotlinx.coroutines.flow.mapLatest
 class InstallmentPlanReadRepositoryImpl @Inject constructor(
     private val planDao: InstallmentPlanDao,
     private val factsReader: InstallmentExpenseFactsReader,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val candidateScan: InstallmentCandidateChargeProbeImpl
 ) : InstallmentPlanReadRepository {
 
     override fun observeOverview(): Flow<InstallmentOverview> = changes().mapLatest { loadOverview() }
@@ -186,49 +181,27 @@ class InstallmentPlanReadRepositoryImpl @Inject constructor(
 
     /**
      * Eligible candidates for the entries of [plan] that may have one today, then the pure rule.
-     * Eligibility (spending type, currency, exclusivity) goes through `ExpenseScheduleLinkPolicy`.
+     * The scan (window query, pure rule, eligibility through `ExpenseScheduleLinkPolicy`) is the one
+     * owned by [InstallmentCandidateChargeProbeImpl], which the plan coordinator also uses.
      */
     private suspend fun suggestionsOf(plan: PlanSnapshot, zone: ZoneId, todayEpochDay: Long): List<InstallmentLinkSuggestion> {
         if (plan.status != InstallmentPlanStatus.ACTIVE) return emptyList()
-        val candidates = LinkedHashMap<Long, CandidateExpense>()
-        val checked = HashMap<Long, Boolean>()
+        val state = InstallmentCandidateChargeProbeImpl.ScanState()
         for (entry in plan.entries) {
             if (!InstallmentPlanReadModel.mayHaveCandidate(plan.fulfilmentMode, entry, todayEpochDay)) continue
-            val due = entry.money.dueEpochDay
-            // Range query follows the plan mode window: AUTO_RECORD [due-3d, due], CONFIRM [due-5d, due+10d].
-            val startMillis = startOfDayMillis(InstallmentCandidateRule.windowStartEpochDay(plan.fulfilmentMode, due), zone)
-            val endMillis = startOfDayMillis(InstallmentCandidateRule.windowEndEpochDay(plan.fulfilmentMode, due) + 1L, zone)
-            for (money in factsReader.findExpenseMoneyBetween(startMillis, endMillis)) {
-                if (candidates.containsKey(money.expenseId) || checked[money.expenseId] == false) continue
-                val gross = InstallmentMinorUnits.toMinorOrNull(money.amount)
-                if (gross == null) {
-                    checked[money.expenseId] = false
-                    continue
-                }
-                val candidate = CandidateExpense(money.expenseId, money.currency, gross, epochDayOf(money.dateMillis, zone))
-                // Cheap pure pre-filter before the per-expense eligibility reads.
-                if (!InstallmentCandidateRule.matches(plan.fulfilmentMode, plan.currency, due, entry.money.scheduledMinor, candidate)) continue
-                if (isEligible(plan, entry.entryId, money.expenseId)) {
-                    candidates[money.expenseId] = candidate
-                } else {
-                    checked[money.expenseId] = false
-                }
-            }
+            // The scan itself (window query, pure rule, eligibility) is owned by the candidate probe.
+            candidateScan.collectCandidates(
+                mode = plan.fulfilmentMode,
+                currency = plan.currency,
+                entryId = entry.entryId,
+                dueEpochDay = entry.money.dueEpochDay,
+                scheduledMinor = entry.money.scheduledMinor,
+                zone = zone,
+                state = state,
+                stopAtFirst = false
+            )
         }
-        return InstallmentPlanReadModel.suggestionsFor(plan, candidates.values.toList())
-    }
-
-    private suspend fun isEligible(plan: PlanSnapshot, entryId: Long, expenseId: Long): Boolean {
-        val facts = factsReader.findExpenseFacts(expenseId) ?: return false
-        // Same relations builder as the coordinator link path: one rule for "may this expense be linked".
-        val relations = InstallmentLinkRelations.forExistingExpense(
-            linkedInstallmentEntryId = planDao.getEntryByLinkedExpenseId(expenseId)?.id,
-            planPurchaseRecordExists = planDao.getPlanByPurchaseExpenseId(expenseId) != null,
-            facts = facts
-        )
-        return ExpenseScheduleLinkPolicy.evaluateInstallmentLink(
-            plan.currency.code, facts.currency, facts.isSpendingType, entryId, relations
-        ) == ScheduleLinkDecision.Allowed
+        return InstallmentPlanReadModel.suggestionsFor(plan, state.candidates())
     }
 
     // ------------------------------------------------------------------ time
@@ -237,7 +210,4 @@ class InstallmentPlanReadRepositoryImpl @Inject constructor(
 
     private fun epochDayOf(millis: Long, zone: ZoneId): Long =
         Instant.ofEpochMilli(millis).atZone(zone).toLocalDate().toEpochDay()
-
-    private fun startOfDayMillis(epochDay: Long, zone: ZoneId): Long =
-        LocalDate.ofEpochDay(epochDay).atStartOfDay(zone).toInstant().toEpochMilli()
 }

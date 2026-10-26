@@ -833,4 +833,45 @@ class InstallmentPlanLifecycleCoordinatorDeclareTest {
         assertEquals(eventsBefore, fx.eventTypes())
         assertFalse(fx.flagOf(fx.planDao.getPlanById(first.value.planId)!!.purchaseExpenseId!!) == null)
     }
+
+    // ------------------------------------------------------------------ owner item 33: blank plan name
+
+    @Test
+    fun declareOnExpense_with_an_empty_or_whitespace_name_is_refused_INVALID_VALUE_and_writes_nothing() = runTest {
+        val expenseId = fx.seedExpense()
+
+        assertRefusedNoWrites(expenseId, fx.terms(displayName = ""), InstallmentRefusalCode.INVALID_VALUE)
+        assertRefusedNoWrites(expenseId, fx.terms(displayName = " \t "), InstallmentRefusalCode.INVALID_VALUE)
+        assertNull(fx.flagOf(expenseId))
+    }
+
+    @Test
+    fun declareWithNewExpense_with_a_blank_name_is_refused_INVALID_VALUE_before_the_purchase_is_created() = runTest {
+        val tablesBefore = fx.tableCounts()
+        val eventsBefore = fx.eventTypes()
+
+        assertEquals(
+            InstallmentOpResult.Refused(InstallmentRefusalCode.INVALID_VALUE),
+            coordinator.declareWithNewExpense(fx.purchaseRequest(), ATHENS, fx.terms(displayName = ""))
+        )
+        assertEquals(
+            InstallmentOpResult.Refused(InstallmentRefusalCode.INVALID_VALUE),
+            coordinator.declareWithNewExpense(fx.purchaseRequest(), ATHENS, fx.terms(displayName = "   "))
+        )
+
+        fx.assertTablesUnchanged(tablesBefore)
+        assertEquals(eventsBefore, fx.eventTypes())
+    }
+
+    @Test
+    fun createStandalone_with_a_blank_name_is_refused_INVALID_VALUE_and_writes_nothing() = runTest {
+        val tablesBefore = fx.tableCounts()
+
+        val empty = coordinator.createStandalone(fx.standaloneTerms().copy(displayName = ""), fx.categoryId, PaymentMethod.CARD)
+        val spaces = coordinator.createStandalone(fx.standaloneTerms().copy(displayName = "  \t"), fx.categoryId, PaymentMethod.CARD)
+
+        assertEquals(InstallmentOpResult.Refused(InstallmentRefusalCode.INVALID_VALUE), empty)
+        assertEquals(InstallmentOpResult.Refused(InstallmentRefusalCode.INVALID_VALUE), spaces)
+        fx.assertTablesUnchanged(tablesBefore)
+    }
 }

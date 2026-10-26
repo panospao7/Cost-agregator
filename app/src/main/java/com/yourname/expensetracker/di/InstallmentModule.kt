@@ -1,10 +1,12 @@
 package com.yourname.expensetracker.di
 
+import com.yourname.expensetracker.data.repository.InstallmentCandidateChargeProbeImpl
 import com.yourname.expensetracker.data.repository.InstallmentEntryLinkReaderImpl
 import com.yourname.expensetracker.data.repository.InstallmentExpenseFactsReaderImpl
 import com.yourname.expensetracker.data.repository.InstallmentPlanReadRepositoryImpl
 import com.yourname.expensetracker.data.repository.InstallmentProjectionPortImpl
 import com.yourname.expensetracker.domain.installment.InstallmentPlanReadRepository
+import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentCandidateChargeProbe
 import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentEntryLinkReader
 import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentExpenseFactsReader
 import com.yourname.expensetracker.domain.installment.projection.InstallmentProjectionPort
@@ -32,6 +34,12 @@ object InstallmentModule {
     fun provideInstallmentExpenseFactsReader(
         impl: InstallmentExpenseFactsReaderImpl
     ): InstallmentExpenseFactsReader = impl
+
+    @Provides
+    @Singleton
+    fun provideInstallmentCandidateChargeProbe(
+        impl: InstallmentCandidateChargeProbeImpl
+    ): InstallmentCandidateChargeProbe = impl
 
     @Provides
     @Singleton

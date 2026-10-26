@@ -481,8 +481,12 @@ confirmation if dirty).
      found: Demo Electronics €50.00, 9 May" with **Link** / View expense (INV-13, AE-17).
    - Possible duplicate: "Possible duplicate of installment 3: a €50.00 charge on 11 Jun" with **View expense**. No
      automatic resolution (Q4). Under OD-5 variant B this row type does not exist.
-   - Waiting for an exchange rate (`AUTO_RECORD_DEFERRED_FX`, Q9): "Waiting for an exchange rate. We'll try again
-     automatically." Informational, no action.
+   - [Amended 2026-10-26 (A2)] No exchange-rate row. Auto-record never waits for a rate (`AUTO_RECORD_DEFERRED_FX`
+     removed, spec 6 Q9): a USD installment recorded without a rate is Paid, and its home-currency value follows the
+     shared missing-rate display (plan R17, slice S8b).
+   - [Amended 2026-10-26 (A2)] Plan without a name (`PLAN_NAME_REQUIRED`, spec INV-34; a plan restored from a
+     redacted backup): its due installments are not recorded until the plan is renamed. Row text: "Row: name needed"
+     in section 8 (PROPOSED, needs owner es/el sign-off). The action that opens the rename (E3) is S10's choice.
 4. **Active plans** list — plan cards (ACTIVE only; a COMPLETED plan that reopens returns here).
 5. Top bar: back, title "Installments & loans", actions **History**, Refresh. FAB "Add plan".
 
@@ -606,7 +610,7 @@ currency" (standalone, detached, currency differs) or "Not available for cancell
 |---|---|---|---|
 | SCHEDULED / Upcoming | Upcoming | | Link, Adjust, Skip. **Confirm is not offered** (no expense is created before the due date, INV-14) |
 | SCHEDULED / Due today | Due today | AUTO: "Will be recorded automatically"; CONFIRM: "Waiting for your confirmation" | Confirm, Link, Adjust, Skip |
-| SCHEDULED / Overdue | Overdue · not counted yet | Sub-reason when known: "Before you set up this plan" (past at declaration), "Its expense was removed" (reopened, auto-record already used), "A matching charge was found" (deferred, INV-13), "Waiting for an exchange rate" (Q9) | Record (confirm), Link, Adjust, Skip |
+| SCHEDULED / Overdue | Overdue · not counted yet | Sub-reason when known: "Before you set up this plan" (past at declaration), "Its expense was removed" (reopened, auto-record already used), "A matching charge was found" (deferred, INV-13), "Row: name needed" copy (INV-34, PROPOSED, owner es/el sign-off). [Amended 2026-10-26 (A2): "Waiting for an exchange rate" removed] | Record (confirm), Link, Adjust, Skip |
 | PAID | Paid | Origin: "Recorded automatically" / "Confirmed" / "Linked"; linked expense merchant + date; chip **Differs from plan** when the paid amount != scheduled amount (7.6); chip "Counts €0" if the expense was marked not mine | View expense, Unlink |
 | SKIPPED | Skipped | Bounded reason label | Unskip |
 | CANCELLED | Cancelled | Reason: Stopped / Refunded / Paid off early / Shortened / Expense removed | none |
@@ -681,7 +685,10 @@ chronological log appears only if OD-13's alternative (plan event table) is appr
 (the expense is dated on the due date at noon, spec 10). The action goes through the expense lifecycle, never from
 the UI. No Undo; after success the snackbar offers **View expense**. If a matching unlinked charge exists the sheet
 shows it first ("A matching charge was found") and recommends Link, to prevent counting the payment twice (INV-13 /
-INV-7). Home-currency conversion failure keeps the entry unrecorded with "Waiting for an exchange rate" (Q9).
+INV-7). [Amended 2026-10-26 (A2)] A missing exchange rate never blocks Record payment: the expense is created and
+its home-currency value follows the shared missing-rate display (R17/S8b). If the plan has no name (INV-34), Record
+payment is refused with `PLAN_NAME_REQUIRED` and nothing changes; the message is the "Row: name needed" copy
+(section 8, PROPOSED).
 **Bulk Record all past payments:** confirmation dialog "Creates N expenses totalling €X, each dated on its due date.
 Totals for those months will change. If you already have these charges, link them instead." Buttons **Record N payments**
 / Cancel; per-entry transactions, so partial success is possible: the result states "Recorded 3 of 4. 1 could not be
@@ -994,7 +1001,8 @@ Bounded reasons mapped to fixed strings:
 | PLAN_ENDED | INV-20 | "This plan is finished and can't be changed." |
 | EXPENSE_LOCKED_BY_INSTALLMENT_PLAN | INV-22 | "This purchase is paid in installments, so its amount can't be changed." |
 | INVALID_VALUE | validation | "Check the highlighted fields." |
-| DEFERRED (`AUTO_RECORD_DEFERRED_CANDIDATE` / `_FX`) | INV-13 / Q9 | row sub-reason, not an error |
+| DEFERRED (`AUTO_RECORD_DEFERRED_CANDIDATE`) | INV-13 | row sub-reason, not an error. [Amended 2026-10-26 (A2): `_FX` removed] |
+| PLAN_NAME_REQUIRED | INV-34 | "Row: name needed" copy (section 8, PROPOSED). [Amended 2026-10-26 (A2)] |
 | WRITES_BLOCKED | barrier | "Your data is being restored. Try again in a moment." |
 | WRITE_FAILED | storage failure / rollback | "Couldn't save. Nothing was changed." |
 
@@ -1028,7 +1036,8 @@ before the last paid due date -> "Choose a date that is not in the future and no
 | Entry REVERSED | "Refunded · not counted" row; expense flagged "Not counted (refunded)" |
 | PAYOFF entry | Payoff row |
 | AUTO_RECORD vs CONFIRM (2.1, INV-12, INV-13) | Mode radio, header label, attention items |
-| `AUTO_RECORD_DEFERRED_CANDIDATE` / `_FX` | Suggested-link attention row / "Waiting for an exchange rate" |
+| `AUTO_RECORD_DEFERRED_CANDIDATE` | Suggested-link attention row. [Amended 2026-10-26 (A2): `_FX` and "Waiting for an exchange rate" removed] |
+| Plan without a name (INV-34, `PLAN_NAME_REQUIRED`) | Attention row and Record refusal ("Row: name needed", PROPOSED). [Amended 2026-10-26 (A2)] |
 | Possible duplicate indicator (Q4) | Overview attention row + detail row note |
 | Past-at-declaration entries (8.1, AE-10c) | Inline notice, Overdue rows, bulk Record all past payments |
 | `spendingExclusionReason` INSTALLMENT_PURCHASE / INSTALLMENT_REVERSED (2.3, INV-1/2) | Marked rows in Transactions, locked fields (INV-22) |
@@ -1064,8 +1073,10 @@ of the write-blocked code, ALREADY_LINKED code name, whether reconcile outcomes 
   in the plan currency. Next-due compares by date only. A purchase in a different currency than its plan is allowed
   (OD-14 recommended): both currencies are shown, financing cost is "Unavailable", and a USD installment expense
   gets its home-currency value from the existing expense conversion at creation (not a new UI figure).
-- **Unavailable conversions:** no conversion exists in v1, so no "approx" markers. If recording needs a rate that is
-  missing, the installment stays unrecorded and shows "Waiting for an exchange rate" (never a zero amount).
+- **Unavailable conversions:** no conversion exists in v1, so no "approx" markers. [Amended 2026-10-26 (A2)] A
+  missing rate never keeps an installment unrecorded. The expense is created as a sentinel row without a
+  home-currency value, excluded from home-currency totals, and shown through the shared missing-rate display (plan
+  R17, slice S8b), never as a zero amount. No installment-specific copy.
 - **Unavailable values:** the word "Unavailable" (info icon with explanation); where space-constrained the em dash is
   allowed only with an "Unavailable" content description (existing `formatBillReminderAmount` convention). Never
   "€0.00".
@@ -1271,7 +1282,7 @@ fixed-width chips. Use plurals resources; positional args (`%1$d of %2$d`), neve
 | Row: expense removed | Its expense was removed |
 | Row: before plan | Before you set up this plan |
 | Row: candidate found | A matching charge was found |
-| Row: FX wait | Waiting for an exchange rate. We'll try again automatically. |
+| Row: name needed | Name this plan to record its payments. **PROPOSED [Amended 2026-10-26 (A2)]: new string for INV-34, needs owner es/el sign-off; used by S10 (attention row, row sub-reason, Record refusal).** ("Row: FX wait" removed [Amended 2026-10-26 (A2)].) |
 | Possible duplicate | Possible duplicate of installment %1$d: a %2$s charge on %3$s |
 | Detached banner | The original purchase was deleted. This plan is now standalone. |
 | Snackbar declared | Installments set up for %s (actions: View plan, Undo) |

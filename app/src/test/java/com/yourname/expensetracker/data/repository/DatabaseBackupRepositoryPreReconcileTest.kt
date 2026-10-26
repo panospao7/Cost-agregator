@@ -464,7 +464,8 @@ class DatabaseBackupRepositoryPreReconcileTest {
             mockk<TransactionLifecycleCoordinator>(relaxed = true),
             facts,
             barrier,
-            FakeTimeProvider.forDate(2027, 3, 12)
+            FakeTimeProvider.forDate(2027, 3, 12),
+            InstallmentCandidateChargeProbeImpl(facts, tracingDao)
         )
         return InstallmentPreBackupReconciler(
             dagger.Lazy { coordinator },
