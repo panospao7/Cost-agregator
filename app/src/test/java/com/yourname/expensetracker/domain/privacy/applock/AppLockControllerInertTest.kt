@@ -1,5 +1,8 @@
 package com.yourname.expensetracker.domain.privacy.applock
 
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -10,8 +13,9 @@ import org.junit.Test
  * foreground, T15 (a returning INERT session) and T14 from INERT (re-activation only at a lock trigger).
  *
  * Acceptance examples covered here: AE-48, AE-49, AE-52, AE-54. AE-50 (`AUTH_ERROR(NO_DEVICE_CREDENTIAL)`,
- * T11) is a prompt outcome and belongs to part (ii).
+ * T11) is a prompt outcome and is covered in `AppLockControllerAuthOutcomeTest` (S16 part ii-a).
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 class AppLockControllerInertTest {
 
     private val notAvailable = listOf(
@@ -76,22 +80,32 @@ class AppLockControllerInertTest {
     }
 
     @Test
-    fun `T6 RESOLVE_TIMEOUT without capability resolves to INERT SETTINGS_UNREADABLE_NO_AUTH`() {
-        val h = AppLockControllerHarness(AppLockTestSettings.DISABLED, DeviceAuthCapability.NO_CREDENTIAL)
+    fun `T6 RESOLVE_TIMEOUT without capability resolves to INERT SETTINGS_UNREADABLE_NO_AUTH`() = runTest {
+        val h = AppLockControllerHarness(
+            AppLockTestSettings.DISABLED,
+            DeviceAuthCapability.NO_CREDENTIAL,
+            scheduler = testScheduler
+        )
         val controller = h.newController()
 
-        controller.onResolveTimeout()
+        resolveTimedOut(h, controller)
 
         assertEquals(AppLockState.Inert(InertReason.SETTINGS_UNREADABLE_NO_AUTH), controller.state.value)
     }
 
     @Test
-    fun `T6b does not apply to an INERT fallback (fail closed)`() {
-        val h = AppLockControllerHarness(AppLockTestSettings.DISABLED, DeviceAuthCapability.NO_CREDENTIAL)
+    fun `T6b does not apply to an INERT fallback (fail closed)`() = runTest {
+        val h = AppLockControllerHarness(
+            AppLockTestSettings.DISABLED,
+            DeviceAuthCapability.NO_CREDENTIAL,
+            scheduler = testScheduler
+        )
         val controller = h.newController()
-        controller.onResolveTimeout()
+        resolveTimedOut(h, controller)
 
-        controller.onLateSettingsResolved(AppLockTestSettings.DISABLED)
+        // The held read now returns a readable lock-off store: the late result must still be dropped.
+        h.repository.releaseReads()
+        runCurrent()
 
         assertEquals(AppLockState.Inert(InertReason.SETTINGS_UNREADABLE_NO_AUTH), controller.state.value)
     }

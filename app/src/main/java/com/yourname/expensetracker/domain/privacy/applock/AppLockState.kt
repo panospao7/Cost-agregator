@@ -31,8 +31,8 @@ enum class AppLockOrigin {
  * an attempt can only be entered from, and only return to, one kind of state (spec 3.3).
  *
  * [ENABLE] and [CONFIRM_CHANGE] are the open-origin prompts: they render as their origin and never
- * remove the open composition (INV-53). Part (i) of S16 only starts [UNLOCK] attempts; the other two
- * are started by the settings operations (S18).
+ * remove the open composition (INV-53). Until part (ii-b) of S16 the controller only starts [UNLOCK]
+ * attempts; the other two are started by the settings operations (S18).
  */
 enum class AuthPurpose(val origin: AppLockOrigin) {
     UNLOCK(AppLockOrigin.LOCKED),

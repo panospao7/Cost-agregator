@@ -20,8 +20,19 @@ enum class DeviceAuthCapability {
     /** The hardware is missing or temporarily unusable. A retry re-evaluates (AE-93). */
     HW_UNAVAILABLE,
 
-    /** Unsupported, status unknown, security update required, or the check itself failed. */
-    UNKNOWN
+    /**
+     * The platform answered, but not with a usable result: unsupported, status unknown or security
+     * update required. This is a genuine state, so a device in it is `INERT(UNKNOWN)` (INV-32).
+     */
+    UNKNOWN,
+
+    /**
+     * The check itself threw, so nothing is known about the device (S16 R3). This is TRANSIENT, unlike
+     * [UNKNOWN]: the controller never turns it into `INERT` and never opens the app on it. It keeps the
+     * lock (stays `LOCKED`, or treats the lock as active for the timer) and asks again at the next
+     * foreground or Unlock tap. It still counts as "not [AVAILABLE]" for enabling (T26), which refuses.
+     */
+    CHECK_FAILED
 }
 
 /**

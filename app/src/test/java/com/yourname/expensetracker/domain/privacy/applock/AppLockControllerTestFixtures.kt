@@ -3,17 +3,27 @@ package com.yourname.expensetracker.domain.privacy.applock
 import io.mockk.coEvery
 import io.mockk.mockk
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.Runnable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestCoroutineScheduler
+import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import kotlin.coroutines.CoroutineContext
 
 /** Controllable [MonotonicClock]: only the monotonic clock exists for the controller (AE-43). */
 internal class FakeMonotonicClock(var nowMillis: Long = 1_000L) : MonotonicClock {
@@ -88,21 +98,145 @@ internal object AppLockTestSettings {
 }
 
 /**
+ * Stands in for the main dispatcher. Work dispatched to it is queued on the test scheduler and runs on
+ * [TestCoroutineScheduler.runCurrent] (see [AppLockControllerHarness.settle]), and [isOnMain] is true only
+ * while such a task runs, so a test can prove which calls hop to "main" (S16 P5).
+ */
+@OptIn(ExperimentalCoroutinesApi::class)
+internal class MarkingMainDispatcher(scheduler: TestCoroutineScheduler) : CoroutineDispatcher() {
+    private val delegate = StandardTestDispatcher(scheduler)
+    private var depth = 0
+
+    /** How many tasks were dispatched here in total. */
+    var dispatched = 0
+        private set
+
+    val isOnMain: Boolean get() = depth > 0
+
+    override fun dispatch(context: CoroutineContext, block: Runnable) {
+        dispatched++
+        delegate.dispatch(
+            context,
+            Runnable {
+                depth++
+                try {
+                    block.run()
+                } finally {
+                    depth--
+                }
+            }
+        )
+    }
+}
+
+/**
+ * The prompt adapter stand-in (S15 contract). [authenticate] answers with the queued [AuthLaunch] values
+ * (default LAUNCHED), keeps the controller-owned callback of every call, and can deliver an outcome
+ * re-entrantly inside the call. [cancel] of the in-flight attempt delivers `Failed(SYSTEM_CANCELED)`
+ * synchronously inside the call, as the real adapter does. Stale ids are ignored by [cancel].
+ */
+internal class FakeDeviceAuthenticator(private val isOnMain: () -> Boolean = { true }) : DeviceAuthenticator {
+
+    class Call(
+        val attemptId: Long,
+        val copy: AuthPromptCopy,
+        val callback: DeviceAuthCallback,
+        val onMain: Boolean
+    )
+
+    val calls = mutableListOf<Call>()
+    val cancelCalls = mutableListOf<Long>()
+    val cancelOnMain = mutableListOf<Boolean>()
+
+    private val queuedResults = ArrayDeque<AuthLaunch>()
+
+    /** The answer when nothing is queued. */
+    var defaultResult: AuthLaunch = AuthLaunch.LAUNCHED
+
+    /** When set, delivered synchronously inside `authenticate` after a LAUNCHED answer was decided. */
+    var reentrantOutcome: DeviceAuthOutcome? = null
+
+    /** When true (the real adapter), `cancel` of the in-flight attempt echoes `Failed(SYSTEM_CANCELED)`. */
+    var echoOnCancel = true
+
+    /** Hook run at the start of `authenticate` (for example to probe the controller's monitor). */
+    var onAuthenticate: ((Long) -> Unit)? = null
+
+    /** Hook run at the start of `cancel`, before any echo. */
+    var onCancel: ((Long) -> Unit)? = null
+
+    /** When set, `authenticate` throws it after recording the call. */
+    var throwOnAuthenticate: Exception? = null
+
+    private var inFlightCall: Call? = null
+
+    val hasInFlight: Boolean get() = inFlightCall != null
+
+    fun queue(vararg results: AuthLaunch) {
+        queuedResults.addAll(results.toList())
+    }
+
+    override fun authenticate(attemptId: Long, copy: AuthPromptCopy, callback: DeviceAuthCallback): AuthLaunch {
+        val call = Call(attemptId, copy, callback, isOnMain())
+        calls += call
+        onAuthenticate?.invoke(attemptId)
+        throwOnAuthenticate?.let { throw it }
+        val result = if (queuedResults.isEmpty()) defaultResult else queuedResults.removeFirst()
+        if (result != AuthLaunch.LAUNCHED) return result
+        inFlightCall = call
+        reentrantOutcome?.let { outcome ->
+            inFlightCall = null
+            callback.onOutcome(attemptId, outcome)
+        }
+        return result
+    }
+
+    override fun cancel(attemptId: Long) {
+        cancelCalls += attemptId
+        cancelOnMain += isOnMain()
+        onCancel?.invoke(attemptId)
+        val call = inFlightCall
+        if (call == null || call.attemptId != attemptId) return
+        inFlightCall = null
+        if (echoOnCancel) {
+            call.callback.onOutcome(attemptId, DeviceAuthOutcome.Failed(DeviceAuthErrorBucket.SYSTEM_CANCELED))
+        }
+    }
+
+    /** Delivers [outcome] to the callback of [call] (default: the latest call) with that call's own id. */
+    fun deliver(outcome: DeviceAuthOutcome, call: Call = calls.last()) {
+        if (inFlightCall === call) inFlightCall = null
+        call.callback.onOutcome(call.attemptId, outcome)
+    }
+
+    /** Delivers [outcome] to the callback of [call] (default: the latest call) but with a different id. */
+    fun deliverWithId(id: Long, outcome: DeviceAuthOutcome, call: Call = calls.last()) {
+        call.callback.onOutcome(id, outcome)
+    }
+}
+
+/**
  * Wires one [AppLockController] to fakes. The scope runs on an unconfined test dispatcher so
- * fire-and-forget diagnostics are recorded in [emitted] as they are launched.
+ * fire-and-forget diagnostics are recorded in [emitted] as they are launched. The "main" dispatcher is
+ * queued: the prompt calls of the controller run only after [settle] (or [advance]).
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 internal class AppLockControllerHarness(
     loadState: AppLockSettingsLoadState = AppLockTestSettings.DISABLED,
     capability: DeviceAuthCapability = DeviceAuthCapability.AVAILABLE,
-    scheduler: TestCoroutineScheduler = TestCoroutineScheduler()
+    val scheduler: TestCoroutineScheduler = TestCoroutineScheduler()
 ) {
     val clock = FakeMonotonicClock()
     val capabilityProvider = FakeCapabilityProvider(capability)
     val repository = FakeAppLockSettingsRepository(loadState)
     val emitted = mutableListOf<PrivacyDiagnosticCode>()
+    val main = MarkingMainDispatcher(scheduler)
+    val authenticator = FakeDeviceAuthenticator { main.isOnMain }
 
-    /** The metadata argument of each emit, in step with [emitted]. The controller must pass none (spec 10). */
+    /**
+     * The metadata argument of each emit, in step with [emitted]. Only LOCK_AUTH_ERROR and
+     * LOCK_UNAVAILABLE_CAPABILITY carry a `CAUSE` (the bounded bucket or capability enum name); the others are empty.
+     */
     val emittedMetadata = mutableListOf<PrivacyDiagnosticMetadata>()
 
     /** When set, the emitter throws it. A diagnostic failure must never change a transition (INV-37). */
@@ -123,23 +257,101 @@ internal class AppLockControllerHarness(
             if (failure != null) throw failure
         }
     }
+    private val scopeJob = SupervisorJob()
     private val scope = CoroutineScope(
-        SupervisorJob() + UnconfinedTestDispatcher(scheduler) + CoroutineExceptionHandler { _, t -> uncaught += t }
+        scopeJob + UnconfinedTestDispatcher(scheduler) + CoroutineExceptionHandler { _, t -> uncaught += t }
     )
+
+    /** Coroutines of the controller's scope that are still running (watchdog, launch, stuck emits). */
+    val activeJobs: Int get() = scopeJob.children.count { it.isActive }
+
+    /**
+     * A snapshot of the children of the controller's scope that are running right now (right after a tap:
+     * the prompt orchestrator and the watchdog). Keep the jobs and inspect them after [settle] to see how
+     * each one ended; [activeJobs] only counts the ones still running.
+     */
+    fun activeControllerJobs(): List<Job> = scopeJob.children.filter { it.isActive }.toList()
+
+    /**
+     * Cancels every running child of the controller's scope (launch coroutine, watchdog, ...) without
+     * cancelling the scope itself: a foreign cancellation of the controller's work (F7).
+     */
+    fun cancelControllerJobs() {
+        scopeJob.children.toList().forEach { it.cancel() }
+    }
 
     /** A new controller over the same fakes: a new process start (state `RESOLVING`). */
     fun newController(): AppLockController =
-        AppLockController(repository, capabilityProvider, clock, emitter, scope)
+        AppLockController(repository, capabilityProvider, clock, emitter, scope, authenticator, main)
 
-    /** A new controller already resolved from the harness store (the usual start of a test). */
+    /** A new controller already resolved from the harness store through the real [AppLockController.resolve]. */
     fun resolvedController(): AppLockController =
-        newController().also { it.onSettingsResolved(repository.loadState) }
+        newController().also { controller -> runBlocking { controller.resolve() } }
 
-    /** Taps Unlock and succeeds the attempt: the in-process auth success that is the only way to unlock. */
+    /** Runs the work queued on the "main" dispatcher (the prompt calls) that is due now. */
+    fun settle() {
+        scheduler.runCurrent()
+    }
+
+    /** Advances virtual time (watchdog, launch retries) by [millis] and runs everything that became due. */
+    fun advance(millis: Long) {
+        scheduler.advanceTimeBy(millis)
+        scheduler.runCurrent()
+    }
+
+    /** Taps Unlock, lets the prompt launch, and returns the attempt id. */
+    fun tap(controller: AppLockController): Long {
+        val result = controller.onUnlockTapped()
+        assertTrue("expected an attempt, got $result", result is UnlockTapResult.Started)
+        settle()
+        return (result as UnlockTapResult.Started).attemptId
+    }
+
+    /** Taps Unlock and succeeds the attempt through the callback: the only way to unlock. */
     fun unlock(controller: AppLockController) {
-        val tap = controller.onUnlockTapped()
-        assertTrue("expected an attempt, got $tap", tap is UnlockTapResult.Started)
-        assertTrue(controller.onAuthSucceeded((tap as UnlockTapResult.Started).attemptId))
+        val attemptId = tap(controller)
+        assertEquals(attemptId, authenticator.calls.last().attemptId)
+        authenticator.deliver(DeviceAuthOutcome.Succeeded)
         assertEquals(AppLockState.Unlocked, controller.state.value)
     }
+}
+
+/**
+ * A harness and a resolved controller that sits in `LOCKED([cause])`, ready for an Unlock tap:
+ * COLD_START from an enabled store, SETTINGS_UNREADABLE from a corrupted store, TIMEOUT after an unlock,
+ * a background and a foreground under the IMMEDIATE timeout.
+ */
+internal fun lockedControllerFor(
+    cause: LockCause,
+    capability: DeviceAuthCapability = DeviceAuthCapability.AVAILABLE
+): Pair<AppLockControllerHarness, AppLockController> {
+    val settings = when (cause) {
+        LockCause.COLD_START, LockCause.TIMEOUT -> AppLockTestSettings.enabled(AutoLockTimeout.IMMEDIATE)
+        LockCause.SETTINGS_UNREADABLE -> AppLockTestSettings.unreadable(SettingsUnreadableCause.CORRUPTED)
+    }
+    val h = AppLockControllerHarness(settings, capability)
+    val controller = h.resolvedController()
+    if (cause == LockCause.TIMEOUT) {
+        h.unlock(controller)
+        controller.onAppBackgrounded()
+        controller.onAppForegrounded()
+    }
+    assertEquals(AppLockState.Locked(cause), controller.state.value)
+    return h to controller
+}
+
+/**
+ * Drives [AppLockController.resolve] to the controller's own RESOLVE_TIMEOUT fallback: the read is held and
+ * T_resolve passes on the test scheduler. The read stays held; set `h.repository.loadState`, call
+ * `h.repository.releaseReads()` and `runCurrent()` to deliver the late result (T6b). Returns the resolve job.
+ * [h] must have been built with this test's `testScheduler`.
+ */
+@OptIn(ExperimentalCoroutinesApi::class)
+internal fun TestScope.resolveTimedOut(h: AppLockControllerHarness, controller: AppLockController): Job {
+    h.repository.holdReads()
+    val resolving = launch { controller.resolve() }
+    runCurrent()
+    advanceTimeBy(AppLockController.RESOLVE_TIMEOUT_MILLIS + 1)
+    runCurrent()
+    return resolving
 }

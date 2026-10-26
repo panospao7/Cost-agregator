@@ -1554,3 +1554,16 @@ Notes for the orchestrator:
   - Genuine NONE_ENROLLED/NO_HARDWARE/UNSUPPORTED keep the spec INERT behaviour.
   - Implement in part (ii), with tests; spec amendment note for domain-modeler at S23.
 - R4: S18's notice logic derives REVIEW_SETTINGS from the load state, not from the INERT reason. T7b/T16 from unreadable settings report a capability reason (cosmetic; F still applies).
+
+## Amendment (2026-10-26) — S16 part (ii-a) review outcome
+- P2 (changed): when the AWAITING_PRIOR_TERMINAL retry budget is spent, the attempt closes `NotLaunched` at once (no `LOCK_AUTH_*` code). The watchdog covers only a LAUNCHED prompt that never answers.
+- S16 emitter write set: `LOCK_AUTH_ERROR` and `LOCK_UNAVAILABLE_CAPABILITY` allow the `CAUSE` key (a bounded enum name: `DeviceAuthErrorBucket` or `DeviceAuthCapability`). `LOCK_AUTH_CANCELLED` and `LOCK_AUTH_LOCKOUT` allow no keys. `LOCK_UNAVAILABLE_CAPABILITY` is claimed once per process per cause; S18 T26 uses the same per-cause claim.
+- F5 decision for ii-b: the watchdog applies to every purpose. An ENABLE or CONFIRM_CHANGE prompt left open longer than `PROMPT_WATCHDOG_MILLIS` is abandoned (fail-closed: the change is not applied).
+  - AE-116's "10-minute foreground prompt accrues nothing" refers to the lock timer. Test it with the monotonic clock only (advance `FakeMonotonicClock`, not coroutine time).
+  - A separate test advances coroutine time past `PROMPT_WATCHDOG_MILLIS` to show the watchdog abandonment.
+- ii-b notes from the review:
+  - Use a separate closing type for a non-UNLOCK success, checked against `Authenticating(id, purpose)` (the F4 guard is UNLOCK-specific).
+  - Add a bounded copy selector for `AuthPromptCopy` by purpose.
+  - T34 `promptBackgroundAt` is an `InFlightAttempt` field, read and written under `stateLock`.
+  - The P6 foreground flag is set before the early return.
+  - Decide whether ENABLE with `NotAvailable` is a T26-style `LOCK_UNAVAILABLE_CAPABILITY` refusal.

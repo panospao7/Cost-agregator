@@ -158,23 +158,38 @@ class AndroidDeviceAuthCapabilityProviderApi30PlusTest {
     }
 
     @Test
-    fun inv23_api30Plus_runtimeFailureOfTheCheck_isUnknown_failClosed() {
+    fun inv23_api30Plus_runtimeFailureOfTheCheck_isCheckFailed_transientAndNeverAvailable() {
         val framework = mockk<android.hardware.biometrics.BiometricManager>()
         every { framework.canAuthenticate(any<Int>()) } throws IllegalStateException("synthetic failure text")
 
         val capability = AndroidDeviceAuthCapabilityProvider(BiometricServiceContext(base, framework)).current()
 
-        assertEquals(DeviceAuthCapability.UNKNOWN, capability)
+        // S16 R3: an exception is not a genuine UNKNOWN device state. The controller keeps the lock on it.
+        assertEquals(DeviceAuthCapability.CHECK_FAILED, capability)
+        assertNotEquals(DeviceAuthCapability.UNKNOWN, capability)
+        assertNotEquals(DeviceAuthCapability.AVAILABLE, capability)
     }
 
     @Test
-    fun inv23_api30Plus_securityExceptionFromTheCheck_isUnknown() {
+    fun inv23_api30Plus_securityExceptionFromTheCheck_isCheckFailed() {
         val framework = mockk<android.hardware.biometrics.BiometricManager>()
         every { framework.canAuthenticate(any<Int>()) } throws SecurityException("synthetic")
 
         val capability = AndroidDeviceAuthCapabilityProvider(BiometricServiceContext(base, framework)).current()
 
-        assertEquals(DeviceAuthCapability.UNKNOWN, capability)
+        assertEquals(DeviceAuthCapability.CHECK_FAILED, capability)
+    }
+
+    @Test
+    fun inv23_api30Plus_aFailedCheckDoesNotStick_theNextCallAsksAgain() {
+        val framework = mockk<android.hardware.biometrics.BiometricManager>()
+        every { framework.canAuthenticate(any<Int>()) } throws IllegalStateException("synthetic") andThen
+            BiometricManager.BIOMETRIC_SUCCESS
+        val provider = AndroidDeviceAuthCapabilityProvider(BiometricServiceContext(base, framework))
+
+        assertEquals(DeviceAuthCapability.CHECK_FAILED, provider.current())
+        assertEquals(DeviceAuthCapability.AVAILABLE, provider.current())
+        verify(exactly = 2) { framework.canAuthenticate(any<Int>()) }
     }
 
     @Test
@@ -259,6 +274,16 @@ class AndroidDeviceAuthCapabilityProviderMappingTest {
         val results = (-50..50).map { map(it) }.toSet()
 
         assertTrue(DeviceAuthCapability.UNSUPPORTED_API !in results)
+    }
+
+    @Test
+    fun inv23_mapCanAuthenticate_neverReturnsCheckFailed() {
+        // CHECK_FAILED means the check itself threw (S16 R3). No library code can produce it, so an
+        // unrecognised code stays a genuine UNKNOWN device state.
+        val results = (-50..50).map { map(it) }.toSet()
+
+        assertTrue(DeviceAuthCapability.CHECK_FAILED !in results)
+        assertEquals(DeviceAuthCapability.UNKNOWN, map(999))
     }
 
     @Test

@@ -3,6 +3,7 @@ package com.yourname.expensetracker.domain.privacy.applock
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -72,9 +73,9 @@ class AppLockControllerResolutionTest {
         // No metadata at all: the cause is the code itself, so nothing else can reach a stored row.
         assertEquals(1, h.emittedMetadata.size)
         assertSame(PrivacyDiagnosticMetadata.EMPTY, h.emittedMetadata.single())
-        // The only port read is the settings store (a DataStore); nothing is written and the controller has
+        // Exactly one settings read (the DataStore), no Room; nothing is written and the controller has
         // no Room or barrier dependency at all (INV-28).
-        assertEquals(0, h.repository.readCount)
+        assertEquals(1, h.repository.readCount)
         assertEquals(0, h.repository.writeAttempts)
     }
 
@@ -104,11 +105,11 @@ class AppLockControllerResolutionTest {
     }
 
     @Test
-    fun `T5 RESOLVE_TIMEOUT with capability AVAILABLE resolves to LOCKED SETTINGS_UNREADABLE`() {
-        val h = AppLockControllerHarness(AppLockTestSettings.DISABLED)
+    fun `T5 RESOLVE_TIMEOUT with capability AVAILABLE resolves to LOCKED SETTINGS_UNREADABLE`() = runTest {
+        val h = AppLockControllerHarness(AppLockTestSettings.DISABLED, scheduler = testScheduler)
         val controller = h.newController()
 
-        controller.onResolveTimeout()
+        resolveTimedOut(h, controller)
 
         assertEquals(AppLockState.Locked(LockCause.SETTINGS_UNREADABLE), controller.state.value)
         assertEquals(listOf(PrivacyDiagnosticCode.LOCK_SHOWN_SETTINGS_UNREADABLE), h.emitted)
@@ -117,15 +118,20 @@ class AppLockControllerResolutionTest {
     // --- Resolution is one-shot --------------------------------------------------------------------
 
     @Test
-    fun `resolution applies once so a later read cannot move DISABLED to LOCKED or LOCKED to DISABLED`() {
-        val disabled = AppLockControllerHarness(AppLockTestSettings.DISABLED).resolvedController()
-        disabled.onSettingsResolved(AppLockTestSettings.enabled())
-        disabled.onResolveTimeout()
+    fun `resolution applies once so a later resolve cannot move DISABLED to LOCKED or LOCKED to DISABLED`() {
+        val disabledHarness = AppLockControllerHarness(AppLockTestSettings.DISABLED)
+        val disabled = disabledHarness.resolvedController()
+        disabledHarness.repository.loadState = AppLockTestSettings.enabled()
+        runBlocking { disabled.resolve() } // idempotent: no second read, no second resolution
         assertEquals(AppLockState.Disabled, disabled.state.value)
+        assertEquals(1, disabledHarness.repository.readCount)
 
-        val locked = AppLockControllerHarness(AppLockTestSettings.enabled()).resolvedController()
-        locked.onSettingsResolved(AppLockTestSettings.DISABLED)
+        val lockedHarness = AppLockControllerHarness(AppLockTestSettings.enabled())
+        val locked = lockedHarness.resolvedController()
+        lockedHarness.repository.loadState = AppLockTestSettings.DISABLED
+        runBlocking { locked.resolve() }
         assertEquals(AppLockState.Locked(LockCause.COLD_START), locked.state.value)
+        assertEquals(1, lockedHarness.repository.readCount)
     }
 
     // --- resolve(): the T_resolve bound and T6b ----------------------------------------------------
@@ -325,10 +331,12 @@ class AppLockControllerResolutionTest {
         val controller = h.resolvedController()
 
         val started = controller.onUnlockTapped() as UnlockTapResult.Started
+        h.settle()
 
         assertEquals(AppLockState.Authenticating(started.attemptId, AuthPurpose.UNLOCK), controller.state.value)
         assertEquals(started.attemptId, controller.inFlightAttemptId)
-        assertTrue(controller.onAuthSucceeded(started.attemptId))
+        assertEquals(listOf(started.attemptId), h.authenticator.calls.map { it.attemptId })
+        h.authenticator.deliver(DeviceAuthOutcome.Succeeded)
         assertEquals(AppLockState.Unlocked, controller.state.value)
         assertNull(controller.inFlightAttemptId)
         assertEquals(
@@ -411,7 +419,9 @@ class AppLockControllerResolutionTest {
         repeat(3) {
             val started = controller.onUnlockTapped() as UnlockTapResult.Started
             ids += started.attemptId
-            assertTrue(controller.onAuthSucceeded(started.attemptId))
+            h.settle()
+            h.authenticator.deliver(DeviceAuthOutcome.Succeeded)
+            assertEquals(AppLockState.Unlocked, controller.state.value)
             controller.onAppBackgrounded()
             controller.onAppForegrounded()
             assertTrue(controller.state.value is AppLockState.Locked)
@@ -553,10 +563,10 @@ class AppLockControllerResolutionTest {
     }
 
     @Test
-    fun `AE-90 a RESOLVE_TIMEOUT fallback is also IMMEDIATE after an unlock`() {
-        val h = AppLockControllerHarness(AppLockTestSettings.enabled(AutoLockTimeout.M15))
+    fun `AE-90 a RESOLVE_TIMEOUT fallback is also IMMEDIATE after an unlock`() = runTest {
+        val h = AppLockControllerHarness(AppLockTestSettings.enabled(AutoLockTimeout.M15), scheduler = testScheduler)
         val controller = h.newController()
-        controller.onResolveTimeout()
+        resolveTimedOut(h, controller)
         h.unlock(controller)
 
         controller.onAppBackgrounded()

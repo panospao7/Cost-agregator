@@ -24,8 +24,10 @@ private const val MIN_SUPPORTED_SDK = Build.VERSION_CODES.R
  * Evaluates [DeviceAuthCapability] at call time (INV-23, AMD-3). Nothing is cached.
  *
  * API below 30 is [DeviceAuthCapability.UNSUPPORTED_API] without asking the library, because the
- * strong-or-credential combination is unsupported there (AE-34). A failure of the check itself maps
- * to [DeviceAuthCapability.UNKNOWN], which refuses the enable (fail closed).
+ * strong-or-credential combination is unsupported there (AE-34). A failure of the check itself (an
+ * exception) maps to [DeviceAuthCapability.CHECK_FAILED]: it refuses the enable (fail closed) and the
+ * controller treats it as transient (keeps the lock, asks again), never as a genuine inert state.
+ * A library answer that is merely unrecognised stays [DeviceAuthCapability.UNKNOWN].
  */
 class AndroidDeviceAuthCapabilityProvider @Inject constructor(
     @ApplicationContext private val context: Context
@@ -40,8 +42,9 @@ class AndroidDeviceAuthCapabilityProvider @Inject constructor(
         } catch (e: CancellationException) {
             throw e
         } catch (ignored: RuntimeException) {
-            // Bounded: the exception text is dropped, the capability becomes UNKNOWN (fail closed).
-            DeviceAuthCapability.UNKNOWN
+            // Bounded: the exception text is dropped. The check failed, so the answer is transient
+            // (CHECK_FAILED), not a genuine UNKNOWN device state (S16 R3, fail closed).
+            DeviceAuthCapability.CHECK_FAILED
         }
     }
 

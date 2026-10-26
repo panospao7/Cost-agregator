@@ -208,6 +208,25 @@ class PrivacyDiagnosticsEmitterTest {
     }
 
     @Test
+    fun `the four S16 part ii-a codes allow exactly their closed key sets`() {
+        val expected: Map<PrivacyDiagnosticCode, Set<PrivacyDiagnosticKey>> = mapOf(
+            PrivacyDiagnosticCode.LOCK_AUTH_CANCELLED to emptySet(),
+            PrivacyDiagnosticCode.LOCK_AUTH_LOCKOUT to emptySet(),
+            PrivacyDiagnosticCode.LOCK_AUTH_ERROR to setOf(PrivacyDiagnosticKey.CAUSE),
+            PrivacyDiagnosticCode.LOCK_UNAVAILABLE_CAPABILITY to setOf(PrivacyDiagnosticKey.CAUSE)
+        )
+
+        // The set of ii-a codes is itself pinned: a new LOCK_AUTH_* code must be added here on purpose.
+        assertEquals(
+            setOf("LOCK_AUTH_CANCELLED", "LOCK_AUTH_LOCKOUT", "LOCK_AUTH_ERROR"),
+            PrivacyDiagnosticCode.entries.map { it.name }.filter { it.startsWith("LOCK_AUTH_") }.toSet()
+        )
+        for ((code, keys) in expected) {
+            assertEquals("${code.name} allowedKeys", keys, code.allowedKeys)
+        }
+    }
+
+    @Test
     fun `every allowed key round-trips through the sanitizer for every code`() = runTest {
         for (code in PrivacyDiagnosticCode.entries) {
             val builder = PrivacyDiagnosticMetadata.builder()

@@ -143,7 +143,7 @@ enum class PrivacyDiagnosticCode(
     ),
 
     // App-lock controller (S16 part (i)): lock shown, unlocked, inert. No metadata: the cause or
-    // reason is the code itself. The auth, enable/disable and recovery codes arrive with their slices.
+    // reason is the code itself. The enable/disable and recovery codes arrive with their slices.
     LOCK_SHOWN_COLD_START(
         DiagnosticReasonCode.LOCK_SHOWN_COLD_START, EventOutcome.BLOCKED, EventSeverity.INFO,
         emptySet()
@@ -179,6 +179,29 @@ enum class PrivacyDiagnosticCode(
     LOCK_INERT_SETTINGS_UNREADABLE(
         DiagnosticReasonCode.LOCK_INERT_SETTINGS_UNREADABLE, EventOutcome.SKIPPED, EventSeverity.WARNING,
         emptySet()
+    ),
+
+    // App-lock controller (S16 part (ii-a)): UNLOCK prompt outcomes (T9, T10, T35). LOCK_AUTH_CANCELLED
+    // and LOCK_AUTH_LOCKOUT carry no metadata. LOCK_AUTH_ERROR carries the bounded prompt error bucket
+    // (HW_UNAVAILABLE / TIMEOUT / SYSTEM_CANCELED / OTHER) under the closed CAUSE key, as an enum name only.
+    LOCK_AUTH_CANCELLED(
+        DiagnosticReasonCode.LOCK_AUTH_CANCELLED, EventOutcome.SKIPPED, EventSeverity.INFO,
+        emptySet()
+    ),
+    LOCK_AUTH_LOCKOUT(
+        DiagnosticReasonCode.LOCK_AUTH_LOCKOUT, EventOutcome.BLOCKED, EventSeverity.WARNING,
+        emptySet()
+    ),
+    LOCK_AUTH_ERROR(
+        DiagnosticReasonCode.LOCK_AUTH_ERROR, EventOutcome.BLOCKED, EventSeverity.WARNING,
+        setOf(PrivacyDiagnosticKey.CAUSE)
+    ),
+
+    // App-lock controller (S16 part (ii-a), owner-approvals item 32): a failed capability check at an Unlock
+    // tap (spec 10 LOCK_UNAVAILABLE_CAPABILITY). CAUSE carries the bounded capability enum name (UNKNOWN).
+    LOCK_UNAVAILABLE_CAPABILITY(
+        DiagnosticReasonCode.LOCK_UNAVAILABLE_CAPABILITY, EventOutcome.SKIPPED, EventSeverity.WARNING,
+        setOf(PrivacyDiagnosticKey.CAUSE)
     )
 }
 
@@ -233,6 +256,9 @@ class PrivacyDiagnosticMetadata private constructor(
  * suppressed code and the suppressed count), then writes itself and opens a new window. The
  * count is memory-only: it is a lower bound if the process dies, and a window with no later
  * call for the same code never produces a summary.
+ *
+ * The window is per code, not per metadata value: a second `LOCK_AUTH_ERROR` bucket emitted within 60 s
+ * of the first is counted but not written (accepted, privacy review F5).
  *
  * ## Contract for callers
  *
