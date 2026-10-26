@@ -3,6 +3,8 @@ package com.yourname.expensetracker.domain.privacy.applock
 import com.yourname.expensetracker.di.AppLockMainDispatcher
 import com.yourname.expensetracker.di.ApplicationScope
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticThrowableSummary
+import com.yourname.expensetracker.domain.privacy.deeplink.DeepLinkHost
+import com.yourname.expensetracker.domain.privacy.deeplink.DeepLinkRequest
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -87,8 +89,23 @@ fun interface OpenOriginSuccessHandler {
  * lockout (T10), no credential (T11), stale outcomes (T12) and host loss (T35); and the open-origin
  * attempts (`ENABLE` from `DISABLED`, `CONFIRM_CHANGE` from `UNLOCKED`): their start API, the prompt
  * background (T32), the success hand-off (T33, delivered to the S18 handler without applying anything) and
- * the non-success return to the origin with the timer hand-off (T34). `TODO(S17)` and `TODO(S18)` mark the
- * held link and the settings operations.
+ * the non-success return to the origin with the timer hand-off (T34). S17 adds the held deep link (T20 to
+ * T22, see "The held link" below). `TODO(S18)` marks the settings operations.
+ *
+ * ## The held link (S17: T20, T21, T22, INV-30, INV-31, OD-7a)
+ *
+ * One link is held in memory ([HeldDeepLink], newest wins, never persisted, never logged, dropped with the
+ * process). [onLockQuery] with a link runs the LOCK_QUERY evaluation and decides APPLY_NOW or HOLD in the same
+ * critical section, so a long background can never let a link apply before the lock engages (INV-31). The link
+ * is held while `LOCKED`, `RESOLVING` or `AUTHENTICATING` of ANY purpose, while an attempt is open, and while an
+ * open-origin success is still being applied (the T33 gate, until [onOpenOriginApplyCompleted]).
+ *
+ * The controller has no navigation port, so a held link is PULLED: [releaseHeldLink] (a LOCK_QUERY itself) hands
+ * it back at most once, only from `DISABLED`, `UNLOCKED` or `INERT`, with no open attempt and no open T33 gate,
+ * only while the app is in the foreground (F1: a backgrounded release is [HeldLinkRelease.None], evaluates
+ * nothing and consumes nothing), and only after the pending timeout was evaluated. The close of a prompt never releases by itself: a T34
+ * hand-off and its evaluation, or a T33 success AND the apply completion, come first. The link is dropped after
+ * `T_held` (5 min, monotonic). The held link never starts a prompt.
  *
  * ## Ports only
  *
@@ -210,9 +227,22 @@ class AppLockController @Inject constructor(
      * A diagnostic claimed under the monitor and recorded after it (spec 10). [cause] is the one bounded enum
      * attached under the closed `CAUSE` key: the [DeviceAuthErrorBucket] of `LOCK_AUTH_ERROR`, or
      * [DeviceAuthCapability] of `LOCK_UNAVAILABLE_CAPABILITY` (`HW_UNAVAILABLE` or `UNKNOWN`). Null for every other
-     * code.
+     * code. For the deep-link codes (S17: `DL_HELD_LOCKED`, `DL_HELD_REPLACED`, `DL_HELD_EXPIRED`) [metadata] is
+     * the ready-made bounded host metadata under the closed `HOST` key (the deep-link host enums only, never link
+     * content) and [cause] is null; the two are mutually exclusive.
      */
-    private class PendingDiagnostic(val code: PrivacyDiagnosticCode, val cause: Enum<*>?)
+    private class PendingDiagnostic(
+        val code: PrivacyDiagnosticCode,
+        val cause: Enum<*>?,
+        /** Ready-made bounded metadata (the deep-link host enums only); mutually exclusive with [cause]. */
+        val metadata: PrivacyDiagnosticMetadata?
+    ) {
+        init {
+            require(metadata == null || cause == null)
+        }
+
+        constructor(code: PrivacyDiagnosticCode, cause: Enum<*>?) : this(code, cause, null)
+    }
 
     /**
      * The attempt that is open. It is also the callback handed to the authenticator, so an outcome is bound
@@ -282,6 +312,21 @@ class AppLockController @Inject constructor(
     private var appInForeground = false
     private var inFlight: InFlightAttempt? = null
     private var lastIssuedAttemptId = 0L
+
+    // S17, guarded by stateLock. Memory only; never persisted, logged or put in a Bundle (T22).
+    private var heldLink: HeldDeepLink? = null
+
+    /** Counts UNLOCK successes (T8), so a release can say whether an unlock happened since the link was held. */
+    private var unlockCount = 0L
+
+    /**
+     * The T33 gate: the id of the open-origin attempt whose success was handed to S18 and whose apply has not
+     * completed yet. While it is open, a link is held and never released (INV-54): the close publishing the
+     * origin state is not the end of the operation. Bounded by [HeldDeepLink.HELD_LINK_TTL_MILLIS] on the
+     * monotonic clock so a forgotten completion cannot hold a link for the whole process.
+     */
+    private var applyGateAttemptId: Long? = null
+    private var applyGateSinceMillis = 0L
     private val claimedDiagnosticCodes: MutableSet<PrivacyDiagnosticCode> =
         EnumSet.noneOf(PrivacyDiagnosticCode::class.java)
     private val claimedAuthErrorBuckets: MutableSet<DeviceAuthErrorBucket> =
@@ -376,7 +421,7 @@ class AppLockController @Inject constructor(
             resolvedByTimeout = false
             lastBackgroundedAtMillis = null
             setState(AppLockState.Disabled)
-            // TODO(S17): apply the held link (T6b side effect "apply held link" is shared with T2).
+            // T6b "apply held link" (shared with T2): pulled through releaseHeldLink() (S17); the state is open now.
         }
     }
 
@@ -503,7 +548,9 @@ class AppLockController @Inject constructor(
      * all purposes, INV-34, INV-54), from `RESOLVING`, `LOCKED` or `INERT` (and the wrong open state)
      * [OpenOriginStartResult.NotInOrigin]. The request-time refusal for an unavailable capability or API
      * (T26) is the caller's check and happens before this call; the prompt's own `NotAvailable` outcome is
-     * still handled here.
+     * still handled here. While the T33 gate is open (the previous open-origin success was handed over and
+     * [onOpenOriginApplyCompleted] was not called yet, for at most `T_held`) the start is refused with
+     * [OpenOriginStartResult.NotInOrigin] as well (F5): the origin is not available until the apply completed.
      *
      * On a start the attempt is opened and `AUTHENTICATING(id, purpose)` is published before the prompt is
      * launched, exactly as for UNLOCK (P1). A matching success returns the state to the origin and calls
@@ -523,6 +570,9 @@ class AppLockController @Inject constructor(
             }
             // The Unlock tap is the only way to start AUTHENTICATING(UNLOCK); this API never does.
             if (!purpose.isOpenOrigin || !inOrigin) return@transition OpenOriginStartResult.NotInOrigin
+            // F5: no new attempt while the previous open-origin success is still being applied (the T33 gate).
+            // A lapsed gate is not cleared here, so a link still held is dropped as expired by the next release (F2).
+            if (applyGateWithinBoundLocked(clock.elapsedRealtimeMillis())) return@transition OpenOriginStartResult.NotInOrigin
             val attemptId = ++lastIssuedAttemptId
             val attempt = InFlightAttempt(attemptId, purpose, null, prompt.copy, onSuccess)
             inFlight = attempt // open BEFORE any authenticate call (S15 binding)
@@ -536,7 +586,174 @@ class AppLockController @Inject constructor(
 
     // TODO(S18): SETTINGS_REREAD (T28, T29), ENABLE / DISABLE / WEAKENING requests (T17 to T19, T26, T27),
     //  and LockNotice derivation (INV-51).
-    // TODO(S17): DEEP_LINK_RECEIVED (T20, T21), the held link and its TTL.
+
+    // --- The held deep link (T20, T21, T22; S17) --------------------------------------------------
+
+    /**
+     * `DEEP_LINK_RECEIVED(link)` through `LOCK_QUERY` (T20, T21, INV-30, INV-31). Runs the same pending-timeout
+     * evaluation as [onLockQuery] and then decides, in the same critical section, so the decision can never be
+     * based on a state the evaluation would have changed:
+     * - [LinkDecision.HOLD] (T20): the state is `LOCKED`, `RESOLVING` or `AUTHENTICATING` of any purpose, an
+     *   attempt is open, or an open-origin success is still being applied (the T33 gate). The link is held
+     *   (replacing any older one, newest wins) with `DL_HELD_LOCKED` or `DL_HELD_REPLACED`. Nothing is looked
+     *   up, written or navigated.
+     * - [LinkDecision.APPLY_NOW] (T21): the state is `DISABLED`, `UNLOCKED` or `INERT` with nothing pending.
+     *   A link still held is older and is dropped, so it can never apply after this one.
+     *
+     * The caller applies a link only on APPLY_NOW. The decision is never made from `AUTHENTICATING` (the
+     * evaluation does not run there, T32).
+     */
+    fun onLockQuery(link: DeepLinkRequest): LinkDecision {
+        val capability = readQueryCapability()
+        val pending = ArrayList<PendingDiagnostic>(2)
+        val decision = transition {
+            evaluateForegroundLocked(ForegroundTrigger.LOCK_QUERY, capability)?.let { pending += it }
+            decideLinkLocked(link, pending)
+        }
+        pending.forEach { record(it) }
+        return decision
+    }
+
+    /**
+     * Hands the held link back at most once (T8, T2, T4, T6, T6b "apply held link", T33 and T34 "release").
+     * It is a LOCK_QUERY itself: the pending timeout is evaluated first, in the same critical section, so a
+     * link is never released into a lock that should have engaged (INV-31).
+     *
+     * [HeldLinkRelease.None] while the app is not in the foreground (F1: no evaluation, nothing consumed, the link
+     * stays held), while `LOCKED`, `RESOLVING`, `AUTHENTICATING`, with an attempt open, or while the T33 gate is
+     * open (an open-origin success whose apply has not completed): the link stays held. Otherwise the link is
+     * removed under the monitor (so it can be released once only) and returned as [HeldLinkRelease.Apply], or as
+     * [HeldLinkRelease.Expired] after `T_held` (the caller opens Home). A T33 gate that lapsed after `T_held`
+     * with a link held also drops the link as [HeldLinkRelease.Expired] (F2): [HeldLinkRelease.Apply] is never
+     * returned before the apply completed. The call is a cheap no-op when nothing is held. The caller (S20)
+     * calls it from a separate main-thread call (never inline under the publish lock) after each publication of
+     * `DISABLED`, `UNLOCKED` or `INERT`, at ON_START right after [onAppForegrounded], and after
+     * [onOpenOriginApplyCompleted].
+     */
+    fun releaseHeldLink(): HeldLinkRelease {
+        // Nothing held, or not in the foreground (F1): None without the capability read. Re-checked under the
+        // monitor below, where the foreground guard decides.
+        if (synchronized(stateLock) { heldLink == null || !appInForeground }) return HeldLinkRelease.None
+        val capability = readQueryCapability()
+        val pending = ArrayList<PendingDiagnostic>(2)
+        val release = transition {
+            // F1: while the app is not in the foreground nothing is evaluated, consumed or released: the link stays
+            // held and the pending background stays pending for the next APP_FOREGROUNDED (INV-31). This guard is
+            // deliberately NOT on onLockQuery(link): AE-58 needs that decision before onStart.
+            if (!appInForeground) return@transition HeldLinkRelease.None
+            evaluateForegroundLocked(ForegroundTrigger.LOCK_QUERY, capability)?.let { pending += it }
+            releaseLocked(pending)
+        }
+        pending.forEach { record(it) }
+        return release
+    }
+
+    /**
+     * Closes the T33 gate (S18 calls this when the durable apply of an open-origin success completed OR failed).
+     * Id-bound: an id other than the one whose success was handed over changes nothing, so a stale or repeated
+     * call is harmless. It releases nothing itself; the caller then asks [releaseHeldLink]. Public rather than
+     * internal for the same reason as the open-origin start API: its caller is another main file, and the id
+     * binding means a wrong call cannot open the gate early for any other attempt.
+     */
+    fun onOpenOriginApplyCompleted(attemptId: Long) {
+        synchronized(stateLock) {
+            if (applyGateAttemptId == attemptId) applyGateAttemptId = null
+        }
+    }
+
+    /**
+     * The capability for a link query, read before the monitor (no binder call under it). A failed read is
+     * [DeviceAuthCapability.CHECK_FAILED]: transient, never INERT, so the timer still evaluates fail-closed.
+     * `CancellationException` and `Error` propagate.
+     */
+    private fun readQueryCapability(): DeviceAuthCapability =
+        try {
+            capabilityProvider.current()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Timber.w("App-lock link query capability read failed: class=%s", DiagnosticThrowableSummary.className(e))
+            DeviceAuthCapability.CHECK_FAILED
+        }
+
+    /** True while the T33 gate is open. A gate older than `T_held` (or from a backwards clock) is lapsed and cleared. Under [stateLock]. */
+    private fun applyGateOpenLocked(nowMillis: Long): Boolean {
+        if (applyGateAttemptId == null) return false
+        if (!applyGateWithinBoundLocked(nowMillis)) {
+            applyGateAttemptId = null
+            return false
+        }
+        return true
+    }
+
+    /** True while the gate is set and not older than `T_held` (a backwards clock counts as lapsed). Never clears. Under [stateLock]. */
+    private fun applyGateWithinBoundLocked(nowMillis: Long): Boolean {
+        if (applyGateAttemptId == null) return false
+        val elapsed = nowMillis - applyGateSinceMillis
+        return elapsed >= 0L && elapsed < HeldDeepLink.HELD_LINK_TTL_MILLIS
+    }
+
+    /** T20 / T21 under the monitor, after the evaluation. Appends the diagnostics claimed to [out]. */
+    private fun decideLinkLocked(link: DeepLinkRequest, out: MutableList<PendingDiagnostic>): LinkDecision {
+        val cur = current
+        val now = clock.elapsedRealtimeMillis()
+        // Evaluated BEFORE mustHold (no short-circuit): a T33 gate that lapsed before this link arrived is cleared
+        // here, at hold time, even while LOCKED. A link held under a still-open gate is dropped at lapse (F2).
+        val gateOpen = applyGateOpenLocked(now)
+        val mustHold = cur is AppLockState.Locked || cur is AppLockState.Resolving ||
+            cur is AppLockState.Authenticating || inFlight != null || gateOpen
+        val previous = heldLink
+        if (!mustHold) {
+            // T21: the newest link applies now; an older held one must never apply after it.
+            heldLink = null
+            if (previous != null) out += linkReplacedDiagnostic(previous.host, link.host)
+            return LinkDecision.APPLY_NOW
+        }
+        heldLink = HeldDeepLink(link, now, unlockCount)
+        out += if (previous == null) linkHeldDiagnostic(link.host) else linkReplacedDiagnostic(previous.host, link.host)
+        return LinkDecision.HOLD
+    }
+
+    /** The release decision under the monitor, after the evaluation. Appends the diagnostics claimed to [out]. */
+    private fun releaseLocked(out: MutableList<PendingDiagnostic>): HeldLinkRelease {
+        val held = heldLink ?: return HeldLinkRelease.None
+        val cur = current
+        val open = cur is AppLockState.Disabled || cur is AppLockState.Unlocked || cur is AppLockState.Inert
+        val now = clock.elapsedRealtimeMillis()
+        if (!open || inFlight != null) return HeldLinkRelease.None
+        val gateWasSet = applyGateAttemptId != null
+        if (gateWasSet && applyGateWithinBoundLocked(now)) return HeldLinkRelease.None
+        applyGateAttemptId = null // lapsed: cleared; a link still held is dropped below, never applied (F2)
+        heldLink = null // taken: a link is released at most once (AE-118)
+        if (gateWasSet || held.isExpired(now)) {
+            // F2/F6: a T33 gate that lapsed (T_held without an apply completion) with a link held drops the link as
+            // expired; Apply is never returned before the apply completed.
+            out += linkExpiredDiagnostic(held.host)
+            return HeldLinkRelease.Expired
+        }
+        return HeldLinkRelease.Apply(held.request, afterUnlock = unlockCount > held.unlockCountAtHold)
+    }
+
+    private fun linkHeldDiagnostic(host: DeepLinkHost): PendingDiagnostic = PendingDiagnostic(
+        PrivacyDiagnosticCode.DL_HELD_LOCKED,
+        null,
+        PrivacyDiagnosticMetadata.builder().put(PrivacyDiagnosticKey.HOST, host).build()
+    )
+
+    private fun linkReplacedDiagnostic(old: DeepLinkHost, new: DeepLinkHost): PendingDiagnostic = PendingDiagnostic(
+        PrivacyDiagnosticCode.DL_HELD_REPLACED,
+        null,
+        PrivacyDiagnosticMetadata.builder()
+            .put(PrivacyDiagnosticKey.OLD_HOST, old)
+            .put(PrivacyDiagnosticKey.NEW_HOST, new)
+            .build()
+    )
+
+    private fun linkExpiredDiagnostic(host: DeepLinkHost): PendingDiagnostic = PendingDiagnostic(
+        PrivacyDiagnosticCode.DL_HELD_EXPIRED,
+        null,
+        PrivacyDiagnosticMetadata.builder().put(PrivacyDiagnosticKey.HOST, host).build()
+    )
 
     // --- The attempt: launch, outcome, close ------------------------------------------------------
 
@@ -809,8 +1026,10 @@ class AppLockController @Inject constructor(
             diagnostic = when (closing) {
                 Closing.Success -> {
                     lastBackgroundedAtMillis = null // an auth success that ends in an open state clears it (AE-42)
+                    unlockCount++
                     setState(AppLockState.Unlocked)
-                    // TODO(S17): apply the held link once after an unlock (T8 side effect).
+                    // T8 "apply held link once": nothing is applied here. The held link is pulled through
+                    // releaseHeldLink() (S17), which hands it back at most once.
                     claim(PrivacyDiagnosticCode.LOCK_UNLOCKED)
                 }
                 Closing.OpenOriginSuccess -> {
@@ -820,6 +1039,10 @@ class AppLockController @Inject constructor(
                     // (INV-54), so the "otherwise hand the background to the timer" clause has no case yet.
                     lastBackgroundedAtMillis = null
                     setState(originState(attempt))
+                    // S17: the T33 gate. A held link is not released by this close publishing the origin state;
+                    // it waits for onOpenOriginApplyCompleted(attemptId) (S18's apply completed or failed).
+                    applyGateAttemptId = attempt.attemptId
+                    applyGateSinceMillis = clock.elapsedRealtimeMillis()
                     null
                 }
                 is Closing.EnableRefused -> {
@@ -911,9 +1134,22 @@ class AppLockController @Inject constructor(
         try {
             handler.onSucceeded(attempt.attemptId, attempt.purpose)
         } catch (e: CancellationException) {
+            clearApplyGate(attempt.attemptId)
             throw e
         } catch (e: Exception) {
             Timber.w("App-lock success hand-off failed: class=%s", DiagnosticThrowableSummary.className(e))
+            clearApplyGate(attempt.attemptId)
+        }
+    }
+
+    /**
+     * F8: a handler that threw did not start an apply, so nothing will call [onOpenOriginApplyCompleted] for this
+     * attempt. Clears its gate (id-bound, under [stateLock]) so a held link and the next open-origin start are not
+     * blocked for `T_held`. The `CancellationException` is rethrown by the caller after this.
+     */
+    private fun clearApplyGate(attemptId: Long) {
+        synchronized(stateLock) {
+            if (applyGateAttemptId == attemptId) applyGateAttemptId = null
         }
     }
 
@@ -974,7 +1210,7 @@ class AppLockController @Inject constructor(
             // T2
             !settings.appLockEnabled -> {
                 setState(AppLockState.Disabled)
-                // TODO(S17): apply the held link.
+                // T2 "apply held link": pulled through releaseHeldLink() (S17); T4 and T6 are the same.
                 null
             }
             // T3
@@ -1009,7 +1245,7 @@ class AppLockController @Inject constructor(
             val elapsed = clock.elapsedRealtimeMillis() - pending
             val timedOut = elapsed < 0L || elapsed >= settings.autoLockTimeout.millis
             if (timedOut) {
-                // T14. TODO(S17): an in-flight link is held here.
+                // T14: a link held (or arriving later) stays held in LOCKED (S17, decideLinkLocked / releaseLocked).
                 return enterLocked(LockCause.TIMEOUT)
             }
             // T15: back within the timeout; a shown inert banner clears.
@@ -1115,15 +1351,17 @@ class AppLockController @Inject constructor(
      * Fire and forget (INV-37): never blocks or delays a transition. [diagnostic] is already claimed under
      * the monitor by the transition, so this only launches (null means a repeat: nothing to emit). The
      * emitter is best effort; `CancellationException` is rethrown and any other failure is logged by class
-     * name only. The only metadata ever attached is one bounded enum under the closed `CAUSE` key: the
-     * `LOCK_AUTH_ERROR` bucket or the `LOCK_UNAVAILABLE_CAPABILITY` cause.
+     * name only. The only metadata ever attached is either one bounded enum under the closed `CAUSE` key (the
+     * `LOCK_AUTH_ERROR` bucket or the `LOCK_UNAVAILABLE_CAPABILITY` cause), or, for the deep-link codes
+     * (`DL_HELD_LOCKED`, `DL_HELD_REPLACED`, `DL_HELD_EXPIRED`), the ready-made bounded host metadata under the
+     * closed `HOST` key (the [DeepLinkHost] enums only, never link content). A diagnostic never carries both.
      *
      * The emitter's 60 s rate window is per code, not per bucket (F5): a second `LOCK_AUTH_ERROR` bucket
      * claimed here within 60 s of the first may be counted by the emitter but not written. This is accepted.
      */
     private fun record(diagnostic: PendingDiagnostic?) {
         if (diagnostic == null) return
-        val metadata = diagnostic.cause?.let {
+        val metadata = diagnostic.metadata ?: diagnostic.cause?.let {
             PrivacyDiagnosticMetadata.builder().put(PrivacyDiagnosticKey.CAUSE, it).build()
         } ?: PrivacyDiagnosticMetadata.EMPTY
         scope.launch {

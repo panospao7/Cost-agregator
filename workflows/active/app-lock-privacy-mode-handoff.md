@@ -1175,3 +1175,125 @@ All in `AppLockController.kt`; line numbers are after the fixes.
   - review iteration limit reached; accepted on validation
 - S16 COMPLETE (parts i, ii-a, ii-b). The controller is still DORMANT until S20 wiring.
 - Next: S17 (held deep links).
+
+## S17 — implemented
+
+Status (2026-10-26, implementer): implemented, NOT validated (no build, test or guard run). DORMANT (no production wiring, S20), no schema/DB impact, no new string, no new binding, no new diagnostic code (the existing `DL_HELD_*` entries are used).
+M = app/src/main/java/com/yourname/expensetracker/domain/privacy/applock, T = app/src/test/java/com/yourname/expensetracker/domain/privacy/applock.
+
+Files:
+- M/HeldDeepLink.kt (new): `HeldDeepLink` (internal; wraps the S3 `DeepLinkRequest`, `heldAtMillis`, `unlockCountAtHold`; no raw URI, not serializable or parcelable, `toString` names the host only; `HELD_LINK_TTL_MILLIS` = 5 min), `LinkDecision { APPLY_NOW, HOLD }`, `HeldLinkRelease { None, Apply(request, afterUnlock), Expired }`. It never references the open-origin start API (source-scan pin intact).
+- M/AppLockController.kt: new `onLockQuery(link: DeepLinkRequest): LinkDecision` (overload), `releaseHeldLink(): HeldLinkRelease`, `onOpenOriginApplyCompleted(attemptId: Long)`; private `decideLinkLocked`, `releaseLocked`, `applyGateOpenLocked`, `readQueryCapability`, three `DL_*` diagnostic builders; fields `heldLink`, `unlockCount`, `applyGateAttemptId`, `applyGateSinceMillis`; `PendingDiagnostic` gained optional ready-made metadata (secondary constructor keeps the old call sites); T8 increments `unlockCount`; the T33 close opens the gate; the four `TODO(S17)` markers became comments.
+- T/AppLockControllerHeldLinkTest.kt (new, 29 tests).
+- T/AppLockControllerIllegalTransitionTest.kt: pins changed by exact addition only (below).
+
+Transitions:
+- T20: `onLockQuery(link)` runs the LOCK_QUERY evaluation (`evaluateForegroundLocked`) and decides in the same critical section. HOLD when the state is `LOCKED`, `RESOLVING` or `AUTHENTICATING` of ANY purpose, when an attempt is open, or when the T33 gate is open. Newest wins; `DL_HELD_LOCKED` (host) or `DL_HELD_REPLACED` (old and new host).
+- T21: APPLY_NOW from `DISABLED`, `UNLOCKED`, `INERT` with nothing pending, after the evaluation (a long background locks first, AE-58). A link still held at that time is older and is dropped (so it can never apply after the newer one).
+- T22: memory only; nothing to do. A new process has no link.
+- Release (T2, T4, T6, T6b, T8, T33, T34): PULL through `releaseHeldLink()`, a LOCK_QUERY itself. Only from `DISABLED`/`UNLOCKED`/`INERT`, with no open attempt and no open T33 gate; the link is removed under the monitor (at most once). Expired after `T_held` (5 min, monotonic, a backwards clock counts as expired): `DL_HELD_EXPIRED(host)` and the caller opens Home (AE-60).
+- The close of a prompt never releases. After T34 the link is released only once the hand-off and its evaluation are done (immediate in the foreground, or in the release's own LOCK_QUERY when backgrounded). After T33 the controller opens the gate (`applyGateAttemptId`) in the close's critical section; it stays open until `onOpenOriginApplyCompleted(attemptId)` (S18, on apply success OR failure). The gate is bounded by `T_held` on the monotonic clock, so a forgotten completion cannot hold a link for the whole process (the link would be expired by then anyway).
+- `HeldDeepLink` never starts a prompt; the held link triggers no write.
+
+AEs: AE-55, AE-56, AE-57, AE-58 (both event orders), AE-59, AE-60 (4:59.999, 5:00, 6:00), AE-118 link part (before and after host loss; stale late success), hold during UNLOCK / ENABLE / CONFIRM_CHANGE, release after T34 (foreground lock, backgrounded deferred timeout) and after T33 plus completion, link between hand-off and completion, gate lapse, RESOLVING (T2, T3), INERT/DISABLED, no link content in diagnostics or logs, memory-only type, CancellationException from the capability read propagates.
+
+Pins (P7, exact additions only; the constructor pin (seven ports) and the source-scan list are unchanged):
+- public method set gains exactly `releaseHeldLink` and `onOpenOriginApplyCompleted` (`onLockQuery` is an overload, the name already pinned);
+- the "no public method takes ..." allow-list gains exactly `DeepLinkRequest` (a validated, bounded domain type);
+- no new synthetic method, no default parameter on the controller.
+
+Decisions where the spec is ambiguous (fail-closed reading); please confirm:
+1. `onLockQuery()` (no argument) keeps returning `AppLockState` (13 existing tests and the S20 binder use it). The bounded decision is the new overload `onLockQuery(link)`. A decision needs the link, and a new method name would have added a name to the pin; the overload adds none. The plan's open question 3 is thus answered by the overload.
+2. Pull, not push: the controller has no navigation port (seven-port pin), so a held link is handed back by `releaseHeldLink()` instead of being applied. The caller applies it (re-validating INV-16) and emits `DL_APPLIED` with `afterUnlock` from `Apply.afterUnlock` (true only when a T8 unlock happened since the link was held).
+3. Completion entry is public, id-bound, not internal: its caller (S18) is another main file and `internal` is not enforced here (the S16 decision 1 reasoning). A wrong id changes nothing, a repeat is harmless, and it releases nothing itself (a wrong call can at worst open the gate for the id it names).
+4. No auto-clear on disable or data wipe. The spec does not list them (T22 and the memory-only rule are the only clears). T33 requires the link to be released after a successful DISABLE/CONFIRM_CHANGE apply, so clearing it on disable would contradict INV-54. A data wipe or restore ends in a process restart (AE-61), which drops the link. If the privacy lead wants a clear on a disable, S18 adds a private clear in the same critical section as the T18 state move.
+5. A held link survives a T14 lock and stays held while `LOCKED`; the TTL is measured from the moment it was held (not from the unlock).
+6. A link that arrives in an open state while an older one is still held (not yet pulled) applies now and drops the older one, with `DL_HELD_REPLACED`, so an older link can never apply after a newer one.
+7. Expiry returns `Expired` (the caller opens Home) rather than applying a Home request, so the controller never invents a link.
+8. A failed capability read in the link path is `CHECK_FAILED` (transient, never INERT, the timer still evaluates); `CancellationException` and `Error` propagate. Nothing is held or applied if the read is cancelled.
+9. `DL_HELD_*` are not claimed once per process (each held link is an event); the emitter's own rate limit is the backstop.
+
+Carry-forwards:
+- S18: call `onOpenOriginApplyCompleted(attemptId)` on every end of the apply (success and write failure, also a throwing handler path), then trigger a release; the T17/T18 state move must happen before the completion call.
+- S20: after the state becomes open (collector or ON_START), after `onOpenOriginApplyCompleted`, and after T2/T4/T6/T6b, call `releaseHeldLink()` and apply `Apply` once (re-validate INV-16, emit `DL_APPLIED(afterUnlock)`), or open Home on `Expired`. Call `onLockQuery(link)` from `onNewIntent`/`onCreate` instead of the no-argument query, and apply only on `APPLY_NOW`. Never put the link in a Bundle or saved state.
+- S23: spec note for decisions 1 to 4 and 6.
+
+Validation to request (validation-runner, serial):
+- `compile`
+- `targeted-unit-test` `*AppLockControllerHeldLink*,*AppLockController*`
+- shard `domain-n-z`
+- `registered-guard` `cancellation` (new catch in `readQueryCapability`), `known_good_state`
+Likeliest compile findings: `out += if (...) a else b` on a `MutableList` parameter; the `?.let { pending += it }` statement in the inline `transition` lambdas; `Timber.Tree.log` override visibility in the privacy test. Likeliest test findings: the deferred-timeout test (backgrounded cancel then release) and the 60.000 s boundary in the foreground T34 test.
+Gates: privacy-security-guardian (lead), architecture-guardian, reviewer-strict.
+
+### S17 — review fixes (privacy-security-guardian + architecture-guardian, both ACCEPT-WITH-CONDITIONS)
+
+Status (2026-10-26, implementer): applied, NOT validated (nothing was run). Still DORMANT, no schema/DB impact, no new string, no new diagnostic code. Public method set unchanged (no new method). No new public type.
+M = app/src/main/java/com/yourname/expensetracker/domain/privacy/applock, T = app/src/test/java/com/yourname/expensetracker/domain/privacy/applock. Line numbers are of the tree after these fixes.
+
+Findings:
+- F1 (HIGH): M/AppLockController.kt:638, first statement of the `releaseHeldLink()` transition: `if (!appInForeground) return@transition HeldLinkRelease.None`. No evaluation, nothing consumed, the link stays held and the pending background stays pending. NOT added to `onLockQuery(link)` (AE-58 needs the decision before onStart). KDoc of `releaseHeldLink` (:620-629) and of `HeldLinkRelease.None` (M/HeldDeepLink.kt) updated.
+  - Tests changed to call `onAppForegrounded()` before a release (T/AppLockControllerHeldLinkTest.kt): "release after T34 evaluates the deferred timeout first" (:290; the lock now happens at the foreground, then the release is None, then Apply after unlock); the RESOLVING tests (T2 and T3), the INERT/DISABLED test and AE-57 (restarted controller) now report the foreground first; the shared fixture `lockedControllerFor` is NOT changed: a local `foregroundLockedControllerFor` wrapper (T/AppLockControllerHeldLinkTest.kt, top) replaces every `lockedControllerFor(COLD_START)` in that file (AE-55, AE-56, AE-60, backwards clock, T20 UNLOCK, privacy, capability, no-prompt, UNLOCK-never-opens-gate tests). Tests that use `unlockedControllerFor`/`disabledControllerFor` already report the foreground.
+  - New repro tests: (a) `F1 a backgrounded T34 cancel within the timeout ...` (:307): release None, pending background still pending, advance past the timeout, `onAppForegrounded` gives LOCKED(TIMEOUT), unlock, release gives Apply(afterUnlock = true). (b) `F1 a T33 success, then a background, then the apply completion ...` (:336): release None and pending kept, a foreground after the timeout locks, Apply(afterUnlock = true) after unlock.
+- F2/F6: M/AppLockController.kt:710 `releaseLocked`: a T33 gate that lapsed (T_held without `onOpenOriginApplyCompleted`) with a link held drops the link as `Expired` (`DL_HELD_EXPIRED`, the caller opens Home), also when the link itself is younger than T_held. `Apply` is never returned before the apply completed. New `applyGateWithinBoundLocked` (pure, no clearing); `applyGateOpenLocked` (decide path) still clears on lapse and a newer link then applies now. Test: `F2 a link that arrives after the T33 hand-off and a gate that then lapses ...` (T/AppLockControllerHeldLinkTest.kt:448). Existing "a gate that nobody completes lapses" test unchanged and still valid.
+- F3: T/AppLockControllerIllegalTransitionTest.kt:571 `onLockQuery has exactly two forms ...`: exactly `onLockQuery()` returning `AppLockState` and `onLockQuery(DeepLinkRequest)` returning `LinkDecision`; `releaseHeldLink()` returns `HeldLinkRelease`; `onOpenOriginApplyCompleted(long)` returns void.
+- F4: T/AppLockControllerIllegalTransitionTest.kt:618-619 source-scan list gains exactly `"releaseHeldLink"` and `"onOpenOriginApplyCompleted"` (startOpenOriginAttempt precedent). To keep the scan green M/HeldDeepLink.kt KDoc no longer names `releaseHeldLink` (reworded, no code change).
+- F5: M/AppLockController.kt:574 `startOpenOriginAttempt` returns the existing `OpenOriginStartResult.NotInOrigin` while the T33 gate is open and not lapsed (no new type; KDoc updated). A lapsed gate does not block and is not cleared there (so a link still held is dropped by the next release, F2). Test: `F5 an open-origin start is refused while the T33 gate is open ...` (T/AppLockControllerHeldLinkTest.kt:471). Existing test changed: the F7 re-entrancy test in T/AppLockControllerPromptOutcomeTest.kt:1527 now calls `controller.onOpenOriginApplyCompleted(attemptId)` in its handler before it starts the next attempt (S18 does the same when its apply has finished).
+- F7: KDocs of `record()` (M/AppLockController.kt:~1347) and `PendingDiagnostic` (:226-243) now cover the host metadata (`HOST` key, the `DeepLinkHost` enums only; `DL_HELD_*`); `PendingDiagnostic` gained `init { require(metadata == null || cause == null) }`.
+- F8: M/AppLockController.kt:1124 `deliverOpenOriginSuccess` and :1142 `clearApplyGate(attemptId)`: when the success handler throws, the gate of that attempt id is cleared under `stateLock`. DEVIATION (small, fail-closed for the apply, not for privacy): also on `CancellationException`, before it is rethrown unchanged, because the existing test "a success handler that throws CancellationException ... then the next start is Started" would otherwise break on F5 and a handler that did not return started no apply. Tests: `F8 a success handler that throws clears the gate ...` (:505) and `F8 ... CancellationException ...` (:522).
+
+Corrected wording (supersedes the S17 "implemented" section where it differs):
+- Gate lapse: a gate that lapses after T_held with a link held does NOT let the link apply. The link is dropped as `Expired` (`DL_HELD_EXPIRED`) and the caller opens Home. The old line "the link would be expired by then anyway" is wrong for a link that arrived after the hand-off.
+- AE-61 (decision 4): a data wipe or restore ends in a restart that is the user tapping "Restart Now", not an automatic one; the process restart drops the link, and there is no auto-clear on disable.
+- The old carry-forward text "release from a collector or when backgrounded" (S20: "after the state becomes open (collector or ON_START)") and the S17 line "or in the release's own LOCK_QUERY when backgrounded" are SUPERSEDED: `releaseHeldLink()` evaluates and releases only while the app is in the foreground (F1); a collector never calls it.
+
+Decisions 1 to 9 of the S17 section: accepted by the privacy lead (decision 4 with the AE-61 wording above; decisions 5 and 6 as written).
+
+BINDING carry-forwards:
+- S18:
+  - call `onOpenOriginApplyCompleted(attemptId)` on every end of the apply, in a `finally`: success, write failure, a throwing handler, a cancelled apply (`CancellationException` is still rethrown);
+  - do the T17/T18 state move under the monitor BEFORE that call;
+  - be the only production caller of `onOpenOriginApplyCompleted` (extend the new source-scan pin by exactly that one file).
+- S20:
+  - `onLockQuery(link)` from `onCreate`/`onNewIntent`, apply only on `APPLY_NOW`; never decide with the no-argument `onLockQuery()`;
+  - pull `releaseHeldLink()` only at ON_START right after `onAppForegrounded()`, and after the apply completion; never inline in a collector (a collector may only post a separate main-thread call);
+  - decide and apply synchronously on main in the same frame; apply a released link before processing the next intent; never switch dispatchers in between;
+  - on `Apply`: re-check INV-16, apply once and emit `DL_APPLIED(afterUnlock)`; on `Expired`: open Home;
+  - be the only production caller of `releaseHeldLink` (extend the new source-scan pin by exactly that one file);
+  - no Bundle/SavedState/`rememberSaveable` for the link;
+  - after a recreation or a process-death restore do not resubmit the original launch intent: skip when `savedInstanceState != null` or `FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY`, or clear the intent data once consumed (a boolean "consumed" flag in saved state is allowed);
+  - deliver `APP_FOREGROUNDED` at the first ON_START (the controller starts with `appInForeground = false`, so no release happens before it).
+
+Validation to request (validation-runner, serial): `compile`; `targeted-unit-test` `*AppLockController*`; shard `domain-n-z`; `registered-guard` `cancellation` (new rethrow path in `deliverOpenOriginSuccess`), `known_good_state`.
+Likeliest findings: Kotlin smart cast in `assertTrue(... is Started && x.attemptId ...)` (used in the new F5 test), `Long::class.javaPrimitiveType!!` in the F3 test, test ordering of `onAppForegrounded()` in RESOLVING.
+
+### S17 — final gate (reviewer-strict ACCEPT-WITH-CONDITIONS) and fixes
+
+Implemented by the implementer; validation NOT run (request `compile`; `targeted-unit-test` `*AppLockController*`; shard `domain-n-z`).
+
+- Issue 2 (code, `AppLockController.kt:702`): `decideLinkLocked` now computes `val gateOpen = applyGateOpenLocked(now)` BEFORE `mustHold` (no short-circuit) and uses `gateOpen` in it. A T33 gate that lapsed before the link arrived is cleared at hold time, even while LOCKED, so the later release is `Apply`, not `Expired`. A link held under a still-open gate is still dropped at lapse (F2 preserved). New test: `AppLockControllerHeldLinkTest.kt:471` (gate lapses, app locks, link held, unlock, release in the foreground returns `Apply(afterUnlock = true)`).
+- Issue 3 (pin, `AppLockControllerIllegalTransitionTest.kt:622`): `"onLockQuery"` added to the single-caller source-scan list. There is no production caller today, so it stays green. S20 extends it by exactly the host Activity file.
+- Note: `AppLockController.kt:636` `releaseHeldLink` folds `appInForeground` into the early-return pre-check (`heldLink == null || !appInForeground`), so the capability read is skipped when backgrounded. The in-transition guard stays; behaviour is otherwise identical.
+- Note: stale test title renamed at `AppLockControllerHeldLinkTest.kt:285` (no longer claims the release evaluates the deferred timeout first).
+- Note: the foreground-only release condition (F1) is added to the class KDoc paragraph "The held link" (`AppLockController.kt:103-108`); the `releaseHeldLink` KDoc caller sentence now matches the S20 binding below.
+
+BINDING S20 (Issue 1, MAJOR; this supersedes the earlier "only at ON_START" text at line 1259):
+- The state collector posts ONE separate main-thread `releaseHeldLink()` call on every publication of `DISABLED`, `UNLOCKED` or `INERT` (T2, T4, T6, T6b, T8, the T34 return). It never calls it inline under `publishLock`.
+- ON_START (right after `onAppForegrounded()`) and after-apply-completion remain additional triggers.
+- Required S20 integration test: link at `onCreate`, then ON_START while `RESOLVING`, then resolve to `DISABLED`: the link is applied exactly once.
+- S20 allows exactly the host Activity file as the caller of `onLockQuery(link)` and `releaseHeldLink` (both pins extended by that one file).
+
+BINDING S18 (Issue 4): starting the apply is the handler's LAST statement. The handler must not throw after the apply has started. The completion call `onOpenOriginApplyCompleted(attemptId)` stays in the apply's `finally`.
+- (2026-10-26) The final re-run targeted vr-20261026-175959-4910ab7e and domain-n-z vr-20261026-180504-dd26d771 FAILED, on one test only: the new "onLockQuery" single-caller scan matched a KDoc reference in HeldDeepLink.kt. Comment reworded (the same approach used for releaseHeldLink); no code change. cancellation vr-20261026-180448-c053fdfe PASS.
+
+### S17 — accepted (2026-10-26)
+- Final tree (serial, PASS):
+  - targeted vr-20261026-181956-021c6c6d
+  - domain-n-z vr-20261026-182242-cc1edda6
+  - cancellation vr-20261026-180448-c053fdfe (production unchanged since; the only later edit is a comment)
+  - earlier on the post-review-fix tree: known_good_state vr-20261026-173012-d51ee97f, time_boundaries vr-20261026-173315-9ab2a6a9
+- Gates:
+  - privacy-security-guardian (lead) ACCEPT-WITH-CONDITIONS; architecture-guardian ACCEPT-WITH-CONDITIONS. Their shared HIGH F1 (release while backgrounded) was fixed.
+  - reviewer-strict ACCEPT-WITH-CONDITIONS: issues 2 and 3 fixed; issues 1 and 4 recorded as BINDING for S20/S18.
+  - Review iteration limit reached; accepted on validation.
+- The controller is still DORMANT. Next: S18 (settings requests: T17–T19, T26–T29; binds startOpenOriginAttempt and onOpenOriginApplyCompleted).

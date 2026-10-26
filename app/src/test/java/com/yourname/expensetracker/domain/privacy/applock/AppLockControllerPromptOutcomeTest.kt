@@ -1522,6 +1522,9 @@ class AppLockControllerPromptOutcomeTest {
         val delivered = mutableListOf<Pair<Long, AuthPurpose>>()
         val handler = OpenOriginSuccessHandler { attemptId, purpose ->
             delivered += attemptId to purpose
+            // F5: the next open-origin start is refused while the T33 gate is open, so the handler (standing in
+            // for S18's finished apply) completes it first.
+            controller.onOpenOriginApplyCompleted(attemptId)
             stateInHandler = controller.state.value
             inFlightInHandler = controller.inFlightAttemptId
             // Another thread needs the controller's monitor: if the handler ran under it, this would time out.

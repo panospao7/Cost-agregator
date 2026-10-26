@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.privacy.applock
 
+import com.yourname.expensetracker.domain.privacy.deeplink.DeepLinkRequest
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -506,7 +507,9 @@ class AppLockControllerIllegalTransitionTest {
         val allowedParameterTypes = setOf(
             Long::class.javaPrimitiveType,
             OpenOriginPrompt::class.java,
-            OpenOriginSuccessHandler::class.java
+            OpenOriginSuccessHandler::class.java,
+            // S17, exact addition: the already validated, bounded S3 link type of onLockQuery(link). No Android type.
+            DeepLinkRequest::class.java
         )
         // Only compiler-generated accessors (`access$...`, first parameter = the controller) are not API.
         // Any other synthetic method on the controller is unexpected and fails the test below.
@@ -540,7 +543,11 @@ class AppLockControllerIllegalTransitionTest {
                 "onLockQuery",
                 "onUnlockTapped",
                 "onPromptHostLost",
-                "startOpenOriginAttempt" // part (ii-b): the one exact addition, bound by S18
+                "startOpenOriginAttempt", // part (ii-b): the one exact addition, bound by S18
+                // S17, exact additions (onLockQuery gains an overload with the same name): pull release of the held
+                // link, and the id-bound T33 apply completion that S18 calls.
+                "releaseHeldLink",
+                "onOpenOriginApplyCompleted"
             ),
             production
         )
@@ -561,6 +568,33 @@ class AppLockControllerIllegalTransitionTest {
     }
 
     @Test
+    fun `onLockQuery has exactly two forms and the S17 release and completion signatures are pinned`() {
+        val own = AppLockController::class.java.methods
+            .filter { it.declaringClass == AppLockController::class.java && !it.isSynthetic }
+
+        // S17 review F3: exactly `onLockQuery()` returning the state and `onLockQuery(DeepLinkRequest)` returning the decision.
+        val lockQueryForms = own.filter { it.name == "onLockQuery" }.map { it.parameterTypes.toList() to it.returnType }
+        assertEquals(2, lockQueryForms.size)
+        assertEquals(
+            setOf<Pair<List<Class<*>>, Class<*>>>(
+                emptyList<Class<*>>() to AppLockState::class.java,
+                listOf<Class<*>>(DeepLinkRequest::class.java) to LinkDecision::class.java
+            ),
+            lockQueryForms.toSet()
+        )
+
+        val release = own.filter { it.name == "releaseHeldLink" }
+        assertEquals(1, release.size)
+        assertEquals(emptyList<Class<*>>(), release.single().parameterTypes.toList())
+        assertEquals(HeldLinkRelease::class.java, release.single().returnType)
+
+        val completed = own.filter { it.name == "onOpenOriginApplyCompleted" }
+        assertEquals(1, completed.size)
+        assertEquals(listOf<Class<*>>(Long::class.javaPrimitiveType!!), completed.single().parameterTypes.toList())
+        assertEquals(Void.TYPE, completed.single().returnType)
+    }
+
+    @Test
     fun `no production file other than the controller touches the controller's internal inspection members`() {
         // pendingBackgroundAtMillis, promptBackgroundAtMillis and inFlightAttemptId stay internal for tests (R1: if anything stays
         // internal, a main file other than the controller must not reference it). Kotlin `internal` is not
@@ -578,7 +612,14 @@ class AppLockControllerIllegalTransitionTest {
             "onAuthSucceeded",
             // Part (ii-b), exact addition (F3): the open-origin start API has no caller yet. S18 adds exactly its
             // own file as the one caller, and extends this pin to allow that single file and nothing else.
-            "startOpenOriginAttempt"
+            "startOpenOriginAttempt",
+            // S17 review F4, exact additions: the held-link release has exactly one production caller (S20) and the
+            // T33 apply completion exactly one (S18). Each extends this pin to allow that single file and nothing else.
+            "releaseHeldLink",
+            "onOpenOriginApplyCompleted",
+            // S17 final gate (Issue 3), exact addition: the link decision `onLockQuery(link)` has no production caller
+            // yet. S20 allows exactly the host Activity file as its caller (with releaseHeldLink) and nothing else.
+            "onLockQuery"
         )
         val offenders = roots.flatMap { root ->
             root.walkTopDown()
