@@ -756,6 +756,7 @@ Context: budget alerts post with the raw `budget.id.toInt()` (`BudgetMonitor.kt:
   - `M/data/privacy/applock/AndroidDeviceAuthCapabilityProvider.kt` (new)
   - `M/ui/applock/BiometricPromptDeviceAuthenticator.kt` (new; bound to an Activity; maps `AuthPromptCopy` to `R.string`)
   - `M/di/AppLockModule.kt`
+- **Dependencies (build):** androidx.biometric 1.1.0 and androidx.fragment 1.8.5 (explicit, owner-approved).
 - **Resources:** `R/values{,-el,-es}/strings_applock_prompt.xml` (new): `applock_prompt_title_enable`, `applock_prompt_subtitle_enable`, `applock_prompt_title_disable`, `applock_prompt_title_change`, `applock_prompt_title_unlock` (ux-flows 9.2).
 - **Build / manifest:**
   - `gradle/libs.versions.toml` and `app/build.gradle.kts` (androidx.biometric 1.1.0)
@@ -768,6 +769,9 @@ Context: budget alerts post with the raw `budget.id.toInt()` (`BudgetMonitor.kt:
     - subtitle only for ENABLE;
     - description never set;
     - authenticators `BIOMETRIC_STRONG | DEVICE_CREDENTIAL`.
+  - `T/ui/applock/BiometricPromptHostGatingTest.kt` (new; API 26/28/29 and a finishing host return `AuthLaunch.HOST_UNAVAILABLE`; the prompt must be built first)
+  - `T/ui/applock/AppLockBiometricSourceScanTest.kt` (new; scans all of `app/src/main/java`; planted self-check)
+  - `T/ui/applock/BiometricPromptAdapterStateMachineTest.kt` (new; Robolectric sdk 34; drives the captured library callback through the internal `PromptHandle` seam; covers the wait-for-echo flag, its timeout and ON_START clearing)
 - **Depends on:** G1a. Release: re-check manifest edits from R17 and C5.
 - **Guards / approvals:** FG-22 (exact permission policy), FG-20, FG-18. **Owner approval required:** the new permission and the new dependency.
 - **Gates:** privacy-security-guardian (lead), architecture-guardian, reviewer-strict.
@@ -777,8 +781,12 @@ Context: budget alerts post with the raw `budget.id.toInt()` (`BudgetMonitor.kt:
   - `targeted-unit-test` `*AndroidDeviceAuthCapability*`
   - `targeted-unit-test` `*BiometricPromptOutcomeMapping*`
   - `targeted-unit-test` `*BiometricPromptCopy*`
+  - `targeted-unit-test` `*BiometricPromptHostGating*`
+  - `targeted-unit-test` `*AppLockBiometricSourceScan*`
+  - `targeted-unit-test` `*BiometricPromptAdapterStateMachine*`
   - shards `data`, `runtime-ui`
   - `lint`
+  - dependency resolution check for androidx.fragment 1.8.5 (no other androidx.fragment, activity or lifecycle bump)
 - **Release state:** dormant. Recommendation: do not ship S15 in a public build before S22, because the new permission would appear with no feature behind it.
 - **Rollback:** revert the dependency and the manifest line together.
 
@@ -1485,4 +1493,14 @@ Notes for the orchestrator:
   - S18 decides whether a sweep-rebuilt BILL that drops its actions emits `NOTIF_ACTIONS_SUPPRESSED_LOCK`.
   - INV-45 owner (S18 and the review-card slice, ~:1042): the review record starts from F for every 1b field and goes through the controller's INV-45 auth/capability check. Today the 1a review card writes permissive 1b values (lock=false, M1, secure=false); this is dormant because no lock exists yet.
   - G1b re-runs `NotificationPresentationDeviceTest` on API 26 and 30 (BILL action counts below API 31).
+- **S16 / S20 / G1b (BINDING, S15 privacy review, 2026-10-26):**
+  - S16: the process-level controller owns attempt identity (strictly increasing ids, INV-24) and in-flight state across Activity recreation; it handles PROMPT_HOST_LOST before the adapter's cancel echo (T12, T35). `authenticate` false and the adapter's `cancel` outcome (Failed with SYSTEM_CANCELED) map to bounded results.
+  - S20: create `BiometricPromptDeviceAuthenticator` in `MainActivity.onCreate` on every Activity creation (the library prompt is constructed once in its constructor so the callback reattaches after rotation).
+  - G1b: add a device test for rotation during the prompt (and for cancel while the prompt is showing: observe whether the library echoes a client cancel).
+- **S16 / S20 / G1b (BINDING, S15 strict review, 2026-10-26):**
+  - S16: `DeviceAuthenticator.authenticate` now returns the bounded `AuthLaunch` (LAUNCHED | ALREADY_IN_FLIGHT | HOST_UNAVAILABLE | AWAITING_PRIOR_TERMINAL | PROMPT_UNAVAILABLE), not a Boolean; map each non-LAUNCHED value to a bounded result without a state change. AWAITING_PRIOR_TERMINAL is transient (at most ~1500 ms, or the next ON_START): retry rather than fail the flow.
+  - S16: "one outcome per attempt" holds per adapter instance only. After Activity recreation the new adapter has nothing in flight and the old adapter never reports; the controller owns the open attempt (INV-24, PROMPT_HOST_LOST, INV-54).
+  - S16: `cancel` on the in-flight attempt delivers `Failed(SYSTEM_CANCELED)` synchronously inside the call, before `cancel` returns. The controller must tolerate re-entrancy (state already moved to the cancelled state when the callback runs).
+  - S20: create the adapter after `super.onCreate()` in `MainActivity.onCreate`, on every creation.
+  - G1b: besides rotation and cancel-echo observation, cover the library silently skipping a launch ("already showing" prompt fragment after recreation): the new adapter then holds an in-flight attempt that may never be answered by the new prompt, and the controller timeout or PROMPT_HOST_LOST path must close it.
 - **Done in G1a fixes:** a committed review-save now runs the same trigger (before value "was off") in the same serialised, NonCancellable block; the navigation log no longer prints destination parameters.
