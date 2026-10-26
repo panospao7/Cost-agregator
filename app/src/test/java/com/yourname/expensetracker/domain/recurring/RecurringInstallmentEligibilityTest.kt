@@ -146,6 +146,53 @@ class RecurringInstallmentEligibilityTest {
     }
 
     @Test
+    fun snapshotFormAgreesWithTheExpenseFormOnEveryStoredRelation() = runTest(timeout = 60.seconds) {
+        val reader = reader()
+        val subject = eligibility(reader)
+        val snapshots = expenses.map { expense ->
+            com.yourname.expensetracker.domain.model.ExpenseSnapshot(
+                id = expense.id,
+                amount = expense.amount,
+                effectiveAmount = expense.effectiveAmount,
+                currency = expense.currency,
+                merchant = expense.merchant,
+                merchantKey = expense.merchantKey,
+                transactionType = com.yourname.expensetracker.domain.model.DomainTransactionType.PURCHASE,
+                date = expense.date,
+                categoryId = null,
+                isNotMine = false,
+                transferDirection = null,
+                notes = null
+            )
+        }
+
+        val excluded = subject.excludedSnapshotIds(snapshots)
+
+        // The snapshot carries no spending-exclusion flag, so only the two stored relations count:
+        // ids 2 and 7 (linked) and 3 and 6 (plan row). Flag-only rows 4 and 5 are the documented gap.
+        assertEquals(setOf(2L, 3L, 6L, 7L), excluded)
+        for (expense in expenses.filter { it.spendingExclusionReason == null }) {
+            assertEquals(
+                "expense ${expense.id}: snapshot and expense forms must agree when no flag is set",
+                !subject.mayLinkToRecurringOccurrence(expense),
+                expense.id in excluded
+            )
+        }
+        assertEquals(1, reader.linkedSetCalls)
+        assertEquals(1, reader.planPurchaseSetCalls)
+    }
+
+    @Test
+    fun snapshotFormReadsEachSetOnceAndNothingForAnEmptyInput() = runTest(timeout = 60.seconds) {
+        val reader = reader()
+        val subject = eligibility(reader)
+
+        assertTrue(subject.excludedSnapshotIds(emptyList()).isEmpty())
+        assertEquals(0, reader.linkedSetCalls)
+        assertEquals(0, reader.planPurchaseSetCalls)
+    }
+
+    @Test
     fun theReaderIsNotBuiltUntilADecisionIsNeeded() = runTest(timeout = 60.seconds) {
         var built = 0
         val subject = RecurringInstallmentEligibility(dagger.Lazy {

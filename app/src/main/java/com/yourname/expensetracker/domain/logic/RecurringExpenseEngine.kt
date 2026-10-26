@@ -10,6 +10,7 @@ import com.yourname.expensetracker.domain.model.DomainTransferDirection
 import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.model.RecurringPattern
+import com.yourname.expensetracker.domain.recurring.RecurringInstallmentEligibility
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -23,7 +24,8 @@ import kotlin.math.sqrt
 class RecurringExpenseEngine @Inject constructor(
     private val expenseRepository: ExpenseRepository,
     private val recurringExpenseRepository: RecurringExpenseRepository,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val installmentEligibility: RecurringInstallmentEligibility
 ) {
 
     /**
@@ -67,7 +69,7 @@ class RecurringExpenseEngine @Inject constructor(
             .map { canonicalMerchantKey(it.merchant, null) }
             .toSet()
 
-        val detectedPatterns = detectPatternsFromSnapshots(
+        val detectedPatterns = detectPatterns(
             allExpenses = allExpenses,
             excludedMerchantKeys = manualMerchantKeys
         )
@@ -77,6 +79,32 @@ class RecurringExpenseEngine @Inject constructor(
 
     suspend fun getPatterns(allExpenses: List<Expense>): List<RecurringPattern> {
         return getPatternsFromSnapshots(allExpenses.map { it.toExpenseSnapshot() })
+    }
+
+    /**
+     * The one entry point for detection (INV-29). Expenses that pay an installment entry, or are a
+     * plan purchase record, are never evidence of a recurring pattern: their ids are removed here
+     * before the pure detector runs. The id set is read once per call (one batch read per link
+     * set, none when [allExpenses] is empty). With no installment plans the filter removes nothing
+     * and the output equals [detectPatternsFromSnapshots] on the same input.
+     *
+     * Every production caller (the engine itself and MergedRecurringPatternsProvider) goes through
+     * here; [detectPatternsFromSnapshots] stays the pure rule and is not called from elsewhere.
+     */
+    suspend fun detectPatterns(
+        allExpenses: List<ExpenseSnapshot>,
+        excludedMerchantKeys: Set<String> = emptySet()
+    ): List<RecurringPattern> {
+        val installmentExpenseIds = installmentEligibility.excludedSnapshotIds(allExpenses)
+        val eligibleExpenses = if (installmentExpenseIds.isEmpty()) {
+            allExpenses
+        } else {
+            allExpenses.filter { it.id !in installmentExpenseIds }
+        }
+        return detectPatternsFromSnapshots(
+            allExpenses = eligibleExpenses,
+            excludedMerchantKeys = excludedMerchantKeys
+        )
     }
 
     fun detectPatternsFromSnapshots(

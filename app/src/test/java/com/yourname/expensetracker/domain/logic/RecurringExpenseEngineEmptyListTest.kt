@@ -4,7 +4,9 @@ import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
+import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentEntryLinkReader
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
+import com.yourname.expensetracker.domain.recurring.RecurringInstallmentEligibility
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.every
@@ -31,10 +33,14 @@ class RecurringExpenseEngineEmptyListTest {
         expenseRepository = mockk()
         recurringExpenseRepository = mockk()
         timeProvider = mockk()
+        val noPlansReader = mockk<InstallmentEntryLinkReader>()
+        coEvery { noPlansReader.linkedExpenseIds() } returns emptySet()
+        coEvery { noPlansReader.planPurchaseExpenseIds() } returns emptySet()
         engine = RecurringExpenseEngine(
             expenseRepository,
             recurringExpenseRepository,
-            timeProvider
+            timeProvider,
+            RecurringInstallmentEligibility(dagger.Lazy { noPlansReader })
         )
         
         every { timeProvider.now() } returns System.currentTimeMillis()

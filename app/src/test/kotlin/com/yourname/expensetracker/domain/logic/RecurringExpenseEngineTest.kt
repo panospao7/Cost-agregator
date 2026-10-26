@@ -6,10 +6,12 @@ import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.entity.TransferDirection
+import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentEntryLinkReader
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.DomainTransferDirection
 import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
+import com.yourname.expensetracker.domain.recurring.RecurringInstallmentEligibility
 import io.mockk.coEvery
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
@@ -33,7 +35,15 @@ class RecurringExpenseEngineTest {
         timeProvider = mockk()
         coEvery { recurringExpenseRepository.getAll() } returns emptyList()
         coEvery { timeProvider.now() } returns timestampOf(2026, Calendar.APRIL, 15)
-        engine = RecurringExpenseEngine(expenseRepository, recurringExpenseRepository, timeProvider)
+        val noPlansReader = mockk<InstallmentEntryLinkReader>()
+        coEvery { noPlansReader.linkedExpenseIds() } returns emptySet()
+        coEvery { noPlansReader.planPurchaseExpenseIds() } returns emptySet()
+        engine = RecurringExpenseEngine(
+            expenseRepository,
+            recurringExpenseRepository,
+            timeProvider,
+            RecurringInstallmentEligibility(dagger.Lazy { noPlansReader })
+        )
     }
 
     // Helper: convert test Expense objects to ExpenseSnapshot for the new production code path.

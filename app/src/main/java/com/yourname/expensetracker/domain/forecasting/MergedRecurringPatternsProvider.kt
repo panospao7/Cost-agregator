@@ -36,7 +36,7 @@ class MergedRecurringPatternsProvider @Inject constructor(
         expenseSnapshots: List<ExpenseSnapshot>,
         manualRecurring: List<ManualRecurringExpense>
     ): List<RecurringPattern> {
-        val detectedPatterns = recurringExpenseEngine.detectPatternsFromSnapshots(
+        val detectedPatterns = recurringExpenseEngine.detectPatterns(
             allExpenses = expenseSnapshots,
             excludedMerchantKeys = emptySet()
         )

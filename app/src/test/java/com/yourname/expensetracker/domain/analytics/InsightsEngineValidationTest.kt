@@ -640,10 +640,16 @@ class InsightsEngineValidationTest {
 
     private fun installRealRecurringEngine(manualRules: List<ManualRecurringExpense>) {
         coEvery { recurringExpenseRepository.getAll() } returns manualRules
+        val noPlansReader = mockk<com.yourname.expensetracker.domain.installment.lifecycle.InstallmentEntryLinkReader>()
+        coEvery { noPlansReader.linkedExpenseIds() } returns emptySet()
+        coEvery { noPlansReader.planPurchaseExpenseIds() } returns emptySet()
         recurringExpenseEngine = RecurringExpenseEngine(
             expenseRepository = expenseRepository,
             recurringExpenseRepository = recurringExpenseRepository,
-            timeProvider = timeProvider
+            timeProvider = timeProvider,
+            installmentEligibility = com.yourname.expensetracker.domain.recurring.RecurringInstallmentEligibility(
+                dagger.Lazy { noPlansReader }
+            )
         )
         engine = InsightsEngine(
             expenseRepository = expenseRepository,

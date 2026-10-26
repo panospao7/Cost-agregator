@@ -253,6 +253,9 @@ class NotificationParserDashboardTotalSeamTest : AnalyticsEngineTestBase() {
         coEvery { recurringExpenseDao.getAll() } returns emptyList()
         every { recurringExpenseDao.getAllFlow() } returns flowOf(emptyList())
 
+        val noPlansReader = mockk<com.yourname.expensetracker.domain.installment.lifecycle.InstallmentEntryLinkReader>()
+        coEvery { noPlansReader.linkedExpenseIds() } returns emptySet()
+        coEvery { noPlansReader.planPurchaseExpenseIds() } returns emptySet()
         val recurringExpenseEngine = RecurringExpenseEngine(
             expenseRepository = expenseRepository,
             recurringExpenseRepository = RecurringExpenseRepository(
@@ -262,7 +265,10 @@ class NotificationParserDashboardTotalSeamTest : AnalyticsEngineTestBase() {
                 timeProvider = timeProvider,
                 ruleLifecycleCoordinator = mockk(relaxed = true)
             ),
-            timeProvider = timeProvider
+            timeProvider = timeProvider,
+            installmentEligibility = com.yourname.expensetracker.domain.recurring.RecurringInstallmentEligibility(
+                dagger.Lazy { noPlansReader }
+            )
         )
 
         insightsEngine = InsightsEngine(

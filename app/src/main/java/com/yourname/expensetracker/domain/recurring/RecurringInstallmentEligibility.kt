@@ -4,7 +4,9 @@ import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentEntryLinkReader
 import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentExpenseFacts
 import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentLinkRelations
+import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import com.yourname.expensetracker.domain.schedule.ExpenseScheduleLinkPolicy
+import com.yourname.expensetracker.domain.schedule.ExpenseScheduleRelations
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -17,7 +19,16 @@ import javax.inject.Singleton
  *   per-expense form [mayLinkToRecurringOccurrence];
  * - the occurrence generation path (create / activate / top-up / update through
  *   [OccurrenceConflictResolver], and the in-memory projection) uses the batch form
- *   [excludedExpenseIds], which reads the installment link sets once per call.
+ *   [excludedExpenseIds], which reads the installment link sets once per call;
+ * - the pattern detector (RecurringExpenseEngine.detectPatterns, INV-29) is the third consumer and
+ *   uses the snapshot form [excludedSnapshotIds].
+ *
+ * Known limit of the snapshot form: an ExpenseSnapshot carries no spendingExclusionReason, so the form
+ * is blind to the flag. An orphan INSTALLMENT_PURCHASE / INSTALLMENT_REVERSED flag with no plan row is
+ * therefore not excluded from detection. This is harmless: the detector uses effectiveAmount, which
+ * is 0 for flagged rows, so a flagged row can never create a pattern; reconcile R1 clears orphan flags.
+ * The direct ExpenseScheduleRelations construction in [excludedSnapshotIds] is guarded by the parity
+ * test against the expense form.
  *
  * Both forms share the private [decide], so they cannot disagree. The decision is made by
  * [ExpenseScheduleLinkPolicy.mayLinkToRecurringOccurrence] over relations built by
@@ -67,6 +78,33 @@ class RecurringInstallmentEligibility @Inject constructor(
     }
 
     /**
+     * Snapshot batch form (S6c-3, INV-29): the ids among [snapshots] that the installment policy
+     * refuses, for the pattern detector. The two link sets are read once per call, and nothing is
+     * read when [snapshots] is empty. An [ExpenseSnapshot] carries no spending-exclusion flag, so
+     * only the two stored relations (an entry links the expense, or a plan row has it as its
+     * purchase) can be applied here; the flag is the one input this form cannot see. The decision
+     * is the same [decideRelations] that [decide] ends in.
+     */
+    suspend fun excludedSnapshotIds(snapshots: Collection<ExpenseSnapshot>): Set<Long> {
+        if (snapshots.isEmpty()) return emptySet()
+        val linkReader = installmentEntryLinkReader.get()
+        val linkedExpenseIds = linkReader.linkedExpenseIds()
+        val planPurchaseExpenseIds = linkReader.planPurchaseExpenseIds()
+        val excluded = HashSet<Long>()
+        for (snapshot in snapshots) {
+            val relations = ExpenseScheduleRelations(
+                linkedInstallmentEntryId = if (snapshot.id in linkedExpenseIds) BATCH_LINKED_ENTRY_MARKER else null,
+                linkedRecurringOccurrenceId = null,
+                isPlanPurchaseRecord = snapshot.id in planPurchaseExpenseIds
+            )
+            if (!decideRelations(relations)) {
+                excluded.add(snapshot.id)
+            }
+        }
+        return excluded
+    }
+
+    /**
      * The single decision. Only the presence of [linkedInstallmentEntryId] matters to the policy for
      * the RECURRING_OCCURRENCE target, so the batch form passes a marker instead of a real entry id.
      */
@@ -93,8 +131,12 @@ class RecurringInstallmentEligibility @Inject constructor(
             planPurchaseRecordExists = planPurchaseRowExists,
             facts = facts
         )
-        return ExpenseScheduleLinkPolicy.mayLinkToRecurringOccurrence(ELIGIBILITY_TARGET_ID, relations)
+        return decideRelations(relations)
     }
+
+    /** The policy call, shared by [decide] (expense rows) and [excludedSnapshotIds] (snapshots). */
+    private fun decideRelations(relations: ExpenseScheduleRelations): Boolean =
+        ExpenseScheduleLinkPolicy.mayLinkToRecurringOccurrence(ELIGIBILITY_TARGET_ID, relations)
 
     private companion object {
         /**
