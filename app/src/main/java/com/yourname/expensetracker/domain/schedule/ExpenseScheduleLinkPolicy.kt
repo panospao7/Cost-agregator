@@ -4,8 +4,12 @@ package com.yourname.expensetracker.domain.schedule
  * Bounded refusal codes of [ExpenseScheduleLinkPolicy]. Names are chosen to match the
  * installment feature's refusal codes one to one (loan-installments domain spec 7.0, INV-5,
  * INV-16) so the plan coordinator can map them without reinterpretation. This enum lives in the
- * schedule package so the recurring lifecycle can consult the policy without depending on the
- * installment package.
+ * schedule package so both sides consult one policy. The policy itself performs no I/O and has no
+ * installment import. Since loan-installments S6c-2 the recurring side does depend on the
+ * installment package, through the read-only port `InstallmentEntryLinkReader`
+ * (`domain/installment/lifecycle`) plus the pure `InstallmentLinkRelations` /
+ * `InstallmentExpenseFacts` types, and the helper `RecurringInstallmentEligibility`
+ * (`domain/recurring`), which feed this policy.
  */
 enum class ScheduleLinkRefusal {
     NOT_A_SPENDING_EXPENSE,

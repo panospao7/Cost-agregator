@@ -896,18 +896,90 @@ FORBIDDEN:
 ```
 
 ```
-EXPENSE LIFECYCLE → INSTALLMENT PLAN reaction (planned — loan-installments S6c):
-  → TransactionSideEffectPlanner.planUpdated() / planDeleted() add a post-commit effect for expenses
-    that a plan references
-  → TransactionSideEffectDispatcher runs it AFTER commit →
-    InstallmentPlanLifecycleCoordinator.onExpenseChanged / onExpenseDeleted
-    (unlink, reopen or detach, per the plan's link rules)
-  → The plan reconcile() (rules R1..R6) backs this up on every recordDueEntries run and after restore
+EXPENSE LIFECYCLE → INSTALLMENT PLAN reaction (implemented — loan-installments S6c-1, 2026-10-26):
+  → TransactionSideEffectPlanner.planUpdated() / planDeleted() append the post-commit actions
+    `installment_expense_changed` (planUpdated, last) and `installment_expense_deleted` (planDeleted),
+    category SideEffectCategory.INSTALLMENT_PLAN
+  → TLC's PostCommitActionRunner (PostCommitActionRunnerImpl; the same runner TransactionSideEffectDispatcher
+    uses) runs them AFTER commit → InstallmentPlanLifecycleCoordinator.onExpenseChanged / onExpenseDeleted
+    (unlink, reopen or detach, per the plan's link rules). The coordinator decides applicability
+    (a no-plan expense changes 0 rows)
+  → `installment_expense_changed` is planned for the update kinds FULL, TYPE, CURRENCY, TRANSFER_DETAILS and
+    PAYMENT_CORE; `installment_expense_deleted` is planned for every single-expense delete via
+    TLC.deleteExpense / the dispatcher. SPENDING_INCLUSION never reacts
+    (loop breaker for the coordinator's own flag writes); CATEGORY_ONLY, LOCATION_ONLY, BUSINESS_FLAGS_ONLY,
+    MERCHANT, AMOUNT, DATE and OWNERSHIP do not react (reconcile is the backstop; reconcile-at-recordDueEntries
+    is PLANNED, binding on S7a (D-18 option (b)); recordDueEntries does not exist yet)
+  → Bulk updates (planBulkUpdated, incl. TYPE/CURRENCY bulk changes) and deleteAll/wipe paths plan no installment
+    reaction; reconcile is the backstop, which today runs only before a .costbackup export (see the S7a note below)
+  → Each Done.postCommit batch the reaction returns is dispatched through the same runner (re-entrant,
+    stateless); batches are dispatched BEFORE the report is judged
+  → In every reacting update batch recurring_reconcile runs before installment_expense_changed, so an expense
+    unlinked by rule R4 is re-offered to recurring matching only on its next edit
+  → The plan reconcile() (rules R1..R6) is PLANNED to back this up at the start of every S7a recordDueEntries run
+    (PLANNED, binding on S7a (D-18 option (b)); recordDueEntries does not exist yet; see "after restore" below).
+    Until S7a, the only reconcile() caller is InstallmentPreBackupReconciler; restored or orphaned data is not
+    repaired until the next .costbackup export or until S7a lands. A lost in-memory post-commit batch (for example budget re-check actions)
+    is NOT recovered by reconcile; the next budget trigger is the backstop
   → The reaction never deletes or edits the expense; expense removal is always the standard
     TransactionLifecycleCoordinator.deleteExpense path chosen by the user
 
+BACKUP pre-reconcile (implemented — loan-installments S6c-4, INV-30):
+  → DatabaseBackupRepositoryImpl.runCostBackupExport calls InstallmentPreBackupReconciler.reconcileBeforeBackup()
+    after the privacy gate and BEFORE maintenanceOperationRunner.enterAndDrain (mode still NORMAL, not inside
+    a runWrite); it runs coordinator.reconcile() and dispatches every Done.postCommit batch
+  → NotReconciled (result not Done, plansFailed / orphanFlagsFailed > 0, or any non-cancellation exception,
+    a closed write barrier included) ABORTS the export before any snapshot: Result.failure with a bounded
+    message (constant message plus the enum name), run event INSTALLMENT_PRE_RECONCILE, run.failedFinal(VALIDATION_FAILED)
+  → Reconciled means only "no failure was reported"; BackupVerifier stays the authority and still fails
+    closed on an orphan introduced after the reconcile (a racing write; a retry succeeds)
+  → Not reconciled: createSafetyBackup, createSafetyBackupInternalAssumingMaintenance (restore callers) and the
+    debug raw export; restore never reconciles
+
+RECURRING LINK-POLICY consultation (implemented — loan-installments S6c-2 / S6c-2b, INV-5, INV-4):
+  → RecurringInstallmentEligibility (domain/recurring, one private decision over
+    InstallmentLinkRelations + ExpenseScheduleLinkPolicy.mayLinkToRecurringOccurrence) is the single gate
+  → Coordinator link paths: RecurringLifecycleCoordinator.isExpenseEligibleForRecurring (layer 1 unchanged,
+    layer 2 delegated) gates the auto-link (claimLinkSuppressInWrite), the manual link
+    (linkExpenseToSpecificOccurrence, refusal = ExpenseNotEligible) and reconcileExpenseLinkAfterUpdate
+  → Generation path: OccurrenceConflictResolver.resolve reads the excluded id set ONCE per call (batch form)
+    and skips excluded expenses; this covers generateOccurrences, projectOccurrences, createRule, activateRule,
+    topUpHorizon and updateRule. An excluded expense leaves the occurrence PLANNED and unlinked
+  → Reads go through the InstallmentEntryLinkReader port (domain/installment/lifecycle), implemented READ-ONLY by
+    InstallmentEntryLinkReaderImpl (data/repository) over InstallmentPlanDao; injected as dagger.Lazy
+  → No recurring result or reason value was added (existing refusal outcomes are reused)
+
+RECURRING RECONCILE INV-5 repair (implemented — S6c-2):
+  → reconcileExpenseLinkAfterUpdate: when an expense linked to a recurring occurrence became installment-linked
+    or a plan purchase, the recurring link is removed with the existing Unlinked outcome (never re-linked); this
+    acts only as a repair on corrupt or restored data
+
+INV-29 PATTERN DETECTOR exclusion (implemented — loan-installments S6c-3):
+  → RecurringExpenseEngine.detectPatterns(snapshots, excludedMerchantKeys) is the SINGLE entry point: it drops
+    installment-linked and plan-purchase expense ids (one batch read per call via
+    RecurringInstallmentEligibility.excludedSnapshotIds) and then calls the pure detectPatternsFromSnapshots.
+    getPatternsFromSnapshots, getPatterns() and MergedRecurringPatternsProvider all route through it
+  → Pinned by RecurringDetectorSingleEntryPointScanTest (no production code outside the engine references
+    detectPatternsFromSnapshots)
+  → Known gap: the snapshot form cannot see the INSTALLMENT_PURCHASE / INSTALLMENT_REVERSED flag (an orphan flag
+    without a plan row is not excluded; harmless because effectiveAmount = 0; reconcile R1 clears it)
+  → The subscription-candidate detector (NotificationSubscriptionDetector) is OUTSIDE INV-29 (follow-up)
+
+AFTER RESTORE (decision D-18, option (b); PLANNED, binding on S7a; recordDueEntries does not exist yet):
+  → There is NO startup hook. Reconcile is to run at the start of EVERY S7a recordDueEntries run, and the run
+    is to dispatch the returned batches. A restored store would then be repaired on the first due-recording run.
+  → Until S7a, the only reconcile() caller is InstallmentPreBackupReconciler; restored or orphaned data is not
+    repaired until the next .costbackup export or until S7a lands.
+  → InstallmentRestoreReconcileTest pins the restore half of AE-12: a .costbackup round trip with nothing to
+    repair (non-redacted and redacted) keeps table counts, expense and plan rows and month totals equal;
+    reconcile() on the restored DB reports all zero and changes no row. The S7a call site is not tested yet.
+
 FORBIDDEN:
   ❌ Plan code reacting to expense changes by writing expenses or calling deleteExpense
+  ❌ Reconcile (or any plan op) running inside restore maintenance or a startup hook
+     (restore half: enforced at runtime by the write barrier; startup half: policy only, unguarded)
+  ❌ A second recurring/detector eligibility rule next to RecurringInstallmentEligibility, or calling
+     detectPatternsFromSnapshots from anywhere except RecurringExpenseEngine.detectPatterns
   ❌ Reacting to expense update/delete from anywhere except the TransactionSideEffectPlanner /
      Dispatcher hook
 ```
@@ -1664,9 +1736,14 @@ OPERATIONS (all on InstallmentPlanLifecycleCoordinator):
                                  INSTALLMENT_REVERSED) per paid expense in the same txn; delete calls
                                  setSpendingExclusionDbOnly(purchase, null)
   recordDueEntries(today)     → worker / foreground trigger (see "Workers / Background Jobs"); one txn per entry
-  onExpenseChanged / onExpenseDeleted
-                              → TransactionSideEffectPlanner / Dispatcher hook (see "Lifecycle Events")
-  reconcile()                 → start of each recordDueEntries run and after restore (rules R1..R6)
+  onExpenseChanged / onExpenseDeleted (implemented, S6c-1)
+                              → TLC PostCommitActionRunner actions `installment_expense_changed` /
+                                 `installment_expense_deleted` planned by TransactionSideEffectPlanner
+                                 (see "Lifecycle Events")
+  reconcile()                 → PLANNED, binding on S7a (D-18 option (b); recordDueEntries does not exist yet):
+                                 start of each recordDueEntries run (this is also the "after restore" path: no
+                                 startup hook); implemented today: immediately before a .costbackup export
+                                 enters maintenance (InstallmentPreBackupReconciler, S6c-4) (rules R1..R6)
                                  + orphan-flag clear (second halves of R1/R3): an expense flagged
                                  INSTALLMENT_PURCHASE / INSTALLMENT_REVERSED that no plan purchase and no entry
                                  link references; one writeTxn per orphan, references and flag re-checked inside

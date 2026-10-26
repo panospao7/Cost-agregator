@@ -200,6 +200,10 @@ Owns recurring pattern detection, future recurring item planning, and the **recu
 - `data/repository/RecurringExpenseRepository.kt`
 - `data/repository/PlannedExpenseRepository.kt`
 
+- `domain/recurring/RecurringInstallmentEligibility.kt` — single installment link-policy gate (INV-5, INV-29) used by the coordinator link paths, `OccurrenceConflictResolver` and `RecurringExpenseEngine.detectPatterns`; holds `dagger.Lazy<InstallmentEntryLinkReader>` (loan-installments S6c-2/2b/3)
+
+**Dependency note (loan-installments S6c):** `domain/recurring` now depends on the `domain/installment` port `InstallmentEntryLinkReader` (read-only; implemented by `data/repository/InstallmentEntryLinkReaderImpl`), plus the pure `InstallmentLinkRelations` / `InstallmentExpenseFacts` types. `domain/installment` has no `domain/recurring` import; the plan side reads recurring-link facts only through `InstallmentExpenseFactsReader` (its impl reads `RecurringOccurrenceDao`, read-only) and never writes recurring tables (INV-25).
+
 **Boundary note:** The `recurring_occurrences`, `recurring_reminder_deliveries`, and `recurring_lifecycle_events` tables are owned by this segment. The `TransactionLifecycleCoordinator` (Segment 9) auto-links new expenses to PLANNED occurrences via `RecurringLifecycleCoordinator.linkExpenseToOccurrence()` as a best-effort post-creation hook.
 
 **Boundary note:** `RecurringLifecycleCoordinator.unlinkExpenseFromOccurrence()` is the direct unlink path triggered when an expense linked to a PLANNED occurrence is deleted. It resets the occurrence back to PLANNED (2026-05-06).
@@ -769,6 +773,8 @@ Owns installment plans (loan and pay-in-installments tracking): plan and entry s
 - `domain/schedule/ExpenseScheduleLinkPolicy.kt` — expense ↔ schedule link policy (S5, INV-5; outside `domain/installment/`, so S5 must add this exact file to the plan-code prefixes of `InstallmentPlanArchitectureGuardTest`)
 - `domain/installment/lifecycle/` — `InstallmentPlanLifecycleCoordinator` (S6a; sole writer of plan tables), `InstallmentPlanOperationResults.kt` (typed results and reconcile report), `InstallmentExpenseFactsReader.kt` (read-only port for expense, category and recurring-link facts and the orphan-flag scan)
 - `domain/installment/readmodel/InstallmentPlanReadModel.kt` — pure overview, detail, history, variance and INV-13 suggestion assembly over loaded snapshots (S6a part 2b, domain spec 8.2); `domain/installment/InstallmentPlanReadRepository.kt` — read-only Flow/suspend port (S6a part 2b); `domain/installment/lifecycle/InstallmentLinkRelations.kt` — the one pure builder of `ExpenseScheduleRelations` for an existing link candidate, shared by the coordinator link op and the read repository eligibility check. The facts reader impl also reads `ExpenseDao.getExpensesBetweenUncapped` (read-only range query for the INV-13 suggestion scan)
+- `domain/installment/lifecycle/InstallmentEntryLinkReader.kt` — read-only port (`linkedEntryIdFor`, `isPlanPurchase`, `linkedExpenseIds`, `planPurchaseExpenseIds`) consumed by Segment 7 (`domain/recurring` → `domain/installment` dependency, S6c-2/2b); impl `data/repository/InstallmentEntryLinkReaderImpl.kt` (`InstallmentPlanDao` reads only; bound in `di/InstallmentModule.kt`). The port methods start with the verb `link` but the receiver is not a `*Dao`, so `verify_db_access_boundaries.py` does not extract them (advisory; no guard change)
+- `domain/installment/lifecycle/InstallmentPreBackupReconciler.kt` — runs plan `reconcile()` and dispatches its batches before a `.costbackup` export enters maintenance (S6c-4, INV-30); called only from `DatabaseBackupRepositoryImpl.runCostBackupExport` (Segment 18)
 - `domain/installment/projection/InstallmentProjectionPort.kt` — port plus the pure `InstallmentProjectionRule` (INV-15) (S6a part 2b)
 - `data/repository/` — `InstallmentPlanReadRepositoryImpl` and `InstallmentProjectionPortImpl` (S6a part 2b; read-only, InstallmentPlanDao reads plus the facts reader); `InstallmentExpenseFactsReaderImpl` (S6a; read-only, the only plan-side reader of ExpenseDao, RecurringOccurrenceDao, CategoryDao); `di/InstallmentModule.kt` wiring (S6a)
 - `data/database/model/SpendingExclusionFlagRow.kt` — read-only projection (id + flag name) of `ExpenseDao.getSpendingExclusionFlagRows` for the orphan-flag scan (S6a)
@@ -779,6 +785,7 @@ Owns installment plans (loan and pay-in-installments tracking): plan and entry s
 **Boundary notes**
 - Expense rows stay in Segment 9: plan code never touches `ExpenseDao`; expenses are created and flagged only through `TransactionLifecycleCoordinator` DbOnly ops (`createExpenseDbOnlyV2`, `setSpendingExclusionDbOnly`).
 - Recurring rules and occurrences stay in Segment 7; installment schedules are never written to `recurring_occurrences`, `manual_recurring_expenses` or `planned_expenses`. Reminders reuse Segment 36.
+- Segment 7 depends on this segment through the read-only port `InstallmentEntryLinkReader` (new `domain/recurring` → `domain/installment` edge, S6c); `RecurringInstallmentEligibility` (Segment 7) is the consumer. Segment 18 calls `InstallmentPreBackupReconciler` before the export drain (S6c-4).
 - Cloud payload assembly (Segments 20 and 28) must not reference this segment (INV-31); the guard `installment_cloud_reachability` (Segment 39) enforces it.
 - Backup, verify and wipe coverage of the plan tables belongs to Segment 18; worker scheduling to Segment 12.
 

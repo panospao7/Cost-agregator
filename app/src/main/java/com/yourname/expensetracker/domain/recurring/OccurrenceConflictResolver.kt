@@ -20,10 +20,12 @@ import javax.inject.Inject
  * and ensure occurrence regeneration, reminder cleanup, and planned-expense
  * invalidation happen atomically with rule mutations.
  *
- * TODO (P4-CURRENT-011): Same expense can currently pay multiple rules if
- * merchant/amount/date match more than one rule's occurrence. A global
- * "expense already linked" check across all rules is needed to prevent
- * double-counting.
+ * P4-CURRENT-011 (resolved elsewhere, comment corrected in loan-installments S6c-5): this resolver
+ * still matches per call, so one expense can be offered to more than one rule's occurrence by
+ * separate calls. The global "one expense, one occurrence" check lives downstream:
+ * `RecurringOccurrenceMaterializer` downgrades a PAID resolution whose expense is already linked to
+ * ANY occurrence (R21 F1), and RecurringRuleLifecycleCoordinator.topUpHorizon additionally
+ * pre-filters already-linked expenses before it resolves.
  */
 class OccurrenceConflictResolver @Inject constructor(
     private val installmentEligibility: RecurringInstallmentEligibility

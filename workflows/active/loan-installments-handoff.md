@@ -963,3 +963,52 @@ Validation to request (serial): targeted `*InstallmentPreBackupReconciler*,*Data
 - Next: rerun targeted `*DatabaseBackupRepositoryPreReconcile*`, then the data shard.
 - S6c-4 final targeted (`*DatabaseBackupRepositoryPreReconcile*,*InstallmentPreBackupReconciler*,*DatabaseBackupRepository*`) vr-20261026-124508-2cf6dfd3 PASS. The edits after the data shard PASS (vr-20261026-120221-804dff49) are test-only.
 - S6c-4 accepted: room-migration-guardian ACCEPT-WITH-CONDITIONS and reviewer-strict ACCEPT-WITH-CONDITIONS, all conditions met. Committed. Next: S6c-5 (D-18 restore round-trip test + docs incl. the carried items; guard-strengthening proposals await the owner).
+
+## S6c-5 — implemented (2026-10-26; docs and one test; uncommitted; docs not validated)
+Test (the earlier attempt wrote it and died on an API error; this pass did not touch it):
+- InstallmentRestoreReconcileTest: AE-12 restore half, in two variants (non-redacted export and redacted export). Targeted run vr-20261026-133610-c8a32805 PASS.
+- Finding: the redacted export blanks the plan `displayName` and `lenderLabel`. `recordEntryExpense` uses the plan displayName as the expense merchant, so S7a MUST handle a blank displayName on a restored redacted plan (fallback merchant text or a refusal). This is a binding S7a note, together with the earlier D-18 note (every recordDueEntries run calls reconcile() first and dispatches its batches; no startup hook).
+Source comment fixes (comment only, no behaviour):
+- ExpenseScheduleLinkPolicy KDoc (S6c-2 finding 4).
+- OccurrenceConflictResolver: the stale TODO P4-CURRENT-011 removed/updated (S6c-2b re-check follow-up 3).
+Docs updated:
+- docs/architecture/LEGAL_PATHS.md: the S6c reaction block marked implemented with the corrected runner wording (TLC PostCommitActionRunner runs `installment_expense_changed` / `installment_expense_deleted`; planned for FULL, TYPE, CURRENCY, TRANSFER_DETAILS, PAYMENT_CORE and for deletes; the coordinator decides applicability; SPENDING_INCLUSION never reacts). New blocks: backup pre-reconcile (InstallmentPreBackupReconciler before enterAndDrain, NotReconciled aborts, BackupVerifier is the authority); recurring link-policy consultation (RecurringInstallmentEligibility on the coordinator link paths and OccurrenceConflictResolver generation, INV-5); recurring reconcile INV-5 repair (Unlinked reused); INV-29 detector exclusion (RecurringExpenseEngine.detectPatterns as the single entry point); "after restore" (reconcile at the start of each S7a recordDueEntries run, D-18 option (b), no startup hook). The operations list entries for onExpenseChanged / onExpenseDeleted and reconcile() updated. INV-5 and INV-29 detection half are closed in docs (S6c-2b and S6c-3 tests passed). The advisory about port methods starting with the verb `link` is recorded in CODEBASE_SEGMENTS.
+- docs/architecture/ENGINE_INTERACTION_MAP.md: TLC to installment plan reaction row; recurring/detector exclusion rows; inherited consumer effects (FinancialHealthScoreV2 bill reliability, InsightsEngine anomaly suppression, AnalyticsViewModel counts from unfiltered snapshots); the subscription detector is outside INV-29.
+- docs/architecture/CODEBASE_SEGMENTS.md: Segments 7 and 40 gain the domain/recurring to domain/installment port dependency; new files RecurringInstallmentEligibility, InstallmentEntryLinkReader (+Impl), InstallmentPreBackupReconciler.
+- Recorded as docs caveat (reviewer-strict ISSUE-2): in a FULL batch recurring_reconcile runs before installment_expense_changed, so an R4-unlinked expense is re-offered to recurring matching only on its next edit. Recorded (ISSUE-1): recurring reconcile unlinks on an installment-linked or plan-purchase expense as an INV-5 repair on corrupt or restored data.
+Correction: the S6c-1 note at :760 ("reconcile is the backstop" for a lost in-memory post-commit batch, e.g. budget re-check batches after a cancellation) is WRONG. Reconcile does not re-create those batches. The next budget trigger is the backstop.
+Owner decisions pending (nothing done without approval):
+- (a) Guard strengthening: an InstallmentPlanArchitectureGuardTest allow-list so plan code calls only the TLC DbOnly ops (S6c-1 F3, planted self-check), plus pinning the new port/impl/helper paths (InstallmentEntryLinkReader, InstallmentEntryLinkReaderImpl, RecurringInstallmentEligibility, InstallmentPreBackupReconciler) in READ_ONLY_IMPL_PATHS / DOMAIN_PORT_PATHS (S6c-2 finding 5).
+- (b) InsightsEngine anomaly suppression for installment merchants: they are no longer suppressed as recurring after S6c-3. Keep or restore suppression?
+- (c) Recurring layer-1 UNKNOWN-type alignment: the resolver excludes TransactionType.UNKNOWN, the coordinator gate does not (pre-existing; aligning changes behaviour).
+- (d) The subscription-candidate detector (NotificationSubscriptionDetector) vs INV-29: extend the exclusion or leave it out.
+Owner FYI carried: a persistently failing plan reconcile, or any non-NORMAL mode, blocks .costbackup export (fail-closed by design); the SAF document the user created stays empty after an early abort (pre-existing); the two batch reads of the detector exclusion are not in one transaction (benign for analytics); an exact exclusion of orphan-flag rows needs a new ExpenseDao query (stop-and-ask, not done).
+Validation to request (serial, once for the S6c candidate): `static-guards` (FG-14, FG-26), plus shard data (and domain-a-m if the candidate also changed domain sources). The comment-only source fixes need no separate run beyond the compile in those runs.
+Status: S6c-1 to S6c-5 complete pending that validation and the S6c candidate reviewer-strict gate. Next after acceptance: S7a.
+
+### S6c-5 docs-accuracy review (architecture-guardian ACCEPT-WITH-CONDITIONS) and fixes (2026-10-26)
+- F1: LEGAL_PATHS/ENGINE_INTERACTION_MAP now mark reconcile-at-recordDueEntries as PLANNED and binding on S7a; recordDueEntries does not exist yet. Until S7a the only reconcile() caller is InstallmentPreBackupReconciler.
+- F2: the restore-test claim is narrowed (nothing to repair; reconcile reports all zero; the S7a call site is untested).
+- F3: dependency wording in CODEBASE_SEGMENTS and the ExpenseScheduleLinkPolicy KDoc.
+- F4: annotation on the FORBIDDEN line: restore half enforced by the write barrier, startup half policy only.
+- F5: the OccurrenceConflictResolver comment names topUpHorizon.
+- F6: wording changed to "every reacting update batch".
+- F7: single-expense deletes only.
+- F8: wording changed to `decideRelations`.
+- F9: wording changed to "constant message plus the enum name".
+- Test KDoc: the privacy gate and the post-commit runner are test doubles.
+- Applied partly by a doc agent, which then died on an API error, and finished by the orchestrator: text-only edits, no code change.
+- Open follow-ups:
+  - (a) Owner FYI: bulk updates (planBulkUpdated, incl. TYPE/CURRENCY bulk changes) and the deleteAll paths (ExpenseRepository :886/:916, NotificationRepository :274) plan no installment reaction. Today the only backstop is the pre-backup reconcile; S7a's reconcile closes it.
+  - (b) Verify the wipe paths clear the plan tables. Per the S2 D-2 finding, data removal is Room-wide, so this is likely covered.
+- S6c candidate gate (final tree, serial):
+  - static-guards vr-20261026-142448-542b9580 PASS
+  - app-check vr-20261026-144036-f4732e0c PASS
+  - S6c-5 restore test targeted vr-20261026-133610-c8a32805 PASS
+  - S6c-5 accepted (T2: architecture-guardian docs review, conditions applied). Committed. S6c COMPLETE: S6c-1, 2, 2b, 3, 4, 5.
+- Next: S7a (AUTO_RECORD host + foreground catch-up). Binding notes:
+  - D-c: no backdating of unconfirmed entries.
+  - D-18: reconcile() first in every recordDueEntries run, with its batches dispatched.
+  - S6c-4 finding 8: redacted restored plans have a blank displayName used as the merchant.
+  - The bulk/deleteAll gap is closed by that reconcile.
+- Owner decisions pending: guard strengthening (a), InsightsEngine anomaly suppression (b), the UNKNOWN-type alignment (c), the subscription detector (d).

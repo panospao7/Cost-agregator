@@ -156,6 +156,43 @@ InstallmentProjectionPort (read-only; implemented over InstallmentPlanReadModel)
       registered guard installment_cloud_reachability; payload inputs are computed without the projection
 ```
 
+### TransactionLifecycleCoordinator → installment plan reaction (implemented — loan-installments S6c-1):
+```
+TransactionSideEffectPlanner.planUpdated() / planDeleted()
+  └── installment_expense_changed / installment_expense_deleted (SideEffectCategory.INSTALLMENT_PLAN)
+        → TLC PostCommitActionRunner (after commit; planned for update kinds FULL / TYPE / CURRENCY /
+          TRANSFER_DETAILS / PAYMENT_CORE and for every delete; SPENDING_INCLUSION never reacts)
+        → InstallmentPlanLifecycleCoordinator.onExpenseChanged / onExpenseDeleted (coordinator decides applicability)
+        → plan Done.postCommit batches re-dispatched through the same runner (budget re-check etc.)
+        Backstops: plan reconcile() before a .costbackup export (InstallmentPreBackupReconciler, implemented);
+        reconcile at the start of each recordDueEntries run is PLANNED, binding on S7a (D-18 option (b));
+        recordDueEntries does not exist yet. Until S7a, the only reconcile() caller is InstallmentPreBackupReconciler;
+        restored or orphaned data is not repaired until the next .costbackup export or until S7a lands.
+        Lost in-memory batches are backstopped by the next budget trigger
+```
+
+### Installment exclusion from recurring link / generation / pattern detection (implemented — S6c-2, S6c-2b, S6c-3):
+```
+RecurringInstallmentEligibility (domain/recurring; reads InstallmentEntryLinkReader, a domain/installment port)
+  ├── RecurringLifecycleCoordinator.isExpenseEligibleForRecurring (auto-link, manual link, reconcileExpenseLinkAfterUpdate;
+  │     reconcile unlinks an already linked expense that became installment-linked: INV-5 repair, Unlinked outcome)
+  ├── OccurrenceConflictResolver.resolve (generateOccurrences, projectOccurrences, createRule, activateRule,
+  │     topUpHorizon, updateRule; one batch read per resolve)
+  └── RecurringExpenseEngine.detectPatterns (INV-29; single entry point to detectPatternsFromSnapshots)
+        ├── MergedRecurringPatternsProvider.getPatterns() / getPatternsFromSnapshots
+        ├── InsightsEngine (getPatternsFromSnapshots, two call sites)
+        └── AnalyticsViewModel (getPatternsFromSnapshots)
+Inherited consumer effects (no code change in the consumers):
+  - FinancialHealthScoreV2 Bill Reliability: patterns no longer include installment-linked series
+  - InsightsEngine anomaly suppression: installment merchants are no longer suppressed as recurring
+    (OWNER decision pending whether that is wanted)
+  - AnalyticsViewModel occurrence counts come from unfiltered snapshots (the exclusion applies to pattern
+    detection only, not to counts)
+  - ForecastInputAssembler baselines: its own installment baseline handling is S8b
+Outside INV-29: the subscription-candidate detector (NotificationSubscriptionDetector) is not filtered (follow-up).
+Known gap: the snapshot form cannot see the INSTALLMENT_PURCHASE / _REVERSED flag (effectiveAmount = 0 makes it harmless).
+```
+
 ### WorkerExecutionGuard changes affect:
 ```
 WorkerExecutionGuard.runGuardedWithContext() / runGuarded()
