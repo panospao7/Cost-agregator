@@ -740,3 +740,154 @@ Rollback: revert the dependency, the fragment pin and the manifest line together
 - Merged manifests (debug + release, read-only check): USE_BIOMETRIC present, USE_FINGERPRINT absent (tools:node="remove" effective). Matches owner-approvals item 9.
 - Status: S15 validated + accepted. Committed. es/el prompt strings remain on the owner native-review list.
 - Next: S16 (controller-owned attempt identity; binding carry-forwards above).
+
+## S16 part (i) — implemented (2026-10-26; implementer, validation NOT run)
+Status: implemented, NOT validated (no build/test/guard run). Dormant: nothing in production calls the controller; the
+controller must not be wired to a consumer (S20) before part (ii) lands (see "Part (ii) must-haves"). No schema/DB impact.
+Legal path: new APP LOCK path (domain port-only controller). No Room, no barrier, no new Hilt module (one `@Binds` added).
+
+Files (source, `M/` = app/src/main/java/com/yourname/expensetracker):
+- NEW M/domain/privacy/applock/AppLockState.kt: `LockCause`, `InertReason`, `AppLockOrigin`, `AuthPurpose(origin, isOpenOrigin)`
+  (UNLOCK->LOCKED, ENABLE->DISABLED, CONFIRM_CHANGE->UNLOCKED), sealed `AppLockState` (`Resolving`, `Disabled`, `Locked(cause)`,
+  `Authenticating(attemptId: Long, purpose)`, `Unlocked`, `Inert(reason)`). `attemptId` is the S15 port's `Long`.
+- NEW M/domain/privacy/applock/LockNotice.kt: type only (`Inert(reason)`, `ReviewSettings`, `BiometricInvalidated`).
+- NEW M/domain/privacy/applock/MonotonicClock.kt: port `elapsedRealtimeMillis()`. NEW M/data/privacy/applock/SystemMonotonicClock.kt:
+  `SystemClock.elapsedRealtime()` (the existing `MonotonicTimeProvider` is `System.nanoTime`-backed and does not count deep sleep,
+  so it was not reused). FG-17 `time_boundaries` does not list `SystemClock`; no exception entry needed.
+- NEW M/domain/privacy/applock/AppLockController.kt: `@Singleton`, ports only (`AppLockSettingsRepository`, `DeviceAuthCapabilityProvider`,
+  `MonotonicClock`, `PrivacyDiagnosticsEmitter`, `@ApplicationScope CoroutineScope`). Also holds `UnlockTapResult`.
+- M M/di/AppLockModule.kt: `@Binds @Singleton MonotonicClock -> SystemMonotonicClock` (module count unchanged; the controller needs no binding).
+- M M/domain/diagnostics/DiagnosticReasonCode.kt: 18 spec-10 "Lock" codes appended at the tail (existing order kept):
+  LOCK_SHOWN_COLD_START, LOCK_SHOWN_TIMEOUT, LOCK_SHOWN_SETTINGS_UNREADABLE, LOCK_UNLOCKED, LOCK_AUTH_CANCELLED, LOCK_AUTH_LOCKOUT,
+  LOCK_AUTH_ERROR, LOCK_UNAVAILABLE_API, LOCK_UNAVAILABLE_NOT_SECURE, LOCK_UNAVAILABLE_CAPABILITY, LOCK_INERT_NO_CREDENTIAL,
+  LOCK_INERT_HW_UNAVAILABLE, LOCK_INERT_UNKNOWN, LOCK_INERT_API_UNSUPPORTED, LOCK_INERT_SETTINGS_UNREADABLE, LOCK_ENABLED,
+  LOCK_DISABLED, LOCK_SETTINGS_RECOVERED. (PIN codes are Inc 2 and not added; LOCK_SETTING_PERSIST_FAILED/UNREADABLE/REVIEW_SAVED existed.)
+- M M/domain/privacy/applock/PrivacyDiagnosticsEmitter.kt (OUTSIDE the plan's S16 write set, needed to emit): 9 new `PrivacyDiagnosticCode`
+  entries with no metadata keys: LOCK_SHOWN_COLD_START/TIMEOUT/SETTINGS_UNREADABLE (BLOCKED), LOCK_UNLOCKED (COMPLETED),
+  LOCK_INERT_* x5 (SKIPPED, WARNING). The other lock codes get their entries with part (ii)/S18.
+Files (tests, T = app/src/test/java/com/yourname/expensetracker/domain/privacy/applock):
+- NEW T/AppLockControllerResolutionTest.kt, T/AppLockControllerInertTest.kt, T/AppLockControllerIllegalTransitionTest.kt.
+- NEW T/AppLockControllerTestFixtures.kt (outside the three listed tests; shared fakes: monotonic clock, capability, read-only settings store
+  that counts write attempts, harness over a mockk emitter and an unconfined test scope). Part (ii) tests reuse it.
+
+Transitions implemented (public API = one method per spec 3.1 event):
+- T1 (initial `Resolving`); T2, T3, T4, T5, T6 via `onSettingsResolved(loadState)` and `onResolveTimeout()`; `suspend resolve()` owns T_resolve
+  (2 s, `RESOLVE_TIMEOUT_MILLIS`): bounded read, then RESOLVE_TIMEOUT, then the late read as LATE_SETTINGS_RESOLVED; idempotent; non-IO read exception
+  maps to `Unreadable(IO_ERROR)`; CancellationException rethrown and a later `resolve()` may retry.
+- T6b via `onLateSettingsResolved`: only if the fallback was the controller's own RESOLVE_TIMEOUT, state is exactly `Locked(SETTINGS_UNREADABLE)`
+  (so NOT while `Authenticating`, AMD-22), and the late read is readable with the lock off (Loaded or FirstRunDefault). Else dropped, not retained.
+- T7/T7b via `onUnlockTapped()` (DEVICE_AUTH only): capability re-evaluated at the tap; not AVAILABLE -> `Inert(reason)` + code, no attempt (T7b);
+  else strictly increasing attempt id + `Authenticating(id, UNLOCK)` with the origin cause kept (T7). `AlreadyInFlight` / `NotLocked` otherwise.
+- T8 via `onAuthSucceeded(attemptId)`: only a success whose id equals the open attempt and whose purpose is UNLOCK unlocks; clears the pending
+  background; `LOCK_UNLOCKED`. Everything else is ignored (T12 for the success event).
+- T13 `onAppBackgrounded()`: UNLOCKED and INERT record the first background (kept until consumed). T14/T15/T16 via `onAppForegrounded()` and
+  `onLockQuery()` (T16 foreground only). Pending-background consumption (AMD-22): consumed when T14/T15/T16 evaluate, see decisions D3/D4.
+- Diagnostics (fire and forget on the app scope, INV-37): shown cold start/timeout/unreadable, unlocked, inert x5. Failure of the sink never
+  affects a transition; CE rethrown.
+
+AEs covered: AE-38 (controller part), AE-40, AE-41, AE-43, AE-46 (double tap), AE-47 (stale success after re-lock; the abandoned-attempt half is
+part ii), AE-48, AE-49, AE-51 (controller part; the review notice is S18), AE-52, AE-53, AE-54, AE-58 (controller part), AE-61, AE-63, AE-90.
+Not covered in part (i): AE-42, AE-44, AE-45, AE-50, AE-116, AE-117, AE-118 (prompt outcomes, T9 to T12, T32 to T35), AE-68 and the isolation test
+(INV-36; subject to TECH-10, so no source scan; part (i) only pins the constructor to the five ports and the public method signatures by reflection).
+
+Seams left for part (ii) (all marked `TODO(S16-ii)` in AppLockController.kt; S17/S18 seams marked `TODO(S17)` / `TODO(S18)`):
+1. After `onUnlockTapped` moves to `Authenticating`, the controller does NOT launch the prompt: part (ii) adds the authenticator binding, records
+   the attempt as open before `authenticate`, maps each non-LAUNCHED `AuthLaunch`, retries AWAITING_PRIOR_TERMINAL, owns the watchdog and tolerates
+   re-entrant outcomes (S15 binding carry-forwards).
+2. Outcome events other than success: `onAuthCancelled`, `onAuthError` (T9, T10, T11), `PROMPT_HOST_LOST` (T35, before the adapter echo), stale
+   handling (T12) for them, the `LOCK_AUTH_*` diagnostics and their `PrivacyDiagnosticCode` entries. `InFlightAttempt.originLockCause` is kept for the T9 return.
+3. ENABLE / CONFIRM_CHANGE start API (S18 binds it), `promptBackgroundAt`, T32/T33/T34, the `AuthPromptCopy` per attempt. `onAppBackgrounded` has the
+   T32 hook comment in its non-open branch; `onAuthSucceeded` rejects non-UNLOCK purposes until T33 exists.
+4. Held link (S17): T2/T4/T6/T6b/T8 "apply held link", T14 "in-flight link held". SETTINGS_REREAD/T28/T29 and LockNotice derivation (S18).
+Part (ii) must-haves before any consumer is wired: today an UNLOCK attempt can end only by success (no cancel/error/host-loss exit). That is why
+the controller must stay unwired until part (ii); S20 must not start before it.
+
+Decisions for review (spec ambiguous; fail-closed reading chosen):
+- D1. T7/T8 (UNLOCK start and success) are in part (i) as requested ("T1-T8"), but the prompt launch and every non-success outcome are part (ii). The plan's seam text says (i) = "resolution, inert and T6b"; the AEs assigned (AE-40/41/43/90/63) need an unlock path to reach UNLOCKED.
+- D2. Only the controller's own RESOLVE_TIMEOUT qualifies for T6b. A repository-reported `Unreadable(TIMEOUT)` (a cause normally set by bounded readers) is treated like CORRUPTED/IO_ERROR/INVALID_VALUE: no T6b. A late read arriving while `Authenticating(UNLOCK)` is dropped, not retained for after the prompt (recovery is the S18 re-read, T28/T29). A late read for an INERT(SETTINGS_UNREADABLE_NO_AUTH) fallback is also dropped (T6b names LOCKED only).
+- D3. T14/T15 evaluate only when a background is pending. A foreground or query with nothing pending (rotation, shade, query while in use) changes nothing and consumes nothing, so INERT keeps its banner for the session (AE-49) and IMMEDIATE never locks without a background (AE-41).
+- D4. Consumption rule: `APP_FOREGROUNDED` always consumes in UNLOCKED/INERT. `LOCK_QUERY` consumes only when the lock is active (T14/T15 fired); a query while capability is not AVAILABLE leaves the pending background so a transient failure of the capability check cannot erase time away. The first background wins until consumed (a repeated stop never shortens elapsed).
+- D5. Negative elapsed (clock going backwards) counts as timed out (lock).
+- D6. T14 from INERT: INERT + lock active + elapsed >= timeout -> LOCKED(TIMEOUT) (AE-49). INERT + lock active + elapsed < timeout (a real return) -> UNLOCKED (T15 clears the banner). INERT keeps its original reason across foregrounds while the capability stays unavailable (T16 is UNLOCKED only).
+- D7. Unreadable states and a RESOLVE_TIMEOUT fallback stay under record F after an unlock (IMMEDIATE timer) until a later slice (S18) re-reads; the controller never writes settings in part (i) (verified by a write-counting fake).
+- D8. Lock diagnostics are emitted per transition (rate-limited by the emitter, 1 per code per 60 s), not deduplicated "once per process per cause": per-process dedup would hide later re-locks. Confirm.
+- D9. Verifier-present ([2]) is absent, so T5/T6/T7b decide on capability alone (marked in code).
+- D10. `PrivacyDiagnosticsEmitter.kt` was edited although outside the plan's S16 write set (9 code entries), plus the shared test fixtures file. Confirm or relocate.
+
+Open questions: (1) D1 split reading; (2) D8; (3) whether `onLockQuery()` should return the state (as now) or a bounded S17 result type; (4) the PIN codes in spec 10 stay unadded (Inc 2).
+
+Validation to request (validation-runner, serial, per plan S16 part (i)): `targeted-unit-test` `*AppLockController*`; shard `domain-n-z`; `registered-guard` `time_boundaries` and `cancellation`.
+Suggested extra: targeted `*PrivacyDiagnosticsEmitter*` (new enum entries), and `compile` first (Kotlin compile of the new controller was not run; mockk `answers` blocks and `synchronized` non-local returns are the likeliest compile findings).
+Gates: privacy-security-guardian (lead), architecture-guardian, reviewer-strict.
+
+## S16 part (i) — review fixes (privacy-security-guardian ACCEPT-WITH-CONDITIONS, architecture-guardian ACCEPT-WITH-CONDITIONS)
+Applied 2026-10-26 by the implementer under the orchestrator's final decisions (owner standing instruction). Validation NOT run. No schema impact.
+C = app/src/main/java/com/yourname/expensetracker/domain/privacy/applock/AppLockController.kt; T = app/src/test/java/com/yourname/expensetracker/domain/privacy/applock.
+1. Spec 10 once per process per cause (privacy F1 / architecture F3). D8 RESOLVED: follow the spec (supersedes the D8 reading above).
+   - C:109 `claimedDiagnosticCodes` (`EnumSet.noneOf(PrivacyDiagnosticCode::class.java)`, guarded by `stateLock`); C:395-426 `enterLocked` / `enterInert` return
+     `claim(code)` (null on a repeat) under the monitor; C:282-300 `onAuthSucceeded` claims `LOCK_UNLOCKED` under the monitor. `record()` (C:~450) launches outside
+     the monitor as before and ignores null. The emitter's rate limit is untouched (backstop). Class KDoc updated (C:71).
+   - Tests added in T/AppLockControllerResolutionTest.kt: `spec 10 a second re-lock or unlock with the same code emits nothing new` (:284), `spec 10 a different code
+     still emits once after another was already claimed` (:309), `spec 10 the once-per-process set belongs to one controller, a new process emits again` (:336).
+   - Existing tests re-checked by reading: none asserts a repeated emission (the `.last()` and `count == 1` assertions each see a first-time code), so none changed.
+2. Visibility (privacy F3 / architecture F1): C:159 `onSettingsResolved`, C:168 `onResolveTimeout`, C:180 `onLateSettingsResolved`, C:282 `onAuthSucceeded` are now
+   `@VisibleForTesting(otherwise = VisibleForTesting.PRIVATE) internal` (import `androidx.annotation.VisibleForTesting`, precedent domain/workers/FileWorkerTerminalDiagnosticSink.kt).
+   `resolve()` is the only production entry. The existing reflection test (T/AppLockControllerIllegalTransitionTest.kt:~335) filters by parameter types, not names, and
+   is unchanged. Added T/AppLockControllerIllegalTransitionTest.kt:349 `the resolution events and the auth success are test seams...`, which pins the exact unmangled
+   public method set {getState, resolve, onAppBackgrounded, onAppForegrounded, onLockQuery, onUnlockTapped} (internal members are name-mangled with `$`).
+3. Architecture F2 (comment only): the `TODO(S16-ii)` about the prompt launch moved out of the `synchronized(stateLock)` block to just after it (C:263-267), with
+   "never call authenticate under stateLock; the outcome callback re-enters the public transitions (cancel delivers Failed(SYSTEM_CANCELED) synchronously)".
+4. Architecture F6: C:442-447 `readLoadState` broad catch now logs `Timber.w("App-lock settings read failed: class=%s", DiagnosticThrowableSummary.className(e))` after the
+   CancellationException rethrow (matches AppLockSettingsRepositoryImpl.kt:94). Class name only. No test (Timber output is not asserted in this suite).
+5. Privacy F7 (tests): T/AppLockControllerTestFixtures.kt:102,110 `emittedMetadata` captures the emitter's 2nd argument; T/AppLockControllerResolutionTest.kt:73-74 (AE-38 T3 test)
+   asserts `assertSame(PrivacyDiagnosticMetadata.EMPTY, ...)`. T/PrivacyDiagnosticsEmitterTest.kt:172 `the nine S16 lock codes carry no metadata keys at all` pins empty `allowedKeys`
+   for the 9 new codes.
+6. Privacy F4 (comment only): C:134 KDoc on `resolve()`: S20 must call it from the application scope, or again on each ON_START while the state is RESOLVING.
+
+Validation to request: `compile`, then `targeted-unit-test` `*AppLockController*` and `*PrivacyDiagnosticsEmitter*`; shard `domain-n-z`. Likeliest compile findings: `secondArg<T>()` in the
+mockk `answers` block, and `claim(...)` inside the `synchronized` lambdas that assign the captured `var code`.
+
+### S16 part (i) validation (2026-10-26)
+- Guards on the review-fixed tree all PASS:
+  - registered-guard time_boundaries vr-20261026-091053-fca536a1
+  - cancellation vr-20261026-091111-b4e7529b
+  - known_good_state vr-20261026-091129-87b85a57
+- targeted vr-20261026-090519-4863d0f0 and shard domain-n-z vr-20261026-091430-2d32f77d FAILED on one test only: AppLockControllerIllegalTransitionTest "no public method takes ...".
+  - Cause: Kotlin synthetic accessors `access$readLoadState` / `access$getDiagnostics$p` (static, first param = the controller), generated for lambdas that touch private members.
+  - Fix (test-only, debug iteration 1): filter `!it.isSynthetic`, the same filter the exact-method-set pin uses. Every real public method is still checked, so this is not a loosening.
+- Re-run: targeted + shard domain-n-z.
+
+### S16 part (i) — final gate (reviewer-strict ACCEPT-WITH-CONDITIONS)
+Fixed (implementer, validation NOT run). All paths are under `app/src/main|test/java/com/yourname/expensetracker/domain/privacy/applock/`.
+1. Finding 4, an `Error` from the read left RESOLVING for the whole process.
+   - Fix: `AppLockController.kt:142-149` now catches `Throwable` (not only `CancellationException`), then `read.cancel()`, `resolveStarted.set(false)` and rethrows. KDoc at `:131-134` updated.
+   - Test: `AppLockControllerResolutionTest.kt:218` "an Error from the read propagates and a later resolve can still complete" (ExceptionInInitializerError, then a healthy read resolves to LOCKED COLD_START).
+2. Finding 3, the INV-37 isolation test could not fail.
+   - Harness scope now has a collecting `CoroutineExceptionHandler`: `AppLockControllerTestFixtures.kt:115` (`uncaught`) and the scope at `:126-128`.
+   - Emitter mock moved to `coAnswers` with an `emitSuspendsForever` switch (`:112-124`). `@OptIn(ExperimentalCoroutinesApi::class)` on the harness (`:94`).
+   - `AppLockControllerResolutionTest.kt:245` now asserts the code in `h.emitted` and an empty `h.uncaught`.
+   - New `:261` "a diagnostic emit that never returns does not block this transition or the next one" (`awaitCancellation()`; resolve, unlock and a re-lock all return with the new state).
+3. Finding 5, the blanket `!it.isSynthetic` filter.
+   - `AppLockControllerIllegalTransitionTest.kt:342-352` excludes only methods named `access$...`, and asserts no other synthetic method is declared (`declaredMethods`).
+4. Nits:
+   - `AppLockState.kt:66-69`: the `Unlocked` KDoc now covers T15 (INERT to UNLOCKED within the timeout).
+   - `PrivacyDiagnosticsEmitterTest.kt:185-203`: the vacuous `assertEquals(9, size)` is replaced by an explicit list of the 9 names compared with the emitter's real lock entries (LOCK_SHOWN_*, LOCK_INERT_*, LOCK_UNLOCKED).
+   - `AppLockControllerIllegalTransitionTest.kt:107-123` (AE-46): now asserts exactly one capability re-check across the three taps (`capabilityProvider.evaluations` delta == 1).
+
+Not changed in this pass: visibility and StateFlow publishing. These are binding for part (ii); the orchestrator records them.
+Validation to request: `compile`, `targeted-unit-test` `*AppLockController*` and `*PrivacyDiagnosticsEmitter*`, shard `domain-n-z`.
+
+### S16 part (i) — accepted (2026-10-26)
+- Final-tree validation (serial, all PASS):
+  - targeted `*AppLockController*,*PrivacyDiagnosticsEmitter*,*AppLockModule*` vr-20261026-100353-da6730f3
+  - registered-guard cancellation vr-20261026-100827-a1c36e4b
+  - known_good_state vr-20261026-100845-52861264
+  - shard domain-n-z vr-20261026-101147-4b92e684
+  - time_boundaries vr-20261026-091053-fca536a1 (the production change since then is only the resolve() Throwable re-arm; that guard scans wall-clock APIs only)
+- Gates:
+  - privacy-security-guardian (lead) ACCEPT-WITH-CONDITIONS, fixed
+  - architecture-guardian ACCEPT-WITH-CONDITIONS, fixed
+  - reviewer-strict ACCEPT-WITH-CONDITIONS: findings 3/4/5 + nits fixed; findings 1/2 BINDING for part (ii)
+- BINDING for part (ii)/S19/S20: see the plan amendments "S16 part (i) review outcome" (P1–P7) and "S16 part (i) final gate" (R1–R4, incl. R3: an exception-derived UNKNOWN capability keeps the lock, owner-approvals item 31).
+- Controller stays DORMANT until part (ii) lands.
+- Next: S16 part (ii).

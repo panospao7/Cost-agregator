@@ -2,8 +2,10 @@ package com.yourname.expensetracker.di
 
 import com.yourname.expensetracker.data.privacy.applock.AndroidDeviceAuthCapabilityProvider
 import com.yourname.expensetracker.data.privacy.applock.AppLockSettingsRepositoryImpl
+import com.yourname.expensetracker.data.privacy.applock.SystemMonotonicClock
 import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsRepository
 import com.yourname.expensetracker.domain.privacy.applock.DeviceAuthCapabilityProvider
+import com.yourname.expensetracker.domain.privacy.applock.MonotonicClock
 import dagger.Binds
 import dagger.Module
 import dagger.hilt.InstallIn
@@ -28,4 +30,10 @@ abstract class AppLockModule {
     abstract fun bindDeviceAuthCapabilityProvider(
         impl: AndroidDeviceAuthCapabilityProvider
     ): DeviceAuthCapabilityProvider
+
+    // The timer clock of AppLockController (S16). The controller itself is a @Singleton with an
+    // @Inject constructor, so it needs no binding here.
+    @Binds
+    @Singleton
+    abstract fun bindMonotonicClock(impl: SystemMonotonicClock): MonotonicClock
 }

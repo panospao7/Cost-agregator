@@ -140,6 +140,45 @@ enum class PrivacyDiagnosticCode(
     LOCK_SETTINGS_REVIEW_SAVED(
         DiagnosticReasonCode.LOCK_SETTINGS_REVIEW_SAVED, EventOutcome.COMPLETED, EventSeverity.INFO,
         emptySet()
+    ),
+
+    // App-lock controller (S16 part (i)): lock shown, unlocked, inert. No metadata: the cause or
+    // reason is the code itself. The auth, enable/disable and recovery codes arrive with their slices.
+    LOCK_SHOWN_COLD_START(
+        DiagnosticReasonCode.LOCK_SHOWN_COLD_START, EventOutcome.BLOCKED, EventSeverity.INFO,
+        emptySet()
+    ),
+    LOCK_SHOWN_TIMEOUT(
+        DiagnosticReasonCode.LOCK_SHOWN_TIMEOUT, EventOutcome.BLOCKED, EventSeverity.INFO,
+        emptySet()
+    ),
+    LOCK_SHOWN_SETTINGS_UNREADABLE(
+        DiagnosticReasonCode.LOCK_SHOWN_SETTINGS_UNREADABLE, EventOutcome.BLOCKED, EventSeverity.WARNING,
+        emptySet()
+    ),
+    LOCK_UNLOCKED(
+        DiagnosticReasonCode.LOCK_UNLOCKED, EventOutcome.COMPLETED, EventSeverity.INFO,
+        emptySet()
+    ),
+    LOCK_INERT_NO_CREDENTIAL(
+        DiagnosticReasonCode.LOCK_INERT_NO_CREDENTIAL, EventOutcome.SKIPPED, EventSeverity.WARNING,
+        emptySet()
+    ),
+    LOCK_INERT_HW_UNAVAILABLE(
+        DiagnosticReasonCode.LOCK_INERT_HW_UNAVAILABLE, EventOutcome.SKIPPED, EventSeverity.WARNING,
+        emptySet()
+    ),
+    LOCK_INERT_UNKNOWN(
+        DiagnosticReasonCode.LOCK_INERT_UNKNOWN, EventOutcome.SKIPPED, EventSeverity.WARNING,
+        emptySet()
+    ),
+    LOCK_INERT_API_UNSUPPORTED(
+        DiagnosticReasonCode.LOCK_INERT_API_UNSUPPORTED, EventOutcome.SKIPPED, EventSeverity.WARNING,
+        emptySet()
+    ),
+    LOCK_INERT_SETTINGS_UNREADABLE(
+        DiagnosticReasonCode.LOCK_INERT_SETTINGS_UNREADABLE, EventOutcome.SKIPPED, EventSeverity.WARNING,
+        emptySet()
     )
 }
 

@@ -109,5 +109,26 @@ enum class DiagnosticReasonCode {
     // App-lock settings durability (spec 10; AMD-1, AMD-10).
     LOCK_SETTING_PERSIST_FAILED,
     LOCK_SETTINGS_UNREADABLE,
-    LOCK_SETTINGS_REVIEW_SAVED
+    LOCK_SETTINGS_REVIEW_SAVED,
+
+    // App-lock controller (S16, spec 10 "Lock" group; INV-37). Appended at the tail, existing order
+    // kept. The bucket / cause enums named in the spec travel as typed metadata, never as codes.
+    LOCK_SHOWN_COLD_START,
+    LOCK_SHOWN_TIMEOUT,
+    LOCK_SHOWN_SETTINGS_UNREADABLE,
+    LOCK_UNLOCKED,
+    LOCK_AUTH_CANCELLED,
+    LOCK_AUTH_LOCKOUT,
+    LOCK_AUTH_ERROR,
+    LOCK_UNAVAILABLE_API,
+    LOCK_UNAVAILABLE_NOT_SECURE,
+    LOCK_UNAVAILABLE_CAPABILITY,
+    LOCK_INERT_NO_CREDENTIAL,
+    LOCK_INERT_HW_UNAVAILABLE,
+    LOCK_INERT_UNKNOWN,
+    LOCK_INERT_API_UNSUPPORTED,
+    LOCK_INERT_SETTINGS_UNREADABLE,
+    LOCK_ENABLED,
+    LOCK_DISABLED,
+    LOCK_SETTINGS_RECOVERED
 }

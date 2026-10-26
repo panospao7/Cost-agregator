@@ -1504,3 +1504,53 @@ Notes for the orchestrator:
   - S20: create the adapter after `super.onCreate()` in `MainActivity.onCreate`, on every creation.
   - G1b: besides rotation and cancel-echo observation, cover the library silently skipping a launch ("already showing" prompt fragment after recreation): the new adapter then holds an in-flight attempt that may never be answered by the new prompt, and the controller timeout or PROMPT_HOST_LOST path must close it.
 - **Done in G1a fixes:** a committed review-save now runs the same trigger (before value "was off") in the same serialised, NonCancellable block; the navigation log no longer prints destination parameters.
+
+## Amendment (2026-10-26) — S16 part (i) review outcome (privacy-security-guardian lead + architecture-guardian, both ACCEPT-WITH-CONDITIONS)
+- Write set additions for S16:
+  - `M/domain/privacy/applock/PrivacyDiagnosticsEmitter.kt`: 9 lock codes with empty allowed keys. TECH-8 single front door.
+  - `T/domain/privacy/applock/AppLockControllerTestFixtures.kt`.
+  - `T/.../PrivacyDiagnosticsEmitterTest.kt`: pins.
+- Split seam moved. Part (i) also carries T7/T8 and the timer (T13–T16, pending-background consumption), because AE-40/41/43/49/58/90 need them.
+  - Part (ii) moves the timer, T7 and T8 tests out of `AppLockControllerResolutionTest` into `AppLockControllerTimerTest` / `AppLockControllerAuthOutcomeTest` without duplicating them.
+- D8 decided: emit once per process per cause (spec §10 :1318). The emitter rate limit stays as a backstop.
+- Decisions D1–D7, D9 and D10 accepted as recorded in the handoff.
+- S16 validation list additions:
+  - `compile`;
+  - targeted `*PrivacyDiagnosticsEmitter*`;
+  - `registered-guard known_good_state`, or static-guards at the S16 candidate (after the S15 DB_SIGNATURE_UNRESOLVED incident).
+- BINDING (no wiring): nothing may inject or call AppLockController in production (S20) until S16 part (ii) lands.
+  - Part (ii) must prove that every AUTHENTICATING(UNLOCK) exits. The exits are cancel, error, lockout, NO_DEVICE_CREDENTIAL, every non-LAUNCHED AuthLaunch, host loss and the watchdog.
+- BINDING guidance for part (ii) (architecture P1–P7):
+  - P1: `authenticate` is called outside stateLock, after the attempt is published. Outcomes arrive only through a controller-owned DeviceAuthCallback bound to the InFlightAttempt (identity check), into the id-checked transitions.
+  - P2: a non-LAUNCHED AuthLaunch rolls back to the origin, with no LOCK_AUTH_* code.
+    - Exception: AWAITING_PRIOR_TERMINAL keeps the attempt open and retries within a bound (~1500 ms or the next ON_START), then hands over to the watchdog.
+  - P3: the watchdog runs on the injected scope, is id-checked, closes via T35/T9, and never waits on an outcome.
+  - P4: PROMPT_HOST_LOST is id-checked and closes the attempt before the adapter echo.
+  - P5: the adapter is Activity-scoped and holds no strong reference past onDestroy. authenticate/cancel run on main; hop from the IO app scope.
+  - P6: T34's foreground evaluation needs a foreground flag, set before the early return in onAppBackgrounded.
+  - P7: the reflection pins in AppLockControllerIllegalTransitionTest are updated by exact additions, never loosened.
+- Carry-forwards:
+  - S17: onLockQuery returns a bounded APPLY_NOW/HOLD decision computed under the monitor (open question 3).
+  - S18: INV-47 re-read at each foreground for transient causes. Use a separate reread event and never call onLateSettingsResolved. Never relax LOCKED.
+  - S25: "verifier present" is added to T5/T6/T7b.
+  - S23 docs:
+    - MonotonicTimeProvider KDoc names MonotonicClock as the sleep-inclusive exception;
+    - TIME_SEMANTICS.md (add it to the S23 write set) and hilt-bindings-map `bindMonotonicClock`;
+    - FG-ID note: cancellation is FG-10, privacy is FG-16.
+  - Spec bookkeeping: T6b also accepts FirstRunDefault (no weaker than the T2 cold start).
+
+## Amendment (2026-10-26) — S16 part (i) final gate (reviewer-strict ACCEPT-WITH-CONDITIONS): BINDING for part (ii) / S19 / S20
+- R1 (with P1): part (ii) makes `onAuthSucceeded`, `onSettingsResolved`, `onResolveTimeout` and `onLateSettingsResolved` PRIVATE.
+  - Tests drive `resolve()` (fake repository + test scheduler) and the controller-owned DeviceAuthCallback (fake DeviceAuthenticator).
+  - `internal` + @VisibleForTesting is not enforced: the lint VisibleForTests check is only a warning here.
+  - If anything stays internal, add a source-scan test that fails when any main file other than AppLockController.kt references it.
+  - Rename the method-set pin to what it actually checks.
+- R2 (with P1/P5): StateFlow publication must not run inside `synchronized(stateLock)`.
+  - Part (ii) computes the next state under the lock and publishes it after release, with a version check so a stale value is never published.
+  - Add a test with an Unconfined collector that calls `onLockQuery()` back into the controller.
+  - Until then S19/S20 must not collect on Main.immediate/Unconfined, and must never call a transition or the authenticator from a collector.
+- R3 (orchestrator decision, standing approval; fail-closed): capability UNKNOWN derived from an exception in `canAuthenticate` (AndroidDeviceAuthCapabilityProvider :41-44) is TRANSIENT.
+  - T16/T7b must not open the app to INERT on it; keep LOCKED (or stay in the current locked state) and re-check at the next foreground or tap.
+  - Genuine NONE_ENROLLED/NO_HARDWARE/UNSUPPORTED keep the spec INERT behaviour.
+  - Implement in part (ii), with tests; spec amendment note for domain-modeler at S23.
+- R4: S18's notice logic derives REVIEW_SETTINGS from the load state, not from the INERT reason. T7b/T16 from unreadable settings report a capability reason (cosmetic; F still applies).

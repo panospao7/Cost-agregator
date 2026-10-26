@@ -169,6 +169,45 @@ class PrivacyDiagnosticsEmitterTest {
     }
 
     @Test
+    fun `the nine S16 lock codes carry no metadata keys at all`() {
+        val lockControllerCodes = listOf(
+            PrivacyDiagnosticCode.LOCK_SHOWN_COLD_START,
+            PrivacyDiagnosticCode.LOCK_SHOWN_TIMEOUT,
+            PrivacyDiagnosticCode.LOCK_SHOWN_SETTINGS_UNREADABLE,
+            PrivacyDiagnosticCode.LOCK_UNLOCKED,
+            PrivacyDiagnosticCode.LOCK_INERT_NO_CREDENTIAL,
+            PrivacyDiagnosticCode.LOCK_INERT_HW_UNAVAILABLE,
+            PrivacyDiagnosticCode.LOCK_INERT_UNKNOWN,
+            PrivacyDiagnosticCode.LOCK_INERT_API_UNSUPPORTED,
+            PrivacyDiagnosticCode.LOCK_INERT_SETTINGS_UNREADABLE
+        )
+
+        // The emitter's real S16 part (i) entries: shown, unlocked and inert (not the settings-durability
+        // LOCK_SETTING* codes). A new such code must be added here on purpose.
+        val emitterLockCodes = PrivacyDiagnosticCode.entries.filter {
+            it.name.startsWith("LOCK_SHOWN_") || it.name.startsWith("LOCK_INERT_") || it.name == "LOCK_UNLOCKED"
+        }
+        assertEquals(
+            listOf(
+                "LOCK_SHOWN_COLD_START",
+                "LOCK_SHOWN_TIMEOUT",
+                "LOCK_SHOWN_SETTINGS_UNREADABLE",
+                "LOCK_UNLOCKED",
+                "LOCK_INERT_NO_CREDENTIAL",
+                "LOCK_INERT_HW_UNAVAILABLE",
+                "LOCK_INERT_UNKNOWN",
+                "LOCK_INERT_API_UNSUPPORTED",
+                "LOCK_INERT_SETTINGS_UNREADABLE"
+            ).sorted(),
+            emitterLockCodes.map { it.name }.sorted()
+        )
+        assertEquals(lockControllerCodes.toSet(), emitterLockCodes.toSet())
+        for (code in lockControllerCodes) {
+            assertTrue("${code.name} must allow no metadata key", code.allowedKeys.isEmpty())
+        }
+    }
+
+    @Test
     fun `every allowed key round-trips through the sanitizer for every code`() = runTest {
         for (code in PrivacyDiagnosticCode.entries) {
             val builder = PrivacyDiagnosticMetadata.builder()
