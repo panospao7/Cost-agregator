@@ -35,6 +35,8 @@ import com.yourname.expensetracker.data.backup.BackupVerifier
 import com.yourname.expensetracker.data.backup.CostbackupBundle
 import com.yourname.expensetracker.data.backup.RestoreJournal
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
+import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentPreBackupReconciler
+import com.yourname.expensetracker.domain.installment.lifecycle.PreBackupReconcileResult
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.testfixtures.backup.lowIterationBackupEncryptionService
@@ -107,6 +109,12 @@ class DatabaseBackupRepositoryImplTest {
     private val secureKeyStorage = mockk<SecureKeyStorage>(relaxed = true)
     private val mockRestoreMaintenanceMode = mockk<RestoreMaintenanceMode>(relaxed = true)
     private val mockRestoreJournal = mockk<RestoreJournal>(relaxed = true)
+
+    // S6c-4: these tests exercise the backup pipeline itself; the installment pre-reconcile
+    // is covered by DatabaseBackupRepositoryPreReconcileTest and reports a clean reconcile here.
+    private val mockPreBackupReconciler = mockk<InstallmentPreBackupReconciler> {
+        coEvery { reconcileBeforeBackup() } returns PreBackupReconcileResult.Reconciled
+    }
 
     private val testDispatcher = StandardTestDispatcher()
     private lateinit var repository: DatabaseBackupRepositoryImpl
@@ -2576,6 +2584,7 @@ class DatabaseBackupRepositoryImplTest {
                     operationRunRecorder = mockk(relaxed = true),
                     diagnosticSink = com.yourname.expensetracker.data.backup.TimberMaintenanceSafeDiagnosticSink(),
                     timeProvider = FakeTimeProvider(fixedTime),
+                    installmentPreBackupReconciler = dagger.Lazy { mockPreBackupReconciler },
                     databaseWriteBarrier = barrier
                 )
 
@@ -2951,6 +2960,7 @@ class DatabaseBackupRepositoryImplTest {
             stagedImportVerifier = stagedVerifier,
             liveImportVerifier = liveVerifier,
             timeProvider = timeProvider,
+            installmentPreBackupReconciler = dagger.Lazy { mockPreBackupReconciler },
             operationRunRecorder = operationRunRecorder
         )
     }

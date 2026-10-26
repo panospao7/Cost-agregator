@@ -225,7 +225,11 @@ class BackupVerifierSavingsLedgerTest {
             snapshotCreator = SqliteSnapshotCreator(),
             restoreInternalWriteScope = RestoreInternalWriteScope(mode),
             operationRunRecorder = recorder, diagnosticSink = sink,
-            timeProvider = clock
+            timeProvider = clock,
+            // S6c-4: restore never reconciles; a strict mock fails the test if it is ever called.
+            installmentPreBackupReconciler = dagger.Lazy {
+                mockk<com.yourname.expensetracker.domain.installment.lifecycle.InstallmentPreBackupReconciler>()
+            }
         )
         try {
             val result = repository.restoreCostBackup(bundle, "test-savings-password")

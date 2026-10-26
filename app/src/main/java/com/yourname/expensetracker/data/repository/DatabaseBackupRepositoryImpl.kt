@@ -42,6 +42,8 @@ import com.yourname.expensetracker.domain.diagnostics.NoOpOperationRunHandle
 import com.yourname.expensetracker.domain.diagnostics.OperationRunHandle
 import com.yourname.expensetracker.domain.diagnostics.OperationRunRecorder
 import com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata
+import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentPreBackupReconciler
+import com.yourname.expensetracker.domain.installment.lifecycle.PreBackupReconcileResult
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptAssetStore
 import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -97,6 +99,12 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
     private val operationRunRecorder: com.yourname.expensetracker.domain.diagnostics.OperationRunRecorder,
     private val diagnosticSink: MaintenanceSafeDiagnosticSink,
     private val timeProvider: TimeProvider,
+    /**
+     * Loan-installments S6c-4 (INV-30, owner item 17): repairs installment orphans before a
+     * `.costbackup` export enters its maintenance mode. Lazy: it reaches the plan coordinator,
+     * which depends on the transaction lifecycle graph. Used only by [runCostBackupExport].
+     */
+    private val installmentPreBackupReconciler: dagger.Lazy<InstallmentPreBackupReconciler>,
     private val databaseReadBarrier: com.yourname.expensetracker.data.backup.DatabaseReadBarrier =
         com.yourname.expensetracker.data.backup.DatabaseReadBarrier(restoreMaintenanceMode),
     private val databaseWriteBarrier: com.yourname.expensetracker.data.backup.DatabaseWriteBarrier =
@@ -124,6 +132,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         stagedImportVerifier: suspend (Context, String, File, Int, DatabaseImportSummary) -> DatabaseImportSummary,
         liveImportVerifier: suspend (AppDatabase, File, Int, DatabaseImportSummary) -> DatabaseImportSummary,
         timeProvider: TimeProvider,
+        installmentPreBackupReconciler: dagger.Lazy<InstallmentPreBackupReconciler>,
         operationRunRecorder: OperationRunRecorder = NoOpOperationRunRecorder
     ) : this(
         context, database, ioDispatcher, privacyGate, privacySettingsRepository,
@@ -140,7 +149,8 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         com.yourname.expensetracker.data.backup.RestoreInternalWriteScope(restoreMaintenanceMode),
         operationRunRecorder,
         com.yourname.expensetracker.data.backup.TimberMaintenanceSafeDiagnosticSink(),
-        timeProvider
+        timeProvider,
+        installmentPreBackupReconciler
     ) {
         this.stagedImportVerifier = stagedImportVerifier
         this.liveImportVerifier = liveImportVerifier
@@ -666,6 +676,33 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                         PrivacyGateReasonCodes.PRIVACY_GATE_FAILURE
                     }
                 )
+            )
+        }
+
+        // Loan-installments S6c-4 (INV-30, owner item 17): repair installment orphans left by an
+        // expense delete or update whose plan reaction did not run, BEFORE the maintenance mode
+        // is entered. The reconcile writes through the plan coordinator, which the write barrier
+        // refuses once BACKUP_EXPORTING is active, and it must never run inside a counted write
+        // (enterAndDrain would throw MAINTENANCE_DRAIN_REENTRANT). Nothing has been entered yet,
+        // so an abort here has no maintenance mode to exit and no snapshot to clean up.
+        // Cancellation propagates unchanged. BackupVerifier stays fail-closed: a write racing
+        // between this reconcile and the drain fails that one backup and a retry succeeds.
+        val preReconcile = installmentPreBackupReconciler.get().reconcileBeforeBackup()
+        if (preReconcile is PreBackupReconcileResult.NotReconciled) {
+            Timber.w("Backup: aborted before snapshot stage=installment_pre_reconcile reason=%s", preReconcile.reason.name)
+            // Bounded enum name only (NOT_DONE / RECONCILE_INCOMPLETE / EXCEPTION), so the stored
+            // run row distinguishes the causes. No free text.
+            run.event(
+                "INSTALLMENT_PRE_RECONCILE",
+                com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
+                reasonCode = DiagnosticReasonCode.VALIDATION_FAILED,
+                metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                    .put("reason", preReconcile.reason.name)
+                    .build()
+            )
+            run.failedFinal(DiagnosticReasonCode.VALIDATION_FAILED.name)
+            return@withContext Result.failure(
+                Exception("Backup aborted: installment plans could not be reconciled (${preReconcile.reason.name})")
             )
         }
 
