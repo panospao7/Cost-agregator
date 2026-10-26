@@ -748,3 +748,156 @@ Owner decisions from this amendment: only the A6 test-shards.json edit (at S5). 
 - A12.7 Validation per batch (serial): (1) targeted "*ExpenseDaoSpendingPredicate*,*SpendingInclusionParity*,*TransactionLifecycleCoordinatorSpendingInclusion*,*ExpenseDaoTest*,*ExpenseRepositoryAssistantSqlGolden*,*ExpenseRepositoryAmountSemanticsSql*,*ComparableHomeValueSqlParity*" (golden/parity tests confirmed present in this worktree); (2) registered-guard db_access; (3) shard data; (4) shard integration-golden. S4d also: spending_predicate_usage, raw_money_aggregates, static-guards, shards domain-a-m, domain-n-z, architecture-contracts. Gates: architecture-guardian + reviewer-strict on every batch; S4d guard review (FG-02/06/07/17/23).
 - A12.8 D-13: the main checkout (feature/ai-evolution) has uncommitted ExpenseDao.kt additions at ~:86-117 and ~:156-195 only (orchestrator diff 2026-10-24) — no A12 query touched; keep diffs token-level.
 - OWNER questions (needed before S4d): O1 close plan-gate item 7 as "no Kotlin raw-.amount changes" (recommend YES); O2 INV-1 applies to business/tax totals (TaxEstimator:292) — a declared business purchase counts 0, installments count when paid; COUNT columns keep including the flagged purchase (recommend YES); O3 the BackupVerifier semantic-aggregate defect → separate post-feature ticket (recommend YES). Optional confirms: WarrantyDao ASSET_VALUE; getCountForPeriod ROW_COUNT.
+
+
+## A13 — S6c sub-slicing (feature-planner 2026-10-26; binding; replaces the S6c write set at ~:327-346)
+Source: workflows/active/loan-installments-s6c-discovery.md (scout, current source). Approved by the orchestrator under the owner's standing instruction (owner-approvals item 28 session; recorded in the handoff).
+
+Common rules:
+- Every new cross-module dependency is `Lazy<...>`.
+- CancellationException is always rethrown.
+- Diagnostics use a class name or a bounded enum only.
+- Every `Done.postCommit` batch is dispatched through the executor TLC uses, never dropped. Confirm that class at the start.
+- No DAO write outside the coordinator.
+- No schema change. The Room schema JSON stays byte-identical.
+- DB policy pins stay at 452. Reads add no rows; prove it with `registered-guard db_access`.
+- No db_raw_query_classification entry (only @Query reads).
+- S6a/S6b fixtures are reused read-only. If a fixture must change, the sub-slices that touch it run serially.
+- Docs belong to S6c-5 only.
+- Tier is T3 unless noted.
+
+### S6c-1 — TLC post-commit reaction (R2/R4/R5, §7.6)
+- Source: `domain/transaction/lifecycle/TransactionSideEffectPlanner.kt`. Possibly `SideEffectCategory`.
+- Tests: new `domain/installment/lifecycle/InstallmentExpenseReactionTest.kt`, plus ctor updates wherever `TransactionSideEffectPlanner(` is built.
+- Closes:
+  - AE-11 delete part: entry SCHEDULED, recordGeneration+1, autoRecordConsumed unchanged, plan ACTIVE.
+  - AE-16 entry fields ("no re-create" stays in S7a).
+  - AE-25.
+  - AE-20: a category edit leaves plan rows and events unchanged.
+  - §7.6: a currency or type change unlinks.
+- Constraints:
+  - `planDeleted` → `onExpenseDeleted`.
+  - `planUpdated` → `onExpenseChanged`, only for FULL / TYPE / CURRENCY / TRANSFER_DETAILS / PAYMENT_CORE. Use an exhaustive `when`; a superset is safe because the reaction is idempotent.
+  - SPENDING_INCLUSION never reacts. This breaks the loop on the coordinator's own flag writes.
+  - planCreated and planBulkUpdated are unchanged; reconcile is the backstop.
+  - The action follows `makeRecurringUnlinkAction`. It returns FailedRetryable on a non-Done result, on plansFailed or orphanFlagsFailed > 0, on an exception, or on a closed barrier.
+  - Loop test with the real planner, coordinator and TLC: at most one further invocation, which changes 0 rows, and no recursion.
+  - An expense with no plan produces no plan writes.
+- SideEffectCategory: (a) add INSTALLMENT_PLAN if no guard, allowlist or persisted column references the enum; otherwise (b) reuse the closest existing value.
+- Gates: architecture-guardian (FG-14), reviewer-strict.
+- Validation: targeted `*InstallmentExpenseReaction*,*TransactionSideEffectPlanner*`; then shards domain-n-z and domain-a-m.
+
+### S6c-2 — Recurring link-policy consultation (INV-4/5)
+- Source:
+  - `domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt`.
+  - New port `domain/installment/lifecycle/InstallmentEntryLinkReader.kt` (`linkedEntryIdFor(expenseId)`).
+  - New `data/repository/InstallmentEntryLinkReaderImpl.kt`, which uses `getEntryByLinkedExpenseId`.
+  - One binding in the DI module that binds InstallmentExpenseFactsReader.
+- Tests: recurring coordinator tests (plus ctor updates); new `InstallmentEntryLinkReaderImplTest.kt`.
+- Closes:
+  - AE-13 first bullet: auto-link skips the installment expense and the occurrence stays PLANNED.
+  - A manual link of an installment-linked expense or a plan purchase record is refused.
+  - An existing link to the same occurrence still passes.
+- Constraints:
+  - The single gate is `isExpenseEligibleForRecurring` (:799), made suspend.
+  - Relations come from `InstallmentLinkRelations.forExistingExpense`, never re-derived from spendingExclusionReason.
+  - The decision is made by `ExpenseScheduleLinkPolicy.mayLinkToRecurringOccurrence`.
+  - The read runs inside `claimLinkSuppressInWrite`'s transaction.
+  - A refusal reuses the existing ineligible outcome.
+- Gates: architecture-guardian, reviewer-strict.
+- Validation: targeted `*RecurringLifecycleCoordinator*,*InstallmentEntryLinkReader*,*ExpenseScheduleLinkPolicy*`; then `registered-guard db_access`; then shards domain-n-z and data.
+
+### S6c-3 — INV-29 detector exclusion (T2; depends on S6c-2, which owns the port and impl)
+- Source:
+  - `domain/logic/RecurringExpenseEngine.kt`.
+  - `domain/forecasting/MergedRecurringPatternsProvider.kt` (:39 calls the pure detector directly).
+  - `data/database/dao/InstallmentPlanDao.kt`: add `getLinkedExpenseIds()` (`SELECT DISTINCT linkedExpenseId FROM installment_entries WHERE linkedExpenseId IS NOT NULL`).
+  - Port and impl: add `linkedExpenseIds(): Set<Long>`.
+- Tests:
+  - New `domain/logic/RecurringExpenseEngineInstallmentExclusionTest.kt`.
+  - `InstallmentPlanDaoTest`.
+  - Ctor updates in the RecurringExpenseEngine tests, MergedRecurringPatternsProviderTest, InsightsEngineValidationTest, e2e/AnalyticsPipelineTest and e2e/NotificationParserDashboardTotalSeamTest.
+- Closes:
+  - INV-29 detection half.
+  - AE-11 last bullet: 12 × 50.00 installment expenses produce no pattern.
+  - Control: the same series unlinked is still detected.
+  - With no plans, the output is identical to today.
+- Constraints:
+  - The engine owns the rule. A new suspend `detectPatterns(...)` reads the id set once, filters by snapshot id, then delegates to the pure `detectPatternsFromSnapshots`.
+  - Route getPatterns(), getPatternsFromSnapshots (which covers AnalyticsViewModel), getPatterns(List<Expense>) and MergedRecurringPatternsProvider through it.
+  - A test asserts that no production file outside the engine calls `detectPatternsFromSnapshots(`.
+  - RecurringPattern is unchanged. No new catch. ForecastInputAssembler baselines stay in S8b.
+- Gates: architecture-guardian; standard review.
+- Validation: targeted `*RecurringExpenseEngine*,*MergedRecurringPatternsProvider*,*InsightsEngineValidation*,*AnalyticsPipeline*,*NotificationParserDashboardTotalSeam*,*InstallmentPlanDaoTest*`; then db_access; then shards domain-a-m and data.
+
+### S6c-4 — Backup pre-reconcile (INV-30, owner item 17, F8)
+- Source:
+  - New `domain/installment/lifecycle/InstallmentPreBackupReconciler.kt`. It runs reconcile(), dispatches the batches, and returns Reconciled or NotReconciled.
+  - `data/repository/DatabaseBackupRepositoryImpl.kt`: Lazy injection, and the secondary test ctor (:112-147).
+- Tests: new `InstallmentPreBackupReconcilerTest.kt` and `data/repository/DatabaseBackupRepositoryPreReconcileTest.kt`; ctor updates in the backup tests.
+- Closes:
+  - AE-12 backup half.
+  - Item 17: a backup right after an unreacted expense delete or update passes verify.
+  - plansFailed or orphanFlagsFailed > 0, or an exception, fails closed before the snapshot.
+- Constraints:
+  - Only in `runCostBackupExport`: after the privacy gate (~:670) and before `enterAndDrain` (:678), while the mode is still NORMAL.
+  - Never inside a runWrite (that throws MAINTENANCE_DRAIN_REENTRANT).
+  - On abort, use an existing failure outcome. On cancellation the mode stays NORMAL.
+  - BackupVerifier is untouched. Test: an orphan injected after the reconcile still fails verify.
+  - exportDatabase (debug) is excluded.
+  - createSafetyBackup gets the call only if it runs in NORMAL mode and runs the orphan verify. Never inside restore maintenance.
+- Gates: room-migration-guardian, reviewer-strict.
+- Validation: targeted `*InstallmentPreBackupReconciler*,*DatabaseBackupRepository*,*BackupVerifier*`; then shards data and domain-a-m.
+
+### S6c-5 — D-18 restore + docs (T2; after S6c-1..4)
+- Docs:
+  - LEGAL_PATHS :899-907, :1667 and :1669: mark as implemented.
+  - Add LEGAL_PATHS rows for the backup pre-reconcile, the recurring consultation and the detector exclusion.
+  - ENGINE_INTERACTION_MAP; CODEBASE_SEGMENTS segment 40.
+- Test: new `data/repository/InstallmentRestoreReconcileTest.kt` (AE-12 restore half): counts equal, reconcile() changes 0 rows, per-month totals equal. If there is no JVM restore fixture, use a snapshot-copy fixture.
+- Validation: targeted `*InstallmentRestoreReconcile*,*Restore*`; then shard data; then static-guards once per S6c candidate (FG-14, FG-26).
+
+### Decisions (orchestrator, under the standing owner instruction; owner FYI)
+- Item 17 = option (a): reconcile immediately before enterAndDrain. Verify is unchanged and fail-closed. A write racing between reconcile and drain fails that backup, and a retry succeeds. The literal "under the barrier" reading would need a barrier contract change (stop-and-ask) and is not taken. This matches handoff F8.
+- D-15: the detector is RecurringExpenseEngine, plus the MergedRecurringPatternsProvider reroute. RecurringPlanProjectionService has one consumer (RecurringRuleLifecycleCoordinator :46).
+- D-18 = option (b). BINDING S7a NOTE: every `recordDueEntries` run (worker and foreground) calls `reconcile()` first and dispatches its batches. No startup trigger and no persisted marker; that would be stop-and-ask, touching D-19 startup and new persisted state.
+- SideEffectCategory and createSafetyBackup coverage are decided at implementation start by the rules above, and recorded in the handoff.
+- Lanes: S6c-1 ‖ S6c-2→S6c-3 ‖ S6c-4→S6c-5. Implementers run one at a time in this worktree: they share ctor-update test files, and the lane has a single writer. Batch validation follows.
+
+### Stop-and-ask triggers
+- S6c-2 needs a new recurring result or reason value.
+- S6c-3 finds a pure-detector production caller that cannot be rerouted, or RecurringPattern must change.
+- db_access needs a policy row, or the pins move off 452.
+- A classification entry or raw query appears.
+- The Room schema JSON changes.
+- Item 17 (b) or D-18 (a) would be needed.
+- New user-visible strings (es/el sign-off).
+
+### A13.1 — S6c-1/S6c-2 review outcome (architecture-guardian, both ACCEPT-WITH-CONDITIONS; orchestrator decisions 2026-10-26)
+- S6c-1 fixes (in the S6c-1 write set):
+  - F1: correct the TRANSFER_DETAILS comment (superset per A13).
+  - F2: TransactionTargetedUpdateSideEffectsTest. The stubs assert `!db.inTransaction()`. Add coVerify of onExpenseChanged: exactly 1 for updateType, 0 for category and merchant.
+  - F4: exact AE-20 events assertion.
+- S6c-2 fixes:
+  - C2: the port gains `suspend fun isPlanPurchase(expenseId): Boolean` (planDao.getPlanByPurchaseExpenseId != null). The gate's relations use "plan row OR flag", same as the plan coordinator's link. Test: a plan row without the flag is refused.
+  - C3: the reader is injected as `dagger.Lazy` (A13 common rule; no exception).
+  - C4:
+    - tests 8a (the read runs inside the transaction, auto + manual);
+    - 8b (reconcile-unlink events: exactly one OCCURRENCE_UNLINKED, no new OCCURRENCE_PAID, planned row not FULFILLED);
+    - 8c (orphan INSTALLMENT_PURCHASE flag);
+    - 8d (golden tests use the real reader over the real DB).
+- NEW S6c-2b — the recurring generation path consults the policy (finding 1, HIGH; INV-5, domain-spec row (d) ~:521):
+  - Write set: domain/recurring/OccurrenceConflictResolver.kt (inject the shared eligibility helper); RecurringLifecycleCoordinator (extract layer 2 into the shared helper; projectOccurrences is covered by the resolver); the port/impl gain batch reads `linkedExpenseIds(): Set<Long>` and `planPurchaseExpenseIds(): Set<Long>`.
+  - InstallmentPlanDao gains `getLinkedExpenseIds()`. That read moves here from S6c-3, and S6c-3 reuses it.
+  - The new `getPlanPurchaseExpenseIds()` (@Query reads only) gets constructor updates for OccurrenceConflictResolver in tests.
+  - Batch read once per resolve, never one read per expense.
+  - Tests: createRule / activateRule / topUpHorizon with a same-day installment-linked or plan-purchase expense leave the occurrence PLANNED, write no PLANNED_FULFILLED event, and keep reminders scheduled. The normal-expense regression still gets PAID.
+  - Gates: architecture-guardian re-check of the single-gate claim; reviewer-strict at the S6c candidate.
+  - Stop-and-ask if the recurring result/reason contract would change.
+- Carried to S6c-5 (docs):
+  - S6c-1 F5: handoff :760 backstop wording; LEGAL_PATHS :899-907 runner/dispatcher wording; ENGINE_INTERACTION_MAP TLC→plan row.
+  - S6c-2 finding 4: the ExpenseScheduleLinkPolicy comment; CODEBASE_SEGMENTS seg 7/40; the LEGAL_PATHS consultation row; INV-5 stays open in docs until S6c-2b passes.
+- Guard strengthening proposals go to the OWNER (guard changes are stop-and-ask even when they strengthen):
+  - S6c-1 F3: an InstallmentPlanArchitectureGuardTest allow-list, so plan code calls only the TLC DbOnly ops (planted self-check).
+  - S6c-2 finding 5: pin the new port/impl in READ_ONLY_IMPL_PATHS / DOMAIN_PORT_PATHS.
+  - Proposed for S6c-5; not done without approval.

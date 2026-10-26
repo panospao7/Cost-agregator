@@ -12,7 +12,8 @@ import javax.inject.Inject
  * Resolves occurrence candidates against actual expenses to determine whether
  * each candidate has been paid, is still planned, or should be skipped.
  *
- * Pure domain logic — no DI needed. Instantiate as a plain class.
+ * Matching is pure domain logic. The one read it performs is the installment exclusion set from
+ * [RecurringInstallmentEligibility] (INV-5, S6c-2b), taken once per [resolve] call.
  *
  * TODO (P4-CURRENT-007): Rule CRUD is not coordinator-owned. A future
  * RecurringRuleLifecycleCoordinator should own create/update/delete of rules
@@ -24,7 +25,9 @@ import javax.inject.Inject
  * "expense already linked" check across all rules is needed to prevent
  * double-counting.
  */
-class OccurrenceConflictResolver @Inject constructor() {
+class OccurrenceConflictResolver @Inject constructor(
+    private val installmentEligibility: RecurringInstallmentEligibility
+) {
 
     /**
      * The resolved status of an occurrence candidate after matching against
@@ -53,6 +56,10 @@ class OccurrenceConflictResolver @Inject constructor() {
      * 3. Amount within ±10% tolerance of the expected amount.
      * 4. Same currency.
      *
+     * 5. The expense is not excluded by the installment link policy (INV-5): an expense that pays an
+     *    installment entry, or is a plan purchase record, is never a match, so its occurrence stays
+     *    PLANNED and unlinked. The exclusion set is read ONCE per call, not per expense.
+     *
      * Each actual expense may be matched to **at most one** occurrence
      * (first-matched wins).
      *
@@ -64,11 +71,17 @@ class OccurrenceConflictResolver @Inject constructor() {
         candidates: List<OccurrenceCandidate>,
         actualExpenses: List<Expense>
     ): List<ResolvedOccurrence> {
+        if (candidates.isEmpty()) return emptyList()
+
+        // One batch read per call (never per expense). The read joins the caller's Room
+        // transaction when resolve runs inside one.
+        val installmentExcludedIds = installmentEligibility.excludedExpenseIds(actualExpenses)
         val matchedExpenseIds = mutableSetOf<Long>()
 
         return candidates.map { candidate ->
             val match = actualExpenses.firstOrNull { expense ->
                 if (matchedExpenseIds.contains(expense.id)) return@firstOrNull false
+                if (installmentExcludedIds.contains(expense.id)) return@firstOrNull false
 
                 if (expense.isNotMine) return@firstOrNull false
                 if (expense.transactionType == TransactionType.TRANSFER ||

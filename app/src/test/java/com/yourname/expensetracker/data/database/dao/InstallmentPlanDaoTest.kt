@@ -773,6 +773,89 @@ class InstallmentPlanDaoTest {
         assertEquals(0, dao.updatePlanShapeIfActive(31337L, 5, 20, NOW))
     }
 
+    // ── batch id reads (S6c-2b) ──────────────────────────────────
+
+    @Test
+    fun getLinkedExpenseIds_returns_every_linked_expense_of_any_entry_status_and_skips_unlinked_entries() = runTest {
+        val planA = dao.insertPlan(plan(uuid = "ids-a"))
+        val planB = dao.insertPlan(plan(uuid = "ids-b", status = "CANCELLED"))
+        dao.insertEntries(
+            listOf(
+                entry(planA, seq = 1, status = "PAID", linkedExpenseId = 501L, linkOrigin = "USER_LINKED"),
+                entry(planA, seq = 2, status = "REVERSED", linkedExpenseId = 502L, linkOrigin = "USER_LINKED"),
+                entry(planA, seq = 3, status = "SCHEDULED"),
+                entry(planB, seq = 1, status = "PAID", linkedExpenseId = 503L, linkOrigin = "AUTO_RECORDED")
+            )
+        )
+
+        val ids = dao.getLinkedExpenseIds()
+
+        assertEquals(setOf(501L, 502L, 503L), ids.toSet())
+        assertEquals("distinct ids, no duplicates", 3, ids.size)
+    }
+
+    @Test
+    fun getLinkedExpenseIds_is_empty_when_there_are_no_plans_or_no_links() = runTest {
+        assertTrue(dao.getLinkedExpenseIds().isEmpty())
+
+        val planId = dao.insertPlan(plan(uuid = "ids-none"))
+        dao.insertEntries(listOf(entry(planId, seq = 1), entry(planId, seq = 2)))
+
+        assertTrue(dao.getLinkedExpenseIds().isEmpty())
+    }
+
+    @Test
+    fun getLinkedExpenseIds_agrees_with_getEntryByLinkedExpenseId_for_every_expense() = runTest {
+        val planId = dao.insertPlan(plan(uuid = "ids-agree"))
+        dao.insertEntries(
+            listOf(
+                entry(planId, seq = 1, status = "PAID", linkedExpenseId = 601L, linkOrigin = "USER_LINKED"),
+                entry(planId, seq = 2, status = "SCHEDULED")
+            )
+        )
+        val linked = dao.getLinkedExpenseIds().toSet()
+
+        for (expenseId in listOf(600L, 601L, 602L)) {
+            val single = dao.getEntryByLinkedExpenseId(expenseId)
+            assertEquals(
+                "expense $expenseId: batch and single reads must agree",
+                single != null,
+                expenseId in linked
+            )
+        }
+    }
+
+    @Test
+    fun getPlanPurchaseExpenseIds_returns_the_purchase_of_every_plan_status_and_skips_standalone_plans() = runTest {
+        dao.insertPlan(plan(uuid = "pp-active", purchaseExpenseId = 701L, status = "ACTIVE"))
+        dao.insertPlan(plan(uuid = "pp-cancelled", purchaseExpenseId = 702L, status = "CANCELLED"))
+        dao.insertPlan(plan(uuid = "pp-refunded", purchaseExpenseId = 703L, status = "REFUNDED"))
+        dao.insertPlan(plan(uuid = "pp-standalone", kind = KIND_STANDALONE, purchaseExpenseId = null))
+
+        val ids = dao.getPlanPurchaseExpenseIds()
+
+        assertEquals(setOf(701L, 702L, 703L), ids.toSet())
+        assertEquals("distinct ids, no duplicates", 3, ids.size)
+    }
+
+    @Test
+    fun getPlanPurchaseExpenseIds_is_empty_without_attached_plans_and_agrees_with_the_single_read() = runTest {
+        assertTrue(dao.getPlanPurchaseExpenseIds().isEmpty())
+        dao.insertPlan(plan(uuid = "pp-only-standalone", kind = KIND_STANDALONE, purchaseExpenseId = null))
+        assertTrue(dao.getPlanPurchaseExpenseIds().isEmpty())
+
+        dao.insertPlan(plan(uuid = "pp-one", purchaseExpenseId = 710L))
+        val purchases = dao.getPlanPurchaseExpenseIds().toSet()
+        for (expenseId in listOf(709L, 710L, 711L)) {
+            val single = dao.getPlanByPurchaseExpenseId(expenseId)
+            assertEquals(
+                "expense $expenseId: batch and single reads must agree",
+                single != null,
+                expenseId in purchases
+            )
+        }
+    }
+
     // ── helpers ──────────────────────────────────────────────────
 
     private suspend fun scheduledEntry(uuid: String): Long {

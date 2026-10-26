@@ -49,6 +49,13 @@ interface InstallmentPlanDao {
     @Query("SELECT * FROM installment_plans WHERE purchaseExpenseId = :expenseId LIMIT 1")
     suspend fun getPlanByPurchaseExpenseId(expenseId: Long): InstallmentPlan?
 
+    /**
+     * Batch read (S6c-2b): the purchase expense id of every plan that has one, of any plan status.
+     * Read-only. Used by the recurring generation path to exclude plan purchase records in one read.
+     */
+    @Query("SELECT DISTINCT purchaseExpenseId FROM installment_plans WHERE purchaseExpenseId IS NOT NULL")
+    suspend fun getPlanPurchaseExpenseIds(): List<Long>
+
     @Query("SELECT * FROM installment_plans ORDER BY createdAt ASC, id ASC")
     suspend fun getAllPlans(): List<InstallmentPlan>
 
@@ -73,6 +80,14 @@ interface InstallmentPlanDao {
 
     @Query("SELECT * FROM installment_entries WHERE linkedExpenseId = :expenseId LIMIT 1")
     suspend fun getEntryByLinkedExpenseId(expenseId: Long): InstallmentEntry?
+
+    /**
+     * Batch read (S6c-2b): the expense id linked by every installment entry, of any entry status
+     * (PAID and REVERSED included). Read-only. Shared by the recurring generation path and the
+     * pattern-detector exclusion (S6c-3).
+     */
+    @Query("SELECT DISTINCT linkedExpenseId FROM installment_entries WHERE linkedExpenseId IS NOT NULL")
+    suspend fun getLinkedExpenseIds(): List<Long>
 
     /** Entries in [status] due on or before [dueOnOrBefore] (epochDay), oldest first. */
     @Query("SELECT * FROM installment_entries WHERE status = :status AND dueDate <= :dueOnOrBefore ORDER BY dueDate ASC, id ASC")

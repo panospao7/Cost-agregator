@@ -19,8 +19,10 @@ import com.yourname.expensetracker.data.database.entity.RecurringLifecycleEvent
 import com.yourname.expensetracker.data.database.entity.RecurringOccurrence
 import com.yourname.expensetracker.data.database.entity.RecurringReminderDelivery
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.data.repository.InstallmentEntryLinkReaderImpl
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.recurring.OccurrenceConflictResolver
+import com.yourname.expensetracker.domain.recurring.RecurringInstallmentEligibility
 import com.yourname.expensetracker.domain.recurring.RecurringOccurrenceExpander
 import com.yourname.expensetracker.domain.recurring.RecurringPlanProjectionService
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -121,10 +123,14 @@ class RecurringHorizonAndLinkR21Test {
             plannedExpenseDao = plannedDao
         )
 
+        val installmentEligibility = RecurringInstallmentEligibility(
+            dagger.Lazy { InstallmentEntryLinkReaderImpl(database.installmentPlanDao()) }
+        )
+
         lifecycle = RecurringLifecycleCoordinator(
             database = database,
             expander = RecurringOccurrenceExpander(),
-            resolver = OccurrenceConflictResolver(),
+            resolver = OccurrenceConflictResolver(installmentEligibility),
             materializer = materializer(),
             occurrenceDao = occurrenceDao,
             expenseDao = expenseDao,
@@ -136,7 +142,8 @@ class RecurringHorizonAndLinkR21Test {
             writeBarrier = barrier,
             plannedExpenseDao = plannedDao,
             transactionRunner = io.mockk.mockk(relaxed = true),
-            eventWriter = eventWriter
+            eventWriter = eventWriter,
+            installmentEligibility = installmentEligibility
         )
         val projection = RecurringPlanProjectionService(
             plannedExpenseDao = plannedDao,
@@ -154,7 +161,7 @@ class RecurringHorizonAndLinkR21Test {
             lifecycleEventDao = eventDao,
             lifecycleCoordinator = dagger.Lazy { lifecycle },
             expander = RecurringOccurrenceExpander(),
-            resolver = OccurrenceConflictResolver(),
+            resolver = OccurrenceConflictResolver(installmentEligibility),
             materializer = materializer(),
             expenseDao = expenseDao,
             eventWriter = eventWriter,
