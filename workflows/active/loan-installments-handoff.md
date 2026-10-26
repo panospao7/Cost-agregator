@@ -1141,3 +1141,102 @@ Paths are under app/src/main/java/com/yourname/expensetracker (main) and app/src
   - map stoppedByBarrier to a retry;
   - cover run-level read failures and a barrier closed at reconcile start with a bounded Result;
   - dispatch the Done.postCommit batches after the call returns.
+
+## S7a-2 — implemented (2026-10-26; uncommitted; nothing compiled, run or validated)
+No stop-and-ask trigger hit: no db_ownership change, no G-WORKER-01 allowlist entry, no startup hook, no AppStartupCoordinator edit, no persisted marker, no new privacy category.
+
+### Files (all in C:\Users\panos\Desktop\Cost-agregator-mec)
+- New: app/src/main/java/com/yourname/expensetracker/service/installment/InstallmentDueRecordingWorker.kt
+  - The RecurringHorizonWorker shape. Injects InstallmentPlanLifecycleCoordinator, PostCommitActionRunner, WorkerExecutionGuard and TimeProvider.
+  - Work name `installment_due_recording`. Guard request: requiresDatabaseWrite, no notification permission, no backup-export, BlockedPolicy.RETRY, specVersion from DEFAULTS.
+  - Inside the guard block: one `checkpoint("installment_due:run")`, then ONE call `recordDueEntries(today, zone)`.
+  - Zone is `ZoneId.systemDefault()`. Today is `TimeProvider.now()` converted to an epoch day in that zone. TimeProvider only exposes now(), the same as the template.
+- Registrations in domain/workers:
+  - WorkerSpec.DEFAULTS: `installment_due_recording`, 24h, KEEP, NetworkType.NOT_REQUIRED (the recurring_horizon constraints).
+  - WorkerRegistry: import plus Entry after recurring_horizon.
+  - WorkerGuardVerifier: workerRegistry map entry plus findWorkerClasses.
+  - WorkerSpecScheduler.listAllWorkerNames.
+  - PrivacyRuntimeWorkerPolicy: unchanged. It lists only gated workers, and the new worker is local-only like recurring_horizon, which is not listed there either. No new category.
+- docs/architecture/LEGAL_PATHS.md: the INSTALLMENT DUE RECORDING row now describes the worker (12 work names, the Result mapping, no startup hook or marker).
+- Tests:
+  - New service/installment/InstallmentDueRecordingWorkerTest.kt (14 tests).
+  - WorkerContractTest 8→9 plus the key set.
+  - WorkerGuardStaticVerificationTest: KNOWN_WORKER_FQNS +1, listAllWorkerNames 11→12.
+  - WorkerGuardVerifierTest (an extra pin the brief did not list): 11→12 plus the name.
+  - No PrivacyRuntimeWorkerPolicy test change, because the worker is not in the policy.
+
+### G-WORKER-01 check (read scripts/verify_worker_boundaries.py; not run)
+The worker has the accepted shape:
+- Top-level `val guardResult = executionGuard.runGuardedWithContext(...) { ... }` and a single top-level `return guardResult.toWorkerResult()`. No `return` inside the lambda. The receiver is a typed `val executionGuard: WorkerExecutionGuard` constructor property.
+- No identifier ending in `Dao`, so the DAO-mutator check cannot fire.
+- The only broad catch, `catch (e: Exception)` in dispatchBatches, has a sibling `catch (e: CancellationException) { throw e }`, the `if (e is CancellationException) throw e` idiom and a `Log.w`. The run-level catch is the specific DatabaseAccessBlockedException.
+- Expected: no violations and no allowlist entry.
+
+### Result mapping
+| Outcome | Worker behaviour | Result |
+|---|---|---|
+| guard denied, restore or maintenance mode, open gate | the guard's own mapping; no coordinator call | retry (BlockedRetry) or success (Skipped) |
+| Done, no failures, not stopped (including deferred and refused) | batches dispatched | success |
+| Done, stoppedByBarrier | batches dispatched first, then `RetryableWorkerException("INSTALLMENT_DUE_STOPPED_BY_BARRIER")` | retry |
+| Done, any per-entry failed count | batches dispatched, then `RetryableWorkerException("INSTALLMENT_DUE_PARTIAL_FAILURE")` | retry |
+| DatabaseAccessBlockedException from the call (closed barrier at reconcile start) | `RetryableWorkerException("INSTALLMENT_DUE_BARRIER_CLOSED")`; no dispatch | retry |
+| result not Done (impossible today) | log class name, then `IllegalStateException("INSTALLMENT_DUE_NOT_DONE")` | failure (guard Failed) |
+| other run-level read exception (getPlansByStatus, getEntriesForPlan) | not caught; the guard classifies it | transient retry or failure (WORKER_UNHANDLED_EXCEPTION) |
+| a batch dispatch exception | logged by class name, the other batches continue | result unchanged |
+| CancellationException (call or dispatch) | never caught here | propagates |
+
+### Notes and risks
+- A dispatch failure does not change the Result, because a retry would not re-dispatch the batch.
+- Retrying on per-entry failure follows the template's partial-failure policy. A persistently failing entry (a CONFLICT or RECORD_FAILED count) retries on WorkManager backoff until the next period.
+- CORRECTION to the line above (architecture review F1, 2026-10-26): for periodic work `Result.retry()` keeps backing off (exponential from 30 s, capped at 5 h; WorkerSpec / WorkerSpecScheduler); it does not stop at the next period. A persistent per-entry failure therefore gives about 10 attempts in the first ~8.5 h, then one attempt every 5 h indefinitely. Each attempt is bounded in rate, idempotent and matches the RecurringHorizonWorker precedent. The orchestrator accepts this policy. Optional follow-up for both workers: a `runAttemptCount` cap that ends in success while keeping `ctx.addErrors`.
+- If the run-level read fails after reconcile already committed some plan transactions, reconcile's batches are lost, because the call throws before returning. This is a known S7a-1 limit, noted in the S7a-1 handoff.
+- The ZoneId is read at run time, so a zone change between runs moves "today". This is the same trust as the confirm path.
+- Hilt: the worker injects the coordinator directly, as the recurring worker does with its coordinator. The coordinator's Lazy ports exist for the backup graph, not for workers.
+- LEGAL_PATHS:667 still says "All 10 production CoroutineWorkers" (stale before this slice; the verifier lists 11, now 12). Left alone.
+
+### Validation to request (serial)
+1. targeted `*InstallmentDueRecordingWorker*,*WorkerContract*,*WorkerGuardStaticVerification*,*PrivacyRuntimeWorkerPolicy*,*WorkerRegistry*` (add `*WorkerGuardVerifier*`, `*WorkerRestoreRegression*` and `*RestoreMaintenanceMode*`: they enumerate DEFAULTS)
+2. registered-guard cancellation (the worker cancellation guard, including G-WORKER-01)
+3. shard runtime-ui, then architecture-contracts
+4. S7a candidate: static-guards, then app-check
+
+### Gates
+architecture-guardian, privacy-security (diagnostics are bounded reason codes and class names only), reviewer-strict.
+
+### S7a-2 — architecture review (ACCEPT-WITH-CONDITIONS) and fixes (2026-10-26; uncommitted; docs and comments only except the CANCEL-01 fix)
+- F1 (retry policy): the S7a-2 risk note "retries on WorkManager backoff until the next period" was wrong. Correction appended under "Notes and risks" above. For periodic work `Result.retry()` backs off exponentially from 30 s, capped at 5 h, so a persistent per-entry failure gives about 10 attempts in the first ~8.5 h and then one every 5 h. Bounded in rate, idempotent, same as RecurringHorizonWorker. The orchestrator accepts the policy. Optional follow-up for both workers: a `runAttemptCount` cap that ends in success while keeping `ctx.addErrors`.
+- F2: LEGAL_PATHS "All 10 production CoroutineWorkers" changed to 12 (9 WorkerSpec.DEFAULTS + notification_intake + 2 action workers), consistent with the S7a-2 row. This resolves the stale-count remark under "Notes and risks".
+- F3: LEGAL_PATHS "DatabaseAccessBlockedException before the first entry" changed to "at reconcile start". A barrier that closes mid-reconcile counts as plansFailed; the run then becomes stoppedByBarrier at the first entry, or succeeds if nothing is due.
+- F4: accepted, no change.
+- F5 (doc drift, comment and docs only): WorkerSpec.kt KDoc "all 8 background workers" now 9; CODEBASE_SEGMENTS Segment 40 now says the worker exists (service/installment/InstallmentDueRecordingWorker.kt); WORKER_BASELINE_INVENTORY (row, registered list 7b, counts), WORKER_REQUIREMENTS_MATRIX (section and privacy summary row) and WORKER_EXECUTION_POLICY (backoff row, parity 9/9, constraints row) list `installment_due_recording` in the existing style: 24h periodic, KEEP, no network, DB write, BlockedPolicy.RETRY, no notification, no privacy gate.
+- F6: KDoc on the worker's companion `schedule()`: kept for template parity, same scheduleFromSpec / unique name / KEEP as WorkerRegistry; WorkerRegistry is the production scheduling path. Comment only.
+- F7: info, no change.
+- CANCEL-01 (fix applied by the orchestrator): the architecture-contracts shard vr-20261026-200658-57f29be7 FAILED on CancellationSafetyArchitectureGuardTest at the coordinator's `recordOneDueEntry` broad catch, because the barrier catch sits between the CancellationException catch and the broad catch. Fix: an explicit `if (e is CancellationException) throw e` in that catch. This touches committed S7a-1 code; the fix ships with the S7a-2 commit.
+- Earlier PASS runs (before the CANCEL-01 fix): targeted vr-20261026-195937-ebd96645, cancellation vr-20261026-200511-06687a6c, runtime-ui vr-20261026-200527-33bb0fe4.
+- To request (serial): re-run the architecture-contracts shard after the CANCEL-01 fix, plus a targeted run of `*InstallmentRecordDueEntries*` (touched coordinator catch); then static-guards and app-check for the S7a candidate.
+
+### S7a-2 — final gate (reviewer-strict ACCEPT-WITH-CONDITIONS) and fixes (2026-10-27; uncommitted; nothing compiled, run or validated after these fixes)
+- ISSUE-1 (fixed): `finishRun` ignored reconcile failures when nothing was due, so a run whose reconcile failed looked clean in the worker run context. Now `ctx.addErrors(failed + reconcile.plansFailed + reconcile.orphanFlagsFailed)` when the sum is above zero, and `ctx.addRowsUpdated(recorded + reconcile repair counts r1..r6 + orphanFlagsCleared)`. The Result mapping is unchanged (reconcile failures alone still give success; only `stoppedByBarrier` or per-entry `failed` retry). New test: `reconcile failures with nothing due are recorded as errors and the Result is unchanged`.
+- ISSUE-2 (fixed, test only): the batch-dispatch test now asserts through `ShadowLog.getLogsForTag(InstallmentDueRecordingWorker.TAG)` that no log message contains "/private" or "1234.56" (and that a log was written). The run-level read-failure test was renamed to drop "without leaking its message" because it never asserted that.
+- Accepted residual F1: persistent per-entry failure retries on WorkManager backoff (bounded in rate, idempotent, same as RecurringHorizonWorker). Follow-up for both workers: a `runAttemptCount` cap that ends in success while keeping `ctx.addErrors`.
+- To request (serial): targeted `*InstallmentDueRecordingWorkerTest*`, then the S7a candidate static-guards and app-check.
+
+### S7a-2 — accepted; S7a COMPLETE (2026-10-27)
+- Final tree (serial, PASS):
+  - targeted vr-20261026-215055-553c06c1
+  - static-guards vr-20261026-215614-e9b548b4
+- Earlier S7a candidate runs on the pre-minor-fix tree:
+  - architecture-contracts vr-20261026-202935-8d5f60d6
+  - app-check vr-20261026-205551-e8e90b57
+  - cancellation vr-20261026-200511-06687a6c
+  - runtime-ui vr-20261026-200527-33bb0fe4
+- Gates:
+  - architecture-guardian ACCEPT-WITH-CONDITIONS (fixed)
+  - reviewer-strict ACCEPT-WITH-CONDITIONS (ISSUE-1/2 fixed)
+- Includes the CANCEL-01 shape fix in the S7a-1 coordinator (`recordOneDueEntry`). LESSON: every coordinator batch must include the architecture-contracts shard.
+- Committed. S7a is done (S7a-1 + S7a-2): auto-recording runs daily via InstallmentDueRecordingWorker. The overview-open trigger is S10.
+- Follow-ups:
+  - runAttemptCount cap for both daily workers (optional);
+  - owner-approved S6c follow-ups (owner-approvals item 37);
+  - guard strengthening (owner-approvals item 36(a)).
+- Next per plan: S7b / S8 (check the plan dependency graph).

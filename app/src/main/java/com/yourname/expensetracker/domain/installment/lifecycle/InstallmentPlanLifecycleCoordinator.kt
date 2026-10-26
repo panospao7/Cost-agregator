@@ -1402,6 +1402,9 @@ class InstallmentPlanLifecycleCoordinator @Inject constructor(
             acc.report = acc.report.copy(stoppedByBarrier = true)
             return
         } catch (e: Exception) {
+            // CANCEL-01 shape: the sibling CancellationException catch above is not adjacent (the
+            // barrier catch sits between), so the guard needs the explicit rethrow here as well.
+            if (e is CancellationException) throw e
             acc.noteFailure(e)
             acc.report = acc.report.withFailed(InstallmentOpFailure.RECORD_FAILED)
             return

@@ -664,7 +664,8 @@ FORBIDDEN:
 EVERY worker:
   → WorkerExecutionGuard.runGuarded() / runGuardedWithContext()
        [checks write barrier FIRST, then logs run]
-  → All 10 production CoroutineWorkers route through the guard, including
+  → All 12 production CoroutineWorkers (9 WorkerSpec.DEFAULTS + notification_intake + 2 action workers)
+       route through the guard, including
        NotificationIntakeWorker (previously allowlisted, now gated) and the
        SnoozeReminderActionWorker / DismissReminderActionWorker pair.
   → WorkerRunLogger records RUNNING → SUCCESS/FAILED/SKIPPED/RETRY
@@ -708,13 +709,22 @@ FORBIDDEN:
 ```
 
 ```
-INSTALLMENT DUE RECORDING (coordinator entry point implemented — loan-installments S7a-1; worker S7a-2 and
-overview S10 callers still planned; no worker exists yet):
-  → A dedicated InstallmentDueRecordingWorker (CoroutineWorker) with its own WorkerRegistry entry (PLANNED, S7a-2),
-    routed through WorkerExecutionGuard.runGuarded() like every worker; the production worker count
-    above grows by one when it lands
-  → worker (S7a-2) or foreground catch-up trigger (overview, S10; both still pending)
-    → InstallmentPlanLifecycleCoordinator.recordDueEntries(today, zone) (implemented, S7a-1)
+INSTALLMENT DUE RECORDING (coordinator entry point implemented — loan-installments S7a-1; worker implemented —
+S7a-2; overview S10 caller still planned):
+  → InstallmentDueRecordingWorker (CoroutineWorker, work name "installment_due_recording", daily periodic, no
+    network, local-data only and not privacy-gated) with its own WorkerRegistry entry, routed through
+    WorkerExecutionGuard.runGuardedWithContext() like every worker (the production worker count above is now 12
+    work names: 9 WorkerSpec.DEFAULTS + notification_intake + 2 action workers). It has no startup hook, no
+    AppStartupCoordinator edit and no persisted marker (D-19); it is scheduled only through WorkerRegistry.
+  → worker (S7a-2) or foreground catch-up trigger (overview, S10; pending)
+    → InstallmentPlanLifecycleCoordinator.recordDueEntries(today, zone) (implemented, S7a-1); the worker makes this
+      ONE call, then dispatches Done.postCommit batches through PostCommitActionRunner (each batch in its own
+      try/catch, cancellation rethrown, failure logged by class name only), and maps the report to a bounded Result:
+      stoppedByBarrier → retry; any per-entry failure → retry (INSTALLMENT_DUE_PARTIAL_FAILURE); a
+      DatabaseAccessBlockedException at reconcile start → retry (INSTALLMENT_DUE_BARRIER_CLOSED; a barrier that
+      closes mid-reconcile counts as plansFailed, and the run then becomes stoppedByBarrier at the first entry, or
+      succeeds if nothing is due); a non-Done
+      result → bounded failure; run-level read exceptions are left to the guard; deferred and refused are success
     → reconcile() first (its batches are returned in Done.postCommit for the CALLER to dispatch after commit),
       then one transaction per entry (writeBarrier.runWrite + database.withTransaction),
       expense created via TransactionLifecycleCoordinator.createExpenseDbOnlyV2 (STRICT_EXTERNAL_ID)

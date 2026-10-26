@@ -128,6 +128,23 @@
 | `retryOnPermissionDenied` | N/A |
 | `maxAttemptsPolicy` | Spec backoff; any per-rule failure ends the run with `RetryableWorkerException("RECURRING_HORIZON_PARTIAL_FAILURE")` after the remaining rules were processed (top-up is idempotent) |
 
+#### `InstallmentDueRecordingWorker`
+
+| Field | Value |
+|---|---|
+| `requiresDatabaseRead` | Yes — ACTIVE AUTO_RECORD installment plans and their entries |
+| `requiresDatabaseWrite` | Yes — due-entry recording via `InstallmentPlanLifecycleCoordinator.recordDueEntries` only (no DAO access in the worker) |
+| `requiresNetwork` | No |
+| `requiresNotificationPermission` | No |
+| `requiresCloudAllowed` | No |
+| `requiresPrivacyCapability` | None (local data only; not privacy-gated, not in `PrivacyRuntimeWorkerPolicy`) |
+| `blocksDuringMaintenance` | Yes — `allowDuringBackupExport=false`, `blockedPolicy=RETRY` |
+| `allowDuringMaintenanceWithOwner` | None |
+| `requiresForeground` | No |
+| `retryOnMaintenance` | Yes — `BlockedPolicy.RETRY` |
+| `retryOnPermissionDenied` | N/A |
+| `maxAttemptsPolicy` | Spec backoff (24h periodic, `KEEP`); a stopped-by-barrier run, any per-entry failure or a closed barrier at reconcile start ends the run with a `RetryableWorkerException` (`INSTALLMENT_DUE_STOPPED_BY_BARRIER`, `INSTALLMENT_DUE_PARTIAL_FAILURE`, `INSTALLMENT_DUE_BARRIER_CLOSED`); recording is idempotent |
+
 #### `ReceiptMatchingWorker`
 
 | Field | Value |
@@ -263,6 +280,7 @@
 | `DataRetentionWorker` | None |
 | `BillReminderWorker` | None |
 | `RecurringHorizonWorker` | None |
+| `InstallmentDueRecordingWorker` | None |
 | `ReceiptMatchingWorker` | None |
 | `WarrantyExpirationWorker` | None |
 | `NotificationIntakeWorker` | None (runtime filter only) |

@@ -361,6 +361,7 @@ object WorkerSpecScheduler {
         "ai_daily_briefing",
         "bill_reminder_periodic",
         "recurring_horizon",
+        "installment_due_recording",
         "reminder_action_dismiss",
         "reminder_action_snooze"
     )

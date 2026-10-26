@@ -44,10 +44,10 @@ class WorkerGuardVerifierTest {
      * true negative enforcement.
      */
     @Test
-    fun `worker registry contains all 11 workers`() {
+    fun `worker registry contains all 12 workers`() {
         val knownNames = WorkerSpecScheduler.listAllWorkerNames()
 
-        // The 11 expected work names from the spec
+        // The 12 expected work names from the spec
         val expectedNames = setOf(
             "notification_intake",
             "location_backfill",
@@ -58,13 +58,14 @@ class WorkerGuardVerifierTest {
             "ai_daily_briefing",
             "bill_reminder_periodic",
             "recurring_horizon",
+            "installment_due_recording",
             "reminder_action_dismiss",
             "reminder_action_snooze"
         )
 
         assertEquals(
-            "listAllWorkerNames must return exactly 11 work names",
-            11, knownNames.size
+            "listAllWorkerNames must return exactly 12 work names",
+            12, knownNames.size
         )
 
         for (name in expectedNames) {

@@ -41,7 +41,7 @@ data class WorkerSpec(
 ) {
     companion object {
         /**
-         * Default specs for all 8 background workers in the system.
+         * Default specs for all 9 background workers in the system.
          *
          * These values reflect the Phase 8 target configuration:
          * - LocationBackfill: 12h interval, UNMETERED network (up from 6h).
@@ -80,6 +80,17 @@ data class WorkerSpec(
             // scheduling never resets the periodic chain.
             "recurring_horizon" to WorkerSpec(
                 name = "recurring_horizon",
+                repeatIntervalHours = 24,
+                existingWorkPolicy = ExistingPeriodicWorkPolicy.KEEP,
+                constraints = Constraints.Builder()
+                    .setRequiredNetworkType(NetworkType.NOT_REQUIRED)
+                    .build()
+            ),
+            // Loan-installments S7a-2: daily auto-record of due installment entries.
+            // Local data only (no network, not privacy-gated); KEEP so cold-start
+            // scheduling never resets the periodic chain.
+            "installment_due_recording" to WorkerSpec(
+                name = "installment_due_recording",
                 repeatIntervalHours = 24,
                 existingWorkPolicy = ExistingPeriodicWorkPolicy.KEEP,
                 constraints = Constraints.Builder()
