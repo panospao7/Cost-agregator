@@ -10,7 +10,8 @@ enum class AppLockSettingField {
     DISCREET,
     REVIEW_SAVE,
     APP_LOCK_ENABLED,
-    AUTO_LOCK_TIMEOUT
+    AUTO_LOCK_TIMEOUT,
+    SECURE_SCREEN
 }
 
 /** Why a settings write was refused before touching the store. */
@@ -23,7 +24,13 @@ enum class AppLockWriteRejection {
      * requested timeout is longer than the stored one. That is a weakening that needs the fresh prompt, so nothing was
      * written.
      */
-    WOULD_WEAKEN
+    WOULD_WEAKEN,
+
+    /**
+     * S18 i-b2 (INV-48, AE-103): the stored lock flag is on, so `discreetNotifications` and `secureScreen` are forced and
+     * their stored values are read-only. Nothing was written and no authentication is asked.
+     */
+    FORCED
 }
 
 /**
@@ -111,4 +118,26 @@ interface AppLockSettingsRepository {
      */
     suspend fun setAutoLockTimeoutIfNotWeakening(timeout: AutoLockTimeout): AppLockSettingsWriteResult =
         AppLockSettingsWriteResult.Failed(AppLockSettingField.AUTO_LOCK_TIMEOUT)
+
+    /**
+     * Forced-aware per-field write of `discreetNotifications` (S18 i-b2; INV-48, AE-103, INV-44, INV-46). The check and
+     * the write are ONE store edit:
+     * - `Unreadable` store: `Rejected(UNREADABLE)`, nothing written;
+     * - the stored lock flag is on (discreet is forced, also while the lock state is `INERT`): `Rejected(FORCED)`,
+     *   nothing written, no authentication is asked (a write of either value is refused);
+     * - otherwise the write, `Committed` only after the durable commit; `Failed(DISCREET)` if it fails.
+     *
+     * The default fails closed (`Failed(DISCREET)`, nothing written). The real store overrides it.
+     * TODO(S18 privacy review finding 8): the default becomes abstract before any wiring.
+     */
+    suspend fun setDiscreetNotificationsIfNotForced(enabled: Boolean): AppLockSettingsWriteResult =
+        AppLockSettingsWriteResult.Failed(AppLockSettingField.DISCREET)
+
+    /**
+     * Forced-aware per-field write of `secureScreen` (S18 i-b2). Same contract as [setDiscreetNotificationsIfNotForced]
+     * with `Failed(SECURE_SCREEN)`: a stored lock flag that is on gives `Rejected(FORCED)` and nothing is written.
+     * The default fails closed. TODO(S18 privacy review finding 8): the default becomes abstract before any wiring.
+     */
+    suspend fun setSecureScreenIfNotForced(enabled: Boolean): AppLockSettingsWriteResult =
+        AppLockSettingsWriteResult.Failed(AppLockSettingField.SECURE_SCREEN)
 }

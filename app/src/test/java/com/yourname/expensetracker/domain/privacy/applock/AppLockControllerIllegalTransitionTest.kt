@@ -516,10 +516,17 @@ class AppLockControllerIllegalTransitionTest {
             DeviceAuthCapability::class.java,
             // S18 (i-b1), exact addition: the closed AutoLockTimeout enum of startTimeoutChangeAttempt and
             // onTimeoutWrittenWithoutPrompt. It carries no text or platform detail.
-            AutoLockTimeout::class.java
+            AutoLockTimeout::class.java,
+            // S18 (i-b2), exact addition: the closed field enum of onPlainSettingWritten. No text or platform detail.
+            AppLockSettingField::class.java
         )
-        // The committed flag is allowed for these two methods only (S18 i-a, and i-b1's no-prompt timeout write).
-        val committedFlagMethods = setOf("onOpenOriginSettingApplied", "onTimeoutWrittenWithoutPrompt")
+        // The committed flag is allowed for these three methods only (S18 i-a, i-b1's no-prompt timeout write, and
+        // i-b2's plain-setting write, which also carries the written value as a Boolean).
+        val committedFlagMethods = setOf(
+            "onOpenOriginSettingApplied",
+            "onTimeoutWrittenWithoutPrompt",
+            "onPlainSettingWritten"
+        )
         // Only compiler-generated accessors (`access$...`, first parameter = the controller) are not API.
         // Any other synthetic method on the controller is unexpected and fails the test below.
         val declared = AppLockController::class.java.declaredMethods
@@ -570,7 +577,10 @@ class AppLockControllerIllegalTransitionTest {
                 // timeout write's view and failure record. Both have exactly one production caller,
                 // AppLockSettingsOperations.kt.
                 "startTimeoutChangeAttempt",
-                "onTimeoutWrittenWithoutPrompt"
+                "onTimeoutWrittenWithoutPrompt",
+                // S18 (i-b2), exact addition: the view and failure record of a forced-aware discreet or secure-screen
+                // write. One production caller, AppLockSettingsOperations.kt.
+                "onPlainSettingWritten"
             ),
             production
         )
@@ -640,6 +650,19 @@ class AppLockControllerIllegalTransitionTest {
             timeoutDirect.single().parameterTypes.toList()
         )
         assertEquals(Void.TYPE, timeoutDirect.single().returnType)
+
+        // S18 (i-b2): the plain-setting record takes the closed field enum, the written value and the committed flag.
+        val plain = own.filter { it.name == "onPlainSettingWritten" }
+        assertEquals(1, plain.size)
+        assertEquals(
+            listOf<Class<*>>(
+                AppLockSettingField::class.java,
+                Boolean::class.javaPrimitiveType!!,
+                Boolean::class.javaPrimitiveType!!
+            ),
+            plain.single().parameterTypes.toList()
+        )
+        assertEquals(Void.TYPE, plain.single().returnType)
     }
 
     @Test
@@ -673,16 +696,19 @@ class AppLockControllerIllegalTransitionTest {
             "onOpenOriginSettingApplied",
             // S18 (i-b1), exact additions: the longer-timeout start and the no-prompt timeout write entry.
             "startTimeoutChangeAttempt",
-            "onTimeoutWrittenWithoutPrompt"
+            "onTimeoutWrittenWithoutPrompt",
+            // S18 (i-b2), exact addition: the forced-aware plain-setting record.
+            "onPlainSettingWritten"
         )
-        // S18 (i-a, i-b1): these six have exactly one production caller, the settings operations file, and nothing else.
+        // S18 (i-a, i-b1, i-b2): these seven have exactly one production caller, the settings operations file.
         val settingsOperationsOnly = setOf(
             "startOpenOriginAttempt",
             "onOpenOriginApplyCompleted",
             "onEnableRefusedAtRequest",
             "onOpenOriginSettingApplied",
             "startTimeoutChangeAttempt",
-            "onTimeoutWrittenWithoutPrompt"
+            "onTimeoutWrittenWithoutPrompt",
+            "onPlainSettingWritten"
         )
         val offenders = roots.flatMap { root ->
             root.walkTopDown()
@@ -714,7 +740,15 @@ class AppLockControllerIllegalTransitionTest {
         // Lifting this pin (allowing the settings UI as a caller) needs the BLOCKING list closed first: see
         // LEGAL_PATHS WRITE 3/4 and handoff S18 (i-b1) item 5.
         // The scan skips comment lines (KDoc links such as [AppLockSettingsOperations] are not calls).
-        val dormant = listOf("AppLockSettingsOperations", "requestEnable", "requestDisable", "requestTimeoutChange")
+        val dormant = listOf(
+            "AppLockSettingsOperations",
+            "requestEnable",
+            "requestDisable",
+            "requestTimeoutChange",
+            // S18 (i-b2), exact additions.
+            "requestDiscreetChange",
+            "requestSecureScreenChange"
+        )
         val offenders = locateProductionSourceRoots().flatMap { root ->
             root.walkTopDown()
                 .filter { it.isFile && (it.extension == "kt" || it.extension == "java") }
@@ -750,6 +784,22 @@ class AppLockControllerIllegalTransitionTest {
         // Pins the call site `.setAutoLockTimeoutIfNotWeakening(` (the declarations have no leading dot). An exact
         // addition: the unconditional pin above is unchanged. Comment lines skipped.
         assertSingleProductionCaller(".setAutoLockTimeoutIfNotWeakening(", "$APPLOCK_PACKAGE_PATH/AppLockSettingsOperations.kt")
+    }
+
+    @Test
+    fun `S18 i-b2 - the forced-aware discreet and secure-screen writes each have exactly one production call site, AppLockSettingsOperations`() {
+        // Pins the call sites (the declarations have no leading dot). The 1a `.setDiscreetNotifications(` caller, the
+        // use case, is a different method name and is unchanged. Comment lines skipped.
+        assertSingleProductionCaller(".setDiscreetNotificationsIfNotForced(", "$APPLOCK_PACKAGE_PATH/AppLockSettingsOperations.kt")
+        assertSingleProductionCaller(".setSecureScreenIfNotForced(", "$APPLOCK_PACKAGE_PATH/AppLockSettingsOperations.kt")
+    }
+
+    @Test
+    fun `S18 i-b2 privacy review F3 - the unforced 1a discreet write has exactly one production call site, UpdateDiscreetNotificationsUseCase`() {
+        // Pins the call site `.setDiscreetNotifications(` (the declarations and the IfNotForced variant have no match:
+        // the variant's name continues after `Notifications`). The 1a use case is the only caller; the 1a secure-screen
+        // path has no unforced `.setSecureScreen(` call site in production today. An exact addition. Comment lines skipped.
+        assertSingleProductionCaller(".setDiscreetNotifications(", "$APPLOCK_PACKAGE_PATH/UpdateDiscreetNotificationsUseCase.kt")
     }
 
     @Test

@@ -744,13 +744,52 @@ class AppLockController @Inject constructor(
         }
     }
 
+    /**
+     * S18 i-b2: the settings view and failure record of a forced-aware plain write ([AppLockSettingField.DISCREET] or
+     * [AppLockSettingField.SECURE_SCREEN]; these never need a prompt: with the lock on they are forced and refused, with
+     * the lock off they are not a weakening). The caller ([AppLockSettingsOperations], the only production caller)
+     * wrote [value] durably first; [committed] is true only for a durable commit and then the value is taken into the
+     * controller's settings view. A write that did not commit changes nothing and records
+     * `LOCK_SETTING_PERSIST_FAILED(FIELD)` once per process per (code, field). Any other field is ignored. The state
+     * never changes.
+     *
+     * The view's discreet and secure-screen fields are bookkeeping only (the stored plain values): the effective values
+     * always OR in the lock flag (`EffectivePrivacyValues`), so this view never decides what is shown or posted by itself.
+     */
+    fun onPlainSettingWritten(field: AppLockSettingField, value: Boolean, committed: Boolean) {
+        val diagnostic = transition {
+            if (field != AppLockSettingField.DISCREET && field != AppLockSettingField.SECURE_SCREEN) return@transition null
+            if (!committed) return@transition claimPersistFailedLocked(field)
+            when (val view = loadState) {
+                is AppLockSettingsLoadState.Loaded, is AppLockSettingsLoadState.FirstRunDefault -> {
+                    val settings = (view as? AppLockSettingsLoadState.Loaded)?.settings
+                        ?: (view as AppLockSettingsLoadState.FirstRunDefault).settings
+                    loadState = AppLockSettingsLoadState.Loaded(
+                        if (field == AppLockSettingField.DISCREET) {
+                            settings.copy(discreetNotifications = value)
+                        } else {
+                            settings.copy(secureScreen = value)
+                        }
+                    )
+                }
+                is AppLockSettingsLoadState.Unreadable, null -> Unit
+            }
+            null
+        }
+        record(diagnostic)
+    }
+
     /** Once per process per (code, FIELD) (spec 10, F8). Must be called with [stateLock] held. */
     private fun claimTimeoutPersistFailedLocked(): PendingDiagnostic? =
-        if (claimedCodeCauses.add(PrivacyDiagnosticCode.LOCK_SETTING_PERSIST_FAILED to AppLockSettingField.AUTO_LOCK_TIMEOUT)) {
+        claimPersistFailedLocked(AppLockSettingField.AUTO_LOCK_TIMEOUT)
+
+    /** Once per process per (code, FIELD) (spec 10, F8). Must be called with [stateLock] held. */
+    private fun claimPersistFailedLocked(field: AppLockSettingField): PendingDiagnostic? =
+        if (claimedCodeCauses.add(PrivacyDiagnosticCode.LOCK_SETTING_PERSIST_FAILED to field)) {
             PendingDiagnostic(
                 PrivacyDiagnosticCode.LOCK_SETTING_PERSIST_FAILED,
                 null,
-                PrivacyDiagnosticMetadata.builder().put(PrivacyDiagnosticKey.FIELD, AppLockSettingField.AUTO_LOCK_TIMEOUT).build()
+                PrivacyDiagnosticMetadata.builder().put(PrivacyDiagnosticKey.FIELD, field).build()
             )
         } else {
             null
@@ -768,7 +807,7 @@ class AppLockController @Inject constructor(
             OpenOriginPrompt.DISABLE -> false
             OpenOriginPrompt.CHANGE -> {
                 // S18 i-b1: a timeout change carries its value in the token; the state never moves (UNLOCKED stays).
-                // A CHANGE without a token timeout is a later weakening kind (TODO(S18-i-b2)): nothing to apply.
+                // A CHANGE without a token timeout carries no other weakening kind (S18 i-b2): nothing to apply.
                 if (tokenTimeout == null) return null
                 if (!committed) return claimTimeoutPersistFailedLocked()
                 applyTimeoutToViewLocked(tokenTimeout)
@@ -811,7 +850,9 @@ class AppLockController @Inject constructor(
         return claim(if (enable) PrivacyDiagnosticCode.LOCK_ENABLED else PrivacyDiagnosticCode.LOCK_DISABLED)
     }
 
-    // TODO(S18-i-b2): INV-3 weakening write (other weakening kinds), TECH-13 (INERT weakening rejection), forced values.
+    // S18 i-b2 settled: the only weakening writes while the lock is on are the disable (T18) and a longer timeout (both
+    // prompt-guarded); discreet and secure screen are FORCED while the lock is on (INV-48) and so refused, not prompted;
+    // TECH-13 (INERT) is the Operations' refusal with no controller entry.
     // TODO(S18-ii): review-save (T27), SETTINGS_REREAD (T28, T29) and LockNotice derivation (INV-51).
 
     // --- The held deep link (T20, T21, T22; S17) --------------------------------------------------

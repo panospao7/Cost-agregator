@@ -15,15 +15,19 @@ import com.yourname.expensetracker.domain.privacy.applock.AppLockWriteRejection
 import com.yourname.expensetracker.domain.privacy.applock.SettingsUnreadableCause
 import java.io.File
 import java.io.IOException
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -50,6 +54,7 @@ class AppLockSettingsRepositoryImplTest {
     private lateinit var faulty: FaultyStore
     private lateinit var repository: AppLockSettingsRepositoryImpl
 
+    private val GATE_TIMEOUT_MS = 10_000L
     private val markerKey = stringPreferencesKey("_app_lock_load_state")
     private val discreetKey = booleanPreferencesKey("discreet_notifications")
 
@@ -1221,6 +1226,202 @@ class AppLockSettingsRepositoryImplTest {
             propagated = true
         }
         assertTrue("CancellationException must propagate from the conditional write", propagated)
+    }
+
+    // ---------------------------------------------------------------------------------
+    // S18 (i-b2): forced-aware discreet and secure-screen writes (INV-48, AE-103, INV-44)
+    // ---------------------------------------------------------------------------------
+
+    private data class ForcedAwareField(
+        val field: AppLockSettingField,
+        val key: androidx.datastore.preferences.core.Preferences.Key<Boolean>,
+        val write: suspend (Boolean) -> AppLockSettingsWriteResult
+    )
+
+    private fun forcedAwareFields(): List<ForcedAwareField> = listOf(
+        ForcedAwareField(AppLockSettingField.DISCREET, discreetKey) { repository.setDiscreetNotificationsIfNotForced(it) },
+        ForcedAwareField(AppLockSettingField.SECURE_SCREEN, secureKey) { repository.setSecureScreenIfNotForced(it) }
+    )
+
+    @Test
+    fun forcedAware_with_the_lock_on_either_value_is_rejected_forced_and_writes_nothing() = runBlocking {
+        for (f in forcedAwareFields()) {
+            seedRecord(lockEnabled = true, timeout = AutoLockTimeout.M1)
+            val before = real.data.first().asMap()
+
+            assertEquals(
+                "${f.field} true",
+                AppLockSettingsWriteResult.Rejected(AppLockWriteRejection.FORCED),
+                f.write(true)
+            )
+            assertEquals(
+                "${f.field} false",
+                AppLockSettingsWriteResult.Rejected(AppLockWriteRejection.FORCED),
+                f.write(false)
+            )
+            assertEquals("${f.field}", before, real.data.first().asMap())
+        }
+    }
+
+    @Test
+    fun forcedAware_with_the_lock_off_commits_the_value_and_keeps_the_other_fields() = runBlocking {
+        for (f in forcedAwareFields()) {
+            val record = seedRecord(lockEnabled = false, timeout = AutoLockTimeout.M5)
+
+            val result = f.write(true)
+
+            val expected = if (f.field == AppLockSettingField.DISCREET) {
+                record.copy(discreetNotifications = true)
+            } else {
+                record.copy(secureScreen = true)
+            }
+            assertEquals("${f.field}", AppLockSettingsWriteResult.Committed(expected), result)
+            assertEquals("${f.field}", true, real.data.first()[f.key])
+            assertEquals("${f.field}", "M5", real.data.first()[timeoutKey])
+        }
+    }
+
+    @Test
+    fun forcedAware_from_first_run_commits_with_the_lock_off_default() = runBlocking {
+        val result = repository.setSecureScreenIfNotForced(true)
+
+        assertEquals(
+            AppLockSettingsWriteResult.Committed(AppLockPrivacySettings(secureScreen = true)),
+            result
+        )
+        assertEquals("NORMAL", real.data.first()[markerKey])
+    }
+
+    @Test
+    fun forcedAware_while_sentinel_present_is_rejected_unreadable_and_writes_nothing() = runBlocking {
+        for (f in forcedAwareFields()) {
+            real.edit { it[markerKey] = "CORRUPTED" }
+            val before = real.data.first().asMap()
+
+            assertEquals(
+                "${f.field}",
+                AppLockSettingsWriteResult.Rejected(AppLockWriteRejection.UNREADABLE),
+                f.write(true)
+            )
+            assertEquals("${f.field}", before, real.data.first().asMap())
+        }
+    }
+
+    @Test
+    fun forcedAware_when_the_read_fails_with_io_error_is_rejected_unreadable() = runBlocking {
+        for (f in forcedAwareFields()) {
+            faulty.failRead = IOException("disk")
+            faulty.failWrite = IOException("disk")
+
+            assertEquals(
+                "${f.field}",
+                AppLockSettingsWriteResult.Rejected(AppLockWriteRejection.UNREADABLE),
+                f.write(true)
+            )
+        }
+    }
+
+    @Test
+    fun forcedAware_write_io_failure_is_typed_failed_for_its_own_field() = runBlocking {
+        for (f in forcedAwareFields()) {
+            seedRecord(lockEnabled = false, timeout = AutoLockTimeout.M5)
+            val before = real.data.first().asMap()
+            faulty.failWrite = IOException("disk full")
+
+            assertEquals("${f.field}", AppLockSettingsWriteResult.Failed(f.field), f.write(true))
+            faulty.failWrite = null
+            assertEquals("${f.field}", before, real.data.first().asMap())
+        }
+    }
+
+    @Test
+    fun forcedAware_cancellation_during_write_propagates() = runBlocking {
+        for (f in forcedAwareFields()) {
+            faulty.failWrite = CancellationException("cancelled")
+
+            var propagated = false
+            try {
+                f.write(true)
+            } catch (e: CancellationException) {
+                propagated = true
+            }
+            assertTrue("${f.field} CancellationException must propagate", propagated)
+            faulty.failWrite = null
+        }
+    }
+
+    /**
+     * S18 i-b2 ISSUE-3: the forced check must read INSIDE the same edit transform as the write. A real DataStore
+     * serialises edits, so a first edit (the lock commit) is held open at its transform; the forced-aware write
+     * is then started and queues behind it. Releasing the gate lets the lock commit first; the queued edit's
+     * transform must then see the lock on and reject FORCED, leaving its key unchanged. A check done before the
+     * edit (a pre-read of committed data, which a held edit does not block) would see the lock off and write.
+     */
+    @Test
+    fun forcedAware_check_reads_inside_the_same_edit_as_a_concurrent_lock_commit() = runBlocking {
+        for (f in forcedAwareFields()) {
+            repository.reviewSave(
+                AppLockPrivacySettings(
+                    discreetNotifications = true,
+                    appLockEnabled = false,
+                    autoLockTimeout = AutoLockTimeout.M5,
+                    secureScreen = true
+                )
+            )
+            assertEquals("${f.field} seeded", true, real.data.first()[f.key])
+            val gated = GatedStore(real)
+            val gatedRepository = AppLockSettingsRepositoryImpl(gated)
+            try {
+                val lockWrite = async { gatedRepository.setAppLockEnabled(true) }
+                withTimeout(GATE_TIMEOUT_MS) { gated.heldEntered.await() }   // the lock edit is open at its transform
+
+                val forcedWrite = async { when (f.field) {
+                    AppLockSettingField.DISCREET -> gatedRepository.setDiscreetNotificationsIfNotForced(false)
+                    else -> gatedRepository.setSecureScreenIfNotForced(false)
+                } }
+                withTimeout(GATE_TIMEOUT_MS) { gated.secondCalled.await() }       // the second edit has been issued
+                assertFalse("${f.field} the queued edit must not complete while the lock edit is held", forcedWrite.isCompleted)
+
+                gated.gate.complete(Unit)
+                val lockResult = withTimeout(GATE_TIMEOUT_MS) { lockWrite.await() }
+                val forcedResult = withTimeout(GATE_TIMEOUT_MS) { forcedWrite.await() }
+
+                assertTrue("${f.field} lock commit: $lockResult", lockResult is AppLockSettingsWriteResult.Committed)
+                assertEquals(
+                    "${f.field} the queued write sees the committed lock inside its own edit",
+                    AppLockSettingsWriteResult.Rejected(AppLockWriteRejection.FORCED),
+                    forcedResult
+                )
+                assertEquals("${f.field} key unchanged", true, real.data.first()[f.key])
+                assertEquals("${f.field} lock on", true, real.data.first()[lockKey])
+            } finally {
+                gated.gate.complete(Unit)   // a failed assertion must fail fast, never hang runBlocking
+            }
+        }
+    }
+
+    /**
+     * Holds the FIRST edit open inside its transform (after signalling [heldEntered]) until [gate] completes, and
+     * signals [secondCalled] when the second edit is issued. Reads are not blocked, like a real held edit.
+     */
+    private class GatedStore(private val delegate: DataStore<Preferences>) : DataStore<Preferences> {
+        val gate = CompletableDeferred<Unit>()
+        val heldEntered = CompletableDeferred<Unit>()
+        val secondCalled = CompletableDeferred<Unit>()
+        private val calls = AtomicInteger(0)
+
+        override val data: Flow<Preferences> get() = delegate.data
+
+        override suspend fun updateData(transform: suspend (t: Preferences) -> Preferences): Preferences {
+            val n = calls.incrementAndGet()
+            if (n == 2) secondCalled.complete(Unit)
+            if (n != 1) return delegate.updateData(transform)
+            return delegate.updateData { prefs ->
+                heldEntered.complete(Unit)
+                gate.await()
+                transform(prefs)
+            }
+        }
     }
 
     /** Wraps a real store so reads and/or writes can be made to fail on demand. */

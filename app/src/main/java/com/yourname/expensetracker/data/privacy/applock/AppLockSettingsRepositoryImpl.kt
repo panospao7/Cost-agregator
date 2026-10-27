@@ -186,6 +186,53 @@ class AppLockSettingsRepositoryImpl @VisibleForTesting internal constructor(
         }
     }
 
+    override suspend fun setDiscreetNotificationsIfNotForced(enabled: Boolean): AppLockSettingsWriteResult =
+        setBooleanIfNotForced(Keys.DISCREET_NOTIFICATIONS, AppLockSettingField.DISCREET, enabled)
+
+    override suspend fun setSecureScreenIfNotForced(enabled: Boolean): AppLockSettingsWriteResult =
+        setBooleanIfNotForced(Keys.SECURE_SCREEN, AppLockSettingField.SECURE_SCREEN, enabled)
+
+    /**
+     * The forced-aware boolean write (S18 i-b2, INV-48): ONE store edit. Unreadable gives `Rejected(UNREADABLE)` and
+     * writes nothing (INV-44); a stored lock flag that is on gives `Rejected(FORCED)` and writes nothing (the value is
+     * forced and read-only); otherwise the write. IO and cancellation as the other per-field writes.
+     */
+    private suspend fun setBooleanIfNotForced(
+        key: Preferences.Key<Boolean>,
+        field: AppLockSettingField,
+        enabled: Boolean
+    ): AppLockSettingsWriteResult {
+        var forced = false
+        return try {
+            val after = store.edit { prefs ->
+                forced = false
+                val stored = when (val state = prefs.toLoadState()) {
+                    is AppLockSettingsLoadState.Loaded -> state.settings
+                    is AppLockSettingsLoadState.FirstRunDefault -> state.settings
+                    is AppLockSettingsLoadState.Unreadable -> return@edit
+                }
+                if (stored.appLockEnabled) {
+                    forced = true
+                    return@edit
+                }
+                prefs[key] = enabled
+                prefs[LOAD_STATE_KEY] = LOAD_STATE_NORMAL
+            }
+            if (forced) {
+                AppLockSettingsWriteResult.Rejected(AppLockWriteRejection.FORCED)
+            } else {
+                when (val state = after.toLoadState()) {
+                    is AppLockSettingsLoadState.Loaded -> AppLockSettingsWriteResult.Committed(state.settings)
+                    is AppLockSettingsLoadState.FirstRunDefault -> AppLockSettingsWriteResult.Committed(state.settings)
+                    is AppLockSettingsLoadState.Unreadable ->
+                        AppLockSettingsWriteResult.Rejected(AppLockWriteRejection.UNREADABLE)
+                }
+            }
+        } catch (e: IOException) {
+            writeFailure(e, field, rejectOnPersistentUnreadable = true)
+        }
+    }
+
     override suspend fun reviewSave(record: AppLockPrivacySettings): AppLockSettingsWriteResult =
         try {
             // One atomic replace of the whole store: every field explicit, marker NORMAL. The

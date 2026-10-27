@@ -172,6 +172,47 @@ internal class FakeAppLockSettingsRepository(var loadState: AppLockSettingsLoadS
         loadState = AppLockSettingsLoadState.Loaded(next)
         return AppLockSettingsWriteResult.Committed(next)
     }
+
+    // --- S18 (i-b2): the forced-aware discreet and secure-screen writes. Counted apart from [writeAttempts]; the
+    // default applies the same check as the real store (Unreadable, then FORCED while the stored lock is on).
+
+    /** Every forced-aware plain write, in order: the field and the requested value. */
+    val plainWrites = mutableListOf<Pair<AppLockSettingField, Boolean>>()
+
+    /** When set, decides the result of a plain write; the default applies the store's rules and updates [loadState]. */
+    var plainWriteResult: ((AppLockSettingField, Boolean) -> AppLockSettingsWriteResult)? = null
+
+    /** When set, a plain write throws it (a non-IO failure of the store). */
+    var plainWriteFailure: Throwable? = null
+
+    /** When set, a plain write suspends on it after being recorded and before it decides (an overlap probe). */
+    var plainWriteGate: CompletableDeferred<Unit>? = null
+
+    override suspend fun setDiscreetNotificationsIfNotForced(enabled: Boolean): AppLockSettingsWriteResult =
+        plainWrite(AppLockSettingField.DISCREET, enabled)
+
+    override suspend fun setSecureScreenIfNotForced(enabled: Boolean): AppLockSettingsWriteResult =
+        plainWrite(AppLockSettingField.SECURE_SCREEN, enabled)
+
+    private suspend fun plainWrite(field: AppLockSettingField, enabled: Boolean): AppLockSettingsWriteResult {
+        plainWrites += field to enabled
+        plainWriteGate?.await()
+        plainWriteFailure?.let { throw it }
+        plainWriteResult?.let { return it(field, enabled) }
+        val base = when (val state = loadState) {
+            is AppLockSettingsLoadState.Loaded -> state.settings
+            is AppLockSettingsLoadState.FirstRunDefault -> state.settings
+            is AppLockSettingsLoadState.Unreadable -> return AppLockSettingsWriteResult.Rejected(AppLockWriteRejection.UNREADABLE)
+        }
+        if (base.appLockEnabled) return AppLockSettingsWriteResult.Rejected(AppLockWriteRejection.FORCED)
+        val next = if (field == AppLockSettingField.DISCREET) {
+            base.copy(discreetNotifications = enabled)
+        } else {
+            base.copy(secureScreen = enabled)
+        }
+        loadState = AppLockSettingsLoadState.Loaded(next)
+        return AppLockSettingsWriteResult.Committed(next)
+    }
 }
 
 internal object AppLockTestSettings {

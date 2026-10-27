@@ -1711,19 +1711,31 @@ WRITE 3 — lock flag (S18 part (i-a), DORMANT: implemented and tested, no produ
   DORMANT / NOT LEGAL TO WIRE until ALL of these BLOCKING items are closed:
     F3: the whole plan :1490-1493 binding - remove the decideDiscreet default, pass actionsSuppressed,
         add the SDK <= 30 lock-on parity row, decide NOTIF_ACTIONS_SUPPRESSED_LOCK;
-    F4: the domain write serializer shared with the ViewModel (it also covers the WRITE 4 timeout writes);
-    F7: a store re-read after a cancelled NonCancellable write (WRITE 3 and both WRITE 4 paths; the
-        controller view is updated from the re-read);
-    finding 8: setAppLockEnabled, setAutoLockTimeout and setAutoLockTimeoutIfNotWeakening become
-        abstract (their fail-closed default bodies go);
+    F4: the domain write serializer shared with the ViewModel (it also covers the WRITE 4 timeout writes
+        and the WRITE 5 discreet / secure-screen writes);
+    F7: a store re-read after a cancelled NonCancellable write (WRITE 3, both WRITE 4 paths and WRITE 5;
+        the controller view is updated from the re-read);
+    finding 8: setAppLockEnabled, setAutoLockTimeout, setAutoLockTimeoutIfNotWeakening,
+        setDiscreetNotificationsIfNotForced and setSecureScreenIfNotForced become abstract (their
+        fail-closed default bodies go);
     INV-45 (final gate finding 1): the review record starts from F for every 1b field (the timeout
         included: IMMEDIATE) and goes through the controller's auth/capability check (plan :1494) before
         any wiring. Today the 1a review card writes lock=false with no authentication
-        (AppLockPrivacySettingsViewModel.kt:195/:200).
-  Source-scan tests allow zero callers of AppLockSettingsOperations, requestEnable, requestDisable and
-  requestTimeoutChange outside AppLockSettingsOperations.kt, exactly one call site of setAppLockEnabled,
-  of setAutoLockTimeout and of setAutoLockTimeoutIfNotWeakening (that file) and exactly one of reviewSave
-  (the 1a ViewModel); lifting them needs the items above.
+        (AppLockPrivacySettingsViewModel.kt:195/:200);
+    WRITE 5 routing (S18 i-b2): the 1a ViewModel's discreet and secure-screen writes are routed through
+        WRITE 5 (requestDiscreetChange / requestSecureScreenChange), so the 1a setDiscreetNotifications
+        path (no FORCED check) can never write a forced value while the lock is on.
+        EXIT CRITERION (S18 i-b2 final gate ISSUE-4): before ANY wiring, either (a) retire
+        UpdateDiscreetNotificationsUseCase -> setDiscreetNotifications (and flip the F3 pin to zero
+        production call sites), or (b) make setDiscreetNotifications forced-aware. Routing the settings
+        ViewModel alone is insufficient (the use case would remain a reachable unforced write path);
+  Source-scan tests allow zero callers of AppLockSettingsOperations, requestEnable, requestDisable,
+  requestTimeoutChange, requestDiscreetChange and requestSecureScreenChange outside
+  AppLockSettingsOperations.kt, exactly one call site of setAppLockEnabled, of setAutoLockTimeout, of
+  setAutoLockTimeoutIfNotWeakening, of setDiscreetNotificationsIfNotForced and of
+  setSecureScreenIfNotForced (that file), exactly one of the unforced 1a setDiscreetNotifications
+  (UpdateDiscreetNotificationsUseCase) and exactly one of reviewSave (the 1a ViewModel); lifting them
+  needs the items above.
 
 WRITE 4 — auto-lock timeout (S18 part (i-b1), DORMANT: implemented and tested, no production caller):
   OWNER: AppLockSettingsOperations (same class as WRITE 3). Entry: suspend requestTimeoutChange(timeout)
@@ -1738,7 +1750,8 @@ WRITE 4 — auto-lock timeout (S18 part (i-b1), DORMANT: implemented and tested,
          Failed = FAILED + record). Committed → AppLockController.onTimeoutWrittenWithoutPrompt(timeout, true),
          which takes the timeout into the settings view unless that would lengthen a lock-on view
          (fail closed)
-      3. longer timeout with the lock on: only from UNLOCKED (INERT = NOT_IN_ORIGIN, TECH-13 is S18-i-b2);
+      3. longer timeout with the lock on: only from UNLOCKED (INERT = NOT_IN_ORIGIN = the spec's
+         Rejected(AUTH_UNAVAILABLE), TECH-13, S18 i-b2: no write, no prompt, no state change);
          CONFIRM_CHANGE prompt with the CHANGE copy (AppLockController.startTimeoutChangeAttempt;
          INV-54 one prompt in flight); nothing is written until it succeeds
       4. the T33 hand-off as WRITE 3: ATOMIC apply on the application scope, withContext(NonCancellable) {
@@ -1748,6 +1761,32 @@ WRITE 4 — auto-lock timeout (S18 part (i-b1), DORMANT: implemented and tested,
          onOpenOriginApplyCompleted in a finally; the state never moves (UNLOCKED stays)
   DORMANT / NOT LEGAL TO WIRE until the same BLOCKING list as WRITE 3 is closed (F3, F4, F7, finding 8,
   INV-45), with the WRITE 4 scope stated there.
+
+WRITE 5 — discreet and secure screen, forced-aware (S18 part (i-b2), DORMANT: implemented and tested, no
+production caller):
+  OWNER: AppLockSettingsOperations (same class as WRITE 3 and 4). Entries: suspend requestDiscreetChange(enabled)
+  and suspend requestSecureScreenChange(enabled). Under INV-48 / OD-2 (a) both values are FORCED while the lock
+  is on (also in INERT), so there is no weakening that needs a prompt: they are refused, not authenticated.
+      1. applyRunning check (ALREADY_IN_FLIGHT), then a Mutex (the same one as WRITE 4) held across
+         [discreet only: the effective-discreet pre-read], the write and the trigger, applyRunning re-checked inside
+      2. withContext(NonCancellable) { AppLockSettingsRepository.setDiscreetNotificationsIfNotForced(enabled) or
+         setSecureScreenIfNotForced(enabled) } - ONE store edit: Unreadable = Rejected(UNREADABLE) (FAILED +
+         LOCK_SETTING_PERSIST_FAILED(DISCREET | SECURE_SCREEN)); stored lock on = Rejected(FORCED)
+         (REJECTED_FORCED: nothing written, no prompt, no record); else the write (lock off is not a weakening)
+      3. Committed → AppLockController.onPlainSettingWritten(field, value, true) (settings view only, the state never
+         changes); Failed / throw / UNREADABLE → onPlainSettingWritten(field, value, false) (record once per
+         (code, field))
+      4. discreet only, Committed: DiscreetRepostTrigger.onCommittedWrite(before, after effective) (INV-13, INV-46)
+      5. the enable / disable apply of WRITE 3 holds the SAME Mutex across its pre-read, write, state move and
+         trigger (privacy review C1), so a plain discreet write cannot commit between the apply's pre-read and
+         its lock write (a stale "was discreet" would skip the sweep)
+  The 1a UpdateDiscreetNotificationsUseCase / ViewModel path (setDiscreetNotifications, no FORCED check) is NOT
+  replaced here. DORMANT / NOT LEGAL TO WIRE until the WRITE 3 BLOCKING list is closed (F3, F4, F7, finding 8,
+  INV-45, and the WRITE 5 routing item listed there) AND the settings ViewModel's discreet and secure-screen
+  writes are routed through WRITE 5 (so a forced value can never be written by the 1a path while the lock is on).
+  EXIT CRITERION (ISSUE-4): routing the ViewModel alone is insufficient. Before wiring, either retire
+  UpdateDiscreetNotificationsUseCase -> setDiscreetNotifications (and flip the F3 pin to zero production call
+  sites), or make setDiscreetNotifications forced-aware.
 
 SERIALISATION (INTERIM): AppLockSettingsWriteSerializer (@Singleton, ui/screens/privacysettings, a
 process-wide Mutex) so a write started by an earlier ViewModel instance still excludes the next
