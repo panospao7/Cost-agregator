@@ -580,7 +580,11 @@ class AppLockControllerIllegalTransitionTest {
                 "onTimeoutWrittenWithoutPrompt",
                 // S18 (i-b2), exact addition: the view and failure record of a forced-aware discreet or secure-screen
                 // write. One production caller, AppLockSettingsOperations.kt.
-                "onPlainSettingWritten"
+                "onPlainSettingWritten",
+                // S18 (ii-c), exact additions: the notice flow (INV-51) and the settings re-read request (INV-47). The
+                // request has ZERO production callers (pinned below); the settings section's retry binds it later.
+                "getNotice",
+                "requestSettingsReread"
             ),
             production
         )
@@ -698,7 +702,10 @@ class AppLockControllerIllegalTransitionTest {
             "startTimeoutChangeAttempt",
             "onTimeoutWrittenWithoutPrompt",
             // S18 (i-b2), exact addition: the forced-aware plain-setting record.
-            "onPlainSettingWritten"
+            "onPlainSettingWritten",
+            // S18 (ii-c), exact addition: the settings re-read request has ZERO production callers. The settings
+            // section's retry (S20) allows exactly its own file as the one caller and extends this pin.
+            "requestSettingsReread"
         )
         // S18 (i-a, i-b1, i-b2): these seven have exactly one production caller, the settings operations file.
         val settingsOperationsOnly = setOf(

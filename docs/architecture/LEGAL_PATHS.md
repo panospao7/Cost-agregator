@@ -1653,6 +1653,25 @@ STORE:
 
 READ for a notification: NotificationPresentationResolver (see NOTIFICATION PRESENTATION).
 READ for the UI: AppLockPrivacySettingsViewModel ← AppLockSettingsRepository.observeLoadState().
+READ + RECOVERY for the app-lock state (S18 ii-c, INV-47, INV-51; DORMANT, no production caller): AppLockController
+  is the only reader that drives lock state. Cold start: resolve() (T1-T6, T6b). While the load state is
+  transient-unreadable (IO_ERROR, TIMEOUT) it re-reads on its own scope at each APP_FOREGROUNDED (never awaited by
+  the foreground evaluation) and on requestSettingsReread() (ZERO production callers; the settings retry binds it
+  later). The result goes through the PRIVATE, sequence-checked onSettingsReread, never through onLateSettingsResolved:
+  a stale sequence, an unreadable result, or a settings write committed since the read was issued (D6, write
+  counter bumped by the committed-write entries; F3: the open-origin entry bumps the counter BEFORE its token
+  check, so a committed write with no matching token still drops older re-reads) is dropped. F5: a newer
+  unreadable re-read result (past the sequence, D6 and transient checks) clears a kept snapshot while the state
+  is LOCKED / AUTHENTICATING; in every other state it changes nothing. T28 from UNLOCKED / INERT: lock off → DISABLED, lock on
+  and lockActive → UNLOCKED, else INERT(reason); no auth, never locks, no write. T29 in LOCKED / AUTHENTICATING: the
+  snapshot is kept and offered to T28 only after an UNLOCK success or after an open-origin prompt that ends in an
+  open state; LOCKED is never relaxed (only T6b may). The one T28 point carries TODO(S18-ii-c D9): the
+  LOCK_SETTINGS_RECOVERED(cause) emission waits for the owner-approved PrivacyDiagnosticsEmitter entry.
+  The one lock notice (INV-51) is derived by the pure LockNoticeDerivation (INERT > REVIEW_SETTINGS from the load
+  state, persistent causes only > biometric, always false in Increment 1; none in RESOLVING / LOCKED /
+  AUTHENTICATING(UNLOCK); the origin's notice during ENABLE / CONFIRM_CHANGE, AMD-22) and published as
+  AppLockController.notice, version-stamped with the state, after the monitor is released (R2), and republished on
+  a load-state-only change.
 
 WRITE 1 — per-field discreet toggle (1a; the only WIRED per-field writer. WRITE 3 (lock flag) and
 WRITE 4 (auto-lock timeout) are DORMANT per-field writers that nothing may call yet):

@@ -1690,3 +1690,111 @@ Gates: privacy-security-guardian (lead), reviewer-strict.
   - ui_dao: re-run after these doc-only edits
 - Open BLOCKING after S18-ii-a+b: F4(a)/D8 (S18-ii-d), finding 8 (S18-ii-f), WRITE 5 routing / ISSUE-4 exit (S18-ii-g, owner D4), INV-45 ViewModel routing (S18-ii-h with S20, owner D1).
 - S18-ii-a and S18-ii-b ACCEPTED (2026-10-27). ui_dao vr-20261027-060124-3941740e PASS on the final tree. Committed. Next: S18-ii-c (notices INV-51; re-read T28/T29). It needs the owner's D9 (the emitter allowlist entry LOCK_SETTINGS_RECOVERED) before its emitter part.
+
+## S18-ii-c — implemented (2026-10-27; NOT validated, nothing was run)
+
+### Files
+- New main: `domain/privacy/applock/LockNoticeDerivation.kt` (pure, `derive(state, loadState, biometricPending = false): LockNotice?`).
+- Edited main: `domain/privacy/applock/AppLockController.kt` only (the `notice` flow, the publication, `requestSettingsReread`, the foreground re-read, private `onSettingsReread`, T28/T29, the D6 write counter). `LockNotice.kt` (S16 types) is reused unchanged.
+- Docs: `docs/architecture/LEGAL_PATHS.md` (the controller READ + RECOVERY paragraph under the App Lock Settings Write Path).
+- New tests: `LockNoticeDerivationTest`, `AppLockControllerNoticeTest`, `AppLockControllerRereadTest`.
+- Edited tests: `AppLockControllerIllegalTransitionTest` (method-set pin gains `getNotice` and `requestSettingsReread`; the source-scan `forbidden` list gains `requestSettingsReread` with no allowed file = ZERO production callers), `AppLockControllerTestFixtures` (`FakeAppLockSettingsRepository.scriptRead(result, gate)`: scripted, optionally gated, later reads; the default read is unchanged).
+
+### Decisions
+1. Publication (R2): `transition` now returns a `Publication(stamp, state, notice)`. The notice is derived under the monitor at the end of every transition from `(current, loadState)`. If it changed, `version` is bumped (so a load-state-only change is republished). State and notice are set together under `publishLock`, after the monitor is released, and only if the stamp is newer than `publishedVersion`. An equal value is not re-emitted (StateFlow), so AE-115 never sees the notice leave and return.
+2. R4: REVIEW_SETTINGS comes from the load state (persistent causes only). A null load state (the resolve-timeout fallback) and transient causes give none.
+3. AMD-22: `Authenticating(ENABLE)` derives the notice of `Disabled`, `Authenticating(CONFIRM_CHANGE)` that of `Unlocked`; `Authenticating(UNLOCK)`, `Locked`, `Resolving` give none.
+4. Re-read: `requestSettingsReread()` (public, zero callers) and the foreground re-read (launched AFTER the foreground evaluation, on the controller scope, never awaited; one foreground re-read at a time) both go through `launchReread`, which only issues a read while the load state is `Unreadable` with a transient cause. Each issue takes a new sequence number and records the write counter. The result goes to the private `onSettingsReread(seq, read)`, separate from `onLateSettingsResolved`.
+5. `onSettingsReread` drops: a stale sequence; a write counter that moved since the issue (a superset of D6, see risks); a view that is no longer transient-unreadable; an unreadable result (the view and state stay; a cause change to persistent is NOT adopted, T28's trigger is Loaded or FirstRunDefault only). A readable result is applied by T28 from UNLOCKED / INERT, kept by T29 in LOCKED / AUTHENTICATING, ignored otherwise.
+6. T28 (`applyRereadLocked`): takes the read as the view; lock off → DISABLED; lock on and no genuine capability gap (CHECK_FAILED counts as able, as in T14/T15) → UNLOCKED; else INERT(reason) via the existing `enterInert` (existing LOCK_INERT_* code, once per process). Capability is read before the monitor (`readQueryCapability`). No auth, no write, never locks. The pending background is not touched.
+7. T29 apply: `closeWith` calls `applyKeptRereadAfterClose()` after an UNLOCK success or after ANY close of an open-origin attempt (after the T33 hand-off to the handler). While the state is still LOCKED / AUTHENTICATING / RESOLVING the snapshot stays kept (LOCKED is never relaxed; a T34 hand-off that locks keeps it). In an open state it is consumed: dropped if `writeSequenceAtKeep != writeSequence` (D6) or the view is no longer transient, else T28. T6b clears a kept snapshot.
+8. D6 write counter (`writeSequence`, under `stateLock`) is bumped by the committed entries: `onOpenOriginSettingApplied(committed = true)` (after the token check; SUPERSEDED by F3: the counter is bumped BEFORE the token check), `onPlainSettingWritten(committed = true)` (for DISCREET / SECURE_SCREEN), `onTimeoutWrittenWithoutPrompt(committed = true)`. A non-committed call does not bump it.
+9. No new catch was added. The re-read job is `scope.launch`; the foreground flag is reset by `invokeOnCompletion` (also on cancellation). `CancellationException` from the read propagates (`readLoadState` rethrows it).
+
+### D9 seam (OWNER GATE, not approved)
+- `PrivacyDiagnosticsEmitter.kt` and every allowlist are untouched. `LOCK_SETTINGS_RECOVERED` is NOT emitted anywhere.
+- The single marked point is in `AppLockController.applyRereadLocked` (the only T28 apply, also reached by the kept-snapshot path): `// TODO(S18-ii-c D9): emit LOCK_SETTINGS_RECOVERED(cause) once the owner approves the emitter entry`. The cause to emit is the PRIOR load state's `Unreadable.cause` (IO_ERROR or TIMEOUT); it must be captured before `loadState = read` overwrites it. The emission should be a `PendingDiagnostic` claimed once per (code, cause) in `claimedCodeCauses` like the other cause-carrying codes.
+- No test requires the emission. The tests do not assert the emitted list for T28.
+
+### Risks / residual
+- The foreground re-read reads the store at every foreground while transient-unreadable (one at a time). Dormant until S20 delivers APP_FOREGROUNDED.
+- `onAppForegrounded` now has a side effect (a launch) in transient-unreadable states; existing tests that foreground over `IO_ERROR` (InertTest `T16 does not fire...`) get an extra read that returns the same unreadable value and is ignored. No existing test asserts `readCount` after a foreground in that state.
+- The write counter check is taken from the ISSUE of the read (a superset of D6's "after it was kept"): a write that commits while a read is in flight also drops that read. Conservative: the next foreground re-reads.
+- The controller's resolve-timeout fallback (load state null) is not re-read by the foreground (the spec's trigger is `Unreadable(IO_ERROR | TIMEOUT)`); only T6b recovers it, as before. If the owner wants `null` treated as transient, `transientUnreadableLocked` is the one place.
+- A kept snapshot can linger across a T7b/T11 INERT until the next close or re-read; it is consumed or replaced there and is always re-checked (transient view, D6) before it applies.
+- A load-state-only notice change cannot be exercised through the public API yet (REVIEW_SETTINGS ends only by the S18-ii-d review-save), so the republish path is covered by the derivation and the shared stamp only. S18-ii-d should add that test.
+- The biometric notice stays false (AE-99's fingerprint rows and AE-100 are Increment 2).
+- `AppLockControllerTestFixtures.kt` is shared by many classes: a compile error there breaks the whole targeted run.
+
+### Validation to request (validation-runner, serial)
+- targeted `*AppLockController*,*LockNoticeDerivation*,*PrivacyDiagnosticsEmitter*`
+- shards `domain-n-z` and `architecture-contracts`
+- registered-guard `cancellation` and `known_good_state`
+- Gates: privacy-security-guardian (lead), reviewer-strict.
+
+### S18-ii-c — privacy review (ACCEPT-WITH-CONDITIONS) and fixes (2026-10-27; NOT validated, nothing was run)
+
+Fixes applied (main: `AppLockController.kt`; tests: `AppLockControllerNoticeTest`, `AppLockControllerRereadTest`):
+- F1 (Medium): torn state / notice pair. `publish` now writes a NULL notice before the state and a non-null notice after it. KDoc of `notice` states the guarantee: no closed state (RESOLVING, LOCKED, AUTHENTICATING(UNLOCK)) is ever observable with a non-null notice. Test: a Unconfined collector on `state` records `(state, notice.value)` across resolve, unlock, UNLOCKED+ReviewSettings -> LOCKED(TIMEOUT), re-unlock, re-lock, and asserts no closed state carries a notice.
+- F2: BINDING, see below (no code in this slice).
+- F3: `onOpenOriginSettingApplied` bumps `writeSequence` on `committed` BEFORE the token check (a committed write with no matching token still drops older re-reads and kept snapshots; fail closed).
+- F4 (comment only): the D9 TODO moved above `loadState = read` in `applyRereadLocked`, with the capture instruction. Nothing is emitted; `LOCK_SETTINGS_RECOVERED` is still not emitted anywhere.
+- F5: a newer Unreadable re-read result supersedes an older kept snapshot. The Unreadable early return moved inside the transition, after the sequence, D6 and transient checks; in LOCKED / AUTHENTICATING it sets `keptReread = null`; in every other state it changes nothing (no capability is read for it). Test covers LOCKED and AUTHENTICATING(UNLOCK), then a later foreground still recovers.
+- F6 (test): pins the INV-47 order (evaluateForeground BEFORE launchReread): transientUnlocked, background, +1 s, scriptRead(DISABLED), foreground -> Locked(TIMEOUT), unlock -> Disabled. If the calls were swapped, T28 would apply DISABLED from UNLOCKED first and the evaluation would find the lock off, so the Locked(TIMEOUT) assertion would fail.
+- F7 (test): a D6 row through `onOpenOriginSettingApplied(committed = true)` with a CHANGE token (and a second row with a non-matching id, which pins F3): the kept snapshot is dropped, the unlock ends UNLOCKED, not DISABLED.
+
+F2 is BINDING for later slices (a committed write that does not bump `writeSequence` lets a stale kept snapshot or in-flight re-read relax the state):
+- S18-ii-d (review-save), S18-ii-e (T19) and S18-ii-g (WRITE 5) must EACH bump `writeSequence` on commit, with one D6 test per entry.
+- S20 must NOT lift dormancy (APP_FOREGROUNDED delivery and the re-read triggers) before d, e, g and h have landed.
+
+Decisions: the 4 decisions put to this review are confirmed (KEEP).
+
+Open spec-owner questions:
+1. Should a transient -> persistent cause change be adopted by the re-read? Today it is not (T28 triggers on Loaded or FirstRunDefault only), so a review notice for a newly CORRUPTED store stays hidden until the next cold start.
+2. Is a null load state after RESOLVE_TIMEOUT intended to stay for the whole process (only T6b recovers it), given INV-47 "not sticky"?
+3. Should T28 also cover DISABLED after a T18 commit over a transient view (F8)?
+
+INFO: F9, F10 (no change made; recorded by the review only).
+
+Targeted filter for this fix pass: `*AppLockControllerRereadTest*,*AppLockControllerNoticeTest*` (plus the earlier `*AppLockController*,*LockNoticeDerivation*,*PrivacyDiagnosticsEmitter*` batch when validation resumes).
+- Orchestrator detail for the S18-ii-c review section (supersedes handoff Decisions 5 and 8 in "S18-ii-c — implemented"):
+  - Confirmed decisions (all KEEP, fail-closed):
+    - (1) The write-counter check is taken when the read is issued. This is a superset of D6: it only drops more results.
+    - (2) An Unreadable re-read result does not change the view. Since F5, in LOCKED/AUTH it clears an older kept snapshot.
+    - (3) A null load state (RESOLVE_TIMEOUT) is not re-read by the foreground; it is recovered only by T6b or a cold start.
+    - (4) The foreground re-read is dormant because `onAppForegrounded` has no production caller. This must be re-checked when S20 wires it (see F2).
+  - F9 (INFO): after T28, a pending background is measured against the stored timeout, which may be longer than F. This is spec-consistent; RereadTest pins it.
+  - F10 (INFO): the re-read has no timeout. A hung read keeps `foregroundRereadRunning` set and suppresses further foreground re-reads for the process. `requestSettingsReread` still works. Fail-closed.
+
+### S18-ii-c — first batch (2026-10-27)
+
+- Targeted vr-20261027-070351-9439d264 FAILED on 3 tests. The root cause is test-side for all 3 (debugger). Test-only fixes applied, uncommitted, not re-run:
+  - AppLockControllerNoticeTest F1: observes both the state and the notice flows (publish writes a non-null notice after the state; a reordered publish shows up in `torn`).
+  - AppLockControllerPromptOutcomeTest R2: reflection moved to `publish(view: Publication)` and the 3-parameter `Publication` constructor. Stale stamps drop both state and notice, a newer stamp publishes both, a stale null notice does not clear a published one.
+  - AppLockControllerRereadTest T29: scripts a readable `DISABLED` before `onAppForegrounded()` (the foreground issues its own re-read, seq 2).
+- Cancellation vr-20261027-070854-6ec4e08d PASS.
+- The remaining jobs are held and re-queued.
+
+### S18-ii-c — final gate (reviewer-strict ACCEPT-WITH-CONDITIONS) and fixes (2026-10-27; NOT validated, nothing was run)
+
+Applied:
+- ISSUE-1 (comment only): the `notice` KDoc in `AppLockController.kt` now states the guarantee per instant (values written under publishLock): a closed state (RESOLVING, LOCKED, AUTHENTICATING(UNLOCK)) is never paired with a non-null notice; two separate reads or a multi-threaded `combine` can pair values from different instants.
+- ISSUE-2 (test): `AppLockControllerRereadTest` "a cancelled foreground re-read frees the next foreground to read again" now asserts `Unlocked` after the `finally` (the held read did not apply) and that the second `onAppForegrounded()` increases `readCount` by exactly 1.
+- N4 (docs): `LEGAL_PATHS.md` READ + RECOVERY now records the F5 rule (a newer unreadable re-read result clears a kept snapshot in LOCKED / AUTHENTICATING) and F3 (the write counter is bumped before the token check).
+- Decisions item 8 in "S18-ii-c — implemented" ("after the token check") is marked SUPERSEDED by F3.
+
+BINDING:
+- S20 (AppLockGate, the notice consumer): render a notice only together with an open state from the same sample, or collect both flows on Main.
+- S20 / S18-ii-h (N1): debounce `requestSettingsReread` retries, or route them through the in-flight guard.
+- Carried forward: F2 stays binding on S18-ii-d, S18-ii-e, S18-ii-g and S20 (each committed write entry bumps `writeSequence` with a D6 test; S20 must not lift dormancy before d, e, g and h).
+
+INFO:
+- N2: the "link query capability read failed" log wording now also covers the re-read paths; it is bounded.
+- N3: T28 to DISABLED leaves `lastBackgroundedAtMillis` set, like T18. Spec-owner note next to F9.
+
+Targeted filter for this pass: `*AppLockControllerRereadTest*` (plus the pending `*AppLockController*,*LockNoticeDerivation*,*PrivacyDiagnosticsEmitter*` batch).
+- S18-ii-c ACCEPTED (2026-10-27), without D9; the LOCK_SETTINGS_RECOVERED emission stays owner-gated behind the TODO seam.
+  - Final targeted vr-20261027-075534-aed6567a PASS, after the test-only and comment-only final-gate fixes.
+  - Earlier runs on the final production code, all PASS: targeted vr-20261027-072634-4c7caf0f, architecture-contracts vr-20261027-072201-01eceafa, domain-n-z vr-20261027-072433-c12f8e58, cancellation vr-20261027-070854-6ec4e08d, known_good_state vr-20261027-070912-75653578.
+  - Gates: privacy-security-guardian ACCEPT-WITH-CONDITIONS (F1–F7); reviewer-strict ACCEPT-WITH-CONDITIONS (ISSUE-1/2, N4).
+  - Committed. Next: S18-ii-d (review-save, domain).

@@ -71,10 +71,29 @@ internal class FakeAppLockSettingsRepository(var loadState: AppLockSettingsLoadS
         gate?.complete(Unit)
     }
 
+    /** One scripted read (S18 ii-c): the [result] it returns, after it waited for [gate] when one is set. */
+    private class ScriptedRead(val result: AppLockSettingsLoadState, val gate: CompletableDeferred<Unit>?)
+
+    private val scriptedReads = ArrayDeque<ScriptedRead>()
+
+    /**
+     * Queues the result of a LATER read, in call order (a scripted re-read, S18 ii-c). A read with a [gate] suspends on
+     * it after it started, so a test can overlap two reads and finish them out of order. When the queue is empty a
+     * read returns [loadState]. A test that sets a gate completes it in a `finally`.
+     */
+    fun scriptRead(result: AppLockSettingsLoadState, gate: CompletableDeferred<Unit>? = null) {
+        scriptedReads.addLast(ScriptedRead(result, gate))
+    }
+
     override suspend fun getLoadState(): AppLockSettingsLoadState {
         readCount++
+        val scripted = scriptedReads.removeFirstOrNull()
         gate?.await()
         failure?.let { throw it }
+        if (scripted != null) {
+            scripted.gate?.await()
+            return scripted.result
+        }
         return loadState
     }
 

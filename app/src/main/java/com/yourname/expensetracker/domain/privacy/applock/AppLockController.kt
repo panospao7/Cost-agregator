@@ -92,7 +92,9 @@ fun interface OpenOriginSuccessHandler {
  * the non-success return to the origin with the timer hand-off (T34). S17 adds the held deep link (T20 to
  * T22, see "The held link" below). S18 part (i-a) adds the enable / disable apply (T17, T18, T26) driven by
  * [AppLockSettingsOperations]; S18 part (i-b1) adds the auto-lock timeout change (a longer timeout confirms through
- * CONFIRM_CHANGE, an equal or shorter one commits without a prompt). `TODO(S18-ii)` marks the rest (the S18 part (ii) sub-slices b to g).
+ * CONFIRM_CHANGE, an equal or shorter one commits without a prompt). S18 part (ii-c) adds the [notice] flow (INV-51,
+ * derived by [LockNoticeDerivation]) and the settings re-read (T28, T29, INV-47; [requestSettingsReread] and the
+ * foreground re-read). `TODO(S18-ii-d)` and later mark the rest.
  *
  * ## The held link (S17: T20, T21, T22, INV-30, INV-31, OD-7a)
  *
@@ -360,6 +362,17 @@ class AppLockController @Inject constructor(
      */
     private val claimedCodeCauses: MutableSet<Pair<PrivacyDiagnosticCode, Enum<*>>> = HashSet()
 
+    // S18-ii-c, guarded by stateLock. `currentNotice` is derived from (`current`, `loadState`) at the end of every
+    // transition; `writeSequence` counts committed settings writes (D6); the re-read fields are described at
+    // [requestSettingsReread].
+    private val mutableNotice = MutableStateFlow<LockNotice?>(null)
+    private var currentNotice: LockNotice? = null
+    private var writeSequence = 0L
+    private var rereadSequence = 0L
+    private var rereadIssuedWriteSequence = 0L
+    private var keptReread: KeptReread? = null
+    private val foregroundRereadRunning = AtomicBoolean(false)
+
     // Written only under publishLock; read without it for the cheap staleness pre-check.
     @Volatile private var publishedVersion = 0L
 
@@ -368,6 +381,21 @@ class AppLockController @Inject constructor(
      * monitor is released; a collector must never call a transition or the authenticator (R2).
      */
     val state: StateFlow<AppLockState> = mutableState.asStateFlow()
+
+    /**
+     * The one lock notice (INV-51), derived by [LockNoticeDerivation] from the state and the load state, or null for
+     * none. It is stamped with the same version as [state] and published after the monitor is released, in the same
+     * publication, so it is never older than the state it belongs to (R2). It is republished when only the load
+     * state changed (a committed write, a re-read). An equal value is not re-emitted, so a notice that stays the
+     * same across a prompt (AE-115) is never seen to disappear and return.
+     *
+     * Observation guarantee (F1): at any single instant (the values written under publishLock), a closed state
+     * (`RESOLVING`, `LOCKED`, `AUTHENTICATING(UNLOCK)`) is never paired with a non-null notice. Two separate reads
+     * (`state.value` then `notice.value`), or a `combine` on a multi-threaded dispatcher, can pair values from
+     * different instants. Consumers must render the notice only together with an open state from the same sample,
+     * or collect both flows on Main.
+     */
+    val notice: StateFlow<LockNotice?> = mutableNotice.asStateFlow()
 
     /** The pending background (spec 2.4), for inspection by tests. Null when none is pending. */
     internal val pendingBackgroundAtMillis: Long?
@@ -444,6 +472,7 @@ class AppLockController @Inject constructor(
             }
             if (!readableAndOff) return@transition
             this.loadState = loadState
+            keptReread = null // S18-ii-c: a snapshot kept for T29 belongs to the unreadable view this read replaces
             resolvedByTimeout = false
             lastBackgroundedAtMillis = null
             setState(AppLockState.Disabled)
@@ -499,6 +528,9 @@ class AppLockController @Inject constructor(
         }
         nudgeAwaitingLaunch()
         evaluateForeground(ForegroundTrigger.APP_FOREGROUNDED)
+        // INV-47: the evaluation above used the state held at that moment (F while unreadable) and never waited. The
+        // re-read starts after it, on the controller scope.
+        launchReread(foreground = true)
     }
 
     /**
@@ -690,6 +722,9 @@ class AppLockController @Inject constructor(
      */
     fun onOpenOriginSettingApplied(attemptId: Long, committed: Boolean) {
         val diagnostic = transition {
+            // F3 (fail closed): a committed write is counted even when no token matches, so D6 drops any older
+            // re-read or kept snapshot.
+            if (committed) writeSequence++ // D6: a settings write committed
             // F2: the prompt (and so ENABLE or DISABLE) is the one recorded by the close of THIS attempt. No token
             // (no prior success, or already consumed) or a different id: a no-op, nothing recorded.
             val prompt = pendingApplyPrompt
@@ -717,6 +752,7 @@ class AppLockController @Inject constructor(
     fun onTimeoutWrittenWithoutPrompt(timeout: AutoLockTimeout, committed: Boolean) {
         val diagnostic = transition {
             if (committed) {
+                writeSequence++ // D6: a settings write committed
                 // Privacy review F2 (fail closed): a no-prompt commit never lengthens a view that has the lock on. A
                 // longer timeout over a lock-on view means the caller's pre-read was stale; the view stays as it is
                 // (more restrictive), so a foreground never measures with an unauthorised longer timeout.
@@ -760,6 +796,7 @@ class AppLockController @Inject constructor(
         val diagnostic = transition {
             if (field != AppLockSettingField.DISCREET && field != AppLockSettingField.SECURE_SCREEN) return@transition null
             if (!committed) return@transition claimPersistFailedLocked(field)
+            writeSequence++ // D6: a settings write committed
             when (val view = loadState) {
                 is AppLockSettingsLoadState.Loaded, is AppLockSettingsLoadState.FirstRunDefault -> {
                     val settings = (view as? AppLockSettingsLoadState.Loaded)?.settings
@@ -853,7 +890,152 @@ class AppLockController @Inject constructor(
     // S18 i-b2 settled: the only weakening writes while the lock is on are the disable (T18) and a longer timeout (both
     // prompt-guarded); discreet and secure screen are FORCED while the lock is on (INV-48) and so refused, not prompted;
     // TECH-13 (INERT) is the Operations' refusal with no controller entry.
-    // TODO(S18-ii): review-save (T27), SETTINGS_REREAD (T28, T29) and LockNotice derivation (INV-51).
+    // TODO(S18-ii-d): review-save (T27).
+
+    // --- Settings re-read (S18-ii-c: T28, T29, INV-47) ----------------------------------------------------------
+
+    /** A re-read result kept by T29 for use after an unlock; dropped by D6 if a settings write committed after it. */
+    private class KeptReread(val read: AppLockSettingsLoadState, val writeSequenceAtKeep: Long)
+
+    /**
+     * `SETTINGS_REREAD` (INV-47): reads the settings store once on the controller scope and offers the result to
+     * the private, sequence-checked [onSettingsReread]. The settings section's retry binds this later; it has NO
+     * production caller yet (a source-scan pin holds it). It does nothing unless the load state is transient
+     * unreadable (`IO_ERROR`, `TIMEOUT`): a readable view needs no re-read, and a persistent cause (`CORRUPTED`,
+     * `INVALID_VALUE`) stays until a review-save (INV-33). A new request makes every older re-read stale. The
+     * foreground does the same on its own at each `APP_FOREGROUNDED` ([onAppForegrounded]).
+     */
+    fun requestSettingsReread() {
+        launchReread(foreground = false)
+    }
+
+    /**
+     * Issues one re-read and runs it on [scope]; the caller never waits for it (INV-47). A foreground re-read is
+     * skipped while a foreground one is still running, so a burst of foregrounds reads once. Issuing records the
+     * sequence number and the write sequence at that moment: only the newest issue may apply (a stale one is dropped)
+     * and none may apply after a settings write committed meanwhile (D6).
+     */
+    private fun launchReread(foreground: Boolean) {
+        if (foreground && !foregroundRereadRunning.compareAndSet(false, true)) return
+        val issued = synchronized(stateLock) {
+            if (!transientUnreadableLocked()) {
+                null
+            } else {
+                rereadIssuedWriteSequence = writeSequence
+                ++rereadSequence
+            }
+        }
+        if (issued == null) {
+            if (foreground) foregroundRereadRunning.set(false)
+            return
+        }
+        val job = scope.launch { onSettingsReread(issued, readLoadState()) }
+        if (foreground) job.invokeOnCompletion { foregroundRereadRunning.set(false) }
+    }
+
+    /** True while the load state is `Unreadable` with a transient cause. Must be called with [stateLock] held. */
+    private fun transientUnreadableLocked(): Boolean {
+        val view = loadState
+        return view is AppLockSettingsLoadState.Unreadable && !view.cause.isPersistent
+    }
+
+    /**
+     * `SETTINGS_REREAD(loadState)` (T28, T29). Private and separate from [onLateSettingsResolved]. Dropped when:
+     * it is not the newest issued re-read ([seq], a stale result); a settings write committed since it was issued
+     * (D6); or the load state is no longer transient unreadable. An unreadable result passes those checks and then
+     * changes neither the view nor the state; in `LOCKED` or `AUTHENTICATING` it also drops an older kept snapshot
+     * (F5: the newer result supersedes it). A readable result is then:
+     * - T28, from `UNLOCKED` or `INERT`: applied at once through [applyRereadLocked], without auth;
+     * - T29, in `LOCKED` or `AUTHENTICATING` of any purpose: kept, nothing changes. It is applied by
+     *   [applyKeptRereadAfterClose] after an unlock or an open-origin prompt that ends in an open state;
+     * - any other state (`RESOLVING`, `DISABLED`): ignored.
+     * It never locks and never opens `LOCKED` (T6b alone may).
+     */
+    private fun onSettingsReread(seq: Long, read: AppLockSettingsLoadState) {
+        // Capability before the monitor (no binder call under it); only an open state with a readable result uses it.
+        val before = current
+        val usesCapability = read !is AppLockSettingsLoadState.Unreadable &&
+            (before is AppLockState.Unlocked || before is AppLockState.Inert)
+        val capability = if (usesCapability) readQueryCapability() else null
+        val diagnostic = transition {
+            if (seq != rereadSequence) return@transition null
+            if (rereadIssuedWriteSequence != writeSequence) return@transition null
+            if (!transientUnreadableLocked()) return@transition null
+            val unreadable = read is AppLockSettingsLoadState.Unreadable
+            when (current) {
+                is AppLockState.Unlocked, is AppLockState.Inert ->
+                    if (unreadable || capability == null) null else applyRereadLocked(read, capability)
+                is AppLockState.Locked, is AppLockState.Authenticating -> {
+                    // F5: a newer unreadable result supersedes an older kept snapshot (the view stays unreadable).
+                    keptReread = if (unreadable) null else KeptReread(read, writeSequence)
+                    null
+                }
+                else -> null
+            }
+        }
+        record(diagnostic)
+    }
+
+    /**
+     * T28 under the monitor, from `UNLOCKED` or `INERT` with a readable [read]: takes the read as the controller's
+     * settings view and moves per the stored values. Lock off: `DISABLED`. Lock on and the lock can protect
+     * (capability not genuinely unavailable, a failed check counts as able, R3): `UNLOCKED`. Lock on and the
+     * capability genuinely unavailable: `INERT(reason)`. No auth, and it never locks mid-session. Returns the
+     * diagnostic of a new `INERT` (an existing code, claimed once per process).
+     */
+    private fun applyRereadLocked(read: AppLockSettingsLoadState, capability: DeviceAuthCapability): PendingDiagnostic? {
+        val settings = when (read) {
+            is AppLockSettingsLoadState.Loaded -> read.settings
+            is AppLockSettingsLoadState.FirstRunDefault -> read.settings
+            is AppLockSettingsLoadState.Unreadable -> return null
+        }
+        // TODO(S18-ii-c D9): capture `(loadState as Unreadable).cause` here, before the assignment, and emit
+        // LOCK_SETTINGS_RECOVERED(cause) once the owner approves the emitter entry. Recovery and a new INERT can
+        // coincide, so both diagnostics must be recorded.
+        loadState = read
+        keptReread = null
+        val next: AppLockState = if (!settings.appLockEnabled) {
+            AppLockState.Disabled
+        } else {
+            capability.toInertReason()?.let { AppLockState.Inert(it) } ?: AppLockState.Unlocked
+        }
+        if (next == current) return null
+        return if (next is AppLockState.Inert) {
+            enterInert(next.reason)
+        } else {
+            setState(next)
+            null
+        }
+    }
+
+    /**
+     * T29's second half: after an UNLOCK success or an open-origin prompt that ended, offers the kept snapshot to T28.
+     * Nothing happens while the state is still `LOCKED`, `AUTHENTICATING` or `RESOLVING` (the snapshot stays kept, so
+     * `LOCKED` is never relaxed). In an open state the snapshot is consumed: dropped if a settings write committed
+     * after it was kept (D6) or the view is no longer transient unreadable, otherwise applied through T28 from
+     * `UNLOCKED` or `INERT`.
+     */
+    private fun applyKeptRereadAfterClose() {
+        if (synchronized(stateLock) { keptReread == null }) return
+        val before = current
+        val capability = if (before is AppLockState.Unlocked || before is AppLockState.Inert) readQueryCapability() else null
+        val diagnostic = transition {
+            val kept = keptReread ?: return@transition null
+            val now = current
+            if (now is AppLockState.Locked || now is AppLockState.Authenticating || now is AppLockState.Resolving) {
+                return@transition null
+            }
+            keptReread = null
+            if (kept.writeSequenceAtKeep != writeSequence) return@transition null
+            if (!transientUnreadableLocked()) return@transition null
+            if ((now is AppLockState.Unlocked || now is AppLockState.Inert) && capability != null) {
+                applyRereadLocked(kept.read, capability)
+            } else {
+                null
+            }
+        }
+        record(diagnostic)
+    }
 
     // --- The held deep link (T20, T21, T22; S17) --------------------------------------------------
 
@@ -1372,6 +1554,9 @@ class AppLockController @Inject constructor(
         record(timerDiagnostic)
         if (closing == Closing.Abandoned) postCancel(attempt.attemptId)
         if (closing == Closing.OpenOriginSuccess) deliverOpenOriginSuccess(attempt)
+        // T29 (S18-ii-c): an UNLOCK success, or any end of an open-origin prompt, may leave an open state; a kept
+        // re-read snapshot is then offered to T28. Still LOCKED or AUTHENTICATING keeps it.
+        if (closing == Closing.Success || attempt.purpose.isOpenOrigin) applyKeptRereadAfterClose()
         return true
     }
 
@@ -1450,9 +1635,29 @@ class AppLockController @Inject constructor(
      * value is exactly what this block produced (or a newer one), never a value from a different moment.
      */
     private inline fun <R> transition(block: () -> R): R {
-        val (result, stamp, next) = synchronized(stateLock) { Triple(block(), version, current) }
-        publish(stamp, next)
+        val (result, view) = synchronized(stateLock) {
+            val outcome = block()
+            outcome to publicationLocked()
+        }
+        publish(view)
         return result
+    }
+
+    /** What one transition publishes: the state and the notice derived with it, under one version stamp. */
+    private class Publication(val stamp: Long, val state: AppLockState, val notice: LockNotice?)
+
+    /**
+     * Must be called with [stateLock] held. Derives the notice from the state and load state the transition ended
+     * with. A notice that changed without a state change (a load-state-only change) takes a new version so it is
+     * published too; an unchanged notice leaves the version alone.
+     */
+    private fun publicationLocked(): Publication {
+        val derived = LockNoticeDerivation.derive(current, loadState)
+        if (derived != currentNotice) {
+            currentNotice = derived
+            version++
+        }
+        return Publication(version, current, currentNotice)
     }
 
     /** Must be called with [stateLock] held. Every state change goes through here. */
@@ -1461,13 +1666,21 @@ class AppLockController @Inject constructor(
         version++
     }
 
-    /** Publishes [next] unless a newer version is already out (a stale value is never published). */
-    private fun publish(stamp: Long, next: AppLockState) {
-        if (stamp <= publishedVersion) return
+    /** Publishes [view] unless a newer version is already out (a stale value is never published). */
+    private fun publish(view: Publication) {
+        if (view.stamp <= publishedVersion) return
         synchronized(publishLock) {
-            if (stamp <= publishedVersion) return
-            publishedVersion = stamp
-            mutableState.value = next
+            if (view.stamp <= publishedVersion) return
+            publishedVersion = view.stamp
+            // F1: a closed state is never observable with a non-null notice. A null notice is written first (so a
+            // state that closes never shows with the old notice); a non-null notice is written after the state.
+            if (view.notice == null) {
+                mutableNotice.value = null
+                mutableState.value = view.state
+            } else {
+                mutableState.value = view.state
+                mutableNotice.value = view.notice
+            }
         }
     }
 

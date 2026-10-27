@@ -605,28 +605,46 @@ class AppLockControllerPromptOutcomeTest {
         val published = AppLockState.Locked(LockCause.TIMEOUT)
         assertEquals(published, controller.state.value)
 
-        // Deterministic pin on the private `publish(stamp, next)` and the version it guards. Only stamps and
-        // states are fed in; the expected outcome is "nothing changes" and then "the newer one is published".
+        // Deterministic pin on the private `publish(view: Publication)` and the version it guards. The shape of the
+        // nested private class `Publication(stamp: Long, state: AppLockState, notice: LockNotice?)` is pinned by this
+        // reflection test (its 3-parameter constructor). Only stamps, states and notices are fed in; the expected
+        // outcome is "nothing changes" and then "the newer one is published".
+        val publicationClass = Class.forName("${AppLockController::class.java.name}\$Publication")
+        val publicationConstructor = publicationClass.declaredConstructors
+            .single { it.parameterCount == 3 }
+            .apply { isAccessible = true }
         val publish = AppLockController::class.java
-            .getDeclaredMethod("publish", Long::class.javaPrimitiveType, AppLockState::class.java)
+            .getDeclaredMethod("publish", publicationClass)
             .apply { isAccessible = true }
         val publishedVersionField = AppLockController::class.java
             .getDeclaredField("publishedVersion")
             .apply { isAccessible = true }
+        fun publication(stamp: Long, state: AppLockState, notice: LockNotice?): Any =
+            publicationConstructor.newInstance(stamp, state, notice)
         val lastVersion = publishedVersionField.getLong(controller)
         assertTrue("a normal transition published at least one version", lastVersion > 0L)
+        val noticeBefore = controller.notice.value
 
-        // A different state with a stamp equal to, older than, or far older than the published version is dropped.
+        // A different state and a non-null notice with a stamp equal to, older than, or far older than the published
+        // version are dropped: neither the state nor the notice changes, and the version is unchanged.
         for (stale in listOf(lastVersion, lastVersion - 1, 1L, 0L)) {
-            publish.invoke(controller, stale, AppLockState.Unlocked)
+            publish.invoke(controller, publication(stale, AppLockState.Unlocked, LockNotice.ReviewSettings))
             assertEquals("stale stamp $stale", published, controller.state.value)
+            assertEquals("stale stamp $stale", noticeBefore, controller.notice.value)
             assertEquals("stale stamp $stale", lastVersion, publishedVersionField.getLong(controller))
         }
 
-        // The same call with a newer stamp is published, so the pin above cannot pass vacuously
-        // (a wrong method, a wrong argument order or a method that never publishes would fail here).
-        publish.invoke(controller, lastVersion + 1, AppLockState.Disabled)
+        // The same call with a newer stamp publishes both the state and the notice, so the pin above cannot pass
+        // vacuously (a wrong method, a wrong argument order or a method that never publishes would fail here).
+        publish.invoke(controller, publication(lastVersion + 1, AppLockState.Disabled, LockNotice.ReviewSettings))
         assertEquals(AppLockState.Disabled, controller.state.value)
+        assertEquals(LockNotice.ReviewSettings, controller.notice.value)
+        assertEquals(lastVersion + 1, publishedVersionField.getLong(controller))
+
+        // A stale null notice does not clear the published one.
+        publish.invoke(controller, publication(lastVersion, AppLockState.Unlocked, null))
+        assertEquals(AppLockState.Disabled, controller.state.value)
+        assertEquals(LockNotice.ReviewSettings, controller.notice.value)
         assertEquals(lastVersion + 1, publishedVersionField.getLong(controller))
     }
 
