@@ -609,6 +609,10 @@ Owns encrypted key storage and security/network bindings.
 - `ui/applock/AppLockPromptHost.kt` — per-Activity: builds and registers the adapter in `onCreate`, adopts the open attempt on rotation, reports `PROMPT_HOST_LOST` once at a real `ON_DESTROY`
 - `ui/applock/AppLockLifecycleBinder.kt` — `@Singleton`, idempotent `install(application)`: the sole INV-25 foreground/background signal source (exact started-activity count) and the caller of `AppLockController.resolve()`
 
+**App lock & privacy mode, increment 1b, S20-b (DORMANT; not wired until S20-c; legal path: LEGAL_PATHS "App Lock Prompt Path and Lifecycle Signals", FLAG_SECURE section)**
+- `ui/applock/SecureWindowController.kt` — `@Singleton`; the single `FLAG_SECURE` writer: `applyInitial(window)` (synchronous) and `bind(activity)` (follows `EffectivePrivacyValues.effectiveSecureScreen` from the COMMITTED `observeLoadState()` plus `controller.state is Resolving` only; clears only on a computed false; fail-closed on null, absent or error); internal `WindowFlagSink` seam
+- `ui/applock/NotificationPermissionPromptOnce.kt` — `@Singleton`, `tryClaim()` backed by an `AtomicBoolean`, not persisted: the once-per-process cap for the R24 POST_NOTIFICATIONS auto-prompt (R24's policy and store stay the deciders)
+
 ## SEGMENT 29: Debug & Diagnostics
 
 Owns debug surfaces, diagnostics pipeline, pipeline diagnostics, data integrity scanning, and retention system.

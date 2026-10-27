@@ -1961,7 +1961,27 @@ FOREGROUND / BACKGROUND SIGNALS (INV-25) — AppLockLifecycleBinder is the SOLE 
   The binder also launches AppLockController.resolve() on @ApplicationScope at install and on every start while the
   state is Resolving (CancellationException rethrown; other exceptions logged by class name only).
 
+FLAG_SECURE (INV-29, INV-53; S20-b adds the class, EFFECTIVE only from the S20-c wiring):
+  SecureWindowController is the SINGLE writer of FLAG_SECURE on the app window. Nothing else may add or clear it.
+  MainActivity.onCreate → applyInitial(window)  (first statement after super.onCreate, synchronous, before setContent)
+  MainActivity.onCreate → bind(activity)        (Activity lifecycleScope; ends at ON_DESTROY; once per Activity instance,
+                                                  never from onNewIntent)
+  flag = EffectivePrivacyValues.effectiveSecureScreen(committed load state, controller.state is Resolving)
+    inputs: AppLockSettingsRepository.observeLoadState() (COMMITTED only, INV-46) and the Resolving flag. NOTHING else.
+    AUTHENTICATING of any purpose is never an input: ENABLE keeps the flag off while the committed lock is off and
+    secure-screen is off, and turns it on at the first emission after the commit (AE-113); CONFIRM_CHANGE keeps it on,
+    a weakening clears it only after its write commits, and a persist failure leaves it on (AE-114).
+    cleared ONLY by a computed false from a real emission; before the first emission, with a null or absent state, and
+    while the load-state stream is down it stays set (fail-closed). When the stream ends (the repository's terminal
+    Unreadable(IO_ERROR) then completion, an error, or a clean completion) a null state is emitted (set) and the stream
+    is re-subscribed with a bounded backoff (1 s doubling, capped at 30 s; INV-47, AE-97), so the flag can clear again
+    after recovery. distinctUntilChanged: no redundant window writes.
+  NotificationPermissionPromptOnce.tryClaim() (in-memory, once per process, AE-39) caps the R24 auto-prompt; R24's
+    NotificationPromptPolicy and NotificationPromptStore remain the deciders.
+
 FORBIDDEN:
+  ❌ A second FLAG_SECURE writer, or any AppLockState other than Resolving (AUTHENTICATING included) as a flag input
+  ❌ Clearing FLAG_SECURE on an unknown, null, absent or failed state
   ❌ A second source of foreground/background signals (ProcessLifecycleOwner, onResume/onPause, a ViewModel)
   ❌ Calling the relay, the adapter or the controller's prompt API from a worker, receiver or service
   ❌ Registering anything other than the prompt host's adapter with the relay; a singleton or static Activity reference

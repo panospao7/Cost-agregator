@@ -2285,3 +2285,55 @@ Residual risk: the two-host test relies on Robolectric 4.11.1 `ActivityControlle
   - pre-fix targeted vr-20261027-210450-98d6a35c
 - Committed.
 - Next: S20-b (SecureWindowController, NotificationPermissionPromptOnce).
+
+### S20-b implementation (2026-10-28, implementer; NOT validated)
+
+Nothing was built, run or committed. Lane worktree `Cost-agregator-al`, base 384d1e56. P = app/src/main/java/com/yourname/expensetracker, T = app/src/test/java/com/yourname/expensetracker. Dormant: nothing instantiates either class (S20-c wires them). No schema impact, no DI module change (both are `@Singleton @Inject constructor`), no pin, guard, baseline or allowlist change. No public API change to AppLockController or the settings repository; R24's NotificationPromptPolicy and NotificationPromptStore are untouched.
+
+Files:
+- N P/ui/applock/SecureWindowController.kt
+- N P/ui/applock/NotificationPermissionPromptOnce.kt
+- N T/ui/applock/SecureWindowControllerTest.kt
+- N T/ui/applock/NotificationPermissionPromptOnceTest.kt
+- M docs/architecture: CODEBASE_SEGMENTS.md, CODEBASE_INVENTORY.md, LEGAL_PATHS.md (FLAG_SECURE block in "App Lock Prompt Path and Lifecycle Signals": single writer, effective from S20-c)
+
+Design:
+- `SecureWindowController(repository: AppLockSettingsRepository, controller: AppLockController)`. `applyInitial(window: Window)` adds FLAG_SECURE synchronously. `bind(activity: ComponentActivity)` launches in `activity.lifecycleScope` (not repeatOnLifecycle: the flag must keep following while the Activity is stopped, because the recents snapshot is taken after onStop) and collects `combine(committed load states, controller.state.map { it is Resolving })` through the pure `SecureWindowController.decide(loadState, resolving)` (= `EffectivePrivacyValues.effectiveSecureScreen`), with `distinctUntilChanged`.
+- Fail-closed: the committed flow is wrapped `.catch { emit(null) }` (null gives true) and the state flow `.catch { emit(true) }`; the flag is cleared only by a computed false from a real emission. After a flow error the stream is finished and the flag stays set (SUPERSEDED by the review fixes below: the stream is now re-subscribed with a bounded backoff, the flag stays set while it is down). No try/catch, so a CancellationException is never caught.
+- Seams: `internal fun interface WindowFlagSink { fun setSecure(secure: Boolean) }`, `internal fun applyInitial(sink)`, `internal suspend fun follow(sink)`, `internal fun secureFlow(): Flow<Boolean>`, `internal companion object { fun decide(...) }`.
+- `NotificationPermissionPromptOnce`: `@Singleton`, `fun tryClaim(): Boolean = claimed.compareAndSet(false, true)`; in memory only.
+
+Tests owed (written here, unvalidated): SecureWindowControllerTest, NotificationPermissionPromptOnceTest. SecureWindowControllerTest uses mockk for the repository and controller, a MutableStateFlow for `state`, a replay-1 DROP_OLDEST MutableSharedFlow for committed states, and `runCurrent()` after every step (standard test dispatcher). Least-certain: the exact sink-call lists in the ae113/distinctUntilChanged/flowError tests (they assume `combine` delivers one value per settled step).
+
+Validation to request: targeted `*SecureWindowController*,*NotificationPermissionPromptOnce*,*NotificationPromptPolicy*` (compile covers the new classes and Hilt). S20-c must: call `applyInitial(window)` first after `super.onCreate`, `bind(this)` after the DB gate, and make the R24 effect start with `if (!notificationPromptOnce.tryClaim()) return@LaunchedEffect`.
+
+### S20-b review fixes (2026-10-28, implementer; NOT validated)
+
+Source: privacy-security-guardian S20-b ACCEPT-WITH-CONDITIONS (no fail-open found; findings F1..F6). Applied in one pass. Nothing was built, run or committed. No schema impact; no guard, baseline or allowlist change.
+
+Files: M P/ui/applock/SecureWindowController.kt, M T/ui/applock/SecureWindowControllerTest.kt, N T/ui/applock/SecureWindowControllerWindowTest.kt (Robolectric), M docs/architecture/LEGAL_PATHS.md (FLAG_SECURE block), this handoff.
+
+- F1 + F3 (INV-47, AE-97): `committedLoadStates()` is now `flow { while (true) { emitAll(repository.observeLoadState() with onEach/catch); emit(null); delay(backoff(failures)); failures++ } }`. A null state is the fail-closed input (decision gives true), so the flag stays set while the stream is down, and a clean completion after Loaded(lock off) no longer freezes a stale false. Backoff: `SecureWindowController.defaultBackoffMillis(failures)` = 1 s doubling, capped at 30 s, never below 1 ms; `failures` restarts on any emission that is not `Unreadable` (the repository's terminal `Unreadable(IO_ERROR)` does not reset it, so a persistent IO error backs off). Seam: the primary constructor is now `internal constructor(repository, controller, backoffMillis: (Int) -> Long)` and the `@Inject` constructor is a secondary one delegating with the default, so Hilt wiring and the public `(repository, controller)` call shape are unchanged. `.catch {}` is kept for the foreign-exception case; `delay` and `emitAll` propagate this collector's CancellationException (no try/catch).
+- F2: `WindowSink` is now `internal class SecureWindowController.WindowSink` (was private) so it is testable. Tests: mockk<Window>(relaxed) mapping, and a Robolectric sdk 34 class (`SecureWindowControllerWindowTest`, set-up copied from AppLockPromptHostTest) asserting `window.attributes.flags` after applyInitial, after a committed false, after committed true/false, and after ON_DESTROY followed by an emission (no write).
+- F4: (a) wording changed in the KDoc, LEGAL_PATHS and this handoff (re-subscribes with backoff); (b) KDoc states that `.catch` maps a foreign upstream CancellationException (collector still active) to "set" while this collector's own cancellation propagates; (c) "and secure-screen is off" added to the AE-113 ENABLE sentence in the KDoc and LEGAL_PATHS.
+- F5: (a) new test moves controller.state Resolving then Disabled while the stream is down and asserts no false follows; (b) the cancellation test now asserts the follower job completes within `runCurrent()` and no further writes (the tautological `isCancelled` assertion was dropped); a new test cancels during the backoff delay and asserts no re-subscription. (c) the AE-114 write-failure re-emit is left as is (accepted).
+- F6 forward items (recorded, not implemented):
+  - S20-c: call `bind(this)` once per Activity instance, never from `onNewIntent`.
+  - S20-c: add a feature-scoped source scan that FLAG_SECURE and window addFlags/clearFlags appear only in SecureWindowController.kt (candidate: extend or sit beside AppLockRelaySourceScan; allowlist/guard changes need the usual owner approval).
+  - S20-c: optionally add class-name-only logs (DiagnosticThrowableSummary.className) in the two `.catch` branches; not done in S20-b (no raw messages, no stack traces).
+  - G1b (AE-67 device list): a Compose `Dialog` window inherits FLAG_SECURE only when it is created; check a flip of the flag while a dialog is open on a device.
+
+New tests (SecureWindowControllerTest): flowError_afterTheFlagWasCleared_controllerStateChangesWhileTheStreamIsDown_neverClearIt, flowError_foreignCancellationException_isASourceFailure_mapsToSet_andTheCollectorKeepsRunning, resubscribe_unreadableThenCompletion_keepsTheFlagSet_thenClearsOnceALockOffStateArrives, resubscribe_aCleanCompletionAfterLockOff_setsTheFlagAgain_insteadOfFreezingAStaleClear, resubscribe_backoffGrowsWhileTheStreamKeepsEnding_andNeverSpins, resubscribe_aRealEmissionRestartsTheBackoff_butAnUnreadableOneDoesNot, resubscribe_cancellationDuringTheBackoffDelay_endsTheFollower_andNeverSubscribesAgain, defaultBackoffMillis_growsFromOneSecond_isCapped_andIsAlwaysPositive. Changed: cancellation_isNeverSwallowed_theFollowerEndsAndWritesNothingMore. (SecureWindowControllerWindowTest): windowSink_true_addsFlagSecure_false_clearsFlagSecure_andNothingElse, applyInitial_onAWindow_addsFlagSecureBeforeAnythingElse, realWindow_applyInitialSets_aCommittedFalseClears_aCommittedTrueSetsAgain, realWindow_afterOnDestroy_aLaterEmissionWritesNothing.
+
+Least-certain (not run): the exact `[true, false, true]` sink lists rely on `combine` delivering one value per settled step (its internal `yield` after each send); the Robolectric tests assume Dispatchers.Main.immediate plus `Looper.idle()` flush the `lifecycleScope` collection and that `Window.attributes.flags` reflects addFlags/clearFlags on an un-attached PhoneWindow.
+
+Validation to request (validation-runner, serial): targeted `*SecureWindowController*,*NotificationPermissionPromptOnce*,*NotificationPromptPolicy*,*AppLockRelaySourceScan*,*AppLockController*`.
+
+### S20-b ACCEPTED (2026-10-28)
+- Gate: privacy-security-guardian (lead) ACCEPT-WITH-CONDITIONS. F1-F5 applied; F6 forwarded to S20-c and G1b.
+- Validation, final tree, all PASS:
+  - targeted vr-20261027-220201-78c8084b
+  - runtime-ui vr-20261027-220703-39595a65
+  - cancellation vr-20261027-220922-db0ca088
+- Committed. Dormant: not wired until S20-c.
+- Next: S20-c (MainActivity shell integration; the controller goes LIVE for all users).
