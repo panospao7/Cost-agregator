@@ -12,11 +12,13 @@ import com.yourname.expensetracker.domain.installment.model.InstallmentPlanStatu
 import com.yourname.expensetracker.domain.installment.readmodel.InstallmentAmount
 import com.yourname.expensetracker.domain.installment.readmodel.InstallmentEntryCounts
 import com.yourname.expensetracker.domain.installment.readmodel.InstallmentEntryLine
+import com.yourname.expensetracker.domain.installment.readmodel.InstallmentLinkSuggestion
 import com.yourname.expensetracker.domain.installment.readmodel.InstallmentPlanDetail
 import com.yourname.expensetracker.domain.installment.readmodel.InstallmentPlanSummary
 import com.yourname.expensetracker.domain.installment.readmodel.InstallmentUnavailableReason
 import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.ui.model.LoadableUiState
+import com.yourname.expensetracker.ui.screens.installments.actions.InstallmentEntryActionKind
 import com.yourname.expensetracker.ui.screens.installments.overview.InstallmentAmountUi
 import com.yourname.expensetracker.util.ViewModelTestUtils
 import io.mockk.every
@@ -90,7 +92,8 @@ class InstallmentPlanDetailViewModelTest : ViewModelTestUtils() {
         paidSoFar: InstallmentAmount = InstallmentAmount.Available(5_000L),
         financingCost: InstallmentAmount = InstallmentAmount.Available(0L),
         endEpochDay: Long? = 20_100L,
-        entries: List<InstallmentEntryLine> = emptyList()
+        entries: List<InstallmentEntryLine> = emptyList(),
+        suggestions: List<InstallmentLinkSuggestion> = emptyList()
     ) = InstallmentPlanDetail(
         summary = InstallmentPlanSummary(
             planId = planId,
@@ -110,7 +113,23 @@ class InstallmentPlanDetailViewModelTest : ViewModelTestUtils() {
         purchaseExpenseId = null,
         entries = entries,
         financingCost = financingCost,
-        suggestions = emptyList()
+        suggestions = suggestions
+    )
+
+    private fun suggestion(
+        entryId: Long,
+        expenseId: Long,
+        grossMinor: Long = 5_000L,
+        dateEpochDay: Long = 20_001L,
+        deltaMinor: Long = 0L
+    ) = InstallmentLinkSuggestion(
+        planId = 7L,
+        entryId = entryId,
+        seq = entryId.toInt(),
+        expenseId = expenseId,
+        expenseGrossMinor = grossMinor,
+        expenseDateEpochDay = dateEpochDay,
+        deltaMinor = deltaMinor
     )
 
     private fun newViewModel() = InstallmentPlanDetailViewModel(repository)
@@ -563,5 +582,176 @@ class InstallmentPlanDetailViewModelTest : ViewModelTestUtils() {
         assertNull(c.entries[0].variance)
         assertEquals(-3.0, (c.entries[1].variance as InstallmentAmountUi.Money).display.amount, 0.0001)
         assertTrue(c.entries[2].variance is InstallmentAmountUi.Unavailable)
+    }
+
+    // ------------------------------------------------------------------ S10b-1 row actions
+
+    private fun actionsOf(c: InstallmentPlanDetailContent) = c.entries.map { it.availableActions }
+
+    @Test
+    fun `S10b-1 regular entries of an active plan get actions by status and due state`() = runTest(testDispatcher) {
+        val entries = listOf(
+            entry(1, InstallmentEntryStatus.SCHEDULED, InstallmentDueState.UPCOMING),
+            entry(2, InstallmentEntryStatus.SCHEDULED, InstallmentDueState.DUE),
+            entry(3, InstallmentEntryStatus.SCHEDULED, InstallmentDueState.OVERDUE),
+            entry(4, InstallmentEntryStatus.SCHEDULED, dueState = null),
+            entry(5, InstallmentEntryStatus.SKIPPED, dueState = null),
+            entry(6, InstallmentEntryStatus.PAID, dueState = null),
+            entry(7, InstallmentEntryStatus.CANCELLED, dueState = null),
+            entry(8, InstallmentEntryStatus.REVERSED, dueState = null),
+            entry(9, InstallmentEntryStatus.PAID_BEFORE_TRACKING, dueState = null)
+        )
+        val c = content(startWith(detail(status = InstallmentPlanStatus.ACTIVE, entries = entries)))
+
+        val adjustSkip = setOf(InstallmentEntryActionKind.ADJUST, InstallmentEntryActionKind.SKIP)
+        val recordAdjustSkip = adjustSkip + InstallmentEntryActionKind.RECORD
+        assertEquals(
+            listOf(
+                adjustSkip, // upcoming: no Record before it is due
+                recordAdjustSkip, // due today
+                recordAdjustSkip, // overdue
+                adjustSkip, // unknown due state is not due
+                setOf(InstallmentEntryActionKind.UNSKIP),
+                emptySet(),
+                emptySet(),
+                emptySet(),
+                emptySet()
+            ),
+            actionsOf(c)
+        )
+    }
+
+    @Test
+    fun `S10b-1 Link is offered only for an entry that has a suggestion`() = runTest(testDispatcher) {
+        val entries = listOf(
+            entry(1, InstallmentEntryStatus.SCHEDULED, InstallmentDueState.UPCOMING),
+            entry(2, InstallmentEntryStatus.SCHEDULED, InstallmentDueState.DUE),
+            entry(3, InstallmentEntryStatus.SCHEDULED, InstallmentDueState.UPCOMING)
+        )
+        val c = content(
+            startWith(detail(entries = entries, suggestions = listOf(suggestion(entryId = 1, expenseId = 91), suggestion(entryId = 2, expenseId = 92))))
+        )
+
+        assertEquals(
+            listOf(
+                setOf(InstallmentEntryActionKind.LINK, InstallmentEntryActionKind.ADJUST, InstallmentEntryActionKind.SKIP),
+                setOf(
+                    InstallmentEntryActionKind.RECORD,
+                    InstallmentEntryActionKind.LINK,
+                    InstallmentEntryActionKind.ADJUST,
+                    InstallmentEntryActionKind.SKIP
+                ),
+                setOf(InstallmentEntryActionKind.ADJUST, InstallmentEntryActionKind.SKIP)
+            ),
+            actionsOf(c)
+        )
+    }
+
+    @Test
+    fun `S10b-1 a completed plan offers only Unskip on skipped entries`() = runTest(testDispatcher) {
+        val entries = listOf(
+            entry(1, InstallmentEntryStatus.SKIPPED, dueState = null),
+            entry(2, InstallmentEntryStatus.SCHEDULED, InstallmentDueState.DUE),
+            entry(3, InstallmentEntryStatus.SCHEDULED, InstallmentDueState.OVERDUE),
+            entry(4, InstallmentEntryStatus.PAID, dueState = null),
+            entry(5, InstallmentEntryStatus.PAID_BEFORE_TRACKING, dueState = null)
+        )
+        val c = content(
+            startWith(
+                detail(
+                    status = InstallmentPlanStatus.COMPLETED,
+                    entries = entries,
+                    suggestions = listOf(suggestion(entryId = 2, expenseId = 92))
+                )
+            )
+        )
+
+        assertEquals(
+            listOf(setOf(InstallmentEntryActionKind.UNSKIP), emptySet(), emptySet(), emptySet(), emptySet()),
+            actionsOf(c)
+        )
+    }
+
+    @Test
+    fun `S10b-1 terminal plans offer no actions on any entry`() = runTest(testDispatcher) {
+        val entries = listOf(
+            entry(1, InstallmentEntryStatus.SCHEDULED, InstallmentDueState.DUE),
+            entry(2, InstallmentEntryStatus.SCHEDULED, InstallmentDueState.UPCOMING),
+            entry(3, InstallmentEntryStatus.SKIPPED, dueState = null),
+            entry(4, InstallmentEntryStatus.PAID, dueState = null)
+        )
+        val terminal = listOf(
+            InstallmentPlanStatus.CANCELLED,
+            InstallmentPlanStatus.REFUNDED,
+            InstallmentPlanStatus.PAID_OFF
+        )
+        for (planStatus in terminal) {
+            val c = content(
+                startWith(
+                    detail(
+                        status = planStatus,
+                        entries = entries,
+                        suggestions = listOf(suggestion(entryId = 1, expenseId = 91), suggestion(entryId = 2, expenseId = 92))
+                    )
+                )
+            )
+            assertEquals("plan $planStatus", List(entries.size) { emptySet<InstallmentEntryActionKind>() }, actionsOf(c))
+        }
+    }
+
+    @Test
+    fun `S10b-1 payoff entries get no actions even in an active plan`() = runTest(testDispatcher) {
+        val entries = listOf(
+            entry(1, InstallmentEntryStatus.SCHEDULED, InstallmentDueState.DUE, kind = InstallmentEntryKind.PAYOFF),
+            entry(2, InstallmentEntryStatus.SKIPPED, dueState = null, kind = InstallmentEntryKind.PAYOFF),
+            entry(3, InstallmentEntryStatus.PAID, dueState = null, kind = InstallmentEntryKind.PAYOFF)
+        )
+        val c = content(
+            startWith(detail(status = InstallmentPlanStatus.ACTIVE, entries = entries, suggestions = listOf(suggestion(entryId = 1, expenseId = 91))))
+        )
+
+        assertEquals(List(3) { emptySet<InstallmentEntryActionKind>() }, actionsOf(c))
+    }
+
+    @Test
+    fun `S10b-1 suggestions are filtered per entry and mapped in the plan currency`() = runTest(testDispatcher) {
+        val entries = listOf(
+            entry(1, minor = 5_000L),
+            entry(2, minor = 5_000L),
+            entry(3, minor = 5_000L)
+        )
+        val suggestions = listOf(
+            suggestion(entryId = 1, expenseId = 91, grossMinor = 5_020L, dateEpochDay = 20_002L, deltaMinor = 20L),
+            suggestion(entryId = 2, expenseId = 92, grossMinor = 4_990L, dateEpochDay = 20_003L, deltaMinor = -10L),
+            suggestion(entryId = 1, expenseId = 93, grossMinor = 5_000L, dateEpochDay = 20_004L, deltaMinor = 0L),
+            // An entry that is not in this plan's schedule never appears on a row.
+            suggestion(entryId = 99, expenseId = 94)
+        )
+        val c = content(startWith(detail(currency = InstallmentCurrency.USD, entries = entries, suggestions = suggestions)))
+
+        assertEquals(listOf(91L, 93L), c.entries[0].suggestions.map { it.expenseId })
+        assertEquals(listOf(92L), c.entries[1].suggestions.map { it.expenseId })
+        assertTrue(c.entries[2].suggestions.isEmpty())
+
+        val first = c.entries[0].suggestions[0]
+        assertEquals(50.20, first.amount.amount, 0.0001)
+        assertEquals("USD", first.amount.currency)
+        assertEquals(20_002L, first.dateEpochDay)
+        assertEquals(20L, first.deltaMinor)
+        // A negative delta keeps its sign.
+        assertEquals(-10L, c.entries[1].suggestions.single().deltaMinor)
+        assertEquals(49.90, c.entries[1].suggestions.single().amount.amount, 0.0001)
+    }
+
+    @Test
+    fun `S10b-1 no suggestions leaves every row with an empty list`() = runTest(testDispatcher) {
+        val c = content(startWith(detail(entries = listOf(entry(1), entry(2)))))
+        assertTrue(c.entries.all { it.suggestions.isEmpty() })
+    }
+
+    @Test
+    fun `S10b-1 the row carries the scheduled minor amount for the adjust prefill`() = runTest(testDispatcher) {
+        val c = content(startWith(detail(entries = listOf(entry(1, minor = 4_996L, original = 5_000L), entry(2, minor = 5_217L)))))
+        assertEquals(listOf(4_996L, 5_217L), c.entries.map { it.scheduledMinor })
     }
 }

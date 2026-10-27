@@ -14,11 +14,14 @@ import com.yourname.expensetracker.domain.installment.model.InstallmentPlanStatu
 import com.yourname.expensetracker.domain.installment.model.InstallmentStatusReason
 import com.yourname.expensetracker.domain.installment.readmodel.InstallmentAmount
 import com.yourname.expensetracker.domain.installment.readmodel.InstallmentEntryLine
+import com.yourname.expensetracker.domain.installment.readmodel.InstallmentLinkSuggestion
 import com.yourname.expensetracker.domain.installment.readmodel.InstallmentPlanDetail
 import com.yourname.expensetracker.domain.installment.readmodel.InstallmentUnavailableReason
 import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.ui.model.LoadableUiState
 import com.yourname.expensetracker.ui.model.MoneyDisplayUi
+import com.yourname.expensetracker.ui.screens.installments.actions.InstallmentEntryActionKind
+import com.yourname.expensetracker.ui.screens.installments.actions.InstallmentLinkSuggestionUi
 import com.yourname.expensetracker.ui.screens.installments.installmentAmountUi
 import com.yourname.expensetracker.ui.screens.installments.installmentMoney
 import com.yourname.expensetracker.ui.screens.installments.overview.InstallmentAmountUi
@@ -84,7 +87,13 @@ data class InstallmentEntryRowUi(
     /** PAID entries only: non-zero paid minus scheduled, or unavailable; null for other statuses or no difference. */
     val variance: InstallmentAmountUi?,
     /** CONFIRM-mode ACTIVE plan, due today or overdue, not yet confirmed or linked (AE-10b). */
-    val awaitingConfirmation: Boolean
+    val awaitingConfirmation: Boolean,
+    /** Scheduled amount in minor units, for the Adjust prefill and its Undo (S10b-1). */
+    val scheduledMinor: Long = 0L,
+    /** Row actions offered for this entry (ux-flows 3.5/3.6). Empty when none applies. */
+    val availableActions: Set<InstallmentEntryActionKind> = emptySet(),
+    /** Matching unlinked charges for this entry (INV-13); the Link sheet lists these. */
+    val suggestions: List<InstallmentLinkSuggestionUi> = emptyList()
 )
 
 data class InstallmentPlanDetailContent(
@@ -152,8 +161,41 @@ internal object InstallmentPlanDetailMapper {
             } else {
                 installmentMoney(awaitingEntries.sumOf { it.scheduledMinor }, currency)
             },
-            entries = detail.entries.map { row(it, currency, awaitingMode && isAwaiting(it)) }
+            entries = detail.entries.map {
+                row(it, currency, awaitingMode && isAwaiting(it), summary.status, detail.suggestions)
+            }
         )
+    }
+
+    /** Row actions per ux-flows 3.5: Link needs a suggestion because the free picker is deferred. */
+    private fun actionsFor(
+        entry: InstallmentEntryLine,
+        planStatus: InstallmentPlanStatus,
+        hasSuggestion: Boolean
+    ): Set<InstallmentEntryActionKind> {
+        if (entry.kind != InstallmentEntryKind.REGULAR) return emptySet()
+        return when (entry.status) {
+            InstallmentEntryStatus.SCHEDULED ->
+                if (planStatus != InstallmentPlanStatus.ACTIVE) {
+                    emptySet()
+                } else {
+                    buildSet {
+                        if (entry.dueState == InstallmentDueState.DUE || entry.dueState == InstallmentDueState.OVERDUE) {
+                            add(InstallmentEntryActionKind.RECORD)
+                        }
+                        if (hasSuggestion) add(InstallmentEntryActionKind.LINK)
+                        add(InstallmentEntryActionKind.ADJUST)
+                        add(InstallmentEntryActionKind.SKIP)
+                    }
+                }
+            InstallmentEntryStatus.SKIPPED ->
+                if (planStatus == InstallmentPlanStatus.ACTIVE || planStatus == InstallmentPlanStatus.COMPLETED) {
+                    setOf(InstallmentEntryActionKind.UNSKIP)
+                } else {
+                    emptySet()
+                }
+            else -> emptySet()
+        }
     }
 
     private fun isAwaiting(entry: InstallmentEntryLine): Boolean =
@@ -163,7 +205,9 @@ internal object InstallmentPlanDetailMapper {
     private fun row(
         entry: InstallmentEntryLine,
         currency: InstallmentCurrency,
-        awaiting: Boolean
+        awaiting: Boolean,
+        planStatus: InstallmentPlanStatus,
+        allSuggestions: List<InstallmentLinkSuggestion>
     ): InstallmentEntryRowUi = InstallmentEntryRowUi(
         entryId = entry.entryId,
         seq = entry.seq,
@@ -178,7 +222,19 @@ internal object InstallmentPlanDetailMapper {
         variance = entry.variance
             ?.takeUnless { it is InstallmentAmount.Available && it.minor == 0L }
             ?.let { installmentAmountUi(it, currency) },
-        awaitingConfirmation = awaiting
+        awaitingConfirmation = awaiting,
+        scheduledMinor = entry.scheduledMinor,
+        availableActions = actionsFor(entry, planStatus, allSuggestions.any { it.entryId == entry.entryId }),
+        suggestions = allSuggestions
+            .filter { it.entryId == entry.entryId }
+            .map {
+                InstallmentLinkSuggestionUi(
+                    expenseId = it.expenseId,
+                    amount = installmentMoney(it.expenseGrossMinor, currency),
+                    dateEpochDay = it.expenseDateEpochDay,
+                    deltaMinor = it.deltaMinor
+                )
+            }
     )
 
     private fun label(entry: InstallmentEntryLine): InstallmentEntryLabelUi = when (entry.status) {

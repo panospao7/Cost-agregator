@@ -1,5 +1,8 @@
 package com.yourname.expensetracker.ui.screens.installments.detail
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,6 +22,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -26,8 +31,13 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -40,30 +50,51 @@ import com.yourname.expensetracker.ui.components.asString
 import com.yourname.expensetracker.ui.components.common.ErrorState
 import com.yourname.expensetracker.ui.components.common.InlineErrorBanner
 import com.yourname.expensetracker.ui.model.LoadableUiState
+import com.yourname.expensetracker.ui.screens.installments.actions.InstallmentActionNoticeEffect
+import com.yourname.expensetracker.ui.screens.installments.actions.InstallmentActionTarget
+import com.yourname.expensetracker.ui.screens.installments.actions.InstallmentEntryActionMenuSheet
+import com.yourname.expensetracker.ui.screens.installments.actions.InstallmentEntryActionSheet
+import com.yourname.expensetracker.ui.screens.installments.actions.InstallmentEntryActionsViewModel
+import com.yourname.expensetracker.ui.screens.installments.actions.installmentRowClickable
 import com.yourname.expensetracker.ui.screens.installments.formatInstallmentDate
 import com.yourname.expensetracker.ui.screens.installments.overview.InstallmentAmountUi
 
 /**
  * Plan detail (loan-installments S10a-2): header, progress, remaining scheduled payments, the
- * per-entry schedule with status labels, and payments awaiting confirmation. Read-only: row
- * actions (Record, Link, Skip), edit and end flows arrive with S10b.
+ * per-entry schedule with status labels, and payments awaiting confirmation. S10b-1 adds the entry
+ * row actions (Record, Link, Skip, Adjust, Unskip) through [InstallmentEntryActionsViewModel]; the
+ * detail ViewModel itself stays read-only. Edit and end flows arrive with S10b-2.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun InstallmentPlanDetailScreen(
     planId: Long,
     onNavigateBack: () -> Unit,
-    viewModel: InstallmentPlanDetailViewModel = hiltViewModel(key = "installment_plan_$planId")
+    viewModel: InstallmentPlanDetailViewModel = hiltViewModel(key = "installment_plan_$planId"),
+    actionsViewModel: InstallmentEntryActionsViewModel = hiltViewModel(key = "installment_actions_$planId")
 ) {
     LaunchedEffect(planId) { viewModel.start(planId) }
     // The ViewModel is activity-scoped (no NavHost): stop its collection when the screen leaves.
-    DisposableEffect(planId) { onDispose { viewModel.stop() } }
+    // The actions ViewModel is activity-scoped too: leaving drops a pending Undo notice, and a sheet
+    // unless the exit is a configuration change (rotation keeps the sheet).
+    val context = LocalContext.current
+    DisposableEffect(planId) {
+        onDispose {
+            viewModel.stop()
+            actionsViewModel.onScreenExit(changingConfigurations = context.findHostActivity()?.isChangingConfigurations == true)
+        }
+    }
     val state by viewModel.state.collectAsState()
+    val actionsState by actionsViewModel.state.collectAsState()
+    val snackbarHostState = remember { SnackbarHostState() }
+    // The row whose action list is open; the list is local UI state, the action itself runs in the ViewModel.
+    var menuEntryId by rememberSaveable { mutableStateOf<Long?>(null) }
     val loaded = (state.loadable as? LoadableUiState.Data)?.value
     // A redacted restore can leave the plan name blank (INV-34): show a fixed generic label.
     val loadedName = loaded?.displayName?.takeIf { it.isNotBlank() }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text(loadedName ?: stringResource(R.string.installments_detail_title)) },
@@ -97,18 +128,54 @@ fun InstallmentPlanDetailScreen(
                 is LoadableUiState.Data -> DetailContent(
                     content = loadable.value,
                     refreshFailed = state.refreshFailed,
-                    onRetry = viewModel::retry
+                    onRetry = viewModel::retry,
+                    onEntryClick = { menuEntryId = it }
                 )
             }
         }
     }
+
+    val menuEntry = loaded?.entries?.firstOrNull { it.entryId == menuEntryId }
+    if (loaded != null && menuEntry != null && menuEntry.availableActions.isNotEmpty()) {
+        InstallmentEntryActionMenuSheet(
+            seq = menuEntry.seq,
+            actions = menuEntry.availableActions,
+            onPick = { kind ->
+                menuEntryId = null
+                actionsViewModel.open(
+                    kind,
+                    InstallmentActionTarget(
+                        entryId = menuEntry.entryId,
+                        seq = menuEntry.seq,
+                        dueEpochDay = menuEntry.dueEpochDay,
+                        scheduledMinor = menuEntry.scheduledMinor,
+                        currencyCode = loaded.currencyCode,
+                        amount = menuEntry.amount,
+                        suggestions = menuEntry.suggestions
+                    )
+                )
+            },
+            onDismiss = { menuEntryId = null }
+        )
+    }
+    actionsState.sheet?.let { sheet ->
+        InstallmentEntryActionSheet(state = actionsState, sheet = sheet, viewModel = actionsViewModel)
+    }
+    InstallmentActionNoticeEffect(actionsState, snackbarHostState, actionsViewModel)
+}
+
+private tailrec fun Context.findHostActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findHostActivity()
+    else -> null
 }
 
 @Composable
 private fun DetailContent(
     content: InstallmentPlanDetailContent,
     refreshFailed: Boolean,
-    onRetry: () -> Unit
+    onRetry: () -> Unit,
+    onEntryClick: (Long) -> Unit
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -131,7 +198,7 @@ private fun DetailContent(
                 style = MaterialTheme.typography.titleMedium
             )
         }
-        items(content.entries, key = { it.entryId }) { entry -> EntryRow(entry) }
+        items(content.entries, key = { it.entryId }) { entry -> EntryRow(entry, onClick = { onEntryClick(entry.entryId) }) }
     }
 }
 
@@ -267,8 +334,12 @@ private fun AwaitingCard(content: InstallmentPlanDetailContent) {
 }
 
 @Composable
-private fun EntryRow(entry: InstallmentEntryRowUi) {
-    Card(modifier = Modifier.fillMaxWidth()) {
+private fun EntryRow(entry: InstallmentEntryRowUi, onClick: () -> Unit) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .installmentRowClickable(entry.availableActions.isNotEmpty(), onClick)
+    ) {
         Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(

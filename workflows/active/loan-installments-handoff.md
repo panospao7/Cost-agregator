@@ -1829,3 +1829,121 @@ es/el DRAFT list for owner sign-off (changed or added in this fix; `installments
     - S10b (row actions, create/edit/end flows: writes through the plan coordinator; T3 gates);
     - S8b (needs owner approval);
     - S11 / S12a / S12b / S13.
+
+## S10b-1 — implemented
+
+Status: implemented, NOT validated (nothing was run). Dormant behind `InstallmentsFeature.ENABLED`. No schema, DAO, guard or allowlist change.
+
+Files (all under `app/src/main/java/com/yourname/expensetracker/ui/screens/installments/` unless noted):
+- New `actions/InstallmentEntryActionsModel.kt`: action kinds, skip reasons, `InstallmentMutationState` (Idle / InProgress / Success / Refused(code) / Failed(code)), notices, undo types, sheet state with `hasInput`, strict amount parser (at most 2 decimals, positive, never rounded silently), and `InstallmentActionMessages` (total refusal / failure / notice -> fixed string maps).
+- New `actions/InstallmentEntryActionsViewModel.kt`: one coordinator op per action, post-commit batch dispatch after the op returns, bounded logging, `CancellationException` rethrown.
+- New `actions/InstallmentEntryActionSheets.kt`: row action menu sheet, Record / Link / Skip / Adjust / Unskip sheets, discard dialog, notice snackbar with Undo.
+- M `detail/InstallmentPlanDetailViewModel.kt`: row UI gained `scheduledMinor`, `availableActions`, `suggestions` (all defaulted; the detail ViewModel itself is still read-only).
+- M `detail/InstallmentPlanDetailScreen.kt`: tappable rows, actions ViewModel (`hiltViewModel(key = "installment_actions_$planId")`), snackbar host.
+- M `app/src/main/res/values{,-es,-el}/strings.xml`: `installments_action_*` strings.
+- New test `app/src/test/.../ui/screens/installments/actions/InstallmentEntryActionsViewModelTest.kt`.
+
+Coordinator ops used (`InstallmentPlanLifecycleCoordinator`), the only write path:
+- Record -> `confirmEntry(entryId, todayEpochDay, zone)`.
+- Link -> `linkExpense(entryId, expenseId)`.
+- Skip -> `skip(entryId, USER_SKIP_*)`.
+- Adjust -> `adjustEntry(entryId, newAmount?, newDueEpochDay?)` (only changed fields are sent).
+- Unskip -> `unskip(entryId)`.
+- Undo (AE-14): Skip -> `unskip`; Link -> `unlinkExpense`; Adjust -> `adjustEntry` with the previous values. Record has no Undo (ux-flows 3.6).
+- Result handling: `Done` / `AlreadyInState` = success; `Refused(code)` -> fixed string per `InstallmentRefusalCode`; `Failed(InstallmentOpFailure)` -> `InstallmentActionFailureCode` (CONFLICT / NOT_FOUND / RECORD_FAILED / UNEXPECTED) -> fixed string; `RateRefused` -> UNEXPECTED. Exception messages are never shown or logged (INV-31); only the operation name and the enum names are logged.
+
+Row action rules (mapper, ux-flows 3.5):
+- Only REGULAR entries in an ACTIVE plan get actions.
+- SCHEDULED: Record when Due or Overdue, Link when a suggestion exists for the entry, Adjust, Skip.
+- SKIPPED: Unskip (ACTIVE or COMPLETED plan).
+- The coordinator still decides legality; the UI only hides actions.
+
+Deferred (not in S10b-1):
+- Link from a free expense picker: no candidate-read API exists (only `InstallmentPlanDetail.suggestions`, the INV-13 matches). Link lists only those suggestions. A full picker needs a new read; owner or planner item.
+- Unlink as a user-facing row action and "Delete expense and reopen" (OQ-21): S10b-2.
+- "View expense" snackbar action after Record: needs navigation to the expense; not wired.
+- Bulk "Record all past payments": not part of this sub-slice.
+- Create, edit, end flows and plan delete: S10b-2.
+- `pluralStringResource`: no new count-bearing copy was needed, so no new plurals.
+- Category name in the Record description (ux-flows says "in [category]"): the read model has no category name; omitted.
+
+es/el DRAFTS (pending owner native sign-off), all added as `installments_action_*`:
+- Menu and titles: es "Registrar pago", "Vincular a un gasto coincidente", "Omitir esta cuota", "Ajustar importe o fecha", "Dejar de omitir". el "Καταγραφή πληρωμής", "Σύνδεση με αντίστοιχο έξοδο", "Παράλειψη αυτής της δόσης", "Προσαρμογή ποσού ή ημερομηνίας", "Αναίρεση παράλειψης".
+- Skip reasons: es "Pausa de pagos del prestamista" / "Condonada por el prestamista" / "Otro". el "Παύση πληρωμών από τον δανειστή" / "Διαγραφή από τον δανειστή" / "Άλλο".
+- Refusal / failure / notice copy (9 refusal, 4 failure, 9 notice strings) and the discard dialog.
+- Check especially: "Condonada" / "Διαγραφή" for "waived", and the el/es "Nothing was changed" phrasing.
+
+Risks and notes for review:
+- Zone and today: `ZoneId.systemDefault()` plus `TimeProvider.now()`, the same as the read repository (no injected zone). Tests assert only that the epoch day is within a day.
+- `PostCommitActionRunner` is injected into the actions ViewModel to dispatch the batches `confirmEntry` returns; failures are logged by class name and never change the committed result. The unit test covers only the empty-batch case (a non-empty `PostCommitActionBatch` fixture was not built).
+- The actions ViewModel is activity-scoped via `hiltViewModel(key)`, like the detail ViewModel; sheet state is not cleared on screen exit (a discarded sheet stays closed, an open one reappears on re-entry). Reviewer: consider clearing on dispose.
+- `InstallmentMutationState` is a feature-local sealed type, not `ui.model.MutationState` (that type has no refused-code field).
+- `InstallmentEntryRowUi` gained defaulted fields, so existing detail tests still construct it; the existing detail mapper test does not yet assert `availableActions` / `suggestions` (test-author follow-up).
+- Compose sheets are not UI-tested.
+
+Validation to request, serially, via validation-runner:
+1. `targeted-unit-test -Filter "*Installment*ViewModel*"` (new actions test plus the existing detail / overview / history tests).
+2. `unit-test-shard -ShardName runtime-ui`.
+3. architecture-contracts (confirm no UI -> DAO / TLC bypass; the UI uses only the plan coordinator and the read repository).
+4. ui_dao.
+5. `lint` (new strings, es/el parity, Compose).
+
+### S10b-1 — tests added (test-author, NOT run)
+
+Closes the two test follow-ups above (non-empty batch fixture; mapper `availableActions` / `suggestions`). Test-only; no source change.
+
+`ui/screens/installments/detail/InstallmentPlanDetailViewModelTest.kt` (the `detail()` helper gained a `suggestions` parameter; new `suggestion()` helper):
+- `S10b-1 regular entries of an active plan get actions by status and due state`
+- `S10b-1 Link is offered only for an entry that has a suggestion`
+- `S10b-1 a completed plan offers only Unskip on skipped entries`
+- `S10b-1 terminal plans offer no actions on any entry` (CANCELLED, REFUNDED, PAID_OFF)
+- `S10b-1 payoff entries get no actions even in an active plan`
+- `S10b-1 suggestions are filtered per entry and mapped in the plan currency` (also: a suggestion for an entry outside the schedule is dropped; negative delta keeps its sign)
+- `S10b-1 no suggestions leaves every row with an empty list`
+- `S10b-1 the row carries the scheduled minor amount for the adjust prefill`
+
+`ui/screens/installments/actions/InstallmentEntryActionsViewModelTest.kt` (new `batch()` fixture builds a non-empty `PostCommitActionBatch`):
+- `a non-empty post-commit batch from Done reaches the runner exactly once after the coordinator returns` (order: coordinator, then runner)
+- `only the non-empty batches of a Done result are dispatched, in order`
+- `a non-empty batch is not dispatched when the result is not Done` (AlreadyInState and Refused)
+- `a post-commit batch that throws does not change the success result or state`
+- `a failing post-commit batch does not stop the next batch`
+- `a CancellationException from the post-commit batch run propagates and is not swallowed` (later batch never runs; no Success state)
+
+Filter to request (serially, via validation-runner): `targeted-unit-test -Filter "*InstallmentPlanDetailViewModelTest*,*InstallmentEntryActionsViewModelTest*"`, or the broader `*Installment*ViewModel*` already listed above.
+
+### S10b-1 — architecture spot check (ACCEPT-WITH-CONDITIONS) and fixes
+
+Fixes applied after the spot check. Implemented, NOT validated (nothing was run). Still dormant; writes only via `InstallmentPlanLifecycleCoordinator`; INV-31 kept; `CancellationException` still rethrown. No schema, DAO, guard or allowlist change.
+
+CORRECTION to "S10b-1 — implemented" and "tests added" above (F2): the claims "AE-7/8/9" and "Undo (AE-14)" were wrong. In the domain spec AE-7 = Stop, AE-8 = Refund, AE-9 = Early payoff and AE-14 = Delete = undo; all four belong to S10b-2. The S10b-1 flows (Record, Link, Skip, Adjust, Unskip and the row Undo of Skip / Link / Adjust) come from ux-flows 3.6. KDoc (Model, ViewModel, Sheets), test section headers and the test class doc were relabelled accordingly; read every "AE-7/8/9/14" in the S10b-1 text above as "ux-flows 3.6".
+
+Fixes:
+- F1 (Medium) stale Undo replay: new `InstallmentEntryActionsViewModel.onScreenExit(changingConfigurations)`, called from the detail screen's `onDispose` (Activity found by unwrapping `LocalContext`; `isChangingConfigurations`). It always clears `notice` and `showDiscardDialog`; when not a configuration change and nothing is InProgress it also clears `sheet` and resets the mutation to Idle. A running action keeps its state. Optional part done: after a real exit the ViewModel is `detached` until the next `open()`, and an action that finishes while detached attaches no notice (so no Undo can replay on re-entry).
+- F4: the action `ModalBottomSheet` uses `rememberModalBottomSheetState(confirmValueChange = { it != Hidden || (!running && !hasInput) })` (latest values via `rememberUpdatedState`), so a swipe or back cannot hide a sheet the ViewModel refuses to close. Side effect to review: with input, swipe and back are vetoed outright (they no longer open the discard dialog); the Cancel button still does.
+- F4b (supersedes the F4 trade-off): the sheet's `confirmValueChange` now routes a Hidden request with input and not running to `viewModel.requestDismiss()` (discard dialog) and vetoes it; while running it vetoes silently; with no input it allows the hide (`onDismissRequest` then closes). A `BackHandler(onBack = viewModel::requestDismiss)` inside the sheet content routes system back the same way. Only `InstallmentEntryActionSheets.kt` changed; ViewModel unchanged (`requestDismiss` already covered by existing tests); Compose wiring not UI-tested; NOT validated.
+- F5 (ux-flows 3.6 ~:734-737): `AlreadyInState` is a SILENT success (no snackbar, no undo). `InstallmentActionNotice.ALREADY_DONE` and `installments_action_notice_already` (en / es / el) were removed. `ILLEGAL_TRANSITION` now maps to the new `installments_action_refused_already_updated` ("This installment was already updated. Refreshing."); `PLAN_HAS_PAYMENTS` keeps `installments_action_refused_illegal`. es / el for the new string are DRAFTS pending owner native sign-off: es "Esta cuota ya se actualizó. Actualizando." / el "Αυτή η δόση είχε ήδη ενημερωθεί. Γίνεται ανανέωση." The "auto-refresh" is the detail's existing live read; no refresh call was added.
+- F6 (tests, `InstallmentEntryActionsViewModelTest`): `confirmVerified(coordinator)` in every flow test; new tests: undo ignored while InProgress; Link AlreadyInState gives no notice and no undo; ILLEGAL_TRANSITION refusal maps to the already-updated copy; screen exit clears notice / dialog / idle sheet; rotation keeps the sheet and input but drops the notice; an in-progress action keeps its state and attaches no stale notice; `open()` after an exit re-attaches notices. The cancellation test now counts the coordinator call, asserts the state stays InProgress (not Failed), no notice, no dispatch and no second call. The three `assertNotEquals(0, R.string...)` tests were renamed `smoke only - ...`. No test was deleted. The AlreadyInState test was changed from ALREADY_DONE to "no notice".
+- F3 (docs only now): LEGAL_PATHS "Installment Plan Mutations" gained a "UI CALLER (S10b-1)" block.
+
+BINDING before S10b-2, S11 or S12a (F3 follow-up): extract ONE domain-level post-commit dispatcher (or a thin use case that calls the coordinator and then dispatches) and use it from the S7a-2 worker, the S6c-4 pre-backup reconciler and `InstallmentEntryActionsViewModel`, replacing the three duplicated `dispatchBatches` loops. Do not add a fourth copy in S10b-2 / S11 / S12a.
+
+Residual risk:
+- The post-commit batch is dropped if the activity finishes between commit and dispatch (same as the worker). The committed state stays correct; only side effects are skipped until the next trigger.
+- Swipe / back on an edited sheet no longer shows the discard dialog (F4 trade-off, see above).
+- Compose sheet and the `onDispose` wiring are not UI-tested.
+
+Low caveats (accepted, no change):
+- `unlinkExpense(entryId)` does not pin an `expenseId`: the Link Undo unlinks whatever expense the entry holds now. A concurrent relink to another expense would be undone instead.
+- The Adjust Undo restores the values captured when the sheet opened, not the values at commit time; a concurrent change in between is overwritten.
+- The "Adjusted" chip stays after an Adjust Undo (ux-flows 3.6 allows it).
+
+Filter to request (serially, via validation-runner): `targeted-unit-test -Filter "*InstallmentEntryActionsViewModelTest*,*InstallmentPlanDetailViewModelTest*"`; then `lint` (new / removed strings, es / el parity, Compose) once for the batch.
+- S10b-1 ACCEPTED (2026-10-27).
+  - Final-tree runs, all PASS: targeted vr-20261027-112156-78411214, ui_dao vr-20261027-112715-aca6efe4, runtime-ui vr-20261027-112731-4af1d11e, lint vr-20261027-112902-3f9721ff.
+  - Earlier on the pre-fix tree: architecture-contracts vr-20261027-110427-0c7ae32d.
+  - Gate: architecture spot check plus cheap review, ACCEPT-WITH-CONDITIONS (F1, F2, F4/F4b, F5, F6 fixed; F3 BINDING before S10b-2/S11/S12a).
+  - Committed.
+  - Next loan work:
+    - extract the shared post-commit dispatcher (F3, BINDING);
+    - then S10b-2 (create/edit/end flows, OQ-21 delete wiring with reviewer-strict).

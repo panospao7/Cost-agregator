@@ -1775,6 +1775,25 @@ OPERATIONS (all on InstallmentPlanLifecycleCoordinator):
                                  link references; one writeTxn per orphan, references and flag re-checked inside
                                  it, then TLC setSpendingExclusionDbOnly(id, null); counted in the report
 
+UI CALLER (S10b-1, dormant behind InstallmentsFeature.ENABLED):
+  InstallmentEntryActionsViewModel (ui/screens/installments/actions)
+                              → calls exactly one coordinator op per user action: confirmEntry (Record),
+                                 linkExpense (Link), skip, unskip, adjustEntry (Adjust), and for the row Undo
+                                 (ux-flows 3.6) unskip / unlinkExpense / adjustEntry with the previous values;
+                                 never a DAO, repository write or TLC call (INV-24, INV-25)
+                              → POST-COMMIT DISPATCH RESPONSIBILITY: the ViewModel itself runs the batches of a
+                                 `Done` result through PostCommitActionRunner AFTER the coordinator returns (never
+                                 inside the transaction); a failing batch is logged by class name and never
+                                 changes the committed result; CancellationException is rethrown
+                              → KNOWN DUPLICATION (follow-up, BINDING before S10b-2 / S11 / S12a): the same
+                                 `dispatchBatches` loop now exists in the S7a-2 worker, the S6c-4 pre-backup
+                                 reconciler and this ViewModel. The planned fix is ONE domain-level post-commit
+                                 dispatcher (or a thin use case that calls the coordinator and then dispatches)
+                                 used by all three callers
+                              → residual risk: if the activity finishes between commit and dispatch the batch is
+                                 dropped (same as the worker); the committed state is correct, only the
+                                 side effects (budget / notification refresh) are skipped until the next trigger
+
 READS (plan coordinator, S6a):
   expense / category / recurring-link facts → InstallmentExpenseFactsReader (domain port) → 
                                  InstallmentExpenseFactsReaderImpl (data/repository, READ-ONLY: ExpenseDao.getById,
