@@ -294,6 +294,13 @@ class AddExpenseViewModelTest : ViewModelTestUtils() {
     }
 
     @Test
+    fun `clipboard canonical 12_50 prefills 12_50`() {
+        useUs()
+        viewModel.setInitialValuesIfBlank("12.50")
+        assertEquals("12.50", viewModel.state.value.amount)
+    }
+
+    @Test
     fun `unparseable clipboard amount keeps the current amount`() {
         useGreek()
         viewModel.setInitialValuesIfBlank(amount = "abc", merchant = "Clip")

@@ -316,3 +316,43 @@ Validation to request: `targeted-unit-test -TestFilter "*AddExpense*,*Cancellati
 - The el/es strings are DRAFTS (owner sign-off pending). TalkBack pass on the Error and Duplicate cards is a device item.
 - Committed.
 - Next: slice D (reduced: canonical clipboard parser plus H-3 fail-closed), then C, E, F, Z.
+
+### Slice D implementation (2026-10-28, implementer; NOT validated)
+Nothing was compiled or run. Scope is the REDUCED slice D (plan Amendment 2026-10-27, verdict 4). Root `A` = `app/src/main/java/com/yourname/expensetracker`, `T` = `app/src/test/java/com/yourname/expensetracker`.
+
+Files changed:
+- `A/ui/util/ClipboardAmountParser.kt`: regex and first-match-only behaviour unchanged. The matched numeric group (currency symbols are still ignored by the regex) is passed to `QuickAddAmountRules.canonicalize`. `Value` returns the canonical `X.YY` text if the canonical value is within 0.01..100000 (BigDecimal compare, inclusive). `Flagged`/`Absent` return null (H-3 fail-closed). The existing try/catch to null is kept. No logging. `AmountUtils` import removed (no longer used here).
+- `T/ui/util/ClipboardAmountParserTest.kt`
+- `T/ui/screens/addexpense/AddExpenseViewModelTest.kt`: one new case, `clipboard canonical 12_50 prefills 12_50` (`setInitialValuesIfBlank("12.50")` gives "12.50"). The existing :254/:261/:268 tests are NOT changed.
+
+Changed test expectations (ClipboardAmountParserTest):
+1. "Paid 1,234.56 yesterday": "1,234.56" -> "1234.56". Spec: OD-1 (canonical parser output, INV-5 for the clipboard channel); amendment verdict 4(a).
+2. "Total: 11,234.56": "11,234.56" -> "11234.56"; renamed "... and returns canonical text". Spec: OD-1, amendment verdict 4(a).
+3. "Total 1,0000": unchanged (null; the regex finds no match).
+New cases:
+- "12,50" -> "12.50" (OD-1 headline)
+- "12.50" -> "12.50"
+- "1.234,56" -> "1234.56"
+- "€12,50" -> "12.50" (symbol ignored, unchanged by design)
+- "1.500", "3,500", "1,234" -> null (H-3 / amendment 4(b): R3 AMOUNT_AMBIGUOUS_SEPARATOR; these previously prefilled raw)
+- "12.505" -> null (H-3: the regex captures "12.505" via the dot-grouping alternative, and R3 flags it)
+- "150000.00" and "100000.01" -> null (range check on the canonical value); "100000.00" -> "100000.00" (inclusive bound, boundary pin)
+
+VERIFY-AT-IMPL (MainActivity, no edit): `A/ui/MainActivity.kt` :607-619 passes the parser output to `AddExpenseSheet(initialAmount = ...)` and :950-955 stores it in `clipboardAmount`. The FAB chip (:992, :1066-1071) renders the string through `label_add_amount_format` without further parsing. The chip therefore shows the canonical value (owner-approvals 54c) and no MainActivity edit is needed. Behaviour change by design: the chip no longer appears for ambiguous or >2-decimal clipboard text (H-3, accepted).
+Consequence for the VM: `setInitialValuesIfBlank` now receives canonical text from this channel. The R16 handling in the VM is unchanged and still correct for any direct caller.
+
+Validation to request: `targeted-unit-test -TestFilter "*ClipboardAmountParserTest*,*AddExpense*,*QuickAddParser*,*AmountUtilsTest*"`, then `unit-test-shard -Shard runtime-ui`. `static-guards` only if the gate requires it (no guard-relevant code touched; ui/util now imports domain.quickadd, a normal ui to domain edge).
+
+### Slice D ACCEPTED (2026-10-28)
+- reviewer-strict ACCEPT.
+- Validation PASS: targeted vr-20261027-224322-6ab60a37; runtime-ui vr-20261027-224824-f3eb0d81.
+- Committed.
+  Slice D reviewer-strict: ACCEPT. Fold into slice C:
+  1. Reword the AddExpenseViewModel :501 comment (ClipboardAmountParser no longer accepts "1,234").
+  2. Optional ClipboardAmountParserTest cases: 0.01 gives "0.01"; 0.00 gives null; 007 gives null.
+  Z follow-up (pre-existing, regex frozen):
+  - space/apostrophe/NBSP-grouped clipboard numbers give a leading-integer fragment ("1 234,56" gives 1.00);
+  - a dropped minus sign;
+  - a trailing period;
+  - an unvalidated currency word.
+  Possible fix: reject a match followed by [\s'’NBSP]\d, or gate on the whole clipboard string being one amount.
