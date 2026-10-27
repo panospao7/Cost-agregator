@@ -134,10 +134,12 @@ private fun createLibraryHandle(activity: FragmentActivity, callback: BiometricP
  * Lifecycle contract for S20 (binding): create this adapter in `MainActivity.onCreate`, after
  * `super.onCreate`, every time the Activity is created. The library prompt is constructed once, in the
  * constructor, which is the androidx guidance for reattaching the callback after a configuration
- * change. The adapter itself holds only the current in-flight sink. Attempt identity and in-flight
- * state across an Activity recreation are owned by the process-level controller (S16, INV-24), not by
- * this class: a new adapter instance starts with nothing in flight, the old adapter never reports, and
- * the controller decides what to do with the attempt that was open (PROMPT_HOST_LOST, INV-54).
+ * change. The adapter itself holds only the current in-flight sink. Attempt identity is owned by the
+ * process-level controller (S16, INV-24), not by this class: a new adapter instance starts with nothing
+ * in flight and the old adapter never reports. The open attempt is carried across an Activity
+ * recreation by the process-level relay (S20-a), which hands it to the new instance through [adopt]
+ * (see the rotation rule below); a host that is really lost is reported to the controller
+ * (PROMPT_HOST_LOST, INV-54).
  *
  * - At most one prompt is in flight; a second request returns [AuthLaunch.ALREADY_IN_FLIGHT] without
  *   launching (INV-34).
@@ -156,6 +158,9 @@ private fun createLibraryHandle(activity: FragmentActivity, callback: BiometricP
  *   [AuthLaunch.AWAITING_PRIOR_TERMINAL]. The wait also ends after [AWAITING_TERMINAL_TIMEOUT_MS] on the
  *   main thread and at the next ON_START or ON_DESTROY of the host, so a library that never echoes
  *   cannot block the adapter.
+ * - After a rotation the prompt host (S20-a) hands the open attempt to the new instance with the internal
+ *   [adopt] seam, which sets the in-flight sink only when idle and not awaiting a terminal. Every rule above
+ *   (one outcome, stale terminals dropped by reference, client cancel) then applies to the adopted attempt.
  * - Wrong-fingerprint feedback stays inside the system prompt and is not an outcome.
  * - Prompt text comes from string resources only (INV-53). The library error text is never read.
  * - Must be used on the main thread.
@@ -247,6 +252,29 @@ class BiometricPromptDeviceAuthenticator @VisibleForTesting internal constructor
             inFlight = null
             AuthLaunch.PROMPT_UNAVAILABLE
         }
+    }
+
+    /**
+     * Takes over the open attempt [attemptId] after an Activity recreation (S20-a, handoff S16 binding F3/F7).
+     *
+     * The platform prompt survives a rotation and the library re-attaches the client callback of the
+     * prompt this instance built in its constructor, so its terminal callback now reaches this adapter.
+     * This seam only records which attempt that terminal belongs to. It never launches anything.
+     *
+     * Adopts only when the adapter is idle (nothing in flight) and is not waiting for the library
+     * terminal of an earlier client cancel: otherwise it returns false and changes nothing, so an
+     * adoption can never replace a live attempt or let a stale echo be credited to the adopted one.
+     * It also returns false when the library prompt was never built or the API is below 30, because no
+     * terminal can arrive then. A true result means at most one outcome is delivered for [attemptId],
+     * through [callback], exactly like an attempt launched by [authenticate]: the terminal is still
+     * checked against the in-flight instance by reference, so a repeated or late terminal is dropped.
+     */
+    internal fun adopt(attemptId: Long, callback: DeviceAuthCallback): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return false
+        if (prompt == null) return false
+        if (inFlight != null || awaitingLibraryTerminal) return false
+        inFlight = InFlight(attemptId, callback)
+        return true
     }
 
     override fun cancel(attemptId: Long) {

@@ -86,7 +86,8 @@ interface DeviceAuthenticator {
      *
      * The guarantee is per adapter instance. After an Activity recreation the new adapter has nothing
      * in flight and the old adapter never reports; the process-level controller owns the open attempt
-     * across recreation (S16, INV-24, PROMPT_HOST_LOST).
+     * across recreation (S16, INV-24, PROMPT_HOST_LOST), and the process-level relay carries it to the
+     * new adapter (S20-a).
      */
     fun authenticate(attemptId: Long, copy: AuthPromptCopy, callback: DeviceAuthCallback): AuthLaunch
 

@@ -175,6 +175,25 @@ AppLockPrivacySettingsViewModel.saveReview  (same scope / NonCancellable / seria
         └── same sweep as above (a committed review-save with discreet on sweeps; refused / failed never does)
 ```
 
+### App lock prompt and lifecycle chain (S20-a; DORMANT until S20-c wires MainActivity):
+```
+AppLockLifecycleBinder (Application.ActivityLifecycleCallbacks; exact started-activity count; sole INV-25 source)
+  ├── 0→1 → AppLockController.onAppForegrounded()
+  ├── 1→0 and !isChangingConfigurations → AppLockController.onAppBackgrounded()   (config-change stop/start pair not reported)
+  └── install and every start while Resolving → AppLockController.resolve()  (@ApplicationScope)
+
+AppLockController → DeviceAuthenticator (DI binding) → AppLockAuthenticatorRelay (weak holder, main thread only)
+  └── BiometricPromptDeviceAuthenticator (one per Activity, built by AppLockPromptHost.attach)
+        └── androidx.biometric BiometricPrompt
+AppLockPromptHost (per Activity, ON_DESTROY)
+  ├── relay.unregister(registration, isChangingConfigurations)
+  │     └── lost attempt id (once, !isChangingConfigurations) → AppLockController.onPromptHostLost(id)
+  └── relay.register on the recreated Activity → BiometricPromptDeviceAuthenticator.adopt(id, callback) (rotation)
+Changing the relay, host or binder affects: AppLockController attempt closing (T9-T12, T35), T32-T34 prompt background,
+  the adapter state machine (BiometricPromptAdapterStateMachineTest), AppLockRelaySourceScanTest (no worker/receiver/service reach).
+Workers, receivers and services do NOT participate (INV-36).
+```
+
 ### WorkerExecutionGuard changes affect:
 ```
 WorkerExecutionGuard.runGuardedWithContext() / runGuarded()

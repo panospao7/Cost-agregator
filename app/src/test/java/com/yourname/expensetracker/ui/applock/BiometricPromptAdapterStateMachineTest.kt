@@ -418,4 +418,176 @@ class BiometricPromptAdapterStateMachineTest {
         rig.succeed()
         assertEquals(DeviceAuthOutcome.Succeeded, callback.outcomes.single().second)
     }
+
+    // ---- S20-a: adopt (rotation hand-over of the open attempt) ---------------------------------------
+
+    @Test
+    fun adopt_idle_returnsTrue_setsInFlight_andNeverLaunchesOrCallsBack() {
+        val rig = Rig()
+        val callback = RecordingCallback()
+
+        assertTrue(rig.adapter.adopt(5L, callback))
+
+        assertEquals("adopt never launches", 0, rig.handle.authenticateCalls)
+        assertEquals(0, rig.handle.cancelCalls)
+        assertTrue("adopt never reports an outcome", callback.outcomes.isEmpty())
+        assertEquals(
+            "the adopted attempt is in flight: a launch is refused",
+            AuthLaunch.ALREADY_IN_FLIGHT,
+            rig.launch(6L, RecordingCallback())
+        )
+        assertFalse(rig.adapter.isAwaitingLibraryTerminal)
+    }
+
+    @Test
+    fun adopt_whileAnAttemptIsInFlight_returnsFalse_andChangesNothing() {
+        val rig = Rig()
+        val own = RecordingCallback()
+        val adopted = RecordingCallback()
+        rig.launch(1L, own)
+
+        assertFalse(rig.adapter.adopt(2L, adopted))
+
+        rig.succeed()
+        assertEquals(listOf(1L to DeviceAuthOutcome.Succeeded), own.outcomes)
+        assertTrue("the refused adoption never gets an outcome", adopted.outcomes.isEmpty())
+    }
+
+    @Test
+    fun adopt_whileAwaitingAClientCancelTerminal_returnsFalse_andIsPossibleOnceTheEchoArrived() {
+        val rig = Rig()
+        val cancelledAttempt = RecordingCallback()
+        rig.launch(1L, cancelledAttempt)
+        rig.adapter.cancel(1L)
+        assertTrue(rig.adapter.isAwaitingLibraryTerminal)
+        val adopted = RecordingCallback()
+
+        assertFalse(rig.adapter.adopt(2L, adopted))
+        assertTrue("a refused adoption leaves the wait alone", rig.adapter.isAwaitingLibraryTerminal)
+        rig.error(BiometricPrompt.ERROR_CANCELED) // the echo
+        assertTrue("control: after the echo the adapter is idle again", rig.adapter.adopt(2L, adopted))
+
+        assertTrue(adopted.outcomes.isEmpty())
+        rig.succeed()
+        assertEquals(listOf(2L to DeviceAuthOutcome.Succeeded), adopted.outcomes)
+        assertEquals("the cancelled attempt got only its own cancel outcome", 1, cancelledAttempt.outcomes.size)
+    }
+
+    @Test
+    fun adopt_theTerminalOfAnOldAttempt_isNeverCreditedToTheAdoptedOne() {
+        val rig = Rig()
+        val old = RecordingCallback()
+        val adopted = RecordingCallback()
+        assertTrue(rig.adapter.adopt(5L, old))
+        rig.adapter.cancel(5L) // the controller closes the old attempt; the echo is still owed
+        assertFalse("not adoptable while the old echo is owed", rig.adapter.adopt(6L, adopted))
+
+        rig.error(BiometricPrompt.ERROR_CANCELED) // the late terminal of the old attempt
+        assertTrue(rig.adapter.adopt(6L, adopted))
+
+        assertTrue("the late terminal must not complete the adopted attempt", adopted.outcomes.isEmpty())
+        assertEquals(
+            listOf(5L to DeviceAuthOutcome.Failed(DeviceAuthErrorBucket.SYSTEM_CANCELED)),
+            old.outcomes
+        )
+    }
+
+    @Test
+    fun adopt_theAdoptedAttemptsTerminal_isDeliveredOnce_withTheAdoptedIdAndCallback() {
+        val rig = Rig()
+        val callback = RecordingCallback()
+        rig.adapter.adopt(5L, callback)
+
+        rig.succeed()
+        rig.succeed()
+        rig.error(BiometricPrompt.ERROR_USER_CANCELED)
+
+        assertEquals(listOf(5L to DeviceAuthOutcome.Succeeded), callback.outcomes)
+        assertEquals("control: the adapter is idle again", AuthLaunch.LAUNCHED, rig.launch(6L, RecordingCallback()))
+    }
+
+    @Test
+    fun adopt_aLibraryErrorIsMappedForTheAdoptedAttempt_exactlyLikeALaunchedOne() {
+        val rig = Rig()
+        val callback = RecordingCallback()
+        rig.adapter.adopt(5L, callback)
+
+        rig.error(BiometricPrompt.ERROR_USER_CANCELED)
+
+        assertEquals(listOf(5L to DeviceAuthOutcome.Cancelled), callback.outcomes)
+    }
+
+    @Test
+    fun adopt_cancelOfTheAdoptedAttempt_deliversExactlyOneSystemCanceled_afterTheHandleCancel() {
+        val rig = Rig()
+        val callback = RecordingCallback()
+        rig.adapter.adopt(5L, callback)
+        events.clear()
+
+        rig.adapter.cancel(5L)
+        rig.adapter.cancel(5L)
+
+        assertEquals(listOf("handle.cancel", "outcome"), events)
+        assertEquals(
+            listOf(5L to DeviceAuthOutcome.Failed(DeviceAuthErrorBucket.SYSTEM_CANCELED)),
+            callback.outcomes
+        )
+    }
+
+    @Test
+    fun adopt_aStaleCancelIdIsIgnored_forAnAdoptedAttempt() {
+        val rig = Rig()
+        val callback = RecordingCallback()
+        rig.adapter.adopt(5L, callback)
+
+        rig.adapter.cancel(4L)
+
+        assertEquals(0, rig.handle.cancelCalls)
+        assertTrue(callback.outcomes.isEmpty())
+        rig.succeed()
+        assertEquals(listOf(5L to DeviceAuthOutcome.Succeeded), callback.outcomes)
+    }
+
+    @Test
+    fun adopt_whenThePromptWasNotBuilt_returnsFalse_andLeavesTheAdapterIdle() {
+        val nullAdapter = BiometricPromptDeviceAuthenticator(newController().get()) { null }
+        val throwing = BiometricPromptDeviceAuthenticator(newController().get()) { throw IllegalStateException("synthetic") }
+        val callback = RecordingCallback()
+
+        assertFalse(nullAdapter.adopt(5L, callback))
+        assertFalse(throwing.adopt(5L, callback))
+
+        assertTrue(callback.outcomes.isEmpty())
+        assertEquals(
+            "still idle: the request reports the missing prompt, not an attempt in flight",
+            AuthLaunch.PROMPT_UNAVAILABLE,
+            nullAdapter.authenticate(6L, AuthPromptCopy.UNLOCK) { _, _ -> }
+        )
+    }
+
+    @Test
+    @Config(sdk = [29])
+    fun adopt_belowApi30_returnsFalse_andLeavesTheAdapterIdle() {
+        val rig = Rig()
+        val callback = RecordingCallback()
+
+        assertFalse(rig.adapter.adopt(5L, callback))
+
+        assertTrue(callback.outcomes.isEmpty())
+        rig.succeed()
+        assertTrue("nothing was adopted, so the terminal has no attempt", callback.outcomes.isEmpty())
+        assertEquals(
+            "below API 30 the adapter never launches",
+            AuthLaunch.HOST_UNAVAILABLE,
+            rig.launch(6L, RecordingCallback())
+        )
+    }
+
+    @Test
+    @Config(sdk = [30])
+    fun adopt_atApi30_isAccepted_theBoundary() {
+        val rig = Rig()
+
+        assertTrue(rig.adapter.adopt(5L, RecordingCallback()))
+    }
 }

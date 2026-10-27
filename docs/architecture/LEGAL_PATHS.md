@@ -1903,3 +1903,68 @@ FORBIDDEN:
   ❌ Calling DiscreetRepostTrigger without NonCancellable and the serializer (review-save included)
   ❌ Raw settings text, paths or stack traces in diagnostics (bounded codes + FIELD enum only)
 ```
+
+## App Lock Prompt Path and Lifecycle Signals (app-lock-privacy-mode, increment 1b, S20-a; DORMANT)
+
+```
+DORMANT: S20-a adds the classes and the one DI binding; nothing instantiates the host or the binder in
+production until S20-c wires MainActivity (the controller goes live there, together with S20-d and S20-e).
+
+PROMPT PATH (the only path to the system prompt):
+  AppLockController (the only caller; on its @AppLockMainDispatcher, outside its monitor)
+  → DeviceAuthenticator port, bound @Singleton to AppLockAuthenticatorRelay (di/AppLockModule)
+  → the CURRENT registered adapter, held WEAKLY: BiometricPromptDeviceAuthenticator (ui/applock, one per Activity,
+     created by AppLockPromptHost.attach in onCreate)
+  → androidx.biometric BiometricPrompt (the only library entry point; AppLockBiometricSourceScanTest allowlist)
+  Outcome path back: adapter → relay-owned callback (bound to the open-attempt record and the holding
+  registration) → the controller's callback. Forwarded at most once, only while the record is open, the id matches
+  and that registration holds the attempt; anything else is dropped. The relay records the open attempt BEFORE it
+  calls the adapter (an outcome may be re-entrant). The AuthPromptCopy is passed through unchanged.
+  RELAY RULES (handoff S16 binding (a)-(e)):
+    (a) weak holder, cleared at the host's ON_DESTROY; (b) no adapter → HOST_UNAVAILABLE and no callback;
+    (c) cancel(id) goes to the adapter that launched or adopted id; if that adapter is gone the relay itself delivers
+        Failed(SYSTEM_CANCELED), once, synchronously; (d) host loss only from the registration holding the attempt,
+        only when !isChangingConfigurations, exactly once (record removed first); (e) reachable only through the DI
+        binding and AppLockPromptHost (never workers, receivers or services; pinned by the relay source scan).
+
+HOST LOSS (T35, PROMPT_HOST_LOST) and ROTATION:
+  Activity ON_DESTROY → AppLockPromptHost → relay.unregister(registration, isChangingConfigurations)
+    - !isChangingConfigurations and this registration holds an open attempt: the relay removes the record and returns
+      its id once → AppLockController.onPromptHostLost(id) (closes the attempt first, then asks the adapter to cancel;
+      the relay finds no record and ignores that cancel)
+    - isChangingConfigurations: no report. The record is kept ORPHANED; the next AppLockPromptHost.attach →
+      relay.register hands the open attempt (id and callback) to the new adapter through
+      BiometricPromptDeviceAuthenticator.adopt (only when idle and not awaiting a terminal; at most one outcome, stale
+      terminals dropped by reference). Adoption is immediate; the controller's watchdog is never the rotation path. A
+      refused adoption closes the attempt with the relay's own Failed(SYSTEM_CANCELED).
+    - a newer host created before the older one is destroyed (CLEAR_TASK) never adopts a record whose holder is alive.
+    - orphan close (no watchdog): orphaning posts ONE check to the main looper (injectable "post to main" seam,
+      default Handler(Looper.getMainLooper()).post). A relaunch adopts inside one main-thread message, so a real
+      adoption always wins and the check then does nothing; a record still orphaned when the check runs (the
+      recreated instance never attached) is closed once with the relay's own Failed(SYSTEM_CANCELED). Each
+      orphaning has its own sequence number, so a stale check never closes a later orphaning.
+  Activity ON_START → AppLockPromptHost → relay.activate(registration): the started host re-asserts itself as the
+    relay's CURRENT registration (a second instance, for example the exported MainActivity VIEW launch, must not
+    strand the visible host's prompt). activate never adopts and never touches the open record.
+
+FOREGROUND / BACKGROUND SIGNALS (INV-25) — AppLockLifecycleBinder is the SOLE source:
+  Application.registerActivityLifecycleCallbacks (installed once per process, idempotent; S20-c calls it from
+  MainActivity.onCreate, MainApplication is not edited) keeps an exact started-activity count:
+    0 → 1 → AppLockController.onAppForegrounded()
+    1 → 0 and !isChangingConfigurations → AppLockController.onAppBackgrounded()
+    a configuration-change stop and its matching start are NOT reported (AE-41); the shade and split-screen never
+    stop the Activity. Every real stop is reported, including stops caused by the app's own prompts (no
+    suppression while a prompt is in flight; the controller decides, T32-T34).
+    an UNPAIRED configuration-change stop (the relaunched instance is destroyed without ever starting, for example it
+    finishes in onCreate) is reported at onActivityDestroyed: count == 0, a pending suppression and
+    !isChangingConfigurations → onAppBackgrounded() once; the next start is then a foreground (fail-closed).
+  The binder also launches AppLockController.resolve() on @ApplicationScope at install and on every start while the
+  state is Resolving (CancellationException rethrown; other exceptions logged by class name only).
+
+FORBIDDEN:
+  ❌ A second source of foreground/background signals (ProcessLifecycleOwner, onResume/onPause, a ViewModel)
+  ❌ Calling the relay, the adapter or the controller's prompt API from a worker, receiver or service
+  ❌ Registering anything other than the prompt host's adapter with the relay; a singleton or static Activity reference
+  ❌ Relying on the controller's watchdog to recover a rotation
+  ❌ Reporting PROMPT_HOST_LOST for a configuration change, or more than once per attempt
+```

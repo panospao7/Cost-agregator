@@ -371,6 +371,18 @@ Binds (@Singleton):
   AppLockSettingsRepository                   → AppLockSettingsRepositoryImpl
                                                 (own DataStore, device-local, never Room or .costbackup;
                                                 public ctor takes @ApplicationContext Context)
+  DeviceAuthenticator                         → AppLockAuthenticatorRelay      (S20-a; the controller's prompt port.
+                                                process-level relay in ui/applock; holds the Activity-bound
+                                                BiometricPromptDeviceAuthenticator weakly. The adapter itself is NOT
+                                                bound: the prompt host creates it per Activity. Reachable only through
+                                                this binding and AppLockPromptHost; never from workers or receivers)
+
+Auto-provided (no module entry; @Inject constructors) — app-lock S20-a (dormant, nothing injects them yet):
+  @Singleton AppLockAuthenticatorRelay                 (no deps; main-thread only)
+  AppLockPromptHost                                    (AppLockAuthenticatorRelay, AppLockController; UNSCOPED, one per
+                                                        Activity, attach() in onCreate — wired by S20-c)
+  @Singleton AppLockLifecycleBinder                    (AppLockController, @ApplicationScope CoroutineScope; install(app)
+                                                        once per process — wired by S20-c)
 
 Auto-provided (no module entry; @Inject constructors) — app-lock 1a:
   @Singleton PrivacyDiagnosticsEmitter                 (NotificationDiagnosticEmitter, MonotonicTimeProvider)

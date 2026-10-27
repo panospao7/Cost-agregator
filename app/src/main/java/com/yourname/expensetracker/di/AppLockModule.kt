@@ -5,7 +5,9 @@ import com.yourname.expensetracker.data.privacy.applock.AppLockSettingsRepositor
 import com.yourname.expensetracker.data.privacy.applock.SystemMonotonicClock
 import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsRepository
 import com.yourname.expensetracker.domain.privacy.applock.DeviceAuthCapabilityProvider
+import com.yourname.expensetracker.domain.privacy.applock.DeviceAuthenticator
 import com.yourname.expensetracker.domain.privacy.applock.MonotonicClock
+import com.yourname.expensetracker.ui.applock.AppLockAuthenticatorRelay
 import dagger.Binds
 import dagger.Module
 import dagger.Provides
@@ -36,10 +38,16 @@ abstract class AppLockModule {
         impl: AppLockSettingsRepositoryImpl
     ): AppLockSettingsRepository
 
-    // The prompt adapter (BiometricPromptDeviceAuthenticator) is bound to an Activity, so it is
-    // created by the UI shell and is intentionally not bound here (S15, TECH-1). The controller takes a
-    // DeviceAuthenticator port; S20 binds a process-level registration relay for it (the controller is
-    // dormant until then, so the missing binding is not part of any reachable graph yet).
+    // The prompt adapter (BiometricPromptDeviceAuthenticator) is bound to an Activity, so it is created
+    // per Activity by the prompt host and is intentionally not bound here (S15, TECH-1). The controller
+    // takes the DeviceAuthenticator port; this binds the process-level relay for it (S20-a). The relay
+    // holds the current adapter weakly and is reachable only through this binding and the prompt host.
+    @Binds
+    @Singleton
+    abstract fun bindDeviceAuthenticator(
+        impl: AppLockAuthenticatorRelay
+    ): DeviceAuthenticator
+
     @Binds
     @Singleton
     abstract fun bindDeviceAuthCapabilityProvider(
