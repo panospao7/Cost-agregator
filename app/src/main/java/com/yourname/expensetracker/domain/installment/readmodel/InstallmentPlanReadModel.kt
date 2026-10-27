@@ -28,6 +28,8 @@ data class EntrySnapshot(
 data class PlanSnapshot(
     val planId: Long,
     val planUuid: String,
+    /** Plan category for the E3 edit prefill (S10b-2); named-argument construction only. */
+    val categoryId: Long? = null,
     val displayName: String,
     val lenderLabel: String?,
     val kind: InstallmentPlanKind,
@@ -136,7 +138,9 @@ data class InstallmentPlanDetail(
     val purchaseExpenseId: Long?,
     val entries: List<InstallmentEntryLine>,
     val financingCost: InstallmentAmount,
-    val suggestions: List<InstallmentLinkSuggestion>
+    val suggestions: List<InstallmentLinkSuggestion>,
+    /** The plan's category (E3 edit prefill, S10b-2); null for a purchase copy of a null category. */
+    val categoryId: Long? = null
 )
 
 data class InstallmentHistoryItem(
@@ -301,7 +305,8 @@ object InstallmentPlanReadModel {
             .sortedWith(compareBy({ it.money.dueEpochDay }, { it.seq }, { it.entryId }))
             .map { entryLine(plan.currency, it, todayEpochDay) },
         financingCost = InstallmentPlanMath.financingCost(plan.moneyInput()),
-        suggestions = suggestions
+        suggestions = suggestions,
+        categoryId = plan.categoryId
     )
 
     fun entryLine(currency: InstallmentCurrency, entry: EntrySnapshot, todayEpochDay: Long): InstallmentEntryLine =

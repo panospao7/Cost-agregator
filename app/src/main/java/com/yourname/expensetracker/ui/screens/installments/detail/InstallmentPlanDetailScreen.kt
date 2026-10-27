@@ -71,7 +71,9 @@ fun InstallmentPlanDetailScreen(
     planId: Long,
     onNavigateBack: () -> Unit,
     viewModel: InstallmentPlanDetailViewModel = hiltViewModel(key = "installment_plan_$planId"),
-    actionsViewModel: InstallmentEntryActionsViewModel = hiltViewModel(key = "installment_actions_$planId")
+    actionsViewModel: InstallmentEntryActionsViewModel = hiltViewModel(key = "installment_actions_$planId"),
+    planActionsViewModel: com.yourname.expensetracker.ui.screens.installments.actions.InstallmentPlanActionsViewModel =
+        hiltViewModel(key = "installment_plan_actions_$planId")
 ) {
     LaunchedEffect(planId) { viewModel.start(planId) }
     // The ViewModel is activity-scoped (no NavHost): stop its collection when the screen leaves.
@@ -81,6 +83,7 @@ fun InstallmentPlanDetailScreen(
     DisposableEffect(planId) {
         onDispose {
             viewModel.stop()
+            planActionsViewModel.onScreenExit()
             actionsViewModel.onScreenExit(changingConfigurations = context.findHostActivity()?.isChangingConfigurations == true)
         }
     }
@@ -98,6 +101,15 @@ fun InstallmentPlanDetailScreen(
         topBar = {
             TopAppBar(
                 title = { Text(loadedName ?: stringResource(R.string.installments_detail_title)) },
+                actions = {
+                    // S10b-2: Edit plan / End plan... / Delete plan, offered by plan status.
+                    if (loaded != null) {
+                        com.yourname.expensetracker.ui.screens.installments.actions.InstallmentPlanActionsMenu(
+                            content = loaded,
+                            viewModel = planActionsViewModel
+                        )
+                    }
+                },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
                         Icon(
@@ -162,6 +174,12 @@ fun InstallmentPlanDetailScreen(
         InstallmentEntryActionSheet(state = actionsState, sheet = sheet, viewModel = actionsViewModel)
     }
     InstallmentActionNoticeEffect(actionsState, snackbarHostState, actionsViewModel)
+    com.yourname.expensetracker.ui.screens.installments.actions.InstallmentPlanActionsHost(
+        content = loaded,
+        onNavigateBack = onNavigateBack,
+        snackbarHostState = snackbarHostState,
+        viewModel = planActionsViewModel
+    )
 }
 
 private tailrec fun Context.findHostActivity(): Activity? = when (this) {

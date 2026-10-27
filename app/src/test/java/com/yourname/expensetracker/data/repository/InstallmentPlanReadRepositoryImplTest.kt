@@ -110,12 +110,14 @@ class InstallmentPlanReadRepositoryImplTest {
         mode: String = "CONFIRM",
         kind: String = "PURCHASE_ATTACHED",
         purchaseExpenseId: Long? = null,
-        terminalAt: Long? = null
+        terminalAt: Long? = null,
+        categoryId: Long? = null
     ) = InstallmentPlan(
         id = id,
         planUuid = "plan-uuid-$id",
         kind = kind,
         purchaseExpenseId = purchaseExpenseId,
+        categoryId = categoryId,
         displayName = "Synthetic plan $id",
         currency = currency,
         splitMethod = "EQUAL_SPLIT",
@@ -274,6 +276,26 @@ class InstallmentPlanReadRepositoryImplTest {
         } catch (expected: CancellationException) {
             // expected
         }
+    }
+
+    // ------------------------------------------------------------------ S10b-2 category carried for the E3 edit prefill
+
+    @Test
+    fun `loadDetail carries the stored plan categoryId for the edit prefill`() = runTest {
+        givenStore(
+            listOf(planRow(1L, kind = "STANDALONE", categoryId = 42L), planRow(2L, categoryId = 7L)),
+            listOf(entryRow(1L, planId = 1L), entryRow(2L, planId = 2L))
+        )
+
+        assertEquals(42L, repo.loadDetail(1L)!!.categoryId)
+        assertEquals("each plan carries its own category", 7L, repo.loadDetail(2L)!!.categoryId)
+    }
+
+    @Test
+    fun `loadDetail keeps a missing plan categoryId as null and not a default id`() = runTest {
+        givenStore(listOf(planRow(1L, categoryId = null)), listOf(entryRow(1L)))
+
+        assertNull(repo.loadDetail(1L)!!.categoryId)
     }
 
     // ------------------------------------------------------------------ INV-17 linked money

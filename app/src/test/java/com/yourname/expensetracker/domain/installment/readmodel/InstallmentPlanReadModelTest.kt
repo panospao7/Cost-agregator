@@ -70,10 +70,12 @@ class InstallmentPlanReadModelTest {
         status: InstallmentPlanStatus = InstallmentPlanStatus.ACTIVE,
         kind: InstallmentPlanKind = InstallmentPlanKind.PURCHASE_ATTACHED,
         purchase: PurchaseMoney? = null,
-        terminalEpochDay: Long? = null
+        terminalEpochDay: Long? = null,
+        categoryId: Long? = null
     ) = PlanSnapshot(
         planId = id,
         planUuid = "plan-uuid-$id",
+        categoryId = categoryId,
         displayName = "Synthetic plan $id",
         lenderLabel = null,
         kind = kind,
@@ -97,6 +99,17 @@ class InstallmentPlanReadModelTest {
         status: InstallmentPlanStatus = InstallmentPlanStatus.ACTIVE,
         currency: InstallmentCurrency = InstallmentCurrency.EUR
     ) = plan(1L, listOf(entry(1L)), currency = currency, mode = mode, status = status)
+
+    // ------------------------------------------------------------------ S10b-2 category carried into the detail
+
+    @Test
+    fun `detail carries the snapshot categoryId and keeps null as null`() {
+        val withCategory = plan(1L, listOf(entry(1L)), categoryId = 42L)
+        val withoutCategory = plan(2L, listOf(entry(1L)), categoryId = null)
+
+        assertEquals(42L, InstallmentPlanReadModel.detail(withCategory, today).categoryId)
+        assertNull(InstallmentPlanReadModel.detail(withoutCategory, today).categoryId)
+    }
 
     // ------------------------------------------------------------------ AE-5 overview per currency
 

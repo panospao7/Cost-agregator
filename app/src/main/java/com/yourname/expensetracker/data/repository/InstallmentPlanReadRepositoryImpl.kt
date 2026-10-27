@@ -130,6 +130,7 @@ class InstallmentPlanReadRepositoryImpl @Inject constructor(
         }
         return PlanSnapshot(
             planId = plan.id,
+            categoryId = plan.categoryId,
             planUuid = plan.planUuid,
             displayName = plan.displayName,
             lenderLabel = plan.lenderLabel,

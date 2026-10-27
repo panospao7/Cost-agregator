@@ -26,6 +26,10 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import com.yourname.expensetracker.ui.screens.installments.create.InstallmentCreateScreen
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.pluralStringResource
@@ -59,6 +63,8 @@ fun InstallmentOverviewScreen(
     viewModel: InstallmentOverviewViewModel = hiltViewModel()
 ) {
     val state by viewModel.state.collectAsState()
+    // S10b-2: the create form is a full-screen overlay hosted here (no new navigation destination).
+    var creating by rememberSaveable { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -73,6 +79,9 @@ fun InstallmentOverviewScreen(
                     }
                 },
                 actions = {
+                    TextButton(onClick = { creating = true }) {
+                        Text(stringResource(R.string.installments_create_add_plan))
+                    }
                     // History is reachable from the empty variants too, so finished plans are never hidden.
                     TextButton(onClick = onOpenHistory) {
                         Text(stringResource(R.string.installments_history_action))
@@ -111,6 +120,15 @@ fun InstallmentOverviewScreen(
                 )
             }
         }
+    }
+    if (creating) {
+        InstallmentCreateScreen(
+            onClose = { creating = false },
+            onCreated = { planId ->
+                creating = false
+                onOpenPlan(planId)
+            }
+        )
     }
 }
 

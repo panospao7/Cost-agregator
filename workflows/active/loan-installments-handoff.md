@@ -1992,3 +1992,83 @@ Validation to request (serially, via validation-runner):
   - Architecture-guardian ACCEPT-WITH-CONDITIONS. Finding 1 note: the worker's batch-failure log is now a Timber line, and Timber is planted only in debug builds, so release logcat no longer carries it. It is not a persisted diagnostic, and the runner already catches per-action failures.
   - Finding 2 (an executable single-owner guard) is pending owner approval as owner-approvals 48.
   - Committed.
+
+## S10b-2 — implemented (PARTIAL: OQ-21 "Delete expense and reopen" BLOCKED; nothing compiled, run or validated)
+
+Dormant (InstallmentsFeature). No schema, DAO, guard or allowlist change. Every plan flow calls exactly one `InstallmentPlanLifecycleCoordinator` op; post-commit batches go through `InstallmentPostCommitDispatcher`. `CancellationException` is rethrown.
+
+Ops used:
+- Create: `createStandalone(terms, categoryId, PaymentMethod.UNKNOWN)` (FIXED_PAYMENT, residual FIRST, per-form `planUuid` so a retry is AlreadyInState).
+- Edit (E3): `editDetails(planId, name, lender, categoryId, mode, currentCurrency, todayEpochDay)`.
+- End: `stop` (AE-7), `refund(planId, false)` (AE-8), `refund(planId, true)` (AE-8 "already recorded", runs the Stop body), `payOff(planId, amountOrNull, date, today, zone)` (AE-9), `delete` (AE-14).
+- Unlink: `unlinkExpense(entryId)`.
+
+Files:
+- NEW `ui/screens/installments/actions/InstallmentPlanActions.kt`: `InstallmentPlanMutationState`, shared `executeInstallmentPlanOp`, `InstallmentPlanActionsViewModel`, availability table (ux-flows 3.7), overflow menu and dialogs host.
+- NEW `ui/screens/installments/create/InstallmentCreateScreen.kt` (form + ViewModel; overlay hosted by the overview, no new destination).
+- NEW `ui/screens/installments/edit/InstallmentEditScreen.kt` (ViewModel + overlay hosted by the detail).
+- M `InstallmentPlanDetailScreen.kt` (overflow menu, dialogs host, `onScreenExit`), `InstallmentOverviewScreen.kt` ("Add plan" top-bar action + create overlay).
+- M read model (additive, defaulted): `InstallmentPlanDetail.categoryId`, `PlanSnapshot.categoryId`, set in `InstallmentPlanReadRepositoryImpl`. Needed because E3 sends the FULL category and the current one was not readable.
+- Strings: values, es DRAFT, el DRAFT (all new `installments_*` S10b-2 keys, plus plurals `installments_stop_body`, `installments_payoff_body`). Needs owner es/el sign-off.
+- Tests: `InstallmentPlanActionsViewModelTest`, `InstallmentCreateViewModelTest`.
+
+BLOCKED (OQ-21 "Delete expense and reopen"): the standard delete is `ExpenseRepository.deleteExpense(...)` -> TLC (no use-case class exists). The INV-23 guard in `InstallmentPlanArchitectureGuardTest` (`deleteExpenseCalls`) flags ANY `deleteExpense(` call in installment code, UI included (its self-check plants `repo.deleteExpense(expense)` and an installments ViewModel path). Calling it from installment UI therefore needs a guard change or a new wrapper outside the installment package. Not done (no guard change, no new write path). Decision needed from the owner or planner: (a) allowlist one UI call site, (b) a neutral `DeleteExpenseUseCase` outside the installment packages, or (c) drop the action (Unlink plus "delete the expense in Transactions", whose reaction already reopens the entry through `planner.planDeleted`).
+
+Deferrals and risks:
+- Unlink has no row entry point yet: `openUnlink(context, entryId, seq)` is implemented and tested, but the detail row mapper has no `canUnlink` flag and the row menu has no Unlink item. The read model carries no `linkOrigin`, so the restriction "only captured/linked entries" is not enforced; the coordinator only allows PAID entries of a non-ended plan.
+- Home-currency default for the create form is fixed to EUR (ux-flows 3.3 asks for the home currency when EUR/USD). Pay-off "Use an existing charge" and the financing cost preview are not built. The create form has no live preview and no first-due date picker (defaults to today; there is no field to change it yet: `setFirstDueEpochDay` exists in the ViewModel only).
+- `PaymentMethod.UNKNOWN` is assumed to exist (spec: "or UNKNOWN"); verify at compile. `Category` is read via `CategoryRepository.getAll()` (id, name).
+- Edit does not change the currency (shown only); no Edit ViewModel test yet.
+- Compose is not UI-tested; dialog/overlay hosting is new.
+
+Test-author follow-ups: `InstallmentEditViewModelTest` (blank name refused, canSave needs category for STANDALONE, editDetails gets the loaded category/currency, AlreadyInState closes, cancellation); a non-empty post-commit batch from `refund`/`payOff` reaches the runner once; mapper test for `toActionContext`.
+
+Validation to request (serially): `targeted-unit-test -Filter "*Installment*ViewModel*"` (and `*InstallmentPlanReadModel*`, `*InstallmentPlanReadRepositoryImpl*`, `*InstallmentPlanDetailViewModel*` for the read-model field); shards `runtime-ui`, `architecture-contracts`; ui_dao; `lint` (new strings, es/el parity, plurals `many` in es); `static-guards` only if the owner picks a delete-wiring option for OQ-21.
+
+### S10b-2 — test-author follow-ups added (nothing compiled or run)
+
+Test-only. New or extended (all under `app/src/test/java/com/yourname/expensetracker/`):
+- NEW `ui/screens/installments/edit/InstallmentEditViewModelTest`: `the loaded plan prefills the form with category, currency and categories and is not dirty`; `a missing plan is a bounded load failure and cannot be saved`; `INV-34 a blank name is refused locally and the coordinator is not called`; `INV-33 canSave requires a category for a STANDALONE plan`; `a purchase attached plan can be saved without a category`; `editDetails receives the loaded category and currency, trimmed name and the civil today`; `AlreadyInState is a silent success that closes the overlay`; `a refusal keeps the form and an unexpected exception becomes a bounded failure`; `a CancellationException from the coordinator is not turned into a failure`; `a dirty form asks before it closes and an untouched one closes`.
+- EXTENDED `ui/screens/installments/actions/InstallmentPlanActionsViewModelTest`: `a non-empty post-commit batch from refund reaches the runner exactly once after the coordinator returns`; `a non-empty post-commit batch from payOff reaches the runner once and an empty batch is skipped`; `AlreadyInState from refund dispatches nothing`; `a failing post-commit batch does not change the refund success`; `a failing post-commit batch does not change the payOff success`.
+- NEW `ui/screens/installments/actions/InstallmentPlanActionContextTest` (`toActionContext` and the ux-flows 3.7 status table): `toActionContext counts and sums only open entries, ...`; `toActionContext reports payments only for paid, payoff or refunded entries`; `toActionContext of a plan without entries ...`; `table Active without payments offers everything`; `table Active with a paid entry offers no delete`; `table Active with nothing left unpaid offers no pay off`; `table Completed offers edit details and refund only`; `table Cancelled offers delete only when nothing was paid`; `table Refunded offers nothing`; `table Paid off offers nothing`; `canEnd is true when at least one end option exists`.
+- EXTENDED `domain/installment/readmodel/InstallmentPlanReadModelTest`: `detail carries the snapshot categoryId and keeps null as null` (helper `plan(...)` gained `categoryId`).
+- EXTENDED `data/repository/InstallmentPlanReadRepositoryImplTest`: `loadDetail carries the stored plan categoryId for the edit prefill`; `loadDetail keeps a missing plan categoryId as null and not a default id` (helper `planRow(...)` gained `categoryId`).
+
+Filter to request (one combined targeted run): `*InstallmentEditViewModelTest*`, `*InstallmentPlanActionsViewModelTest*`, `*InstallmentPlanActionContextTest*`, `*InstallmentPlanReadModelTest*`, `*InstallmentPlanReadRepositoryImplTest*` (or the wider `*Installment*ViewModel*` plus the last two).
+
+Open points: (1) `PAID_BEFORE_TRACKING` is deliberately not asserted for `hasPayments` / Delete availability, because ux-flows 3.7 says only "Paid/Reversed" and the mapper ignores it; the planner should confirm the intended rule. (2) The edit ViewModel `todayEpochDay` is asserted as 20832..20833 because it uses the device zone. (3) Compose overlays (Edit/Create/Actions host) remain untested. (4) Create ViewModel post-commit dispatch is not covered here.
+
+### S10b-2 — architecture spot check (ACCEPT-WITH-CONDITIONS) and fixes
+
+Dormant. Source and tests only; no schema, DAO, guard or allowlist change. Nothing compiled, run or validated. Coordinator-only writes unchanged; `CancellationException` is rethrown everywhere; no new diagnostics (INV-31).
+
+Applied:
+- F1 (HIGH) Overlay ViewModels are activity-scoped (no NavHost) and never reset. Added `resetSession()` to `InstallmentCreateViewModel` and `InstallmentEditViewModel`. It is a no-op while the mutation is InProgress; otherwise it clears the form, the mutation and `showDiscardDialog`. Create also regenerates `planUuid` and recomputes `firstDueEpochDay` from `TimeProvider` (today); Edit sets `planId = null` (and cancels a pending load) so the next `start()` reloads. Called on every close path in both screens: onClose (top bar, back, dialog dismiss), discard-confirm, Create `onCreated`, Edit saved-close, and a `DisposableEffect` `onDispose`.
+- F2 (MEDIUM) OQ-18 paid-before field always fails while there is no first-due picker (firstDue = today = declaredOn; `InstallmentScheduleCalculator:162`). The field is HIDDEN (`InstallmentCreateForm.SHOW_PAID_BEFORE_FIELD = false`) and `paidBeforeTrackingCount = 0` is always sent. The create test that sent paidBefore = 2 now asserts the flag is false and that 0 reaches the coordinator (not deleted). Recorded with deferral 49(b): re-show the field (flip the flag, send `form.paidBefore`) together with the first-due picker. The strings `installments_create_paid_before*` stay for that.
+- F3 (MEDIUM-LOW) An in-flight op stuck InProgress after a `CancellationException`: `launchOp` (Actions), Create `save` and Edit `save` now catch `CancellationException`, set `mutation = Idle` only if it is still InProgress, and rethrow (CANCEL-01: CE-only catch that rethrows).
+- F4 (LOW) Edit on a COMPLETED plan: the plan status is loaded (`InstallmentEditUiState.status`, `modeEditable`); the mode chips are disabled and `setMode` is ignored when COMPLETED.
+- F5 (LOW) On a COMPLETED plan the refund "already recorded" answer no longer offers Stop (a COMPLETED plan cannot be stopped): `answerRefundAlreadyRecorded(true)` closes the dialog with the fixed notice `NOTHING_TO_CHANGE` and runs no coordinator operation. New string `installments_plan_notice_nothing_to_change` (values, es DRAFT, el DRAFT; needs owner es/el sign-off).
+- F7 (tests) The CancellationException tests in Create, Edit and Actions now assert the mutation returns to Idle, not only "not Failed/Success".
+
+Tests added (all under `app/src/test/java/com/yourname/expensetracker/ui/screens/installments/`):
+- Create: success -> `resetSession` -> new `planUuid` (via two `createStandalone` calls) and Idle clean form; discard -> reopen is clean (no draft, no dialog, closes without asking); `resetSession` no-op while InProgress; `firstDueEpochDay` recomputed after the day advances (fake clock +3 days).
+- Edit: success -> `resetSession` -> Idle and the next `start()` reloads (`loadDetail` twice); discard -> reopen clean; no-op while InProgress; F4 COMPLETED disables mode chips and ignores `setMode`.
+- Actions: F5 refund already recorded on a COMPLETED plan closes with the notice and calls neither `refund` nor `stop`.
+
+Follow-ups (not applied):
+- F6 (LOW) TalkBack: the footer/top-bar action buttons of the Create and Edit overlays need accessibility semantics; and a disabled Confirm in the Pay off early dialog gives no feedback about why it is disabled (amount invalid or date in the future).
+- The `PAID_BEFORE_TRACKING` delete rule (not counted as a payment for Delete availability, `toActionContext.hasPayments`) is CONFIRMED consistent by the spot check; it answers open point (1) above.
+
+Filter to request (one combined targeted run): `*InstallmentCreateViewModelTest*`, `*InstallmentEditViewModelTest*`, `*InstallmentPlanActionsViewModelTest*`, `*InstallmentPlanActionContextTest*`. Also `lint` once for the new string (es/el parity).
+- S10b-2 ACCEPTED, without OQ-21 (2026-10-27).
+  - Final-tree runs, all PASS: targeted vr-20261027-145450-ba814fa1, runtime-ui vr-20261027-150152-4bb66816, domain-a-m vr-20261027-150323-93063fc1, lint vr-20261027-150454-4e8c1a8a.
+  - Earlier on the pre-fix tree: ui_dao vr-20261027-144129-5ba33b29, architecture-contracts vr-20261027-144316-8ba1239f (InstallmentPlanArchitectureGuardTest INV-23/24/25).
+  - Gate: architecture spot check plus cheap review, ACCEPT-WITH-CONDITIONS (F1–F5 and F7 fixed; F6 follow-up).
+  - The OQ-21 "Delete expense and reopen" owner decision is pending (owner-approvals 49(c); recommended: drop).
+  - The es/el strings are DRAFTS.
+  - Committed.
+  - Next loan work:
+    - S11 (add expense: installments switch and currency picker; HARD gate Release 1.0 merged, which is satisfied);
+    - S12a/b;
+    - S8b (owner);
+    - S13 (enablement, with the C1 deep-link confirmation).
