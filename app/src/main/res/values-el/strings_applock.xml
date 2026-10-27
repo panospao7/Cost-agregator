@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- S19: lock surface, paused banners and review banner. DRAFT translation, owner sign-off pending. -->
+    <string name="applock_lock_title">Η εφαρμογή είναι κλειδωμένη</string>
+    <string name="applock_lock_subtitle">Ξεκλειδώστε για να συνεχίσετε.</string>
+    <string name="applock_unlock_button">Ξεκλείδωμα</string>
+    <string name="applock_msg_try_again">Αδυναμία ξεκλειδώματος. Δοκιμάστε ξανά.</string>
+    <string name="applock_msg_too_many_attempts">Πολλές προσπάθειες. Περιμένετε λίγο και δοκιμάστε ξανά.</string>
+    <string name="applock_msg_biometric_locked">Το δακτυλικό αποτύπωμα είναι κλειδωμένο. Χρησιμοποιήστε το κλείδωμα οθόνης.</string>
+    <string name="applock_msg_unavailable_now">Το ξεκλείδωμα δεν είναι διαθέσιμο αυτή τη στιγμή. Δοκιμάστε ξανά σε λίγο.</string>
+    <string name="applock_msg_setting_unreadable">Αδυναμία ελέγχου της ρύθμισης κλειδώματος. Ξεκλειδώστε για να συνεχίσετε.</string>
+
+    <string name="applock_banner_inactive_title">Το κλείδωμα εφαρμογής είναι σε παύση</string>
+    <string name="applock_banner_inactive_body">Το τηλέφωνό σας δεν έχει πλέον κλείδωμα οθόνης, οπότε η εφαρμογή δεν μπορεί να ζητήσει ξεκλείδωμα. Ορίστε κλείδωμα οθόνης για να ενεργοποιηθεί ξανά η προστασία.</string>
+    <string name="applock_banner_inactive_body_unavailable">Το τηλέφωνό σας δεν μπορεί να ελέγξει αυτή τη στιγμή το κλείδωμα οθόνης, οπότε το κλείδωμα εφαρμογής είναι σε παύση. Ενεργοποιείται ξανά την επόμενη φορά που θα κλειδώσει η εφαρμογή.</string>
+    <string name="applock_banner_inactive_body_os">Το κλείδωμα εφαρμογής δεν υποστηρίζεται σε αυτή την έκδοση του Android, οπότε είναι σε παύση. Μπορείτε να το απενεργοποιήσετε από τις ρυθμίσεις.</string>
+    <string name="applock_banner_inactive_body_unreadable">Η εφαρμογή δεν μπόρεσε να διαβάσει τη ρύθμιση κλειδώματος και το τηλέφωνό σας δεν έχει κλείδωμα οθόνης, οπότε το κλείδωμα εφαρμογής είναι σε παύση.</string>
+    <string name="applock_banner_open_settings">Ρυθμίσεις κλειδώματος εφαρμογής</string>
+    <string name="applock_banner_open_security_settings">Άνοιγμα ρυθμίσεων ασφαλείας</string>
+    <string name="applock_banner_review_title">Ελέγξτε τις ρυθμίσεις απορρήτου</string>
+    <string name="applock_banner_review_body">Η εφαρμογή δεν μπόρεσε να διαβάσει τις αποθηκευμένες ρυθμίσεις απορρήτου, οπότε χρησιμοποιεί τις ασφαλέστερες επιλογές μέχρι να τις ελέγξετε.</string>
+    <string name="applock_banner_review_action">Έλεγχος ρυθμίσεων</string>
+    <string name="applock_banner_description">%1$s. %2$s</string>
+</resources>

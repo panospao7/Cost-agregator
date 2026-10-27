@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- S19: lock surface, paused banners and review banner. DRAFT translation, owner sign-off pending. -->
+    <string name="applock_lock_title">App bloqueada</string>
+    <string name="applock_lock_subtitle">Desbloquea para continuar.</string>
+    <string name="applock_unlock_button">Desbloquear</string>
+    <string name="applock_msg_try_again">No se pudo desbloquear. Inténtalo de nuevo.</string>
+    <string name="applock_msg_too_many_attempts">Demasiados intentos. Espera un momento y vuelve a intentarlo.</string>
+    <string name="applock_msg_biometric_locked">La huella está bloqueada. Usa el bloqueo de pantalla.</string>
+    <string name="applock_msg_unavailable_now">El desbloqueo no está disponible ahora. Inténtalo de nuevo en un momento.</string>
+    <string name="applock_msg_setting_unreadable">No se pudo comprobar el ajuste de bloqueo. Desbloquea para continuar.</string>
+
+    <string name="applock_banner_inactive_title">El bloqueo de la app está en pausa</string>
+    <string name="applock_banner_inactive_body">Tu teléfono ya no tiene bloqueo de pantalla, así que la app no puede pedirte que la desbloquees. Configura un bloqueo de pantalla para volver a activar la protección.</string>
+    <string name="applock_banner_inactive_body_unavailable">Tu teléfono no puede comprobar ahora el bloqueo de pantalla, así que el bloqueo de la app está en pausa. Se reactiva la próxima vez que la app se bloquee.</string>
+    <string name="applock_banner_inactive_body_os">El bloqueo de la app no es compatible con esta versión de Android, así que está en pausa. Puedes desactivarlo en los ajustes.</string>
+    <string name="applock_banner_inactive_body_unreadable">La app no pudo leer el ajuste de bloqueo y tu teléfono no tiene bloqueo de pantalla, así que el bloqueo de la app está en pausa.</string>
+    <string name="applock_banner_open_settings">Ajustes del bloqueo de la app</string>
+    <string name="applock_banner_open_security_settings">Abrir ajustes de seguridad</string>
+    <string name="applock_banner_review_title">Revisa tus ajustes de privacidad</string>
+    <string name="applock_banner_review_body">La app no pudo leer tus ajustes de privacidad guardados, así que usa las opciones más seguras hasta que los revises.</string>
+    <string name="applock_banner_review_action">Revisar ajustes</string>
+    <string name="applock_banner_description">%1$s. %2$s</string>
+</resources>

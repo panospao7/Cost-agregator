@@ -2007,3 +2007,103 @@ Validation to request (serial, via validation-runner):
     - D1, S18-ii-h merges with S20;
     - D9, the LOCK_SETTINGS_RECOVERED emitter entry.
   - S19 can start, since D11 takes it off the BLOCKING list.
+
+## S19 — implemented
+
+Status (2026-10-27, implementer): implemented, NOT validated (no build, test, lint or guard run). DORMANT: no Hilt, no injection, no production caller (S20 wires it), no change to MainActivity or MainScreen, no change to the controller, no schema/DB impact, no guard/allowlist/baseline change, no new diagnostic code, no new dependency.
+
+Files (all new; nothing existing was edited except this handoff):
+- `app/src/main/java/com/yourname/expensetracker/ui/applock/AppLockGate.kt`: `AppLockGate` (parameters) and a second overload over the plain interface `AppLockGateSource { state; notice }`; `AppLockGateRender` and `AppLockState.toGateRender()`.
+- `.../ui/applock/AppLockSurface.kt`: `AppLockSurface`, `LockSurfaceMode`, `LockSurfaceMessage`, `AppLockUiTags`.
+- `.../ui/applock/LockNoticeBanner.kt`: `LockNoticeBanner` plus the pure `bannerCopy()` / `bannerActions()` helpers (internal).
+- `app/src/main/res/values/strings_applock.xml`, `values-es/strings_applock.xml`, `values-el/strings_applock.xml`.
+- Tests: `app/src/test/.../ui/applock/AppLockComposeTestBase.kt` (shared rule + `ContentSlotProbe`/`ProbeContent`; the existing registerActivity + `createComposeRule` Robolectric pattern of `AppLockPrivacySectionTest`), `AppLockGateTest.kt`, `AppLockGateOpenOriginPromptTest.kt`, `AppLockSurfaceTest.kt`, `LockNoticeBannerTest.kt`. No existing test touched or deleted.
+
+Gate contract for S20:
+- `AppLockGate(state, notice, inAppActionsAllowed, onUnlock, onOpenSecuritySettings, onOpenAppLockSettings, onReviewSettings, modifier, unlockMessage = null) { content }`, or `AppLockGate(source: AppLockGateSource, ...)`. S20 adapts `AppLockController.state` / `.notice` to `AppLockGateSource` (the controller does not implement it) and maps `AppOperationalState` to `inAppActionsAllowed` (true only for Normal and BackupExporting; the gate takes a Boolean so `ui/applock` gets no new `data.backup` import).
+- `onUnlock` is S20's `controller.onUnlockTapped()`. The gate never calls the controller, the authenticator, the clipboard, a permission API, navigation or a link lookup. Callbacks fire only from a user tap.
+
+How each binding is met:
+- INV-26 / AE-38: `when (state.toGateRender())`; `content()` exists only in the OPEN branch. RESOLVING gives the neutral surface (no text, no button); LOCKED and AUTHENTICATING(UNLOCK) give the lock surface. The content slot and the banner are composed 0 times there (tests: gate matrix, probe).
+- INV-53 / AE-113, AE-114: AUTHENTICATING is mapped by `purpose.isOpenOrigin` only, so ENABLE and CONFIRM_CHANGE take the same branch as DISABLED / UNLOCKED. The slot is one stable `Box` after the conditional banner group, so it is neither disposed nor rebuilt. Probe tests: DisposableEffect entered 1 / disposed 0, `LaunchedEffect(Unit)` ran 1, one distinct non-saveable `remember` token, lock surface 0 across prompt open / close / retry / success. FLAG_SECURE is not touched here (S20).
+- INV-51 / AE-99, AE-101, AE-115 and S18-ii-c ISSUE-1: the notice is a parameter and is composed ONLY inside the OPEN branch, so a torn sample (stale notice with a closed state) can never draw a banner, whatever sampling produced the pair. The `AppLockGateSource` overload also collects both flows with `collectAsState()` (composition's Main dispatcher). During open-origin prompts the controller keeps the origin notice and the gate passes it through; tested continuity across CONFIRM_CHANGE. UNLOCK prompt: slot 0, no banner (even with a stale notice passed).
+- R2 collector constraint: no Main.immediate / Unconfined collection; the collection is read-only and never calls a transition or the authenticator. Nothing in the gate calls the controller.
+- INV-34 / AE-44, AE-46, AE-118: Unlock enabled only when `state is Locked`; disabled while AUTHENTICATING(UNLOCK); re-enabled when the state is back at LOCKED (T9, T10, T35 incl. host loss). No auto-prompt, no effect or timer calls `onUnlock` (tested: 0 callbacks across all states and transitions).
+- INV-27 / INV-52 / AE-62, AE-108: the operational lock screen stays inside `content` (unchanged). `inAppActionsAllowed = false` removes the in-app banner actions (not just disables them); the system-intent action "Open security settings" stays; a review banner then has no action. Origin vs prompt rendering is identical for every notice x allowed combination (tested).
+- INV-35 / AE-69: lock surface shows only constant resource strings (tested by collecting all text), single scrollable centred column, 56 dp button, status area reserves 2 lines, polite live region only when non-empty, heading semantics, decorative icon, start/end padding only (RTL test), 200% font scale test.
+- S18-ii-e carry-forwards 3, 4, 7: they concern the settings UI and `requestDisable`; the gate has no settings, `requestDisable`, `requestSettingsReread` or `SettingsRequestResult` surface at all. REVIEW_REQUIRED is therefore never mapped to a review card here, STARTED is never read, and the gate infers no success from anything; it renders only the published `AppLockState`. The review banner's "Review settings" action is a plain callback that S20 / S18-ii-h route to the settings review section (user tap only).
+- N1 (debounce `requestSettingsReread`): not applicable to the gate (it has no retry control); stays with S20 / S18-ii-h.
+
+Decisions and risks:
+1. `LockNotice.BiometricInvalidated` (Inc 2, PIN) draws nothing in 1b: there is no 1b copy and no dismiss API on the controller, and the controller never derives it in 1b. Revisit in Inc 2 (S25+).
+2. The status line (try again, too many attempts, fingerprint locked, unavailable now) is supplied by the caller through `unlockMessage`; the controller publishes no outcome message today, so S20 must decide the source (for example the outcome of `onUnlockTapped()` / the prompt host). With `unlockMessage = null` only the T5 "Couldn't check the lock setting" line appears (cause SETTINGS_UNREADABLE). No status line during the prompt.
+3. Initial TalkBack focus on the headline (ux-flows) is not forced; there is no auto focus jump to the button, which is the intended property. A device check belongs to G1b.
+4. The Back behaviour (background the task) on the lock surface is S20's (Activity level).
+5. ux-flows says banners reuse the `PrivacyBlockedCard` pattern; a small sibling was added (neutral warning colour, no error colour) instead of generalising the shared card. Design colours: `SemanticColors.WarningOrange` at 18% alpha container.
+6. Compose tests rely on the Robolectric activity registration workaround (same as `AppLockPrivacySectionTest`); no new test dependency.
+7. The test-only `ContentSlotProbe` observes entry/dispose per composition; "banner not removed" in AE-115 is asserted at idle after each transition (the structure, not a frame trace, guarantees no flicker).
+
+es / el DRAFT strings for owner sign-off (all new keys in `strings_applock.xml`; apostrophes are escaped in the en file; `applock_banner_description` is the format string "%1$s. %2$s" in all three, the title then the body, one TalkBack stop):
+- applock_lock_title: es "App bloqueada" / el "Η εφαρμογή είναι κλειδωμένη"
+- applock_lock_subtitle: es "Desbloquea para continuar." / el "Ξεκλειδώστε για να συνεχίσετε."
+- applock_unlock_button: es "Desbloquear" / el "Ξεκλείδωμα"
+- applock_msg_try_again: es "No se pudo desbloquear. Inténtalo de nuevo." / el "Αδυναμία ξεκλειδώματος. Δοκιμάστε ξανά."
+- applock_msg_too_many_attempts: es "Demasiados intentos. Espera un momento y vuelve a intentarlo." / el "Πολλές προσπάθειες. Περιμένετε λίγο και δοκιμάστε ξανά."
+- applock_msg_biometric_locked: es "La huella está bloqueada. Usa el bloqueo de pantalla." / el "Το δακτυλικό αποτύπωμα είναι κλειδωμένο. Χρησιμοποιήστε το κλείδωμα οθόνης."
+- applock_msg_unavailable_now: es "El desbloqueo no está disponible ahora. Inténtalo de nuevo en un momento." / el "Το ξεκλείδωμα δεν είναι διαθέσιμο αυτή τη στιγμή. Δοκιμάστε ξανά σε λίγο."
+- applock_msg_setting_unreadable: es "No se pudo comprobar el ajuste de bloqueo. Desbloquea para continuar." / el "Αδυναμία ελέγχου της ρύθμισης κλειδώματος. Ξεκλειδώστε για να συνεχίσετε."
+- applock_banner_inactive_title: es "El bloqueo de la app está en pausa" / el "Το κλείδωμα εφαρμογής είναι σε παύση"
+- applock_banner_inactive_body, _body_unavailable, _body_os, _body_unreadable, applock_banner_open_settings, applock_banner_open_security_settings, applock_banner_review_title, _body, _action: see the two locale files (drafts, same status).
+- Wording consistency note for the owner: S15's es/el prompt strings say "bloqueo de la app" / "κλείδωμα εφαρμογής"; S19 follows them, but uses "App bloqueada" / "Η εφαρμογή είναι κλειδωμένη" for the headline.
+
+Validation to request (serial, via validation-runner):
+1. targeted-unit-test `*AppLockGate*`, `*AppLockSurface*`, `*LockNoticeBanner*` (one combined run; the new `AppLockComposeTestBase.kt` is compiled with them)
+2. shard `runtime-ui`
+3. `lint` (new resources: es/el parity, apostrophe escaping, unused resources are all referenced from code, hardcoded text)
+4. no static-guards or app-check needed for S19 alone unless a guard-relevant production file changed (none did); they run at the next candidate.
+Gates for S19: privacy-security-guardian (lead), reviewer-strict, architecture-guardian. Items for them: no production caller (grep for `AppLockGate(` outside tests must be empty), notice composed only in OPEN, `inAppActionsAllowed` semantics, compile-risk check of the test file (first compile, Compose test APIs: `assertTextEquals("")` on the empty status line, `SemanticsConfiguration.getOrNull`).
+
+### S19 — privacy review (ACCEPT-WITH-CONDITIONS) and fixes
+
+Status (2026-10-27, test-author): test-only fixes applied; NOT validated (no build, test, lint or guard run; validation HELD). No production file changed.
+
+Findings applied:
+1. Finding 1 (torn pairs through the SOURCE overload, S20's production path): `AppLockGateTest` has three new tests over a mutable `AppLockGateSource` that starts at `Locked` + `ReviewSettings`. Notice-before-state and state-before-notice are published through the open and close transitions (also through `Authenticating(UNLOCK)` and `Resolving`), stepwise with idle between writes and back to back in both orders. Whenever the state is closed: `NOTICE_BANNER` count 0, live probe entries (entered minus disposed) 0, no probe node, no content slot, no probe text; the first closed phase also asserts `probe.entered == 0`.
+2. Finding 2: `AppLockSurfaceTest.collectText` now also collects `SemanticsProperties.ContentDescription`; `AppLockGateTest.assertClosedRendering` asserts `onAllNodesWithText(PROBE_TEXT, substring = true, useUnmergedTree = true)` count 0.
+3. Finding 3: new `AppLockGateSourceScanTest` (feature-scoped, not a registered guard; same source-root pattern as `AppLockBiometricSourceScanTest`, comments and strings blanked) asserts `AppLockGate.kt` contains none of `immediate`, `Unconfined`, `collectAsStateWithLifecycle`, `LaunchedEffect`, `SideEffect`, `DisposableEffect`; two self-checks prove it can fail.
+
+INFO (no change required): 4 and 5 recorded as informational by the review; 6 = G1b TalkBack device checks (initial focus on the headline, no focus jump to Unlock, banner as one TalkBack stop).
+
+BINDING carry-forwards for S20:
+- CF-1: back `AppLockGateSource` directly with `controller.state` / `controller.notice` (no `stateIn` or `map` with an open initial value).
+- CF-2: use the source overload, never `collectAsStateWithLifecycle`, `Main.immediate` or `Unconfined`.
+- CF-3: `onOpenSecuritySettings` is a direct system intent (constant action, no extras, not through the MainViewModel navigation channel); `ActivityNotFoundException` is handled with a bounded code; `onOpenAppLockSettings` / `onReviewSettings` re-check the operational state at tap time.
+- CF-4: derive `unlockMessage` only from bounded outcome enums, cleared when leaving LOCKED or when a new lock episode starts.
+- CF-5: no Activity-level dialog or overlay outside the gate (FLAG_SECURE inheritance, INV-29).
+- CF-6 (G1b device check): no content frame drawn after a re-lock at APP_FOREGROUNDED; confirm no activity-scoped ViewModel holds clipboard listeners or permission flows across re-lock.
+
+Validation to request (serial, via validation-runner): targeted-unit-test `*AppLockGate*`, `*AppLockSurface*`, `*LockNoticeBanner*` (one combined run; `*AppLockGate*` also matches the new `AppLockGateSourceScanTest`).
+
+### S19 — final gate (reviewer-strict ACCEPT-WITH-CONDITIONS) and fixes
+
+Status (2026-10-27, implementer): fixes applied; NOT validated (no build, test, lint or guard run; validation HELD).
+
+Findings applied:
+1. Finding 1 (window insets; the app is edge-to-edge, targetSdk 35, `MainActivity` `enableEdgeToEdge`):
+   - `AppLockGate.kt` OPEN branch: the notice banner gets `Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(Top + Horizontal))`. The content slot `Box` (same node, same tag, same position) gets `consumeWindowInsets` of the same insets through a conditional `.then(...)` modifier, only while a banner is composed. No wrapping composable was added or removed, so slot identity is kept (INV-53): the banner toggle changes a modifier, not the composition structure.
+   - `AppLockSurface.kt` LOCK branch: `windowInsetsPadding(WindowInsets.safeDrawing)` inside the navy background, so the scrollable column never goes under the system bars. The NEUTRAL surface is unchanged (draws nothing).
+   - Existing probe tests still hold by reasoning (entered/disposed/launched are driven by the slot's position in the composition, which is unchanged). New test `toggling the banner keeps the same content slot under the conditional insets modifier` toggles the notice twice in `Unlocked` and asserts entered 1, disposed 0, launched 1, one `remember` token.
+2. Finding 2 (fail-closed exhaustiveness, test-only): the `AppLockGateTest` mapping test iterates `AuthPurpose.values()` and compares `Authenticating(id, purpose).toGateRender()` with an exhaustive `when (purpose)` with no else (`UNLOCK` -> `LOCK_SURFACE`; `ENABLE`, `CONFIRM_CHANGE` -> `OPEN`), so a new purpose does not compile until it is classified.
+
+INFO (no change): the RTL test is weak; the scan scope covers the gate file only (`AppLockGateSourceScanTest`); banner contrast and the TalkBack live-region announcement are G1b device checks.
+
+S20 note: with the insets now handled in the gate, `MainScreen`'s Scaffold insets must not double-pad when a banner is shown. The content slot consumes Top + Horizontal safeDrawing insets only while a banner is composed; verify in S20 that the Scaffold sees the consumed insets (no double top padding) and that without a banner it still pads normally.
+
+Validation to request (serial, via validation-runner): targeted-unit-test `*AppLockGate*`, `*AppLockSurface*`, `*LockNoticeBanner*` (one combined run).
+- S19 final batch: targeted vr-20261027-135835-50132250 FAILED to compile, because the tests called `SemanticsConfiguration.getOrNull` without an import (AppLockSurfaceTest :157-158, LockNoticeBannerTest :151). Fix (test-only): use the member `getOrElseNullable(key) { null }`. The remaining jobs were held and are re-queued.
+- S19 ACCEPTED (2026-10-27).
+  - Final-tree runs, all PASS: targeted vr-20261027-140842-3d486312, runtime-ui vr-20261027-141113-ab437ac3, architecture-contracts vr-20261027-141330-fc654f8d, lint vr-20261027-141416-1aa69e1d.
+  - Gates: privacy-security-guardian ACCEPT-WITH-CONDITIONS (findings 1–3 applied; CF-1..6 BINDING on S20); reviewer-strict ACCEPT-WITH-CONDITIONS (insets and the exhaustive purpose mapping applied).
+  - The es/el strings are DRAFTS pending the owner's native sign-off.
+  - Committed.
+  - The app-lock lane is now BLOCKED on owner decisions D4 (S18-ii-g), D1 (S18-ii-h with S20) and D9 (the LOCK_SETTINGS_RECOVERED emitter entry). S20 needs S18-ii-g and S18-ii-h first.
