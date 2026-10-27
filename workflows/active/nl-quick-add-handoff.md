@@ -97,3 +97,11 @@ Release 1.0 (incl. R16, R23 part 1) → ai-fixes → money-correctness-1.0.x (if
 → loan S1..S10 (S3/S6a serialised vs TLC work) → nl-quick-add inc 1 → MEC (b) add-expense UI → MEC (c) receipt review
 → loan S11 on the general currency control (plan edits at loan S0: S11 write set, D-8, S6a AUTO_RECORD_DEFERRED_FX) → nl-quick-add inc 1b → MEC inc 1b.
 Source: docs/features/manual-entry-currency/impact-map.md §9.
+
+## 2026-10-27 START (owner-approvals item 51b)
+- The owner approved starting increment 1 ("I approve").
+- Worktree: C:\Users\panos\Desktop\Cost-agregator-nlq.
+- Branch: feature/nl-quick-add, from origin/feature/ai-evolution e6967db1. That tip contains Release 1.0.2 (bug-fixes 0a52b066) and ai-fixes merged through Z2 (8d8ad26d), so the S0.1 base preconditions are met.
+- The plan header has been corrected as in the main checkout.
+- S0.2: manual-entry-currency (feature/manual-entry-currency, which hosts loan-installments) is NOT merged into this base. The owner-confirmed build order is nl-quick-add increment 1, then MEC B1/B2/C, then loan S11. Loan S11 has not started. MEC/loan rebase onto quick-add later.
+- Next: S0 discovery (D-1..D-13, line re-checks), then the S0 baselines through the shared serial queue.

@@ -1,7 +1,7 @@
 # Feature plan: nl-quick-add (increment 1 — typed, deterministic, fill-only)
 
 Author: feature-planner (stage 6). Persisted by the orchestrator. Date 2026-10-16.
-Status: AWAITING OWNER PLAN APPROVAL (Gate 3). No `app/` edits until S0 passes. Implementation only after Release 1.0 accepted + `release-1.0-wt` merged + ai-fixes B2d landed; must land before loan-installments S11.
+Status: PLAN APPROVED 2026-10-16 (Gate 3; header corrected 2026-10-21 by orchestrator, see handoff). No `app/` edits until S0 passes. Implementation only after Release 1.0 accepted + `release-1.0-wt` merged + ai-fixes B2d landed; must land before loan-installments S11.
 
 - Risk tier: **T2 (upper end)**; slice E T3 by rule (new guards; impact map §5, G2-18).
 - Basis: `docs/features/nl-quick-add/impact-map.md` (trusted), `gate2-decisions.md` (G2-1..G2-18 DECIDED = Recommended), `domain-spec.md` §1–§3, §5, §7, §11–§13, `ux-flows.md` §2–§11, `workflows/active/ai-fixes-plan.md` (format, shard/guard facts).
