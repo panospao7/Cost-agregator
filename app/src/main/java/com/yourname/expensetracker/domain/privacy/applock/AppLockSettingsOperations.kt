@@ -28,7 +28,14 @@ enum class SettingsRequestResult {
     NOT_IN_ORIGIN,
 
     /** T26: the capability is not `AVAILABLE` (or the check failed). No prompt, nothing written. */
-    REFUSED_UNAVAILABLE
+    REFUSED_UNAVAILABLE,
+
+    /**
+     * S18 ii-e (T19, INV-44, INV-45): a disable while `INERT` found the settings under review (`INERT(SETTINGS_UNREADABLE_NO_AUTH)`
+     * or an unreadable load state). Nothing written, no prompt; the review-save is the way for a persistent unreadable
+     * store, or the settings are temporarily unreadable (retry or re-read).
+     */
+    REVIEW_REQUIRED
 }
 
 /**
@@ -196,9 +203,94 @@ class AppLockSettingsOperations @Inject constructor(
         return start(OpenOriginPrompt.ENABLE)
     }
 
-    /** The DISABLE attempt (T18, OD-8a: fresh authentication). Never writes anything itself. */
+    /**
+     * The DISABLE attempt (T18, OD-8a: fresh authentication) from `UNLOCKED`. Never writes anything itself, except in
+     * `INERT`, where nothing can authenticate and T19 applies (see [requestInertDisable]).
+     */
     fun requestDisable(): SettingsRequestResult =
-        if (applyRunning.get()) SettingsRequestResult.ALREADY_IN_FLIGHT else start(OpenOriginPrompt.DISABLE)
+        when {
+            applyRunning.get() -> SettingsRequestResult.ALREADY_IN_FLIGHT
+            controller.state.value is AppLockState.Inert -> requestInertDisable()
+            else -> start(OpenOriginPrompt.DISABLE)
+        }
+
+    /**
+     * S18 part (ii-e): the disable of the lock while `INERT`, with NO authentication (T19, INV-3, INV-45, D3). The
+     * steps, in order:
+     *
+     * 1. The one-apply flag [applyRunning] is claimed atomically ([SettingsRequestResult.ALREADY_IN_FLIGHT] if it is
+     *    taken) and released on every path that does not launch the apply.
+     * 2. [AppLockController.beginInertDisable]: `INERT(SETTINGS_UNREADABLE_NO_AUTH)`, or any unreadable load state, is
+     *    [SettingsRequestResult.REVIEW_REQUIRED] with nothing written (INV-44: the review-save is the way); a state that
+     *    is not `INERT` is [SettingsRequestResult.NOT_IN_ORIGIN].
+     * 3. The capability is read FRESH. Only a capability that is neither `AVAILABLE` nor `CHECK_FAILED` (nothing can
+     *    authenticate, D3) allows the no-auth path; otherwise [SettingsRequestResult.NOT_IN_ORIGIN] (the state is not the
+     *    origin of the DISABLE prompt, which starts only from `UNLOCKED`) and nothing is written.
+     * 4. The apply launches on the application scope (ATOMIC) and the result is [SettingsRequestResult.STARTED]; the
+     *    outcome is observed in `AppLockState`. The apply ([runInertDisableApply]) runs inside the [writeSerializer]
+     *    under `NonCancellable` and RE-PROVES D3 there (state still `INERT`, FRESH capability still neither `AVAILABLE`
+     *    nor `CHECK_FAILED`, store readable) before writing `appLockEnabled = false` (F7 re-read after a cancelled
+     *    write), then the id-bound `onInertDisableApplied` moves `INERT` to `DISABLED` only after `Committed` and only if
+     *    the state is still `INERT`. A failed write leaves `INERT` and records the failure once.
+     *
+     * Disabling never re-posts (INV-13): no [DiscreetRepostTrigger] call. No prompt is started, so no attempt id, no T33
+     * gate and no held link are involved. This request has no production caller yet (dormant).
+     */
+    private fun requestInertDisable(): SettingsRequestResult {
+        if (!applyRunning.compareAndSet(false, true)) return SettingsRequestResult.ALREADY_IN_FLIGHT
+        var launched = false
+        try {
+            val begin = controller.beginInertDisable()
+            if (begin !is InertDisableBegin.Begun) {
+                return if (begin == InertDisableBegin.ReviewRequired) {
+                    SettingsRequestResult.REVIEW_REQUIRED
+                } else {
+                    SettingsRequestResult.NOT_IN_ORIGIN
+                }
+            }
+            val capability = readCapability()
+            if (capability == DeviceAuthCapability.AVAILABLE || capability == DeviceAuthCapability.CHECK_FAILED) {
+                // An unused token is replaced by the next begin and applies to no other id.
+                return SettingsRequestResult.NOT_IN_ORIGIN
+            }
+            scope.launch(start = CoroutineStart.ATOMIC) { runInertDisableApply(begin.id) }
+            launched = true
+            return SettingsRequestResult.STARTED
+        } finally {
+            // A refusal, a cancellation of the capability read or a launch that failed releases the flag; a throwable
+            // propagates unchanged. After a successful launch the apply's own finally clears it.
+            if (!launched) applyRunning.set(false)
+        }
+    }
+
+    private suspend fun runInertDisableApply(id: Long) {
+        try {
+            withContext(NonCancellable) {
+                writeSerializer.withExclusiveWrite {
+                    // D3 re-proof INSIDE the serializer (the decision was made outside it): the state must still be INERT,
+                    // a FRESH capability must still be unable to authenticate and the store must still be readable.
+                    // Anything else writes nothing; the state and the view stay as they are.
+                    val fresh = readCapability()
+                    if (controller.state.value !is AppLockState.Inert ||
+                        fresh == DeviceAuthCapability.AVAILABLE ||
+                        fresh == DeviceAuthCapability.CHECK_FAILED ||
+                        readCommittedSettings() == null
+                    ) {
+                        return@withExclusiveWrite
+                    }
+                    // F7: a cancelled write is settled from one store re-read; the cancellation is rethrown afterwards.
+                    val outcome = settleCancelledWrite(AppLockSettingField.APP_LOCK_ENABLED, { !it.appLockEnabled }) {
+                        write(false)
+                    }
+                    outcome.applyThenRethrow { result ->
+                        controller.onInertDisableApplied(id, result is AppLockSettingsWriteResult.Committed)
+                    }
+                }
+            }
+        } finally {
+            applyRunning.set(false)
+        }
+    }
 
     /**
      * S18 part (i-b1): the auto-lock timeout change (INV-3, OD-8a). The committed timeout is read first (one fresh

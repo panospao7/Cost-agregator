@@ -532,7 +532,10 @@ class AppLockControllerIllegalTransitionTest {
             "onTimeoutWrittenWithoutPrompt",
             "onPlainSettingWritten",
             // S18 (ii-d), exact addition: the no-prompt review-save commit entry (T27).
-            "onReviewSavedWithoutPrompt"
+            "onReviewSavedWithoutPrompt",
+            // S18 (ii-e), exact addition, scoped to this ONE method (no global Boolean allowance): the id-bound T19
+            // apply report of an INERT disable. Its other parameter is the attempt-style Long id.
+            "onInertDisableApplied"
         )
         // Only compiler-generated accessors (`access$...`, first parameter = the controller) are not API.
         // Any other synthetic method on the controller is unexpected and fails the test below.
@@ -597,7 +600,11 @@ class AppLockControllerIllegalTransitionTest {
                 // state move and diagnostics of a review-save that needed no prompt. Both have exactly one production
                 // caller, AppLockSettingsOperations.kt.
                 "startReviewSaveAttempt",
-                "onReviewSavedWithoutPrompt"
+                "onReviewSavedWithoutPrompt",
+                // S18 (ii-e), exact additions: the id-bound begin and apply report of an INERT disable (T19). Both have
+                // exactly one production caller, AppLockSettingsOperations.kt.
+                "beginInertDisable",
+                "onInertDisableApplied"
             ),
             production
         )
@@ -680,6 +687,20 @@ class AppLockControllerIllegalTransitionTest {
             plain.single().parameterTypes.toList()
         )
         assertEquals(Void.TYPE, plain.single().returnType)
+
+        // S18 (ii-e): the INERT disable begins with no argument (the controller reads its own state and load state) and
+        // returns the bounded begin result; its apply report is bound to the issued Long id plus the committed flag.
+        val inertBegin = own.filter { it.name == "beginInertDisable" }
+        assertEquals(1, inertBegin.size)
+        assertEquals(emptyList<Class<*>>(), inertBegin.single().parameterTypes.toList())
+        assertEquals(InertDisableBegin::class.java, inertBegin.single().returnType)
+        val inertApplied = own.filter { it.name == "onInertDisableApplied" }
+        assertEquals(1, inertApplied.size)
+        assertEquals(
+            listOf<Class<*>>(Long::class.javaPrimitiveType!!, Boolean::class.javaPrimitiveType!!),
+            inertApplied.single().parameterTypes.toList()
+        )
+        assertEquals(Void.TYPE, inertApplied.single().returnType)
     }
 
     @Test
@@ -723,10 +744,16 @@ class AppLockControllerIllegalTransitionTest {
             // persistent-unreadable accessor. Exactly one production caller each, the settings operations file.
             "startReviewSaveAttempt",
             "onReviewSavedWithoutPrompt",
-            "isPersistentUnreadable"
+            "isPersistentUnreadable",
+            // S18 (ii-e), exact additions: the INERT disable begin and apply report (T19). Exactly one production
+            // caller each, the settings operations file.
+            "beginInertDisable",
+            "onInertDisableApplied"
         )
-        // S18 (i-a, i-b1, i-b2, ii-d): these ten have exactly one production caller, the settings operations file.
+        // S18 (i-a, i-b1, i-b2, ii-d, ii-e): these twelve have exactly one production caller, the settings operations file.
         val settingsOperationsOnly = setOf(
+            "beginInertDisable",
+            "onInertDisableApplied",
             "startReviewSaveAttempt",
             "onReviewSavedWithoutPrompt",
             "isPersistentUnreadable",

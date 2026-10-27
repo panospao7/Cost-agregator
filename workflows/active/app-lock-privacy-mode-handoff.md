@@ -1909,3 +1909,69 @@ Filter (targeted-unit-test): `*AppLockControllerReviewSaveTest*,*AppLockControll
   - Gates: privacy-security-guardian ACCEPT-WITH-CONDITIONS (C1, C2, F3); reviewer-strict ACCEPT-WITH-CONDITIONS (ISSUE-1 MAJOR guard, ISSUE-2..4).
   - Committed.
   - Next: S18-ii-e (T19, INERT disable without auth, conditions (a)–(f)). F2 is binding: bump writeSequence on commit, with a D6 test.
+
+## S18-ii-e — implemented
+
+Applied by the implementer (2026-10-27). NOT compiled or run; no validation was run. DORMANT (no new production caller). No schema impact. No new diagnostic code, no new emitter entry (existing `LOCK_DISABLED`, `LOCK_SETTING_PERSIST_FAILED(APP_LOCK_ENABLED)`).
+
+Files:
+- `domain/privacy/applock/AppLockController.kt`: new `InertDisableBegin` (Begun(id) / ReviewRequired / NotInOrigin); `beginInertDisable()` and `onInertDisableApplied(id, committed)`; token fields `pendingInertDisableId` / `lastInertDisableId` (own id sequence, not an attempt id); the stale "TECH-13 ... no controller entry" seam comment extended. There was no `TODO(S18-ii...)` seam belonging to T19 in the controller (only the unrelated `TODO(S18-ii-c D9)` and `TODO(S25)` exist).
+- `domain/privacy/applock/AppLockSettingsOperations.kt`: `SettingsRequestResult.REVIEW_REQUIRED`; `requestDisable()` keeps its non-suspend signature and gets the INERT branch (`requestInertDisable`, `runInertDisableApply`).
+- `docs/architecture/LEGAL_PATHS.md`: WRITE 3 T19 branch and the pin sentence.
+- Tests: new `AppLockControllerInertDisableTest`; modified `AppLockControllerInertWeakeningTest` (the "disable in INERT is NOT_IN_ORIGIN" assertion became the T19 behaviour; a NOT_IN_ORIGIN case for a fresh AVAILABLE / CHECK_FAILED was kept; nothing deleted); `AppLockControllerIllegalTransitionTest` (+2 public-method names, +2 signature assertions, `onInertDisableApplied` added to `committedFlagMethods` for that method only, +2 names in the single-caller `forbidden` and `settingsOperationsOnly` sets; no new allowed parameter type was needed).
+
+How the conditions are met:
+- (a) `requestDisable()` while the state is INERT: the capability is read fresh at request time (`readCapability()`, a failed read is CHECK_FAILED). AVAILABLE or CHECK_FAILED gives `NOT_IN_ORIGIN`, nothing written. The decision is RE-PROVED inside the shared `AppLockSettingsWriteSerializer` before the write (state still INERT, FRESH capability still neither AVAILABLE nor CHECK_FAILED, store readable), as in S18-ii-d C1. Tests: stale AVAILABLE, CHECK_FAILED, throwing capability read, held-serializer re-proof (capability change, state change with a no-auth capability restored, store turned unreadable).
+- (b) The apply is id-bound: `beginInertDisable()` records a one-shot token under the monitor, `onInertDisableApplied(id, committed)` consumes it only for the exact id and re-checks under the monitor that the state is still INERT with no open attempt before moving to DISABLED. `applyRunning` is claimed with `compareAndSet` before the begin (so two requests cannot both begin) and cleared in the apply's `finally` (and on every path that does not launch). The shared serializer wraps the pre-proof, the write and the controller entry. Tests: wrong/reused ids, replaced token, ALREADY_IN_FLIGHT for a second disable and an enable while one is held at the serializer.
+- (c) DISABLED only after `Committed`. A failure (Failed, Rejected, a thrown store exception) stays INERT and claims `LOCK_SETTING_PERSIST_FAILED(APP_LOCK_ENABLED)` once per process (claim-once, second failure records nothing); success emits `LOCK_DISABLED`. If INERT ended during the write the commit is still taken (view lock off, `LOCK_DISABLED`) but the state is NOT moved to DISABLED (fail closed). Tests cover each.
+- (d) `INERT(SETTINGS_UNREADABLE_NO_AUTH)` or a null/unreadable load state gives `REVIEW_REQUIRED` (checked under the monitor in `beginInertDisable`, before the capability, so it applies for every capability). Nothing is written or recorded; the review-save path still works afterwards (tested).
+- (e) No new production caller. `requestDisable` was already in the dormancy list; `beginInertDisable` and `onInertDisableApplied` joined the single-caller pins (Operations only).
+- (f) No re-post: no `DiscreetRepostTrigger` call on disable (follows the T18 pattern and the INV-13 rule: only a false-to-true effective edge sweeps, and a disable only loosens the forced value). The F7 re-read (`settleCancelledWrite` with `{ !it.appLockEnabled }`) settles a cancelled write; the `CancellationException` is rethrown by `applyThenRethrow` (tests grab the apply's job and assert `isCancelled`, plus the committed / not committed / throwing re-read variants). No new `catch` was added.
+- F2 (BINDING): a committed `onInertDisableApplied` bumps `writeSequence` (also when no token matches, like `onOpenOriginSettingApplied`). D6 tests: `F2 D6 a re-read still in flight when a T19 write commits drops its result` (in-flight re-read is dropped) and the control `D6 a T19 write that did not commit does not drop an in-flight re-read`. The `onInertDisableApplied` also clears the pending background on the move to DISABLED.
+
+Design notes and deviations:
+- `requestDisable()` stays non-suspend (many existing tests call it from non-suspend code). So the T19 write runs on the application scope (ATOMIC launch, like the prompt applies) and the request returns `SettingsRequestResult.STARTED`; the outcome is observed in `AppLockState` and the diagnostics. The plan did not name a result for the success path; `STARTED` is the existing one with that meaning.
+- The new result `SettingsRequestResult.REVIEW_REQUIRED` is the one enum addition.
+- `beginInertDisable()` has no argument. The capability check lives in Operations (before and inside the serializer), as for review-save. An unused token (capability refused after the begin) lingers until replaced; it can be consumed only by its exact id, which only the launching apply holds.
+- A coverage gap: `!readable` with a non-NO_AUTH INERT reason (a readable-state INERT whose view later became unreadable) has no test, because no harness path produces it (a transient-unreadable view while INERT(NO_CREDENTIAL) only arises through T28 which then makes the view Loaded). The branch is one line in `beginInertDisable`.
+
+Risks / likeliest findings (nothing was run):
+- Race tests rely on T15 (`onAppBackgrounded` then `onAppForegrounded` with an AVAILABLE capability, within the timeout) moving INERT to UNLOCKED; they assert only "not INERT and not DISABLED".
+- The D6 control test assumes a T28 re-read from INERT applies a lock-off read as DISABLED.
+- Held-serializer tests rely on the unconfined test dispatcher resuming the queued apply after the mutex unlock (`h.settle()` follows `holder.await()`), as the S18-ii-d C1 tests do.
+- The F7 rethrow tests rely on a launch that ends by a `CancellationException` reporting `isCancelled` on its job.
+
+Validation to request (serial, validation-runner):
+- targeted-unit-test `*AppLockController*,*AppLockSettingsOperations*`
+- shards domain-n-z and architecture-contracts
+- registered-guard cancellation and known_good_state
+Gates: privacy-security-guardian (lead), reviewer-strict.
+
+### S18-ii-e — privacy review (ACCEPT-WITH-CONDITIONS) and fixes
+
+Applied (2026-10-27; NOT compiled or run; no validation was running):
+
+- Finding 1 (test gap), applied: in `AppLockControllerInertDisableTest` "T19 INERT ending during the write ...", after `gate.complete` the test asserts the moved state is `UNLOCKED`, then `onAppBackgrounded()`, `h.clock.advance(120_000L)` (past M1), `onAppForegrounded()`, and asserts the state is still `UNLOCKED` with no prompt. Reasoned: deleting the view update in `onInertDisableApplied` (Ctl ~:889-894) leaves the view at lock on with M1, so the foreground after 120 s T14-locks and the assertion fails.
+- INFO 2, accepted (D1-like residual): if the device regains authentication between the in-serializer re-proof and the NonCancellable commit, the store keeps the user's lock-off and the state is not relaxed. One sentence added to LEGAL_PATHS WRITE 3 T19 (e).
+- INFO 5, 6, 8, accepted: (5) the lingering unused token is not exploitable (consumable only by its exact id, held by the launching apply); (6) the re-proof checks store readability only; (8) the Timber label "timeout pre-read" is reused.
+
+BINDING carry-forwards for S18-ii-h / S20:
+- (3) After the race, the session is UNLOCKED with the lock off; ENABLE is refused until a T18 with authentication or a cold start.
+- (4) The UI maps REVIEW_REQUIRED for transient or null views to retry / `requestSettingsReread`, NOT to a review card.
+- (7) The UI observes `AppLockState` and never infers success from `STARTED` (a silent no-op is possible). `requestDisable` is bound only to an explicit settings user action (no deep link, intent or worker).
+
+Filter (targeted-unit-test): `*AppLockControllerInertDisableTest*`.
+
+### S18-ii-e — final gate (reviewer-strict ACCEPT-WITH-CONDITIONS) and fixes (2026-10-27)
+- Applied (comments and docs only):
+  - Finding 1: the beginInertDisable KDoc says the capability check is made AFTER begin, so REVIEW_REQUIRED applies whatever the capability.
+  - Finding 2: the controller KDoc and LEGAL_PATHS WRITE 3 (e) no longer say "fail closed" / "NOT relaxed". The state is not moved, and the view follows the commit: an UNLOCKED session stays open with the lock off, while a LOCKED state stays LOCKED.
+  - Finding 3: the REVIEW_REQUIRED KDocs mention retry or re-read for temporarily unreadable views.
+- Finding 4 (condition): re-run targeted `*AppLockControllerInertDisableTest*` on the final test file.
+- INFO 5: the in-serializer re-check reads the published state (the decisive move is checked under the monitor). Optional hardening later.
+- S18-ii-e ACCEPTED (2026-10-27).
+  - Final targeted vr-20261027-113534-0c07a9a1 PASS, on the final test file.
+  - Production-tree runs, all PASS: targeted vr-20261027-111000-ac91e5ef, cancellation vr-20261027-111504-042ed693, known_good_state vr-20261027-111522-6fe89536, architecture-contracts vr-20261027-111823-dc197ba7, domain-n-z vr-20261027-111910-508a9c8c. Later edits were comment-only in production.
+  - Gates: privacy-security-guardian PASS / ACCEPT-WITH-CONDITIONS; reviewer-strict ACCEPT-WITH-CONDITIONS (doc findings 1–3 fixed, re-run done).
+  - Committed.
+  - Next: S18-ii-f (finding 8: the repository write defaults become abstract), then S18-ii-g (needs owner D4).

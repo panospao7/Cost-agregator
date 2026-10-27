@@ -64,6 +64,24 @@ sealed interface OpenOriginStartResult {
 }
 
 /**
+ * Bounded result of [AppLockController.beginInertDisable] (S18 ii-e, T19). It carries no text and no platform detail.
+ */
+sealed interface InertDisableBegin {
+    /** The token for [id] is recorded; the caller may write once and must report it with `onInertDisableApplied(id, ...)`. */
+    data class Begun(val id: Long) : InertDisableBegin
+
+    /**
+     * INV-44, INV-45: the state is `INERT(SETTINGS_UNREADABLE_NO_AUTH)` or the load state is unreadable (or unresolved).
+     * Nothing was recorded; a disable never bypasses the review: the review-save is the way for a persistent unreadable
+     * store, and a retry or re-read for a temporarily unreadable (IO_ERROR, TIMEOUT) or unresolved view.
+     */
+    data object ReviewRequired : InertDisableBegin
+
+    /** The state is not `INERT`, or an attempt is open. Nothing was recorded. */
+    data object NotInOrigin : InertDisableBegin
+}
+
+/**
  * Receives the success of an open-origin attempt (the T33 hand-off to the owning settings operation, S18).
  *
  * The controller invokes it at most once per attempt, only for a success that matches the open attempt by
@@ -357,6 +375,13 @@ class AppLockController @Inject constructor(
 
     /** S18 ii-d: the record of a weakening review-save attempt, recorded with the token. The T27 move takes it from here. */
     private var pendingApplyRecord: AppLockPrivacySettings? = null
+
+    /**
+     * S18 ii-e (T19): the one-shot token of an `INERT` disable that has begun and not been applied yet. Its own id
+     * sequence ([lastInertDisableId]), never an attempt id: T19 has no prompt and no attempt. Guarded by [stateLock].
+     */
+    private var pendingInertDisableId: Long? = null
+    private var lastInertDisableId = 0L
     private var pendingApplyForegroundSinceClose = false
     private val claimedDiagnosticCodes: MutableSet<PrivacyDiagnosticCode> =
         EnumSet.noneOf(PrivacyDiagnosticCode::class.java)
@@ -818,6 +843,69 @@ class AppLockController @Inject constructor(
         return claim(PrivacyDiagnosticCode.LOCK_SETTINGS_REVIEW_SAVED)
     }
 
+    /**
+     * S18 ii-e (T19, INV-3, D3): begins the disable of the lock while `INERT`, where nothing can authenticate. Under the
+     * monitor:
+     * - the state must be exactly `INERT` with no open attempt, else [InertDisableBegin.NotInOrigin];
+     * - `INERT(SETTINGS_UNREADABLE_NO_AUTH)`, or a load state that is unreadable (or unresolved), is
+     *   [InertDisableBegin.ReviewRequired] (INV-44, INV-45: the review-save is the way; nothing is recorded);
+     * - otherwise a one-shot token with a fresh id is recorded and returned as [InertDisableBegin.Begun].
+     *
+     * Whether authentication is really impossible (the FRESH capability is neither `AVAILABLE` nor `CHECK_FAILED`, D3)
+     * is the caller's check ([AppLockSettingsOperations], the only production caller), made AFTER this call (so
+     * [InertDisableBegin.ReviewRequired] applies whatever the capability) and again inside the shared write serializer
+     * before the write. The write is the caller's too. A new begin replaces an older
+     * unused token (an abandoned one can never be applied: only the exact id applies).
+     */
+    fun beginInertDisable(): InertDisableBegin = transition {
+        val cur = current
+        if (cur !is AppLockState.Inert || inFlight != null) return@transition InertDisableBegin.NotInOrigin
+        val view = loadState
+        val readable = view is AppLockSettingsLoadState.Loaded || view is AppLockSettingsLoadState.FirstRunDefault
+        if (cur.reason == InertReason.SETTINGS_UNREADABLE_NO_AUTH || !readable) return@transition InertDisableBegin.ReviewRequired
+        val id = ++lastInertDisableId
+        pendingInertDisableId = id
+        InertDisableBegin.Begun(id)
+    }
+
+    /**
+     * S18 ii-e (T19): the view, the state move and the diagnostics of an `INERT` disable, called by the settings
+     * operation AFTER its durable write returned. [committed] is true only for a durable commit. Id-bound: unless [id]
+     * matches the unconsumed token of [beginInertDisable] the call is a no-op (no state change, no code); a match
+     * consumes the token, so a repeat is a no-op too. Everything is re-checked under the monitor:
+     * - not committed: no state change (`INERT` stays), `LOCK_SETTING_PERSIST_FAILED(APP_LOCK_ENABLED)` once per process
+     *   per (code, field), the lock flag of the view is left as it is (INV-46);
+     * - committed: `writeSequence` is bumped (F2, D6: a kept or in-flight re-read snapshot is dropped; counted even when
+     *   no token matches, like [onOpenOriginSettingApplied]), the view takes lock off, `LOCK_DISABLED` is recorded once per
+     *   process, and the state moves to `DISABLED` ONLY from exactly `INERT` with no open attempt. If the state moved
+     *   meanwhile (for example the capability returned and a foreground made it `UNLOCKED` or `LOCKED`) it is NOT
+     *   moved; the view still follows the commit, so an `UNLOCKED` session stays open with the lock off (handoff
+     *   carry-forward 3) and a `LOCKED` state stays `LOCKED` until a real unlock; the next cold start resolves from the
+     *   committed store. The pending background is
+     *   discarded with the move (`DISABLED` records none).
+     */
+    fun onInertDisableApplied(id: Long, committed: Boolean) {
+        val diagnostic = transition {
+            if (committed) writeSequence++ // F2, D6: a settings write committed
+            if (pendingInertDisableId != id) return@transition null
+            pendingInertDisableId = null
+            if (!committed) return@transition claimPersistFailedLocked(AppLockSettingField.APP_LOCK_ENABLED)
+            when (val view = loadState) {
+                is AppLockSettingsLoadState.Loaded ->
+                    loadState = AppLockSettingsLoadState.Loaded(view.settings.copy(appLockEnabled = false))
+                is AppLockSettingsLoadState.FirstRunDefault ->
+                    loadState = AppLockSettingsLoadState.Loaded(view.settings.copy(appLockEnabled = false))
+                is AppLockSettingsLoadState.Unreadable, null -> Unit
+            }
+            if (current is AppLockState.Inert && inFlight == null) {
+                setState(AppLockState.Disabled)
+                lastBackgroundedAtMillis = null
+            }
+            claim(PrivacyDiagnosticCode.LOCK_DISABLED)
+        }
+        record(diagnostic)
+    }
+
     /** True while the load state is `Unreadable` with a persistent cause (`CORRUPTED`, `INVALID_VALUE`). Under [stateLock]. */
     private fun persistentUnreadableLocked(): Boolean {
         val view = loadState
@@ -992,6 +1080,8 @@ class AppLockController @Inject constructor(
     // S18 i-b2 settled: the only weakening writes while the lock is on are the disable (T18) and a longer timeout (both
     // prompt-guarded); discreet and secure screen are FORCED while the lock is on (INV-48) and so refused, not prompted;
     // TECH-13 (INERT) is the Operations' refusal with no controller entry.
+    // S18 ii-e settled: the disable while INERT, where nothing can authenticate (T19, D3), is the id-bound pair
+    // [beginInertDisable] / [onInertDisableApplied]; every other weakening while INERT keeps the TECH-13 refusal.
     // S18 ii-d settled: a weakening review-save confirms through the CHANGE prompt ([startReviewSaveAttempt]); a
     // non-weakening one, or one saved while INERT with nothing to authenticate with (D3), needs no prompt
     // ([onReviewSavedWithoutPrompt]).

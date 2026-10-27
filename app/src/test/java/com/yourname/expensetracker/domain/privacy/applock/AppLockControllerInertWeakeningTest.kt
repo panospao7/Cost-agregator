@@ -13,7 +13,9 @@ import org.junit.Test
  * [AppLockController]. In INERT nothing can authenticate, so every weakening is refused with no write, no prompt, no
  * state change and no diagnostic; a strengthening still commits. The refusal maps the spec's
  * `Rejected(AUTH_UNAVAILABLE)` to the existing bounded [TimeoutChangeResult.NOT_IN_ORIGIN].
- * Not covered here (S18-ii): the INERT review-save (AE-87).
+ * S18-ii-e: the disable is the exception (T19, D3): it needs no authentication when the fresh capability cannot
+ * authenticate, see the disable test below and `AppLockControllerInertDisableTest`. The INERT review-save (AE-87) is in
+ * `AppLockControllerReviewSaveTest`.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class AppLockControllerInertWeakeningTest {
@@ -95,14 +97,41 @@ class AppLockControllerInertWeakeningTest {
     }
 
     @Test
-    fun `TECH-13 disabling the lock is refused in INERT with no write and no prompt`() = runBlocking {
+    fun `T19 (was TECH-13) disabling the lock in INERT needs no authentication when nothing can authenticate`() = runBlocking {
+        // S18-ii-e: the former TECH-13 refusal of the disable is now the T19 behaviour. The capability of this rig is
+        // NO_CREDENTIAL (neither AVAILABLE nor CHECK_FAILED, D3), so the disable commits with no prompt. The full T19
+        // matrix is in AppLockControllerInertDisableTest.
         val rig = inertRig()
 
-        assertEquals(SettingsRequestResult.NOT_IN_ORIGIN, rig.ops.requestDisable())
+        assertEquals(SettingsRequestResult.STARTED, rig.ops.requestDisable())
         rig.h.settle()
 
-        assertNothingHappened(rig)
-        assertEquals(true, (rig.h.repository.loadState as AppLockSettingsLoadState.Loaded).settings.appLockEnabled)
+        assertEquals(listOf(false), rig.h.repository.lockWrites)
+        assertEquals(false, (rig.h.repository.loadState as AppLockSettingsLoadState.Loaded).settings.appLockEnabled)
+        assertEquals(AppLockState.Disabled, rig.controller.state.value)
+        assertEquals(listOf(PrivacyDiagnosticCode.LOCK_DISABLED), rig.h.emitted)
+        assertTrue("no prompt", rig.h.authenticator.calls.isEmpty())
+        assertTrue("no timeout write", rig.h.repository.timeoutWrites.isEmpty())
+        assertTrue("no plain write", rig.h.repository.plainWrites.isEmpty())
+        assertTrue(rig.uncaught.isEmpty())
+    }
+
+    @Test
+    fun `TECH-13 disabling the lock is still NOT_IN_ORIGIN in INERT when the fresh capability is AVAILABLE or CHECK_FAILED`() = runBlocking {
+        for (fresh in listOf(DeviceAuthCapability.AVAILABLE, DeviceAuthCapability.CHECK_FAILED)) {
+            val rig = inertRig()
+            rig.h.capabilityProvider.capability = fresh
+
+            assertEquals("$fresh", SettingsRequestResult.NOT_IN_ORIGIN, rig.ops.requestDisable())
+            rig.h.settle()
+
+            assertNothingHappened(rig)
+            assertEquals(
+                "$fresh",
+                true,
+                (rig.h.repository.loadState as AppLockSettingsLoadState.Loaded).settings.appLockEnabled
+            )
+        }
     }
 
     @Test

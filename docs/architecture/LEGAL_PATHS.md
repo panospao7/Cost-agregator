@@ -1767,6 +1767,30 @@ WRITE 3 — lock flag (S18 part (i-a), DORMANT: implemented and tested, no produ
          never re-posts
       7. completion: onOpenOriginApplyCompleted(attemptId) in a finally (also on failure or
          cancellation, which is rethrown), after the state move; releases the T33 gate
+      T19 BRANCH (S18-ii-e): requestDisable() while the state is INERT takes NO prompt (nothing can authenticate):
+         a. applyRunning is claimed atomically (compareAndSet; ALREADY_IN_FLIGHT if taken) and released on every
+            path that does not launch the apply;
+         b. AppLockController.beginInertDisable(): INERT(SETTINGS_UNREADABLE_NO_AUTH) or any unreadable /
+            unresolved load state -> REVIEW_REQUIRED, nothing written (INV-44: the review-save is the way); not
+            INERT or an attempt open -> NOT_IN_ORIGIN; else an id-bound one-shot token (own id sequence);
+         c. the capability is read FRESH; AVAILABLE or CHECK_FAILED (a failed read) -> NOT_IN_ORIGIN, nothing
+            written (D3: the no-auth path exists only when the device cannot authenticate);
+         d. ATOMIC launch on the application scope, STARTED; the apply runs inside the shared
+            AppLockSettingsWriteSerializer under NonCancellable and RE-PROVES D3 there (state still INERT, FRESH
+            capability still neither AVAILABLE nor CHECK_FAILED, store readable) before the single
+            setAppLockEnabled(false) call (F7 re-read after a cancelled write; the cancellation is rethrown);
+         e. AppLockController.onInertDisableApplied(id, committed): id-bound, bumps writeSequence on a commit
+            (F2, D6), moves INERT -> DISABLED ONLY after Committed and only if the state is still INERT with no
+            attempt open (a moved state is never moved; view and LOCK_DISABLED follow the commit); a failed
+            write stays INERT and records LOCK_SETTING_PERSIST_FAILED(APP_LOCK_ENABLED) once per process; if the
+            device regains authentication between the in-serializer re-proof and the NonCancellable commit, the
+            store keeps the user's lock-off and the state is NOT moved; the view follows the commit, so an
+            UNLOCKED session stays open with the lock off and a LOCKED state stays LOCKED until a real unlock
+            (accepted residual, same as D1);
+         f. no DiscreetRepostTrigger call (disable never re-posts, INV-13); no T33 gate and no held link are
+            involved (no attempt); applyRunning is cleared in the apply's finally.
+         Still DORMANT: the same request entry (requestDisable) and the same source-scan pins; beginInertDisable and
+         onInertDisableApplied have exactly one production caller, AppLockSettingsOperations.kt.
   DORMANT / NOT LEGAL TO WIRE until ALL of these BLOCKING items are closed:
     F3: CLOSED by S18-ii-b (adopted resolver form, actionPolicy != UNCHANGED; see the plan amendment
         "S18-ii-b accepted deviation"; the API 26/30 device re-run stays with G1b);
@@ -1797,7 +1821,8 @@ WRITE 3 — lock flag (S18 part (i-a), DORMANT: implemented and tested, no produ
   setAutoLockTimeoutIfNotWeakening, of setDiscreetNotificationsIfNotForced and of
   setSecureScreenIfNotForced (that file), exactly one of the unforced 1a setDiscreetNotifications
   (UpdateDiscreetNotificationsUseCase) and exactly one of reviewSave (the 1a ViewModel); lifting them
-  needs the items above.
+  needs the items above. S18-ii-e adds beginInertDisable and onInertDisableApplied to the controller-entry
+  pins (exactly one production caller each: AppLockSettingsOperations.kt).
 
 WRITE 4 — auto-lock timeout (S18 part (i-b1), DORMANT: implemented and tested, no production caller):
   OWNER: AppLockSettingsOperations (same class as WRITE 3). Entry: suspend requestTimeoutChange(timeout)
