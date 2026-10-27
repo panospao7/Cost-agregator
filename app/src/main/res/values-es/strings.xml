@@ -433,5 +433,80 @@
         <item quantity="one">No se pudo leer %d plan y no está incluido en estas cifras.</item>
         <item quantity="other">No se pudieron leer %d planes y no están incluidos en estas cifras.</item>
     </plurals>
+    <!-- loan-installments S10a-2: DRAFT translations, pending owner sign-off -->
+    <string name="installments_history_action">Historial</string>
+    <string name="installments_detail_title">Detalles del plan</string>
+    <string name="installments_error_not_found">Este plan ya no existe.</string>
+    <string name="installments_error_load_detail">No se pudo cargar este plan.</string>
+    <string name="installments_error_refresh_detail">No se pudo actualizar. Se muestran los últimos detalles cargados.</string>
+    <string name="installments_status_completed">Completado</string>
+    <string name="installments_status_cancelled">Cancelado</string>
+    <string name="installments_status_refunded">Reembolsado</string>
+    <string name="installments_status_paid_off">Liquidado</string>
+    <string name="installments_banner_completed">Todos los pagos están contabilizados.</string>
+    <string name="installments_banner_ended">Este plan ha finalizado y no se puede modificar.</string>
+    <string name="installments_kind_purchase">Compra a plazos</string>
+    <string name="installments_kind_standalone">Plan independiente</string>
+    <string name="installments_lender">Prestamista: %1$s</string>
+    <string name="installments_end_date_unavailable">Fecha de fin: No disponible</string>
+    <string name="installments_financing_cost">Coste de financiación: %1$s</string>
+    <string name="installments_financing_needs_purchase">Requiere una compra en la misma moneda</string>
+    <string name="installments_financing_not_for_status">No disponible para planes cancelados o reembolsados</string>
+    <string name="installments_financing_payment_unreadable">Ahora no se puede leer el importe de un pago</string>
+    <string name="installments_schedule">Calendario</string>
+    <string name="installments_entry_number">Pago %1$d</string>
+    <string name="installments_entry_upcoming">Próximo</string>
+    <string name="installments_entry_overdue">Vencido · aún no contado</string>
+    <string name="installments_entry_paid">Pagado</string>
+    <string name="installments_entry_skipped">Omitido</string>
+    <string name="installments_entry_cancelled">Cancelado</string>
+    <string name="installments_entry_refunded">Reembolsado · no contado</string>
+    <string name="installments_entry_paid_before_tracking">Pagado antes del seguimiento</string>
+    <string name="installments_entry_payoff">Liquidación anticipada</string>
+    <string name="installments_entry_was">Antes: %1$s</string>
+    <string name="installments_entry_paid_unavailable">Importe pagado: No disponible</string>
+    <string name="installments_entry_differs">Difiere del plan: %1$s</string>
+    <string name="installments_reason_skip_lender_holiday">Pausa del prestamista</string>
+    <string name="installments_reason_skip_waived">Condonado</string>
+    <string name="installments_reason_skip_other">Otro motivo</string>
+    <string name="installments_reason_stopped">Plan detenido</string>
+    <string name="installments_reason_refunded">Plan reembolsado</string>
+    <string name="installments_reason_paid_off_early">Liquidado anticipadamente</string>
+    <string name="installments_reason_shortened">Plan acortado</string>
+    <string name="installments_reason_expense_removed">Se eliminó su gasto</string>
+    <string name="installments_history_title">Historial de planes</string>
+    <string name="installments_history_empty_title">Aún no hay planes finalizados</string>
+    <string name="installments_history_empty_body">Los planes que completes o canceles se guardan aquí para que puedas consultarlos.</string>
+    <string name="installments_history_empty_completed">No hay planes completados</string>
+    <string name="installments_history_empty_cancelled">No hay planes cancelados</string>
+    <string name="installments_history_empty_refunded">No hay planes reembolsados</string>
+    <string name="installments_history_empty_paid_off">No hay planes liquidados</string>
+    <string name="installments_filter_all">Todos</string>
+    <string name="installments_history_range">%1$s – %2$s</string>
+    <plurals name="installments_history_count_paid">
+        <item quantity="one">%d pagado</item>
+        <item quantity="other">%d pagados</item>
+    </plurals>
+    <plurals name="installments_history_count_skipped">
+        <item quantity="one">%d omitido</item>
+        <item quantity="other">%d omitidos</item>
+    </plurals>
+    <plurals name="installments_history_count_cancelled">
+        <item quantity="one">%d cancelado</item>
+        <item quantity="other">%d cancelados</item>
+    </plurals>
+    <plurals name="installments_history_count_refunded">
+        <item quantity="one">%d reembolsado</item>
+        <item quantity="other">%d reembolsados</item>
+    </plurals>
+    <string name="installments_plan_unnamed">Plan de cuotas</string>
+    <plurals name="installments_history_before_tracking">
+        <item quantity="one">%d pago pagado antes del seguimiento</item>
+        <item quantity="other">%d pagos pagados antes del seguimiento</item>
+    </plurals>
+    <string name="installments_history_total">Total contado: %1$s</string>
+    <string name="installments_history_refunded_note">Los pagos reembolsados no se cuentan.</string>
+    <string name="installments_error_load_history">No se pudo cargar el historial de planes.</string>
+    <string name="installments_error_refresh_history">No se pudo actualizar. Se muestra el último historial cargado.</string>
 
 </resources>

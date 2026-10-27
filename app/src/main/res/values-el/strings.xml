@@ -184,4 +184,79 @@
         <item quantity="one">%d πλάνο δεν μπόρεσε να διαβαστεί και δεν περιλαμβάνεται σε αυτά τα ποσά.</item>
         <item quantity="other">%d πλάνα δεν μπόρεσαν να διαβαστούν και δεν περιλαμβάνονται σε αυτά τα ποσά.</item>
     </plurals>
+    <!-- loan-installments S10a-2: DRAFT translations, pending owner sign-off -->
+    <string name="installments_history_action">Ιστορικό</string>
+    <string name="installments_detail_title">Λεπτομέρειες πλάνου</string>
+    <string name="installments_error_not_found">Αυτό το πλάνο δεν υπάρχει πια.</string>
+    <string name="installments_error_load_detail">Δεν ήταν δυνατή η φόρτωση αυτού του πλάνου.</string>
+    <string name="installments_error_refresh_detail">Δεν ήταν δυνατή η ανανέωση. Εμφανίζονται οι τελευταίες λεπτομέρειες που φορτώθηκαν.</string>
+    <string name="installments_status_completed">Ολοκληρώθηκε</string>
+    <string name="installments_status_cancelled">Ακυρώθηκε</string>
+    <string name="installments_status_refunded">Επιστράφηκε</string>
+    <string name="installments_status_paid_off">Εξοφλήθηκε</string>
+    <string name="installments_banner_completed">Όλες οι πληρωμές έχουν καταχωριστεί.</string>
+    <string name="installments_banner_ended">Αυτό το πλάνο έχει ολοκληρωθεί και δεν μπορεί να αλλάξει.</string>
+    <string name="installments_kind_purchase">Αγορά με δόσεις</string>
+    <string name="installments_kind_standalone">Ανεξάρτητο πλάνο</string>
+    <string name="installments_lender">Δανειστής: %1$s</string>
+    <string name="installments_end_date_unavailable">Ημερομηνία λήξης: Μη διαθέσιμη</string>
+    <string name="installments_financing_cost">Κόστος χρηματοδότησης: %1$s</string>
+    <string name="installments_financing_needs_purchase">Απαιτείται αγορά στο ίδιο νόμισμα</string>
+    <string name="installments_financing_not_for_status">Μη διαθέσιμο για ακυρωμένα ή επιστραμμένα πλάνα</string>
+    <string name="installments_financing_payment_unreadable">Δεν είναι δυνατή η ανάγνωση του ποσού μιας πληρωμής αυτή τη στιγμή</string>
+    <string name="installments_schedule">Πρόγραμμα</string>
+    <string name="installments_entry_number">Πληρωμή %1$d</string>
+    <string name="installments_entry_upcoming">Επερχόμενη</string>
+    <string name="installments_entry_overdue">Εκπρόθεσμη · δεν προσμετράται ακόμα</string>
+    <string name="installments_entry_paid">Πληρώθηκε</string>
+    <string name="installments_entry_skipped">Παραλείφθηκε</string>
+    <string name="installments_entry_cancelled">Ακυρώθηκε</string>
+    <string name="installments_entry_refunded">Επιστράφηκε · δεν προσμετράται</string>
+    <string name="installments_entry_paid_before_tracking">Πληρώθηκε πριν την παρακολούθηση</string>
+    <string name="installments_entry_payoff">Πρόωρη εξόφληση</string>
+    <string name="installments_entry_was">Ήταν %1$s</string>
+    <string name="installments_entry_paid_unavailable">Ποσό πληρωμής: Μη διαθέσιμο</string>
+    <string name="installments_entry_differs">Διαφέρει από το πλάνο: %1$s</string>
+    <string name="installments_reason_skip_lender_holiday">Παύση από τον δανειστή</string>
+    <string name="installments_reason_skip_waived">Διαγράφηκε</string>
+    <string name="installments_reason_skip_other">Άλλος λόγος</string>
+    <string name="installments_reason_stopped">Το πλάνο διακόπηκε</string>
+    <string name="installments_reason_refunded">Το πλάνο επιστράφηκε</string>
+    <string name="installments_reason_paid_off_early">Εξοφλήθηκε πρόωρα</string>
+    <string name="installments_reason_shortened">Το πλάνο μειώθηκε σε διάρκεια</string>
+    <string name="installments_reason_expense_removed">Το έξοδό της αφαιρέθηκε</string>
+    <string name="installments_history_title">Ιστορικό πλάνων</string>
+    <string name="installments_history_empty_title">Δεν υπάρχουν ακόμα ολοκληρωμένα πλάνα</string>
+    <string name="installments_history_empty_body">Τα πλάνα που ολοκληρώνετε ή ακυρώνετε φυλάσσονται εδώ για να τα ανατρέχετε.</string>
+    <string name="installments_history_empty_completed">Δεν υπάρχουν ολοκληρωμένα πλάνα</string>
+    <string name="installments_history_empty_cancelled">Δεν υπάρχουν ακυρωμένα πλάνα</string>
+    <string name="installments_history_empty_refunded">Δεν υπάρχουν επιστραμμένα πλάνα</string>
+    <string name="installments_history_empty_paid_off">Δεν υπάρχουν εξοφλημένα πλάνα</string>
+    <string name="installments_filter_all">Όλα</string>
+    <string name="installments_history_range">%1$s – %2$s</string>
+    <plurals name="installments_history_count_paid">
+        <item quantity="one">%d πληρωμένη</item>
+        <item quantity="other">%d πληρωμένες</item>
+    </plurals>
+    <plurals name="installments_history_count_skipped">
+        <item quantity="one">%d παραλειφθείσα</item>
+        <item quantity="other">%d παραλειφθείσες</item>
+    </plurals>
+    <plurals name="installments_history_count_cancelled">
+        <item quantity="one">%d ακυρωμένη</item>
+        <item quantity="other">%d ακυρωμένες</item>
+    </plurals>
+    <plurals name="installments_history_count_refunded">
+        <item quantity="one">%d επιστραμμένη</item>
+        <item quantity="other">%d επιστραμμένες</item>
+    </plurals>
+    <string name="installments_plan_unnamed">Πλάνο δόσεων</string>
+    <plurals name="installments_history_before_tracking">
+        <item quantity="one">%d πληρωμή πριν την παρακολούθηση</item>
+        <item quantity="other">%d πληρωμές πριν την παρακολούθηση</item>
+    </plurals>
+    <string name="installments_history_total">Συνολικό ποσό που προσμετράται: %1$s</string>
+    <string name="installments_history_refunded_note">Οι επιστραμμένες πληρωμές δεν προσμετρώνται.</string>
+    <string name="installments_error_load_history">Δεν ήταν δυνατή η φόρτωση του ιστορικού πλάνων.</string>
+    <string name="installments_error_refresh_history">Δεν ήταν δυνατή η ανανέωση. Εμφανίζεται το τελευταίο ιστορικό που φορτώθηκε.</string>
 </resources>

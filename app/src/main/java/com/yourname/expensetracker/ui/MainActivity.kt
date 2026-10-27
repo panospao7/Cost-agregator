@@ -79,6 +79,8 @@ import com.yourname.expensetracker.ui.screens.export.ExportOptionsScreen
 import com.yourname.expensetracker.ui.screens.groups.SharedExpenseGroupsScreen
 import com.yourname.expensetracker.ui.screens.recurring.RecurringExpensesScreen
 import com.yourname.expensetracker.ui.screens.recurringmanual.ManualRecurringExpenseScreen
+import com.yourname.expensetracker.ui.screens.installments.detail.InstallmentPlanDetailScreen
+import com.yourname.expensetracker.ui.screens.installments.history.InstallmentHistoryScreen
 import com.yourname.expensetracker.ui.screens.installments.overview.InstallmentOverviewScreen
 import com.yourname.expensetracker.ui.navigation.InstallmentsFeature
 import com.yourname.expensetracker.ui.screens.subscription.SubscriptionManagementScreen
@@ -741,20 +743,36 @@ fun MainScreen(
                         androidx.compose.runtime.LaunchedEffect(Unit) { navigation.navigateHome() }
                     } else {
                         InstallmentOverviewScreen(
+                            onNavigateBack = { navigation.navigateBack() },
+                            onOpenPlan = { planId ->
+                                navigation.navigateTo(NavigationDestination.InstallmentPlanDetail(planId))
+                            },
+                            onOpenHistory = { navigation.navigateTo(NavigationDestination.InstallmentHistory) }
+                        )
+                    }
+                }
+                // Plan detail and history (S10a-2): same gate helper as the overview, so all three
+                // stay dormant while InstallmentsFeature.ENABLED is false.
+                is NavigationDestination.InstallmentPlanDetail -> {
+                    if (InstallmentsFeature.shouldRedirectHome(currentDestination)) {
+                        androidx.compose.runtime.LaunchedEffect(Unit) { navigation.navigateHome() }
+                    } else {
+                        InstallmentPlanDetailScreen(
+                            planId = currentDestination.planId,
                             onNavigateBack = { navigation.navigateBack() }
                         )
                     }
                 }
-                // Detail and history screens arrive in S10a-2. Until then they have no screen, so they
-                // redirect Home whatever the flag says; the gate helper stays the single decision point
-                // (S10a-2 renders the screen in the not-redirect branch).
-                is NavigationDestination.InstallmentPlanDetail,
                 is NavigationDestination.InstallmentHistory -> {
                     if (InstallmentsFeature.shouldRedirectHome(currentDestination)) {
                         androidx.compose.runtime.LaunchedEffect(Unit) { navigation.navigateHome() }
                     } else {
-                        // Enabled but not yet implemented (S10a-2): never render a placeholder.
-                        androidx.compose.runtime.LaunchedEffect(Unit) { navigation.navigateHome() }
+                        InstallmentHistoryScreen(
+                            onNavigateBack = { navigation.navigateBack() },
+                            onOpenPlan = { planId ->
+                                navigation.navigateTo(NavigationDestination.InstallmentPlanDetail(planId))
+                            }
+                        )
                     }
                 }
                 is NavigationDestination.Assistant -> {

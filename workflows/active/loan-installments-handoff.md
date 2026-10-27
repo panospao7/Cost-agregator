@@ -1751,3 +1751,81 @@ Targeted filter for the re-run: `*Installment*ViewModel*` (InstallmentOverviewVi
   - Gates: privacy spot check ACCEPT-WITH-CONDITIONS (C1 = an S13 hard requirement; C2 = a handoff correction); cheap review ACCEPT-WITH-CONDITIONS (items 1–8 fixed).
   - The es/el strings are DRAFTS pending the owner's native sign-off.
   - Committed. Next: S10a-2 (plan detail and history screens).
+
+## S10a-2 — implemented (2026-10-27; uncommitted; nothing compiled, run or validated)
+
+Scope: plan detail screen, history screen, MainActivity render branches, overview entry points (plan card tap, History action). All dormant behind `InstallmentsFeature.ENABLED = false`. Read-only: no writes, no DAO in UI, no schema, guard, allowlist or manifest change.
+
+### Files
+- NEW `ui/screens/installments/InstallmentUiSupport.kt`: internal pure helpers `installmentMoney` (minor / 100 with explicit currency), `installmentAmountUi` (Available -> Money, Unavailable -> Unavailable), `formatInstallmentDate`. Shared by the two new mappers; the S10a-1 overview keeps its own private copies (no refactor).
+- NEW `ui/screens/installments/detail/InstallmentPlanDetailViewModel.kt` (state models, pure `InstallmentPlanDetailMapper`, Hilt VM) and `InstallmentPlanDetailScreen.kt`.
+- NEW `ui/screens/installments/history/InstallmentHistoryViewModel.kt` (state models, pure `InstallmentHistoryMapper`, Hilt VM) and `InstallmentHistoryScreen.kt`.
+- `ui/screens/installments/overview/InstallmentOverviewScreen.kt`: new params `onOpenPlan: (Long) -> Unit`, `onOpenHistory: () -> Unit`; plan card is clickable; top-bar `TextButton` "History" (also shown in the empty variants).
+- `ui/MainActivity.kt`: the S10a-1 combined detail/history redirect branch is split. Both branches still call `InstallmentsFeature.shouldRedirectHome(currentDestination)` (redirect Home while disabled) and otherwise render `InstallmentPlanDetailScreen(planId)` / `InstallmentHistoryScreen`. Overview passes the two navigation callbacks; history cards open the detail.
+- Strings: `values`, `values-es`, `values-el` (about 50 new keys, list below).
+- Tests (new): `ui/screens/installments/detail/InstallmentPlanDetailViewModelTest.kt` (25 tests), `ui/screens/installments/history/InstallmentHistoryViewModelTest.kt` (13 tests).
+
+### Behaviour and decisions
+- Detail VM takes the plan id through `start(planId)` (called from the screen in `LaunchedEffect(planId)`; the screen uses `hiltViewModel(key = "installment_plan_$planId")` so each plan has its own VM). Same-id `start` is a no-op; `retry()` restarts. No SavedStateHandle/assisted factory: the repo has no precedent for them in screens, and `start` keeps the VM testable.
+- Not found (bounded code `NOT_FOUND`, fixed string `installments_error_not_found`, no Retry button): id <= 0 (no repository call), `observeDetail` emitting null (missing plan or unreadable stored codes, per the repository contract), or a plan deleted while open. Read failure: `LOAD_FAILED` (no content) or `REFRESH_FAILED` (content kept, inline banner). Log carries only the code. `CancellationException` is rethrown in the `catch` operators.
+- Progress "n of N paid" per owner-approvals 47(a): n = paid + paidBeforeTracking, N = n + scheduled + skipped (cancelled and reversed are not part of N). Remaining scheduled payments = count of scheduled entries ("N payments left") plus the remaining amount in the plan currency.
+- Row labels (AE-18, ux-flows 3.5): Upcoming, Due today, Overdue · not counted yet, Paid, Payoff (PAYOFF kind that is PAID), Skipped, Cancelled, Refunded · not counted (REVERSED), Paid before tracking. Sub-reasons are bounded to the entry status: skip reasons for SKIPPED, stop/refund/payoff/shortened/expense-removed for CANCELLED, expense-removed for SCHEDULED; any stored code outside that is dropped (never shown as text).
+- Awaiting confirmation (AE-10b): per entry and as a card ("N payments due, awaiting confirmation: X (not counted)", reusing the S10a-1 plural) only for ACTIVE CONFIRM-mode plans, SCHEDULED entries that are DUE or OVERDUE.
+- Unavailable never zero (INV-17): paid-so-far, financing cost, per-entry variance (shown as "Paid amount: Unavailable"), and null start/end dates are shown as the word "Unavailable". Financing cost keeps its sign when negative. A real zero stays a money value. Financing cost reason line follows ux-flows 3.5 (needs same-currency purchase / not available for cancelled or refunded / payment amount cannot be read).
+- Entries "Was X" line only when `originalScheduledMinor != scheduledMinor` (the read model carries no original date, so a date-only adjustment is not flagged). "Differs from plan: X" only when a PAID variance is non-zero.
+- Plan banners: COMPLETED "All payments are accounted for."; CANCELLED/REFUNDED/PAID_OFF "This plan is finished and can't be changed." (ux-flows 3.5 dated banners need the terminal date, which the detail read model does not expose; not added).
+- History: cards from `observeHistory()` in the read model's order (newest ended first). Text per AE-7 / AE-11: status chip, "start – end · currency", "N paid · N skipped · N cancelled · N refunded", optional "N payments paid before tracking", "Total counted: X", "Financing cost: X"; REFUNDED shows "Refunded payments are not counted." so its zero total is explained. Filter chips All/Completed/Cancelled/Refunded/Paid off (ux-flows 3.8); a filter with no match is Data with zero cards and a per-filter message; no finished plans at all is Empty. Cards open the read-only detail. No delete action (S10b).
+- No money is concatenated: all composed text uses format strings (`installments_two_parts`, `installments_label_value`, `installments_history_range`, `installments_history_counts`, ...) and `pluralStringResource`.
+
+### S10a-1 follow-up: count-only finished-plan read — NOT done (note)
+`InstallmentPlanReadRepository` has no count-only history read, and `InstallmentPlanReadRepositoryImpl` computes history by `loadAll()` (full plan and entry load). A count-only method added to the interface would still do the same full load unless a new DAO count query were added, which the brief forbids. The overview's `finishedPlanCount()` (`observeHistory().size` with `onStart { emit(0) }`) is therefore unchanged, including its first-paint flicker. Recommended follow-up (needs owner/scout approval of a DAO query): `InstallmentPlanDao` count of plans with status <> 'ACTIVE' plus `observeFinishedPlanCount()` on the read repository.
+
+### es/el strings: all DRAFT, owner sign-off required
+New keys (English in `values`; es and el carry a DRAFT comment): `installments_history_action`, `installments_detail_title`, `installments_error_not_found`, `installments_error_load_detail`, `installments_error_refresh_detail`, `installments_status_completed`, `_cancelled`, `_refunded`, `_paid_off`, `installments_banner_completed`, `installments_banner_ended`, `installments_kind_purchase`, `installments_kind_standalone`, `installments_lender`, `installments_end_date_unavailable`, `installments_financing_cost`, `installments_financing_needs_purchase`, `installments_financing_not_for_status`, `installments_financing_payment_unreadable`, `installments_schedule`, `installments_entry_number`, `installments_entry_upcoming`, `_overdue`, `_paid`, `_skipped`, `_cancelled`, `_refunded`, `_paid_before_tracking`, `_payoff`, `_was`, `_paid_unavailable`, `_differs`, `installments_reason_skip_lender_holiday`, `_skip_waived`, `_skip_other`, `_stopped`, `_refunded`, `_paid_off_early`, `_shortened`, `_expense_removed`, `installments_history_title`, `installments_history_empty_title`, `_empty_body`, `_empty_completed`, `_empty_cancelled`, `_empty_refunded`, `_empty_paid_off`, `installments_filter_all`, `installments_history_range` (language-neutral), `installments_history_counts`, `installments_history_before_tracking` (plural), `installments_history_total`, `installments_history_refunded_note`, `installments_error_load_history`, `installments_error_refresh_history`.
+Items needing a native check:
+- es: "Liquidado" (paid off), "Liquidación anticipada" (payoff entry), "Condonado" (waived), "Pausa del prestamista" (lender break), "Coste de financiación", "Compra a plazos", "Pagado antes del seguimiento".
+- el: "Εξοφλήθηκε" (paid off), "Πρόωρη εξόφληση" (payoff entry), "Διαγράφηκε" (waived; may read as "deleted"), "Παύση από τον δανειστή" (lender break), "Κόστος χρηματοδότησης", "Το έξοδό της αφαιρέθηκε" (grammatical gender of the installment), "Πληρώθηκε πριν την παρακολούθηση".
+- Plurals use one/other only (the existing el style); es may get a lint `many` suggestion.
+
+### Risks (nothing compiled)
+- Check at first compile: `hiltViewModel(key = ...)` overload for the default parameter; `FilterChip` (Material3 version, `ExperimentalMaterial3Api` opt-in is present on the screen); `InstallmentHistoryFilter.entries`; `Card(...).clickable` and `TextButton` imports in the overview; `ErrorState(onRetry = null)` hides Retry (assumed from the nullable parameter; if it renders a button regardless, NOT_FOUND shows a retry that re-reads and stays not-found, harmless).
+- `installments_end_date_unavailable` and `installments_entry_paid_unavailable` embed the translated word "Unavailable" in one string each (so each locale can inflect it).
+- Detail shows no purchase tile, activity section or "Each" tile (spec-limited or S10b); the overdue sub-reasons other than "Its expense was removed" need data the read model does not carry.
+- A screen left open past midnight shows stale DUE/OVERDUE labels until the next DB change (same as S10a-1 INFO 8, S13 note).
+- Settled-up plans that are COMPLETED but reopen: not handled here (a reopen is a write, S10b).
+- The detail tests use mockk on the read repository interface only (no final classes mocked).
+
+### Validation to request (serial, via validation-runner)
+1. `targeted-unit-test -Filter "*Installment*ViewModel*"` plus `*NavigationRouteContractTest*`, `*FeatureConfigNavigationContractTest*`, `*InstallmentsFeatureGateTest*`, `*DeepLinkParserTest*`.
+2. `unit-test-shard -ShardName runtime-ui`.
+3. Registered guard `ui_dao` (the new screens import no DAO or entity).
+4. `lint` (new es/el strings and plurals; MissingTranslation baseline).
+Gates: cheap review; privacy spot check optional (no new data surface beyond display names and amounts on a gated screen; INV-31 mapping unchanged).
+
+### S10a-2 — privacy spot check (ACCEPT-WITH-CONDITIONS) and fixes
+Uncommitted; nothing compiled, run or validated after these fixes. Dormant, read-only, no schema, guard, allowlist or manifest change; no test deleted.
+1. MEDIUM, detail and history collected forever (no NavHost, so `hiltViewModel(key = "installment_plan_$planId")` and the history ViewModel live at activity level). Fixed: `InstallmentPlanDetailViewModel.stop()` cancels `collectJob`, nulls it and clears `planId` (so `start(sameId)` after `stop()` restarts cleanly); `InstallmentPlanDetailScreen` calls it from `DisposableEffect(planId) { onDispose { viewModel.stop() } }`; the key is unchanged. `InstallmentHistoryViewModel` got public `start()` (no-op while a collection is running; init still starts the first one) and `stop()`; `InstallmentHistoryScreen` calls `start()` and `stop()` from `DisposableEffect(Unit)`. `retry()` still force-restarts.
+2. Tests (detail): `start()` with a changed id (7 then 8, two `MutableSharedFlow`s) resets to Loading, ignores a later emission on 7, and shows plan 8's data; `stop()` cancels the collection (a later emission is ignored) and a later `start(7)` restarts (observe called twice). History: `stop()` cancels, `start()` restarts; `start()` while running does not collect twice.
+3. Tests, both ViewModels: an upstream `CancellationException` is rethrown (state stays Loading, no error code, no refresh-failed), never turned into LOAD_FAILED.
+4. Tests, both ViewModels: a planted `Timber.Tree` sees exactly one message that contains `code=LOAD_FAILED` and not the exception text or the plan name, with no throwable attached.
+5. History filter after a failed refresh: the ViewModel caches the last items (`lastItems`); `selectFilter` re-runs `InstallmentHistoryMapper.toState(cached, selected)` when no collection is running and keeps `refreshFailed` and `errorCode`. Test added (REFRESH_FAILED state, CANCELLED then ALL).
+6. Blank plan names (INV-34 redacted restore): the fallback is in the screens, not the mapper. Detail top bar uses `installments_detail_title`; the detail header card and history card use the new `installments_plan_unnamed` ("Installment plan"). No VM test (display-only).
+7. `installments_history_counts` is removed and replaced by four plurals: `installments_history_count_paid`, `_skipped`, `_cancelled`, `_refunded`. Zero counts are hidden, so AE-7 reads "3 paid · 9 cancelled"; parts are joined with the existing `installments_two_parts` format string (no concatenation, RTL-safe); the line is omitted when every count is zero. The paid-before-tracking line is unchanged.
+8. A zero variance is mapped to null in `InstallmentPlanDetailMapper` (Available with `minor == 0`); the screen's Double compare is removed; Unavailable stays visible (INV-17). Test added (0 -> null, -300 kept, Unavailable kept).
+9. INFO 9: S13 C1 is still open (unchanged by this fix).
+10. INFO 10: the AE-7 end-date derivation belongs to the read model (`InstallmentHistorySummary.endEpochDay`); the UI shows null as "Unavailable" and does not derive it.
+
+es/el DRAFT list for owner sign-off (changed or added in this fix; `installments_history_counts` is gone):
+- New plurals (one/other only): `installments_history_count_paid`, `_skipped`, `_cancelled`, `_refunded`. es: "pagado/pagados", "omitido/omitidos", "cancelado/cancelados", "reembolsado/reembolsados". el: "πληρωμένη/πληρωμένες", "παραλειφθείσα/παραλειφθείσες", "ακυρωμένη/ακυρωμένες", "επιστραμμένη/επιστραμμένες" (feminine, agreeing with "δόση/πληρωμή"; check the gender for one-count).
+- New string `installments_plan_unnamed`: es "Plan de cuotas", el "Πλάνο δόσεων".
+- Validation to request: `targeted-unit-test -Filter "*InstallmentPlanDetailViewModelTest*" "*InstallmentHistoryViewModelTest*"` (plus the S10a-1 filter above), then `lint` for the new plurals and the removed string.
+- S10a-2 ACCEPTED (2026-10-27).
+  - Final-tree runs, all PASS: targeted vr-20261027-095844-31694611, ui_dao vr-20261027-100348-df98adbd, runtime-ui vr-20261027-100404-97681285, lint vr-20261027-100535-8d0e6b50.
+  - Earlier on the pre-fix tree: architecture-contracts vr-20261027-094008-c12383df.
+  - Gate: privacy spot check plus a light correctness read, ACCEPT-WITH-CONDITIONS; all conditions fixed.
+  - The es/el strings are DRAFTS pending the owner's native sign-off.
+  - Committed.
+  - Next loan work:
+    - S10b (row actions, create/edit/end flows: writes through the plan coordinator; T3 gates);
+    - S8b (needs owner approval);
+    - S11 / S12a / S12b / S13.

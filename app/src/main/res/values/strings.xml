@@ -2698,4 +2698,80 @@
         <item quantity="other">%d plans couldn\'t be read and are not included in these figures.</item>
     </plurals>
 
+    <!-- loan-installments S10a-2: plan detail and history (dormant behind InstallmentsFeature.ENABLED) -->
+    <string name="installments_history_action">History</string>
+    <string name="installments_detail_title">Plan details</string>
+    <string name="installments_error_not_found">This plan no longer exists.</string>
+    <string name="installments_error_load_detail">Couldn\'t load this plan.</string>
+    <string name="installments_error_refresh_detail">Couldn\'t refresh. Showing the last loaded details.</string>
+    <string name="installments_status_completed">Completed</string>
+    <string name="installments_status_cancelled">Cancelled</string>
+    <string name="installments_status_refunded">Refunded</string>
+    <string name="installments_status_paid_off">Paid off</string>
+    <string name="installments_banner_completed">All payments are accounted for.</string>
+    <string name="installments_banner_ended">This plan is finished and can\'t be changed.</string>
+    <string name="installments_kind_purchase">Purchase installments</string>
+    <string name="installments_kind_standalone">Standalone plan</string>
+    <string name="installments_lender">Lender: %1$s</string>
+    <string name="installments_end_date_unavailable">End date: Unavailable</string>
+    <string name="installments_financing_cost">Financing cost: %1$s</string>
+    <string name="installments_financing_needs_purchase">Needs a purchase in the same currency</string>
+    <string name="installments_financing_not_for_status">Not available for cancelled or refunded plans</string>
+    <string name="installments_financing_payment_unreadable">A payment amount can\'t be read right now</string>
+    <string name="installments_schedule">Schedule</string>
+    <string name="installments_entry_number">Payment %1$d</string>
+    <string name="installments_entry_upcoming">Upcoming</string>
+    <string name="installments_entry_overdue">Overdue · not counted yet</string>
+    <string name="installments_entry_paid">Paid</string>
+    <string name="installments_entry_skipped">Skipped</string>
+    <string name="installments_entry_cancelled">Cancelled</string>
+    <string name="installments_entry_refunded">Refunded · not counted</string>
+    <string name="installments_entry_paid_before_tracking">Paid before tracking</string>
+    <string name="installments_entry_payoff">Payoff</string>
+    <string name="installments_entry_was">Was %1$s</string>
+    <string name="installments_entry_paid_unavailable">Paid amount: Unavailable</string>
+    <string name="installments_entry_differs">Differs from plan: %1$s</string>
+    <string name="installments_reason_skip_lender_holiday">Lender break</string>
+    <string name="installments_reason_skip_waived">Waived</string>
+    <string name="installments_reason_skip_other">Other reason</string>
+    <string name="installments_reason_stopped">Plan stopped</string>
+    <string name="installments_reason_refunded">Plan refunded</string>
+    <string name="installments_reason_paid_off_early">Paid off early</string>
+    <string name="installments_reason_shortened">Plan shortened</string>
+    <string name="installments_reason_expense_removed">Its expense was removed</string>
+    <string name="installments_history_title">Plan history</string>
+    <string name="installments_history_empty_title">No finished plans yet</string>
+    <string name="installments_history_empty_body">Plans you complete or cancel are kept here so you can look back.</string>
+    <string name="installments_history_empty_completed">No completed plans</string>
+    <string name="installments_history_empty_cancelled">No cancelled plans</string>
+    <string name="installments_history_empty_refunded">No refunded plans</string>
+    <string name="installments_history_empty_paid_off">No paid-off plans</string>
+    <string name="installments_filter_all">All</string>
+    <string name="installments_history_range">%1$s – %2$s</string>
+    <plurals name="installments_history_count_paid">
+        <item quantity="one">%d paid</item>
+        <item quantity="other">%d paid</item>
+    </plurals>
+    <plurals name="installments_history_count_skipped">
+        <item quantity="one">%d skipped</item>
+        <item quantity="other">%d skipped</item>
+    </plurals>
+    <plurals name="installments_history_count_cancelled">
+        <item quantity="one">%d cancelled</item>
+        <item quantity="other">%d cancelled</item>
+    </plurals>
+    <plurals name="installments_history_count_refunded">
+        <item quantity="one">%d refunded</item>
+        <item quantity="other">%d refunded</item>
+    </plurals>
+    <string name="installments_plan_unnamed">Installment plan</string>
+    <plurals name="installments_history_before_tracking">
+        <item quantity="one">%d payment paid before tracking</item>
+        <item quantity="other">%d payments paid before tracking</item>
+    </plurals>
+    <string name="installments_history_total">Total counted: %1$s</string>
+    <string name="installments_history_refunded_note">Refunded payments are not counted.</string>
+    <string name="installments_error_load_history">Couldn\'t load your plan history.</string>
+    <string name="installments_error_refresh_history">Couldn\'t refresh. Showing the last loaded history.</string>
+
 </resources>

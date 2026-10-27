@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.ui.screens.installments.overview
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,6 +21,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -45,13 +47,15 @@ import java.time.format.FormatStyle
 /**
  * Installments overview (loan-installments S10a-1): remaining scheduled payments per currency,
  * the next due payment, payments awaiting confirmation, and the ACTIVE plan cards. Read-only.
- * Actions (record, link, skip, add plan) arrive with S10b; the History and plan-detail entry
- * points arrive with S10a-2.
+ * Actions (record, link, skip, add plan) arrive with S10b. A plan card opens the read-only plan
+ * detail and the top-bar History action opens the plan history (S10a-2).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun InstallmentOverviewScreen(
     onNavigateBack: () -> Unit,
+    onOpenPlan: (Long) -> Unit,
+    onOpenHistory: () -> Unit,
     viewModel: InstallmentOverviewViewModel = hiltViewModel()
 ) {
     val state by viewModel.state.collectAsState()
@@ -66,6 +70,12 @@ fun InstallmentOverviewScreen(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = stringResource(R.string.installments_back)
                         )
+                    }
+                },
+                actions = {
+                    // History is reachable from the empty variants too, so finished plans are never hidden.
+                    TextButton(onClick = onOpenHistory) {
+                        Text(stringResource(R.string.installments_history_action))
                     }
                 }
             )
@@ -96,7 +106,8 @@ fun InstallmentOverviewScreen(
                 is LoadableUiState.Data -> OverviewContent(
                     content = loadable.value,
                     refreshFailed = state.refreshFailed,
-                    onRetry = viewModel::retry
+                    onRetry = viewModel::retry,
+                    onOpenPlan = onOpenPlan
                 )
             }
         }
@@ -107,7 +118,8 @@ fun InstallmentOverviewScreen(
 private fun OverviewContent(
     content: InstallmentOverviewContent,
     refreshFailed: Boolean,
-    onRetry: () -> Unit
+    onRetry: () -> Unit,
+    onOpenPlan: (Long) -> Unit
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -136,7 +148,7 @@ private fun OverviewContent(
                     style = MaterialTheme.typography.titleMedium
                 )
             }
-            items(content.plans, key = { it.planId }) { plan -> PlanCard(plan) }
+            items(content.plans, key = { it.planId }) { plan -> PlanCard(plan, onClick = { onOpenPlan(plan.planId) }) }
         }
     }
 }
@@ -219,8 +231,8 @@ private fun AwaitingCard(lines: List<InstallmentAwaitingLineUi>) {
 }
 
 @Composable
-private fun PlanCard(plan: InstallmentPlanCardUi) {
-    Card(modifier = Modifier.fillMaxWidth()) {
+private fun PlanCard(plan: InstallmentPlanCardUi, onClick: () -> Unit) {
+    Card(modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(plan.displayName, style = MaterialTheme.typography.titleMedium)
