@@ -166,7 +166,7 @@ class AppLockControllerForcedValueTest {
 
     @Test
     // The ops-level interleaving (an enable apply committing while a plain write is pending) is excluded by
-    // directWriteMutex (S18 i-b2 C1; pinned by the C1 test below). What remains is a lock committed by ANOTHER
+    // the shared write serializer (S18 i-b2 C1, F4 in S18 ii-a; pinned by the C1 test below). What remains is a lock committed by ANOTHER
     // store writer (e.g. a review-save) while the plain write is pending. This test proves the OPS handling of a
     // FORCED decided at write time (the fake store decides after the gate): the result is surfaced, nothing leaks
     // into the stored value, no sweep, no prompt. Store-level atomicity (the forced check reading inside the same
@@ -249,7 +249,7 @@ class AppLockControllerForcedValueTest {
     // --- Cancellation -------------------------------------------------------------------------------
 
     @Test
-    fun `a CancellationException from the write propagates, is not recorded, and releases the mutex`() {
+    fun `a CancellationException from the write propagates, records the unconfirmed write once (F7), and releases the serializer`() {
         val rig = disabledRig()
         rig.h.repository.plainWriteFailure = CancellationException("c")
 
@@ -259,7 +259,9 @@ class AppLockControllerForcedValueTest {
         } catch (e: CancellationException) {
             // propagated
         }
-        assertTrue(rig.h.emitted.isEmpty())
+        // S18 ii-a F7: the re-read shows discreet still false, so it is not committed and recorded once.
+        assertEquals(listOf(PrivacyDiagnosticCode.LOCK_SETTING_PERSIST_FAILED), rig.h.emitted)
+        assertTrue(rig.triggerCalls.isEmpty())
 
         rig.h.repository.plainWriteFailure = null
         assertEquals(PlainSettingResult.COMMITTED, runBlocking { rig.ops.requestDiscreetChange(true) })

@@ -56,17 +56,17 @@ object NotificationContentPolicy {
 
     /**
      * DISCREET decision for the in-place re-post sweep (spec 4.6, INV-13): the sweep runs only after a
-     * committed write made discreet effective, so it does not read the settings again. No fallback reason.
+     * committed write made discreet effective, so it does not re-read the settings for the mode; the caller
+     * supplies the lock term (the service obtains it through the resolver for BILL). No fallback reason.
      *
      * [actionsSuppressed] is true when the caller knows the lock is enabled or the settings are
-     * unreadable; on API 30 and below that drops the BILL actions (INV-10). The default keeps the
-     * actions as the sweep rebuilds them today, and the sweep caller must pass the committed lock term
-     * once it has one (see the S14 handoff note).
+     * unreadable; on API 30 and below that drops the BILL actions (INV-10). There is deliberately no
+     * default: every caller must choose, so a sweep rebuild cannot keep BILL actions by omission (S18-ii-b).
      */
     fun decideDiscreet(
         kind: NotificationKind,
         sdkInt: Int,
-        actionsSuppressed: Boolean = false
+        actionsSuppressed: Boolean
     ): NotificationPresentationDecision =
         build(kind, discreet = true, sdkInt = sdkInt, fallbackReason = null, lockOrUnreadable = actionsSuppressed)
 

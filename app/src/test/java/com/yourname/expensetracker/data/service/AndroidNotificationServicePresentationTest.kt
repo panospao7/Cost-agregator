@@ -1,13 +1,16 @@
 package com.yourname.expensetracker.data.service
 
 import android.app.Notification
+import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.service.notification.StatusBarNotification
+import androidx.core.app.NotificationCompat
 import androidx.test.core.app.ApplicationProvider
 import com.yourname.expensetracker.domain.notification.presentation.NotificationKind
 import com.yourname.expensetracker.domain.notification.presentation.NotificationPresentationMode
@@ -16,6 +19,9 @@ import com.yourname.expensetracker.domain.privacy.applock.AppLockPrivacySettings
 import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsLoadState
 import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsRepository
 import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsWriteResult
+import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticCode
+import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticKey
+import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticMetadata
 import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticsEmitter
 import com.yourname.expensetracker.domain.privacy.applock.SettingsUnreadableCause
 import com.yourname.expensetracker.domain.privacy.deeplink.DeepLinkRequest
@@ -34,12 +40,15 @@ import com.yourname.expensetracker.ui.MainActivity
 import com.yourname.expensetracker.ui.navigation.DeepLinkDrops
 import com.yourname.expensetracker.ui.navigation.DeepLinkPolicy
 import com.yourname.expensetracker.ui.navigation.DeepLinkPolicyResult
+import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
@@ -1000,4 +1009,159 @@ class AndroidNotificationServicePresentationSdk30Test : AndroidNotificationServi
 @Config(sdk = [31])
 class AndroidNotificationServicePresentationSdk31Test : AndroidNotificationServicePresentationContract() {
     override val expectedSdk: Int = 31
+}
+
+// --- S18-ii-b (F3): the sweep rebuild passes the committed lock term to decideDiscreet ---------------------------------
+
+/**
+ * A BILL original with its Snooze and Dismiss actions is swept at API 30 under different committed settings.
+ * Real Robolectric manager, applier and resolver; the settings store is scripted and the diagnostics emitters are
+ * capturing doubles. The resolver's own emitter runs on an unconfined scope so its fire-and-forget emission is
+ * visible without waiting.
+ */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [30])
+class AndroidNotificationServiceSweepActionsSdk30Test {
+
+    private class Emitted(val code: PrivacyDiagnosticCode, val metadata: PrivacyDiagnosticMetadata)
+
+    private lateinit var appContext: Context
+    private lateinit var scope: CoroutineScope
+    private val resolverEmitted = mutableListOf<Emitted>()
+    private val resolverEmitter: PrivacyDiagnosticsEmitter = mockk {
+        coEvery { emit(any(), any()) } coAnswers { resolverEmitted += Emitted(firstArg(), secondArg()) }
+    }
+
+    @Before
+    fun setUp() {
+        appContext = ApplicationProvider.getApplicationContext()
+        scope = CoroutineScope(Job() + Dispatchers.Unconfined)
+        realManager().createNotificationChannel(
+            NotificationChannel(BILL_CHANNEL, BILL_CHANNEL, NotificationManager.IMPORTANCE_HIGH)
+        )
+    }
+
+    @After
+    fun tearDown() {
+        scope.cancel()
+    }
+
+    private fun realManager(): NotificationManager =
+        appContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+
+    private fun postBillOriginal(id: Int) {
+        fun broadcast(name: String) = PendingIntent.getBroadcast(
+            appContext,
+            id,
+            Intent("com.yourname.test.$name"),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val builder = NotificationCompat.Builder(appContext, BILL_CHANNEL)
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setContentTitle(SENTINEL_TITLE)
+            .setContentText(SENTINEL_TEXT)
+            .addExtras(Bundle().apply { putString(NotificationKindMarker.EXTRA_KEY, NotificationKind.BILL.stableToken) })
+            .addAction(android.R.drawable.ic_dialog_info, "Snooze", broadcast("snooze"))
+            .addAction(android.R.drawable.ic_dialog_info, "Dismiss", broadcast("dismiss"))
+        realManager().notify(id, builder.build())
+    }
+
+    private fun sweep(state: AppLockSettingsLoadState): NotificationService.RepostResult =
+        sweepWith(ScriptedSettingsRepository { state })
+
+    private fun sweepWith(repo: ScriptedSettingsRepository): NotificationService.RepostResult {
+        val resolver = NotificationPresentationResolver(repo, resolverEmitter, scope)
+        val service = AndroidNotificationService(
+            appContext,
+            resolver,
+            NotificationPresentationApplier(appContext, NotificationPresentationTexts(appContext)),
+            mockk<PrivacyDiagnosticsEmitter>(relaxed = true)
+        )
+        var result: NotificationService.RepostResult? = null
+        runTest(timeout = 10.seconds) { result = service.repostActiveAsDiscreet() }
+        return result!!
+    }
+
+    private fun actionCount(id: Int): Int =
+        realManager().activeNotifications.single { it.id == id }.notification.actions?.size ?: 0
+
+    private fun suppressedEmissions() =
+        resolverEmitted.filter { it.code == PrivacyDiagnosticCode.NOTIF_ACTIONS_SUPPRESSED_LOCK }
+
+    @Test
+    fun `lock on drops the BILL actions on a sweep rebuild and records the suppressed code keyed by sdk only`() {
+        postBillOriginal(BILL_ID)
+        assertEquals(2, actionCount(BILL_ID))
+
+        val result = sweep(
+            AppLockSettingsLoadState.Loaded(
+                AppLockPrivacySettings(discreetNotifications = false, appLockEnabled = true)
+            )
+        )
+
+        assertEquals(1, result.reposted)
+        assertEquals(0, actionCount(BILL_ID))
+        assertEquals(1, suppressedEmissions().size)
+        assertEquals(
+            mapOf<PrivacyDiagnosticKey, Any>(PrivacyDiagnosticKey.SDK_INT to 30),
+            suppressedEmissions().single().metadata.entries
+        )
+    }
+
+    @Test
+    fun `unreadable settings count as lock on so the sweep rebuild drops the BILL actions`() {
+        postBillOriginal(BILL_ID)
+        assertEquals(2, actionCount(BILL_ID))
+
+        val result = sweep(AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.IO_ERROR))
+
+        assertEquals(1, result.reposted)
+        assertEquals(0, actionCount(BILL_ID))
+        assertEquals(1, suppressedEmissions().size)
+    }
+
+    @Test
+    fun `a settings read that throws counts as lock on so the sweep rebuild drops the BILL actions`() {
+        postBillOriginal(BILL_ID)
+        assertEquals(2, actionCount(BILL_ID))
+
+        val result = sweepWith(ScriptedSettingsRepository { throw IllegalStateException("store exploded") })
+
+        assertEquals(1, result.reposted)
+        assertEquals(0, actionCount(BILL_ID))
+        assertEquals(1, suppressedEmissions().size)
+    }
+
+    @Test
+    fun `a settings read that times out counts as lock on so the sweep rebuild drops the BILL actions`() {
+        postBillOriginal(BILL_ID)
+        assertEquals(2, actionCount(BILL_ID))
+
+        // The resolver bounds the read (T_READ_MILLIS); runTest virtual time skips the wait.
+        val result = sweepWith(ScriptedSettingsRepository { awaitCancellation() })
+
+        assertEquals(1, result.reposted)
+        assertEquals(0, actionCount(BILL_ID))
+        assertEquals(1, suppressedEmissions().size)
+        assertEquals(
+            mapOf<PrivacyDiagnosticKey, Any>(PrivacyDiagnosticKey.SDK_INT to 30),
+            suppressedEmissions().single().metadata.entries
+        )
+    }
+
+    @Test
+    fun `lock off keeps the BILL actions on a sweep rebuild and records no suppressed code`() {
+        postBillOriginal(BILL_ID)
+
+        val result = sweep(AppLockSettingsLoadState.Loaded(AppLockPrivacySettings(discreetNotifications = true)))
+
+        assertEquals(1, result.reposted)
+        assertEquals(2, actionCount(BILL_ID))
+        assertTrue(suppressedEmissions().isEmpty())
+    }
+
+    private companion object {
+        const val BILL_CHANNEL = "bill_reminders"
+        const val BILL_ID = 30011
+    }
 }

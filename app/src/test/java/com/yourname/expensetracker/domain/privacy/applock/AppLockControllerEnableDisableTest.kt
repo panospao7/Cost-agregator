@@ -1,56 +1,13 @@
 package com.yourname.expensetracker.domain.privacy.applock
 
-import io.mockk.coEvery
-import io.mockk.mockk
-import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.CoroutineExceptionHandler
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.test.StandardTestDispatcher
-import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * [AppLockSettingsOperations] wired to one [AppLockController] over the shared fakes (S18 part (i-a)).
- * With [deferred] false the apply runs inside the hand-off call (an unconfined scope); with true it is queued on
- * the test scheduler and runs on `h.settle()`, so a test can see that the handler itself does not wait for it.
- */
-@OptIn(ExperimentalCoroutinesApi::class)
-internal class SettingsOperationsRig(
-    val h: AppLockControllerHarness,
-    val controller: AppLockController,
-    deferred: Boolean = false
-) {
-    /** Throwables that reached the operations scope's exception handler. */
-    val uncaught = mutableListOf<Throwable>()
-
-    /** Every `DiscreetRepostTrigger.onCommittedWrite(was, is)` call. */
-    val triggerCalls = mutableListOf<Pair<Boolean, Boolean>>()
-
-    /** When set, the trigger throws it. */
-    var triggerFailure: Throwable? = null
-
-    val job = SupervisorJob()
-    private val dispatcher: CoroutineDispatcher =
-        if (deferred) StandardTestDispatcher(h.scheduler) else UnconfinedTestDispatcher(h.scheduler)
-    val scope = CoroutineScope(job + dispatcher + CoroutineExceptionHandler { _, t -> uncaught += t })
-
-    private val trigger = mockk<DiscreetRepostTrigger>().also { mock ->
-        coEvery { mock.onCommittedWrite(any(), any()) } coAnswers {
-            triggerCalls += firstArg<Boolean>() to secondArg<Boolean>()
-            triggerFailure?.let { throw it }
-            DiscreetRepostOutcome.SWEPT
-        }
-    }
-
-    val ops = AppLockSettingsOperations(controller, h.repository, h.capabilityProvider, trigger, scope)
-}
-
+// SettingsOperationsRig (the shared construction of AppLockSettingsOperations) lives in AppLockControllerTestFixtures.kt.
 @OptIn(ExperimentalCoroutinesApi::class)
 class AppLockControllerEnableDisableTest {
 

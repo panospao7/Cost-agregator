@@ -78,9 +78,11 @@ class BillNotificationSweepParityTest {
     private fun manager(): NotificationManager =
         context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
-    private fun settingsRepo() = ScriptedSettingsRepository {
+    /** The committed settings the worker and the sweep both read; a test can flip it between the two. */
+    private var settingsState: AppLockSettingsLoadState =
         AppLockSettingsLoadState.Loaded(AppLockPrivacySettings(discreetNotifications = true))
-    }
+
+    private fun settingsRepo() = ScriptedSettingsRepository { settingsState }
 
     private fun resolver() = NotificationPresentationResolver(settingsRepo(), mockk(relaxed = true), scope)
 
@@ -189,6 +191,58 @@ class BillNotificationSweepParityTest {
         assertEquals(2, workerShape.actionIconRes.size)
         assertEquals(workerShape.actionIconRes, sweepShape.actionIconRes)
         assertEquals(workerShape.actionTitles, sweepShape.actionTitles)
+    }
+
+    private fun sweepOnce(): com.yourname.expensetracker.domain.service.NotificationService.RepostResult {
+        val service = AndroidNotificationService(
+            context,
+            resolver(),
+            NotificationPresentationApplier(context, NotificationPresentationTexts(context)),
+            mockk<PrivacyDiagnosticsEmitter>(relaxed = true)
+        )
+        var result: com.yourname.expensetracker.domain.service.NotificationService.RepostResult? = null
+        runTest(timeout = 10.seconds) { result = service.repostActiveAsDiscreet() }
+        return result!!
+    }
+
+    private fun lockOn() = AppLockSettingsLoadState.Loaded(
+        AppLockPrivacySettings(discreetNotifications = false, appLockEnabled = true)
+    )
+
+    /** S18-ii-b (F3): at API 30 with the lock on, the sweep rebuild drops the BILL actions like the post path. */
+    @Test
+    @Config(sdk = [30])
+    fun `api 30 with the lock on the sweep rebuilt BILL has no actions and matches the worker built one`() {
+        // Control: lock off, the worker's BILL carries both actions (so the original below is not vacuous).
+        val unlockedWorker = runWorkerOnce().notification
+        assertEquals(2, unlockedWorker.actions.size)
+
+        // The lock is enabled after the BILL was posted; the sweep must drop the actions it would re-apply.
+        settingsState = lockOn()
+        assertEquals(1, sweepOnce().reposted)
+        val sweepLocked = active().notification
+        assertEquals(0, sweepLocked.actions?.size ?: 0)
+
+        // Parity: a BILL the worker itself builds under the same lock-on state has the same shape and no actions.
+        manager().cancelAll()
+        val workerLocked = runWorkerOnce().notification
+        assertEquals(0, workerLocked.actions?.size ?: 0)
+        assertEquals(workerLocked.smallIcon.resId, sweepLocked.smallIcon.resId)
+        assertEquals(workerLocked.priority, sweepLocked.priority)
+    }
+
+    /** Fail-closed: unreadable settings count as lock on, so the sweep rebuild drops the actions at API 30. */
+    @Test
+    @Config(sdk = [30])
+    fun `api 30 with unreadable settings the sweep rebuilt BILL has no actions`() {
+        assertEquals(2, runWorkerOnce().notification.actions.size)
+
+        settingsState = AppLockSettingsLoadState.Unreadable(
+            com.yourname.expensetracker.domain.privacy.applock.SettingsUnreadableCause.IO_ERROR
+        )
+        assertEquals(1, sweepOnce().reposted)
+
+        assertEquals(0, active().notification.actions?.size ?: 0)
     }
 
     private companion object {

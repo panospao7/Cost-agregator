@@ -116,7 +116,7 @@ class AppLockControllerOpenOriginSuccessTest {
     }
 
     @Test
-    fun `a write that throws CancellationException ends the apply cancelled, records no failure code and still completes`() {
+    fun `a write that throws CancellationException ends the apply cancelled, records the unconfirmed write once (F7) and still completes`() {
         val rig = disabledRig(deferred = true)
         rig.h.repository.lockWriteFailure = CancellationException("cancelled")
         startEnable(rig)
@@ -127,7 +127,12 @@ class AppLockControllerOpenOriginSuccessTest {
 
         assertTrue("the cancellation must propagate, not be swallowed", apply.isCancelled)
         assertEquals(AppLockState.Disabled, rig.controller.state.value)
-        assertFalse(rig.h.emitted.contains(PrivacyDiagnosticCode.LOCK_SETTING_PERSIST_FAILED))
+        // S18 ii-a F7: the store was re-read, showed no commit, so the failure is recorded once and nothing moved.
+        assertEquals(listOf(PrivacyDiagnosticCode.LOCK_SETTING_PERSIST_FAILED), rig.h.emitted)
+        assertEquals(
+            mapOf<PrivacyDiagnosticKey, Any>(PrivacyDiagnosticKey.FIELD to AppLockSettingField.APP_LOCK_ENABLED),
+            rig.h.emittedMetadata.single().entries
+        )
         assertTrue(rig.uncaught.isEmpty())
         // The completion ran in the finally: the gate is closed, so a new attempt may start.
         assertTrue(rig.controller.startOpenOriginAttempt(OpenOriginPrompt.ENABLE, RecordingSuccessHandler()) is OpenOriginStartResult.Started)

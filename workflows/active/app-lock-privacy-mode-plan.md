@@ -1569,3 +1569,104 @@ Notes for the orchestrator:
   - Decide whether ENABLE with `NotAvailable` is a T26-style `LOCK_UNAVAILABLE_CAPABILITY` refusal.
 
 - (2026-10-26, S16 ii-b) SUPERSEDED: the "internal" attempt-start API for ENABLE/CONFIRM_CHANGE (S16 scope boundary, ~:814 and :872) became the public `startOpenOriginAttempt(OpenOriginPrompt, OpenOriginSuccessHandler)` (decision 1). It is guarded by a source-scan pin: no main file other than AppLockController.kt references it until S18 adds exactly its own file.
+
+## Amendment (2026-10-27) — S18 part (ii) split (feature-planner; orchestrator-persisted; BINDING)
+
+### Facts this split rests on
+- F-a. `reviewSave` (Impl :236-249) is unconditional: it clears and then writes every key. The serializer alone does not close F4(a), so a check inside the same edit is needed (D8).
+- F-b. Routing the 1a review card through the controller before S20 is a regression. Nothing calls `resolve()`, so the controller stays RESOLVING and the card would get NOT_IN_ORIGIN. The ViewModel routing therefore merges together with S20 (D1).
+- F-c. There is no 1a secure-screen writer. The WRITE 5 routing therefore only covers discreet.
+- F-d. `LOCK_SETTINGS_RECOVERED` (DiagnosticReasonCode :133) has no PrivacyDiagnosticsEmitter entry.
+- F-e. `AT/data/service/NotificationPresentationDeviceTest.kt:88` is a finding-8 fake, so finding 8 needs an androidTest compile.
+- F-f. Stale `TODO(S18-i-b2)` labels remain at AppLockController :95 and :685.
+
+### Sub-slices
+Lane A runs strictly in order: a → c → d → e → f → g → h, and h is held until S20. Sub-slice b is disjoint from all of them. Each lane-A sub-slice owns only the regions it names; pins change by exact additions only.
+
+- S18-ii-a. Domain serializer (F4) and cancelled-write re-read (F7).
+  - Move AppLockSettingsWriteSerializer from ui to domain/privacy/applock with the same API.
+  - Operations injects it and drops directWriteMutex on all four paths (lock apply, timeout apply, direct timeout write, plain writes). The pre-read, write, controller entry and trigger all run inside it.
+  - The ViewModel keeps wrapping WRITE 1 and WRITE 2 with the shared serializer (import and KDoc change only).
+  - One F7 helper, used by WRITE 3, both WRITE 4 paths and WRITE 5. After a CancellationException from a NonCancellable write, re-read once:
+    - the requested value means Committed;
+    - unreadable, or the read throws, means not committed: no move, a recorded failure, no trigger (INV-46);
+    - then rethrow.
+  - Fix the stale TODO labels (comments only).
+  - New tests: AppLockSettingsWriteSerializerSharingTest and AppLockSettingsOperationsCancelledWriteTest. Construction is centralised in AppLockControllerTestFixtures.
+  - Docs: LEGAL_PATHS (SERIALISATION is domain-owned; F4 and F7 struck); path mentions in SEGMENTS, INVENTORY, hilt-bindings-map and the ENGINE map.
+  - Gates: privacy-security-guardian, architecture-guardian, reviewer-strict.
+  - Validation: targeted `*AppLockSettingsWriteSerializer*,*AppLockSettingsOperations*,*AppLockController*,*AppLockPrivacySettingsViewModel*`; shards domain-n-z and runtime-ui; registered-guard cancellation, known_good_state and ui_dao.
+- S18-ii-b. F3, action suppression (the plan :1490-1493 binding).
+  - `decideDiscreet(actionsSuppressed)` loses its default.
+  - AndroidNotificationService.rebuildDiscreet (:314) passes effectiveLockEnabled(committed load state); unreadable counts as lock on.
+  - An SDK <=30 lock-on parity row.
+  - NOTIF_ACTIONS_SUPPRESSED_LOCK per D5.
+  - Write set: NotificationContentPolicy.kt and AndroidNotificationService.kt.
+  - Tests: NotificationContentPolicyTest (the default-pin case becomes an explicit false case; modified, not deleted), BillNotificationSweepParityTest (T/service/reminder), AndroidNotificationServicePresentationTest.
+  - Gates: privacy-security-guardian (lead), reviewer-strict.
+  - Validation: targeted `*NotificationContentPolicy*,*BillNotificationSweepParity*,*AndroidNotificationService*,*NotificationPresentationResolver*`; shards data and domain-n-z, plus the service/reminder shard.
+- S18-ii-c. Notices (INV-51) and re-read (T28, T29, INV-47).
+  - A pure LockNoticeDerivation with priority INERT > REVIEW_SETTINGS (persistent unreadable) > biometric (always false). Per R4 the review notice comes from the load state.
+  - No notice in RESOLVING, LOCKED or AUTH(UNLOCK). The origin notice is kept during ENABLE and CONFIRM_CHANGE (AMD-22).
+  - A `notice` StateFlow, version-stamped like the state and published after the monitor is released (R2).
+  - `requestSettingsReread()`, with zero callers. A foreground re-read while transient-unreadable. A private, sequence-checked onSettingsReread.
+  - T28 never locks. T29 keeps the snapshot while LOCKED or AUTH and applies it after an open outcome, under D6.
+  - A LOCK_SETTINGS_RECOVERED emitter entry. This is D9 and needs owner approval: an allowlist item.
+  - Gates: privacy-security-guardian (lead), reviewer-strict.
+- S18-ii-d. Review-save, domain part (T27, INV-45, T33 binding, prompt copy, diagnostics).
+  - `requestReviewSave(record)` returns a bounded ReviewSaveResult.
+  - The record is classified by a pure ReviewSaveAuthorisation.
+  - A weakening from UNLOCKED goes through a CONFIRM_CHANGE prompt with the CHANGE copy and an ATOMIC apply in the serializer.
+  - INERT without auth is allowed only under D3. A non-weakening save is a direct write.
+  - Codes are owned by the controller and claimed once (D7).
+  - Store-level guard (D8): `reviewSave` writes only if the in-edit state is persistent-unreadable, otherwise it returns Rejected(NOT_UNDER_REVIEW).
+  - The copy-selection pin: ENABLE gives ENABLE, T18 gives DISABLE, a longer timeout or a weakening review-save gives CHANGE.
+  - Gates: privacy-security-guardian (lead), reviewer-strict, architecture-guardian.
+- S18-ii-e. T19, INERT disable without auth, under the handoff conditions (a)-(f) (handoff :1543).
+  - Under (d), any unreadable load state returns REVIEW_REQUIRED and writes nothing.
+  - The existing "disable in INERT gives NOT_IN_ORIGIN" assertion is modified to the T19 behaviour, not deleted.
+- S18-ii-f. Finding 8.
+  - The 5 repository write defaults become abstract; fakes return Failed(field).
+  - It touches the notification test fakes and the androidTest fake (F-e), so it needs an androidTest compile (proven at app-check).
+  - Depends on e, and on b being merged.
+- S18-ii-g. WRITE 5 routing and the ISSUE-4 exit (wiring-type).
+  - The ViewModel's `setDiscreetNotifications` calls `operations.requestDiscreetChange` with no outer serializer, since a non-reentrant Mutex would deadlock.
+  - D4: retire `UpdateDiscreetNotificationsUseCase` and the unforced `setDiscreetNotifications`, then flip the F3 pin to 0. This needs OWNER approval because it deletes tests.
+  - The dormancy pin is lifted by exactly one entry: `requestDiscreetChange` for the ViewModel.
+- S18-ii-h. INV-45 ViewModel routing (wiring-type).
+  - `saveReview` calls `requestReviewSave` with the D2 record. The ViewModel's review-save diagnostics are removed, and `retry()` asks for a re-read.
+  - It MERGES TOGETHER WITH S20's final sub-slice (D1).
+
+### Decisions (owner-approvals item 45)
+- Applied under the standing instruction:
+  - D2: until S22, the 1a record is {lock off, IMMEDIATE, discreet = the user's choice, secure on (F)}. Verify that no 1a code reads secureScreen.
+  - D3: no-auth applies only when the fresh capability is neither AVAILABLE nor CHECK_FAILED.
+  - D5: NOTIF_ACTIONS_SUPPRESSED_LOCK on sweep rebuilds, keyed by sdkInt.
+  - D6: a kept T29 snapshot is dropped if a settings write committed after it (a write-sequence counter).
+  - D7: codes are claimed once per (code, field).
+  - D8: the conditional reviewSave plus NOT_UNDER_REVIEW.
+  - D10: g lands before S20.
+  - D11: S19 comes off the BLOCKING list; only S20 stays gated.
+  - D12: F3 is done here, not in G1b; G1b keeps the device re-run.
+- Owner:
+  - D1: h merges together with S20.
+  - D4: deleting tests (UpdateDiscreetNotificationsUseCaseTest and the setDiscreetNotifications Impl cases). Fallback (b): make setDiscreetNotifications forced-aware and keep the use case.
+  - D9: the emitter allowlist entry LOCK_SETTINGS_RECOVERED (CAUSE: IO_ERROR or TIMEOUT).
+
+### Validation and stop triggers
+- Validation runs through one serial queue. a and b are disjoint and share one combined targeted run. static-guards and app-check run once, at the S18-ii candidate (after g).
+- Stop and ask on:
+  - deleting or ignoring a test (D4);
+  - any change under config/guards or the emitter registry (D9);
+  - loosening a pin;
+  - lifting dormancy beyond g and h;
+  - new persisted keys;
+  - weakening fail-closed behaviour (CHECK_FAILED treated as no-auth, a stale T29 applied over a commit, a move on an unknown F7 outcome);
+  - running past 2+2 iterations.
+- After S18-ii, two items remain BLOCKING: INV-45's ViewModel routing (h, with S20) and the S22 UI fields.
+
+### Amendment (2026-10-27) — S18-ii-b accepted deviation (privacy-security-guardian ACCEPT-WITH-CONDITIONS; orchestrator)
+- **Supersedes:** the literal "pass `effectiveLockEnabled(committed load state)`" wording at plan :1490-1493 and in the S18-ii-b item. The ADOPTED form is below.
+- **Adopted form:** for BILL, `AndroidNotificationService.rebuildDiscreet` takes the action-suppression term from the single rule owner, `presentationResolver.resolve(kind, SDK_INT)`: `actionsSuppressed = (actionPolicy != UNCHANGED)`. This fails closed for any unexpected value.
+- **Equivalence:** on API ≤30, NONE is exactly `effectiveLockEnabled(state)`. Timeout, unreadable and throwing reads all give NONE through FAIL_CLOSED. On API ≥31 the output is AUTH_REQUIRED either way.
+- **Why:** the service gets no second rule and no new settings dependency. NOTIF_ACTIONS_SUPPRESSED_LOCK reuses the resolver's existing emission ({SDK_INT} only).

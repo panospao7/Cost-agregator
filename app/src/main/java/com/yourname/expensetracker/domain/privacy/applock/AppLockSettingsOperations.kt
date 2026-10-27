@@ -7,8 +7,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 import java.util.concurrent.atomic.AtomicBoolean
@@ -113,13 +111,23 @@ enum class PlainSettingResult {
  * The unlock-equivalent discard of the pending background is done by the controller's close and is not
  * repeated here.
  *
- * Write serialisation: the lock flag is written by a per-field atomic store edit, so it cannot interleave with
- * the discreet write or a review-save at the store. Within this class every write path (lock apply, timeout
- * apply, direct timeout write, discreet/secure-screen writes) runs under `directWriteMutex`, so a pre-read and
- * its INV-13 sweep decision can never go stale against another of these writes (S18 i-b2 C1). The
- * `AppLockSettingsWriteSerializer` of the settings
- * ViewModel is not shared (it lives in the ui package; moving it into the domain, with the pre-read, the write
- * and the trigger inside it, is a recorded BLOCKING carry-forward for any wiring, privacy review F4).
+ * Write serialisation (S18 ii-a, F4): every write path of this class (lock apply, timeout apply, direct timeout
+ * write, discreet/secure-screen writes) runs inside the domain-owned singleton [AppLockSettingsWriteSerializer],
+ * the SAME instance the settings ViewModel wraps its WRITE 1 (discreet toggle) and WRITE 2 (review-save) with. The
+ * pre-read, the durable write, the controller entry and the trigger are one critical section, so a pre-read and its
+ * INV-13 sweep decision can never go stale against another writer, and a review-save cannot interleave with a lock
+ * apply. The serializer is not reentrant: nothing called inside it re-enters it, and no prompt is held inside it
+ * (a prompt has closed before any apply starts).
+ *
+ * Cancelled durable write (S18 ii-a, F7): a write that ends with a `CancellationException` inside `NonCancellable`
+ * has an unknown durable outcome (the store edit may have committed). The store is re-read ONCE: a loaded value equal
+ * to the request is treated as committed (the normal committed path runs, trigger included); anything else
+ * (another value, first-run default, unreadable, a throwing read) is treated as not committed (no move, the failure
+ * recorded once, no trigger, INV-46). For the plain (discreet, secure-screen) writes a re-read that shows the stored
+ * lock ON is the forced answer of the uncancelled path, `Rejected(FORCED)`, for either value (no move, no trigger, no
+ * record). The `CancellationException` is then rethrown (a failure of the outcome step and a second cancellation of
+ * the re-read are kept on it as suppressed exceptions), and the completion `finally` (INV-54) still runs. See
+ * [settleCancelledWrite].
  *
  * One apply at a time (F5): a flag is set before the apply launches and cleared in its `finally`; while it is set
  * both requests answer [SettingsRequestResult.ALREADY_IN_FLIGHT] (the controller's gate alone would answer
@@ -134,18 +142,12 @@ class AppLockSettingsOperations @Inject constructor(
     private val settingsRepository: AppLockSettingsRepository,
     private val capabilityProvider: DeviceAuthCapabilityProvider,
     private val discreetRepostTrigger: DiscreetRepostTrigger,
+    private val writeSerializer: AppLockSettingsWriteSerializer,
     @ApplicationScope private val scope: CoroutineScope
 ) {
 
     /** True from before the apply launches until its `finally` (F5). */
     private val applyRunning = AtomicBoolean(false)
-
-    /**
-     * Serialises all four write paths of this class (lock apply, timeout apply, direct timeout write, and the plain
-     * discreet/secure-screen writes): each pre-read and its write (and the INV-13 sweep decision that depends on it)
-     * are one critical section (S18 i-b1 privacy review F1, S18 i-b2 C1). Never held across a prompt.
-     */
-    private val directWriteMutex = Mutex()
 
     /** T26 request-time check, then the ENABLE attempt (T17). Never writes anything itself. */
     fun requestEnable(): SettingsRequestResult {
@@ -167,7 +169,7 @@ class AppLockSettingsOperations @Inject constructor(
      * read; an unreadable or failed read is a failure with nothing written, no prompt, fail closed).
      *
      * - Equal or shorter than the committed timeout, or the lock is off: written directly, no prompt (a longer
-     *   timeout is the only weakening here), by the CONDITIONAL store edit, under [directWriteMutex] across the
+     *   timeout is the only weakening here), by the CONDITIONAL store edit, inside the [writeSerializer] across the
      *   pre-read and the write (privacy review F1). The controller's settings view is updated through
      *   `onTimeoutWrittenWithoutPrompt`. The result is [TimeoutChangeResult.COMMITTED] or [TimeoutChangeResult.FAILED].
      * - Longer, lock on: the CONFIRM_CHANGE attempt (CHANGE copy) starts, only from `UNLOCKED`. Nothing is written
@@ -186,19 +188,19 @@ class AppLockSettingsOperations @Inject constructor(
         // Privacy review F1: the pre-read and the direct write are one critical section (so two overlapping direct
         // requests cannot interleave their read and write), applyRunning is re-checked inside it, and the write itself
         // is the conditional store edit that re-checks the weakening inside the edit. A null result means "needs the
-        // prompt": that part runs outside the mutex (the prompt can be open for a long time).
-        val direct: TimeoutChangeResult? = directWriteMutex.withLock {
-            if (applyRunning.get()) return@withLock TimeoutChangeResult.ALREADY_IN_FLIGHT
+        // prompt": that part runs outside the serializer (the prompt can be open for a long time).
+        val direct: TimeoutChangeResult? = writeSerializer.withExclusiveWrite {
+            if (applyRunning.get()) return@withExclusiveWrite TimeoutChangeResult.ALREADY_IN_FLIGHT
             // S18 i-b1 final gate ISSUE-1: no write while a CONFIRM_CHANGE prompt is open (from its start until its
             // close). The controller has no "ended without success" hook, so a flag could stick; its own state is the
-            // source. From the close to the apply start, the apply takes [directWriteMutex] (runTimeoutApply), so a
+            // source. From the close to the apply start, the apply takes the [writeSerializer] (runTimeoutApply), so a
             // direct write that slipped into that window completes, view included, before the apply writes.
-            if (isConfirmChangeOpen()) return@withLock TimeoutChangeResult.ALREADY_IN_FLIGHT
+            if (isConfirmChangeOpen()) return@withExclusiveWrite TimeoutChangeResult.ALREADY_IN_FLIGHT
             val committed = readCommittedSettings()
             if (committed == null) {
                 // Unreadable (INV-44) or a failed read: nothing is written and no prompt starts; the failure is recorded.
                 controller.onTimeoutWrittenWithoutPrompt(newTimeout, false)
-                return@withLock TimeoutChangeResult.FAILED
+                return@withExclusiveWrite TimeoutChangeResult.FAILED
             }
             val longer = newTimeout.millis > committed.autoLockTimeout.millis
             if (!longer || !committed.appLockEnabled) writeTimeoutWithoutPrompt(newTimeout) else null
@@ -224,7 +226,7 @@ class AppLockSettingsOperations @Inject constructor(
      * write, no prompt, no record), and with the lock off the value is not a weakening (INV-3 covers only an enabled
      * lock), so it commits directly. The effective discreet value is read before the write and handed with the
      * committed one to [DiscreetRepostTrigger] (a sweep only on a false to true edge). The pre-read, the write and the
-     * trigger run under [directWriteMutex].
+     * trigger run inside the [writeSerializer].
      */
     suspend fun requestDiscreetChange(enabled: Boolean): PlainSettingResult =
         writePlainSetting(AppLockSettingField.DISCREET, enabled)
@@ -235,38 +237,134 @@ class AppLockSettingsOperations @Inject constructor(
 
     private suspend fun writePlainSetting(field: AppLockSettingField, enabled: Boolean): PlainSettingResult {
         if (applyRunning.get()) return PlainSettingResult.ALREADY_IN_FLIGHT
-        return directWriteMutex.withLock {
-            if (applyRunning.get()) return@withLock PlainSettingResult.ALREADY_IN_FLIGHT
+        return writeSerializer.withExclusiveWrite {
+            if (applyRunning.get()) return@withExclusiveWrite PlainSettingResult.ALREADY_IN_FLIGHT
             withContext(NonCancellable) {
                 val discreet = field == AppLockSettingField.DISCREET
                 val wasEffectiveDiscreet = if (discreet) readEffectiveDiscreetBeforeWrite() else false
-                when (val result = writePlain(field, enabled)) {
-                    is AppLockSettingsWriteResult.Committed -> {
-                        controller.onPlainSettingWritten(field, enabled, true)
-                        if (discreet) {
-                            discreetRepostTrigger.onCommittedWrite(
-                                wasEffectiveDiscreet = wasEffectiveDiscreet,
-                                isEffectiveDiscreet = EffectivePrivacyValues.effectiveDiscreet(
-                                    AppLockSettingsLoadState.Loaded(result.settings)
+                val outcome = settleCancelledWrite(
+                    field,
+                    { settings -> settings.plainValue(field) == enabled },
+                    lockOnIsForced = true
+                ) {
+                    writePlain(field, enabled)
+                }
+                outcome.applyThenRethrow { written ->
+                    when (written) {
+                        is AppLockSettingsWriteResult.Committed -> {
+                            controller.onPlainSettingWritten(field, enabled, true)
+                            if (discreet) {
+                                discreetRepostTrigger.onCommittedWrite(
+                                    wasEffectiveDiscreet = wasEffectiveDiscreet,
+                                    isEffectiveDiscreet = EffectivePrivacyValues.effectiveDiscreet(
+                                        AppLockSettingsLoadState.Loaded(written.settings)
+                                    )
                                 )
-                            )
+                            }
+                            PlainSettingResult.COMMITTED
                         }
-                        PlainSettingResult.COMMITTED
-                    }
-                    is AppLockSettingsWriteResult.Rejected ->
-                        if (result.reason == AppLockWriteRejection.FORCED) {
-                            PlainSettingResult.REJECTED_FORCED
-                        } else {
+                        is AppLockSettingsWriteResult.Rejected ->
+                            if (written.reason == AppLockWriteRejection.FORCED) {
+                                PlainSettingResult.REJECTED_FORCED
+                            } else {
+                                controller.onPlainSettingWritten(field, enabled, false)
+                                PlainSettingResult.FAILED
+                            }
+                        is AppLockSettingsWriteResult.Failed -> {
                             controller.onPlainSettingWritten(field, enabled, false)
                             PlainSettingResult.FAILED
                         }
-                    is AppLockSettingsWriteResult.Failed -> {
-                        controller.onPlainSettingWritten(field, enabled, false)
-                        PlainSettingResult.FAILED
                     }
                 }
             }
         }
+    }
+
+    /** The stored value of one plain (discreet or secure-screen) field, for the F7 re-read comparison. */
+    private fun AppLockPrivacySettings.plainValue(field: AppLockSettingField): Boolean =
+        if (field == AppLockSettingField.DISCREET) discreetNotifications else secureScreen
+
+    /**
+     * A durable write's result together with the `CancellationException` (if any) that ended the write. The exception
+     * is held back until the caller has applied the outcome, then rethrown by [applyThenRethrow] (never swallowed).
+     */
+    private class WriteOutcome(val result: AppLockSettingsWriteResult, val cancellation: CancellationException?)
+
+    /**
+     * F7 (S18 ii-a): runs [write]; if it ends with a `CancellationException` the durable outcome is unknown, so the
+     * store is re-read ONCE. Only a `Loaded` state whose value satisfies [isRequestedValue] counts as committed
+     * ([AppLockSettingsWriteResult.Committed] with the re-read settings); another value, the first-run default (nothing
+     * was ever stored), `Unreadable` or a throwing re-read count as not committed ([AppLockSettingsWriteResult.Failed]
+     * for [field]: the caller moves nothing, records the failure once and runs no trigger, INV-46). Runs under
+     * `NonCancellable` (every caller is inside it). A cancellation raised by the re-read itself also counts as not
+     * committed; the ORIGINAL cancellation is kept for the caller to rethrow. Bounded log: class name only.
+     */
+    private suspend fun settleCancelledWrite(
+        field: AppLockSettingField,
+        isRequestedValue: (AppLockPrivacySettings) -> Boolean,
+        lockOnIsForced: Boolean = false,
+        write: suspend () -> AppLockSettingsWriteResult
+    ): WriteOutcome =
+        try {
+            WriteOutcome(write(), null)
+        } catch (cancelled: CancellationException) {
+            WriteOutcome(rereadAfterCancelledWrite(field, isRequestedValue, lockOnIsForced, cancelled), cancelled)
+        }
+
+    private suspend fun rereadAfterCancelledWrite(
+        field: AppLockSettingField,
+        isRequestedValue: (AppLockPrivacySettings) -> Boolean,
+        lockOnIsForced: Boolean,
+        first: CancellationException
+    ): AppLockSettingsWriteResult {
+        val state = try {
+            rereadStoreOrNull()
+        } catch (second: CancellationException) {
+            // Not committed as far as can be proven; the FIRST cancellation is rethrown by the caller, the second is
+            // kept on it as a suppressed exception (never lost).
+            if (second !== first) first.addSuppressed(second)
+            null
+        }
+        return when (state) {
+            is AppLockSettingsLoadState.Loaded ->
+                when {
+                    // Privacy review C2: the stored lock is on, so the plain field is forced. The uncancelled path
+                    // answers Rejected(FORCED) for either value; so does this one (no move, no trigger, no record).
+                    lockOnIsForced && state.settings.appLockEnabled ->
+                        AppLockSettingsWriteResult.Rejected(AppLockWriteRejection.FORCED)
+                    isRequestedValue(state.settings) -> AppLockSettingsWriteResult.Committed(state.settings)
+                    else -> AppLockSettingsWriteResult.Failed(field)
+                }
+            // Null (a throwing re-read), the first-run default and Unreadable all count as not committed.
+            else -> AppLockSettingsWriteResult.Failed(field)
+        }
+    }
+
+    /** The F7 re-read: the load state, or null when the read threw (bounded: class name only). Cancellation propagates. */
+    private suspend fun rereadStoreOrNull(): AppLockSettingsLoadState? =
+        try {
+            settingsRepository.getLoadState()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Timber.w("App-lock cancelled-write re-read failed: class=%s", DiagnosticThrowableSummary.className(e))
+            null
+        }
+
+    /**
+     * Applies the outcome (state move, record, trigger) via [apply], then rethrows the held cancellation, also when
+     * [apply] itself throws (the cancellation wins and is never swallowed; the failure of [apply] stays on it as a
+     * suppressed exception, so it is not lost either).
+     */
+    private inline fun <T> WriteOutcome.applyThenRethrow(apply: (AppLockSettingsWriteResult) -> T): T {
+        val held = cancellation ?: return apply(result)
+        try {
+            apply(result)
+        } catch (e: Throwable) {
+            if (e === held) throw e
+            held.addSuppressed(e)
+        }
+        throw held
     }
 
     /** The forced-aware durable write. Any non-cancellation failure is a failed write (bounded: class name only). */
@@ -292,21 +390,27 @@ class AppLockSettingsOperations @Inject constructor(
      */
     private suspend fun writeTimeoutWithoutPrompt(timeout: AutoLockTimeout): TimeoutChangeResult =
         withContext(NonCancellable) {
-            when (val result = writeTimeout(timeout, conditional = true)) {
-                is AppLockSettingsWriteResult.Committed -> {
-                    controller.onTimeoutWrittenWithoutPrompt(timeout, true)
-                    TimeoutChangeResult.COMMITTED
-                }
-                is AppLockSettingsWriteResult.Rejected ->
-                    if (result.reason == AppLockWriteRejection.WOULD_WEAKEN) {
-                        TimeoutChangeResult.NOT_IN_ORIGIN
-                    } else {
+            // F7 (S18 ii-a): a cancelled write is settled from one store re-read, then the cancellation is rethrown.
+            val outcome = settleCancelledWrite(AppLockSettingField.AUTO_LOCK_TIMEOUT, { it.autoLockTimeout == timeout }) {
+                writeTimeout(timeout, conditional = true)
+            }
+            outcome.applyThenRethrow { result ->
+                when (result) {
+                    is AppLockSettingsWriteResult.Committed -> {
+                        controller.onTimeoutWrittenWithoutPrompt(timeout, true)
+                        TimeoutChangeResult.COMMITTED
+                    }
+                    is AppLockSettingsWriteResult.Rejected ->
+                        if (result.reason == AppLockWriteRejection.WOULD_WEAKEN) {
+                            TimeoutChangeResult.NOT_IN_ORIGIN
+                        } else {
+                            controller.onTimeoutWrittenWithoutPrompt(timeout, false)
+                            TimeoutChangeResult.FAILED
+                        }
+                    is AppLockSettingsWriteResult.Failed -> {
                         controller.onTimeoutWrittenWithoutPrompt(timeout, false)
                         TimeoutChangeResult.FAILED
                     }
-                is AppLockSettingsWriteResult.Failed -> {
-                    controller.onTimeoutWrittenWithoutPrompt(timeout, false)
-                    TimeoutChangeResult.FAILED
                 }
             }
         }
@@ -327,12 +431,17 @@ class AppLockSettingsOperations @Inject constructor(
         try {
             withContext(NonCancellable) {
                 // ISSUE-1(b): the write and the view update are one critical section with the direct path. No prompt is
-                // held under the mutex (the prompt closed before this apply started).
-                directWriteMutex.withLock {
-                    val result = writeTimeout(timeout, conditional = false) // the prompt path: unconditional
+                // held inside the serializer (the prompt closed before this apply started).
+                writeSerializer.withExclusiveWrite {
+                    // The prompt path: unconditional. F7: a cancelled write is settled from one store re-read.
+                    val outcome = settleCancelledWrite(AppLockSettingField.AUTO_LOCK_TIMEOUT, { it.autoLockTimeout == timeout }) {
+                        writeTimeout(timeout, conditional = false)
+                    }
                     // The state-move entry comes BEFORE the completion call (S17 binding). It applies the timeout from
                     // its own token, bound to attemptId; a wrong or reused id is a no-op.
-                    controller.onOpenOriginSettingApplied(attemptId, result is AppLockSettingsWriteResult.Committed)
+                    outcome.applyThenRethrow { result ->
+                        controller.onOpenOriginSettingApplied(attemptId, result is AppLockSettingsWriteResult.Committed)
+                    }
                 }
             }
         } finally {
@@ -407,24 +516,30 @@ class AppLockSettingsOperations @Inject constructor(
         try {
             withContext(NonCancellable) {
                 // S18 i-b2 privacy review C1: the pre-read, the write, the state move and the trigger are one critical
-                // section with the plain discreet / secure-screen path and the timeout path ([directWriteMutex]), so a
-                // plain discreet-off write that commits between the pre-read and the lock write cannot leave a stale
-                // "was discreet" that skips the sweep. No prompt is held under the mutex (the prompt closed before the
-                // apply started).
-                directWriteMutex.withLock {
+                // section with the plain discreet / secure-screen path, the timeout path and the settings ViewModel's
+                // writes (the shared [writeSerializer]), so a plain discreet-off write that commits between the
+                // pre-read and the lock write cannot leave a stale "was discreet" that skips the sweep. No prompt is
+                // held inside the serializer (the prompt closed before the apply started).
+                writeSerializer.withExclusiveWrite {
                     val enable = prompt == OpenOriginPrompt.ENABLE
                     val wasEffectiveDiscreet = if (enable) readEffectiveDiscreetBeforeWrite() else false
-                    val result = write(enable)
-                    val committed = result as? AppLockSettingsWriteResult.Committed
-                    // The state move comes BEFORE the completion call (S17 binding).
-                    controller.onOpenOriginSettingApplied(attemptId, committed != null)
-                    if (enable && committed != null) {
-                        discreetRepostTrigger.onCommittedWrite(
-                            wasEffectiveDiscreet = wasEffectiveDiscreet,
-                            isEffectiveDiscreet = EffectivePrivacyValues.effectiveDiscreet(
-                                AppLockSettingsLoadState.Loaded(committed.settings)
+                    // F7: a cancelled write is settled from one store re-read (a committed value runs the normal
+                    // committed path, anything else moves nothing); the cancellation is rethrown after the outcome.
+                    val outcome = settleCancelledWrite(AppLockSettingField.APP_LOCK_ENABLED, { it.appLockEnabled == enable }) {
+                        write(enable)
+                    }
+                    outcome.applyThenRethrow { result ->
+                        val committed = result as? AppLockSettingsWriteResult.Committed
+                        // The state move comes BEFORE the completion call (S17 binding).
+                        controller.onOpenOriginSettingApplied(attemptId, committed != null)
+                        if (enable && committed != null) {
+                            discreetRepostTrigger.onCommittedWrite(
+                                wasEffectiveDiscreet = wasEffectiveDiscreet,
+                                isEffectiveDiscreet = EffectivePrivacyValues.effectiveDiscreet(
+                                    AppLockSettingsLoadState.Loaded(committed.settings)
+                                )
                             )
-                        )
+                        }
                     }
                 }
             }

@@ -92,7 +92,7 @@ fun interface OpenOriginSuccessHandler {
  * the non-success return to the origin with the timer hand-off (T34). S17 adds the held deep link (T20 to
  * T22, see "The held link" below). S18 part (i-a) adds the enable / disable apply (T17, T18, T26) driven by
  * [AppLockSettingsOperations]; S18 part (i-b1) adds the auto-lock timeout change (a longer timeout confirms through
- * CONFIRM_CHANGE, an equal or shorter one commits without a prompt). `TODO(S18-i-b2)` and `TODO(S18-ii)` mark the rest.
+ * CONFIRM_CHANGE, an equal or shorter one commits without a prompt). `TODO(S18-ii)` marks the rest (the S18 part (ii) sub-slices b to g).
  *
  * ## The held link (S17: T20, T21, T22, INV-30, INV-31, OD-7a)
  *
@@ -682,7 +682,7 @@ class AppLockController @Inject constructor(
      * - [OpenOriginPrompt.CHANGE] with a token timeout (S18 i-b1, a longer timeout): committed takes THAT timeout
      *   into the settings view, not committed records `LOCK_SETTING_PERSIST_FAILED(AUTO_LOCK_TIMEOUT)` (once per
      *   process per (code, field)); the state never moves. A CHANGE with no token timeout changes nothing
-     *   (TODO(S18-i-b2)).
+     *   (TODO(S18-ii-d): the review-save weakening prompt gives it a meaning).
      *
      * The unlock-equivalent discard (T33: `promptBackgroundAt` and `lastBackgroundedAt`) was done by the close
      * that handed the success over and is not repeated here. The held link is not released here either: it waits
@@ -1089,8 +1089,11 @@ class AppLockController @Inject constructor(
         } catch (e: CancellationException) {
             // ISSUE-3: the original CancellationException is what propagates. A throwable from the close itself
             // (a failing capability read, rethrown by closeAttempt after the attempt is closed) is attached to it.
+            // CANCEL-01: a second cancellation from the close is attached the same way; `e` is rethrown below.
             try {
                 closeAttempt(attempt, if (attempt.launched) Closing.Abandoned else Closing.NotLaunched)
+            } catch (closeFailure: CancellationException) {
+                if (closeFailure !== e) e.addSuppressed(closeFailure)
             } catch (closeFailure: Throwable) {
                 if (closeFailure !== e) e.addSuppressed(closeFailure)
             }

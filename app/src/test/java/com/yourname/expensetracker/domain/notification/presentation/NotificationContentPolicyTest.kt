@@ -99,7 +99,7 @@ class NotificationContentPolicyTest {
     @Test
     fun `decideDiscreet gives DISCREET without fallback for every kind and sdk`() {
         for (kind in NotificationKind.entries) for (sdk in sdkLevels) {
-            val decision = NotificationContentPolicy.decideDiscreet(kind, sdk)
+            val decision = NotificationContentPolicy.decideDiscreet(kind, sdk, actionsSuppressed = false)
             assertEquals(kind, decision.kind)
             assertEquals(NotificationPresentationMode.DISCREET, decision.mode)
             assertFalse(decision.usesCallerText)
@@ -115,7 +115,7 @@ class NotificationContentPolicyTest {
         for (kind in NotificationKind.entries) for (sdk in sdkLevels) {
             assertEquals(
                 NotificationContentPolicy.decide(kind, discreetOn, sdk),
-                NotificationContentPolicy.decideDiscreet(kind, sdk)
+                NotificationContentPolicy.decideDiscreet(kind, sdk, actionsSuppressed = false)
             )
         }
     }
@@ -128,7 +128,7 @@ class NotificationContentPolicyTest {
             } else {
                 NotificationActionPolicy.UNCHANGED
             }
-            assertEquals(expected, NotificationContentPolicy.decideDiscreet(kind, sdk).actionPolicy)
+            assertEquals(expected, NotificationContentPolicy.decideDiscreet(kind, sdk, actionsSuppressed = false).actionPolicy)
         }
     }
 
@@ -230,6 +230,7 @@ class NotificationContentPolicyTest {
 
     @Test
     fun `decideDiscreet drops bill actions on api 30 and below only when told the lock or unreadable applies`() {
+        // S18-ii-b: the parameter has no default any more, so the former default case is an explicit false.
         for (sdk in listOf(26, 30)) {
             assertEquals(
                 NotificationActionPolicy.NONE,
@@ -237,7 +238,7 @@ class NotificationContentPolicyTest {
             )
             assertEquals(
                 NotificationActionPolicy.UNCHANGED,
-                NotificationContentPolicy.decideDiscreet(NotificationKind.BILL, sdk).actionPolicy
+                NotificationContentPolicy.decideDiscreet(NotificationKind.BILL, sdk, actionsSuppressed = false).actionPolicy
             )
         }
         assertEquals(

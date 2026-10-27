@@ -386,9 +386,11 @@ Auto-provided (no module entry; @Inject constructors) — app-lock 1a:
                                                         PrivacyDiagnosticsEmitter, BankFeatureAvailability,
                                                         AiRuntimeDiagnostics, @ApplicationScope CoroutineScope;
                                                         field-injected into MainActivity)
-  @Singleton AppLockSettingsWriteSerializer            (no deps; ui/screens/privacysettings; INTERIM process-wide
-                                                        Mutex serialising settings writes; retired at S18 when it
-                                                        moves to the domain owner)
+  @Singleton AppLockSettingsWriteSerializer            (no deps; domain/privacy/applock; process-wide Mutex
+                                                        serialising ALL app-lock settings writes, shared by the
+                                                        ViewModel and AppLockSettingsOperations; moved from the ui
+                                                        package by S18 ii-a)
+  @Singleton AppLockSettingsOperations additionally takes AppLockSettingsWriteSerializer (S18 ii-a)
   @HiltViewModel AppLockPrivacySettingsViewModel       (AppLockSettingsRepository, UpdateDiscreetNotificationsUseCase,
                                                         PrivacyDiagnosticsEmitter, AppLockSettingsWriteSerializer,
                                                         DiscreetRepostTrigger, @ApplicationScope CoroutineScope)

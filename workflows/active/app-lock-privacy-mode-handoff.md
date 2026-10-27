@@ -1571,3 +1571,122 @@ Validation to request (serial, validation-runner): targeted-unit-test `*AppLockC
     - privacy-security-guardian ACCEPT-WITH-CONDITIONS: C1 race fix, C2 BLOCKING list, F3 pin, F4 KDoc, all applied.
     - reviewer-strict ACCEPT-WITH-CONDITIONS: ISSUE-1..5 applied. ISSUE-4 (retire or make forced-aware `UpdateDiscreetNotificationsUseCase` → `setDiscreetNotifications`) must be closed BEFORE any wiring.
   - Next: S18-ii, which is review-save, re-read, notices, and T19 under the binding conditions (a)–(f).
+
+## S18-ii-a — implemented (2026-10-27; NOT validated, nothing was run)
+
+Scope: domain serializer (F4) and cancelled-write re-read (F7). Lane A sub-slice a. Dormancy holds (no new production caller of Operations).
+
+Files (M = main, T = test, relative to `app/src/`):
+- M/domain/privacy/applock/AppLockSettingsWriteSerializer.kt: NEW (moved; same API `withExclusiveWrite`, `@Singleton @Inject constructor()`, no Hilt module). KDoc: non-reentrant, no prompt inside.
+- M/ui/screens/privacysettings/AppLockSettingsWriteSerializer.kt: emptied to a zero-byte file by the implementer (no delete tool). THE ORCHESTRATOR MUST `git rm` IT. The ViewModel imports the domain class explicitly.
+- M/domain/privacy/applock/AppLockSettingsOperations.kt: injects the serializer (constructor order: controller, repository, capability, trigger, SERIALIZER, scope); `directWriteMutex` and the Mutex imports removed; all four paths run in `writeSerializer.withExclusiveWrite` (runApply, runTimeoutApply, direct timeout write inside requestTimeoutChange, writePlainSetting). F7 helper `settleCancelledWrite` + `rereadAfterCancelledWrite` + `WriteOutcome.applyThenRethrow`.
+- M/ui/screens/privacysettings/AppLockPrivacySettingsViewModel.kt: import + KDoc only.
+- M/domain/privacy/applock/AppLockController.kt: comments only (the two stale `TODO(S18-i-b2)` labels, now `TODO(S18-ii)` and `TODO(S18-ii-d)`).
+- T/domain/privacy/applock/AppLockSettingsWriteSerializerSharingTest.kt: NEW. T/domain/privacy/applock/AppLockSettingsOperationsCancelledWriteTest.kt: NEW.
+- T/domain/privacy/applock/AppLockControllerTestFixtures.kt: `SettingsOperationsRig` MOVED here from AppLockControllerEnableDisableTest.kt (now the one construction site) with a `serializer` parameter (default a fresh instance).
+- T EnableDisableTest (rig and unused imports removed), ForcedValueTest, OpenOriginSuccessTest, SettingsOperationsTimeoutTest (see decision 4), T/ui/.../AppLockPrivacySettingsViewModelTest.kt (import).
+- Docs: LEGAL_PATHS (SERIALISATION domain-owned; WRITE 1/5 wording; F4 and F7 struck as CLOSED in the WRITE 3 BLOCKING list), CODEBASE_SEGMENTS, CODEBASE_INVENTORY, hilt-bindings-map, ENGINE_INTERACTION_MAP.
+
+Decisions:
+1. (Corrected in the guardian fixes.) The plain writes and the direct timeout write run `serializer { NonCancellable { ... } }`: the lock wait is cancellable, which is safe because nothing is written or moved before the lock is held (a cancelled waiter just leaves). The two applies (lock apply, prompt timeout apply) keep `NonCancellable { serializer { ... } }`, so an apply that started always runs to its completion `finally`. The earlier text that claimed `NonCancellable { serializer }` for the plain writes was wrong.
+2. F7 evidence rule: only a `Loaded` re-read whose field equals the request counts as committed. `FirstRunDefault` (nothing ever stored), `Unreadable`, another value, a throwing re-read, or a cancellation inside the re-read all count as NOT committed (`Failed(field)`: no move, the existing claim-once PERSIST_FAILED, no trigger). The held CancellationException is rethrown AFTER the outcome was applied (`applyThenRethrow`, in a `finally`, so the cancellation wins even if the trigger throws). The completion `finally` (INV-54) is untouched.
+3. Plain writes: (superseded by the guardian fixes, privacy C2) a cancelled write whose re-read shows the stored lock ON gives `Rejected(FORCED)` (REJECTED_FORCED semantics) for an equal AND a different value, exactly the uncancelled answer: no move, no trigger, no failure record; then the cancellation is rethrown. Timeout (WOULD_WEAKEN case): a cancelled conditional timeout write whose re-read shows the lock on and a stored timeout shorter than requested is `Failed(AUTO_LOCK_TIMEOUT)` (recorded once), where the uncancelled path would answer WOULD_WEAKEN (NOT_IN_ORIGIN, no record). The caller sees only the cancellation, so no result differs; the one record is the conservative choice (a retry takes the prompt path). Only a `Loaded` re-read equal to the request counts as committed.
+4. Four existing tests asserted "a cancellation records NOTHING" (OpenOriginSuccessTest lock write, TimeoutTest direct and prompt-apply, ForcedValueTest plain). F7 changes that by design (no commit seen = failure recorded once). They are MODIFIED (renamed and assertion changed to the one PERSIST_FAILED record), not deleted. Report to the reviewer.
+5. Pins: none changed. The serializer KDoc DOES mention Operations; the dormancy and single-call-site scans do not trip because they skip comments (corrected in the guardian fixes).
+
+Risks:
+- Not compiled or run. Verify: `private inline fun WriteOutcome.applyThenRethrow` (private class in a private inline) and the `try { return ... } finally { throw }` shape compile cleanly; the new tests rely on the fake store committing then throwing CancellationException from `lockWriteResult`/`timeoutWriteResult`/`plainWriteResult`.
+- Non-reentrant lock: no inner call re-enters it (controller, repository, trigger do not use the serializer). The future S18 ii-g must not wrap `requestDiscreetChange` in the serializer.
+- The F7 equality test can mistake another writer's identical value for ours (benign: same value).
+- Residual 5 (privacy): an ENABLE whose write really committed but whose F7 re-read is unreadable (or throws) stays `Disabled` in-process, with one PERSIST_FAILED record, until a re-read of the store. INV-46 holds (no trigger, no move on unproven evidence) and notifications fail closed via INV-2 (the stored lock is on, so the effective values are forced on at the next read).
+
+### S18-ii-a — guardian fixes (architecture + privacy ACCEPT-WITH-CONDITIONS)
+
+Implemented, NOT validated, nothing was run. Write set: Operations, the CancelledWrite test, the OpenOriginSuccess test, LEGAL_PATHS, this handoff. S18-ii-b files untouched.
+1. MAJOR (architecture 1, G-CANCEL-01 + U-PR1): the broad `catch (e: Exception)` of the F7 re-read moved into the standard helper `rereadStoreOrNull()` (`catch (e: CancellationException) { throw e } catch (e: Exception) { Timber.w(class name only); null }`). `rereadAfterCancelledWrite` wraps only that call in a catch for `CancellationException` alone (maps to null, no broad catch left). Loaded + requested value gives Committed, anything else gives Failed(field). No behaviour change. Every other broad catch in Operations already has the rethrowing CE sibling; the new `applyThenRethrow` catch uses `if (e === held) throw e`.
+2. Architecture 2 / privacy 4: `applyThenRethrow` no longer uses `finally { throw }`. When apply throws X while a cancellation is held, X is added as suppressed to the held cancellation (unless it is the same object) and the held cancellation is thrown. A second cancellation thrown by the re-read is added as suppressed to the first, which is the one rethrown.
+3. Privacy C2: `settleCancelledWrite(..., lockOnIsForced = true)` for WRITE 5; a re-read with the stored lock on returns `Rejected(FORCED)` for an equal and a different value (see decision 3).
+4. Privacy C3 and architecture 5 tests (AppLockSettingsOperationsCancelledWriteTest): lock-on equal and different value for both plain fields; a cancellation thrown by the re-read itself (WRITE 4 direct, WRITE 5, WRITE 3; original propagates, second suppressed, Failed recorded once); a throwing re-read isolated from the pre-read (failure set inside the write lambda) on both WRITE 4 paths and WRITE 5; the F7 DISABLE case (unreadable re-read keeps the lock on, PERSIST_FAILED(APP_LOCK_ENABLED) once, gate released); an outcome-step failure kept as suppressed. OpenOriginSuccessTest ~:131 now asserts the exact emitted list and the FIELD metadata. Gates are completed in a `finally` (unchanged).
+5. Docs: LEGAL_PATHS ~:1714 and ~:1792 reworded (F4 serializer part CLOSED, F4(a) D8 BLOCKING for S18-ii-d); decisions 1, 3, 5 corrected above; residual 5 added.
+Pins unchanged. Dormancy holds (no new production caller of Operations).
+Targeted filter: `*AppLockSettingsOperations*,*AppLockControllerOpenOriginSuccess*,*AppLockControllerForcedValue*,*AppLockSettingsWriteSerializer*`, plus the registered guards cancellation (G-CANCEL-01) and `CancellationSafetyArchitectureGuardTest`.
+
+Validation to request (serial, one batch):
+- targeted `*AppLockSettingsWriteSerializer*,*AppLockSettingsOperations*,*AppLockController*,*AppLockPrivacySettingsViewModel*`
+- shards domain-n-z and runtime-ui
+- registered-guard cancellation, known_good_state, ui_dao
+
+Gates: privacy-security-guardian, architecture-guardian, reviewer-strict.
+
+## S18-ii-b — implemented
+
+Files (source):
+- `domain/notification/presentation/NotificationContentPolicy.kt`: `decideDiscreet(kind, sdkInt, actionsSuppressed)` has no default (KDoc updated).
+- `data/service/AndroidNotificationService.kt`: `rebuildDiscreet` is now `suspend` and passes `actionsSuppressed = actionsSuppressedFor(kind)` (new private suspend helper).
+
+Files (tests):
+- `NotificationContentPolicyTest`: the default-pin case (`decideDiscreet drops bill actions on api 30 and below only when told ...`) is MODIFIED (the former default call is now an explicit `actionsSuppressed = false`, still asserting UNCHANGED on SDK 26 and 30); the three other `decideDiscreet(kind, sdk)` calls became explicit `false` (semantics unchanged). Nothing deleted.
+- `BillNotificationSweepParityTest` (`T/service/reminder`): `settingsState` var behind the scripted repo, `sweepOnce()` and `lockOn()` helpers, two `@Config(sdk = [30])` rows: lock on (control: unlocked worker BILL has 2 actions; after the lock flips the sweep rebuild has none; a lock-on worker BILL has the same icon and priority and no actions) and unreadable (no actions).
+- `AndroidNotificationServicePresentationTest`: new class `AndroidNotificationServiceSweepActionsSdk30Test` (lock on, unreadable, throwing read, lock off control). Asserts the action count after a real sweep and the single `NOTIF_ACTIONS_SUPPRESSED_LOCK` with metadata exactly `{SDK_INT: 30}`.
+
+Decisions:
+1. One rule, no copy. The service does not hold the settings repository. For BILL it calls `presentationResolver.resolve(kind, sdkInt)` and sets `actionsSuppressed = (actionPolicy == NONE)`. On API 30 and below `NONE` is exactly `EffectivePrivacyValues.effectiveLockEnabled(loadState)` (timeout, `Unreadable(any)` and a thrown read all count as lock on, as on the post path); on API 31+ the policy is `AUTH_REQUIRED` so the term is irrelevant. Non-BILL kinds pass `false` without a read (they have no actions). Deviation from the literal plan wording ("pass `effectiveLockEnabled(<committed state>)`"): same value, but it avoids a second rule, a new constructor parameter on the Hilt/androidTest/6 test construction sites, and an edit to the resolver (outside the write set).
+2. D5: the resolver's existing private `reportActionsSuppressed` helper emits `NOTIF_ACTIONS_SUPPRESSED_LOCK(SDK_INT)` on that same call, so sweep-rebuilt BILLs record it exactly as the post path does. The code and its emitter entry already exist (`PrivacyDiagnosticsEmitter.kt:60`): no allowlist, registry or guard change.
+3. `CancellationException` propagates from the resolver (it is rethrown before its broad catch); the sweep loop already rethrows it before its own `catch (Exception)`. No new catch added.
+4. The read happens per BILL rebuild, after the pacer pause, so it reflects the state at that moment (one extra bounded read per swept BILL, `T_READ_MILLIS` = 500 ms bound inside the resolver).
+
+Risks:
+- Not compiled or run. Verify the new Robolectric rows: BILL channel creation in the new class, `actions` platform type on `unlockedWorker.actions.size`, and that `BillReminderWorker` runs under `@Config(sdk = [30])` in the parity test (it was only run at 34 before).
+- Side effect: a sweep of a BILL under unreadable settings also records `NOTIF_POLICY_SETTINGS_UNREADABLE(cause)` through the resolver (bounded, rate limited, same as a post). Accepted; a reviewer may prefer a quiet path.
+- The resolver's emitter is fire-and-forget on the application scope, so D5 emission is not awaited by the sweep (matches the post path).
+- G1b still owns the device re-run of `NotificationPresentationDeviceTest` on API 26 and 30; `NotificationPresentationDeviceTest.kt:192` constructs the service with the unchanged 4-argument constructor (no change needed).
+
+Validation to request (serial, one batch):
+- targeted `*NotificationContentPolicy*,*BillNotificationSweepParity*,*AndroidNotificationService*,*NotificationPresentationResolver*`
+- shards `data`, `domain-n-z` and `runtime-ui` (config/validation/test-shards.json: `service.*`, which holds `service/reminder`, is in `runtime-ui`; `domain.notification` falls under `domain-n-z`; `data.service` under `data`).
+
+Gates: privacy-security-guardian (lead), reviewer-strict.
+
+### S18-ii-b — privacy review (ACCEPT-WITH-CONDITIONS) and fixes (2026-10-27; NOT validated, nothing was run)
+
+- F1 (hardening): `AndroidNotificationService.actionsSuppressedFor` now tests `actionPolicy != NotificationActionPolicy.UNCHANGED` (was `== NONE`), so any unexpected policy value fails closed. KDoc updated. On API 31+ AUTH_REQUIRED now answers true, but `decideDiscreet` returns AUTH_REQUIRED first, so the output is unchanged.
+- F2 (stale doc): `NotificationContentPolicy.decideDiscreet` KDoc no longer says the sweep "does not read the settings again"; it says the sweep does not re-read for the mode and the caller supplies the lock term (the service obtains it through the resolver for BILL).
+- F3 (test): `AndroidNotificationServiceSweepActionsSdk30Test` gains a fifth row (a read that never completes via `awaitCancellation()`; the resolver's 500 ms bound is skipped by virtual time) asserting 0 actions and exactly one `NOTIF_ACTIONS_SUPPRESSED_LOCK` with `{SDK_INT: 30}`. The unreadable, throwing and timeout rows now assert `actionCount(BILL_ID) == 2` before the sweep (control). The old inline service construction in the throwing row was replaced by a shared `sweepWith(repo)` helper (`sweep(state)` delegates to it).
+- INFO 4: the extra settings read on API 31+ BILL rebuilds is accepted, to avoid keeping a second SDK-gated rule beside the resolver.
+- INFO 5: no code change required.
+- C1 (condition): validation must include `*AndroidNotificationServiceRepost*` in the targeted batch, in addition to the S18-ii-b batch above.
+
+### S18-ii-a+b — first combined batch (2026-10-27)
+- Targeted vr-20261027-045853-80c28864 FAILED on exactly one test: `AppLockSettingsOperationsCancelledWriteTest` "WRITE 3 … re-read shows committed …".
+- The cause was a TEST bug. The shared helper probed the T33 gate with an ENABLE prompt, which is legal only from DISABLED. In the committed case the state is UNLOCKED, so the probe got NotInOrigin.
+- Fix (test-only): the probe now uses the legal open-origin prompt for the resulting state (ENABLE from DISABLED, DISABLE from UNLOCKED). Any other state fails, so no assertion is weakened.
+- cancellation vr-20261027-050442-ab6e7ac8 PASS. The remaining jobs in the batch were held and are re-queued.
+- architecture-contracts vr-20261027-050820-588a1bf7 FAILED on CANCEL-01 (U-PR1) at AppLockController.kt:1094. This is a PRE-EXISTING violation introduced by S16 part (ii-b) (fca5663b): the nested `catch (closeFailure: Throwable)` inside `launchPrompt`'s CE catch.
+  - It went unnoticed because the app-lock batches since S16 did not include the architecture-contracts shard. The registered G-CANCEL-01 guard accepted it.
+  - Fix (same behaviour): a preceding `catch (closeFailure: CancellationException)` sibling that attaches it to `e` as suppressed. `e` is still rethrown. The comment sits above the try, so the sibling stays inside the guard's 200-character window (the first attempt failed in vr-20261027-051556-650244a9 because of the comment).
+  - Process: every app-lock batch that changes production code now includes the architecture-contracts shard.
+- Passed on the current tree before this controller fix: targeted vr-20261027-050936-cd9bbaa4 and known_good_state vr-20261027-051224-29a2330d.
+- Passed earlier on the pre-test-fix tree: ui_dao vr-20261027-050804-42457c64, cancellation vr-20261027-050442-ab6e7ac8.
+- The batch is re-queued after the controller fix.
+
+### S18-ii-a+b — final gate (reviewer-strict ACCEPT-WITH-CONDITIONS) and fixes (2026-10-27)
+- ISSUE-1: the LEGAL_PATHS BLOCKING list now strikes F3, as CLOSED by S18-ii-b.
+- ISSUE-2: the re-post sweep legal path (LEGAL_PATHS) and the ENGINE map rows now show the BILL resolver read, `actionsSuppressed = actionPolicy != UNCHANGED`, and the D5 and unreadable codes.
+- ISSUE-3: ui_dao is re-run on the final tree.
+- N5: S18-ii-b decision 1's `== NONE` is superseded by F1 (`!= UNCHANGED`).
+- N2, N3, N4 and N6 are recorded as accepted:
+  - N2: an Error is suppressed under a held cancellation, the same primary-wins semantics as `use`.
+  - N3: a WRITE 4 cancelled-differ records a failure; this cannot happen under the shared serializer.
+  - N4: the serializer is held across the sweep; this is bounded.
+  - N6: Hilt sharing is proven at app-check.
+- Final-tree validation (fingerprint 170e3954…), all PASS:
+  - targeted vr-20261027-052203-f4e739fd
+  - cancellation vr-20261027-052451-f87ff41b
+  - architecture-contracts vr-20261027-052507-76056dbc
+  - domain-n-z vr-20261027-052553-d8b56820
+  - runtime-ui vr-20261027-052740-eb499ae2
+  - data vr-20261027-052941-9743300b
+  - known_good_state vr-20261027-053500-6ab5bb4a
+  - ui_dao: re-run after these doc-only edits
+- Open BLOCKING after S18-ii-a+b: F4(a)/D8 (S18-ii-d), finding 8 (S18-ii-f), WRITE 5 routing / ISSUE-4 exit (S18-ii-g, owner D4), INV-45 ViewModel routing (S18-ii-h with S20, owner D1).
+- S18-ii-a and S18-ii-b ACCEPTED (2026-10-27). ui_dao vr-20261027-060124-3941740e PASS on the final tree. Committed. Next: S18-ii-c (notices INV-51; re-read T28/T29). It needs the owner's D9 (the emitter allowlist entry LOCK_SETTINGS_RECOVERED) before its emitter part.

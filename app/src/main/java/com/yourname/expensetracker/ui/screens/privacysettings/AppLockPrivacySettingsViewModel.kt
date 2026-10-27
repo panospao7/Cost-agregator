@@ -9,6 +9,7 @@ import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingField
 import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsLoadState
 import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsRepository
 import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsWriteResult
+import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsWriteSerializer
 import com.yourname.expensetracker.domain.privacy.applock.DiscreetRepostTrigger
 import com.yourname.expensetracker.domain.privacy.applock.EffectivePrivacyValues
 import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticCode
@@ -90,9 +91,10 @@ sealed interface AppLockPrivacySectionState {
  * saves discreet on re-posts the shade in place like the per-field path.
  *
  * Write discipline (S9b carry-forwards):
- * - Serialised: every write runs under the singleton [AppLockSettingsWriteSerializer], so two taps, or a
- *   write started by a previous instance of this ViewModel, can never interleave their before-read, write
- *   and sweep.
+ * - Serialised: every write runs under the singleton, domain-owned [AppLockSettingsWriteSerializer], so two taps,
+ *   or a write started by a previous instance of this ViewModel, can never interleave their before-read, write
+ *   and sweep. The same instance serialises the app-lock operations (S18 ii-a, F4). The wrappers here (WRITE 1 and
+ *   WRITE 2) never call the operations, so the non-reentrant lock cannot deadlock.
  * - Survives screen exit: writes are launched in the [ApplicationScope] and run inside
  *   `withContext(NonCancellable)`, off Main (the scope uses the IO dispatcher). A committed ON therefore
  *   cannot miss its re-post sweep because the screen was left. `NonCancellable` defers cancellation; it

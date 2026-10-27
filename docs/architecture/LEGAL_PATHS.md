@@ -1525,7 +1525,10 @@ RE-POST sweep (turning discreet on, see APP LOCK SETTINGS WRITE PATH):
              bill_reminders = BILL, anomaly_alerts = ANOMALY, ai_briefings = BRIEFING;
              budget_alerts id 10000..19999 = WARRANTY, 20000..29999 = RECEIPT_MATCH, other = BUDGET
           3. any other channel (including the capture channel) → null → skipped
-      • NotificationContentPolicy.decideDiscreet(kind, sdkInt) (no second settings read)
+      • BILL: NotificationPresentationResolver.resolve(BILL, sdkInt) (bounded T_read; actionsSuppressed =
+        actionPolicy != UNCHANGED; D5 NOTIF_ACTIONS_SUPPRESSED_LOCK(SDK_INT); NOTIF_POLICY_SETTINGS_UNREADABLE
+        when the store is unreadable) → NotificationContentPolicy.decideDiscreet(kind, sdkInt, actionsSuppressed);
+        other kinds: actionsSuppressed = false, no read (S18-ii-b)
       • fresh builder → NotificationPresentationApplier.apply (stamps the kind marker again);
         from the original it reuses only id, tag, channel, content intent, action PendingIntents
         (BILL only, mapped by position onto resource-titled templates) and the post time;
@@ -1656,7 +1659,7 @@ WRITE 4 (auto-lock timeout) are DORMANT per-field writers that nothing may call 
   → AppLockPrivacySection (UI) → AppLockPrivacySettingsViewModel.setDiscreetNotifications
      (ignored unless Ready and idle, INV-44)
   → appScope.launch (@ApplicationScope, IO) { withContext(NonCancellable) {
-        AppLockSettingsWriteSerializer.withExclusiveWrite { ... } } }
+        AppLockSettingsWriteSerializer.withExclusiveWrite { ... } } }   (domain-owned, shared with WRITE 3-5)
   → UpdateDiscreetNotificationsUseCase(enabled)
       1. before = effective discreet from getLoadState() (trusted only for Loaded / FirstRunDefault;
          Unreadable counts as was-off)
@@ -1709,12 +1712,14 @@ WRITE 3 — lock flag (S18 part (i-a), DORMANT: implemented and tested, no produ
       7. completion: onOpenOriginApplyCompleted(attemptId) in a finally (also on failure or
          cancellation, which is rethrown), after the state move; releases the T33 gate
   DORMANT / NOT LEGAL TO WIRE until ALL of these BLOCKING items are closed:
-    F3: the whole plan :1490-1493 binding - remove the decideDiscreet default, pass actionsSuppressed,
-        add the SDK <= 30 lock-on parity row, decide NOTIF_ACTIONS_SUPPRESSED_LOCK;
-    F4: the domain write serializer shared with the ViewModel (it also covers the WRITE 4 timeout writes
-        and the WRITE 5 discreet / secure-screen writes);
-    F7: a store re-read after a cancelled NonCancellable write (WRITE 3, both WRITE 4 paths and WRITE 5;
-        the controller view is updated from the re-read);
+    F3: CLOSED by S18-ii-b (adopted resolver form, actionPolicy != UNCHANGED; see the plan amendment
+        "S18-ii-b accepted deviation"; the API 26/30 device re-run stays with G1b);
+    F4: serializer part CLOSED (S18-ii-a); F4(a) review-save in-edit guard (D8) remains BLOCKING for wiring
+        (S18-ii-d) (the domain-owned serializer is shared with the ViewModel and covers the WRITE 3,
+        WRITE 4 and WRITE 5 paths);
+    F7: CLOSED by S18 ii-a (a store re-read after a cancelled NonCancellable write on WRITE 3, both WRITE 4
+        paths and WRITE 5; loaded + equal = committed path, otherwise not committed: no move, failure recorded
+        once, no trigger; the CancellationException is rethrown and the completion finally still runs);
     finding 8: setAppLockEnabled, setAutoLockTimeout, setAutoLockTimeoutIfNotWeakening,
         setDiscreetNotificationsIfNotForced and setSecureScreenIfNotForced become abstract (their
         fail-closed default bodies go);
@@ -1742,7 +1747,7 @@ WRITE 4 — auto-lock timeout (S18 part (i-b1), DORMANT: implemented and tested,
   (no ViewModel, Activity, Compose or Android type).
       1. applyRunning check, then the pre-read of the committed settings; an unreadable store or a
          throwing pre-read = FAILED, nothing written, no prompt, LOCK_SETTING_PERSIST_FAILED(AUTO_LOCK_TIMEOUT)
-      2. equal or shorter timeout, or the lock is off (NO prompt): under a Mutex held across the pre-read
+      2. equal or shorter timeout, or the lock is off (NO prompt): inside the shared serializer across the pre-read
          and the write (applyRunning re-checked inside it), withContext(NonCancellable) {
          AppLockSettingsRepository.setAutoLockTimeoutIfNotWeakening(timeout) } - ONE store edit that
          re-checks "lock on and timeout longer than stored" and writes nothing then
@@ -1767,7 +1772,7 @@ production caller):
   OWNER: AppLockSettingsOperations (same class as WRITE 3 and 4). Entries: suspend requestDiscreetChange(enabled)
   and suspend requestSecureScreenChange(enabled). Under INV-48 / OD-2 (a) both values are FORCED while the lock
   is on (also in INERT), so there is no weakening that needs a prompt: they are refused, not authenticated.
-      1. applyRunning check (ALREADY_IN_FLIGHT), then a Mutex (the same one as WRITE 4) held across
+      1. applyRunning check (ALREADY_IN_FLIGHT), then the shared AppLockSettingsWriteSerializer (the same one as WRITE 1-4) held across
          [discreet only: the effective-discreet pre-read], the write and the trigger, applyRunning re-checked inside
       2. withContext(NonCancellable) { AppLockSettingsRepository.setDiscreetNotificationsIfNotForced(enabled) or
          setSecureScreenIfNotForced(enabled) } - ONE store edit: Unreadable = Rejected(UNREADABLE) (FAILED +
@@ -1777,7 +1782,7 @@ production caller):
          changes); Failed / throw / UNREADABLE → onPlainSettingWritten(field, value, false) (record once per
          (code, field))
       4. discreet only, Committed: DiscreetRepostTrigger.onCommittedWrite(before, after effective) (INV-13, INV-46)
-      5. the enable / disable apply of WRITE 3 holds the SAME Mutex across its pre-read, write, state move and
+      5. the enable / disable apply of WRITE 3 holds the SAME serializer across its pre-read, write, state move and
          trigger (privacy review C1), so a plain discreet write cannot commit between the apply's pre-read and
          its lock write (a stale "was discreet" would skip the sweep)
   The 1a UpdateDiscreetNotificationsUseCase / ViewModel path (setDiscreetNotifications, no FORCED check) is NOT
@@ -1788,14 +1793,16 @@ production caller):
   UpdateDiscreetNotificationsUseCase -> setDiscreetNotifications (and flip the F3 pin to zero production call
   sites), or make setDiscreetNotifications forced-aware.
 
-SERIALISATION (INTERIM): AppLockSettingsWriteSerializer (@Singleton, ui/screens/privacysettings, a
-process-wide Mutex) so a write started by an earlier ViewModel instance still excludes the next
-one's before-read / write / sweep. S18 moves it to the domain owner before any new writer is WIRED
-(domain code cannot depend on the ui package) and takes over review-save diagnostics. WRITE 3 and
-WRITE 4 are implemented but do NOT share this serializer (only the per-field atomic store edit keeps
-them from interleaving at the store; WRITE 4's no-prompt path also holds its own Mutex across its
-pre-read and write), so they may not be wired until the serialiser is domain-owned and both run inside
-it (blocking: privacy review F4).
+SERIALISATION (domain-owned since S18 ii-a, F4 serializer part CLOSED (S18-ii-a); F4(a) review-save in-edit
+guard (D8) remains BLOCKING for wiring (S18-ii-d)): AppLockSettingsWriteSerializer (@Singleton,
+domain/privacy/applock, a process-wide non-reentrant Mutex, withExclusiveWrite) so a write started by an
+earlier ViewModel instance still excludes the next one's before-read / write / sweep. ONE instance is shared
+by the ViewModel's WRITE 1 and WRITE 2 wrappers and by every AppLockSettingsOperations path (WRITE 3 lock
+apply, WRITE 4 timeout apply and direct timeout write, WRITE 5 plain writes): the pre-read, the durable
+write, the controller entry and the trigger are one critical section, and no prompt is held inside it.
+Nothing called inside it may re-enter it (the ViewModel wrappers never call Operations; Operations never
+calls the ViewModel). The former Operations-private directWriteMutex is gone. Review-save diagnostics
+ownership and the store-level D8 guard remain with S18 ii-d.
 
 FORBIDDEN:
   ❌ Writing the settings store anywhere but AppLockSettingsRepositoryImpl

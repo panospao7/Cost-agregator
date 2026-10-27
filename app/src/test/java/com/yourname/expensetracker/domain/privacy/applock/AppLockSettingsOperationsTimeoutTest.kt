@@ -311,7 +311,7 @@ class AppLockSettingsOperationsTimeoutTest {
     // --- Cancellation ----------------------------------------------------------------------------
 
     @Test
-    fun `a CancellationException from the direct write propagates and is not recorded as a failure`() {
+    fun `a CancellationException from the direct write propagates and the unconfirmed write is recorded once (F7)`() {
         val rig = unlockedRig(AutoLockTimeout.M5)
         rig.h.repository.timeoutWriteFailure = CancellationException("c")
 
@@ -322,12 +322,13 @@ class AppLockSettingsOperationsTimeoutTest {
             // propagated
         }
 
-        assertTrue(rig.h.emitted.isEmpty())
+        // S18 ii-a F7: the re-read shows the stored M5 (not the requested S30), so it is not committed and recorded once.
+        assertEquals(listOf(PrivacyDiagnosticCode.LOCK_SETTING_PERSIST_FAILED), rig.h.emitted)
         assertEquals(AppLockState.Unlocked, rig.controller.state.value)
     }
 
     @Test
-    fun `a CancellationException from the prompt-path write is not swallowed, records nothing, and still completes the apply`() = runBlocking {
+    fun `a CancellationException from the prompt-path write is not swallowed, records the unconfirmed write once (F7), and still completes the apply`() = runBlocking {
         val rig = unlockedRig()
         val h = rig.h
         h.repository.timeoutWriteFailure = CancellationException("c")
@@ -337,7 +338,7 @@ class AppLockSettingsOperationsTimeoutTest {
         h.authenticator.deliver(DeviceAuthOutcome.Succeeded)
 
         assertEquals(AppLockState.Unlocked, rig.controller.state.value)
-        assertTrue("a cancellation is not a persist failure", h.emitted.isEmpty())
+        assertEquals("F7: no commit on the re-read is one persist failure", listOf(PrivacyDiagnosticCode.LOCK_SETTING_PERSIST_FAILED), h.emitted)
         assertTrue("a cancellation is not reported as an uncaught failure", rig.uncaught.isEmpty())
         // The completion ran in the finally: the in-flight flag is cleared and a new request is accepted.
         h.repository.timeoutWriteFailure = null

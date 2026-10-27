@@ -36,7 +36,7 @@
 | **NotificationService / AndroidNotificationService** (`domain/service`, `data/service`) | Kind-aware posts only (`*ForKind`, INV-12) from BudgetMonitor (BUDGET), AnomalyAlertOrchestrator (ANOMALY), DeliverProactiveBriefingNotificationUseCase (BRIEFING), WarrantyExpirationWorker (WARRANTY), ReceiptMatchingWorker (RECEIPT_MATCH); builder owner 1 (`postForKind` + `rebuildDiscreet` sweep). `DeliveryResult.PERMISSION_DENIED` is returned for a platform `SecurityException`; every caller must handle it explicitly. 4 constructor params (context, resolver, applier, `PrivacyDiagnosticsEmitter`) | 🟡 HIGH |
 | **NotificationPresentationApplier / NotificationContentPolicy / NotificationPresentationResolver** | Every app notification of the six kinds (5 service callers + BillReminderWorker + the re-post sweep). Applier = the one place a decision becomes builder state (PRIVATE, generic public version, FULL/DISCREET text, BigText, action policy, kind marker). Policy = pure single owner of FULL/DISCREET and the action policy (BILL AUTH_REQUIRED on API 31+). Resolver = bounded 500 ms fail-closed read of `AppLockSettingsRepository`. Texts: `strings_notification_presentation.xml` (en/es/el) | 🟡 HIGH |
 | **NotificationKindClassifier / NotificationKindMarker** | Re-post sweep only: marker first, channel / id-range fallback, other channels (incl. capture) skipped; marker value = `NotificationKind.stableToken` (renaming a constant must not change it) | 🟡 HIGH |
-| **Post-commit discreet re-post** (`UpdateDiscreetNotificationsUseCase` → `DiscreetRepostTrigger` → `NotificationService.repostActiveAsDiscreet()`) | Runs only after a committed discreet write on the false → true edge; never on a failed / rejected write, never when turned off. Diagnostics: `NOTIF_REPOSTED_DISCREET(COUNT)` (at least one re-posted), `NOTIF_REPOST_FAILED(EXCEPTION_CLASS)` (per-notification failure, query failure, or a sweep failure caught at the trigger boundary). A sweep failure never fails the committed write. Called from `AppLockPrivacySettingsViewModel` in `@ApplicationScope` under `NonCancellable` + `AppLockSettingsWriteSerializer` (interim, S18) | 🟡 HIGH |
+| **Post-commit discreet re-post** (`UpdateDiscreetNotificationsUseCase` → `DiscreetRepostTrigger` → `NotificationService.repostActiveAsDiscreet()`) | Runs only after a committed discreet write on the false → true edge; never on a failed / rejected write, never when turned off. Diagnostics: `NOTIF_REPOSTED_DISCREET(COUNT)` (at least one re-posted), `NOTIF_REPOST_FAILED(EXCEPTION_CLASS)` (per-notification failure, query failure, or a sweep failure caught at the trigger boundary). A sweep failure never fails the committed write. Called from `AppLockPrivacySettingsViewModel` in `@ApplicationScope` under `NonCancellable` + the domain-owned `AppLockSettingsWriteSerializer` (`domain/privacy/applock`, shared with `AppLockSettingsOperations`, S18 ii-a) | 🟡 HIGH |
 | **DeepLinkPolicy / DeepLinkApplier** (`ui/navigation`) | MainActivity deep-link intake (`handleIntent`, `onCreate` + `onNewIntent`), every notification tap (explicit MainActivity + ACTION_VIEW), `MarkDashboardBriefingOpenedUseCase` (the only link-reachable write), read-only `ExpenseRepository.getExpenseById`. Policy is pure; the applier alone navigates | 🟡 HIGH |
 | **WorkerExecutionGuard** | ALL workers (all 10 CoroutineWorkers run through it, incl. `NotificationIntakeWorker` + snooze/dismiss reminder action workers), 7 (Backup restore gating) | 🟡 HIGH |
 | **WorkerRegistry** | 12 (Startup scheduling), 7 (Backup resume via spec lookup) | 🟢 LOW |
@@ -151,7 +151,7 @@ AndroidNotificationService.postForKind
   ├── BudgetMonitor (BUDGET), AnomalyAlertOrchestrator (ANOMALY), DeliverProactiveBriefingNotificationUseCase (BRIEFING)
   ├── WarrantyExpirationWorker (WARRANTY), ReceiptMatchingWorker (RECEIPT_MATCH)
   └── DeliveryResult.PERMISSION_DENIED handling in every caller
-AndroidNotificationService.rebuildDiscreet (re-post sweep, via NotificationContentPolicy.decideDiscreet)
+AndroidNotificationService.rebuildDiscreet (re-post sweep: BILL via NotificationPresentationResolver.resolve for the action term, then NotificationContentPolicy.decideDiscreet; S18-ii-b)
 BillReminderWorker.sendNotification
 NotificationKindMarker (stamped by the applier, read by NotificationKindClassifier)
 ```
@@ -166,7 +166,8 @@ AppLockPrivacySettingsViewModel.setDiscreetNotifications  (@ApplicationScope, No
               └── false → true only → NotificationService.repostActiveAsDiscreet()
                     ├── NotificationKindClassifier.classify() + NotificationKindMarker.read()
                     ├── SweepPacer.pause(SWEEP_REPOST_SPACING_MS = 300) before every re-post (cancellable; skipped ones not paused)
-                    ├── NotificationContentPolicy.decideDiscreet() → NotificationPresentationApplier
+                    ├── BILL: NotificationPresentationResolver.resolve (bounded read; actionsSuppressed = actionPolicy != UNCHANGED)
+                    ├── NotificationContentPolicy.decideDiscreet(kind, sdk, actionsSuppressed) → NotificationPresentationApplier
                     └── NOTIF_REPOSTED_DISCREET(COUNT) / NOTIF_REPOST_FAILED(EXCEPTION_CLASS)
 
 AppLockPrivacySettingsViewModel.saveReview  (same scope / NonCancellable / serializer)

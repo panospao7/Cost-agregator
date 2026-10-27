@@ -6,6 +6,7 @@ import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingField
 import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsLoadState
 import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsRepository
 import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsWriteResult
+import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsWriteSerializer
 import com.yourname.expensetracker.domain.privacy.applock.AppLockWriteRejection
 import com.yourname.expensetracker.domain.privacy.applock.DiscreetRepostOutcome
 import com.yourname.expensetracker.domain.privacy.applock.DiscreetRepostTrigger
