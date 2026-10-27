@@ -459,4 +459,11 @@
     <string name="ai_insight_desc">Añade una frase generada en el dispositivo a una nueva recomendación cuando registras un gasto mientras la app está abierta. Nunca usa la nube.</string>
     <string name="ai_insight_needs_ai">Activa la IA arriba para usar esto.</string>
     <string name="ai_insight_needs_on_device">Activa la IA en el dispositivo arriba para usar esto.</string>
+    <!-- nl-quick-add slice A: DRAFT Spanish, native sign-off pending -->
+    <string name="add_expense_error_save_failed">No se pudo guardar el gasto. Inténtalo de nuevo.</string>
+    <string name="add_expense_error_currency_loading">Cargando la configuración de moneda…</string>
+    <string name="add_expense_error_merchant_required">El nombre del comercio es obligatorio</string>
+    <string name="add_expense_error_amount_invalid">Introduce un importe válido</string>
+    <string name="add_expense_error_amount_too_large">El importe es demasiado grande</string>
+    <string name="add_expense_error_date_future">La fecha no puede ser futura</string>
 </resources>

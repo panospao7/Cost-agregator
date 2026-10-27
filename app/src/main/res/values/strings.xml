@@ -1942,6 +1942,13 @@
     <string name="add_expense_account_name_label">Account/Person name</string>
     <string name="add_expense_account_placeholder">e.g., Savings account, John, Bank transfer</string>
     <string name="add_expense_error_format">❌ %1$s</string>
+    <!-- nl-quick-add slice A: bounded save/validation messages (never carry exception or repository text) -->
+    <string name="add_expense_error_save_failed">Couldn\'t save the expense. Please try again.</string>
+    <string name="add_expense_error_currency_loading">Loading currency settings…</string>
+    <string name="add_expense_error_merchant_required">Merchant name is required</string>
+    <string name="add_expense_error_amount_invalid">Enter a valid amount</string>
+    <string name="add_expense_error_amount_too_large">Amount is too large</string>
+    <string name="add_expense_error_date_future">Date cannot be in the future</string>
     <string name="add_expense_amount_cd">Amount field, current value %1$s Euro</string>
     <string name="add_expense_payment_method_cd_format">%1$s payment method, %2$s</string>
     <string name="add_expense_category_cd_format">%1$s category, %2$s</string>

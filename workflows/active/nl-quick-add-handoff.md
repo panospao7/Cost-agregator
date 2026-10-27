@@ -179,3 +179,140 @@ Base: feature/nl-quick-add from e6967db1.
 - The S0 reconciliation amendment is persisted in the plan (owner-approvals item 54).
 - Next: slice A (add-expense hygiene), then B (parser + golden suite), D (reduced) and C, one implementer per slice in sequence.
 - Validation: a batched A+B targeted run, then the shards.
+
+### Slice A implementation (2026-10-27, implementer; NOT validated)
+Files changed (all in the nlq worktree):
+- `app/src/main/java/com/yourname/expensetracker/ui/screens/addexpense/AddExpenseViewModel.kt`
+- `app/src/main/java/com/yourname/expensetracker/ui/screens/addexpense/AddExpenseSheet.kt`
+- `app/src/main/res/values/strings.xml`, `values-el/strings.xml`, `values-es/strings.xml` (new keys only)
+- `app/src/test/java/com/yourname/expensetracker/architecture/CancellationSafetyArchitectureGuardTest.kt` (removed the `AddExpenseViewModel.kt` KNOWN_VIOLATIONS entry only)
+- `app/src/test/java/com/yourname/expensetracker/ui/screens/addexpense/AddExpenseViewModelTest.kt`
+
+New string keys (EN text; el/es are DRAFT, owner native sign-off pending):
+- `add_expense_error_save_failed`: "Couldn't save the expense. Please try again."
+- `add_expense_error_currency_loading`: "Loading currency settings…"
+- `add_expense_error_merchant_required`: "Merchant name is required"
+- `add_expense_error_amount_invalid`: "Enter a valid amount"
+- `add_expense_error_amount_too_large`: "Amount is too large"
+- `add_expense_error_date_future`: "Date cannot be in the future"
+- `add_expense_error_format` ("❌ %1$s") is unchanged and still used by the Sheet error card.
+
+Implementation notes:
+- State: `merchantError`/`amountError` are `UiText?`; `SaveResult.Error(val message: UiText)`.
+- Bounded log codes are private VM companion constants: `MERCHANT_SUGGESTION_SEARCH_FAILED` (Timber.w) and `ADD_EXPENSE_SAVE_FAILED` (Timber.e); no throwable and no text is attached.
+- Both broad catches have a preceding sibling `catch (e: CancellationException) { throw e }`.
+- The save coroutine has a `finally` that clears `isSaving` (and resets a still-running mutation to idle) on any exit, including cancellation.
+- `private fun mapSaveError(result: Result.Error): UiText` is the MEC seam. It is a `when (result.message)` whose only branch today is `else -> save_failed`. Unexpected `Result.Loading` also maps to `save_failed`.
+- A private `AddExpenseState.withSaveError(UiText)` helper sets `isSaving=false`, `saveResult` and `mutation`.
+- Transfer (2) and OwnershipValidator messages are `UiText.DynamicString` of the existing English constants. OwnershipValidator is not edited.
+- Duplicate: the VM's mutation message now uses `UiText.StringResource(R.string.error_duplicate_transaction)`. This is the resource the Sheet's Duplicate card already uses. The mutation message is not rendered anywhere.
+- No `suspend fun` was added to the VM.
+- Sheet: `MerchantFieldWithSuggestions.error` is now `UiText?`. Merchant and amount `supportingText` use `UiText.asString()`. A `LaunchedEffect(state.saveResult)` waits one frame, then `scrollState.animateScrollTo(maxValue)` on Error/Duplicate. Both Cards are `semantics(mergeDescendants = true) { liveRegion = Assertive }`.
+- Error card: the "❌ %1$s" wrapper is KEPT, as ux-flows §9 requires. The Text carries `contentDescription = <resolved text only>`, so TalkBack does not announce the glyph. The Duplicate card text is unchanged.
+
+VERIFY-AT-IMPL outcomes:
+- Sheet :180 component: `MerchantFieldWithSuggestions`, a public `@Composable` in the same file. Its `error` param was `String?` and is now `UiText?`. It has no other callers.
+- UiTextExtensions :42: `@Composable fun UiText.asString(): String`. It is composable, so it is only called inside composition (the `supportingText` lambdas and the Card content). The non-composable `asString(Context)` overload is at :15.
+- Duplicate resource: the Sheet uses `R.string.error_duplicate_transaction`. It is now reused by the VM mutation.
+- String assertions on merchantError/amountError existed in AddExpenseViewModelTest (3 places). They were updated to the UiText equivalents.
+- The CancellationSafety scanner only inspects broad catches inside `suspend fun` bodies; the VM has none, so the removed entry is expected green. The rethrow is in place regardless.
+
+Tests (AddExpenseViewModelTest): capturing Timber tree added (plant in setup, uproot in tearDown). New cases:
+- AE-52 suggestion-search failure logs exactly the code
+- suggestion-search cancellation is not logged
+- AE-53 IllegalStateException
+- AE-53 SQLiteException
+- AE-53 save cancellation
+- `Result.Error` with a message
+- `Result.Error` with no message (seam default)
+- `Result.Loading`
+- `Result.Duplicate`
+- three validation-resource cases: amount too large, future date, currency loading
+No test was deleted.
+
+Validation to request: `targeted-unit-test -TestFilter "*AddExpense*,*CancellationSafetyArchitectureGuardTest*"`, then lint (MissingTranslation), `unit-test-shard -Shard runtime-ui`, `-Shard architecture-contracts`, `static-guards`.
+
+### Slice B implementation (2026-10-27, implementer; NOT validated)
+Nothing was compiled or run. Slice A files were not touched.
+
+Files (all in the nlq worktree, root `A` = `app/src/main/java/com/yourname/expensetracker`, `T` = `app/src/test/java/com/yourname/expensetracker`):
+- NEW `A/domain/quickadd/QuickAddParser.kt` (`class QuickAddParser @Inject constructor()`, `parse(QuickAddInput): QuickAddParseResult`; no Hilt module)
+- NEW `A/domain/quickadd/QuickAddModels.kt`, `QuickAddAmountRules.kt`, `QuickAddDateRules.kt`, `QuickAddVocabulary.kt`
+- `config/validation/test-shards.json`: `com.yourname.expensetracker.domain.quickadd.*` added to `domain-n-z` after `domain.provenance.*` (one line, nothing else)
+- `docs/architecture/CODEBASE_SEGMENTS.md`: Segment 9 lists the 5 files and has a `domain/quickadd/*` boundary note (G2-10). No claim about the clipboard consumer until D lands.
+- NEW `T/domain/quickadd/QuickAddParserGoldenFixtures.kt`, `QuickAddParserGoldenTest.kt`, `QuickAddParserPurityTest.kt`
+
+Canonicaliser (single owner of the amount rule; D calls it from `ui/util/ClipboardAmountParser`):
+- `QuickAddAmountRules.canonicalize(core: String): FieldParse<AmountText>` (public object, pure; BigDecimal; does not call `AmountUtils.parseAmount` or `AmountInputSanitizer`).
+- `core` = money token text with currency markers removed. It performs R0..R7 itself: Value(AmountText("12.50")), Flagged(AMOUNT_*), or Absent for "".
+- D usage: pass the regex-matched numeric substring; Value -> `value.text`; Flagged/Absent -> no prefill.
+
+Implementation notes:
+- Purity: no clock, no system zone (zone and now arrive in `QuickAddInput`), `Locale.ROOT` only, no logging, no `java.util.Currency`. Imports: `java.*`, `javax.inject.Inject`, and `domain.categorization.GreeklishNormalizer` (instantiated directly; pure; single owner of the Greeklish fold per spec 4.11). No `android.*`, `timber`, `data.*`, `domain.ai`.
+- `QuickAddInput` and `MerchantText` redact in `toString()`. The result carries no line, tokens, currency or foreign amount.
+- The parser emits all `LineHint`s, including NOTHING_RECOGNISED (all five fields Absent and the line non-blank). A blank line gives Absent everywhere and NO hint. C must not add NOTHING_RECOGNISED a second time.
+- Payment: own enum `QuickAddPayment {CARD, CASH}` so the parser files need no `data.*` import (plan G-2). C maps it to `PaymentMethod`.
+- Order inside the pipeline: classification, then the non-catalog ISO adjacency pass, then the leading-integer quantity rule (so "20 thb taxi" is foreign, not a quantity).
+
+Golden suite (132 cases), per-category counts vs spec 12:
+A 9/9, B 14/14, C 16/16, D 16/16, E 14/14, F 10/10, G 12/12, H 5/5, I 5/5, J 7/7, K 9/9, L 7/7, M 8/8 (total 132/132). `taxonomyCountsMatchSpecSection12` asserts the counts and unique ids.
+
+N11 candidates / spec ambiguities (expected values NOT adjusted; owner/spec author to confirm):
+1. AE-12 "20 abc" -> "20.00", merchant "abc" CONTRADICTS spec 4.2 / OD-3 / G2-3 (leading bare integer followed by TEXT is AMOUNT_QUANTITY, e.g. "15 taxi"). The code follows OD-3 (Gate 2 decided). The table pins "abc 20" -> 20.00 / merchant "abc" (D14) and does NOT pin the literal "20 abc". Under the code "20 abc" is Flagged(AMOUNT_QUANTITY).
+2. Spec 8 says emoji-only gives FILL_NONE + NOTHING_RECOGNISED, but spec 4.3 rule 8 and 4.10 (and the same sentence's parenthetical) make an emoji token TEXT and therefore the merchant. M04 pins merchant Value(emoji), no hint. Under 5.4 that outcome is FILL_PARTIAL, not FILL_NONE.
+3. Spec 4.1 step 3 regex: the space character class was lost in the file (renders as spaces). Implemented as U+00A0, U+202F, U+2009 (the three the task and plan name). U+2007 (figure space) is NOT joined.
+4. Spec 4.2 numeric-date regex allows only 2- or 4-digit years, yet 4.7 says a 3-digit year is DATE_INVALID. The shape accepts 2..4 digit years so the 3-digit case can be reached. A 1-digit year is not a date token (falls to a money candidate, AMOUNT_UNCLEAR).
+5. "Attached" markers (spec 4.6) are implemented as prefix OR suffix for every marker kind, including the attached-only `e`, `ε` and the alphabetic symbols (examples in the spec are one-sided only).
+6. Taxonomy H lists "χθες 5/3"; the table uses the AE-13 literal "taxi 9 χθες 15/10" (same behaviour). F has no "Δευ" case (the vocabulary has it; only "Δευτ." is pinned) because of the count budget.
+7. Non-catalog ISO list = full ISO 4217 alphabetic codes minus the 28 catalog codes. Words that are also codes (cup, pen, all, top, mad, bob...) block the amount when adjacent to the number (OD-5 accepted residual). Detached catalog codes include english-word collisions such as "try" (TRY), as specified.
+8. R5 wording: for a single dot or comma with exactly 3 digits R3 fires first; for 4+ fraction digits ("3.5055") R5 gives UNCLEAR. "0.000"-style zeros hit R3 before R6.
+
+Tests:
+- Golden: every case compared as a rendered string (readable diff, all failures listed); INV-5 on every amount Value under en-US, el-GR, tr-TR, de-DE default locales (`sanitize(T) == T`, `parseAmount(T)` equals the decimal); INV-6 (epoch on localDate, <= now, whole seconds); required AE lines present (AE-10..18); direct canonicaliser table with `parseAmount` agreement on Values and `parseAmount == null` on R4 rows; locale independence of the canonicaliser; embedded catalog codes and symbols vs `SupportedCurrency.catalog`; toString redaction.
+- Purity: same input twice (also across two parser instances); identical results under tr-TR and el-GR defaults; identical when the default TimeZone changes; Turkish dotless-i hazard lines. Locale and TimeZone restored in `finally`.
+- Hand-computed expectations (DST gap/overlap, 92-day edge) were derived from the spec text and must be confirmed by the first run.
+
+Residual risk: first compile and run are unverified. Likely first-run failure sites are the hand-derived golden strings (check `everyGoldenCaseMatchesItsExpectedFields`, which lists every mismatch) and Kotlin compile details.
+
+Validation to request (B): `targeted-unit-test -TestFilter "*QuickAddParser*,*AmountUtilsTest*"`, then `unit-test-shard -Shard domain-n-z` (report must list QuickAddParserGoldenTest and QuickAddParserPurityTest), then `static-guards`. Batched with A: `*AddExpense*,*CancellationSafetyArchitectureGuardTest*,*QuickAddParser*,*AmountUtilsTest*`.
+
+### Slices A+B pre-validation fixes (2026-10-27, implementer; NOT validated)
+Nothing was compiled or run.
+- A: `AddExpenseViewModelTest` tearDown is now `try { Timber.uproot(logTree) } finally { super.tearDown() }`. The `Result.Error` with a repository message test now also asserts `loggedLines.isEmpty()` (nothing logged on that branch).
+- B emoji-only line (owner-approvals item 57, N11 item 2 resolved): `QuickAddParser.deriveMerchant` (the single place the merchant is assembled) now returns Absent unless the merchant contains at least one Unicode letter or digit (`Character.isLetterOrDigit` over code points, checked after the 100-char cut). Emoji plus letters stays a merchant. Golden M04 changed to no merchant plus `NOTHING_RECOGNISED`. No other golden row had a letterless merchant (checked by search; C16 "taxi 15💰" keeps merchant "taxi"), so no other expectation changed.
+- B "20 abc" (N11 item 1 resolved): OD-3 prevails (Flagged AMOUNT_QUANTITY); no code change. Clarification appended to `docs/features/nl-quick-add/domain-spec.md` (also records N11 items 3, 4, 5, 7 as accepted interpretations).
+- Validation to request: unchanged from the Slice B entry above (the batched targeted run covers `*AddExpense*` and `*QuickAddParser*`).
+
+### Slice B review fixes (2026-10-28, implementer; NOT validated)
+Nothing was compiled or run. Slice A files were not touched. First validation run: only `QuickAddParserGoldenTest.canonicalizeIsTheSingleOwnerOfTheAmountRule` failed ("canonicalize(1,234,567) expected V(1234567.00) but was F(AMOUNT_OVER_LIMIT)"); the test was wrong, not the code.
+
+Files: `A/domain/quickadd/QuickAddParser.kt`, `QuickAddAmountRules.kt`, `QuickAddVocabulary.kt`; `T/domain/quickadd/QuickAddParserGoldenFixtures.kt`, `QuickAddParserGoldenTest.kt`, NEW `QuickAddParserForeignCurrencyTest.kt`; `docs/features/nl-quick-add/domain-spec.md` (Clarification 2026-10-28); `docs/architecture/CODEBASE_SEGMENTS.md` (Segment 9 order).
+
+- ISSUE-1 (test): `1,234,567` now expects `F(AMOUNT_OVER_LIMIT)` (spec 4.5 R7); added `CanonRow("1,000,000", V(1000000.00))`.
+- ISSUE-2 (owner-approvals item 58, currency fails closed, recorded in the spec clarification):
+  - (a) any TEXT token, or MONEY core, containing a code point of category Sc is foreign unless it is exactly a home marker; an unknown symbol token next to a money candidate is consumed as a never-home marker (so it leaves the merchant);
+  - (b) US$, CA$, AU$, $US are covered by (a); they are NOT added as markers, so they are foreign even for home USD;
+  - (c) `splitNumberLike` skips one leading minus-class char before the prefix marker and keeps it in the core: "taxi -$5" is FOREIGN (priority) not only NOT_POSITIVE; "-€5" with home EUR is NOT_POSITIVE;
+  - (d) the adjacency pass (renamed `markAdjacentCurrencyWords`) also covers the alphabetic catalog symbols Fr R kr lei Ft kn Kč zł лв (new `QuickAddVocabulary.adjacentAlphabeticSymbol`); a home marker never blocks, `kr` is never home; away from the number they stay text;
+  - (e) `ISO_4217_CODES` completed (added BOV CHE CHW CLF COU MXV SVC USN UYI UYW VED XAG XAU XBA XBB XBC XBD XCG XDR XPD XPT XSU XTS XUA XXX ZWG); catalog codes are still filtered out.
+  - Pinned in the NEW `QuickAddParserForeignCurrencyTest` (the 132-case table and its section 12 counts are intact; no golden row changed expectation).
+- ISSUE-3: `deriveMerchant` keeps all text tokens when category removal would leave no letter or digit. "groceries 🛒 42.30" gives category Groceries and merchant "groceries 🛒" (the spec 4.11 non-blank wording read through the item-57 letter-or-digit rule).
+- ISSUE-4: raw invisible/special characters removed from the source. The editing tooling decodes a literal `\uXXXX` in file content into the raw character, so instead of `\u` escapes the characters are built from code points (named constants, e.g. `0x00A0.toChar()`): fixtures (B04-B06, C01, C13, K01, K02), golden test (required list, canon rows), foreign-currency test, `QuickAddAmountRules` (minus class, U+FFFF poison), `QuickAddParser` (grouping spaces, punctuation, dashes) and the `×` quantity unit in `QuickAddVocabulary`. Regex-level `\\u00A0` / `\\u00D7` escapes were already in place. Meaning unchanged. A final grep over `domain/quickadd/*.kt` finds none of U+00A0, U+202F, U+2009, U+2212, U+00D7, U+037E, U+0387, U+FFFF, U+2011/2013/2014, U+FE63, U+FF0D, U+0661/0662, U+00B7, U+2026. Visible Greek, currency symbols and emoji in test strings stay literal.
+- ISSUE-6: stale N11 comment fixed; "20 abc" (AMOUNT_QUANTITY, merchant "abc") pinned in the foreign-currency test class; INV-5 also asserts `AmountInputSanitizer.parseOrNull(T)` under the 4 locales; NEW brute-force test `canonicalizeValuesAlwaysAgreeWithParseAmountOnEveryShortString` (Value implies parseAmount agrees; the converse is not required by design); the toString test also asserts on `result.toString()`.
+- ISSUE-7: spec clarification records that NOTHING_RECOGNISED is emitted by the parser (C1) and not re-derived by C3 (section 5.4 owner moved).
+- ISSUE-8: Segment 9 lists the five quickadd entries after the domain/transaction/lifecycle entries.
+
+Validation to request: `targeted-unit-test -TestFilter "*AddExpense*,*CancellationSafetyArchitectureGuardTest*,*QuickAddParser*,*AmountUtilsTest*"`, then `unit-test-shard -Shard domain-n-z`, then `static-guards`.
+- 2026-10-28 static-guards known_good_state FAIL (vr-20261027-213956-60eab3e8): active_db_gate 21→22 DB_SIGNATURE_UNRESOLVED from QuickAddParser.addToken(buffer: StringBuilder); fixed by FQN kotlin.text.StringBuilder (no guard/baseline change).
+
+### Slices A + B ACCEPTED (2026-10-28)
+- Gates:
+  - Slice A: privacy-security-guardian + architecture-guardian (combined) ACCEPT-WITH-CONDITIONS; F1 and F2 applied.
+  - Slice B: reviewer-strict ACCEPT-WITH-CONDITIONS; ISSUE-1..8 applied (owner-approvals 57, 58).
+- Validation:
+  - final tree, all PASS: targeted A+B vr-20261027-212616-88ce3332; domain-n-z vr-20261027-213103-d67badba; runtime-ui vr-20261027-213249-bdc82a3c; architecture-contracts vr-20261027-213451-0b626489; lint vr-20261027-213537-703ba75a;
+  - after the QuickAddParser FQN fix: targeted *QuickAddParser* vr-20261027-220938-0a2470a4; known_good_state vr-20261027-221241-e11ca90d; static-guards vr-20261027-221600-56cf13ee.
+  - history: the first static-guards (vr-20261027-213956-60eab3e8) FAILED on known_good_state 21→22; fixed without any baseline change.
+- The el/es strings are DRAFTS (owner sign-off pending). TalkBack pass on the Error and Duplicate cards is a device item.
+- Committed.
+- Next: slice D (reduced: canonical clipboard parser plus H-3 fail-closed), then C, E, F, Z.

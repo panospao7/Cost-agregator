@@ -243,6 +243,11 @@ Owns the base expense CRUD surface, shared core expense models, and the **transa
 - `domain/transaction/SideEffectMode.kt` — Enum: IMMEDIATE, DEFER
 - `domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt` — **Single entry point for ALL expense CUD**
 - `domain/transaction/lifecycle/TransactionSideEffectDispatcher.kt` — Post-creation side effects
+- `domain/quickadd/QuickAddParser.kt` — Quick-add line parser (C1): pure `parse(QuickAddInput): QuickAddParseResult`; fill-only, no persistence
+- `domain/quickadd/QuickAddModels.kt` — Parser value objects (`QuickAddInput`, `FieldParse`, `QuickAddParseResult`, `FlagReason`, `LineHint`); no raw line, tokens, currency or foreign amount in the result
+- `domain/quickadd/QuickAddAmountRules.kt` — Amount rules; `QuickAddAmountRules.canonicalize` is the single owner of amount canonicalisation
+- `domain/quickadd/QuickAddDateRules.kt` — Date and time-of-day rules (LocalDate arithmetic in the input zone)
+- `domain/quickadd/QuickAddVocabulary.kt` — Date/payment/currency vocabulary and the embedded non-catalog ISO list
 - `docs/development/DAO_ACCESS_GUARDRAILS.md` — DAO access policy
 - `scripts/guardrails/dao-access-check.kts` — Guardrail enforcement
 - `util/ImportCoordinator.kt` — CSV/JSON import orchestration (format detection, delegation, result reporting)
@@ -253,6 +258,8 @@ Owns the base expense CRUD surface, shared core expense models, and the **transa
 **Boundary note:** The `transaction_events` table is owned by this segment. It is an immutable append-only log; no updates or deletes should be performed on it.
 
 **Boundary note:** entity provenance/source-link persistence (`domain/provenance/` writers, `entity_source_links` table via `EntitySourceLinkDao`, bound in `di/ProvenanceModule.kt`) rides along with expense lifecycle creation; CI enforces it via `scripts/verify_source_provenance_boundaries.py` (Segment 39).
+
+**Boundary note:** `domain/quickadd/*` (nl-quick-add, G2-10) is a pure, deterministic parser package owned by this segment. It is not a mutation path: the parser performs no persistence, no logging and no clock or locale reads, and its result never carries the typed line. The parser files import nothing from `android.*`, `timber`, `data.*` or `domain.ai`; `now` and the zone arrive through `QuickAddInput`. Quick-add Fill writes in-memory form state only; every persisted effect stays on the existing Save path (`ManualExpenseRepository` to `TransactionLifecycleCoordinator` to `ExpenseDao.insertAtomic()`).
 
 ## SEGMENT 10: Dashboard Totals & Widgets
 

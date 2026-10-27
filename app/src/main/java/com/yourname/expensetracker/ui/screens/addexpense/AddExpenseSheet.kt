@@ -26,7 +26,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -42,7 +44,9 @@ import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.entity.TransferDirection
+import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
+import com.yourname.expensetracker.ui.components.asString
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import com.yourname.expensetracker.ui.util.UiTimeUtils
 import java.time.format.DateTimeFormatter
@@ -104,6 +108,16 @@ fun AddExpenseSheet(
         val hasPrefill = incomingPrefill.first != null || incomingPrefill.second != null
         if (hasPrefill) {
             viewModel.setInitialValuesIfBlank(incomingPrefill.first, incomingPrefill.second)
+        }
+    }
+
+    // ux-flows §9: the Error/Duplicate Card sits at the bottom of the scroll column; bring it into view.
+    LaunchedEffect(state.saveResult) {
+        val result = state.saveResult
+        if (result is SaveResult.Error || result is SaveResult.Duplicate) {
+            // Wait one frame so the newly composed Card is measured and maxValue is current.
+            withFrameNanos { }
+            scrollState.animateScrollTo(scrollState.maxValue)
         }
     }
 
@@ -198,7 +212,7 @@ fun AddExpenseSheet(
                         onDone = { focusManager.clearFocus() }
                     ),
                     isError = state.amountError != null,
-                    supportingText = state.amountError?.let { { Text(it) } },
+                    supportingText = state.amountError?.let { { Text(it.asString()) } },
                     leadingIcon = {
  val currencySymbol = remember(state.homeCurrency) {
      val hc = state.homeCurrency ?: ""
@@ -539,7 +553,9 @@ fun AddExpenseSheet(
                             colors = CardDefaults.cardColors(
                                 containerColor = MaterialTheme.colorScheme.errorContainer
                             ),
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Assertive }
                         ) {
                             Text(
                                 stringResource(com.yourname.expensetracker.R.string.error_duplicate_transaction),
@@ -549,15 +565,22 @@ fun AddExpenseSheet(
                         }
                     }
                     is SaveResult.Error -> {
+                        // ux-flows §9: keep the "❌ %1$s" wrapper, but TalkBack reads the text-only
+                        // content description so the leading glyph is not announced.
+                        val errorText = result.message.asString()
                         Card(
                             colors = CardDefaults.cardColors(
                                 containerColor = MaterialTheme.colorScheme.errorContainer
                             ),
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Assertive }
                         ) {
                             Text(
-                                stringResource(R.string.add_expense_error_format, result.message),
-                                modifier = Modifier.padding(12.dp),
+                                stringResource(R.string.add_expense_error_format, errorText),
+                                modifier = Modifier
+                                    .padding(12.dp)
+                                    .semantics { contentDescription = errorText },
                                 color = MaterialTheme.colorScheme.onErrorContainer
                             )
                         }
@@ -579,7 +602,7 @@ fun MerchantFieldWithSuggestions(
     showSuggestions: Boolean,
     onSuggestionSelected: (MerchantSuggestion) -> Unit,
     onDismissSuggestions: () -> Unit,
-    error: String?,
+    error: UiText?,
     categories: List<Category>,
     onNextFocus: () -> Unit
 ) {
@@ -593,7 +616,7 @@ fun MerchantFieldWithSuggestions(
             placeholder = { Text(stringResource(com.yourname.expensetracker.R.string.merchant_placeholder)) },
             singleLine = true,
             isError = error != null,
-            supportingText = error?.let { { Text(it) } },
+            supportingText = error?.let { { Text(it.asString()) } },
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
             keyboardActions = KeyboardActions(onNext = { onNextFocus() }),
             modifier = Modifier.fillMaxWidth()

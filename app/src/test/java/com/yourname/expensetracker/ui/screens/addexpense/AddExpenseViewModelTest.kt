@@ -1,19 +1,24 @@
 package com.yourname.expensetracker.ui.screens.addexpense
 
+import android.database.sqlite.SQLiteException
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.database.dao.MerchantSuggestion
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.ManualExpenseRepository
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.model.Result
+import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.util.ViewModelTestUtils
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -25,6 +30,7 @@ import org.junit.Assert.assertTrue
 import org.junit.After
 import org.junit.Before
 import org.junit.Test
+import timber.log.Timber
 import java.util.Locale
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -37,9 +43,32 @@ class AddExpenseViewModelTest : ViewModelTestUtils() {
 
     private lateinit var viewModel: AddExpenseViewModel
 
+    // INV-13 capture: every log line (any priority) with its throwable.
+    private data class LoggedLine(val priority: Int, val message: String, val throwable: Throwable?)
+
+    private val loggedLines = mutableListOf<LoggedLine>()
+    private val logTree = object : Timber.Tree() {
+        override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
+            loggedLines += LoggedLine(priority, message, t)
+        }
+    }
+
+    private val amountInvalidText = UiText.StringResource(R.string.add_expense_error_amount_invalid)
+    private val saveFailedText = UiText.StringResource(R.string.add_expense_error_save_failed)
+
+    @After
+    override fun tearDown() {
+        try {
+            Timber.uproot(logTree)
+        } finally {
+            super.tearDown()
+        }
+    }
+
     @Before
     override fun setup() {
         super.setup()
+        Timber.plant(logTree)
         every { timeProvider.now() } returns 1_700_000_000_000L
         every { categoryRepository.allCategories } returns flowOf(emptyList())
         coEvery { expenseRepository.searchMerchants(any()) } returns emptyList()
@@ -233,7 +262,7 @@ class AddExpenseViewModelTest : ViewModelTestUtils() {
     fun `mixed separators with invalid grouping are rejected with the existing error and never saved`() {
         useGreek()
         saveWithAmount("1,23.4")
-        assertEquals("Enter a valid amount", viewModel.state.value.amountError)
+        assertEquals(amountInvalidText, viewModel.state.value.amountError)
         verifySavedAmount(1.234, times = 0)
         coVerify(exactly = 0) {
             manualExpenseRepository.addManualExpense(
@@ -320,7 +349,7 @@ class AddExpenseViewModelTest : ViewModelTestUtils() {
         testDispatcher.scheduler.advanceUntilIdle()
 
         val state = viewModel.state.value
-        assertEquals("Merchant name is required", state.merchantError)
+        assertEquals(UiText.StringResource(R.string.add_expense_error_merchant_required), state.merchantError)
         assertNull(state.amountError)
         assertNull(state.saveResult)
         verifyNoManualExpenseSaved()
@@ -339,7 +368,7 @@ class AddExpenseViewModelTest : ViewModelTestUtils() {
         testDispatcher.scheduler.advanceUntilIdle()
 
         val state = viewModel.state.value
-        assertEquals("Enter a valid amount", state.amountError)
+        assertEquals(amountInvalidText, state.amountError)
         assertNull(state.merchantError)
         assertNull(state.saveResult)
         verifyNoManualExpenseSaved()
@@ -408,5 +437,216 @@ class AddExpenseViewModelTest : ViewModelTestUtils() {
         assertEquals("", state.amount)
         assertEquals("EUR", state.homeCurrency)
         assertEquals(1_700_000_000_000L, state.date)
+    }
+
+    // ---- nl-quick-add slice A: error hygiene (INV-13, INV-15; AE-51..AE-53) ----
+
+    private fun stubAddManualExpenseThrows(t: Throwable) {
+        coEvery {
+            manualExpenseRepository.addManualExpense(
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any()
+            )
+        } throws t
+    }
+
+    private fun stubAddManualExpenseReturns(result: Result<Long>) {
+        coEvery {
+            manualExpenseRepository.addManualExpense(
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any()
+            )
+        } returns result
+    }
+
+    private fun fillValidFormAndSave() {
+        useUs()
+        testDispatcher.scheduler.advanceUntilIdle() // home currency load
+        viewModel.reset()
+        viewModel.updateMerchant("Valid Merchant")
+        viewModel.updateAmount("50.00")
+        testDispatcher.scheduler.advanceUntilIdle()
+        loggedLines.clear()
+        viewModel.save()
+        testDispatcher.scheduler.advanceUntilIdle()
+    }
+
+    @Test
+    fun `AE-52 suggestion search failure logs exactly the bounded code with no throwable and no text`() = runTest(testDispatcher) {
+        coEvery { expenseRepository.searchMerchants("καφ") } throws
+            SQLiteException("no such column near WHERE merchant LIKE 'καφ%' AND secret=42")
+
+        viewModel.updateMerchant("καφ")
+        advanceTimeBy(350)
+        advanceUntilIdle()
+
+        assertEquals(listOf("MERCHANT_SUGGESTION_SEARCH_FAILED"), loggedLines.map { it.message })
+        assertTrue(loggedLines.all { it.throwable == null })
+        assertTrue(viewModel.state.value.suggestions.isEmpty())
+        assertFalse(viewModel.state.value.showSuggestions)
+    }
+
+    @Test
+    fun `suggestion search cancellation is rethrown and not logged or treated as failure`() = runTest(testDispatcher) {
+        coEvery { expenseRepository.searchMerchants("co") } throws CancellationException("cancelled")
+
+        viewModel.updateMerchant("co")
+        advanceTimeBy(350)
+        advanceUntilIdle()
+
+        assertTrue(loggedLines.isEmpty())
+    }
+
+    @Test
+    fun `AE-53 save exception shows the generic resource clears isSaving and logs only the code`() {
+        stubAddManualExpenseThrows(IllegalStateException("Created expense 42 was not found for Valid Merchant"))
+
+        fillValidFormAndSave()
+
+        val state = viewModel.state.value
+        assertEquals(SaveResult.Error(saveFailedText), state.saveResult)
+        assertEquals(saveFailedText, state.mutation.error)
+        assertFalse(state.isSaving)
+        assertFalse(state.mutation.isRunning)
+        assertEquals(listOf("ADD_EXPENSE_SAVE_FAILED"), loggedLines.map { it.message })
+        assertTrue(loggedLines.all { it.throwable == null })
+    }
+
+    @Test
+    fun `AE-53 save SQLiteException never surfaces SQL text`() {
+        stubAddManualExpenseThrows(SQLiteException("UNIQUE constraint failed: expenses.dedupe_key (merchant=Valid Merchant)"))
+
+        fillValidFormAndSave()
+
+        assertEquals(SaveResult.Error(saveFailedText), viewModel.state.value.saveResult)
+        assertEquals(listOf("ADD_EXPENSE_SAVE_FAILED"), loggedLines.map { it.message })
+        assertTrue(loggedLines.all { it.throwable == null })
+    }
+
+    @Test
+    fun `AE-53 save cancellation propagates without an Error result and isSaving is cleared`() {
+        stubAddManualExpenseThrows(CancellationException("scope cancelled"))
+
+        fillValidFormAndSave()
+
+        val state = viewModel.state.value
+        assertNull(state.saveResult)
+        assertNull(state.mutation.error)
+        assertFalse(state.isSaving)
+        assertFalse(state.mutation.isRunning)
+        assertTrue(loggedLines.isEmpty())
+    }
+
+    @Test
+    fun `Result Error with a repository message maps to the bounded resource and never shows the message`() {
+        stubAddManualExpenseReturns(
+            Result.Error(IllegalStateException("db path /data/user/0/secret"), "Failed: UNIQUE constraint expenses.dedupe_key")
+        )
+
+        fillValidFormAndSave()
+
+        val state = viewModel.state.value
+        assertEquals(SaveResult.Error(saveFailedText), state.saveResult)
+        assertEquals(saveFailedText, state.mutation.error)
+        assertFalse(state.isSaving)
+        assertTrue(loggedLines.isEmpty())
+    }
+
+    @Test
+    fun `Result Error without a message maps to the seam default resource`() {
+        stubAddManualExpenseReturns(Result.Error())
+
+        fillValidFormAndSave()
+
+        assertEquals(SaveResult.Error(saveFailedText), viewModel.state.value.saveResult)
+        assertFalse(viewModel.state.value.isSaving)
+    }
+
+    @Test
+    fun `Result Loading maps to the generic save failed resource`() {
+        stubAddManualExpenseReturns(Result.Loading)
+
+        fillValidFormAndSave()
+
+        assertEquals(SaveResult.Error(saveFailedText), viewModel.state.value.saveResult)
+        assertFalse(viewModel.state.value.isSaving)
+    }
+
+    @Test
+    fun `Result Duplicate keeps the Duplicate state and uses the existing duplicate resource for the mutation`() {
+        stubAddManualExpenseReturns(Result.Duplicate)
+
+        fillValidFormAndSave()
+
+        val state = viewModel.state.value
+        assertEquals(SaveResult.Duplicate, state.saveResult)
+        assertEquals(UiText.StringResource(R.string.error_duplicate_transaction), state.mutation.error)
+        assertFalse(state.isSaving)
+    }
+
+    @Test
+    fun `validation messages are resource ids - amount too large`() {
+        useUs()
+        stubAddManualExpense()
+        testDispatcher.scheduler.advanceUntilIdle()
+        viewModel.updateMerchant("Shop")
+        viewModel.updateAmount("2000000.00")
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        viewModel.save()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(
+            UiText.StringResource(R.string.add_expense_error_amount_too_large),
+            viewModel.state.value.amountError
+        )
+        verifyNoManualExpenseSaved()
+    }
+
+    @Test
+    fun `validation messages are resource ids - future date`() {
+        useUs()
+        stubAddManualExpense()
+        testDispatcher.scheduler.advanceUntilIdle()
+        viewModel.updateMerchant("Shop")
+        viewModel.updateAmount("10.00")
+        viewModel.updateDate(1_700_000_000_000L + 3L * 24 * 60 * 60 * 1000)
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        viewModel.save()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        val expected = UiText.StringResource(R.string.add_expense_error_date_future)
+        assertEquals(SaveResult.Error(expected), viewModel.state.value.saveResult)
+        assertEquals(expected, viewModel.state.value.mutation.error)
+        assertFalse(viewModel.state.value.isSaving)
+        verifyNoManualExpenseSaved()
+    }
+
+    @Test
+    fun `validation messages are resource ids - currency still loading`() {
+        useUs()
+        val loadingCurrencyRepo = mockk<CurrencySettingsRepository>(relaxed = true)
+        every { loadingCurrencyRepo.homeCurrency() } returns emptyFlow()
+        val loadingViewModel = AddExpenseViewModel(
+            manualExpenseRepository = manualExpenseRepository,
+            expenseRepository = expenseRepository,
+            categoryRepository = categoryRepository,
+            timeProvider = timeProvider,
+            currencySettingsRepository = loadingCurrencyRepo,
+        )
+        testDispatcher.scheduler.advanceUntilIdle()
+        loadingViewModel.updateMerchant("Shop")
+        loadingViewModel.updateAmount("10.00")
+
+        loadingViewModel.save()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertNull(loadingViewModel.state.value.homeCurrency)
+        assertEquals(
+            SaveResult.Error(UiText.StringResource(R.string.add_expense_error_currency_loading)),
+            loadingViewModel.state.value.saveResult
+        )
+        verifyNoManualExpenseSaved()
     }
 }

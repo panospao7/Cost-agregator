@@ -55,6 +55,7 @@
         "com.yourname.expensetracker.domain.price.*",
         "com.yourname.expensetracker.domain.privacy.*",
         "com.yourname.expensetracker.domain.provenance.*",
+        "com.yourname.expensetracker.domain.quickadd.*",
         "com.yourname.expensetracker.domain.receipt.*",
         "com.yourname.expensetracker.domain.receiptmatching.*",
         "com.yourname.expensetracker.domain.recurring.*",

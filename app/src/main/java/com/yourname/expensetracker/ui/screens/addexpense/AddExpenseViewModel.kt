@@ -11,7 +11,10 @@ import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ManualExpenseRepository
 import com.yourname.expensetracker.domain.model.Result
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
+import com.yourname.expensetracker.R
+import com.yourname.expensetracker.domain.model.UiText
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -46,8 +49,8 @@ data class AddExpenseState(
  val isSaving: Boolean = false,
  val saveResult: SaveResult? = null,
  val mutation: com.yourname.expensetracker.ui.model.MutationState = com.yourname.expensetracker.ui.model.MutationState.idle(),
- val merchantError: String? = null,
- val amountError: String? = null,
+ val merchantError: UiText? = null,
+ val amountError: UiText? = null,
  val transferDirection: TransferDirection? = null,
  val transferAccountName: String = "",
  val isNotMine: Boolean = false,
@@ -66,7 +69,7 @@ data class AddExpenseState(
 sealed class SaveResult {
     object Success : SaveResult()
     object Duplicate : SaveResult()
-    data class Error(val message: String) : SaveResult()
+    data class Error(val message: UiText) : SaveResult()
 }
 
 @HiltViewModel
@@ -77,6 +80,12 @@ class AddExpenseViewModel @Inject constructor(
  private val timeProvider: TimeProvider,
  private val currencySettingsRepository: CurrencySettingsRepository
 ) : ViewModel() {
+
+    private companion object {
+        // INV-13: bounded diagnostic codes. No throwable, query, merchant or message text is ever attached.
+        const val LOG_MERCHANT_SUGGESTION_SEARCH_FAILED = "MERCHANT_SUGGESTION_SEARCH_FAILED"
+        const val LOG_ADD_EXPENSE_SAVE_FAILED = "ADD_EXPENSE_SAVE_FAILED"
+    }
 
     private val _state = MutableStateFlow(AddExpenseState(date = timeProvider.now()))
     val state: StateFlow<AddExpenseState> = _state.asStateFlow()
@@ -123,9 +132,12 @@ class AddExpenseViewModel @Inject constructor(
                             showSuggestions = suggestions.isNotEmpty()
                         )
                     }
+                } catch (e: CancellationException) {
+                    throw e
                 } catch (e: Exception) {
                     // S5-008: Silently clear suggestions on failure (non-critical)
-                    Timber.w(e, "Merchant suggestion search failed for: $sanitized")
+                    // INV-13: bounded code only; no throwable, query or merchant text.
+                    Timber.w(LOG_MERCHANT_SUGGESTION_SEARCH_FAILED)
                     if (isActive) {
                         _state.update { it.copy(suggestions = emptyList(), showSuggestions = false) }
                     }
@@ -277,14 +289,14 @@ class AddExpenseViewModel @Inject constructor(
         // Real EUR users (homeCurrency == "EUR") are allowed through once loaded
         val currency = currentState.homeCurrency
         if (currency == null) {
-            _state.update { it.copy(saveResult = SaveResult.Error("Loading currency settings..."), mutation = com.yourname.expensetracker.ui.model.MutationState.error("save", com.yourname.expensetracker.domain.model.UiText.DynamicString("Loading currency settings..."))) }
+            _state.update { it.withSaveError(UiText.StringResource(R.string.add_expense_error_currency_loading)) }
             return
         }
 
         // Validate
         val merchantTrimmed = currentState.merchant.trim()
         if (merchantTrimmed.isBlank()) {
-            _state.update { it.copy(merchantError = "Merchant name is required") }
+            _state.update { it.copy(merchantError = UiText.StringResource(R.string.add_expense_error_merchant_required)) }
             return
         }
 
@@ -292,12 +304,12 @@ class AddExpenseViewModel @Inject constructor(
         // Ambiguous or invalid input keeps the existing invalid-amount error.
         val amount = com.yourname.expensetracker.ui.util.AmountInputSanitizer.parseOrNull(currentState.amount)
         if (amount == null || amount <= 0) {
-            _state.update { it.copy(amountError = "Enter a valid amount") }
+            _state.update { it.copy(amountError = UiText.StringResource(R.string.add_expense_error_amount_invalid)) }
             return
         }
 
         if (amount > 1_000_000) { // Reasonable upper limit
-            _state.update { it.copy(amountError = "Amount is too large") }
+            _state.update { it.copy(amountError = UiText.StringResource(R.string.add_expense_error_amount_too_large)) }
             return
         }
 
@@ -306,7 +318,7 @@ class AddExpenseViewModel @Inject constructor(
             TimePeriodUtils.getEndOfDay(timeProvider.now()) - 1
         }
         if (currentState.date > endOfToday) {
-            _state.update { it.copy(saveResult = SaveResult.Error("Date cannot be in the future"), mutation = com.yourname.expensetracker.ui.model.MutationState.error("save", com.yourname.expensetracker.domain.model.UiText.DynamicString("Date cannot be in the future"))) }
+            _state.update { it.withSaveError(UiText.StringResource(R.string.add_expense_error_date_future)) }
             return
         }
 
@@ -314,13 +326,13 @@ class AddExpenseViewModel @Inject constructor(
         if (currentState.transactionType == TransactionType.TRANSFER) {
             if (currentState.transferDirection == null) {
                 _state.update {
-                    it.copy(saveResult = SaveResult.Error("Transfer direction is required for transfer transactions"), mutation = com.yourname.expensetracker.ui.model.MutationState.error("save", com.yourname.expensetracker.domain.model.UiText.DynamicString("Transfer direction is required for transfer transactions")))
+                    it.withSaveError(UiText.DynamicString("Transfer direction is required for transfer transactions"))
                 }
                 return
             }
             if (transferAccountNameTrimmed.isBlank()) {
                 _state.update {
-                    it.copy(saveResult = SaveResult.Error("Transfer account name is required for transfer transactions"), mutation = com.yourname.expensetracker.ui.model.MutationState.error("save", com.yourname.expensetracker.domain.model.UiText.DynamicString("Transfer account name is required for transfer transactions")))
+                    it.withSaveError(UiText.DynamicString("Transfer account name is required for transfer transactions"))
                 }
                 return
             }
@@ -340,12 +352,8 @@ class AddExpenseViewModel @Inject constructor(
             shareAmountText = shareAmountText
         )
         if (ownershipResult is com.yourname.expensetracker.ui.util.OwnershipValidator.ValidationResult.Invalid) {
-            _state.update {
-                it.copy(
-                    saveResult = SaveResult.Error(ownershipResult.message),
-                    mutation = com.yourname.expensetracker.ui.model.MutationState.error("save", com.yourname.expensetracker.domain.model.UiText.DynamicString(ownershipResult.message))
-                )
-            }
+            // OwnershipValidator messages are fixed user-safe English constants (localisation deferred).
+            _state.update { it.withSaveError(UiText.DynamicString(ownershipResult.message)) }
             return
         }
 
@@ -412,46 +420,56 @@ class AddExpenseViewModel @Inject constructor(
                     }
                     is Result.Duplicate -> {
                         _state.update {
-                            it.copy(isSaving = false, saveResult = SaveResult.Duplicate, mutation = com.yourname.expensetracker.ui.model.MutationState.error("save", com.yourname.expensetracker.domain.model.UiText.DynamicString("Duplicate expense")))
+                            it.copy(isSaving = false, saveResult = SaveResult.Duplicate, mutation = com.yourname.expensetracker.ui.model.MutationState.error("save", UiText.StringResource(R.string.error_duplicate_transaction)))
                         }
                     }
                     is Result.Error -> {
-                        // S5-003: Update mutation so Save button re-enables
-                        val msg = result.message ?: "Failed to save expense"
-                        _state.update {
-                            it.copy(
-                                isSaving = false,
-                                saveResult = SaveResult.Error(msg),
-                                mutation = com.yourname.expensetracker.ui.model.MutationState.error("save", com.yourname.expensetracker.domain.model.UiText.DynamicString(msg))
-                            )
-                        }
+                        // S5-003: Update mutation so Save button re-enables.
+                        // INV-15: repository message/exception are never displayed.
+                        _state.update { it.withSaveError(mapSaveError(result)) }
                     }
                     Result.Loading -> {
                         // S5-003: Result.Loading is not a valid terminal state for one-shot save
-                        val msg = "Unexpected loading result"
-                        _state.update {
-                            it.copy(
-                                isSaving = false,
-                                saveResult = SaveResult.Error(msg),
-                                mutation = com.yourname.expensetracker.ui.model.MutationState.error("save", com.yourname.expensetracker.domain.model.UiText.DynamicString(msg))
-                            )
-                        }
+                        _state.update { it.withSaveError(saveFailedText()) }
                     }
                 }
 
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
-                // S5-003: Update mutation so Save button re-enables after exception
-                val msg = e.message ?: "Unknown error"
+                // S5-003: Update mutation so Save button re-enables after exception.
+                // INV-13/INV-15: bounded code only; no throwable or message text.
+                Timber.e(LOG_ADD_EXPENSE_SAVE_FAILED)
+                _state.update { it.withSaveError(saveFailedText()) }
+            } finally {
+                // INV-15: isSaving never stays true, including on cancellation.
                 _state.update {
-                    it.copy(
-                        isSaving = false,
-                        saveResult = SaveResult.Error(msg),
-                        mutation = com.yourname.expensetracker.ui.model.MutationState.error("save", com.yourname.expensetracker.domain.model.UiText.DynamicString(msg))
-                    )
+                    if (it.isSaving) {
+                        it.copy(isSaving = false, mutation = com.yourname.expensetracker.ui.model.MutationState.idle())
+                    } else {
+                        it
+                    }
                 }
             }
         }
     }
+
+    /**
+     * Maps a repository error to a bounded, localised message. The repository message and
+     * exception are never displayed (INV-15). Add bounded repository error codes as `when`
+     * branches; the default is the generic save-failed resource. Non-suspend by design.
+     */
+    private fun mapSaveError(result: Result.Error): UiText = when (result.message) {
+        else -> saveFailedText()
+    }
+
+    private fun saveFailedText(): UiText = UiText.StringResource(R.string.add_expense_error_save_failed)
+
+    private fun AddExpenseState.withSaveError(message: UiText): AddExpenseState = copy(
+        isSaving = false,
+        saveResult = SaveResult.Error(message),
+        mutation = com.yourname.expensetracker.ui.model.MutationState.error("save", message)
+    )
 
 
     fun reset() {

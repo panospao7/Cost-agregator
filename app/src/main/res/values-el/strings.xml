@@ -210,4 +210,11 @@
     <string name="ai_insight_desc">Προσθέτει μία φράση που δημιουργείται στη συσκευή σε μια νέα πρόταση ενέργειας όταν προσθέτετε μια δαπάνη ενώ η εφαρμογή είναι ανοιχτή. Δεν χρησιμοποιεί ποτέ το cloud.</string>
     <string name="ai_insight_needs_ai">Ενεργοποιήστε το AI παραπάνω για να το χρησιμοποιήσετε.</string>
     <string name="ai_insight_needs_on_device">Ενεργοποιήστε το AI στη συσκευή παραπάνω για να το χρησιμοποιήσετε.</string>
+    <!-- nl-quick-add slice A: DRAFT Greek, owner native sign-off pending -->
+    <string name="add_expense_error_save_failed">Δεν ήταν δυνατή η αποθήκευση του εξόδου. Δοκιμάστε ξανά.</string>
+    <string name="add_expense_error_currency_loading">Φόρτωση ρυθμίσεων νομίσματος…</string>
+    <string name="add_expense_error_merchant_required">Το όνομα καταστήματος είναι υποχρεωτικό</string>
+    <string name="add_expense_error_amount_invalid">Εισάγετε έγκυρο ποσό</string>
+    <string name="add_expense_error_amount_too_large">Το ποσό είναι πολύ μεγάλο</string>
+    <string name="add_expense_error_date_future">Η ημερομηνία δεν μπορεί να είναι στο μέλλον</string>
 </resources>
