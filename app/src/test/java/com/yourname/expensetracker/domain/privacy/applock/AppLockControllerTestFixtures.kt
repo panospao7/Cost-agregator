@@ -119,6 +119,59 @@ internal class FakeAppLockSettingsRepository(var loadState: AppLockSettingsLoadS
         loadState = AppLockSettingsLoadState.Loaded(next)
         return AppLockSettingsWriteResult.Committed(next)
     }
+
+    // --- S18 (i-b1): the timeout write. Counted apart from [writeAttempts] like the lock write.
+
+    /** Every `setAutoLockTimeout` call, in order. */
+    val timeoutWrites = mutableListOf<AutoLockTimeout>()
+
+    /** When set, decides the result of a timeout write; the default commits and updates [loadState]. */
+    var timeoutWriteResult: ((AutoLockTimeout) -> AppLockSettingsWriteResult)? = null
+
+    /** When set, a timeout write throws it (a non-IO failure of the store). */
+    var timeoutWriteFailure: Throwable? = null
+
+    override suspend fun setAutoLockTimeout(timeout: AutoLockTimeout): AppLockSettingsWriteResult {
+        timeoutWrites += timeout
+        timeoutWriteFailure?.let { throw it }
+        timeoutWriteResult?.let { return it(timeout) }
+        val base = when (val state = loadState) {
+            is AppLockSettingsLoadState.Loaded -> state.settings
+            is AppLockSettingsLoadState.FirstRunDefault -> state.settings
+            is AppLockSettingsLoadState.Unreadable -> return AppLockSettingsWriteResult.Rejected(AppLockWriteRejection.UNREADABLE)
+        }
+        val next = base.copy(autoLockTimeout = timeout)
+        loadState = AppLockSettingsLoadState.Loaded(next)
+        return AppLockSettingsWriteResult.Committed(next)
+    }
+
+    // --- S18 (i-b1) privacy review F1: the conditional (no-prompt) timeout write. It shares the hooks and the
+    // [timeoutWrites] list of the unconditional write, and the default applies the same check as the real store.
+
+    /** Every `setAutoLockTimeoutIfNotWeakening` call, in order (also recorded in [timeoutWrites]). */
+    val conditionalTimeoutWrites = mutableListOf<AutoLockTimeout>()
+
+    /** When set, a conditional write suspends on it after being recorded and before it decides (an overlap probe). */
+    var conditionalWriteGate: CompletableDeferred<Unit>? = null
+
+    override suspend fun setAutoLockTimeoutIfNotWeakening(timeout: AutoLockTimeout): AppLockSettingsWriteResult {
+        conditionalTimeoutWrites += timeout
+        timeoutWrites += timeout
+        conditionalWriteGate?.await()
+        timeoutWriteFailure?.let { throw it }
+        timeoutWriteResult?.let { return it(timeout) }
+        val base = when (val state = loadState) {
+            is AppLockSettingsLoadState.Loaded -> state.settings
+            is AppLockSettingsLoadState.FirstRunDefault -> state.settings
+            is AppLockSettingsLoadState.Unreadable -> return AppLockSettingsWriteResult.Rejected(AppLockWriteRejection.UNREADABLE)
+        }
+        if (base.appLockEnabled && timeout.millis > base.autoLockTimeout.millis) {
+            return AppLockSettingsWriteResult.Rejected(AppLockWriteRejection.WOULD_WEAKEN)
+        }
+        val next = base.copy(autoLockTimeout = timeout)
+        loadState = AppLockSettingsLoadState.Loaded(next)
+        return AppLockSettingsWriteResult.Committed(next)
+    }
 }
 
 internal object AppLockTestSettings {

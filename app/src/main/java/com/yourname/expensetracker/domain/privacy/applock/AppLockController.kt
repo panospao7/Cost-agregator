@@ -91,7 +91,8 @@ fun interface OpenOriginSuccessHandler {
  * background (T32), the success hand-off (T33, delivered to the S18 handler without applying anything) and
  * the non-success return to the origin with the timer hand-off (T34). S17 adds the held deep link (T20 to
  * T22, see "The held link" below). S18 part (i-a) adds the enable / disable apply (T17, T18, T26) driven by
- * [AppLockSettingsOperations]; `TODO(S18-i-b)` and `TODO(S18-ii)` mark the rest of the settings operations.
+ * [AppLockSettingsOperations]; S18 part (i-b1) adds the auto-lock timeout change (a longer timeout confirms through
+ * CONFIRM_CHANGE, an equal or shorter one commits without a prompt). `TODO(S18-i-b2)` and `TODO(S18-ii)` mark the rest.
  *
  * ## The held link (S17: T20, T21, T22, INV-30, INV-31, OD-7a)
  *
@@ -259,7 +260,9 @@ class AppLockController @Inject constructor(
         /** For ENABLE and CONFIRM_CHANGE: where a matching success is handed (T33). Null for UNLOCK. */
         val successHandler: OpenOriginSuccessHandler?,
         /** For ENABLE and CONFIRM_CHANGE: the closed prompt selector the attempt was started with. Null for UNLOCK. */
-        val prompt: OpenOriginPrompt? = null
+        val prompt: OpenOriginPrompt? = null,
+        /** For a CHANGE attempt of a timeout change (S18 i-b1): the requested timeout, copied into the one-shot token. */
+        val requestedTimeout: AutoLockTimeout? = null
     ) : DeviceAuthCallback {
         /**
          * T32: the first `APP_BACKGROUNDED` during an open-origin attempt (monotonic). Bound to this attempt, so
@@ -342,6 +345,9 @@ class AppLockController @Inject constructor(
      */
     private var pendingApplyAttemptId: Long? = null
     private var pendingApplyPrompt: OpenOriginPrompt? = null
+
+    /** S18 i-b1: the timeout of a timeout-change attempt, recorded with the token. The apply takes it from here. */
+    private var pendingApplyTimeout: AutoLockTimeout? = null
     private var pendingApplyForegroundSinceClose = false
     private val claimedDiagnosticCodes: MutableSet<PrivacyDiagnosticCode> =
         EnumSet.noneOf(PrivacyDiagnosticCode::class.java)
@@ -583,7 +589,24 @@ class AppLockController @Inject constructor(
      * [onSuccess] once; the controller applies nothing (T33 is S18). Every other end returns to the origin
      * with nothing written (T34).
      */
-    fun startOpenOriginAttempt(prompt: OpenOriginPrompt, onSuccess: OpenOriginSuccessHandler): OpenOriginStartResult {
+    fun startOpenOriginAttempt(prompt: OpenOriginPrompt, onSuccess: OpenOriginSuccessHandler): OpenOriginStartResult =
+        startOpenOriginAttemptWith(prompt, onSuccess, null)
+
+    /**
+     * S18 i-b1: starts the CONFIRM_CHANGE attempt (CHANGE copy) of a LONGER auto-lock timeout. Same legality as
+     * [startOpenOriginAttempt] (only from exactly `UNLOCKED`, one prompt at a time, the T33 gate refuses). The
+     * requested timeout is recorded with the attempt and, on a matching success, in the one-shot token; the
+     * state-move entry [onOpenOriginSettingApplied] applies THAT value, never a caller argument. Whether the
+     * timeout is longer than the committed one is the caller's check ([AppLockSettingsOperations]).
+     */
+    fun startTimeoutChangeAttempt(requestedTimeout: AutoLockTimeout, onSuccess: OpenOriginSuccessHandler): OpenOriginStartResult =
+        startOpenOriginAttemptWith(OpenOriginPrompt.CHANGE, onSuccess, requestedTimeout)
+
+    private fun startOpenOriginAttemptWith(
+        prompt: OpenOriginPrompt,
+        onSuccess: OpenOriginSuccessHandler,
+        requestedTimeout: AutoLockTimeout?
+    ): OpenOriginStartResult {
         val purpose = prompt.purpose
         var opened: InFlightAttempt? = null
         val result: OpenOriginStartResult = transition {
@@ -600,7 +623,7 @@ class AppLockController @Inject constructor(
             // A lapsed gate is not cleared here, so a link still held is dropped as expired by the next release (F2).
             if (applyGateWithinBoundLocked(clock.elapsedRealtimeMillis())) return@transition OpenOriginStartResult.NotInOrigin
             val attemptId = ++lastIssuedAttemptId
-            val attempt = InFlightAttempt(attemptId, purpose, null, prompt.copy, onSuccess, prompt)
+            val attempt = InFlightAttempt(attemptId, purpose, null, prompt.copy, onSuccess, prompt, requestedTimeout)
             inFlight = attempt // open BEFORE any authenticate call (S15 binding)
             setState(AppLockState.Authenticating(attemptId, purpose))
             opened = attempt
@@ -656,7 +679,10 @@ class AppLockController @Inject constructor(
      *   state is something else (for example a foreground evaluation locked it between the hand-off and the write,
      *   T14) it is NOT moved: a `LOCKED` state stays `LOCKED` until a real unlock (fail closed), and the next cold
      *   start resolves from the committed store.
-     * - [OpenOriginPrompt.CHANGE] is not an enable or disable and changes nothing (TODO(S18-i-b)).
+     * - [OpenOriginPrompt.CHANGE] with a token timeout (S18 i-b1, a longer timeout): committed takes THAT timeout
+     *   into the settings view, not committed records `LOCK_SETTING_PERSIST_FAILED(AUTO_LOCK_TIMEOUT)` (once per
+     *   process per (code, field)); the state never moves. A CHANGE with no token timeout changes nothing
+     *   (TODO(S18-i-b2)).
      *
      * The unlock-equivalent discard (T33: `promptBackgroundAt` and `lastBackgroundedAt`) was done by the close
      * that handed the success over and is not repeated here. The held link is not released here either: it waits
@@ -669,24 +695,85 @@ class AppLockController @Inject constructor(
             val prompt = pendingApplyPrompt
             if (prompt == null || pendingApplyAttemptId != attemptId) return@transition null
             val foregroundSinceClose = pendingApplyForegroundSinceClose
+            val tokenTimeout = pendingApplyTimeout
             pendingApplyAttemptId = null
             pendingApplyPrompt = null
+            pendingApplyTimeout = null
             pendingApplyForegroundSinceClose = false
-            applyOpenOriginSettingLocked(prompt, committed, foregroundSinceClose)
+            applyOpenOriginSettingLocked(prompt, committed, foregroundSinceClose, tokenTimeout)
         }
         record(diagnostic)
     }
+
+    /**
+     * S18 i-b1: the settings view and failure record of a timeout write that needed NO prompt (an equal or shorter
+     * timeout, or a longer one while the lock is off). The caller ([AppLockSettingsOperations], the only production
+     * caller) wrote [timeout] durably first; [committed] is true only for a durable commit. A commit takes the new
+     * timeout into the controller's settings view (the next foreground evaluation measures with it). A write that did
+     * not commit changes nothing and records `LOCK_SETTING_PERSIST_FAILED(AUTO_LOCK_TIMEOUT)`, once per process per
+     * (code, field). The state never changes. The prompt path does NOT use this entry: it takes its timeout from the
+     * token ([onOpenOriginSettingApplied]).
+     */
+    fun onTimeoutWrittenWithoutPrompt(timeout: AutoLockTimeout, committed: Boolean) {
+        val diagnostic = transition {
+            if (committed) {
+                // Privacy review F2 (fail closed): a no-prompt commit never lengthens a view that has the lock on. A
+                // longer timeout over a lock-on view means the caller's pre-read was stale; the view stays as it is
+                // (more restrictive), so a foreground never measures with an unauthorised longer timeout.
+                val view = (loadState as? AppLockSettingsLoadState.Loaded)?.settings
+                    ?: (loadState as? AppLockSettingsLoadState.FirstRunDefault)?.settings
+                val wouldLengthenLockOnView = view != null && view.appLockEnabled &&
+                    timeout.millis > view.autoLockTimeout.millis
+                if (!wouldLengthenLockOnView) applyTimeoutToViewLocked(timeout)
+                null
+            } else {
+                claimTimeoutPersistFailedLocked()
+            }
+        }
+        record(diagnostic)
+    }
+
+    /** Must be called with [stateLock] held. An unreadable or missing view is left as it is (fail-closed record F). */
+    private fun applyTimeoutToViewLocked(timeout: AutoLockTimeout) {
+        when (val view = loadState) {
+            is AppLockSettingsLoadState.Loaded ->
+                loadState = AppLockSettingsLoadState.Loaded(view.settings.copy(autoLockTimeout = timeout))
+            is AppLockSettingsLoadState.FirstRunDefault ->
+                loadState = AppLockSettingsLoadState.Loaded(view.settings.copy(autoLockTimeout = timeout))
+            is AppLockSettingsLoadState.Unreadable, null -> Unit
+        }
+    }
+
+    /** Once per process per (code, FIELD) (spec 10, F8). Must be called with [stateLock] held. */
+    private fun claimTimeoutPersistFailedLocked(): PendingDiagnostic? =
+        if (claimedCodeCauses.add(PrivacyDiagnosticCode.LOCK_SETTING_PERSIST_FAILED to AppLockSettingField.AUTO_LOCK_TIMEOUT)) {
+            PendingDiagnostic(
+                PrivacyDiagnosticCode.LOCK_SETTING_PERSIST_FAILED,
+                null,
+                PrivacyDiagnosticMetadata.builder().put(PrivacyDiagnosticKey.FIELD, AppLockSettingField.AUTO_LOCK_TIMEOUT).build()
+            )
+        } else {
+            null
+        }
 
     /** Must be called with [stateLock] held. */
     private fun applyOpenOriginSettingLocked(
         prompt: OpenOriginPrompt,
         committed: Boolean,
-        foregroundSinceClose: Boolean
+        foregroundSinceClose: Boolean,
+        tokenTimeout: AutoLockTimeout?
     ): PendingDiagnostic? {
         val enable = when (prompt) {
             OpenOriginPrompt.ENABLE -> true
             OpenOriginPrompt.DISABLE -> false
-            OpenOriginPrompt.CHANGE -> return null
+            OpenOriginPrompt.CHANGE -> {
+                // S18 i-b1: a timeout change carries its value in the token; the state never moves (UNLOCKED stays).
+                // A CHANGE without a token timeout is a later weakening kind (TODO(S18-i-b2)): nothing to apply.
+                if (tokenTimeout == null) return null
+                if (!committed) return claimTimeoutPersistFailedLocked()
+                applyTimeoutToViewLocked(tokenTimeout)
+                return null
+            }
         }
         if (!committed) {
             // Once per process per (code, FIELD) (spec 10, F8).
@@ -724,7 +811,7 @@ class AppLockController @Inject constructor(
         return claim(if (enable) PrivacyDiagnosticCode.LOCK_ENABLED else PrivacyDiagnosticCode.LOCK_DISABLED)
     }
 
-    // TODO(S18-i-b): timeout change, INV-3 weakening write, TECH-13 (INERT weakening rejection), forced values.
+    // TODO(S18-i-b2): INV-3 weakening write (other weakening kinds), TECH-13 (INERT weakening rejection), forced values.
     // TODO(S18-ii): review-save (T27), SETTINGS_REREAD (T28, T29) and LockNotice derivation (INV-51).
 
     // --- The held deep link (T20, T21, T22; S17) --------------------------------------------------
@@ -808,6 +895,7 @@ class AppLockController @Inject constructor(
         if (pendingApplyAttemptId == attemptId) {
             pendingApplyAttemptId = null
             pendingApplyPrompt = null
+            pendingApplyTimeout = null
             pendingApplyForegroundSinceClose = false
         }
     }
@@ -1197,6 +1285,7 @@ class AppLockController @Inject constructor(
                     // this does not. F6: whether the app was in the foreground when the prompt closed.
                     pendingApplyAttemptId = attempt.attemptId
                     pendingApplyPrompt = attempt.prompt
+                    pendingApplyTimeout = attempt.requestedTimeout
                     pendingApplyForegroundSinceClose = appInForeground
                     null
                 }

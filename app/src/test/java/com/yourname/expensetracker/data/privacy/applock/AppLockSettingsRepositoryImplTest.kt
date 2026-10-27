@@ -8,10 +8,10 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.yourname.expensetracker.domain.privacy.applock.AppLockPrivacySettings
 import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingField
+import com.yourname.expensetracker.domain.privacy.applock.AutoLockTimeout
 import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsLoadState
 import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsWriteResult
 import com.yourname.expensetracker.domain.privacy.applock.AppLockWriteRejection
-import com.yourname.expensetracker.domain.privacy.applock.AutoLockTimeout
 import com.yourname.expensetracker.domain.privacy.applock.SettingsUnreadableCause
 import java.io.File
 import java.io.IOException
@@ -912,6 +912,315 @@ class AppLockSettingsRepositoryImplTest {
             thrown = e
         }
         assertTrue("non-IO write failure must propagate", thrown is IllegalStateException)
+    }
+
+    // ---------------------------------------------------------------------------------
+    // S18 (i-b1): setAutoLockTimeout (INV-3, INV-44, INV-46)
+    // ---------------------------------------------------------------------------------
+
+
+    @Test
+    fun setAutoLockTimeout_commits_and_reads_back_the_timeout() = runBlocking {
+        val result = repository.setAutoLockTimeout(AutoLockTimeout.M5)
+
+        assertEquals(
+            AppLockSettingsWriteResult.Committed(AppLockPrivacySettings(autoLockTimeout = AutoLockTimeout.M5)),
+            result
+        )
+        assertEquals(
+            AppLockSettingsLoadState.Loaded(AppLockPrivacySettings(autoLockTimeout = AutoLockTimeout.M5)),
+            repository.getLoadState()
+        )
+        assertEquals("M5", real.data.first()[timeoutKey])
+        assertEquals("NORMAL", real.data.first()[markerKey])
+    }
+
+    @Test
+    fun setAutoLockTimeout_from_first_run_writes_only_the_timeout_and_the_normal_marker() = runBlocking {
+        repository.setAutoLockTimeout(AutoLockTimeout.S30)
+
+        assertEquals(
+            mapOf(
+                "_app_lock_load_state" to "NORMAL",
+                "auto_lock_timeout" to "S30"
+            ),
+            real.data.first().asMap().mapKeys { it.key.name }
+        )
+    }
+
+    @Test
+    fun setAutoLockTimeout_leaves_the_other_fields_untouched() = runBlocking {
+        val record = AppLockPrivacySettings(
+            discreetNotifications = true,
+            appLockEnabled = true,
+            autoLockTimeout = AutoLockTimeout.M1,
+            secureScreen = false
+        )
+        repository.reviewSave(record)
+
+        val result = repository.setAutoLockTimeout(AutoLockTimeout.M15)
+
+        assertEquals(
+            AppLockSettingsWriteResult.Committed(record.copy(autoLockTimeout = AutoLockTimeout.M15)),
+            result
+        )
+        assertEquals(
+            AppLockSettingsLoadState.Loaded(record.copy(autoLockTimeout = AutoLockTimeout.M15)),
+            repository.getLoadState()
+        )
+    }
+
+    @Test
+    fun setAutoLockTimeout_every_entry_round_trips() = runBlocking {
+        for (timeout in AutoLockTimeout.entries) {
+            val result = repository.setAutoLockTimeout(timeout)
+            assertEquals("$timeout", timeout, (result as AppLockSettingsWriteResult.Committed).settings.autoLockTimeout)
+            assertEquals(
+                "$timeout",
+                AppLockSettingsLoadState.Loaded(AppLockPrivacySettings(autoLockTimeout = timeout)),
+                repository.getLoadState()
+            )
+        }
+    }
+
+    @Test
+    fun setAutoLockTimeout_while_sentinel_present_is_rejected_unreadable_and_writes_nothing() = runBlocking {
+        real.edit { it[markerKey] = "CORRUPTED" }
+        val before = real.data.first().asMap()
+
+        val result = repository.setAutoLockTimeout(AutoLockTimeout.M5)
+
+        assertEquals(AppLockSettingsWriteResult.Rejected(AppLockWriteRejection.UNREADABLE), result)
+        assertEquals(before, real.data.first().asMap())
+        assertEquals(
+            AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.CORRUPTED),
+            repository.getLoadState()
+        )
+    }
+
+    @Test
+    fun setAutoLockTimeout_while_marker_is_invalid_is_rejected_unreadable_and_writes_nothing() = runBlocking {
+        real.edit { it[markerKey] = "BOGUS" }
+        val before = real.data.first().asMap()
+
+        val result = repository.setAutoLockTimeout(AutoLockTimeout.M5)
+
+        assertEquals(AppLockSettingsWriteResult.Rejected(AppLockWriteRejection.UNREADABLE), result)
+        assertEquals(before, real.data.first().asMap())
+    }
+
+    @Test
+    fun setAutoLockTimeout_when_the_read_fails_with_io_error_is_rejected_unreadable() = runBlocking {
+        faulty.failRead = IOException("disk")
+        faulty.failWrite = IOException("disk")
+
+        val result = repository.setAutoLockTimeout(AutoLockTimeout.M5)
+
+        assertEquals(AppLockSettingsWriteResult.Rejected(AppLockWriteRejection.UNREADABLE), result)
+    }
+
+    @Test
+    fun setAutoLockTimeout_write_io_failure_while_sentinel_present_is_rejected_not_failed_and_keeps_the_sentinel() = runBlocking {
+        real.edit { it[markerKey] = "CORRUPTED" }
+        val before = real.data.first().asMap()
+        faulty.failWrite = IOException("disk full")
+
+        val result = repository.setAutoLockTimeout(AutoLockTimeout.M5)
+
+        assertEquals(AppLockSettingsWriteResult.Rejected(AppLockWriteRejection.UNREADABLE), result)
+        faulty.failWrite = null
+        assertEquals(before, real.data.first().asMap())
+    }
+
+    @Test
+    fun setAutoLockTimeout_write_io_failure_is_typed_failed_and_keeps_the_committed_value() = runBlocking {
+        repository.setAutoLockTimeout(AutoLockTimeout.M1)
+        val before = real.data.first().asMap()
+        faulty.failWrite = IOException("disk full")
+
+        val result = repository.setAutoLockTimeout(AutoLockTimeout.M15)
+
+        assertEquals(AppLockSettingsWriteResult.Failed(AppLockSettingField.AUTO_LOCK_TIMEOUT), result)
+        faulty.failWrite = null
+        assertEquals(before, real.data.first().asMap())
+        assertEquals("M1", real.data.first()[timeoutKey])
+    }
+
+    @Test
+    fun setAutoLockTimeout_write_io_failure_from_first_run_writes_nothing() = runBlocking {
+        faulty.failWrite = IOException("disk full")
+
+        val result = repository.setAutoLockTimeout(AutoLockTimeout.M5)
+
+        assertEquals(AppLockSettingsWriteResult.Failed(AppLockSettingField.AUTO_LOCK_TIMEOUT), result)
+        faulty.failWrite = null
+        assertEquals(emptyMap<Preferences.Key<*>, Any>(), real.data.first().asMap())
+        assertEquals(
+            AppLockSettingsLoadState.FirstRunDefault(AppLockPrivacySettings.DEFAULTS),
+            repository.getLoadState()
+        )
+    }
+
+    @Test
+    fun setAutoLockTimeout_write_io_failure_then_retry_commits() = runBlocking {
+        faulty.failWrite = IOException("disk full")
+        repository.setAutoLockTimeout(AutoLockTimeout.M5)
+        faulty.failWrite = null
+
+        val retry = repository.setAutoLockTimeout(AutoLockTimeout.M5)
+
+        assertEquals(
+            AppLockSettingsWriteResult.Committed(AppLockPrivacySettings(autoLockTimeout = AutoLockTimeout.M5)),
+            retry
+        )
+    }
+
+    @Test
+    fun setAutoLockTimeout_cancellation_during_write_propagates_and_is_not_a_typed_failure() = runBlocking {
+        faulty.failWrite = CancellationException("cancelled")
+
+        var propagated = false
+        try {
+            repository.setAutoLockTimeout(AutoLockTimeout.M5)
+        } catch (e: CancellationException) {
+            propagated = true
+        }
+        assertTrue("CancellationException must propagate from setAutoLockTimeout", propagated)
+    }
+
+    @Test
+    fun setAutoLockTimeout_non_io_write_failure_propagates() = runBlocking {
+        faulty.failWrite = IllegalStateException("boom")
+
+        var thrown: Throwable? = null
+        try {
+            repository.setAutoLockTimeout(AutoLockTimeout.M5)
+        } catch (e: IllegalStateException) {
+            thrown = e
+        }
+        assertTrue("non-IO write failure must propagate", thrown is IllegalStateException)
+    }
+
+    // ---------------------------------------------------------------------------------
+    // S18 (i-b1) privacy review F1: setAutoLockTimeoutIfNotWeakening (check and write in ONE store edit)
+    // ---------------------------------------------------------------------------------
+
+    private suspend fun seedRecord(lockEnabled: Boolean, timeout: AutoLockTimeout): AppLockPrivacySettings {
+        val record = AppLockPrivacySettings(appLockEnabled = lockEnabled, autoLockTimeout = timeout)
+        repository.reviewSave(record)
+        return record
+    }
+
+    @Test
+    fun conditionalTimeout_lengthening_with_the_lock_on_is_rejected_and_writes_nothing() = runBlocking {
+        seedRecord(lockEnabled = true, timeout = AutoLockTimeout.M1)
+        val before = real.data.first().asMap()
+
+        val result = repository.setAutoLockTimeoutIfNotWeakening(AutoLockTimeout.M5)
+
+        assertEquals(AppLockSettingsWriteResult.Rejected(AppLockWriteRejection.WOULD_WEAKEN), result)
+        assertEquals(before, real.data.first().asMap())
+        assertEquals("M1", real.data.first()[timeoutKey])
+    }
+
+    @Test
+    fun conditionalTimeout_shortening_or_equal_with_the_lock_on_is_committed() = runBlocking {
+        val record = seedRecord(lockEnabled = true, timeout = AutoLockTimeout.M5)
+
+        val shorter = repository.setAutoLockTimeoutIfNotWeakening(AutoLockTimeout.S30)
+        val equal = repository.setAutoLockTimeoutIfNotWeakening(AutoLockTimeout.S30)
+
+        assertEquals(
+            AppLockSettingsWriteResult.Committed(record.copy(autoLockTimeout = AutoLockTimeout.S30)),
+            shorter
+        )
+        assertEquals(shorter, equal)
+        assertEquals("S30", real.data.first()[timeoutKey])
+    }
+
+    @Test
+    fun conditionalTimeout_lengthening_with_the_lock_off_is_committed() = runBlocking {
+        val record = seedRecord(lockEnabled = false, timeout = AutoLockTimeout.M1)
+
+        val result = repository.setAutoLockTimeoutIfNotWeakening(AutoLockTimeout.M15)
+
+        assertEquals(
+            AppLockSettingsWriteResult.Committed(record.copy(autoLockTimeout = AutoLockTimeout.M15)),
+            result
+        )
+        assertEquals("M15", real.data.first()[timeoutKey])
+    }
+
+    @Test
+    fun conditionalTimeout_from_first_run_commits_with_the_lock_off_default() = runBlocking {
+        val result = repository.setAutoLockTimeoutIfNotWeakening(AutoLockTimeout.M15)
+
+        assertEquals(
+            AppLockSettingsWriteResult.Committed(AppLockPrivacySettings(autoLockTimeout = AutoLockTimeout.M15)),
+            result
+        )
+        assertEquals("NORMAL", real.data.first()[markerKey])
+    }
+
+    @Test
+    fun conditionalTimeout_with_an_invalid_stored_timeout_and_the_lock_on_reads_it_as_immediate() = runBlocking {
+        seedRecord(lockEnabled = true, timeout = AutoLockTimeout.M5)
+        real.edit { it[timeoutKey] = "GARBAGE" }
+        val before = real.data.first().asMap()
+
+        val longer = repository.setAutoLockTimeoutIfNotWeakening(AutoLockTimeout.S30)
+
+        assertEquals(AppLockSettingsWriteResult.Rejected(AppLockWriteRejection.WOULD_WEAKEN), longer)
+        assertEquals(before, real.data.first().asMap())
+        val equal = repository.setAutoLockTimeoutIfNotWeakening(AutoLockTimeout.IMMEDIATE)
+        assertTrue(equal is AppLockSettingsWriteResult.Committed)
+    }
+
+    @Test
+    fun conditionalTimeout_while_sentinel_present_is_rejected_unreadable_and_writes_nothing() = runBlocking {
+        real.edit { it[markerKey] = "CORRUPTED" }
+        val before = real.data.first().asMap()
+
+        val result = repository.setAutoLockTimeoutIfNotWeakening(AutoLockTimeout.S30)
+
+        assertEquals(AppLockSettingsWriteResult.Rejected(AppLockWriteRejection.UNREADABLE), result)
+        assertEquals(before, real.data.first().asMap())
+    }
+
+    @Test
+    fun conditionalTimeout_when_the_read_fails_with_io_error_is_rejected_unreadable() = runBlocking {
+        faulty.failRead = IOException("disk")
+        faulty.failWrite = IOException("disk")
+
+        val result = repository.setAutoLockTimeoutIfNotWeakening(AutoLockTimeout.S30)
+
+        assertEquals(AppLockSettingsWriteResult.Rejected(AppLockWriteRejection.UNREADABLE), result)
+    }
+
+    @Test
+    fun conditionalTimeout_write_io_failure_is_typed_failed_and_keeps_the_committed_value() = runBlocking {
+        seedRecord(lockEnabled = true, timeout = AutoLockTimeout.M5)
+        val before = real.data.first().asMap()
+        faulty.failWrite = IOException("disk full")
+
+        val result = repository.setAutoLockTimeoutIfNotWeakening(AutoLockTimeout.S30)
+
+        assertEquals(AppLockSettingsWriteResult.Failed(AppLockSettingField.AUTO_LOCK_TIMEOUT), result)
+        faulty.failWrite = null
+        assertEquals(before, real.data.first().asMap())
+    }
+
+    @Test
+    fun conditionalTimeout_cancellation_during_write_propagates() = runBlocking {
+        faulty.failWrite = CancellationException("cancelled")
+
+        var propagated = false
+        try {
+            repository.setAutoLockTimeoutIfNotWeakening(AutoLockTimeout.S30)
+        } catch (e: CancellationException) {
+            propagated = true
+        }
+        assertTrue("CancellationException must propagate from the conditional write", propagated)
     }
 
     /** Wraps a real store so reads and/or writes can be made to fail on demand. */

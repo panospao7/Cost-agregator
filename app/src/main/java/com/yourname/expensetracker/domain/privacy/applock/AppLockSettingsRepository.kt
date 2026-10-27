@@ -9,13 +9,21 @@ import kotlinx.coroutines.flow.Flow
 enum class AppLockSettingField {
     DISCREET,
     REVIEW_SAVE,
-    APP_LOCK_ENABLED
+    APP_LOCK_ENABLED,
+    AUTO_LOCK_TIMEOUT
 }
 
 /** Why a settings write was refused before touching the store. */
 enum class AppLockWriteRejection {
     /** INV-44: the load state is `Unreadable`, so a per-field write is refused and nothing is written. */
-    UNREADABLE
+    UNREADABLE,
+
+    /**
+     * S18 i-b1 privacy review F1: a conditional timeout write found, inside the store edit, that the lock is on and the
+     * requested timeout is longer than the stored one. That is a weakening that needs the fresh prompt, so nothing was
+     * written.
+     */
+    WOULD_WEAKEN
 }
 
 /**
@@ -74,4 +82,33 @@ interface AppLockSettingsRepository {
      */
     suspend fun setAppLockEnabled(enabled: Boolean): AppLockSettingsWriteResult =
         AppLockSettingsWriteResult.Failed(AppLockSettingField.APP_LOCK_ENABLED)
+
+    /**
+     * Per-field write of `autoLockTimeout` (S18 i-b1; INV-3, INV-44, INV-46). Same contract as
+     * [setAppLockEnabled]: `Rejected(UNREADABLE)` and nothing written for any `Unreadable` state;
+     * `Failed(AUTO_LOCK_TIMEOUT)` if the commit fails; `Committed` only after the durable commit. Authorisation
+     * (the fresh prompt for a longer timeout) is the caller's concern.
+     *
+     * The default fails closed (`Failed(AUTO_LOCK_TIMEOUT)`, nothing written), so an implementation that does not
+     * support the write can never report a commit. The real store overrides it.
+     */
+    suspend fun setAutoLockTimeout(timeout: AutoLockTimeout): AppLockSettingsWriteResult =
+        AppLockSettingsWriteResult.Failed(AppLockSettingField.AUTO_LOCK_TIMEOUT)
+
+    /**
+     * Conditional per-field write of `autoLockTimeout` for the NO-PROMPT path (S18 i-b1 privacy review F1; INV-3,
+     * INV-44, INV-46). The check and the write are ONE store edit, so a stale pre-read can never turn a direct write
+     * into an unauthorised weakening:
+     * - `Unreadable` store: `Rejected(UNREADABLE)`, nothing written (as [setAutoLockTimeout]);
+     * - the stored lock is on and [timeout] is longer than the stored timeout (an invalid stored timeout reads as
+     *   IMMEDIATE, the most restrictive): `Rejected(WOULD_WEAKEN)`, nothing written;
+     * - otherwise the write, `Committed` only after the durable commit; `Failed(AUTO_LOCK_TIMEOUT)` if it fails.
+     *
+     * The prompt path keeps the unconditional [setAutoLockTimeout]: the user authenticated for that exact value.
+     * The default fails closed (`Failed(AUTO_LOCK_TIMEOUT)`, nothing written). The real store overrides it.
+     * TODO(S18 privacy review finding 8): the defaults of this method and of [setAutoLockTimeout] become abstract
+     * before any wiring.
+     */
+    suspend fun setAutoLockTimeoutIfNotWeakening(timeout: AutoLockTimeout): AppLockSettingsWriteResult =
+        AppLockSettingsWriteResult.Failed(AppLockSettingField.AUTO_LOCK_TIMEOUT)
 }

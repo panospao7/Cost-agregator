@@ -513,9 +513,13 @@ class AppLockControllerIllegalTransitionTest {
             // S18 (i-a), exact addition: the bounded capability enum of onEnableRefusedAtRequest (T26). It carries
             // no text or platform detail. The committed flag of onOpenOriginSettingApplied (T17, T18) is a Boolean,
             // which is NOT allowed globally (privacy review F2): it is allowed for that one method only, below.
-            DeviceAuthCapability::class.java
+            DeviceAuthCapability::class.java,
+            // S18 (i-b1), exact addition: the closed AutoLockTimeout enum of startTimeoutChangeAttempt and
+            // onTimeoutWrittenWithoutPrompt. It carries no text or platform detail.
+            AutoLockTimeout::class.java
         )
-        val committedFlagMethod = "onOpenOriginSettingApplied"
+        // The committed flag is allowed for these two methods only (S18 i-a, and i-b1's no-prompt timeout write).
+        val committedFlagMethods = setOf("onOpenOriginSettingApplied", "onTimeoutWrittenWithoutPrompt")
         // Only compiler-generated accessors (`access$...`, first parameter = the controller) are not API.
         // Any other synthetic method on the controller is unexpected and fails the test below.
         val declared = AppLockController::class.java.declaredMethods
@@ -527,7 +531,7 @@ class AppLockControllerIllegalTransitionTest {
             .filter { method ->
                 method.parameterTypes.any {
                     it !in allowedParameterTypes && !it.name.startsWith("kotlin.coroutines") &&
-                        !(it == Boolean::class.javaPrimitiveType && method.name == committedFlagMethod)
+                        !(it == Boolean::class.javaPrimitiveType && method.name in committedFlagMethods)
                 }
             }
             .map { it.name }
@@ -561,7 +565,12 @@ class AppLockControllerIllegalTransitionTest {
                 // S18 (i-a), exact additions: the T26 request-time refusal claim and the T17 / T18 state move of the
                 // enable / disable apply. Both have exactly one production caller, AppLockSettingsOperations.kt.
                 "onEnableRefusedAtRequest",
-                "onOpenOriginSettingApplied"
+                "onOpenOriginSettingApplied",
+                // S18 (i-b1), exact additions: the CONFIRM_CHANGE start of a longer timeout, and the no-prompt
+                // timeout write's view and failure record. Both have exactly one production caller,
+                // AppLockSettingsOperations.kt.
+                "startTimeoutChangeAttempt",
+                "onTimeoutWrittenWithoutPrompt"
             ),
             production
         )
@@ -615,6 +624,22 @@ class AppLockControllerIllegalTransitionTest {
             applied.single().parameterTypes.toList()
         )
         assertEquals(Void.TYPE, applied.single().returnType)
+
+        // S18 (i-b1): the timeout is a closed enum argument; the timeout start returns the same bounded start result.
+        val timeoutStart = own.filter { it.name == "startTimeoutChangeAttempt" }
+        assertEquals(1, timeoutStart.size)
+        assertEquals(
+            listOf<Class<*>>(AutoLockTimeout::class.java, OpenOriginSuccessHandler::class.java),
+            timeoutStart.single().parameterTypes.toList()
+        )
+        assertEquals(OpenOriginStartResult::class.java, timeoutStart.single().returnType)
+        val timeoutDirect = own.filter { it.name == "onTimeoutWrittenWithoutPrompt" }
+        assertEquals(1, timeoutDirect.size)
+        assertEquals(
+            listOf<Class<*>>(AutoLockTimeout::class.java, Boolean::class.javaPrimitiveType!!),
+            timeoutDirect.single().parameterTypes.toList()
+        )
+        assertEquals(Void.TYPE, timeoutDirect.single().returnType)
     }
 
     @Test
@@ -645,14 +670,19 @@ class AppLockControllerIllegalTransitionTest {
             "onLockQuery",
             // S18 (i-a), exact additions: the T26 refusal claim and the T17 / T18 state move.
             "onEnableRefusedAtRequest",
-            "onOpenOriginSettingApplied"
+            "onOpenOriginSettingApplied",
+            // S18 (i-b1), exact additions: the longer-timeout start and the no-prompt timeout write entry.
+            "startTimeoutChangeAttempt",
+            "onTimeoutWrittenWithoutPrompt"
         )
-        // S18 (i-a): these four have exactly one production caller, the settings operations file, and nothing else.
+        // S18 (i-a, i-b1): these six have exactly one production caller, the settings operations file, and nothing else.
         val settingsOperationsOnly = setOf(
             "startOpenOriginAttempt",
             "onOpenOriginApplyCompleted",
             "onEnableRefusedAtRequest",
-            "onOpenOriginSettingApplied"
+            "onOpenOriginSettingApplied",
+            "startTimeoutChangeAttempt",
+            "onTimeoutWrittenWithoutPrompt"
         )
         val offenders = roots.flatMap { root ->
             root.walkTopDown()
@@ -681,18 +711,10 @@ class AppLockControllerIllegalTransitionTest {
         // DORMANT pin (arch review F2). The enable and disable requests exist and are tested, but nothing in
         // production may call them yet: no ViewModel, Activity, module or screen. There is no DI module for the class
         // (it is `@Singleton @Inject constructor`), so the single exempt file is AppLockSettingsOperations.kt itself.
-        // Lifting this pin (allowing the settings UI as a caller) needs the BLOCKING list closed first (see
-        // LEGAL_PATHS.md, WRITE 3, and the handoff):
-        //   F3: the whole plan :1490-1493 binding - remove the decideDiscreet default, pass actionsSuppressed, add
-        //       the SDK <= 30 lock-on parity row, decide NOTIF_ACTIONS_SUPPRESSED_LOCK;
-        //   F4: the domain write serializer shared with the ViewModel;
-        //   F7: a store re-read after a cancelled NonCancellable write;
-        //   finding 8: setAppLockEnabled becomes abstract;
-        //   INV-45 (final gate finding 1): the review record starts from F for every 1b field and goes through the
-        //       controller's auth/capability check (plan :1494) before any wiring. Today the 1a review card writes
-        //       lock=false with no authentication (AppLockPrivacySettingsViewModel.kt:195/:200).
+        // Lifting this pin (allowing the settings UI as a caller) needs the BLOCKING list closed first: see
+        // LEGAL_PATHS WRITE 3/4 and handoff S18 (i-b1) item 5.
         // The scan skips comment lines (KDoc links such as [AppLockSettingsOperations] are not calls).
-        val dormant = listOf("AppLockSettingsOperations", "requestEnable", "requestDisable")
+        val dormant = listOf("AppLockSettingsOperations", "requestEnable", "requestDisable", "requestTimeoutChange")
         val offenders = locateProductionSourceRoots().flatMap { root ->
             root.walkTopDown()
                 .filter { it.isFile && (it.extension == "kt" || it.extension == "java") }
@@ -715,6 +737,19 @@ class AppLockControllerIllegalTransitionTest {
         // Pins the call site `.setAppLockEnabled(` (the declaration `fun setAppLockEnabled(` has no leading dot and
         // is not a call). Exact relative path under each production root, comment lines skipped.
         assertSingleProductionCaller(".setAppLockEnabled(", "$APPLOCK_PACKAGE_PATH/AppLockSettingsOperations.kt")
+    }
+
+    @Test
+    fun `S18 i-b1 - the timeout write has exactly one production call site, AppLockSettingsOperations`() {
+        // Pins the call site `.setAutoLockTimeout(` (the declarations have no leading dot). Comment lines skipped.
+        assertSingleProductionCaller(".setAutoLockTimeout(", "$APPLOCK_PACKAGE_PATH/AppLockSettingsOperations.kt")
+    }
+
+    @Test
+    fun `S18 i-b1 privacy review F1 - the conditional timeout write has exactly one production call site, AppLockSettingsOperations`() {
+        // Pins the call site `.setAutoLockTimeoutIfNotWeakening(` (the declarations have no leading dot). An exact
+        // addition: the unconditional pin above is unchanged. Comment lines skipped.
+        assertSingleProductionCaller(".setAutoLockTimeoutIfNotWeakening(", "$APPLOCK_PACKAGE_PATH/AppLockSettingsOperations.kt")
     }
 
     @Test

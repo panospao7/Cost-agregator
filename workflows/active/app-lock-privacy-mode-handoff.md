@@ -1424,3 +1424,80 @@ Test-author: nothing further beyond the tests above. Validation to request (seri
   - reviewer-strict ACCEPT-WITH-CONDITIONS, fixed (single-caller pins for setAppLockEnabled and reviewSave; INV-45 added to the BLOCKING list).
 - DORMANT. BLOCKING before any wiring of AppLockSettingsOperations: F3, F4, F7, finding 8, INV-45 (see the final-gate section).
 - Next: S18 part (i-b): timeout change, weakening (INV-3), TECH-13, forced values.
+
+## S18 part (i-b1) — implemented (implementer; validation NOT run)
+Scope: the auto-lock TIMEOUT CHANGE only. DORMANT (no production caller outside AppLockSettingsOperations.kt).
+- Files (source):
+  - `domain/privacy/applock/AppLockSettingsRepository.kt`: `AppLockSettingField.AUTO_LOCK_TIMEOUT`; `setAutoLockTimeout(AutoLockTimeout)` with a fail-closed default body `Failed(AUTO_LOCK_TIMEOUT)`.
+  - `data/privacy/applock/AppLockSettingsRepositoryImpl.kt`: atomic per-field `setAutoLockTimeout` (one DataStore edit; Unreadable gives `Rejected(UNREADABLE)` and writes nothing; IO gives `Failed(AUTO_LOCK_TIMEOUT)` or Rejected if the store cannot be read).
+  - `domain/privacy/applock/AppLockController.kt`: `startTimeoutChangeAttempt(AutoLockTimeout, OpenOriginSuccessHandler)` (CHANGE copy, delegates to a private start shared with `startOpenOriginAttempt`, whose public signature is unchanged); `onTimeoutWrittenWithoutPrompt(AutoLockTimeout, Boolean)`; the one-shot token now also carries the requested timeout (`pendingApplyTimeout`, set at the close, cleared with the token); `onOpenOriginSettingApplied` applies the TOKEN's timeout for CHANGE (committed: settings view; not committed: `LOCK_SETTING_PERSIST_FAILED(FIELD=AUTO_LOCK_TIMEOUT)` once per (code, field)); the state never moves. TODO(S18-i-b) became TODO(S18-i-b2).
+  - `domain/privacy/applock/AppLockSettingsOperations.kt`: `suspend requestTimeoutChange(AutoLockTimeout): TimeoutChangeResult` (COMMITTED, FAILED, STARTED, ALREADY_IN_FLIGHT, NOT_IN_ORIGIN).
+- Behaviour:
+  - Equal or shorter, or the lock is off: direct NonCancellable write, no prompt, then the controller view entry.
+  - Longer with the lock on: CONFIRM_CHANGE with the CHANGE copy; the success handler's last statement launches the ATOMIC apply (NonCancellable write, id-bound `onOpenOriginSettingApplied`, then completion in `finally` and `applyRunning` clear).
+  - An unreadable store or a throwing pre-read: FAILED, nothing written, no prompt, recorded.
+  - A longer timeout while INERT: NOT_IN_ORIGIN, no write, no prompt (fail closed). TECH-13's `Rejected(AUTH_UNAVAILABLE)` is S18-i-b2.
+  - CancellationException is never swallowed.
+- Files (tests):
+  - `AppLockControllerIllegalTransitionTest.kt`: pins (method set +`startTimeoutChangeAttempt`, `onTimeoutWrittenWithoutPrompt`; parameter allow-list +`AutoLockTimeout`, Boolean allowed for the two committed-flag methods; both new methods single-caller in AppLockSettingsOperations.kt; new `.setAutoLockTimeout(` single-caller pin; dormancy list +`requestTimeoutChange`; signature pins).
+  - `AppLockControllerTestFixtures.kt`: fake repository `setAutoLockTimeout` (`timeoutWrites`, `timeoutWriteResult`, `timeoutWriteFailure`).
+  - `AppLockSettingsOperationsTimeoutTest.kt` (new).
+  - `AppLockSettingsRepositoryImplTest.kt`: 13 `setAutoLockTimeout_*` tests.
+- AEs: AE-116 (a cancelled request for M5 keeps M1), INV-3 / OD-8a, INV-44, INV-46, INV-54 (own row only); AE-114 pattern for the write failure.
+- Validation to request (serial, validation-runner):
+  - targeted-unit-test `*AppLockController*,*AppLockSettingsOperations*,*AppLockSettingsRepositoryImpl*`;
+  - shards domain-n-z and data;
+  - registered-guard cancellation;
+  - known_good_state.
+- Not done (left): TODO(S18-i-b2) weakening writes, TECH-13, forced values; TODO(S18-ii) review-save, re-read, notices. Gates (privacy-security-guardian, reviewer-strict) still to run for i-b1.
+- (2026-10-27) The S18 (i-b1) targeted run vr-20261026-231624-ce9063e1 and the shards domain-n-z/data failed with a TEST compile error: a duplicate AutoLockTimeout import and a duplicate `timeoutKey` declaration in AppLockSettingsRepositoryImplTest (the implementer flagged this as a risk). Both duplicates are removed (test-only). Guards cancellation vr-20261026-232012-45504b19 and known_good_state vr-20261026-232031-78ce6750 PASS.
+
+### S18 part (i-b1) — privacy-review fixes (ACCEPT-WITH-CONDITIONS)
+Implementer pass; validation NOT run. Paths: M = app/src/main/java/com/yourname/expensetracker, T = app/src/test/java/com/yourname/expensetracker.
+1. Finding 1 (MEDIUM, the no-prompt check and write were not atomic): fixed with the stronger option.
+   - M/domain/privacy/applock/AppLockSettingsRepository.kt:26 new bounded reason `AppLockWriteRejection.WOULD_WEAKEN`; :112 new `setAutoLockTimeoutIfNotWeakening(AutoLockTimeout)` with a fail-closed default body `Failed(AUTO_LOCK_TIMEOUT)`.
+   - M/data/privacy/applock/AppLockSettingsRepositoryImpl.kt:153-186: ONE `store.edit`: Unreadable gives `Rejected(UNREADABLE)`; lock on and `timeout.millis > stored.millis` gives `Rejected(WOULD_WEAKEN)` and writes nothing; else the write. An invalid stored timeout reads as IMMEDIATE (fail closed). IO and cancellation as the other per-field writes (cancellation propagates).
+   - M/domain/privacy/applock/AppLockSettingsOperations.kt:123 `directWriteMutex`; :164 the pre-read and the direct write are one `withLock` section, `applyRunning` re-checked inside; :197 the direct write uses `writeTimeout(timeout, conditional = true)`, `WOULD_WEAKEN` answers NOT_IN_ORIGIN (no view change, no record); :231 the prompt-path apply keeps the unconditional write (`conditional = false`). The prompt itself is started outside the mutex.
+   - Pin: T/domain/privacy/applock/AppLockControllerIllegalTransitionTest.kt (new test after the `.setAutoLockTimeout(` pin) allows exactly one production call site of `.setAutoLockTimeoutIfNotWeakening(`, AppLockSettingsOperations.kt (exact addition; the existing pins are unchanged).
+   - Tests: T/data/privacy/applock/AppLockSettingsRepositoryImplTest.kt `conditionalTimeout_*` (9: rejected lengthening with lock on, allowed shortening/equal, allowed with lock off, first run, invalid stored timeout, sentinel, IO read failure, IO write failure, cancellation); T/domain/privacy/applock/AppLockSettingsOperationsTimeoutTest.kt `F1 ...` (conditional vs unconditional use, stale-pre-read answer, two overlapping direct requests, a longer request after an overlapping shortening); fixture T/domain/privacy/applock/AppLockControllerTestFixtures.kt `setAutoLockTimeoutIfNotWeakening` (`conditionalTimeoutWrites`, `conditionalWriteGate`).
+2. Finding 2 (LOW-MEDIUM): M/domain/privacy/applock/AppLockController.kt:717-731 `onTimeoutWrittenWithoutPrompt(timeout, committed = true)` leaves the view unchanged when the effective view has the lock on and the timeout is longer than the view's (fail closed). Tests: AppLockSettingsOperationsTimeoutTest.kt `F2 ...` (longer left unchanged, shorter still applied).
+3. Tests added in AppLockSettingsOperationsTimeoutTest.kt: 8a (INERT: longer NOT_IN_ORIGIN, no write, no prompt; shorter COMMITTED), 8c (shorten to IMMEDIATE, background and foreground within 0 and 1 ms gives LOCKED(TIMEOUT)), 8d (AE-117 M5 variant, IMMEDIATE stored, both callback orders, M5 committed, UNLOCKED, no lock), 8e (an invalid stored timeout reads IMMEDIATE and forces the prompt), 8f (first-run store commits directly), 8g (unreadable path metadata is FIELD=AUTO_LOCK_TIMEOUT).
+4. Findings 3, 4, 5 (docs): LEGAL_PATHS.md new "WRITE 4 — auto-lock timeout (S18 i-b1, DORMANT)" next to WRITE 3 (owner, steps, conditional write, blocking conditions), the WRITE 1 header no longer calls WRITE 3 the only dormant per-field writer, the SERIALISATION paragraph covers WRITE 4; CODEBASE_SEGMENTS.md:603 mentions the timeout writer.
+5. BLOCKING before ANY wiring of `AppLockSettingsOperations` (S18-ii, S19, S20); supersedes the FINAL list at :1400-1405 (same in LEGAL_PATHS WRITE 3 and CODEBASE_SEGMENTS.md:603):
+   - F3: the whole plan :1490-1493 binding (remove the `decideDiscreet` default, pass `actionsSuppressed`, SDK <= 30 lock-on parity row, decide `NOTIF_ACTIONS_SUPPRESSED_LOCK`).
+   - F4: the domain write serializer shared with the ViewModel; it also covers the timeout writes (both paths).
+   - F7: a store re-read after a cancelled NonCancellable write, for the lock write AND both timeout paths (no-prompt and prompt-apply); the controller view is updated from the re-read.
+   - Finding 8: `setAppLockEnabled`, `setAutoLockTimeout` and `setAutoLockTimeoutIfNotWeakening` become abstract (default bodies removed, fakes updated).
+   - INV-45: the review record starts from F for every 1b field, the timeout included (IMMEDIATE), and goes through the controller's auth/capability check (plan :1494).
+6. Behaviour note: a conditional write rejected as WOULD_WEAKEN is reported as NOT_IN_ORIGIN (retry takes the prompt path); it records nothing. A cancellation inside the direct NonCancellable write still leaves the durable outcome unknown (F7, not done).
+7. Validation to request (serial): `compile`; targeted-unit-test `*AppLockController*,*AppLockSettingsOperations*,*AppLockSettingsRepositoryImpl*`; shards domain-n-z and data; registered-guard cancellation; known_good_state.
+- (2026-10-27) Post-fix targeted vr-20261026-235057-d07beefc and domain-n-z vr-20261026-235951-5c26bc1d FAILED on three AppLockSettingsOperationsTimeoutTest tests only.
+  - Root cause (debugger): unlockedRig never cleared the rig's own unlock prompt from authenticator.calls, so the `calls.isEmpty()` assertions saw one stale call.
+  - Fix (test-only): clear the calls in unlockedRig; the two `calls.size == 1` assertions become `isEmpty()`.
+  - Unchanged PASS runs: cancellation vr-20261026-235616-35f3696f, known_good_state vr-20261026-235634-bdf22def, data vr-20261027-000137-2a523052.
+
+### S18 part (i-b1) — final gate (reviewer-strict ACCEPT-WITH-CONDITIONS) and fixes
+Implementer pass; validation NOT run. M = app/src/main/java/com/yourname/expensetracker, T = app/src/test/java/com/yourname/expensetracker.
+1. ISSUE-1 (a direct write could interleave with a CONFIRM_CHANGE prompt or its apply, so store and view could diverge): fixed.
+   - M/domain/privacy/applock/AppLockSettingsOperations.kt:171 inside the `directWriteMutex.withLock` block (:165) the direct path answers ALREADY_IN_FLIGHT while `isConfirmChangeOpen()` (:256: the controller state is `Authenticating` with purpose CONFIRM_CHANGE), in addition to `applyRunning` (:170). Chosen over an `AtomicBoolean timeoutChangePending`: the controller has no "prompt ended without success" hook, so a flag would stick after a cancel or error; the state cannot stick.
+   - M/domain/privacy/applock/AppLockSettingsOperations.kt:239 `runTimeoutApply` takes `directWriteMutex` around the unconditional write plus `onOpenOriginSettingApplied` (inside the existing NonCancellable block; no prompt is held under it). The short window between the controller's close (state back on UNLOCKED) and the handler setting `applyRunning` is therefore harmless: a direct write that slipped in finishes, view included, before the apply writes.
+   - Test: T/domain/privacy/applock/AppLockSettingsOperationsTimeoutTest.kt:271 (open prompt: ALREADY_IN_FLIGHT, no write, store and view still M5 after cancel, then a direct request works again) and :293 (during the apply: ALREADY_IN_FLIGHT, store and view both M15 afterwards).
+   - Not tested (residual): the close-to-handler window itself (a direct request between the controller's close and `applyRunning.set(true)`); it needs a hook that parks the handler.
+2. ISSUE-2 (test rig): T/domain/privacy/applock/AppLockSettingsOperationsTimeoutTest.kt:30 `unlockedRig(timeout)` now calls `unlockedControllerFor(timeout)` (the fixture already took a timeout), so the controller view matches the store. Before it, the view was always M1, which made the "view still holds M5" assertions vacuous. The equal-timeout test (:109 area) now asserts an equal M5 request keeps a view that does not lock at 61 s.
+3. ISSUE-3 (comments only): AppLockControllerIllegalTransitionTest.kt dormancy pin comment (~:714) now points to "LEGAL_PATHS WRITE 3/4 and handoff S18 (i-b1) item 5" instead of an inline list (no pin changed); the AppLockSettingsOperations class KDoc (:61-64) now lists `startTimeoutChangeAttempt` and `onTimeoutWrittenWithoutPrompt`.
+4. Validation to request (serial): `compile`; targeted-unit-test `*AppLockSettingsOperations*,*AppLockController*`; shard domain-n-z; registered-guard cancellation; known_good_state.
+5. OPEN QUESTION for S23 (diagnostics): is a success diagnostic defined for a committed timeout change (direct or prompt path)? Today a commit records nothing (only LOCK_SETTING_PERSIST_FAILED(AUTO_LOCK_TIMEOUT) on failure; LOCK_ENABLED and LOCK_DISABLED exist for the lock flag). Decide whether S23 adds a bounded code or leaves it silent.
+
+### S18 part (i-b1) — accepted (2026-10-27)
+- Final tree (serial, all PASS):
+  - targeted vr-20261027-004839-fa8250cc
+  - cancellation vr-20261027-005328-c0955671
+  - known_good_state vr-20261027-005346-44ab0a9b
+  - domain-n-z vr-20261027-005702-f3142193
+  - Earlier: data vr-20261027-000137-2a523052. The repository Impl has not changed since that run.
+- Gates:
+  - privacy-security-guardian (lead) ACCEPT-WITH-CONDITIONS, fixed: atomic WOULD_WEAKEN conditional write, directWriteMutex, fail-closed view.
+  - reviewer-strict ACCEPT-WITH-CONDITIONS, fixed: the direct path refuses while CONFIRM_CHANGE is open; the apply runs under the mutex; the rig view matches the store.
+  - Review iteration limit reached; accepted on validation.
+- DORMANT. The BLOCKING-before-wiring list is in LEGAL_PATHS WRITE 3/4 and the handoff.
+- Next: S18 part (i-b2): weakening (INV-3/OD-8a) beyond the timeout, TECH-13 INERT, forced values. Then part (ii).

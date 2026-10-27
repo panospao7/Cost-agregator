@@ -1651,8 +1651,8 @@ STORE:
 READ for a notification: NotificationPresentationResolver (see NOTIFICATION PRESENTATION).
 READ for the UI: AppLockPrivacySettingsViewModel ← AppLockSettingsRepository.observeLoadState().
 
-WRITE 1 — per-field discreet toggle (1a; the only WIRED per-field writer. WRITE 3 is a second,
-DORMANT per-field writer that nothing may call yet):
+WRITE 1 — per-field discreet toggle (1a; the only WIRED per-field writer. WRITE 3 (lock flag) and
+WRITE 4 (auto-lock timeout) are DORMANT per-field writers that nothing may call yet):
   → AppLockPrivacySection (UI) → AppLockPrivacySettingsViewModel.setDiscreetNotifications
      (ignored unless Ready and idle, INV-44)
   → appScope.launch (@ApplicationScope, IO) { withContext(NonCancellable) {
@@ -1711,23 +1711,52 @@ WRITE 3 — lock flag (S18 part (i-a), DORMANT: implemented and tested, no produ
   DORMANT / NOT LEGAL TO WIRE until ALL of these BLOCKING items are closed:
     F3: the whole plan :1490-1493 binding - remove the decideDiscreet default, pass actionsSuppressed,
         add the SDK <= 30 lock-on parity row, decide NOTIF_ACTIONS_SUPPRESSED_LOCK;
-    F4: the domain write serializer shared with the ViewModel;
-    F7: a store re-read after a cancelled NonCancellable write;
-    finding 8: setAppLockEnabled becomes abstract;
-    INV-45 (final gate finding 1): the review record starts from F for every 1b field and goes through
-        the controller's auth/capability check (plan :1494) before any wiring. Today the 1a review card
-        writes lock=false with no authentication (AppLockPrivacySettingsViewModel.kt:195/:200).
-  Source-scan tests allow zero callers of AppLockSettingsOperations, requestEnable and requestDisable
-  outside AppLockSettingsOperations.kt, exactly one call site of setAppLockEnabled (that file) and exactly
-  one of reviewSave (the 1a ViewModel); lifting them needs the items above.
+    F4: the domain write serializer shared with the ViewModel (it also covers the WRITE 4 timeout writes);
+    F7: a store re-read after a cancelled NonCancellable write (WRITE 3 and both WRITE 4 paths; the
+        controller view is updated from the re-read);
+    finding 8: setAppLockEnabled, setAutoLockTimeout and setAutoLockTimeoutIfNotWeakening become
+        abstract (their fail-closed default bodies go);
+    INV-45 (final gate finding 1): the review record starts from F for every 1b field (the timeout
+        included: IMMEDIATE) and goes through the controller's auth/capability check (plan :1494) before
+        any wiring. Today the 1a review card writes lock=false with no authentication
+        (AppLockPrivacySettingsViewModel.kt:195/:200).
+  Source-scan tests allow zero callers of AppLockSettingsOperations, requestEnable, requestDisable and
+  requestTimeoutChange outside AppLockSettingsOperations.kt, exactly one call site of setAppLockEnabled,
+  of setAutoLockTimeout and of setAutoLockTimeoutIfNotWeakening (that file) and exactly one of reviewSave
+  (the 1a ViewModel); lifting them needs the items above.
+
+WRITE 4 — auto-lock timeout (S18 part (i-b1), DORMANT: implemented and tested, no production caller):
+  OWNER: AppLockSettingsOperations (same class as WRITE 3). Entry: suspend requestTimeoutChange(timeout)
+  (no ViewModel, Activity, Compose or Android type).
+      1. applyRunning check, then the pre-read of the committed settings; an unreadable store or a
+         throwing pre-read = FAILED, nothing written, no prompt, LOCK_SETTING_PERSIST_FAILED(AUTO_LOCK_TIMEOUT)
+      2. equal or shorter timeout, or the lock is off (NO prompt): under a Mutex held across the pre-read
+         and the write (applyRunning re-checked inside it), withContext(NonCancellable) {
+         AppLockSettingsRepository.setAutoLockTimeoutIfNotWeakening(timeout) } - ONE store edit that
+         re-checks "lock on and timeout longer than stored" and writes nothing then
+         (Rejected(WOULD_WEAKEN) = NOT_IN_ORIGIN, no view change, no record; Rejected(UNREADABLE) or
+         Failed = FAILED + record). Committed → AppLockController.onTimeoutWrittenWithoutPrompt(timeout, true),
+         which takes the timeout into the settings view unless that would lengthen a lock-on view
+         (fail closed)
+      3. longer timeout with the lock on: only from UNLOCKED (INERT = NOT_IN_ORIGIN, TECH-13 is S18-i-b2);
+         CONFIRM_CHANGE prompt with the CHANGE copy (AppLockController.startTimeoutChangeAttempt;
+         INV-54 one prompt in flight); nothing is written until it succeeds
+      4. the T33 hand-off as WRITE 3: ATOMIC apply on the application scope, withContext(NonCancellable) {
+         AppLockSettingsRepository.setAutoLockTimeout(timeout) } (UNconditional: the user authenticated for
+         that exact value), then onOpenOriginSettingApplied(attemptId, committed) (applies the token's
+         timeout; a failed write records LOCK_SETTING_PERSIST_FAILED(AUTO_LOCK_TIMEOUT)), then
+         onOpenOriginApplyCompleted in a finally; the state never moves (UNLOCKED stays)
+  DORMANT / NOT LEGAL TO WIRE until the same BLOCKING list as WRITE 3 is closed (F3, F4, F7, finding 8,
+  INV-45), with the WRITE 4 scope stated there.
 
 SERIALISATION (INTERIM): AppLockSettingsWriteSerializer (@Singleton, ui/screens/privacysettings, a
 process-wide Mutex) so a write started by an earlier ViewModel instance still excludes the next
 one's before-read / write / sweep. S18 moves it to the domain owner before any new writer is WIRED
-(domain code cannot depend on the ui package) and takes over review-save diagnostics. WRITE 3 is
-implemented but does NOT share this serializer (only the per-field atomic store edit keeps it from
-interleaving at the store), so it may not be wired until the serialiser is domain-owned and WRITE 3
-runs inside it (blocking: privacy review F4).
+(domain code cannot depend on the ui package) and takes over review-save diagnostics. WRITE 3 and
+WRITE 4 are implemented but do NOT share this serializer (only the per-field atomic store edit keeps
+them from interleaving at the store; WRITE 4's no-prompt path also holds its own Mutex across its
+pre-read and write), so they may not be wired until the serialiser is domain-owned and both run inside
+it (blocking: privacy review F4).
 
 FORBIDDEN:
   ❌ Writing the settings store anywhere but AppLockSettingsRepositoryImpl

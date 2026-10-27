@@ -7,6 +7,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 import java.util.concurrent.atomic.AtomicBoolean
@@ -32,10 +34,35 @@ enum class SettingsRequestResult {
 }
 
 /**
+ * Bounded result of [AppLockSettingsOperations.requestTimeoutChange] (S18 part (i-b1)). No text, no platform detail.
+ */
+enum class TimeoutChangeResult {
+    /** An equal or shorter timeout (or any timeout while the lock is off) was written durably, with no prompt. */
+    COMMITTED,
+
+    /** The write did not commit, or the settings were unreadable (nothing written). The previous value stays in force. */
+    FAILED,
+
+    /** A longer timeout: the CONFIRM_CHANGE prompt started. Its outcome is applied by this class. */
+    STARTED,
+
+    /** A prompt or an apply is already in flight (INV-34, INV-54). Nothing changed. */
+    ALREADY_IN_FLIGHT,
+
+    /**
+     * A longer timeout while the state is not `UNLOCKED` (or INERT, TODO(S18-i-b2) TECH-13), or the T33 gate is open.
+     * Also the answer of a direct write whose conditional store edit found a stale pre-read (the lock is on and the
+     * stored timeout is shorter than requested): nothing was written, a retry takes the prompt path.
+     */
+    NOT_IN_ORIGIN
+}
+
+/**
  * The application-scoped owner of the app-lock enable and disable requests (S18 part (i-a): T17, T18, T26, T33;
  * INV-3, INV-13, INV-54). It is the ONLY production caller of `AppLockController.startOpenOriginAttempt`,
- * `onOpenOriginApplyCompleted` and the two state-move entries `onEnableRefusedAtRequest` and
- * `onOpenOriginSettingApplied` (pinned by a source scan). It holds no ViewModel, Activity, Compose or Android
+ * `startTimeoutChangeAttempt`, `onOpenOriginApplyCompleted` and the three state-move entries
+ * `onEnableRefusedAtRequest`, `onOpenOriginSettingApplied` and `onTimeoutWrittenWithoutPrompt`
+ * (pinned by a source scan). It holds no ViewModel, Activity, Compose or Android
  * type: the success handler it gives the controller captures only this singleton and a constant prompt.
  *
  * ## Enable ([requestEnable])
@@ -90,6 +117,12 @@ class AppLockSettingsOperations @Inject constructor(
     /** True from before the apply launches until its `finally` (F5). */
     private val applyRunning = AtomicBoolean(false)
 
+    /**
+     * Serialises the no-prompt timeout path: the pre-read and the direct (conditional) write are one critical section
+     * (S18 i-b1 privacy review F1). Never held across a prompt.
+     */
+    private val directWriteMutex = Mutex()
+
     /** T26 request-time check, then the ENABLE attempt (T17). Never writes anything itself. */
     fun requestEnable(): SettingsRequestResult {
         if (applyRunning.get()) return SettingsRequestResult.ALREADY_IN_FLIGHT
@@ -104,6 +137,154 @@ class AppLockSettingsOperations @Inject constructor(
     /** The DISABLE attempt (T18, OD-8a: fresh authentication). Never writes anything itself. */
     fun requestDisable(): SettingsRequestResult =
         if (applyRunning.get()) SettingsRequestResult.ALREADY_IN_FLIGHT else start(OpenOriginPrompt.DISABLE)
+
+    /**
+     * S18 part (i-b1): the auto-lock timeout change (INV-3, OD-8a). The committed timeout is read first (one fresh
+     * read; an unreadable or failed read is a failure with nothing written, no prompt, fail closed).
+     *
+     * - Equal or shorter than the committed timeout, or the lock is off: written directly, no prompt (a longer
+     *   timeout is the only weakening here), by the CONDITIONAL store edit, under [directWriteMutex] across the
+     *   pre-read and the write (privacy review F1). The controller's settings view is updated through
+     *   `onTimeoutWrittenWithoutPrompt`. The result is [TimeoutChangeResult.COMMITTED] or [TimeoutChangeResult.FAILED].
+     * - Longer, lock on: the CONFIRM_CHANGE attempt (CHANGE copy) starts, only from `UNLOCKED`. Nothing is written
+     *   until the prompt succeeds; a cancelled or failed prompt leaves the old timeout (AE-116). The success handler
+     *   starts the apply as its LAST statement, exactly as for enable and disable; the apply writes under
+     *   `NonCancellable`, then the id-bound `onOpenOriginSettingApplied` (which applies the timeout recorded in the
+     *   controller's one-shot token), then completes in a `finally`. [applyRunning] is honoured.
+     *
+     * TODO(S18-i-b2): TECH-13 (a longer timeout while INERT is `Rejected(AUTH_UNAVAILABLE)`; today it is the
+     * fail-closed [TimeoutChangeResult.NOT_IN_ORIGIN] with no write and no prompt), the other weakening writes and
+     * forced values.
+     */
+    suspend fun requestTimeoutChange(newTimeout: AutoLockTimeout): TimeoutChangeResult {
+        if (applyRunning.get()) return TimeoutChangeResult.ALREADY_IN_FLIGHT
+        // Privacy review F1: the pre-read and the direct write are one critical section (so two overlapping direct
+        // requests cannot interleave their read and write), applyRunning is re-checked inside it, and the write itself
+        // is the conditional store edit that re-checks the weakening inside the edit. A null result means "needs the
+        // prompt": that part runs outside the mutex (the prompt can be open for a long time).
+        val direct: TimeoutChangeResult? = directWriteMutex.withLock {
+            if (applyRunning.get()) return@withLock TimeoutChangeResult.ALREADY_IN_FLIGHT
+            // S18 i-b1 final gate ISSUE-1: no write while a CONFIRM_CHANGE prompt is open (from its start until its
+            // close). The controller has no "ended without success" hook, so a flag could stick; its own state is the
+            // source. From the close to the apply start, the apply takes [directWriteMutex] (runTimeoutApply), so a
+            // direct write that slipped into that window completes, view included, before the apply writes.
+            if (isConfirmChangeOpen()) return@withLock TimeoutChangeResult.ALREADY_IN_FLIGHT
+            val committed = readCommittedSettings()
+            if (committed == null) {
+                // Unreadable (INV-44) or a failed read: nothing is written and no prompt starts; the failure is recorded.
+                controller.onTimeoutWrittenWithoutPrompt(newTimeout, false)
+                return@withLock TimeoutChangeResult.FAILED
+            }
+            val longer = newTimeout.millis > committed.autoLockTimeout.millis
+            if (!longer || !committed.appLockEnabled) writeTimeoutWithoutPrompt(newTimeout) else null
+        }
+        if (direct != null) return direct
+        if (controller.state.value is AppLockState.Inert) return TimeoutChangeResult.NOT_IN_ORIGIN // TODO(S18-i-b2)
+        return when (
+            controller.startTimeoutChangeAttempt(
+                newTimeout,
+                OpenOriginSuccessHandler { attemptId, _ -> startTimeoutApply(attemptId, newTimeout) }
+            )
+        ) {
+            is OpenOriginStartResult.Started -> TimeoutChangeResult.STARTED
+            OpenOriginStartResult.AlreadyInFlight -> TimeoutChangeResult.ALREADY_IN_FLIGHT
+            OpenOriginStartResult.NotInOrigin -> TimeoutChangeResult.NOT_IN_ORIGIN
+        }
+    }
+
+    /**
+     * The no-prompt write: durable first (under `NonCancellable`), then the controller's view and failure record. It is
+     * the CONDITIONAL store edit (F1): if the stored lock is on and the stored timeout is shorter than [timeout] by the
+     * time the edit runs (a stale pre-read), it writes nothing and answers [TimeoutChangeResult.NOT_IN_ORIGIN] with no
+     * view change and no failure record; a retry then takes the prompt path.
+     */
+    private suspend fun writeTimeoutWithoutPrompt(timeout: AutoLockTimeout): TimeoutChangeResult =
+        withContext(NonCancellable) {
+            when (val result = writeTimeout(timeout, conditional = true)) {
+                is AppLockSettingsWriteResult.Committed -> {
+                    controller.onTimeoutWrittenWithoutPrompt(timeout, true)
+                    TimeoutChangeResult.COMMITTED
+                }
+                is AppLockSettingsWriteResult.Rejected ->
+                    if (result.reason == AppLockWriteRejection.WOULD_WEAKEN) {
+                        TimeoutChangeResult.NOT_IN_ORIGIN
+                    } else {
+                        controller.onTimeoutWrittenWithoutPrompt(timeout, false)
+                        TimeoutChangeResult.FAILED
+                    }
+                is AppLockSettingsWriteResult.Failed -> {
+                    controller.onTimeoutWrittenWithoutPrompt(timeout, false)
+                    TimeoutChangeResult.FAILED
+                }
+            }
+        }
+
+    /** The T33 hand-off target of a timeout change. Its LAST (and only) statement starts the apply (see [startApply]). */
+    private fun startTimeoutApply(attemptId: Long, timeout: AutoLockTimeout) {
+        applyRunning.set(true) // before the launch; cleared in runTimeoutApply's finally (F5)
+        try {
+            scope.launch(start = CoroutineStart.ATOMIC) { runTimeoutApply(attemptId, timeout) }
+        } catch (t: Throwable) {
+            // CancellationException is a Throwable and is rethrown unchanged.
+            applyRunning.set(false)
+            throw t
+        }
+    }
+
+    private suspend fun runTimeoutApply(attemptId: Long, timeout: AutoLockTimeout) {
+        try {
+            withContext(NonCancellable) {
+                // ISSUE-1(b): the write and the view update are one critical section with the direct path. No prompt is
+                // held under the mutex (the prompt closed before this apply started).
+                directWriteMutex.withLock {
+                    val result = writeTimeout(timeout, conditional = false) // the prompt path: unconditional
+                    // The state-move entry comes BEFORE the completion call (S17 binding). It applies the timeout from
+                    // its own token, bound to attemptId; a wrong or reused id is a no-op.
+                    controller.onOpenOriginSettingApplied(attemptId, result is AppLockSettingsWriteResult.Committed)
+                }
+            }
+        } finally {
+            try {
+                controller.onOpenOriginApplyCompleted(attemptId)
+            } finally {
+                applyRunning.set(false)
+            }
+        }
+    }
+
+    /** True while the controller holds an open CONFIRM_CHANGE prompt (the state is the source; no flag can stick). */
+    private fun isConfirmChangeOpen(): Boolean =
+        (controller.state.value as? AppLockState.Authenticating)?.purpose == AuthPurpose.CONFIRM_CHANGE
+
+    /** The durable timeout write. Any non-cancellation failure is a failed write (bounded: class name only in the log). */
+    private suspend fun writeTimeout(timeout: AutoLockTimeout, conditional: Boolean): AppLockSettingsWriteResult =
+        try {
+            if (conditional) {
+                settingsRepository.setAutoLockTimeoutIfNotWeakening(timeout)
+            } else {
+                settingsRepository.setAutoLockTimeout(timeout)
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Timber.w("App-lock timeout write failed: class=%s", DiagnosticThrowableSummary.className(e))
+            AppLockSettingsWriteResult.Failed(AppLockSettingField.AUTO_LOCK_TIMEOUT)
+        }
+
+    /** The committed settings, or null when unreadable or the read threw (fail closed). Cancellation propagates. */
+    private suspend fun readCommittedSettings(): AppLockPrivacySettings? =
+        try {
+            when (val state = settingsRepository.getLoadState()) {
+                is AppLockSettingsLoadState.Loaded -> state.settings
+                is AppLockSettingsLoadState.FirstRunDefault -> state.settings
+                is AppLockSettingsLoadState.Unreadable -> null
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Timber.w("App-lock timeout pre-read failed: class=%s", DiagnosticThrowableSummary.className(e))
+            null
+        }
 
     private fun start(prompt: OpenOriginPrompt): SettingsRequestResult =
         when (controller.startOpenOriginAttempt(prompt, OpenOriginSuccessHandler { attemptId, _ -> startApply(attemptId, prompt) })) {

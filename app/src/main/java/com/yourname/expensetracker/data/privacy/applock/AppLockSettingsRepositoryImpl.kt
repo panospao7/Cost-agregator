@@ -132,6 +132,60 @@ class AppLockSettingsRepositoryImpl @VisibleForTesting internal constructor(
             writeFailure(e, AppLockSettingField.APP_LOCK_ENABLED, rejectOnPersistentUnreadable = true)
         }
 
+    override suspend fun setAutoLockTimeout(timeout: AutoLockTimeout): AppLockSettingsWriteResult =
+        try {
+            val after = store.edit { prefs ->
+                // INV-44: nothing is written while unreadable (same read-check-write as the lock flag write).
+                if (prefs.toLoadState() is AppLockSettingsLoadState.Unreadable) return@edit
+                prefs[Keys.AUTO_LOCK_TIMEOUT] = timeout.token
+                prefs[LOAD_STATE_KEY] = LOAD_STATE_NORMAL
+            }
+            when (val state = after.toLoadState()) {
+                is AppLockSettingsLoadState.Loaded -> AppLockSettingsWriteResult.Committed(state.settings)
+                is AppLockSettingsLoadState.FirstRunDefault -> AppLockSettingsWriteResult.Committed(state.settings)
+                is AppLockSettingsLoadState.Unreadable ->
+                    AppLockSettingsWriteResult.Rejected(AppLockWriteRejection.UNREADABLE)
+            }
+        } catch (e: IOException) {
+            writeFailure(e, AppLockSettingField.AUTO_LOCK_TIMEOUT, rejectOnPersistentUnreadable = true)
+        }
+
+    override suspend fun setAutoLockTimeoutIfNotWeakening(timeout: AutoLockTimeout): AppLockSettingsWriteResult {
+        // Set inside the edit, read after it: the check and the write are ONE atomic store edit (S18 i-b1 F1).
+        var weakening = false
+        return try {
+            val after = store.edit { prefs ->
+                weakening = false
+                val stored = when (val state = prefs.toLoadState()) {
+                    is AppLockSettingsLoadState.Loaded -> state.settings
+                    is AppLockSettingsLoadState.FirstRunDefault -> state.settings
+                    // INV-44: nothing is written while unreadable.
+                    is AppLockSettingsLoadState.Unreadable -> return@edit
+                }
+                // A longer timeout with the lock on is a weakening: it needs the prompt path, so nothing is written
+                // here. An invalid stored timeout already reads as IMMEDIATE, so any other value is longer.
+                if (stored.appLockEnabled && timeout.millis > stored.autoLockTimeout.millis) {
+                    weakening = true
+                    return@edit
+                }
+                prefs[Keys.AUTO_LOCK_TIMEOUT] = timeout.token
+                prefs[LOAD_STATE_KEY] = LOAD_STATE_NORMAL
+            }
+            if (weakening) {
+                AppLockSettingsWriteResult.Rejected(AppLockWriteRejection.WOULD_WEAKEN)
+            } else {
+                when (val state = after.toLoadState()) {
+                    is AppLockSettingsLoadState.Loaded -> AppLockSettingsWriteResult.Committed(state.settings)
+                    is AppLockSettingsLoadState.FirstRunDefault -> AppLockSettingsWriteResult.Committed(state.settings)
+                    is AppLockSettingsLoadState.Unreadable ->
+                        AppLockSettingsWriteResult.Rejected(AppLockWriteRejection.UNREADABLE)
+                }
+            }
+        } catch (e: IOException) {
+            writeFailure(e, AppLockSettingField.AUTO_LOCK_TIMEOUT, rejectOnPersistentUnreadable = true)
+        }
+    }
+
     override suspend fun reviewSave(record: AppLockPrivacySettings): AppLockSettingsWriteResult =
         try {
             // One atomic replace of the whole store: every field explicit, marker NORMAL. The
