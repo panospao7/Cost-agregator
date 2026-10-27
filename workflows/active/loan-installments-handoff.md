@@ -2113,3 +2113,115 @@ Validation to request (one combined targeted run first): `targeted-unit-test -Fi
   - Gate: cheap review ACCEPT-WITH-CONDITIONS (finding 1 resolved by owner-approvals 50(a); finding 2 tests added; 3 and 4 accepted; 5 is the pre-S13 memoise).
   - The es/el strings are DRAFTS.
   - Committed. Next: S12a.
+
+## S12a — implemented
+
+Status: implemented, NOT validated (nothing was run). Dormant: every hook is gated on `InstallmentsFeature.ENABLED` (false).
+
+Ops and reads used (no new DAO query, no schema, guard or allowlist change):
+- Write: only `InstallmentPlanLifecycleCoordinator.declareOnExpense(expenseId, terms, zone)` (declare) and `.delete(planId)` (Undo of the declaration, AE-14). Post-commit batches go through the shared `InstallmentPostCommitDispatcher` via `executeInstallmentPlanOp`. No DAO, TLC or repository write from the UI; no `deleteExpense(` (INV-23).
+- Reads: `InstallmentPlanReadRepository.loadOverview/loadHistory/loadDetail/loadSuggestions` (existing). Chips are a UI join of expense id to entry/plan facts (OQ-22), never stored text. Menu eligibility uses `InstallmentExpenseFacts.isSpendingType/hasSplit` and the `Expense` row the screen already holds.
+- AE-20: `InstallmentLockedExpenseException` is mapped to the fixed string `transactions_installment_purchase_locked` in `TransactionsViewModel.updateExpenseType` and `.updateOwnership` (two additive catch branches; the TLC already throws it).
+
+Files:
+- New: `ui/screens/installments/declare/DeclareInstallmentsSheet.kt` (ViewModel + sheet + host with Undo snackbar), `ui/screens/transactions/TransactionsInstallmentViewModel.kt` (marks loader, duplicate rule, row UI model, filter), `ui/screens/transactions/TransactionsInstallmentUi.kt` (chips, menu items, filter chip).
+- Modified: `TransactionsScreen.kt` (additive hooks, new default param `onOpenInstallmentPlan`), `TransactionsViewModel.kt` (two catch branches only), `values/strings.xml`, `values-es/strings.xml`, `values-el/strings.xml`.
+- Tests: `DeclareInstallmentsViewModelTest`, `TransactionsViewModelInstallmentTest`.
+
+Deviations and decisions:
+1. Marks/filter live in a NEW `TransactionsInstallmentViewModel`, not in `TransactionsViewModel` (an overlap file), so its constructor and existing tests are untouched. The plan test name `TransactionsViewModelInstallmentTest` is kept.
+2. The filter is applied to the already grouped list in the screen (`filterGrouped`); with paging on the ALL tab it only filters loaded pages.
+3. "Installment plan" badge and chip appear on every entry-linked expense (the read model does not expose the link origin), a superset of auto-recorded. The chip shows for PAID and REVERSED entries only.
+4. AE-17 part 2 "possible duplicate" is implemented as a UI-only rule (same currency, amount within 1 minor unit, date in (due, due+10 days]). The window is a PROPOSAL for the domain-modeler to confirm. It is a chip on Transactions only, not on the plan detail.
+5. Snackbar offers Undo; "View plan" is offered only after a failed Undo (a Material snackbar has one action). The row menu "View installment plan" covers the other case.
+6. Navigation to the plan detail is a callback `onOpenInstallmentPlan` (default no-op); wiring it in the NavHost belongs to S13 enablement.
+7. `InstallmentPlanOperation` was not extended: CREATE = declare, DELETE = undo (labels only).
+8. OD-14: the plan currency picker (EUR/USD) is always shown; a plan currency different from the purchase forces FIXED_PAYMENT (no cross-currency conversion is invented) and states that financing cost is unavailable. A purchase in an unsupported currency (for example CHF) has no preselected plan currency.
+9. Not implemented: recurring-link ("LINKED_ELSEWHERE") pre-check in the menu (needs a read the Transactions row does not have); the coordinator refuses with a fixed message instead. WRITES_BLOCKED has no dedicated string (shown as the generic failure).
+
+es/el DRAFT strings (pending owner sign-off): `transactions_installment_*` (menu, plural chip, n of m, badge, matches, duplicate, filter, purchase_locked) and `declare_installments_*` (sheet labels, impact, refusals, snackbars). Format strings: `%1$d of %2$d`, `%1$s on %2$s`; plural `transactions_installment_chip_paid_in`.
+
+Risks:
+- `TransactionsScreen` chip row sits above the merchant line and the filter chip above the top bar; visual placement needs a design look. `TransactionItem`/`TransactionsScreen` are overlap files (merge conflict risk).
+- The marks loader does N+1 `loadDetail` reads per refresh (small plan counts; memoise before S13 if needed).
+- `InstallmentRowUi.of` runs the duplicate rule per visible row on recomposition (cheap, in memory).
+- AE-20 locked-message branches in `TransactionsViewModel` have no VM-level test (full VM fixture); `TransactionsViewModelTest` should get one case.
+
+Validation to request: targeted `*Transactions*Installment*,*DeclareInstallments*,*TransactionsViewModel*`; shards runtime-ui and architecture-contracts; ui_dao guard; lint (es/el parity, plural forms); static-guards (lifecycle entry, overlap files).
+Gates: architecture-guardian, privacy-security, reviewer-strict.
+
+S12a — AE-20 VM test added (TransactionsViewModelTest, uncommitted, not run): `INV-22 AE-20 updateExpenseType installment lock shows fixed resource message`, `INV-22 AE-20 updateOwnership installment lock shows fixed resource message`, `INV-22 AE-20 installment lock with hostile code never shows exception text`, `INV-22 AE-20 cancellation in updateExpenseType and updateOwnership is not mapped to installment lock message`. Request filter: `*TransactionsViewModelTest*`.
+
+### S12a — privacy + architecture review (ACCEPT-WITH-CONDITIONS) and fixes
+
+Status: fixes applied, uncommitted, NOT validated (nothing was run). Still dormant, coordinator-only writes, INV-31, no schema/DAO/guard/allowlist change. Prior targeted run vr-20261027-162517-1b8bae5a failed to compile (item 0); it is superseded by these edits.
+
+Applied:
+- Compile fix: `TransactionsViewModelInstallmentTest` mocked `spendingExclusionReason` with the enum; the entity field is `String?` (enum NAME). Now `exclusion?.name`. No other enum-vs-String mismatch on Expense fields in the new tests (`splitTemplateId` is Long?, `splitVisualization` String?).
+- F1 (MEDIUM, privacy): `TransactionsViewModel.updateExpenseType` and `.updateOwnership` now have a dedicated `catch (e: InstallmentLockedExpenseException)` before `catch (e: Exception)`, mirroring the `GroupLinkedExpenseException` branch. It logs the constant `Transactions: TRANSACTION_UPDATE_BLOCKED code=EXPENSE_LOCKED_BY_INSTALLMENT_PLAN` only (never `e.code`, which is an unvalidated constructor argument) and emits the fixed UiText `transactions_installment_purchase_locked`. The old `e is InstallmentLockedExpenseException` branch inside the broad catch is removed; the broad catch keeps `if (e is CancellationException) throw e` as its first statement (CANCEL-01 order unchanged).
+- F2 (MEDIUM): `DeclareInstallmentsHost` snackbars now pass an explicit duration: Declared (Undo) and UndoFailed (View plan) use `SnackbarDuration.Long`, Undone uses `Short` (matches the Transactions screen, which uses Short and no dismiss action, so `withDismissAction` is not added). Every branch consumes the notice after `showSnackbar` returns (action, dismissal or timeout), so it cannot return.
+- F3 (LOW-MEDIUM): `TransactionsScreen` load-more trigger: while the installments filter is on, `shouldLoadMore` no longer needs the last-visible/`totalItems > 0` condition, so it keeps calling `loadMore()` page by page until `hasReachedEnd` (bounded by the existing paging; the derived state is keyed on the filter flag). Chosen over a "Showing loaded items only" hint because it needs no new string (no es/el draft), fixes the false-empty case (totalItems == 0 blocked the old trigger), and the existing loading indicator and "You've reached the end" row already communicate progress.
+- F7 (LOW): `LaunchedEffect(installmentVm, groupedTransactionsBase)` now refreshes the marks whenever the base list changes (refresh cancels a running read), so a later auto-recorded payment no longer shows "Pay in installments...".
+- F6 (tests):
+  - `DeclareInstallmentsViewModelTest`: the vacuous `R.string.x != 0` test is replaced by an exhaustive check that `declareMutationMessage` is non-null for every `InstallmentRefusalCode` and every `InstallmentActionFailureCode` (Idle stays null).
+  - `TransactionsViewModelInstallmentTest`: added fail-closed (a flagged row with no mark is Hidden, for every SpendingExclusionReason), split detected via `splitTemplateId`, duplicate rule ignores a non-spending type, and the failed-read test now plants a Timber tree and asserts the only log is `class=IllegalStateException` with no "Demo"/"600".
+  - `TransactionsViewModelTest`: the lock tests now assert the exact log list (the constant only, no `TRANSACTION_UPDATE_FAILED` line, no throwable); the hostile-code test asserts the constant twice and no hostile text.
+
+OWNER items (sign-off needed):
+- F4: the filter is a single "installment rows" toggle, versus ux-flows "All / Installment payments / Purchase records". This is a deviation from the spec.
+- F5: the purchase-lock message wording drops the spec's second sentence.
+
+Follow-ups:
+- Move the AE-17 duplicate rule into `InstallmentCandidateRule` after domain-modeler confirmation of the window.
+- Show the possible duplicate on the plan detail too.
+- Link origin in the read model, for exact auto-recorded badges (today the badge is a superset).
+- Extend the guard scope to cover `ui/screens/transactions/TransactionsInstallment*.kt` (needs owner approval; no guard change made).
+- Memoise the per-plan `loadDetail` reads before S13 (F7 refresh and F3 paging make refreshes more frequent).
+
+Validation to request: targeted `*TransactionsViewModelInstallmentTest*,*TransactionsViewModelTest*,*DeclareInstallmentsViewModelTest*`; then runtime-ui and architecture-contracts shards; lint (no new strings); static-guards only if the gate requires it (CANCEL-01 window in `TransactionsViewModel` is the relevant check).
+
+### S12a — final gate (reviewer-strict ACCEPT-WITH-CONDITIONS) and fixes
+
+Status: fixes applied, uncommitted, NOT validated (nothing was run). Still dormant, coordinator-only writes, INV-31, CANCEL-01 kept, no schema/DAO/guard/allowlist change, no test deleted. Supersedes the F3 and snackbar items of the previous section where they differ.
+
+1. MAJOR (F3 paging stall) - fixed. The predicate is now the pure `TransactionsLoadMorePolicy.shouldLoadMore(...)` (in `TransactionsInstallmentViewModel.kt`). Filter off: `isAllTab && nearEnd && !isLoadingMore && !hasReachedEnd`, EXACTLY the old rule (isLoading not consulted). Filter on: `isAllTab && !isLoading && !isLoadingMore && !hasReachedEnd` (no scroll condition). `TransactionsScreen` calls it from the same `derivedStateOf` and keys the effect `LaunchedEffect(shouldLoadMore, if (installmentFilterOn) transactions.size else -1)`. Reasoning: (a) refresh while loading: `loadMore()` returns early while `_isLoading`; the predicate is now false during the load and goes false to true when it ends, which restarts the effect; the refresh also empties the list (size changes), a second restart. (b) same-frame race (StateFlow conflation hides a fast isLoadingMore true/false pair, so `shouldLoadMore` never changes): each completed page grows the base list, which changes the key and restarts the effect. A failed page adds no rows, so no retry loop; an end-of-data page sets `hasReachedEnd`. Filter off: the key part is the constant -1, behaviour unchanged. Test: new `TransactionsLoadMorePolicyTest` (filter off equals the original rule for all 32 combinations; filter on x isLoading x isLoadingMore x hasReachedEnd x nearEnd; other tabs never page).
+2. MINOR (PAYOFF label) - fixed. `InstallmentRowMark.Payment` has `showSequence` (true only for REGULAR entries); `InstallmentRowChips` shows the source badge only when false (no "Installment 0 of N"). Test: `AE-17 a PAYOFF entry shows the source badge only...` (also asserts N counts REGULAR entries and a PAYOFF entry is not a duplicate reference).
+3. MINOR (reads) - fixed. The refresh job does `delay(REFRESH_DEBOUNCE_MS = 250)` before `loader.load`, under the existing `loadJob?.cancel()`, so bursts coalesce and a newer refresh cancels both the wait and an in-flight read (the CancellationException still propagates). "Skip while isLoadingMore" was NOT done (the VM does not know that state; the debounce covers paging bursts). Tests: two quick refreshes cause one `loadOverview()` (virtual time); a slow first read never lands after a second refresh.
+4. MINOR (snackbar replay) - fixed. `DeclareInstallmentsViewModel.changed` is a one-shot `Flow<Unit>` (conflated Channel) sent from the declare and undo success paths; the host collects it (`rememberUpdatedState(onChanged)`), so the refresh no longer depends on the snackbar coroutine. Each notice snackbar is wrapped in try/finally that calls `consumeNotice(notice)`, which clears only that notice, so a snackbar cancelled by leaving composition consumes its notice (no replay on return) without wiping a newer one. `open()` now KEEPS a pending notice (it used to null it, silently dropping an Undo). Decision: keep, not offer a new UI: the declaration is real and Undo stays valid until its own timeout; the notice is replaced only by a newer one. Consequence for the owner: if the user declares a second purchase before the first snackbar times out, the first Undo is lost when the second notice replaces it (the plan stays reachable from the plans screen).
+5. MINOR (AlreadyInState) - fixed. A silent AlreadyInState declare still sends the `changed` signal (it is `Success`). Test covers the signal with no notice.
+6. Tests added/changed: `DeclareInstallmentsViewModelTest` (declare and undo `Done(ref, listOf(batch))` reach `PostCommitActionRunner.run(batch)` via coVerify; one signal per declare/undo/AlreadyInState, none on refusal; `consumeNotice(expected)` clears only that notice; `open()` keeps a pending notice). `TransactionsViewModelInstallmentTest` (`InstallmentRowMarksLoader.load(enabled = true)` maps details to marks; the failed-read test now starts from NON-empty marks so the EMPTY assertion is meaningful; PAYOFF; debounce; cancel).
+
+OWNER question (OD-14 narrowing): the declare sheet does not offer EQUAL_SPLIT when the plan currency differs from the purchase currency (a fixed payment is the only way; `effectiveSplit`). Spec line 128 allows an equal split in that case, and the coordinator does not enforce OD-14. Decide: keep the narrowing (no conversion is invented; documented in the `DeclareForm` KDoc) or allow it (needs a stated conversion rule).
+
+S13 re-check: declaring on an old purchase with `paidBeforeTrackingCount = 0` (the declare sheet always sends 0) creates SCHEDULED entries whose due date can already be in the past. Confirm AUTO_RECORD cannot record them as new expenses (INV-12 / D-c), for example through the due-recording worker or the pre-backup reconciler.
+
+F5 wording note for the owner: the purchase-lock message states the type and ownership lock but not the amount (the spec's second sentence is dropped); confirm that is acceptable.
+
+Validation to request: targeted `*TransactionsLoadMorePolicyTest*,*TransactionsViewModelInstallmentTest*,*DeclareInstallmentsViewModelTest*,*TransactionsViewModelTest*`; then runtime-ui and architecture-contracts shards; lint (no new strings). Gate: reviewer-strict re-check of items 1 and 4.
+
+### S12a — reviewer-strict iteration 2 (ACCEPT-WITH-CONDITIONS) and text fixes (2026-10-27)
+- Iteration-1 findings 1–6 are CLOSED. Filter-off paging is provably unchanged (the 32-combination policy test).
+- Finding 1, text corrected: the "a failed page … no retry loop" claim was inaccurate. A page that keeps failing is still retried through the isLoadingMore toggle, as before; with the filter on, scrolling no longer stops it.
+  - PRE-ENABLE item: with the filter on, key the effect on (isAllTab, isLoading, hasReachedEnd, base row count or generation) without the isLoadingMore toggle, or back off retries.
+  - Correction to the iteration-1 section: its "no retry loop" claim is superseded.
+- Finding 2 (recorded, owner-visible): the pending Declared/Undo snackbar is consumed when the activity is recreated (rotation, dark mode, locale), so the Undo is lost. This is fail-safe (no replay, no duplicate); the plan can still be deleted from the plan screen while it has no payments. Optional: skip the consume while isChangingConfigurations.
+- Finding 3: the test name and comment were fixed.
+- Finding 4, PRE-ENABLE device QA checklist (no Compose test harness in the repo):
+  - (a) filter on with more than one page and few marks: paging continues to the end;
+  - (b) pull-to-refresh with the filter on, during paging;
+  - (c) leave and return while the Declared snackbar is showing: no replay and no second refresh;
+  - (d) rotate while the Declared snackbar is showing.
+- Residual stall windows (narrow, recoverable): an identical size after a same-frame refresh; a tryLock miss; an unescaped LIKE in AmountOpsDisabled search. A sturdier VM-exposed generation key is optional, pre-enable.
+- Final-tree runs before these text edits, all PASS: targeted vr-20261027-171704-0fd845b6, runtime-ui vr-20261027-171750-e7040ef3, architecture-contracts vr-20261027-165255-6729065d, lint vr-20261027-165542-a00e6b80, static-guards vr-20261027-170046-6c8c8c31, cancellation vr-20261027-165138-ecfd4156.
+- S12a ACCEPTED (2026-10-27).
+  - Final targeted vr-20261027-172037-f635eea6 PASS, after the text-only fixes.
+  - Gates:
+    - privacy-security plus architecture: ACCEPT-WITH-CONDITIONS;
+    - reviewer-strict iteration 1: ACCEPT-WITH-CONDITIONS (1 MAJOR, fixed);
+    - reviewer-strict iteration 2: ACCEPT-WITH-CONDITIONS (text fixes applied; pre-enable items recorded).
+  - Committed.
+  - The loan lane is now WAITING on:
+    - S8b: owner approval of the guard strengthening;
+    - S11: blocked by the build order (nl-quick-add inc 1, then MEC B and C);
+    - S13: enablement, needs S8b and S11 plus the pre-enable items.
+  - Owner items: OQ-21 (49c); the OD-14 EQUAL_SPLIT narrowing; F4 filter granularity; F5 lock wording; es/el sign-off.

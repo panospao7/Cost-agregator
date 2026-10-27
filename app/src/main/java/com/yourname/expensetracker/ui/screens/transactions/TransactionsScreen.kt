@@ -52,6 +52,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.yourname.expensetracker.ui.navigation.InstallmentsFeature
+import com.yourname.expensetracker.ui.screens.installments.declare.DeclareInstallmentsHost
+import com.yourname.expensetracker.ui.screens.installments.declare.DeclareInstallmentsTarget
+import com.yourname.expensetracker.ui.screens.installments.declare.DeclareInstallmentsViewModel
 import com.yourname.expensetracker.BuildConfig
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.database.entity.Category
@@ -128,10 +132,28 @@ fun TransactionsScreen(
     highlightedExpenseId: Long? = null,
     onNavigateToAnalytics: () -> Unit = {},
     onAddExpense: () -> Unit = {},
-    onOpenVisualSplit: (Expense) -> Unit = {}
+    onOpenVisualSplit: (Expense) -> Unit = {},
+    onOpenInstallmentPlan: (Long) -> Unit = {}
 ) {
     val transactions by viewModel.transactions.collectAsState()
-    val groupedTransactions by viewModel.groupedTransactions.collectAsState()
+    val groupedTransactionsBase by viewModel.groupedTransactions.collectAsState()
+    // loan-installments S12a: dormant hooks. Nothing is created, read or shown while the flag is false.
+    val installmentVm: TransactionsInstallmentViewModel? =
+        if (InstallmentsFeature.ENABLED) hiltViewModel() else null
+    val declareVm: DeclareInstallmentsViewModel? =
+        if (InstallmentsFeature.ENABLED) hiltViewModel() else null
+    val installmentMarks = installmentVm?.marks?.collectAsState()?.value ?: InstallmentRowMarks.EMPTY
+    val installmentFilterOn = installmentVm?.filterOn?.collectAsState()?.value ?: false
+    // F7: also re-read when the base list changes, so a payment recorded later (for example an
+    // auto-recorded one) no longer shows "Pay in installments". refresh() cancels a running read.
+    LaunchedEffect(installmentVm, groupedTransactionsBase) { installmentVm?.refresh() }
+    val groupedTransactions = remember(groupedTransactionsBase, installmentMarks, installmentFilterOn) {
+        if (installmentFilterOn) {
+            TransactionsInstallmentViewModel.filterGrouped(groupedTransactionsBase, installmentMarks)
+        } else {
+            groupedTransactionsBase
+        }
+    }
     val categories by viewModel.categories.collectAsState()
     val selectedTab by viewModel.selectedTab.collectAsState()
     val searchQuery by viewModel.searchQuery.collectAsState()
@@ -238,20 +260,31 @@ fun TransactionsScreen(
     }
     
     // Detect when to load more for pagination
-    val shouldLoadMore by remember {
+    // F3: while the installments filter is on, the filtered list can be empty or tiny although more
+    // pages exist, which would block the scroll trigger and show a false empty list. Keep loading
+    // (page by page, the existing paging) until the end is reached.
+    val shouldLoadMore by remember(installmentFilterOn) {
         derivedStateOf {
             val lastVisibleItem = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
             val totalItems = listState.layoutInfo.totalItemsCount
-            selectedTab == TransactionTab.ALL && 
-            lastVisibleItem >= totalItems - 5 && 
-            totalItems > 0 &&
-            !isLoadingMore &&
-            !hasReachedEnd
+            TransactionsLoadMorePolicy.shouldLoadMore(
+                isAllTab = selectedTab == TransactionTab.ALL,
+                installmentFilterOn = installmentFilterOn,
+                nearEnd = lastVisibleItem >= totalItems - 5 && totalItems > 0,
+                isLoading = isLoading,
+                isLoadingMore = isLoadingMore,
+                hasReachedEnd = hasReachedEnd
+            )
         }
     }
-    
-    // Trigger load more when needed
-    LaunchedEffect(shouldLoadMore) {
+
+    // Trigger load more when needed. While the filter is on, the key also carries the loaded base row
+    // count: each completed page (or a refresh that resets the list) restarts the effect, so a state
+    // change that StateFlow conflation hid cannot leave the paging stalled. The row-count key adds no
+    // loop, but a page that keeps failing is still retried through the isLoadingMore toggle (as before,
+    // and with the filter on not stopped by scrolling): a pre-enable item. Filter off: the key part is
+    // constant, behaviour unchanged.
+    LaunchedEffect(shouldLoadMore, if (installmentFilterOn) transactions.size else -1) {
         if (shouldLoadMore) {
             viewModel.loadMore()
         }
@@ -262,6 +295,9 @@ fun TransactionsScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             Column {
+                if (installmentVm != null) {
+                    InstallmentFilterChipRow(selected = installmentFilterOn, onToggle = { installmentVm.toggleFilter() })
+                }
                 // Header with search toggle
                 TopAppBar(
                     title = { 
@@ -658,7 +694,10 @@ fun TransactionsScreen(
                                             }
                                         },
                                         onEditLocation = { expenseToEditLocation = item.expense },
-                                        onViewProvenance = { expenseToViewProvenance = item.expense }
+                                        onViewProvenance = { expenseToViewProvenance = item.expense },
+                                        installmentRow = InstallmentRowUi.of(item.expense, installmentMarks),
+                                        onPayInInstallments = { declareVm?.open(DeclareInstallmentsTarget.from(item.expense)) },
+                                        onOpenInstallmentPlan = onOpenInstallmentPlan
                                     )
                                 }
                             }
@@ -704,6 +743,16 @@ fun TransactionsScreen(
         // ============================================================
         // DIALOGS
         // ============================================================
+
+        // loan-installments S12a: declare sheet + Undo snackbar (dormant while the flag is false)
+        if (declareVm != null) {
+            DeclareInstallmentsHost(
+                viewModel = declareVm,
+                snackbarHostState = snackbarHostState,
+                onChanged = { viewModel.refresh(); installmentVm?.refresh() },
+                onOpenPlan = onOpenInstallmentPlan
+            )
+        }
 
         // Delete confirmation dialog
         if (expenseToDelete != null) {
@@ -1410,7 +1459,10 @@ private fun TransactionItem(
     onEditOwnership: () -> Unit,
     onDebug: () -> Unit,
     onEditLocation: () -> Unit,
-    onViewProvenance: () -> Unit = {}
+    onViewProvenance: () -> Unit = {},
+    installmentRow: InstallmentRowUi? = null,
+    onPayInInstallments: () -> Unit = {},
+    onOpenInstallmentPlan: (Long) -> Unit = {}
 ) {
     val expense = transaction.expense
     val category = transaction.category
@@ -1515,6 +1567,7 @@ private fun TransactionItem(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(2.dp)
             ) {
+                InstallmentRowChips(ui = installmentRow, onOpenPlan = onOpenInstallmentPlan)
                 // Merchant row with edit indicator
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -1702,6 +1755,12 @@ private fun TransactionItem(
                             expanded = showActionMenu,
                             onDismissRequest = { showActionMenu = false }
                         ) {
+                            InstallmentMenuItems(
+                                menu = installmentRow?.menu,
+                                onDismiss = { showActionMenu = false },
+                                onPay = onPayInInstallments,
+                                onViewPlan = onOpenInstallmentPlan
+                            )
                             val (ownershipIcon, _) = remember(expense.isNotMine, expense.isSharedExpense, expense.transactionType, ownershipNotMine, ownershipShared, ownershipTransfer, ownershipSettings) {
                                 when {
                                     expense.isNotMine -> Icons.Rounded.Person to ownershipNotMine
