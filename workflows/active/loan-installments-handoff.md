@@ -1451,3 +1451,99 @@ Validation to request: targeted `*ExportOptionsViewModelTest*,*AccountingExportR
   - Gates: privacy-security-guardian PASS; reviewer-strict ACCEPT-WITH-CONDITIONS (C1 tests added, C2 docs).
   - Committed. Next loan slice: S7b (reminders).
   - Approved follow-ups pending: item 36(a) guard strengthening, item 37 follow-ups, and S8b (needs owner approval for the cloud-reachability guard strengthening).
+
+## S7b — implemented (2026-10-27; uncommitted; nothing compiled, run or validated)
+
+Legal path: read-only via `InstallmentProjectionPort` (plain injection, no cycle found, so no `dagger.Lazy`). No DAO write, no schema change (db pin stays 452), no second reminder system. INV-15, INV-31; AE-7, AE-11, AE-31.
+
+Files:
+- `M:domain/reminder/BillReminderManager.kt`: new ctor params (port, ledger, `BillReminderSettingsRepository`). New `getDueInstallmentReminders()`, `claimInstallmentReminder()` (claim, then re-read the port and match `planUuid:seq:recordGeneration`; claim released when the entry is no longer projected, e.g. paid, linked, skipped, stopped, completed, or a bumped generation), `releaseInstallmentReminder()`, `buildInstallmentReminderText()`. Reminder window = `DEFAULT_REMINDER_DAYS` (3) from today; overdue entries are never projected (INV-15), so there is no overdue installment reminder.
+- `N:domain/reminder/InstallmentReminderLedger.kt`: dedupe ledger (interface + SharedPreferences impl, same pattern as `BillReminderSettingsRepositoryImpl`). Holds only `planUuid:seq:recordGeneration` and an integer due day; pruned after 60 days. Not Room. Bound in `M:di/ReminderSettingsModule.kt`.
+- `M:service/reminder/BillReminderWorker.kt`: ctor gets `BillReminderManager` (last param); `dispatchInstallmentReminders(ctx)` runs inside the existing `WorkerExecutionGuard` block after the settings and quiet-hours check and before the recurring dispatch, in its own try (CancellationException rethrown, other failures logged by class name only so the recurring path still runs). Installment notifications use the same channel and no Snooze/Dismiss actions (those receivers act on `recurring_reminder_deliveries` ids only). Notification id = `NotificationId.forBill(dedupeKey.hashCode())`.
+- Tests: `N:domain/reminder/BillReminderManagerInstallmentTest.kt`; ctor updates in `BillReminderManagerTest.kt`, `BillReminderWorkerTest.kt`, `BillReminderWorkerTimeProviderTest.kt`.
+
+Deviation from the plan write set: the new ledger file and the DI binding were needed because installments have no `recurring_reminder_deliveries` row and no schema change is allowed.
+
+Privacy handling of displayName: the notification text is identical in shape to the recurring bill reminder (hard-coded title "Bill due", body "<name> due: <amount> <currency>"; no lock-screen public version is set, so Android default VISIBILITY_PRIVATE applies, as for bills). displayName is used exactly where the bill merchant is. Lender, n/N, schedule, status and planUuid are never in the text. A blank displayName (INV-34 / AE-31 redacted restore) falls back to the existing generic "Bill" (the same fallback as a recurring bill without a merchant): the user still learns that a payment is due, nothing is revealed, and the title/body are never empty. `InstallmentReminder.toString()` is redacted. Logs and diagnostics carry no plan data (no DiagnosticEvent is emitted for installment reminders, because the event entity types are recurring-delivery based).
+
+Strings: none added. The existing bill reminder text is hard-coded English in the worker; installment reminders match it. Owner es/el review: nothing new, but the hard-coded English notification text (existing debt, also for bills) stays untranslated.
+
+Risks:
+- At-most-once delivery: the ledger claim is written before the post. A process death between claim and post loses that one reminder (no retry). Failed posts release the claim.
+- The ledger lives in SharedPreferences, so a backup restore or data clear can repeat a reminder once.
+- The notification id hash can collide with a recurring bill notification id in the 30000-39999 range (same inherent risk as `forBill`).
+- Reminder tap routing to plan detail is still S10a.
+
+Validation to request: targeted `*BillReminder*` (covers manager, installment, both worker tests); shard `domain-a-m`; shard `runtime-ui` (worker changed); registered-guard cancellation guard (worker cancellation rules); `architecture-contracts` (new file under domain/reminder using android Context, same as the settings repo) and Hilt graph compile (new binding). privacy-security-guardian and reviewer-strict gates still due (worker path).
+
+### S7b — privacy review (ACCEPT-WITH-CONDITIONS) and fixes
+
+Conditions:
+- C1 (tests, done, not yet run): new `N:service/reminder/BillReminderWorkerInstallmentTest.kt` (Robolectric, same harness as `BillReminderWorkerTest`). Covers: CancellationException from `getDueInstallmentReminders` propagates and the recurring path is not run; a RuntimeException from it does not block the recurring dispatch (`markReminderSent` still called), result stays `Result.success()`, log is class name only with no plan data; a failed post (SecurityException permission_denied, and generic RuntimeException) calls `releaseInstallmentReminder(claimed)` exactly once with that candidate; a post CancellationException propagates with no release; a successful post does not release and posts one notification (title "Bill due", id in 30000-39999, no actions) via the real `NotificationManagerCompat` + ShadowNotificationManager; claim returning null neither posts nor releases; reminders disabled, whole-day quiet hours: `getDueInstallmentReminders`/`claimInstallmentReminder` never called; quiet hours enabled but outside the window, and the enabled control: claim and post happen once. Permission-denied post is testable here via the existing static `NotificationManagerCompat.from` mock pattern (mockkStatic), so no seam gap. Not covered: the real Android runtime permission-denied path (device behaviour), only the SecurityException contract.
+- C2 (redaction, done by the orchestrator): `InstallmentReminderText.toString()` returns `InstallmentReminderText(redacted)` in `domain/reminder/BillReminderManager.kt` (next to the existing `InstallmentReminder.toString()` redaction).
+
+Follow-ups (from privacy-security-guardian, not blocking S7b):
+- (3) Add a separate `NotificationId.forInstallment` sub-range so installment ids cannot collide with `forBill` hash ids (S10a).
+- (4) Cancel an already posted installment notification when the entry is paid or the plan is stopped or deleted (S10a).
+- (5) Ledger pruning happens only on claim, so ledger keys of deleted plans linger until the next claim (opaque ids only, no plan data).
+- (7) Pre-existing app-wide check: `NotificationFilter.IGNORED_PACKAGES` lacks the app's own package, so the notification capture service might capture the app's own reminder notifications. Verify before release.
+- INFO: device-to-device transfer is not excluded app-wide; installment amounts are formatted with `toPlainString` while bills use the locale `%.2f` (cosmetic).
+
+Validation to request: targeted `*BillReminderWorkerInstallmentTest*,*BillReminderWorkerTest*,*BillReminderWorkerTimeProviderTest*,*BillReminderManagerInstallmentTest*` (or `*BillReminder*`).
+
+### S7b — reviewer-strict REJECT (iteration 1) fixes
+
+Implemented (production only; nothing compiled, run or validated; tests are for the test-author). Owner-approvals item 44 records the delivery semantics.
+
+- ISSUE-1 (checkpoint swallowed): `BillReminderWorker` installment dispatch try now rethrows `WorkerCheckpointBlockedException` before the generic catch (CancellationException rethrow kept), as `NotificationIntakeWorker`. The guard then sees the blocked checkpoint (RETRY) and the recurring coordinator is not reached. The other catches on the installment path (`sendInstallmentNotification`) wrap only `ensureChannelExists`/`build`/`notify`; no checkpoint runs there.
+- ISSUE-2 (claim leak): the manager wraps the post-claim revalidation in `try/catch Throwable` -> `withContext(NonCancellable) { release }` -> rethrow. The worker wraps text build, id, channel, `Builder.build()` and notify in the same release-and-rethrow; `ensureChannelExists()` and `build()` moved inside `sendInstallmentNotification`'s try (a failure there is `Failed("notification_error")` and releases). CancellationException is never swallowed. `markSent` runs after the post, outside the release try.
+- ISSUE-3 (at-most-once after process death): two-phase `InstallmentReminderLedger`. Value per opaque key is `dueDay|claimedAt|sent` (SharedPreferences string, no plan data). `tryClaim(key, dueEpochDay, todayEpochDay, nowMillis)` succeeds when the key is absent, or recorded for another due day, or unsent and older than `STALE_CLAIM_THRESHOLD_MS` (= `RecurringLifecycleCoordinator.STALE_CLAIM_THRESHOLD_MS`, 5 minutes, same as recurring `recoverStaleClaimedDeliveries`). `markSent(key, dueEpochDay, nowMillis)` finalizes after a successful notify; a sent key is never claimed or released again. `claimedAt` comes from `TimeProvider.now()`. `commit()` result is checked: a failed write means the claim is not obtained (no post). An unreadable record fails closed (suppressed). 60-day prune kept and now also runs on read (`getDueInstallmentReminders` calls `prune(today)`), which closes privacy finding 5.
+- Due-date change (item 4): `blocks()` ignores a record whose due day differs from the entry's current due day, so an E3 edit re-reminds. Finding: `InstallmentPlanDao.updateEntryScheduleIfScheduled` (used by `rescheduleEntry`, called for RESPREAD at InstallmentPlanLifecycleCoordinator ~:784/:858 and DUE_DAY_CHANGED at ~:909) rewrites `dueDate` (and amount) of a SCHEDULED entry WITHOUT bumping `recordGeneration`. So E3 (DUE_DAY_CHANGED) can change a SCHEDULED entry's due date with the same dedupe key; the due-day check covers it. Extend/RESPREAD keeps the due date but changes the amount; the amount alone does not re-remind (accepted). Only `REVERT_PAID_BEFORE_TRACKING` (no bump, status only) and unlink/reverse paths touch generation; a PAID_BEFORE_TRACKING entry is not SCHEDULED so it is never listed. Additionally the manager releases the claim when the revalidated entry's due day differs from the claimed one (moved between list and claim).
+- ISSUE-5 (amount format): installment text now uses `"%.2f".format(BigDecimal)` in the default locale, like the bill reminder (`"%.2f".format(Double)`), with no Double conversion. Scale 2 is the currency scale because only currencies for which `InstallmentMinorUnits.isSupportedScale` holds (exactly 2 digits) are projected; it equals the bill path's `%.2f`.
+- ISSUE-4 (notification id sub-range): NOT done here; follow-up for S10a (touches `NotificationIdGenerator`).
+
+New/changed signatures: `InstallmentReminderLedger.tryClaim(key, dueEpochDay, todayEpochDay, nowMillis)`, `markSent(key, dueEpochDay, nowMillis): Boolean`, `isClaimed(key, dueEpochDay, nowMillis)`, `release(key)` (unsent only), `prune(todayEpochDay)`; `BillReminderManager.markInstallmentReminderSent(reminder): Boolean`. `markSent` takes the due day (deviation from a bare `markSent(key)`) so it can upsert when the claim record is gone.
+
+Validation to request: targeted `*BillReminder*` plus a new ledger test class; shard `domain-a-m`; registered-guard cancellation guard; Hilt graph compile (ledger signature changed, binding unchanged).
+
+### S7b iteration-1 tests (test-author; nothing compiled or run)
+
+Files: `domain/reminder/BillReminderManagerInstallmentTest.kt` (rewritten, recording `FakeLedger` on the new signatures, `FakeProjectionPort`/`FakeSettingsRepository` can fail from the Nth call), new `domain/reminder/InstallmentReminderLedgerImplTest.kt` (Robolectric, real SharedPreferences; also drives the manager over the real ledger), `service/reminder/BillReminderWorkerInstallmentTest.kt` (updated). `BillReminderManagerTest`, `BillReminderWorkerTest` and `BillReminderWorkerTimeProviderTest` needed no change (relaxed mocks, no ledger/manager signature use).
+- Priority 1: blocked `installment_reminder` checkpoint -> `BlockedRetry` -> `Result.retry()`; no claim, no `recoverAndGetDueReminders`, no "dispatch failed" warning. The guard is the same stand-in model used by `WarrantyExpirationWorkerTest` (the real `WorkerExecutionGuard` is not driven here).
+- Priority 2/3: manager revalidation throw (port, CancellationException, settings) releases and rethrows; worker text-build throw/cancel and post cancel release; channel creation failure is `Failed("notification_error")` and releases; Sent -> `markInstallmentReminderSent` once, never release; failed post -> release, never mark; mark-sent failure logs and does not release. The old test "post cancellation ... releaseInstallmentReminder exactly 0" was changed to exactly 1 (the worker now releases on any throw after the claim).
+- Priority 4: ledger tests as listed in the task. The commit-failure case uses a mocked `Context`/`SharedPreferences` whose editor `commit()` returns false (real prefs cannot fail a commit). The record `toString` redaction is checked by reflection on the private nested `InstallmentReminderLedgerImpl$Record`. The raw `k:<key>` = `dueDay|claimedAt|sent` layout is read/planted only for the corrupt-value and claimedAt-kept cases.
+- Priority 5-8: D+1 re-listing after markSent and the moved-due-day release are in both the fake-ledger manager test and the real-ledger integration; PAID_BEFORE_TRACKING never listed (and revalidated away after listing); redaction of `InstallmentReminderText`/`InstallmentReminder`; German locale gives a comma (default locale restored in `finally`); AE-11 now uses a COMPLETED plan that still carries SCHEDULED in-window entries (only `prune` touches the ledger) plus a plan completed between listing and claim.
+- Not testable: build-failure inside `NotificationCompat.Builder.build()` (no seam; the channel-creation failure covers the same catch). Exception identity is asserted through the cause chain because coroutine stack-trace recovery may copy the exception.
+
+Filter to request: `*InstallmentReminderLedgerImplTest*,*BillReminderManagerInstallmentTest*,*BillReminderManagerTest*,*BillReminderWorkerInstallmentTest*,*BillReminderWorkerTest*,*BillReminderWorkerTimeProviderTest*` (or `*BillReminder*,*InstallmentReminderLedgerImplTest*`).
+
+### S7b — reviewer-strict iteration 2 (ACCEPT-WITH-CONDITIONS) and fixes (orchestrator, 2026-10-27)
+- **Finding 1 (claim discarded by prompt cancellation):** fixed. The worker wraps `claimInstallmentReminder` and, on CancellationException, releases under NonCancellable and rethrows. `release` removes only an unsent record, so it can never un-claim a sent key.
+- **Finding 2 (a failing release hides the original):** fixed at both sites. A release failure is added via `t.addSuppressed(r)`, and then the original `t` is rethrown.
+- **CANCEL-01:** architecture-contracts vr-20261027-035030-0ef71304 FAILED, because the WorkerCheckpointBlockedException catch pushed the generic `catch (e: Exception)` out of the guard's 200-character sibling window. Fixed with an explicit `if (e is CancellationException) throw e`.
+- **Batch results before these fixes:**
+  - PASS: targeted vr-20261027-034123-51a46419, cancellation vr-20261027-034712-d4ac2abe, domain-a-m vr-20261027-034728-041ab688, runtime-ui vr-20261027-034859-314e207e, static-guards vr-20261027-035118-b91ed1e1.
+  - app-check was held and is re-queued after the fixes.
+- **Notes A–E:** recorded as accepted residuals:
+  - (A) release is not a compare-and-delete, which is safe under unique periodic work;
+  - (B) undecodable records fail closed forever, so a future format change needs a version prefix;
+  - (C) clock regression, which matches recurring behaviour;
+  - (D) a date edit re-reminds once, by design (item 44);
+  - (E) there is no notify-before-mark ordering assertion.
+- **Review iterations:** 2 of 2 used. The two conditions were mechanical and are closed. Acceptance depends on the re-run batch below.
+- S7b ACCEPTED (2026-10-27).
+  - Final-tree runs, all PASS:
+    - targeted vr-20261027-042110-e4478439
+    - cancellation vr-20261027-042644-ccf6a973
+    - architecture-contracts vr-20261027-042700-f2eaa60b (the CANCEL-01 fix)
+    - runtime-ui vr-20261027-042746-760ebddb
+    - app-check vr-20261027-042917-9c2f0bc1, which also proves the Hilt graph compiles
+  - Earlier on the iteration-1 production tree (worker and manager unchanged since, except the iteration-2 fixes covered above): domain-a-m vr-20261027-034728-041ab688 and static-guards vr-20261027-035118-b91ed1e1.
+  - Gates:
+    - privacy-security-guardian: ACCEPT-WITH-CONDITIONS (C1 worker tests, C2 redaction).
+    - reviewer-strict: iteration 1 REJECT, then fixed under owner-approvals 44; iteration 2 ACCEPT-WITH-CONDITIONS (findings 1–2 fixed).
+  - Follow-ups for S10a:
+    - the forInstallment notification-id sub-range;
+    - cancel the posted reminder when the entry is paid or the plan is stopped or deleted.
+  - Follow-up before release: check whether NotificationFilter self-captures the app's own reminders.
+  - Next loan slices: S8b (needs owner approval of the guard-surface strengthening at start), then S10a/b.
