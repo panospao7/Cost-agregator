@@ -99,11 +99,10 @@ interface AppLockSettingsRepository {
      * `Failed(APP_LOCK_ENABLED)` if the commit fails; `Committed` only after the durable commit. Authorisation
      * (the fresh prompt) is the caller's concern.
      *
-     * The default fails closed (`Failed(APP_LOCK_ENABLED)`, nothing written), so an implementation that does not
-     * support the write can never report a commit. The real store overrides it.
+     * Abstract (S18 ii-f, privacy review finding 8): there is no default body, so every implementation and every fake must
+     * state its behaviour. A fake that does not support the write returns `Failed(APP_LOCK_ENABLED)` (fail-closed).
      */
-    suspend fun setAppLockEnabled(enabled: Boolean): AppLockSettingsWriteResult =
-        AppLockSettingsWriteResult.Failed(AppLockSettingField.APP_LOCK_ENABLED)
+    suspend fun setAppLockEnabled(enabled: Boolean): AppLockSettingsWriteResult
 
     /**
      * Per-field write of `autoLockTimeout` (S18 i-b1; INV-3, INV-44, INV-46). Same contract as
@@ -111,11 +110,10 @@ interface AppLockSettingsRepository {
      * `Failed(AUTO_LOCK_TIMEOUT)` if the commit fails; `Committed` only after the durable commit. Authorisation
      * (the fresh prompt for a longer timeout) is the caller's concern.
      *
-     * The default fails closed (`Failed(AUTO_LOCK_TIMEOUT)`, nothing written), so an implementation that does not
-     * support the write can never report a commit. The real store overrides it.
+     * Abstract (S18 ii-f, privacy review finding 8): no default body. A fake that does not support the write returns
+     * `Failed(AUTO_LOCK_TIMEOUT)` (fail-closed).
      */
-    suspend fun setAutoLockTimeout(timeout: AutoLockTimeout): AppLockSettingsWriteResult =
-        AppLockSettingsWriteResult.Failed(AppLockSettingField.AUTO_LOCK_TIMEOUT)
+    suspend fun setAutoLockTimeout(timeout: AutoLockTimeout): AppLockSettingsWriteResult
 
     /**
      * Conditional per-field write of `autoLockTimeout` for the NO-PROMPT path (S18 i-b1 privacy review F1; INV-3,
@@ -127,12 +125,10 @@ interface AppLockSettingsRepository {
      * - otherwise the write, `Committed` only after the durable commit; `Failed(AUTO_LOCK_TIMEOUT)` if it fails.
      *
      * The prompt path keeps the unconditional [setAutoLockTimeout]: the user authenticated for that exact value.
-     * The default fails closed (`Failed(AUTO_LOCK_TIMEOUT)`, nothing written). The real store overrides it.
-     * TODO(S18 privacy review finding 8): the defaults of this method and of [setAutoLockTimeout] become abstract
-     * before any wiring.
+     * Abstract (S18 ii-f, privacy review finding 8): no default body. A fake that does not support the write returns
+     * `Failed(AUTO_LOCK_TIMEOUT)` (fail-closed).
      */
-    suspend fun setAutoLockTimeoutIfNotWeakening(timeout: AutoLockTimeout): AppLockSettingsWriteResult =
-        AppLockSettingsWriteResult.Failed(AppLockSettingField.AUTO_LOCK_TIMEOUT)
+    suspend fun setAutoLockTimeoutIfNotWeakening(timeout: AutoLockTimeout): AppLockSettingsWriteResult
 
     /**
      * Forced-aware per-field write of `discreetNotifications` (S18 i-b2; INV-48, AE-103, INV-44, INV-46). The check and
@@ -142,17 +138,16 @@ interface AppLockSettingsRepository {
      *   nothing written, no authentication is asked (a write of either value is refused);
      * - otherwise the write, `Committed` only after the durable commit; `Failed(DISCREET)` if it fails.
      *
-     * The default fails closed (`Failed(DISCREET)`, nothing written). The real store overrides it.
-     * TODO(S18 privacy review finding 8): the default becomes abstract before any wiring.
+     * Abstract (S18 ii-f, privacy review finding 8): no default body. A fake that does not support the write returns
+     * `Failed(DISCREET)` (fail-closed).
      */
-    suspend fun setDiscreetNotificationsIfNotForced(enabled: Boolean): AppLockSettingsWriteResult =
-        AppLockSettingsWriteResult.Failed(AppLockSettingField.DISCREET)
+    suspend fun setDiscreetNotificationsIfNotForced(enabled: Boolean): AppLockSettingsWriteResult
 
     /**
      * Forced-aware per-field write of `secureScreen` (S18 i-b2). Same contract as [setDiscreetNotificationsIfNotForced]
      * with `Failed(SECURE_SCREEN)`: a stored lock flag that is on gives `Rejected(FORCED)` and nothing is written.
-     * The default fails closed. TODO(S18 privacy review finding 8): the default becomes abstract before any wiring.
+     * Abstract (S18 ii-f, privacy review finding 8): no default body. A fake that does not support the write returns
+     * `Failed(SECURE_SCREEN)` (fail-closed).
      */
-    suspend fun setSecureScreenIfNotForced(enabled: Boolean): AppLockSettingsWriteResult =
-        AppLockSettingsWriteResult.Failed(AppLockSettingField.SECURE_SCREEN)
+    suspend fun setSecureScreenIfNotForced(enabled: Boolean): AppLockSettingsWriteResult
 }

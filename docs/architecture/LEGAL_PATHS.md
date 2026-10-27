@@ -1800,9 +1800,9 @@ WRITE 3 — lock flag (S18 part (i-a), DORMANT: implemented and tested, no produ
     F7: CLOSED by S18 ii-a (a store re-read after a cancelled NonCancellable write on WRITE 3, both WRITE 4
         paths and WRITE 5; loaded + equal = committed path, otherwise not committed: no move, failure recorded
         once, no trigger; the CancellationException is rethrown and the completion finally still runs);
-    finding 8: setAppLockEnabled, setAutoLockTimeout, setAutoLockTimeoutIfNotWeakening,
-        setDiscreetNotificationsIfNotForced and setSecureScreenIfNotForced become abstract (their
-        fail-closed default bodies go);
+    finding 8: CLOSED by S18-ii-f (setAppLockEnabled, setAutoLockTimeout, setAutoLockTimeoutIfNotWeakening,
+        setDiscreetNotificationsIfNotForced and setSecureScreenIfNotForced are abstract; their fail-closed
+        default bodies are gone and every fake overrides them, failing closed unless the test needs behaviour);
     INV-45: ViewModel routing (S18-ii-h, merges with S20). The controller-side review authorisation is
         CLOSED by S18-ii-d (WRITE 2b: classify, prompt for a weakening, D3, conditional write); what remains is
         routing the review card through AppLockSettingsOperations.requestReviewSave, with the record starting

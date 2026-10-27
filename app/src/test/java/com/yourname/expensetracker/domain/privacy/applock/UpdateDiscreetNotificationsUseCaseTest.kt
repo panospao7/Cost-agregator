@@ -44,6 +44,22 @@ class UpdateDiscreetNotificationsUseCaseTest {
 
         override suspend fun reviewSave(record: AppLockPrivacySettings): AppLockSettingsWriteResult =
             throw UnsupportedOperationException()
+
+        // S18 ii-f (finding 8): the write methods are abstract; this fake does not support them, so they fail closed.
+        override suspend fun setAppLockEnabled(enabled: Boolean): AppLockSettingsWriteResult =
+            AppLockSettingsWriteResult.Failed(AppLockSettingField.APP_LOCK_ENABLED)
+
+        override suspend fun setAutoLockTimeout(timeout: AutoLockTimeout): AppLockSettingsWriteResult =
+            AppLockSettingsWriteResult.Failed(AppLockSettingField.AUTO_LOCK_TIMEOUT)
+
+        override suspend fun setAutoLockTimeoutIfNotWeakening(timeout: AutoLockTimeout): AppLockSettingsWriteResult =
+            AppLockSettingsWriteResult.Failed(AppLockSettingField.AUTO_LOCK_TIMEOUT)
+
+        override suspend fun setDiscreetNotificationsIfNotForced(enabled: Boolean): AppLockSettingsWriteResult =
+            AppLockSettingsWriteResult.Failed(AppLockSettingField.DISCREET)
+
+        override suspend fun setSecureScreenIfNotForced(enabled: Boolean): AppLockSettingsWriteResult =
+            AppLockSettingsWriteResult.Failed(AppLockSettingField.SECURE_SCREEN)
     }
 
     private val service = mockk<NotificationService>()

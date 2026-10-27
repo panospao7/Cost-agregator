@@ -8,6 +8,7 @@ import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsReposit
 import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsWriteResult
 import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsWriteSerializer
 import com.yourname.expensetracker.domain.privacy.applock.AppLockWriteRejection
+import com.yourname.expensetracker.domain.privacy.applock.AutoLockTimeout
 import com.yourname.expensetracker.domain.privacy.applock.DiscreetRepostOutcome
 import com.yourname.expensetracker.domain.privacy.applock.DiscreetRepostTrigger
 import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticCode
@@ -72,6 +73,22 @@ class AppLockPrivacySettingsViewModelTest : ViewModelTestUtils() {
             }
             return result
         }
+
+        // S18 ii-f (finding 8): the write methods are abstract; this fake does not support them, so they fail closed.
+        override suspend fun setAppLockEnabled(enabled: Boolean): AppLockSettingsWriteResult =
+            AppLockSettingsWriteResult.Failed(AppLockSettingField.APP_LOCK_ENABLED)
+
+        override suspend fun setAutoLockTimeout(timeout: AutoLockTimeout): AppLockSettingsWriteResult =
+            AppLockSettingsWriteResult.Failed(AppLockSettingField.AUTO_LOCK_TIMEOUT)
+
+        override suspend fun setAutoLockTimeoutIfNotWeakening(timeout: AutoLockTimeout): AppLockSettingsWriteResult =
+            AppLockSettingsWriteResult.Failed(AppLockSettingField.AUTO_LOCK_TIMEOUT)
+
+        override suspend fun setDiscreetNotificationsIfNotForced(enabled: Boolean): AppLockSettingsWriteResult =
+            AppLockSettingsWriteResult.Failed(AppLockSettingField.DISCREET)
+
+        override suspend fun setSecureScreenIfNotForced(enabled: Boolean): AppLockSettingsWriteResult =
+            AppLockSettingsWriteResult.Failed(AppLockSettingField.SECURE_SCREEN)
     }
 
     private val useCase = mockk<UpdateDiscreetNotificationsUseCase>()

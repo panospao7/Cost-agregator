@@ -1975,3 +1975,35 @@ Filter (targeted-unit-test): `*AppLockControllerInertDisableTest*`.
   - Gates: privacy-security-guardian PASS / ACCEPT-WITH-CONDITIONS; reviewer-strict ACCEPT-WITH-CONDITIONS (doc findings 1–3 fixed, re-run done).
   - Committed.
   - Next: S18-ii-f (finding 8: the repository write defaults become abstract), then S18-ii-g (needs owner D4).
+
+## S18-ii-f — implemented
+
+NOT validated; nothing was run. No production behaviour change (interface signature only; the production store already overrides every method).
+
+- Production: `domain/privacy/applock/AppLockSettingsRepository.kt`. `setAppLockEnabled`, `setAutoLockTimeout`, `setAutoLockTimeoutIfNotWeakening`, `setDiscreetNotificationsIfNotForced` and `setSecureScreenIfNotForced` lose their fail-closed default bodies and are abstract. The three `TODO(S18 privacy review finding 8)` comments are resolved (KDoc now states "Abstract (S18 ii-f, finding 8)"). No other write method had a default (`setDiscreetNotifications` and `reviewSave` were already abstract).
+- Verified: `data/privacy/applock/AppLockSettingsRepositoryImpl.kt` overrides all five (:117, :135, :153, :189, :192). `AppLockControllerTestFixtures.kt` `FakeAppLockSettingsRepository` already overrides all five with behaviour (:153, :179, :202, :236, :239), untouched. `AppLockControllerIllegalTransitionTest` only uses the class literal (reflection), untouched.
+- Fakes touched (each now overrides the five methods, returning `Failed(field)`: APP_LOCK_ENABLED, AUTO_LOCK_TIMEOUT x2, DISCREET, SECURE_SCREEN; imports `AppLockSettingField` and `AutoLockTimeout` added where missing; no assertion changed):
+  - `app/src/test/.../data/service/AndroidNotificationServiceTest.kt` (`FakeSettingsRepository`)
+  - `app/src/test/.../data/service/AndroidNotificationServicePresentationTest.kt` (`PresentationFixtures.ScriptedSettingsRepository`, also used by `BillNotificationSweepParityTest`, which has no implementer of its own and needed no edit)
+  - `app/src/test/.../domain/notification/presentation/NotificationPresentationResolverTest.kt` (`FakeRepository`)
+  - `app/src/test/.../ui/screens/privacysettings/AppLockPrivacySettingsViewModelTest.kt` (`FakeRepository`)
+  - `app/src/test/.../domain/privacy/applock/UpdateDiscreetNotificationsUseCaseTest.kt` (`FakeRepository`, same package, no import needed)
+  - `app/src/androidTest/.../data/service/NotificationPresentationDeviceTest.kt` (`DeviceSettingsRepository`, fact F-e)
+- No anonymous `object : AppLockSettingsRepository` and no other implementer exists in `app/src/test` or `app/src/androidTest` (grep of every `AppLockSettingsRepository` reference).
+- Docs: LEGAL_PATHS WRITE 3 BLOCKING list records finding 8 as CLOSED (S18-ii-f; F3, F4, F7 were already CLOSED there). CODEBASE_SEGMENTS (AppLockSettingsOperations entry) records F3 and finding 8 as CLOSED.
+- Still open BLOCKING: WRITE 5 routing / ISSUE-4 exit (S18-ii-g, owner D4), INV-45 ViewModel routing (S18-ii-h with S20, owner D1). Dormancy holds: no new caller of any write method.
+
+Validation to request (serial, via validation-runner):
+1. targeted-unit-test `*AndroidNotificationService*,*NotificationPresentationResolver*,*AppLockPrivacySettingsViewModel*,*UpdateDiscreetNotificationsUseCase*,*AppLockController*,*AppLockSettingsOperations*,*BillNotificationSweepParity*`
+2. shards domain-n-z, data, runtime-ui
+3. registered-guard known_good_state
+4. app-check (includes the androidTest compile for `NotificationPresentationDeviceTest`, fact F-e)
+- S18-ii-f ACCEPTED (2026-10-27).
+  - Runs, all PASS: targeted vr-20261027-115625-77ce0e49, known_good_state vr-20261027-120915-3fdf80eb, domain-n-z vr-20261027-121217-3a2f7221, data vr-20261027-121403-63026730, runtime-ui vr-20261027-121804-a6868dd0, app-check vr-20261027-122006-066ef4a7 (androidTest compile, F-e).
+  - Gate: reviewer-strict with the privacy checklist (gates merged, owner-approvals 48), ACCEPT-WITH-CONDITIONS. ISSUE-1 fixed after validation, docs only: the CODEBASE_SEGMENTS :603 open items are now WRITE 5 routing/ISSUE-4 (S18-ii-g, D4) and the INV-45 ViewModel routing (S18-ii-h, D1).
+  - Committed.
+  - The app-lock lane is now BLOCKED on owner decisions:
+    - D4, test deletion for S18-ii-g;
+    - D1, S18-ii-h merges with S20;
+    - D9, the LOCK_SETTINGS_RECOVERED emitter entry.
+  - S19 can start, since D11 takes it off the BLOCKING list.
