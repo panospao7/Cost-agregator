@@ -15,6 +15,7 @@ import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import com.yourname.expensetracker.domain.privacy.PrivacySettings
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsLoadState
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
+import com.yourname.expensetracker.domain.transaction.SpendingExclusionReason
 import com.yourname.expensetracker.domain.export.FreshBooksExporter
 import com.yourname.expensetracker.domain.export.QuickBooksIIFExporter
 import com.yourname.expensetracker.domain.export.XeroCSVExporter
@@ -888,6 +889,185 @@ class ExportOptionsViewModelTest {
 
             assertEquals("Start date must be before end date", viewModel.uiState.value.error)
         }
+    }
+
+    // ── loan-installments S9 / owner-approvals 42: filtered accounting pre-checks ─────
+
+    private fun flagged(
+        id: Long,
+        merchant: String = "Plan$id",
+        currency: String = "EUR",
+        reason: SpendingExclusionReason = SpendingExclusionReason.INSTALLMENT_PURCHASE
+    ): Expense = createExpense(id = id, merchant = merchant, currency = currency)
+        .copy(spendingExclusionReason = reason.name)
+
+    private fun stubAccountingFileOut(prefix: String): File {
+        val out = File(createTempDir(prefix = prefix), "expenses.csv")
+        every { exportDataRepository.createExportFile(any(), any()) } returns out
+        return out
+    }
+
+    @Test
+    fun `installment accounting pre-check all-flagged xero range is refused as empty`() = runBlocking {
+        val out = stubAccountingFileOut("export_all_flagged_xero_")
+        val expenses = listOf(flagged(id = 1L), flagged(id = 2L, reason = SpendingExclusionReason.INSTALLMENT_REVERSED))
+        coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns 2
+        coEvery { exportDataRepository.getExpensesBetween(any(), any(), any()) } returns expenses
+        stubPagedExpenses(expenses, emptyList())
+
+        viewModel.selectFormat("xero")
+        viewModel.generateExport()
+        val state = viewModel.uiState.value
+
+        assertTrue(!state.exportSuccess)
+        assertEquals(null, state.exportFilePath)
+        assertTrue(state.error.orEmpty().contains("non-empty dataset"))
+        assertFalse("No accounting file may be left behind", out.exists())
+    }
+
+    @Test
+    fun `installment accounting pre-check all-flagged range is refused for freshbooks and quickbooks too`() = runBlocking {
+        for (formatId in listOf("freshbooks", "quickbooks")) {
+            stubAccountingFileOut("export_all_flagged_${formatId}_")
+            val expenses = listOf(flagged(id = 1L))
+            coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns 1
+            coEvery { exportDataRepository.getExpensesBetween(any(), any(), any()) } returns expenses
+            stubPagedExpenses(expenses, emptyList())
+
+            viewModel.selectFormat(formatId)
+            viewModel.generateExport()
+            val state = viewModel.uiState.value
+
+            assertTrue("$formatId must be refused", !state.exportSuccess)
+            assertTrue(state.error.orEmpty().contains("non-empty dataset"))
+        }
+    }
+
+    @Test
+    fun `installment accounting pre-check mixed range validates only the unflagged sample`() = runBlocking {
+        val out = stubAccountingFileOut("export_mixed_flagged_xero_")
+        val expenses = listOf(
+            createExpense(id = 1L, merchant = "Cafe", currency = "EUR"),
+            flagged(id = 2L, merchant = "PlanUsd", currency = "USD")
+        )
+        coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns 2
+        coEvery { exportDataRepository.getExpensesBetween(any(), any(), any()) } returns expenses
+        stubPagedExpenses(expenses, emptyList())
+
+        viewModel.selectFormat("xero")
+        viewModel.generateExport()
+        val state = viewModel.uiState.value
+
+        assertEquals(null, state.error)
+        assertTrue("Flagged USD row must not trip SINGLE_CURRENCY", state.exportSuccess)
+        val written = File(state.exportFilePath!!).readText()
+        assertTrue(written.contains("Cafe"))
+        assertFalse("Flagged row must not be written", written.contains("PlanUsd"))
+        assertEquals(out.absolutePath, state.exportFilePath)
+    }
+
+    @Test
+    fun `installment accounting pre-check unflagged mixed currency still fails single currency`() = runBlocking {
+        stubAccountingFileOut("export_mixed_unflagged_xero_")
+        val expenses = listOf(
+            createExpense(id = 1L, merchant = "Cafe", currency = "EUR"),
+            createExpense(id = 2L, merchant = "Hotel", currency = "USD")
+        )
+        coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns 2
+        coEvery { exportDataRepository.getExpensesBetween(any(), any(), any()) } returns expenses
+        stubPagedExpenses(expenses, emptyList())
+
+        viewModel.selectFormat("xero")
+        viewModel.generateExport()
+        val state = viewModel.uiState.value
+
+        assertTrue(!state.exportSuccess)
+        assertTrue(state.error.orEmpty().contains("single-currency dataset"))
+    }
+
+    @Test
+    fun `installment accounting pre-check large range counts unflagged rows across pages and refuses all-flagged`() = runBlocking {
+        stubAccountingFileOut("export_large_all_flagged_")
+        // totalCount (10_001) exceeds the 10_000 validation sample, so the unflagged count is paged.
+        val sample = List(10_000) { flagged(id = it + 1L) }
+        val page1 = listOf(flagged(id = 1L), flagged(id = 2L), flagged(id = 3L))
+        val page2 = listOf(flagged(id = 4L), flagged(id = 5L))
+        coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns 10_001
+        coEvery { exportDataRepository.getExpensesBetween(any(), any(), any()) } returns sample
+        stubPagedExpenses(page1, page2, emptyList())
+
+        viewModel.selectFormat("xero")
+        viewModel.generateExport()
+        val state = viewModel.uiState.value
+
+        assertTrue(!state.exportSuccess)
+        assertTrue(state.error.orEmpty().contains("non-empty dataset"))
+        // Page 1 is requested with no cursor, page 2 with page 1's last (date, id).
+        io.mockk.coVerify(exactly = 1) {
+            exportDataRepository.getExpensesPage(any(), any(), any(), null, null)
+        }
+        io.mockk.coVerify(exactly = 1) {
+            exportDataRepository.getExpensesPage(any(), any(), any(), 1_700_000_000_000L, 3L)
+        }
+        io.mockk.coVerify(exactly = 1) {
+            exportDataRepository.getExpensesPage(any(), any(), any(), 1_700_000_000_000L, 5L)
+        }
+    }
+
+    @Test
+    fun `installment accounting pre-check large range with unflagged rows on a later page is not refused`() = runBlocking {
+        stubAccountingFileOut("export_large_some_unflagged_")
+        val sample = List(10_000) { flagged(id = it + 1L) }
+        val page1 = listOf(flagged(id = 1L), flagged(id = 2L))
+        val page2 = listOf(flagged(id = 3L), createExpense(id = 4L, merchant = "RealCafe", currency = "EUR"))
+        coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns 10_001
+        coEvery { exportDataRepository.getExpensesBetween(any(), any(), any()) } returns sample
+        stubPagedExpenses(page1, page2, emptyList())
+
+        viewModel.selectFormat("xero")
+        viewModel.generateExport()
+        val state = viewModel.uiState.value
+
+        assertFalse(state.error.orEmpty().contains("non-empty dataset"))
+        assertEquals(null, state.error)
+        assertTrue(state.exportSuccess)
+    }
+
+    @Test
+    fun `installment accounting pre-check range at the sample limit uses the sample and does not page`() = runBlocking {
+        stubAccountingFileOut("export_limit_all_flagged_")
+        val sample = List(10_000) { flagged(id = it + 1L) }
+        coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns 10_000
+        coEvery { exportDataRepository.getExpensesBetween(any(), any(), any()) } returns sample
+        stubPagedExpenses(sample.take(2), emptyList())
+
+        viewModel.selectFormat("xero")
+        viewModel.generateExport()
+        val state = viewModel.uiState.value
+
+        assertTrue(!state.exportSuccess)
+        assertTrue(state.error.orEmpty().contains("non-empty dataset"))
+        io.mockk.coVerify(exactly = 0) {
+            exportDataRepository.getExpensesPage(any(), any(), any(), any(), any())
+        }
+    }
+
+    @Test
+    fun `installment generic csv keeps flagged rows and does not apply the accounting filter`() = runBlocking {
+        val out = stubAccountingFileOut("export_generic_flagged_")
+        val expenses = listOf(flagged(id = 1L, merchant = "PlanRow"))
+        coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns 1
+        coEvery { exportDataRepository.getExpensesBetween(any(), any()) } returns expenses
+        stubPagedExpenses(expenses, emptyList())
+
+        viewModel.generateExport()
+        val state = viewModel.uiState.value
+
+        assertTrue(state.exportSuccess)
+        assertEquals(null, state.error)
+        val written = out.readText()
+        assertTrue(written.contains("PlanRow"))
+        assertTrue(written.contains("[not counted (installment plan)]"))
     }
 
     private fun stubPagedExpenses(vararg pages: List<Expense>) {

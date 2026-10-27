@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.yourname.expensetracker.data.database.entity.EntitySourceLink
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.repository.ExportDataRepository
+import com.yourname.expensetracker.domain.export.ExportInstallmentMarker
 import com.yourname.expensetracker.domain.export.AccountingExportPolicy
 import com.yourname.expensetracker.domain.export.AccountingExportEmptyDatasetException
 import com.yourname.expensetracker.domain.export.AccountingExportPolicyViolationException
@@ -364,8 +365,26 @@ class ExportOptionsViewModel @Inject constructor(
                 val previewCollector = PreviewCollector(PREVIEW_MAX_CHARS)
 
                 // BAK-12: Validate dataset size and accounting policy before streaming
-                val expenseCount = withContext(ioDispatcher) {
+                val totalCount = withContext(ioDispatcher) {
                     exportDataRepository.countExpensesBetween(startDate, endDate)
+                }
+                // Owner-approvals 42: installment-flagged rows are not written by Xero, FreshBooks or
+                // QuickBooks IIF, so the empty check and the validation sample use only unflagged rows.
+                var accountingSample: List<Expense> = emptyList()
+                var expenseCount = totalCount
+                if (format.requiresAccountingPolicy() && totalCount > 0) {
+                    accountingSample = withContext(ioDispatcher) {
+                        exportDataRepository.getExpensesBetween(
+                            startDate, endDate,
+                            ACCOUNTING_VALIDATION_MAX_ROWS
+                        )
+                    }.filterNot { ExportInstallmentMarker.isInstallmentFlagged(it) }
+                    expenseCount = if (totalCount <= ACCOUNTING_VALIDATION_MAX_ROWS) {
+                        // The sample covered the whole range, so its filtered size is exact.
+                        accountingSample.size
+                    } else {
+                        countUnflaggedExpenses(startDate, endDate)
+                    }
                 }
                 // RP-19 (19-C): accounting formats reject empty datasets — a
                 // header-only accounting file is not importable by the target
@@ -394,15 +413,9 @@ class ExportOptionsViewModel @Inject constructor(
                             expenseCount, ACCOUNTING_VALIDATION_MAX_ROWS, ACCOUNTING_VALIDATION_MAX_ROWS
                         )
                     }
-                    val sampleExpenses = withContext(ioDispatcher) {
-                        exportDataRepository.getExpensesBetween(
-                            startDate, endDate,
-                            ACCOUNTING_VALIDATION_MAX_ROWS
-                        )
-                    }
-                    if (sampleExpenses.isNotEmpty()) {
+                    if (accountingSample.isNotEmpty()) {
                         accountingExportPolicy.validateAccountingDataset(
-                            sampleExpenses.map { it.toExportTransaction() },
+                            accountingSample.map { it.toExportTransaction() },
                             format.accountingExportDisplayName(),
                             maxValidationRows = ACCOUNTING_VALIDATION_MAX_ROWS
                         )
@@ -881,6 +894,31 @@ class ExportOptionsViewModel @Inject constructor(
             lastDate = last.date
             lastId = last.id
         }
+    }
+
+    /**
+     * Counts rows that are not installment-flagged by streaming bounded pages (no full materialization).
+     * Used only for ranges larger than the validation sample, where the sample cannot give an exact count.
+     * Cancellation is checked once per page and never swallowed.
+     */
+    private suspend fun countUnflaggedExpenses(
+        startDate: Long,
+        endDate: Long,
+        pageSize: Int = 2000
+    ): Int {
+        var lastDate: Long? = null
+        var lastId: Long? = null
+        var count = 0
+        while (true) {
+            coroutineContext.ensureActive()
+            val page = exportDataRepository.getExpensesPage(startDate, endDate, pageSize, lastDate, lastId)
+            if (page.isEmpty()) break
+            count += page.count { !ExportInstallmentMarker.isInstallmentFlagged(it) }
+            val last = page.last()
+            lastDate = last.date
+            lastId = last.id
+        }
+        return count
     }
 
     /**

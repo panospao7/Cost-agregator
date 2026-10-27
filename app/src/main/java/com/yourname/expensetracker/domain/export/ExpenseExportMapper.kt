@@ -31,7 +31,12 @@ object ExpenseExportMapper {
             originalAmount = expense.amount.takeIf { it.isFinite() },
 
             merchant = expense.merchant,
-            notes = expense.notes,
+            // loan-installments OD-11: flagged rows stay in the export, marked in the existing notes
+            // field; unflagged rows are unchanged. effectiveAmount above already applies INV-1.
+            notes = ExportInstallmentMarker.notesWithMarker(
+                expense.notes,
+                ExportInstallmentMarker.markerFor(expense)
+            ),
             categoryId = expense.categoryId,
             currency = expense.currency,
             transactionType = expense.transactionType,
@@ -51,7 +56,9 @@ object ExpenseExportMapper {
             businessPurpose = expense.businessPurpose,
             businessCategory = expense.businessCategory,
             businessProject = expense.businessProject,
-            requiresReceipt = expense.requiresReceipt
+            requiresReceipt = expense.requiresReceipt,
+
+            spendingExclusionReason = expense.spendingExclusionReason
         )
     }
 

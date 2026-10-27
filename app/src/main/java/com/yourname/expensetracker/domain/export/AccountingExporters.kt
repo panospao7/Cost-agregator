@@ -57,6 +57,8 @@ class QuickBooksIIFExporter {
     }
 
     fun writeExpense(writer: Appendable, expense: ExportTransaction, categories: Map<Long, String>) {
+        // Owner-approvals 42: installment-flagged rows are not exported to QuickBooks IIF.
+        if (ExportInstallmentMarker.isInstallmentFlagged(expense)) return
         val date = Instant.ofEpochMilli(expense.date).atZone(ZoneId.systemDefault()).format(dateFormat)
         val fundingAccount = expense.sourceAccountName
         val categoryAccount = categories[expense.categoryId] ?: "Uncategorized"
@@ -99,6 +101,8 @@ class XeroCSVExporter {
     }
 
     fun writeExpense(writer: Appendable, expense: ExportTransaction, categories: Map<Long, String>) {
+        // Owner-approvals 41(a): installment-flagged rows are not exported to Xero.
+        if (ExportInstallmentMarker.isInstallmentFlagged(expense)) return
         val date = Instant.ofEpochMilli(expense.date).atZone(ZoneId.systemDefault()).format(dateFormat)
         val description = CsvCellSanitizer.sanitize(expense.merchant)
         val amount = CsvCellSanitizer.sanitize(
@@ -154,6 +158,8 @@ class FreshBooksExporter {
     }
 
     fun writeExpense(writer: Appendable, expense: ExportTransaction, categories: Map<Long, String>) {
+        // Owner-approvals 41(a): installment-flagged rows are not exported to FreshBooks.
+        if (ExportInstallmentMarker.isInstallmentFlagged(expense)) return
         val date = Instant.ofEpochMilli(expense.date).atZone(ZoneId.systemDefault()).format(dateFormat)
         val description = CsvCellSanitizer.sanitize(expense.merchant)
         val amount = CsvCellSanitizer.sanitize(

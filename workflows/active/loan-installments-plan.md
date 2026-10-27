@@ -422,6 +422,7 @@ D-1..D-8 are being resolved by the parallel scout. D-9..D-20 are extra planner i
   - E1 exported with the marker; the total excludes 600.00;
   - a REVERSED installment is marked;
   - re-importing the file creates no flag.
+- **Amended by owner-approvals 41/42:** importers SKIP marked rows (not "ignore the marker"); Xero, FreshBooks and QuickBooks IIF EXCLUDE flagged rows (filtered pre-checks in AccountingExportRepository and ExportOptionsViewModel); generic CSV/JSON, PDF and business report keep the marker.
 - **Depends on:** S3; D-3. Can run in parallel with S5–S8.
 - **Gates:** privacy-security-guardian. reviewer-strict YES (money, export).
 - **Validation profiles:** `targeted-unit-test -Filter "*Export*"`, then `unit-test-shard -ShardName domain-a-m`.

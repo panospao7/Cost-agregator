@@ -102,7 +102,16 @@ class AccountingExportRepository @Inject constructor(
             // A.9 Batch 6: fetch via deterministic exhaustive paging so that
             // exports are never silently truncated and row ordering is stable
             // (date ASC, id ASC, merchant COLLATE NOCASE ASC).
-            val expenses = deterministicExpenseExportPager.fetchAllBetween(startDate, endDate)
+            val fetchedExpenses = deterministicExpenseExportPager.fetchAllBetween(startDate, endDate)
+
+            // Owner-approvals 41(a)/42: installment-flagged rows are excluded from Xero, FreshBooks and
+            // QuickBooks IIF. Filter BEFORE the empty check, policy validation and recordCount so all
+            // three use the same set the exporters actually write. The PDF report keeps every row.
+            val expenses = if (format.requiresAccountingPolicy()) {
+                fetchedExpenses.filterNot { ExportInstallmentMarker.isInstallmentFlagged(it) }
+            } else {
+                fetchedExpenses
+            }
 
             if (expenses.isEmpty() && !format.allowsEmptyDataset()) {
                 return@withContext ExportResult(

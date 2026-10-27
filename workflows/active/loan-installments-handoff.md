@@ -1326,3 +1326,128 @@ privacy-security-guardian (mandatory), reviewer-strict YES.
   - Committed.
   - Next loan slices: S7b (reminders) or S9 (export).
   - S8b entry conditions: A15, plus owner approval for the cloud-reachability guard strengthening.
+
+## S9 — implemented (2026-10-27; uncommitted; nothing compiled, run or validated)
+OD-11 / INV-1 export marking. No schema change, no db_ownership rows (pins stay 452), no guard / baseline / allowlist / config edit, no DAO call, no coroutine code added.
+
+### Finding that shaped the slice
+Every export total already used `Expense.effectiveAmount`, which returns 0 for a flagged row (S3). The totals therefore already follow INV-1 and were NOT reimplemented. `ExportOptionsViewModel` computes no totals (it streams rows), so it is untouched. S9 only adds the marker.
+
+### Files (all in C:\Users\panos\Desktop\Cost-agregator-mec)
+- New app/src/main/java/com/yourname/expensetracker/domain/export/ExportInstallmentMarker.kt. It is a label helper only: `markerFor(reason|expense)`, `notesWithMarker`, `stripFromNotes`, `countByMarker`. It decides no spending rule.
+- M domain/export/ExpenseExportMapper.kt: `ExportTransaction.notes` is now `notesWithMarker(expense.notes, markerFor(expense))`. Unflagged rows are unchanged (the same reference). `amount` and `effectiveAmount` are untouched.
+- M domain/export/AccountantReportPdfExporter.kt: new `internal installmentMarkerSummaryLines()`, written under "Transaction Count" in the Summary. Totals, breakdown and large-transactions are unchanged (already `effectiveAmount`).
+- M domain/business/BusinessExpenseReportGenerator.kt: the CSV Notes cell carries the marker; the TOP 10 and MISSING RECEIPTS lines get a ` [marker]` suffix (private `installmentMarkerSuffix`). Totals are unchanged.
+- M util/CsvExpenseImporter.kt, util/JsonExpenseImporter.kt: strip a leading marker from notes (two lines in the JSON importer, one in CSV, plus imports).
+- New test app/src/test/java/com/yourname/expensetracker/domain/export/ExpenseExportInstallmentMarkingTest.kt (8 tests).
+
+### Formats and fields used
+| Format | Marker field | Totals |
+|---|---|---|
+| Generic CSV (ExportOptionsViewModel.writePage) | `Notes` column, via `ExportTransaction.notes` | none computed; `EffectiveAmount` column is 0 for flagged rows |
+| Generic JSON | `notes` | none computed; `effectiveAmount` 0 for flagged rows |
+| QuickBooks IIF | `MEMO` (= notes) | none; the row writes `amount` (full) |
+| Accountant PDF | summary lines (the PDF has no per-row table) | `effectiveAmount` (INV-1) |
+| Business report text | suffix on TOP 10 / MISSING RECEIPTS lines | `effectiveAmount` (INV-1) |
+| Business CSV | `Notes` column | `Amount` column is `effectiveAmount` (0 for flagged rows) |
+| Xero CSV, FreshBooks CSV | NONE (see stop-and-ask) | none; the row writes `amount` (full) |
+
+**Correction (owner-approvals 41/42; the table above is the pre-decision S9 state):**
+| Format | Flagged rows now |
+|---|---|
+| Xero CSV, FreshBooks CSV, QuickBooks IIF | EXCLUDED (not written; empty check, validation sample and recordCount use unflagged rows only). The QuickBooks IIF `MEMO` row above is superseded. |
+| Generic CSV, Generic JSON, accountant PDF, business report | INCLUDED and marked (Notes/notes, PDF summary lines, report suffix) as in the table |
+
+### STOP-AND-ASK (plan S9): Xero and FreshBooks have no type/notes field
+- Their columns are Date, Description (= merchant), Amount, Currency, Account/Category, Reference/Vendor, plus the FX columns. There is no notes or type column.
+- The mapper-level marker never reaches them; I did not change their column set or the Description.
+- Consequence today: a flagged 600.00 purchase row is exported with Amount 600.00 and no marker, and the plan's installments are exported as well, so a downstream tool that sums the file double counts. This also affects QuickBooks, which writes the full `amount`, though it is marked in MEMO.
+- Options for the owner:
+  - (a) Exclude flagged rows from the Xero and FreshBooks files.
+  - (b) Add a column.
+  - (c) Suffix the marker onto Description (not recommended: it alters the merchant text).
+- Not implemented; needs an owner decision. (a) is a small filter in `writePage` and `AccountingExportRepository`.
+
+### Marker text and localization
+- `[not counted (installment plan)]` for INSTALLMENT_PURCHASE (an unknown non-null reason fails closed to the same text), `[refunded]` for INSTALLMENT_REVERSED.
+- NOT localized: exports are English-only today (hardcoded English headers, "Accountant Report", "Transaction Count", "Total Business Expenses"). No string resources were added, so no es/el review is needed. If exports are localized later, the two constants are the single place to change.
+- Prefixed to existing notes: `[refunded] original note`.
+- Plan privacy: only a fixed string is written. No plan displayName, lender, schedule or plan id is exported. The merchant is the expense's own merchant.
+
+### Importer behaviour
+- `CreateExpenseRequest` has no spending-exclusion field, so re-import can never create a flag (the test asserts this by reflection).
+- The CSV importer and both JSON paths (v2 and v1) strip a leading marker from notes, so the marker is not stored as user text. A user note that merely contains the text elsewhere is untouched. Unmarked notes are unchanged.
+- Amount precedence is unchanged: `amount` first. So re-importing a flagged 600.00 row creates an ordinary 600.00 expense that counts as spending. The marker is ignored by design (spec: "importers ignore the marker"), but this is a double-count path if the installments are also imported. See risks.
+
+### Risks
+- Re-import double count (above). Option for the owner: the importers skip rows carrying the marker (changes the "ignore" contract), or import them with the effective amount. Not done.
+- Xero and FreshBooks unmarked (stop-and-ask above).
+- Business CSV `Amount` is `effectiveAmount`, so a flagged row shows 0 (pre-existing behaviour for not-mine rows; consistent with INV-1), with the marker in Notes.
+- The two deprecated private ViewModel writers `streamGenericCsvExport` and `streamJsonExport` have no callers and were left alone.
+- A user note that already starts with the marker text would be stripped on import (harmless).
+- Tests are unrun. The IIF test assumes `CsvCellSanitizer.sanitizeIif` leaves `[`, `(` and `)` intact. The business-report test uses mockk relaxed mocks following BusinessExpenseReportGeneratorTest. The sealed-mock caveat of S8a does not apply (no sealed type is mocked).
+
+### Validation to request (serial)
+1. targeted `*Export*,*AccountantReport*,*BusinessExpenseReport*`. This also covers the importer edits through the `*Import*` tests: add `*CsvExpenseImporter*,*JsonExpenseImporter*` to the filter.
+2. unit-test-shard domain-a-m (and `util` tests if they sit in a different shard).
+3. static-guards: this diff touches no guard-relevant file, but `util/*Importer.kt` is on the import surface. Run it once at the batch gate.
+### Gates
+privacy-security-guardian, reviewer-strict YES (money, export). Tests to add beyond this file, if wanted: an importer-level test that feeds a marked CSV/JSON row and asserts the `CreateExpenseRequest.notes` (needs the importer's mocks).
+
+### S9 — owner-gate decisions applied (owner-approvals 41)
+(2026-10-27; uncommitted; nothing compiled, run or validated.) Supersedes the stop-and-ask and the re-import double-count risk above. No schema change, no db_ownership rows, no new strings, no guard/baseline change, no coroutine code added.
+
+41(a) Xero and FreshBooks EXCLUDE flagged rows (INSTALLMENT_PURCHASE / INSTALLMENT_REVERSED). No new column, no Description change. QuickBooks IIF, generic CSV/JSON, PDF and business report keep the marker behaviour.
+- domain/export/ExportInstallmentMarker.kt: new single rule `isInstallmentFlagged(reason | Expense | ExportTransaction)` (any non-null reason; unknown codes fail closed to flagged), and `isMarkedNotes(notes)`. `stripFromNotes` REMOVED (unused); `notesWithMarker` no longer strips. KDoc updated.
+- domain/export/ExportTransaction.kt: new defaulted field `spendingExclusionReason: String?` (carries the stored code only; never written to any output column). domain/export/ExpenseExportMapper.kt: populates it.
+- domain/export/AccountingExporters.kt: `XeroCSVExporter.writeExpense` and `FreshBooksExporter.writeExpense` return early on `isInstallmentFlagged`. Every path (the repository `export(...)` and the ViewModel streaming `writeExpense` at ExportOptionsViewModel 666/692) goes through `writeExpense`, so data/repository/AccountingExportRepository.kt and ExportOptionsViewModel.kt needed no edit.
+
+41(b) Importers SKIP rows whose notes begin with either export marker (via `ExportInstallmentMarker.isMarkedNotes`).
+- util/CsvExpenseImporter.kt: returns `RowResult.Duplicate("INSTALLMENT_EXPORT_MARKER")` (bounded code), so it is counted in the existing `duplicates` counter, which ImportCoordinator already maps to `skippedCount`. No new result type.
+- util/JsonExpenseImporter.kt: the row loop does `skipped++; continue` before v1/v2 parsing (covers both paths); `parseV2Row`/`parseV1Row` use plain notes again.
+- A user note that itself begins with a marker string is now skipped on import (accepted, per decision).
+
+Tests (domain/export/ExpenseExportInstallmentMarkingTest.kt; the old strip test was replaced):
+- `isInstallmentFlagged is the single rule for expense and export transaction`, `isMarkedNotes detects both markers and nothing else`.
+- `xero export omits flagged rows and leaves unflagged rows unchanged`, `freshbooks export omits flagged rows ...` (output equals the unflagged-only export; no marker text).
+- `csv re-import skips marked rows, reports them skipped and imports unflagged rows normally` (imported 1, duplicates/skipped 2, errors 0, no flag field on CreateExpenseRequest).
+- `json re-import skips marked rows in v2 and v1 ...` (imported 1, skipped 2, errors 0).
+Other existing tests unchanged: QuickBooks marker test and report tests still apply.
+
+Known residuals: `accountingExportPolicy.validateAccountingDataset` still validates flagged rows before the exporter drops them; the Xero/FreshBooks file row count can be lower than the selected-range count. CSV importer skips marked rows only after date/amount presence checks (an exported row always has both).
+Validation to request: targeted `*ExpenseExportInstallmentMarkingTest*,*CsvExpenseImporter*,*JsonExpenseImporter*,*AccountingExport*,*XeroCSV*,*FreshBooks*`, then the batch static-guards gate.
+
+### S9 — owner-approvals 42 applied (IIF exclusion, filtered checks) (2026-10-27)
+- The implementer died on an API error after the code edits; the orchestrator wrote this note.
+- QuickBooksIIFExporter.writeExpense returns early on isInstallmentFlagged (AccountingExporters.kt:61), the same rule as Xero (:105) and FreshBooks (:162). The test `quickbooks iif omits flagged rows and leaves unflagged rows unchanged` is updated.
+- Filtered pre-checks: AccountingExportRepository :111 and ExportOptionsViewModel :380 / :915 filter flagged rows before the empty check, the policy validation and the counts, for the accounting formats.
+- Follow-up (minor): the "all-flagged range is refused as empty / recordCount equals written rows" test was not added.
+- Test compile fix (orchestrator): @Suppress("DEPRECATION_ERROR") on the two mocked createExpense calls (the importers use the same legacy call with the same suppression). The earlier targeted vr-20261027-002059-97acd6b6 and domain-a-m vr-20261027-002415-e47a84d7 FAILED on that compile error only. static-guards vr-20261027-002504-a6845b71 PASS.
+- privacy-security-guardian S9: PASS, ACCEPT-WITH-CONDITIONS. C1 (IIF) is met by item 42. Info items:
+  - F3: the deprecated ViewModel writers have no callers; any revival must go through the mapper.
+  - F4: pre-existing raw exception messages in JsonExpenseImporter; separate ticket.
+  - INV-1: transaction counts still include flagged rows (labelled).
+- (2026-10-27) Missing import of ExportInstallmentMarker in ExportOptionsViewModel added (the agent died before adding it). Targeted vr-20261027-005933-a5d48ca3 and domain-a-m vr-20261027-010050-7e283be1 FAILED on that compile error only.
+
+### S9 — final gate (reviewer-strict ACCEPT-WITH-CONDITIONS) and fixes
+(2026-10-27; uncommitted; tests and comments/docs only; nothing compiled, run or validated after these fixes.)
+
+Conditions closed:
+- ISSUE-1 (tests for owner-approvals 42 filtered pre-checks):
+  - ExportOptionsViewModelTest (ui/screens/export), `installment accounting pre-check ...` group (7 tests): all-flagged Xero refused with "non-empty dataset" and no file left; all-flagged FreshBooks and QuickBooks refused; mixed range validates only the unflagged sample (a flagged USD row in an EUR range no longer trips SINGLE_CURRENCY, and the flagged row is not written); an unflagged USD row still trips SINGLE_CURRENCY (control); >10,000 range pages `getExpensesPage` to count unflagged rows (cursor of each previous page's last row verified) and refuses an all-flagged range; a later-page unflagged row is not refused; a range of exactly 10,000 uses the sample and never pages; generic CSV keeps flagged rows with the marker (filter is accounting-only).
+  - AccountingExportRepositoryTest (data/repository), `installment exclusion ...` group (4 tests): recordCount equals the unflagged count and flagged merchants are absent for Xero, FreshBooks and QuickBooks; all-flagged range fails with "No expenses found" for all three; flagged USD row does not trip single-currency; unflagged USD still does.
+- ISSUE-2 (comments): ExportInstallmentMarker.kt and ExportTransaction.kt KDoc now say all three accounting formats (Xero, FreshBooks, QuickBooks IIF) exclude flagged rows, while generic CSV/JSON, the PDF and the business report mark them. The "Formats and fields used" table above carries a correction block.
+- ISSUE-3 (docs): "amended by owner-approvals 41/42" notes added to spec section 11.4 (accounting formats exclude flagged rows; importers skip marked rows) and plan S9 (importers SKIP marked rows; IIF excluded).
+
+Non-blocking follow-ups (not fixed):
+- The format-selection count (shown before generating) is unfiltered for accounting formats, so it can exceed the number of rows actually written.
+- Mixed currency caused by a flagged row in the business report: the report still includes flagged rows, so a flagged row in another currency can make the report mixed-currency.
+- The PDF can show a zero-total currency section when a currency has only flagged rows (effective amount 0).
+
+Validation to request: targeted `*ExportOptionsViewModelTest*,*AccountingExportRepositoryTest*,*ExpenseExportInstallmentMarkingTest*` (then the batch domain-a-m shard and static-guards as already planned). Possible compile risks to check first: `Expense.copy(spendingExclusionReason = ...)` in the ViewModel test, `File.readText` of the final export path.
+- S9 accepted (2026-10-27).
+  - Final targeted vr-20261027-020618-e0b152e1 PASS. The edits after the production-code runs below are tests, comments and docs only.
+  - Production-code runs, all PASS: targeted vr-20261027-010708-c693e1ad, domain-a-m vr-20261027-011225-55b56876, runtime-ui vr-20261027-011356-a1873cf1, static-guards vr-20261027-011529-6f7f0270.
+  - Gates: privacy-security-guardian PASS; reviewer-strict ACCEPT-WITH-CONDITIONS (C1 tests added, C2 docs).
+  - Committed. Next loan slice: S7b (reminders).
+  - Approved follow-ups pending: item 36(a) guard strengthening, item 37 follow-ups, and S8b (needs owner approval for the cloud-reachability guard strengthening).

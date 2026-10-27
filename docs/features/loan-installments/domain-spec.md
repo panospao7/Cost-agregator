@@ -970,6 +970,11 @@ Virtual counting is rejected (Q3), so the question becomes **which fulfilment mo
 - Expense exports: installment expenses are ordinary rows. Purchase rows flagged `INSTALLMENT_PURCHASE` /
   `INSTALLMENT_REVERSED` are proposed to be **included and marked "not counted (installment plan)"** where the
   format has a type/notes field. Any totals the export computes must apply INV-1 (OD-11).
+- **Amended by owner-approvals 41/42 (supersedes the proposal above for the accounting formats):** the three
+  accounting formats (Xero CSV, FreshBooks CSV, QuickBooks IIF) EXCLUDE flagged rows; their empty check, policy
+  validation sample and record count use only unflagged rows. Generic CSV/JSON, the accountant PDF and the business
+  report still include flagged rows and mark them. Importers SKIP rows whose notes begin with an export marker
+  (counted as skipped), so re-importing an export never creates a flagged or double-counted expense.
 
 ### 11.5 Privacy
 

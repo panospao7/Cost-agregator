@@ -3,6 +3,7 @@ package com.yourname.expensetracker.util
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.dao.CategoryDao
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.export.ExportInstallmentMarker
 import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
 import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
@@ -59,6 +60,12 @@ class JsonExpenseImporter @Inject constructor(
             for (i in 0 until rows.length()) {
                 try {
                     val row = rows.getJSONObject(i)
+                    // Owner-approvals 41(b): rows the exporter marked as installment-flagged are
+                    // skipped (v1 and v2), counted as skipped; no flag is ever created on import.
+                    if (ExportInstallmentMarker.isMarkedNotes(row.optString("notes", null))) {
+                        skipped++
+                        continue
+                    }
                     val request = if (version >= 2) {
                         parseV2Row(row, i, fileImportRunId, csvImportBatchId, i + 1)
                     } else {
