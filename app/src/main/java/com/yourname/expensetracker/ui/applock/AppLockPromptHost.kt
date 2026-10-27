@@ -11,7 +11,7 @@ import javax.inject.Inject
 /**
  * The per-Activity half of the system prompt wiring (S20-a, TECH-1 A). One instance serves one Activity
  * instance: it is injected unscoped into the Activity and [attach]ed once, in `onCreate`, after
- * `super.onCreate`. Nothing calls it yet (the shell integration, S20-c, does); the class is dormant.
+ * `super.onCreate`. `MainActivity.onCreate` (S20-c) is the caller.
  *
  * What it does for its Activity:
  * - Builds the Activity-bound prompt adapter ([BiometricPromptDeviceAuthenticator]) in `onCreate`, as the

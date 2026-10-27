@@ -29,9 +29,9 @@ internal fun interface WindowFlagSink {
 }
 
 /**
- * The single writer of `FLAG_SECURE` on the app window (INV-29, INV-53 shell part; S20-b). Nothing calls it yet:
- * the shell integration (S20-c) calls [applyInitial] as the first statement after `super.onCreate` and [bind] once
- * the database gate has passed, so until then the class is dormant.
+ * The single writer of `FLAG_SECURE` on the app window (INV-29, INV-53 shell part; S20-b). `MainActivity` (S20-c)
+ * calls [applyInitial] as the first statement after `super.onCreate` and [bind] once the database gate has passed.
+ * `UnsupportedDatabaseActivity` is not covered (it never binds this controller).
  *
  * ## What decides the flag
  *

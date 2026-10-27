@@ -1800,7 +1800,7 @@ Supersedes:
   - N AppLockShellTest: CF-1 same instances; CF-3; CF-4; SaveableStateHolder; AE-113 LaunchedEffect not re-run; prompt-once; insets with and without a banner.
   - M AppLockGateSourceScanTest: the file set gains exactly AppLockShell.kt.
   - Plus GsonR8KeepRulesContractTest.
-- Pins: the gate scan gains AppLockShell.kt; the relay scan gains MainActivity.kt; the dormancy pin is unchanged.
+- Pins: the gate scan gains AppLockShell.kt; the relay scan gains MainActivity.kt (AMENDED 2026-10-28: the relay-scan extension was correctly NOT applied, because MainActivity references the prompt host provider, not the relay; MainScreenCallSiteTest pins that MainActivity.kt references neither the relay nor the DeviceAuthenticator); the dormancy pin is unchanged.
 - Docs: LEGAL_PATHS (MainScreen only from the gate; the single FLAG_SECURE writer; POST_NOTIFICATIONS once per process; binder owns resolve and lifecycle), SEGMENTS, ENGINE, INVENTORY.
 - Gates: privacy-security-guardian (lead), architecture-guardian, reviewer-strict.
 - Validation:

@@ -2,6 +2,7 @@ package com.yourname.expensetracker.ui.applock
 
 import com.yourname.expensetracker.architecture.SourceTextSanitizer
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -29,6 +30,10 @@ class AppLockGateSourceScanTest {
 
     private val gateFile = "com/yourname/expensetracker/ui/applock/AppLockGate.kt"
 
+    /** S20-c: the Activity-side shell is scanned with the gate; the set gains exactly this file. */
+    private val shellFile = "com/yourname/expensetracker/ui/applock/AppLockShell.kt"
+    private val scannedFiles = listOf(gateFile, shellFile)
+
     private val forbiddenTokens = listOf(
         "immediate",
         "Unconfined",
@@ -40,15 +45,52 @@ class AppLockGateSourceScanTest {
 
     private fun forbiddenIn(sanitized: String): List<String> = forbiddenTokens.filter { sanitized.contains(it) }
 
+    /** The shell must call the gate's source overload: `AppLockGate(source = ...`, not the state/notice overload. */
+    private val sourceOverloadCall = Regex("""\bAppLockGate\s*\(\s*source\s*=""")
+
+    private fun sanitizedOf(relative: String): String {
+        val file = File(sourceRoot, relative)
+        assertTrue("missing $relative", file.isFile)
+        return SourceTextSanitizer.stripCommentsAndStringBodies(file.readText())
+    }
+
     @Test
-    fun inv53_r2_appLockGateSourceHasNoImmediateUnconfinedLifecycleCollectionOrEffects() {
-        val file = File(sourceRoot, gateFile)
-        assertTrue("missing $gateFile", file.isFile)
-        val sanitized = SourceTextSanitizer.stripCommentsAndStringBodies(file.readText())
+    fun inv53_r2_everyScannedFileHasNoImmediateUnconfinedLifecycleCollectionOrEffects() {
+        // One loop over the scanned set, so the set pin below is what decides which files are covered.
+        for (relative in scannedFiles) {
+            assertEquals("forbidden tokens in $relative", emptyList<String>(), forbiddenIn(sanitizedOf(relative)))
+        }
+    }
+
+    @Test
+    fun inv53_r2_theGateStillCollectsWithPlainCollectAsState() {
+        val sanitized = sanitizedOf(gateFile)
 
         assertTrue("scan read an implausibly small gate file", sanitized.contains("fun AppLockGate("))
         assertTrue("the gate must still collect with collectAsState", sanitized.contains("collectAsState"))
-        assertEquals("forbidden tokens in $gateFile", emptyList<String>(), forbiddenIn(sanitized))
+    }
+
+    @Test
+    fun inv53_r2_theShellHandsTheGateTheSourceOverload() {
+        val sanitized = sanitizedOf(shellFile)
+
+        assertTrue("scan read an implausibly small shell file", sanitized.contains("fun AppLockShell("))
+        assertTrue("the shell must call AppLockGate(source = ...", sourceOverloadCall.containsMatchIn(sanitized))
+    }
+
+    @Test
+    fun scannedFileSet_isExactlyTheGateAndTheShell() {
+        assertEquals(listOf(gateFile, shellFile), scannedFiles)
+        scannedFiles.forEach { assertTrue("missing $it", File(sourceRoot, it).isFile) }
+    }
+
+    @Test
+    fun selfCheck_sourceOverloadRegex_acceptsTheSourceOverloadOnly() {
+        assertTrue(sourceOverloadCall.containsMatchIn("AppLockGate(\n    source = source,\n    x = 1\n)"))
+        assertTrue(sourceOverloadCall.containsMatchIn("AppLockGate ( source=s )"))
+        assertFalse(sourceOverloadCall.containsMatchIn("AppLockGate(state = s, notice = n)"))
+        assertFalse(sourceOverloadCall.containsMatchIn("fun AppLockGate(source: AppLockGateSource)"))
+        assertFalse(sourceOverloadCall.containsMatchIn("AppLockGate(state = s, source = x)"))
     }
 
     @Test

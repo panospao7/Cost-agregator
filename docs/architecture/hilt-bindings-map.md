@@ -377,12 +377,12 @@ Binds (@Singleton):
                                                 bound: the prompt host creates it per Activity. Reachable only through
                                                 this binding and AppLockPromptHost; never from workers or receivers)
 
-Auto-provided (no module entry; @Inject constructors) — app-lock S20-a (dormant, nothing injects them yet):
+Auto-provided (no module entry; @Inject constructors) — app-lock S20-a (injected into MainActivity by S20-c):
   @Singleton AppLockAuthenticatorRelay                 (no deps; main-thread only)
   AppLockPromptHost                                    (AppLockAuthenticatorRelay, AppLockController; UNSCOPED, one per
-                                                        Activity, attach() in onCreate — wired by S20-c)
+                                                        Activity, attach() in onCreate — called by MainActivity, S20-c)
   @Singleton AppLockLifecycleBinder                    (AppLockController, @ApplicationScope CoroutineScope; install(app)
-                                                        once per process — wired by S20-c)
+                                                        once per process — called by MainActivity, S20-c)
 
 Auto-provided (no module entry; @Inject constructors) — app-lock 1a:
   @Singleton PrivacyDiagnosticsEmitter                 (NotificationDiagnosticEmitter, MonotonicTimeProvider)

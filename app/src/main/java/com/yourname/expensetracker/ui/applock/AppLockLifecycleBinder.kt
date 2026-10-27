@@ -12,14 +12,16 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import timber.log.Timber
+import java.util.Collections
+import java.util.IdentityHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
  * The one source of the foreground and background signals of the app lock (INV-25, TECH-3 in the plan), and the
- * one caller of [AppLockController.resolve] (S20-a). Nothing calls [install] yet (the shell integration, S20-c,
- * does, once per process from `MainActivity.onCreate`, so `MainApplication` is not edited); the class is dormant.
+ * one caller of [AppLockController.resolve] (S20-a). `MainActivity.onCreate` (S20-c) calls [install] once per
+ * process, so `MainApplication` is not edited.
  *
  * ## Started-activity count (AE-41)
  *
@@ -48,8 +50,10 @@ import javax.inject.Singleton
  * resolves it). `resolve` is idempotent, so extra calls return at once. A `CancellationException` is rethrown;
  * any other exception from `resolve` is logged by class name only (never a message or stack trace).
  *
- * The binder must be installed before the first Activity starts; an Activity already started when it is
- * installed is not counted, and a stop that finds the count at zero is ignored (never negative).
+ * The binder must be installed before the first Activity starts. Started Activities are counted by identity: an
+ * Activity already started when the binder is installed is never counted, and the later stop of an
+ * Activity that was never counted is ignored, so it can neither cancel a counted start nor report a background
+ * (the count is never negative and a late install cannot cause a missed background).
  *
  * Main thread only: the lifecycle callbacks run on it and the count is confined to it.
  */
@@ -62,8 +66,15 @@ class AppLockLifecycleBinder @Inject constructor(
     private val installed = AtomicBoolean(false)
 
     // Main-thread confined (Application.ActivityLifecycleCallbacks run on the main thread).
-    private var startedCount = 0
+    // The started Activities, by IDENTITY: only an Activity whose start was counted can later be un-counted by its
+    // stop. An Activity that started before the binder was installed is never in the set, so its later stop cannot
+    // cancel the start of a counted Activity (that would be a fail-open background miss).
+    private val startedActivities: MutableSet<Activity> =
+        Collections.newSetFromMap(IdentityHashMap<Activity, Boolean>())
     private var suppressNextForeground = false
+
+    private val startedCount: Int
+        get() = startedActivities.size
 
     /** The exact number of started activities as the binder counts them. Test hook only. */
     @get:VisibleForTesting
@@ -82,8 +93,8 @@ class AppLockLifecycleBinder @Inject constructor(
 
     private val callbacks = object : Application.ActivityLifecycleCallbacks {
         override fun onActivityStarted(activity: Activity) {
-            startedCount += 1
-            if (startedCount == 1) {
+            // A repeated start of an instance that is already counted changes nothing.
+            if (startedActivities.add(activity) && startedCount == 1) {
                 if (suppressNextForeground) {
                     suppressNextForeground = false // the start that completes a configuration change
                 } else {
@@ -94,8 +105,8 @@ class AppLockLifecycleBinder @Inject constructor(
         }
 
         override fun onActivityStopped(activity: Activity) {
-            if (startedCount == 0) return // an unmatched stop (installed late): never negative
-            startedCount -= 1
+            // A stop of an Activity whose start was never counted (it started before install) is ignored.
+            if (!startedActivities.remove(activity)) return
             if (startedCount != 0) return
             if (activity.isChangingConfigurations) {
                 suppressNextForeground = true

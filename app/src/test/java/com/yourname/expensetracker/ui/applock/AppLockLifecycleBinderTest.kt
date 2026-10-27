@@ -143,6 +143,86 @@ class AppLockLifecycleBinderTest {
         assertEquals(listOf("foreground"), events)
     }
 
+    // ---- S20-c review #1: started Activities are counted by identity ------------------------------------------
+
+    @Test
+    fun identity_aPreInstallActivityThatStopsAfterMainActivityStarted_reportsNothing_andDoesNotUncountTheStart() {
+        install()
+        val preInstall = newActivity() // started before the binder was installed: never seen by onActivityStarted
+        val main = newActivity()
+        start(main)
+        events.clear()
+
+        stop(preInstall)
+
+        assertEquals("an uncounted stop reports nothing", emptyList<String>(), events)
+        assertEquals("the counted start is still counted", 1, binder.startedActivityCount)
+        verify(exactly = 0) { controller.onAppBackgrounded() }
+    }
+
+    @Test
+    fun identity_afterAnIgnoredPreInstallStop_theNextRealStopReportsTheBackground() {
+        install()
+        val preInstall = newActivity()
+        val main = newActivity()
+        start(main)
+        stop(preInstall) // ignored
+        events.clear()
+
+        stop(main) // the real background
+
+        assertEquals(listOf("background"), events)
+        assertEquals(0, binder.startedActivityCount)
+        verify(exactly = 1) { controller.onAppBackgrounded() }
+    }
+
+    @Test
+    fun identity_aPreInstallConfigurationChangeStop_setsNoSuppression_andIsNotUncounted() {
+        install()
+        val preInstall = newActivity(changingConfigurations = true)
+        val main = newActivity()
+        start(main)
+        events.clear()
+
+        stop(preInstall)
+        stop(main)
+        start(newActivity())
+
+        assertEquals(listOf("background", "foreground"), events)
+    }
+
+    @Test
+    fun identity_aSecondStopOfTheSameInstance_isIgnored_soItCannotUncountAnotherActivity() {
+        install()
+        val a = newActivity()
+        val b = newActivity()
+        start(a)
+        start(b)
+        stop(a)
+        events.clear()
+
+        stop(a) // already un-counted: must not take b's count
+        assertEquals(1, binder.startedActivityCount)
+        assertEquals(emptyList<String>(), events)
+        stop(b)
+
+        assertEquals(listOf("background"), events)
+    }
+
+    @Test
+    fun identity_aRepeatedStartOfTheSameInstance_isCountedOnce() {
+        install()
+        val a = newActivity()
+
+        start(a)
+        start(a)
+
+        assertEquals(1, binder.startedActivityCount)
+        assertEquals(listOf("foreground"), events)
+        stop(a)
+        assertEquals(listOf("foreground", "background"), events)
+    }
+
     // ---- 0 to 1 foreground, 1 to 0 background ------------------------------------------------------------
 
     @Test

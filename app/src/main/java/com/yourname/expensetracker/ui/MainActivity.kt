@@ -6,7 +6,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
-import androidx.activity.ComponentActivity
+import androidx.fragment.app.FragmentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -41,6 +41,12 @@ import com.yourname.expensetracker.data.backup.AppOperationalState
 import com.yourname.expensetracker.data.backup.RestoreRestartSignal
 import com.yourname.expensetracker.data.database.DatabaseOpenGate
 import com.yourname.expensetracker.ui.unsupported.UnsupportedDatabaseActivity
+import com.yourname.expensetracker.domain.privacy.applock.AppLockController
+import com.yourname.expensetracker.ui.applock.AppLockLifecycleBinder
+import com.yourname.expensetracker.ui.applock.AppLockPromptHost
+import com.yourname.expensetracker.ui.applock.AppLockShell
+import com.yourname.expensetracker.ui.applock.NotificationPermissionPromptOnce
+import com.yourname.expensetracker.ui.applock.SecureWindowController
 import kotlinx.coroutines.flow.first
 import com.yourname.expensetracker.data.database.entity.Budget as BudgetEntity
 import com.yourname.expensetracker.data.repository.ExpenseRepository
@@ -99,10 +105,11 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import javax.inject.Inject
+import javax.inject.Provider
 import kotlin.math.roundToInt
 
 @AndroidEntryPoint
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {
     private val mainViewModel: MainViewModel by viewModels()
 
     /** Applies validated deep links (INV-14..INV-22); the activity itself never parses a link. */
@@ -122,8 +129,30 @@ class MainActivity : ComponentActivity() {
     @Inject
     lateinit var restoreRestartSignal: RestoreRestartSignal
 
+    /** S20-c: the process-wide app-lock controller (state and notice feed the shell). */
+    @Inject
+    lateinit var appLockController: AppLockController
+
+    /** S20-c: sole INV-25 lifecycle signal and the owner of `resolve()`; installed once per process. */
+    @Inject
+    lateinit var appLockLifecycleBinder: AppLockLifecycleBinder
+
+    /** S20-c: [AppLockPromptHost] is unscoped (one per Activity instance), so it is injected as a provider. */
+    @Inject
+    lateinit var appLockPromptHostProvider: Provider<AppLockPromptHost>
+
+    /** S20-c: the single FLAG_SECURE writer. */
+    @Inject
+    lateinit var secureWindowController: SecureWindowController
+
+    /** S20-c: caps the POST_NOTIFICATIONS auto-prompt to once per process (AE-39). */
+    @Inject
+    lateinit var notificationPromptOnce: NotificationPermissionPromptOnce
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // S20-c / INV-29: the window is secure before anything else can draw (synchronous add; never cleared here).
+        secureWindowController.applyInitial(window)
         // R25 B2: a blocked live database (too old / too new / unreadable) must never reach the
         // normal UI; redirect to the plain export-only screen before any intent handling.
         if (DatabaseOpenGate.blockedReasonOrNull(applicationContext) != null) {
@@ -134,6 +163,12 @@ class MainActivity : ComponentActivity() {
             finish()
             return
         }
+        // S20-c: install the lifecycle binder before any other in-process Activity can start (S20-a F4; Activities
+        // started before this point are not counted), attach this Activity's prompt host, then bind the secure
+        // window once for this Activity instance (never from onNewIntent).
+        appLockLifecycleBinder.install(application)
+        appLockPromptHostProvider.get().attach(this)
+        secureWindowController.bind(this)
         enableEdgeToEdge()
         if (savedInstanceState == null) {
             val consumed = handleIntent(intent)
@@ -152,13 +187,20 @@ class MainActivity : ComponentActivity() {
                         modifier = Modifier.fillMaxSize(),
                         color = MaterialTheme.colorScheme.background
                     ) {
-                        MainScreen(
-                            mainViewModel = mainViewModel,
-                            actionRegistry = actionRegistry,
-                            expenseRepository = expenseRepository,
-                            gson = gson,
-                            restoreRestartSignal = restoreRestartSignal
-                        )
+                        AppLockShell(
+                            controller = appLockController,
+                            operationalState = mainViewModel.operationalState,
+                            navigateTo = mainViewModel::navigateTo
+                        ) {
+                            MainScreen(
+                                mainViewModel = mainViewModel,
+                                actionRegistry = actionRegistry,
+                                expenseRepository = expenseRepository,
+                                gson = gson,
+                                restoreRestartSignal = restoreRestartSignal,
+                                notificationPromptOnce = notificationPromptOnce
+                            )
+                        }
                     }
                 }
             }
@@ -255,7 +297,8 @@ fun MainScreen(
     actionRegistry: ContextualActionRegistry,
     expenseRepository: ExpenseRepository,
     gson: Gson,
-    restoreRestartSignal: RestoreRestartSignal
+    restoreRestartSignal: RestoreRestartSignal,
+    notificationPromptOnce: NotificationPermissionPromptOnce
 ) {
     // RP-17 17-A / D1: availability resolved here (same seam as
     // NavigationController/HomeScreen) — the Activity's injected instance is
@@ -446,6 +489,8 @@ fun MainScreen(
     }
 
     LaunchedEffect(Unit) {
+        // S20-c / AE-39: at most one auto-prompt decision per process, however often the shell re-enters.
+        if (!notificationPromptOnce.tryClaim()) return@LaunchedEffect
         val granted = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
             PackageManager.PERMISSION_GRANTED

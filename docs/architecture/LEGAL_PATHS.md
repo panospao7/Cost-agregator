@@ -1904,11 +1904,47 @@ FORBIDDEN:
   ❌ Raw settings text, paths or stack traces in diagnostics (bounded codes + FIELD enum only)
 ```
 
-## App Lock Prompt Path and Lifecycle Signals (app-lock-privacy-mode, increment 1b, S20-a; DORMANT)
+## App Lock Prompt Path and Lifecycle Signals (app-lock-privacy-mode, increment 1b, S20-a/b/c)
 
 ```
-DORMANT: S20-a adds the classes and the one DI binding; nothing instantiates the host or the binder in
-production until S20-c wires MainActivity (the controller goes live there, together with S20-d and S20-e).
+LIVE from S20-c: MainActivity now installs the binder, attaches the prompt host, applies and binds the secure window
+and hosts MainScreen inside the app-lock shell. The lock is still not user-enableable (S22 adds the switch), so for
+every user with a readable lock-off store the controller resolves to DISABLED and the shell renders the open branch;
+the fail-closed paths (T5, T6b, RP-11) can show LOCKED or INERT. S20-c is release-safe only
+together with S20-d and S20-e (one atomic S20 candidate, D1).
+
+MAINSCREEN IS COMPOSED ONLY FROM THE GATE (S20-c, INV-26):
+  MainActivity.setContent → ExpenseTrackerTheme → ProvideNavigationController → Surface
+    → AppLockShell(controller, mainViewModel.operationalState, mainViewModel::navigateTo) { MainScreen(...) }
+    → AppLockGate (source overload, no gate effects) → the content slot, only in an open state.
+  RESOLVING/LOCKED/AUTHENTICATING(UNLOCK) never compose MainScreen. There is exactly one production `MainScreen(`
+  call and it sits inside the AppLockShell content lambda (MainScreenCallSiteTest). The shell sits INSIDE
+  ProvideNavigationController so navigation state survives a lock; the content's rememberSaveable state is kept by a
+  SaveableStateHolder (T14). No Dialog, AlertDialog or Popup in setContent outside the shell (CF-5, FLAG_SECURE
+  inheritance).
+  Shell rules: the gate reads controller.state / controller.notice directly (ControllerGateSource, CF-1); Unlock is a
+  tap calling onUnlockTapped() only (INV-34); the notice's Security settings action sends a constant
+  ACTION_SECURITY_SETTINGS intent with no extras straight from the tap (ActivityNotFoundException → one bounded Timber
+  reason, no PrivacyDiagnosticCode; CF-3); the app-lock-settings and review actions re-check
+  MainViewModel.operationalState.value at tap time and then navigate to NavigationDestination.PrivacySettings;
+  inAppActionsAllowed comes from the operational state (INV-52); the status line is derived only from the published
+  AppLockState sequence (an UNLOCK prompt that returns to LOCKED → "try again"; cleared outside LOCKED and on a new
+  episode; CF-4).
+  MainActivity.onCreate order: super.onCreate → secureWindow.applyInitial(window) → DB gate → binder.install(application)
+  → promptHost.attach(this) → secureWindow.bind(this) → enableEdgeToEdge → handleIntent → setContent. handleIntent and
+  onNewIntent are unchanged (the deep-link gate is S21). The binder is installed in MainActivity.onCreate (MainApplication
+  is not edited): started Activities are counted by IDENTITY, so an Activity started before install (a rescue or
+  database-gate Activity) is never counted and its later stop is ignored; it can neither cancel a counted start nor
+  cause a missed background (S20-c review #1).
+  Back while the gate is closed (RESOLVING, LOCKED, AUTHENTICATING(UNLOCK)) moves the task to the back (AppLockShell
+  BackHandler, S19 decision 4).
+  POST_NOTIFICATIONS: the R24 auto-prompt effect starts with NotificationPermissionPromptOnce.tryClaim(), so the
+  decision runs at most once per process however often the shell re-enters MainScreen; NotificationPromptPolicy and
+  NotificationPromptStore still decide whether it shows.
+  FLAG_SECURE: the single writer (SecureWindowController) is now live; a source scan pins that FLAG_SECURE and window
+  flag writes appear in no other production file (MainScreenCallSiteTest).
+  The binder owns resolve() and the INV-25 lifecycle signals; MainActivity calls neither the controller's lifecycle API nor
+  resolve() itself.
 
 PROMPT PATH (the only path to the system prompt):
   AppLockController (the only caller; on its @AppLockMainDispatcher, outside its monitor)

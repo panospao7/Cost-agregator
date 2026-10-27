@@ -5,8 +5,8 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * The once-per-process claim for the POST_NOTIFICATIONS auto-prompt (R2, AE-39; S20-b). Nothing calls it yet: S20-c
- * makes the R24 effect start with `if (!notificationPromptOnce.tryClaim()) return@LaunchedEffect`, so a shell
+ * The once-per-process claim for the POST_NOTIFICATIONS auto-prompt (R2, AE-39; S20-b). `MainActivity` (S20-c)
+ * starts the R24 effect with `if (!notificationPromptOnce.tryClaim()) return@LaunchedEffect`, so a shell
  * recomposition, a lock and unlock, or a recreated Activity never prompts a second time in the same process.
  *
  * It is NOT persisted and decides nothing else: R24's `NotificationPromptPolicy` (should the prompt show) and

@@ -175,8 +175,12 @@ AppLockPrivacySettingsViewModel.saveReview  (same scope / NonCancellable / seria
         └── same sweep as above (a committed review-save with discreet on sweeps; refused / failed never does)
 ```
 
-### App lock prompt and lifecycle chain (S20-a; DORMANT until S20-c wires MainActivity):
+### App lock prompt and lifecycle chain (S20-a; LIVE since S20-c wires MainActivity):
 ```
+MainActivity.onCreate (S20-c): secureWindow.applyInitial(window) → DB gate → binder.install(application) → promptHost.attach(this)
+  → secureWindow.bind(this) → setContent { ... AppLockShell { MainScreen } }  (MainScreen only inside the gate's open branch)
+  Changing MainActivity.onCreate order, the shell or the gate affects: MainScreenCallSiteTest, AppLockShellTest, AppLockGateSourceScanTest,
+  SecureWindowController (single FLAG_SECURE writer), the R24 prompt-once claim, deep-link intake (S21 will gate handleIntent).
 AppLockLifecycleBinder (Application.ActivityLifecycleCallbacks; exact started-activity count; sole INV-25 source)
   ├── 0→1 → AppLockController.onAppForegrounded()
   ├── 1→0 and !isChangingConfigurations → AppLockController.onAppBackgrounded()   (config-change stop/start pair not reported)

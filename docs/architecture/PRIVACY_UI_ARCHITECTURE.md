@@ -130,7 +130,13 @@ Re-verified against source:
 - `PrivacyBlocked` still has exactly 12 subclasses (11 concrete + `Custom`) — `domain/privacy/PrivacyBlocked.kt`.
 - The P12-REG-01 fix remains in place: `ExportOptionsViewModel` uses `EXPENSE_EXPORT` / `EXPENSE_EXPORT_ENCRYPTED`; `ExportPrivacyGate` (in `domain/privacy/`, not the data layer) still denies `RAWBACKUP_EXPORT` in both branches and is its sole owner per the `PrivacyGate` contract KDoc.
 - `AssistantViewModel.privacyBlocked` is constructed directly from the settings flag (`PrivacyBlocked.CloudAiDisabled()`), not via `toPrivacyBlocked()` — a minor deviation from the "single entry point" KDoc contract, which that KDoc scopes to cloud providers.
-- No UI-level screenshot protection (`FLAG_SECURE`) or blur/redaction overlay exists in production UI code; privacy UI enforcement is limited to the typed blocked states, gating, and export redaction described above.
+- No UI-level screenshot protection (`FLAG_SECURE`) or blur/redaction overlay exists in production UI code; privacy UI enforcement is limited to the typed blocked states, gating, and export redaction described above. (Historical as of 2026-09-07; superseded by the 2026-10-28 S20-c entry below.)
 - Worker toggle→worker mapping and `data_retention` exemption unchanged (see "Background Worker Privacy Gating").
 
 Re-verified 2026-09-21: all items above still hold; no changes to gates, call-site counts (48 across 32 files), `PrivacyBlocked` subclasses, worker policy, or test files.
+
+### 2026-10-28 S20-c (app lock shell integration)
+
+- `FLAG_SECURE` on the app window is now written, by `ui/applock/SecureWindowController.kt` only (single writer, pinned by `MainScreenCallSiteTest`), and it is CONDITIONAL. It is on while `EffectivePrivacyValues.effectiveSecureScreen` holds: RESOLVING, or the committed lock is on, or the committed secure-screen setting is on, or the settings store is unreadable or missing (fail-closed). It is cleared for users with the lock off and secure-screen off (a readable store). `AUTHENTICATING` of any purpose never moves it (INV-53).
+- `UnsupportedDatabaseActivity` is NOT covered by this flag (it never binds the controller).
+- The app-lock gate (`AppLockGate` inside `AppLockShell`, the only place `MainScreen` is composed, INV-26) is privacy enforcement: RESOLVING, LOCKED and AUTHENTICATING(UNLOCK) compose no financial UI, and Back on those surfaces moves the task to the back. The lock is not user-enableable until S22. See LEGAL_PATHS "App Lock Prompt Path and Lifecycle Signals".
