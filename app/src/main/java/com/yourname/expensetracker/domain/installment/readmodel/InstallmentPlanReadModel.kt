@@ -150,6 +150,26 @@ data class InstallmentHistoryItem(
     val summary: InstallmentHistorySummary
 )
 
+/** Input of [InstallmentPlanReadModel.budgetInclusion]: the readable plans and the count of unreadable ones. */
+data class InstallmentBudgetInputs(
+    val plans: List<PlanSnapshot>,
+    val unreadablePlanCount: Int
+)
+
+/**
+ * Installment money already counted in one budget period (B-2, INV-1), per currency.
+ *
+ * @property minorByCurrency counted effective minor units per currency; a currency with nothing
+ *   counted has no entry, so there is never a zero row and never a cross-currency sum.
+ * @property complete false when some plan or paid entry that could belong to the budget could not
+ *   be read; the figures are then not trustworthy and the caller shows "unavailable", never a
+ *   possibly understated amount and never zero.
+ */
+data class InstallmentBudgetInclusion(
+    val minorByCurrency: Map<InstallmentCurrency, Long>,
+    val complete: Boolean
+)
+
 // ---------------------------------------------------------------------------------------------
 // Candidate rule (INV-13 and domain spec section 8.2)
 // ---------------------------------------------------------------------------------------------
@@ -412,6 +432,52 @@ object InstallmentPlanReadModel {
         status == InstallmentEntryStatus.SCHEDULED &&
             kind == InstallmentEntryKind.REGULAR &&
             linkedExpenseId == null
+
+    /**
+     * S12b (B-2, INV-1, AE-24): the installment money that already counts in a budget period, per
+     * currency. Only PAID entries count (an entry counts through its real linked expense; scheduled,
+     * awaiting, skipped and reversed entries never inflate it, INV-12/INV-14), at the linked expense's
+     * stored effective amount, so a not-mine or otherwise excluded expense contributes nothing. The
+     * expense's own date places it in the period [periodStartMillis, periodEndMillisExclusive)
+     * (OD-10). The linked EXPENSE's own category decides ([categoryId] null = overall budget,
+     * every category; an uncategorised expense counts only for the overall budget), matching how
+     * a budget's spent follows each expense; the plan's category is not used. The
+     * purchase record of a plan is not an entry and never counts here (INV-1). No rounding is
+     * applied: amounts are already Long minor units and are only summed.
+     *
+     * A PAID entry of a matching plan whose linked expense is missing, has no date, or is in an
+     * unsupported currency, and any unreadable plan, make the result incomplete.
+     */
+    fun budgetInclusion(
+        inputs: InstallmentBudgetInputs,
+        periodStartMillis: Long,
+        periodEndMillisExclusive: Long,
+        categoryId: Long?
+    ): InstallmentBudgetInclusion {
+        val totals = EnumMap<InstallmentCurrency, Long>(InstallmentCurrency::class.java)
+        var complete = inputs.unreadablePlanCount == 0
+        for (plan in inputs.plans) {
+            for (entry in plan.entries) {
+                if (entry.money.status != InstallmentEntryStatus.PAID) continue
+                val linked = entry.money.linkedExpense
+                // The expense's own category decides (a budget's spent follows each expense, so a
+                // recategorised installment expense moves with it). A readable expense of another
+                // category cannot taint this budget; an unreadable one has no known category and
+                // makes a category budget incomplete rather than possibly understated.
+                if (categoryId != null && linked != null && linked.categoryId != categoryId) continue
+                val date = linked?.dateMillis
+                val currency = linked?.let { InstallmentCurrency.fromCodeOrNull(it.currency) }
+                if (linked == null || date == null || currency == null) {
+                    complete = false
+                    continue
+                }
+                if (date < periodStartMillis || date >= periodEndMillisExclusive) continue
+                totals[currency] = (totals[currency] ?: 0L) + linked.effectiveMinor
+            }
+        }
+        val positive = totals.filterValues { it > 0L }
+        return InstallmentBudgetInclusion(positive, complete)
+    }
 
     private fun dueOf(plan: PlanSnapshot, entryId: Long): Long =
         plan.entries.firstOrNull { it.entryId == entryId }?.money?.dueEpochDay ?: Long.MAX_VALUE

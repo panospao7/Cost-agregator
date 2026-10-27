@@ -85,7 +85,8 @@ class BudgetViewModelCurrencyProvenanceTest : ViewModelTestUtils() {
             autopilotEngine = autopilotEngine,
             timeProvider = timeProvider,
             currencySettingsRepository = currencySettingsRepository,
-            database = mockk()
+            database = mockk(),
+            installmentReadRepository = mockk(relaxed = true)
         )
     }
 
@@ -353,7 +354,8 @@ class BudgetViewModelCurrencyProvenanceTest : ViewModelTestUtils() {
             autopilotEngine = autopilotEngine,
             timeProvider = timeProvider,
             currencySettingsRepository = currencySettingsRepository,
-            database = mockk()
+            database = mockk(),
+            installmentReadRepository = mockk(relaxed = true)
         )
     }
 

@@ -100,5 +100,7 @@ data class InstallmentExpenseMoney(
     val currency: String,
     val dateMillis: Long,
     val amount: Double,
-    val effectiveAmount: Double
+    val effectiveAmount: Double,
+    /** The expense's own category, or null when uncategorised (S12b budget line). */
+    val categoryId: Long? = null
 )

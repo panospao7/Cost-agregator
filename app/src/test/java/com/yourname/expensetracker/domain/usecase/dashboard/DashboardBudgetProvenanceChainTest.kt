@@ -196,7 +196,8 @@ class DashboardBudgetProvenanceChainTest {
             autopilotEngine = mockk<BudgetAutopilotEngine>(relaxed = true),
             timeProvider = clock,
             currencySettingsRepository = currencySettingsRepository,
-            database = database
+            database = database,
+            installmentReadRepository = mockk(relaxed = true)
         )
 
         // REAL dashboard budget projection (only budgetRepository is read by observeBudgetStatuses).

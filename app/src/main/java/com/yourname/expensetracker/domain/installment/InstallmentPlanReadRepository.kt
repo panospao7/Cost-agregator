@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.installment
 
+import com.yourname.expensetracker.domain.installment.readmodel.InstallmentBudgetInputs
 import com.yourname.expensetracker.domain.installment.readmodel.InstallmentHistoryItem
 import com.yourname.expensetracker.domain.installment.readmodel.InstallmentLinkSuggestion
 import com.yourname.expensetracker.domain.installment.readmodel.InstallmentOverview
@@ -36,4 +37,12 @@ interface InstallmentPlanReadRepository {
 
     /** INV-13 suggested links across all ACTIVE plans (AE-17). */
     suspend fun loadSuggestions(): List<InstallmentLinkSuggestion>
+
+    /**
+     * S12b (B-2, INV-1): the readable plans (any status, with their PAID entries and linked
+     * expense money including the expense date) plus the count of unreadable plans, for the
+     * Budget info line. The budget screen feeds it to `InstallmentPlanReadModel.budgetInclusion`.
+     * Read-only; no new store query.
+     */
+    suspend fun loadBudgetInputs(): InstallmentBudgetInputs
 }

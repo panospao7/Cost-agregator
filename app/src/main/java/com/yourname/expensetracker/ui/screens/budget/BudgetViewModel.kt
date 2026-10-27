@@ -17,6 +17,12 @@ import com.yourname.expensetracker.domain.core.money.CurrencyAssumption
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.groups.SharedExpenseBudgetOffsetEngine
+import com.yourname.expensetracker.domain.installment.InstallmentPlanReadRepository
+import com.yourname.expensetracker.domain.installment.model.InstallmentCurrency
+import com.yourname.expensetracker.domain.installment.model.InstallmentMinorUnits
+import com.yourname.expensetracker.domain.installment.readmodel.InstallmentPlanReadModel
+import com.yourname.expensetracker.ui.model.MoneyDisplayUi
+import com.yourname.expensetracker.ui.navigation.InstallmentsFeature
 import com.yourname.expensetracker.domain.savings.SavingsGoalCurrencyPolicy
 import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -35,7 +41,9 @@ data class BudgetUiState(
     val error: String? = null,
     /** S8-005: null until home currency loads — never defaults to "EUR" */
     val homeCurrency: String? = null,
-    val referenceNowMillis: Long = 0L
+    val referenceNowMillis: Long = 0L,
+    /** S12b: installment info line per budget id; empty while the installments feature is off. */
+    val installmentLines: Map<Long, BudgetInstallmentLine> = emptyMap()
 ) {
     val loadableState: com.yourname.expensetracker.ui.model.LoadableUiState<List<BudgetStatus>>
         get() = when {
@@ -50,6 +58,18 @@ data class BudgetUiState(
         }
 }
 
+/**
+ * S12b (B-2, INV-1): the "Includes €X in installments" info line of one budget, in the budget's own
+ * currency. There is no line for zero, and the amounts of different currencies are never combined.
+ */
+sealed interface BudgetInstallmentLine {
+    /** The installment money already counted in this budget's period (non-zero). */
+    data class Included(val amount: MoneyDisplayUi) : BudgetInstallmentLine
+
+    /** The installment figure could not be determined; never rendered as zero. */
+    data object Unavailable : BudgetInstallmentLine
+}
+
 @HiltViewModel
 class BudgetViewModel @Inject constructor(
     private val budgetRepository: BudgetRepository,
@@ -59,8 +79,13 @@ class BudgetViewModel @Inject constructor(
     private val timeProvider: TimeProvider,
     private val currencySettingsRepository: CurrencySettingsRepository,
     /** BUD-21: Used for transactional bulk updates. */
-    private val database: AppDatabase
+    private val database: AppDatabase,
+    /** S12b: read-only installment read model for the budget info line (dormant behind the feature flag). */
+    private val installmentReadRepository: InstallmentPlanReadRepository
 ) : ViewModel() {
+
+    /** Test seam for the compile-time gate [InstallmentsFeature.ENABLED]; production never changes it. */
+    internal var installmentsEnabled: Boolean = InstallmentsFeature.ENABLED
 
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     private val _manualState = MutableStateFlow<ManualState>(ManualState.Idle)
@@ -116,6 +141,54 @@ class BudgetViewModel @Inject constructor(
                 }
             }
 
+    /**
+     * S12b: each emission of the statuses carries the installment info lines. Flag off: the read
+     * repository is never touched and the map is empty. A failed read (other than cancellation)
+     * yields [BudgetInstallmentLine.Unavailable] for every budget, never a zero or a partial figure.
+     */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    private val statusesWithInstallmentLines: Flow<Pair<List<BudgetStatus>, Map<Long, BudgetInstallmentLine>>> =
+        adjustedBudgetStatuses.mapLatest { statuses -> statuses to installmentLinesFor(statuses) }
+
+    internal suspend fun installmentLinesFor(statuses: List<BudgetStatus>): Map<Long, BudgetInstallmentLine> {
+        if (!installmentsEnabled || statuses.isEmpty()) return emptyMap()
+        val inputs = try {
+            installmentReadRepository.loadBudgetInputs()
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            return statuses.associate { it.budget.id to BudgetInstallmentLine.Unavailable }
+        }
+        val lines = LinkedHashMap<Long, BudgetInstallmentLine>()
+        for (status in statuses) {
+            val inclusion = InstallmentPlanReadModel.budgetInclusion(
+                inputs = inputs,
+                periodStartMillis = status.periodStart,
+                periodEndMillisExclusive = status.periodEnd,
+                categoryId = status.budget.categoryId
+            )
+            if (!inclusion.complete) {
+                lines[status.budget.id] = BudgetInstallmentLine.Unavailable
+                continue
+            }
+            val currency = InstallmentCurrency.fromCodeOrNull(status.budget.currency)
+            val ownMinor = currency?.let { inclusion.minorByCurrency[it] } ?: 0L
+            val hasOtherCurrency = inclusion.minorByCurrency.any { (code, minor) -> code != currency && minor != 0L }
+            // Owner approval 50(a): the card's spent is converted to the home currency across all
+            // currencies, so the line shows only when it is in the card's spent currency and no
+            // counted installment exists in another currency. Anything else is Unavailable, never
+            // an understated figure. Nothing counted at all: no line.
+            if (ownMinor == 0L && !hasOtherCurrency) continue
+            if (currency == null || hasOtherCurrency || status.currency != currency.code) {
+                lines[status.budget.id] = BudgetInstallmentLine.Unavailable
+                continue
+            }
+            lines[status.budget.id] = BudgetInstallmentLine.Included(
+                MoneyDisplayUi.from(InstallmentMinorUnits.fromMinor(ownMinor), currency.code)
+            )
+        }
+        return lines
+    }
+
     /** S8-005: null initial value — never defaults to "EUR" before repository emits. */
     private val _homeCurrency = currencySettingsRepository.homeCurrency()
         .stateIn(viewModelScope, SharingStarted.Lazily, null)
@@ -123,9 +196,9 @@ class BudgetViewModel @Inject constructor(
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     val uiState: StateFlow<BudgetUiState> = combine(
         combine(
-            adjustedBudgetStatuses,
+            statusesWithInstallmentLines,
             _suggestionsRefreshTrigger.flatMapLatest { flow { emit(budgetRepository.getSuggestions()) } }
-        ) { statuses, suggestions -> statuses to suggestions },
+        ) { statusesAndLines, suggestions -> statusesAndLines to suggestions },
         combine(
             _manualState,
             _autopilotRecommendations,
@@ -135,8 +208,10 @@ class BudgetViewModel @Inject constructor(
             object { val manual = manual; val autopilot = autopilot; val autopilotLoading = autopilotLoading; val autopilotError = autopilotError }
         },
         _homeCurrency
-    ) { (statuses, suggestions), ctx, hc ->
+    ) { (statusesAndLines, suggestions), ctx, hc ->
+        val (statuses, installmentLines) = statusesAndLines
         BudgetUiState(
+            installmentLines = installmentLines,
             budgets = statuses,
             suggestions = suggestions,
             autopilotRecommendations = ctx.autopilot?.categoryRecommendations ?: emptyList(),

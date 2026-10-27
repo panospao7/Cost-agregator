@@ -62,6 +62,7 @@ class InstallmentExpenseFactsReaderImpl @Inject constructor(
         currency = currency,
         dateMillis = date,
         amount = amount,
-        effectiveAmount = effectiveAmount
+        effectiveAmount = effectiveAmount,
+        categoryId = categoryId
     )
 }

@@ -387,4 +387,7 @@
     <string name="installments_edit_helper">Οι αλλαγές ισχύουν για τις πληρωμές που καταγράφονται από εδώ και πέρα. Τα καταγεγραμμένα έξοδα δεν αλλάζουν.</string>
     <string name="installments_edit_no_category">Χωρίς κατηγορία</string>
     <string name="installments_action_notice_undo_failed">Δεν ήταν δυνατή η αναίρεση. Χρησιμοποιήστε τις ενέργειες της γραμμής.</string>
+    <!-- loan-installments S12b: DRAFT translations, pending owner sign-off -->
+    <string name="budget_includes_installments_format">Περιλαμβάνει %1$s σε δόσεις</string>
+    <string name="budget_includes_installments_unavailable">Το ποσό των δόσεων δεν είναι διαθέσιμο</string>
 </resources>

@@ -13,6 +13,7 @@ import com.yourname.expensetracker.domain.installment.model.InstallmentMinorUnit
 import com.yourname.expensetracker.domain.installment.model.InstallmentPlanKind
 import com.yourname.expensetracker.domain.installment.model.InstallmentPlanStatus
 import com.yourname.expensetracker.domain.installment.readmodel.EntryMoney
+import com.yourname.expensetracker.domain.installment.readmodel.InstallmentBudgetInputs
 import com.yourname.expensetracker.domain.installment.readmodel.EntrySnapshot
 import com.yourname.expensetracker.domain.installment.readmodel.InstallmentHistoryItem
 import com.yourname.expensetracker.domain.installment.readmodel.InstallmentLinkSuggestion
@@ -91,6 +92,11 @@ class InstallmentPlanReadRepositoryImpl @Inject constructor(
             .flatMap { suggestionsOf(it, zone, today) }
     }
 
+    override suspend fun loadBudgetInputs(): InstallmentBudgetInputs {
+        val loaded = loadAll(ZoneId.systemDefault())
+        return InstallmentBudgetInputs(loaded.snapshots, loaded.unreadable)
+    }
+
     // ------------------------------------------------------------------ loading
 
     private fun changes(): Flow<Unit> {
@@ -156,7 +162,7 @@ class InstallmentPlanReadRepositoryImpl @Inject constructor(
                 factsReader.findExpenseMoney(id)?.let { m ->
                     val gross = InstallmentMinorUnits.toMinorOrNull(m.amount)
                     val effective = InstallmentMinorUnits.toMinorOrNull(m.effectiveAmount)
-                    if (gross == null || effective == null) null else LinkedExpenseMoney(m.currency, gross, effective)
+                    if (gross == null || effective == null) null else LinkedExpenseMoney(m.currency, gross, effective, m.dateMillis, m.categoryId)
                 }
             }
         } else {

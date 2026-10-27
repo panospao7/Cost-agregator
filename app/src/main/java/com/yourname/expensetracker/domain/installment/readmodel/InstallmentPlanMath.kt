@@ -40,11 +40,18 @@ sealed interface InstallmentAmount {
  *   exclusion flags do not change what the lender charged).
  * @property effectiveMinor the expense's `effectiveAmount` (what counts as spending; used by
  *   paid-so-far and the lifetime counted total).
+ * @property dateMillis the expense's own date in epoch millis (S12b budget line: the charge's own
+ *   date governs the month it counts in, OD-10); null when not loaded, and then the charge is never
+ *   placed in a budget period.
+ * @property categoryId the expense's own category (S12b budget line: a budget's spent follows each
+ *   expense's category, not the plan's); null when the expense is uncategorised or not loaded.
  */
 data class LinkedExpenseMoney(
     val currency: String,
     val grossMinor: Long,
-    val effectiveMinor: Long
+    val effectiveMinor: Long,
+    val dateMillis: Long? = null,
+    val categoryId: Long? = null
 )
 
 /** One entry as the math needs it. [scheduledMinor] is in the plan currency. */

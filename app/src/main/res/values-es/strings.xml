@@ -638,5 +638,8 @@
     <string name="installments_edit_helper">Los cambios se aplican a los pagos que se registren desde ahora. Los gastos registrados no cambian.</string>
     <string name="installments_edit_no_category">Sin categoría</string>
     <string name="installments_action_notice_undo_failed">No se pudo deshacer. Usa las acciones de la fila.</string>
+    <!-- loan-installments S12b: DRAFT translations, pending owner sign-off -->
+    <string name="budget_includes_installments_format">Incluye %1$s en cuotas</string>
+    <string name="budget_includes_installments_unavailable">Importe de cuotas no disponible</string>
 
 </resources>

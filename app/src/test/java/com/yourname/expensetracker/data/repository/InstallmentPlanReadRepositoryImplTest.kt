@@ -170,8 +170,9 @@ class InstallmentPlanReadRepositoryImplTest {
         amount: Double = 50.0,
         effective: Double = amount,
         currency: String = "EUR",
-        dateMillis: Long = noonUtc(due)
-    ) = InstallmentExpenseMoney(id, currency, dateMillis, amount, effective)
+        dateMillis: Long = noonUtc(due),
+        categoryId: Long? = null
+    ) = InstallmentExpenseMoney(id, currency, dateMillis, amount, effective, categoryId)
 
     private fun facts(
         id: Long,
@@ -384,6 +385,36 @@ class InstallmentPlanReadRepositoryImplTest {
             InstallmentAmount.Unavailable(InstallmentUnavailableReason.NO_PURCHASE),
             repo.loadDetail(1L)!!.financingCost
         )
+    }
+
+    // ------------------------------------------------------------------ S12b budget inputs
+
+    @Test
+    fun `loadBudgetInputs plumbs the expense date and category into the linked money`() = runTest {
+        val chargeDate = noonUtc(due.plusDays(2))
+        givenStore(
+            listOf(planRow(1L, categoryId = 5L), planRow(2L, status = "BOGUS")),
+            listOf(
+                entryRow(1L, status = "PAID", amount = 50.0, linkedExpenseId = 900L),
+                entryRow(2L, status = "PAID", amount = 40.0, linkedExpenseId = 901L),
+                entryRow(3L, amount = 30.0, linkedExpenseId = 902L)
+            )
+        )
+        reader.money[900L] = money(900L, amount = 53.0, effective = 52.0, dateMillis = chargeDate, categoryId = 9L)
+        reader.money[901L] = money(901L, amount = 40.0, dateMillis = chargeDate, categoryId = null)
+        reader.money[902L] = money(902L, categoryId = 3L)
+
+        val inputs = repo.loadBudgetInputs()
+
+        assertEquals("the BOGUS plan is counted unreadable, not listed", 1, inputs.unreadablePlanCount)
+        val entries = inputs.plans.single().entries.associateBy { it.entryId }
+        val paid = entries.getValue(1L).money.linkedExpense!!
+        assertEquals(chargeDate, paid.dateMillis)
+        assertEquals("the EXPENSE category, not the plan category 5", 9L, paid.categoryId)
+        assertEquals(5_300L, paid.grossMinor)
+        assertEquals(5_200L, paid.effectiveMinor)
+        assertNull("an uncategorised expense stays null", entries.getValue(2L).money.linkedExpense!!.categoryId)
+        assertNull("only PAID entries load linked money", entries.getValue(3L).money.linkedExpense)
     }
 
     // ------------------------------------------------------------------ history

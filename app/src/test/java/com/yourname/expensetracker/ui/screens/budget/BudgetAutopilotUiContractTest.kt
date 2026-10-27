@@ -88,7 +88,8 @@ class BudgetAutopilotUiContractTest {
             autopilotEngine = autopilotEngine,
             timeProvider = timeProvider,
             currencySettingsRepository = currencyRepo,
-            database = mockk()
+            database = mockk(),
+            installmentReadRepository = mockk(relaxed = true)
         )
     }
 

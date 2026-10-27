@@ -84,7 +84,8 @@ class BudgetViewModelAutopilotQualityTest : ViewModelTestUtils() {
             autopilotEngine = autopilotEngine,
             timeProvider = timeProvider,
             currencySettingsRepository = currencySettingsRepository,
-            database = mockk()
+            database = mockk(),
+            installmentReadRepository = mockk(relaxed = true)
         )
     }
 
@@ -280,7 +281,8 @@ class BudgetViewModelAutopilotQualityTest : ViewModelTestUtils() {
                 autopilotEngine = autopilotEngine,
                 timeProvider = timeProvider,
                 currencySettingsRepository = currencySettingsRepository,
-                database = database
+                database = database,
+                installmentReadRepository = io.mockk.mockk(relaxed = true)
             )
 
             val actionableRec = recommendation(

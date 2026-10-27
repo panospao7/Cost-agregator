@@ -2901,5 +2901,8 @@
     <string name="installments_edit_helper">Changes apply to payments recorded from now on. Recorded expenses are not changed.</string>
     <string name="installments_edit_no_category">No category</string>
     <string name="installments_action_notice_undo_failed">Couldn\'t undo. Use the row actions instead.</string>
+    <!-- loan-installments S12b: budget info line (dormant behind InstallmentsFeature.ENABLED); %1$s is a formatted amount with its currency -->
+    <string name="budget_includes_installments_format">Includes %1$s in installments</string>
+    <string name="budget_includes_installments_unavailable">Installment amount unavailable</string>
 
 </resources>
