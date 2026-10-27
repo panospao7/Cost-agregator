@@ -21,7 +21,12 @@ import javax.inject.Singleton
  *   [OccurrenceConflictResolver], and the in-memory projection) uses the batch form
  *   [excludedExpenseIds], which reads the installment link sets once per call;
  * - the pattern detector (RecurringExpenseEngine.detectPatterns, INV-29) is the third consumer and
- *   uses the snapshot form [excludedSnapshotIds].
+ *   uses the snapshot form [excludedSnapshotIds];
+ * - the insights anomaly finder (InsightsEngine.findAnomalies, INV-29, S6c-F.2) is the fourth
+ *   consumer and uses the snapshot form [excludedSnapshotIds], dropping the ids from both anomaly
+ *   paths;
+ * - the notification subscription detector (NotificationSubscriptionDetector.detectSubscriptions,
+ *   INV-29, S6c-F.2) is the fifth consumer and uses the batch form [excludedExpenseIds].
  *
  * Known limit of the snapshot form: an ExpenseSnapshot carries no spendingExclusionReason, so the form
  * is blind to the flag. An orphan INSTALLMENT_PURCHASE / INSTALLMENT_REVERSED flag with no plan row is
@@ -38,7 +43,8 @@ import javax.inject.Singleton
  * link of the expense is not a refusal reason (the policy ignores it for this target), so it is not
  * read here.
  *
- * Recurring's own layer (not-mine, TRANSFER, DEPOSIT) stays with its callers.
+ * Recurring's own layer (not-mine, TRANSFER, DEPOSIT, UNKNOWN for new links) is owned by
+ * [RecurringLinkTypeEligibility], not by this class.
  *
  * The reader is a lazy cross-module dependency: constructing this class never builds it. Reads run
  * inside the caller's Room transaction when one is open. The class performs no writes.

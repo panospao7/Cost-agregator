@@ -1512,6 +1512,27 @@ Files: `domain/reminder/BillReminderManagerInstallmentTest.kt` (rewritten, recor
 - Priority 1: blocked `installment_reminder` checkpoint -> `BlockedRetry` -> `Result.retry()`; no claim, no `recoverAndGetDueReminders`, no "dispatch failed" warning. The guard is the same stand-in model used by `WarrantyExpirationWorkerTest` (the real `WorkerExecutionGuard` is not driven here).
 - Priority 2/3: manager revalidation throw (port, CancellationException, settings) releases and rethrows; worker text-build throw/cancel and post cancel release; channel creation failure is `Failed("notification_error")` and releases; Sent -> `markInstallmentReminderSent` once, never release; failed post -> release, never mark; mark-sent failure logs and does not release. The old test "post cancellation ... releaseInstallmentReminder exactly 0" was changed to exactly 1 (the worker now releases on any throw after the claim).
 - Priority 4: ledger tests as listed in the task. The commit-failure case uses a mocked `Context`/`SharedPreferences` whose editor `commit()` returns false (real prefs cannot fail a commit). The record `toString` redaction is checked by reflection on the private nested `InstallmentReminderLedgerImpl$Record`. The raw `k:<key>` = `dueDay|claimedAt|sent` layout is read/planted only for the corrupt-value and claimedAt-kept cases.
+
+## S6c-F.2 — implemented (2026-10-27; owner items 37(a) + 37(c); uncommitted; nothing compiled, run or validated)
+
+Legal path: read-only through `RecurringInstallmentEligibility` (the single owner, INV-5 / INV-29, decision 46(b)). No new DAO query, no new `@Query`, no schema change (pins stay at 452), no new catch, no new logging beyond one `Timber.d` count line in the detector (same style as the existing size-check line), no CancellationSafety allowlist change.
+
+Source files:
+- `M:domain/analytics/InsightsEngine.kt`: new last ctor param `installmentEligibility: RecurringInstallmentEligibility`. In `findAnomalies`, `excludedSnapshotIds(safeExpenses)` is computed once right after `safeExpenses`, outside any try. The ids are dropped from the merged result (`merged.values.filter { it.expense.id !in installmentExcludedIds }` before sort and `take(10)`), which covers BOTH paths by id. Baselines (`historicalPurchasesByMerchant`, the recurring-keys path, `AnomalyDetector` inputs) are untouched. A reader failure propagates to the existing anomalies stage catch (`catch (e: CancellationException) { throw e } catch (e: Exception) { ...; null }` at the `anomaliesDeferred` async) = no anomalies (fail-closed); CancellationException is rethrown there (confirmed). AIML-13 KDoc extended.
+- `M:domain/subscription/NotificationSubscriptionDetector.kt`: new last ctor param `installmentEligibility`. After the existing size check, `excludedExpenseIds(transactions.map { it.expense })` once, filter by id, re-check `MIN_TRANSACTIONS`, then group over the filtered list. No catch added. The pipeline is not edited.
+- `M:domain/recurring/RecurringInstallmentEligibility.kt`: KDoc consumer list only (fourth and fifth consumers).
+
+Hilt notes: `InsightsEngine` already depends on `RecurringExpenseEngine`, which takes the same `@Singleton RecurringInstallmentEligibility` (holds a `dagger.Lazy<InstallmentEntryLinkReader>`), so no new edge into the reader graph. `NotificationSubscriptionDetector` is injected only into `NotificationProcessingPipeline`; the helper builds nothing on construction (lazy reader), so no cycle is possible through the detector. No `@Provides`/module builds either class; no main-source manual construction exists. No androidTest construction site exists (grep of `InsightsEngine(` and `NotificationSubscriptionDetector(` in `app/src/androidTest` = 0). The detector has no test construction site (pipeline tests use `mockk<NotificationSubscriptionDetector>(relaxed = true)`).
+
+Tests (ctor-only, no assertion changes): new shared helper `N:test/.../domain/analytics/NoPlansInstallmentEligibility.kt` (`noPlansInstallmentEligibility()`, a mock reader returning empty sets, same shape as the `RecurringExpenseEngineTest` setup). Updated: `InsightsEngineTest`, `InsightsEngineValidationTest` (2 sites), `InsightsEngineDeepTest`, `InsightsEngineEdgeCaseTest`, `InsightsEngineNormalizedDailyMoneyTest` (positional), e2e `AnalyticsPipelineTest`, `NotificationParserDashboardTotalSeamTest`, `FlowPipelineTestHarness`, `verification/CrossEngineParityMatrixTest`, `ui/screens/analytics/AnalyticsViewModelInsightsTest` (2 sites). New: `N:domain/analytics/InsightsEngineInstallmentAnomalySuppressionTest.kt` (F-AE-2..4) and `N:domain/subscription/NotificationSubscriptionDetectorInstallmentExclusionTest.kt` (F-AE-5). Docs: `ENGINE_INTERACTION_MAP.md` (INV-29 consumer block and the SAFE-to-change row).
+
+Risks:
+- Drop-after-merge masks a non-linked same-merchant spike on the merchant path: that path keeps only the largest current-month purchase per merchant, so if that largest one is installment-linked, a smaller non-linked spike at the same merchant is not surfaced (and a linked candidate can use one of the top-5 slots before the drop). This follows the plan text (drop from the merged result); a pre-filter of the current-month candidates would remove it but moves the baseline boundary, so it was not done.
+- The snapshot form cannot see the INSTALLMENT_PURCHASE / _REVERSED flag (known gap, harmless for effectiveAmount = 0 rows).
+- The detector test makes the `MerchantNormalizer` throw so the detector's existing lower-case fallback groups merchants (no canonical fixture).
+- A reader failure now silences all anomalies (fail-closed by design, spec).
+
+Targeted filter: `*InsightsEngine*,*NotificationSubscriptionDetector*,*AnalyticsPipeline*,*NotificationParserDashboardTotalSeam*,*CrossEngineParityMatrix*,*AnalyticsViewModelInsights*,*CancellationSafetyArchitectureGuard*,*RecurringInstallmentEligibility*`, plus the `FlowPipelineTestHarness` users (grep for the class name).
 - Priority 5-8: D+1 re-listing after markSent and the moved-due-day release are in both the fake-ledger manager test and the real-ledger integration; PAID_BEFORE_TRACKING never listed (and revalidated away after listing); redaction of `InstallmentReminderText`/`InstallmentReminder`; German locale gives a comma (default locale restored in `finally`); AE-11 now uses a COMPLETED plan that still carries SCHEDULED in-window entries (only `prune` touches the ledger) plus a plan completed between listing and claim.
 - Not testable: build-failure inside `NotificationCompat.Builder.build()` (no seam; the channel-creation failure covers the same catch). Exception identity is asserted through the cause chain because coroutine stack-trace recovery may copy the exception.
 
@@ -1547,3 +1568,88 @@ Filter to request: `*InstallmentReminderLedgerImplTest*,*BillReminderManagerInst
     - cancel the posted reminder when the entry is paid or the plan is stopped or deleted.
   - Follow-up before release: check whether NotificationFilter self-captures the app's own reminders.
   - Next loan slices: S8b (needs owner approval of the guard-surface strengthening at start), then S10a/b.
+- Orchestrator notes on S6c-F.2 (2026-10-27):
+  - **Accepted residual:** drop-after-merge on the anomaly merchant path. A linked largest current-month purchase can hide a smaller non-linked spike at the same merchant, and a linked candidate can take a top-5 slot before it is dropped. This is no worse than before S6c-3, when the whole merchant was suppressed as recurring. Pre-filtering the candidates is a possible follow-up.
+  - **One added Timber.d:** it logs a count only, matching the existing detector line. Accepted.
+
+## S6c-F.3 — implemented (2026-10-27; owner item 37(b), decision 46(a) R2; uncommitted; nothing compiled, run or validated)
+
+Legal path: recurring rule coordinator stays the only link writer (claimLinkSuppressInWrite); the new object is pure (no I/O, no DAO, no schema, no new query, no new catch; pins stay at 452; no guard/db_ownership/allowlist change).
+
+Source files:
+- `N:domain/recurring/RecurringLinkTypeEligibility.kt`: `mayCreateLink(type, isNotMine)` = `!isNotMine && type not in {TRANSFER, DEPOSIT, UNKNOWN}`; `mayKeepLink(type, isNotMine)` = `!isNotMine && type not in {TRANSFER, DEPOSIT}`. The current gate already excluded isNotMine on the reconcile keep path, so the keep form preserves that exactly; the only difference between the two forms is UNKNOWN.
+- `M:domain/recurring/OccurrenceConflictResolver.kt`: inline rule replaced by `mayCreateLink` (behaviour unchanged); unused `TransactionType` import removed.
+- `M:domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt`: `linkExpenseToOccurrence` pre-check uses `mayCreateLink`; the private gate is now `isExpenseEligibleForRecurring(expense, existingLink: Boolean)` (layer 1 via keep or create form, then the unchanged INV-5 installment check); KDoc at the link function (rule 6) and the gate updated; unused `TransactionType` import removed.
+- `M:domain/recurring/RecurringInstallmentEligibility.kt`: one KDoc line only (the "Recurring's own layer" sentence, which was at :46 in this tree, not :41).
+
+Call-site classification (gate `isExpenseEligibleForRecurring`):
+- `claimLinkSuppressInWrite` (auto-link and manual link, in-transaction): CREATE (`existingLink = false`). A claim writes a new link; an expense already linked to this occurrence is a no-op there, so the form only matters for a first link.
+- `linkExpenseToOccurrenceDetailed` failure-reason check: CREATE. It only classifies why a new link was not made, so UNKNOWN reports `Skipped(expense_not_eligible)`.
+- `reconcileExpenseLinkAfterUpdate` "linked and still matches": KEEP (`existingLink = true`). This is the R2 branch and the only keep call. `reconcileAllLinkedExpensesAfterBulkUpdate` has no gate call of its own (it loops PAID occurrences and delegates to this reconcile), so the bulk path is covered by the same keep call.
+- `reconcileExpenseLinkAfterUpdate` relink after the "no longer matches" unlink: CREATE. The old link was just removed, so a relink is a new link. (A linked UNKNOWN expense that no longer matches by date or merchant is unlinked and not relinked, as for any other type.)
+- `reconcileExpenseLinkAfterUpdate` not-linked branch: CREATE.
+No ambiguous classification; no PAID to PLANNED change for an UNKNOWN expense that still matches.
+
+Behaviour change: UNKNOWN expenses are no longer auto-linked, manually linked, or reported as `NoMatch` by the coordinator (now `Skipped(expense_not_eligible)` / `SpecificLinkResult.ExpenseNotEligible`), which matches what the generation resolver always did. Existing links on UNKNOWN expenses are kept. Before this slice a parsed UNKNOWN expense could be linked through the coordinator even though the resolver refused it.
+
+Tests (none deleted, no existing expectation changed; grep found no existing test that asserted an UNKNOWN link):
+- New `N:test/.../domain/recurring/RecurringLinkTypeEligibilityParityTest.kt` (F-AE-7): both tables over `TransactionType.entries` x isNotMine, keep-superset-of-create (only difference is UNKNOWN), a real `OccurrenceConflictResolver` driven over the table against `mayCreateLink`, and a source scan that neither the resolver nor the coordinator contains an inline `TransactionType.TRANSFER/DEPOSIT/UNKNOWN` and that the coordinator calls both forms.
+- `M:RecurringLifecycleCoordinatorInstallmentLinkPolicyTest` (real Room; chosen over the mock-based `RecurringLifecycleCoordinatorTest`, which never exercises the link gate): helpers got optional `type`; added F-AE-6 (auto-link, detailed outcome, manual link and unlinked reconcile refuse UNKNOWN; WITHDRAWAL controls link by auto and manual) and F-AE-8 (a link retyped to UNKNOWN survives reconcile as `UpdatedLinkedSnapshot` and survives the bulk reconcile with `updatedSnapshots = 1`, stays PAID; a retype to TRANSFER still unlinks).
+- `M:OccurrenceConflictResolverInstallmentExclusionTest`: helper got optional `type`; added an UNKNOWN row (PLANNED) with a WITHDRAWAL control (PAID) and an UNKNOWN-beside-PURCHASE case.
+- `M:MarkRecurringBillPaidUseCaseTest` (mockk coordinator): the use case always creates a PURCHASE, so an UNKNOWN expense cannot reach it; added the ineligible outcome case (`SpecificLinkResult.ExpenseNotEligible` gives `Failed(LINK_REJECTED)`, rule not advanced). The real UNKNOWN refusal is the Room test above.
+
+Risks:
+- The unlink-on-TRANSFER control runs the unlink without a planned row; it relies on the unlink being null-safe for a missing planned row (the existing Unlinked test seeds one). If it fails, seed a planned row as that test does.
+- `Pipeline4LifecycleGolden` / `RecurringPaymentMatchE2E` were not run. A grep found no `TransactionType.UNKNOWN` in them, nor in the RecurringHorizonAndLinkR21, RecurringRuleLifecycleCoordinator, RecurringGenerationInstallmentExclusion or RecurringPlannedActualNoDoubleCount tests (the only UNKNOWN uses in recurring-named tests are RecurringExpenseEngineTest and RecurringIncomeTrackerTest, which do not link). A parsed-UNKNOWN pipeline fixture could still flip them; if so, change the expectation with a `// owner item 37(b)` comment (never delete).
+- Anything that created an UNKNOWN to PAID link through the coordinator before this slice now stays PLANNED until the user classifies the expense.
+
+Targeted filter: `*RecurringLinkTypeEligibility*,*RecurringLifecycleCoordinator*,*OccurrenceConflictResolver*,*RecurringInstallmentEligibility*,*MarkRecurringBillPaid*,*RecurringPaymentMatchE2E*,*RecurringHorizonAndLinkR21*,*Pipeline4LifecycleGolden*,*RecurringGenerationInstallmentExclusion*,*RecurringExpenseEngine*,*RecurringRuleLifecycleCoordinator*,*RecurringPlannedActualNoDoubleCountGolden*,*NotificationProcessingPipeline*`.
+
+## S6c-F.1 — implemented
+
+Owner item 36(a), approved guard strengthening. Test-only; the single file is `N:test/.../architecture/InstallmentPlanArchitectureGuardTest.kt`. No config/guards, allowlist or baseline file touched. Not run (the validation-runner owns execution).
+
+What changed:
+- `PLAN_ALLOWED_TLC_OPS = {createExpenseDbOnlyV2, setSpendingExclusionDbOnly}` in the companion.
+- New matcher `planTlcCalls(rel, raw, allowed = PLAN_ALLOWED_TLC_OPS)`, rule id `PLAN_TLC_OP_NOT_ALLOWED`. It runs only on files under `PLAN_CODE_PREFIXES`, on sanitized code (comments and string bodies ignored).
+- Receivers: anything declared `name: (pkg.)TransactionLifecycleCoordinator` (nullable too), the canonical names `transactionLifecycleCoordinator` and `tlc`, and local aliases `val|var x = <receiver>` followed to a fixed point (alias chains).
+- Flagged when the member is not in the allow-list: `r.m`, `r?.m`, `r!!.m`, a line break before the dot, `this.r.m`, scope functions (`.let/.run/.apply/.also` are members outside the list; `with(r)` is flagged outright), `r::m` and `TransactionLifecycleCoordinator::m`. Any member access is judged, not only `m(`, so a property or bare reference cannot dodge the list.
+- Tests: live scan (zero violations expected; the only TLC user is the coordinator, three calls at ~:219, ~:1623, ~:1665, verified by grep); planted self-check (flagged at five plan paths incl. a sibling path and the ExpenseScheduleLinkPolicy file; clean: allowed ops via canonical/typed/alias/safe-call/line-break forms, comments, strings, import, unrelated receivers, non-plan paths incl. TransactionsViewModel; widened-allow-list control); non-vacuity (set pinned to exactly two ops, each matches `DbOnly(V\d+)?$`, is declared `fun <op>(` in TLC_PATH, and is called in COORDINATOR_PATH); live visibility (with an empty allow-list the coordinator yields at least 3 hits, so receiver tracking is not blind).
+
+Scope and limits (documented in the matcher KDoc):
+- A receiver passed through a generic or function-typed parameter, a lambda parameter (`x.let { t -> t.op() }` is caught only because `let` itself is flagged), a `Lazy`/`Provider` wrapper, destructuring, or a differently named untyped property is not tracked.
+- A non-TLC local that happens to be named `tlc` is treated as a TLC (conservative).
+- Only plan code is scanned; "only the coordinator holds a TLC" stays deferred. A third TLC op needs owner approval (the allow-list is pinned in the non-vacuity test).
+
+Targeted filter: `*InstallmentPlanArchitectureGuard*`.
+- S6c-F batch 1 (2026-10-27): targeted vr-20261027-054719-dae1e5fc FAILED on one test, the F.1 planted self-check case "alias of a typed receiver".
+  - Cause: a matcher bug. The alias regex's optional type part `(?::[^=\n]*)?` could span a ctor `val coord: TransactionLifecycleCoordinator) { … val c =`, so it swallowed the real alias declaration (findAll is non-overlapping).
+  - Fix (test-only, STRICTER): the type part stops at `(){},;`.
+  - db_access vr-20261027-060142-2d6d25d4 PASS (pins at 452).
+  - The rest of the batch was held and is re-queued.
+- S6c-F full batch on the final production tree, all PASS:
+  - targeted vr-20261027-060514-65d41ca5
+  - cancellation vr-20261027-060817-15e60c80
+  - architecture-contracts vr-20261027-060833-70b92c2a
+  - domain-a-m vr-20261027-060919-1f9fedbb
+  - domain-n-z vr-20261027-061036-e0147bb0
+  - runtime-ui vr-20261027-061222-d3d8b072
+  - data vr-20261027-061353-b1355f09
+  - static-guards vr-20261027-061757-d06d20e5
+  - app-check vr-20261027-063400-335f3d7f
+  - db_access vr-20261027-060142-2d6d25d4 (pins at 452)
+- architecture-guardian: PASS / ACCEPT-WITH-CONDITIONS. Applied, docs and comments only:
+  - finding 1: the F.1 matcher's Limits KDoc now lists parentheses/cast receivers, parenthesized aliases, import aliases and string-template calls;
+  - finding 4: an INV-29 amendment for the F.2 consumers, and the ENGINE map :24 row.
+- **Finding 3 (accepted outcome-code change):** for a legacy UNKNOWN expense already linked to the same occurrence, a retry of the specific link now returns EXPENSE_NOT_ELIGIBLE instead of ALREADY_LINKED_TO_THIS (the detailed link gives `expense_not_eligible` instead of `expense_already_linked`). Nothing is written and PAID is kept, so R2 holds. TRANSFER and DEPOSIT already behaved this way. This corrects the handoff line "the form only matters for a first link".
+- **Finding 5:** the separate raw-merchant logging ticket must also cover the throwable (SQL message and stack trace) in the pipeline's `Timber.w(e, …)`.
+- S6c-F ACCEPTED (2026-10-27).
+  - Final gate: reviewer-strict ACCEPT-WITH-CONDITIONS, docs only.
+    - F1 corrects the masking-residual rationale above. Pre-filtering the anomaly MERCHANT path's current-month candidates would leave the baselines alone, because that path's baseline is history before the current month; only the statistical path shares its input with its baseline. The residual stays accepted, and the pre-filter is a possible follow-up.
+    - F2 widens the raw-merchant logging ticket to NotificationProcessingPipeline :1772 and :1854 as well as :1798 and :1807. Those lines log the raw merchant and the exception object, and the new installment-reader failure can reach :1854. The exposure is pre-existing, not new.
+    - F3 (optional, follow-up): a detector test for a non-cancellation reader failure; rename `autoLinkAndManualLinkStillLinkAWithdrawalExpense` to `autoLinkStillLinksAWithdrawalExpense`.
+  - Behaviour change (approved 37(b)): new UNKNOWN-type expenses are no longer auto-linked or manually linked to recurring bills. Existing links are kept (46(a)).
+  - Committed.
+  - Next loan work:
+    - S8b (owner approval of the guard-surface strengthening);
+    - S10a/S10b UI (es/el strings; soft gate D-13 on the Release merge).

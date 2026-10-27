@@ -61,12 +61,17 @@ class OccurrenceConflictResolverInstallmentExclusionTest {
         sourceId = 1L
     )
 
-    private fun expense(id: Long, date: Long = day, reason: String? = null) = Expense(
+    private fun expense(
+        id: Long,
+        date: Long = day,
+        reason: String? = null,
+        type: TransactionType = TransactionType.PURCHASE
+    ) = Expense(
         id = id,
         amount = 15.99,
         currency = "EUR",
         merchant = "Netflix",
-        transactionType = TransactionType.PURCHASE,
+        transactionType = type,
         date = date,
         createdAt = date,
         source = "test",
@@ -152,8 +157,33 @@ class OccurrenceConflictResolverInstallmentExclusionTest {
         assertEquals("never one read per expense", 0, reader.perExpenseReads)
     }
 
+    // Owner item 37(b): the layer-1 type rule (RecurringLinkTypeEligibility.mayCreateLink) is unchanged here.
     @Test
-    fun noCandidatesOrNoExpensesReadNothing() = runTest(timeout = 60.seconds) {
+    fun anUnknownExpenseLeavesTheOccurrencePlannedAndAWithdrawalStillPaysIt() = runTest(timeout = 60.seconds) {
+        val unknown = resolver(FakeReader())
+            .resolve(listOf(candidate()), listOf(expense(1L, type = TransactionType.UNKNOWN)))
+        assertEquals("PLANNED", unknown.single().status)
+        assertNull(unknown.single().linkedExpenseId)
+
+        val withdrawal = resolver(FakeReader())
+            .resolve(listOf(candidate()), listOf(expense(1L, type = TransactionType.WITHDRAWAL)))
+        assertEquals("PAID", withdrawal.single().status)
+        assertEquals(1L, withdrawal.single().linkedExpenseId)
+    }
+
+    @Test
+    fun anUnknownExpenseBesideAPurchaseDoesNotBlockTheMatch() = runTest(timeout = 60.seconds) {
+        val resolved = resolver(FakeReader()).resolve(
+            listOf(candidate()),
+            listOf(expense(1L, type = TransactionType.UNKNOWN), expense(2L))
+        )
+
+        assertEquals("PAID", resolved.single().status)
+        assertEquals(2L, resolved.single().linkedExpenseId)
+    }
+
+    @Test
+    fun noCandidatesOrNoExpensesReadNothing()= runTest(timeout = 60.seconds) {
         val reader = FakeReader()
         val subject = resolver(reader)
 

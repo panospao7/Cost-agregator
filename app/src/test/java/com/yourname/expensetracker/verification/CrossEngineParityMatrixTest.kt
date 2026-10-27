@@ -324,7 +324,8 @@ class CrossEngineParityMatrixTest : AnalyticsEngineTestBase() {
             monthlyComparisonCalculator = MonthlyComparisonCalculator(),
             categoryInsightEngine = CategoryInsightEngine(),
             merchantInsightEngine = MerchantInsightEngine(),
-            dayOfWeekAnalyzer = DayOfWeekAnalyzer()
+            dayOfWeekAnalyzer = DayOfWeekAnalyzer(),
+            installmentEligibility = com.yourname.expensetracker.domain.analytics.noPlansInstallmentEligibility()
         )
         val advanced = AdvancedAnalyticsEngine(
             expenseRepository = repository,

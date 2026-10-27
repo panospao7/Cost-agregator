@@ -393,6 +393,10 @@ name, OD-1). "TLC" means `TransactionLifecycleCoordinator`. AE-n refers to secti
   detection (DETECTED_PATTERN) and from forecast history baselines when the plan's future entries are projected
   explicitly. Owner: `ForecastInputAssembler` for forecast inputs; the recurring pattern detector for detection
   (two distinct rules, one owner each). (AE-11)
+  - **Amendment (S6c-F.2, 2026-10-27; owner-approvals 37(a)/(c), 46(b)).** `InsightsEngine.findAnomalies` and
+    `NotificationSubscriptionDetector.detectSubscriptions` also exclude installment-linked and plan-purchase
+    expenses, through the single owner `RecurringInstallmentEligibility` (anomalies: by expense id on both
+    anomaly paths, baselines unchanged; subscriptions: filtered before MIN_TRANSACTIONS is re-checked).
   - **Amendment (S8a final gate, 2026-10-27; plan A15).** The forecast-baseline exclusion and the projected entries
     live ONLY on a separate, installment-aware entry point (a separate file) feeding the UI flow. They are never
     added to `assemble()` as called by `FinancialWeatherRepository`, because that path fills the shared
@@ -1404,3 +1408,7 @@ The table is kept for traceability. "Recommended" is now the decided option.
 ### Amendment 2026-10-27 (S8a privacy review; owner-approvals item 40(b))
 - INV-31 scope: INV-31 covers PLAN-ENTITY fields (displayName, lenderLabel, n/N, schedule, remaining, status, planUuid) and projected installments. A RECORDED installment expense is an ordinary expense. Its merchant (copied from the plan displayName at record time) follows the ordinary merchant / redactBeforeCloud cloud policy of §11.5. No plan-only field is stored on the expense (INV-28).
 - S8b binding: the FinancialWeather path that feeds the cloud briefing stays installment-free by construction. Projections reach Home through a separate flow and are merged only at the UI. Plan projections are never expressed as an existing UpcomingItem variant.
+
+### Amendment 2026-10-27 (S6c-F.3; owner item 37(b), decision 46(a))
+- Recurring layer-1 rule (append-only clarification; INV-5 unchanged): the recurring lifecycle's own type/ownership rule has ONE owner, `RecurringLinkTypeEligibility` (pure, `domain/recurring`). A NEW link of an expense to a recurring occurrence (auto-link, manual link, generation-time matching, relink after a no-longer-matches unlink) is refused for a not-mine expense and for TRANSFER, DEPOSIT and UNKNOWN. UNKNOWN is added by this amendment: an unclassified row is not a confirmed bill payment. The generation-time resolver already refused UNKNOWN; the coordinator link paths now agree with it.
+- EXISTING links are kept (decision 46(a), R2): re-validating an existing link (reconcile "still matches", including the bulk-update reconcile) excludes only not-mine, TRANSFER and DEPOSIT, so an existing link on an UNKNOWN expense stays and its occurrence stays PAID. A bulk edit never reverts a PAID occurrence to PLANNED. The installment layer (INV-5) is unchanged and applies to both forms.

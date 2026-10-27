@@ -83,7 +83,8 @@ class InsightsEngineTest {
             monthlyComparisonCalculator = monthlyCalculator,
             categoryInsightEngine = categoryCalculator,
             merchantInsightEngine = merchantCalculator,
-            dayOfWeekAnalyzer = weekdayCalculator
+            dayOfWeekAnalyzer = weekdayCalculator,
+            installmentEligibility = noPlansInstallmentEligibility()
         )
     }
 

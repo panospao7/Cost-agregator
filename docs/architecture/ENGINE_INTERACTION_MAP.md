@@ -21,7 +21,7 @@
 | **PrivacyGate/CloudPayloadPolicy** | 1 (Notification), 3 (Receipt), 8 (AI), 10 (Bank), 11 (Email), 7 (Backup) | 🟡 HIGH |
 | **TransactionSideEffectDispatcher** | 2 (Lifecycle), 4 (Recurring match), 5 (Budget recheck), Analytics | 🟡 HIGH |
 | **WarrantyTextExtractor** | 3 (Receipt side effects) only | 🟢 LOW |
-| **NotificationSubscriptionDetector** | 4 (Recurring detection) only | 🟢 LOW |
+| **NotificationSubscriptionDetector** | 4 (Recurring detection) only; also reads installment link sets via RecurringInstallmentEligibility (S6c-F.2) | 🟢 LOW |
 | **LocationBackfill/Geocoding** | Location enrichment only | 🟢 LOW |
 | **NLP/AI Categorization** | 1 (Notification), 3 (Receipt), 11 (Email) | 🟡 HIGH |
 | **InvestmentTracker** | Investment portfolio only | 🟢 LOW |
@@ -204,8 +204,22 @@ Inherited consumer effects (no code change in the consumers):
   - AnalyticsViewModel occurrence counts come from unfiltered snapshots (the exclusion applies to pattern
     detection only, not to counts)
   - ForecastInputAssembler baselines: its own installment baseline handling is S8b
-Outside INV-29: the subscription-candidate detector (NotificationSubscriptionDetector) is not filtered (follow-up).
+Direct consumers of RecurringInstallmentEligibility added in S6c-F.2 (INV-5, INV-29, decision 46(b); suppression by expense id, one batch read per call, no new DAO query):
+  - InsightsEngine.findAnomalies: excludedSnapshotIds(safeExpenses) once; ids dropped from the merged result of BOTH
+    anomaly paths (merchant multiplier + AnomalyDetector); baselines unchanged; a reader failure goes to the
+    existing anomalies stage catch (no anomalies, fail-closed)
+  - NotificationSubscriptionDetector.detectSubscriptions: excludedExpenseIds(...) once after the size check, filter,
+    MIN_TRANSACTIONS re-check before grouping; the notification pipeline is not edited
 Known gap: the snapshot form cannot see the INSTALLMENT_PURCHASE / _REVERSED flag (effectiveAmount = 0 makes it harmless).
+Layer-1 type/ownership rule owner (S6c-F.3, owner item 37(b), decision 46(a)):
+RecurringLinkTypeEligibility (domain/recurring; pure object, no I/O) is the SINGLE layer-1 rule.
+  - mayCreateLink(type, isNotMine): !isNotMine && type not in {TRANSFER, DEPOSIT, UNKNOWN}; used for NEW links by
+    OccurrenceConflictResolver.resolve, RecurringLifecycleCoordinator.linkExpenseToOccurrence (pre-check) and the gate
+    isExpenseEligibleForRecurring(existingLink = false) (auto-link, manual link via claimLinkSuppressInWrite,
+    detailed-link reason, reconcile new-link / relink)
+  - mayKeepLink(type, isNotMine): !isNotMine && type not in {TRANSFER, DEPOSIT}; used for RE-VALIDATING an existing link
+    (reconcileExpenseLinkAfterUpdate "still matches", which reconcileAllLinkedExpensesAfterBulkUpdate runs): an existing
+    link on an UNKNOWN expense is KEPT (R2); a bulk edit never reverts PAID to PLANNED
 ```
 
 ### WorkerExecutionGuard changes affect:
@@ -284,7 +298,7 @@ PrivacyGate.check(capability, context)
 
 ### SAFE to change (isolated engines):
 - WarrantyTextExtractor — only affects receipt side effects
-- NotificationSubscriptionDetector — only affects recurring detection
+- NotificationSubscriptionDetector — only affects recurring detection (S6c-F.2: also filters installment-linked / plan-purchase expenses through RecurringInstallmentEligibility, INV-29)
 - InvestmentTracker — isolated portfolio domain
 - TaxEstimator — isolated tax reports
 - LocationBackfill — isolated enrichment

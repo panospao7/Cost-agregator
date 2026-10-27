@@ -120,7 +120,8 @@ class InsightsEngineValidationTest {
             monthlyComparisonCalculator = monthlyComparisonCalculator,
             categoryInsightEngine = categoryInsightEngine,
             merchantInsightEngine = merchantInsightEngine,
-            dayOfWeekAnalyzer = dayOfWeekAnalyzer
+            dayOfWeekAnalyzer = dayOfWeekAnalyzer,
+            installmentEligibility = noPlansInstallmentEligibility()
         )
 
         // Default mock for recurringExpenseEngine (relaxed returns emptyList for getPatternsFromSnapshots)
@@ -660,7 +661,8 @@ class InsightsEngineValidationTest {
             monthlyComparisonCalculator = monthlyComparisonCalculator,
             categoryInsightEngine = categoryInsightEngine,
             merchantInsightEngine = merchantInsightEngine,
-            dayOfWeekAnalyzer = dayOfWeekAnalyzer
+            dayOfWeekAnalyzer = dayOfWeekAnalyzer,
+            installmentEligibility = noPlansInstallmentEligibility()
         )
     }
 

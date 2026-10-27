@@ -209,13 +209,17 @@ class RecurringLifecycleCoordinatorInstallmentLinkPolicyTest {
         )
     )
 
-    private suspend fun seedExpense(date: Long, reason: String? = null): Long =
+    private suspend fun seedExpense(
+        date: Long,
+        reason: String? = null,
+        type: TransactionType = TransactionType.PURCHASE
+    ): Long =
         expenseDao.insert(
             Expense(
                 amount = 15.99,
                 currency = "EUR",
                 merchant = "Netflix",
-                transactionType = TransactionType.PURCHASE,
+                transactionType = type,
                 date = date,
                 createdAt = date,
                 source = "test",
@@ -273,13 +277,19 @@ class RecurringLifecycleCoordinatorInstallmentLinkPolicyTest {
     }
 
     private suspend fun openOccurrenceAndMatchingExpense(
-        reason: String? = null
+        reason: String? = null,
+        type: TransactionType = TransactionType.PURCHASE
     ): Pair<Long, Long> {
         val due = dayOf(2026, 9, 19)
         seedRule(nextDate = due)
         val occurrenceId = seedOccurrence(due)
-        val expenseId = seedExpense(due + HALF_DAY / 2, reason)
+        val expenseId = seedExpense(due + HALF_DAY / 2, reason, type)
         return occurrenceId to expenseId
+    }
+
+    /** Changes the type of an already linked expense (an edit after the link exists). */
+    private suspend fun retypeExpense(expenseId: Long, type: TransactionType) {
+        expenseDao.update(expenseDao.getById(expenseId)!!.copy(transactionType = type))
     }
 
     // ── AE-13: auto-link ────────────────────────────────────────────────────
@@ -525,5 +535,144 @@ class RecurringLifecycleCoordinatorInstallmentLinkPolicyTest {
 
         assertTrue(result is RecurringExpenseReconcileResult.Linked)
         assertEquals(expenseId, occurrenceDao.getById(occurrenceId)!!.linkedExpenseId)
+    }
+
+    // ── owner item 37(b): layer-1 UNKNOWN alignment (F-AE-6 / F-AE-8) ────────
+
+    // F-AE-6: a NEW link of an UNKNOWN expense is refused on every new-link path.
+    @Test
+    fun autoLinkRefusesAnUnknownExpenseAndTheOccurrenceStaysPlanned() = runTest(timeout = 60.seconds) {
+        // owner item 37(b): UNKNOWN is never auto-linked.
+        val (occurrenceId, expenseId) = openOccurrenceAndMatchingExpense(type = TransactionType.UNKNOWN)
+
+        assertEquals(false, lifecycle.linkExpenseToOccurrence(expenseId))
+
+        val occurrence = occurrenceDao.getById(occurrenceId)!!
+        assertEquals("PLANNED", occurrence.status)
+        assertNull(occurrence.linkedExpenseId)
+        assertNull(occurrenceDao.getByLinkedExpenseId(expenseId))
+        assertTrue(eventDao.getEventsByType("OCCURRENCE_PAID").isEmpty())
+    }
+
+    @Test
+    fun detailedAutoLinkReportsTheExistingIneligibleOutcomeForAnUnknownExpense() =
+        runTest(timeout = 60.seconds) {
+            val (occurrenceId, expenseId) = openOccurrenceAndMatchingExpense(type = TransactionType.UNKNOWN)
+
+            assertEquals(
+                RecurringExpenseReconcileResult.Skipped(expenseId, "expense_not_eligible"),
+                lifecycle.linkExpenseToOccurrenceDetailed(expenseId)
+            )
+            assertEquals("PLANNED", occurrenceDao.getById(occurrenceId)!!.status)
+        }
+
+    @Test
+    fun manualLinkRefusesAnUnknownExpense() = runTest(timeout = 60.seconds) {
+        val (occurrenceId, expenseId) = openOccurrenceAndMatchingExpense(type = TransactionType.UNKNOWN)
+
+        assertEquals(
+            SpecificLinkResult.ExpenseNotEligible,
+            lifecycle.linkExpenseToSpecificOccurrence(occurrenceId, expenseId, "TEST_SPECIFIC")
+        )
+
+        val occurrence = occurrenceDao.getById(occurrenceId)!!
+        assertEquals("PLANNED", occurrence.status)
+        assertNull(occurrence.linkedExpenseId)
+        assertTrue(eventDao.getEventsByType("OCCURRENCE_PAID").isEmpty())
+    }
+
+    @Test
+    fun reconcileDoesNotCreateANewLinkForAnUnlinkedUnknownExpense() = runTest(timeout = 60.seconds) {
+        val (occurrenceId, expenseId) = openOccurrenceAndMatchingExpense(type = TransactionType.UNKNOWN)
+
+        assertEquals(
+            RecurringExpenseReconcileResult.Skipped(expenseId, "expense_not_eligible"),
+            lifecycle.reconcileExpenseLinkAfterUpdate(expenseId)
+        )
+        assertEquals("PLANNED", occurrenceDao.getById(occurrenceId)!!.status)
+        assertNull(occurrenceDao.getByLinkedExpenseId(expenseId))
+    }
+
+    // F-AE-6 controls: PURCHASE (above) and WITHDRAWAL still link.
+    @Test
+    fun autoLinkAndManualLinkStillLinkAWithdrawalExpense() = runTest(timeout = 60.seconds) {
+        val (autoOccurrenceId, autoExpenseId) =
+            openOccurrenceAndMatchingExpense(type = TransactionType.WITHDRAWAL)
+
+        assertTrue(lifecycle.linkExpenseToOccurrence(autoExpenseId))
+        assertEquals("PAID", occurrenceDao.getById(autoOccurrenceId)!!.status)
+        assertEquals(autoExpenseId, occurrenceDao.getById(autoOccurrenceId)!!.linkedExpenseId)
+    }
+
+    @Test
+    fun manualLinkStillLinksAWithdrawalExpense() = runTest(timeout = 60.seconds) {
+        val (occurrenceId, expenseId) = openOccurrenceAndMatchingExpense(type = TransactionType.WITHDRAWAL)
+
+        assertEquals(
+            SpecificLinkResult.Linked,
+            lifecycle.linkExpenseToSpecificOccurrence(occurrenceId, expenseId, "TEST_SPECIFIC")
+        )
+        assertEquals(expenseId, occurrenceDao.getById(occurrenceId)!!.linkedExpenseId)
+    }
+
+    // F-AE-8 (decision 46(a), R2): an EXISTING link on an UNKNOWN expense is kept and stays PAID.
+    @Test
+    fun reconcileKeepsAnExistingLinkWhenTheExpenseBecomesUnknown() = runTest(timeout = 60.seconds) {
+        val (occurrenceId, expenseId) = openOccurrenceAndMatchingExpense()
+        assertEquals(
+            SpecificLinkResult.Linked,
+            lifecycle.linkExpenseToSpecificOccurrence(occurrenceId, expenseId, "TEST_SPECIFIC")
+        )
+        retypeExpense(expenseId, TransactionType.UNKNOWN)
+
+        assertEquals(
+            RecurringExpenseReconcileResult.UpdatedLinkedSnapshot(expenseId, occurrenceId),
+            lifecycle.reconcileExpenseLinkAfterUpdate(expenseId)
+        )
+
+        val occurrence = occurrenceDao.getById(occurrenceId)!!
+        assertEquals("PAID", occurrence.status)
+        assertEquals(expenseId, occurrence.linkedExpenseId)
+        assertTrue(eventDao.getEventsByType("OCCURRENCE_UNLINKED").isEmpty())
+    }
+
+    @Test
+    fun bulkReconcileKeepsAnExistingLinkOnAnUnknownExpenseAndNeverRevertsPaid() =
+        runTest(timeout = 60.seconds) {
+            val (occurrenceId, expenseId) = openOccurrenceAndMatchingExpense()
+            assertEquals(
+                SpecificLinkResult.Linked,
+                lifecycle.linkExpenseToSpecificOccurrence(occurrenceId, expenseId, "TEST_SPECIFIC")
+            )
+            retypeExpense(expenseId, TransactionType.UNKNOWN)
+
+            val result = lifecycle.reconcileAllLinkedExpensesAfterBulkUpdate("test_bulk")
+
+            assertEquals(1, result.total)
+            assertEquals(1, result.updatedSnapshots)
+            assertEquals(0, result.unlinked)
+            assertEquals(0, result.relinked)
+            assertEquals(0, result.failed)
+            val occurrence = occurrenceDao.getById(occurrenceId)!!
+            assertEquals("PAID", occurrence.status)
+            assertEquals(expenseId, occurrence.linkedExpenseId)
+            assertTrue(eventDao.getEventsByType("OCCURRENCE_UNLINKED").isEmpty())
+        }
+
+    // Keep-variant control: TRANSFER is still refused for an existing link (only UNKNOWN is kept).
+    @Test
+    fun reconcileStillUnlinksAnExistingLinkWhenTheExpenseBecomesATransfer() = runTest(timeout = 60.seconds) {
+        val (occurrenceId, expenseId) = openOccurrenceAndMatchingExpense()
+        assertEquals(
+            SpecificLinkResult.Linked,
+            lifecycle.linkExpenseToSpecificOccurrence(occurrenceId, expenseId, "TEST_SPECIFIC")
+        )
+        retypeExpense(expenseId, TransactionType.TRANSFER)
+
+        val result = lifecycle.reconcileExpenseLinkAfterUpdate(expenseId)
+
+        assertTrue(result is RecurringExpenseReconcileResult.Unlinked)
+        assertEquals("PLANNED", occurrenceDao.getById(occurrenceId)!!.status)
+        assertNull(occurrenceDao.getByLinkedExpenseId(expenseId))
     }
 }

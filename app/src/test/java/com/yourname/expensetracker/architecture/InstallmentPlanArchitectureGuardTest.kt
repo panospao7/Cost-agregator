@@ -265,6 +265,48 @@ class InstallmentPlanArchitectureGuardTest {
         return call + reference
     }
 
+    /**
+     * S6c-F.1 (owner item 36a) / check 10. Plan code may call exactly [PLAN_ALLOWED_TLC_OPS] on a
+     * TransactionLifecycleCoordinator. Receivers tracked on sanitized code (comments and strings ignored):
+     *  - anything declared `name: (pkg.)TransactionLifecycleCoordinator` (ctor params, vals, locals);
+     *  - the canonical names `transactionLifecycleCoordinator` and `tlc`;
+     *  - local aliases `val|var x = <receiver>` (followed to a fixed point, so alias chains are covered).
+     * Flagged when the member is not allowed: `r.m`, `r?.m`, `r!!.m`, a line break before the dot, scope
+     * functions (`.let/.run/.apply/.also` are members outside the allow-list; `with(r)` is flagged outright),
+     * and `r::m` / `TransactionLifecycleCoordinator::m`. Any member access is judged, not only `m(`, so a
+     * property or a bare reference cannot dodge the list. [allowed] is a parameter only so the live-visibility
+     * check can prove the matcher sees the real coordinator's receivers.
+     * Limits: a receiver passed through a generic or function-typed parameter, a lambda parameter, a Lazy or
+     * Provider wrapper, destructuring, or a differently named untyped property is not tracked. Also not
+     * flagged: a receiver in parentheses or a cast (`(tlc).op(..)`, `(tlc as TransactionLifecycleCoordinator).op(..)`),
+     * an alias assigned in parentheses (`val t = (tlc)`), an import alias of the type (`import ... as Tlc`), and a
+     * call inside a string template (string bodies are blanked by the sanitizer). None exists in plan code today.
+     */
+    private fun planTlcCalls(rel: String, raw: String, allowed: Set<String> = PLAN_ALLOWED_TLC_OPS): List<Hit> {
+        if (!isPlanCode(rel)) return emptyList()
+        val code = code(raw)
+        val names = linkedSetOf("transactionLifecycleCoordinator", "tlc")
+        Regex("""\b([A-Za-z_]\w*)\s*:\s*(?:\w+\.)*TransactionLifecycleCoordinator\b""")
+            .findAll(code).forEach { names += it.groupValues[1] }
+        var grew = true
+        while (grew) {
+            grew = false
+            val known = names.joinToString("|") { Regex.escape(it) }
+            Regex(
+                """\b(?:val|var)\s+([A-Za-z_]\w*)\s*(?::[^=\n(){},;]*)?=\s*(?:this\s*\.\s*)?(?:$known)(?!\w)(?:\s*!!)?(?!\s*(?:\??\s*\.|\(|::))"""
+            ).findAll(code).forEach { if (names.add(it.groupValues[1])) grew = true }
+        }
+        val group = names.joinToString("|") { Regex.escape(it) }
+        val rule = "PLAN_TLC_OP_NOT_ALLOWED"
+        val notAllowed: (MatchResult) -> Boolean = { it.groupValues[1] !in allowed }
+        val member = Regex("""(?<!\w)(?:$group)(?!\w)(?:\s*!!)?\s*\??\s*\.\s*(\w+)""")
+        val reference = Regex("""(?<!\w)(?:$group|TransactionLifecycleCoordinator)(?!\w)\s*::\s*(\w+)""")
+        val scopeWith = Regex("""\bwith\s*\(\s*(?:this\s*\.\s*)?(?:$group)(?!\w)""")
+        return lineHits(rule, member, code, notAllowed) +
+            lineHits(rule, reference, code, notAllowed) +
+            lineHits(rule, scopeWith, code)
+    }
+
     // ---------------------------------------------------------------- live scans
 
     @Test
@@ -325,6 +367,53 @@ class InstallmentPlanArchitectureGuardTest {
         assertNoViolations(
             "setSpendingExclusion* called outside the plan coordinator / TLC definition (INV-24, spec 5.2)",
             this::spendingExclusionCalls
+        )
+    }
+
+    @Test
+    fun `S6c-F1 INV-24 INV-25 plan code calls only the allow-listed TLC operations`() {
+        assertNoViolations(
+            "Plan code calls a TransactionLifecycleCoordinator operation outside $PLAN_ALLOWED_TLC_OPS (INV-24, INV-25, owner item 36a)",
+            { rel, raw -> planTlcCalls(rel, raw) }
+        )
+    }
+
+    @Test
+    fun `S6c-F1 non-vacuity - allow-list is exactly the two DbOnly ops, declared in the TLC and called by the coordinator`() {
+        assertEquals(
+            "a third TLC op for plan code needs explicit owner approval (S6c-F follow-up Stop and ask)",
+            setOf("createExpenseDbOnlyV2", "setSpendingExclusionDbOnly"),
+            PLAN_ALLOWED_TLC_OPS
+        )
+        val files = requireScan()
+        val tlc = files.singleOrNull { it.rel == TLC_PATH }
+        val coordinator = files.singleOrNull { it.rel == COORDINATOR_PATH }
+        assertTrue("TLC file must be in the scan at $TLC_PATH (else this check is vacuous)", tlc != null)
+        assertTrue("plan coordinator must be in the scan at $COORDINATOR_PATH (else this check is vacuous)", coordinator != null)
+        val tlcCode = code(tlc!!.raw)
+        val coordinatorCode = code(coordinator!!.raw)
+        val dbOnlyName = Regex("""DbOnly(V\d+)?$""")
+        for (op in PLAN_ALLOWED_TLC_OPS) {
+            assertTrue("allowed op '$op' must be a DbOnly(V<n>) operation", dbOnlyName.containsMatchIn(op))
+            assertTrue(
+                "allowed op '$op' must be declared as 'fun $op(' in $TLC_PATH",
+                Regex("""\bfun\s+${Regex.escape(op)}\s*\(""").containsMatchIn(tlcCode)
+            )
+            assertTrue(
+                "allowed op '$op' must be called at least once in $COORDINATOR_PATH (stale allow-list entry otherwise)",
+                Regex("""\.\s*${Regex.escape(op)}\b""").containsMatchIn(coordinatorCode)
+            )
+        }
+    }
+
+    @Test
+    fun `S6c-F1 live visibility - with an empty allow-list the matcher sees every TLC call in the coordinator`() {
+        val coordinator = requireScan().singleOrNull { it.rel == COORDINATOR_PATH }
+        assertTrue("plan coordinator must be in the scan at $COORDINATOR_PATH", coordinator != null)
+        val hits = planTlcCalls(coordinator!!.rel, coordinator.raw, allowed = emptySet())
+        assertTrue(
+            "matcher must see at least the three known TLC call sites in the coordinator, saw ${hits.size} (receiver tracking is blind)",
+            hits.size >= 3
         )
     }
 
@@ -778,6 +867,135 @@ class InstallmentPlanArchitectureGuardTest {
         assertClean("string literal", spendingExclusionCalls(benignOutsider, "val s = \"setSpendingExclusionDbOnly(1)\""))
     }
 
+    @Test
+    fun `self-check S6c-F1 TLC allow-list detector flags planted forbidden ops and ignores allowed ops comments strings and non-plan paths`() {
+        val plan = COORDINATOR_PATH
+        val siblingPlan = "$ROOT/domain/installment/lifecycle/InstallmentPlanRebuilder.kt"
+        val workerPlan = "$ROOT/service/installment/InstallmentRecordDueWorker.kt"
+        val uiPlan = "$ROOT/ui/screens/installments/InstallmentsViewModel.kt"
+        val schedulePolicy = "$ROOT/domain/schedule/ExpenseScheduleLinkPolicy.kt"
+        val tlcType = "com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator"
+        val rule = "PLAN_TLC_OP_NOT_ALLOWED"
+
+        val violating = listOf(
+            "canonical tlc create" to
+                "suspend fun f(r: R) { tlc.createExpense(r) }",
+            "canonical long name update" to
+                "suspend fun f(e: E) { transactionLifecycleCoordinator.updateExpense(e) }",
+            "canonical tlc delete DbOnly (a DbOnly name is not automatically allowed)" to
+                "suspend fun f() { tlc.deleteExpenseDbOnly(1L) }",
+            "V2 lookalike outside the list" to
+                "suspend fun f(r: R) { tlc.createExpenseDbOnly(r) }",
+            "typed ctor property with arbitrary name" to
+                "class R(private val coord: TransactionLifecycleCoordinator) { suspend fun f(r: Any) { coord.createExpense(r) } }",
+            "fully qualified type" to
+                "class R(private val c: $tlcType) { suspend fun f(r: Any) { c.createExpense(r) } }",
+            "nullable typed receiver with safe call" to
+                "class R(private val coord: TransactionLifecycleCoordinator?) { suspend fun f(r: Any) { coord?.createExpense(r) } }",
+            "safe call on canonical name" to
+                "suspend fun f(r: R) { tlc?.createExpense(r) }",
+            "not-null assertion before the dot" to
+                "suspend fun f(r: R) { tlc!!.createExpense(r) }",
+            "line break before the dot" to
+                "suspend fun f(r: R) { tlc\n    .createExpense(r) }",
+            "line break before a safe-call dot" to
+                "suspend fun f(r: R) { transactionLifecycleCoordinator\n    ?.updateExpense(r) }",
+            "this-qualified receiver" to
+                "class R { suspend fun f(r: R) { this.tlc.createExpense(r) } }",
+            "local alias of the canonical name" to
+                "suspend fun f(r: R) { val t = tlc\n t.createExpense(r) }",
+            "alias of an alias" to
+                "suspend fun f(r: R) { val a = transactionLifecycleCoordinator\n val b = a\n b.updateExpense(r) }",
+            "alias of a typed receiver" to
+                "class R(private val coord: TransactionLifecycleCoordinator) { suspend fun f(r: Any) { val c = coord\n c.createExpense(r) } }",
+            "callable reference on a receiver" to
+                "val ref = tlc::createExpense",
+            "callable reference on the type" to
+                "val ref = TransactionLifecycleCoordinator::createExpense",
+            "with scope function" to
+                "suspend fun f() { with(tlc) { } }",
+            "let scope function" to
+                "suspend fun f() { tlc.let { } }",
+            "run scope function" to
+                "suspend fun f() { transactionLifecycleCoordinator.run { } }",
+            "apply scope function" to
+                "suspend fun f() { tlc.apply { } }",
+            "also scope function" to
+                "suspend fun f() { tlc.also { } }",
+            "property-style member access" to
+                "suspend fun f() = tlc.someState"
+        )
+        for (path in listOf(plan, siblingPlan, workerPlan, uiPlan, schedulePolicy)) {
+            for ((label, snippet) in violating) {
+                assertFlagged("$path :: $label", planTlcCalls(path, snippet), rule)
+            }
+        }
+        // The same typed-alias shape at a sibling plan path, spelled out as one named case.
+        assertFlagged(
+            "typed alias at a sibling plan path",
+            planTlcCalls(
+                siblingPlan,
+                "class R(private val txCoordinator: TransactionLifecycleCoordinator) { suspend fun f(e: Any) { txCoordinator.deleteExpense(1L) } }"
+            ),
+            rule
+        )
+
+        val allowedClean = listOf(
+            "canonical create V2" to
+                "suspend fun f(r: R) { val x = tlc.createExpenseDbOnlyV2(r) }",
+            "canonical long name exclusion" to
+                "suspend fun f() { transactionLifecycleCoordinator.setSpendingExclusionDbOnly(1L, null) }",
+            "typed alias, allowed op" to
+                "class R(private val coord: TransactionLifecycleCoordinator) { suspend fun f(r: Any) { coord.createExpenseDbOnlyV2(r) } }",
+            "typed alias, safe call, allowed op" to
+                "class R(private val coord: TransactionLifecycleCoordinator?) { suspend fun f(r: Any) { coord?.setSpendingExclusionDbOnly(1L, null) } }",
+            "typed alias, line break before the dot, allowed op" to
+                "class R(private val coord: TransactionLifecycleCoordinator) { suspend fun f(r: Any) { coord\n    .createExpenseDbOnlyV2(r) } }",
+            "local alias, allowed op" to
+                "suspend fun f(r: R) { val t = tlc\n t.setSpendingExclusionDbOnly(1L, null) }",
+            "allowed op callable reference" to
+                "val ref = tlc::createExpenseDbOnlyV2",
+            "line comment mention" to
+                "// tlc.createExpense(r)\nfun f() {}",
+            "block comment mention" to
+                "/* transactionLifecycleCoordinator.updateExpense(e) and with(tlc) */ fun f() {}",
+            "string mention" to
+                "val s = \"tlc.createExpense(r)\"",
+            "raw string mention" to
+                "val s = \"\"\"transactionLifecycleCoordinator.deleteExpense(1L)\"\"\"",
+            "declaration only, no member access" to
+                "class R(private val transactionLifecycleCoordinator: TransactionLifecycleCoordinator)",
+            "import line" to
+                "import $tlcType",
+            "unrelated receiver is not a TLC" to
+                "suspend fun f(r: R) { planRepository.createExpense(r); clock.update(); tlcLike.createExpense(r); mytlc.createExpense(r) }",
+            "alias of an unrelated value" to
+                "suspend fun f(r: R) { val t = somethingElse\n t.createExpense(r) }"
+        )
+        for (path in listOf(plan, siblingPlan, workerPlan, uiPlan, schedulePolicy)) {
+            for ((label, snippet) in allowedClean) {
+                assertClean("$path :: $label", planTlcCalls(path, snippet))
+            }
+        }
+
+        // Non-plan paths are not this rule's concern (the TLC has other legal callers).
+        for (nonPlan in listOf(
+            "$ROOT/ui/screens/transactions/TransactionsViewModel.kt",
+            "$ROOT/data/repository/ExpenseRepository.kt",
+            "$ROOT/domain/schedule/ExpenseSchedulePolicy.kt",
+            TLC_PATH
+        )) {
+            assertClean("non-plan path $nonPlan", planTlcCalls(nonPlan, "suspend fun f(r: R) { tlc.createExpense(r); tlc.deleteExpense(1L) }"))
+        }
+
+        // Control: with the allow-list widened, a previously flagged op becomes clean, so the hits above
+        // come from the allow-list rule and not from a receiver-shape accident.
+        assertClean(
+            "widened allow-list control",
+            planTlcCalls(plan, "suspend fun f(r: R) { tlc.createExpense(r) }", allowed = setOf("createExpense"))
+        )
+    }
+
     // ---------------------------------------------------------------- S6a read-side seam (F6)
 
     /**
@@ -1109,6 +1327,13 @@ class InstallmentPlanArchitectureGuardTest {
             "$ROOT/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt"
 
         const val DAO_PACKAGE_PREFIX = "$ROOT/data/database/dao/"
+
+        /**
+         * The only TransactionLifecycleCoordinator operations plan code may call (owner item 36a, S6c-F.1):
+         * the DbOnly creation of a charge expense and the DbOnly spending-exclusion write. A third op needs
+         * explicit owner approval; the non-vacuity test pins this set.
+         */
+        val PLAN_ALLOWED_TLC_OPS = setOf("createExpenseDbOnlyV2", "setSpendingExclusionDbOnly")
 
         /**
          * Entries are directory prefixes plus one exact file: the schedule exclusivity policy sits outside

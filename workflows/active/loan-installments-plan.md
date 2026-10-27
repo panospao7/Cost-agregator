@@ -1027,3 +1027,93 @@ Rules and gates:
   - Home without double counting (ISSUE-1): the UI-side installment-aware weather replaces the baseline view for Home only; the cloud path keeps the installment-free one. Home never sums both views.
   - Differential definition (ISSUE-3): the differential holds expense rows, link state and spending-predicate state constant; only the projection-port output varies (empty vs non-empty). Spending aggregates follow ordinary aggregate semantics (a PURCHASE_ATTACHED flag and S6c-3 recurring exclusion legitimately change them, so they are not part of the differential).
   - Test labels (ISSUE-4): tests 1, 2 and 5 of DashboardBriefingInstallmentExclusionTest are PLACEHOLDERS that S8b replaces with the end-to-end differential.
+
+
+## Amendment (2026-10-27) — S6c-F follow-up slice: owner-approvals 36 and 37 (feature-planner; orchestrator-persisted; BINDING)
+
+36(b) is already done at HEAD c9eb53e7:
+- ENTRY_LINK_READER_IMPL_PATH is in READ_ONLY_IMPL_PATHS (:1091);
+- InstallmentEntryLinkReader is in DOMAIN_PORT_PATHS (:1102);
+- both are covered by the self-checks.
+
+Out of scope (not covered by item 36(b)): pinning RecurringInstallmentEligibility or InstallmentPreBackupReconciler, and extending check 8.
+
+### S6c-F.1 (36a): TLC allow-list for plan code (test-only)
+- Write set: test/architecture/InstallmentPlanArchitectureGuardTest.kt.
+- New matcher `planTlcCalls(rel, raw)` over PLAN_CODE_PREFIXES, rule PLAN_TLC_OP_NOT_ALLOWED. It finds receivers in these forms:
+  - typed as TransactionLifecycleCoordinator;
+  - named `transactionLifecycleCoordinator` or `tlc`;
+  - local aliases;
+  - `?.`;
+  - a line break before the dot;
+  - scope functions;
+  - `::` references.
+- PLAN_ALLOWED_TLC_OPS = {createExpenseDbOnlyV2, setSpendingExclusionDbOnly}.
+- Tests:
+  - a live scan;
+  - a planted self-check with flagged and clean cases (non-plan paths are not flagged);
+  - a non-vacuity check: every allowed op matches `DbOnly(V\d+)?$`, is declared in TLC_PATH, and is called at least once in COORDINATOR_PATH.
+- Invariants: INV-24, INV-25. Gate: architecture-guardian.
+
+### S6c-F.2 (37a + 37c): consumer exclusion through the single owner RecurringInstallmentEligibility
+- 37(a) InsightsEngine:
+  - ctor param `installmentEligibility`;
+  - in findAnomalies (~:759), compute `excludedSnapshotIds(safeExpenses)` once, outside any try;
+  - drop those ids from the merged result (~:873-890), covering BOTH anomaly paths, by id (decision 46(b));
+  - baselines are untouched;
+  - a reader failure goes to the existing stage catch (no anomalies, fail-closed);
+  - update the AIML-13 KDoc.
+- 37(c) NotificationSubscriptionDetector:
+  - ctor param `installmentEligibility`;
+  - in detectSubscriptions, after the size check, compute `excludedExpenseIds(transactions.map { it.expense })` once, filter, re-check MIN_TRANSACTIONS;
+  - no pipeline edit.
+- Ctor-only test updates (S6c-3 helper pattern, no assertion changes):
+  - InsightsEngineTest, InsightsEngineValidationTest, InsightsEngineDeepTest, InsightsEngineEdgeCaseTest, InsightsEngineNormalizedDailyMoneyTest;
+  - e2e AnalyticsPipelineTest, NotificationParserDashboardTotalSeamTest, FlowPipelineTestHarness;
+  - CrossEngineParityMatrixTest;
+  - AnalyticsViewModelInsightsTest.
+- New tests: InsightsEngineInstallmentAnomalySuppressionTest (F-AE-2..4) and NotificationSubscriptionDetectorInstallmentExclusionTest (F-AE-5).
+- RecurringInstallmentEligibility.kt: KDoc consumer list only.
+- Invariants: INV-5, INV-29.
+
+### S6c-F.3 (37b): layer-1 UNKNOWN alignment
+- NEW domain/recurring/RecurringLinkTypeEligibility.kt, a pure object and the single layer-1 rule: `!isNotMine && type ∉ {TRANSFER, DEPOSIT, UNKNOWN}` for NEW links.
+- Its users:
+  - OccurrenceConflictResolver (~:88-91);
+  - RecurringLifecycleCoordinator linkExpenseToOccurrence pre-check (~:363-366);
+  - the gate isExpenseEligibleForRecurring (~:824-831).
+- Decision 46(a), R2: EXISTING links on UNKNOWN expenses are KEPT. The reconcile "still matches" branch (~:701) and reconcileAllLinkedExpensesAfterBulkUpdate (~:768) use a keep-variant that excludes only TRANSFER and DEPOSIT. A bulk edit must never revert PAID bills to PLANNED.
+- Update stale KDoc at ~:346, ~:812 and RecurringInstallmentEligibility.kt:41.
+- Tests:
+  - NEW RecurringLinkTypeEligibilityParityTest: an exhaustive table of TransactionType.entries × isNotMine, resolver vs coordinator gate (F-AE-7);
+  - added cases in RecurringLifecycleCoordinatorTest, OccurrenceConflictResolverTest and the MarkRecurringBillPaid test: UNKNOWN is refused for auto-link and manual link, PURCHASE and WITHDRAWAL controls still link (F-AE-6), and an existing UNKNOWN link survives reconcile and bulk-update reconcile (F-AE-8).
+  - If Pipeline4LifecycleGolden or RecurringPaymentMatchE2E flips on a parsed UNKNOWN expense, CHANGE the expectation with a citation of 37(b). Never delete.
+- Gates: architecture-guardian, reviewer-strict (recurring lifecycle; include the 37(c) pipeline seam).
+
+### Docs
+- ENGINE_INTERACTION_MAP.md :24, :198-207, :287.
+- An append-only spec clarification (INV-29 now also covers the subscription detector and anomaly suppression; the layer-1 UNKNOWN rule).
+- A handoff entry.
+
+### Validation (one batch, serial)
+1. targeted `*InstallmentPlanArchitectureGuard*,*CancellationSafetyArchitectureGuard*,*InsightsEngine*,*NotificationSubscriptionDetector*,*AnalyticsPipeline*,*NotificationParserDashboardTotalSeam*,*CrossEngineParityMatrix*,*AnalyticsViewModelInsights*,*NotificationProcessingPipeline*,*RecurringLinkTypeEligibility*,*RecurringLifecycleCoordinator*,*OccurrenceConflictResolver*,*RecurringInstallmentEligibility*,*MarkRecurringBillPaid*,*RecurringPaymentMatchE2E*,*RecurringHorizonAndLinkR21*,*Pipeline4LifecycleGolden*,*RecurringGenerationInstallmentExclusion*,*RecurringExpenseEngine*`, plus the FlowPipelineTestHarness users.
+2. Shards: architecture-contracts, domain-a-m, domain-n-z, runtime-ui, data.
+3. registered-guard db_access (pins stay at 452).
+4. static-guards.
+5. app-check once.
+
+### Stop and ask
+- Any config/guards, db_ownership, raw-query classification, allowlist or baseline change beyond the test-level PLAN_ALLOWED_TLC_OPS.
+- A third TLC op.
+- A pin moving off 452.
+- Deleting or ignoring a test.
+- A new DAO query or @Query.
+- A new ExpenseSnapshot field.
+- A new catch, or growth of the CancellationSafety allowlist.
+- Touching the materializer or the pipeline DAO read.
+
+Deferred:
+- the orphan-flag gap;
+- extra pins and check 8;
+- "only the coordinator holds a TLC";
+- the pre-existing raw-merchant logging at NotificationSubscriptionDetector:99 and NotificationProcessingPipeline:1798/:1807 (separate ticket).

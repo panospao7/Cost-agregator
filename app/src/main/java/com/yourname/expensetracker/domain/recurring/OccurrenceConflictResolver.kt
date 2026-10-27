@@ -1,7 +1,6 @@
 package com.yourname.expensetracker.domain.recurring
 
 import com.yourname.expensetracker.data.database.entity.Expense
-import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.recurring.RecurringOccurrenceExpander.OccurrenceCandidate
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
@@ -85,10 +84,10 @@ class OccurrenceConflictResolver @Inject constructor(
                 if (matchedExpenseIds.contains(expense.id)) return@firstOrNull false
                 if (installmentExcludedIds.contains(expense.id)) return@firstOrNull false
 
-                if (expense.isNotMine) return@firstOrNull false
-                if (expense.transactionType == TransactionType.TRANSFER ||
-                    expense.transactionType == TransactionType.DEPOSIT ||
-                    expense.transactionType == TransactionType.UNKNOWN) return@firstOrNull false
+                // Layer 1 (owner item 37(b)): the single type/ownership rule for NEW links.
+                if (!RecurringLinkTypeEligibility.mayCreateLink(expense.transactionType, expense.isNotMine)) {
+                    return@firstOrNull false
+                }
 
                 if (!isSameCalendarDay(candidate.dueDate, expense.date)) return@firstOrNull false
                 if (!merchantsMatch(candidate.merchant, expense)) return@firstOrNull false

@@ -4,6 +4,7 @@ import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import com.yourname.expensetracker.domain.model.PeriodRange
 import com.yourname.expensetracker.domain.model.UiText
+import com.yourname.expensetracker.domain.recurring.RecurringInstallmentEligibility
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.text.DomainTextKeys
 import kotlinx.coroutines.async
@@ -50,6 +51,13 @@ import kotlin.coroutines.cancellation.CancellationException
  * whose merchant key matches a known recurring rule. The merchant-level
  * anomaly detection in [findAnomalies] also uses an adaptive multiplier
  * (3× to 5×) that grows stricter as historical data accumulates.
+ *
+ * Installment exclusion (INV-5, INV-29, decision 46(b)): [findAnomalies] also drops, by expense id
+ * and across BOTH detection paths, every expense that [RecurringInstallmentEligibility] refuses
+ * (an expense that pays an installment entry, or a plan purchase record). Such an expense is a
+ * scheduled payment, not an outlier. The link sets are read once per call; merchant and
+ * statistical baselines are unchanged. A reader failure reaches the anomalies stage catch and
+ * yields no anomalies (fail-closed); a CancellationException propagates.
  */
 @Singleton
 class InsightsEngine @Inject constructor(
@@ -62,7 +70,8 @@ class InsightsEngine @Inject constructor(
     private val monthlyComparisonCalculator: MonthlyComparisonCalculator,
     private val categoryInsightEngine: CategoryInsightEngine,
     private val merchantInsightEngine: MerchantInsightEngine,
-    private val dayOfWeekAnalyzer: DayOfWeekAnalyzer
+    private val dayOfWeekAnalyzer: DayOfWeekAnalyzer,
+    private val installmentEligibility: RecurringInstallmentEligibility
 ) {
 
     /**
@@ -775,6 +784,13 @@ class InsightsEngine @Inject constructor(
         }
         val safeExpenses = safeNormalizedById.values.map { it.toExpenseSnapshot() }
 
+        // INV-29 (decision 46(b)): installment-linked and plan-purchase expenses are scheduled
+        // payments, never anomalies. Read once per call (batch form), outside any try: a reader
+        // failure reaches the stage catch in the caller (no anomalies, fail-closed) and a
+        // CancellationException propagates. Baselines above/below stay untouched; the ids are
+        // dropped from the merged result so both detection paths are covered.
+        val installmentExcludedIds: Set<Long> = installmentEligibility.excludedSnapshotIds(safeExpenses)
+
         // ── Path 1: merchant-level DB-backed detection (existing logic) ────────
         val historicalPurchasesByMerchant = safeExpenses
             .asSequence()
@@ -892,6 +908,7 @@ class InsightsEngine @Inject constructor(
         }
 
         merged.values
+            .filter { it.expense.id !in installmentExcludedIds }
             .sortedByDescending { it.deviationMultiple }
             .take(10)
     }
