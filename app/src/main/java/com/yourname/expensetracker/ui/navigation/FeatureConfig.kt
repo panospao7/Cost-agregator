@@ -214,6 +214,16 @@ data class FeatureConfig(
                 descriptionRes = R.string.feature_manual_recurring_desc,
                 isNew = true
             ),
+            // loan-installments S10a: withheld from the menu while InstallmentsFeature.ENABLED is false
+            // (see availableFeatures); listed here so the id/destination contract tests cover it.
+            FeatureConfig(
+                id = InstallmentsFeature.FEATURE_ID,
+                titleRes = R.string.installments_title,
+                icon = Icons.Rounded.Payments,
+                color = Color(0xFF009688),
+                destination = NavigationDestination.Installments,
+                descriptionRes = R.string.feature_installments_desc
+            ),
             FeatureConfig(
                 id = "groups",
                 titleRes = R.string.feature_shared_groups,
@@ -254,11 +264,13 @@ data class FeatureConfig(
          */
         fun availableFeatures(
             bankSyncAvailable: Boolean,
-            deferredAvailable: Boolean = DeferredFeatureGate.available
+            deferredAvailable: Boolean = DeferredFeatureGate.available,
+            installmentsEnabled: Boolean = InstallmentsFeature.ENABLED
         ): List<FeatureConfig> =
             allFeatures.filter { feature ->
                 (bankSyncAvailable || feature.id != BANK_CONNECTIONS_FEATURE_ID) &&
-                    (deferredAvailable || !DeferredFeatureGate.isDeferredFeatureId(feature.id))
+                    (deferredAvailable || !DeferredFeatureGate.isDeferredFeatureId(feature.id)) &&
+                    (installmentsEnabled || feature.id != InstallmentsFeature.FEATURE_ID)
             }
 
         /**

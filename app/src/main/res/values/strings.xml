@@ -2653,4 +2653,49 @@
     <!-- R24c: shown when the receipt currency could not be read and the home currency was assumed -->
     <string name="receipt_currency_unverified_warning">We couldn\'t read the currency on this receipt. Check it before saving.</string>
 
+    <!-- loan-installments S10a-1: installments overview (dormant behind InstallmentsFeature.ENABLED) -->
+    <string name="installments_title">Installments &amp; loans</string>
+    <string name="feature_installments_desc">Track payments you still owe and when they end</string>
+    <string name="installments_back">Back</string>
+    <string name="installments_remaining_label">Remaining scheduled payments</string>
+    <string name="installments_remaining_note">Sum of payments still to be made. Not your lender\'s outstanding balance.</string>
+    <plurals name="installments_plan_count">
+        <item quantity="one">%d plan</item>
+        <item quantity="other">%d plans</item>
+    </plurals>
+    <string name="installments_next_due">Next due</string>
+    <string name="installments_next_line">Next: %1$s · %2$s</string>
+    <string name="installments_needs_attention">Needs your attention</string>
+    <plurals name="installments_awaiting_header">
+        <item quantity="one">%1$d payment due, awaiting confirmation: %2$s (not counted)</item>
+        <item quantity="other">%1$d payments due, awaiting confirmation: %2$s (not counted)</item>
+    </plurals>
+    <string name="installments_active_plans">Active plans</string>
+    <string name="installments_status_active">Active</string>
+    <string name="installments_mode_auto_label">Recorded automatically</string>
+    <string name="installments_mode_confirm_label">You confirm each payment</string>
+    <string name="installments_progress">%1$d of %2$d paid</string>
+    <string name="installments_awaiting_plan">Awaiting confirmation · not counted yet</string>
+    <string name="installments_ends">Ends %1$s</string>
+    <plurals name="installments_payments_left">
+        <item quantity="one">%d payment left</item>
+        <item quantity="other">%d payments left</item>
+    </plurals>
+    <string name="installments_paid_so_far">Paid so far: %1$s</string>
+    <string name="installments_label_value">%1$s %2$s</string>
+    <string name="installments_two_parts">%1$s · %2$s</string>
+    <string name="installments_unavailable">Unavailable</string>
+    <string name="installments_due_today">Due today</string>
+    <string name="installments_overdue_on">Overdue since %1$s</string>
+    <string name="installments_empty_title">No installment plans yet</string>
+    <string name="installments_empty_body">Track card installments, pay-later purchases, tax plans and loans. See what you still owe and when each plan ends.</string>
+    <string name="installments_empty_finished_title">No active plans</string>
+    <string name="installments_empty_finished_body">Your finished plans are in History.</string>
+    <string name="installments_error_load">Couldn\'t load your plans.</string>
+    <string name="installments_error_refresh">Couldn\'t refresh. Showing the last loaded plans.</string>
+    <plurals name="installments_unreadable_plans">
+        <item quantity="one">%d plan couldn\'t be read and is not included in these figures.</item>
+        <item quantity="other">%d plans couldn\'t be read and are not included in these figures.</item>
+    </plurals>
+
 </resources>

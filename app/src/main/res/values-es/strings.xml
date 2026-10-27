@@ -389,4 +389,49 @@
     <string name="currency_home_switch_loading">Comprobando tu moneda principal…</string>
     <string name="currency_home_switch_unavailable">Ahora no se puede leer tu moneda principal. Aun así, puedes elegir una nueva; primero se te pedirá confirmación.</string>
     <string name="currency_home_switch_error_write_failed">No se pudo cambiar tu moneda principal. Inténtalo de nuevo.</string>
+    <!-- loan-installments S10a-1: DRAFT translations, pending owner sign-off -->
+    <string name="installments_title">Cuotas y préstamos</string>
+    <string name="feature_installments_desc">Controla los pagos que aún debes y cuándo terminan</string>
+    <string name="installments_back">Atrás</string>
+    <string name="installments_remaining_label">Pagos programados restantes</string>
+    <string name="installments_remaining_note">Suma de los pagos que faltan. No es el saldo pendiente de tu prestamista.</string>
+    <plurals name="installments_plan_count">
+        <item quantity="one">%d plan</item>
+        <item quantity="other">%d planes</item>
+    </plurals>
+    <string name="installments_next_due">Próximo vencimiento</string>
+    <string name="installments_next_line">Próximo: %1$s · %2$s</string>
+    <string name="installments_needs_attention">Requiere tu atención</string>
+    <plurals name="installments_awaiting_header">
+        <item quantity="one">%1$d pago con vencimiento, pendiente de confirmar: %2$s (no contado)</item>
+        <item quantity="other">%1$d pagos con vencimiento, pendientes de confirmar: %2$s (no contados)</item>
+    </plurals>
+    <string name="installments_active_plans">Planes activos</string>
+    <string name="installments_status_active">Activo</string>
+    <string name="installments_mode_auto_label">Registro automático</string>
+    <string name="installments_mode_confirm_label">Confirmas cada pago</string>
+    <string name="installments_progress">%1$d de %2$d pagados</string>
+    <string name="installments_awaiting_plan">Pendiente de confirmar · aún no contado</string>
+    <string name="installments_ends">Termina el %1$s</string>
+    <plurals name="installments_payments_left">
+        <item quantity="one">Queda %d pago</item>
+        <item quantity="other">Quedan %d pagos</item>
+    </plurals>
+    <string name="installments_paid_so_far">Pagado hasta ahora: %1$s</string>
+    <string name="installments_label_value">%1$s %2$s</string>
+    <string name="installments_two_parts">%1$s · %2$s</string>
+    <string name="installments_unavailable">No disponible</string>
+    <string name="installments_due_today">Vence hoy</string>
+    <string name="installments_overdue_on">Vencido desde el %1$s</string>
+    <string name="installments_empty_title">Aún no hay planes de cuotas</string>
+    <string name="installments_empty_body">Controla compras a plazos, pagos aplazados, planes de impuestos y préstamos. Mira lo que aún debes y cuándo termina cada plan.</string>
+    <string name="installments_empty_finished_title">No hay planes activos</string>
+    <string name="installments_empty_finished_body">Tus planes finalizados están en el historial.</string>
+    <string name="installments_error_load">No se pudieron cargar tus planes.</string>
+    <string name="installments_error_refresh">No se pudo actualizar. Se muestran los últimos planes cargados.</string>
+    <plurals name="installments_unreadable_plans">
+        <item quantity="one">No se pudo leer %d plan y no está incluido en estas cifras.</item>
+        <item quantity="other">No se pudieron leer %d planes y no están incluidos en estas cifras.</item>
+    </plurals>
+
 </resources>

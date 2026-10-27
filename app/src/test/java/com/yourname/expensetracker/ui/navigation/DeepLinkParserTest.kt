@@ -70,4 +70,95 @@ class DeepLinkParserTest {
             assertTrue("Host '$host' must be rejected", decision is DeepLinkDecision.Reject)
         }
     }
+
+    // ---- loan-installments S10a-1: dormant installments deep links ----
+
+    @Test
+    fun `installments links are rejected while the flag is false`() {
+        listOf(
+            "expensetracker://installments",
+            "expensetracker://installment_plan?id=42"
+        ).forEach { uri ->
+            assertEquals(
+                "Flag false must reject $uri",
+                DeepLinkDecision.Reject,
+                parseDeepLink(Uri.parse(uri), installmentsEnabled = false)
+            )
+        }
+    }
+
+    @Test
+    fun `installments links are rejected by default while the compile-time gate is false`() {
+        // Canary: the enablement slice (S13) flips InstallmentsFeature.ENABLED and must update this test.
+        assertFalse(InstallmentsFeature.ENABLED)
+        listOf(
+            "expensetracker://installments",
+            "expensetracker://installment_plan?id=42"
+        ).forEach { uri ->
+            assertEquals(DeepLinkDecision.Reject, parseDeepLink(Uri.parse(uri)))
+        }
+    }
+
+    @Test
+    fun `installments overview link requires confirmation when enabled`() {
+        val decision = parseDeepLink(Uri.parse("expensetracker://installments"), installmentsEnabled = true)
+
+        assertTrue(decision is DeepLinkDecision.RequireConfirmation)
+        assertEquals(
+            NavigationDestination.Installments,
+            (decision as DeepLinkDecision.RequireConfirmation).destination
+        )
+    }
+
+    @Test
+    fun `installment plan link with a positive id requires confirmation when enabled`() {
+        val decision = parseDeepLink(
+            Uri.parse("expensetracker://installment_plan?id=42"),
+            installmentsEnabled = true
+        )
+
+        assertTrue(decision is DeepLinkDecision.RequireConfirmation)
+        assertEquals(
+            NavigationDestination.InstallmentPlanDetail(42L),
+            (decision as DeepLinkDecision.RequireConfirmation).destination
+        )
+    }
+
+    @Test
+    fun `installment plan link with a missing or malformed id is rejected even when enabled`() {
+        listOf(
+            "expensetracker://installment_plan",
+            "expensetracker://installment_plan?id=",
+            "expensetracker://installment_plan?id=abc",
+            "expensetracker://installment_plan?id=1.5",
+            "expensetracker://installment_plan?id=0",
+            "expensetracker://installment_plan?id=-7",
+            "expensetracker://installment_plan?plan=42",
+            "expensetracker://installment_plan?id=99999999999999999999"
+        ).forEach { uri ->
+            assertEquals(
+                "Enabled flag must still reject $uri",
+                DeepLinkDecision.Reject,
+                parseDeepLink(Uri.parse(uri), installmentsEnabled = true)
+            )
+        }
+    }
+
+    @Test
+    fun `installments flag does not change unrelated hosts`() {
+        listOf(false, true).forEach { enabled ->
+            assertEquals(
+                DeepLinkDecision.Allow(NavigationDestination.Home),
+                parseDeepLink(Uri.parse("expensetracker://home"), installmentsEnabled = enabled)
+            )
+            assertEquals(
+                DeepLinkDecision.Reject,
+                parseDeepLink(Uri.parse("expensetracker://unknown"), installmentsEnabled = enabled)
+            )
+            assertEquals(
+                DeepLinkDecision.Reject,
+                parseDeepLink(Uri.parse("https://expensetracker.app/installments"), installmentsEnabled = enabled)
+            )
+        }
+    }
 }

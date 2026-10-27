@@ -140,4 +140,48 @@
     <string name="currency_home_switch_loading">Έλεγχος του κύριου νομίσματος…</string>
     <string name="currency_home_switch_unavailable">Δεν είναι δυνατή η ανάγνωση του κύριου νομίσματος αυτή τη στιγμή. Μπορείτε να επιλέξετε νέο· θα σας ζητηθεί πρώτα επιβεβαίωση.</string>
     <string name="currency_home_switch_error_write_failed">Δεν ήταν δυνατή η αλλαγή του κύριου νομίσματος. Δοκιμάστε ξανά.</string>
+    <!-- loan-installments S10a-1: DRAFT translations, pending owner sign-off -->
+    <string name="installments_title">Δόσεις και δάνεια</string>
+    <string name="feature_installments_desc">Παρακολουθήστε τις πληρωμές που οφείλετε και πότε λήγουν</string>
+    <string name="installments_back">Πίσω</string>
+    <string name="installments_remaining_label">Υπολειπόμενες προγραμματισμένες πληρωμές</string>
+    <string name="installments_remaining_note">Άθροισμα των πληρωμών που απομένουν. Δεν είναι το οφειλόμενο υπόλοιπο του δανειστή σας.</string>
+    <plurals name="installments_plan_count">
+        <item quantity="one">%d πλάνο</item>
+        <item quantity="other">%d πλάνα</item>
+    </plurals>
+    <string name="installments_next_due">Επόμενη πληρωμή</string>
+    <string name="installments_next_line">Επόμενη: %1$s · %2$s</string>
+    <string name="installments_needs_attention">Χρειάζεται την προσοχή σας</string>
+    <plurals name="installments_awaiting_header">
+        <item quantity="one">%1$d πληρωμή προς εξόφληση αναμένει επιβεβαίωση: %2$s (δεν προσμετράται)</item>
+        <item quantity="other">%1$d πληρωμές προς εξόφληση αναμένουν επιβεβαίωση: %2$s (δεν προσμετρώνται)</item>
+    </plurals>
+    <string name="installments_active_plans">Ενεργά πλάνα</string>
+    <string name="installments_status_active">Ενεργό</string>
+    <string name="installments_mode_auto_label">Αυτόματη καταγραφή</string>
+    <string name="installments_mode_confirm_label">Επιβεβαιώνετε κάθε πληρωμή</string>
+    <string name="installments_progress">%1$d από %2$d πληρωμένες</string>
+    <string name="installments_awaiting_plan">Αναμένει επιβεβαίωση · δεν προσμετράται ακόμα</string>
+    <string name="installments_ends">Λήγει στις %1$s</string>
+    <plurals name="installments_payments_left">
+        <item quantity="one">Απομένει %d πληρωμή</item>
+        <item quantity="other">Απομένουν %d πληρωμές</item>
+    </plurals>
+    <string name="installments_paid_so_far">Πληρώθηκαν μέχρι τώρα: %1$s</string>
+    <string name="installments_label_value">%1$s %2$s</string>
+    <string name="installments_two_parts">%1$s · %2$s</string>
+    <string name="installments_unavailable">Μη διαθέσιμο</string>
+    <string name="installments_due_today">Λήγει σήμερα</string>
+    <string name="installments_overdue_on">Εκπρόθεσμη από %1$s</string>
+    <string name="installments_empty_title">Δεν υπάρχουν ακόμα πλάνα δόσεων</string>
+    <string name="installments_empty_body">Παρακολουθήστε αγορές με δόσεις, πληρωμές αργότερα, φορολογικά πλάνα και δάνεια. Δείτε τι οφείλετε ακόμα και πότε τελειώνει κάθε πλάνο.</string>
+    <string name="installments_empty_finished_title">Δεν υπάρχουν ενεργά πλάνα</string>
+    <string name="installments_empty_finished_body">Τα ολοκληρωμένα πλάνα σας βρίσκονται στο Ιστορικό.</string>
+    <string name="installments_error_load">Δεν ήταν δυνατή η φόρτωση των πλάνων σας.</string>
+    <string name="installments_error_refresh">Δεν ήταν δυνατή η ανανέωση. Εμφανίζονται τα τελευταία πλάνα που φορτώθηκαν.</string>
+    <plurals name="installments_unreadable_plans">
+        <item quantity="one">%d πλάνο δεν μπόρεσε να διαβαστεί και δεν περιλαμβάνεται σε αυτά τα ποσά.</item>
+        <item quantity="other">%d πλάνα δεν μπόρεσαν να διαβαστούν και δεν περιλαμβάνονται σε αυτά τα ποσά.</item>
+    </plurals>
 </resources>

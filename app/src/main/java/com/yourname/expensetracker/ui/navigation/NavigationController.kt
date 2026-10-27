@@ -126,6 +126,12 @@ internal fun NavigationDestination.toSaveToken(): String = when (this) {
     is NavigationDestination.ScanReceipt -> "scan_receipt"
     is NavigationDestination.RecurringExpenses -> "recurring_expenses"
     is NavigationDestination.ManualRecurringExpense -> "manual_recurring_expense"
+    is NavigationDestination.Installments -> "installments"
+    is NavigationDestination.InstallmentPlanDetail -> buildSaveToken(
+        base = "installment_plan",
+        params = mapOf("id" to planId.toString())
+    )
+    is NavigationDestination.InstallmentHistory -> "installment_history"
     is NavigationDestination.SavingsGoals -> "savings_goals"
     is NavigationDestination.CarbonFootprint -> "carbon_footprint"
     is NavigationDestination.WarrantyTracker -> "warranty_tracker"
@@ -207,6 +213,13 @@ internal fun destinationFromSaveToken(
         baseToken == "scan_receipt" -> NavigationDestination.ScanReceipt
         baseToken == "recurring_expenses" -> NavigationDestination.RecurringExpenses
         baseToken == "manual_recurring_expense" -> NavigationDestination.ManualRecurringExpense
+        // Installments (S10a): restorable as plain destinations; rendering is gated by
+        // InstallmentsFeature.ENABLED in MainActivity (redirects Home while dormant).
+        baseToken == "installments" -> NavigationDestination.Installments
+        baseToken == "installment_plan" -> params["id"]?.toLongOrNull()
+            ?.takeIf { it > 0L }
+            ?.let { NavigationDestination.InstallmentPlanDetail(it) }
+        baseToken == "installment_history" -> NavigationDestination.InstallmentHistory
         baseToken == "savings_goals" -> NavigationDestination.SavingsGoals
         baseToken == "carbon_footprint" -> NavigationDestination.CarbonFootprint
         baseToken == "warranty_tracker" -> NavigationDestination.WarrantyTracker
@@ -485,13 +498,17 @@ fun ProvideNavigationController(
     // RP-17 17-A / D1: persisted bank destination is replaced (never rendered)
     // when the bank-sync surface is unavailable in this build.
     val bankSyncAvailable = remember { com.yourname.expensetracker.domain.bank.BankFeatureAvailability().isBankSyncAvailable }
+    // loan-installments S10a: the token layer stays ungated (round-trip contract); the restore into
+    // the UI drops installment destinations while InstallmentsFeature.ENABLED is false (fall back
+    // to Home / drop from the back stack).
     val restoredDestination = destinationFromSaveToken(
         token = persistedState.destinationToken,
         bankSyncAvailable = bankSyncAvailable,
         deferredAvailable = DeferredFeatureGate.available
-    ) ?: initialDestination
+    )?.takeUnless { InstallmentsFeature.shouldRedirectHome(it) } ?: initialDestination
     val restoredBackStack = persistedState.backStackTokens
         .mapNotNull { destinationFromSaveToken(it, bankSyncAvailable, DeferredFeatureGate.available) }
+        .filterNot { InstallmentsFeature.shouldRedirectHome(it) }
 
     val currentDestination = remember {
         mutableStateOf(restoredDestination)

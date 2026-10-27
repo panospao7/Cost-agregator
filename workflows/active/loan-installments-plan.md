@@ -484,6 +484,7 @@ D-1..D-8 are being resolved by the parallel scout. D-9..D-20 are extra planner i
 - **Validation profiles:** `targeted-unit-test -Filter "*Budget*Installment*"`, then `unit-test-shard -ShardName runtime-ui`.
 
 ### S13 — Enablement + final acceptance
+- **Amendment (2026-10-27, S10a-1 privacy spot check C1): HARD REQUIREMENT.** Before or together with flipping `InstallmentsFeature.ENABLED`, `MainActivity.handleIntent` routes the `installments` and `installment_plan` hosts through `parseDeepLink` with a user confirmation on RequireConfirmation (or reminder taps use an explicit internal PendingIntent extra, and external links get confirmation). Add the manifest hosts in the same slice. The code gate, not the manifest, is the current boundary.
 - **Goal:** flip `InstallmentsFeature.ENABLED`; update `docs/architecture/CODEBASE_INVENTORY.md`; run end-to-end AE-6 replay and AE-23 diagnostics plus payload; confirm the whole-feature privacy and money posture.
 - **Write set:** `InstallmentsFeature` constant; inventory doc; `T:integration/InstallmentEndToEndScenarioTest.kt` (AE-1 → AE-11 lifecycle, AE-6, AE-23).
 - **Gates:** reviewer-strict (Opus, final acceptance) by a reviewer other than any slice reviewer. All three guardians sign off.

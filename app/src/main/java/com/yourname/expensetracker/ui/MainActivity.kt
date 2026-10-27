@@ -79,6 +79,8 @@ import com.yourname.expensetracker.ui.screens.export.ExportOptionsScreen
 import com.yourname.expensetracker.ui.screens.groups.SharedExpenseGroupsScreen
 import com.yourname.expensetracker.ui.screens.recurring.RecurringExpensesScreen
 import com.yourname.expensetracker.ui.screens.recurringmanual.ManualRecurringExpenseScreen
+import com.yourname.expensetracker.ui.screens.installments.overview.InstallmentOverviewScreen
+import com.yourname.expensetracker.ui.navigation.InstallmentsFeature
 import com.yourname.expensetracker.ui.screens.subscription.SubscriptionManagementScreen
 import com.yourname.expensetracker.ui.screens.tax.TaxConfigurationScreen
 import com.yourname.expensetracker.ui.theme.ExpenseTrackerTheme
@@ -250,6 +252,21 @@ class MainActivity : ComponentActivity() {
                 }
             }
             "review" -> mainViewModel.navigateTo(NavigationDestination.Review)
+            // loan-installments S10a: dormant behind InstallmentsFeature.ENABLED. A disabled or
+            // malformed link lands on Home (same as an unsupported host), never on the feature.
+            InstallmentsFeature.DEEP_LINK_HOST_OVERVIEW -> mainViewModel.navigateTo(
+                if (InstallmentsFeature.ENABLED) NavigationDestination.Installments else NavigationDestination.Home
+            )
+            InstallmentsFeature.DEEP_LINK_HOST_PLAN -> {
+                val planId = data.getQueryParameter("id")?.toLongOrNull()?.takeIf { it > 0L }
+                mainViewModel.navigateTo(
+                    if (InstallmentsFeature.ENABLED && planId != null) {
+                        NavigationDestination.InstallmentPlanDetail(planId)
+                    } else {
+                        NavigationDestination.Home
+                    }
+                )
+            }
             "plan" -> mainViewModel.navigateTo(NavigationDestination.Budget)
             "add" -> {
                 mainViewModel.triggerAddExpense()
@@ -716,6 +733,29 @@ fun MainScreen(
                     ManualRecurringExpenseScreen(
                         onNavigateBack = { navigation.navigateBack() }
                     )
+                }
+                // loan-installments S10a: dormant. While InstallmentsFeature.ENABLED is false none of
+                // the installment destinations is rendered; they redirect Home like deferred features.
+                is NavigationDestination.Installments -> {
+                    if (InstallmentsFeature.shouldRedirectHome(currentDestination)) {
+                        androidx.compose.runtime.LaunchedEffect(Unit) { navigation.navigateHome() }
+                    } else {
+                        InstallmentOverviewScreen(
+                            onNavigateBack = { navigation.navigateBack() }
+                        )
+                    }
+                }
+                // Detail and history screens arrive in S10a-2. Until then they have no screen, so they
+                // redirect Home whatever the flag says; the gate helper stays the single decision point
+                // (S10a-2 renders the screen in the not-redirect branch).
+                is NavigationDestination.InstallmentPlanDetail,
+                is NavigationDestination.InstallmentHistory -> {
+                    if (InstallmentsFeature.shouldRedirectHome(currentDestination)) {
+                        androidx.compose.runtime.LaunchedEffect(Unit) { navigation.navigateHome() }
+                    } else {
+                        // Enabled but not yet implemented (S10a-2): never render a placeholder.
+                        androidx.compose.runtime.LaunchedEffect(Unit) { navigation.navigateHome() }
+                    }
                 }
                 is NavigationDestination.Assistant -> {
                     AssistantSheet(

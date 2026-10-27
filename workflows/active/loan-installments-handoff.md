@@ -1653,3 +1653,101 @@ Targeted filter: `*InstallmentPlanArchitectureGuard*`.
   - Next loan work:
     - S8b (owner approval of the guard-surface strengthening);
     - S10a/S10b UI (es/el strings; soft gate D-13 on the Release merge).
+
+## S10a-1 — implemented (2026-10-27; uncommitted; nothing compiled, run or validated)
+
+Scope: navigation, hidden entry, deep-link tokens, overview screen. Detail and history are S10a-2.
+
+### Files
+- NEW `ui/navigation/InstallmentsFeature.kt`: `const val ENABLED = false` (the compile-time gate), `FEATURE_ID`, deep-link host constants, `isInstallmentDestination`, `shouldRedirectHome`.
+- `ui/navigation/NavigationDestination.kt`: `Installments`, `InstallmentPlanDetail(planId)`, `InstallmentHistory`. Not added to `featureDestinations` (the menu entry comes from FeatureConfig only).
+- `ui/navigation/NavigationController.kt`: `toSaveToken` (exhaustive `when`, so required) and `destinationFromSaveToken`: tokens `installments`, `installment_plan?id=<n>`, `installment_history`. Restore is NOT flag-gated (a pure mapping; `FeatureConfigNavigationContractTest` requires every `allFeatures` token to restore). Rendering is gated instead.
+- `ui/navigation/FeatureConfig.kt`: item `installments` (title `installments_title`, desc `feature_installments_desc`, `Icons.Rounded.Payments`) in `allFeatures`; `availableFeatures(...)` gets a defaulted `installmentsEnabled = InstallmentsFeature.ENABLED` and withholds it while false. The HomeScreen caller is unchanged.
+- `ui/navigation/DeepLinkParser.kt`: `parseDeepLink(uri, installmentsEnabled = ENABLED)`: `installments` and `installment_plan?id=` return RequireConfirmation (plan names and amounts, like `review` and `activity?expenseId=`), and Reject while the flag is false or the id is missing, non-numeric or <= 0.
+- `ui/MainActivity.kt`: `handleIntent` has the two hosts, both flag-gated, landing on Home when disabled or malformed. The render branch renders `InstallmentOverviewScreen` only when the flag is true; otherwise `navigateHome()`.
+- NEW `ui/screens/installments/overview/InstallmentOverviewViewModel.kt` (state models, pure `InstallmentOverviewMapper`, Hilt VM) and `InstallmentOverviewScreen.kt`.
+- Strings: `values/strings.xml`, `values-es`, `values-el` (both locales exist, with a MissingTranslation lint baseline, so es and el are added now to avoid new lint findings).
+- Tests: NEW `ui/screens/installments/overview/InstallmentOverviewViewModelTest.kt` (18 tests); `ui/navigation/NavigationRouteContractTest.kt` minimal edit (completeness checks require `Installments`, `InstallmentHistory` in the object list and `InstallmentPlanDetail` rows in the parameterised list).
+
+### Navigation decisions
+- Allow-list for deep links: the only config-level allow-list is the AndroidManifest intent-filter hosts (home, dashboard, activity, review, plan, add, analytics, map). No guard, baseline or config file lists hosts. I did NOT add the two hosts to the manifest: the manifest cannot be gated by a Kotlin constant, and adding them would widen the exported surface of a dormant feature. Without a manifest host the links cannot arrive from outside [CORRECTED 2026-10-27: wrong — MainActivity is exported, explicit intents reach handleIntent; the code gate is the boundary, see "S10a-1 — privacy spot check"], and the parser and `handleIntent` are ready. The enablement slice (S13) must add `<data android:scheme="expensetracker" android:host="installments" />` and `...host="installment_plan"` together with flipping the flag, and S8's reminder tap must use the `installment_plan?id=` URI. No guard or allowlist change was needed.
+- Detail and history: the destinations exist and have tokens, but they are NOT rendered; the render branch redirects Home (`navigateHome()`), so nothing is a dead placeholder screen and no production caller navigates to them. S10a-2 replaces that branch with the real screens (and wires the History action and card taps).
+- `handleIntent` does not use `parseDeepLink` (pre-existing: it has its own switch and no confirmation prompt, PRV-16 TODO). I kept that structure and gated the new hosts the same way the parser does.
+- Overview "Next due" uses the read model's per-plan `nextDue` and excludes OVERDUE ones (a plan whose earliest scheduled entry is overdue contributes no next-due candidate; its later upcoming entry is not visible without the detail read). The read model has no per-entry attention rows, so S10b adds Record/Link/Skip rows; here "Needs your attention" shows only the per-currency awaiting-confirmation lines (AE-10b).
+
+### Behaviour
+- AE-5: one line per currency present in `remainingScheduledByCurrency` (EUR before USD), with plan count; no combined total; none for an absent currency.
+- AE-10b: per-currency "N past payments awaiting confirmation: amount (not counted)" lines from `awaitingConfirmationByCurrency`; a plan card shows "Awaiting confirmation · not counted yet" only for CONFIRM-mode plans with a DUE or OVERDUE next entry.
+- AE-18/INV-17: remaining scheduled payments in the plan currency (minor units / 100, EUR and USD only); paid-so-far unavailable is the word "Unavailable", never zero; a real zero stays a money value. Unreadable plans are a count notice, and an overview with only unreadable plans is Data, not Empty.
+- Progress "n of N paid": n = paid + paid-before-tracking, N = n + scheduled + skipped. (My choice; confirm at review.)
+- Empty has two variants (no plans ever / only finished plans) chosen from `observeHistory().size`; a history failure falls back to the first variant and never blocks the overview.
+- INV-31: failures map to `LOAD_FAILED` / `REFRESH_FAILED` and fixed string resources; the log carries only the code. `CancellationException` is rethrown in both `catch` operators. No DAO access; the VM depends only on `InstallmentPlanReadRepository`.
+- Not in this sub-slice: History action, Refresh action (the observe flows re-emit on change), FAB "Add plan", plan-detail navigation, Record/Link/Skip actions, Possible-duplicate and deferred-candidate attention rows.
+
+### es/el strings: all DRAFT, owner sign-off required
+Keys (all new, English in `values`): `installments_title`, `feature_installments_desc`, `installments_back`, `installments_remaining_label`, `installments_remaining_note`, `installments_plan_count` (plural), `installments_next_due`, `installments_next_line`, `installments_needs_attention`, `installments_awaiting_header` (plural), `installments_active_plans`, `installments_status_active`, `installments_mode_auto_label`, `installments_mode_confirm_label`, `installments_progress`, `installments_awaiting_plan`, `installments_ends`, `installments_payments_left` (plural), `installments_paid_so_far`, `installments_unavailable`, `installments_due_today`, `installments_overdue_on`, `installments_empty_title`, `installments_empty_body`, `installments_empty_finished_title`, `installments_empty_finished_body`, `installments_error_load`, `installments_error_refresh`, `installments_unreadable_plans` (plural).
+- Both `values-es` and `values-el` carry a DRAFT comment. Items for native review: es "Cuotas y préstamos", "Pagos programados restantes", "Pendiente de confirmar · aún no contado"; el "Δόσεις και δάνεια", "Υπολειπόμενες προγραμματισμένες πληρωμές" (ux-flows already flags it), "Αναμένει επιβεβαίωση · δεν προσμετράται ακόμα". Plurals use one/other only (the existing el plural style).
+
+### Risks
+- Nothing compiled. Check at first compile: `Icons.Rounded.Payments` via the `rounded.*` import in FeatureConfig; `UiText.from(Int)` overload; `InlineErrorBanner`/`ErrorState`/`EmptyState` from `ui.components.common`; mockk of the final `InstallmentHistoryItem` in the VM test.
+- `if (InstallmentsFeature.ENABLED)` is a constant condition (compiler warning only; no warnings-as-errors found in app/build.gradle.kts).
+- es plural `many` category: lint may suggest it for es (MissingQuantity is a warning); el matches existing usage.
+- Money display uses `MoneyDisplayUi.from(Double, code)` over exact minor units / 100 (EUR and USD are 2-digit; the read model refuses other scales).
+- DeepLinkParserTest (existing, Uri-based) is not extended: test-author should add cases (flag false rejects; enabled via the new parameter returns RequireConfirmation; bad id rejects), plus a FeatureConfig test that `installments` is absent from `availableFeatures` by default and present with `installmentsEnabled = true`, and an `InstallmentsFeature.shouldRedirectHome` test.
+
+### Validation to request (serial, via validation-runner)
+1. `targeted-unit-test -Filter "*Installment*ViewModel*"` plus `*NavigationRouteContractTest*`, `*FeatureConfigNavigationContractTest*`, `*DeepLinkParserTest*`.
+2. `unit-test-shard -ShardName runtime-ui`.
+3. Registered guard `ui_dao` (the overview imports no DAO or entity).
+4. `lint` if a runner profile exists (new es/el strings, plurals).
+
+### S10a-1 — navigation tests added (test-author; not compiled or run)
+- `DeepLinkParserTest` (extended; Robolectric, Uri-based): `installments links are rejected while the flag is false`; `installments links are rejected by default while the compile-time gate is false`; `installments overview link requires confirmation when enabled`; `installment plan link with a positive id requires confirmation when enabled`; `installment plan link with a missing or malformed id is rejected even when enabled` (missing, empty, abc, 1.5, 0, -7, wrong key, overflow); `installments flag does not change unrelated hosts`.
+- NEW `InstallmentsFeatureGateTest` (plain JVM): `installments is absent from availableFeatures by default while the gate is false`; `... absent ... when explicitly disabled`; `installments is present in availableFeatures when enabled`; `installments stays in allFeatures regardless of the flag`; `enabling installments does not add or drop any other feature`; `shouldRedirectHome is true for every installment destination when disabled`; `... is false for every installment destination when enabled`; `... is false for non-installment destinations in both flag states`; `shouldRedirectHome defaults to the compile-time gate`; `isInstallmentDestination recognises exactly the three installment destinations`.
+- Canary tests assert `InstallmentsFeature.ENABLED == false`; S13 must update them when it flips the flag.
+- Filter: `*DeepLinkParserTest*` and `*InstallmentsFeatureGateTest*` (add to the S10a-1 targeted run, together with `*NavigationRouteContractTest*`, `*FeatureConfigNavigationContractTest*`, `*Installment*ViewModel*`).
+
+### S10a-1 — privacy spot check (ACCEPT-WITH-CONDITIONS) and validation (2026-10-27)
+- **C2 correction:** the earlier claim "Without a manifest host the links cannot arrive from outside" is WRONG. MainActivity is `exported="true"` and explicit intents ignore intent-filter hosts, so `expensetracker://installment_plan?id=N` already reaches `handleIntent` today. Dormancy holds because of the CODE gate (`InstallmentsFeature.ENABLED = false` → Home), not because of the manifest. Owner-approvals 47(b) stands; only its reason is corrected.
+- **C1, HARD REQUIREMENT for S13 (or any slice that flips InstallmentsFeature.ENABLED):** `handleIntent` must route the `installments` and `installment_plan` hosts through `parseDeepLink` and show a confirmation on RequireConfirmation. Today it navigates straight to InstallmentPlanDetail (existing PRV-16 gap). Alternatively, reminder taps use an explicit internal PendingIntent extra, and only external links go through confirmation.
+- **Recommended for S10a-2, which edits MainActivity and NavigationController anyway:**
+  - gate token restore on InstallmentsFeature.ENABLED in ProvideNavigationController;
+  - add `.takeIf { it > 0L }` on the restored plan id (NavigationController :219);
+  - make the render branch call `shouldRedirectHome(destination)` instead of an inline duplicate (finding 4).
+- **INFO:**
+  - toLongOrNull accepts a leading '+' and non-ASCII digits. The id is still positive, so this is harmless; an ASCII-only `^[0-9]{1,18}$` pre-check is optional.
+  - the `parseDeepLink` reason text is English and never shown.
+- **Validation, all PASS:**
+  - targeted vr-20261027-081209-50b6228b
+  - ui_dao vr-20261027-081958-5ab296ce
+  - runtime-ui vr-20261027-082014-2d8ba014
+  - architecture-contracts vr-20261027-082145-4c44bea4
+  - static-guards vr-20261027-082233-4ef08131
+  - lint vr-20261027-083837-6f10ebf5
+
+### S10a-1 — review fixes (2026-10-27; uncommitted; nothing compiled, run or validated)
+1. Dead helpers: `MainActivity` render branches now call `InstallmentsFeature.shouldRedirectHome(currentDestination)` for `Installments`, `InstallmentPlanDetail` and `InstallmentHistory` (the tested helper is the real gate). Redirect behaviour is identical: disabled redirects Home for all three; detail and history still redirect Home when enabled (no screen until S10a-2, which fills the not-redirect branch).
+2. Token restore (privacy finding 3): `ProvideNavigationController` drops an installment destination (current and back stack) while the gate is false (`shouldRedirectHome`), falling back to `initialDestination`; the token layer stays ungated so `FeatureConfigNavigationContractTest` and the round-trip tests are unaffected. `installment_plan` id now needs `> 0` (`takeIf { it > 0L }`). Test: `NavigationRouteContractTest` gains `installment_plan token with a non-positive or malformed id does not restore`. The Compose-level restore gate has no unit test (needs a composition); it is covered by the same helper `InstallmentsFeatureGateTest` tests.
+3. First paint: `finishedPlanCount()` has `.onStart { emit(0) }`, so the overview no longer waits on `observeHistory()`. Side effect: for an overview with no active plans and finished plans, the first paint can show the NO_PLANS variant, then switch to NO_ACTIVE_PLANS when the history count arrives (brief flicker). S10a-2 follow-up: `observeHistory()` loads full rows only to take `size`, and the history screen loads them again (double load); add a count-only read (for example `observeFinishedPlanCount()`), which also removes the flicker.
+4. Vacuous test: the mapper filters `remainingLines` to currencies that have a plan (`remaining` keys intersect plan currencies). Test `AE-5 a currency with no plan has no line` now passes `remaining = {EUR, USD}` with only an EUR plan and asserts there is no USD line (expectation intentionally tightened; no test deleted).
+5. RTL-safe text: the screen no longer concatenates strings. New format strings `installments_label_value` (`%1$s %2$s`) and `installments_two_parts` (`%1$s · %2$s`) in values, values-es, values-el (a single space: aapt collapses unquoted double spaces). `CurrencyFormatter.formatMoney` uses `NumberFormat.getCurrencyInstance`, so it already includes the currency symbol; the code prefix (`EUR  €524.00`) was dropped in the Remaining and Awaiting lines.
+6. Wording: `installments_awaiting_header` now reads "N payment(s) due, awaiting confirmation: X (not counted)" since it counts DUE today as well as OVERDUE. es and el DRAFTS updated.
+7. `LocalContext.current.resources.getQuantityString` replaced by `pluralStringResource` (no `LocalContext` import left).
+8. Comment added in `InstallmentOverviewMapper.nextDueCard` that a plan whose earliest scheduled entry is OVERDUE contributes no Next-due candidate (limitation of the read model; S10a-2/S10b). No test added.
+
+Known, not fixed:
+- INFO 8: a screen left open past midnight shows stale DUE/OVERDUE labels until the next DB change (note for S13: add a day-change tick or recompute on resume).
+- INFO 9: the cheap-review INFO 9 text was not included in the fix request; recorded here as acknowledged and not fixed. Orchestrator: add the original wording if it matters.
+
+es/el DRAFT list for owner sign-off (changed or added in this fix, in addition to the earlier list):
+- es: `installments_awaiting_header` "pago(s) con vencimiento, pendiente(s) de confirmar ... (no contado/s)"; `installments_label_value`, `installments_two_parts` (language-neutral).
+- el: `installments_awaiting_header` "πληρωμή(ές) προς εξόφληση αναμένει/αναμένουν επιβεβαίωση ... (δεν προσμετράται/ρώνται)" (wording of "προς εξόφληση" for "due" needs a native check); `installments_label_value`, `installments_two_parts`.
+
+Targeted filter for the re-run: `*Installment*ViewModel*` (InstallmentOverviewViewModelTest) plus `*NavigationRouteContractTest*`, `*FeatureConfigNavigationContractTest*`, `*InstallmentsFeatureGateTest*`, `*DeepLinkParserTest*`; then lint (strings, plurals) and `ui_dao`.
+- INFO 9 (cheap review), wording: a refresh failure while the overview is Empty becomes the full Error state, and the Empty state is lost. This is acceptable; `emptyKind` is reset correctly in `onReadFailed`.
+- S10a-1 ACCEPTED (2026-10-27).
+  - Final-tree runs, all PASS: targeted vr-20261027-085403-01295661, ui_dao vr-20261027-090322-e5c12ac5, runtime-ui vr-20261027-090338-c596afc3, lint vr-20261027-090509-d7810528.
+  - Earlier on the pre-fix tree: architecture-contracts vr-20261027-082145-4c44bea4, static-guards vr-20261027-082233-4ef08131.
+  - Gates: privacy spot check ACCEPT-WITH-CONDITIONS (C1 = an S13 hard requirement; C2 = a handoff correction); cheap review ACCEPT-WITH-CONDITIONS (items 1–8 fixed).
+  - The es/el strings are DRAFTS pending the owner's native sign-off.
+  - Committed. Next: S10a-2 (plan detail and history screens).

@@ -37,11 +37,38 @@ sealed interface DeepLinkDecision {
  * - `review` → RequireConfirmation (shows pending financial data)
  * - `add` → RequireConfirmation (can create financial records)
  * - `analytics`, `map` → Allow (aggregate data, not individual records)
+ * - `installments`, `installment_plan?id=` → RequireConfirmation (plan names and amounts), and
+ *   Reject while the feature is dormant ([InstallmentsFeature.ENABLED] is false) or the plan id
+ *   is missing or malformed
  */
-fun parseDeepLink(uri: Uri): DeepLinkDecision {
+fun parseDeepLink(
+    uri: Uri,
+    installmentsEnabled: Boolean = InstallmentsFeature.ENABLED
+): DeepLinkDecision {
     if (uri.scheme != "expensetracker") return DeepLinkDecision.Reject
 
     return when (uri.host) {
+        InstallmentsFeature.DEEP_LINK_HOST_OVERVIEW -> if (installmentsEnabled) {
+            DeepLinkDecision.RequireConfirmation(
+                destination = NavigationDestination.Installments,
+                reason = "View installment plans"
+            )
+        } else {
+            DeepLinkDecision.Reject
+        }
+
+        InstallmentsFeature.DEEP_LINK_HOST_PLAN -> {
+            val planId = uri.getQueryParameter("id")?.toLongOrNull()?.takeIf { it > 0L }
+            if (installmentsEnabled && planId != null) {
+                DeepLinkDecision.RequireConfirmation(
+                    destination = NavigationDestination.InstallmentPlanDetail(planId),
+                    reason = "View a specific installment plan"
+                )
+            } else {
+                DeepLinkDecision.Reject
+            }
+        }
+
         "home", "dashboard" -> DeepLinkDecision.Allow(NavigationDestination.Home)
 
         "activity" -> {
