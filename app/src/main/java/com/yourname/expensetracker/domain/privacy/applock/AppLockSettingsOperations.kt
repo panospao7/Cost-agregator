@@ -76,6 +76,36 @@ enum class PlainSettingResult {
 }
 
 /**
+ * Bounded result of [AppLockSettingsOperations.requestReviewSave] (S18 part (ii-d): T27, INV-44, INV-45). No text, no
+ * platform detail.
+ */
+enum class ReviewSaveResult {
+    /** The record was written durably with no prompt (not weakening, or `INERT` with nothing to authenticate, D3). */
+    COMMITTED,
+
+    /** A weakening record: the CONFIRM_CHANGE prompt (CHANGE copy) started. Its outcome is applied by this class. */
+    STARTED,
+
+    /** The write did not commit (or was refused at the store). The sentinel and the state stay; nothing was applied. */
+    FAILED,
+
+    /** INV-45: the record has the lock on but the fresh capability is not `AVAILABLE`. Nothing written, no prompt. */
+    REJECTED_CAPABILITY,
+
+    /** The settings are not under review (the state is not `UNLOCKED`/`INERT`, or the load state is not persistently unreadable). */
+    NOT_IN_REVIEW,
+
+    /**
+     * The request needs the prompt but the state is not its origin: a weakening record while `INERT` with a capability
+     * that is `AVAILABLE` or `CHECK_FAILED` (D3), or the controller refused the start (T33 gate open, state moved).
+     */
+    NOT_IN_ORIGIN,
+
+    /** A prompt or an apply is already in flight (INV-34, INV-54). Nothing changed. */
+    ALREADY_IN_FLIGHT
+}
+
+/**
  * The application-scoped owner of the app-lock enable and disable requests (S18 part (i-a): T17, T18, T26, T33;
  * INV-3, INV-13, INV-54). It is the ONLY production caller of `AppLockController.startOpenOriginAttempt`,
  * `startTimeoutChangeAttempt`, `onOpenOriginApplyCompleted` and the three state-move entries
@@ -135,6 +165,12 @@ enum class PlainSettingResult {
  *
  * The state move is bound to the attempt: it passes the attempt id, and the controller derives enable or
  * disable from the prompt it recorded for that id (F2).
+ *
+ * Review-save (S18 ii-d, T27, INV-45): [requestReviewSave] recovers a persistently unreadable store. It is the second
+ * production caller of `AppLockSettingsRepository.reviewSave` (with the 1a ViewModel until S18-ii-h) and the only one
+ * behind the controller. A weakening record confirms through the CHANGE prompt, then applies like the other prompt
+ * paths (serializer, `NonCancellable`, F7 re-read, id-bound state move, completion in a `finally`). It has no
+ * production caller yet (dormant).
  */
 @Singleton
 class AppLockSettingsOperations @Inject constructor(
@@ -234,6 +270,188 @@ class AppLockSettingsOperations @Inject constructor(
     /** S18 part (i-b2): the secure-screen setting; the same rule as [requestDiscreetChange], with no re-post. */
     suspend fun requestSecureScreenChange(enabled: Boolean): PlainSettingResult =
         writePlainSetting(AppLockSettingField.SECURE_SCREEN, enabled)
+
+    /**
+     * S18 part (ii-d): the review-save of a persistently unreadable store (T27, INV-44, INV-45, AE-85 to AE-89). The
+     * steps, in order:
+     *
+     * 1. [applyRunning] is honoured ([ReviewSaveResult.ALREADY_IN_FLIGHT]).
+     * 2. The state must be `UNLOCKED` or `INERT` and the controller's load state `Unreadable(CORRUPTED | INVALID_VALUE)`,
+     *    else [ReviewSaveResult.NOT_IN_REVIEW].
+     * 3. The capability is read FRESH. A lock-on record with a capability other than `AVAILABLE` is
+     *    [ReviewSaveResult.REJECTED_CAPABILITY]: nothing written, no prompt.
+     * 4. [ReviewSaveAuthorisation] classifies the record (weakening = lock off, or a timeout longer than `IMMEDIATE`).
+     * 5. Weakening from `UNLOCKED`: the CONFIRM_CHANGE attempt (CHANGE copy) starts through
+     *    `startReviewSaveAttempt`; the record is kept in the controller's one-shot token. On success the apply runs
+     *    inside the [writeSerializer] under `NonCancellable` (the prompt is NOT held inside it): the conditional
+     *    `reviewSave`, the F7 re-read after a cancelled write, then the id-bound `onOpenOriginSettingApplied` (T27 move
+     *    from the token), then the discreet trigger `(false, effective after)`, and the completion call in a `finally`.
+     * 6. Weakening while `INERT`: allowed without authentication ONLY under D3, when the fresh capability is neither
+     *    `AVAILABLE` nor `CHECK_FAILED` (nothing can authenticate). Otherwise [ReviewSaveResult.NOT_IN_ORIGIN].
+     * 7. Not weakening, or `INERT` without authentication: a direct write inside the [writeSerializer] (F7 as above),
+     *    then `onReviewSavedWithoutPrompt` and the same trigger call.
+     *
+     * Both writes are the conditional `reviewSave` (D8): the store itself refuses with `Rejected(NOT_UNDER_REVIEW)` if
+     * a concurrent commit already recovered it. A committed save bumps the controller's `writeSequence` (F2, D6). The
+     * diagnostics (`LOCK_SETTINGS_REVIEW_SAVED`, `LOCK_SETTING_PERSIST_FAILED(REVIEW_SAVE)`) are claimed and recorded by
+     * the controller (D7), fire and forget, so a diagnostics failure never fails a committed save.
+     *
+     * Single caller note: this request has NO production caller yet. The 1a ViewModel routes through it with S18-ii-h
+     * together with S20 (D1); until then it is dormant (a source-scan pin holds that).
+     */
+    suspend fun requestReviewSave(record: AppLockPrivacySettings): ReviewSaveResult {
+        if (applyRunning.get()) return ReviewSaveResult.ALREADY_IN_FLIGHT
+        if (!isReviewOpen()) return ReviewSaveResult.NOT_IN_REVIEW
+        val capability = readCapability()
+        if (record.appLockEnabled && capability != DeviceAuthCapability.AVAILABLE) return ReviewSaveResult.REJECTED_CAPABILITY
+        var noAuthUnderD3 = false
+        if (ReviewSaveAuthorisation.isWeakening(record)) {
+            if (controller.state.value !is AppLockState.Inert) return startReviewSavePrompt(record)
+            // D3: with nothing that can authenticate (neither AVAILABLE nor CHECK_FAILED) no authentication is possible.
+            if (capability == DeviceAuthCapability.AVAILABLE || capability == DeviceAuthCapability.CHECK_FAILED) {
+                return ReviewSaveResult.NOT_IN_ORIGIN
+            }
+            noAuthUnderD3 = true
+        }
+        return writeReviewSaveDirect(record, noAuthUnderD3)
+    }
+
+    /** True while the state is `UNLOCKED` or `INERT` and the controller's load state is persistently unreadable. */
+    private fun isReviewOpen(): Boolean {
+        val state = controller.state.value
+        return (state is AppLockState.Unlocked || state is AppLockState.Inert) && controller.isPersistentUnreadable
+    }
+
+    private fun startReviewSavePrompt(record: AppLockPrivacySettings): ReviewSaveResult =
+        when (
+            controller.startReviewSaveAttempt(
+                record,
+                OpenOriginSuccessHandler { attemptId, _ -> startReviewSaveApply(attemptId, record) }
+            )
+        ) {
+            is OpenOriginStartResult.Started -> ReviewSaveResult.STARTED
+            OpenOriginStartResult.AlreadyInFlight -> ReviewSaveResult.ALREADY_IN_FLIGHT
+            OpenOriginStartResult.NotInOrigin -> ReviewSaveResult.NOT_IN_ORIGIN
+        }
+
+    /**
+     * The no-prompt review-save write (steps 6 and 7). The re-checks and the write are one critical section.
+     *
+     * [noAuthUnderD3] is true when the direct path was taken BECAUSE of D3 (a weakening record from `INERT` with nothing
+     * that can authenticate). The decision was made outside the serializer, so it is re-proved inside it (INV-45): the
+     * state must still be `INERT` and a FRESH capability must still be neither `AVAILABLE` nor `CHECK_FAILED`, else
+     * [ReviewSaveResult.NOT_IN_ORIGIN] with nothing written (a weakening save may not skip the prompt once the state
+     * moved to `UNLOCKED` or authentication became possible). A lock-on record re-requires a fresh `AVAILABLE`
+     * capability, else [ReviewSaveResult.REJECTED_CAPABILITY].
+     */
+    private suspend fun writeReviewSaveDirect(record: AppLockPrivacySettings, noAuthUnderD3: Boolean): ReviewSaveResult =
+        writeSerializer.withExclusiveWrite {
+            if (applyRunning.get()) return@withExclusiveWrite ReviewSaveResult.ALREADY_IN_FLIGHT
+            if (!isReviewOpen()) return@withExclusiveWrite ReviewSaveResult.NOT_IN_REVIEW
+            if (noAuthUnderD3 || record.appLockEnabled) {
+                val fresh = readCapability()
+                if (noAuthUnderD3 &&
+                    (
+                        controller.state.value !is AppLockState.Inert ||
+                            fresh == DeviceAuthCapability.AVAILABLE ||
+                            fresh == DeviceAuthCapability.CHECK_FAILED
+                        )
+                ) {
+                    return@withExclusiveWrite ReviewSaveResult.NOT_IN_ORIGIN
+                }
+                if (record.appLockEnabled && fresh != DeviceAuthCapability.AVAILABLE) {
+                    return@withExclusiveWrite ReviewSaveResult.REJECTED_CAPABILITY
+                }
+            }
+            withContext(NonCancellable) {
+                val outcome = settleCancelledWrite(AppLockSettingField.REVIEW_SAVE, { it == record }) {
+                    writeReviewSave(record)
+                }
+                outcome.applyThenRethrow { result ->
+                    when (result) {
+                        is AppLockSettingsWriteResult.Committed -> {
+                            controller.onReviewSavedWithoutPrompt(result.settings, true)
+                            runReviewSaveTrigger(result.settings)
+                            ReviewSaveResult.COMMITTED
+                        }
+                        // D8: the store was already recovered by another commit; not a persist failure, nothing applied.
+                        is AppLockSettingsWriteResult.Rejected ->
+                            if (result.reason == AppLockWriteRejection.NOT_UNDER_REVIEW) {
+                                ReviewSaveResult.NOT_IN_REVIEW
+                            } else {
+                                controller.onReviewSavedWithoutPrompt(record, false)
+                                ReviewSaveResult.FAILED
+                            }
+                        is AppLockSettingsWriteResult.Failed -> {
+                            controller.onReviewSavedWithoutPrompt(record, false)
+                            ReviewSaveResult.FAILED
+                        }
+                    }
+                }
+            }
+        }
+
+    /** The T33 hand-off target of a weakening review-save. Its LAST (and only) statement starts the apply. */
+    private fun startReviewSaveApply(attemptId: Long, record: AppLockPrivacySettings) {
+        applyRunning.set(true) // before the launch; cleared in runReviewSaveApply's finally (F5)
+        var launched = false
+        try {
+            scope.launch(start = CoroutineStart.ATOMIC) { runReviewSaveApply(attemptId, record) }
+            launched = true
+        } finally {
+            // A launch that failed (a rejecting dispatcher) releases the flag; the throwable propagates unchanged.
+            if (!launched) applyRunning.set(false)
+        }
+    }
+
+    private suspend fun runReviewSaveApply(attemptId: Long, record: AppLockPrivacySettings) {
+        try {
+            withContext(NonCancellable) {
+                // No prompt is held inside the serializer (the prompt closed before this apply started).
+                writeSerializer.withExclusiveWrite {
+                    val outcome = settleCancelledWrite(AppLockSettingField.REVIEW_SAVE, { it == record }) {
+                        writeReviewSave(record)
+                    }
+                    // The state-move entry comes BEFORE the completion call (S17 binding). It applies T27 from its own
+                    // token, bound to attemptId; a wrong or reused id is a no-op.
+                    outcome.applyThenRethrow { result ->
+                        val committed = result as? AppLockSettingsWriteResult.Committed
+                        controller.onOpenOriginSettingApplied(attemptId, committed != null)
+                        if (committed != null) runReviewSaveTrigger(committed.settings)
+                    }
+                }
+            }
+        } finally {
+            try {
+                controller.onOpenOriginApplyCompleted(attemptId)
+            } finally {
+                applyRunning.set(false)
+            }
+        }
+    }
+
+    /**
+     * INV-13 after a committed review-save: the "before" is false (an unreadable store is not evidence that the
+     * notifications were already discreet, see [readEffectiveDiscreetBeforeWrite]), the "after" is the effective value
+     * of the committed record. The sweep is idempotent and only more private. The trigger isolates its own failures.
+     */
+    private suspend fun runReviewSaveTrigger(committed: AppLockPrivacySettings) {
+        discreetRepostTrigger.onCommittedWrite(
+            wasEffectiveDiscreet = false,
+            isEffectiveDiscreet = EffectivePrivacyValues.effectiveDiscreet(AppLockSettingsLoadState.Loaded(committed))
+        )
+    }
+
+    /** The conditional durable review-save. Any non-cancellation failure is a failed write (bounded: class name only). */
+    private suspend fun writeReviewSave(record: AppLockPrivacySettings): AppLockSettingsWriteResult =
+        try {
+            settingsRepository.reviewSave(record)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Timber.w("App-lock review-save write failed: class=%s", DiagnosticThrowableSummary.className(e))
+            AppLockSettingsWriteResult.Failed(AppLockSettingField.REVIEW_SAVE)
+        }
 
     private suspend fun writePlainSetting(field: AppLockSettingField, enabled: Boolean): PlainSettingResult {
         if (applyRunning.get()) return PlainSettingResult.ALREADY_IN_FLIGHT

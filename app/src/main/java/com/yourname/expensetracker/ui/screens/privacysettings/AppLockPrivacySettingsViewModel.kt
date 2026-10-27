@@ -272,7 +272,9 @@ class AppLockPrivacySettingsViewModel @Inject constructor(
             is AppLockSettingsWriteResult.Rejected -> {
                 // Reachable: the repository answers Rejected(UNREADABLE) when the read after a failed
                 // commit is transient. Nothing was written. Keep the error and the diagnostic, and
-                // re-read so the observer reports the true state.
+                // re-read so the observer reports the true state. Under D8 this branch now also covers a stale
+                // card (Rejected(NOT_UNDER_REVIEW): the store is no longer under review), which shows SAVE_FAILED
+                // and records PERSIST_FAILED(REVIEW_SAVE) too. This legacy 1a handling goes away with S18-ii-h.
                 notice.value = AppLockPrivacySectionNotice.SAVE_FAILED
                 recordPersistFailed(AppLockSettingField.REVIEW_SAVE)
                 resubscribeOnMain()

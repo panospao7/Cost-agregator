@@ -30,7 +30,15 @@ enum class AppLockWriteRejection {
      * S18 i-b2 (INV-48, AE-103): the stored lock flag is on, so `discreetNotifications` and `secureScreen` are forced and
      * their stored values are read-only. Nothing was written and no authentication is asked.
      */
-    FORCED
+    FORCED,
+
+    /**
+     * S18 ii-d (F4(a), D8): a review-save found, inside its store edit, that the stored state is NOT persistent-unreadable
+     * (`CORRUPTED` or `INVALID_VALUE`): it is `Loaded`, a first run, or transient-unreadable. A review-save is only the
+     * recovery of a persistently unreadable store (INV-44), so nothing was written. A stale review card (the store was
+     * recovered or changed since the card was shown) can therefore never overwrite a committed record.
+     */
+    NOT_UNDER_REVIEW
 }
 
 /**
@@ -75,6 +83,13 @@ interface AppLockSettingsRepository {
      * Review-save (INV-44): one atomic write that replaces the whole store with the complete [record]
      * and marker `NORMAL`. This is the only write that clears a `CORRUPTED` / `INVALID_VALUE` state, and
      * only on success. Authorisation (INV-45) is the caller's concern, not the store's.
+     *
+     * Conditional (S18 ii-d, F4(a), D8): the write happens ONLY if, inside the same store edit, the stored state is
+     * persistent-unreadable (`CORRUPTED` or `INVALID_VALUE`). A readable in-edit state (`Loaded`, first run) gives
+     * `Rejected(NOT_UNDER_REVIEW)` and nothing is written, so a lock commit that landed after the caller looked is
+     * never overwritten. On the real store a transient read failure (`IO_ERROR`) is not visible inside the edit: it
+     * gives `Rejected(UNREADABLE)` and nothing is written, not `NOT_UNDER_REVIEW`. An IO failure of the edit itself is
+     * `Failed(REVIEW_SAVE)` (AE-89).
      */
     suspend fun reviewSave(record: AppLockPrivacySettings): AppLockSettingsWriteResult
 

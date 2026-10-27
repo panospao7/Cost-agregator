@@ -417,6 +417,32 @@ class AppLockPrivacySettingsViewModelTest : ViewModelTestUtils() {
         }
 
     @Test
+    fun `a stale 1a review save on a no longer corrupted store is Rejected NOT_UNDER_REVIEW and shows SAVE_FAILED (S18 ii-d D8 parity)`() =
+        runTest(testDispatcher) {
+            // The card was rendered over CORRUPTED; another writer has since recovered the store, so the conditional
+            // repository write refuses with NOT_UNDER_REVIEW. The ViewModel shows the bounded error, records the
+            // REVIEW_SAVE persist failure, never reaches the sweep trigger and re-reads the true state.
+            val repository = FakeRepository(AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.CORRUPTED))
+            repository.reviewSaveResult = AppLockSettingsWriteResult.Rejected(AppLockWriteRejection.NOT_UNDER_REVIEW)
+            val viewModel = viewModel(repository)
+            advanceUntilIdle()
+
+            viewModel.setReviewDiscreetChoice(true)
+            viewModel.saveReview()
+            advanceUntilIdle()
+
+            assertEquals(listOf(on), repository.reviewSaves)
+            assertEquals(
+                AppLockPrivacySectionState.NeedsReview(true, false, AppLockPrivacySectionNotice.SAVE_FAILED),
+                viewModel.uiState.value
+            )
+            assertEquals("the true state is re-read", 2, repository.observeCalls)
+            coVerify { emitter.emit(PrivacyDiagnosticCode.LOCK_SETTING_PERSIST_FAILED, fieldIs(AppLockSettingField.REVIEW_SAVE)) }
+            coVerify(exactly = 0) { emitter.emit(PrivacyDiagnosticCode.LOCK_SETTINGS_REVIEW_SAVED) }
+            coVerify(exactly = 0) { repostTrigger.onCommittedWrite(any(), any()) }
+        }
+
+    @Test
     fun `unexpected exception during review save shows an error and records REVIEW_SAVE`() =
         runTest(testDispatcher) {
             val repository = FakeRepository(AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.CORRUPTED))

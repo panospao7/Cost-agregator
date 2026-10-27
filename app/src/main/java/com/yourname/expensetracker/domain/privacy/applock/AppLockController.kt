@@ -94,7 +94,9 @@ fun interface OpenOriginSuccessHandler {
  * [AppLockSettingsOperations]; S18 part (i-b1) adds the auto-lock timeout change (a longer timeout confirms through
  * CONFIRM_CHANGE, an equal or shorter one commits without a prompt). S18 part (ii-c) adds the [notice] flow (INV-51,
  * derived by [LockNoticeDerivation]) and the settings re-read (T28, T29, INV-47; [requestSettingsReread] and the
- * foreground re-read). `TODO(S18-ii-d)` and later mark the rest.
+ * foreground re-read). S18 part (ii-d) adds the review-save entries (T27, INV-45: [startReviewSaveAttempt],
+ * [onReviewSavedWithoutPrompt]); the controller owns `LOCK_SETTINGS_REVIEW_SAVED` and
+ * `LOCK_SETTING_PERSIST_FAILED(REVIEW_SAVE)` (D7).
  *
  * ## The held link (S17: T20, T21, T22, INV-30, INV-31, OD-7a)
  *
@@ -264,7 +266,9 @@ class AppLockController @Inject constructor(
         /** For ENABLE and CONFIRM_CHANGE: the closed prompt selector the attempt was started with. Null for UNLOCK. */
         val prompt: OpenOriginPrompt? = null,
         /** For a CHANGE attempt of a timeout change (S18 i-b1): the requested timeout, copied into the one-shot token. */
-        val requestedTimeout: AutoLockTimeout? = null
+        val requestedTimeout: AutoLockTimeout? = null,
+        /** For a CHANGE attempt of a weakening review-save (S18 ii-d): the record to write, copied into the one-shot token. */
+        val requestedRecord: AppLockPrivacySettings? = null
     ) : DeviceAuthCallback {
         /**
          * T32: the first `APP_BACKGROUNDED` during an open-origin attempt (monotonic). Bound to this attempt, so
@@ -350,6 +354,9 @@ class AppLockController @Inject constructor(
 
     /** S18 i-b1: the timeout of a timeout-change attempt, recorded with the token. The apply takes it from here. */
     private var pendingApplyTimeout: AutoLockTimeout? = null
+
+    /** S18 ii-d: the record of a weakening review-save attempt, recorded with the token. The T27 move takes it from here. */
+    private var pendingApplyRecord: AppLockPrivacySettings? = null
     private var pendingApplyForegroundSinceClose = false
     private val claimedDiagnosticCodes: MutableSet<PrivacyDiagnosticCode> =
         EnumSet.noneOf(PrivacyDiagnosticCode::class.java)
@@ -622,7 +629,7 @@ class AppLockController @Inject constructor(
      * with nothing written (T34).
      */
     fun startOpenOriginAttempt(prompt: OpenOriginPrompt, onSuccess: OpenOriginSuccessHandler): OpenOriginStartResult =
-        startOpenOriginAttemptWith(prompt, onSuccess, null)
+        startOpenOriginAttemptWith(prompt, onSuccess, null, null)
 
     /**
      * S18 i-b1: starts the CONFIRM_CHANGE attempt (CHANGE copy) of a LONGER auto-lock timeout. Same legality as
@@ -632,12 +639,25 @@ class AppLockController @Inject constructor(
      * timeout is longer than the committed one is the caller's check ([AppLockSettingsOperations]).
      */
     fun startTimeoutChangeAttempt(requestedTimeout: AutoLockTimeout, onSuccess: OpenOriginSuccessHandler): OpenOriginStartResult =
-        startOpenOriginAttemptWith(OpenOriginPrompt.CHANGE, onSuccess, requestedTimeout)
+        startOpenOriginAttemptWith(OpenOriginPrompt.CHANGE, onSuccess, requestedTimeout, null)
+
+    /**
+     * S18 ii-d (T27, INV-45): starts the CONFIRM_CHANGE attempt (CHANGE copy) of a WEAKENING review-save. Same
+     * legality as [startOpenOriginAttempt] (only from exactly `UNLOCKED`, one prompt at a time, the T33 gate refuses),
+     * and in addition only while the controller's load state is persistent-unreadable (`CORRUPTED` or `INVALID_VALUE`),
+     * checked under the monitor: otherwise [OpenOriginStartResult.NotInOrigin]. The [record] is kept in the attempt and,
+     * on a matching success, in the one-shot token; [onOpenOriginSettingApplied] applies THAT record's state move
+     * (lock off: `DISABLED`, lock on: `UNLOCKED`), never a caller argument. Whether the record is weakening is the
+     * caller's check ([AppLockSettingsOperations], via [ReviewSaveAuthorisation]).
+     */
+    fun startReviewSaveAttempt(record: AppLockPrivacySettings, onSuccess: OpenOriginSuccessHandler): OpenOriginStartResult =
+        startOpenOriginAttemptWith(OpenOriginPrompt.CHANGE, onSuccess, null, record)
 
     private fun startOpenOriginAttemptWith(
         prompt: OpenOriginPrompt,
         onSuccess: OpenOriginSuccessHandler,
-        requestedTimeout: AutoLockTimeout?
+        requestedTimeout: AutoLockTimeout?,
+        requestedRecord: AppLockPrivacySettings?
     ): OpenOriginStartResult {
         val purpose = prompt.purpose
         var opened: InFlightAttempt? = null
@@ -654,8 +674,12 @@ class AppLockController @Inject constructor(
             // F5: no new attempt while the previous open-origin success is still being applied (the T33 gate).
             // A lapsed gate is not cleared here, so a link still held is dropped as expired by the next release (F2).
             if (applyGateWithinBoundLocked(clock.elapsedRealtimeMillis())) return@transition OpenOriginStartResult.NotInOrigin
+            // S18 ii-d: a review-save attempt exists only while the settings need a review (INV-44, T27).
+            if (requestedRecord != null && !persistentUnreadableLocked()) return@transition OpenOriginStartResult.NotInOrigin
             val attemptId = ++lastIssuedAttemptId
-            val attempt = InFlightAttempt(attemptId, purpose, null, prompt.copy, onSuccess, prompt, requestedTimeout)
+            val attempt = InFlightAttempt(
+                attemptId, purpose, null, prompt.copy, onSuccess, prompt, requestedTimeout, requestedRecord
+            )
             inFlight = attempt // open BEFORE any authenticate call (S15 binding)
             setState(AppLockState.Authenticating(attemptId, purpose))
             opened = attempt
@@ -713,8 +737,11 @@ class AppLockController @Inject constructor(
      *   start resolves from the committed store.
      * - [OpenOriginPrompt.CHANGE] with a token timeout (S18 i-b1, a longer timeout): committed takes THAT timeout
      *   into the settings view, not committed records `LOCK_SETTING_PERSIST_FAILED(AUTO_LOCK_TIMEOUT)` (once per
-     *   process per (code, field)); the state never moves. A CHANGE with no token timeout changes nothing
-     *   (TODO(S18-ii-d): the review-save weakening prompt gives it a meaning).
+     *   process per (code, field)); the state never moves. A CHANGE with a token RECORD (S18 ii-d, a weakening
+     *   review-save) applies T27: committed takes the record as the settings view, drops any kept re-read snapshot,
+     *   bumps `writeSequence`, moves lock off to `DISABLED` and lock on to `UNLOCKED` (only from `UNLOCKED`/`INERT` with
+     *   no open attempt) and records `LOCK_SETTINGS_REVIEW_SAVED`; not committed moves nothing and records
+     *   `LOCK_SETTING_PERSIST_FAILED(REVIEW_SAVE)`. A CHANGE with neither changes nothing.
      *
      * The unlock-equivalent discard (T33: `promptBackgroundAt` and `lastBackgroundedAt`) was done by the close
      * that handed the success over and is not repeated here. The held link is not released here either: it waits
@@ -731,14 +758,78 @@ class AppLockController @Inject constructor(
             if (prompt == null || pendingApplyAttemptId != attemptId) return@transition null
             val foregroundSinceClose = pendingApplyForegroundSinceClose
             val tokenTimeout = pendingApplyTimeout
+            val tokenRecord = pendingApplyRecord
             pendingApplyAttemptId = null
             pendingApplyPrompt = null
             pendingApplyTimeout = null
+            pendingApplyRecord = null
             pendingApplyForegroundSinceClose = false
-            applyOpenOriginSettingLocked(prompt, committed, foregroundSinceClose, tokenTimeout)
+            applyOpenOriginSettingLocked(prompt, committed, foregroundSinceClose, tokenTimeout, tokenRecord)
         }
         record(diagnostic)
     }
+
+    /**
+     * S18 ii-d (T27, INV-45): the view, the state move and the diagnostics of a review-save that needed NO prompt (a
+     * non-weakening record, or a record saved while `INERT` where nothing can authenticate, D3). The caller
+     * ([AppLockSettingsOperations], the only production caller) wrote [saved] durably first, inside the shared write
+     * serializer; [committed] is true only for a durable commit.
+     *
+     * - Not committed: nothing changes (the sentinel is kept, the state stays) and
+     *   `LOCK_SETTING_PERSIST_FAILED(REVIEW_SAVE)` is recorded, once per process per (code, field).
+     * - Committed: `writeSequence` is bumped (F2, D6: a kept or in-flight re-read snapshot is dropped), a kept snapshot
+     *   is discarded, the record becomes the controller's settings view, `LOCK_SETTINGS_REVIEW_SAVED` is recorded once
+     *   per process, and the state moves per T27 only from `UNLOCKED` or `INERT` with no open attempt: lock off to
+     *   `DISABLED`, lock on to `UNLOCKED`. Any other state is not moved (fail closed; a `LOCKED` state stays `LOCKED`).
+     *   A weakening record (per [ReviewSaveAuthorisation]) does not move the state unless it is `INERT`: from `UNLOCKED`
+     *   it needs the prompt, so a caller's word alone never relaxes an unlocked lock (the commit is still taken).
+     *
+     * The state never moves before a commit (INV-46). The inert notice is derived from the new state and view, so it is
+     * gone with the move (AE-87).
+     */
+    fun onReviewSavedWithoutPrompt(saved: AppLockPrivacySettings, committed: Boolean) {
+        val diagnostic = transition {
+            if (!committed) return@transition claimPersistFailedLocked(AppLockSettingField.REVIEW_SAVE)
+            applyReviewSaveCommittedLocked(saved, direct = true)
+        }
+        record(diagnostic)
+    }
+
+    /**
+     * The committed half of a review-save, shared by the prompt path (via the token, [direct] false) and the no-prompt
+     * path ([direct] true). Must be called with [stateLock] held. Returns the `LOCK_SETTINGS_REVIEW_SAVED` diagnostic
+     * the first time.
+     *
+     * Reviewer-strict ISSUE-1 (fail closed): on the direct path the state moves on the caller's word, so a weakening
+     * record (lock off, or a longer timeout) never moves the state unless it is `INERT` (D3, where nothing can
+     * authenticate). A weakening record from `UNLOCKED` needs the prompt, whose token authorises the move. The commit
+     * itself is still taken (the store did commit): the sequence bump, the view and the diagnostic are unchanged.
+     */
+    private fun applyReviewSaveCommittedLocked(record: AppLockPrivacySettings, direct: Boolean): PendingDiagnostic? {
+        writeSequence++ // F2, D6: a settings write committed
+        keptReread = null
+        loadState = AppLockSettingsLoadState.Loaded(record)
+        val cur = current
+        val unauthorisedWeakening = direct && ReviewSaveAuthorisation.isWeakening(record) && cur !is AppLockState.Inert
+        if (!unauthorisedWeakening && inFlight == null && (cur is AppLockState.Unlocked || cur is AppLockState.Inert)) {
+            val next: AppLockState = if (record.appLockEnabled) AppLockState.Unlocked else AppLockState.Disabled
+            if (next != cur) setState(next)
+        }
+        return claim(PrivacyDiagnosticCode.LOCK_SETTINGS_REVIEW_SAVED)
+    }
+
+    /** True while the load state is `Unreadable` with a persistent cause (`CORRUPTED`, `INVALID_VALUE`). Under [stateLock]. */
+    private fun persistentUnreadableLocked(): Boolean {
+        val view = loadState
+        return view is AppLockSettingsLoadState.Unreadable && view.cause.isPersistent
+    }
+
+    /**
+     * S18 ii-d: whether the settings need a review right now (the load state is persistent-unreadable). For
+     * [AppLockSettingsOperations] only (a source-scan pin holds that); the state check is its own.
+     */
+    internal val isPersistentUnreadable: Boolean
+        get() = synchronized(stateLock) { persistentUnreadableLocked() }
 
     /**
      * S18 i-b1: the settings view and failure record of a timeout write that needed NO prompt (an equal or shorter
@@ -837,14 +928,25 @@ class AppLockController @Inject constructor(
         prompt: OpenOriginPrompt,
         committed: Boolean,
         foregroundSinceClose: Boolean,
-        tokenTimeout: AutoLockTimeout?
+        tokenTimeout: AutoLockTimeout?,
+        tokenRecord: AppLockPrivacySettings?
     ): PendingDiagnostic? {
         val enable = when (prompt) {
             OpenOriginPrompt.ENABLE -> true
             OpenOriginPrompt.DISABLE -> false
             OpenOriginPrompt.CHANGE -> {
+                // S18 ii-d (T27): a weakening review-save carries its record in the token. Committed: the shared T27 move
+                // (lock off to DISABLED, lock on to UNLOCKED) and LOCK_SETTINGS_REVIEW_SAVED; not committed: nothing moves
+                // and LOCK_SETTING_PERSIST_FAILED(REVIEW_SAVE) is claimed (the sentinel stays).
+                if (tokenRecord != null) {
+                    return if (committed) {
+                        applyReviewSaveCommittedLocked(tokenRecord, direct = false)
+                    } else {
+                        claimPersistFailedLocked(AppLockSettingField.REVIEW_SAVE)
+                    }
+                }
                 // S18 i-b1: a timeout change carries its value in the token; the state never moves (UNLOCKED stays).
-                // A CHANGE without a token timeout carries no other weakening kind (S18 i-b2): nothing to apply.
+                // A CHANGE with neither a token timeout nor a token record carries no other weakening kind: nothing to apply.
                 if (tokenTimeout == null) return null
                 if (!committed) return claimTimeoutPersistFailedLocked()
                 applyTimeoutToViewLocked(tokenTimeout)
@@ -890,7 +992,9 @@ class AppLockController @Inject constructor(
     // S18 i-b2 settled: the only weakening writes while the lock is on are the disable (T18) and a longer timeout (both
     // prompt-guarded); discreet and secure screen are FORCED while the lock is on (INV-48) and so refused, not prompted;
     // TECH-13 (INERT) is the Operations' refusal with no controller entry.
-    // TODO(S18-ii-d): review-save (T27).
+    // S18 ii-d settled: a weakening review-save confirms through the CHANGE prompt ([startReviewSaveAttempt]); a
+    // non-weakening one, or one saved while INERT with nothing to authenticate with (D3), needs no prompt
+    // ([onReviewSavedWithoutPrompt]).
 
     // --- Settings re-read (S18-ii-c: T28, T29, INV-47) ----------------------------------------------------------
 
@@ -1119,6 +1223,7 @@ class AppLockController @Inject constructor(
             pendingApplyAttemptId = null
             pendingApplyPrompt = null
             pendingApplyTimeout = null
+            pendingApplyRecord = null
             pendingApplyForegroundSinceClose = false
         }
     }
@@ -1512,6 +1617,7 @@ class AppLockController @Inject constructor(
                     pendingApplyAttemptId = attempt.attemptId
                     pendingApplyPrompt = attempt.prompt
                     pendingApplyTimeout = attempt.requestedTimeout
+                    pendingApplyRecord = attempt.requestedRecord
                     pendingApplyForegroundSinceClose = appInForeground
                     null
                 }

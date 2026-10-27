@@ -520,12 +520,19 @@ class AppLockControllerIllegalTransitionTest {
             // S18 (i-b2), exact addition: the closed field enum of onPlainSettingWritten. No text or platform detail.
             AppLockSettingField::class.java
         )
+        // S18 (ii-d), exact addition, allowed for these two methods only (like the committed flag below): the
+        // review-save record of startReviewSaveAttempt and onReviewSavedWithoutPrompt (T27). The record carries no text
+        // or platform detail, but its lock flag selects the T27 target state, so the direct entry guards it (ISSUE-1:
+        // a weakening record never moves a state other than INERT on the caller's word).
+        val reviewSaveRecordMethods = setOf("startReviewSaveAttempt", "onReviewSavedWithoutPrompt")
         // The committed flag is allowed for these three methods only (S18 i-a, i-b1's no-prompt timeout write, and
         // i-b2's plain-setting write, which also carries the written value as a Boolean).
         val committedFlagMethods = setOf(
             "onOpenOriginSettingApplied",
             "onTimeoutWrittenWithoutPrompt",
-            "onPlainSettingWritten"
+            "onPlainSettingWritten",
+            // S18 (ii-d), exact addition: the no-prompt review-save commit entry (T27).
+            "onReviewSavedWithoutPrompt"
         )
         // Only compiler-generated accessors (`access$...`, first parameter = the controller) are not API.
         // Any other synthetic method on the controller is unexpected and fails the test below.
@@ -538,7 +545,8 @@ class AppLockControllerIllegalTransitionTest {
             .filter { method ->
                 method.parameterTypes.any {
                     it !in allowedParameterTypes && !it.name.startsWith("kotlin.coroutines") &&
-                        !(it == Boolean::class.javaPrimitiveType && method.name in committedFlagMethods)
+                        !(it == Boolean::class.javaPrimitiveType && method.name in committedFlagMethods) &&
+                        !(it == AppLockPrivacySettings::class.java && method.name in reviewSaveRecordMethods)
                 }
             }
             .map { it.name }
@@ -584,7 +592,12 @@ class AppLockControllerIllegalTransitionTest {
                 // S18 (ii-c), exact additions: the notice flow (INV-51) and the settings re-read request (INV-47). The
                 // request has ZERO production callers (pinned below); the settings section's retry binds it later.
                 "getNotice",
-                "requestSettingsReread"
+                "requestSettingsReread",
+                // S18 (ii-d), exact additions: the CONFIRM_CHANGE start of a weakening review-save, and the view,
+                // state move and diagnostics of a review-save that needed no prompt. Both have exactly one production
+                // caller, AppLockSettingsOperations.kt.
+                "startReviewSaveAttempt",
+                "onReviewSavedWithoutPrompt"
             ),
             production
         )
@@ -705,10 +718,18 @@ class AppLockControllerIllegalTransitionTest {
             "onPlainSettingWritten",
             // S18 (ii-c), exact addition: the settings re-read request has ZERO production callers. The settings
             // section's retry (S20) allows exactly its own file as the one caller and extends this pin.
-            "requestSettingsReread"
+            "requestSettingsReread",
+            // S18 (ii-d), exact additions: the review-save start, the no-prompt review-save record and the internal
+            // persistent-unreadable accessor. Exactly one production caller each, the settings operations file.
+            "startReviewSaveAttempt",
+            "onReviewSavedWithoutPrompt",
+            "isPersistentUnreadable"
         )
-        // S18 (i-a, i-b1, i-b2): these seven have exactly one production caller, the settings operations file.
+        // S18 (i-a, i-b1, i-b2, ii-d): these ten have exactly one production caller, the settings operations file.
         val settingsOperationsOnly = setOf(
+            "startReviewSaveAttempt",
+            "onReviewSavedWithoutPrompt",
+            "isPersistentUnreadable",
             "startOpenOriginAttempt",
             "onOpenOriginApplyCompleted",
             "onEnableRefusedAtRequest",
@@ -754,7 +775,9 @@ class AppLockControllerIllegalTransitionTest {
             "requestTimeoutChange",
             // S18 (i-b2), exact additions.
             "requestDiscreetChange",
-            "requestSecureScreenChange"
+            "requestSecureScreenChange",
+            // S18 (ii-d), exact addition: dormant until the 1a ViewModel routes through it (S18-ii-h, with S20).
+            "requestReviewSave"
         )
         val offenders = locateProductionSourceRoots().flatMap { root ->
             root.walkTopDown()
@@ -810,21 +833,27 @@ class AppLockControllerIllegalTransitionTest {
     }
 
     @Test
-    fun `S18 i-a final gate F2 - reviewSave keeps its single production caller, the 1a privacy settings ViewModel`() {
-        // Pinned to the current single caller (1a review card). Moving it behind the controller (INV-45, S18-ii)
-        // changes this expectation deliberately.
-        assertSingleProductionCaller(
+    fun `S18 ii-d - reviewSave has exactly two production callers, the 1a privacy settings ViewModel and AppLockSettingsOperations`() {
+        // The 1a review card still calls it directly until S18-ii-h (with S20) routes it through requestReviewSave;
+        // that change reduces this set to AppLockSettingsOperations alone, deliberately.
+        assertProductionCallers(
             ".reviewSave(",
-            "com/yourname/expensetracker/ui/screens/privacysettings/AppLockPrivacySettingsViewModel.kt"
+            setOf(
+                "com/yourname/expensetracker/ui/screens/privacysettings/AppLockPrivacySettingsViewModel.kt",
+                "$APPLOCK_PACKAGE_PATH/AppLockSettingsOperations.kt"
+            )
         )
     }
 
-    private fun assertSingleProductionCaller(callSite: String, allowedRelativePath: String) {
+    private fun assertSingleProductionCaller(callSite: String, allowedRelativePath: String) =
+        assertProductionCallers(callSite, setOf(allowedRelativePath))
+
+    private fun assertProductionCallers(callSite: String, allowedRelativePaths: Set<String>) {
         val roots = locateProductionSourceRoots()
         val offenders = roots.flatMap { root ->
             root.walkTopDown()
                 .filter { it.isFile && (it.extension == "kt" || it.extension == "java") }
-                .filter { relativeToRoot(it, root) != allowedRelativePath }
+                .filter { relativeToRoot(it, root) !in allowedRelativePaths }
                 .filter { file ->
                     file.readLines()
                         .map { it.trim() }
@@ -834,17 +863,19 @@ class AppLockControllerIllegalTransitionTest {
                 .map { it.path }
                 .toList()
         }
-        assertEquals("callers of $callSite outside $allowedRelativePath", emptyList<String>(), offenders)
-        // The allowed file must really contain the call, so a moved or renamed caller fails the pin instead of
+        assertEquals("callers of $callSite outside $allowedRelativePaths", emptyList<String>(), offenders)
+        // Each allowed file must really contain the call, so a moved or renamed caller fails the pin instead of
         // silently leaving it vacuous.
-        val allowedCalls = roots.count { root ->
-            File(root, allowedRelativePath).let { f ->
-                f.isFile && f.readLines().map { it.trim() }
-                    .filterNot { it.startsWith("*") || it.startsWith("/*") || it.startsWith("//") }
-                    .any { it.contains(callSite) }
+        allowedRelativePaths.forEach { allowedRelativePath ->
+            val allowedCalls = roots.count { root ->
+                File(root, allowedRelativePath).let { f ->
+                    f.isFile && f.readLines().map { it.trim() }
+                        .filterNot { it.startsWith("*") || it.startsWith("/*") || it.startsWith("//") }
+                        .any { it.contains(callSite) }
+                }
             }
+            assertEquals("the allowed caller $allowedRelativePath of $callSite", 1, allowedCalls)
         }
-        assertEquals("the allowed caller of $callSite", 1, allowedCalls)
     }
 
     /** The file's path under its source root, with `/` separators on every platform. */

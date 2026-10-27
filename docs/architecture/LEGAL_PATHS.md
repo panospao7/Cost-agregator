@@ -1709,6 +1709,43 @@ WRITE 2 — review-save (1a; replaces a CORRUPTED / INVALID_VALUE store):
       cannot turn a committed save into a reported failure
   → on Committed → DiscreetRepostTrigger.onCommittedWrite(false, after), inside the same serializer /
     NonCancellable block; Failed, Rejected or thrown saves never reach it
+  → CONDITIONAL since S18 ii-d (F4(a), D8): reviewSave writes ONLY if, INSIDE the same store edit, the stored
+    state is persistent-unreadable (CORRUPTED or INVALID_VALUE). Loaded, a first run or a transient state gives
+    Rejected(NOT_UNDER_REVIEW) and nothing is written, so a stale 1a card can never overwrite a committed
+    record (the ViewModel shows SAVE_FAILED).
+
+WRITE 2b — review-save (1b, S18 ii-d; the controller-owned path, DORMANT: no production caller, the ViewModel
+still uses the 1a path above until S18-ii-h):
+  OWNER: AppLockSettingsOperations.requestReviewSave(record) (the only production caller of
+  AppLockController.startReviewSaveAttempt / onReviewSavedWithoutPrompt; the `.reviewSave(` callers are pinned
+  to exactly {AppLockPrivacySettingsViewModel, AppLockSettingsOperations}).
+  → ReviewSaveAuthorisation.classify(record): weakening = lock off, or a timeout longer than IMMEDIATE
+    (forced discreet and secure do not count)
+  → applyRunning check, review-open check (persistent-unreadable only), fresh capability read, then ONE of:
+      (a) weakening from UNLOCKED: CHANGE prompt (AppLockController.startReviewSaveAttempt; INV-54), the
+          one-shot T33 token carries the record, the apply runs in the shared AppLockSettingsWriteSerializer
+          under NonCancellable with the F7 re-read (settleCancelledWrite)
+      (b) D3: no authentication available in INERT → the direct write, no prompt. The D3 decision is made
+          outside the serializer, so it is re-proved INSIDE it before the write (INV-45): the state must still
+          be INERT and a fresh capability must be neither AVAILABLE nor CHECK_FAILED, else NOT_IN_ORIGIN with
+          nothing written
+      (c) direct (not a weakening): the direct write, no prompt; a lock-on record re-requires a fresh
+          AVAILABLE capability inside the serializer, else REJECTED_CAPABILITY with nothing written
+  → AppLockSettingsRepository.reviewSave(record): the CONDITIONAL write (D8) above, never a per-field write
+  → AppLockController.onOpenOriginSettingApplied (prompt path) / onReviewSavedWithoutPrompt (direct path):
+    the T27 entries; a commit moves the state only from UNLOCKED / INERT with no open attempt (fail closed
+    otherwise) and replaces the settings view with the committed record. Guard (ISSUE-1, fail closed): on the
+    DIRECT path a weakening record (ReviewSaveAuthorisation.isWeakening) moves the state only when it is INERT;
+    from UNLOCKED it never moves on the caller's word (the commit is still taken: sequence bump, view, diagnostic).
+    The PROMPT path is token-bound and unaffected. A non-commit (Failed, Rejected(UNREADABLE), throw; and on the
+    PROMPT path also Rejected(NOT_UNDER_REVIEW)) records LOCK_SETTING_PERSIST_FAILED(REVIEW_SAVE) once per
+    (code, field) and moves nothing;
+    LOCK_SETTINGS_REVIEW_SAVED is owned by the controller (once per process).
+    Asymmetry between the two paths (D8): on the DIRECT path a Rejected(NOT_UNDER_REVIEW) returns
+    NOT_IN_REVIEW with no record and no controller call; only the PROMPT path records
+    PERSIST_FAILED(REVIEW_SAVE), via onOpenOriginSettingApplied(id, false)
+  → on Committed → DiscreetRepostTrigger.onCommittedWrite(false, effective after), inside the serializer; the
+    completion (onOpenOriginApplyCompleted) runs in a finally
 
 WRITE 3 — lock flag (S18 part (i-a), DORMANT: implemented and tested, no production caller):
   OWNER: AppLockSettingsOperations (domain/privacy/applock, @Singleton, @ApplicationScope). The only
@@ -1733,19 +1770,20 @@ WRITE 3 — lock flag (S18 part (i-a), DORMANT: implemented and tested, no produ
   DORMANT / NOT LEGAL TO WIRE until ALL of these BLOCKING items are closed:
     F3: CLOSED by S18-ii-b (adopted resolver form, actionPolicy != UNCHANGED; see the plan amendment
         "S18-ii-b accepted deviation"; the API 26/30 device re-run stays with G1b);
-    F4: serializer part CLOSED (S18-ii-a); F4(a) review-save in-edit guard (D8) remains BLOCKING for wiring
-        (S18-ii-d) (the domain-owned serializer is shared with the ViewModel and covers the WRITE 3,
-        WRITE 4 and WRITE 5 paths);
+    F4: CLOSED: serializer part (S18-ii-a) and F4(a) review-save in-edit guard (D8) (S18-ii-d: reviewSave is
+        conditional inside the store edit, Rejected(NOT_UNDER_REVIEW)) (the domain-owned serializer is shared
+        with the ViewModel and covers the WRITE 3, WRITE 4, WRITE 5 and WRITE 2b paths);
     F7: CLOSED by S18 ii-a (a store re-read after a cancelled NonCancellable write on WRITE 3, both WRITE 4
         paths and WRITE 5; loaded + equal = committed path, otherwise not committed: no move, failure recorded
         once, no trigger; the CancellationException is rethrown and the completion finally still runs);
     finding 8: setAppLockEnabled, setAutoLockTimeout, setAutoLockTimeoutIfNotWeakening,
         setDiscreetNotificationsIfNotForced and setSecureScreenIfNotForced become abstract (their
         fail-closed default bodies go);
-    INV-45 (final gate finding 1): the review record starts from F for every 1b field (the timeout
-        included: IMMEDIATE) and goes through the controller's auth/capability check (plan :1494) before
-        any wiring. Today the 1a review card writes lock=false with no authentication
-        (AppLockPrivacySettingsViewModel.kt:195/:200);
+    INV-45: ViewModel routing (S18-ii-h, merges with S20). The controller-side review authorisation is
+        CLOSED by S18-ii-d (WRITE 2b: classify, prompt for a weakening, D3, conditional write); what remains is
+        routing the review card through AppLockSettingsOperations.requestReviewSave, with the record starting
+        from F for every 1b field (the timeout included: IMMEDIATE). Today the 1a review card still writes
+        lock=false with no authentication (AppLockPrivacySettingsViewModel.kt:195/:200);
     WRITE 5 routing (S18 i-b2): the 1a ViewModel's discreet and secure-screen writes are routed through
         WRITE 5 (requestDiscreetChange / requestSecureScreenChange), so the 1a setDiscreetNotifications
         path (no FORCED check) can never write a forced value while the lock is on.
@@ -1813,15 +1851,15 @@ production caller):
   sites), or make setDiscreetNotifications forced-aware.
 
 SERIALISATION (domain-owned since S18 ii-a, F4 serializer part CLOSED (S18-ii-a); F4(a) review-save in-edit
-guard (D8) remains BLOCKING for wiring (S18-ii-d)): AppLockSettingsWriteSerializer (@Singleton,
+guard (D8) CLOSED (S18-ii-d)): AppLockSettingsWriteSerializer (@Singleton,
 domain/privacy/applock, a process-wide non-reentrant Mutex, withExclusiveWrite) so a write started by an
 earlier ViewModel instance still excludes the next one's before-read / write / sweep. ONE instance is shared
 by the ViewModel's WRITE 1 and WRITE 2 wrappers and by every AppLockSettingsOperations path (WRITE 3 lock
 apply, WRITE 4 timeout apply and direct timeout write, WRITE 5 plain writes): the pre-read, the durable
 write, the controller entry and the trigger are one critical section, and no prompt is held inside it.
 Nothing called inside it may re-enter it (the ViewModel wrappers never call Operations; Operations never
-calls the ViewModel). The former Operations-private directWriteMutex is gone. Review-save diagnostics
-ownership and the store-level D8 guard remain with S18 ii-d.
+calls the ViewModel). The former Operations-private directWriteMutex is gone. The store-level D8 guard and
+the controller-side review-save diagnostics ownership (WRITE 2b) landed in S18 ii-d.
 
 FORBIDDEN:
   ❌ Writing the settings store anywhere but AppLockSettingsRepositoryImpl

@@ -233,11 +233,19 @@ class AppLockSettingsRepositoryImpl @VisibleForTesting internal constructor(
         }
     }
 
-    override suspend fun reviewSave(record: AppLockPrivacySettings): AppLockSettingsWriteResult =
-        try {
+    override suspend fun reviewSave(record: AppLockPrivacySettings): AppLockSettingsWriteResult {
+        // Set inside the edit, read after it: the check and the write are ONE atomic store edit (S18 ii-d, F4(a), D8).
+        var notUnderReview = false
+        return try {
             // One atomic replace of the whole store: every field explicit, marker NORMAL. The
             // sentinel is cleared only if this commit succeeds (INV-44).
             val after = store.edit { prefs ->
+                notUnderReview = false
+                val stored = prefs.toLoadState()
+                if (stored !is AppLockSettingsLoadState.Unreadable || !stored.cause.isPersistent) {
+                    notUnderReview = true
+                    return@edit
+                }
                 prefs.clear()
                 prefs[Keys.DISCREET_NOTIFICATIONS] = record.discreetNotifications
                 prefs[Keys.APP_LOCK_ENABLED] = record.appLockEnabled
@@ -245,11 +253,16 @@ class AppLockSettingsRepositoryImpl @VisibleForTesting internal constructor(
                 prefs[Keys.SECURE_SCREEN] = record.secureScreen
                 prefs[LOAD_STATE_KEY] = LOAD_STATE_NORMAL
             }
-            val committed = (after.toLoadState() as? AppLockSettingsLoadState.Loaded)?.settings ?: record
-            AppLockSettingsWriteResult.Committed(committed)
+            if (notUnderReview) {
+                AppLockSettingsWriteResult.Rejected(AppLockWriteRejection.NOT_UNDER_REVIEW)
+            } else {
+                val committed = (after.toLoadState() as? AppLockSettingsLoadState.Loaded)?.settings ?: record
+                AppLockSettingsWriteResult.Committed(committed)
+            }
         } catch (e: IOException) {
             writeFailure(e, AppLockSettingField.REVIEW_SAVE, rejectOnPersistentUnreadable = false)
         }
+    }
 
     /**
      * Classifies an IO failure of a write. If the store cannot be read at all, the write is a

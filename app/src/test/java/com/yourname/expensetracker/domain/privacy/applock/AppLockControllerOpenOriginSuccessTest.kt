@@ -5,6 +5,7 @@ import com.yourname.expensetracker.domain.privacy.deeplink.DeepLinkRequest
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -221,5 +222,175 @@ class AppLockControllerOpenOriginSuccessTest {
             }
         }
         assertEquals(listOf(PrivacyDiagnosticCode.LOCK_ENABLED), rig.h.emitted)
+    }
+
+    // --- S18 ii-d: the review-save (T27) through the same T33 hand-off --------------------------------------------
+
+    /** `UNLOCKED` over a CORRUPTED store (a review is open), setup prompts and diagnostics cleared. */
+    private fun reviewRig(deferred: Boolean = false): SettingsOperationsRig {
+        val h = AppLockControllerHarness(AppLockTestSettings.unreadable(SettingsUnreadableCause.CORRUPTED))
+        val controller = h.resolvedController()
+        h.unlock(controller)
+        controller.onAppForegrounded()
+        assertEquals(AppLockState.Unlocked, controller.state.value)
+        h.authenticator.calls.clear()
+        h.emitted.clear()
+        h.emittedMetadata.clear()
+        return SettingsOperationsRig(h, controller, deferred)
+    }
+
+    private val weakeningOff = AppLockPrivacySettings(appLockEnabled = false, autoLockTimeout = AutoLockTimeout.M1)
+    private val lockOnLonger = AppLockPrivacySettings(appLockEnabled = true, autoLockTimeout = AutoLockTimeout.M5)
+
+    private fun startReview(rig: SettingsOperationsRig, record: AppLockPrivacySettings) {
+        assertEquals(ReviewSaveResult.STARTED, runBlocking { rig.ops.requestReviewSave(record) })
+        rig.h.settle()
+    }
+
+    @Test
+    fun `review-save the hand-off handler returns before the apply runs, and the origin state is visible until it does`() {
+        val rig = reviewRig(deferred = true)
+        startReview(rig, weakeningOff)
+
+        rig.h.authenticator.deliver(DeviceAuthOutcome.Succeeded)
+
+        // The handler only started the apply: nothing was written, the state is the closed origin.
+        assertEquals(AppLockState.Unlocked, rig.controller.state.value)
+        assertTrue(rig.h.repository.reviewSaves.isEmpty())
+        assertNull(rig.controller.inFlightAttemptId)
+
+        rig.h.settle()
+
+        assertEquals(listOf(weakeningOff), rig.h.repository.reviewSaves)
+        assertEquals(AppLockState.Disabled, rig.controller.state.value)
+        assertTrue(rig.uncaught.isEmpty())
+    }
+
+    @Test
+    fun `review-save AE-117 an OEM stop during the prompt - success before APP_FOREGROUNDED gives the saved state and no timeout lock`() {
+        for ((record, expected) in listOf(weakeningOff to AppLockState.Disabled, lockOnLonger to AppLockState.Unlocked)) {
+            val rig = reviewRig()
+            startReview(rig, record)
+            rig.controller.onAppBackgrounded() // the credential UI stops the host at t=0 (recorded as the prompt background)
+            rig.h.clock.advance(20_000L)
+
+            rig.h.authenticator.deliver(DeviceAuthOutcome.Succeeded)
+            rig.controller.onAppForegrounded()
+
+            assertEquals("$record", expected, rig.controller.state.value)
+            assertFalse("$record", rig.h.emitted.contains(PrivacyDiagnosticCode.LOCK_SHOWN_TIMEOUT))
+            assertNull("$record", rig.controller.pendingBackgroundAtMillis)
+            assertNull("$record", rig.controller.promptBackgroundAtMillis)
+            assertEquals("$record", listOf(record), rig.h.repository.reviewSaves)
+        }
+    }
+
+    @Test
+    fun `review-save AE-117 an OEM stop during the prompt - APP_FOREGROUNDED before the success gives the saved state and no timeout lock`() {
+        for ((record, expected) in listOf(weakeningOff to AppLockState.Disabled, lockOnLonger to AppLockState.Unlocked)) {
+            val rig = reviewRig()
+            startReview(rig, record)
+            rig.controller.onAppBackgrounded()
+            rig.h.clock.advance(20_000L)
+            rig.controller.onAppForegrounded() // no evaluation while the prompt is in flight (T32)
+
+            rig.h.authenticator.deliver(DeviceAuthOutcome.Succeeded)
+
+            assertEquals("$record", expected, rig.controller.state.value)
+            assertFalse("$record", rig.h.emitted.contains(PrivacyDiagnosticCode.LOCK_SHOWN_TIMEOUT))
+            assertNull("$record", rig.controller.pendingBackgroundAtMillis)
+            // A later foreground does not find a leftover background either.
+            rig.controller.onAppForegrounded()
+            assertEquals("$record", expected, rig.controller.state.value)
+        }
+    }
+
+    @Test
+    fun `review-save a held link waits for the apply and is released after the completion, also when the write failed`() {
+        for (failWrite in listOf(false, true)) {
+            val rig = reviewRig(deferred = true)
+            if (failWrite) {
+                rig.h.repository.reviewSaveResult = { AppLockSettingsWriteResult.Failed(AppLockSettingField.REVIEW_SAVE) }
+            }
+            startReview(rig, weakeningOff)
+            assertEquals("$failWrite", LinkDecision.HOLD, rig.controller.onLockQuery(home))
+
+            rig.h.authenticator.deliver(DeviceAuthOutcome.Succeeded)
+            // The gate is open: the apply has not completed, so nothing is released.
+            assertEquals("$failWrite", HeldLinkRelease.None, rig.controller.releaseHeldLink())
+            assertTrue(
+                "$failWrite: a new attempt is refused while the apply is open",
+                rig.controller.startOpenOriginAttempt(OpenOriginPrompt.DISABLE, RecordingSuccessHandler()) == OpenOriginStartResult.NotInOrigin
+            )
+
+            rig.h.settle()
+
+            val expectedState = if (failWrite) AppLockState.Unlocked else AppLockState.Disabled
+            assertEquals("$failWrite", expectedState, rig.controller.state.value)
+            val released = rig.controller.releaseHeldLink()
+            assertTrue("$failWrite: $released", released is HeldLinkRelease.Apply)
+            assertEquals("$failWrite", home, (released as HeldLinkRelease.Apply).request)
+            assertEquals("$failWrite", HeldLinkRelease.None, rig.controller.releaseHeldLink())
+            // The completion closed the gate: the origin is available again.
+            val probe = if (failWrite) OpenOriginPrompt.DISABLE else OpenOriginPrompt.ENABLE
+            assertTrue("$failWrite", rig.controller.startOpenOriginAttempt(probe, RecordingSuccessHandler()) is OpenOriginStartResult.Started)
+        }
+    }
+
+    @Test
+    fun `review-save the repost trigger runs once after the commit and the completion releases the apply flag`() {
+        val rig = reviewRig()
+        startReview(rig, weakeningOff.copy(discreetNotifications = true))
+
+        rig.h.authenticator.deliver(DeviceAuthOutcome.Succeeded)
+
+        assertEquals(listOf(false to true), rig.triggerCalls)
+        assertEquals(AppLockState.Disabled, rig.controller.state.value)
+        // The apply flag is cleared: a request is answered by the state check, not ALREADY_IN_FLIGHT.
+        assertEquals(ReviewSaveResult.NOT_IN_REVIEW, runBlocking { rig.ops.requestReviewSave(weakeningOff) })
+    }
+
+    // --- The prompt copy of each purpose ------------------------------------------------------------------------
+
+    @Test
+    fun `the prompt copy table - ENABLE gives ENABLE, T18 gives DISABLE, a longer timeout or a weakening review-save gives CHANGE`() {
+        val enable = disabledRig()
+        assertEquals(SettingsRequestResult.STARTED, enable.ops.requestEnable())
+        enable.h.settle()
+        assertEquals(AuthPromptCopy.ENABLE, enable.h.authenticator.calls.single().copy)
+
+        val (disableHarness, disableController) = unlockedControllerFor(AutoLockTimeout.M1)
+        val disable = SettingsOperationsRig(disableHarness, disableController)
+        disableHarness.authenticator.calls.clear()
+        assertEquals(SettingsRequestResult.STARTED, disable.ops.requestDisable())
+        disableHarness.settle()
+        assertEquals(AuthPromptCopy.DISABLE, disableHarness.authenticator.calls.single().copy)
+
+        val (timeoutHarness, timeoutController) = unlockedControllerFor(AutoLockTimeout.M1)
+        val timeout = SettingsOperationsRig(timeoutHarness, timeoutController)
+        timeoutHarness.authenticator.calls.clear()
+        assertEquals(TimeoutChangeResult.STARTED, runBlocking { timeout.ops.requestTimeoutChange(AutoLockTimeout.M5) })
+        timeoutHarness.settle()
+        assertEquals(AuthPromptCopy.CHANGE, timeoutHarness.authenticator.calls.single().copy)
+
+        for (record in listOf(weakeningOff, lockOnLonger)) {
+            val review = reviewRig()
+            startReview(review, record)
+            assertEquals("$record", AuthPromptCopy.CHANGE, review.h.authenticator.calls.single().copy)
+        }
+    }
+
+    @Test
+    fun `a review-save that is not weakening starts no prompt at all`() {
+        val rig = reviewRig()
+
+        val result = runBlocking {
+            rig.ops.requestReviewSave(AppLockPrivacySettings(appLockEnabled = true, autoLockTimeout = AutoLockTimeout.IMMEDIATE))
+        }
+        rig.h.settle()
+
+        assertEquals(ReviewSaveResult.COMMITTED, result)
+        assertTrue(rig.h.authenticator.calls.isEmpty())
+        assertNull(rig.controller.inFlightAttemptId)
     }
 }

@@ -426,6 +426,17 @@ class AppLockSettingsRepositoryImplTest {
     private val timeoutKey = stringPreferencesKey("auto_lock_timeout")
     private val secureKey = booleanPreferencesKey("secure_screen")
 
+    /**
+     * S18 ii-d (D8): a review-save only writes over a persistent-unreadable store. This helper puts the real store into
+     * CORRUPTED first (an existing record is kept underneath; review-save replaces the whole store), then commits the
+     * record through the production review-save, so a test that needs a committed 1b record keeps doing exactly that.
+     */
+    private suspend fun commitViaReview(record: AppLockPrivacySettings) {
+        real.edit { it[markerKey] = "CORRUPTED" }
+        val result = repository.reviewSave(record)
+        assertEquals(AppLockSettingsWriteResult.Committed(record), result)
+    }
+
     @Test
     fun absent_1b_keys_with_other_keys_present_take_their_defaults_without_resetting_the_store() = runBlocking {
         // A 1a-era store (discreet only) opened by a 1b build must keep its value and default the rest.
@@ -608,7 +619,7 @@ class AppLockSettingsRepositoryImplTest {
             autoLockTimeout = AutoLockTimeout.S30,
             secureScreen = true
         )
-        repository.reviewSave(record)
+        commitViaReview(record)
 
         val result = repository.setDiscreetNotifications(true)
 
@@ -623,6 +634,7 @@ class AppLockSettingsRepositoryImplTest {
             autoLockTimeout = AutoLockTimeout.IMMEDIATE,
             secureScreen = true
         )
+        real.edit { it[markerKey] = "CORRUPTED" }   // S18 ii-d (D8): review-save needs a persistent-unreadable store
 
         val result = repository.reviewSave(record)
 
@@ -662,7 +674,7 @@ class AppLockSettingsRepositoryImplTest {
     @Test
     fun reviewSave_write_failure_keeps_a_committed_1b_record() = runBlocking {
         val committed = AppLockPrivacySettings(appLockEnabled = true, autoLockTimeout = AutoLockTimeout.M5)
-        repository.reviewSave(committed)
+        commitViaReview(committed)
         faulty.failWrite = IOException("disk full")
 
         val result = repository.reviewSave(AppLockPrivacySettings())
@@ -670,6 +682,180 @@ class AppLockSettingsRepositoryImplTest {
         assertEquals(AppLockSettingsWriteResult.Failed(AppLockSettingField.REVIEW_SAVE), result)
         faulty.failWrite = null
         assertEquals(AppLockSettingsLoadState.Loaded(committed), repository.getLoadState())
+    }
+
+    // ---------------------------------------------------------------------------------
+    // S18 ii-d (F4(a), D8): review-save is conditional on a persistent-unreadable store (INV-44)
+    // ---------------------------------------------------------------------------------
+
+    @Test
+    fun reviewSave_over_a_loaded_store_is_rejected_not_under_review_and_writes_nothing() = runBlocking {
+        val committed = AppLockPrivacySettings(
+            discreetNotifications = true,
+            appLockEnabled = true,
+            autoLockTimeout = AutoLockTimeout.M5,
+            secureScreen = true
+        )
+        commitViaReview(committed)
+        val before = real.data.first().asMap()
+
+        val result = repository.reviewSave(AppLockPrivacySettings())   // would be a full weakening if it wrote
+
+        assertEquals(AppLockSettingsWriteResult.Rejected(AppLockWriteRejection.NOT_UNDER_REVIEW), result)
+        assertEquals("the committed record is not touched", before, real.data.first().asMap())
+        assertEquals(AppLockSettingsLoadState.Loaded(committed), repository.getLoadState())
+    }
+
+    @Test
+    fun reviewSave_over_a_first_run_default_store_is_rejected_not_under_review_and_writes_nothing() = runBlocking {
+        assertEquals(
+            AppLockSettingsLoadState.FirstRunDefault(AppLockPrivacySettings.DEFAULTS),
+            repository.getLoadState()
+        )
+
+        val result = repository.reviewSave(AppLockPrivacySettings(appLockEnabled = true))
+
+        assertEquals(AppLockSettingsWriteResult.Rejected(AppLockWriteRejection.NOT_UNDER_REVIEW), result)
+        assertTrue("nothing is written: the store is still empty", real.data.first().asMap().isEmpty())
+        assertEquals(
+            AppLockSettingsLoadState.FirstRunDefault(AppLockPrivacySettings.DEFAULTS),
+            repository.getLoadState()
+        )
+    }
+
+    @Test
+    fun reviewSave_with_a_transient_io_error_store_is_rejected_and_writes_nothing() = runBlocking {
+        // A transient IO_ERROR cannot be observed INSIDE the edit transform (the transform only ever sees data that
+        // was read), so the transient case is a read failure that also fails the edit. The refusal comes from the
+        // IO-failure mapping (UNREADABLE for a non-persistent cause), never Committed and never Failed(REVIEW_SAVE).
+        commitViaReview(AppLockPrivacySettings(appLockEnabled = true, autoLockTimeout = AutoLockTimeout.M5))
+        val before = real.data.first().asMap()
+        faulty.failRead = IOException("disk")
+        faulty.failWrite = IOException("disk")
+
+        val result = repository.reviewSave(AppLockPrivacySettings())
+
+        faulty.failRead = null
+        faulty.failWrite = null
+        assertEquals(AppLockSettingsWriteResult.Rejected(AppLockWriteRejection.UNREADABLE), result)
+        assertEquals("nothing is written", before, real.data.first().asMap())
+    }
+
+    @Test
+    fun reviewSave_with_a_failing_read_but_a_loaded_store_in_the_edit_is_rejected_not_under_review() = runBlocking {
+        val committed = AppLockPrivacySettings(appLockEnabled = true)
+        commitViaReview(committed)
+        val before = real.data.first().asMap()
+        faulty.failRead = IOException("disk")   // reads fail, the edit itself still runs over the real data
+
+        val result = repository.reviewSave(AppLockPrivacySettings())
+
+        faulty.failRead = null
+        assertEquals(AppLockSettingsWriteResult.Rejected(AppLockWriteRejection.NOT_UNDER_REVIEW), result)
+        assertEquals(before, real.data.first().asMap())
+    }
+
+    @Test
+    fun reviewSave_over_each_persistent_unreadable_cause_commits_the_full_record_and_marker() = runBlocking {
+        val record = AppLockPrivacySettings(
+            discreetNotifications = true,
+            appLockEnabled = true,
+            autoLockTimeout = AutoLockTimeout.M5,
+            secureScreen = true
+        )
+        val expected = mapOf(
+            "_app_lock_load_state" to "NORMAL",
+            "discreet_notifications" to true,
+            "app_lock_enabled" to true,
+            "auto_lock_timeout" to "M5",
+            "secure_screen" to true
+        )
+        val names = listOf("CORRUPTED", "INVALID_VALUE unknown marker", "INVALID_VALUE bare invalid lock flag")
+        for (name in names) {
+            real.edit { prefs ->
+                prefs.clear()
+                when (name) {
+                    "CORRUPTED" -> {
+                        prefs[markerKey] = "CORRUPTED"
+                        prefs[booleanPreferencesKey("stale")] = true
+                    }
+                    "INVALID_VALUE unknown marker" -> {
+                        prefs[markerKey] = "BOGUS"
+                        prefs[discreetKey] = false
+                    }
+                    else -> prefs[stringPreferencesKey("app_lock_enabled")] = "yes"
+                }
+            }
+            val causeBefore = repository.getLoadState()
+            assertTrue("$name is persistent-unreadable before", causeBefore is AppLockSettingsLoadState.Unreadable)
+
+            val result = repository.reviewSave(record)
+
+            assertEquals(name, AppLockSettingsWriteResult.Committed(record), result)
+            assertEquals(name, expected, real.data.first().asMap().mapKeys { it.key.name })
+            assertEquals(name, AppLockSettingsLoadState.Loaded(record), repository.getLoadState())
+        }
+    }
+
+    @Test
+    fun reviewSave_a_second_stale_save_after_the_recovery_is_rejected_and_keeps_the_first_record() = runBlocking {
+        real.edit { it[markerKey] = "CORRUPTED" }
+        val first = AppLockPrivacySettings(appLockEnabled = true, autoLockTimeout = AutoLockTimeout.M5)
+        assertEquals(AppLockSettingsWriteResult.Committed(first), repository.reviewSave(first))
+
+        val stale = repository.reviewSave(AppLockPrivacySettings())
+
+        assertEquals(AppLockSettingsWriteResult.Rejected(AppLockWriteRejection.NOT_UNDER_REVIEW), stale)
+        assertEquals(AppLockSettingsLoadState.Loaded(first), repository.getLoadState())
+    }
+
+    /**
+     * S18 ii-d D8 race: the review-save check must read INSIDE the same edit transform as the write (pattern of S18
+     * i-b2 ISSUE-3, [forcedAware_check_reads_inside_the_same_edit_as_a_concurrent_lock_commit]).
+     *
+     * Construction: a lock write (setAppLockEnabled) over a CORRUPTED store is refused (INV-44), so it cannot be the
+     * concurrent writer. The closest legal writer that turns the in-edit state readable is another review-save (a
+     * second review card). The store is seeded CORRUPTED; review-save A (lock on, timeout M5) is held open inside its
+     * edit by the [GatedStore]; review-save B (all defaults, lock off) is issued and queues behind it. While A is held
+     * a plain read still sees CORRUPTED, which is exactly what a check done BEFORE the edit would see (and would then
+     * overwrite A). On release A commits first; B's transform must then see Loaded and reject NOT_UNDER_REVIEW, leaving
+     * the lock key that A wrote ON.
+     */
+    @Test
+    fun reviewSave_check_reads_inside_the_same_edit_as_a_concurrent_review_save() = runBlocking {
+        real.edit { it[markerKey] = "CORRUPTED" }
+        val gated = GatedStore(real)
+        val gatedRepository = AppLockSettingsRepositoryImpl(gated)
+        val recordA = AppLockPrivacySettings(appLockEnabled = true, autoLockTimeout = AutoLockTimeout.M5)
+        try {
+            val saveA = async { gatedRepository.reviewSave(recordA) }
+            withTimeout(GATE_TIMEOUT_MS) { gated.heldEntered.await() }   // A is open at its transform
+
+            val saveB = async { gatedRepository.reviewSave(AppLockPrivacySettings()) }
+            withTimeout(GATE_TIMEOUT_MS) { gated.secondCalled.await() }  // B has been issued
+            assertFalse("B must not complete while A is held", saveB.isCompleted)
+            assertEquals(
+                "a pre-edit read still sees the store as corrupted",
+                AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.CORRUPTED),
+                gatedRepository.getLoadState()
+            )
+
+            gated.gate.complete(Unit)
+            val resultA = withTimeout(GATE_TIMEOUT_MS) { saveA.await() }
+            val resultB = withTimeout(GATE_TIMEOUT_MS) { saveB.await() }
+
+            assertEquals(AppLockSettingsWriteResult.Committed(recordA), resultA)
+            assertEquals(
+                "B sees the recovered store inside its own edit",
+                AppLockSettingsWriteResult.Rejected(AppLockWriteRejection.NOT_UNDER_REVIEW),
+                resultB
+            )
+            assertEquals("the lock key written by A is unchanged by B", true, real.data.first()[lockKey])
+            assertEquals("M5", real.data.first()[timeoutKey])
+            assertEquals(AppLockSettingsLoadState.Loaded(recordA), gatedRepository.getLoadState())
+        } finally {
+            gated.gate.complete(Unit)   // a failed assertion must fail fast, never hang runBlocking
+        }
     }
 
     // ---------------------------------------------------------------------------------
@@ -744,7 +930,7 @@ class AppLockSettingsRepositoryImplTest {
             autoLockTimeout = AutoLockTimeout.M15,
             secureScreen = true
         )
-        repository.reviewSave(record)
+        commitViaReview(record)
 
         val result = repository.setAppLockEnabled(true)
 
@@ -961,7 +1147,7 @@ class AppLockSettingsRepositoryImplTest {
             autoLockTimeout = AutoLockTimeout.M1,
             secureScreen = false
         )
-        repository.reviewSave(record)
+        commitViaReview(record)
 
         val result = repository.setAutoLockTimeout(AutoLockTimeout.M15)
 
@@ -1112,7 +1298,7 @@ class AppLockSettingsRepositoryImplTest {
 
     private suspend fun seedRecord(lockEnabled: Boolean, timeout: AutoLockTimeout): AppLockPrivacySettings {
         val record = AppLockPrivacySettings(appLockEnabled = lockEnabled, autoLockTimeout = timeout)
-        repository.reviewSave(record)
+        commitViaReview(record)
         return record
     }
 
@@ -1360,7 +1546,7 @@ class AppLockSettingsRepositoryImplTest {
     @Test
     fun forcedAware_check_reads_inside_the_same_edit_as_a_concurrent_lock_commit() = runBlocking {
         for (f in forcedAwareFields()) {
-            repository.reviewSave(
+            commitViaReview(
                 AppLockPrivacySettings(
                     discreetNotifications = true,
                     appLockEnabled = false,

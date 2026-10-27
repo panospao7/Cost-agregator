@@ -104,9 +104,35 @@ internal class FakeAppLockSettingsRepository(var loadState: AppLockSettingsLoadS
         return AppLockSettingsWriteResult.Failed(AppLockSettingField.DISCREET)
     }
 
+    /** Every `reviewSave` call that passed the D8 check (the store was persistent-unreadable), in order. */
+    val reviewSaves = mutableListOf<AppLockPrivacySettings>()
+
+    /** When set, decides the result of a review-save that passed the D8 check; the default commits and updates [loadState]. */
+    var reviewSaveResult: ((AppLockPrivacySettings) -> AppLockSettingsWriteResult)? = null
+
+    /** When set, a review-save that passed the D8 check throws it (a non-IO failure of the store). */
+    var reviewSaveFailure: Throwable? = null
+
+    /** When set, a review-save that passed the D8 check suspends on it after being recorded and before it decides (S18 ii-d part B). */
+    var reviewSaveGate: CompletableDeferred<Unit>? = null
+
+    /**
+     * Mirrors the conditional review-save of the real store (S18 ii-d, F4(a), D8): it writes only while [loadState] is
+     * persistent-unreadable (`CORRUPTED` or `INVALID_VALUE`); a `Loaded`, first-run or transient-unreadable state gives
+     * `Rejected(NOT_UNDER_REVIEW)` and nothing changes. A write replaces the whole record and the state becomes `Loaded`.
+     */
     override suspend fun reviewSave(record: AppLockPrivacySettings): AppLockSettingsWriteResult {
         writeAttempts++
-        return AppLockSettingsWriteResult.Failed(AppLockSettingField.REVIEW_SAVE)
+        val state = loadState
+        if (state !is AppLockSettingsLoadState.Unreadable || !state.cause.isPersistent) {
+            return AppLockSettingsWriteResult.Rejected(AppLockWriteRejection.NOT_UNDER_REVIEW)
+        }
+        reviewSaves += record
+        reviewSaveGate?.await()
+        reviewSaveFailure?.let { throw it }
+        reviewSaveResult?.let { return it(record) }
+        loadState = AppLockSettingsLoadState.Loaded(record)
+        return AppLockSettingsWriteResult.Committed(record)
     }
 
     // --- S18 (i-a): the lock-flag write of the enable / disable apply. Counted apart from [writeAttempts], which

@@ -14,8 +14,9 @@ import org.junit.Test
 /**
  * The `notice` flow of [AppLockController] (S18 ii-c, INV-51, AMD-6, AMD-22): AE-97 and AE-98 (notice half), AE-99
  * (the 1b rows; the fingerprint rows belong to Increment 2), AE-101 and the derivation half of AE-115. The pure table
- * is [LockNoticeDerivationTest]. The review-save half of AE-115 and the biometric notice (always false in
- * Increment 1, AE-100) are not covered here.
+ * is [LockNoticeDerivationTest]. The biometric notice (always false in Increment 1, AE-100) is not covered here.
+ * The review-save half of AE-115, AE-87, the end of the notice after the
+ * save (AE-101) and the load-state-only republish are covered at the end (S18 ii-d).
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class AppLockControllerNoticeTest {
@@ -252,5 +253,156 @@ class AppLockControllerNoticeTest {
         assertEquals(AppLockState.Authenticating(unlockId, AuthPurpose.UNLOCK), controller.state.value)
         assertNull(controller.notice.value)
         assertTrue("$seen", seen.all { it == null })
+    }
+
+    // --- S18 ii-d: the review-save (AE-115 review half, AE-87, AE-101, the load-state-only republish) -------------
+
+    private val weakeningOff = AppLockPrivacySettings(appLockEnabled = false, autoLockTimeout = AutoLockTimeout.M1)
+    private val lockOnLonger = AppLockPrivacySettings(appLockEnabled = true, autoLockTimeout = AutoLockTimeout.M5)
+    private val notWeakening = AppLockPrivacySettings(appLockEnabled = true, autoLockTimeout = AutoLockTimeout.IMMEDIATE)
+    private val lockOffDiscreetOn = AppLockPrivacySettings(appLockEnabled = false, discreetNotifications = true)
+
+    /** `UNLOCKED` over a CORRUPTED store with the review notice shown, on the test's scheduler. */
+    private fun TestScope.reviewRig(): SettingsOperationsRig {
+        val h = AppLockControllerHarness(AppLockTestSettings.unreadable(SettingsUnreadableCause.CORRUPTED), scheduler = testScheduler)
+        val controller = h.resolvedController()
+        h.unlock(controller)
+        controller.onAppForegrounded()
+        assertEquals(AppLockState.Unlocked, controller.state.value)
+        assertEquals(LockNotice.ReviewSettings, controller.notice.value)
+        h.authenticator.calls.clear()
+        return SettingsOperationsRig(h, controller)
+    }
+
+    private fun save(rig: SettingsOperationsRig, record: AppLockPrivacySettings): ReviewSaveResult =
+        runBlocking { rig.ops.requestReviewSave(record) }
+
+    @Test
+    fun `AE-115 a weakening review-save prompt keeps the review notice, never removed and shown again, and the save ends it`() = runTest {
+        for (record in listOf(weakeningOff, lockOnLonger)) {
+            val rig = reviewRig()
+            val controller = rig.controller
+            val seen = recordNotices(controller)
+
+            assertEquals("$record", ReviewSaveResult.STARTED, save(rig, record))
+            rig.h.settle()
+            val first = rig.h.authenticator.calls.last().attemptId
+            assertEquals("$record", AppLockState.Authenticating(first, AuthPurpose.CONFIRM_CHANGE), controller.state.value)
+            assertEquals("$record", LockNotice.ReviewSettings, controller.notice.value)
+
+            rig.h.authenticator.deliver(DeviceAuthOutcome.Cancelled)
+            assertEquals("$record", AppLockState.Unlocked, controller.state.value)
+            assertEquals("$record", LockNotice.ReviewSettings, controller.notice.value)
+
+            assertEquals("$record", ReviewSaveResult.STARTED, save(rig, record))
+            rig.h.settle()
+            val second = rig.h.authenticator.calls.last().attemptId
+            assertEquals("$record", AppLockState.Authenticating(second, AuthPurpose.CONFIRM_CHANGE), controller.state.value)
+            assertEquals("$record", LockNotice.ReviewSettings, controller.notice.value)
+            assertEquals("$record: the notice was never null while the prompt was open", listOf<LockNotice?>(LockNotice.ReviewSettings), seen)
+
+            rig.h.authenticator.deliver(DeviceAuthOutcome.Succeeded)
+            assertNull("$record", controller.notice.value)
+            assertEquals("$record", listOf<LockNotice?>(LockNotice.ReviewSettings, null), seen)
+        }
+    }
+
+    @Test
+    fun `AE-115 a failed prompt or a failing write after the prompt keeps the review notice`() = runTest {
+        val rig = reviewRig()
+        val seen = recordNotices(rig.controller)
+        rig.h.repository.reviewSaveResult = { AppLockSettingsWriteResult.Failed(AppLockSettingField.REVIEW_SAVE) }
+
+        assertEquals(ReviewSaveResult.STARTED, save(rig, weakeningOff))
+        rig.h.settle()
+        rig.h.authenticator.deliver(DeviceAuthOutcome.Failed(DeviceAuthErrorBucket.OTHER))
+        assertEquals(LockNotice.ReviewSettings, rig.controller.notice.value)
+
+        assertEquals(ReviewSaveResult.STARTED, save(rig, weakeningOff))
+        rig.h.settle()
+        rig.h.authenticator.deliver(DeviceAuthOutcome.Succeeded) // the write fails
+        assertEquals(AppLockState.Unlocked, rig.controller.state.value)
+        assertEquals(LockNotice.ReviewSettings, rig.controller.notice.value)
+        assertEquals(listOf<LockNotice?>(LockNotice.ReviewSettings), seen)
+    }
+
+    @Test
+    fun `AE-87 the inert notice is gone once the lock-off review-save is saved, and a refused lock-on record keeps it`() = runTest {
+        val h = AppLockControllerHarness(
+            AppLockTestSettings.unreadable(SettingsUnreadableCause.CORRUPTED),
+            DeviceAuthCapability.NO_CREDENTIAL,
+            scheduler = testScheduler
+        )
+        val controller = h.resolvedController()
+        val rig = SettingsOperationsRig(h, controller)
+        val inert = LockNotice.Inert(InertReason.SETTINGS_UNREADABLE_NO_AUTH)
+        assertEquals(inert, controller.notice.value)
+        val seen = recordNotices(controller)
+
+        assertEquals(ReviewSaveResult.REJECTED_CAPABILITY, save(rig, notWeakening))
+        assertEquals(AppLockState.Inert(InertReason.SETTINGS_UNREADABLE_NO_AUTH), controller.state.value)
+        assertEquals(inert, controller.notice.value)
+
+        assertEquals(ReviewSaveResult.COMMITTED, save(rig, lockOffDiscreetOn))
+
+        assertEquals(AppLockState.Disabled, controller.state.value)
+        assertNull(controller.notice.value)
+        assertEquals(listOf<LockNotice?>(inert, null), seen)
+    }
+
+    @Test
+    fun `AE-101 the review notice ends after the save, stays through a failed save, and does not return after an unlock or a cold start`() = runTest {
+        val rig = reviewRig()
+        val controller = rig.controller
+        rig.h.repository.reviewSaveResult = { AppLockSettingsWriteResult.Failed(AppLockSettingField.REVIEW_SAVE) }
+        assertEquals(ReviewSaveResult.FAILED, save(rig, notWeakening))
+        assertEquals(LockNotice.ReviewSettings, controller.notice.value)
+
+        rig.h.repository.reviewSaveResult = null
+        assertEquals(ReviewSaveResult.COMMITTED, save(rig, notWeakening))
+        assertNull(controller.notice.value)
+
+        // The saved record has the lock on and IMMEDIATE: the next background locks, and the unlock shows no notice.
+        controller.onAppBackgrounded()
+        controller.onAppForegrounded()
+        assertEquals(AppLockState.Locked(LockCause.TIMEOUT), controller.state.value)
+        assertNull(controller.notice.value)
+        rig.h.unlock(controller)
+        assertNull(controller.notice.value)
+
+        val coldStart = rig.h.resolvedController()
+        assertEquals(AppLockState.Locked(LockCause.COLD_START), coldStart.state.value)
+        rig.h.unlock(coldStart)
+        assertNull(coldStart.notice.value)
+    }
+
+    @Test
+    fun `S18 ii-c gap the notice is republished on a load-state-only change, reached through the review-save`() = runTest {
+        for (viaPrompt in listOf(false, true)) {
+            val rig = reviewRig()
+            val controller = rig.controller
+            val notices = recordNotices(controller)
+            val states = mutableListOf<AppLockState>()
+            backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { controller.state.collect { states += it } }
+
+            if (viaPrompt) {
+                assertEquals(ReviewSaveResult.STARTED, save(rig, lockOnLonger))
+                rig.h.settle()
+                rig.h.authenticator.deliver(DeviceAuthOutcome.Succeeded)
+            } else {
+                assertEquals(ReviewSaveResult.COMMITTED, save(rig, notWeakening))
+            }
+
+            // UNLOCKED stays UNLOCKED; only the load state changed (persistent unreadable to Loaded).
+            assertEquals("prompt=$viaPrompt", AppLockState.Unlocked, controller.state.value)
+            assertNull("prompt=$viaPrompt", controller.notice.value)
+            assertEquals("prompt=$viaPrompt", listOf<LockNotice?>(LockNotice.ReviewSettings, null), notices)
+            val expectedStates = if (viaPrompt) {
+                listOf(AppLockState.Unlocked, rig.h.authenticator.calls.last().let { AppLockState.Authenticating(it.attemptId, AuthPurpose.CONFIRM_CHANGE) }, AppLockState.Unlocked)
+            } else {
+                listOf(AppLockState.Unlocked)
+            }
+            assertEquals("prompt=$viaPrompt", expectedStates, states)
+        }
     }
 }
