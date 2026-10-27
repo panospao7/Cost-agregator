@@ -1412,3 +1412,98 @@ The table is kept for traceability. "Recommended" is now the decided option.
 ### Amendment 2026-10-27 (S6c-F.3; owner item 37(b), decision 46(a))
 - Recurring layer-1 rule (append-only clarification; INV-5 unchanged): the recurring lifecycle's own type/ownership rule has ONE owner, `RecurringLinkTypeEligibility` (pure, `domain/recurring`). A NEW link of an expense to a recurring occurrence (auto-link, manual link, generation-time matching, relink after a no-longer-matches unlink) is refused for a not-mine expense and for TRANSFER, DEPOSIT and UNKNOWN. UNKNOWN is added by this amendment: an unclassified row is not a confirmed bill payment. The generation-time resolver already refused UNKNOWN; the coordinator link paths now agree with it.
 - EXISTING links are kept (decision 46(a), R2): re-validating an existing link (reconcile "still matches", including the bulk-update reconcile) excludes only not-mine, TRANSFER and DEPOSIT, so an existing link on an UNKNOWN expense stays and its occurrence stays PAID. A bulk edit never reverts a PAID occurrence to PLANNED. The installment layer (INV-5) is unchanged and applies to both forms.
+
+## Clarification 2026-10-27 — owner decisions (owner-approvals item 51c)
+
+Append-only. Nothing above this heading is rewritten. For the entries named below, this section wins over the text
+above.
+
+**Source.** The owner replied "I approve" to the orchestrator's recommendations on 2026-10-27 (owner-approvals item
+51c; also item 49c (OQ-21); OD-14, F4 and F5 were raised in the S12a reviews (handoff :2171-2198);
+`build/release-lead-notes/owner-approvals-20261022.md` in the main checkout). Recorded
+in `workflows/active/loan-installments-handoff.md`, "2026-10-27 OWNER DECISIONS" (:2229-2237). Four of the six 51c(c)
+decisions are spec/UX decisions. Only OD-14 touches this file. OQ-21, F4 and F5 are UX decisions and are recorded in `ux-flows.md` under the
+same heading.
+
+**Impact.** Schema: none. New invariants: none. New refusal codes: none. Coordinator code: unchanged. AE-1…AE-31
+stay valid (AE-5 is consistent with the narrowing, see below).
+
+### C-1. OD-14 narrowed: a plan whose currency differs from its purchase allows FIXED_PAYMENT only
+
+**Decision.** OD-14 stays "allow a plan currency different from the purchase currency", with one narrowing. Such a
+plan can only be `FIXED_PAYMENT`. `EQUAL_SPLIT` is not available across currencies, because no conversion rule exists
+and none is invented.
+
+**Entries superseded or narrowed**
+
+| Entry | Where | Original | Now |
+|---|---|---|---|
+| OD-14 row | section 14, :1385 | "Allow. Financing cost 'unavailable'" | "Allow, `FIXED_PAYMENT` only. Financing cost 'unavailable'". The status line at :1360 ("recommended option accepted") is read as "accepted with this narrowing". |
+| Q9 Currency | section 6, :661-663 | "A purchase-attached plan may have a plan currency different from the purchase currency (for example a USD purchase turned into EUR card installments)." | The same, but only as a `FIXED_PAYMENT` plan. The financing-cost sentence is unchanged. |
+| `splitMethod` | section 2.1, :127 | `EQUAL_SPLIT` \| `FIXED_PAYMENT`; "STANDALONE is always FIXED_PAYMENT" | Add: a PURCHASE_ATTACHED plan can be `EQUAL_SPLIT` only when the plan currency equals the purchase currency. |
+| `declaredTotal` | section 2.1, :128 | "EQUAL_SPLIT: the amount split (defaults to the purchase amount when currencies match)" | An `EQUAL_SPLIT` plan always has matching currencies, so `declaredTotal` is always the purchase amount. There is no "user types the total when currencies differ" branch. |
+| Add-expense currency note | `ux-flows.md` :224-227 (cross-file) | "The amount to split must then be entered (spec 2.1 `declaredTotal` only defaults when currencies match)." | Superseded by this rule. The Add-expense plan-currency row is also removed by G2-6 (`loan-installments-plan.md` :671), so the declare sheet on an existing expense is the only place a differing currency can be chosen. |
+| `gate2-decisions.md` :24 | outside this write set | "Allow; financing cost shows 'unavailable'" | Not edited. This section governs. |
+
+**Not changed:** INV-16, INV-17 (financing cost stays "unavailable" with reason `CURRENCY_DIFFERS`, never 0;
+`InstallmentPlanMath.kt:181-183`), section 9 (no conversion), the `CURRENCY_MISMATCH` link refusal, AE-5. AE-5 Plan C
+(purchase 240.00 USD, plan currency EUR, 4 × 56.00 = 224.00 ≠ 240.00) is a `FIXED_PAYMENT` plan by construction, so it
+already complies.
+
+**Rule (precise).** Let P be the purchase expense's currency code and C the plan currency, C ∈ {EUR, USD}. For a
+PURCHASE_ATTACHED declaration on an existing expense:
+1. C == P: `EQUAL_SPLIT` or `FIXED_PAYMENT`, as before.
+2. C ≠ P: the split method is `FIXED_PAYMENT`. The user types the fixed payment in C (2 dp, > 0). The terms carry
+   `fixedPaymentAmount` = that amount and `declaredTotal = null`. The total is `fixedPaymentAmount × N` (INV-10) and may
+   differ from the purchase amount. The purchase amount is never converted, scaled or reinterpreted in C. A stored
+   `EQUAL_SPLIT` selection is overridden to `FIXED_PAYMENT` when the currencies differ.
+3. P outside {EUR, USD} (for example CHF): no plan currency is preselected and saving is blocked until the user picks
+   EUR or USD. After the pick C ≠ P, so rule 2 applies.
+4. Financing cost stays "unavailable" (INV-17). It is never 0.
+5. The Add-expense path (`declareWithNewExpense`, S11) never has C ≠ P (G2-6), and STANDALONE plans are always
+   `FIXED_PAYMENT`. Rules 2 and 3 therefore only occur in the existing-expense declare sheet.
+6. After declaration the currency and split method are locked once a payment exists (section 7.4, `CURRENCY_LOCKED`),
+   and the Edit screen does not change the currency, so the UI cannot move a plan into a cross-currency
+   `EQUAL_SPLIT` state later.
+
+**Implemented behaviour (evidence, as of this date).**
+- The rule has ONE owner today, the declare-sheet state. `DeclareInstallmentsUiState.effectiveSplit` returns
+  `f.split` only when `f.currency?.code == t.currency`, otherwise `FIXED_PAYMENT`
+  (`DeclareInstallmentsSheet.kt:141-147`). `currencyDiffers` is at :151. `canSave` is at :159-167: a null plan
+  currency blocks saving, and `FIXED_PAYMENT` needs a parsed fixed amount.
+- `save()` builds the terms from `effectiveSplit` (:293-302): `declaredTotal = if (equal) target.amount else null` and
+  `fixedPaymentAmount = if (equal) null else fixed`. It then calls only `coordinator.declareOnExpense` (:318).
+- UI (:500-528): the currency chips are always shown. When the currencies differ, the "Equal split of total" chip is
+  disabled (:519), "Fixed payment × N" is selected, and the note `declare_installments_currency_differs` is shown
+  (:512-514; text at `values/strings.xml:2853`: "This plan is in a different currency than the purchase. Enter each
+  payment; financing cost will be unavailable."). The KDoc at :100-105 documents the narrowing.
+- Tests: `DeclareInstallmentsViewModelTest.kt:126-149` (`OD-14 a plan currency different from the purchase forces a
+  fixed payment`: `currencyDiffers`, `effectiveSplit == FIXED_PAYMENT`, `canSave` false until a fixed payment is
+  typed, then terms `FIXED_PAYMENT` / `USD` / 50.0 / `declaredTotal == null`) and :151-160 (a CHF purchase needs a plan
+  currency pick before saving).
+- The coordinator does NOT enforce it. `declareOnExpense` (`InstallmentPlanLifecycleCoordinator.kt:133-179`) reads
+  the purchase facts (:149) and checks the declaration policy (:156-168), but it never compares `terms.currency` or
+  `terms.splitMethod` with the purchase currency. `editDetails` accepts a currency change on an ACTIVE plan with no
+  PAID or REVERSED entries whatever the split method and purchase currency are (:690-708). Its only UI caller sends
+  the unchanged currency (`InstallmentEditScreen.kt:103-105`, :167, :238).
+
+**Example (clarifies AE-5; no new AE number; synthetic data).**
+- Given a purchase of 240.00 USD dated 2027-01-05 and N = 4:
+  - plan currency USD: both split methods are offered, and `EQUAL_SPLIT` gives 4 × 60.00 USD with
+    `declaredTotal = 240.00`;
+  - plan currency EUR: `EQUAL_SPLIT` is not offered and `FIXED_PAYMENT` is the effective method. Save is blocked
+    until a payment is typed. After 56.00 is typed, the plan is 4 × 56.00 EUR, `declaredTotal = null`, and financing
+    cost is "unavailable" (currency differs).
+- Given a purchase of 300.00 CHF: no plan currency is preselected and Save is blocked. After EUR is picked, only
+  `FIXED_PAYMENT` is possible.
+
+**Follow-ups raised, not decided (need an explicit decision; they are not part of 51c).**
+- F-1 Single owner. The narrowing lives in the UI layer only. If it must hold for every caller, make it an invariant
+  (it would be INV-35) owned by the plan coordinator, which refuses a PURCHASE_ATTACHED `EQUAL_SPLIT` whose plan
+  currency ≠ the purchase currency. The UI check would then only mirror it. This changes implemented S6a behaviour and
+  needs a refusal code choice: the existing `CURRENCY_MISMATCH` means "linked expense in another currency". It also
+  covers the `editDetails` currency change. Recommendation: pre-enable hardening, not before.
+- F-2 UI nit. For a purchase in an unsupported currency (CHF) before a plan currency is picked, `currencyDiffers`
+  is false (:151), so the "Equal split" chip is enabled (:519) although `effectiveSplit` already returns
+  `FIXED_PAYMENT` (:146). A tap changes nothing visible. It cannot violate the rule, because saving needs a picked
+  currency.

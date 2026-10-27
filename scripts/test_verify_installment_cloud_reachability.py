@@ -30,9 +30,18 @@ content, no real receipts or personal data):
   6. ``is_cloud_surface_path`` truth table;
   7. the guard registry entry agrees with the script's rule constants.
 
+S8b-1 (owner-approved guard strengthening, A15): the surface also fences the
+five files of the cloud briefing chain (FinancialWeatherRepository,
+ForecastInputAssembler, SynthesisEngine, NarrativeGenerator,
+DashboardDataProvider).  Proven here: each new exact entry flags a projection
+port import plus field (G-INSTALLMENT-CLOUD-01/-03), the off-surface Home
+source and a suffix look-alike are NOT scanned, and omitting any entry's file
+is an infrastructure failure naming that entry.
+
 Every fixture tree that expects PASS or a violation first seeds one clean file
-for each of the six surface entries (``_seed_surface``), because a surface
-entry that matches no scanned file is itself an infrastructure failure.
+for each of the eleven surface entries (four directory prefixes and seven exact
+files; ``_seed_surface``), because a surface entry that matches no scanned file
+is itself an infrastructure failure.
 
 Run:
     python -m pytest scripts/test_verify_installment_cloud_reachability.py -v
@@ -72,7 +81,20 @@ _SURFACE_SEEDS = {
     "data/privacy": "data/privacy/SurfaceSeed.kt",
     "di/AiModule.kt": "di/AiModule.kt",
     "di/PrivacyModule.kt": "di/PrivacyModule.kt",
+    "data/repository/FinancialWeatherRepository.kt": "data/repository/FinancialWeatherRepository.kt",
+    "domain/forecasting/ForecastInputAssembler.kt": "domain/forecasting/ForecastInputAssembler.kt",
+    "domain/logic/SynthesisEngine.kt": "domain/logic/SynthesisEngine.kt",
+    "domain/logic/NarrativeGenerator.kt": "domain/logic/NarrativeGenerator.kt",
+    "domain/usecase/dashboard/DashboardDataProvider.kt": "domain/usecase/dashboard/DashboardDataProvider.kt",
 }
+# The five exact entries added by S8b-1 (cloud briefing chain, A15).
+_S8B1_ENTRIES = (
+    "data/repository/FinancialWeatherRepository.kt",
+    "domain/forecasting/ForecastInputAssembler.kt",
+    "domain/logic/SynthesisEngine.kt",
+    "domain/logic/NarrativeGenerator.kt",
+    "domain/usecase/dashboard/DashboardDataProvider.kt",
+)
 _SEED_COUNT = len(_SURFACE_SEEDS)
 _ALL_SURFACE_ENTRIES = tuple(_SURFACE_SEEDS)
 _UNMATCHED = "E_INSTALLMENT_CLOUD_SURFACE_ENTRY_UNMATCHED"
@@ -101,7 +123,8 @@ def _seed_surface(tmp_path: Path, omit=()) -> None:
     """Seed one clean file for each surface entry not listed in ``omit``.
 
     A test that writes the same relative path afterwards simply overwrites the
-    seed (di/AiModule.kt, di/PrivacyModule.kt), so the scanned count stays 6.
+    seed (an exact-file entry such as di/AiModule.kt), so the scanned count
+    stays equal to the number of surface entries (11).
     """
     for entry, sub in _SURFACE_SEEDS.items():
         if entry in omit:
@@ -154,7 +177,7 @@ def _found(tmp_path: Path):
 
 
 def _assert_clean(tmp_path: Path, expected_scanned: int = _SEED_COUNT + 1):
-    """Assert PASS; default = the six seeds plus the one fixture file under test."""
+    """Assert PASS; default = the eleven seeds plus the one fixture file under test."""
     violations, scanned, infra = _scan(tmp_path)
     assert infra is None, infra
     assert violations == []
@@ -176,7 +199,16 @@ def test_surface_definition_constants():
     assert tuple(guard.SURFACE_DIRECTORY_PREFIXES) == (
         "data/ai", "domain/ai", "domain/privacy", "data/privacy",
     )
-    assert tuple(guard.SURFACE_EXACT_FILE_SUFFIXES) == ("di/AiModule.kt", "di/PrivacyModule.kt")
+    assert tuple(guard.SURFACE_EXACT_FILE_SUFFIXES) == (
+        "di/AiModule.kt",
+        "di/PrivacyModule.kt",
+        "data/repository/FinancialWeatherRepository.kt",
+        "domain/forecasting/ForecastInputAssembler.kt",
+        "domain/logic/SynthesisEngine.kt",
+        "domain/logic/NarrativeGenerator.kt",
+        "domain/usecase/dashboard/DashboardDataProvider.kt",
+    )
+    assert _S8B1_ENTRIES == tuple(guard.SURFACE_EXACT_FILE_SUFFIXES)[2:]
 
 
 # ── Positive fixtures (exit 0, non-empty surface) ───────────────────────────
@@ -241,7 +273,7 @@ def test_positive_plan_text_in_non_surface_file_is_not_scanned(tmp_path):
         f"import {_BASE}.domain.installment.InstallmentProjectionPort\n"
         "class X(val plan: InstallmentPlan, val port: InstallmentProjectionPort)\n",
     )
-    # Only the six seeds plus Clean.kt count as scanned; X.kt is off the surface.
+    # Only the eleven seeds plus Clean.kt count as scanned; X.kt is off the surface.
     _assert_clean(tmp_path, expected_scanned=_SEED_COUNT + 1)
 
 
@@ -300,7 +332,7 @@ def test_positive_installment_substring_identifier_off_surface_is_clean(tmp_path
         "ui/screens/home/Elsewhere.kt",
         f"package {_BASE}.ui.screens.home\n{code_line}\n",
     )
-    # Off-surface file is not scanned: only the six seeds count.
+    # Off-surface file is not scanned: only the eleven seeds count.
     _assert_clean(tmp_path, expected_scanned=_SEED_COUNT)
 
 
@@ -472,6 +504,91 @@ def test_negative_bare_projection_port_constructor_parameter(tmp_path):
     assert _found(tmp_path) == [(_rel(sub), 5, R3)]
 
 
+# ── S8b-1: cloud briefing chain entries (A15) ───────────────────────────────
+
+
+def _projection_port_leak_text(sub: str) -> str:
+    """Kotlin text with a projection-port import (line 3) and a field (line 6).
+
+    The package line is derived from ``sub`` and carries no installment word.
+    Expected findings: line 3 -> rule 01 + 03 (an import line is never also
+    reported by rule 02), line 6 -> rule 03.
+    """
+    package = f"{_BASE}." + sub.rsplit("/", 1)[0].replace("/", ".")
+    return (
+        f"package {package}\n"
+        "\n"
+        f"import {_BASE}.domain.installment.projection.InstallmentProjectionPort\n"
+        "\n"
+        "class Seeded(\n"
+        "    private val installmentProjectionPort: InstallmentProjectionPort,\n"
+        ")\n"
+    )
+
+
+@pytest.mark.parametrize("sub", _S8B1_ENTRIES)
+def test_negative_s8b1_entry_flags_projection_port_import_and_field(tmp_path, sub):
+    _seed_surface(tmp_path)
+    _write(tmp_path, sub, _projection_port_leak_text(sub))
+    p = _rel(sub)
+    assert _found(tmp_path) == [(p, 3, R1), (p, 3, R3), (p, 6, R3)]
+    result = _run_cli(tmp_path)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert f"{p}:3 [{R1}]" in result.stdout
+    assert f"{p}:3 [{R3}]" in result.stdout
+    assert f"{p}:6 [{R3}]" in result.stdout
+    assert "3 installment cloud reachability violation(s)" in result.stdout
+    assert "InstallmentProjectionPort" not in result.stdout
+
+
+def test_positive_s8b1_off_surface_home_installment_weather_source_is_not_scanned(tmp_path):
+    # The Home-only installment-aware source lives off-surface by design: the
+    # same text that is flagged on the five new entries is NOT flagged here.
+    sub = "data/repository/HomeInstallmentWeatherSource.kt"
+    assert guard.is_cloud_surface_path(sub) is False
+    assert guard.matched_surface_entries(sub) == []
+    _seed_surface(tmp_path)
+    _write(tmp_path, sub, _projection_port_leak_text(sub))
+    _assert_clean(tmp_path, expected_scanned=_SEED_COUNT)
+
+
+@pytest.mark.parametrize("sub", _S8B1_ENTRIES)
+def test_positive_s8b1_suffix_precision_look_alike_file_names_are_not_on_the_surface(
+    tmp_path, sub
+):
+    directory, _sep, name = sub.rpartition("/")
+    look_alike = f"{directory}/X{name}"
+    assert guard.is_cloud_surface_path(look_alike) is False
+    assert guard.matched_surface_entries(look_alike) == []
+    _seed_surface(tmp_path)
+    _write(tmp_path, look_alike, _projection_port_leak_text(look_alike))
+    _assert_clean(tmp_path, expected_scanned=_SEED_COUNT)
+
+
+@pytest.mark.parametrize("sub", _S8B1_ENTRIES)
+def test_positive_s8b1_suffix_precision_look_alike_directory_is_not_on_the_surface(
+    tmp_path, sub
+):
+    look_alike = f"x{sub}"
+    assert guard.is_cloud_surface_path(look_alike) is False
+    assert guard.matched_surface_entries(look_alike) == []
+    _seed_surface(tmp_path)
+    _write(tmp_path, look_alike, _projection_port_leak_text(look_alike))
+    _assert_clean(tmp_path, expected_scanned=_SEED_COUNT)
+
+
+@pytest.mark.parametrize("omitted", _S8B1_ENTRIES)
+def test_infra_s8b1_entry_file_missing_exits_two_naming_that_entry(tmp_path, omitted):
+    _seed_surface(tmp_path, omit=(omitted,))
+    result = _run_cli(tmp_path)
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert result.stderr.strip() == (
+        f"INSTALLMENT CLOUD REACHABILITY: infrastructure error ({_UNMATCHED}: {omitted})"
+    )
+    assert "PASS" not in result.stdout
+    assert "FAIL" not in result.stdout
+
+
 @pytest.mark.parametrize(
     "type_name",
     [
@@ -545,6 +662,11 @@ def test_negative_reference_after_a_comment_on_the_same_line_is_flagged(tmp_path
         "data/privacy/DefaultRedactor.kt",
         "di/AiModule.kt",
         "di/PrivacyModule.kt",
+        "data/repository/FinancialWeatherRepository.kt",
+        "domain/forecasting/ForecastInputAssembler.kt",
+        "domain/logic/SynthesisEngine.kt",
+        "domain/logic/NarrativeGenerator.kt",
+        "domain/usecase/dashboard/DashboardDataProvider.kt",
         "some/pkg/FooCloudPayloadBuilder.kt",
         "some/pkg/FooPromptFormatter.kt",
         "some/pkg/FooPromptBuilder.kt",
@@ -877,7 +999,7 @@ def test_infra_empty_surface_exits_two(tmp_path):
 
 def test_infra_empty_surface_is_reported_before_any_unmatched_entry(tmp_path):
     # Zero scanned files: the empty-surface check comes first, so the code is
-    # SURFACE_EMPTY and not one of the six ENTRY_UNMATCHED variants.
+    # SURFACE_EMPTY and not one of the eleven ENTRY_UNMATCHED variants.
     _write(tmp_path, "ui/screens/home/X.kt", "package probe\nval a = 1\n")
     violations, scanned, infra = _scan(tmp_path)
     assert (violations, scanned) == ([], 0)
@@ -888,14 +1010,17 @@ def test_infra_empty_surface_is_reported_before_any_unmatched_entry(tmp_path):
 # ── Surface staleness: every directory prefix / exact file must match ───────
 
 
-def test_surface_entries_under_test_are_exactly_the_six_documented_entries():
+def test_surface_entries_under_test_are_exactly_the_eleven_documented_entries():
     assert _ALL_SURFACE_ENTRIES == tuple(guard.SURFACE_DIRECTORY_PREFIXES) + tuple(
         guard.SURFACE_EXACT_FILE_SUFFIXES
     )
-    assert len(_ALL_SURFACE_ENTRIES) == 6
+    assert len(guard.SURFACE_DIRECTORY_PREFIXES) == 4
+    assert len(guard.SURFACE_EXACT_FILE_SUFFIXES) == 7
+    assert len(_ALL_SURFACE_ENTRIES) == 11
+    assert _SEED_COUNT == 11
 
 
-def test_surface_all_six_entries_seeded_is_the_control_and_passes(tmp_path):
+def test_surface_all_eleven_entries_seeded_is_the_control_and_passes(tmp_path):
     _seed_surface(tmp_path)
     violations, scanned, infra = _scan(tmp_path)
     assert infra is None
@@ -949,7 +1074,7 @@ def test_infra_name_pattern_file_does_not_satisfy_a_missing_entry(tmp_path, omit
 
 def test_name_pattern_only_file_does_not_trigger_the_unmatched_check(tmp_path):
     # Name patterns are open-ended by design and exempt from staleness: with all
-    # six entries present, an extra pattern-only file (outside every entry
+    # eleven entries present, an extra pattern-only file (outside every entry
     # directory) passes, and so does a tree with no pattern file at all.
     _seed_surface(tmp_path)
     _write(tmp_path, "some/pkg/FooCloudPayloadBuilder.kt", "package probe\nval ok = 1\n")
@@ -978,6 +1103,28 @@ def test_unmatched_check_is_reported_for_the_first_missing_entry_in_declared_ord
         ("app/src/main/java/x/data/privacy/Foo.kt", ["data/privacy"]),
         ("app/src/main/java/x/di/AiModule.kt", ["di/AiModule.kt"]),
         ("app/src/main/java/x/di/PrivacyModule.kt", ["di/PrivacyModule.kt"]),
+        (
+            "app/src/main/java/x/data/repository/FinancialWeatherRepository.kt",
+            ["data/repository/FinancialWeatherRepository.kt"],
+        ),
+        (
+            "app/src/main/java/x/domain/forecasting/ForecastInputAssembler.kt",
+            ["domain/forecasting/ForecastInputAssembler.kt"],
+        ),
+        (
+            "app/src/main/java/x/domain/logic/SynthesisEngine.kt",
+            ["domain/logic/SynthesisEngine.kt"],
+        ),
+        (
+            "app/src/main/java/x/domain/logic/NarrativeGenerator.kt",
+            ["domain/logic/NarrativeGenerator.kt"],
+        ),
+        (
+            "app/src/main/java/x/domain/usecase/dashboard/DashboardDataProvider.kt",
+            ["domain/usecase/dashboard/DashboardDataProvider.kt"],
+        ),
+        ("app/src/main/java/x/data/repository/HomeInstallmentWeatherSource.kt", []),
+        ("app/src/main/java/x/data/repository/XFinancialWeatherRepository.kt", []),
         ("some/pkg/FooCloudPayloadBuilder.kt", []),
         ("mydata/ai/Foo.kt", []),
         ("di/AiModuleFoo.kt", []),
@@ -1134,6 +1281,11 @@ def test_cli_runs_without_the_canonical_flag_on_a_clean_tree(tmp_path):
         "data/privacy/DefaultRedactor.kt",
         "app/src/main/java/com/yourname/expensetracker/di/AiModule.kt",
         "app/src/main/java/com/yourname/expensetracker/di/PrivacyModule.kt",
+        "app/src/main/java/com/yourname/expensetracker/data/repository/FinancialWeatherRepository.kt",
+        "app/src/main/java/com/yourname/expensetracker/domain/forecasting/ForecastInputAssembler.kt",
+        "app/src/main/java/com/yourname/expensetracker/domain/logic/SynthesisEngine.kt",
+        "app/src/main/java/com/yourname/expensetracker/domain/logic/NarrativeGenerator.kt",
+        "app/src/main/java/com/yourname/expensetracker/domain/usecase/dashboard/DashboardDataProvider.kt",
         "di/AiModule.kt",
         "some/pkg/FooCloudPayloadBuilder.kt",
         "some/pkg/CloudPayloadFoo.kt",
@@ -1168,6 +1320,14 @@ def test_is_cloud_surface_path_true(path):
         "xdi/AiModule.kt",
         "di/AiModule.kt.bak",
         "di/AiModuleFoo.kt",
+        "data/repository/HomeInstallmentWeatherSource.kt",
+        "data/repository/XFinancialWeatherRepository.kt",
+        "xdata/repository/FinancialWeatherRepository.kt",
+        "data/repository/FinancialWeatherRepository.kt.bak",
+        "domain/forecasting/XForecastInputAssembler.kt",
+        "domain/logic/XSynthesisEngine.kt",
+        "domain/logic/NarrativeGeneratorFoo.kt",
+        "domain/usecase/dashboard/XDashboardDataProvider.kt",
         "some/pkg/Foo.java",
         "some/pkg/CloudPayload.java",
         "some/pkg/DashboardInputBuilder.kt",

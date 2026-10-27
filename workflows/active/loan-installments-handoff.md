@@ -2225,3 +2225,84 @@ Validation to request: targeted `*TransactionsLoadMorePolicyTest*,*TransactionsV
     - S11: blocked by the build order (nl-quick-add inc 1, then MEC B and C);
     - S13: enablement, needs S8b and S11 plus the pre-enable items.
   - Owner items: OQ-21 (49c); the OD-14 EQUAL_SPLIT narrowing; F4 filter granularity; F5 lock wording; es/el sign-off.
+
+## 2026-10-27 OWNER DECISIONS (owner-approvals item 51c)
+- The owner replied "I approve" to the orchestrator's recommendations:
+  - S8b guard strengthening approved (A15): five exact-file entries on installment_cloud_reachability, with a negative fixture.
+  - Item 48 guard approved: only InstallmentPostCommitDispatcher.kt references PostCommitActionRunner under the installment packages.
+  - OQ-21 DROPPED: no "Delete expense and reopen" action.
+  - OD-14 narrowing accepted: cross-currency plans allow FIXED only.
+  - F4 accepted: a single filter toggle.
+  - F5 accepted: the shortened locked-expense wording.
+- The es/el native sign-off is still open; the strings stay DRAFTS.
+- Build order confirmed: nl-quick-add increment 1 (new lane Cost-agregator-nlq), then MEC B1/B2/C, then loan S11.
+- Next:
+  1. item 48 guard (test-only);
+  2. append-only spec/ux clarifications for OQ-21, OD-14, F4 and F5;
+  3. S8b, starting with a feature-planner refresh of S8b against current source and A15.
+
+### Item 48 guard (2026-10-27, test-author; NOT validated)
+- File: app/src/test/java/com/yourname/expensetracker/architecture/InstallmentPlanArchitectureGuardTest.kt (test-only; no allow-list beyond the dispatcher's exact path; existing tests untouched).
+- Rule id: POST_COMMIT_RUNNER_OUTSIDE_DISPATCHER. Scope: domain/installment/, service/installment/, ui/screens/installments/. Matcher runs on sanitized code (comments and string bodies blanked) with `\bPostCommitActionRunner\w*`, so imports, types, ctor params, FQNs, `::` refs and Impl lookalikes are flagged; comment/KDoc mentions are not.
+- Tests added:
+  - `S10b-1 F3 PostCommitActionRunner is referenced only by InstallmentPostCommitDispatcher in installment packages` (live scan)
+  - `self-check S10b-1 F3 post-commit runner detector flags planted references and ignores comments strings the dispatcher and other paths` (planted: ui/screens/installments, service/installment and domain/installment paths flagged; dispatcher path, ui/screens/addexpense and other non-installment paths clean)
+  - `S10b-1 F3 non-vacuity - the dispatcher exists in the scan and itself references PostCommitActionRunner`
+- Pre-change grep of `PostCommitActionRunner` under the three packages: only domain/installment/lifecycle/InstallmentPostCommitDispatcher.kt (line 4 import, line 19 KDoc mention, line 27 ctor param). No other file in service/installment or ui/screens/installments; no STOP condition.
+- Validation to request: targeted-unit-test filter `*InstallmentPlanArchitectureGuard*`.
+
+### Spec clarifications for item 51c (2026-10-27, domain-modeler; docs only)
+- Appended "## Clarification 2026-10-27 — owner decisions (owner-approvals item 51c)" to docs/features/loan-installments/domain-spec.md (C-1, OD-14) and to ux-flows.md (U-1 OQ-21, U-2 F4, U-3 F5, U-4 OD-14 cross-reference).
+- The old wording in gate2-decisions.md:24 and plan :446/:471/:543 is superseded by those sections and left as is.
+- New PRE-ENABLE items (before S13), orchestrator decisions under standing approval:
+  - PE-OD14: OD-14 is enforced only in the UI (DeclareInstallmentsUiState.effectiveSplit, DeclareInstallmentsSheet.kt:141-147). Neither the coordinator's declareOnExpense (:133-179) nor editDetails (:690-708) checks it.
+    - Add domain enforcement in InstallmentPlanLifecycleCoordinator, the single owner, with a bounded refusal. This is a small hardening slice before S13.
+    - The F-2 nit goes with it: the "Equal split" chip is enabled with no effect before a currency is picked.
+  - PE-F5: the accepted short message says "its amount can't be changed", but it is emitted only on type and ownership changes (TransactionsViewModel :757-760, :866-869).
+    - Recommend field-neutral wording before S13. This is a new wording decision for the owner, with es/el sign-off.
+    - The edit-form locked treatment (disabled controls, "Locked while..." line, "View plan" link) is not implemented.
+  - PE-UNLINK: the Unlink row entry point is not wired (openUnlink at InstallmentPlanActions.kt:261 has no caller and there is no canUnlink flag). The role lines in the Transactions delete dialog (ux-flows :820-826) are missing. The OQ-21 "unlink, then delete" route depends on both.
+  - Recorded rule: Unlink is unrestricted (the read model has no link origin). "Unlink only for USER_LINKED" from plan :543 is not adopted.
+
+### S8b-1 implementation (2026-10-27, implementer; NOT validated)
+- Scope: guard strengthening only (owner-approvals item 51c; plan Amendment 2026-10-27 "S8b-1"). No Kotlin, no schema, no registry/suite/allowlist/baseline change. Rules 01-03 and all scan logic unchanged.
+- Pre-checks: all five files exist under app/src/main/java/com/yourname/expensetracker/ and have 0 case-insensitive "installment" hits.
+- Files changed:
+  - scripts/verify_installment_cloud_reachability.py: SURFACE_EXACT_FILE_SUFFIXES gains data/repository/FinancialWeatherRepository.kt, domain/forecasting/ForecastInputAssembler.kt, domain/logic/SynthesisEngine.kt, domain/logic/NarrativeGenerator.kt, domain/usecase/dashboard/DashboardDataProvider.kt (existing di/AiModule.kt and di/PrivacyModule.kt kept); docstring "exact files" block and scope-limit note updated.
+  - scripts/test_verify_installment_cloud_reachability.py: seeds, pins and new tests (below).
+  - docs: docs/architecture/LEGAL_PATHS.md (~:492-500), docs/architecture/CODEBASE_SEGMENTS.md (:755), docs/architecture/ENGINE_INTERACTION_MAP.md (NOT line, ~:154-159), docs/ci/GR-10B_SOURCE_SCOPE_MATRIX.md (:121).
+- Pin changes (the planner's "6" counts surface ENTRIES = 4 directory prefixes + 2 exact files, which equals the seed count and the clean-tree scanned count; the CLI "N file(s) scanned" is seeds + extra fixture files):
+  - entries 6 -> 11 (4 prefixes + 7 exact); exact suffixes 2 -> 7; _SURFACE_SEEDS 6 -> 11 seeds (so _SEED_COUNT, _ALL_SURFACE_ENTRIES and the parametrized unmatched tests expand automatically);
+  - test_surface_definition_constants: exact tuple now the 7 suffixes in declared order;
+  - test_surface_entries_under_test_are_exactly_the_six_documented_entries -> ..._eleven_documented_entries (asserts 4/7/11 and _SEED_COUNT == 11); test_surface_all_six_entries_seeded_is_the_control_and_passes -> test_surface_all_eleven_entries_seeded_is_the_control_and_passes (scanned == 11);
+  - test_negative_one_reference_in_each_surface_category list +5; matched_surface_entries truth table +5 positives +2 negatives; is_cloud_surface_path true +5, false +8;
+  - comments/docstrings "six" -> "eleven".
+- New tests: test_negative_s8b1_entry_flags_projection_port_import_and_field (x5; line 3 R1+R3, line 6 R3, exit 1, 3 violations); test_positive_s8b1_off_surface_home_installment_weather_source_is_not_scanned; test_positive_s8b1_suffix_precision_look_alike_file_names_are_not_on_the_surface (x5); test_positive_s8b1_suffix_precision_look_alike_directory_is_not_on_the_surface (x5); test_infra_s8b1_entry_file_missing_exits_two_naming_that_entry (x5).
+- Validation to request: pytest-subset with -TestFilter scripts/test_verify_installment_cloud_reachability.py; then registered guard installment_cloud_reachability (expect PASS: all 11 entries matched, 0 hits; the scanned-file count rises by at least the 5 new files); also scripts/ci/test_gr10b_source_scope_matrix.py (docs row edited).
+- Residual: scripts/ci/guard_registry.py description for installment_cloud_reachability still says "AI/privacy DI modules" (not edited by instruction; not wrong, less specific). ENGINE_INTERACTION_MAP :150 (ForecastInputAssembler "projected entries") is stale versus A15 and is left to S8b-3 docs.
+
+### Item 48 + S8b-1 review fixes (2026-10-27, implementer; NOT validated)
+- Finding 1: InstallmentPlanArchitectureGuardTest item 48 non-vacuity test now asserts every POST_COMMIT_RUNNER_SCOPE_PREFIXES entry matches at least one scanned file; the rule KDoc gains a "Known limits" note (typealias outside the three packages; wrappers that run batches without naming the type; installment code outside the three packages).
+- Finding 2: ENGINE_INTERACTION_MAP.md ForecastInputAssembler line now reads SUPERSEDED by A15 (not a projection consumer; Home-only source HomeInstallmentWeatherSource, S8b-3). This closes the "stale" residual noted under S8b-1.
+- Finding 3: domain-spec.md and ux-flows.md 2026-10-27 clarification Source paragraphs now cite item 49c (OQ-21) and the S12a reviews (handoff :2171-2198) for OD-14, F4 and F5, and say "Four of the six 51c(c) decisions are spec/UX decisions".
+- Finding 4: ux-flows.md U-1 rule 4 and the OQ-21 row cite owner-approvals item 56 (orchestrator, standing approval; owner FYI) as the record for unrestricted Unlink.
+- Finding 5: LEGAL_PATHS.md "POST-COMMIT DISPATCH OWNER" gains an "Enforced by InstallmentPlanArchitectureGuardTest POST_COMMIT_RUNNER_OUTSIDE_DISPATCHER" line.
+- Finding 6: this entry.
+- BINDING: guard_registry.py:770-779 description still omits the five S8b-1 files — follow-up (registry change = stop-and-ask).
+- Validation to request: targeted-unit-test `*InstallmentPlanArchitectureGuard*`; docs-only edits otherwise.
+
+### Item 48 guard + S8b-1 + 51c clarifications ACCEPTED (2026-10-27)
+- Gate: reviewer-strict ACCEPT-WITH-CONDITIONS (architecture and privacy checklist). Findings 1-5 applied.
+- Validation, final tree, all PASS:
+  - pytest test_verify_installment_cloud_reachability: vr-20261027-204733-f65d82a4
+  - pytest test_gr10b_source_scope_matrix: vr-20261027-204751-0fa6bbcc
+  - registered-guard installment_cloud_reachability: vr-20261027-204809-722bfcac
+  - targeted *InstallmentPlanArchitectureGuard*: vr-20261027-204825-ecdead29
+  - registered-guard guard_docs_truth: vr-20261027-205044-4b5d59ee
+  - pre-fix targeted: vr-20261027-204012-3b910026
+- Committed.
+- Next: S8b-2 (engine projections), then S8b-3 and S8b-4. One batch validation, then static-guards and app-check at the S8b candidate.
+- OWNER items (non-blocking):
+  - item 53c: a HomeInstallmentWeatherSource consumer pin;
+  - item 56: extend item 48 to the post-commit wrappers;
+  - PE-F5: field-neutral locked wording.

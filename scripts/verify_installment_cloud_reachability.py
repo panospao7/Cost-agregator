@@ -22,8 +22,20 @@ the checked-in manifest ``config/guards/production_source_roots.yml`` via
                      receipt, dedupe, categorization), use cases, AI models
     domain/privacy/  CloudPayloadPolicy, PreparedCloudPayload, redactor, gate
     data/privacy/    default cloud payload policy and redactor
-  exact files
+  exact files (7 entries)
     di/AiModule.kt, di/PrivacyModule.kt   (cloud provider / policy wiring)
+    data/repository/FinancialWeatherRepository.kt,
+    domain/forecasting/ForecastInputAssembler.kt,
+    domain/logic/SynthesisEngine.kt, domain/logic/NarrativeGenerator.kt,
+    domain/usecase/dashboard/DashboardDataProvider.kt
+                     (the cloud briefing chain: weather repository -> forecast
+                     assembly -> synthesis -> narrative -> processed dashboard
+                     data feeding the DASHBOARD_BRIEFING payload; added by loan
+                     slice S8b-1 / amendment A15 so this chain stays
+                     installment-free by construction.  The Home-only
+                     installment-aware weather source lives off-surface in a
+                     separate file, e.g. data/repository/
+                     HomeInstallmentWeatherSource.kt)
   file-name patterns (anywhere in the declared production roots, so a payload
   builder added later outside the directories above is still fenced)
     *CloudPayload*, *PromptFormatter*, *PromptBuilder*, *PayloadAssembler*,
@@ -62,7 +74,11 @@ File-name patterns are exempt, because they are open-ended by design.
 Scope limits (documented, not silent): this is a direct-reference fence.
 Transitive reachability through a shared upstream model (for example the
 dashboard model that feeds the briefing builder) is closed by the S8a payload
-exclusion seam and the AE-23 payload test, not by this text guard.
+exclusion seam and the AE-23 payload test, not by this text guard.  The 7
+exact-file entries fence the known cloud briefing chain files directly
+(weather repository, forecast input assembler, synthesis engine, narrative
+generator, dashboard data provider); a file outside the 7 entries, the
+directory prefixes and the name patterns is not scanned.
 Known limit: a simple string template ``"$identifier"`` (for example
 ``"$installmentPlans"``) is masked together with the string literal, so rule 03
 does not see the identifier; ``${...}`` expressions are code and are scanned.
@@ -147,6 +163,12 @@ SURFACE_DIRECTORY_PREFIXES: Tuple[str, ...] = (
 SURFACE_EXACT_FILE_SUFFIXES: Tuple[str, ...] = (
     "di/AiModule.kt",
     "di/PrivacyModule.kt",
+    # S8b-1 (A15): the cloud briefing chain must stay installment-free by construction.
+    "data/repository/FinancialWeatherRepository.kt",
+    "domain/forecasting/ForecastInputAssembler.kt",
+    "domain/logic/SynthesisEngine.kt",
+    "domain/logic/NarrativeGenerator.kt",
+    "domain/usecase/dashboard/DashboardDataProvider.kt",
 )
 
 _ASCII = re.ASCII

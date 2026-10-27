@@ -147,13 +147,16 @@ BillReminderWorker.doWork()
 ```
 InstallmentProjectionPort (read-only; implemented over InstallmentPlanReadModel)
   ├── CashFlowCalculator (future SCHEDULED entries become dated outflows)
-  ├── ForecastInputAssembler (projected entries; installment-linked expenses excluded from baselines)
+  ├── ForecastInputAssembler — SUPERSEDED by A15: not a projection consumer (fenced below); Home-only source is HomeInstallmentWeatherSource (S8b-3)
   ├── FinancialStressForecastEngine (known bounded outflows)
   ├── Home upcoming items merge point (sibling of RecurringPlanProjectionService; its contract unchanged)
   ├── BillReminderManager / BillReminderWorker (installment due reminders, existing settings)
   └── NOT: any cloud payload assembly (HybridDashboardBriefingService inputs, DashboardBriefingInputBuilder,
       TransactionInsightInputBuilder, FinancialQueryInterpretationInputBuilder) — INV-31, enforced by the
-      registered guard installment_cloud_reachability; payload inputs are computed without the projection
+      registered guard installment_cloud_reachability; payload inputs are computed without the projection.
+      The guard also fences the cloud briefing chain files directly (S8b-1 / A15): FinancialWeatherRepository,
+      ForecastInputAssembler, SynthesisEngine, NarrativeGenerator and DashboardDataProvider (7 exact-file
+      entries in total), so any projection-aware weather logic must live in a separate off-surface Home-only file
 ```
 
 ### TransactionLifecycleCoordinator → installment plan reaction (implemented — loan-installments S6c-1):

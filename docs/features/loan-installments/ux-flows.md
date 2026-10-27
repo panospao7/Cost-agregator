@@ -1391,3 +1391,151 @@ OD-1 (separate coordinator; Recurring placement flips if rejected), OD-3 (end-pl
 OD-5 (captured-charge linking), OD-6 (residual first/last label), OD-8 (frequencies), OD-9 (shared/split purchases),
 OD-10 (month of a linked charge), OD-11 (export marking), OD-12 (health score/synthesis not wired), OD-13 (event
 table), OD-14 (plan currency vs purchase currency), OD-15 (conditional fallback, no UI difference).
+
+## Clarification 2026-10-27 — owner decisions (owner-approvals item 51c)
+
+Append-only. Nothing above this heading is rewritten. For the entries named below, this section wins over the text
+above.
+
+**Source.** The owner replied "I approve" to the orchestrator's recommendations on 2026-10-27 (owner-approvals item
+51c; also item 49c (OQ-21); OD-14, F4 and F5 were raised in the S12a reviews (handoff :2171-2198);
+`build/release-lead-notes/owner-approvals-20261022.md` in the main checkout). Recorded in
+`workflows/active/loan-installments-handoff.md`, "2026-10-27 OWNER DECISIONS" (:2229-2237). Four of the six 51c(c)
+decisions are spec/UX decisions. This file covers OQ-21, F4 and F5. The fourth of these, OD-14, is a domain rule and is recorded in `domain-spec.md` (same heading); its UX
+consequence is cross-referenced in U-4.
+
+**Impact.** No schema, DAO, guard or allowlist change. No new or removed string. The es/el strings stay DRAFTS and the
+native sign-off is still open.
+
+### U-1. OQ-21 DROPPED: there is no "Delete expense and reopen" action
+
+**Decision.** The action is not built. The app has no expense-delete use case (the only delete is
+`ExpenseRepository.deleteExpense`, :583 and :603, which goes to the transaction lifecycle coordinator), and the INV-23
+guard forbids any `deleteExpense(` call in installment code, UI included
+(`InstallmentPlanArchitectureGuardTest.kt:211`, registered at :353, self-checked at :719-745). Wiring it would have
+needed a guard change or a new wrapper outside the installment packages (handoff :2015).
+
+**Entries superseded or narrowed**
+
+| Entry | Where | Original | Now |
+|---|---|---|---|
+| OQ-21 | section 10, :1373-1376 | PLANNER question: "is user-facing Unlink safe? ... consider limiting Unlink ..., or offering 'Delete expense and reopen' as one action through the standard expense-delete path." | CLOSED. The delete half is dropped. The Unlink half is answered by U-1 rule 4 (record: owner-approvals item 56, orchestrator, standing approval; owner FYI). |
+| Unlink expense (Paid rows) | section 3.6, :726-730 | The dialog paragraph ends "OQ-21 asks whether Unlink should be user-facing at all". | Closed: Unlink is user-facing. Dialog text and the "creates a new expense" warning are unchanged. |
+| OQ-21 resolution and S10b-2 goal | `loan-installments-plan.md` :543 and :446 (cross-file) | "AUTO_RECORDED and USER_CONFIRMED entries get 'Delete expense and reopen' via the standard expense-delete use case." | The "Delete expense and reopen" half is dropped. The "Unlink only for USER_LINKED" half is not carried by the decision (see rule 4). |
+
+No wireframe, copy key or state in this file ever carried "Delete expense and reopen". The action existed only in the
+plan and handoff text, so no string is removed.
+
+**Rule (precise).**
+1. No installment screen deletes an expense (INV-23 is unchanged).
+2. To drop the expense of a recorded installment, the user either (a) unlinks it from the plan detail and then deletes
+   it in Transactions, or (b) deletes it directly in Transactions. The Unlink dialog already says "If the payment did
+   not happen, delete the expense in Transactions instead" (`values/strings.xml:2921`, copy table :1269). The
+   Delete-plan info row (:817-818) already names both routes.
+3. Where the entry reopens:
+   - Unlink: `unlinkExpense` moves a PAID entry to SCHEDULED with `recordGeneration` + 1 and leaves the expense
+     untouched (`InstallmentPlanLifecycleCoordinator.kt:379-399`). Only a REGULAR PAID entry of an ACTIVE or COMPLETED
+     plan can be unlinked (`InstallmentPlanTransitions.kt:199`, :360-368).
+   - Direct delete of a still-linked expense: the transaction lifecycle coordinator deletes the row and then plans the
+     post-commit batch (`TransactionLifecycleCoordinator.kt:3077-3082`, best effort). The batch includes
+     `installment_expense_deleted` (`TransactionSideEffectPlanner.kt:157-169`, :504-515), which calls
+     `InstallmentPlanLifecycleCoordinator.onExpenseDeleted` (:1069) and reconcile R2. The entry reopens (ACTIVE or
+     COMPLETED plan, `recordGeneration` + 1, `autoRecordConsumed` unchanged), or becomes CANCELLED(`EXPENSE_REMOVED`)
+     in a CANCELLED or PAID_OFF plan (`InstallmentPlanTransitions.kt:564-583`; domain-spec section 7.6). If the
+     post-commit reaction fails, the reconcile run repairs it (domain-spec :524).
+   - Unlink first, then delete: the entry is already open after the unlink. The later delete finds no linked entry, so
+     the reaction does nothing (`reconcileForExpense`, :1100-1109).
+   So the owner's sentence "unlink, then delete; that already reopens the entry through the post-commit reaction" is
+   exact for the direct-delete route. In the two-step route the reopen happens at the unlink step.
+4. Unlink scope as implemented (not changed by 51c): it is NOT restricted by link origin. The coordinator allows it
+   for any PAID REGULAR entry of an ACTIVE or COMPLETED plan, whether the entry was auto-recorded, confirmed or linked,
+   and the read model carries no link origin (handoff :2018, :2177). The owner's route "unlink, then delete" only
+   works for an auto-recorded or confirmed entry if Unlink is unrestricted, so this clarification records
+   unrestricted Unlink as the rule. Record: owner-approvals item 56 (orchestrator, standing approval; owner FYI).
+   The plan's earlier "Unlink only for USER_LINKED" would be a new decision.
+5. Known risk, unchanged: unlinking without deleting leaves the expense counting while the entry is open, and a later
+   Record creates a second expense (new generation key). The consequence-first dialog is the only mitigation.
+
+**Not built yet (pre-enable items, not part of 51c).**
+- The Unlink row entry point. `openUnlink` (`InstallmentPlanActions.kt:261-263`) has no caller and the detail row
+  mapper has no `canUnlink` flag, so today the route (a) above has no UI trigger. Route (b) works without it.
+- The role-dependent lines in the Transactions delete dialog (:820-826). `DeleteConfirmationDialog`
+  (`TransactionsScreen.kt:1892`) has no installment text and no string exists for them. With OQ-21 dropped, these
+  lines are what tells the user that deleting an installment expense makes the installment unpaid.
+
+### U-2. F4 accepted: the Transactions installments filter is a single toggle
+
+**Decision.** The filter is one toggle, not the three-way choice.
+
+**Entries superseded or narrowed**
+
+| Entry | Where | Original | Now |
+|---|---|---|---|
+| Transactions filter row | section 3.9 table, :889 | "New toggle 'Installments': All / Installment payments / Purchase records." and the note "Purchase records can be hidden with one tap." | One toggle "Installments". The three-way choice and the "hide purchase records" claim are superseded. |
+
+No other section describes the three options, and no copy key existed for them (the section 8 copy table has none), so
+no string is removed.
+
+**Rule (precise).**
+1. Control: one `FilterChip` labelled "Installments" (`transactions_installment_filter`, `values/strings.xml:2847`;
+   es "Cuotas" :656 and el "Δόσεις" :405 are DRAFTS). It sits above the top bar (`TransactionsScreen.kt:298-300`;
+   `TransactionsInstallmentUi.kt:107-117`) and exists only while `InstallmentsFeature.ENABLED`.
+2. OFF (default) is "All": the list is unchanged. ON keeps only installment-related rows in one list: purchase
+   records (chips "Paid in N installments" and "Not counted as spending") together with installment payment expenses
+   (entries that are PAID or REVERSED, REGULAR or PAYOFF). Date groups left empty are dropped
+   (`TransactionsInstallmentViewModel.kt:127-149` builds the marks, :293-299 `filterGrouped`; test
+   `TransactionsViewModelInstallmentTest.kt:194-210`).
+3. Not available: payments only, purchase records only, hiding purchase records. The 3.9 rationale "purchase records
+   can be hidden with one tap" no longer holds. Purchase records stay recognisable by their chips.
+4. Scope and state: session state in `TransactionsInstallmentViewModel` (`_filterOn`, :263-264; `toggleFilter`,
+   :284-287). It is not persisted and is forced off when the feature is disabled (:268-273). The filter is applied to
+   the loaded, grouped list (`TransactionsScreen.kt:150-156`). While it is ON the screen keeps paging to the end
+   (`TransactionsLoadMorePolicy`, :236-248; screen :266-291), so the filtered list is complete only after paging ends.
+5. No filtered-empty copy was specified or added. The pre-enable QA items for paging and the retry window stay open
+   (handoff :2205, :2209-2213).
+
+### U-3. F5 accepted: the locked-expense message has one sentence
+
+**Decision.** The message for a refused edit of a plan purchase is the shortened form now in the strings.
+
+**Entries superseded or narrowed**
+
+| Entry | Where | Original | Now |
+|---|---|---|---|
+| Editing the purchase expense from Transactions | section 3.7, :765-770 | The refused-attempt text adds a second sentence: "To change it, delete the plan (if no payment is recorded) or adjust the plan." | One sentence only. The second sentence is superseded. |
+
+The error-code table (:1002) and the copy table (:1251, "Purchase locked") already show the short form, so :768-770 was
+the only differing text.
+
+**Rule (precise).**
+1. Exact text (en): "This purchase is paid in installments, so its amount can't be changed." Key
+   `transactions_installment_purchase_locked` (`values/strings.xml:2848`). The es (:657) and el (:406) strings are
+   DRAFT translations of the same short form; native sign-off is still open.
+2. It is a fixed resource message. It carries no data, no exception text and no instruction to delete or adjust the
+   plan. It is shown through `_error` from `TransactionsViewModel.updateExpenseType` (:757-760) and `updateOwnership`
+   (:866-869), and the log line is the constant `TRANSACTION_UPDATE_BLOCKED code=EXPENSE_LOCKED_BY_INSTALLMENT_PLAN`.
+   Tests: `TransactionsViewModelTest.kt:205`, :224, :243.
+3. Not part of this decision and not implemented: the disabled controls, the line "Locked while this purchase is
+   paid in installments." and the "View plan" link in the edit form (:765-768). There is no such string, and
+   `InstallmentLockedExpenseException` is mapped only in `TransactionsViewModel` (:757, :866).
+
+### U-4. Cross-reference for OD-14 (the UX side of the domain-spec clarification)
+
+- :224-227 (section 3.1, currency note): superseded. The Add-expense plan-currency row is removed by G2-6, and an
+  amount to split is never typed when currencies differ (`FIXED_PAYMENT` only).
+- :1073-1075 (section 5, mixed currency): "A purchase in a different currency than its plan is allowed" now reads
+  "allowed as a fixed-payment plan". Financing cost stays "Unavailable".
+- Declare sheet as implemented: when the currencies differ, "Equal split of total" is disabled, "Fixed payment × N" is
+  selected, and the note `declare_installments_currency_differs` (`values/strings.xml:2853`) is shown
+  (`DeclareInstallmentsSheet.kt:512-528`).
+
+### Inconsistencies found while recording these decisions
+
+- F5 wording versus where it is shown. The accepted text names only the amount, but INV-22 also locks currency,
+  transaction type and ownership (domain-spec :382-385). The only two places that show the message are the type-change
+  and ownership-change paths, so a user changing the type or ownership reads "its amount can't be changed". The handoff
+  note (:2198) says the message "states the type and ownership lock but not the amount", which does not match the
+  string. The wording is accepted as is. A field-neutral wording would be a new decision.
+- F4 versus its original purpose. The single toggle cannot hide purchase records (U-2 rule 3).
+- OQ-21 rationale versus mechanics. The reopen after "unlink, then delete" comes from the unlink, not from the post-commit
+  reaction (U-1 rule 3).

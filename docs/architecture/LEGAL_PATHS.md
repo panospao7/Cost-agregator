@@ -491,8 +491,13 @@ payload exclusion seam planned for S8a):
     expenses carry no notes text
   → Enforced by the registered static guard installment_cloud_reachability
     (scripts/verify_installment_cloud_reachability.py), three rule families over the cloud AI payload
-    surface (data/ai, domain/ai, domain/privacy, data/privacy, the AI and privacy DI modules, cloud
-    payload and briefing/insight/assistant input-builder files):
+    surface (data/ai, domain/ai, domain/privacy, data/privacy, the AI and privacy DI modules, the five
+    cloud briefing chain files data/repository/FinancialWeatherRepository.kt,
+    domain/forecasting/ForecastInputAssembler.kt, domain/logic/SynthesisEngine.kt,
+    domain/logic/NarrativeGenerator.kt and domain/usecase/dashboard/DashboardDataProvider.kt (7 exact-file
+    entries in total; S8b-1 / A15: the cloud briefing chain stays installment-free by construction, and a
+    Home-only installment-aware weather source must live off-surface in its own file), cloud payload and
+    briefing/insight/assistant input-builder files):
       G-INSTALLMENT-CLOUD-01  import of domain.installment, service.installment or
                               ui.screens.installments (wildcard and alias imports included)
       G-INSTALLMENT-CLOUD-02  any other qualified reference to those packages (backticks and
@@ -1798,6 +1803,7 @@ POST-COMMIT DISPATCH OWNER (S10b-1 F3; single owner, no per-caller copy):
                                  failure (logged by class simple name only, never changes the committed result);
                                  CancellationException is rethrown and stops the remaining batches
                               ❌ a private `dispatchBatches` loop in a worker, reconciler, view model or use case
+                              → Enforced by InstallmentPlanArchitectureGuardTest POST_COMMIT_RUNNER_OUTSIDE_DISPATCHER (domain/installment, service/installment, ui/screens/installments; the dispatcher's exact path is the only exemption)
 
 READS (plan coordinator, S6a):
   expense / category / recurring-link facts → InstallmentExpenseFactsReader (domain port) → 

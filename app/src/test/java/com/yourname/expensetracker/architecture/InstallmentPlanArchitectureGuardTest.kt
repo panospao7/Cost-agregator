@@ -1284,8 +1284,139 @@ class InstallmentPlanArchitectureGuardTest {
         )
     }
 
+    // ---------------------------------------------------------------- S10b-1 F3 single post-commit runner owner
+
+    /**
+     * Owner approvals items 48 and 51c (S10b-1 F3): under the installment packages in
+     * [POST_COMMIT_RUNNER_SCOPE_PREFIXES] only [POST_COMMIT_DISPATCHER_PATH] may reference
+     * `PostCommitActionRunner`. Matched on sanitized code (comments and string bodies blanked), so imports,
+     * type references, constructor params, fully qualified names and `::` references are all caught while a
+     * comment mention is not. The pattern also covers `PostCommitActionRunner*` lookalikes such as the Impl.
+     * No allow-list beyond the single dispatcher path (exact relative path, never basename).
+     *
+     * Known limits (not covered by this rule):
+     * - a typealias for the runner declared outside the three scope packages;
+     * - public wrappers that run post-commit batches without naming the type:
+     *   `PostCommitSideEffectEvidenceService.runWithEvidence` / `runBestEffortWithEvidence`,
+     *   `TransactionSideEffectDispatcher`, `ReceiptSideEffectDispatcher`;
+     * - installment code outside the three packages: `di/InstallmentModule.kt`,
+     *   `data/repository/Installment*Impl.kt`.
+     */
+    private fun postCommitRunnerReferences(rel: String, raw: String): List<Hit> {
+        if (POST_COMMIT_RUNNER_SCOPE_PREFIXES.none { rel.startsWith(it) }) return emptyList()
+        if (rel == POST_COMMIT_DISPATCHER_PATH) return emptyList()
+        return lineHits(
+            "POST_COMMIT_RUNNER_OUTSIDE_DISPATCHER",
+            Regex("""\bPostCommitActionRunner\w*"""),
+            code(raw)
+        )
+    }
+
+    @Test
+    fun `S10b-1 F3 PostCommitActionRunner is referenced only by InstallmentPostCommitDispatcher in installment packages`() {
+        assertNoViolations(
+            "PostCommitActionRunner referenced in an installment package outside $POST_COMMIT_DISPATCHER_PATH " +
+                "(S10b-1 F3 single owner, owner items 48 and 51c)",
+            this::postCommitRunnerReferences
+        )
+    }
+
+    @Test
+    fun `self-check S10b-1 F3 post-commit runner detector flags planted references and ignores comments strings the dispatcher and other paths`() {
+        val rule = "POST_COMMIT_RUNNER_OUTSIDE_DISPATCHER"
+        val runnerFqn = "com.yourname.expensetracker.domain.sideeffect.PostCommitActionRunner"
+        val violating = listOf(
+            "import" to "import $runnerFqn\nclass X",
+            "constructor param" to "class X(private val runner: PostCommitActionRunner)",
+            "nullable constructor param" to "class X(private val runner: PostCommitActionRunner?)",
+            "fully qualified type" to "class X(private val runner: $runnerFqn)",
+            "class reference" to "val k = PostCommitActionRunner::class",
+            "callable reference" to "val ref = PostCommitActionRunner::run",
+            "Impl lookalike" to "class X(private val runner: PostCommitActionRunnerImpl)",
+            "local declaration" to "suspend fun f(r: Any) { val x: PostCommitActionRunner = r as PostCommitActionRunner }",
+            "reference beside a comment mention" to "// mentions PostCommitActionRunner\nclass X(private val r: PostCommitActionRunner)"
+        )
+        val installmentPaths = listOf(
+            "$ROOT/ui/screens/installments/InstallmentsViewModel.kt",
+            "$ROOT/ui/screens/installments/detail/InstallmentPlanDetailViewModel.kt",
+            "$ROOT/service/installment/InstallmentRecordDueWorker.kt",
+            "$ROOT/domain/installment/lifecycle/InstallmentPlanLifecycleCoordinator.kt",
+            "$ROOT/domain/installment/usecase/CreateInstallmentPlanUseCase.kt",
+            // A sibling of the dispatcher and a same-basename file elsewhere are NOT the dispatcher.
+            "$ROOT/domain/installment/lifecycle/InstallmentPlanRebuilder.kt",
+            "$ROOT/domain/installment/other/InstallmentPostCommitDispatcher.kt"
+        )
+        for (path in installmentPaths) {
+            for ((label, snippet) in violating) {
+                assertFlagged("$path :: $label", postCommitRunnerReferences(path, snippet), rule)
+            }
+        }
+
+        val runnerSnippet = "import $runnerFqn\nclass D(private val postCommitActionRunner: PostCommitActionRunner)"
+        assertClean("the dispatcher is the single legal owner", postCommitRunnerReferences(POST_COMMIT_DISPATCHER_PATH, runnerSnippet))
+        for (otherPath in listOf(
+            "$ROOT/ui/screens/addexpense/AddExpenseViewModel.kt",
+            "$ROOT/domain/transaction/lifecycle/TransactionSideEffectDispatcher.kt",
+            "$ROOT/domain/receipt/lifecycle/ReceiptSideEffectDispatcher.kt",
+            "$ROOT/domain/sideeffect/PostCommitActionRunnerImpl.kt",
+            "$ROOT/data/repository/ManualExpenseRepository.kt",
+            // Prefix boundary: a sibling directory sharing the name stem is not an installment package.
+            "$ROOT/ui/screens/installmentsettings/SomeViewModel.kt"
+        )) {
+            assertClean("non-installment path $otherPath", postCommitRunnerReferences(otherPath, runnerSnippet))
+        }
+
+        val uiPath = installmentPaths.first()
+        assertClean("line comment", postCommitRunnerReferences(uiPath, "// never PostCommitActionRunner here\nfun f() {}"))
+        assertClean("block comment", postCommitRunnerReferences(uiPath, "/* PostCommitActionRunner */ fun f() {}"))
+        assertClean("KDoc link", postCommitRunnerReferences(uiPath, "/** runs via [PostCommitActionRunner] */ class X"))
+        assertClean("string literal", postCommitRunnerReferences(uiPath, "val s = \"PostCommitActionRunner\""))
+        assertClean(
+            "the dispatcher itself is the legal collaborator",
+            postCommitRunnerReferences(uiPath, "class X(private val dispatcher: InstallmentPostCommitDispatcher)")
+        )
+    }
+
+    @Test
+    fun `S10b-1 F3 non-vacuity - the dispatcher exists in the scan and itself references PostCommitActionRunner`() {
+        val dispatcher = requireScan().singleOrNull { it.rel == POST_COMMIT_DISPATCHER_PATH }
+        assertTrue(
+            "InstallmentPostCommitDispatcher must be in the scan at $POST_COMMIT_DISPATCHER_PATH " +
+                "(else the single-owner rule passes vacuously after a rename)",
+            dispatcher != null
+        )
+        assertTrue(
+            "the dispatcher must reference PostCommitActionRunner in code (imports/params, not comments) - " +
+                "otherwise the single-owner rule has no owner",
+            Regex("""\bPostCommitActionRunner\b""").containsMatchIn(code(dispatcher!!.raw))
+        )
+        // The exemption must be what saves the dispatcher: the same matcher with the dispatcher at a
+        // non-exempt sibling path flags the real file text.
+        assertFlagged(
+            "real dispatcher text at a non-exempt sibling path",
+            postCommitRunnerReferences("$ROOT/domain/installment/lifecycle/Renamed.kt", dispatcher.raw),
+            "POST_COMMIT_RUNNER_OUTSIDE_DISPATCHER"
+        )
+        assertClean("real dispatcher at its pinned path", postCommitRunnerReferences(dispatcher.rel, dispatcher.raw))
+        // Each scope prefix must still match at least one scanned file (else a directory rename makes it vacuous).
+        for (p in POST_COMMIT_RUNNER_SCOPE_PREFIXES) {
+            assertTrue("scope prefix $p matches no scanned file", requireScan().any { it.rel.startsWith(p) })
+        }
+    }
+
     private companion object {
         const val ROOT = "com/yourname/expensetracker"
+
+        /** The single legal owner of PostCommitActionRunner among the installment packages (exact path). */
+        const val POST_COMMIT_DISPATCHER_PATH =
+            "$ROOT/domain/installment/lifecycle/InstallmentPostCommitDispatcher.kt"
+
+        /** Directory prefixes in scope of the single-owner rule (S10b-1 F3). */
+        val POST_COMMIT_RUNNER_SCOPE_PREFIXES = listOf(
+            "$ROOT/domain/installment/",
+            "$ROOT/service/installment/",
+            "$ROOT/ui/screens/installments/"
+        )
 
         const val FACTS_READER_IMPL_PATH = "$ROOT/data/repository/InstallmentExpenseFactsReaderImpl.kt"
 

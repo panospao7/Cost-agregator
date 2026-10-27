@@ -1118,3 +1118,109 @@ Deferred:
 - extra pins and check 8;
 - "only the coordinator holds a TLC";
 - the pre-existing raw-merchant logging at NotificationSubscriptionDetector:99 and NotificationProcessingPipeline:1798/:1807 (separate ticket).
+
+
+## Amendment (2026-10-27) — S8b sub-slice plan (feature-planner; orchestrator-persisted; BINDING)
+Applies S8b (:397-416) as superseded by A15 (:1018-1030) and owner-approvals 51c. Paths are under app/src/main/java/com/yourname/expensetracker/ unless shown in full.
+
+### Facts
+- F1: the installment_cloud_reachability surface lives ONLY in `scripts/verify_installment_cloud_reachability.py`.
+  - Prefixes at :140-145; exact suffixes at :147-150 (`di/AiModule.kt`, `di/PrivacyModule.kt`); name patterns at :170-173.
+  - Suffix match is `(?:^|/)<suffix>$`. An unmatched entry exits 2 (E_INSTALLMENT_CLOUD_SURFACE_ENTRY_UNMATCHED).
+  - The self-tests in `scripts/test_verify_installment_cloud_reachability.py` pin the surface at :74, :104, :179, :547, :891, :910, :927, :980, :986, :1136 and :1152.
+  - The five approved files have 0 "installment" hits today.
+- F2: the Home merge point is HomeViewModel.
+  - processedDataFlow :253-279 → computeDashboardWidgetsUseCase.compute(); the dashboard combine is at :344-417.
+  - ComputeDashboardWidgetsUseCase adds FinancialWeatherWidget at :1255/:1261 and is injected only in HomeViewModel :131.
+  - The cloud consumer DailyBriefingWorker :106-108 uses getProcessedDataFlow and never ComputeDashboardWidgetsUseCase.
+  - LEGAL MERGE: in HomeViewModel after compute(), REPLACE the single FinancialWeatherWidget. Never add one, never merge in ProcessedDashboardData / DashboardDataProvider / DashboardData, and never add a FinancialWeather field.
+- F3: FinancialWeatherRepository.getFinancialWeather (:40-117) runs combine → mapExpenseSnapshots → patterns → assemble (:57-64) → synthesize → generate → map. buildUpcomingItems is at :133-178 (31 days).
+- F4: neither engine is on the cloud path.
+  - CashFlowCalculator.calculateDailyCashFlow has one caller (CashFlowCalendarViewModel :106).
+  - getUpcomingBills (:487) is also called by FinancialHealthScoreV2 :424 (OD-12) and SmartSavingsEngine :484, so it stays byte-identical.
+  - FinancialStressForecastEngine has one caller, ComputeDashboardWidgetsUseCase :285/:1231 (Home-only).
+- F5: InstallmentProjectionPort.upcomingEntries(horizonEndEpochDay) at domain/installment/projection/InstallmentProjectionPort.kt:94-102; the rule is InstallmentProjectionRule.project :56-87; the binding is InstallmentModule :58-60. It has no Flow, so use InstallmentPlanReadRepository.observeOverview() as the invalidation trigger (VERIFY-AT-IMPL).
+- F6, INV-16 mechanisms:
+  - assembler planned-expense conversion with partial/excluded (:537-594);
+  - CashFlowCalculator convertOutcome (:399-421) with DailyCashFlow.isPartial;
+  - stress HZ01-B exclusion (:176-183).
+  - Detected patterns are summed raw (:239-242), so projections NEVER go through the pattern channel.
+- F7: the DashboardBriefingInstallmentExclusionTest placeholders are tests 1 (:144), 2 (:161) and 5 (:219). Tests 3 and 4 stay.
+
+### S8b-1: guard strengthening (script + self-tests + docs; no Kotlin). Approved in 51c.
+- Production: M scripts/verify_installment_cloud_reachability.py.
+  - Append to SURFACE_EXACT_FILE_SUFFIXES: data/repository/FinancialWeatherRepository.kt, domain/forecasting/ForecastInputAssembler.kt, domain/logic/SynthesisEngine.kt, domain/logic/NarrativeGenerator.kt, domain/usecase/dashboard/DashboardDataProvider.kt.
+  - Update the docstring (:25-26) and the scope note (:62-65).
+  - Rules 01-03 are unchanged.
+- Tests: M scripts/test_verify_installment_cloud_reachability.py.
+  - Pins change 6 → 11.
+  - A parametrized negative fixture over the 5 entries (projection-port import plus field) gives exit 1 with G-01/G-03.
+  - Off-surface control: data/repository/HomeInstallmentWeatherSource.kt is not scanned.
+  - Suffix-precision control: XFinancialWeatherRepository.kt.
+  - Each new entry omitted gives exit 2.
+- Docs: LEGAL_PATHS :492-493, SEGMENTS :755, ENGINE map :154-156, docs/ci/GR-10B_SOURCE_SCOPE_MATRIX.md:121 (VERIFY).
+- Gates: architecture-guardian, privacy-security-guardian, reviewer-strict.
+- Validation: the guard self-test profile (VERIFY-AT-IMPL), then registered-guard installment_cloud_reachability (expect 11 matched, 0 hits).
+- Stop if: a hit in the five files; an allowlist or baseline is needed; rule, registry or suite pins change beyond the surface; a sixth entry seems needed.
+
+### S8b-2: engine projections (INV-15, INV-16, INV-29 stress baseline; AE-7, AE-11)
+- M CashFlowCalculator.kt: the port goes in the ctor and only calculateDailyCashFlow uses it; conversion through convertOutcome; a failure omits the item and sets isPartial. getUpcomingBills stays byte-identical.
+- M di/CashFlowModule.kt :34-45.
+- M FinancialStressForecastEngine.kt: port plus RecurringInstallmentEligibility; projected entries become known outflows (HZ01-B conversion); linked history leaves the baseline while entries are projected. SynthesisEngine is NOT edited.
+- New tests:
+  - CashFlowCalculatorInstallmentTest: AE-7, AE-11, INV-15 bounds, USD with and without a rate, getUpcomingBills unchanged.
+  - FinancialStressForecastInstallmentTest: the same, plus no double count.
+- Ctor-only test updates: CashFlowCalculatorTest, P6BudgetCleanupTest :227, FinancialStressForecastEngineTest, e2e/NotificationParserDashboardTotalSeamTest :452.
+- Docs: ENGINE map :146-151.
+- Gates: architecture-guardian.
+- Stop if: the health score, SmartSavingsEngine or SynthesisEngine must be wired; an allowlist or marker grows; there is no dormancy precedent.
+
+### S8b-3: Home installment-aware weather + single merge point (A15 option A)
+- N data/repository/HomeInstallmentWeatherSource.kt (off-surface): observe(): Flow<HomeInstallmentWeather?>, null when the port is empty. It:
+  - drops RecurringInstallmentEligibility.excludedSnapshotIds (INV-29, single owner);
+  - feeds projections as planned inputs into the UNMODIFIED assemble/synthesize/generate;
+  - keeps upcomingItems identical to the baseline;
+  - carries the installment rows separately.
+- N domain/installment/projection/InstallmentUpcomingProjection.kt: a 31-day sibling of RecurringPlanProjectionService, which stays unchanged. Never an UpcomingItem.
+- M ui/screens/home/HomeViewModel.kt:
+  - new ctor dep and an internal var installmentsEnabled seam (BudgetViewModel :87-88 precedent);
+  - replaces the weather widget after compute();
+  - installment rows as a separate Home-only state.
+- Optional: N HomeWeatherMerge.kt. Optional: M FinancialWeatherRepository.kt, only a behaviour-neutral, installment-free extraction of :89-117 within the same guarded file; the signature and output are unchanged.
+- UNTOUCHED: ForecastInputAssembler, SynthesisEngine, NarrativeGenerator, DashboardDataProvider, UpcomingItem, DashboardBriefingInputBuilder.
+- New tests:
+  - HomeInstallmentWeatherSourceTest (replaces ForecastInputAssemblerInstallmentTest): AE-7, AE-11, INV-15, INV-16 with/without a rate, INV-29 swap-never-sum, upcomingItems identical, null when empty;
+  - InstallmentUpcomingProjectionTest;
+  - HomeViewModelInstallmentWeatherTest: replaced not added; with the seam off or the port empty, the state equals pre-S8b.
+- Ctor-only test updates: HomeViewModelWidgetsTest, HomeViewModelCurrencyReloadTest.
+- Docs: ENGINE map :150/:152, a LEGAL_PATHS Home weather read row, SEGMENTS ownership, a spec INV-29 owner clarification.
+- Gates: architecture-guardian, privacy-security-guardian, reviewer-strict.
+- STOP (option B goes to the OWNER) if projections cannot enter the unmodified assemble() via planned inputs (dedupe :543, or SynthesisEngine does not count planned items).
+- Also stop on:
+  - a non-identical FinancialWeatherRepository extraction;
+  - an UpcomingItem or allowlist change;
+  - an InstallmentPlanArchitectureGuardTest importer-allowlist entry;
+  - a RECURRING_RULE contract change.
+
+### S8b-4: end-to-end cloud differential (tests only; A15 ISSUE-3/4; INV-31; AE-23)
+- Replace placeholders 1, 2 and 5 in DashboardBriefingInstallmentExclusionTest. The chain: fake projection port (empty vs non-empty) → real FinancialWeatherRepository (real assembler, synthesis and narrative) → DashboardDataProvider.getProcessedDataFlow → GenerateDashboardBriefingUseCase → CloudDashboardBriefingService text.
+  - Assert identical input, prompts (redact on and off) and payload.
+  - Non-vacuity: HomeInstallmentWeatherSource DOES change in the same fixture.
+  - Test 5: TransactionInsight input and prompt are identical.
+- A DailyBriefingWorker test asserting it passes getProcessedDataFlow output unchanged (VERIFY-AT-IMPL).
+- Gates: privacy-security-guardian (mandatory).
+- STOP on any cloud delta.
+
+### Validation (serial)
+- S8b-1: its own guard runs.
+- S8b-2..4 as one batch:
+  - targeted *CashFlowCalculator*,*P6BudgetCleanup*,*FinancialStressForecast*,*NotificationParserDashboardTotalSeam*,*HomeInstallmentWeatherSource*,*InstallmentUpcomingProjection*,*InstallmentProjection*,*HomeViewModel*,*FinancialWeatherRepository*,*CrossEngineParityMatrix*,*DashboardBriefingInstallmentExclusion*,*DashboardBriefing*,*GenerateTransactionInsight*,*DailyBriefingWorker*,*ProcessedDashboard*,*DashboardDataProvider*;
+  - shards domain-a-m, data, runtime-ui and integration-golden (VERIFY);
+  - registered guards installment_cloud_reachability, cloud_payload and the money-aggregate guard (VERIFY the name);
+  - static-guards and app-check once at the S8b candidate.
+
+### Decisions (orchestrator under standing approval, owner-approvals item 53)
+- Q1 INV-29 scope on Home: GLOBAL-WHILE-PROJECTED. While at least one entry is projected, the aware view excludes all installment-linked and plan-purchase expenses via RecurringInstallmentEligibility. No new read API.
+- Q2: the other Home widgets (Monte Carlo, runway, health score) stay on the installment-free baseline in v1. Mixed, not double-counted. Deferred.
+- Q3: an architecture test pinning HomeInstallmentWeatherSource to HomeViewModel plus DI is a guard strengthening. It goes to the OWNER and is not blocking.
+- Deferred: rendering installment rows in FinancialWeatherCard/HomeScreen (new strings, es/el); installment-aware SmartSavings, health score and Monte Carlo.
