@@ -142,6 +142,14 @@ enum class PrivacyDiagnosticCode(
         emptySet()
     ),
 
+    // App-lock controller (S18-ii-c, owner-approvals item 51a, D9): T28, a re-read recovered a transient unreadable
+    // store. CAUSE carries the bounded PRIOR unreadable cause, only IO_ERROR or TIMEOUT (the controller never
+    // emits a persistent cause here), as an enum name only.
+    LOCK_SETTINGS_RECOVERED(
+        DiagnosticReasonCode.LOCK_SETTINGS_RECOVERED, EventOutcome.COMPLETED, EventSeverity.INFO,
+        setOf(PrivacyDiagnosticKey.CAUSE)
+    ),
+
     // App-lock controller (S16 part (i)): lock shown, unlocked, inert. No metadata: the cause or
     // reason is the code itself. The enable/disable and recovery codes arrive with their slices.
     LOCK_SHOWN_COLD_START(

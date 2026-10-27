@@ -7,6 +7,8 @@ import com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
 import com.yourname.expensetracker.domain.diagnostics.EventMetadataSanitizer
+import com.yourname.expensetracker.domain.diagnostics.EventOutcome
+import com.yourname.expensetracker.domain.diagnostics.EventSeverity
 import com.yourname.expensetracker.domain.diagnostics.NotificationDiagnosticEmitter
 import com.yourname.expensetracker.domain.util.FakeMonotonicTimeProvider
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
@@ -251,6 +253,72 @@ class PrivacyDiagnosticsEmitterTest {
         for ((code, keys) in expected) {
             assertEquals("${code.name} allowedKeys", keys, code.allowedKeys)
         }
+    }
+
+    @Test
+    fun `D9 LOCK_SETTINGS_RECOVERED allows exactly the CAUSE key`() {
+        assertEquals(setOf(PrivacyDiagnosticKey.CAUSE), PrivacyDiagnosticCode.LOCK_SETTINGS_RECOVERED.allowedKeys)
+        assertEquals(
+            DiagnosticReasonCode.LOCK_SETTINGS_RECOVERED,
+            PrivacyDiagnosticCode.LOCK_SETTINGS_RECOVERED.reasonCode
+        )
+        // The settings-durability family is pinned on purpose: a new LOCK_SETTING* code must be added here.
+        assertEquals(
+            setOf(
+                "LOCK_SETTING_PERSIST_FAILED",
+                "LOCK_SETTINGS_UNREADABLE",
+                "LOCK_SETTINGS_REVIEW_SAVED",
+                "LOCK_SETTINGS_RECOVERED"
+            ),
+            PrivacyDiagnosticCode.entries.map { it.name }.filter { it.startsWith("LOCK_SETTING") }.toSet()
+        )
+    }
+
+    @Test
+    fun `D9 LOCK_SETTINGS_RECOVERED is stored as a completed info privacy event with the cause as an enum name`() = runTest {
+        emitter.emit(
+            PrivacyDiagnosticCode.LOCK_SETTINGS_RECOVERED,
+            PrivacyDiagnosticMetadata.builder().put(PrivacyDiagnosticKey.CAUSE, SettingsUnreadableCause.TIMEOUT).build()
+        )
+
+        val event = written.single()
+        assertEquals(AppPipeline.PRIVACY, event.pipeline)
+        assertEquals(PrivacyDiagnosticsEmitter.STAGE, event.stage)
+        assertEquals(DiagnosticReasonCode.LOCK_SETTINGS_RECOVERED, event.reasonCode)
+        assertEquals(EventOutcome.COMPLETED, event.outcome)
+        assertEquals(EventSeverity.INFO, event.severity)
+        assertTrue(event.isTerminal)
+        assertNull(event.exception)
+        val json = metadataOf(event)
+        assertEquals(setOf("cause"), json.keys().asSequence().toSet())
+        assertEquals("TIMEOUT", json.getString("cause"))
+    }
+
+    @Test
+    fun `D9 LOCK_SETTINGS_RECOVERED drops every key other than CAUSE and keeps CAUSE`() = runTest {
+        emitter.emit(
+            PrivacyDiagnosticCode.LOCK_SETTINGS_RECOVERED,
+            PrivacyDiagnosticMetadata.builder()
+                .put(PrivacyDiagnosticKey.CAUSE, SettingsUnreadableCause.IO_ERROR)
+                .put(PrivacyDiagnosticKey.HOST, FakeHost.ADD)
+                .put(PrivacyDiagnosticKey.FIELD, FakeHost.ANALYTICS)
+                .put(PrivacyDiagnosticKey.COUNT, 3)
+                .put(PrivacyDiagnosticKey.AFTER_UNLOCK, true)
+                .exceptionClass(IllegalStateException("merchant ACME /data/user/0/secret.db"))
+                .build()
+        )
+
+        val json = metadataOf(written.single())
+        assertEquals(setOf("cause"), json.keys().asSequence().toSet())
+        assertEquals("IO_ERROR", json.getString("cause"))
+        assertFalse(written.single().metadata.toJson().contains("ACME"))
+    }
+
+    @Test
+    fun `D9 LOCK_SETTINGS_RECOVERED without metadata stores none`() = runTest {
+        emitter.emit(PrivacyDiagnosticCode.LOCK_SETTINGS_RECOVERED)
+
+        assertTrue(written.single().metadata.isEmpty())
     }
 
     @Test

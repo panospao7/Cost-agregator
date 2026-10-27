@@ -407,8 +407,8 @@ internal class AppLockControllerHarness(
     val authenticator = FakeDeviceAuthenticator { main.isOnMain }
 
     /**
-     * The metadata argument of each emit, in step with [emitted]. Only LOCK_AUTH_ERROR and
-     * LOCK_UNAVAILABLE_CAPABILITY carry a `CAUSE` (the bounded bucket or capability enum name); the others are empty.
+     * The metadata argument of each emit, in step with [emitted]. Only the codes with a `CAUSE` key carry one (the
+     * bounded bucket, capability or prior-cause enum); the others are empty.
      */
     val emittedMetadata = mutableListOf<PrivacyDiagnosticMetadata>()
 

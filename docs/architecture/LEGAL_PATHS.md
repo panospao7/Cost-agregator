@@ -1665,8 +1665,12 @@ READ + RECOVERY for the app-lock state (S18 ii-c, INV-47, INV-51; DORMANT, no pr
   is LOCKED / AUTHENTICATING; in every other state it changes nothing. T28 from UNLOCKED / INERT: lock off → DISABLED, lock on
   and lockActive → UNLOCKED, else INERT(reason); no auth, never locks, no write. T29 in LOCKED / AUTHENTICATING: the
   snapshot is kept and offered to T28 only after an UNLOCK success or after an open-origin prompt that ends in an
-  open state; LOCKED is never relaxed (only T6b may). The one T28 point carries TODO(S18-ii-c D9): the
-  LOCK_SETTINGS_RECOVERED(cause) emission waits for the owner-approved PrivacyDiagnosticsEmitter entry.
+  open state; LOCKED is never relaxed (only T6b may). The one T28 point (applyRereadLocked) emits
+  LOCK_SETTINGS_RECOVERED (D9, owner-approvals item 51a; PrivacyDiagnosticsEmitter entry, CAUSE key only): the
+  PRIOR load state's transient cause (IO_ERROR or TIMEOUT) is captured before the view is overwritten, claimed once
+  per process per (code, cause) in claimedCodeCauses, and recorded after the monitor is released. A new INERT
+  diagnostic can coincide, so up to two diagnostics are recorded per T28. The CAUSE value limit (IO_ERROR or TIMEOUT
+  only) is enforced by the controller; emission is fire-and-forget (INV-37).
   The one lock notice (INV-51) is derived by the pure LockNoticeDerivation (INERT > REVIEW_SETTINGS from the load
   state, persistent causes only > biometric, always false in Increment 1; none in RESOLVING / LOCKED /
   AUTHENTICATING(UNLOCK); the origin's notice during ENABLE / CONFIRM_CHANGE, AMD-22) and published as

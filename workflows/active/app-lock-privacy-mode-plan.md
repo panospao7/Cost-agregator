@@ -1670,3 +1670,219 @@ Lane A runs strictly in order: a → c → d → e → f → g → h, and h is h
 - **Adopted form:** for BILL, `AndroidNotificationService.rebuildDiscreet` takes the action-suppression term from the single rule owner, `presentationResolver.resolve(kind, SDK_INT)`: `actionsSuppressed = (actionPolicy != UNCHANGED)`. This fails closed for any unexpected value.
 - **Equivalence:** on API ≤30, NONE is exactly `effectiveLockEnabled(state)`. Timeout, unreadable and throwing reads all give NONE through FAIL_CLOSED. On API ≥31 the output is AUTH_REQUIRED either way.
 - **Why:** the service gets no second rule and no new settings dependency. NOTIF_ACTIONS_SUPPRESSED_LOCK reuses the resolver's existing emission ({SDK_INT} only).
+
+
+## Amendment (2026-10-27) — S20 sub-slice plan, absorbing S18-ii-g and S18-ii-h (feature-planner; orchestrator-persisted; BINDING)
+
+Supersedes:
+- D10 ("g lands before S20"). Per item 52, g is now S20-d.
+- The S18-ii rule "static-guards and app-check at the S18-ii candidate (after g)". These now run once, at the S20 candidate.
+- The stale MainActivity reference ":471-478" in S20 (plan :995).
+
+### Facts (verified in source)
+- FS-0: R24 9b920430, R19 df769791 and R18 0bd05c58 are ancestors. R18 HZ-03 F1 CHECKED: fixed by R32 01fae80c (also an ancestor).
+- FS-1: MainActivity.
+  - `:105` is `class MainActivity : ComponentActivity()`. TECH-1 A (plan :134) requires FragmentActivity, and the adapter needs one (BiometricPromptDeviceAuthenticator :163-168).
+  - onCreate (:125-166) runs: DB gate :129-136 → enableEdgeToEdge :137 → handleIntent :138-145 → setContent :146 → theme :147 → ProvideNavigationController :148-150 → Surface :151-154 → MainScreen( :155-161.
+  - onNewIntent :168-177; handleIntent :191-197 (PRV-16 :185-186 belongs to S21).
+- FS-2: there is no FLAG_SECURE anywhere in MainActivity.
+- FS-3: the R24 auto-prompt is at :448-462: LaunchedEffect(Unit) with NotificationPromptPolicy.shouldAutoPrompt and notificationPromptStore (persisted, once per install). The store is at :428-430, the launcher at :431-446 and the dialog at :475-487.
+- FS-4: MainScreen signature :253-259. ReviewViewModel via hiltViewModel :317. The operational lock :375-419 returns early.
+- FS-5: AppLockModule :31-60 leaves DeviceAuthenticator intentionally unbound (:39-42).
+- FS-6: DeviceAuthenticator: authenticate :91; cancel :100 must deliver Failed(SYSTEM_CANCELED) synchronously; per-adapter guarantee :87-89; HOST_UNAVAILABLE :57.
+- FS-7: no relay, prompt host, binder, secure-window controller or prompt-once class exists. The only adapter is BiometricPromptDeviceAuthenticator (inFlight :170-172, observer :199-210, authenticate :225, cancel :252, onLibraryTerminal :271). It has NO adopt seam (handoff :947 makes adoption mandatory).
+- FS-8: AppLockGate: AppLockGateSource :52-55; value overload :84-95; source overload :153-163; slot and insets :121-142.
+- FS-9: AppLockController.
+  - @Singleton ctor :200-209 (authenticator :207, @ApplicationScope :206).
+  - state :416, notice :431.
+  - resolve() :460: S20 must call it from the application scope, and again on each ON_START while RESOLVING.
+  - onAppBackgrounded :528, onAppForegrounded :554, onUnlockTapped :591, onPromptHostLost :631, requestSettingsReread :1103.
+- FS-10: EffectivePrivacyValues.effectiveSecureScreen(loadState, resolving) :49-53. observeLoadState :74. The unforced setDiscreetNotifications is at :80.
+- FS-11: AppLockPrivacySettingsViewModel.
+  - ctor :104-110: repository, updateDiscreetNotifications, privacyDiagnostics, writeSerializer, discreetRepostTrigger, appScope.
+  - setDiscreetNotifications :159-181; saveReview :194-214; retry :217-220; handleReviewResult :257-283; resubscribeOnMain :327-329.
+- FS-12: Operations: requestDiscreetChange :359-360; requestReviewSave :394-409; PlainSettingResult :71-82 (4 values); ReviewSaveResult :89-112 (7 values).
+- FS-13: pins in AppLockControllerIllegalTransitionTest.
+  - Dormancy :790-824, with the token list :798-808. It INCLUDES the type name "AppLockSettingsOperations"; only Operations.kt is exempt (:812). The g lift is therefore a per-file exemption of TWO tokens.
+  - F3 :854-860; reviewSave two-callers :862-873.
+- FS-14: the 6 setDiscreetNotifications fakes:
+  - AT/data/service/NotificationPresentationDeviceTest
+  - T/data/service/AndroidNotificationServiceTest
+  - T/data/service/AndroidNotificationServicePresentationTest
+  - T/domain/notification/presentation/NotificationPresentationResolverTest
+  - T/domain/privacy/applock/AppLockControllerTestFixtures
+  - T/domain/privacy/applock/AppLockControllerEnableDisableTest
+- FS-15: biometric 1.1.0 and fragment are pinned. TECH-3 uses registerActivityLifecycleCallbacks.
+- FS-16: existing feature scans are AppLockGateSourceScanTest and AppLockBiometricSourceScanTest. There is no MainActivity or MainScreen test.
+
+### Order
+- One lane, one writer: a → b → c → d → e.
+  - a and b are disjoint and share one targeted run.
+  - d and e share files and run strictly in sequence.
+- Start only after D9 is validated and committed.
+- a and b are releasable on their own (dormant). c and d are release-safe ONLY together with e: the S20 candidate is one atomic merge (D1).
+
+### S20-a — relay, prompt host, lifecycle binder (dormant; nothing instantiates them)
+- Invariants: INV-24, INV-25, INV-54, TECH-1 A, TECH-3, handoff :947 (adoption) and :948 relay (a)-(e); the JVM parts of AE-41, AE-116, AE-117 and AE-118.
+- N ui/applock/AppLockAuthenticatorRelay.kt: @Singleton, main-thread-only, implements DeviceAuthenticator.
+  - (a) Holds the adapter weakly and clears it at the host's ON_DESTROY.
+  - (b) With no adapter: HOST_UNAVAILABLE, and no callback.
+  - (c) cancel(id) goes to the launching or adopting adapter. If that adapter is gone, the relay delivers Failed(SYSTEM_CANCELED) itself, exactly once and synchronously.
+  - (d) Host loss is reported only from the holding registration, only when !isChangingConfigurations, and exactly once; the attempt record is removed first.
+  - (e) Reachable only through DI and the prompt host.
+  - It records the open attempt before launch.
+- N ui/applock/AppLockPromptHost.kt: per Activity.
+  - Builds the adapter in onCreate and registers it with the relay.
+  - Adopts the open attempt on rotation (never waits for the watchdog).
+  - Calls onPromptHostLost(id) once at ON_DESTROY when !isChangingConfigurations and an open attempt has no outcome.
+  - Copy passes through unchanged.
+- N ui/applock/AppLockLifecycleBinder.kt: @Singleton, idempotent install(application) via registerActivityLifecycleCallbacks.
+  - Exact started count: 0→1 calls onAppForegrounded; 1→0 with !isChangingConfigurations calls onAppBackgrounded (AE-41).
+  - Reports every real stop during prompts.
+  - Launches resolve() on @ApplicationScope at install, and on each start while Resolving. Never swallows CancellationException.
+- M ui/applock/BiometricPromptDeviceAuthenticator.kt (write-set extension): internal adopt(attemptId, callback), only when idle and not awaiting a terminal; at most one outcome; stale terminals dropped by reference.
+- M di/AppLockModule.kt: @Binds @Singleton bindDeviceAuthenticator(relay); comment :39-42 replaced.
+- Tests:
+  - N AppLockAuthenticatorRelayTest.
+  - N AppLockRelaySourceScanTest (feature-scoped, TECH-10, not registered): no worker, receiver or service references the relay, DeviceAuthenticator or AppLockController; the relay is referenced only by AppLockModule, AppLockPromptHost and (from c) MainActivity; self-checks.
+  - N AppLockPromptHostTest (Robolectric; AE-118, rotation adoption, exactly-once, copy).
+  - N AppLockLifecycleBinderTest.
+  - M BiometricPromptAdapterStateMachineTest (adopt cases).
+- Pins: none changed.
+- Docs: hilt-bindings-map, LEGAL_PATHS (controller → relay → adapter; host loss; binder as the sole INV-25 signal), SEGMENTS, INVENTORY, ENGINE.
+- Gates: privacy-security-guardian (lead), architecture-guardian, reviewer-strict.
+- Stop on:
+  - a DeviceAuthenticator or controller public-API change;
+  - binding anything else;
+  - editing MainApplication.kt;
+  - relying on the watchdog;
+  - a relay reachable from workers or receivers;
+  - weakening adapter rules;
+  - any guard-registry entry.
+
+### S20-b — SecureWindowController + NotificationPermissionPromptOnce (not wired)
+- Invariants: INV-53 shell part (committed-only, never AUTHENTICATING), INV-29; AE-113, AE-114, AE-39; R2.
+- N ui/applock/SecureWindowController.kt:
+  - effectiveSecureScreen(loadState, state is Resolving), from observeLoadState plus controller.state (Resolving only);
+  - applyInitial(window) is synchronous;
+  - bind(activity) collects with distinctUntilChanged and clears ONLY on a computed false from a real emission. Null, absent or a flow error keep the flag set; a persist failure leaves it set.
+- N ui/applock/NotificationPermissionPromptOnce.kt: @Singleton, AtomicBoolean tryClaim(), not persisted. R24's policy and store stay the deciders.
+- Tests: N SecureWindowControllerTest (AE-113, AE-114, RESOLVING/Unreadable/null/error all give set); N NotificationPermissionPromptOnceTest.
+- Docs: SEGMENTS, INVENTORY; LEGAL_PATHS records the single FLAG_SECURE writer.
+- Gates: privacy-security-guardian (lead), reviewer-strict.
+- Validation for a + b:
+  - targeted `*AppLockAuthenticatorRelay*,*AppLockRelaySourceScan*,*AppLockPromptHost*,*AppLockLifecycleBinder*,*BiometricPrompt*,*AppLockBiometricSourceScan*,*SecureWindowController*,*NotificationPermissionPromptOnce*,*NotificationPromptPolicy*`;
+  - shards runtime-ui and architecture-contracts;
+  - registered-guard cancellation.
+- Stop on: any AUTHENTICATING input to the flag; clearing on unknown; an edit to NotificationPromptPolicy or NotificationPromptStore; a persisted once-flag.
+
+### S20-c — MainActivity shell integration (the controller goes LIVE for all users)
+- Invariants: INV-26, INV-27, INV-29, INV-53, OD-9a (VERIFY); AE-38, AE-39, AE-61, AE-62, AE-63 (VERIFY), AE-113; CF-1..CF-5; S19 insets note; RP-1, RP-9.
+- M ui/MainActivity.kt, minimal hunks:
+  - :105 becomes FragmentActivity;
+  - injected fields (controller, binder, prompt host factory, SecureWindowController, NotificationPermissionPromptOnce);
+  - secureWindow.applyInitial(window) as the FIRST statement after super.onCreate;
+  - after the DB gate: binder.install, promptHost.attach, secureWindow.bind;
+  - setContent wraps MainScreen in AppLockShell inside ProvideNavigationController;
+  - MainScreen gains a notificationPromptOnce parameter; the R24 effect starts with `if (!notificationPromptOnce.tryClaim()) return@LaunchedEffect`;
+  - handleIntent and onNewIntent are unchanged (S21).
+- N ui/applock/AppLockShell.kt (write-set extension, RP-1):
+  - a ControllerGateSource exposing controller.state and controller.notice directly (CF-1);
+  - the source overload of AppLockGate (CF-2);
+  - rememberSaveableStateHolder (T14);
+  - onUnlock is a tap-only onUnlockTapped();
+  - a derived unlockMessage from bounded enums (CF-4);
+  - onOpenSecuritySettings sends a constant ACTION_SECURITY_SETTINGS intent with no extras, handling ActivityNotFound with a bounded Timber reason (CF-3);
+  - tap-time operationalState re-checks;
+  - inAppActionsAllowed from the operational state (INV-52).
+- Tests:
+  - N MainScreenCallSiteTest (TECH-10): exactly one MainScreen( inside the AppLockShell lambda; no Dialog, AlertDialog or Popup outside the gate (CF-5); applyInitial before setContent; FragmentActivity; self-checks.
+  - N AppLockShellTest: CF-1 same instances; CF-3; CF-4; SaveableStateHolder; AE-113 LaunchedEffect not re-run; prompt-once; insets with and without a banner.
+  - M AppLockGateSourceScanTest: the file set gains exactly AppLockShell.kt.
+  - Plus GsonR8KeepRulesContractTest.
+- Pins: the gate scan gains AppLockShell.kt; the relay scan gains MainActivity.kt; the dormancy pin is unchanged.
+- Docs: LEGAL_PATHS (MainScreen only from the gate; the single FLAG_SECURE writer; POST_NOTIFICATIONS once per process; binder owns resolve and lifecycle), SEGMENTS, ENGINE, INVENTORY.
+- Gates: privacy-security-guardian (lead), architecture-guardian, reviewer-strict.
+- Validation:
+  - targeted `*MainScreenCallSite*,*AppLockShell*,*AppLockGate*,*AppLockSurface*,*LockNoticeBanner*,*SecureWindowController*,*NotificationPermissionPromptOnce*,*AppLockRelaySourceScan*,*GsonR8KeepRulesContract*,*AppLockBiometricSourceScan*`;
+  - shard runtime-ui; lint;
+  - registered guards ui_dao and cancellation.
+- Stop on:
+  - an edit to AppLockGate.kt or AppLockSurface.kt;
+  - touching handleIntent or deep links;
+  - a new PrivacyDiagnosticCode or emitter entry for CF-3;
+  - CF-4 needing a new controller API;
+  - MainActivity hunks outside the listed regions;
+  - the TECH-10 owner confirmation missing (VERIFY in the handoff).
+
+### S20-d — S18-ii-g: WRITE 5 discreet routing + D4 retirement
+- M AppLockPrivacySettingsViewModel:
+  - the ctor swaps updateDiscreetNotifications for operations;
+  - setDiscreetNotifications = `withContext(NonCancellable) { handlePlain(operations.requestDiscreetChange(enabled)) }`, with NO outer serializer;
+  - exhaustive mapping with no else: COMMITTED does nothing; FAILED, REJECTED_FORCED and ALREADY_IN_FLIGHT give SAVE_FAILED plus resubscribeOnMain();
+  - the exception-path recordPersistFailed(DISCREET) is KEPT;
+  - KDoc :85-103.
+- D domain/privacy/applock/UpdateDiscreetNotificationsUseCase.kt (VERIFY the result type is in the same file).
+- M AppLockSettingsRepository.kt: remove setDiscreetNotifications (:80). M AppLockSettingsRepositoryImpl.kt: remove it.
+- Tests:
+  - D UpdateDiscreetNotificationsUseCaseTest (approved).
+  - M AppLockSettingsRepositoryImplTest: about 15 cases removed (approved). M ...CorruptionTest: 2 removed (approved).
+  - M AppLockPrivacySettingsViewModelTest.
+  - M the 6 fakes (FS-14).
+  - The owed D6 test in AppLockControllerRereadTest: a discreet write committed via requestDiscreetChange after a kept T29 snapshot drops it.
+- Exact pins:
+  - F3 :854-860 becomes `assertProductionCallers(".setDiscreetNotifications(", emptySet())`, renamed "D4 retired: no production call site".
+  - Dormancy :790-824: the single-file exemption becomes a per-file map. Operations.kt keeps all tokens. AppLockPrivacySettingsViewModel.kt gets exactly {"AppLockSettingsOperations", "requestDiscreetChange"}.
+  - reviewSave :862-873 is unchanged.
+- Docs: LEGAL_PATHS (~:1556, :1678-1690, :1804-1823, :1859-1876), SEGMENTS (:294, :598), INVENTORY (:17), ENGINE (:161-164), hilt-bindings-map (:382, :394).
+- Gates: privacy-security-guardian, architecture-guardian, reviewer-strict.
+- Stop on: deleting tests beyond D4; another pin loosened; removing the VM discreet diagnostic; routing secure-screen; S18-ii-f state conflicting.
+
+### S20-e — S18-ii-h: INV-45 review-save routing (last; closes D1)
+- M AppLockPrivacySettingsViewModel:
+  - saveReview sends the D2 record {lock off, IMMEDIATE, discreet = choice, secure on} to operations.requestReviewSave under NonCancellable, with no serializer;
+  - remove the VM's LOCK_SETTINGS_REVIEW_SAVED emit, the review recordPersistFailed(REVIEW_SAVE) and the sweep (D7: the controller and Operations own them);
+  - remove the unused writeSerializer and discreetRepostTrigger ctor params;
+  - retry() also asks for a re-read (via an Operations pass-through if one exists, else the controller; VERIFY);
+  - exhaustive mapping: COMMITTED resets the choice, sets reviewCommitted and shows REVIEW_SAVED; STARTED shows no notice; FAILED gives SAVE_FAILED; REJECTED_CAPABILITY, NOT_IN_REVIEW, NOT_IN_ORIGIN and ALREADY_IN_FLIGHT give SAVE_FAILED plus resubscribeOnMain().
+- M AppLockSettingsOperations.kt: KDoc only (:391-392).
+- Tests: M AppLockPrivacySettingsViewModelTest (every ReviewSaveResult, the D2 record, no VM diagnostics, retry re-read); M IllegalTransitionTest pins.
+- Exact pins:
+  - the dormancy exemption for the VM gains exactly "requestReviewSave";
+  - the reviewSave pin set becomes {AppLockSettingsOperations.kt} only;
+  - if a zero-caller pin on requestSettingsReread exists, add exactly the VM or the Operations pass-through.
+- Validation for d + e:
+  - targeted `*AppLockPrivacySettingsViewModel*,*AppLockSettingsRepositoryImpl*,*AppLockSettingsOperations*,*AppLockSettingsWriteSerializer*,*AppLockController*,*AndroidNotificationService*,*NotificationPresentationResolver*`;
+  - shards domain-n-z, data, runtime-ui;
+  - registered guards known_good_state, ui_dao, cancellation.
+- Stop on:
+  - ux needing REVIEW_SAVED after STARTED;
+  - a reachable REJECTED_CAPABILITY with the D2 record;
+  - a new persisted key;
+  - removing diagnostics without the exactly-once proof;
+  - lifting dormancy beyond g and h;
+  - more than 2+2 iterations.
+
+### Candidate gate (once, after e)
+- static-guards, lint, app-check (including the androidTest compile).
+- No migration tests.
+- No connected run is needed for S20 acceptance. G1b owns the device checks:
+  - AE-38, AE-41, AE-42, AE-66, AE-67, AE-116, AE-117, AE-118 (device);
+  - RP-5, RP-6, RP-7, CF-6, the insets and TalkBack checks, privacy F6.
+- G1b runs before any release containing S20.
+
+### Lock reachability
+- No S20 sub-slice makes the lock user-enableable. The enable, disable, timeout and secure-screen requests stay dormant; the first user-enableable slice is S22.
+- From S20-c on, the controller is LIVE for everyone:
+  - every cold start shows the RESOLVING neutral surface with FLAG_SECURE (RP-5);
+  - fail-closed paths can show LOCKED to a lock-off user (T5 SETTINGS_UNREADABLE, or a resolve timeout bounded by T6b; RP-11);
+  - INERT applies without a device credential.
+
+### Deferred
+- Held deep links (PRV-16) go to S21.
+- The RP-5 pre-warm is not planned.
+- FLAG_SECURE for UnsupportedDatabaseActivity is recorded for S23 and G1b.
+
+### Decision (orchestrator, standing approval; owner-approvals item 55)
+- D2 vs S20 FLAG_SECURE: KEEP D2 (fail-closed: a review-save writes secure on), on the CONDITION that no release ships S20 without S22.
+- An interim S20-only release would need the owner to approve changing h's record to the store default for secureScreen.

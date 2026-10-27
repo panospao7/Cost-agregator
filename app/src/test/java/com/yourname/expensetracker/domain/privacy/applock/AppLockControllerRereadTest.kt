@@ -12,7 +12,13 @@ import org.junit.Test
  * `AUTHENTICATING` (AE-97, AE-98), the D6 drop of a kept snapshot, the stale-sequence drop, and that a re-read never locks
  * and never writes. The re-reads are scripted through `FakeAppLockSettingsRepository.scriptRead`.
  *
- * The emission of `LOCK_SETTINGS_RECOVERED` is NOT covered: its emitter entry (D9) is not approved yet.
+ * The emission of `LOCK_SETTINGS_RECOVERED` (D9, owner-approvals item 51a) is covered at the end of this file: one
+ * recovery from a transient `Unreadable(IO_ERROR | TIMEOUT)` view records it once with the bounded prior cause under the
+ * `CAUSE` key, together with a new INERT diagnostic when both happen, from T28 and from the T29 kept snapshot, and
+ * nothing is recorded for a readable or persistent-unreadable view, an unreadable or failing re-read, a stale or
+ * D6-dropped result, or a snapshot that is superseded. The once-per-(code, cause) claim itself is not reachable twice
+ * through one controller (a recovered view never becomes transient unreadable again), so only its observable
+ * consequence is pinned: one record per recovery, and a different cause is a different claim.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class AppLockControllerRereadTest {
@@ -469,6 +475,393 @@ class AppLockControllerRereadTest {
             unlockOnce(h, controller)
 
             assertEquals("matching=$matchingToken", AppLockState.Unlocked, controller.state.value) // dropped: not DISABLED
+            assertNeverWrote(h)
+        }
+    }
+
+    // --- D9: LOCK_SETTINGS_RECOVERED (S18 ii-c, owner-approvals item 51a) ---------------------------------------
+
+    private val recoveredCode = PrivacyDiagnosticCode.LOCK_SETTINGS_RECOVERED
+
+    /** The metadata of every `LOCK_SETTINGS_RECOVERED` the harness recorded, in order (`emitted` and `emittedMetadata` are in step). */
+    private fun AppLockControllerHarness.recoveryMetadata(): List<Map<PrivacyDiagnosticKey, Any>> =
+        emitted.indices.filter { emitted[it] == recoveredCode }.map { emittedMetadata[it].entries }
+
+    /** Forgets what the setup emitted, so a test sees only the diagnostics of the step under test. */
+    private fun AppLockControllerHarness.forgetEmitted() {
+        emitted.clear()
+        emittedMetadata.clear()
+    }
+
+    /**
+     * Exactly one `LOCK_SETTINGS_RECOVERED` per cause in [causes], in order, each carrying only the closed `CAUSE` key
+     * with the bounded enum (no text of any kind), and no recorded diagnostic of any code carries a string value.
+     */
+    private fun assertRecoveries(label: String, h: AppLockControllerHarness, vararg causes: SettingsUnreadableCause) {
+        val expected = causes.map { mapOf<PrivacyDiagnosticKey, Any>(PrivacyDiagnosticKey.CAUSE to it) }
+        assertEquals(label, expected, h.recoveryMetadata())
+        assertTrue(label, h.emittedMetadata.all { m -> m.entries.values.none { it is String } })
+        assertEquals(label, emptyList<Throwable>(), h.uncaught)
+    }
+
+    @Test
+    fun `D9 a T28 recovery from a transient IO_ERROR or TIMEOUT view records LOCK_SETTINGS_RECOVERED once with that cause`() {
+        val transientCauses = SettingsUnreadableCause.entries.filter { !it.isPersistent }
+        assertEquals(setOf(SettingsUnreadableCause.IO_ERROR, SettingsUnreadableCause.TIMEOUT), transientCauses.toSet())
+        for (cause in transientCauses) {
+            val (h, controller) = transientUnlocked(cause = cause)
+            h.forgetEmitted()
+            h.repository.scriptRead(AppLockTestSettings.DISABLED)
+
+            controller.requestSettingsReread()
+
+            assertEquals("$cause", AppLockState.Disabled, controller.state.value)
+            assertEquals("$cause", listOf(recoveredCode), h.emitted)
+            assertRecoveries("$cause", h, cause)
+            assertNeverWrote(h)
+        }
+    }
+
+    @Test
+    fun `D9 a recovery that keeps the state UNLOCKED still records LOCK_SETTINGS_RECOVERED`() {
+        val (h, controller) = transientUnlocked()
+        h.forgetEmitted()
+        h.repository.scriptRead(enabled)
+
+        controller.requestSettingsReread()
+
+        assertEquals(AppLockState.Unlocked, controller.state.value) // the state does not change
+        assertEquals(listOf(recoveredCode), h.emitted)
+        assertRecoveries("unlocked", h, SettingsUnreadableCause.IO_ERROR)
+    }
+
+    @Test
+    fun `D9 a foreground re-read records LOCK_SETTINGS_RECOVERED too`() {
+        val (h, controller) = transientUnlocked(cause = SettingsUnreadableCause.TIMEOUT)
+        h.forgetEmitted()
+        h.repository.scriptRead(AppLockTestSettings.DISABLED)
+
+        controller.onAppForegrounded()
+
+        assertEquals(AppLockState.Disabled, controller.state.value)
+        assertRecoveries("foreground", h, SettingsUnreadableCause.TIMEOUT)
+    }
+
+    @Test
+    fun `D9 a recovery is recorded once, later re-reads and foregrounds record nothing more`() {
+        val (h, controller) = transientUnlocked()
+        h.forgetEmitted()
+        h.repository.scriptRead(AppLockTestSettings.DISABLED)
+        controller.requestSettingsReread()
+        assertRecoveries("first", h, SettingsUnreadableCause.IO_ERROR)
+
+        // The view is readable now: no further read is made, and an unreadable result could not be applied anyway.
+        val readsAfterRecovery = h.repository.readCount
+        h.repository.scriptRead(unreadableIo)
+        controller.requestSettingsReread()
+        controller.onAppForegrounded()
+        controller.onAppBackgrounded()
+        controller.onAppForegrounded()
+
+        assertEquals(readsAfterRecovery, h.repository.readCount)
+        assertRecoveries("later", h, SettingsUnreadableCause.IO_ERROR)
+    }
+
+    @Test
+    fun `D9 each recovery records its own prior cause (IO_ERROR then TIMEOUT)`() {
+        val h = AppLockControllerHarness(unreadableIo)
+        val first = h.resolvedController()
+        h.unlock(first)
+        h.forgetEmitted()
+        h.repository.scriptRead(AppLockTestSettings.DISABLED)
+        first.requestSettingsReread()
+        assertRecoveries("io", h, SettingsUnreadableCause.IO_ERROR)
+
+        // A second controller over a store that is unreadable for another transient cause.
+        h.repository.loadState = AppLockTestSettings.unreadable(SettingsUnreadableCause.TIMEOUT)
+        val second = h.resolvedController()
+        h.unlock(second)
+        h.repository.scriptRead(AppLockTestSettings.DISABLED)
+        second.requestSettingsReread()
+
+        assertEquals(AppLockState.Disabled, second.state.value)
+        assertRecoveries("io then timeout", h, SettingsUnreadableCause.IO_ERROR, SettingsUnreadableCause.TIMEOUT)
+    }
+
+    @Test
+    fun `D9 a stale re-read result records nothing and the newest result records exactly one recovery`() {
+        val (h, controller) = transientUnlocked()
+        h.forgetEmitted()
+        val olderGate = CompletableDeferred<Unit>()
+        val newestGate = CompletableDeferred<Unit>()
+        try {
+            h.repository.scriptRead(AppLockTestSettings.DISABLED, olderGate) // the first (older) re-read, held
+            h.repository.scriptRead(enabled, newestGate) // the second (newest) re-read, held too
+            controller.requestSettingsReread()
+            controller.requestSettingsReread()
+            assertRecoveries("both held", h)
+
+            olderGate.complete(Unit) // the older result arrives first, as a stale sequence
+            assertEquals(AppLockState.Unlocked, controller.state.value) // the stale DISABLED did not apply
+            assertRecoveries("stale dropped", h)
+
+            newestGate.complete(Unit) // the newest result arrives and applies
+            assertEquals(AppLockState.Unlocked, controller.state.value)
+            assertRecoveries("newest applied", h, SettingsUnreadableCause.IO_ERROR)
+        } finally {
+            olderGate.complete(Unit)
+            newestGate.complete(Unit)
+        }
+    }
+
+    @Test
+    fun `D9 a re-read dropped by a committed write records nothing, the later recovery records it`() {
+        val (h, controller) = transientUnlocked()
+        h.forgetEmitted()
+        val gate = CompletableDeferred<Unit>()
+        try {
+            h.repository.scriptRead(AppLockTestSettings.DISABLED, gate)
+            controller.requestSettingsReread()
+            controller.onPlainSettingWritten(AppLockSettingField.DISCREET, true, committed = true)
+
+            gate.complete(Unit)
+        } finally {
+            gate.complete(Unit)
+        }
+
+        assertEquals(AppLockState.Unlocked, controller.state.value)
+        assertRecoveries("dropped", h)
+
+        h.repository.scriptRead(AppLockTestSettings.DISABLED)
+        controller.onAppForegrounded()
+
+        assertEquals(AppLockState.Disabled, controller.state.value)
+        assertRecoveries("recovered later", h, SettingsUnreadableCause.IO_ERROR)
+    }
+
+    @Test
+    fun `D9 an unreadable or failing re-read is not a recovery and records nothing`() {
+        val (h, controller) = transientUnlocked()
+        h.forgetEmitted()
+        for (cause in SettingsUnreadableCause.entries) {
+            h.repository.scriptRead(AppLockTestSettings.unreadable(cause))
+            controller.requestSettingsReread()
+        }
+        h.repository.failure = IllegalStateException("secret-path /data/x")
+        controller.requestSettingsReread()
+
+        assertEquals(AppLockState.Unlocked, controller.state.value)
+        assertEquals(emptyList<PrivacyDiagnosticCode>(), h.emitted)
+        assertRecoveries("unreadable", h)
+    }
+
+    @Test
+    fun `D9 a recovery to INERT records both the new INERT diagnostic and LOCK_SETTINGS_RECOVERED`() {
+        // Row 1: UNLOCKED, the capability is gone. Row 2: INERT(SETTINGS_UNREADABLE_NO_AUTH), a different reason now.
+        val rows = listOf(
+            Triple(SettingsUnreadableCause.IO_ERROR, DeviceAuthCapability.NO_CREDENTIAL, PrivacyDiagnosticCode.LOCK_INERT_NO_CREDENTIAL),
+            Triple(SettingsUnreadableCause.TIMEOUT, DeviceAuthCapability.HW_UNAVAILABLE, PrivacyDiagnosticCode.LOCK_INERT_HW_UNAVAILABLE)
+        )
+        for ((index, row) in rows.withIndex()) {
+            val (cause, capability, inertCode) = row
+            val (h, controller) = if (index == 0) {
+                transientUnlocked(cause = cause)
+            } else {
+                val inert = AppLockControllerHarness(AppLockTestSettings.unreadable(cause), DeviceAuthCapability.NO_CREDENTIAL)
+                val c = inert.resolvedController()
+                assertEquals(AppLockState.Inert(InertReason.SETTINGS_UNREADABLE_NO_AUTH), c.state.value)
+                inert to c
+            }
+            h.forgetEmitted()
+            h.capabilityProvider.capability = capability
+            h.repository.scriptRead(enabled)
+
+            controller.requestSettingsReread()
+
+            assertEquals("$cause", true, controller.state.value is AppLockState.Inert)
+            assertEquals("$cause", 2, h.emitted.size)
+            assertEquals("$cause", setOf(recoveredCode, inertCode), h.emitted.toSet())
+            assertRecoveries("$cause", h, cause)
+            // The INERT diagnostic keeps its own shape: no metadata.
+            assertTrue("$cause", h.emittedMetadata[h.emitted.indexOf(inertCode)].entries.isEmpty())
+            assertNeverWrote(h)
+        }
+    }
+
+    @Test
+    fun `D9 a recovery from INERT to a non-INERT state records only LOCK_SETTINGS_RECOVERED`() {
+        val h = AppLockControllerHarness(AppLockTestSettings.unreadable(SettingsUnreadableCause.TIMEOUT), DeviceAuthCapability.NO_CREDENTIAL)
+        val controller = h.resolvedController()
+        assertEquals(AppLockState.Inert(InertReason.SETTINGS_UNREADABLE_NO_AUTH), controller.state.value)
+        h.forgetEmitted()
+        h.repository.scriptRead(AppLockTestSettings.DISABLED)
+
+        controller.requestSettingsReread()
+
+        assertEquals(AppLockState.Disabled, controller.state.value)
+        assertEquals(listOf(recoveredCode), h.emitted)
+        assertRecoveries("inert to disabled", h, SettingsUnreadableCause.TIMEOUT)
+    }
+
+    @Test
+    fun `D9 T29 a snapshot kept in LOCKED is recorded when the unlock applies it, not when it is kept`() {
+        val (h, controller) = transientLocked()
+        h.forgetEmitted()
+        h.repository.scriptRead(AppLockTestSettings.DISABLED)
+
+        controller.requestSettingsReread() // kept: LOCKED is not relaxed
+
+        assertEquals(AppLockState.Locked(LockCause.SETTINGS_UNREADABLE), controller.state.value)
+        assertRecoveries("kept", h)
+
+        unlockOnce(h, controller)
+
+        assertEquals(AppLockState.Disabled, controller.state.value)
+        assertRecoveries("applied", h, SettingsUnreadableCause.IO_ERROR)
+    }
+
+    @Test
+    fun `D9 T29 a snapshot kept in AUTHENTICATING UNLOCK is recorded only when a later unlock applies it`() {
+        val (h, controller) = transientLocked()
+        h.forgetEmitted()
+        h.tap(controller)
+        h.repository.scriptRead(AppLockTestSettings.DISABLED)
+        controller.requestSettingsReread()
+        h.authenticator.deliver(DeviceAuthOutcome.Cancelled) // back to LOCKED: the snapshot stays kept
+
+        assertEquals(AppLockState.Locked(LockCause.SETTINGS_UNREADABLE), controller.state.value)
+        assertRecoveries("cancelled", h)
+
+        unlockOnce(h, controller)
+
+        assertEquals(AppLockState.Disabled, controller.state.value)
+        assertRecoveries("unlocked", h, SettingsUnreadableCause.IO_ERROR)
+    }
+
+    @Test
+    fun `D9 T29 a snapshot kept during an open-origin prompt is recorded once the prompt ends in an open state`() {
+        for (outcome in listOf(DeviceAuthOutcome.Cancelled, DeviceAuthOutcome.Succeeded)) {
+            val (h, controller) = transientUnlocked(cause = SettingsUnreadableCause.TIMEOUT)
+            h.forgetEmitted()
+            h.startOpenOrigin(controller, OpenOriginPrompt.CHANGE, RecordingSuccessHandler())
+            h.repository.scriptRead(AppLockTestSettings.DISABLED)
+            controller.requestSettingsReread()
+            assertRecoveries("$outcome kept", h)
+
+            h.authenticator.deliver(outcome)
+
+            assertEquals("$outcome", AppLockState.Disabled, controller.state.value)
+            assertRecoveries("$outcome applied", h, SettingsUnreadableCause.TIMEOUT)
+        }
+    }
+
+    @Test
+    fun `D9 T29 a kept snapshot that INERT applies records both diagnostics after the unlock`() {
+        val (h, controller) = transientLocked()
+        h.tap(controller) // the capability is checked at the tap, so it changes only after the prompt started
+        h.forgetEmitted()
+        h.repository.scriptRead(enabled)
+        controller.requestSettingsReread() // kept while AUTHENTICATING(UNLOCK)
+        assertRecoveries("kept", h)
+        h.capabilityProvider.capability = DeviceAuthCapability.NO_CREDENTIAL
+
+        h.authenticator.deliver(DeviceAuthOutcome.Succeeded)
+
+        assertEquals(AppLockState.Inert(InertReason.NO_CREDENTIAL), controller.state.value)
+        assertEquals(
+            setOf(PrivacyDiagnosticCode.LOCK_SETTINGS_RECOVERED, PrivacyDiagnosticCode.LOCK_INERT_NO_CREDENTIAL),
+            h.emitted.filter { it == recoveredCode || it == PrivacyDiagnosticCode.LOCK_INERT_NO_CREDENTIAL }.toSet()
+        )
+        assertRecoveries("kept to inert", h, SettingsUnreadableCause.IO_ERROR)
+    }
+
+    @Test
+    fun `D9 T29 a kept snapshot that D6 drops or a newer unreadable result supersedes records nothing`() {
+        // Row 1: a committed write drops the kept snapshot. Row 2: a newer unreadable result supersedes it.
+        for (dropped in listOf(true, false)) {
+            val (h, controller) = transientLocked()
+            h.forgetEmitted()
+            h.repository.scriptRead(AppLockTestSettings.DISABLED)
+            controller.requestSettingsReread() // kept
+            if (dropped) {
+                controller.onPlainSettingWritten(AppLockSettingField.DISCREET, true, committed = true)
+            } else {
+                h.repository.scriptRead(unreadableIo)
+                controller.requestSettingsReread()
+            }
+
+            unlockOnce(h, controller)
+
+            assertEquals("dropped=$dropped", AppLockState.Unlocked, controller.state.value) // not DISABLED
+            assertRecoveries("dropped=$dropped", h)
+
+            // The view is still transient, so the next foreground re-read recovers and records exactly once.
+            h.repository.scriptRead(AppLockTestSettings.DISABLED)
+            controller.onAppForegrounded()
+            assertEquals("dropped=$dropped", AppLockState.Disabled, controller.state.value)
+            assertRecoveries("dropped=$dropped later", h, SettingsUnreadableCause.IO_ERROR)
+        }
+    }
+
+    @Test
+    fun `D9 a readable view never records LOCK_SETTINGS_RECOVERED`() {
+        val firstRun = AppLockSettingsLoadState.FirstRunDefault(AppLockPrivacySettings())
+        for (stored in listOf(AppLockTestSettings.DISABLED, firstRun, enabled)) {
+            val h = AppLockControllerHarness(stored)
+            val controller = h.resolvedController()
+            if (stored === enabled) h.unlock(controller)
+            h.forgetEmitted()
+            h.repository.scriptRead(AppLockTestSettings.DISABLED)
+            val readsBefore = h.repository.readCount
+
+            controller.requestSettingsReread()
+            controller.onAppForegrounded()
+
+            assertEquals("$stored", readsBefore, h.repository.readCount) // no re-read for a readable view
+            assertRecoveries("$stored", h)
+        }
+    }
+
+    @Test
+    fun `D9 a persistent unreadable view never records LOCK_SETTINGS_RECOVERED, the re-read is not even made`() {
+        for (cause in SettingsUnreadableCause.entries.filter { it.isPersistent }) {
+            // Row 1: unlocked over the persistent view. Row 2: still locked over it.
+            for (unlocked in listOf(true, false)) {
+                val h = AppLockControllerHarness(AppLockTestSettings.unreadable(cause))
+                val controller = h.resolvedController()
+                if (unlocked) h.unlock(controller)
+                val stateBefore = controller.state.value
+                h.forgetEmitted()
+                h.repository.scriptRead(AppLockTestSettings.DISABLED)
+
+                controller.requestSettingsReread()
+                controller.onAppForegrounded()
+
+                val label = "$cause unlocked=$unlocked"
+                assertEquals(label, 1, h.repository.readCount) // the resolve only
+                assertEquals(label, stateBefore, controller.state.value)
+                assertRecoveries(label, h)
+            }
+        }
+    }
+
+    @Test
+    fun `INV-37 a failing emitter does not change the recovery and does not escape`() {
+        val sinks = listOf<Pair<String, (AppLockControllerHarness) -> Unit>>(
+            "failing" to { h -> h.emitFailure = IllegalStateException("secret-path /data/x merchant ACME") },
+            "stuck" to { h -> h.emitSuspendsForever = true }
+        )
+        for ((label, breakSink) in sinks) {
+            val (h, controller) = transientUnlocked()
+            h.forgetEmitted()
+            breakSink(h)
+            h.repository.scriptRead(AppLockTestSettings.DISABLED)
+
+            controller.requestSettingsReread()
+
+            assertEquals(label, AppLockState.Disabled, controller.state.value) // the transition happened regardless
+            assertEquals(label, listOf(recoveredCode), h.emitted) // attempted once
+            assertEquals(label, emptyList<Throwable>(), h.uncaught) // and the failure did not escape
             assertNeverWrote(h)
         }
     }

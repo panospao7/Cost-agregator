@@ -1711,7 +1711,7 @@ Gates: privacy-security-guardian (lead), reviewer-strict.
 8. D6 write counter (`writeSequence`, under `stateLock`) is bumped by the committed entries: `onOpenOriginSettingApplied(committed = true)` (after the token check; SUPERSEDED by F3: the counter is bumped BEFORE the token check), `onPlainSettingWritten(committed = true)` (for DISCREET / SECURE_SCREEN), `onTimeoutWrittenWithoutPrompt(committed = true)`. A non-committed call does not bump it.
 9. No new catch was added. The re-read job is `scope.launch`; the foreground flag is reset by `invokeOnCompletion` (also on cancellation). `CancellationException` from the read propagates (`readLoadState` rethrows it).
 
-### D9 seam (OWNER GATE, not approved)
+### D9 seam (OWNER GATE, not approved) (SUPERSEDED by the 2026-10-27 D9 section: the owner approved D9 and it is now emitted)
 - `PrivacyDiagnosticsEmitter.kt` and every allowlist are untouched. `LOCK_SETTINGS_RECOVERED` is NOT emitted anywhere.
 - The single marked point is in `AppLockController.applyRereadLocked` (the only T28 apply, also reached by the kept-snapshot path): `// TODO(S18-ii-c D9): emit LOCK_SETTINGS_RECOVERED(cause) once the owner approves the emitter entry`. The cause to emit is the PRIOR load state's `Unreadable.cause` (IO_ERROR or TIMEOUT); it must be captured before `loadState = read` overwrites it. The emission should be a `PendingDiagnostic` claimed once per (code, cause) in `claimedCodeCauses` like the other cause-carrying codes.
 - No test requires the emission. The tests do not assert the emitted list for T28.
@@ -1793,7 +1793,7 @@ INFO:
 - N3: T28 to DISABLED leaves `lastBackgroundedAtMillis` set, like T18. Spec-owner note next to F9.
 
 Targeted filter for this pass: `*AppLockControllerRereadTest*` (plus the pending `*AppLockController*,*LockNoticeDerivation*,*PrivacyDiagnosticsEmitter*` batch).
-- S18-ii-c ACCEPTED (2026-10-27), without D9; the LOCK_SETTINGS_RECOVERED emission stays owner-gated behind the TODO seam.
+- S18-ii-c ACCEPTED (2026-10-27), without D9; the LOCK_SETTINGS_RECOVERED emission stays owner-gated behind the TODO seam. (SUPERSEDED by the 2026-10-27 D9 section: D9 is approved and emitted.)
   - Final targeted vr-20261027-075534-aed6567a PASS, after the test-only and comment-only final-gate fixes.
   - Earlier runs on the final production code, all PASS: targeted vr-20261027-072634-4c7caf0f, architecture-contracts vr-20261027-072201-01eceafa, domain-n-z vr-20261027-072433-c12f8e58, cancellation vr-20261027-070854-6ec4e08d, known_good_state vr-20261027-070912-75653578.
   - Gates: privacy-security-guardian ACCEPT-WITH-CONDITIONS (F1–F7); reviewer-strict ACCEPT-WITH-CONDITIONS (ISSUE-1/2, N4).
@@ -2107,3 +2107,97 @@ Validation to request (serial, via validation-runner): targeted-unit-test `*AppL
   - The es/el strings are DRAFTS pending the owner's native sign-off.
   - Committed.
   - The app-lock lane is now BLOCKED on owner decisions D4 (S18-ii-g), D1 (S18-ii-h with S20) and D9 (the LOCK_SETTINGS_RECOVERED emitter entry). S20 needs S18-ii-g and S18-ii-h first.
+
+## 2026-10-27 OWNER DECISIONS D1, D4 and D9 (owner-approvals item 51a)
+- The owner replied "I approve" to the orchestrator's recommendations:
+  - D4 option (a): retire UpdateDiscreetNotificationsUseCase and the unforced setDiscreetNotifications in S18-ii-g. Deleting UpdateDiscreetNotificationsUseCaseTest and the Impl setDiscreetNotifications cases is approved.
+  - D1: S18-ii-h merges together with S20.
+  - D9: the PrivacyDiagnosticsEmitter allowlist entry LOCK_SETTINGS_RECOVERED (CAUSE: IO_ERROR or TIMEOUT), emitted at the TODO(S18-ii-c D9) seam in applyRereadLocked.
+- The es/el native sign-off is still open; the strings stay DRAFTS.
+- Next: one lane-A batch, D9 (the S18-ii-c remainder), then S18-ii-g, in a single implementer pass. Then the guardians, validation, and the S18-ii candidate static-guards plus app-check (after g). S18-ii-h waits for S20.
+
+### S18-ii-c D9 + S18-ii-g implementation (2026-10-27, implementer; NOT validated)
+
+Status: Part 1 (D9) IMPLEMENTED. Part 2 (S18-ii-g) NOT STARTED: STOPPED on a Hilt-graph blocker (below). Nothing was built or run.
+
+Files changed (D9):
+- `app/src/main/java/com/yourname/expensetracker/domain/privacy/applock/PrivacyDiagnosticsEmitter.kt`: new enum entry `LOCK_SETTINGS_RECOVERED` (COMPLETED, INFO, allowed keys `{CAUSE}`), after `LOCK_SETTINGS_REVIEW_SAVED`. The emitter allowlist is by KEY, so the value limit (IO_ERROR or TIMEOUT) is enforced by the controller, which only emits a non-persistent prior cause. No config/guards file, registry JSON or pinned-count test needed a change (no existing pin matches the `LOCK_SETTINGS_` prefix).
+- `app/src/main/java/com/yourname/expensetracker/domain/privacy/applock/AppLockController.kt`:
+  - `applyRereadLocked(read, capability, out: MutableList<PendingDiagnostic>)` now returns Unit. It captures the PRIOR `Unreadable.cause` (only if not persistent) BEFORE `loadState = read`, and adds `claimCodeCause(LOCK_SETTINGS_RECOVERED, cause)` to `out` (once per process per (code, cause), `claimedCodeCauses`). A new INERT diagnostic is added to `out` as well, so both are recorded.
+  - Both callers (`onSettingsReread`, `applyKeptRereadAfterClose`) collect into a list inside `transition<Unit> { }` and call `record(it)` after the monitor is released. The T29 kept-snapshot path therefore also emits.
+  - The `TODO(S18-ii-c D9)` is removed. KDoc of `PendingDiagnostic` and `record` mention the new code. No new catch; no CancellationException handling changed.
+- `docs/architecture/LEGAL_PATHS.md`: the READ + RECOVERY paragraph now states the D9 emission instead of the TODO.
+- This handoff section.
+
+Tests: none edited or deleted by the implementer. `AppLockControllerRereadTest` header still says the emission is "NOT covered" (stale comment, test-author's file).
+
+Pins changed: none. Tests deleted: none.
+
+Blocker for S18-ii-g (decision needed, nothing edited for it):
+- Routing `AppLockPrivacySettingsViewModel.setDiscreetNotifications` to `AppLockSettingsOperations.requestDiscreetChange` makes the `@HiltViewModel` inject `AppLockSettingsOperations` -> `AppLockController`. The controller's constructor takes the `DeviceAuthenticator` port, which has NO Hilt binding (`AppLockModule` comment and S16 note at handoff :922/:948: S20 binds the process-level relay; the controller is "not reachable from any Hilt entry point until then"). The change would make the Hilt graph fail with a missing binding for `DeviceAuthenticator`, so every build and test run would fail.
+- This contradicts D10 ("g lands before S20") unless g brings an interim binding. Options for the orchestrator or owner:
+  1. Add a minimal fail-closed interim `DeviceAuthenticator` binding in g (a hostless authenticator that answers `HOST_UNAVAILABLE` for authenticate and no-ops cancel), replaced by S20's relay (S20 constraints a-e at :948 stay binding). New class plus `@Binds` in `AppLockModule`, plus a test and a hilt-bindings-map line. Neither this nor any guard/baseline effect was assessed. Needs approval because it is new wiring outside the g write set.
+  2. Move the ViewModel routing (and the use-case retirement, since it depends on it) to S20 together with the relay and S18-ii-h.
+  3. Inject a narrower port for the discreet write that does not pull in the controller (a design change to Operations; not in the plan).
+- Everything else of g (use case and `setDiscreetNotifications` retirement, F3 pin flip, dormancy-pin entry, test deletions, doc updates) is unchanged and waits for this decision. Doc mentions found for that work: LEGAL_PATHS (:1556, :1678-1690, :1804-1823, :1859-1876), CODEBASE_SEGMENTS (:294, :598), CODEBASE_INVENTORY (:17), ENGINE_INTERACTION_MAP (:161-164), hilt-bindings-map (:382, :394).
+
+### D9 tests (2026-10-27, test-author; NOT validated)
+
+Written, not run. Files: `PrivacyDiagnosticsEmitterTest.kt` and `AppLockControllerRereadTest.kt` (domain/privacy/applock, test sources). No fixture change was needed. The stale "emission NOT covered" header of `AppLockControllerRereadTest` was replaced.
+
+PrivacyDiagnosticsEmitterTest (INV-18 allowlist):
+- `D9 LOCK_SETTINGS_RECOVERED allows exactly the CAUSE key` (also pins the LOCK_SETTING* family: PERSIST_FAILED, UNREADABLE, REVIEW_SAVED, RECOVERED)
+- `D9 LOCK_SETTINGS_RECOVERED is stored as a completed info privacy event with the cause as an enum name`
+- `D9 LOCK_SETTINGS_RECOVERED drops every key other than CAUSE and keeps CAUSE`
+- `D9 LOCK_SETTINGS_RECOVERED without metadata stores none`
+
+AppLockControllerRereadTest (INV-47, INV-37; payload is exactly `{CAUSE: <enum>}` and no recorded metadata holds a string):
+- `D9 a T28 recovery from a transient IO_ERROR or TIMEOUT view records LOCK_SETTINGS_RECOVERED once with that cause`
+- `D9 a recovery that keeps the state UNLOCKED still records LOCK_SETTINGS_RECOVERED`
+- `D9 a foreground re-read records LOCK_SETTINGS_RECOVERED too`
+- `D9 a recovery is recorded once, later re-reads and foregrounds record nothing more`
+- `D9 each recovery records its own prior cause (IO_ERROR then TIMEOUT)` (retitled by the review fixes below)
+- `D9 a stale re-read result records nothing and the newest result records exactly one recovery`
+- `D9 a re-read dropped by a committed write records nothing, the later recovery records it`
+- `D9 an unreadable or failing re-read is not a recovery and records nothing`
+- `D9 a recovery to INERT records both the new INERT diagnostic and LOCK_SETTINGS_RECOVERED`
+- `D9 a recovery from INERT to a non-INERT state records only LOCK_SETTINGS_RECOVERED`
+- `D9 T29 a snapshot kept in LOCKED is recorded when the unlock applies it, not when it is kept`
+- `D9 T29 a snapshot kept in AUTHENTICATING UNLOCK is recorded only when a later unlock applies it`
+- `D9 T29 a snapshot kept during an open-origin prompt is recorded once the prompt ends in an open state`
+- `D9 T29 a kept snapshot that INERT applies records both diagnostics after the unlock`
+- `D9 T29 a kept snapshot that D6 drops or a newer unreadable result supersedes records nothing`
+- `D9 a readable view never records LOCK_SETTINGS_RECOVERED`
+- `D9 a persistent unreadable view never records LOCK_SETTINGS_RECOVERED, the re-read is not even made`
+- `INV-37 a failing emitter does not change the recovery and does not escape` (retitled; now also a stuck-sink row)
+
+Not testable through the public API: the once-per-(code, cause) dedupe inside ONE controller. A view that recovered is readable for good (only `resolve`, which is one-shot, ever sets an unreadable view), so a second recovery with the same cause cannot happen on the same instance; the claim set is per instance. Pinned instead: one record per recovery, later re-reads and foregrounds add none, and a different cause is its own claim. Persistent-unreadable: the re-read is never issued (`transientUnreadableLocked` gate in `launchReread`), so the guarantee asserted is no read and no emission, not a filter inside `applyRereadLocked`.
+
+Runner filter: `*AppLockController*,*LockNoticeDerivation*,*PrivacyDiagnosticsEmitter*`.
+
+### 2026-10-27 S18-ii-g RE-SEQUENCED into S20 (owner-approvals item 52, orchestrator; D10 revised)
+- Routing the ViewModel through Operations would put AppLockController into the Hilt graph before the S20 relay binds DeviceAuthenticator, which fails with MissingBinding.
+- Decision: g (plus the D4 retirement and its approved test deletions) moves into S20 together with h. No interim stub authenticator.
+- Release prerequisites are already ancestors of this branch: R24 9b920430, R19 df769791, R18 0bd05c58. The "R18 HZ-03 F1 status" check is assigned to the S20 planner.
+- Current batch: D9 only (AppLockController.kt, PrivacyDiagnosticsEmitter.kt, LEGAL_PATHS.md, and tests in PrivacyDiagnosticsEmitterTest and AppLockControllerRereadTest).
+
+### D9 review fixes (2026-10-27, implementer; NOT validated)
+
+Privacy-security-guardian verdict on D9: PASS (privacy), ACCEPT-WITH-CONDITIONS. All six findings applied in one pass. Nothing was built or run.
+
+- F1 (production, `AppLockController.applyRereadLocked`): the prior-cause filter is now a positive allowlist, `takeIf { it == SettingsUnreadableCause.IO_ERROR || it == SettingsUnreadableCause.TIMEOUT }`, replacing `takeUnless { it.isPersistent }`. A cause added to the enum later is not emitted until it is admitted here. Behaviour is identical today (the transient set is exactly IO_ERROR and TIMEOUT). No test pin added: no public-API path reaches the difference (a re-read is only issued while `transientUnreadableLocked()`, which still uses `isPersistent`, and the enum has no other cause), so a pin would need a new enum entry. The existing `D9 a T28 recovery from a transient ...` test already asserts `transientCauses == {IO_ERROR, TIMEOUT}`, which fails if the enum grows.
+- F2 (`AppLockControllerRereadTest`): the test "a different cause is a different claim ..." is retitled `D9 each recovery records its own prior cause (IO_ERROR then TIMEOUT)` (disclosure in the header kept). The tautological `!cause.isPersistent` assertion in `assertRecoveries` is removed.
+- F3 (`AppLockControllerRereadTest`): the INV-37 test is retitled `INV-37 a failing emitter does not change the recovery and does not escape` and now loops over a "failing" row (`emitFailure`) and a "stuck" row (`emitSuspendsForever = true`). Each asserts the state still applies (`Disabled`), one attempt, `h.uncaught` empty, and no writes.
+- F4 (`AppLockControllerRereadTest`): the stale-result test now holds BOTH reads with two gates, releases the older first and asserts no recovery and the state unchanged (`Unlocked`), then releases the newest and asserts exactly one recovery. Both gates are completed in `finally`.
+- F5 (`AppLockControllerTestFixtures`): the `emittedMetadata` KDoc now says "the codes with a `CAUSE` key" instead of naming two codes.
+- F6 (docs): `LEGAL_PATHS.md` READ + RECOVERY paragraph adds "The CAUSE value limit (IO_ERROR or TIMEOUT only) is enforced by the controller; emission is fire-and-forget (INV-37)." This handoff marks the old "D9 seam (OWNER GATE, not approved)" heading and the "S18-ii-c ACCEPTED ... without D9" line as SUPERSEDED by the D9 section, and the two retitled test names in the "D9 tests" list are updated.
+
+Runner filter: `*AppLockController*,*LockNoticeDerivation*,*PrivacyDiagnosticsEmitter*`.
+
+### S18-ii-c D9 ACCEPTED (2026-10-27)
+- Gate: privacy-security-guardian PASS / ACCEPT-WITH-CONDITIONS. F1-F6 applied; the F1 positive cause allowlist is in production.
+- Validation, all PASS:
+  - pre-fix: targeted vr-20261027-202723-71c43899; domain-n-z vr-20261027-203811-f40c252d;
+  - final tree: targeted vr-20261027-204259-eba2043b.
+- Committed.
+- Next: S20-a (relay, prompt host, lifecycle binder) per "## Amendment (2026-10-27) — S20 sub-slice plan" (owner-approvals item 55).

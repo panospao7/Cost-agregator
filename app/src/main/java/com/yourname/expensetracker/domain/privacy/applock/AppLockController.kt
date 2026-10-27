@@ -253,7 +253,8 @@ class AppLockController @Inject constructor(
      * [DeviceAuthCapability] of `LOCK_UNAVAILABLE_CAPABILITY` (`HW_UNAVAILABLE` or `UNKNOWN`). Null for every other
      * code. For the deep-link codes (S17: `DL_HELD_LOCKED`, `DL_HELD_REPLACED`, `DL_HELD_EXPIRED`) [metadata] is
      * the ready-made bounded host metadata under the closed `HOST` key (the deep-link host enums only, never link
-     * content) and [cause] is null; the two are mutually exclusive. `LOCK_SETTING_PERSIST_FAILED` (S18) uses
+     * content) and [cause] is null; the two are mutually exclusive. `LOCK_SETTINGS_RECOVERED` (S18-ii-c, D9) carries the
+     * prior [SettingsUnreadableCause] (`IO_ERROR` or `TIMEOUT` only) as [cause]. `LOCK_SETTING_PERSIST_FAILED` (S18) uses
      * [metadata] too: the closed `FIELD` key with the [AppLockSettingField] enum name only.
      */
     private class PendingDiagnostic(
@@ -1151,54 +1152,70 @@ class AppLockController @Inject constructor(
         val usesCapability = read !is AppLockSettingsLoadState.Unreadable &&
             (before is AppLockState.Unlocked || before is AppLockState.Inert)
         val capability = if (usesCapability) readQueryCapability() else null
-        val diagnostic = transition {
-            if (seq != rereadSequence) return@transition null
-            if (rereadIssuedWriteSequence != writeSequence) return@transition null
-            if (!transientUnreadableLocked()) return@transition null
+        // Up to two diagnostics (D9: a recovery and a new INERT can coincide), claimed under the monitor and
+        // recorded after it.
+        val pending = ArrayList<PendingDiagnostic>(2)
+        transition<Unit> {
+            if (seq != rereadSequence) return@transition
+            if (rereadIssuedWriteSequence != writeSequence) return@transition
+            if (!transientUnreadableLocked()) return@transition
             val unreadable = read is AppLockSettingsLoadState.Unreadable
             when (current) {
-                is AppLockState.Unlocked, is AppLockState.Inert ->
-                    if (unreadable || capability == null) null else applyRereadLocked(read, capability)
+                is AppLockState.Unlocked, is AppLockState.Inert -> {
+                    if (!unreadable && capability != null) applyRereadLocked(read, capability, pending)
+                }
                 is AppLockState.Locked, is AppLockState.Authenticating -> {
                     // F5: a newer unreadable result supersedes an older kept snapshot (the view stays unreadable).
                     keptReread = if (unreadable) null else KeptReread(read, writeSequence)
-                    null
                 }
-                else -> null
+                else -> Unit
             }
         }
-        record(diagnostic)
+        pending.forEach { record(it) }
     }
 
     /**
      * T28 under the monitor, from `UNLOCKED` or `INERT` with a readable [read]: takes the read as the controller's
      * settings view and moves per the stored values. Lock off: `DISABLED`. Lock on and the lock can protect
      * (capability not genuinely unavailable, a failed check counts as able, R3): `UNLOCKED`. Lock on and the
-     * capability genuinely unavailable: `INERT(reason)`. No auth, and it never locks mid-session. Returns the
-     * diagnostic of a new `INERT` (an existing code, claimed once per process).
+     * capability genuinely unavailable: `INERT(reason)`. No auth, and it never locks mid-session.
+     *
+     * Adds to [out] the diagnostics claimed here (D9, owner-approvals item 51a): `LOCK_SETTINGS_RECOVERED` with the
+     * PRIOR view's transient cause (`IO_ERROR` or `TIMEOUT`, once per process per (code, cause) through
+     * [claimedCodeCauses]), and the diagnostic of a new `INERT` (an existing code, claimed once per process). The two
+     * can coincide, so both are recorded. The caller records them after the monitor is released.
      */
-    private fun applyRereadLocked(read: AppLockSettingsLoadState, capability: DeviceAuthCapability): PendingDiagnostic? {
+    private fun applyRereadLocked(
+        read: AppLockSettingsLoadState,
+        capability: DeviceAuthCapability,
+        out: MutableList<PendingDiagnostic>
+    ) {
         val settings = when (read) {
             is AppLockSettingsLoadState.Loaded -> read.settings
             is AppLockSettingsLoadState.FirstRunDefault -> read.settings
-            is AppLockSettingsLoadState.Unreadable -> return null
+            is AppLockSettingsLoadState.Unreadable -> return
         }
-        // TODO(S18-ii-c D9): capture `(loadState as Unreadable).cause` here, before the assignment, and emit
-        // LOCK_SETTINGS_RECOVERED(cause) once the owner approves the emitter entry. Recovery and a new INERT can
-        // coincide, so both diagnostics must be recorded.
+        // D9: the prior cause is captured before the assignment below overwrites it. Only a transient cause is a
+        // recovery (T28's trigger); a persistent or absent prior view emits nothing here. A positive allowlist, so a
+        // cause added later is never emitted until it is deliberately admitted here.
+        val priorCause = (loadState as? AppLockSettingsLoadState.Unreadable)?.cause?.takeIf {
+            it == SettingsUnreadableCause.IO_ERROR || it == SettingsUnreadableCause.TIMEOUT
+        }
         loadState = read
         keptReread = null
+        if (priorCause != null) {
+            claimCodeCause(PrivacyDiagnosticCode.LOCK_SETTINGS_RECOVERED, priorCause)?.let { out += it }
+        }
         val next: AppLockState = if (!settings.appLockEnabled) {
             AppLockState.Disabled
         } else {
             capability.toInertReason()?.let { AppLockState.Inert(it) } ?: AppLockState.Unlocked
         }
-        if (next == current) return null
-        return if (next is AppLockState.Inert) {
-            enterInert(next.reason)
+        if (next == current) return
+        if (next is AppLockState.Inert) {
+            enterInert(next.reason)?.let { out += it }
         } else {
             setState(next)
-            null
         }
     }
 
@@ -1213,22 +1230,21 @@ class AppLockController @Inject constructor(
         if (synchronized(stateLock) { keptReread == null }) return
         val before = current
         val capability = if (before is AppLockState.Unlocked || before is AppLockState.Inert) readQueryCapability() else null
-        val diagnostic = transition {
-            val kept = keptReread ?: return@transition null
+        val pending = ArrayList<PendingDiagnostic>(2)
+        transition<Unit> {
+            val kept = keptReread ?: return@transition
             val now = current
             if (now is AppLockState.Locked || now is AppLockState.Authenticating || now is AppLockState.Resolving) {
-                return@transition null
+                return@transition
             }
             keptReread = null
-            if (kept.writeSequenceAtKeep != writeSequence) return@transition null
-            if (!transientUnreadableLocked()) return@transition null
+            if (kept.writeSequenceAtKeep != writeSequence) return@transition
+            if (!transientUnreadableLocked()) return@transition
             if ((now is AppLockState.Unlocked || now is AppLockState.Inert) && capability != null) {
-                applyRereadLocked(kept.read, capability)
-            } else {
-                null
+                applyRereadLocked(kept.read, capability, pending)
             }
         }
-        record(diagnostic)
+        pending.forEach { record(it) }
     }
 
     // --- The held deep link (T20, T21, T22; S17) --------------------------------------------------
@@ -2062,7 +2078,8 @@ class AppLockController @Inject constructor(
      * the monitor by the transition, so this only launches (null means a repeat: nothing to emit). The
      * emitter is best effort; `CancellationException` is rethrown and any other failure is logged by class
      * name only. The only metadata ever attached is either one bounded enum under the closed `CAUSE` key (the
-     * `LOCK_AUTH_ERROR` bucket or the `LOCK_UNAVAILABLE_CAPABILITY` cause), or, for the deep-link codes
+     * `LOCK_AUTH_ERROR` bucket, the `LOCK_UNAVAILABLE_CAPABILITY` cause, or the `LOCK_SETTINGS_RECOVERED` prior
+     * transient cause `IO_ERROR` / `TIMEOUT`), or, for the deep-link codes
      * (`DL_HELD_LOCKED`, `DL_HELD_REPLACED`, `DL_HELD_EXPIRED`), the ready-made bounded host metadata under the
      * closed `HOST` key (the [DeepLinkHost] enums only, never link content). A diagnostic never carries both.
      *
