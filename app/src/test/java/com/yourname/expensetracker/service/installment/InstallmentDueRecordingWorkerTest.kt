@@ -13,7 +13,9 @@ import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentDueRunReport
 import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentOpFailure
 import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentOpResult
+import com.yourname.expensetracker.domain.installment.lifecycle.CapturingTree
 import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentPlanLifecycleCoordinator
+import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentPostCommitDispatcher
 import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentReconcileReport
 import com.yourname.expensetracker.domain.installment.model.InstallmentDeferralReason
 import com.yourname.expensetracker.domain.sideeffect.PostCommitAction
@@ -44,7 +46,6 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
-import org.robolectric.shadows.ShadowLog
 import java.time.Instant
 import java.time.ZoneId
 import kotlin.test.assertFailsWith
@@ -118,7 +119,7 @@ class InstallmentDueRecordingWorkerTest {
                     appContext,
                     workerParameters,
                     coordinator,
-                    runner,
+                    InstallmentPostCommitDispatcher(runner),
                     executionGuard,
                     timeProvider
                 )
@@ -245,14 +246,20 @@ class InstallmentDueRecordingWorkerTest {
         val second = batch("b2")
         coEvery { coordinator.recordDueEntries(any(), any()) } returns done(batches = listOf(first, second))
         coEvery { runner.run(first) } throws IllegalStateException("/private/receipt/1234.56")
-
-        assertEquals(Result.success(), buildWorker().doWork())
+        // The dispatcher logs through Timber, so capture it for the privacy assertion.
+        val logs = CapturingTree()
+        logs.plant()
+        try {
+            assertEquals(Result.success(), buildWorker().doWork())
+        } finally {
+            logs.uproot()
+        }
 
         coVerify(exactly = 1) { runner.run(first) }
         coVerify(exactly = 1) { runner.run(second) }
         // The failure is logged by class name only: no message text, path or amount.
-        val logged = ShadowLog.getLogsForTag(InstallmentDueRecordingWorker.TAG).map { it.msg.orEmpty() }
-        assertTrue(logged.isNotEmpty())
+        val logged = logs.lines.toList()
+        assertTrue(logged.any { it.contains("IllegalStateException") })
         assertTrue(logged.none { it.contains("/private") || it.contains("1234.56") })
     }
 

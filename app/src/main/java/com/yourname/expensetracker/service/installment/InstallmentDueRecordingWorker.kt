@@ -9,8 +9,7 @@ import com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException
 import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentDueRunReport
 import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentOpResult
 import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentPlanLifecycleCoordinator
-import com.yourname.expensetracker.domain.sideeffect.PostCommitActionBatch
-import com.yourname.expensetracker.domain.sideeffect.PostCommitActionRunner
+import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentPostCommitDispatcher
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.workers.BlockedPolicy
 import com.yourname.expensetracker.domain.workers.RetryableWorkerException
@@ -22,7 +21,6 @@ import com.yourname.expensetracker.domain.workers.WorkerSpecScheduler
 import com.yourname.expensetracker.domain.workers.toWorkerResult
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
-import kotlinx.coroutines.CancellationException
 import java.time.Instant
 import java.time.ZoneId
 
@@ -38,8 +36,8 @@ import java.time.ZoneId
  *
  * Result mapping (every reason code is a bounded constant, no name, amount, date or id):
  * - guard denied, restore or maintenance mode: the guard's own mapping (retry), no coordinator call;
- * - `Done`: the post-commit batches are dispatched first (each batch in its own try/catch; a failing
- *   batch is logged by class name and does not stop the rest);
+ * - `Done`: the post-commit batches are dispatched first through [InstallmentPostCommitDispatcher]
+ *   (the single owner: a failing batch is logged by class name and does not stop the rest);
  *   - `stoppedByBarrier`: [RetryableWorkerException] `INSTALLMENT_DUE_STOPPED_BY_BARRIER` (retry);
  *   - any per-entry failure count: [RetryableWorkerException] `INSTALLMENT_DUE_PARTIAL_FAILURE`
  *     (retry; recording is idempotent, the latch and the compare-and-set make a re-run safe);
@@ -56,7 +54,7 @@ class InstallmentDueRecordingWorker @AssistedInject constructor(
     @Assisted appContext: Context,
     @Assisted workerParams: WorkerParameters,
     private val installmentCoordinator: InstallmentPlanLifecycleCoordinator,
-    private val postCommitActionRunner: PostCommitActionRunner,
+    private val postCommitDispatcher: InstallmentPostCommitDispatcher,
     private val executionGuard: WorkerExecutionGuard,
     private val timeProvider: TimeProvider
 ) : CoroutineWorker(appContext, workerParams) {
@@ -98,7 +96,7 @@ class InstallmentDueRecordingWorker @AssistedInject constructor(
             throw IllegalStateException(REASON_NOT_DONE)
         }
         // Dispatch first: the batches belong to transactions that already committed.
-        dispatchBatches(result.postCommit)
+        postCommitDispatcher.dispatch(result.postCommit)
 
         val report = result.value
         val skipped = report.deferred.values.sum() + report.refused.values.sum()
@@ -119,27 +117,6 @@ class InstallmentDueRecordingWorker @AssistedInject constructor(
         }
         if (failed > 0) {
             throw RetryableWorkerException(REASON_PARTIAL_FAILURE)
-        }
-    }
-
-    /**
-     * Runs each batch in order; one failing batch does not stop the rest. A failing batch is logged
-     * by class simple name only and does not change the run result (re-running the worker would not
-     * re-dispatch it). Cancellation is rethrown.
-     */
-    private suspend fun dispatchBatches(batches: List<PostCommitActionBatch>) {
-        for (batch in batches) {
-            if (batch.actions.isEmpty()) continue
-            try {
-                postCommitActionRunner.run(batch)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                // Sibling catch above already rethrows; the explicit idiom is kept
-                // because SourceScanningArchitectureGuardTest requires it per worker file.
-                if (e is CancellationException) throw e
-                Log.w(TAG, "INSTALLMENT_DUE_BATCH_DISPATCH_FAILED class=${e::class.java.simpleName}")
-            }
         }
     }
 

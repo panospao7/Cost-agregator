@@ -5,9 +5,8 @@ import androidx.lifecycle.viewModelScope
 import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentEntryRef
 import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentOpResult
 import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentPlanLifecycleCoordinator
+import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentPostCommitDispatcher
 import com.yourname.expensetracker.domain.installment.model.InstallmentPlanStatus
-import com.yourname.expensetracker.domain.sideeffect.PostCommitActionBatch
-import com.yourname.expensetracker.domain.sideeffect.PostCommitActionRunner
 import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.time.Instant
@@ -33,7 +32,8 @@ import timber.log.Timber
  * ## Legal path
  * Every action calls exactly one [InstallmentPlanLifecycleCoordinator] operation; this class never
  * touches a DAO, the transaction lifecycle coordinator or a repository write (INV-24, INV-25).
- * Post-commit batches returned by the coordinator are dispatched after it returns, never inside it.
+ * Post-commit batches returned by the coordinator are dispatched after it returns, never inside it,
+ * through the shared [InstallmentPostCommitDispatcher] (single owner of the dispatch loop).
  *
  * ## Diagnostics and messages
  * Only the [InstallmentOperation] name and a bounded refusal or failure code reach the log and the
@@ -43,7 +43,7 @@ import timber.log.Timber
 @HiltViewModel
 class InstallmentEntryActionsViewModel @Inject constructor(
     private val coordinator: InstallmentPlanLifecycleCoordinator,
-    private val postCommitActionRunner: PostCommitActionRunner,
+    private val postCommitDispatcher: InstallmentPostCommitDispatcher,
     private val timeProvider: TimeProvider
 ) : ViewModel() {
 
@@ -234,7 +234,7 @@ class InstallmentEntryActionsViewModel @Inject constructor(
             when (result) {
                 is InstallmentOpResult.Done -> {
                     // The coordinator transaction has committed: dispatch its side effects now.
-                    dispatchBatches(result.postCommit)
+                    postCommitDispatcher.dispatch(result.postCommit)
                     onSuccess(operation, result.value, alreadyInState = false, closeSheetOnSuccess, isUndo, undoOnDone)
                 }
 
@@ -305,24 +305,6 @@ class InstallmentEntryActionsViewModel @Inject constructor(
                 // An undo has no sheet to show the failure in: surface a fixed snackbar instead.
                 notice = if (isUndo && !detached) InstallmentActionNoticeUi(InstallmentActionNotice.UNDO_FAILED) else null
             )
-        }
-    }
-
-    /**
-     * Runs each batch in order; one failing batch does not stop the rest and never changes the
-     * result of the committed operation. Cancellation is rethrown.
-     */
-    private suspend fun dispatchBatches(batches: List<PostCommitActionBatch>) {
-        for (batch in batches) {
-            if (batch.actions.isEmpty()) continue
-            try {
-                postCommitActionRunner.run(batch)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                if (e is CancellationException) throw e
-                Timber.w("Installment post-commit dispatch failed: class=%s", e::class.java.simpleName)
-            }
         }
     }
 

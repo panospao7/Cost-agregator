@@ -1947,3 +1947,48 @@ Filter to request (serially, via validation-runner): `targeted-unit-test -Filter
   - Next loan work:
     - extract the shared post-commit dispatcher (F3, BINDING);
     - then S10b-2 (create/edit/end flows, OQ-21 delete wiring with reviewer-strict).
+
+## S10b-1 F3 — post-commit dispatcher extracted
+
+Implemented, NOT validated (nothing was run). No schema, DAO, guard or allowlist change. Behaviour is unchanged except one benign point (below).
+
+Done:
+- New `domain/installment/lifecycle/InstallmentPostCommitDispatcher.kt` (`@Singleton`, `@Inject` with `PostCommitActionRunner`): `suspend fun dispatch(batches)`.
+  - Skips batches without actions and runs the rest in order.
+  - Isolates each non-cancellation failure and logs only `e::class.java.simpleName` through Timber.
+  - Rethrows `CancellationException` (a rethrowing catch sits directly above the broad catch; comments are in the KDoc, outside the CANCEL-01 200-char window).
+  - Placed in domain: it depends only on `domain/sideeffect`, and the layering and cancellation architecture tests contain no rule against it.
+- The three duplicated `dispatchBatches` loops are gone:
+  - `InstallmentDueRecordingWorker`: constructor takes `InstallmentPostCommitDispatcher` instead of `PostCommitActionRunner`.
+  - `InstallmentPreBackupReconciler`: second dependency is `Lazy<InstallmentPostCommitDispatcher>`. It is still resolved only when `postCommit` is non-empty, so the lazy graph rule is kept.
+  - `InstallmentEntryActionsViewModel`: constructor takes `InstallmentPostCommitDispatcher`.
+- Deviations (all benign):
+  - The pre-backup reconciler used to pass empty batches to the runner and now skips them (empty batches are a no-op in the runner).
+  - The worker's failure log moved from `Log.w` (worker TAG) to the dispatcher's Timber line, which still carries the class name only.
+  - The worker's per-file "if (e is CancellationException) throw e" idiom was removed together with the broad catch; the worker has no broad catch left.
+- Tests (no test deleted, behavioural assertions kept):
+  - New `InstallmentPostCommitDispatcherTest`: empty list, skip empty batch, order, failure isolation with class-name-only log, cancellation propagates and stops the rest.
+  - `InstallmentDueRecordingWorkerTest`: dispatcher wiring. The log assertion now uses Timber `CapturingTree` instead of `ShadowLog`.
+  - `InstallmentPreBackupReconcilerTest`: dispatcher wiring. Its `batch()` helper now builds a non-empty batch.
+  - `InstallmentEntryActionsViewModelTest`: dispatcher wired over the existing runner mock.
+  - `DatabaseBackupRepositoryPreReconcileTest` and `InstallmentRestoreReconcileTest`: `Lazy` wiring only.
+- Docs: LEGAL_PATHS "Installment Plan Mutations" (UI CALLER block trimmed; new "POST-COMMIT DISPATCH OWNER" block names the single owner and the three callers); ENGINE_INTERACTION_MAP (recordDueEntries block).
+- The BINDING F3 condition is now met. S10b-2 / S11 / S12a callers must use `InstallmentPostCommitDispatcher` and never add a fourth loop.
+
+Validation to request (serially, via validation-runner):
+- `targeted-unit-test -Filter "*InstallmentPostCommitDispatcher*,*InstallmentDueRecordingWorker*,*InstallmentPreBackupReconciler*,*InstallmentEntryActionsViewModel*,*DatabaseBackupRepositoryPreReconcile*,*InstallmentRestoreReconcile*"`
+- shards: `domain-a-m`, `runtime-ui`, `architecture-contracts`
+- the registered cancellation guard (CANCEL-01, `CancellationSafetyArchitectureGuardTest`)
+- S10b-1 F3 (post-commit dispatcher) ACCEPTED (2026-10-27).
+  - Runs, all PASS:
+    - targeted vr-20261027-124942-c578d034
+    - cancellation vr-20261027-130147-0c1a80ae
+    - architecture-contracts vr-20261027-130203-0c6e08df
+    - domain-a-m vr-20261027-130249-59b0e21b
+    - runtime-ui vr-20261027-130551-f79185c7
+    - app-check vr-20261027-131008-2e573c31 (Hilt graph plus ALL unit tests)
+    - static-guards vr-20261027-134131-cee3b012 (Python G-CANCEL-01)
+  - Data shard vr-20261027-130420-4d23196d FAILED on `TransactionsViewModelTest > reactive load failure keeps prior rows…` with a Turbine "No value produced in 3s". That code is unrelated and unchanged, so it was a timing flake. The app-check passed on the same fingerprint afterwards, including that test, and the runner then refused a data-shard re-run as E_DUPLICATE_OR_OVERLAPPING_VALIDATION, because app-check covers it.
+  - Architecture-guardian ACCEPT-WITH-CONDITIONS. Finding 1 note: the worker's batch-failure log is now a Timber line, and Timber is planted only in debug builds, so release logcat no longer carries it. It is not a persisted diagnostic, and the runner already catches per-action failures.
+  - Finding 2 (an executable single-owner guard) is pending owner approval as owner-approvals 48.
+  - Committed.

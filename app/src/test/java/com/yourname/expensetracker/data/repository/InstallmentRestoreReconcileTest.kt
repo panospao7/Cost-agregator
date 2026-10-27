@@ -30,6 +30,7 @@ import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentCoord
 import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentOpResult
 import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentPlanLifecycleCoordinator
 import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentPlanTerms
+import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentPostCommitDispatcher
 import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentPreBackupReconciler
 import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentReconcileReport
 import com.yourname.expensetracker.domain.installment.model.InstallmentFulfilmentMode
@@ -406,7 +407,7 @@ class InstallmentRestoreReconcileTest {
         // The REAL pre-backup reconciler over the real plan coordinator (S6c-4).
         val reconciler = InstallmentPreBackupReconciler(
             dagger.Lazy { coordinator },
-            dagger.Lazy { mockk<PostCommitActionRunner>(relaxed = true) }
+            dagger.Lazy { InstallmentPostCommitDispatcher(mockk<PostCommitActionRunner>(relaxed = true)) }
         )
         return DatabaseBackupRepositoryImpl(
             context = backupContext,

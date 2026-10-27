@@ -176,6 +176,8 @@ TransactionSideEffectPlanner.planUpdated() / planDeleted()
 ```
 recordDueEntries(today, zone)   (callers S7a-2 worker and S10 overview: pending)
   ├── reconcile() first (D-18); its report and batches are carried in Done.postCommit for the caller to dispatch
+  │     through InstallmentPostCommitDispatcher (single owner of the post-commit loop, S10b-1 F3; also used by
+  │     InstallmentPreBackupReconciler and InstallmentEntryActionsViewModel; see LEGAL_PATHS "Installment Plan Mutations")
   ├── one writeTxn per due AUTO_RECORD entry:
   │     ├── InstallmentCandidateChargeProbe.hasCandidate (read-only boolean port, called inside the entry transaction;
   │     │     impl data/repository/InstallmentCandidateChargeProbeImpl: plan DAO reads + facts reader; shares the

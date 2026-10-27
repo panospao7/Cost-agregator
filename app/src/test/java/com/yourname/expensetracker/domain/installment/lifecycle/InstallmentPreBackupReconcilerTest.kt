@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.installment.lifecycle
 
 import com.yourname.expensetracker.domain.installment.model.InstallmentRefusalCode
+import com.yourname.expensetracker.domain.sideeffect.PostCommitAction
 import com.yourname.expensetracker.domain.sideeffect.PostCommitActionBatch
 import com.yourname.expensetracker.domain.sideeffect.PostCommitActionRunner
 import com.yourname.expensetracker.domain.sideeffect.SideEffectBatchResult
@@ -43,7 +44,8 @@ class InstallmentPreBackupReconcilerTest {
         logs.uproot()
     }
 
-    private fun batch(id: String) = PostCommitActionBatch.empty(id)
+    /** Non-empty on purpose: the shared dispatcher skips batches without actions. */
+    private fun batch(id: String) = PostCommitActionBatch(id, listOf(mockk<PostCommitAction>(relaxed = true)))
 
     private fun batchResult(id: String) = SideEffectBatchResult(id, 0, 0, 0, 0, 0, emptyList())
 
@@ -59,7 +61,7 @@ class InstallmentPreBackupReconcilerTest {
         }
 
     private fun reconciler(runner: PostCommitActionRunner = runner()) =
-        InstallmentPreBackupReconciler(Lazy { coordinator }, Lazy { runner })
+        InstallmentPreBackupReconciler(Lazy { coordinator }, Lazy { InstallmentPostCommitDispatcher(runner) })
 
     private fun stubReconcile(result: InstallmentOpResult<InstallmentReconcileReport>) {
         coEvery { coordinator.reconcile() } returns result
@@ -88,7 +90,7 @@ class InstallmentPreBackupReconcilerTest {
         var runnerBuilt = false
         val subject = InstallmentPreBackupReconciler(Lazy { coordinator }, Lazy {
             runnerBuilt = true
-            runner()
+            InstallmentPostCommitDispatcher(runner())
         })
 
         assertEquals(PreBackupReconcileResult.Reconciled, subject.reconcileBeforeBackup())
@@ -107,7 +109,7 @@ class InstallmentPreBackupReconcilerTest {
             },
             Lazy {
                 runnerBuilt++
-                runner()
+                InstallmentPostCommitDispatcher(runner())
             }
         )
 
@@ -211,7 +213,7 @@ class InstallmentPreBackupReconcilerTest {
     fun a_throwing_dependency_resolution_is_also_contained() = runTest {
         val subject = InstallmentPreBackupReconciler(
             Lazy { throw IllegalArgumentException("graph-secret-999") },
-            Lazy { runner() }
+            Lazy { InstallmentPostCommitDispatcher(runner()) }
         )
 
         assertEquals(

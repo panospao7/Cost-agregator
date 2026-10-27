@@ -1,7 +1,5 @@
 package com.yourname.expensetracker.domain.installment.lifecycle
 
-import com.yourname.expensetracker.domain.sideeffect.PostCommitActionBatch
-import com.yourname.expensetracker.domain.sideeffect.PostCommitActionRunner
 import dagger.Lazy
 import timber.log.Timber
 import javax.inject.Inject
@@ -44,19 +42,21 @@ sealed interface PreBackupReconcileResult {
  * maintenance drain can reintroduce a transient orphan; the verify then fails that backup and a
  * retry succeeds (owner item 17, option (a)).
  *
- * Runs `reconcile()` and dispatches every `Done.postCommit` batch through the executor the
- * transaction lifecycle coordinator uses, even when the report counts failures: those batches
+ * Runs `reconcile()` and dispatches every `Done.postCommit` batch through
+ * [InstallmentPostCommitDispatcher] (the single owner of the dispatch loop; it wraps the executor the
+ * transaction lifecycle coordinator uses), even when the report counts failures: those batches
  * belong to transactions that already committed. A failing batch does not stop later ones and does
  * not make the reconcile incomplete: it carries side effects only, not stored state.
  * `CancellationException` is always rethrown. Diagnostics carry class simple names only.
  *
  * Both dependencies are `Lazy`: the plan coordinator depends on the transaction lifecycle
- * coordinator, and the backup repository must not pull that graph in at construction.
+ * coordinator, and the backup repository must not pull that graph in at construction. The
+ * dispatcher is resolved only when there is a batch to dispatch.
  */
 @Singleton
 class InstallmentPreBackupReconciler @Inject constructor(
     private val coordinator: Lazy<InstallmentPlanLifecycleCoordinator>,
-    private val postCommitActionRunner: Lazy<PostCommitActionRunner>
+    private val postCommitDispatcher: Lazy<InstallmentPostCommitDispatcher>
 ) {
 
     suspend fun reconcileBeforeBackup(): PreBackupReconcileResult {
@@ -67,7 +67,8 @@ class InstallmentPreBackupReconciler @Inject constructor(
                 return PreBackupReconcileResult.NotReconciled(PreBackupNotReconciledReason.NOT_DONE)
             }
             // Dispatch first: the batches belong to plan transactions that already committed.
-            dispatchBatches(result.postCommit)
+            val batches = result.postCommit
+            if (batches.isNotEmpty()) postCommitDispatcher.get().dispatch(batches)
             val report = result.value
             if (report.plansFailed > 0 || report.orphanFlagsFailed > 0) {
                 Timber.w("Installment pre-backup reconcile incomplete")
@@ -79,23 +80,6 @@ class InstallmentPreBackupReconciler @Inject constructor(
             if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.w("Installment pre-backup reconcile failed: %s", e.javaClass.simpleName)
             PreBackupReconcileResult.NotReconciled(PreBackupNotReconciledReason.EXCEPTION)
-        }
-    }
-
-    /**
-     * Runs each batch in order; one failing batch does not stop the rest. Cancellation is
-     * rethrown. A failing batch is logged by class simple name only.
-     */
-    private suspend fun dispatchBatches(batches: List<PostCommitActionBatch>) {
-        if (batches.isEmpty()) return
-        val runner = postCommitActionRunner.get()
-        for (batch in batches) {
-            try {
-                runner.run(batch)
-            } catch (e: Exception) {
-                if (e is kotlinx.coroutines.CancellationException) throw e
-                Timber.w("Installment pre-backup batch dispatch failed: %s", e.javaClass.simpleName)
-            }
         }
     }
 }

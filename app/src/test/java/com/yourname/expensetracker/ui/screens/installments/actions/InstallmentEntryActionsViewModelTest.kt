@@ -4,6 +4,7 @@ import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentEntry
 import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentOpFailure
 import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentOpResult
 import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentPlanLifecycleCoordinator
+import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentPostCommitDispatcher
 import com.yourname.expensetracker.domain.installment.model.InstallmentEntryStatus
 import com.yourname.expensetracker.domain.installment.model.InstallmentPlanStatus
 import com.yourname.expensetracker.domain.installment.model.InstallmentRefusalCode
@@ -49,7 +50,8 @@ class InstallmentEntryActionsViewModelTest : ViewModelTestUtils() {
     private val runner = mockk<PostCommitActionRunner>(relaxed = true)
     private val timeProvider = mockk<TimeProvider> { every { now() } returns 1_800_000_000_000L }
 
-    private fun viewModel() = InstallmentEntryActionsViewModel(coordinator, runner, timeProvider)
+    private fun viewModel() =
+        InstallmentEntryActionsViewModel(coordinator, InstallmentPostCommitDispatcher(runner), timeProvider)
 
     private fun suggestion(expenseId: Long = 99L) = InstallmentLinkSuggestionUi(
         expenseId = expenseId,

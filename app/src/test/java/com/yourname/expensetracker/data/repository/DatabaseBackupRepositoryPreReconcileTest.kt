@@ -30,6 +30,7 @@ import org.json.JSONObject
 import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentOpFailure
 import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentOpResult
 import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentPlanLifecycleCoordinator
+import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentPostCommitDispatcher
 import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentPreBackupReconciler
 import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentReconcileReport
 import com.yourname.expensetracker.domain.installment.lifecycle.PreBackupReconcileResult
@@ -330,7 +331,7 @@ class DatabaseBackupRepositoryPreReconcileTest {
                     coEvery { reconcile() } throws IllegalStateException("secret-merchant-text-12345")
                 }
             },
-            dagger.Lazy { mockk<PostCommitActionRunner>(relaxed = true) }
+            dagger.Lazy { InstallmentPostCommitDispatcher(mockk<PostCommitActionRunner>(relaxed = true)) }
         )
 
         for ((reconciler, reason) in listOf(notDone to "NOT_DONE", failing to "EXCEPTION")) {
@@ -395,7 +396,7 @@ class DatabaseBackupRepositoryPreReconcileTest {
                     coEvery { reconcile() } throws CancellationException("test cancellation")
                 }
             },
-            dagger.Lazy { mockk<PostCommitActionRunner>(relaxed = true) }
+            dagger.Lazy { InstallmentPostCommitDispatcher(mockk<PostCommitActionRunner>(relaxed = true)) }
         )
 
         var propagated = false
@@ -469,7 +470,7 @@ class DatabaseBackupRepositoryPreReconcileTest {
         )
         return InstallmentPreBackupReconciler(
             dagger.Lazy { coordinator },
-            dagger.Lazy { mockk<PostCommitActionRunner>(relaxed = true) }
+            dagger.Lazy { InstallmentPostCommitDispatcher(mockk<PostCommitActionRunner>(relaxed = true)) }
         )
     }
 
@@ -477,7 +478,7 @@ class DatabaseBackupRepositoryPreReconcileTest {
     private fun reconcilerReporting(result: InstallmentOpResult<InstallmentReconcileReport>) =
         InstallmentPreBackupReconciler(
             dagger.Lazy { mockk<InstallmentPlanLifecycleCoordinator> { coEvery { reconcile() } returns result } },
-            dagger.Lazy { mockk<PostCommitActionRunner>(relaxed = true) }
+            dagger.Lazy { InstallmentPostCommitDispatcher(mockk<PostCommitActionRunner>(relaxed = true)) }
         )
 
     private fun TestScope.newRepository(

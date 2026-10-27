@@ -1781,18 +1781,23 @@ UI CALLER (S10b-1, dormant behind InstallmentsFeature.ENABLED):
                                  linkExpense (Link), skip, unskip, adjustEntry (Adjust), and for the row Undo
                                  (ux-flows 3.6) unskip / unlinkExpense / adjustEntry with the previous values;
                                  never a DAO, repository write or TLC call (INV-24, INV-25)
-                              → POST-COMMIT DISPATCH RESPONSIBILITY: the ViewModel itself runs the batches of a
-                                 `Done` result through PostCommitActionRunner AFTER the coordinator returns (never
-                                 inside the transaction); a failing batch is logged by class name and never
-                                 changes the committed result; CancellationException is rethrown
-                              → KNOWN DUPLICATION (follow-up, BINDING before S10b-2 / S11 / S12a): the same
-                                 `dispatchBatches` loop now exists in the S7a-2 worker, the S6c-4 pre-backup
-                                 reconciler and this ViewModel. The planned fix is ONE domain-level post-commit
-                                 dispatcher (or a thin use case that calls the coordinator and then dispatches)
-                                 used by all three callers
+                              → POST-COMMIT DISPATCH: the ViewModel hands the batches of a `Done` result to
+                                 InstallmentPostCommitDispatcher AFTER the coordinator returns (never inside the
+                                 transaction); see "POST-COMMIT DISPATCH OWNER" below
                               → residual risk: if the activity finishes between commit and dispatch the batch is
                                  dropped (same as the worker); the committed state is correct, only the
                                  side effects (budget / notification refresh) are skipped until the next trigger
+
+POST-COMMIT DISPATCH OWNER (S10b-1 F3; single owner, no per-caller copy):
+  InstallmentPostCommitDispatcher (domain/installment/lifecycle, @Singleton, wraps PostCommitActionRunner)
+                              → dispatch(batches) for the `Done.postCommit` of a coordinator result, called AFTER the
+                                 coordinator returns, by exactly these callers: InstallmentDueRecordingWorker (S7a-2),
+                                 InstallmentPreBackupReconciler (S6c-4, via dagger.Lazy) and
+                                 InstallmentEntryActionsViewModel (S10b-1). S10b-2 / S11 / S12a callers use it too
+                              → semantics: skip a batch without actions; run in order; isolate a non-cancellation
+                                 failure (logged by class simple name only, never changes the committed result);
+                                 CancellationException is rethrown and stops the remaining batches
+                              ❌ a private `dispatchBatches` loop in a worker, reconciler, view model or use case
 
 READS (plan coordinator, S6a):
   expense / category / recurring-link facts → InstallmentExpenseFactsReader (domain port) → 
