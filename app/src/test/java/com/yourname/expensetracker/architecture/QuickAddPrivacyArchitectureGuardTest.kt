@@ -237,7 +237,13 @@ class QuickAddPrivacyArchitectureGuardTest {
         val files = kotlinFilesUnder(addExpenseDir)
         assertTrue("No Kotlin files found under ${addExpenseDir.absolutePath}; guard would be vacuous", files.isNotEmpty())
         val names = files.map { it.name }.toSet()
-        listOf("AddExpenseViewModel.kt", "AddExpenseSheet.kt", "QuickAddFillContract.kt").forEach {
+        listOf(
+            "AddExpenseViewModel.kt",
+            "AddExpenseSheet.kt",
+            "QuickAddFillContract.kt",
+            "QuickAddSection.kt",
+            "QuickAddUiMapper.kt"
+        ).forEach {
             assertTrue("Expected $it under the add-expense package; found $names", it in names)
         }
 

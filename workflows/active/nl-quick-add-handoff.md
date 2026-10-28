@@ -2,7 +2,7 @@
 
 Feature id: `nl-quick-add` (roadmap item 2 of the `ai-evolution` program; see `workflows/active/ai-evolution-handoff.md`)
 Branch at start: release-1.0-remediation
-Status: PLAN APPROVED — PARKED until Release 1.0 accepted + release-1.0-wt merged + ai-fixes B2d landed; next slice S0. DOCS-ONLY (Release 1.0 frozen; implementation post-1.0, after ai-fixes).
+Status: INCREMENT 1 ACCEPTED (2026-10-28). Slices S0, A, B, D, C, E, F and Z are accepted. Final-tree conditions C1 (app-check) and C2 (static-guards) are met. The merge to feature/ai-evolution is approved (owner-approvals 73b). The owner's Greek sign-off stays a STORE-RELEASE condition (items 72c, 73c).
 
 ## Origin
 Owner GO 2026-10-16 ("go quick-add"). Scope source: `docs/features/ai-evolution/idea-portfolio.md` B1 + `docs/features/ai-evolution/critique.md` §5 (reshape: deterministic parser is the product, Nano optional enhancer, text only, prefill into existing add-expense, raw text in memory only).
@@ -60,7 +60,11 @@ Owner GO 2026-10-16 ("go quick-add"). Scope source: `docs/features/ai-evolution/
   H-4 add_expense_error_currency_loading included. N1-N11 stop-and-asks stand.
 
 ## Next action
-When Release 1.0 is accepted, release-1.0-wt merged, and ai-fixes landed through B2d: run S0 pre-flight (branch feature/nl-quick-add; D-1..D-13; baselines via validation-runner). Must land before loan-installments S11. No app/ edits before that.
+Merge into feature/ai-evolution. This is approved (owner-approvals 73b).
+- Merge in Cost-agregator-int from origin/feature/ai-evolution e6967db1 (a fast-forward-able base).
+- Validate the merge commit, then push.
+- This must land before loan-installments S11.
+- Greek sign-off is a store-release condition (73c).
 
 ## Open risks
 - No-rate foreign-currency behaviour VERIFIED (debugger, 2026-10-16): docs/features/manual-entry-currency/no-rate-verification.md —
@@ -88,9 +92,17 @@ When Release 1.0 is accepted, release-1.0-wt merged, and ai-fixes landed through
 - Sequencing vs loan-installments S11 (same VM/Sheet).
 
 ## Slice statuses
-| Slice | Status |
-|---|---|
-| S0, A, B, D, C, E, F, Z | planned |
+| Slice | Status | Commit | Key runs |
+|---|---|---|---|
+| S0 | ACCEPTED | 59aaecc2 | baselines on tree 3ef7ab9d all PASS (see "S0 baselines"); S0 PASSED |
+| A + B | ACCEPTED | 56730961 | targeted vr-20261027-212616-88ce3332; domain-n-z vr-20261027-213103-d67badba; architecture-contracts vr-20261027-213451-0b626489; static-guards vr-20261027-221600-56cf13ee |
+| D | ACCEPTED | 43213322 | targeted vr-20261027-224322-6ab60a37; runtime-ui vr-20261027-224824-f3eb0d81 |
+| C | ACCEPTED | 8b107fca | static-guards vr-20261028-004311-ba4cfcda; targeted vr-20261028-011400-c5a980c6; domain-n-z vr-20261028-011818-b4a1a4c1 |
+| E | ACCEPTED | 61ea8caf | targeted vr-20261028-022757-e52f7575; architecture-contracts vr-20261028-023013-02302b23 |
+| F | ACCEPTED | be762dcd | targeted vr-20261028-051232-e4fad8e2; runtime-ui vr-20261028-051449-100cb511 |
+| Z | ACCEPTED (docs) | a479573a | docs only; final acceptance below |
+
+Final acceptance 2026-10-28: ACCEPT-WITH-CONDITIONS (C1 app-check, C2 static-guards, C3 Greek sign-off).
 
 ## Approved global post-1.0 build order (manual-entry-currency Gate 2 G2-1, 2026-10-16)
 Release 1.0 (incl. R16, R23 part 1) → ai-fixes → money-correctness-1.0.x (if specced; else after MEC a) → MEC core (a, setter-less)
@@ -557,7 +569,9 @@ Recorded per G2-17. None is in increment 1 scope; each needs an owner or a later
    - F4 `ManualExpenseRepository :252` `Timber.e(e, ...)` attaches a throwable, and `:214-216` passes the raw `exception.message` upward;
    - F5 `GreeklishNormalizer.toLatinStatic` does not fold accented diphthongs, so merchant keys split on accents (dedup and history matching only).
 3. Runner shard-coverage gap: `validation-runner` has no check that every test package belongs to a shard, so a new package outside every shard is silently skipped by sharded runs. `domain.quickadd.*` was added to `domain-n-z` (G2-7); other new packages (ai-fixes, loan) should be checked.
-4. Native Spanish review, and the el/es DRAFT sign-off: owner native review of all `quick_add_*` and `add_expense_error_*` strings in `values-el` and `values-es` (es still shows the English example; plan: owner reviews Greek).
+4. Localisation sign-off, split (final acceptance, 2026-10-28):
+   - 4a. Greek: owner release condition (item 72c). The owner reviews and signs off all `quick_add_*` and `add_expense_error_*` strings in `values-el` before release.
+   - 4b. Spanish native review: follow-up, not a release condition. `values-es` strings stay DRAFT (es still shows the English example) until a native review.
 5. Localisation of the 2 transfer and 5 OwnershipValidator messages (item 54b): they are still `UiText.DynamicString` of the existing English constants (OwnershipValidator not edited in increment 1).
 6. Clipboard pre-existing fragment cases (slice D review; regex frozen):
    - space, apostrophe or NBSP-grouped numbers give a leading-integer fragment ("1 234,56" gives 1.00);
@@ -571,9 +585,37 @@ Recorded per G2-17. None is in increment 1 scope; each needs an owner or a later
    - expect `ManualExpenseRepository` conflicts;
    - add a `mapSaveError` branch for `RECURRING_FOREIGN_CURRENCY_ERROR_CODE` (otherwise A's generic `Result.Error` mapping hides the bounded code; see S0 note on the MEC seam).
 10. Loan-installments S11 rebases onto quick-add (G2-16): `AddExpenseViewModel` and `AddExpenseSheet` are the shared write set.
+11. N3 (owner-approvals item 72b): announce the category value in the quick-add summary (today the summary names fields only). Pre-store-release, together with the TalkBack pass (item 8).
 
 ### Slice Z docs (2026-10-28, implementer; NOT validated)
-Docs only. Nothing was built, tested or run; no `app/` edit, no commit.
+Docs only. Nothing was built, tested or run; no `app/` edit. Committed as a479573a.
 - M `docs/architecture/CODEBASE_INVENTORY.md`: header line now "Generated/verified: 2026-10-28 (nl-quick-add increment 1 refresh ...)"; NEW "Drift Sync (2026-10-28 / nl-quick-add increment 1)" section (domain files, UI files, new tests, shard entry, strings, no schema change); one line under "Transaction Parsing". Manual refresh (S0 D-10: no regeneration script). Other sections untouched.
 - M `workflows/active/nl-quick-add-handoff.md`: the "Increment 1 follow-ups (Z)" section above and this entry.
 - Still to do in Z: bundle gate through the validation-runner, then the final review in a fresh session separate from the discovery reviewers.
+- Update (2026-10-28): slice Z committed as a479573a; the final review is recorded below.
+
+### Final acceptance (2026-10-28, reviewer-strict fresh session): ACCEPT-WITH-CONDITIONS
+Increment 1 slices S0, A, B, D, C, E, F, Z are ACCEPTED per slice; the bundle verdict is ACCEPT-WITH-CONDITIONS.
+
+Conditions (must close before the owner merge decision):
+- C1 (app-check): run `app-check` through the validation-runner on the final tree (a479573a plus the N1/N2 test and docs edits). Missing, stale or errored results are not PASS.
+- C2 (static-guards): run `static-guards` on the final tree. The last full static-guards PASS predates slices D-F production edits (slice C vr-20261028-004311-ba4cfcda; slice F vr-20261028-040441-8ce03b5a, taken before the one-line `clearFocus(force = true)` change).
+- C3 (Greek): the owner's Greek sign-off on all `quick_add_*` and `add_expense_error_*` strings in `values-el` is a release condition (owner-approvals item 72c).
+
+Notes (non-blocking):
+- N1: handoff header was stale (status, next action, slice table, slice Z "no commit"); corrected in this pass.
+- N2: guard G-1 required-files list now also includes `QuickAddSection.kt` and `QuickAddUiMapper.kt` (item 72a); test-only edit in `QuickAddPrivacyArchitectureGuardTest.kt`. Re-run `*QuickAddPrivacyArchitectureGuardTest*` with the final-tree validation.
+- N3: announce the category value in the quick-add summary (item 72b); follow-up #11, pre-store-release together with the TalkBack pass.
+- N4: record the mapSaveError branch for RECURRING_FOREIGN_CURRENCY_ERROR_CODE in the MEC handoff (done 2026-10-28 in manual-entry-currency-handoff.md on the mec branch, 3d17c4be). Spanish native review stays a follow-up, not a release condition.
+
+Final-tree validation (2026-10-28, after the N1/N2 edits):
+- targeted *QuickAddPrivacyArchitectureGuardTest*: vr-20261028-065210-17217cd7 PASS
+- static-guards: vr-20261028-065243-1c6b11a7 PASS (C2 met)
+- app-check: vr-20261028-070746-2fe658fd PASS (C1 met)
+- Earlier app-check vr-20261028-061105-3e651cb2: STALE_RESULT (edits landed mid-run). Superseded, not counted.
+
+Owner decision (owner-approvals 73, 2026-10-28):
+- The merge to feature/ai-evolution is approved.
+- Greek sign-off stays a store-release condition.
+
+Next: merge feature/nl-quick-add into feature/ai-evolution in the integration worktree (Cost-agregator-int), validate the merge commit, then fast-forward push.
