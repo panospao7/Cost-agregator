@@ -1539,3 +1539,19 @@ the only differing text.
 - F4 versus its original purpose. The single toggle cannot hide purchase records (U-2 rule 3).
 - OQ-21 rationale versus mechanics. The reopen after "unlink, then delete" comes from the unlink, not from the post-commit
   reaction (U-1 rule 3).
+
+## Clarification 2026-10-28 — F5 wording (owner-approvals 59d)
+
+Supersedes the short text in U-3 (and the "Inconsistencies" note "F5 wording versus where it is shown"): the owner
+approved a field-neutral wording, because the message is shown only when the user changes the transaction TYPE or the
+OWNERSHIP of a plan purchase (`TransactionsViewModel.updateExpenseType`, `updateOwnership`), never an amount edit.
+
+1. New text (en), key `transactions_installment_purchase_locked` (unchanged): "This purchase is paid in installments,
+   so this can't be changed here."
+2. es: "Esta compra se paga a plazos, así que esto no se puede cambiar aquí." el: "Αυτή η αγορά πληρώνεται σε δόσεις,
+   οπότε αυτό δεν μπορεί να αλλάξει εδώ." Both are DRAFT (`<!-- DRAFT: owner native sign-off pending -->` in the
+   resource files); native sign-off is still open.
+3. Unchanged from U-3: one fixed resource message, no data or exception text, no instruction to delete or adjust the
+   plan, shown through `_error` from the type-change and ownership-change paths. The key, the call sites and the tests
+   (which assert the resource id) are not touched. The older copies of the amount-specific sentence (the error-code
+   table, the copy table "Purchase locked", section 3.7) are superseded by this text.

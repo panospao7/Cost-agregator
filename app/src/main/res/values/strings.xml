@@ -2845,7 +2845,7 @@
     <string name="transactions_installment_chip_matches">Matches installment %d</string>
     <string name="transactions_installment_chip_duplicate">Possible duplicate of installment %d</string>
     <string name="transactions_installment_filter">Installments</string>
-    <string name="transactions_installment_purchase_locked">This purchase is paid in installments, so its amount can\'t be changed.</string>
+    <string name="transactions_installment_purchase_locked">This purchase is paid in installments, so this can\'t be changed here.</string>
     <string name="declare_installments_title">Pay in installments</string>
     <string name="declare_installments_name">Plan name</string>
     <string name="declare_installments_count">Number of payments</string>

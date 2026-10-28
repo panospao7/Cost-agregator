@@ -1294,20 +1294,26 @@ class InstallmentPlanArchitectureGuardTest {
      * comment mention is not. The pattern also covers `PostCommitActionRunner*` lookalikes such as the Impl.
      * No allow-list beyond the single dispatcher path (exact relative path, never basename).
      *
+     * Owner item 59c extends the same rule to the public post-commit wrappers, which run a batch without
+     * naming the runner: [POST_COMMIT_WRAPPER_TYPES] (`PostCommitSideEffectEvidenceService`,
+     * `TransactionSideEffectDispatcher`, `ReceiptSideEffectDispatcher`, each with `*` lookalikes) and the
+     * service calls `runWithEvidence` / `runBestEffortWithEvidence`. Same scope, same single exemption.
+     *
      * Known limits (not covered by this rule):
-     * - a typealias for the runner declared outside the three scope packages;
-     * - public wrappers that run post-commit batches without naming the type:
-     *   `PostCommitSideEffectEvidenceService.runWithEvidence` / `runBestEffortWithEvidence`,
-     *   `TransactionSideEffectDispatcher`, `ReceiptSideEffectDispatcher`;
+     * - a typealias for the runner or a wrapper declared outside the three scope packages;
+     * - a post-commit wrapper reached through a differently named type that is not listed in
+     *   [POST_COMMIT_WRAPPER_TYPES] (a new wrapper type needs a new entry; the non-vacuity test only pins the
+     *   three known declarations);
      * - installment code outside the three packages: `di/InstallmentModule.kt`,
      *   `data/repository/Installment*Impl.kt`.
      */
     private fun postCommitRunnerReferences(rel: String, raw: String): List<Hit> {
         if (POST_COMMIT_RUNNER_SCOPE_PREFIXES.none { rel.startsWith(it) }) return emptyList()
         if (rel == POST_COMMIT_DISPATCHER_PATH) return emptyList()
+        val types = (listOf("PostCommitActionRunner") + POST_COMMIT_WRAPPER_TYPES).joinToString("|") { "$it\\w*" }
         return lineHits(
             "POST_COMMIT_RUNNER_OUTSIDE_DISPATCHER",
-            Regex("""\bPostCommitActionRunner\w*"""),
+            Regex("""\b(?:$types|runWithEvidence\b|runBestEffortWithEvidence\b)"""),
             code(raw)
         )
     }
@@ -1375,6 +1381,58 @@ class InstallmentPlanArchitectureGuardTest {
             "the dispatcher itself is the legal collaborator",
             postCommitRunnerReferences(uiPath, "class X(private val dispatcher: InstallmentPostCommitDispatcher)")
         )
+
+        // Owner item 59c: the public post-commit wrappers are flagged the same way as the runner.
+        val wrapperViolating = listOf(
+            "evidence service import" to
+                "import com.yourname.expensetracker.domain.sideeffect.PostCommitSideEffectEvidenceService\nclass X",
+            "evidence service ctor param" to
+                "class X(private val evidence: PostCommitSideEffectEvidenceService)",
+            "evidence service lookalike" to
+                "class X(private val evidence: PostCommitSideEffectEvidenceServiceImpl)",
+            "runWithEvidence call" to
+                "suspend fun f(b: Any) { evidence.runWithEvidence(b) }",
+            "runBestEffortWithEvidence call" to
+                "suspend fun f(b: Any) { evidence.runBestEffortWithEvidence(b, 1) }",
+            "runWithEvidence callable reference" to
+                "val ref = evidence::runWithEvidence",
+            "transaction dispatcher ctor param" to
+                "class X(private val d: TransactionSideEffectDispatcher)",
+            "transaction dispatcher fully qualified" to
+                "class X(private val d: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionSideEffectDispatcher)",
+            "receipt dispatcher ctor param" to
+                "class X(private val d: ReceiptSideEffectDispatcher?)",
+            "receipt dispatcher class reference" to
+                "val k = ReceiptSideEffectDispatcher::class",
+            "wrapper beside a comment mention" to
+                "// mentions TransactionSideEffectDispatcher\nclass X(private val d: TransactionSideEffectDispatcher)"
+        )
+        for (path in installmentPaths) {
+            for ((label, snippet) in wrapperViolating) {
+                assertFlagged("$path :: $label", postCommitRunnerReferences(path, snippet), rule)
+            }
+        }
+        val wrapperSnippet = wrapperViolating.joinToString("\n") { it.second }
+        assertClean("the dispatcher may use any post-commit wrapper (single owner)", postCommitRunnerReferences(POST_COMMIT_DISPATCHER_PATH, wrapperSnippet))
+        for (otherPath in listOf(
+            "$ROOT/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt",
+            "$ROOT/domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt",
+            "$ROOT/data/repository/ReceiptRepository.kt",
+            "$ROOT/domain/sideeffect/PostCommitSideEffectEvidenceService.kt",
+            "$ROOT/ui/screens/installmentsettings/SomeViewModel.kt"
+        )) {
+            assertClean("non-installment path $otherPath", postCommitRunnerReferences(otherPath, wrapperSnippet))
+        }
+        for (benign in listOf(
+            "line comment" to "// never TransactionSideEffectDispatcher or runWithEvidence here\nfun f() {}",
+            "block comment" to "/* ReceiptSideEffectDispatcher, PostCommitSideEffectEvidenceService */ fun f() {}",
+            "KDoc link" to "/** via [TransactionSideEffectDispatcher.runBestEffortWithEvidence] */ class X",
+            "string literal" to "val s = \"PostCommitSideEffectEvidenceService.runWithEvidence\"",
+            "planner is not a wrapper" to "class X(private val p: TransactionSideEffectPlanner, q: ReceiptSideEffectPlanner)",
+            "lookalike member name" to "fun f() { rerunWithEvidenceFlag() }"
+        )) {
+            assertClean("wrapper rule benign: ${benign.first}", postCommitRunnerReferences(uiPath, benign.second))
+        }
     }
 
     @Test
@@ -1404,6 +1462,159 @@ class InstallmentPlanArchitectureGuardTest {
         }
     }
 
+    @Test
+    fun `owner 59c non-vacuity - each post-commit wrapper and its service calls exist in the scan and the extended matcher sees them`() {
+        val files = requireScan()
+        assertEquals(
+            "a new post-commit wrapper type needs an entry here and in the rule (owner item 59c)",
+            setOf("PostCommitSideEffectEvidenceService", "TransactionSideEffectDispatcher", "ReceiptSideEffectDispatcher"),
+            POST_COMMIT_WRAPPER_TYPES.toSet()
+        )
+        val declarationPaths = mapOf(
+            "PostCommitSideEffectEvidenceService" to "$ROOT/domain/sideeffect/PostCommitSideEffectEvidenceService.kt",
+            "TransactionSideEffectDispatcher" to "$ROOT/domain/transaction/lifecycle/TransactionSideEffectDispatcher.kt",
+            "ReceiptSideEffectDispatcher" to "$ROOT/domain/receipt/lifecycle/ReceiptSideEffectDispatcher.kt"
+        )
+        for (type in POST_COMMIT_WRAPPER_TYPES) {
+            val path = declarationPaths.getValue(type)
+            val file = files.singleOrNull { it.rel == path }
+            assertTrue("wrapper $type must be in the scan at $path (else the rule passes vacuously after a rename)", file != null)
+            assertTrue(
+                "wrapper $type must be declared as a class in $path",
+                Regex("""\bclass\s+${Regex.escape(type)}\b""").containsMatchIn(code(file!!.raw))
+            )
+            // The real declaration text, planted into an installment package, is flagged by the extended matcher.
+            assertFlagged(
+                "real $type text planted at a non-exempt installment path",
+                postCommitRunnerReferences("$ROOT/domain/installment/lifecycle/Renamed.kt", file.raw),
+                "POST_COMMIT_RUNNER_OUTSIDE_DISPATCHER"
+            )
+        }
+        val evidence = files.single { it.rel == declarationPaths.getValue("PostCommitSideEffectEvidenceService") }
+        val evidenceCode = code(evidence.raw)
+        for (call in listOf("runWithEvidence", "runBestEffortWithEvidence")) {
+            assertTrue(
+                "the evidence service must declare 'fun $call(' (else the call-name arm is stale)",
+                Regex("""\bfun\s+$call\s*\(""").containsMatchIn(evidenceCode)
+            )
+        }
+        // Wrapper names are absent from the three installment prefixes today (grep at 59c time); the dispatcher
+        // is the only file there that may name post-commit machinery at all.
+        val wrapperName = Regex("""\b(?:${POST_COMMIT_WRAPPER_TYPES.joinToString("|")})\w*|\brunWithEvidence\b|\brunBestEffortWithEvidence\b""")
+        val inScope = files.filter { f -> POST_COMMIT_RUNNER_SCOPE_PREFIXES.any { f.rel.startsWith(it) } }
+        assertTrue("installment scope must contain scanned files", inScope.isNotEmpty())
+        val offenders = inScope.filter { it.rel != POST_COMMIT_DISPATCHER_PATH && wrapperName.containsMatchIn(code(it.raw)) }
+        assertTrue("wrapper references outside the dispatcher: ${offenders.map { it.rel }}", offenders.isEmpty())
+    }
+
+    // ---------------------------------------------------------------- owner 59b Home weather consumer pin
+
+    /**
+     * Owner approvals items 53c and 59b: `HomeInstallmentWeatherSource` may be referenced in production only by
+     * [HOME_VIEW_MODEL_PATH] and its own file [HOME_WEATHER_SOURCE_PATH] (exact relative paths, never basenames).
+     * No DI module binds it (the class has an `@Inject` constructor), so there is no third exemption. Scope is ALL
+     * of app/src/main, not only the plan prefixes. Matched on sanitized code (comments and string bodies blanked),
+     * so imports, ctor params, fully qualified names and `::` references are caught while a comment, KDoc or log
+     * string mention is not; `HomeInstallmentWeatherSource*` lookalikes are caught too.
+     *
+     * Known limits: a typealias declared in an exempt file; a consumer that obtains the source's flow through a
+     * differently named wrapper (the wrapper itself would reference the type and be flagged).
+     */
+    private fun homeWeatherSourceReferences(rel: String, raw: String): List<Hit> {
+        if (rel == HOME_VIEW_MODEL_PATH || rel == HOME_WEATHER_SOURCE_PATH) return emptyList()
+        return lineHits(
+            "HOME_INSTALLMENT_WEATHER_OUTSIDE_HOME",
+            Regex("""\bHomeInstallmentWeatherSource\w*"""),
+            code(raw)
+        )
+    }
+
+    @Test
+    fun `owner 59b HomeInstallmentWeatherSource is referenced only by HomeViewModel and its own file`() {
+        assertNoViolations(
+            "HomeInstallmentWeatherSource referenced outside $HOME_VIEW_MODEL_PATH / $HOME_WEATHER_SOURCE_PATH " +
+                "(HOME_INSTALLMENT_WEATHER_OUTSIDE_HOME, owner items 53c and 59b)",
+            this::homeWeatherSourceReferences
+        )
+    }
+
+    @Test
+    fun `self-check owner 59b Home weather detector flags planted references outside Home and ignores comments strings and the two exempt files`() {
+        val rule = "HOME_INSTALLMENT_WEATHER_OUTSIDE_HOME"
+        val typeFqn = "com.yourname.expensetracker.data.repository.HomeInstallmentWeatherSource"
+        val violating = listOf(
+            "import" to "import $typeFqn\nclass X",
+            "constructor param" to "class X(private val source: HomeInstallmentWeatherSource)",
+            "nullable constructor param" to "class X(private val source: HomeInstallmentWeatherSource?)",
+            "fully qualified type" to "class X(private val source: $typeFqn)",
+            "class reference" to "val k = HomeInstallmentWeatherSource::class",
+            "callable reference" to "val ref = HomeInstallmentWeatherSource::observe",
+            "Impl lookalike" to "class X(private val source: HomeInstallmentWeatherSourceImpl)",
+            "reference beside a comment mention" to "// mentions HomeInstallmentWeatherSource\nclass X(private val s: HomeInstallmentWeatherSource)"
+        )
+        val outsiders = listOf(
+            "$ROOT/data/ai/AiBriefingContextBuilder.kt",
+            "$ROOT/domain/ai/usecase/BuildDashboardBriefingUseCase.kt",
+            "$ROOT/data/repository/DashboardContractsAdapter.kt",
+            "$ROOT/ui/screens/assistant/AssistantViewModel.kt",
+            "$ROOT/data/repository/FinancialWeatherRepository.kt",
+            "$ROOT/di/RepositoryModule.kt",
+            // Siblings and same-basename files are NOT the exempt files.
+            "$ROOT/ui/screens/home/HomeScreenState.kt",
+            "$ROOT/ui/screens/home/other/HomeViewModel.kt",
+            "$ROOT/ui/screens/homebase/HomeViewModel.kt",
+            "$ROOT/data/repository/other/HomeInstallmentWeatherSource.kt"
+        )
+        for (path in outsiders) {
+            for ((label, snippet) in violating) {
+                assertFlagged("$path :: $label", homeWeatherSourceReferences(path, snippet), rule)
+            }
+        }
+        val snippet = "import $typeFqn\nclass H(private val homeInstallmentWeatherSource: HomeInstallmentWeatherSource)"
+        assertClean("HomeViewModel is the single legal consumer", homeWeatherSourceReferences(HOME_VIEW_MODEL_PATH, snippet))
+        assertClean("the source's own file", homeWeatherSourceReferences(HOME_WEATHER_SOURCE_PATH, snippet))
+
+        val aiPath = outsiders.first()
+        assertClean("line comment", homeWeatherSourceReferences(aiPath, "// never HomeInstallmentWeatherSource here\nfun f() {}"))
+        assertClean("block comment", homeWeatherSourceReferences(aiPath, "/* HomeInstallmentWeatherSource */ fun f() {}"))
+        assertClean("KDoc link", homeWeatherSourceReferences(aiPath, "/** merged via [HomeInstallmentWeatherSource] */ class X"))
+        assertClean("string literal", homeWeatherSourceReferences(aiPath, "val s = \"HomeInstallmentWeatherSource\""))
+        assertClean(
+            "an unrelated Home type",
+            homeWeatherSourceReferences(aiPath, "class X(private val m: HomeWeatherMerge, p: InstallmentProjectionPort)")
+        )
+    }
+
+    @Test
+    fun `owner 59b non-vacuity - HomeViewModel exists in the scan and really references HomeInstallmentWeatherSource`() {
+        val files = requireScan()
+        val home = files.singleOrNull { it.rel == HOME_VIEW_MODEL_PATH }
+        assertTrue("HomeViewModel must be in the scan at $HOME_VIEW_MODEL_PATH (else the pin passes vacuously after a rename)", home != null)
+        assertTrue(
+            "HomeViewModel must reference HomeInstallmentWeatherSource in code (import/ctor param, not comments) - otherwise the pin has no consumer",
+            Regex("""\bHomeInstallmentWeatherSource\b""").containsMatchIn(code(home!!.raw))
+        )
+        val source = files.singleOrNull { it.rel == HOME_WEATHER_SOURCE_PATH }
+        assertTrue("HomeInstallmentWeatherSource must be in the scan at $HOME_WEATHER_SOURCE_PATH", source != null)
+        assertTrue(
+            "HomeInstallmentWeatherSource must be declared as a class in $HOME_WEATHER_SOURCE_PATH",
+            Regex("""\bclass\s+HomeInstallmentWeatherSource\b""").containsMatchIn(code(source!!.raw))
+        )
+        // The exemption must be what saves HomeViewModel and the source: both texts at a non-exempt sibling path are flagged.
+        assertFlagged(
+            "real HomeViewModel text at a non-exempt sibling path",
+            homeWeatherSourceReferences("$ROOT/ui/screens/home/Renamed.kt", home.raw),
+            "HOME_INSTALLMENT_WEATHER_OUTSIDE_HOME"
+        )
+        assertFlagged(
+            "real source text at a non-exempt sibling path",
+            homeWeatherSourceReferences("$ROOT/data/repository/Renamed.kt", source.raw),
+            "HOME_INSTALLMENT_WEATHER_OUTSIDE_HOME"
+        )
+        assertClean("real HomeViewModel at its pinned path", homeWeatherSourceReferences(home.rel, home.raw))
+        assertClean("real source at its pinned path", homeWeatherSourceReferences(source.rel, source.raw))
+    }
+
     private companion object {
         const val ROOT = "com/yourname/expensetracker"
 
@@ -1418,7 +1629,21 @@ class InstallmentPlanArchitectureGuardTest {
             "$ROOT/ui/screens/installments/"
         )
 
-        const val FACTS_READER_IMPL_PATH = "$ROOT/data/repository/InstallmentExpenseFactsReaderImpl.kt"
+        /**
+         * Public post-commit wrappers that run a batch without naming PostCommitActionRunner (owner item 59c).
+         * Only the dispatcher may reference them under [POST_COMMIT_RUNNER_SCOPE_PREFIXES].
+         */
+        val POST_COMMIT_WRAPPER_TYPES = listOf(
+            "PostCommitSideEffectEvidenceService",
+            "TransactionSideEffectDispatcher",
+            "ReceiptSideEffectDispatcher"
+        )
+
+        /** Exact paths for the Home weather consumer pin (owner item 59b). */
+        const val HOME_VIEW_MODEL_PATH = "$ROOT/ui/screens/home/HomeViewModel.kt"
+        const val HOME_WEATHER_SOURCE_PATH = "$ROOT/data/repository/HomeInstallmentWeatherSource.kt"
+
+        const val FACTS_READER_IMPL_PATH ="$ROOT/data/repository/InstallmentExpenseFactsReaderImpl.kt"
 
         const val READ_REPOSITORY_IMPL_PATH = "$ROOT/data/repository/InstallmentPlanReadRepositoryImpl.kt"
 

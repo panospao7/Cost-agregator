@@ -1507,3 +1507,34 @@ PURCHASE_ATTACHED declaration on an existing expense:
   is false (:151), so the "Equal split" chip is enabled (:519) although `effectiveSplit` already returns
   `FIXED_PAYMENT` (:146). A tap changes nothing visible. It cannot violate the rule, because saving needs a picked
   currency.
+
+## Clarification 2026-10-28 — INV-29 owner (S8b-3)
+
+Append-only. Nothing above this heading is rewritten. This section clarifies who owns INV-29 on the Home weather path
+and in which scope it applies. Schema: none. New invariants: none. New refusal codes: none.
+
+- **Owner of the Home weather path.** `HomeInstallmentWeatherSource` (`data/repository`, off the cloud surface) is the
+  Home-only installment-aware weather source. It is consumed only by `HomeViewModel`, which REPLACES the single
+  `FinancialWeatherWidget` after `ComputeDashboardWidgetsUseCase.compute()` (`HomeWeatherMerge`). The exclusion itself
+  stays single-owned by `RecurringInstallmentEligibility.excludedSnapshotIds`; the source only calls it.
+- **Projected entries are planned inputs.** Each projected entry (31-day window, SCHEDULED entries of ACTIVE plans) is a
+  MUST planned input in plan currency fed to the unmodified `ForecastInputAssembler.assemble`. Its existing planned-expense
+  normalisation converts it (INV-16) or omits it and marks the forecast partial; it is never 0 and never summed raw.
+  Projections are never an `UpcomingItem`, and `upcomingItems` equal the baseline list.
+- **Scope is GLOBAL while any entry is projected (owner-approvals 53a), not per plan, and applies to history BEFORE the
+  current month only (owner-approvals 60b).** While at least one entry is projected, ALL installment-linked and
+  plan-purchase history dated before the start of the current month (home time zone) is removed from the aware view's
+  snapshots, whichever plan the projected entry belongs to. Those are the baselines (average month, previous month,
+  typical daily discretionary). Current-month actual installment payments stay in month-to-date, so a paid installment
+  is counted once (as an actual) and never zero times; the projection adds only the entries still SCHEDULED, so an
+  installment is counted exactly once for the month. The aware view replaces the baseline view and the two are never
+  summed. Accepted trade-off: the pace ratio compares a current month that includes installments against a baseline
+  that excludes them.
+- **Expected step change.** When the last projection ends (the final entry is paid, the plan is stopped or completed, or
+  the window holds no entry), the source emits null and Home shows the baseline again. The linked history then
+  re-enters the baseline patterns, so the baseline can change by a step on that day. This is expected behaviour, not a
+  defect (AE-7, AE-11).
+- **Cloud path unchanged (A15).** The `FinancialWeatherRepository` chain (`ForecastInputAssembler`, `SynthesisEngine`,
+  `NarrativeGenerator`, `DashboardDataProvider`, `DashboardBriefingInputBuilder`) stays installment-free; the registered
+  guard `installment_cloud_reachability` fences it (INV-31). No `FinancialWeather` field carries installment data.
+  Other Home widgets (Monte Carlo is handled in S8b-2; runway and health score) are not changed by S8b-3.

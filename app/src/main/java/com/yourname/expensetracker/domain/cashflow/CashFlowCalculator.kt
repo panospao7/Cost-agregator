@@ -19,6 +19,9 @@ import com.yourname.expensetracker.domain.core.money.TransactionTypeFilter
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.forecasting.MergedRecurringPatternsProvider
+import com.yourname.expensetracker.domain.installment.model.InstallmentMinorUnits
+import com.yourname.expensetracker.domain.installment.projection.InstallmentProjectedEntry
+import com.yourname.expensetracker.domain.installment.projection.InstallmentProjectionPort
 import com.yourname.expensetracker.domain.model.RecurringPattern
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
@@ -62,7 +65,14 @@ data class DailyCashFlow(
     /** Typed actual expense aggregate used by detail consumers. */
     val expenseAggregate: MoneyAggregate? = null,
     /** Typed recurring aggregate used by detail consumers. */
-    val recurringAggregate: MoneyAggregate? = null
+    val recurringAggregate: MoneyAggregate? = null,
+    /**
+     * S8b-2 (INV-15, INV-16): installment entries counted into this day's outflow, as the port
+     * reported them (plan currency, minor units). An entry whose conversion to [currency] failed is
+     * NOT listed and is never counted as zero: it raises [failedConversionCount] and [isPartial].
+     * Empty when the plan store has nothing projected for the day.
+     */
+    val projectedInstallments: List<InstallmentProjectedEntry> = emptyList()
 )
 
 enum class CashFlowRiskLevel {
@@ -88,7 +98,13 @@ class CashFlowCalculator @Inject constructor(
      * Replaces ad-hoc inline conversion loops with proper failure tracking
      * and consistent rate-basis selection.
      */
-    private val normalizationEngine: MoneyNormalizationEngine
+    private val normalizationEngine: MoneyNormalizationEngine,
+    /**
+     * S8b-2 (INV-15): read-only source of upcoming installment entries. Only
+     * [calculateDailyCashFlow] uses it; [getUpcomingBills] does not (health score and
+     * SmartSavingsEngine read it, OD-12).
+     */
+    private val installmentProjectionPort: InstallmentProjectionPort
 ) {
 
     /**
@@ -155,6 +171,16 @@ class CashFlowCalculator @Inject constructor(
         }
         val zone = ZoneId.systemDefault()
         val startLocalDate = Instant.ofEpochMilli(startTime).atZone(zone).toLocalDate()
+
+        // S8b-2 (INV-15): projected installment entries for the emitted days, indexed by civil
+        // epoch day. The port applies the projection bounds (SCHEDULED entries of ACTIVE plans due
+        // today or later), so a stopped (AE-7) or completed (AE-11) plan contributes nothing here.
+        // Read-only; the same civil-day range the day loop below emits.
+        val firstEmittedEpochDay = startLocalDate.toEpochDay()
+        val lastEmittedEpochDay = Instant.ofEpochMilli(endTime - 1).atZone(zone).toLocalDate().toEpochDay()
+        val installmentsByEpochDay = installmentProjectionPort.upcomingEntries(lastEmittedEpochDay)
+            .filter { it.dueEpochDay in firstEmittedEpochDay..lastEmittedEpochDay }
+            .groupBy { it.dueEpochDay }
 
         // ── Pre-compute occurrence-driven predictions (FCST-3) ──────────────
         // P6-CURRENT-024: READ-ONLY. Manual rules are PROJECTED in memory via the
@@ -424,6 +450,40 @@ class CashFlowCalculator @Inject constructor(
                 }
             }
 
+            // S8b-2 (INV-15, INV-16): projected installments are dated outflows. Each entry is in
+            // its own plan currency (EUR or USD) and goes through the same convertOutcome as the
+            // recurring items above (FORECAST_DATE basis). A failed conversion omits the entry and
+            // counts as a conversion failure (isPartial); it is never 0 and never summed raw.
+            // Installments do not go through the recurring-pattern channel or its content dedup:
+            // a PAID entry is not projected, and installment-linked history is excluded from
+            // pattern detection upstream (INV-29).
+            val includedInstallments = mutableListOf<InstallmentProjectedEntry>()
+            for (entry in installmentsByEpochDay[cursorLocalDate.toEpochDay()].orEmpty()) {
+                val entryAmount = InstallmentMinorUnits.fromMinor(entry.amountMinor)
+                val convertedInstallment = if (entry.currency.code.equals(homeCurrency, ignoreCase = true)) {
+                    entryAmount
+                } else {
+                    val outcome = currencyConverter.convertOutcome(
+                        amount = entryAmount,
+                        fromCurrency = entry.currency.code,
+                        toCurrency = homeCurrency,
+                        rateBasis = com.yourname.expensetracker.domain.core.money.RateBasis.FORECAST_DATE,
+                        atMillis = currentDay.time,
+                        stalePolicy = com.yourname.expensetracker.domain.core.money.StaleRatePolicy.None
+                    )
+                    when (outcome) {
+                        is com.yourname.expensetracker.domain.core.money.ConversionOutcome.Converted ->
+                            outcome.convertedAmount
+                        is com.yourname.expensetracker.domain.core.money.ConversionOutcome.Failed -> {
+                            conversionFailures++
+                            continue
+                        }
+                    }
+                }
+                recurringExpenseAmounts += convertedInstallment
+                includedInstallments += entry
+            }
+
             val dayIncome = MoneyAggregateBuilder.fromHomeCurrencyAmounts(
                 amounts = listOf(incomeAggregate.displayAmount) + recurringIncomeAmounts,
                 homeCurrency = homeCurrency
@@ -473,7 +533,8 @@ class CashFlowCalculator @Inject constructor(
                     failedOccurrenceRuleCount = failedOccurrenceRuleCount,
                     incomeAggregate = incomeAggregate,
                     expenseAggregate = expenseAggregate,
-                    recurringAggregate = recurringAggregate
+                    recurringAggregate = recurringAggregate,
+                    projectedInstallments = includedInstallments
                 )
             )
             

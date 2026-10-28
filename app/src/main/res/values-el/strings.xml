@@ -403,7 +403,8 @@
     <string name="transactions_installment_chip_matches">Ταιριάζει με τη δόση %d</string>
     <string name="transactions_installment_chip_duplicate">Πιθανό διπλότυπο της δόσης %d</string>
     <string name="transactions_installment_filter">Δόσεις</string>
-    <string name="transactions_installment_purchase_locked">Αυτή η αγορά πληρώνεται σε δόσεις, επομένως το ποσό της δεν μπορεί να αλλάξει.</string>
+    <!-- DRAFT: owner native sign-off pending -->
+    <string name="transactions_installment_purchase_locked">Αυτή η αγορά πληρώνεται σε δόσεις, οπότε αυτό δεν μπορεί να αλλάξει εδώ.</string>
     <string name="declare_installments_title">Πληρωμή σε δόσεις</string>
     <string name="declare_installments_name">Όνομα πλάνου</string>
     <string name="declare_installments_count">Αριθμός πληρωμών</string>

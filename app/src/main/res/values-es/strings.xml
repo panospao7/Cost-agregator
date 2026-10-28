@@ -654,7 +654,8 @@
     <string name="transactions_installment_chip_matches">Coincide con la cuota %d</string>
     <string name="transactions_installment_chip_duplicate">Posible duplicado de la cuota %d</string>
     <string name="transactions_installment_filter">Cuotas</string>
-    <string name="transactions_installment_purchase_locked">Esta compra se paga en cuotas, por lo que no se puede cambiar su importe.</string>
+    <!-- DRAFT: owner native sign-off pending -->
+    <string name="transactions_installment_purchase_locked">Esta compra se paga en cuotas, así que esto no se puede cambiar aquí.</string>
     <string name="declare_installments_title">Pagar en cuotas</string>
     <string name="declare_installments_name">Nombre del plan</string>
     <string name="declare_installments_count">Número de pagos</string>

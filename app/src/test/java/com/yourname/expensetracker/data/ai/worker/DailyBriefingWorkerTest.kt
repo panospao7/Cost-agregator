@@ -36,6 +36,7 @@ import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkStatic
+import io.mockk.slot
 import io.mockk.unmockkAll
 import io.mockk.verify
 import kotlinx.coroutines.CancellationException
@@ -45,6 +46,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertSame
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -175,6 +177,29 @@ class DailyBriefingWorkerTest {
         verify(atLeast = 1) {
             workManager.enqueueUniqueWork(any(), any(), any<androidx.work.OneTimeWorkRequest>())
         }
+    }
+
+    // INV-31 / AE-23 / A15 (S8b-4): the worker is a pass-through between the dashboard data provider
+    // and the briefing use case. It must hand over the EXACT getProcessedDataFlow output (same
+    // instance, not a copy and not a rebuilt or merged snapshot), so nothing installment-aware can be
+    // added on the worker path.
+    @Test
+    fun `INV-31 worker passes the getProcessedDataFlow output to the briefing use case unchanged`() = runTest {
+        val processed = sampleProcessedData()
+        val handedOver = slot<ProcessedDashboardData>()
+        coEvery { dashboardDataProvider.getProcessedDataFlow(analyticsRepository) } returns flowOf(processed)
+        coEvery { generateDashboardBriefingUseCase(capture(handedOver), 1000L) } returns Unit
+
+        val result = buildWorker().doWork()
+
+        assertEquals(Result.success(), result)
+        coVerify(exactly = 1) { dashboardDataProvider.getProcessedDataFlow(analyticsRepository) }
+        coVerify(exactly = 1) { generateDashboardBriefingUseCase(any(), 1000L) }
+        assertSame(
+            "the use case must receive the provider's snapshot instance untouched",
+            processed,
+            handedOver.captured
+        )
     }
 
     @Test

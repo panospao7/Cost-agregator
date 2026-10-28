@@ -38,8 +38,15 @@ port import plus field (G-INSTALLMENT-CLOUD-01/-03), the off-surface Home
 source and a suffix look-alike are NOT scanned, and omitting any entry's file
 is an infrastructure failure naming that entry.
 
+Owner-approvals 59a (guard strengthening after the S8b-3/4 privacy review): the
+production adapter data/repository/DashboardContractsAdapter.kt is the eighth
+exact entry (12 surface entries in total).  It gets the same three proofs as the
+S8b-1 entries (projection port import plus field flagged with G-01/G-03, suffix
+precision look-alikes not scanned, omitting its file is an infrastructure
+failure naming the entry); see ``_CHAIN_ENTRIES``.
+
 Every fixture tree that expects PASS or a violation first seeds one clean file
-for each of the eleven surface entries (four directory prefixes and seven exact
+for each of the twelve surface entries (four directory prefixes and eight exact
 files; ``_seed_surface``), because a surface entry that matches no scanned file
 is itself an infrastructure failure.
 
@@ -86,6 +93,7 @@ _SURFACE_SEEDS = {
     "domain/logic/SynthesisEngine.kt": "domain/logic/SynthesisEngine.kt",
     "domain/logic/NarrativeGenerator.kt": "domain/logic/NarrativeGenerator.kt",
     "domain/usecase/dashboard/DashboardDataProvider.kt": "domain/usecase/dashboard/DashboardDataProvider.kt",
+    "data/repository/DashboardContractsAdapter.kt": "data/repository/DashboardContractsAdapter.kt",
 }
 # The five exact entries added by S8b-1 (cloud briefing chain, A15).
 _S8B1_ENTRIES = (
@@ -95,6 +103,10 @@ _S8B1_ENTRIES = (
     "domain/logic/NarrativeGenerator.kt",
     "domain/usecase/dashboard/DashboardDataProvider.kt",
 )
+# The exact entry added by owner-approvals 59a (production Dashboard* adapter).
+_ADAPTER_ENTRIES = ("data/repository/DashboardContractsAdapter.kt",)
+# Every chain/adapter entry: the three S8b-1 style proofs run over all six.
+_CHAIN_ENTRIES = _S8B1_ENTRIES + _ADAPTER_ENTRIES
 _SEED_COUNT = len(_SURFACE_SEEDS)
 _ALL_SURFACE_ENTRIES = tuple(_SURFACE_SEEDS)
 _UNMATCHED = "E_INSTALLMENT_CLOUD_SURFACE_ENTRY_UNMATCHED"
@@ -124,7 +136,7 @@ def _seed_surface(tmp_path: Path, omit=()) -> None:
 
     A test that writes the same relative path afterwards simply overwrites the
     seed (an exact-file entry such as di/AiModule.kt), so the scanned count
-    stays equal to the number of surface entries (11).
+    stays equal to the number of surface entries (12).
     """
     for entry, sub in _SURFACE_SEEDS.items():
         if entry in omit:
@@ -177,7 +189,7 @@ def _found(tmp_path: Path):
 
 
 def _assert_clean(tmp_path: Path, expected_scanned: int = _SEED_COUNT + 1):
-    """Assert PASS; default = the eleven seeds plus the one fixture file under test."""
+    """Assert PASS; default = the twelve seeds plus the one fixture file under test."""
     violations, scanned, infra = _scan(tmp_path)
     assert infra is None, infra
     assert violations == []
@@ -207,8 +219,9 @@ def test_surface_definition_constants():
         "domain/logic/SynthesisEngine.kt",
         "domain/logic/NarrativeGenerator.kt",
         "domain/usecase/dashboard/DashboardDataProvider.kt",
+        "data/repository/DashboardContractsAdapter.kt",
     )
-    assert _S8B1_ENTRIES == tuple(guard.SURFACE_EXACT_FILE_SUFFIXES)[2:]
+    assert _CHAIN_ENTRIES == tuple(guard.SURFACE_EXACT_FILE_SUFFIXES)[2:]
 
 
 # ── Positive fixtures (exit 0, non-empty surface) ───────────────────────────
@@ -273,7 +286,7 @@ def test_positive_plan_text_in_non_surface_file_is_not_scanned(tmp_path):
         f"import {_BASE}.domain.installment.InstallmentProjectionPort\n"
         "class X(val plan: InstallmentPlan, val port: InstallmentProjectionPort)\n",
     )
-    # Only the eleven seeds plus Clean.kt count as scanned; X.kt is off the surface.
+    # Only the twelve seeds plus Clean.kt count as scanned; X.kt is off the surface.
     _assert_clean(tmp_path, expected_scanned=_SEED_COUNT + 1)
 
 
@@ -332,7 +345,7 @@ def test_positive_installment_substring_identifier_off_surface_is_clean(tmp_path
         "ui/screens/home/Elsewhere.kt",
         f"package {_BASE}.ui.screens.home\n{code_line}\n",
     )
-    # Off-surface file is not scanned: only the eleven seeds count.
+    # Off-surface file is not scanned: only the twelve seeds count.
     _assert_clean(tmp_path, expected_scanned=_SEED_COUNT)
 
 
@@ -505,6 +518,8 @@ def test_negative_bare_projection_port_constructor_parameter(tmp_path):
 
 
 # ── S8b-1: cloud briefing chain entries (A15) ───────────────────────────────
+# Owner-approvals 59a: the parametrized proofs below also cover the production
+# adapter entry data/repository/DashboardContractsAdapter.kt (``_CHAIN_ENTRIES``).
 
 
 def _projection_port_leak_text(sub: str) -> str:
@@ -526,7 +541,7 @@ def _projection_port_leak_text(sub: str) -> str:
     )
 
 
-@pytest.mark.parametrize("sub", _S8B1_ENTRIES)
+@pytest.mark.parametrize("sub", _CHAIN_ENTRIES)
 def test_negative_s8b1_entry_flags_projection_port_import_and_field(tmp_path, sub):
     _seed_surface(tmp_path)
     _write(tmp_path, sub, _projection_port_leak_text(sub))
@@ -552,7 +567,7 @@ def test_positive_s8b1_off_surface_home_installment_weather_source_is_not_scanne
     _assert_clean(tmp_path, expected_scanned=_SEED_COUNT)
 
 
-@pytest.mark.parametrize("sub", _S8B1_ENTRIES)
+@pytest.mark.parametrize("sub", _CHAIN_ENTRIES)
 def test_positive_s8b1_suffix_precision_look_alike_file_names_are_not_on_the_surface(
     tmp_path, sub
 ):
@@ -565,7 +580,7 @@ def test_positive_s8b1_suffix_precision_look_alike_file_names_are_not_on_the_sur
     _assert_clean(tmp_path, expected_scanned=_SEED_COUNT)
 
 
-@pytest.mark.parametrize("sub", _S8B1_ENTRIES)
+@pytest.mark.parametrize("sub", _CHAIN_ENTRIES)
 def test_positive_s8b1_suffix_precision_look_alike_directory_is_not_on_the_surface(
     tmp_path, sub
 ):
@@ -577,7 +592,7 @@ def test_positive_s8b1_suffix_precision_look_alike_directory_is_not_on_the_surfa
     _assert_clean(tmp_path, expected_scanned=_SEED_COUNT)
 
 
-@pytest.mark.parametrize("omitted", _S8B1_ENTRIES)
+@pytest.mark.parametrize("omitted", _CHAIN_ENTRIES)
 def test_infra_s8b1_entry_file_missing_exits_two_naming_that_entry(tmp_path, omitted):
     _seed_surface(tmp_path, omit=(omitted,))
     result = _run_cli(tmp_path)
@@ -999,7 +1014,7 @@ def test_infra_empty_surface_exits_two(tmp_path):
 
 def test_infra_empty_surface_is_reported_before_any_unmatched_entry(tmp_path):
     # Zero scanned files: the empty-surface check comes first, so the code is
-    # SURFACE_EMPTY and not one of the eleven ENTRY_UNMATCHED variants.
+    # SURFACE_EMPTY and not one of the twelve ENTRY_UNMATCHED variants.
     _write(tmp_path, "ui/screens/home/X.kt", "package probe\nval a = 1\n")
     violations, scanned, infra = _scan(tmp_path)
     assert (violations, scanned) == ([], 0)
@@ -1010,17 +1025,17 @@ def test_infra_empty_surface_is_reported_before_any_unmatched_entry(tmp_path):
 # ── Surface staleness: every directory prefix / exact file must match ───────
 
 
-def test_surface_entries_under_test_are_exactly_the_eleven_documented_entries():
+def test_surface_entries_under_test_are_exactly_the_twelve_documented_entries():
     assert _ALL_SURFACE_ENTRIES == tuple(guard.SURFACE_DIRECTORY_PREFIXES) + tuple(
         guard.SURFACE_EXACT_FILE_SUFFIXES
     )
     assert len(guard.SURFACE_DIRECTORY_PREFIXES) == 4
-    assert len(guard.SURFACE_EXACT_FILE_SUFFIXES) == 7
-    assert len(_ALL_SURFACE_ENTRIES) == 11
-    assert _SEED_COUNT == 11
+    assert len(guard.SURFACE_EXACT_FILE_SUFFIXES) == 8
+    assert len(_ALL_SURFACE_ENTRIES) == 12
+    assert _SEED_COUNT == 12
 
 
-def test_surface_all_eleven_entries_seeded_is_the_control_and_passes(tmp_path):
+def test_surface_all_twelve_entries_seeded_is_the_control_and_passes(tmp_path):
     _seed_surface(tmp_path)
     violations, scanned, infra = _scan(tmp_path)
     assert infra is None
@@ -1074,7 +1089,7 @@ def test_infra_name_pattern_file_does_not_satisfy_a_missing_entry(tmp_path, omit
 
 def test_name_pattern_only_file_does_not_trigger_the_unmatched_check(tmp_path):
     # Name patterns are open-ended by design and exempt from staleness: with all
-    # eleven entries present, an extra pattern-only file (outside every entry
+    # twelve entries present, an extra pattern-only file (outside every entry
     # directory) passes, and so does a tree with no pattern file at all.
     _seed_surface(tmp_path)
     _write(tmp_path, "some/pkg/FooCloudPayloadBuilder.kt", "package probe\nval ok = 1\n")
@@ -1123,8 +1138,14 @@ def test_unmatched_check_is_reported_for_the_first_missing_entry_in_declared_ord
             "app/src/main/java/x/domain/usecase/dashboard/DashboardDataProvider.kt",
             ["domain/usecase/dashboard/DashboardDataProvider.kt"],
         ),
+        (
+            "app/src/main/java/x/data/repository/DashboardContractsAdapter.kt",
+            ["data/repository/DashboardContractsAdapter.kt"],
+        ),
         ("app/src/main/java/x/data/repository/HomeInstallmentWeatherSource.kt", []),
         ("app/src/main/java/x/data/repository/XFinancialWeatherRepository.kt", []),
+        ("app/src/main/java/x/data/repository/XDashboardContractsAdapter.kt", []),
+        ("app/src/main/java/x/data/repository/DashboardContractsAdapterFoo.kt", []),
         ("some/pkg/FooCloudPayloadBuilder.kt", []),
         ("mydata/ai/Foo.kt", []),
         ("di/AiModuleFoo.kt", []),

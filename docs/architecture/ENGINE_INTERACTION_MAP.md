@@ -33,7 +33,7 @@
 | **ReceiptMatchLifecycleService** | 3 (Receipt matching) only | 🟢 LOW |
 | **RecurringRuleLifecycleCoordinator** | 4 (Recurring lifecycle), 2 (Transaction reconcile) | 🟡 HIGH |
 | **RecurringLifecycleEventWriter** | 4 (Recurring), 7 (Backup audit) | 🟢 LOW |
-| **InstallmentProjectionPort** (planned — loan-installments S6a port, S8b wiring; not in code yet) | Read-only projection of future SCHEDULED installment entries (sibling `InstallmentUpcomingProjection`; RECURRING_RULE contract unchanged). Wired readers: `CashFlowCalculator` (dated outflows), `ForecastInputAssembler` (projected entries; installment-linked history excluded from pattern baselines), `FinancialStressForecastEngine` (known bounded outflows), the recurring-sibling merge point at the Home upcoming items (`RecurringPlanProjectionService` itself unchanged); reminder reader: `BillReminderManager` / `BillReminderWorker` (per-entry delivery dedupe key). Owner of plan state and writes: `InstallmentPlanLifecycleCoordinator` (see LEGAL_PATHS "Installment Plan Mutations"). MUST NOT be reachable from any cloud payload assembly (briefing, insight, assistant inputs): guard `installment_cloud_reachability`. Any cash-flow/forecast output feeding a cloud payload is computed without this projection. A currency-mixed projection is converted by the engine or reported partial, never summed as home currency and never shown as 0 | 🟡 HIGH |
+| **InstallmentProjectionPort** (implemented: BillReminderManager (S7b), CashFlowCalculator (S8b-2), FinancialStressForecastEngine (S8b-2), HomeInstallmentWeatherSource (S8b-3)) | Read-only projection of future SCHEDULED installment entries (sibling `InstallmentUpcomingProjection`; RECURRING_RULE contract unchanged). Wired readers: `CashFlowCalculator` (dated outflows), `FinancialStressForecastEngine` (known bounded outflows), `HomeInstallmentWeatherSource` → `HomeViewModel` weather-widget replace (never `UpcomingItems`; `RecurringPlanProjectionService` itself unchanged); reminder reader: `BillReminderManager` / `BillReminderWorker` (per-entry delivery dedupe key). Owner of plan state and writes: `InstallmentPlanLifecycleCoordinator` (see LEGAL_PATHS "Installment Plan Mutations"). MUST NOT be reachable from any cloud payload assembly (briefing, insight, assistant inputs): guard `installment_cloud_reachability`. Any cash-flow/forecast output feeding a cloud payload is computed without this projection. A currency-mixed projection is converted by the engine or reported partial, never summed as home currency and never shown as 0 | 🟡 HIGH |
 | **BillReminderWorker** | 4 (Reminder dispatch), BillReminderSettings runtime check | 🟢 LOW |
 | **WorkerExecutionGuard** | ALL workers (all 10 CoroutineWorkers run through it, incl. `NotificationIntakeWorker` + snooze/dismiss reminder action workers), 7 (Backup restore gating) | 🟡 HIGH |
 | **WorkerRegistry** | 12 (Startup scheduling), 7 (Backup resume via spec lookup) | 🟢 LOW |
@@ -143,20 +143,32 @@ BillReminderWorker.doWork()
   └── BillReminderSettingsRepository (runtime enabled/quiet hours check)
 ```
 
-### InstallmentProjectionPort changes affect (planned — loan-installments S6a/S8b/S7b; not in code yet):
+### InstallmentProjectionPort changes affect (implemented: BillReminderManager (S7b), CashFlowCalculator (S8b-2), FinancialStressForecastEngine (S8b-2), HomeInstallmentWeatherSource (S8b-3)):
 ```
 InstallmentProjectionPort (read-only; implemented over InstallmentPlanReadModel)
-  ├── CashFlowCalculator (future SCHEDULED entries become dated outflows)
-  ├── ForecastInputAssembler — SUPERSEDED by A15: not a projection consumer (fenced below); Home-only source is HomeInstallmentWeatherSource (S8b-3)
-  ├── FinancialStressForecastEngine (known bounded outflows)
-  ├── Home upcoming items merge point (sibling of RecurringPlanProjectionService; its contract unchanged)
+  ├── CashFlowCalculator (future SCHEDULED entries become dated outflows) — implemented by S8b-2 for calculateDailyCashFlow ONLY
+  │     (INV-16 convertOutcome; a failed conversion omits the entry and sets isPartial); getUpcomingBills stays byte-identical,
+  │     so the health score (OD-12) and SmartSavingsEngine stay unwired
+  ├── ForecastInputAssembler — SUPERSEDED by A15: NOT a projection consumer and NOT modified (fenced below). The merge source is
+  │     HomeInstallmentWeatherSource (S8b-3, data/repository, off the cloud surface): it feeds projected entries as MUST planned inputs
+  │     into the UNMODIFIED assemble → SynthesisEngine.synthesize → NarrativeGenerator.generate (so the existing planned-expense
+  │     currency normalisation applies, INV-16) and removes RecurringInstallmentEligibility.excludedSnapshotIds from the snapshots
+  │     while entries are projected (INV-29); HomeViewModel merges it after ComputeDashboardWidgetsUseCase.compute()
+  ├── FinancialStressForecastEngine (known bounded outflows) — implemented by S8b-2, Home-only (sole caller ComputeDashboardWidgetsUseCase);
+  │     HZ01-B conversion; while at least one entry is projected, installment-linked history leaves the Monte Carlo baseline via
+  │     RecurringInstallmentEligibility (INV-29 "global while projected"); SynthesisEngine is not edited
+  ├── Home weather merge point — implemented by S8b-3 (behind HomeViewModel.installmentsEnabled, default InstallmentsFeature.ENABLED = false):
+  │     HomeViewModel REPLACES the single FinancialWeatherWidget (HomeWeatherMerge) with HomeInstallmentWeatherSource's aware weather and
+  │     exposes InstallmentUpcomingProjection rows (31 days, plan currency, sibling of RecurringPlanProjectionService, whose contract is
+  │     unchanged) as a separate Home-only state; projections are never an UpcomingItem variant; invalidation = InstallmentPlanReadRepository.observeOverview
   ├── BillReminderManager / BillReminderWorker (installment due reminders, existing settings)
   └── NOT: any cloud payload assembly (HybridDashboardBriefingService inputs, DashboardBriefingInputBuilder,
       TransactionInsightInputBuilder, FinancialQueryInterpretationInputBuilder) — INV-31, enforced by the
       registered guard installment_cloud_reachability; payload inputs are computed without the projection.
       The guard also fences the cloud briefing chain files directly (S8b-1 / A15): FinancialWeatherRepository,
-      ForecastInputAssembler, SynthesisEngine, NarrativeGenerator and DashboardDataProvider (7 exact-file
-      entries in total), so any projection-aware weather logic must live in a separate off-surface Home-only file
+      ForecastInputAssembler, SynthesisEngine, NarrativeGenerator and DashboardDataProvider, plus (owner-approvals
+      59a) the production adapter DashboardContractsAdapter that feeds them into the dashboard data (8 exact-file
+      entries, 12 surface entries in total), so any projection-aware weather logic must live in a separate off-surface Home-only file
 ```
 
 ### TransactionLifecycleCoordinator → installment plan reaction (implemented — loan-installments S6c-1):
@@ -208,7 +220,7 @@ Inherited consumer effects (no code change in the consumers):
     (OWNER decision pending whether that is wanted)
   - AnalyticsViewModel occurrence counts come from unfiltered snapshots (the exclusion applies to pattern
     detection only, not to counts)
-  - ForecastInputAssembler baselines: its own installment baseline handling is S8b
+  - ForecastInputAssembler baselines: unchanged (A15); the Home-only installment baseline exclusion lives in HomeInstallmentWeatherSource (S8b-3)
 Direct consumers of RecurringInstallmentEligibility added in S6c-F.2 (INV-5, INV-29, decision 46(b); suppression by expense id, one batch read per call, no new DAO query):
   - InsightsEngine.findAnomalies: excludedSnapshotIds(safeExpenses) once; ids dropped from the merged result of BOTH
     anomaly paths (merchant multiplier + AnomalyDetector); baselines unchanged; a reader failure goes to the

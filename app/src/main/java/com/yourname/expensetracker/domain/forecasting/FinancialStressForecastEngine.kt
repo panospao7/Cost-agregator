@@ -16,10 +16,14 @@ import com.yourname.expensetracker.domain.core.money.MoneyAggregateBuilder
 import com.yourname.expensetracker.domain.core.money.MoneyAggregate
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.installment.model.InstallmentMinorUnits
+import com.yourname.expensetracker.domain.installment.projection.InstallmentProjectedEntry
+import com.yourname.expensetracker.domain.installment.projection.InstallmentProjectionPort
 import com.yourname.expensetracker.domain.logic.SynthesisEngine
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
+import com.yourname.expensetracker.domain.recurring.RecurringInstallmentEligibility
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
 import com.yourname.expensetracker.domain.util.CancellationSafe
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
@@ -67,7 +71,15 @@ class FinancialStressForecastEngine @Inject constructor(
     private val recurringOccurrenceDao: RecurringOccurrenceDao,
     private val currencyConverter: CurrencyConverter,
     private val accountBalanceProvider: AccountBalanceProvider,
-    private val databaseReadBarrier: DatabaseReadBarrier
+    private val databaseReadBarrier: DatabaseReadBarrier,
+    /** S8b-2 (INV-15): read-only source of upcoming installment entries (known outflows). */
+    private val installmentProjectionPort: InstallmentProjectionPort,
+    /**
+     * S8b-2 (INV-29): the single owner of the installment exclusion predicate. Used only while at
+     * least one installment entry is projected, to drop installment-linked history from the
+     * Monte Carlo baseline so the same payments are not counted twice.
+     */
+    private val recurringInstallmentEligibility: RecurringInstallmentEligibility
 ) {
     companion object {
         private const val TAG = "FinancialStressForecast"
@@ -119,7 +131,32 @@ class FinancialStressForecastEngine @Inject constructor(
             // Pre-fetch and normalize expenses for Monte Carlo simulation
             val rawExpenses = expenseRepository.getExpensesBetween(sixtyDaysAgo, now)
             val normExpenses = analyticsCurrencyNormalizer.normalizeExpenses(rawExpenses, resolvedDisplayCurrency)
+
+            // S8b-2 (INV-15): upcoming installment entries up to the longest horizon, read once.
+            // The port applies the projection bounds (SCHEDULED entries of ACTIVE plans due today
+            // or later), so a stopped (AE-7) or completed (AE-11) plan projects nothing.
+            val installmentEntries = installmentProjectionPort.upcomingEntries(
+                java.time.Instant.ofEpochMilli(TimePeriodUtils.addDays(now, DAYS_90))
+                    .atZone(java.time.ZoneId.systemDefault()).toLocalDate().toEpochDay()
+            )
+
+            // S8b-2 (INV-29, owner-approvals 53a "global while projected"): while at least one
+            // entry is projected, installment-linked and plan-purchase history leaves the
+            // discretionary Monte Carlo baseline for every horizon, so the same payments are not
+            // counted both as history and as projected outflows. With nothing projected the
+            // baseline is exactly the pre-installment one and the exclusion owner is not consulted.
+            //
+            // The expense list itself is NOT filtered here: the "no recent purchase history"
+            // fallback in runMonteCarloSimulation must be decided on the pre-exclusion purchases,
+            // otherwise a fully installment-linked history would be mistaken for "no history" and
+            // replaced by the synthetic baseline. The excluded ids are applied only where the
+            // discretionary purchases are built.
             val normalizedExpenses = normExpenses.includedExpenses
+            val installmentLinkedIds: Set<Long> = if (installmentEntries.isEmpty()) {
+                emptySet()
+            } else {
+                recurringInstallmentEligibility.excludedSnapshotIds(normalizedExpenses)
+            }
 
             // Calculate horizons
             val horizon30 = calculateHorizon(
@@ -129,9 +166,11 @@ class FinancialStressForecastEngine @Inject constructor(
                 now = now,
                 normalizedExpenses = normalizedExpenses,
                 normalizedDeposits = normalizedDeposits,
-                displayCurrency = resolvedDisplayCurrency
+                displayCurrency = resolvedDisplayCurrency,
+                installmentEntries = installmentEntries,
+                installmentLinkedIds = installmentLinkedIds
             )
-            
+
             val horizon60 = calculateHorizon(
                 daysAhead = DAYS_60,
                 currentBalance = currentBalance,
@@ -139,9 +178,11 @@ class FinancialStressForecastEngine @Inject constructor(
                 now = now,
                 normalizedExpenses = normalizedExpenses,
                 normalizedDeposits = normalizedDeposits,
-                displayCurrency = resolvedDisplayCurrency
+                displayCurrency = resolvedDisplayCurrency,
+                installmentEntries = installmentEntries,
+                installmentLinkedIds = installmentLinkedIds
             )
-            
+
             val horizon90 = calculateHorizon(
                 daysAhead = DAYS_90,
                 currentBalance = currentBalance,
@@ -149,9 +190,11 @@ class FinancialStressForecastEngine @Inject constructor(
                 now = now,
                 normalizedExpenses = normalizedExpenses,
                 normalizedDeposits = normalizedDeposits,
-                displayCurrency = resolvedDisplayCurrency
+                displayCurrency = resolvedDisplayCurrency,
+                installmentEntries = installmentEntries,
+                installmentLinkedIds = installmentLinkedIds
             )
-            
+
             val horizons = listOf(horizon30, horizon60, horizon90)
             
             // Determine overall risk level (worst of all horizons)
@@ -210,20 +253,26 @@ class FinancialStressForecastEngine @Inject constructor(
         now: Long,
         normalizedExpenses: List<ExpenseSnapshot>,
         normalizedDeposits: List<ExpenseSnapshot>,
-        displayCurrency: String
+        displayCurrency: String,
+        installmentEntries: List<InstallmentProjectedEntry>,
+        installmentLinkedIds: Set<Long>
     ): StressHorizon {
         val horizonStart = TimePeriodUtils.getStartOfDay(now)
         val horizonEnd = TimePeriodUtils.addDays(now, daysAhead)
-        
-        // 1. Calculate recurring obligations within this horizon
-        val recurringOutflowResult = calculateRecurringOutflows(patterns, horizonStart, horizonEnd, displayCurrency)
+
+        // 1. Calculate recurring obligations within this horizon (S8b-2: plus projected installments)
+        val recurringOutflowResult = calculateRecurringOutflows(
+            patterns, horizonStart, horizonEnd, displayCurrency, installmentEntries
+        )
         val recurringOutflows = recurringOutflowResult.total.displayAmount
         
         // 2. Estimate expected income using pre-normalized deposits
         val expectedIncome = estimateIncome(daysAhead, normalizedDeposits, displayCurrency)
         
         // 3. Run Monte Carlo for discretionary spending using pre-normalized expenses
-        val mcResult = runMonteCarloSimulation(daysAhead, patterns, normalizedExpenses, displayCurrency)
+        val mcResult = runMonteCarloSimulation(
+            daysAhead, patterns, normalizedExpenses, displayCurrency, installmentLinkedIds
+        )
         
         // 4. Calculate projected balance
         val projectedBalance = currentBalance + expectedIncome - recurringOutflows - mcResult.percentile50
@@ -293,7 +342,8 @@ class FinancialStressForecastEngine @Inject constructor(
         patterns: List<com.yourname.expensetracker.domain.model.RecurringPattern>,
         startDate: Long,
         endDate: Long,
-        displayCurrency: String
+        displayCurrency: String,
+        installmentEntries: List<InstallmentProjectedEntry> = emptyList()
     ): RecurringOutflowResult {
         val manualPatterns = patterns.filter { it.id != null && it.confidence >= 0.50f }
         val detectedPatterns = patterns.filter { it.id == null && it.confidence >= 0.50f }
@@ -403,6 +453,32 @@ class FinancialStressForecastEngine @Inject constructor(
             val expansion = expandDetectedPatterns(detectedPatterns, startDate, endDate, displayCurrency)
             convertedOutflows += expansion.convertedAmounts
             excludedConversionCount += expansion.excludedConversionCount
+        }
+
+        // ── Part 3 (S8b-2, INV-15/INV-16): projected installment entries are known outflows ──
+        // Entries are in their plan currency (EUR or USD, minor units). Each one goes through the
+        // same HZ01-B conversion as the occurrences above; an unconvertible entry is excluded and
+        // counted (partial), never added raw and never shown as zero. Half-open window like the
+        // recurring section: the entry's civil due day starts in [startDate, endDate).
+        if (installmentEntries.isNotEmpty()) {
+            val zone = java.time.ZoneId.systemDefault()
+            for (entry in installmentEntries) {
+                val dueStart = java.time.LocalDate.ofEpochDay(entry.dueEpochDay)
+                    .atStartOfDay(zone).toInstant().toEpochMilli()
+                if (dueStart < startDate || dueStart >= endDate) continue
+                val converted = convertToDisplayOrNull(
+                    InstallmentMinorUnits.fromMinor(entry.amountMinor),
+                    entry.currency.code,
+                    displayCurrency
+                )
+                if (converted != null) {
+                    convertedOutflows += converted
+                } else {
+                    excludedConversionCount++
+                    Timber.w("$TAG: Conversion unavailable for installment entry %s to %s, excluding",
+                        entry.currency.code, displayCurrency)
+                }
+            }
         }
 
         return RecurringOutflowResult(
@@ -539,10 +615,12 @@ class FinancialStressForecastEngine @Inject constructor(
         daysAhead: Int,
         patterns: List<com.yourname.expensetracker.domain.model.RecurringPattern>,
         normalizedExpenses: List<ExpenseSnapshot>,
-        displayCurrency: String
+        displayCurrency: String,
+        installmentLinkedIds: Set<Long>
     ): MonteCarloHorizonResult {
-        val purchases = normalizedExpenses.filter { 
-            it.transactionType == DomainTransactionType.PURCHASE && !it.isNotMine 
+        // The emptiness fallback below is decided on the PRE-exclusion purchases (S8b-2 F1).
+        val purchases = normalizedExpenses.filter {
+            it.transactionType == DomainTransactionType.PURCHASE && !it.isNotMine
         }
 
         val recurringMerchantKeys = patterns
@@ -551,10 +629,18 @@ class FinancialStressForecastEngine @Inject constructor(
             .filter { it.isNotBlank() }
             .toSet()
 
-        val discretionaryPurchases = if (recurringMerchantKeys.isEmpty()) {
+        // S8b-2 (INV-29, 53a): installment-linked history leaves the discretionary baseline
+        // while entries are projected (the set is empty otherwise).
+        val purchasesWithoutInstallments = if (installmentLinkedIds.isEmpty()) {
             purchases
         } else {
-            purchases.filterNot { purchase ->
+            purchases.filterNot { it.id in installmentLinkedIds }
+        }
+
+        val discretionaryPurchases = if (recurringMerchantKeys.isEmpty()) {
+            purchasesWithoutInstallments
+        } else {
+            purchasesWithoutInstallments.filterNot { purchase ->
                 val purchaseMerchantKey = purchase.merchantKey ?: MerchantKeyGenerator.generate(purchase.merchant)
                 purchaseMerchantKey in recurringMerchantKeys
             }

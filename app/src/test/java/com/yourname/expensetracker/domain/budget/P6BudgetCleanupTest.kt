@@ -234,7 +234,8 @@ class P6BudgetCleanupTest : AnalyticsEngineTestBase() {
             currencySettingsRepository = currencyRepo,
             currencyConverter = com.yourname.expensetracker.testCurrencyConverter(),
             databaseReadBarrier = mockk(relaxed = true),
-            normalizationEngine = mockNormalizationEngine
+            normalizationEngine = mockNormalizationEngine,
+            installmentProjectionPort = com.yourname.expensetracker.domain.installment.projection.emptyInstallmentProjectionPort()
         )
 
         val results = calculator.calculateDailyCashFlow(

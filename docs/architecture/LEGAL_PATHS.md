@@ -494,7 +494,8 @@ payload exclusion seam planned for S8a):
     surface (data/ai, domain/ai, domain/privacy, data/privacy, the AI and privacy DI modules, the five
     cloud briefing chain files data/repository/FinancialWeatherRepository.kt,
     domain/forecasting/ForecastInputAssembler.kt, domain/logic/SynthesisEngine.kt,
-    domain/logic/NarrativeGenerator.kt and domain/usecase/dashboard/DashboardDataProvider.kt (7 exact-file
+    domain/logic/NarrativeGenerator.kt and domain/usecase/dashboard/DashboardDataProvider.kt, and the
+    production adapter data/repository/DashboardContractsAdapter.kt (owner-approvals 59a) (8 exact-file
     entries in total; S8b-1 / A15: the cloud briefing chain stays installment-free by construction, and a
     Home-only installment-aware weather source must live off-surface in its own file), cloud payload and
     briefing/insight/assistant input-builder files):
@@ -991,6 +992,37 @@ INV-29 PATTERN DETECTOR exclusion (implemented — loan-installments S6c-3):
     without a plan row is not excluded; harmless because effectiveAmount = 0; reconcile R1 clears it)
   → The subscription-candidate detector (NotificationSubscriptionDetector) is OUTSIDE INV-29 (follow-up)
 
+HOME INSTALLMENT-AWARE WEATHER read path (implemented — loan-installments S8b-3, A15 option A, INV-15/16/29; read-only):
+  → Cloud / briefing path (UNCHANGED, installment-free by construction): FinancialWeatherRepository →
+    ForecastInputAssembler.assemble → SynthesisEngine.synthesize → NarrativeGenerator.generate →
+    DashboardDataProvider.getProcessedDataFlow. These five files are fenced by installment_cloud_reachability
+  → Home path: HomeViewModel (the ONLY consumer of HomeInstallmentWeatherSource; enforced by
+    InstallmentPlanArchitectureGuardTest HOME_INSTALLMENT_WEATHER_OUTSIDE_HOME over all of app/src/main, owner-approvals
+    59b: only ui/screens/home/HomeViewModel.kt and the source's own file may reference it) runs
+    ComputeDashboardWidgetsUseCase.compute() on getProcessedDataFlow output, then, ONLY when the seam
+    HomeViewModel.installmentsEnabled (default InstallmentsFeature.ENABLED = false) is on and the source emits
+    non-null, HomeWeatherMerge.replaceWeather REPLACES the single FinancialWeatherWidget (never a second widget;
+    upcomingItems of the baseline widget are kept). Nothing is merged in ProcessedDashboardData,
+    DashboardDataProvider, DashboardData or FinancialWeather, and no FinancialWeather field is added
+  → HomeInstallmentWeatherSource (data/repository, OFF the cloud surface) is the one merge source. It reads the same
+    inputs as FinancialWeatherRepository plus InstallmentProjectionPort (31-day window via
+    InstallmentUpcomingProjection), RecurringInstallmentEligibility and InstallmentPlanReadRepository.observeOverview
+    (invalidation trigger only; it re-emits on plan and entry row changes). Port empty → null → Home keeps the baseline
+  → INV-29 (single owner RecurringInstallmentEligibility.excludedSnapshotIds): while at least one entry is projected,
+    installment-linked and plan-purchase history dated BEFORE the current month (home time zone) is removed from the
+    aware view's snapshots (global-while-projected, owner-approvals 53a; before-the-month only, 60b). Current-month
+    actual installment payments stay in month-to-date, so an installment is counted once, never zero times. The aware
+    view REPLACES the baseline view; the two are never summed. Trade-off: the pace ratio compares a current month that
+    includes installments against a baseline without them
+  → INV-15/16: each projected entry is a MUST planned input in plan currency fed to the UNMODIFIED assemble
+    (its planned-expense normalisation converts at LATEST_AVAILABLE or omits the entry and marks the forecast partial,
+    never 0). SynthesisEngine counts MUST items of the current month as committed. The installment rows are carried
+    separately (HomeViewModel.installmentRows, plan currency, never summed across currencies)
+  → Plan projections are never an UpcomingItem variant. The Home Monte Carlo (FinancialStressForecastEngine) is
+    installment-aware since S8b-2 (Home-only; supersedes the Q2 "Monte Carlo stays installment-free" wording, see the
+    plan S8b amendment note). Runway and health score stay on the installment-free baseline in v1
+    (owner-approvals 53 Q2)
+
 AFTER RESTORE (decision D-18, option (b); coordinator part implemented in S7a-1, worker call site S7a-2 pending):
   → There is NO startup hook. recordDueEntries runs reconcile at its start on EVERY run and returns the batches
     in Done.postCommit; the caller (S7a-2 worker, S10 overview) dispatches them after commit. A restored store
@@ -1007,6 +1039,9 @@ FORBIDDEN:
      (restore half: enforced at runtime by the write barrier; startup half: policy only, unguarded)
   ❌ A second recurring/detector eligibility rule next to RecurringInstallmentEligibility, or calling
      detectPatternsFromSnapshots from anywhere except RecurringExpenseEngine.detectPatterns
+  ❌ Installment projections or exclusions inside FinancialWeatherRepository / ForecastInputAssembler.assemble /
+     SynthesisEngine / NarrativeGenerator / DashboardDataProvider, or any second Home weather merge point
+     (HomeInstallmentWeatherSource is merged only in HomeViewModel after compute())
   ❌ Reacting to expense update/delete from anywhere except the TransactionSideEffectPlanner /
      Dispatcher hook
 ```
@@ -1803,7 +1838,7 @@ POST-COMMIT DISPATCH OWNER (S10b-1 F3; single owner, no per-caller copy):
                                  failure (logged by class simple name only, never changes the committed result);
                                  CancellationException is rethrown and stops the remaining batches
                               ❌ a private `dispatchBatches` loop in a worker, reconciler, view model or use case
-                              → Enforced by InstallmentPlanArchitectureGuardTest POST_COMMIT_RUNNER_OUTSIDE_DISPATCHER (domain/installment, service/installment, ui/screens/installments; the dispatcher's exact path is the only exemption)
+                              → Enforced by InstallmentPlanArchitectureGuardTest POST_COMMIT_RUNNER_OUTSIDE_DISPATCHER (domain/installment, service/installment, ui/screens/installments; the dispatcher's exact path is the only exemption). Since owner-approvals 59c the rule also covers the public post-commit wrappers PostCommitSideEffectEvidenceService (runWithEvidence / runBestEffortWithEvidence), TransactionSideEffectDispatcher and ReceiptSideEffectDispatcher: none of them may be referenced from those three prefixes, so the dispatcher stays the single owner (known limit: a typealias declared outside the prefixes; installment code outside the three prefixes such as di/InstallmentModule.kt and data/repository/Installment*Impl.kt)
 
 READS (plan coordinator, S6a):
   expense / category / recurring-link facts → InstallmentExpenseFactsReader (domain port) → 

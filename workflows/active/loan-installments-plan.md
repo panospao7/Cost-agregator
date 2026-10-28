@@ -1224,3 +1224,8 @@ Applies S8b (:397-416) as superseded by A15 (:1018-1030) and owner-approvals 51c
 - Q2: the other Home widgets (Monte Carlo, runway, health score) stay on the installment-free baseline in v1. Mixed, not double-counted. Deferred.
 - Q3: an architecture test pinning HomeInstallmentWeatherSource to HomeViewModel plus DI is a guard strengthening. It goes to the OWNER and is not blocking.
 - Deferred: rendering installment rows in FinancialWeatherCard/HomeScreen (new strings, es/el); installment-aware SmartSavings, health score and Monte Carlo.
+
+### Note (2026-10-28, append-only; privacy-security-guardian F6 on S8b-3/4)
+- Decision Q2's "Monte Carlo stays installment-free" is SUPERSEDED for the Home stress engine by S8b-2: FinancialStressForecastEngine (Home-only; sole caller ComputeDashboardWidgetsUseCase) consumes the InstallmentProjectionPort (known bounded outflows, HZ01-B conversion, INV-29 baseline exclusion). The cloud path is unaffected (the engine is not on the cloud briefing chain). Runway, health score and SmartSavings remain on the installment-free baseline. LEGAL_PATHS and ENGINE_INTERACTION_MAP were corrected accordingly.
+- The merge is a weather-widget REPLACE via HomeInstallmentWeatherSource, never an UpcomingItem variant. The earlier wording "recurring-sibling merge point at the Home upcoming items" (ENGINE_INTERACTION_MAP) was wrong and is corrected.
+- Owner-approvals 59a: data/repository/DashboardContractsAdapter.kt is added as the 8th exact-file entry of the installment_cloud_reachability surface (12 surface entries).
