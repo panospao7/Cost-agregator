@@ -396,7 +396,9 @@ Auto-provided (no module entry; @Inject constructors) — app-lock 1a:
   DeepLinkApplier                                      (ExpenseRepository, MarkDashboardBriefingOpenedUseCase,
                                                         PrivacyDiagnosticsEmitter, BankFeatureAvailability,
                                                         AiRuntimeDiagnostics, @ApplicationScope CoroutineScope;
-                                                        field-injected into MainActivity)
+                                                        injected only through AppLockDeepLinkRouter's constructor
+                                                        since S21-b, no longer field-injected into MainActivity;
+                                                        pinned by DeepLinkApplierCallerPinTest)
   AppLockDeepLinkRouter                                (AppLockController, DeepLinkApplier; UNSCOPED @Inject, one per
                                                         Activity — field-injected into MainActivity; S21-b, ui/applock)
   @Singleton AppLockSettingsWriteSerializer            (no deps; domain/privacy/applock; process-wide Mutex
@@ -522,6 +524,14 @@ Provides:
 @EntryPoint @InstallIn(SingletonComponent::class):
   AppStartupCoordinator                       → obtained via EntryPointAccessors
 ```
+
+### `UnsupportedDatabaseExportAuthEntryPoint` — `ui/unsupported/UnsupportedDatabaseExportAuth.kt` (app-lock S21-c)
+```
+@EntryPoint @InstallIn(SingletonComponent::class), read-only, narrow:
+  AppLockSettingsRepository                   → AppLockSettingsRepositoryImpl (ctor: @ApplicationContext Context only)
+  DeviceAuthCapabilityProvider                → AndroidDeviceAuthCapabilityProvider (ctor: @ApplicationContext Context only)
+```
+Resolved at every export tap, by `UnsupportedDatabaseExportAuth.isAuthRequired`, via `EntryPointAccessors` on the application context. Nothing Room-backed is reachable from it (the screen exists because Room cannot open). Pinned by `UnsupportedDatabaseActivityTest` (exactly one lookup across the two `ui/unsupported` files).
 
 ---
 

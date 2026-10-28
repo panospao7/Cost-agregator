@@ -222,16 +222,26 @@ class UnsupportedDatabaseActivityTest {
     }
 
     @Test
-    fun `activity source has no hilt room privacy gate or export coupling`() {
-        val relative = "com/yourname/expensetracker/ui/unsupported/UnsupportedDatabaseActivity.kt"
-        val file = listOf("app/src/main/java/", "src/main/java/", "../app/src/main/java/")
-            .map { File(it + relative) }
-            .firstOrNull { it.isFile }
-        assertNotNull("UnsupportedDatabaseActivity.kt not found from the test working directory", file)
-        val source = file!!.readText()
-
-        listOf("@AndroidEntryPoint", "AppDatabase", "Dao", "exportDatabase", "PrivacyGate").forEach { token ->
-            assertFalse("UnsupportedDatabaseActivity.kt must not contain $token", source.contains(token))
+    fun `activity surface has no hilt activity room privacy gate or export coupling and exactly one entry point lookup`() {
+        // R25 pin, narrowed by app-lock S21-c (owner decision 73a): the surface is the activity file plus its
+        // export-auth file. Exactly ONE entry point lookup is allowed across both; every other R25 token stays out.
+        val surface = listOf(
+            "com/yourname/expensetracker/ui/unsupported/UnsupportedDatabaseActivity.kt",
+            "com/yourname/expensetracker/ui/unsupported/UnsupportedDatabaseExportAuth.kt"
+        ).map { relative ->
+            val file = listOf("app/src/main/java/", "src/main/java/", "../app/src/main/java/")
+                .map { File(it + relative) }
+                .firstOrNull { it.isFile }
+            assertNotNull("$relative not found from the test working directory", file)
+            relative to file!!.readText()
         }
+
+        surface.forEach { (relative, source) ->
+            listOf("@AndroidEntryPoint", "AppDatabase", "Dao", "exportDatabase", "PrivacyGate").forEach { token ->
+                assertFalse("$relative must not contain $token", source.contains(token))
+            }
+        }
+        val lookups = surface.sumOf { (_, source) -> source.split("EntryPointAccessors.fromApplication(").size - 1 }
+        assertEquals("exactly one entry point lookup across the activity surface", 1, lookups)
     }
 }

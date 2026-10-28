@@ -500,6 +500,17 @@ DATABASE OPEN GATE (R25):
   → UnsupportedDatabaseActivity is the only UI for a refused DB. Its single data exception is an
     owner-approved export of the UNTOUCHED file, started by the user through the SAF picker
     (never automatic, never background, never to a non-user-chosen destination).
+  → APP LOCK GATE ON THAT EXPORT (app-lock S21-c, #10; owner decision 73a): at the export tap, BEFORE the
+    SAF picker opens, the activity reads the committed lock and the device-auth capability through the one
+    narrow read-only Hilt @EntryPoint in ui/unsupported/UnsupportedDatabaseExportAuth.kt (the lock settings
+    reader and the capability port only; no AppDatabase, no Dao, nothing Room-backed), bounded at 2 s. Device
+    auth is required when (lock ON, or the store is unreadable / the read failed / timed out) AND capability
+    is AVAILABLE or CHECK_FAILED, or no answer (provider threw or entry point unresolved). For UNSUPPORTED_API, NO_CREDENTIAL, HW_UNAVAILABLE and UNKNOWN the lock is
+    INERT (the main app opens without a prompt in those states), so the export is not gated. The prompt is a
+    per-Activity BiometricPromptDeviceAuthenticator with the constant UNLOCK copy. Cancel, failure or a prompt
+    that cannot launch exports nothing and shows one constant message; onStop cancels an open prompt and
+    denies; no diagnostic code is added and nothing platform-supplied is kept. The activity never binds AppLockController and the lock gate in MainActivity
+    is unchanged.
 
 BACKUP SCHEMA FLOOR (R25-C):
   → Supported backup schema range == app open range: v145..v151. Both restoreCostBackup
@@ -514,6 +525,8 @@ FORBIDDEN:
   ❌ Opening the live DB while the open gate blocks it, or during RESTORE_SWAPPING
   ❌ Destructive fallback / auto-reset of an unsupported, newer, or unreadable DB
   ❌ Any raw-file export of a blocked DB other than the user-started SAF export in UnsupportedDatabaseActivity
+  ❌ That export without device auth while the lock is on or unreadable and the device can authenticate (S21-c)
+  ❌ A second @EntryPoint lookup, or any Room-backed binding, reachable from the UnsupportedDatabaseActivity surface
   ❌ Restoring a backup below v145 or above v151
   ❌ Any DB read during restore stages (DatabaseReadBarrier denies during restore)
   ❌ Using stale Room instance after DB swap (forced restart)
@@ -1683,11 +1696,17 @@ STORE:
 
 READ for a notification: NotificationPresentationResolver (see NOTIFICATION PRESENTATION).
 READ for the UI: AppLockPrivacySettingsViewModel ← AppLockSettingsRepository.observeLoadState().
+READ for the unsupported-database export gate (app-lock S21-c, #10): UnsupportedDatabaseExportAuth calls
+  AppLockSettingsRepository.getLoadState() once per export tap, bounded at 2 s (a timeout, a throw or an unreadable
+  store all count as unreadable, never as off). Read-only: no write, no controller, no observeLoadState.
 READ + RECOVERY for the app-lock state (S18 ii-c, INV-47, INV-51; requestSettingsReread has ONE production caller since S20-e, the 1a ViewModel retry): AppLockController
   is the only reader that drives lock state. Cold start: resolve() (T1-T6, T6b). While the load state is
-  transient-unreadable (IO_ERROR, TIMEOUT) it re-reads on its own scope at each APP_FOREGROUNDED (never awaited by
-  the foreground evaluation) and on requestSettingsReread() (ZERO production callers; the settings retry binds it
-  later). The result goes through the PRIVATE, sequence-checked onSettingsReread, never through onLateSettingsResolved:
+  transient-unreadable it re-reads on its own scope at each APP_FOREGROUNDED (never awaited by the foreground
+  evaluation) and on requestSettingsReread() (its ONE production caller, the 1a ViewModel retry). "Transient
+  unreadable" is an Unreadable view with cause IO_ERROR or TIMEOUT, and also (S21-a, 61c-2) the controller's own
+  RESOLVE_TIMEOUT fallback: no loaded view yet (loadState == null) and resolvedByTimeout. Every re-read is
+  bounded at RESOLVE_TIMEOUT_MILLIS (2 s); a re-read that outlives the bound changes nothing (no view, no state
+  change; the next foreground re-reads). The result goes through the PRIVATE, sequence-checked onSettingsReread, never through onLateSettingsResolved:
   a stale sequence, an unreadable result, or a settings write committed since the read was issued (D6, write
   counter bumped by the committed-write entries; F3: the open-origin entry bumps the counter BEFORE its token
   check, so a committed write with no matching token still drops older re-reads) is dropped. F5: a newer
@@ -1984,8 +2003,9 @@ MAINSCREEN IS COMPOSED ONLY FROM THE GATE (S20-c, INV-26):
   AppLockState sequence (an UNLOCK prompt that returns to LOCKED → "try again"; cleared outside LOCKED and on a new
   episode; CF-4).
   MainActivity.onCreate order: super.onCreate → secureWindow.applyInitial(window) → DB gate → binder.install(application)
-  → promptHost.attach(this) → secureWindow.bind(this) → enableEdgeToEdge → handleIntent → setContent. handleIntent and
-  onNewIntent are unchanged (the deep-link gate is S21). The binder is installed in MainActivity.onCreate (MainApplication
+  → promptHost.attach(this) → secureWindow.bind(this) → deepLinkRouter.startReleasing(this, mainViewModel) →
+  enableEdgeToEdge → handleIntent → setContent. handleIntent routes only through AppLockDeepLinkRouter (Deep Links,
+  ROUTER); onNewIntent unchanged. The binder is installed in MainActivity.onCreate (MainApplication
   is not edited): started Activities are counted by IDENTITY, so an Activity started before install (a rescue or
   database-gate Activity) is never counted and its later stop is ignored; it can neither cancel a counted start nor
   cause a missed background (S20-c review #1).

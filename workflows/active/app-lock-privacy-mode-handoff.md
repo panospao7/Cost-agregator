@@ -2625,3 +2625,235 @@ Residual risk (unrun): the second C2 test assumes the gated lookup resumes on th
   - The R25 pin may allow exactly one `EntryPointAccessors.fromApplication(`. All other R25 forbidden tokens stay.
 - 73b: the merge plan is approved. app-lock S20 + S21 go to feature/ai-evolution after the S21 candidate gates pass, after nl-quick-add.
 - Next: S21-c implementation (feature-implementer), in parallel with an architecture-guardian review of S21-b.
+
+### S21-c implementation (2026-10-28, implementer; NOT validated)
+
+Nothing was built or run. No schema, permission, manifest, guard, baseline, allowlist, diagnostic-code, controller, MainActivity or router change. No STOP condition was hit.
+
+Files changed (P = app/src/main/java/com/yourname/expensetracker):
+- N `P/ui/unsupported/UnsupportedDatabaseExportAuth.kt`: public `@EntryPoint @InstallIn(SingletonComponent)` `UnsupportedDatabaseExportAuthEntryPoint` (exactly `appLockSettingsRepository()` and `deviceAuthCapabilityProvider()`); `internal enum ExportLockRead {ON, OFF, UNREADABLE}`; `internal const EXPORT_AUTH_READ_TIMEOUT_MILLIS = 2000`; `internal object UnsupportedDatabaseExportAuth` with `isAuthRequired(context)` (the ONE `EntryPointAccessors.fromApplication(`), `decide(repository?, provider?, timeoutMillis)`, `readLock`, `readCapability`, `capabilityRequiresAuth`.
+- M `P/ui/unsupported/UnsupportedDatabaseActivity.kt`: `ComponentActivity` becomes `FragmentActivity`; per-Activity `BiometricPromptDeviceAuthenticator(this)` built in `onCreate` after the gate check; new private states CHECKING, AUTHENTICATING, AUTH_DENIED; the export button now calls `onExportRequested { launcher.launch(...) }`, which reads the gate at the tap and opens the SAF picker only when auth is not required or succeeded. `writeBackupTo`, `writeBackupZip`, `deletePartialOutput` and the existing `UNSUPPORTED_DB_*` codes are unchanged.
+- M `res/values/strings.xml`, `values-el/strings.xml`, `values-es/strings.xml`: one new string `unsupported_db_export_auth_denied` (EN final; el and es carry the comment `DRAFT: owner native sign-off pending`).
+- M test (pin only) `app/src/test/.../ui/unsupported/UnsupportedDatabaseActivityTest.kt`: the R25 pin is renamed `activity surface has no hilt activity room privacy gate or export coupling and exactly one entry point lookup`; it scans the activity file AND `UnsupportedDatabaseExportAuth.kt` for @AndroidEntryPoint, AppDatabase, Dao, exportDatabase, PrivacyGate (all still forbidden) and requires exactly one `EntryPointAccessors.fromApplication(` across the two.
+- Docs: LEGAL_PATHS (DATABASE OPEN GATE: auth gate paragraph and two FORBIDDEN lines), hilt-bindings-map (new entry point section), CODEBASE_SEGMENTS (new file line), PRIVACY_UI_ARCHITECTURE (one clause). CODEBASE_INVENTORY lists no `ui/unsupported` file, so it is untouched.
+
+Decisions:
+- Graph check: `AppLockSettingsRepositoryImpl` takes `@ApplicationContext Context` only (a dedicated DataStore); `AndroidDeviceAuthCapabilityProvider` takes `@ApplicationContext Context` only. No AppDatabase, Dao or Room-backed binding is reachable.
+- Capability rule (spec silent on the export; chosen to match the lock state machine T4/T6/T7b/T16 where capability other than AVAILABLE is INERT and the app opens with no prompt): auth required iff (lock ON, or store unreadable, read threw, read timed out at 2 s, or the entry point could not be resolved) AND capability in {AVAILABLE, CHECK_FAILED, no answer}. UNSUPPORTED_API, NO_CREDENTIAL, HW_UNAVAILABLE and UNKNOWN: not gated (nothing can be asked; gating would lock the user out of the only data-recovery path). FirstRunDefault reads as its settings (lock off). Lock OFF: no prompt, the capability is not even read.
+- Prompt copy: reuses `AuthPromptCopy.UNLOCK` (constant title "Unlock", no subtitle). A dedicated EXPORT copy would need a new enum value in the domain port plus adapter and pin changes, so it was not done.
+- Where auth sits: at the tap, before the SAF picker, so nothing is created at the destination before auth. There is no "authorised" flag carried through the picker result (a rotation during the picker must not lose a legitimate export); the exposure is that auth precedes the picker rather than the write.
+- Outcome: every non-Succeeded outcome and every non-LAUNCHED launch (including below API 30, host unavailable, prompt unavailable) gives AUTH_DENIED with one constant string. No log line, no new diagnostic code, no allowlist entry; no outcome detail, path or exception text is kept. A late or repeated callback of an older attempt is ignored.
+- The entry point is public (matching `AppStartupEntryPoint`); the object and enum are internal.
+- Parser traps avoided: all parameter types imported or builtin, no `@Composable` function-type parameter, no top-level `fun interface`, no top-level fun in the new file (only a const, an enum, an interface and an object).
+
+Test-author work (AE and cases to write):
+- N `UnsupportedDatabaseExportAuthTest` (pure, runTest, fakes for the two ports):
+  1. lock ON + AVAILABLE -> required; lock ON + CHECK_FAILED -> required;
+  2. lock ON with UNSUPPORTED_API, NO_CREDENTIAL, HW_UNAVAILABLE, UNKNOWN -> not required (one case each, parameterised);
+  3. lock OFF (Loaded and FirstRunDefault) with every capability -> not required, and the capability port is not called;
+  4. `Unreadable` (each cause: IO_ERROR, CORRUPTED, INVALID_VALUE, TIMEOUT if present) + AVAILABLE -> required; + NO_CREDENTIAL -> not required;
+  5. repository that never returns (virtual time) -> UNREADABLE at 2000 ms -> required with AVAILABLE; one just under 2000 ms returning OFF -> not required;
+  6. repository that throws RuntimeException -> UNREADABLE; capability provider that throws -> treated as no answer -> required;
+  7. a CancellationException from the repository or the provider is rethrown (not swallowed), and cancelling the caller during the read propagates;
+  8. null ports (entry point unresolved) -> required;
+  9. no exception text or setting value in any return value (the result is a boolean).
+- M `UnsupportedDatabaseActivityTest` / N `UnsupportedDatabaseActivityExportAuthTest` (Robolectric; the lock state is injected through Hilt test wiring or a Robolectric Application with a test entry point, whichever the existing test setup supports; if the test app is not Hilt, resolve failure must behave as "unreadable" and the prompt path on API 28 ends as AUTH_DENIED):
+  1. tap with auth not required -> picker launched, no prompt;
+  2. tap with auth required and Succeeded -> picker launched exactly once; no document created before Succeeded;
+  3. Cancelled / LockedOut / NotAvailable / Failed / Succeeded from an older attempt id -> no picker, state AUTH_DENIED with `unsupported_db_export_auth_denied` shown;
+  4. authenticate returns HOST_UNAVAILABLE or PROMPT_UNAVAILABLE -> AUTH_DENIED, no picker;
+  5. a second tap while CHECKING or AUTHENTICATING does nothing (button disabled);
+  6. a synchronous callback before `authenticate` returns still works (state recorded first);
+  7. the existing tests (launch, zip content, gate-not-blocking finish, cleanup) still pass with a `FragmentActivity` base;
+  8. the gate-not-blocking finish path builds no authenticator.
+  (The authenticator is a private field today; the test-author may add an `internal` constructor seam or drive the real adapter under Robolectric. Any such seam is a source change and goes back to the implementer.)
+- Source scans: a case in `UnsupportedDatabaseExportAuthTest` that the new file has no `fun interface`, no `@Composable`, no `Dao`, no `AppDatabase`, and exactly one entry point lookup (the pin in `UnsupportedDatabaseActivityTest` already covers the last).
+- Strings parity: en/el/es all carry `unsupported_db_export_auth_denied`.
+
+Targeted validation filter to request (one combined batch with the rest of S21): `*UnsupportedDatabase*,*AppLockBiometricSourceScan*,*AppLockRelaySourceScan*,*BiometricPrompt*,*AppLockControllerIllegalTransition*,*GsonR8KeepRulesContract*`; then guards known_good_state, cancellation, ui_dao; lint (MissingTranslation, hardcoded text); then the S21 candidate gates (static-guards, app-check). A Hilt compile (kapt/ksp) of the new `@EntryPoint` is exercised by any app build.
+
+Residual risks (unrun):
+- Robolectric: `BiometricPromptDeviceAuthenticator(this)` is now built in `onCreate` of the unsupported screen; the existing activity tests run it at SDK 28. Other tests construct the adapter under Robolectric, so it is expected to be fine.
+- The `Theme.ExpenseTracker` manifest theme is used by `FragmentActivity` here exactly as for `MainActivity`; not checked on a device. The G1b list should include a device check of #10: lock ON, forced gate (schema too new), tap export -> prompt -> picker; cancel -> message, no picker.
+- A `FragmentActivity` is created for a process whose Room cannot open; the Hilt component is the same one the Application already builds.
+- The decision to not gate INERT capability states (see above) is a judgement the privacy-security-guardian and the owner should confirm; the stricter reading would lock a user out of export on those devices.
+- A rotation during the prompt loses that attempt (the user taps again); a rotation during the picker keeps the export (no flag).
+- el and es strings are DRAFT until the owner signs off.
+
+### S21-c tests + S21-b architecture fixes (2026-10-28, test-author; NOT validated)
+
+Test and docs only; nothing was built or run; no production source was edited. T = app/src/test/java/com/yourname/expensetracker.
+
+Files (new):
+- N `T/ui/unsupported/UnsupportedDatabaseExportAuthTest.kt` (pure, `runTest`, virtual time; reuses the internal `FakeAppLockSettingsRepository` and `FakeCapabilityProvider` fixtures).
+- N `T/ui/unsupported/UnsupportedDatabaseActivityExportAuthTest.kt` (Robolectric sdk 28, `ActivityScenario` + `createEmptyComposeRule`; the DENIED branch only).
+- N `T/ui/unsupported/UnsupportedDatabaseActivitySourceScanTest.kt` (structural pins standing in for the SEAM-NEEDED behaviours).
+- N `T/ui/unsupported/UnsupportedDatabaseExportAuthStringsTest.kt` (Robolectric sdk 34; en / es / el parity for `unsupported_db_export_auth_denied`; no existing test covered it).
+- N `T/ui/applock/DeepLinkApplierCallerPinTest.kt` (S21-b architecture-guardian P2).
+- Docs: LEGAL_PATHS (onCreate order and the handleIntent sentence), hilt-bindings-map (DeepLinkApplier is injected only through the router), CODEBASE_SEGMENTS (own S21-b heading, S21-c moved to its own heading, `startReleasing`/`route` added to the S20-c MainActivity line), CODEBASE_INVENTORY (S21-b bullet).
+
+Tests by name (all `s21c_` or `s21b_` prefixed, backticks not needed):
+- `UnsupportedDatabaseExportAuthTest`:
+  - matrix: `everyCapabilityIsDecidedExactlyOnce`, `capabilityRule_perValue`, `lockOn_available_requiresAuth_control`, `lockOn_checkFailed_requiresAuth`, `lockOn_inertCapabilities_doNotRequireAuth`, `firstRunDefaultWithLockFlagOn_isTreatedAsLockOn`;
+  - lock OFF: `lockOff_loaded_neverRequiresAuth_andNeverReadsTheCapability`, `lockOff_firstRunDefault_...`, `lockOff_evenWhenTheCapabilityProviderWouldThrow_doesNotRequireAuth`;
+  - UNREADABLE (all four causes): `unreadable_everyCause_isNeverReadAsOff`, `..._withAvailable_requiresAuth`, `..._withCheckFailed_requiresAuth`, `..._withInertCapabilities_doesNotRequireAuth`;
+  - timeout: `theTimeoutConstantIs2000Millis`, `aReadThatNeverReturns_isUnreadableAtExactly2000Millis_andRequiresAuthWhenAvailable`, `aReadThatNeverReturns_readLockIsUnreadable`, `..._withNoCredential_doesNotRequireAuth`, `readJustUnderTheBound_returnsItsValue_lockOffIsNotGated` (1999 ms), `..._lockOnIsGated`, `readJustOverTheBound_isUnreadable_evenThoughItWouldHaveSaidOff` (2001 ms), `aTimedOutReadDoesNotCancelTheCaller_theNextCallReadsFresh`;
+  - throws: `aRepositoryThatThrows_isUnreadable_andRequiresAuthWhenAvailable`, `..._withInertCapability_doesNotRequireAuth`, `aProviderThatThrows_isNoAnswer_andRequiresAuthWhenTheLockIsOn`, `aProviderThatThrows_requiresAuthWhenTheStoreIsUnreadable`, `readCapability_returnsTheValueAndEvaluatesEveryCall`;
+  - stale snapshots: `everyCallReadsTheLockFresh`, `everyCallEvaluatesTheCapabilityFresh`;
+  - cancellation: `aCancellationExceptionFromTheRepository_isRethrown_notSwallowed`, `aCancellationExceptionFromTheProvider_isRethrown_notSwallowed`, `cancellingTheCallerDuringTheRead_propagates_andNothingIsDecided`;
+  - null ports: `nullPorts_requireAuth`, `nullRepository_isUnreadable_andFollowsTheCapability`, `nullProvider_isNoAnswer`;
+  - source scan: `sourceScan_newFileHasNoFunInterfaceComposableDaoAppDatabaseLoggingOrWrites`, `sourceScan_exactlyOneEntryPointLookup`, `sourceScan_entryPointIsSingletonScopedWithExactlyTwoReadMembers`, `sourceScan_selfCheck_eachRuleCanFail`.
+- `UnsupportedDatabaseActivityExportAuthTest` (real activity, entry point unresolvable under `HiltTestApplication` without a rule, so the gate fails closed; real adapter at SDK 28 answers HOST_UNAVAILABLE): `activityIsAFragmentActivity_forThePromptHost`, `beforeAnyTap_theExportButtonIsEnabled_andNoDeniedMessageIsShown`, `tapWithAuthRequiredAndNoPromptAvailable_showsTheConstantDeniedMessage_andOpensNoPicker`, `aDeniedTap_keepsTheButtonUsable_andRecordsNoLogLineOrDiagnostic`, `aSecondTapAfterADeniedAttempt_triesAgain_andStillOpensNoPicker`.
+- `UnsupportedDatabaseActivitySourceScanTest` (pins): `gateNotBlockingFinishPath_buildsNoAuthenticator`, `thePickerIsOpenedOnlyFromTheExportGate`, `aStaleRepeatedOrLateOutcome_isIgnoredBeforeItCanOpenThePicker`, `theAttemptIsRecordedOpenBeforeAuthenticateRuns`, `aNonLaunchedAnswerOrAMissingAuthenticator_failsClosed`, `aSecondTapWhileCheckingAuthenticatingOrRunning_doesNothing`, `theAuthPathWritesNoLogLineAndNoDiagnostic`.
+- `UnsupportedDatabaseExportAuthStringsTest`: `defaultDeniedMessage_isNonBlankAndPlaceholderFree`, `spanishDeniedMessage_existsAndDiffersFromDefault`, `greekDeniedMessage_existsAndDiffersFromDefault`, `threeLocalesCarryThreeDistinctTexts`, `theStringIsDeclaredExactlyOnceInEachResourceFile`.
+- `DeepLinkApplierCallerPinTest`: `s21b_scanCoversTheProductionTreeAndTheAllowedFilesExist`, `s21b_deepLinkApplierIsReferencedOnlyByItsOwnFileAndTheRouter`, `s21b_noStringLiteralNamesTheApplier`, `s21b_heldLinkReleaseApplyIsConstructedOnlyInTheController`, `s21b_theRouterMatchesOnAReleasedLinkButNeverConstructsOne`, and three `selfCheck_*` planted cases.
+
+Pin allow-sets (verified by text search before writing, whole of app/src; debug and release have no reference):
+- token `DeepLinkApplier` (main): exactly `ui/navigation/DeepLinkApplier.kt` and `ui/applock/AppLockDeepLinkRouter.kt`.
+- `HeldLinkRelease.Apply(` construction: exactly `domain/privacy/applock/AppLockController.kt` (line 1444). DEVIATION from the brief ("controller file and the router"): the router has no construction, it only matches `is HeldLinkRelease.Apply`, so the pin is stricter and the router is not in the allow-set (a separate test asserts it matches but never constructs). An unqualified `Apply(` is allowed only in `HeldDeepLink.kt` (the declaration).
+
+SEAM-NEEDED (not reachable without a production change; no reflection hack was used):
+- The lock state and the authenticator of `UnsupportedDatabaseActivity` are not injectable: `UnsupportedDatabaseExportAuth.isAuthRequired(applicationContext)` is called directly and `exportAuthenticator` is a private field built with `BiometricPromptDeviceAuthenticator(this)`. Blocked as a result: auth not required then picker with no prompt; auth required + Succeeded then picker exactly once; Cancelled / LockedOut / NotAvailable / Failed / stale attempt id; PROMPT_UNAVAILABLE and the other non-LAUNCHED answers (only HOST_UNAVAILABLE is reached, through the real adapter at SDK 28); a double tap while CHECKING or AUTHENTICATING; a synchronous callback before `authenticate` returns; the behavioural form of "the gate-not-blocking finish path builds no authenticator".
+- Smallest seam proposed (implementer decides): two `@VisibleForTesting internal` vars in the `UnsupportedDatabaseActivity` companion, `exportAuthRequired: suspend (Context) -> Boolean` (default `UnsupportedDatabaseExportAuth.isAuthRequired`) and `authenticatorFactory: (FragmentActivity) -> DeviceAuthenticator` (default `BiometricPromptDeviceAuthenticator(it)`), reset in `@After`. With them the missing cases are about 10 Robolectric tests using `FakeDeviceAuthenticator` and a `CompletableDeferred` gate for the CHECKING state; the picker is observable already through `shadowOf(activity).peekNextStartedActivityForResult()`. Needs privacy-security-guardian view because it adds mutable static test state to a production class; the alternative with no production change is the first `@HiltAndroidTest` (rule + `@BindValue`/`@UninstallModules`), which pulls the whole app graph into the unit-test Hilt component and was judged riskier unrun.
+- Until then the structural pins in `UnsupportedDatabaseActivitySourceScanTest` stand in, and G1b keeps the on-device #10 check.
+
+Recorded residual R-S21-3 (architecture-guardian): in multi-window, two started MainActivity instances can both observe the controller; the held link goes to whichever posted release task runs first. The controller hands a held link out at most once (removed under its monitor), so a link is never applied twice and there is no privacy impact; at most the navigation lands in the other window.
+
+Combined targeted filter to request (one batch): `*UnsupportedDatabase*,*AppLockBiometricSourceScan*,*AppLockRelaySourceScan*,*BiometricPrompt*,*AppLockControllerIllegalTransition*,*GsonR8KeepRulesContract*,*DeepLinkApplier*,*MainScreenCallSite*`. The new classes are covered by `*UnsupportedDatabase*` (ExportAuthTest, ActivityExportAuthTest, ActivitySourceScanTest, ExportAuthStringsTest) and `*DeepLinkApplier*` (DeepLinkApplierCallerPinTest); no extra filter is needed. Then guards known_good_state, cancellation, ui_dao, lint (MissingTranslation, hardcoded text), as listed in the S21-c implementation section.
+
+Residual risks (unrun):
+- `UnsupportedDatabaseActivityExportAuthTest` assumes `EntryPointAccessors.fromApplication` on `HiltTestApplication` without a Hilt rule throws an `Exception` (an IllegalStateException), which the gate maps to fail closed. If it ever resolved (lock off) the first-tap tests would see the picker, not the denied message; if it threw an Error it would crash the activity. It is also the first use of `ActivityScenario` + `createEmptyComposeRule` in this repo (existing tests use `Robolectric.buildActivity` and `createComposeRule`).
+- The "no picker" assertions there have no positive control until the seam exists (a picker launch is assumed to show in `ShadowActivity`).
+- The pure suite does not assert at exactly 2000 ms: whether a read completing at the bound wins is dispatcher-order dependent. It brackets with 1999 ms (value kept) and 2001 ms (timeout wins) and pins that a never-returning read ends at exactly 2000 ms.
+- The pure suite pins the owner-decision table (INERT capabilities not gated). That is the judgement the privacy-security-guardian and owner still confirm; a change there is a one-table edit.
+- The source-scan pins are intentionally structural and will need an edit when the activity is refactored; the DeepLinkApplier pin also rejects a new mention of the class in any main, debug or release text file, not only an import.
+- `DeepLinkApplierCallerPinTest` reads every Kotlin, Java and common text file under app/src/main, debug and release (a few thousand small files).
+
+### S21-c review fixes (2026-10-28, implementer; NOT validated)
+
+Nothing was built or run. Source of the fixes: privacy-security-guardian review plus the orchestrator decision under standing approval item 62. No schema, manifest, permission, guard, baseline, allowlist, diagnostic-code, string or controller change. P = app/src/main/java/com/yourname/expensetracker.
+
+Fixes:
+1. (P3, liveness) `P/ui/unsupported/UnsupportedDatabaseActivity.kt` new `onStop`: when `exportState == AUTHENTICATING` it calls `exportAuthenticator?.cancel(exportAuthAttemptId)`. The adapter delivers `Failed(SYSTEM_CANCELED)` synchronously, which reaches `onExportAuthOutcome` and ends in AUTH_DENIED with no picker. If no outcome was delivered (a fake, a stale id) and the state is still AUTHENTICATING after `cancel`, it is set to AUTH_DENIED directly (fail closed). `super.onStop()` is called last.
+2. (P3) The CHECKING coroutine in `onExportRequested` is wrapped in `try { ... } finally { if (exportState == ExportState.CHECKING) exportState = ExportState.IDLE }`. There is no catch, so `CancellationException` (and any other throwable) still propagates. The finally only resets the state; the picker is called only from the try body (not required) and from `onExportAuthOutcome` (Succeeded).
+3. (P3) KDoc "Capability rule, Inc 2 note" on `UnsupportedDatabaseExportAuth` in `P/ui/unsupported/UnsupportedDatabaseExportAuth.kt` (PIN mode is never INERT, ux-flows.md:211, T6 "no verifier"; NO_CREDENTIAL with PIN mode must require auth once a lock mode exists). Plan item added under S21-c in `workflows/active/app-lock-privacy-mode-plan.md`: "S21-c follow-up (Inc 2): export gate must treat PIN-mode locks as never INERT".
+4. (P3) `docs/architecture/PRIVACY_UI_ARCHITECTURE.md` :141 now reads "gated by device auth instead when the lock is on or unreadable and capability is AVAILABLE or CHECK_FAILED (INERT states are not gated)".
+5. Test seams (both in the `UnsupportedDatabaseActivity` companion, `@VisibleForTesting internal var`, default null, always null in production; a test sets them and resets them to null in `@After`):
+   - `UnsupportedDatabaseActivity.exportAuthRequiredForTest: (suspend (android.content.Context) -> Boolean)?`. When non-null, `onExportRequested` calls it with `applicationContext` instead of `UnsupportedDatabaseExportAuth.isAuthRequired(applicationContext)`. A suspending fake (for example one awaiting a `CompletableDeferred`) holds the CHECKING state. It runs inside the try/finally of fix 2.
+   - `UnsupportedDatabaseActivity.authenticatorFactoryForTest: ((androidx.fragment.app.FragmentActivity) -> DeviceAuthenticator)?`. When non-null, `onCreate` builds `exportAuthenticator = authenticatorFactoryForTest?.invoke(this) ?: BiometricPromptDeviceAuthenticator(this)` (after the gate-not-blocking finish/return, so that path still builds nothing). Set both seams BEFORE the activity is created; the factory is read once in `onCreate`.
+   - Kotlin access: both are companion members, so a test in the same module uses `UnsupportedDatabaseActivity.exportAuthRequiredForTest = { _ -> true }` and `UnsupportedDatabaseActivity.authenticatorFactoryForTest = { FakeDeviceAuthenticator(...) }`.
+   - known_good_state parser: scripts/kotlin_callable_parser.py scans only `fun` keywords and reads only parameter lists, so function-type properties are not parsed as signatures (precedent: `RestoreJournal.kt` has `internal var ...: ((File, String) -> Unit)? = null`). No `fun interface` was added; no new top-level declaration; no new fun, so no new callable signature. The companion is not a parser owner, so the existing companion funs are unchanged.
+
+Test-author work:
+- Existing pins still hold by construction: `BiometricPromptDeviceAuthenticator(this)` is still the only construction (one match of `BiometricPromptDeviceAuthenticator(`) and sits in `onCreate` after the early return and before `setContent`; `launchPicker()` still appears once in `onExportRequested` and once in `onExportAuthOutcome`; the auth-path scan range (`fun onExportRequested(` to `fun startExport(`) now also contains `onStop` and the try/finally, neither has a forbidden token. `UnsupportedDatabaseActivityTest` R25 forbidden tokens are not present in the new code. Re-check `s21c_gateNotBlockingFinishPath_buildsNoAuthenticator` (it matches the literal `BiometricPromptDeviceAuthenticator(this)`, which is kept).
+- New Robolectric cases, unblocked by the seams: auth not required then picker with no prompt; required + Succeeded then picker exactly once and no document before Succeeded; Cancelled, LockedOut, NotAvailable, Failed and a stale attempt id give AUTH_DENIED with no picker; PROMPT_UNAVAILABLE, HOST_UNAVAILABLE and the other non-LAUNCHED answers give AUTH_DENIED; double tap during CHECKING (held by the suspending gate fake) and during AUTHENTICATING does nothing; a synchronous callback before `authenticate` returns; the gate-not-blocking finish path never invokes the factory.
+- New for fixes 1 and 2: `onStop` while AUTHENTICATING calls `cancel` with the open attempt id, ends AUTH_DENIED, opens no picker (fake that delivers Failed(SYSTEM_CANCELED) on cancel, and a fake that delivers nothing); `onStop` while IDLE or CHECKING does not call `cancel`; cancelling the CHECKING coroutine (destroy the activity or cancel the gate fake) leaves the state IDLE and opens no picker; a gate that throws a non-cancellation exception resets the state and the exception still propagates.
+- Reset both seams to null in `@After` (static mutable state).
+
+Validation to request (add to the S21 combined batch): the same targeted filter `*UnsupportedDatabase*,*AppLockBiometricSourceScan*,*AppLockRelaySourceScan*,*BiometricPrompt*,*AppLockControllerIllegalTransition*,*GsonR8KeepRulesContract*,*DeepLinkApplier*,*MainScreenCallSite*`; guards known_good_state (the seam properties), cancellation (the new try/finally in a coroutine), ui_dao; lint.
+
+Residual risks (unrun):
+- `onStop` cancels an in-flight prompt, so the user leaving the app during the prompt must tap export again (the intended outcome). A configuration change also stops the activity, so a rotation during the prompt now ends the attempt as AUTH_DENIED instead of leaving the state AUTHENTICATING on a dead adapter.
+- The seams add mutable static state to a production class (guardian review requested; they are `internal`, annotated, and null by default).
+
+### S21-c seam tests + pin hardening (2026-10-28, test-author; NOT validated)
+
+Test and handoff only; nothing was built or run; no production source was edited. T = app/src/test/java/com/yourname/expensetracker/ui/unsupported.
+
+Files:
+- N `T/UnsupportedDatabaseActivityExportAuthSeamTest.kt` (Robolectric sdk 28, `ActivityScenario` + `createEmptyComposeRule`, same pattern as `UnsupportedDatabaseActivityExportAuthTest`). Both seams are set before the activity is created and reset to null in `@After`. Fakes: `FakeDeviceAuthenticator` (records `authenticate`/`cancel` ids and copies; optional synchronous outcome; optional outcome delivered on `cancel`; the test delivers outcomes through the stored callback) and `HeldGate` (suspending gate held by a `CompletableDeferred`). The picker is observed through `shadowOf(activity).nextStartedActivityForResult` (action `ACTION_CREATE_DOCUMENT`), which the positive control consumes and re-checks as null, so "exactly once" is asserted.
+- M `T/UnsupportedDatabaseActivitySourceScanTest.kt` (pin hardening, the surface is the activity file plus `UnsupportedDatabaseExportAuth.kt`).
+
+Tests by name (`UnsupportedDatabaseActivityExportAuthSeamTest`, all `s21c_seam_` prefixed):
+- not required: `authNotRequired_opensThePickerWithoutAnyPrompt`;
+- positive controls: `requiredAndSucceeded_opensThePickerExactlyOnce_control`, `aRepeatedSucceededCallback_doesNotOpenASecondPicker`, `aDeniedAttempt_canBeRetried_andASucceededRetryOpensThePicker`, `whenTheGateBlocks_theFactoryIsInvokedOnceWithTheActivity_control`;
+- outcomes (denied string, no picker, button usable): `cancelled_`, `lockedOutTemporary_`, `lockedOutPermanent_`, `notAvailable_`, `failed_everyBucket_` (all four buckets), each `...deniesWithNoPicker`;
+- stale ids: `aStaleAttemptId_isIgnored_andTheOpenAttemptStillDecides`, `aLateSucceededOfAClosedEarlierAttempt_neverOpensThePicker`;
+- non-LAUNCHED answers (`ALREADY_IN_FLIGHT`, `HOST_UNAVAILABLE`, `AWAITING_PRIOR_TERMINAL`, `PROMPT_UNAVAILABLE`): `launchAnswer<X>_deniesWithNoPicker`, each also delivers a late Succeeded and asserts no picker;
+- double tap: `aSecondTapWhileChecking_doesNothing` (gate held, gate calls stay 1, then released to one prompt and one picker), `aSecondTapWhileAuthenticating_doesNothing`;
+- synchronous callback: `aSynchronousSucceededInsideAuthenticate_opensThePickerOnce`, `aSynchronousCancelledInsideAuthenticate_deniesWithNoPicker`;
+- finish path: `whenTheGateDoesNotBlock_theActivityFinishesAndTheFactoryIsNeverInvoked` (with the control above);
+- onStop (via `moveToState(CREATED)` then `RESUMED`, the denied message is read after the restart): `onStopWhileAuthenticating_cancelsTheOpenAttempt_andEndsDeniedWithNoPicker_whenCancelDelivers`, `..._whenNothingIsDelivered` (also a late Succeeded for the closed id), `aSecondStopAfterTheAttemptEnded_doesNotCancelAgain`, `onStopWhileIdle_doesNotCancel`, `onStopWhileChecking_doesNotCancel`;
+- CHECKING coroutine: `cancellingTheCheckingCoroutine_leavesTheStateIdleWithNoPicker` (`lifecycleScope` children cancelled), `aGateThatThrowsCancellation_leavesTheStateIdleWithNoPicker`, `aGateThatThrowsANonCancellation_resetsTheState_andTheExceptionStillPropagates`.
+
+Pin hardening (`UnsupportedDatabaseActivitySourceScanTest`, `s21c_pin_` prefixed):
+- `entryPointMembersAreExactlyTheLockRepositoryAndTheCapabilityProvider` (member names AND return types as an exact map, nothing else declared in the body, and the two domain imports present; the earlier `ExportAuthTest` case only checked the names);
+- `theSurfaceHasAtMostOneEntryPointAndNoOtherLookupForm` (`@EntryPoint` count across both files is 1, no `EntryPoints.get(`, `fromActivity(`, `fromFragment(`, exactly one `fromApplication(`);
+- `theSeamsAreDeclaredOnceAsNullInternalVarsInTheActivityCompanion`;
+- `noProductionFileAssignsATestSeam` (every .kt/.java under app/src main, debug, release; flags `name =` and a `setName(` call; the declaration lines and reads are allowed);
+- planted self-checks: `selfCheck_theEntryPointMemberRuleCanFail` (wrong type, swapped types, extra, missing, parameter, property), `selfCheck_theLookupAndEntryPointCountRulesCanFail`, `selfCheck_theSeamAssignmentRuleCanFail` (also asserts declarations, reads, `==`, comments and strings are allowed).
+
+Deviations from the brief:
+- A stale attempt id does NOT give the AUTH_DENIED string. The activity ignores it (state stays AUTHENTICATING, button disabled, no message). The tests assert that, then that the real outcome of the open attempt decides (Cancelled gives the message; Succeeded opens the picker). A closed earlier attempt's late Succeeded is asserted not to open the picker.
+- The "missing authenticator" fail-closed branch (`exportAuthenticator == null`) cannot be reached through the factory seam (its type is non-null); it stays covered by the structural pin `s21c_aNonLaunchedAnswerOrAMissingAuthenticator_failsClosed`.
+
+SKIPPED-WITH-REASON: none. Judgement call on the non-cancellation throw: it cannot reach the main looper as a crash in the JVM because the test installs a capturing uncaught-exception handler (on the test thread and as the process default, both restored in a `finally`) before the tap. The test asserts the state reset (button enabled, no message, no prompt, no picker) and that the very exception instance reached that handler. If a Robolectric or kotlinx version routes an uncaught coroutine exception elsewhere (for example rethrows it from the looper), only the last assertion would fail, not the JVM; then drop that last line and keep the state assertions.
+
+Filter (unchanged): `*UnsupportedDatabase*,*AppLockBiometricSourceScan*,*AppLockRelaySourceScan*,*BiometricPrompt*,*AppLockControllerIllegalTransition*,*GsonR8KeepRulesContract*,*DeepLinkApplier*,*MainScreenCallSite*`. The new class `UnsupportedDatabaseActivityExportAuthSeamTest` is matched by `*UnsupportedDatabase*`; the modified scan class too.
+
+Residual risks (unrun):
+- The seam tests assume `ShadowActivity.nextStartedActivityForResult` records a `rememberLauncherForActivityResult` launch of `CreateDocument` under `ActivityScenario` (the positive control is the first test to fail if not, and every "no picker" assertion would then be vacuous; check that control first).
+- `ActivityScenario.moveToState(CREATED)` / `RESUMED` on the unsupported screen is the first use of lifecycle moves in this suite; compose is only touched while RESUMED. `failed_everyBucket_` launches and closes four scenarios in one test.
+- The `onStop` tests rely on a `moveToState(CREATED)` stopping (not destroying) the activity, which is the documented behaviour.
+- The seams are static mutable state; the classes reset them in `@After`, and nothing else in the module sets them. If Gradle runs test classes in one JVM concurrently the seam tests would interfere; Robolectric tests here run serially per JVM fork.
+- The structural pins stay: they are cheap and cover the unreachable null-authenticator branch.
+
+### S21 strict review (reviewer-strict) + fix pass (2026-10-28; NOT validated)
+
+Verdict: ACCEPT-WITH-CONDITIONS.
+- C1: the batch passes, and the positive control `s21c_seam_requiredAndSucceeded_opensThePickerExactlyOnce_control` passes (it proves a picker launch is visible to the `ShadowActivity` observation; every "no picker" assertion depends on it).
+- C2: F1 and F2 applied (done in this pass, below).
+- C3: the candidate gates pass.
+
+Findings and dispositions:
+- F1 (P2) LEGAL_PATHS READ + RECOVERY paragraph contradicted itself ("ZERO" vs "ONE" production callers of `requestSettingsReread`) and missed the S21-a re-read for the controller's own `RESOLVE_TIMEOUT` fallback. DONE. Truth checked in source: ONE production caller (`AppLockPrivacySettingsViewModel`, the 1a retry). The paragraph now states the fallback re-read (no loaded view plus `resolvedByTimeout`), the `RESOLVE_TIMEOUT_MILLIS` bound, that a timed-out re-read changes nothing, and adds the new STORE READ reader (`UnsupportedDatabaseExportAuth`, `getLoadState`, 2 s bound, read-only).
+- F2 (P3) CODEBASE_SEGMENTS: blank line missing before the S20-b bold heading. DONE.
+- F3 seam-assignment scan: the setter pattern now accepts the `$module` mangled form (`[\w$]*`); a planted Java `setExportAuthRequiredForTest$app_release(` case (and an `$app_debug` one) is in the self-check; `::exportAuthRequiredForTest` and `::authenticatorFactoryForTest` property references are forbidden in production and planted. DONE.
+- F4 docs. DONE: hilt-bindings-map "Obtained once" now "Resolved at every export tap"; LEGAL_PATHS export-gate paragraph adds "or no answer (provider threw or entry point unresolved)" and that onStop cancels an open prompt and denies; the plan S21-c heading is "RESOLVED: owner-approvals 73a, option (A)"; CODEBASE_INVENTORY app-lock drift sync lists `UnsupportedDatabaseExportAuth.kt` (S21-c bullet).
+- F5 stale KDocs ("cannot be driven without a production seam") in `UnsupportedDatabaseActivityExportAuthTest` and `UnsupportedDatabaseActivitySourceScanTest` updated to point at `UnsupportedDatabaseActivityExportAuthSeamTest`. DONE.
+- F6 bounded prompt-timeout liveness (CHECKING finishing after onStop can launch the picker in the background; no privacy impact). FOLLOW-UP for S22-b.
+- F7 reflection pin that the `@Inject` constructors of `AppLockSettingsRepositoryImpl` and `AndroidDeviceAuthCapabilityProvider` take exactly one parameter, `android.content.Context` (keeps the unsupported-database entry-point graph Room-free). DONE in `UnsupportedDatabaseExportAuthTest` (`s21c_entryPointGraph_*`, with a planted self-check over wrong-arity, wrong-type, no-parameter and not-injected classes).
+- F8 AE-57 passes by construction. ACCEPTED: no persistence path exists.
+
+Compile fix: `UnsupportedDatabaseActivityExportAuthSeamTest` and `UnsupportedDatabaseActivityExportAuthTest` imported `androidx.compose.ui.test.assertExists` and `assertDoesNotExist`; both are MEMBERS of `SemanticsNodeInteraction`, not top-level extensions. The four import lines are removed (the calls stay and resolve as members). The other Compose test imports in both files (`assertIsEnabled`, `assertIsNotEnabled`, `onNodeWithText`, `performClick`, `junit4.createEmptyComposeRule`) are top-level and match how `AppLockSurfaceTest` / `AppLockGateTest` import them; `createEmptyComposeRule` is used only by the S21 files (a real `ui-test-junit4` top-level function).
+
+Batch results so far:
+- targeted vr-20261028-082614-8431cf10 FAIL (compile, fixed here);
+- runtime-ui vr-20261028-083340-5dd9b18d FAIL (same compile);
+- known_good_state vr-20261028-083003-9b78fac9 PASS;
+- cancellation vr-20261028-083306-4ad2e0df PASS;
+- ui_dao vr-20261028-083324-62328ed9 PASS;
+- lint vr-20261028-083426-b872fc6d PASS.
+The tree changed after these runs (tests and docs only), so the targeted and runtime-ui results must be re-run; the PASS results above were taken before this pass, and this pass edited tests and docs only (no production code).
+
+Merge-readiness notes (reviewer):
+- merge from origin/feature/ai-evolution 73c593dd in an integration worktree, merge base 25096c65;
+- expect clean merges; re-read CODEBASE_SEGMENTS and CODEBASE_INVENTORY afterwards;
+- the later mec rebase must drop its pre-1a `handleIntent` (it will fail `MainScreenCallSiteTest` and `DeepLinkApplierCallerPinTest`), and loan S13-a host branches stay inside `DeepLinkApplier.kt`.
+
+KSP fix: the F7 self-check plants use a test-local @PlantedInject marker (Dagger rejected @Inject on private test classes; vr-20261028-084359-0f4d8f61)
+
+Debug iteration 1 (debugger): DeepLinkApplierCallerPinTest self-check regex over-broad on a spaced qualified call (fixed with a lookbehind); seam throw test routed boom through the global ExceptionCollector (now inside runTest). Positive control s21c_seam_requiredAndSucceeded_opensThePickerExactlyOnce_control PASSED in vr-20261028-084602-dc39f4c6 (285/287).
+
+### S21 ACCEPTED (2026-10-28): S21-a + S21-b + S21-c candidate
+- Gates:
+  - privacy-security-guardian on S21-a, S21-b and S21-c (all ACCEPT-WITH-CONDITIONS; conditions met);
+  - architecture-guardian on S21-b (ACCEPT-WITH-CONDITIONS; conditions met);
+  - reviewer-strict on the whole of S21 (ACCEPT-WITH-CONDITIONS).
+- reviewer-strict conditions:
+  - C1 met: targeted PASS, including the positive control s21c_seam_requiredAndSucceeded_opensThePickerExactlyOnce_control;
+  - C2 met: F1 and F2 applied;
+  - C3 met: the candidate gates below.
+- Final candidate validation, all PASS:
+  - targeted `*UnsupportedDatabase*,*AppLockBiometricSourceScan*,*AppLockRelaySourceScan*,*BiometricPrompt*,*AppLockControllerIllegalTransition*,*GsonR8KeepRulesContract*,*DeepLinkApplier*,*MainScreenCallSite*`: vr-20261028-085219-facdb3d2
+  - runtime-ui: vr-20261028-085521-781d85d2
+  - static-guards: vr-20261028-085755-e1e24a43
+  - app-check: vr-20261028-091358-7d60c257
+  - known_good_state vr-20261028-083003-9b78fac9, cancellation vr-20261028-083306-4ad2e0df, ui_dao vr-20261028-083324-62328ed9 and lint vr-20261028-083426-b872fc6d (only test and docs edits after these)
+- Debug iterations used: 1 of 2 (compile imports, KSP @Inject plants, a self-check regex, ExceptionCollector routing; all test-only).
+- #9 and #10 are closed. Follow-ups:
+  - F6: bounded prompt timeout (S22-b);
+  - AuthPromptCopy.EXPORT (S22/S23);
+  - the Inc-2 PIN-mode export rule;
+  - the G1b device check for #10.
+- Next: merge app-lock (S20 + S21) into feature/ai-evolution (owner-approvals 73b) in Cost-agregator-int. The trial merge against 73c593dd is clean. Then S22.

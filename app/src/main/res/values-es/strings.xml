@@ -17,6 +17,8 @@
     <string name="unsupported_db_close_button">Cerrar la aplicación</string>
     <string name="unsupported_db_export_success">El archivo de la base de datos se exportó correctamente.</string>
     <string name="unsupported_db_export_failed">No se pudo exportar el archivo de la base de datos. Prueba con otra ubicación.</string>
+    <!-- S21-c: DRAFT: owner native sign-off pending -->
+    <string name="unsupported_db_export_auth_denied">Para exportar se necesita tu huella o el bloqueo de pantalla. No se exportó nada.</string>
     <string name="backup_schema_too_old">Esta copia de seguridad es de una versión de la app demasiado antigua para restaurarla.</string>
     <string name="backup_schema_too_new">Esta copia de seguridad se creó con una versión más reciente de la app. Actualiza la app para restaurarla.</string>
 

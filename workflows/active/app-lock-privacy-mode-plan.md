@@ -1958,13 +1958,14 @@ T3. S21 starts after the S20 candidate is committed. One lane, a → b → c. P 
   - R-S21-2: a rotation during a released-link lookup loses that apply.
 - Gates: privacy-security-guardian (lead), architecture-guardian, reviewer-strict.
 
-### S21-c — #10 UnsupportedDatabaseActivity export (OWNER DECISION PENDING, item 69)
+### S21-c — #10 UnsupportedDatabaseActivity export (RESOLVED: owner-approvals 73a, option (A))
 - (A), recommended: device auth before the export when the committed lock is on (or the store is unreadable) and capability is AVAILABLE or CHECK_FAILED.
   - Read through one narrow Hilt @EntryPoint (AppLockSettingsRepository read + DeviceAuthCapabilityProvider), bounded at 2 s.
   - A per-Activity BiometricPromptDeviceAuthenticator with constant copy; the activity becomes a FragmentActivity.
   - Files: N UnsupportedDatabaseExportAuth.kt; strings with es/el DRAFT.
   - The R25 pin test is renamed and allows exactly one EntryPointAccessors.fromApplication( (a pin change, hence the owner).
 - (B): an owner exception (LEGAL_PATHS line plus a release note).
+- S21-c follow-up (Inc 2): export gate must treat PIN-mode locks as never INERT (ux-flows.md:211, T6 "no verifier"); `UnsupportedDatabaseExportAuth.capabilityRequiresAuth` must require auth for NO_CREDENTIAL when the lock mode is PIN.
 
 ### Coordination with loan S13-a
 - app-lock S21 owns: the MainActivity field block, onCreate :166-180, onNewIntent, handleIntent, the router, and the DeepLinkApplier signatures.

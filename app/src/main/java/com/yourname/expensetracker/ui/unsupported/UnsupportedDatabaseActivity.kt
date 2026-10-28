@@ -1,14 +1,15 @@
 package com.yourname.expensetracker.ui.unsupported
 
+import android.content.Context
 import android.net.Uri
 import android.os.Bundle
 import android.provider.DocumentsContract
 import android.util.Log
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.StringRes
+import androidx.annotation.VisibleForTesting
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -30,9 +31,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.lifecycleScope
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.database.DatabaseOpenGate
+import com.yourname.expensetracker.domain.privacy.applock.AuthLaunch
+import com.yourname.expensetracker.domain.privacy.applock.AuthPromptCopy
+import com.yourname.expensetracker.domain.privacy.applock.DeviceAuthCallback
+import com.yourname.expensetracker.domain.privacy.applock.DeviceAuthOutcome
+import com.yourname.expensetracker.domain.privacy.applock.DeviceAuthenticator
+import com.yourname.expensetracker.ui.applock.BiometricPromptDeviceAuthenticator
 import com.yourname.expensetracker.ui.theme.ExpenseTrackerTheme
 import java.io.File
 import java.io.FileInputStream
@@ -50,16 +58,27 @@ import kotlinx.coroutines.withContext
  * R25 slice B2: the only screen shown while the database open gate blocks the live database file
  * (too old, too new or unreadable).
  *
- * This is deliberately a plain [ComponentActivity]: no dependency injection, no Room, nothing that
- * could open or migrate the blocked file. The one optional action is a user-started export of the
- * untouched database file (plus its -wal companion, never -shm) through the system document picker.
- * The files are copied verbatim with plain file streams and are never opened with SQLite.
+ * This is deliberately not a Hilt activity: no generated injection base, no Room, nothing that could
+ * open or migrate the blocked file. It is a [FragmentActivity] only because the system authentication
+ * prompt needs one. The one optional action is a user-started export of the untouched database file
+ * (plus its -wal companion, never -shm) through the system document picker. The files are copied
+ * verbatim with plain file streams and are never opened with SQLite.
+ *
+ * App lock (S21-c, #10): when the committed lock is on, or the lock store cannot be read, and the
+ * device can authenticate (or the capability check failed), the export first needs device
+ * authentication, before the document picker opens. The lock and the capability come from the one
+ * narrow read-only entry point in `UnsupportedDatabaseExportAuth.kt`, read at the tap and bounded at 2 s.
+ * A cancelled or failed prompt exports nothing and shows one constant message; no diagnostic is kept.
  */
-class UnsupportedDatabaseActivity : ComponentActivity() {
+class UnsupportedDatabaseActivity : FragmentActivity() {
 
-    private enum class ExportState { IDLE, RUNNING, SUCCESS, FAILED }
+    private enum class ExportState { IDLE, CHECKING, AUTHENTICATING, RUNNING, SUCCESS, FAILED, AUTH_DENIED }
 
     private var exportState by mutableStateOf(ExportState.IDLE)
+
+    /** Per Activity instance, created in [onCreate] (prompt library guidance). Null only when the gate does not block. */
+    private var exportAuthenticator: DeviceAuthenticator? = null
+    private var exportAuthAttemptId: Long = 0L
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -70,6 +89,7 @@ class UnsupportedDatabaseActivity : ComponentActivity() {
             finish()
             return
         }
+        exportAuthenticator = authenticatorFactoryForTest?.invoke(this) ?: BiometricPromptDeviceAuthenticator(this)
         setContent {
             ExpenseTrackerTheme {
                 Surface(
@@ -107,8 +127,8 @@ class UnsupportedDatabaseActivity : ComponentActivity() {
             )
             Spacer(Modifier.height(24.dp))
             Button(
-                onClick = { launcher.launch(EXPORT_SUGGESTED_NAME) },
-                enabled = exportState != ExportState.RUNNING,
+                onClick = { onExportRequested { launcher.launch(EXPORT_SUGGESTED_NAME) } },
+                enabled = canStartExport(),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(stringResource(R.string.unsupported_db_export_button))
@@ -116,6 +136,7 @@ class UnsupportedDatabaseActivity : ComponentActivity() {
             when (exportState) {
                 ExportState.SUCCESS -> StatusText(R.string.unsupported_db_export_success)
                 ExportState.FAILED -> StatusText(R.string.unsupported_db_export_failed)
+                ExportState.AUTH_DENIED -> StatusText(R.string.unsupported_db_export_auth_denied)
                 else -> Unit
             }
             Spacer(Modifier.height(12.dp))
@@ -135,6 +156,85 @@ class UnsupportedDatabaseActivity : ComponentActivity() {
             text = stringResource(textRes),
             style = MaterialTheme.typography.bodyMedium
         )
+    }
+
+    /** False while a gate read, a prompt or an export is in flight, so a second tap cannot start another. */
+    private fun canStartExport(): Boolean = when (exportState) {
+        ExportState.CHECKING,
+        ExportState.AUTHENTICATING,
+        ExportState.RUNNING -> false
+        ExportState.IDLE,
+        ExportState.SUCCESS,
+        ExportState.FAILED,
+        ExportState.AUTH_DENIED -> true
+    }
+
+    /**
+     * The export button (S21-c). Decides at the tap, from a fresh bounded read, whether device
+     * authentication must come first; [launchPicker] (the system document picker) runs only when it is
+     * not required or the user authenticated. Nothing is written to any document before that.
+     */
+    private fun onExportRequested(launchPicker: () -> Unit) {
+        if (!canStartExport()) return
+        exportState = ExportState.CHECKING
+        lifecycleScope.launch {
+            try {
+                val testGate = exportAuthRequiredForTest
+                val authRequired = if (testGate != null) {
+                    testGate(applicationContext)
+                } else {
+                    UnsupportedDatabaseExportAuth.isAuthRequired(applicationContext)
+                }
+                if (authRequired) {
+                    beginExportAuthentication(launchPicker)
+                } else {
+                    exportState = ExportState.IDLE
+                    launchPicker()
+                }
+            } finally {
+                // A cancelled (or failed) gate read must not leave the button disabled. This only resets the
+                // state; it never opens the picker.
+                if (exportState == ExportState.CHECKING) exportState = ExportState.IDLE
+            }
+        }
+    }
+
+    override fun onStop() {
+        // The port contract: the caller closes an attempt it no longer waits for. cancel() delivers the
+        // outcome synchronously, which ends the attempt as AUTH_DENIED with no picker.
+        if (exportState == ExportState.AUTHENTICATING) {
+            exportAuthenticator?.cancel(exportAuthAttemptId)
+            // Fail closed if no outcome was delivered (a stale id or an adapter that already closed it).
+            if (exportState == ExportState.AUTHENTICATING) exportState = ExportState.AUTH_DENIED
+        }
+        super.onStop()
+    }
+
+    private fun beginExportAuthentication(launchPicker: () -> Unit) {
+        val attemptId = ++exportAuthAttemptId
+        // Recorded before the launch: the prompt can report back before authenticate returns.
+        exportState = ExportState.AUTHENTICATING
+        val launch = exportAuthenticator?.authenticate(
+            attemptId,
+            AuthPromptCopy.UNLOCK,
+            DeviceAuthCallback { id, outcome -> onExportAuthOutcome(id, outcome, launchPicker) }
+        ) ?: AuthLaunch.PROMPT_UNAVAILABLE
+        if (launch != AuthLaunch.LAUNCHED && exportState == ExportState.AUTHENTICATING) {
+            // Nothing was launched (below API 30, host unavailable, prompt could not be built): fail closed.
+            exportState = ExportState.AUTH_DENIED
+        }
+    }
+
+    private fun onExportAuthOutcome(attemptId: Long, outcome: DeviceAuthOutcome, launchPicker: () -> Unit) {
+        // A late or repeated callback of an earlier attempt can never start an export.
+        if (attemptId != exportAuthAttemptId || exportState != ExportState.AUTHENTICATING) return
+        if (outcome == DeviceAuthOutcome.Succeeded && !isFinishing && !isDestroyed) {
+            exportState = ExportState.IDLE
+            launchPicker()
+        } else {
+            // Cancelled, locked out, no credential, failed or unknown: no export, one constant message.
+            exportState = ExportState.AUTH_DENIED
+        }
     }
 
     private fun startExport(uri: Uri) {
@@ -194,6 +294,20 @@ class UnsupportedDatabaseActivity : ComponentActivity() {
         internal const val CODE_EXPORT_COMPLETED = "UNSUPPORTED_DB_EXPORT_COMPLETED"
         internal const val CODE_EXPORT_FAILED = "UNSUPPORTED_DB_EXPORT_FAILED"
         internal const val CODE_CLEANUP_FAILED = "UNSUPPORTED_DB_EXPORT_CLEANUP_FAILED"
+
+        /**
+         * Test seam: replaces the export auth gate read (`UnsupportedDatabaseExportAuth.isAuthRequired`) when
+         * non-null. Always null in production; a test sets it and resets it to null afterwards.
+         */
+        @VisibleForTesting
+        internal var exportAuthRequiredForTest: (suspend (Context) -> Boolean)? = null
+
+        /**
+         * Test seam: replaces the system-prompt authenticator built in `onCreate` when non-null. Always null
+         * in production; a test sets it and resets it to null afterwards.
+         */
+        @VisibleForTesting
+        internal var authenticatorFactoryForTest: ((FragmentActivity) -> DeviceAuthenticator)? = null
 
         private const val EXPORT_MIME_TYPE = "application/zip"
         private const val EXPORT_SUGGESTED_NAME = "cost-aggregator-database-backup.zip"
