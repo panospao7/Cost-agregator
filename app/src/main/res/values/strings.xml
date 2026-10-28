@@ -91,7 +91,7 @@
     <string name="day_sunday">Sunday</string>
     
     <!-- Legacy Names for Backward Compatibility -->
-    <string name="amount_label">Amount (€)</string>
+    <string name="amount_label">Amount</string>
     <string name="amount_placeholder">0.00</string>
     <string name="merchant_label">Merchant / Place</string>
     <string name="merchant_placeholder">e.g. Sklavenitis, Starbucks...</string>
@@ -1947,8 +1947,13 @@
     <string name="add_expense_error_currency_loading">Loading currency settings…</string>
     <string name="add_expense_error_merchant_required">Merchant name is required</string>
     <string name="add_expense_error_amount_invalid">Enter a valid amount</string>
-    <string name="add_expense_error_amount_too_large">Amount is too large</string>
     <string name="add_expense_error_date_future">Date cannot be in the future</string>
+    <!-- manual-entry-currency B1 (ux-flows section 14): per-currency amount and save-refusal messages -->
+    <string name="mec_block_home_unresolved">Couldn\'t read your home currency. Nothing was saved. Try again.</string>
+    <string name="mec_amount_no_decimals">%1$s amounts have no decimals. Enter a whole number.</string>
+    <string name="mec_amount_max_decimals">%1$s amounts allow up to %2$d decimals.</string>
+    <string name="mec_amount_too_large">Amount is too large. Maximum is %1$s.</string>
+    <string name="mec_repeat_home_only">Repeat is only available in your home currency (%1$s).</string>
     <!-- nl-quick-add slice F: quick add line, summary, per-field flags (never echo the typed line) -->
     <string name="quick_add_label">Quick add</string>
     <string name="quick_add_placeholder">e.g. coffee 3.50 yesterday</string>
@@ -1991,7 +1996,7 @@
     <string name="quick_add_flag_payment_conflict">Both card and cash found. Choose one.</string>
     <string name="quick_add_flag_category_ambiguous">More than one category matched. Choose one.</string>
     <string name="add_expense_category_auto_hint">No category chosen. One is assigned automatically when you save.</string>
-    <string name="add_expense_amount_cd">Amount field, current value %1$s Euro</string>
+    <string name="add_expense_amount_cd">Amount field, current value %1$s %2$s</string>
     <string name="add_expense_payment_method_cd_format">%1$s payment method, %2$s</string>
     <string name="add_expense_category_cd_format">%1$s category, %2$s</string>
     <string name="add_expense_category_icon_cd">%1$s icon</string>

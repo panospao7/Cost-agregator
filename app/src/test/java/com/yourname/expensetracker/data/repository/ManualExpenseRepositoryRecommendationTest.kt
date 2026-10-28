@@ -148,7 +148,8 @@ class ManualExpenseRepositoryRecommendationTest {
             merchant = "Cafe",
             amount = 4.5,
             currency = "EUR",
-            categoryId = 1L
+            categoryId = 1L,
+            entryZone = java.time.ZoneOffset.UTC
         )
         testDispatcher.scheduler.advanceUntilIdle()
     }

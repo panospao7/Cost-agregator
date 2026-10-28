@@ -28,6 +28,8 @@ import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
 import com.yourname.expensetracker.domain.sideeffect.PostCommitActionBatch
 import com.yourname.expensetracker.domain.sideeffect.PostCommitActionRunner
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
+import com.yourname.expensetracker.domain.transaction.RateRefusalCodes
+import com.yourname.expensetracker.domain.transaction.UserPresentRateRequirement
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -123,7 +125,8 @@ class ManualExpenseRepository @Inject constructor(
         longitude: Double? = null,
         locationSource: String? = null,
         recurrenceFrequency: RecurrenceFrequency? = null,
-        recurringNote: String? = null
+        recurringNote: String? = null,
+        entryZone: java.time.ZoneId
     ): Result<Long> {
         writeBarrier.checkWritesAllowed("ManualExpenseRepository.addManualExpense")
         // ── Guard validation (kept for early return with localized messages) ──
@@ -178,7 +181,10 @@ class ManualExpenseRepository @Inject constructor(
             myShareAmount = myShareAmount,
             latitude = latitude,
             longitude = longitude,
-            locationSource = locationSource
+            locationSource = locationSource,
+            // MEC setter #1: every manual save is a user-present (flagged) create. The entry zone
+            // is the zone captured when the sheet opened; it is never persisted or logged.
+            userPresentRate = UserPresentRateRequirement(entryZone)
         )
 
         // ── Delegate to coordinator (DEFER side effects until outer tx commits) ─
@@ -231,10 +237,20 @@ class ManualExpenseRepository @Inject constructor(
                 }
 
                 is CreateExpenseResult.ValidationFailed -> {
+                    // MEC: a flagged refusal surfaces only as a bounded code constant (never the
+                    // joined, possibly payload-bearing message). Precedence: typed rate refusal,
+                    // then amount-precision codes, then the existing joined message.
+                    val refusal = coordinatorResult.rateRefusal
+                    val errorMessage = when {
+                        refusal != null -> RateRefusalCodes.codeFor(refusal.reason)
+                        RateRefusalCodes.AMOUNT_PRECISION_EXCEEDED in coordinatorResult.errors ->
+                            RateRefusalCodes.AMOUNT_PRECISION_EXCEEDED
+                        RateRefusalCodes.AMOUNT_DIGITS_UNAVAILABLE in coordinatorResult.errors ->
+                            RateRefusalCodes.AMOUNT_DIGITS_UNAVAILABLE
+                        else -> coordinatorResult.errors.joinToString("; ")
+                    }
                     return@withTransaction ManualExpenseTxOutcome(
-                        Result.Error(
-                            message = coordinatorResult.errors.joinToString("; ")
-                        ),
+                        Result.Error(message = errorMessage),
                         PostCommitActionBatch.empty("manual_vf")
                     )
                 }

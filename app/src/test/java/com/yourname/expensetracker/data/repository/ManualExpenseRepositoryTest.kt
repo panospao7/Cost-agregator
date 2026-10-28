@@ -22,6 +22,10 @@ import com.yourname.expensetracker.domain.sideeffect.PostCommitActionRunner
 import com.yourname.expensetracker.domain.sideeffect.MutationResult
 import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
 import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
+import com.yourname.expensetracker.domain.transaction.RateRefusal
+import com.yourname.expensetracker.domain.transaction.RateRefusalCodes
+import com.yourname.expensetracker.domain.transaction.RateRefusalReason
+import com.yourname.expensetracker.domain.transaction.UserPresentRateRequirement
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
@@ -36,17 +40,19 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import java.time.ZoneId
+import java.time.ZoneOffset
 import kotlin.time.Duration.Companion.seconds
 
 /**
  * MEC A2 (INV-14, INV-16, AE-26, G2-8): the manual-entry repository takes its amount cap from
  * [com.yourname.expensetracker.domain.currency.CurrencyAmountPolicy], rejects recurrence for a
- * currency that differs from the resolved home before the coordinator is called, and sets no
- * user-present rate flag (the setter arrives with B1).
+ * currency that differs from the resolved home before the coordinator is called. B1 (setter #1):
+ * every save carries the user-present rate flag with the caller's entry zone, and a flagged
+ * refusal surfaces only as a bounded code.
  */
 class ManualExpenseRepositoryTest {
 
@@ -105,17 +111,21 @@ class ManualExpenseRepositoryTest {
         unmockkStatic("androidx.room.RoomDatabaseKt")
     }
 
+    private val athens: ZoneId = ZoneId.of("Europe/Athens")
+
     private suspend fun add(
         amount: Double,
         currency: String,
-        recurrence: RecurrenceFrequency? = null
+        recurrence: RecurrenceFrequency? = null,
+        zone: ZoneId = athens
     ): Result<Long> = repository.addManualExpense(
         merchant = "Cafe",
         amount = amount,
         currency = currency,
         categoryId = 1L,
         date = now,
-        recurrenceFrequency = recurrence
+        recurrenceFrequency = recurrence,
+        entryZone = zone
     )
 
     // ── INV-16 / AE-26 ───────────────────────────────────────────────────────
@@ -187,12 +197,110 @@ class ManualExpenseRepositoryTest {
         coVerify(exactly = 0) { coordinator.createExpenseDbOnlyV2(any()) }
     }
 
-    // ── G2-8: no setter in A2 ────────────────────────────────────────────────
+    // ── B1: setter #1 (inverted from the A2 "no flag" pin) ───────────────────
 
     @Test
-    fun `the request sent to the coordinator carries no user-present rate flag`() = runTest(timeout = 60.seconds) {
-        add(20.0, "USD")
+    fun `B1 the request sent to the coordinator carries the user-present rate flag with the passed zone`() =
+        runTest(timeout = 60.seconds) {
+            val zone = ZoneId.of("Pacific/Auckland")
 
-        assertNull(requestSlot.captured.userPresentRate)
+            add(20.0, "USD", zone = zone)
+
+            assertEquals(UserPresentRateRequirement(zone), requestSlot.captured.userPresentRate)
+        }
+
+    @Test
+    fun `B1 the flag follows each call's own zone`() = runTest(timeout = 60.seconds) {
+        add(20.0, "EUR", zone = ZoneId.of("America/Los_Angeles"))
+        assertEquals(
+            UserPresentRateRequirement(ZoneId.of("America/Los_Angeles")),
+            requestSlot.captured.userPresentRate
+        )
+
+        add(20.0, "EUR", zone = ZoneOffset.UTC)
+        assertEquals(UserPresentRateRequirement(ZoneOffset.UTC), requestSlot.captured.userPresentRate)
+    }
+
+    // ── B1: typed refusal in ValidationFailed ────────────────────────────────
+
+    @Test
+    fun `B1 a home-unresolved rate refusal returns RATE_NOT_ELIGIBLE_HOME_UNRESOLVED`() =
+        runTest(timeout = 60.seconds) {
+            coEvery { coordinator.createExpenseDbOnlyV2(any()) } returns MutationResult(
+                CreateExpenseResult.ValidationFailed(
+                    errors = listOf("synthetic detail that must not surface"),
+                    rateRefusal = RateRefusal(RateRefusalReason.HOME_CURRENCY_UNRESOLVED)
+                ),
+                PostCommitActionBatch.empty("test")
+            )
+
+            val result = add(20.0, "USD")
+
+            assertTrue("Expected Error, got $result", result is Result.Error)
+            assertEquals(
+                RateRefusalCodes.NOT_ELIGIBLE_HOME_UNRESOLVED,
+                (result as Result.Error).message
+            )
+            assertEquals("RATE_NOT_ELIGIBLE_HOME_UNRESOLVED", result.message)
+        }
+
+    @Test
+    fun `B1 a typed rate refusal wins over amount-precision codes in the same failure`() =
+        runTest(timeout = 60.seconds) {
+            coEvery { coordinator.createExpenseDbOnlyV2(any()) } returns MutationResult(
+                CreateExpenseResult.ValidationFailed(
+                    errors = listOf(RateRefusalCodes.AMOUNT_PRECISION_EXCEEDED),
+                    rateRefusal = RateRefusal(RateRefusalReason.STALE_RATE)
+                ),
+                PostCommitActionBatch.empty("test")
+            )
+
+            val result = add(20.0, "USD")
+
+            assertEquals(RateRefusalCodes.NOT_ELIGIBLE_STALE, (result as Result.Error).message)
+        }
+
+    @Test
+    fun `B1 a flagged precision failure returns AMOUNT_PRECISION_EXCEEDED alone`() =
+        runTest(timeout = 60.seconds) {
+            coEvery { coordinator.createExpenseDbOnlyV2(any()) } returns MutationResult(
+                CreateExpenseResult.ValidationFailed(
+                    errors = listOf("other validation text", RateRefusalCodes.AMOUNT_PRECISION_EXCEEDED)
+                ),
+                PostCommitActionBatch.empty("test")
+            )
+
+            val result = add(12.5, "JPY")
+
+            assertTrue("Expected Error, got $result", result is Result.Error)
+            assertEquals("AMOUNT_PRECISION_EXCEEDED", (result as Result.Error).message)
+        }
+
+    @Test
+    fun `B1 a flagged digits-unavailable failure returns AMOUNT_DIGITS_UNAVAILABLE alone`() =
+        runTest(timeout = 60.seconds) {
+            coEvery { coordinator.createExpenseDbOnlyV2(any()) } returns MutationResult(
+                CreateExpenseResult.ValidationFailed(
+                    errors = listOf("other validation text", RateRefusalCodes.AMOUNT_DIGITS_UNAVAILABLE)
+                ),
+                PostCommitActionBatch.empty("test")
+            )
+
+            val result = add(12.5, "USD")
+
+            assertEquals("AMOUNT_DIGITS_UNAVAILABLE", (result as Result.Error).message)
+        }
+
+    @Test
+    fun `B1 non-MEC validation failures keep the joined message`() = runTest(timeout = 60.seconds) {
+        coEvery { coordinator.createExpenseDbOnlyV2(any()) } returns MutationResult(
+            CreateExpenseResult.ValidationFailed(errors = listOf("first problem", "second problem")),
+            PostCommitActionBatch.empty("test")
+        )
+
+        val result = add(20.0, "USD")
+
+        assertTrue("Expected Error, got $result", result is Result.Error)
+        assertEquals("first problem; second problem", (result as Result.Error).message)
     }
 }

@@ -211,7 +211,7 @@ class AddExpenseViewModelTest : ViewModelTestUtils() {
         coEvery {
             manualExpenseRepository.addManualExpense(
                 any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
-                any(), any(), any(), any(), any(), any(), any(), any(), any(), any()
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()
             )
         } returns Result.Success(1L)
     }
@@ -239,7 +239,8 @@ class AddExpenseViewModelTest : ViewModelTestUtils() {
                 longitude = any(),
                 locationSource = any(),
                 recurrenceFrequency = any(),
-                recurringNote = any()
+                recurringNote = any(),
+                entryZone = any()
             )
         }
     }
@@ -302,7 +303,7 @@ class AddExpenseViewModelTest : ViewModelTestUtils() {
         coVerify(exactly = 0) {
             manualExpenseRepository.addManualExpense(
                 any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
-                any(), any(), any(), any(), any(), any(), any(), any(), any(), any()
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()
             )
         }
     }
@@ -374,7 +375,7 @@ class AddExpenseViewModelTest : ViewModelTestUtils() {
         coVerify(exactly = 0) {
             manualExpenseRepository.addManualExpense(
                 any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
-                any(), any(), any(), any(), any(), any(), any(), any(), any(), any()
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()
             )
         }
     }
@@ -456,7 +457,8 @@ class AddExpenseViewModelTest : ViewModelTestUtils() {
                 longitude = any(),
                 locationSource = any(),
                 recurrenceFrequency = any(),
-                recurringNote = any()
+                recurringNote = any(),
+                entryZone = any()
             )
         }
     }
@@ -487,7 +489,7 @@ class AddExpenseViewModelTest : ViewModelTestUtils() {
         coEvery {
             manualExpenseRepository.addManualExpense(
                 any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
-                any(), any(), any(), any(), any(), any(), any(), any(), any(), any()
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()
             )
         } throws t
     }
@@ -496,7 +498,7 @@ class AddExpenseViewModelTest : ViewModelTestUtils() {
         coEvery {
             manualExpenseRepository.addManualExpense(
                 any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
-                any(), any(), any(), any(), any(), any(), any(), any(), any(), any()
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()
             )
         } returns result
     }
@@ -638,8 +640,9 @@ class AddExpenseViewModelTest : ViewModelTestUtils() {
         viewModel.save()
         testDispatcher.scheduler.advanceUntilIdle()
 
+        // B1: the cap comes from CurrencyAmountPolicy (EUR 1,000,000), formatted in the default locale (US pinned).
         assertEquals(
-            UiText.StringResource(R.string.add_expense_error_amount_too_large),
+            UiText.StringResource(R.string.mec_amount_too_large, listOf("1,000,000")),
             viewModel.state.value.amountError
         )
         verifyNoManualExpenseSaved()
@@ -742,7 +745,7 @@ class AddExpenseViewModelTest : ViewModelTestUtils() {
         coEvery {
             manualExpenseRepository.addManualExpense(
                 any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
-                any(), any(), any(), any(), any(), any(), any(), any(), any(), any()
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()
             )
         } coAnswers {
             delay(10_000)
@@ -780,7 +783,8 @@ class AddExpenseViewModelTest : ViewModelTestUtils() {
                 longitude = any(),
                 locationSource = any(),
                 recurrenceFrequency = any(),
-                recurringNote = any()
+                recurringNote = any(),
+                entryZone = any()
             )
         }
     }
@@ -1373,7 +1377,7 @@ class AddExpenseViewModelTest : ViewModelTestUtils() {
         coEvery {
             manualExpenseRepository.addManualExpense(
                 any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
-                any(), any(), any(), any(), any(), any(), any(), any(), any(), any()
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()
             )
         } returnsMany listOf<Result<Long>>(Result.Success(1L), Result.Duplicate)
         fillAndSettle("καφές 3,50")
@@ -1706,5 +1710,538 @@ class AddExpenseViewModelTest : ViewModelTestUtils() {
         assertNull(st.selectedCategoryId)
         assertEquals("groceries", st.merchant)
         assertEquals("5.00", st.amount)
+    }
+
+    // =====================================================================================
+    // MEC slice B1: per-currency precision/cap on save (INV-12..14), no rounding, entry zone
+    // captured at sheet open (AE-34), typed refusal mapping (AE-14, AE-19, S4).
+    // =====================================================================================
+
+    private val zoneSlot = io.mockk.slot<ZoneId>()
+
+    private fun setDeviceZone(id: String) = TimeZone.setDefault(TimeZone.getTimeZone(id))
+
+    /** Replaces the VM with one whose home currency is [code] and waits for the load. */
+    private fun useHome(code: String) {
+        val repo = mockk<CurrencySettingsRepository>(relaxed = true)
+        every { repo.homeCurrency() } returns flowOf(code)
+        viewModel = createViewModel(repo)
+        testDispatcher.scheduler.advanceUntilIdle()
+        assertEquals(code, viewModel.state.value.homeCurrency)
+    }
+
+    private fun stubAddManualExpenseCapturingZone() {
+        coEvery {
+            manualExpenseRepository.addManualExpense(
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                entryZone = capture(zoneSlot)
+            )
+        } returns Result.Success(1L)
+    }
+
+    /** Fresh form (reset), optionally opens the sheet (captures the zone), types and saves. */
+    private fun typeAndSave(typed: String, openSheet: Boolean = false) {
+        testDispatcher.scheduler.advanceUntilIdle()
+        viewModel.reset()
+        if (openSheet) viewModel.onSheetOpened()
+        viewModel.updateMerchant("Shop")
+        viewModel.updateAmount(typed)
+        testDispatcher.scheduler.advanceUntilIdle()
+        loggedLines.clear()
+        viewModel.save()
+        testDispatcher.scheduler.advanceUntilIdle()
+    }
+
+    private fun noDecimalsText(code: String) = UiText.StringResource(R.string.mec_amount_no_decimals, listOf(code))
+
+    @Test
+    fun `B1 save passes the parsed amount unrounded with the session entry zone`() {
+        useUs()
+        setDeviceZone("Pacific/Auckland")
+        stubAddManualExpenseCapturingZone()
+
+        typeAndSave("19.99", openSheet = true)
+
+        assertEquals(SaveResult.Success, viewModel.state.value.saveResult)
+        verifySavedAmount(19.99)
+        assertEquals(ZoneId.of("Pacific/Auckland"), zoneSlot.captured)
+    }
+
+    // ---- AE-15 / INV-12 / INV-13: whole-unit currencies ----
+
+    @Test
+    fun `B1 AE-15 JPY home 1500,50 shows the no-decimals error keeps the text and saves nothing`() {
+        useGreek()
+        useHome("JPY")
+        stubAddManualExpense()
+
+        typeAndSave("1500,50")
+
+        val state = viewModel.state.value
+        assertEquals(noDecimalsText("JPY"), state.amountError)
+        assertEquals("1500,50", state.amount)
+        assertNull(state.saveResult)
+        assertFalse(state.isSaving)
+        verifyNoManualExpenseSaved()
+    }
+
+    @Test
+    fun `B1 AE-15 JPY home 1500 saves 1500`() {
+        useUs()
+        useHome("JPY")
+        stubAddManualExpense()
+
+        typeAndSave("1500")
+
+        assertEquals(SaveResult.Success, viewModel.state.value.saveResult)
+        assertNull(viewModel.state.value.amountError)
+        verifySavedAmount(1500.0)
+    }
+
+    @Test
+    fun `B1 AE-15 JPY home 1500_00 trailing zeros count as whole and save 1500`() {
+        useUs()
+        useHome("JPY")
+        stubAddManualExpense()
+
+        typeAndSave("1500.00")
+
+        assertEquals(SaveResult.Success, viewModel.state.value.saveResult)
+        verifySavedAmount(1500.0)
+    }
+
+    @Test
+    fun `B1 JPY home 12_50 is rejected inline`() {
+        useUs()
+        useHome("JPY")
+        stubAddManualExpense()
+
+        typeAndSave("12.50")
+
+        assertEquals(noDecimalsText("JPY"), viewModel.state.value.amountError)
+        assertEquals("12.50", viewModel.state.value.amount)
+        verifyNoManualExpenseSaved()
+    }
+
+    @Test
+    fun `B1 EUR home with two decimals is not a precision error`() {
+        useUs()
+        stubAddManualExpense()
+
+        typeAndSave("12.50")
+
+        assertEquals(SaveResult.Success, viewModel.state.value.saveResult)
+        assertNull(viewModel.state.value.amountError)
+        verifySavedAmount(12.50)
+    }
+
+    @Test
+    fun `B1 G2-9 en_US typed 12,345 is truncated to 12,34 and saved exactly`() {
+        useUs()
+        stubAddManualExpense()
+        testDispatcher.scheduler.advanceUntilIdle()
+        viewModel.reset()
+        viewModel.updateMerchant("Shop")
+        viewModel.updateAmount("12.345")
+        testDispatcher.scheduler.advanceUntilIdle()
+        assertEquals("12.34", viewModel.state.value.amount)
+
+        viewModel.save()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(SaveResult.Success, viewModel.state.value.saveResult)
+        verifySavedAmount(12.34)
+    }
+
+    // ---- INV-14: per-currency cap ----
+
+    @Test
+    fun `B1 KRW home 2,000,000 passes the per-currency cap`() {
+        useUs()
+        useHome("KRW")
+        stubAddManualExpense()
+
+        typeAndSave("2000000")
+
+        assertEquals(SaveResult.Success, viewModel.state.value.saveResult)
+        assertNull(viewModel.state.value.amountError)
+        verifySavedAmount(2_000_000.0)
+    }
+
+    @Test
+    fun `B1 KRW home above one billion is too large with the formatted cap`() {
+        useUs()
+        useHome("KRW")
+        stubAddManualExpense()
+
+        typeAndSave("1000000001")
+
+        assertEquals(
+            UiText.StringResource(R.string.mec_amount_too_large, listOf("1,000,000,000")),
+            viewModel.state.value.amountError
+        )
+        verifyNoManualExpenseSaved()
+    }
+
+    @Test
+    fun `B1 JPY home above 100,000,000 is too large and exactly the cap is accepted`() {
+        useUs()
+        useHome("JPY")
+        stubAddManualExpense()
+
+        typeAndSave("100000001")
+        assertEquals(
+            UiText.StringResource(R.string.mec_amount_too_large, listOf("100,000,000")),
+            viewModel.state.value.amountError
+        )
+        verifyNoManualExpenseSaved()
+
+        typeAndSave("100000000")
+        assertEquals(SaveResult.Success, viewModel.state.value.saveResult)
+        verifySavedAmount(100_000_000.0)
+    }
+
+    @Test
+    fun `B1 EUR home cap boundary - exactly 1,000,000 saves and one cent above is too large`() {
+        useUs()
+        stubAddManualExpense()
+
+        typeAndSave("1000000.01")
+        assertEquals(
+            UiText.StringResource(R.string.mec_amount_too_large, listOf("1,000,000")),
+            viewModel.state.value.amountError
+        )
+        verifyNoManualExpenseSaved()
+
+        typeAndSave("1000000.00")
+        assertEquals(SaveResult.Success, viewModel.state.value.saveResult)
+        verifySavedAmount(1_000_000.0)
+    }
+
+    // ---- AE-34: entry zone captured at sheet open ----
+
+    @Test
+    fun `B1 AE-34 the zone captured at sheet open survives a device zone change`() {
+        useUs()
+        stubAddManualExpenseCapturingZone()
+        setDeviceZone("Pacific/Auckland")
+        testDispatcher.scheduler.advanceUntilIdle()
+        viewModel.reset()
+        viewModel.onSheetOpened()
+        viewModel.updateMerchant("Shop")
+        viewModel.updateAmount("10.00")
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        setDeviceZone("America/Los_Angeles")
+        viewModel.save()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(SaveResult.Success, viewModel.state.value.saveResult)
+        assertEquals(ZoneId.of("Pacific/Auckland"), zoneSlot.captured)
+    }
+
+    @Test
+    fun `B1 AE-34 without a sheet open the save falls back to the device zone at save time`() {
+        useUs()
+        stubAddManualExpenseCapturingZone()
+        setDeviceZone("Asia/Tokyo")
+
+        typeAndSave("10.00", openSheet = false)
+
+        assertEquals(SaveResult.Success, viewModel.state.value.saveResult)
+        assertEquals(ZoneId.of("Asia/Tokyo"), zoneSlot.captured)
+    }
+
+    @Test
+    fun `B1 reset then reopen captures the new zone`() {
+        useUs()
+        stubAddManualExpenseCapturingZone()
+        setDeviceZone("Pacific/Auckland")
+        testDispatcher.scheduler.advanceUntilIdle()
+        viewModel.reset()
+        viewModel.onSheetOpened()
+
+        setDeviceZone("Asia/Tokyo")
+        viewModel.reset()
+        viewModel.onSheetOpened()
+        viewModel.updateMerchant("Shop")
+        viewModel.updateAmount("10.00")
+        testDispatcher.scheduler.advanceUntilIdle()
+        setDeviceZone("America/Los_Angeles")
+        viewModel.save()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(ZoneId.of("Asia/Tokyo"), zoneSlot.captured)
+    }
+
+    @Test
+    fun `B1 reset clears the captured zone so a stale zone is never reused`() {
+        useUs()
+        stubAddManualExpenseCapturingZone()
+        setDeviceZone("Pacific/Auckland")
+        testDispatcher.scheduler.advanceUntilIdle()
+        viewModel.reset()
+        viewModel.onSheetOpened()
+
+        setDeviceZone("America/Los_Angeles")
+        typeAndSave("10.00", openSheet = false) // typeAndSave resets first
+
+        assertEquals(ZoneId.of("America/Los_Angeles"), zoneSlot.captured)
+    }
+
+    @Test
+    fun `B1 F1 a second onSheetOpened in the same session keeps the first zone`() {
+        useUs()
+        stubAddManualExpenseCapturingZone()
+        setDeviceZone("Pacific/Auckland")
+        testDispatcher.scheduler.advanceUntilIdle()
+        viewModel.reset()
+        viewModel.onSheetOpened()
+
+        setDeviceZone("Asia/Tokyo")
+        viewModel.onSheetOpened() // e.g. recomposition or rotation re-runs the effect
+        viewModel.updateMerchant("Shop")
+        viewModel.updateAmount("10.00")
+        testDispatcher.scheduler.advanceUntilIdle()
+        viewModel.save()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(SaveResult.Success, viewModel.state.value.saveResult)
+        assertEquals(ZoneId.of("Pacific/Auckland"), zoneSlot.captured)
+    }
+
+    @Test
+    fun `B1 F1 onSheetLeft then onSheetOpened captures the new zone`() {
+        useUs()
+        stubAddManualExpenseCapturingZone()
+        setDeviceZone("Pacific/Auckland")
+        testDispatcher.scheduler.advanceUntilIdle()
+        viewModel.reset()
+        viewModel.onSheetOpened()
+
+        viewModel.onSheetLeft()
+        setDeviceZone("Asia/Tokyo")
+        viewModel.onSheetOpened()
+        viewModel.updateMerchant("Shop")
+        viewModel.updateAmount("10.00")
+        testDispatcher.scheduler.advanceUntilIdle()
+        viewModel.save()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(SaveResult.Success, viewModel.state.value.saveResult)
+        assertEquals(ZoneId.of("Asia/Tokyo"), zoneSlot.captured)
+    }
+
+    @Test
+    fun `B1 F1 onSheetLeft without reopen falls back to the device zone at save`() {
+        useUs()
+        stubAddManualExpenseCapturingZone()
+        setDeviceZone("Pacific/Auckland")
+        testDispatcher.scheduler.advanceUntilIdle()
+        viewModel.reset()
+        viewModel.onSheetOpened()
+
+        viewModel.onSheetLeft()
+        setDeviceZone("Asia/Tokyo")
+        viewModel.updateMerchant("Shop")
+        viewModel.updateAmount("10.00")
+        testDispatcher.scheduler.advanceUntilIdle()
+        viewModel.save()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(SaveResult.Success, viewModel.state.value.saveResult)
+        assertEquals(ZoneId.of("Asia/Tokyo"), zoneSlot.captured)
+    }
+
+    // ---- AE-14 / S4 / AE-19: bounded repository codes map to localised resources ----
+
+    @Test
+    fun `B1 AE-14 the home-unresolved refusal maps to mec_block_home_unresolved`() {
+        stubAddManualExpenseReturns(
+            Result.Error(message = com.yourname.expensetracker.domain.transaction.RateRefusalCodes.NOT_ELIGIBLE_HOME_UNRESOLVED)
+        )
+
+        fillValidFormAndSave()
+
+        val expected = UiText.StringResource(R.string.mec_block_home_unresolved)
+        val state = viewModel.state.value
+        assertEquals(SaveResult.Error(expected), state.saveResult)
+        assertEquals(expected, state.mutation.error)
+        assertFalse(state.isSaving)
+        assertTrue(loggedLines.isEmpty())
+    }
+
+    @Test
+    fun `B1 S4 the recurring foreign-currency code maps to mec_repeat_home_only with the home code`() {
+        useUs()
+        useHome("JPY")
+        stubAddManualExpenseReturns(
+            Result.Error(message = ManualExpenseRepository.RECURRING_FOREIGN_CURRENCY_ERROR_CODE)
+        )
+
+        typeAndSave("1500")
+
+        assertEquals(
+            SaveResult.Error(UiText.StringResource(R.string.mec_repeat_home_only, listOf("JPY"))),
+            viewModel.state.value.saveResult
+        )
+        assertFalse(viewModel.state.value.isSaving)
+    }
+
+    @Test
+    fun `B1 AE-19 the coordinator AMOUNT_PRECISION_EXCEEDED maps to the no-decimals resource for a whole-unit home`() {
+        useUs()
+        useHome("JPY")
+        stubAddManualExpenseReturns(
+            Result.Error(message = com.yourname.expensetracker.domain.transaction.RateRefusalCodes.AMOUNT_PRECISION_EXCEEDED)
+        )
+
+        typeAndSave("1500")
+
+        assertEquals(SaveResult.Error(noDecimalsText("JPY")), viewModel.state.value.saveResult)
+        assertEquals(noDecimalsText("JPY"), viewModel.state.value.mutation.error)
+    }
+
+    @Test
+    fun `B1 AE-19 the coordinator AMOUNT_PRECISION_EXCEEDED maps to the max-decimals resource for a two-digit home`() {
+        stubAddManualExpenseReturns(
+            Result.Error(message = com.yourname.expensetracker.domain.transaction.RateRefusalCodes.AMOUNT_PRECISION_EXCEEDED)
+        )
+
+        fillValidFormAndSave()
+
+        assertEquals(
+            SaveResult.Error(UiText.StringResource(R.string.mec_amount_max_decimals, listOf("EUR", 2))),
+            viewModel.state.value.saveResult
+        )
+    }
+
+    @Test
+    fun `B1 AE-19 AMOUNT_PRECISION_EXCEEDED with unavailable digits falls back to save-failed`() {
+        useUs()
+        useHome("12") // not a parsable currency code: digits unavailable
+        stubAddManualExpenseReturns(
+            Result.Error(message = com.yourname.expensetracker.domain.transaction.RateRefusalCodes.AMOUNT_PRECISION_EXCEEDED)
+        )
+
+        typeAndSave("10.00")
+
+        assertEquals(SaveResult.Error(saveFailedText), viewModel.state.value.saveResult)
+    }
+
+    @Test
+    fun `B1 any other repository code or text maps to save-failed and is never shown`() {
+        for (message in listOf(
+            com.yourname.expensetracker.domain.transaction.RateRefusalCodes.AMOUNT_DIGITS_UNAVAILABLE,
+            com.yourname.expensetracker.domain.transaction.RateRefusalCodes.NOT_ELIGIBLE_STALE,
+            "first problem; second problem Pacific/Auckland"
+        )) {
+            stubAddManualExpenseReturns(Result.Error(message = message))
+
+            fillValidFormAndSave()
+
+            assertEquals(message, SaveResult.Error(saveFailedText), viewModel.state.value.saveResult)
+            assertFalse(message, viewModel.state.value.isSaving)
+        }
+    }
+
+    // ---- AE-15 through quick-add Fill ----
+
+    @Test
+    fun `B1 Fill with a JPY home and a fractional amount is rejected at save`() {
+        beginFill()
+        useHome("JPY")
+        categoriesJob?.cancel()
+        categoriesJob = CoroutineScope(testDispatcher).launch { viewModel.categories.collect { } }
+        stubAddManualExpense()
+
+        fillAndSettle("coffee 3,50")
+        assertEquals("3.50", st.amount)
+        loggedLines.clear()
+
+        viewModel.save()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(noDecimalsText("JPY"), st.amountError)
+        assertEquals("3.50", st.amount)
+        assertNull(st.saveResult)
+        verifyNoManualExpenseSaved()
+        assertTrue(loggedLines.isEmpty())
+    }
+
+    @Test
+    fun `B1 Fill with a JPY home and a whole amount saves in the home currency`() {
+        beginFill()
+        useHome("JPY")
+        categoriesJob?.cancel()
+        categoriesJob = CoroutineScope(testDispatcher).launch { viewModel.categories.collect { } }
+        stubAddManualExpense()
+
+        fillAndSettle("coffee 1500")
+        viewModel.save()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(SaveResult.Success, st.saveResult)
+        verifySavedAmount(1500.0)
+    }
+
+    // ---- INV-13 / AE-33: precision and cap errors, zone and amount never logged ----
+
+    @Test
+    fun `B1 precision and cap errors log nothing`() {
+        useUs()
+        useHome("JPY")
+        stubAddManualExpense()
+
+        typeAndSave("12.50")
+        assertEquals(noDecimalsText("JPY"), viewModel.state.value.amountError)
+        assertTrue(loggedLines.isEmpty())
+
+        typeAndSave("100000001")
+        assertTrue(viewModel.state.value.amountError is UiText.StringResource)
+        assertTrue(loggedLines.isEmpty())
+
+        useHome("EUR")
+        typeAndSave("2000000.00")
+        assertEquals(
+            UiText.StringResource(R.string.mec_amount_too_large, listOf("1,000,000")),
+            viewModel.state.value.amountError
+        )
+        assertTrue(loggedLines.isEmpty())
+    }
+
+    @Test
+    fun `AE-53 AE-33 a failing save with a captured zone logs only the bounded code and no zone or amount`() {
+        useUs()
+        setDeviceZone("Pacific/Auckland")
+        stubAddManualExpenseThrows(IllegalStateException("zone Pacific/Auckland amount 50.00"))
+
+        typeAndSave("50.00", openSheet = true)
+
+        assertEquals(SaveResult.Error(saveFailedText), viewModel.state.value.saveResult)
+        assertEquals(listOf("ADD_EXPENSE_SAVE_FAILED"), loggedLines.map { it.message })
+        assertTrue(loggedLines.all { it.throwable == null })
+        assertTrue(loggedLines.none { it.message.contains("Auckland") || it.message.contains("50") })
+    }
+
+    @Test
+    fun `AE-33 G-1 the captured zone is never part of the observable state`() {
+        useUs()
+        setDeviceZone("Pacific/Auckland")
+        testDispatcher.scheduler.advanceUntilIdle()
+        viewModel.reset()
+        viewModel.onSheetOpened()
+        viewModel.updateMerchant("Shop")
+        viewModel.updateAmount("10.00")
+
+        val rendered = viewModel.state.value.toString()
+        assertFalse(rendered.contains("Auckland"))
+        for (field in AddExpenseState::class.java.declaredFields) {
+            assertFalse(
+                "state field ${field.name} must not hold a zone",
+                ZoneId::class.java.isAssignableFrom(field.type) || TimeZone::class.java.isAssignableFrom(field.type)
+            )
+        }
     }
 }

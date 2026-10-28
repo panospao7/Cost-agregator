@@ -163,3 +163,27 @@ Next: loan-installments S1 in this lane (after the S0 D-10/D-12/D-13/D-20 discov
 ## 2026-10-28: Q1 approved (owner-approvals 81a)
 - The 3 enabled-path parseDeepLink tests are retired from DeepLinkParserTest.kt and restated as S13-a acceptance examples in loan-installments-handoff.md.
 - The merge is now compile-eligible. The validation ladder from mec-merge-ai-evolution-plan.md is queued serially. Then reviewer-strict, then the merge commit and a push of feature/manual-entry-currency.
+
+## 2026-10-28: catch-up merge COMMITTED 59275eac and pushed (owner-approvals 82)
+- All validation PASS; the reviewer-strict conditions are applied; run IDs are in the commit message.
+- Next (MEC lane, in order):
+  1. S4: the AddExpenseViewModel.mapSaveError RECURRING_FOREIGN_CURRENCY_ERROR_CODE branch (mec_ string, es/el DRAFT).
+  2. MEC B1/B2: the currency selector, plus the quick-add selected-currency follow-up (owner-approvals 80c).
+  3. MEC C.
+- Loan: S11 and S13. S13-a must use the acceptance examples (a)-(d) and clear the BLOCKING INV-1 smallest/largest item first.
+
+## 2026-10-28: B0′ + B1 DONE (owner-approvals 83-86)
+- B0′ (RF-2 refuted; picker seeds from the current date) and B1 (home-only flagged save; per-currency precision and cap; no rounding; S4 mapping; entry zone F1 b′).
+- Validation, all PASS:
+  - targeted vr-20261028-180859-c32b9c14;
+  - runtime-ui vr-20261028-181446-a4a72908;
+  - data vr-20261028-181732-22952e85;
+  - architecture-contracts vr-20261028-182219-5040aef7;
+  - lint vr-20261028-182305-48ffc9f6;
+  - static-guards vr-20261028-182910-b8cc3b6b;
+  - app-check vr-20261028-184628-a9f72d80.
+- Gates: privacy ACCEPT; architecture ACCEPT-WITH-CONDITIONS (fixed); reviewer-strict ACCEPT-WITH-CONDITIONS.
+- B2 REQUIRED TEST (reviewer-strict ISSUE-1): a Robolectric Compose test of the sheet's F1 wiring. The zone is cleared when the sheet leaves composition and kept across `ActivityScenario.recreate()`.
+- Follow-ups: F4 capFor; P1 home code for mec_repeat_home_only (B2); P2 bounded code instead of exception.message; D-B1-2 edit precision plus myShareAmount; 3-decimal typing; HomeScreen.kt:1531 stale picker (Home owner).
+- Process (owner-approvals 86): from now on there is one writer per slice (it writes its own tests) and one combined guardian. reviewer-strict runs only at merges and candidates. Sonnet for writers.
+- Next: B2 (currency control, preview, blocked card; quick-add selected currency 80c; the ISSUE-1 test), then C, then loan S11, then Z.

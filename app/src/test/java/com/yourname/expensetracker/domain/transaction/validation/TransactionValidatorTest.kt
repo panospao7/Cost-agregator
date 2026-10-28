@@ -3,6 +3,7 @@ package com.yourname.expensetracker.domain.transaction.validation
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
+import com.yourname.expensetracker.domain.transaction.RateRefusalCodes
 import com.yourname.expensetracker.domain.transaction.UserPresentRateRequirement
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.every
@@ -116,6 +117,17 @@ class TransactionValidatorTest {
         val flaggedErrors = validator.validateCreate(request(10.0, "XYZ", flagged = true))
         assertEquals(listOf("AMOUNT_DIGITS_UNAVAILABLE"), flaggedErrors.map { it.code })
         assertEquals(listOf("AMOUNT_DIGITS_UNAVAILABLE"), flaggedErrors.map { it.message })
+    }
+
+    @Test
+    fun `F5 flagged precision and digits errors carry message equal to the bounded code`() {
+        val precision = validator.validateCreate(request(1500.5, "JPY", flagged = true))
+            .single { it.code == RateRefusalCodes.AMOUNT_PRECISION_EXCEEDED }
+        assertEquals(RateRefusalCodes.AMOUNT_PRECISION_EXCEEDED, precision.message)
+
+        val digits = validator.validateCreate(request(10.0, "XYZ", flagged = true))
+            .single { it.code == RateRefusalCodes.AMOUNT_DIGITS_UNAVAILABLE }
+        assertEquals(RateRefusalCodes.AMOUNT_DIGITS_UNAVAILABLE, digits.message)
     }
 
     @Test

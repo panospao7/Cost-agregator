@@ -137,6 +137,10 @@ class AddExpenseViewModel @Inject constructor(
 
  private var homeCurrencyJob: Job? = null
 
+ // MEC AE-34: the entry zone captured when the sheet opened. A plain field: never in state, never
+ // persisted or logged (QuickAddPrivacy G-1). Cleared by reset().
+ private var sessionZone: java.time.ZoneId? = null
+
  init {
  homeCurrencyJob = viewModelScope.launch {
  currencySettingsRepository.homeCurrency().collect { hc ->
@@ -371,8 +375,11 @@ class AddExpenseViewModel @Inject constructor(
             return
         }
 
-        if (amount > 1_000_000) { // Reasonable upper limit
-            _state.update { it.copy(amountError = UiText.StringResource(R.string.add_expense_error_amount_too_large)) }
+        // MEC INV-12/13/14: per-currency precision and cap, owned by CurrencyAmountPolicy. The amount
+        // is never rounded or truncated; a failing amount keeps its text and nothing is saved.
+        val amountCheckError = checkAmountForCurrency(amount, currency)
+        if (amountCheckError != null) {
+            _state.update { it.copy(amountError = amountCheckError) }
             return
         }
 
@@ -438,10 +445,8 @@ class AddExpenseViewModel @Inject constructor(
             shareAmount = null
         }
 
-        // Normalize to 2 decimal places
-        val normalizedAmount = java.math.BigDecimal(amount)
-            .setScale(2, java.math.RoundingMode.HALF_UP)
-            .toDouble()
+        // MEC AE-34: the zone captured when the sheet opened; falls back to the device zone now.
+        val entryZone = sessionZone ?: java.time.ZoneId.systemDefault()
 
         _state.update { it.copy(isSaving = true, saveResult = null, mutation = com.yourname.expensetracker.ui.model.MutationState.running("save")) }
 
@@ -450,7 +455,7 @@ class AddExpenseViewModel @Inject constructor(
                 // 1. Save the actual transaction
                 val result = manualExpenseRepository.addManualExpense(
                     merchant = merchantTrimmed,
-                    amount = normalizedAmount,
+                    amount = amount,
                     // S5-004: Use currency captured at save-tap, not live _state.value
                     currency = currency,
                     categoryId = currentState.selectedCategoryId,
@@ -472,7 +477,8 @@ class AddExpenseViewModel @Inject constructor(
                     },
                     mySharePercentage = sharePercentage,
                     myShareAmount = shareAmount,
-                    recurrenceFrequency = currentState.recurrenceFrequency.takeIf { currentState.isRecurring }
+                    recurrenceFrequency = currentState.recurrenceFrequency.takeIf { currentState.isRecurring },
+                    entryZone = entryZone
                 )
 
                 when (result) {
@@ -489,7 +495,7 @@ class AddExpenseViewModel @Inject constructor(
                     is Result.Error -> {
                         // S5-003: Update mutation so Save button re-enables.
                         // INV-15: repository message/exception are never displayed.
-                        _state.update { it.withSaveError(mapSaveError(result)) }
+                        _state.update { it.withSaveError(mapSaveError(result, currency)) }
                     }
                     Result.Loading -> {
                         // S5-003: Result.Loading is not a valid terminal state for one-shot save
@@ -518,11 +524,66 @@ class AddExpenseViewModel @Inject constructor(
     }
 
     /**
-     * Maps a repository error to a bounded, localised message. The repository message and
-     * exception are never displayed (INV-15). Add bounded repository error codes as `when`
-     * branches; the default is the generic save-failed resource. Non-suspend by design.
+     * MEC INV-12/13/14: validates the parsed [amount] for [currency] with [CurrencyAmountPolicy]
+     * (Double overload). Returns the inline error, or null when the amount may be saved. Never
+     * rounds. An unparsable currency code skips the precision check and uses the default cap.
      */
-    private fun mapSaveError(result: Result.Error): UiText = when (result.message) {
+    private fun checkAmountForCurrency(amount: Double, currency: String): UiText? {
+        val code = com.yourname.expensetracker.domain.core.money.CurrencyCode.parse(currency)
+        if (code == null) {
+            return if (amount > com.yourname.expensetracker.domain.currency.CurrencyAmountPolicy.DEFAULT_CAP.toDouble()) {
+                amountTooLargeText(com.yourname.expensetracker.domain.currency.CurrencyAmountPolicy.DEFAULT_CAP)
+            } else {
+                null
+            }
+        }
+        return when (val check = com.yourname.expensetracker.domain.currency.CurrencyAmountPolicy.check(amount, code)) {
+            com.yourname.expensetracker.domain.currency.AmountCheck.Ok -> null
+            // Not reachable after the positive check; fail closed with the generic invalid-amount error.
+            com.yourname.expensetracker.domain.currency.AmountCheck.NotPositive ->
+                UiText.StringResource(R.string.add_expense_error_amount_invalid)
+            // OD-6: digits unknown. Never assume 2 digits or "no limit".
+            com.yourname.expensetracker.domain.currency.AmountCheck.DigitsUnavailable ->
+                UiText.StringResource(R.string.add_expense_error_amount_invalid)
+            is com.yourname.expensetracker.domain.currency.AmountCheck.PrecisionExceeded ->
+                precisionText(code.code, check.allowedDigits)
+            is com.yourname.expensetracker.domain.currency.AmountCheck.AboveCap ->
+                amountTooLargeText(check.cap)
+        }
+    }
+
+    private fun precisionText(currencyCode: String, allowedDigits: Int): UiText =
+        if (allowedDigits == 0) {
+            UiText.StringResource(R.string.mec_amount_no_decimals, listOf(currencyCode))
+        } else {
+            UiText.StringResource(R.string.mec_amount_max_decimals, listOf(currencyCode, allowedDigits))
+        }
+
+    private fun amountTooLargeText(cap: java.math.BigDecimal): UiText =
+        UiText.StringResource(
+            R.string.mec_amount_too_large,
+            listOf(java.text.NumberFormat.getIntegerInstance().format(cap.toLong()))
+        )
+
+    /**
+     * Maps a repository error to a bounded, localised message. The repository message and
+     * exception are never displayed (INV-15). Only bounded repository error codes are matched, by
+     * equality; the default is the generic save-failed resource. Non-suspend by design.
+     * [currency] is the home currency captured at save-tap.
+     */
+    private fun mapSaveError(result: Result.Error, currency: String): UiText = when (result.message) {
+        // S4 / INV-16: recurring rule refused for a currency other than home.
+        ManualExpenseRepository.RECURRING_FOREIGN_CURRENCY_ERROR_CODE ->
+            UiText.StringResource(R.string.mec_repeat_home_only, listOf(currency))
+        // AE-14: the home currency could not be resolved at save; nothing was saved.
+        com.yourname.expensetracker.domain.transaction.RateRefusalCodes.NOT_ELIGIBLE_HOME_UNRESOLVED ->
+            UiText.StringResource(R.string.mec_block_home_unresolved)
+        // AE-19: the coordinator refused the amount's precision; digits null falls back to save-failed.
+        com.yourname.expensetracker.domain.transaction.RateRefusalCodes.AMOUNT_PRECISION_EXCEEDED -> {
+            val digits = com.yourname.expensetracker.domain.core.money.CurrencyCode.parse(currency)
+                ?.let { com.yourname.expensetracker.domain.currency.CurrencyAmountPolicy.fractionDigits(it) }
+            if (digits == null) saveFailedText() else precisionText(currency, digits)
+        }
         else -> saveFailedText()
     }
 
@@ -665,7 +726,27 @@ class AddExpenseViewModel @Inject constructor(
         )
     }
 
+    /**
+     * MEC AE-34: called by the sheet when it opens. Captures the device zone once per sheet session
+     * (null-guarded) so a zone change while the sheet is open cannot move the expense's local date.
+     * A configuration change keeps the captured zone; [onSheetLeft] and [reset] clear it.
+     */
+    fun onSheetOpened() {
+        if (sessionZone == null) {
+            sessionZone = java.time.ZoneId.systemDefault()
+        }
+    }
+
+    /**
+     * MEC AE-34: called when the sheet leaves composition for any reason other than a configuration
+     * change (e.g. host navigation without [reset]), so the next session re-captures a fresh zone.
+     */
+    fun onSheetLeft() {
+        sessionZone = null
+    }
+
     fun reset() {
+        sessionZone = null
         searchJob?.cancel()
         searchJob = null
         fillJob?.cancel()

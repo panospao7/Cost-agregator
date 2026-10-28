@@ -525,8 +525,14 @@
     <string name="add_expense_error_currency_loading">Φόρτωση ρυθμίσεων νομίσματος…</string>
     <string name="add_expense_error_merchant_required">Το όνομα καταστήματος είναι υποχρεωτικό</string>
     <string name="add_expense_error_amount_invalid">Εισάγετε έγκυρο ποσό</string>
-    <string name="add_expense_error_amount_too_large">Το ποσό είναι πολύ μεγάλο</string>
     <string name="add_expense_error_date_future">Η ημερομηνία δεν μπορεί να είναι στο μέλλον</string>
+    <!-- manual-entry-currency B1: DRAFT Greek, owner native sign-off pending (ux-flows section 14) -->
+    <string name="amount_label">Ποσό</string>
+    <string name="mec_block_home_unresolved">Δεν ήταν δυνατή η ανάγνωση του βασικού νομίσματος. Δεν αποθηκεύτηκε τίποτα. Δοκιμάστε ξανά.</string>
+    <string name="mec_amount_no_decimals">Τα ποσά σε %1$s δεν έχουν δεκαδικά. Εισάγετε ακέραιο αριθμό.</string>
+    <string name="mec_amount_max_decimals">Τα ποσά σε %1$s δέχονται έως %2$d δεκαδικά.</string>
+    <string name="mec_amount_too_large">Το ποσό είναι πολύ μεγάλο. Το μέγιστο είναι %1$s.</string>
+    <string name="mec_repeat_home_only">Η επανάληψη διατίθεται μόνο στο βασικό σας νόμισμα (%1$s).</string>
     <!-- nl-quick-add slice F: DRAFT: owner native sign-off pending -->
     <string name="quick_add_label">Γρήγορη προσθήκη</string>
     <string name="quick_add_placeholder">π.χ. καφές 3,50 χθες</string>

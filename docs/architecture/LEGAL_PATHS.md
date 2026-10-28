@@ -78,7 +78,17 @@ USER-PRESENT RATE REQUIREMENT (manual-entry-currency A2; INV-5..9, 19):
     → AMOUNT_PRECISION_EXCEEDED (TransactionValidator) is enforced only for flagged requests
   Setters (fixed allow-list, never grows): ManualExpenseRepository, ReceiptScanViewModel, and the
   installment plan coordinator's declare-with-new-expense request; enforced by
-  ManualEntryCurrencySetterAllowListGuardTest. No production setter exists until manual-entry-currency B1.
+  ManualEntryCurrencySetterAllowListGuardTest. Setter #1 is active (manual-entry-currency B1):
+  ManualExpenseRepository.addManualExpense(..., entryZone) always sets
+  UserPresentRateRequirement(entryZone); entryZone is captured once by
+  AddExpenseViewModel.onSheetOpened() (plain VM field, never state/persisted/logged).
+  AddExpenseViewModel validates the unrounded amount with CurrencyAmountPolicy.check (no rounding on save);
+  the repository maps a flagged ValidationFailed to a bounded code (rateRefusal code, else
+  AMOUNT_PRECISION_EXCEEDED / AMOUNT_DIGITS_UNAVAILABLE, else the joined message). The ViewModel maps
+  by equality: RECURRING_FOREIGN_CURRENCY_ERROR_CODE -> mec_repeat_home_only,
+  RATE_NOT_ELIGIBLE_HOME_UNRESOLVED -> mec_block_home_unresolved, AMOUNT_PRECISION_EXCEEDED -> the
+  precision text; every other code (AMOUNT_DIGITS_UNAVAILABLE, RATE_NOT_ELIGIBLE_NONE / _STALE /
+  _UNSUPPORTED, anything else) -> the generic save-failed text.
 
 FORBIDDEN:
   ❌ Setting CreateExpenseRequest.userPresentRate outside the three allow-listed files

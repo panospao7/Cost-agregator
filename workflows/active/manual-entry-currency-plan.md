@@ -192,3 +192,170 @@ MEC inc 1b (ECB 90-day history, R23 setting, privacy review; N1); nl-quick-add i
 - D-16 RF-2 debugger verdict (H-3).
 - D-17 tests pinning raw 1M for weak currencies (importers, group, bank, receipt batch) (N18).
 - D-18 exact G-MONEY-11/18/19 + time-guard patterns for the evaluator.
+
+## Amendment (2026-10-28): B0 re-anchor (feature-planner; orchestrator-persisted; BINDING)
+- **RF-2 REFUTED.** Release-1.0 R20c-1 (2026-10-17; findings ledger :1250-1274) already reads the picker in UTC.
+  - Anchors: `UiTimeUtils.kt:64-126` (pickerMillisToLocalDate :74, instantToPickerMillis :89, pickerMillisKeepingTimeOf :113). `AddExpenseSheet.kt` DateSelector is now :884-957 (it was :841-855).
+  - Evidence: UiTimeUtilsTest (18 tests: New York, Athens, Kiritimati, DST gaps and overlaps, round trips). B0-as-RF-2 is DROPPED, and B1's "B0 if chosen" dependency is empty.
+- **RF-2b (new; orchestrator decision under item 62, owner FYI): B0′ "picker seeds from the current date".**
+  - Bug: `rememberDatePickerState` (:892-894) is read only at first composition. After quick-add Fill (`AddExpenseViewModel.kt:647`) or reset (:676) changes `state.date`, the picker opens on the stale day, and OK without a change silently reverts the date. That changes the rate date for B2 (AE-11/INV-2).
+  - Fix: in `DateSelector` only, move `rememberDatePickerState(initialSelectedDateMillis = UiTimeUtils.instantToPickerMillis(dateMs))` inside `if (showDatePicker)` before `DatePickerDialog`.
+  - Unchanged: no helper, no ViewModel or UiTimeUtils change, same signature.
+  - Tests: N `ui/screens/addexpense/AddExpenseDateSelectorTest.kt` (Robolectric Compose, as in QuickAddSectionTest :49-50; TimeZone.setDefault pinned and restored; whole-second instants):
+    - initial OK-without-change is idempotent (New York, Auckland, Tokyo);
+    - after an external date change, OK keeps the new date (New York, Auckland);
+    - reopening seeds from the current date (Tokyo);
+    - a DST spring-forward day keeps the day (New York);
+    - dismiss does not call onDateSelected.
+  - Validation: targeted `*AddExpense*,*UiTimeUtilsTest*`, then runtime-ui and lint. static-guards is batched with B1.
+  - Gates: reviewer-strict and architecture-guardian (batched with B1).
+  - STOP if:
+    - Robolectric cannot drive DatePickerDialog (no connected tests without the owner; H-4);
+    - UiTimeUtils semantics would change;
+    - the signature would change;
+    - HomeScreen.kt:1531 or the installment pickers would need edits.
+  - Follow-up (not this feature): HomeScreen.kt:1531 has the same stale-picker pattern. Route to the Home owner.
+- B0′, then B1, then B2 run sequentially (all write AddExpenseSheet.kt).
+
+
+## Amendment (2026-10-28): B1 re-anchor (feature-planner; orchestrator-persisted; BINDING)
+Base: 59275eac plus B0′. T3. Lane mec, one writer. B0′ comes first (it shares AddExpenseSheet.kt).
+
+### Anchors (old → current; [D] drifted, [V] vanished)
+- **AddExpenseViewModel.kt:**
+  - flat cap old :297 → :374-377 [D]; rounding old :367-370 → :441-444 [D];
+  - parse :366-372 (R16 AmountInputSanitizer.parseOrNull);
+  - save() :345-518; addManualExpense(...) :451-476; Result.Error → mapSaveError :489-493; the CancellationException rethrow :500-501;
+  - mapSaveError :525-527 (only `else`); quick-add fill() :549-613 (homeCurrency :551, the systemDefault zone :569); reset() :668-677.
+  - Edit branch [V]: the sheet is create-only (AddExpenseSheet.kt:96).
+- **AddExpenseSheet.kt:**
+  - amount label :228 (`amount_label` "Amount (€)", es "Cantidad (€)", no el); cd :222 (`add_expense_amount_cd` "… %1$s Euro", default locale only);
+  - leading icon :249-261 already shows the home symbol [D, done]; supportingText :240-248; save error card :625-640.
+- **ManualExpenseRepository.kt:**
+  - addManualExpense :105-127 (21 params); A2 cap :133-140; INV-16 :141-146 (RECURRING_FOREIGN_CURRENCY_ERROR_CODE :82);
+  - CreateExpenseRequest :160-182 (no userPresentRate today); ValidationFailed join :233-240.
+- **Codes (domain/transaction/RateRefusal.kt):** RateRefusalReason.HOME_CURRENCY_UNRESOLVED :20; RateRefusalCodes.NOT_ELIGIBLE_HOME_UNRESOLVED :41; AMOUNT_PRECISION_EXCEEDED :44; AMOUNT_DIGITS_UNAVAILABLE :47; codeFor :49.
+- **CurrencyAmountPolicy:** check(Double, CurrencyCode) :92 is the same overload the validator uses (:110).
+- **Strings (ux-flows §14 :168-182):** mec_block_home_unresolved, mec_amount_no_decimals, mec_amount_max_decimals, mec_amount_too_large, mec_repeat_home_only (S4).
+- **AddExpenseViewModelStressTest.kt [V]:** the file does not exist.
+
+### Write set
+- Source:
+  - AddExpenseViewModel.kt, AddExpenseSheet.kt, ManualExpenseRepository.kt;
+  - res values/values-el/values-es strings.xml;
+  - ENGINE_INTERACTION_MAP.md :94 (setter #1 is now active).
+- Tests:
+  - AddExpenseViewModelTest, ManualExpenseRepositoryTest;
+  - mechanical `entryZone` additions in ManualExpenseRepositoryRecommendationTest and SharedExpenseGroupsViewModelTest :194.
+- Out of scope: guards, test-shards, the lint baseline, the quick-add domain/mapper, QuickAddUiMapperTest.
+
+### Behaviour (S4 folded in)
+- **Repository:**
+  - `addManualExpense(..., entryZone: ZoneId)` is REQUIRED (no default) and always sets `userPresentRate = UserPresentRateRequirement(entryZone)` (setter #1).
+  - Typed refusal in ValidationFailed:
+    1. `rateRefusal != null` → `Result.Error(RateRefusalCodes.codeFor(reason))`;
+    2. otherwise, if the errors contain AMOUNT_PRECISION_EXCEEDED or AMOUNT_DIGITS_UNAVAILABLE → that code alone;
+    3. otherwise the existing join.
+- **VM save():**
+  - Delete the flat cap and the rounding; pass the parsed amount unchanged.
+  - After parse and the `<= 0` check, run `CurrencyAmountPolicy.check(amount, code)` (Double overload):
+    - PrecisionExceeded(0) → mec_amount_no_decimals(code);
+    - PrecisionExceeded(d) → mec_amount_max_decimals(code, d);
+    - AboveCap(cap) → mec_amount_too_large(formatted cap);
+    - DigitsUnavailable → add_expense_error_amount_invalid (fail closed).
+  - In every case the text is kept and nothing is saved.
+  - If the code does not parse, skip the precision check and use DEFAULT_CAP.
+- **Entry zone (AE-34):**
+  - A plain VM field `sessionZone: ZoneId?`, never in state or SavedStateHandle (G-1).
+  - The Sheet calls `viewModel.onSheetOpened()` from `LaunchedEffect(Unit)`; reset() clears it; save() uses `sessionZone ?: now`.
+  - The Fill zone (:569) is unchanged.
+- **mapSaveError(result, currency):** equality on bounded codes only:
+  - RECURRING_FOREIGN_CURRENCY_ERROR_CODE → mec_repeat_home_only(home) (S4);
+  - NOT_ELIGIBLE_HOME_UNRESOLVED → mec_block_home_unresolved (AE-14);
+  - AMOUNT_PRECISION_EXCEEDED → the precision text (null digits → save-failed);
+  - else → save-failed.
+  - No message parsing, no new Timber, no amount or zone in logs.
+- **Sheet:**
+  - `amount_label` edited in place (en "Amount", es "Cantidad"; el "Ποσό" only if lint shows it is baselined).
+  - `add_expense_amount_cd` becomes "… %1$s %2$s" with the home code.
+  - Other "(€)" labels on other screens are follow-ups.
+- **Strings:** the 5 mec_ keys from ux §14, es/el DRAFT (owner reviews the Greek).
+- **Quick-add:**
+  - Fill keeps home-currency parsing and FOREIGN_CURRENCY_BLOCKED (replaced in B2, 80c).
+  - Removing the rounding has no effect on Fill (Fill text is always 2 decimals).
+  - A 0-decimal home rejects a fractional Fill at Save (AE-15).
+  - N17 does not fire in B1.
+
+### Decisions (orchestrator under item 62; owner FYI, owner-approvals 84)
+- **D-B1-1:** G2-9 ("EUR 12.345 → inline error") is unreachable since R16; the sanitizer truncates en_US to 12.34, and el reads it as grouping. ACCEPT: G2-9 is met by the sanitizer plus no rounding on save. Precision is tested with 0-decimal homes (AE-15). The sanitizer's 2-decimal limit is unchanged in B1. Follow-up for B2/1b: 3-decimal homes (BHD, KWD, JOD, OMR, TND, IQD, LYD) cannot type a third decimal.
+- **D-B1-2:** AE-36 edit precision has no owner (the sheet is create-only; A2 precision is create-only). DEFERRED to a follow-up, together with A2's myShareAmount precision gap.
+- **B0:** RF-2 refuted (see the B0 re-anchor); B0′ lands first.
+
+### Tests
+- **AddExpenseViewModelTest:**
+  - B1 save passes the parsed amount unrounded with the session entry zone;
+  - B1 AE-15: JPY home "1500,50" shows the no-decimals error, keeps the text and saves nothing;
+  - B1 AE-15: JPY home "1500" saves 1500;
+  - B1: JPY home "12.50" is rejected inline;
+  - B1 G2-9: en_US typed "12.345" is truncated to 12.34 and saved exactly;
+  - B1: KRW home 2,000,000 passes the per-currency cap;
+  - "amount too large" expectation edited IN PLACE to mec_amount_too_large (not deleted);
+  - B1 AE-34: the zone captured at sheet open survives a device zone change;
+  - B1: reset then reopen captures the new zone;
+  - B1 AE-14: the home-unresolved refusal maps to mec_block_home_unresolved;
+  - B1 S4: the recurring foreign-currency code maps to mec_repeat_home_only;
+  - B1 AE-19: the coordinator's AMOUNT_PRECISION_EXCEEDED maps to the precision resource;
+  - B1: Fill with a JPY home and a fractional amount is rejected at save;
+  - B1: precision and cap errors log nothing;
+  - extend AE-53 for AE-33;
+  - the positional stub goes to 22 `any()`, and every named verify gains `entryZone = any()`.
+- **ManualExpenseRepositoryTest:**
+  - the :193 `assertNull(userPresentRate)` pin is INVERTED (not deleted): the request carries the flag with the passed zone;
+  - a home-unresolved refusal returns RATE_NOT_ELIGIBLE_HOME_UNRESOLVED;
+  - a flagged precision failure returns AMOUNT_PRECISION_EXCEEDED alone;
+  - non-MEC validation failures keep the joined message.
+
+### Pins and guards
+- None loosened. Setter allow-list, QuickAddPrivacy G-1/G-3 and CancellationSafety are run only, never edited.
+- The only pin edits are the :193 inversion and the :630 expectation (reviewer-strict confirms they are rewrites).
+
+### Validation (batched with B0′)
+1. targeted: `*AddExpense*,*UiTimeUtilsTest*,*ManualExpenseRepository*,*SharedExpenseGroupsViewModelTest*,*QuickAddUiMapperTest*,*CancellationSafetyArchitectureGuardTest*,*ManualEntryCurrencySetterAllowListGuardTest*,*QuickAddPrivacyArchitectureGuardTest*`
+2. shards: runtime-ui, data, architecture-contracts.
+3. lint.
+4. static-guards.
+5. app-check once per candidate.
+
+### Gates
+- reviewer-strict: flagged saves, rounding removal, pin edits, typed refusal.
+- architecture-guardian: setter #1, the required param, the onSheetOpened seam, ENGINE map, string keys.
+- privacy-security-guardian: bounded codes, zone never persisted or logged, no SavedStateHandle, no amount in logs.
+
+### STOP
+- A setter, QuickAddPrivacy or CancellationSafety guard edit.
+- static-guards rejects `ZoneId.systemDefault()` in the VM (that would need a zone provider plus a DI change).
+- Lint needs a baseline refresh (N5).
+- Any non-mechanical quick-add or SharedExpenseGroups test change.
+- Loan S11/S13 in flight on the same files.
+
+### Deferred
+- Prefill and suggestion "%.2f".
+- Other "(€)" labels.
+- Quick-add's 1M flag for high-cap homes.
+- Fill with the selected currency (B2).
+- AE-36 edit precision.
+- myShareAmount precision.
+- 3-decimal typing.
+
+### B1 review dispositions (2026-10-28)
+- Privacy guardian: ACCEPT.
+- Architecture guardian: ACCEPT-WITH-CONDITIONS (F1/F2/F3 below).
+- F1 (MEDIUM, AE-34 zone re-capture on LaunchedEffect re-run while the VM survives): NOT FIXED, STOPPED by precondition. The sheet's own close paths (save success, BackHandler, close button) all call reset(), but the host can remove the sheet from composition without reset(): MainActivity collects MainViewModel.navigationRequest and calls navigation.navigateToTab/navigateTo while NavigationDestination.AddExpense is showing, and the VM is the Activity-scoped hiltViewModel(), so it survives with a stale sessionZone. Making onSheetOpened() capture only when sessionZone == null would then keep a stale zone for the next session. Needs an orchestrator decision (see handback). rememberSaveable is forbidden here (QuickAddPrivacy G-1). Privacy P3 = F1.
+- F2 (LOW): add_expense_error_amount_too_large was referenced only by the three strings files (values, values-es, values-el); the test already uses mec_amount_too_large. The three entries are deleted. Docs mentions (nl-quick-add ux-flows.md, nl-quick-add-handoff.md) are historical and left unchanged.
+- F3 (LOW, docs): LEGAL_PATHS.md manual-entry-currency paragraph now lists the exact ViewModel code mapping (RECURRING_FOREIGN_CURRENCY_ERROR_CODE -> mec_repeat_home_only; RATE_NOT_ELIGIBLE_HOME_UNRESOLVED -> mec_block_home_unresolved; AMOUNT_PRECISION_EXCEEDED -> precision text; all other codes incl. AMOUNT_DIGITS_UNAVAILABLE and RATE_NOT_ELIGIBLE_NONE/STALE/UNSUPPORTED -> generic save-failed). This LEGAL_PATHS edit is recorded as a write-set extension: its old "no production setter until B1" line became false once setter #1 went live.
+- Follow-ups:
+  - F4: add CurrencyAmountPolicy.capFor(String) to de-duplicate the unparsable-code -> DEFAULT_CAP fallback in the VM, TransactionValidator and ManualExpenseRepository.
+  - F5: a test pinning validator message == code (being added now).
+  - Privacy P1: mec_repeat_home_only should receive the resolved home code explicitly once B2 separates selected vs home currency.
+  - Privacy P2: ManualExpenseRepository Error branch puts exception.message into Result.Error.message (never displayed); replace with a bounded code in a later slice.
+- F1 FIXED (option b′, owner-approvals 85): null-guarded capture plus a sheet-scoped DisposableEffect that clears the zone on dispose unless the Activity is changing configurations; MainActivity untouched.

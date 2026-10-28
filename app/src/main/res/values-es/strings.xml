@@ -89,7 +89,7 @@
     <string name="label_none">Ninguno</string>
 
     <!-- Legacy/Common Input Labels -->
-    <string name="amount_label">Cantidad (€)</string>
+    <string name="amount_label">Cantidad</string>
     <string name="amount_placeholder">0.00</string>
     <string name="merchant_label">Comercio / Lugar</string>
     <string name="merchant_placeholder">ej. Sklavenitis, Starbucks...</string>
@@ -777,8 +777,13 @@
     <string name="add_expense_error_currency_loading">Cargando la configuración de moneda…</string>
     <string name="add_expense_error_merchant_required">El nombre del comercio es obligatorio</string>
     <string name="add_expense_error_amount_invalid">Introduce un importe válido</string>
-    <string name="add_expense_error_amount_too_large">El importe es demasiado grande</string>
     <string name="add_expense_error_date_future">La fecha no puede ser futura</string>
+    <!-- manual-entry-currency B1: DRAFT Spanish, owner native sign-off pending (ux-flows section 14) -->
+    <string name="mec_block_home_unresolved">No se pudo leer tu moneda principal. No se guardó nada. Inténtalo de nuevo.</string>
+    <string name="mec_amount_no_decimals">Los importes en %1$s no tienen decimales. Introduce un número entero.</string>
+    <string name="mec_amount_max_decimals">Los importes en %1$s admiten hasta %2$d decimales.</string>
+    <string name="mec_amount_too_large">El importe es demasiado grande. El máximo es %1$s.</string>
+    <string name="mec_repeat_home_only">La repetición solo está disponible en tu moneda principal (%1$s).</string>
     <!-- nl-quick-add slice F: DRAFT: owner native sign-off pending (Spanish shows the English example: the parser knows English, Greek and Greeklish only) -->
     <string name="quick_add_label">Añadir rápido</string>
     <string name="quick_add_placeholder">p. ej. coffee 3.50 yesterday</string>

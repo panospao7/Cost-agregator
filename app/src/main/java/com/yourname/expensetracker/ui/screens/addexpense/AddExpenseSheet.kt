@@ -1,5 +1,8 @@
 package com.yourname.expensetracker.ui.screens.addexpense
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
@@ -25,6 +28,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
@@ -53,6 +57,15 @@ import java.time.format.DateTimeFormatter
 import java.time.Instant
 import java.time.ZoneId
 import java.util.*
+
+private fun findHostActivity(context: Context): Activity? {
+    var current: Context? = context
+    while (current is ContextWrapper) {
+        if (current is Activity) return current
+        current = current.baseContext
+    }
+    return current as? Activity
+}
 
 @Composable
 private fun getTransactionTypeLabel(type: TransactionType): String {
@@ -103,6 +116,19 @@ fun AddExpenseSheet(
     }
     val selectedCategory = categories.firstOrNull { it.id == state.selectedCategoryId }
     val categoryChip = QuickAddUiMapper.categoryChip(state.categoryFillSource, selectedCategory?.name)
+
+    // MEC AE-34: capture the entry zone once per sheet session (kept in the ViewModel only). The capture is
+    // null-guarded, so a configuration change keeps the zone; leaving the sheet for any reason other than a
+    // configuration change (e.g. host navigation without reset()) clears it so the next session re-captures.
+    val hostActivity = findHostActivity(LocalContext.current)
+    DisposableEffect(Unit) {
+        viewModel.onSheetOpened()
+        onDispose {
+            if (hostActivity?.isChangingConfigurations != true) {
+                viewModel.onSheetLeft()
+            }
+        }
+    }
 
     // Handle save result
     LaunchedEffect(state.mutation.isSuccess) {
@@ -219,7 +245,7 @@ fun AddExpenseSheet(
                 )
 
                 // === Amount Field ===
-                val amountCd = stringResource(R.string.add_expense_amount_cd, state.amount)
+                val amountCd = stringResource(R.string.add_expense_amount_cd, state.amount, state.homeCurrency ?: "")
                 val amountError = state.amountError
                 val amountNote = fieldNotes[QuickAddField.AMOUNT]
                 OutlinedTextField(
@@ -889,9 +915,6 @@ fun DateSelector(
 ) {
     val dateFormat = remember { DateTimeFormatter.ofPattern("EEE, dd MMM yyyy, HH:mm", Locale.getDefault()) }
     var showDatePicker by remember { mutableStateOf(false) }
-    val datePickerState = rememberDatePickerState(
-        initialSelectedDateMillis = UiTimeUtils.instantToPickerMillis(dateMs)
-    )
 
     val formattedDate = dateFormat.format(Instant.ofEpochMilli(dateMs).atZone(ZoneId.systemDefault()))
     val dateSelectorCd = stringResource(R.string.add_expense_date_selector_cd_format, formattedDate)
@@ -924,6 +947,11 @@ fun DateSelector(
     }
 
     if (showDatePicker) {
+        // RF-2b: state is scoped to the dialog so each opening seeds from the current dateMs;
+        // a seed captured at first composition would go stale after quick-add Fill/reset and OK would revert the date.
+        val datePickerState = rememberDatePickerState(
+            initialSelectedDateMillis = UiTimeUtils.instantToPickerMillis(dateMs)
+        )
         DatePickerDialog(
             onDismissRequest = { showDatePicker = false },
             confirmButton = {
