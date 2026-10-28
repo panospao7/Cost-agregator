@@ -149,6 +149,37 @@ class DeclareInstallmentsViewModelTest : ViewModelTestUtils() {
     }
 
     @Test
+    fun `F-2 the equal split chip is allowed only for the purchase currency`() = runTest(testDispatcher) {
+        val vm = viewModel()
+        vm.openTarget()
+        assertTrue(vm.state.value.equalSplitAllowed)
+        assertEquals(InstallmentSplitMethod.EQUAL_SPLIT, vm.state.value.effectiveSplit)
+
+        vm.setCurrency(InstallmentCurrency.USD)
+        assertFalse(vm.state.value.equalSplitAllowed)
+        assertEquals(InstallmentSplitMethod.FIXED_PAYMENT, vm.state.value.effectiveSplit)
+
+        vm.setCurrency(InstallmentCurrency.EUR)
+        assertTrue(vm.state.value.equalSplitAllowed)
+    }
+
+    @Test
+    fun `F-2 the equal split chip is not allowed for a null plan currency or before a target is open`() =
+        runTest(testDispatcher) {
+            val vm = viewModel()
+            assertFalse(vm.state.value.equalSplitAllowed)
+
+            vm.openTarget(target.copy(currency = "CHF"))
+            assertNull(vm.state.value.form?.currency)
+            assertFalse(vm.state.value.equalSplitAllowed)
+            assertEquals(InstallmentSplitMethod.FIXED_PAYMENT, vm.state.value.effectiveSplit)
+
+            // A supported pick that differs from the unsupported purchase currency stays fixed-only.
+            vm.setCurrency(InstallmentCurrency.EUR)
+            assertFalse(vm.state.value.equalSplitAllowed)
+        }
+
+    @Test
     fun `an unsupported purchase currency needs a plan currency pick before saving`() = runTest(testDispatcher) {
         val vm = viewModel()
         vm.openTarget(target.copy(currency = "CHF"))

@@ -207,7 +207,40 @@ class InstallmentPlanActionsViewModelTest : ViewModelTestUtils() {
         assertFalse(InstallmentPlanAvailability.of(context(status = InstallmentPlanStatus.COMPLETED)).delete)
     }
 
-    // ------------------------------------------------------------------ restricted Unlink (OQ-21)
+    // ------------------------------------------------------------------ Unlink (OQ-21; unrestricted, owner-approvals 56)
+
+    @Test
+    fun `PE-B openUnlink opens the UNLINK dialog and confirm reaches unlinkExpense once with the batch dispatched`() =
+        runTestVm { vm ->
+            val committed = batch("corr-unlink", "key-1")
+            coEvery { coordinator.unlinkExpense(5L) } returns
+                InstallmentOpResult.Done(
+                    InstallmentEntryRef(5L, 7L, InstallmentEntryStatus.SCHEDULED, InstallmentPlanStatus.ACTIVE, null),
+                    listOf(committed)
+                )
+
+            vm.openUnlink(context(), entryId = 5L, seq = 3)
+
+            val dialog = vm.state.value.dialog
+            assertEquals(InstallmentPlanDialogKind.UNLINK, dialog?.kind)
+            assertEquals(5L, dialog?.entryId)
+            assertEquals(3, dialog?.entrySeq)
+            coVerify(exactly = 0) { coordinator.unlinkExpense(any()) }
+
+            vm.confirm()
+            testDispatcher.scheduler.advanceUntilIdle()
+
+            coVerify(exactly = 1) { coordinator.unlinkExpense(5L) }
+            coVerify(exactly = 1) { coordinator.unlinkExpense(any()) }
+            coVerify(exactly = 1) { runner.run(committed) }
+            coVerify(exactly = 1) { runner.run(any()) }
+            assertNull(vm.state.value.dialog)
+            assertEquals(InstallmentPlanNotice.UNLINKED, vm.state.value.notice)
+            assertEquals(
+                InstallmentPlanMutationState.Success(InstallmentPlanOperation.UNLINK, false, 7L),
+                vm.state.value.mutation
+            )
+        }
 
     @Test
     fun `unlink reaches unlinkExpense for the entry and nothing else`() = runTestVm { vm ->

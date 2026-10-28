@@ -473,6 +473,71 @@ class InstallmentPlanLifecycleCoordinatorEndEditTest {
         )
     }
 
+    // ------------------------------------------------------------------ OD-14 currency change of an equal-split purchase plan
+
+    @Test
+    fun `OD-14 an equal split purchase plan cannot change to another currency and nothing is written`() = runBlocking {
+        val (planId, _) = fx.declareAe1(coordinator)
+        val before = fx.tableCounts()
+
+        val result = coordinator.editDetails(
+            planId, "Renamed Plan", "New Lender", fx.categoryId, InstallmentFulfilmentMode.CONFIRM, "USD", today0705
+        )
+
+        assertEquals(InstallmentOpResult.Refused(InstallmentRefusalCode.CURRENCY_MISMATCH), result)
+        fx.assertTablesUnchanged(before)
+        val plan = fx.planDao.getPlanById(planId)!!
+        assertEquals("EUR", plan.currency)
+        assertEquals("Demo Electronics", plan.displayName)
+        assertEquals("AUTO_RECORD", plan.fulfilmentMode)
+    }
+
+    @Test
+    fun `OD-14 CURRENCY_LOCKED keeps precedence over CURRENCY_MISMATCH once an entry is paid`() = runBlocking {
+        val (planId, _) = ae1WithPaid(1, day(2027, 4, 10))
+
+        val result = coordinator.editDetails(
+            planId, "Demo Electronics", "Synthetic Lender", fx.categoryId, InstallmentFulfilmentMode.AUTO_RECORD, "USD", day(2027, 4, 10)
+        )
+
+        assertEquals(InstallmentOpResult.Refused(InstallmentRefusalCode.CURRENCY_LOCKED), result)
+    }
+
+    @Test
+    fun `OD-14 a fixed payment purchase plan may change currency`() = runBlocking {
+        val usdPurchase = fx.seedExpense(amount = 240.0, currency = "USD")
+        val declared = coordinator.declareOnExpense(usdPurchase, fx.crossCurrencyFixedTerms(), ATHENS) as InstallmentOpResult.Done
+        val planId = declared.value.planId
+
+        val result = coordinator.editDetails(
+            planId, "Demo Electronics", "Synthetic Lender", fx.categoryId, InstallmentFulfilmentMode.AUTO_RECORD, "USD", today0705
+        )
+
+        assertTrue(result is InstallmentOpResult.Done)
+        assertEquals("USD", fx.planDao.getPlanById(planId)!!.currency)
+    }
+
+    @Test
+    fun `OD-14 a legacy mismatched equal split plan still accepts name and category edits and a change back to the purchase currency`() =
+        runBlocking {
+            val (planId, _) = fx.declareAe1(coordinator)
+            // Legacy state from before the rule: an equal split plan in USD on the EUR purchase.
+            fx.exec("UPDATE installment_plans SET currency = 'USD' WHERE id = $planId")
+
+            val renamed = coordinator.editDetails(
+                planId, "Renamed Plan", "New Lender", fx.categoryId, InstallmentFulfilmentMode.AUTO_RECORD, "USD", today0705
+            )
+            assertTrue(renamed is InstallmentOpResult.Done)
+            assertEquals("Renamed Plan", fx.planDao.getPlanById(planId)!!.displayName)
+            assertEquals("USD", fx.planDao.getPlanById(planId)!!.currency)
+
+            val back = coordinator.editDetails(
+                planId, "Renamed Plan", "New Lender", fx.categoryId, InstallmentFulfilmentMode.AUTO_RECORD, "EUR", today0705
+            )
+            assertTrue(back is InstallmentOpResult.Done)
+            assertEquals("EUR", fx.planDao.getPlanById(planId)!!.currency)
+        }
+
     // ------------------------------------------------------------------ terminal plans, purchase gone
 
     @Test

@@ -671,6 +671,25 @@ class InstallmentPlanTransitionsTest {
     }
 
     @Test
+    fun isUnlinkable_equals_the_UNLINK_transition_is_a_Move_over_the_full_status_kind_plan_product() {
+        var movesSeen = 0
+        for (plan in PS.entries) {
+            for (status in ES.entries) {
+                for (kind in InstallmentEntryKind.entries) {
+                    val result = run(ctx(plan = plan, status = status, kind = kind), EntryTrigger.UNLINK)
+                    val isMove = result is EntryTransitionResult.Move
+                    if (isMove) movesSeen++
+                    assertWithMessage("isUnlinkable for a %s %s entry in a %s plan", status, kind, plan)
+                        .that(InstallmentPlanTransitions.isUnlinkable(status, kind, plan))
+                        .isEqualTo(isMove)
+                }
+            }
+        }
+        // PAID + REGULAR in ACTIVE and COMPLETED only (spec 3.2; owner-approvals 56).
+        assertThat(movesSeen).isEqualTo(2)
+    }
+
+    @Test
     fun entry_table_EXPENSE_REMOVED_over_entry_status_in_an_ACTIVE_plan() {
         assertEntryStatusColumn(
             EntryTrigger.EXPENSE_REMOVED,

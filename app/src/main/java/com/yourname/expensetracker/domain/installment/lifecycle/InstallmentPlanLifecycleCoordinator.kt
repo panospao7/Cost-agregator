@@ -30,6 +30,7 @@ import com.yourname.expensetracker.domain.installment.model.InstallmentPlanStatu
 import com.yourname.expensetracker.domain.installment.model.InstallmentPlanTransitions
 import com.yourname.expensetracker.domain.installment.model.InstallmentRefusalCode
 import com.yourname.expensetracker.domain.installment.model.InstallmentResidualPlacement
+import com.yourname.expensetracker.domain.installment.model.InstallmentSplitCurrencyRule
 import com.yourname.expensetracker.domain.installment.model.InstallmentSplitMethod
 import com.yourname.expensetracker.domain.installment.model.InstallmentStatusReason
 import com.yourname.expensetracker.domain.installment.model.PaidBeforeTrackingCandidate
@@ -171,6 +172,11 @@ class InstallmentPlanLifecycleCoordinator @Inject constructor(
             is ScheduleGenerationResult.Refused -> return@writeTxn InstallmentOpResult.Refused(generated.code)
             is ScheduleGenerationResult.Success -> generated.schedule
         }
+        // After the schedule checks so every pre-existing refusal keeps its precedence (for example
+        // UNSUPPORTED_CURRENCY); still before any write (OD-14).
+        if (isEqualSplitCurrencyMismatch(terms, facts.currency)) {
+            return@writeTxn InstallmentOpResult.Refused(InstallmentRefusalCode.CURRENCY_MISMATCH)
+        }
         val ref = insertPlanWithEntries(
             terms, InstallmentPlanKind.PURCHASE_ATTACHED, expenseId, facts.categoryId, facts.paymentMethod, schedule, now
         )
@@ -214,6 +220,10 @@ class InstallmentPlanLifecycleCoordinator @Inject constructor(
         val schedule = when (val generated = generate(terms, purchaseDay)) {
             is ScheduleGenerationResult.Refused -> return@writeTxn InstallmentOpResult.Refused(generated.code)
             is ScheduleGenerationResult.Success -> generated.schedule
+        }
+        // OD-14, still in the pure-check block: before the TLC create, so a mismatch writes nothing.
+        if (isEqualSplitCurrencyMismatch(terms, purchaseRequest.currency)) {
+            return@writeTxn InstallmentOpResult.Refused(InstallmentRefusalCode.CURRENCY_MISMATCH)
         }
 
         val created = transactionLifecycleCoordinator.createExpenseDbOnlyV2(
@@ -660,7 +670,9 @@ class InstallmentPlanLifecycleCoordinator @Inject constructor(
      * Every argument is the full new value (pass the current one to leave it). An ACTIVE plan
      * accepts every field. A COMPLETED plan accepts the display name, lender label and category
      * only: a currency or fulfilment mode change on it is ILLEGAL_TRANSITION. Any other status is
-     * ILLEGAL_TRANSITION. Switching the mode from CONFIRM to AUTO_RECORD is refused
+     * ILLEGAL_TRANSITION. A currency change of an EQUAL_SPLIT plan on a purchase is refused with
+     * CURRENCY_MISMATCH unless the new currency is the purchase currency (OD-14, checked after
+     * CURRENCY_LOCKED). Switching the mode from CONFIRM to AUTO_RECORD is refused
      * (ILLEGAL_TRANSITION) while a SCHEDULED entry is due on or before [todayEpochDay]: the user
      * confirms or skips those first, so the later catch-up never records an entry the user never
      * confirmed. Recorded expenses are unchanged; the new values apply to expenses created
@@ -704,6 +716,19 @@ class InstallmentPlanLifecycleCoordinator @Inject constructor(
             val reversedCount = planDao.countEntriesForPlanByStatus(plan.id, InstallmentEntryStatus.REVERSED.name)
             if (paidCount + reversedCount > 0) {
                 return@writeTxn InstallmentOpResult.Refused(InstallmentRefusalCode.CURRENCY_LOCKED)
+            }
+            // OD-14: an equal-split plan on a purchase stays in the purchase currency. Only a currency
+            // CHANGE is checked; name, lender and category edits on a legacy plan stay allowed.
+            val purchaseId = plan.purchaseExpenseId
+            if (plan.kind == InstallmentPlanKind.PURCHASE_ATTACHED.name &&
+                plan.splitMethod == InstallmentSplitMethod.EQUAL_SPLIT.name &&
+                purchaseId != null
+            ) {
+                val purchaseFacts = factsReader.findExpenseFacts(purchaseId)
+                    ?: return@writeTxn InstallmentOpResult.Refused(InstallmentRefusalCode.ILLEGAL_TRANSITION)
+                if (!InstallmentSplitCurrencyRule.equalSplitAllowed(target.code, purchaseFacts.currency)) {
+                    return@writeTxn InstallmentOpResult.Refused(InstallmentRefusalCode.CURRENCY_MISMATCH)
+                }
             }
         }
         if (modeChanged && fulfilmentMode == InstallmentFulfilmentMode.AUTO_RECORD) {
@@ -1533,6 +1558,15 @@ class InstallmentPlanLifecycleCoordinator @Inject constructor(
         val planStatus = settlePlanStatus(plan.id, now)
         return InstallmentOpResult.Done(entryRef(entry, planStatus, move.to, null))
     }
+
+    /**
+     * OD-14: an EQUAL_SPLIT plan in a currency other than the purchase currency is refused
+     * (CURRENCY_MISMATCH); only FIXED_PAYMENT may cross currencies. The rule lives in
+     * [InstallmentSplitCurrencyRule].
+     */
+    private fun isEqualSplitCurrencyMismatch(terms: InstallmentPlanTerms, purchaseCurrency: String): Boolean =
+        terms.splitMethod == InstallmentSplitMethod.EQUAL_SPLIT &&
+            !InstallmentSplitCurrencyRule.equalSplitAllowed(terms.currency, purchaseCurrency)
 
     private fun generate(terms: InstallmentPlanTerms, purchaseEpochDay: Long?): ScheduleGenerationResult =
         InstallmentScheduleCalculator.generate(

@@ -559,6 +559,75 @@ class InstallmentPlanLifecycleCoordinatorLinkConfirmTest {
         assertEquals(captured, entry(planId, 1).linkedExpenseId)
     }
 
+    // ------------------------------------------------------------------ PE-B owner-approvals 56 characterization
+
+    /**
+     * ux-flows U-1 rule 5 (known risk, unchanged): Unlink leaves the expense counting while the entry is
+     * open. Every claim latches `autoRecordConsumed` (owner approval 39(b)) and the release does not
+     * reset it, so the automatic catch-up NEVER re-records an unlinked entry. Only a later manual Record
+     * creates a second expense (next test).
+     */
+    @Test
+    fun PEB_owner56_unlinking_an_auto_recorded_due_entry_keeps_the_expense_and_the_catch_up_records_no_second_one() = runTest {
+        val planId = standalone(mode = InstallmentFulfilmentMode.AUTO_RECORD, uuid = "auto-uuid")
+        val firstRun = coordinator.recordDueEntries(today, ATHENS) as InstallmentOpResult.Done
+        assertEquals(2, firstRun.value.recorded)
+        val recorded = entry(planId, 1)
+        assertEquals("PAID", recorded.status)
+        assertEquals("AUTO_RECORDED", recorded.linkOrigin)
+        assertEquals(true, recorded.autoRecordConsumed)
+        val expenseId = recorded.linkedExpenseId!!
+        assertEquals(2, fx.count("expenses"))
+
+        val unlinked = coordinator.unlinkExpense(entryId(planId, 1))
+
+        assertTrue(unlinked is InstallmentOpResult.Done)
+        val reopened = entry(planId, 1)
+        assertEquals("SCHEDULED", reopened.status)
+        assertNull(reopened.linkedExpenseId)
+        assertEquals(1, reopened.recordGeneration)
+        assertEquals("the latch is never reset by Unlink (INV-12)", true, reopened.autoRecordConsumed)
+        assertNotNull("the expense is untouched", fx.expenseDao.getById(expenseId))
+        assertEquals("the unlinked expense still counts", 50.0, fx.spending(2027, 4), 0.0)
+
+        // Catch-up on the same day and on a later day: entry 1 is due (04-10 <= today) but latched.
+        val sameDay = coordinator.recordDueEntries(today, ATHENS) as InstallmentOpResult.Done
+        assertEquals(0, sameDay.value.recorded)
+        assertTrue(sameDay.value.deferred.isEmpty() && sameDay.value.refused.isEmpty() && sameDay.value.failed.isEmpty())
+        assertEquals(2, fx.count("expenses"))
+        assertEquals("SCHEDULED", entry(planId, 1).status)
+
+        val laterDay = coordinator.recordDueEntries(day(2027, 6, 12), ATHENS) as InstallmentOpResult.Done
+        assertEquals("only entry 3 is newly due", 1, laterDay.value.recorded)
+        assertEquals(3, fx.count("expenses"))
+        assertEquals("SCHEDULED", entry(planId, 1).status)
+        assertNull(entry(planId, 1).linkedExpenseId)
+        assertEquals("April still counts the single original expense", 50.0, fx.spending(2027, 4), 0.0)
+    }
+
+    /** U-1 rule 5, second half: a later manual Record after Unlink creates a second expense (new generation key). */
+    @Test
+    fun PEB_owner56_a_manual_record_after_unlink_creates_a_second_expense_under_the_next_generation_key() = runTest {
+        val planId = standalone(mode = InstallmentFulfilmentMode.AUTO_RECORD, uuid = "auto-uuid")
+        coordinator.recordDueEntries(today, ATHENS)
+        val firstExpenseId = entry(planId, 1).linkedExpenseId!!
+        coordinator.unlinkExpense(entryId(planId, 1))
+
+        val again = coordinator.confirmEntry(entryId(planId, 1), today, ATHENS) as InstallmentOpResult.Done
+
+        val secondExpenseId = again.value.linkedExpenseId!!
+        assertTrue("a second expense, not an adoption of the first", secondExpenseId != firstExpenseId)
+        assertNotNull(fx.expenseDao.getById(firstExpenseId))
+        assertEquals(3, fx.count("expenses"))
+        val second = fx.expenseDao.getById(secondExpenseId)!!
+        assertTrue(
+            "STRICT key must carry generation 1 but was ${second.dedupeKey}",
+            second.dedupeKey!!.endsWith("installment:auto-uuid:REGULAR:1:1")
+        )
+        assertEquals("the unlinked payment and the new one both count (U-1 rule 5)", 100.0, fx.spending(2027, 4), 0.0)
+        assertEquals(1, entry(planId, 1).recordGeneration)
+    }
+
     // ------------------------------------------------------------------ AE-16 skip / unskip
 
     @Test

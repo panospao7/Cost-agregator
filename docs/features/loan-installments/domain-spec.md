@@ -1486,6 +1486,24 @@ PURCHASE_ATTACHED declaration on an existing expense:
   `terms.splitMethod` with the purchase currency. `editDetails` accepts a currency change on an ACTIVE plan with no
   PAID or REVERSED entries whatever the split method and purchase currency are (:690-708). Its only UI caller sends
   the unchanged currency (`InstallmentEditScreen.kt:103-105`, :167, :238).
+- **Enforced in the coordinator since PE-A (2026-10-28, pre-enable batch).** The pure rule is
+  `InstallmentSplitCurrencyRule.equalSplitAllowed(planCurrency, purchaseCurrency)` (true only when both are known and
+  equal; null fails closed). It refuses with the existing `CURRENCY_MISMATCH` code (already mapped in the UI; no new
+  code or string):
+  - `declareOnExpense`: `EQUAL_SPLIT` with `terms.currency` ≠ the stored purchase currency, after the schedule checks
+    (so UNSUPPORTED_CURRENCY, INVALID_COUNT and the other earlier refusals keep their precedence) and before any write;
+  - `declareWithNewExpense`: the same comparison against the request currency, in the pure-check block before the TLC
+    create, so nothing is created and no TLC audit event is written;
+  - `editDetails`: a currency change of a PURCHASE_ATTACHED `EQUAL_SPLIT` plan to a currency other than the purchase
+    currency, AFTER `CURRENCY_LOCKED`. Name, lender, category and mode edits of a legacy mismatched plan stay allowed,
+    and so does a change back to the purchase currency. `FIXED_PAYMENT` plans and STANDALONE plans are unaffected.
+  The restore path is not enforced (a restored legacy plan is left as stored). The declare sheet enables the
+  equal-split chip only through the same function (`DeclareInstallmentsUiState.equalSplitAllowed`), so a null plan
+  currency no longer leaves the chip enabled (F-2).
+- **Past-due catch-up (PE-A proof, item 3).** A plan declared with `paidBeforeTrackingCount = 0` on an old purchase
+  leaves its already-due entries SCHEDULED. Auto-record applies only when `declaredOn <= due <= today`
+  (`InstallmentPlanTransitions.isAutoRecordApplicable`), so neither the worker catch-up nor the pre-backup reconcile
+  records an entry due before `declaredOn`; the user confirms or skips those (S13 re-confirms).
 
 **Example (clarifies AE-5; no new AE number; synthetic data).**
 - Given a purchase of 240.00 USD dated 2027-01-05 and N = 4:

@@ -1784,6 +1784,12 @@ OPERATIONS (all on InstallmentPlanLifecycleCoordinator):
   declareWithNewExpense       → [txn: TLC createExpenseDbOnlyV2 (standard dedupe) + the declare steps]
                                  → post-commit batches
   createStandalone            → [txn: validate category, insert plan + entries]
+  OD-14 currency rule (PE-A)  → InstallmentSplitCurrencyRule.equalSplitAllowed is the single definition: an
+                                 EQUAL_SPLIT purchase plan must be in the purchase currency. declareOnExpense and
+                                 declareWithNewExpense (pure-check block, before the TLC create) and the currency
+                                 change of editDetails (after CURRENCY_LOCKED) refuse CURRENCY_MISMATCH; the declare
+                                 sheet enables the equal-split chip through the same function. FIXED_PAYMENT may
+                                 cross currencies. No new owner, no new write path.
   paid-before-tracking count  → the first k regular entries are inserted as PAID_BEFORE_TRACKING in the
                                  same transaction (declare / createStandalone)
   markPaidBeforeTracking / revertPaidBeforeTracking (proposed names)
@@ -1801,7 +1807,10 @@ OPERATIONS (all on InstallmentPlanLifecycleCoordinator):
                               → implemented in S7a-1 (coordinator); callers are the S7a-2 worker and the S10
                                  overview, both still pending (see "Workers / Background Jobs"); one txn per entry;
                                  reconcile runs first and its batches are returned for the caller to dispatch;
-                                 candidate deferral via InstallmentCandidateChargeProbe (read-only)
+                                 candidate deferral via InstallmentCandidateChargeProbe (read-only);
+                                 an entry due before the plan's declaredOn never auto-records (rule
+                                 declaredOn <= due <= today, isAutoRecordApplicable); reconcile() never creates
+                                 an expense (PE-A proof test)
   onExpenseChanged / onExpenseDeleted (implemented, S6c-1)
                               → TLC PostCommitActionRunner actions `installment_expense_changed` /
                                  `installment_expense_deleted` planned by TransactionSideEffectPlanner

@@ -460,7 +460,8 @@ class InstallmentPlanLifecycleCoordinatorDeclareTest {
 
         val done = coordinator.declareOnExpense(
             usdPurchase,
-            fx.terms(total = 224.0, count = 4, currency = "EUR"),
+            // OD-14 / AE-5 Plan C: a cross-currency plan is FIXED_PAYMENT (the user types 56.00 EUR).
+            fx.terms(split = InstallmentSplitMethod.FIXED_PAYMENT, total = null, fixed = 56.0, count = 4, currency = "EUR"),
             ATHENS
         ) as InstallmentOpResult.Done
 
@@ -468,6 +469,108 @@ class InstallmentPlanLifecycleCoordinatorDeclareTest {
         assertEquals("EUR", plan.currency)
         assertEquals(listOf(56.0, 56.0, 56.0, 56.0), fx.entries(plan.id).map { it.scheduledAmount })
         assertEquals("INSTALLMENT_PURCHASE", fx.flagOf(usdPurchase))
+    }
+
+    // ------------------------------------------------------------------ OD-14 equal split needs the purchase currency
+
+    @Test
+    fun OD14_declareOnExpense_equal_split_in_another_currency_is_refused_CURRENCY_MISMATCH_and_writes_nothing() = runTest {
+        val usdPurchase = fx.seedExpense(amount = 240.0, currency = "USD")
+
+        assertRefusedNoWrites(
+            usdPurchase,
+            fx.terms(total = 224.0, count = 4, currency = "EUR"),
+            InstallmentRefusalCode.CURRENCY_MISMATCH
+        )
+        assertEquals(0, fx.count("installment_plans"))
+        assertNull(fx.flagOf(usdPurchase))
+    }
+
+    @Test
+    fun OD14_declareOnExpense_euro_purchase_with_a_dollar_equal_split_is_refused_CURRENCY_MISMATCH() = runTest {
+        assertRefusedNoWrites(
+            fx.seedExpense(),
+            fx.terms(currency = "USD"),
+            InstallmentRefusalCode.CURRENCY_MISMATCH
+        )
+    }
+
+    @Test
+    fun OD14_declareOnExpense_equal_split_in_the_purchase_currency_is_allowed_for_a_dollar_purchase() = runTest {
+        val usdPurchase = fx.seedExpense(amount = 240.0, currency = "USD")
+
+        val done = coordinator.declareOnExpense(
+            usdPurchase,
+            fx.terms(total = 240.0, count = 4, currency = "USD"),
+            ATHENS
+        ) as InstallmentOpResult.Done
+
+        val plan = fx.planDao.getPlanById(done.value.planId)!!
+        assertEquals("USD", plan.currency)
+        assertEquals("EQUAL_SPLIT", plan.splitMethod)
+        assertEquals(listOf(60.0, 60.0, 60.0, 60.0), fx.entries(plan.id).map { it.scheduledAmount })
+    }
+
+    @Test
+    fun OD14_declareOnExpense_fixed_payment_may_cross_currencies_in_both_directions() = runTest {
+        val usdPurchase = fx.seedExpense(amount = 240.0, currency = "USD")
+        val eurPurchase = fx.seedExpense(amount = 240.0, currency = "EUR", merchant = "Demo Appliances")
+
+        val toEur = coordinator.declareOnExpense(
+            usdPurchase,
+            fx.crossCurrencyFixedTerms(planUuid = "cross-a"),
+            ATHENS
+        )
+        val toUsd = coordinator.declareOnExpense(
+            eurPurchase,
+            fx.crossCurrencyFixedTerms(planUuid = "cross-b").copy(currency = "USD"),
+            ATHENS
+        )
+
+        assertTrue(toEur is InstallmentOpResult.Done)
+        assertTrue(toUsd is InstallmentOpResult.Done)
+        assertEquals("EUR", fx.planDao.getPlanByUuid("cross-a")!!.currency)
+        assertEquals("USD", fx.planDao.getPlanByUuid("cross-b")!!.currency)
+    }
+
+    @Test
+    fun OD14_the_mismatch_refusal_comes_after_the_schedule_checks_so_existing_refusals_keep_precedence() = runTest {
+        // An unsupported plan currency on an EQUAL_SPLIT is still UNSUPPORTED_CURRENCY, and a bad count
+        // is still INVALID_COUNT, even though the currency also differs from the purchase currency.
+        val usdPurchase = fx.seedExpense(amount = 240.0, currency = "USD")
+        assertRefusedNoWrites(usdPurchase, fx.terms(currency = "CHF"), InstallmentRefusalCode.UNSUPPORTED_CURRENCY)
+        assertRefusedNoWrites(usdPurchase, fx.terms(count = 1, currency = "EUR"), InstallmentRefusalCode.INVALID_COUNT)
+    }
+
+    @Test
+    fun OD14_declareWithNewExpense_equal_split_in_another_currency_is_refused_before_the_TLC_create() = runTest {
+        val tablesBefore = fx.tableCounts()
+        val eventsBefore = fx.eventTypes()
+
+        val result = coordinator.declareWithNewExpense(
+            fx.purchaseRequest(currency = "USD"),
+            ATHENS,
+            fx.terms(currency = "EUR")
+        )
+
+        assertEquals(InstallmentOpResult.Refused(InstallmentRefusalCode.CURRENCY_MISMATCH), result)
+        fx.assertTablesUnchanged(tablesBefore)
+        // Nothing was created, so TLC wrote no audit event and the rate evaluation never ran.
+        assertEquals(eventsBefore, fx.eventTypes())
+        // CurrencyCode is an inline value class, so MockK cannot record any() for it; match the concrete pair.
+        coVerify(exactly = 0) { fx.evaluator.evaluate(CurrencyCode("USD"), CurrencyCode("EUR"), any(), any()) }
+        verify(exactly = 0) { fx.planner.planCreated(any(), any(), any()) }
+    }
+
+    @Test
+    fun OD14_declareWithNewExpense_equal_split_in_the_purchase_currency_is_not_refused() = runTest {
+        val done = coordinator.declareWithNewExpense(
+            fx.purchaseRequest(currency = "EUR"),
+            ATHENS,
+            fx.terms(currency = "EUR")
+        )
+
+        assertTrue(done is InstallmentOpResult.Done)
     }
 
     // ------------------------------------------------------------------ standalone
@@ -672,7 +775,7 @@ class InstallmentPlanLifecycleCoordinatorDeclareTest {
         val done = coordinator.declareWithNewExpense(
             fx.purchaseRequest(amount = 600.0, currency = "USD"),
             zone,
-            fx.terms(currency = "EUR")
+            fx.crossCurrencyFixedTerms()
         ) as InstallmentOpResult.Done
 
         val purchase = fx.expenseDao.getById(fx.planDao.getPlanById(done.value.planId)!!.purchaseExpenseId!!)!!
@@ -692,7 +795,7 @@ class InstallmentPlanLifecycleCoordinatorDeclareTest {
         val result = coordinator.declareWithNewExpense(
             fx.purchaseRequest(currency = "USD"),
             ATHENS,
-            fx.terms()
+            fx.crossCurrencyFixedTerms()
         )
 
         assertEquals(InstallmentOpResult.RateRefused(RateRefusalReason.NO_RATE), result)
@@ -715,7 +818,11 @@ class InstallmentPlanLifecycleCoordinatorDeclareTest {
             coEvery { fx.evaluator.evaluate(CurrencyCode("USD"), CurrencyCode("EUR"), any(), any()) } returns eligibility
             val before = fx.tableCounts()
 
-            val result = coordinator.declareWithNewExpense(fx.purchaseRequest(currency = "USD"), ATHENS, fx.terms())
+            val result = coordinator.declareWithNewExpense(
+                fx.purchaseRequest(currency = "USD"),
+                ATHENS,
+                fx.crossCurrencyFixedTerms()
+            )
 
             assertTrue("expected RateRefused for $reason but was $result", result is InstallmentOpResult.RateRefused)
             assertEquals(reason, (result as InstallmentOpResult.RateRefused).reason)

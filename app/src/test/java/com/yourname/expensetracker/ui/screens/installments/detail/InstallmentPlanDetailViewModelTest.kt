@@ -754,4 +754,50 @@ class InstallmentPlanDetailViewModelTest : ViewModelTestUtils() {
         val c = content(startWith(detail(entries = listOf(entry(1, minor = 4_996L, original = 5_000L), entry(2, minor = 5_217L)))))
         assertEquals(listOf(4_996L, 5_217L), c.entries.map { it.scheduledMinor })
     }
+
+    // ------------------------------------------------------------------ PE-B Unlink entry point (owner-approvals 56)
+
+    @Test
+    fun `PE-B canUnlink is true only for a PAID REGULAR entry of an ACTIVE or COMPLETED plan over the full product`() =
+        runTest(testDispatcher) {
+            var offered = 0
+            for (planStatus in InstallmentPlanStatus.entries) {
+                for (kind in InstallmentEntryKind.entries) {
+                    val entries = InstallmentEntryStatus.entries.mapIndexed { index, status ->
+                        entry(index + 1L, status, dueState = null, kind = kind)
+                    }
+                    val c = content(startWith(detail(status = planStatus, entries = entries)))
+                    InstallmentEntryStatus.entries.forEachIndexed { index, status ->
+                        val expected = status == InstallmentEntryStatus.PAID &&
+                            kind == InstallmentEntryKind.REGULAR &&
+                            (planStatus == InstallmentPlanStatus.ACTIVE || planStatus == InstallmentPlanStatus.COMPLETED)
+                        if (expected) offered++
+                        assertEquals(
+                            "canUnlink for a $status $kind entry in a $planStatus plan",
+                            expected,
+                            c.entries[index].canUnlink
+                        )
+                    }
+                }
+            }
+            // Exactly PAID + REGULAR in ACTIVE and COMPLETED.
+            assertEquals(2, offered)
+        }
+
+    @Test
+    fun `PE-B Unlink is independent of the row actions and of suggestions`() = runTest(testDispatcher) {
+        val entries = listOf(
+            entry(1, InstallmentEntryStatus.PAID, dueState = null),
+            entry(2, InstallmentEntryStatus.SCHEDULED, InstallmentDueState.DUE)
+        )
+        val c = content(
+            startWith(detail(status = InstallmentPlanStatus.ACTIVE, entries = entries, suggestions = listOf(suggestion(2, 92))))
+        )
+
+        // A paid row has no entry action but can be unlinked; a due row has actions but cannot be unlinked.
+        assertTrue(c.entries[0].availableActions.isEmpty())
+        assertTrue(c.entries[0].canUnlink)
+        assertTrue(c.entries[1].availableActions.isNotEmpty())
+        assertFalse(c.entries[1].canUnlink)
+    }
 }

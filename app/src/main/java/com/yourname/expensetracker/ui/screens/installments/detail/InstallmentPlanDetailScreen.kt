@@ -56,6 +56,7 @@ import com.yourname.expensetracker.ui.screens.installments.actions.InstallmentEn
 import com.yourname.expensetracker.ui.screens.installments.actions.InstallmentEntryActionSheet
 import com.yourname.expensetracker.ui.screens.installments.actions.InstallmentEntryActionsViewModel
 import com.yourname.expensetracker.ui.screens.installments.actions.installmentRowClickable
+import com.yourname.expensetracker.ui.screens.installments.actions.toActionContext
 import com.yourname.expensetracker.ui.screens.installments.formatInstallmentDate
 import com.yourname.expensetracker.ui.screens.installments.overview.InstallmentAmountUi
 
@@ -148,10 +149,17 @@ fun InstallmentPlanDetailScreen(
     }
 
     val menuEntry = loaded?.entries?.firstOrNull { it.entryId == menuEntryId }
-    if (loaded != null && menuEntry != null && menuEntry.availableActions.isNotEmpty()) {
+    if (loaded != null && menuEntry != null && (menuEntry.availableActions.isNotEmpty() || menuEntry.canUnlink)) {
         InstallmentEntryActionMenuSheet(
             seq = menuEntry.seq,
             actions = menuEntry.availableActions,
+            canUnlink = menuEntry.canUnlink,
+            onUnlink = {
+                menuEntryId = null
+                // The dialog states the consequence first; the confirmation reaches the coordinator
+                // through the plan actions ViewModel (owner-approvals 56).
+                planActionsViewModel.openUnlink(loaded.toActionContext(), menuEntry.entryId, menuEntry.seq)
+            },
             onPick = { kind ->
                 menuEntryId = null
                 actionsViewModel.open(
@@ -356,7 +364,7 @@ private fun EntryRow(entry: InstallmentEntryRowUi, onClick: () -> Unit) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .installmentRowClickable(entry.availableActions.isNotEmpty(), onClick)
+            .installmentRowClickable(entry.availableActions.isNotEmpty() || entry.canUnlink, onClick)
     ) {
         Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {

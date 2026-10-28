@@ -11,6 +11,7 @@ import com.yourname.expensetracker.domain.installment.model.InstallmentEntryStat
 import com.yourname.expensetracker.domain.installment.model.InstallmentFulfilmentMode
 import com.yourname.expensetracker.domain.installment.model.InstallmentPlanKind
 import com.yourname.expensetracker.domain.installment.model.InstallmentPlanStatus
+import com.yourname.expensetracker.domain.installment.model.InstallmentPlanTransitions
 import com.yourname.expensetracker.domain.installment.model.InstallmentStatusReason
 import com.yourname.expensetracker.domain.installment.readmodel.InstallmentAmount
 import com.yourname.expensetracker.domain.installment.readmodel.InstallmentEntryLine
@@ -92,6 +93,11 @@ data class InstallmentEntryRowUi(
     val scheduledMinor: Long = 0L,
     /** Row actions offered for this entry (ux-flows 3.5/3.6). Empty when none applies. */
     val availableActions: Set<InstallmentEntryActionKind> = emptySet(),
+    /**
+     * Unlink is offered (owner-approvals 56, unrestricted by link origin): the shared transition-table
+     * predicate `InstallmentPlanTransitions.isUnlinkable` (PAID + REGULAR entry, ACTIVE or COMPLETED plan).
+     */
+    val canUnlink: Boolean = false,
     /** Matching unlinked charges for this entry (INV-13); the Link sheet lists these. */
     val suggestions: List<InstallmentLinkSuggestionUi> = emptyList()
 )
@@ -225,6 +231,7 @@ internal object InstallmentPlanDetailMapper {
         awaitingConfirmation = awaiting,
         scheduledMinor = entry.scheduledMinor,
         availableActions = actionsFor(entry, planStatus, allSuggestions.any { it.entryId == entry.entryId }),
+        canUnlink = InstallmentPlanTransitions.isUnlinkable(entry.status, entry.kind, planStatus),
         suggestions = allSuggestions
             .filter { it.entryId == entry.entryId }
             .map {

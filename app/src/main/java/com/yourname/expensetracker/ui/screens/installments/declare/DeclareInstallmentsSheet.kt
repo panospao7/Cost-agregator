@@ -50,6 +50,7 @@ import com.yourname.expensetracker.domain.installment.model.InstallmentFulfilmen
 import com.yourname.expensetracker.domain.installment.model.InstallmentMinorUnits
 import com.yourname.expensetracker.domain.installment.model.InstallmentRefusalCode
 import com.yourname.expensetracker.domain.installment.model.InstallmentResidualPlacement
+import com.yourname.expensetracker.domain.installment.model.InstallmentSplitCurrencyRule
 import com.yourname.expensetracker.domain.installment.model.InstallmentSplitMethod
 import com.yourname.expensetracker.domain.installment.schedule.InstallmentScheduleCalculator
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -143,8 +144,19 @@ data class DeclareInstallmentsUiState(
         get() {
             val f = form ?: return InstallmentSplitMethod.EQUAL_SPLIT
             val t = target ?: return f.split
-            return if (f.currency?.code == t.currency) f.split else InstallmentSplitMethod.FIXED_PAYMENT
+            return if (InstallmentSplitCurrencyRule.equalSplitAllowed(f.currency?.code, t.currency)) {
+                f.split
+            } else {
+                InstallmentSplitMethod.FIXED_PAYMENT
+            }
         }
+
+    /**
+     * The equal-split chip is enabled only through [InstallmentSplitCurrencyRule] (OD-14): false for
+     * a null plan currency and for a plan currency other than the purchase currency.
+     */
+    val equalSplitAllowed: Boolean
+        get() = InstallmentSplitCurrencyRule.equalSplitAllowed(form?.currency?.code, target?.currency)
 
     val fixedMinor: Long? get() = form?.let { InstallmentAmountInput.parseMinor(it.fixedText) }
 
@@ -516,7 +528,7 @@ private fun DeclareSheet(state: DeclareInstallmentsUiState, vm: DeclareInstallme
                 FilterChip(
                     selected = state.effectiveSplit == InstallmentSplitMethod.EQUAL_SPLIT,
                     onClick = { vm.setSplit(InstallmentSplitMethod.EQUAL_SPLIT) },
-                    enabled = !running && !state.currencyDiffers,
+                    enabled = !running && state.equalSplitAllowed,
                     label = { Text(stringResource(R.string.declare_installments_split_equal)) }
                 )
                 FilterChip(

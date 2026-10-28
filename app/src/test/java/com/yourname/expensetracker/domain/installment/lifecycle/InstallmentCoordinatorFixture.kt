@@ -281,6 +281,18 @@ class InstallmentCoordinatorFixture private constructor(
         declaredOnEpochDay = declaredOn
     )
 
+    /**
+     * OD-14 cross-currency terms: FIXED_PAYMENT 50.00 x 12 in EUR (no declared total), for a purchase
+     * in another currency. An EQUAL_SPLIT plan in another currency is refused CURRENCY_MISMATCH.
+     */
+    fun crossCurrencyFixedTerms(planUuid: String = "plan-uuid-1") = terms(
+        planUuid = planUuid,
+        currency = "EUR",
+        split = InstallmentSplitMethod.FIXED_PAYMENT,
+        total = null,
+        fixed = 50.0
+    )
+
     /** FIXED_PAYMENT 50.00 x [count] standalone terms, first due 2027-04-10. */
     fun standaloneTerms(
         planUuid: String = "standalone-uuid-1",

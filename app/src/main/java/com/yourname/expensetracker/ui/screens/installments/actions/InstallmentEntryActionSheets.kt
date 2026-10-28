@@ -43,14 +43,21 @@ import com.yourname.expensetracker.ui.screens.installments.formatInstallmentDate
 
 private const val MILLIS_PER_DAY = 86_400_000L
 
-/** The row action list (ux-flows 3.6): only the actions the row offers. */
+/**
+ * The row action list (ux-flows 3.6): only the actions the row offers. [canUnlink] adds the Unlink item
+ * after the others (owner-approvals 56); [onUnlink] opens the plan-level Unlink dialog, which states the
+ * consequence first. Unlink is not an [InstallmentEntryActionKind] because it runs through the plan
+ * actions ViewModel, not the entry actions one.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun InstallmentEntryActionMenuSheet(
     seq: Int,
     actions: Set<InstallmentEntryActionKind>,
     onPick: (InstallmentEntryActionKind) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    canUnlink: Boolean = false,
+    onUnlink: () -> Unit = {}
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
@@ -62,6 +69,11 @@ fun InstallmentEntryActionMenuSheet(
             InstallmentEntryActionKind.entries.filter { it in actions }.forEach { kind ->
                 TextButton(onClick = { onPick(kind) }, modifier = Modifier.fillMaxWidth()) {
                     Text(stringResource(menuLabel(kind)), modifier = Modifier.fillMaxWidth())
+                }
+            }
+            if (canUnlink) {
+                TextButton(onClick = onUnlink, modifier = Modifier.fillMaxWidth()) {
+                    Text(stringResource(R.string.installments_unlink_confirm), modifier = Modifier.fillMaxWidth())
                 }
             }
         }

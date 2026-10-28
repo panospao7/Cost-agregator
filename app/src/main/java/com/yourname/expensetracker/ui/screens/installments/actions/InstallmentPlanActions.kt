@@ -236,7 +236,7 @@ data class InstallmentPlanActionsUiState(
 
 /**
  * End flows (domain-spec AE-7 Stop, AE-8 Refund, AE-9 Early payoff, AE-14 Delete = undo of the
- * declaration) and the restricted entry Unlink. Every confirmation reaches exactly one
+ * declaration) and the unrestricted entry Unlink (owner-approvals 56). Every confirmation reaches exactly one
  * [InstallmentPlanLifecycleCoordinator] operation; this class never touches a DAO, the transaction
  * lifecycle coordinator or an expense repository (INV-24, INV-25, INV-23: no expense is deleted here).
  * Post-commit batches go through the shared [InstallmentPostCommitDispatcher].
@@ -258,7 +258,10 @@ class InstallmentPlanActionsViewModel @Inject constructor(
 
     fun openDelete(context: InstallmentPlanActionContext) = open(InstallmentPlanDialogKind.DELETE, context)
 
-    /** Restricted Unlink of one PAID entry (OQ-21): the dialog states the consequence first. */
+    /**
+     * Unrestricted Unlink of one PAID entry (OQ-21, owner-approvals 56): the dialog states the consequence
+     * first. The plan-detail entry menu offers it where the transition table allows it.
+     */
     fun openUnlink(context: InstallmentPlanActionContext, entryId: Long, seq: Int) =
         open(InstallmentPlanDialogKind.UNLINK, context, entryId, seq)
 

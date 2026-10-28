@@ -1229,3 +1229,136 @@ Applies S8b (:397-416) as superseded by A15 (:1018-1030) and owner-approvals 51c
 - Decision Q2's "Monte Carlo stays installment-free" is SUPERSEDED for the Home stress engine by S8b-2: FinancialStressForecastEngine (Home-only; sole caller ComputeDashboardWidgetsUseCase) consumes the InstallmentProjectionPort (known bounded outflows, HZ01-B conversion, INV-29 baseline exclusion). The cloud path is unaffected (the engine is not on the cloud briefing chain). Runway, health score and SmartSavings remain on the installment-free baseline. LEGAL_PATHS and ENGINE_INTERACTION_MAP were corrected accordingly.
 - The merge is a weather-widget REPLACE via HomeInstallmentWeatherSource, never an UpcomingItem variant. The earlier wording "recurring-sibling merge point at the Home upcoming items" (ENGINE_INTERACTION_MAP) was wrong and is corrected.
 - Owner-approvals 59a: data/repository/DashboardContractsAdapter.kt is added as the 8th exact-file entry of the installment_cloud_reachability surface (12 surface entries).
+
+
+## Amendment (2026-10-28) — Loan pre-enable batch (feature-planner; orchestrator-persisted; BINDING)
+
+The batch runs in the mec lane, one writer, slices serial; the feature stays dormant.
+
+Rules:
+- No schema change, no DAO write, no TLC bypass, and no guard, allowlist or baseline change, except the item-17 registry description (owner-approvals 65).
+- Out of scope: MainActivity, AndroidManifest, AddExpenseViewModel/Sheet (S11, MEC B1/B2), ReceiptScan* (MEC C), and TransactionsViewModel.kt (dirty in the main checkout).
+- strings.xml (es/el DRAFT), LEGAL_PATHS and the handoff are edited only in slice order.
+
+### Dispositions
+
+Disposition key: a = do now in a slice; b = S13 or needs S11; c = device-only check; d = decision.
+
+| # | Item | Disp. |
+|---|---|---|
+| 1 | PE-OD14: coordinator FIXED-only for cross-currency plans | a: PE-A, covering declareOnExpense, declareWithNewExpense and editDetails |
+| 2 | F-2 equal-split chip nit | a: PE-A |
+| 3 | Past-due SCHEDULED entries with paidBeforeTrackingCount = 0 never auto-record | a: PE-A proof test; b: S13 re-confirms |
+| 4 | PE-UNLINK part 1 (Unlink entry point, canUnlink) | a: PE-B |
+| 5 | Owner-56 risk: a re-record after Unlink | a: PE-B characterization test; b: S13 re-check |
+| 6 | PE-UNLINK part 2 (delete-dialog role lines and View plan) | a: PE-D |
+| 7 | F4 CashFlowCalendar installment dot and row | a: PE-C |
+| 8 | 60d-1 early bank charge over-count | d: ACCEPTED for v1, conservative over-count (item 65a); docs clarification in PE-C |
+| 9 | 60d-2 English fallback label | a: PE-C |
+| 10 | 60d-3 observeOverview trigger performance | a: PE-C, via observeChanges() |
+| 11 | S12b memoise loadBudgetInputs | a: PE-C |
+| 12 | S12a marks-loader N+1 | a: PE-D |
+| 13 | S12a retry-loop key | a: PE-D |
+| 14 | S12a device QA checklist | c: after PE-D, before S13 |
+| 15 | S10a-1 C1 deep-link confirmation and manifest hosts | b: S13-a, rebased on the app-lock tip after S20 and coordinated with app-lock S21 |
+| 16 | F5 edit-form locked treatment | b: S11 |
+| 17 | guard_registry.py :770-779 description | d: APPROVED as description-only (item 65b), done at the batch candidate |
+| 18-19 | F5 wording; guards 48/53c/56/59a-c | closed |
+| 20 | Create form defaults to EUR / currency picker | b: S11 |
+| 21 | es/el sign-off | d: owner only |
+| 22 | Unescaped LIKE in AmountOpsDisabled search | deferred: separate ticket |
+
+### PE-A — coordinator OD-14 + F-2 chip + past-due proof
+- Refusal code: reuse InstallmentRefusalCode.CURRENCY_MISMATCH (:32), which is already mapped in the UI.
+- N domain/installment/model/InstallmentSplitCurrencyRule.kt: equalSplitAllowed(planCurrency, purchaseCurrency).
+- M InstallmentPlanLifecycleCoordinator:
+  - declareOnExpense: after the facts read (:149-150), before generate (:169);
+  - declareWithNewExpense: in the pure-check block (:200-212), before the TLC create;
+  - editDetails: in the currency-change branch (:702-708), AFTER CURRENCY_LOCKED, for PURCHASE_ATTACHED + EQUAL_SPLIT only. Name/lender/category edits on a legacy mismatched plan stay allowed.
+- M DeclareInstallmentsSheet :141-151 and :519: the chip is enabled only when equalSplitAllowed, and false for a null currency.
+- Docs: a domain-spec line and a LEGAL_PATHS note.
+- Tests:
+  - Declare/EndEdit coordinator tests;
+  - InstallmentSplitCurrencyRuleTest;
+  - DeclareInstallmentsViewModelTest;
+  - past-due proof: declare on a purchase 3 months old, AUTO_RECORD, paidBeforeTrackingCount = 0, then catch-up and pre-backup reconcile record nothing before declaredOn.
+- Gates: reviewer-strict, architecture-guardian.
+- Filter: *InstallmentPlanLifecycleCoordinator*,*InstallmentSplitCurrencyRule*,*DeclareInstallments*,*InstallmentDueRecordingWorker*,*InstallmentPlanArchitectureGuard*.
+- Shards: domain-a-m, runtime-ui, architecture-contracts.
+- STOP if:
+  - an existing coordinator test changes outcome;
+  - the past-due proof fails (a money bug: go to the debugger);
+  - a new refusal code or string is needed;
+  - the restore path needs enforcement.
+
+### PE-B — plan-detail Unlink entry point (unrestricted, owner 56)
+- M InstallmentPlanTransitions: extract a pure isUnlinkable(entryStatus, entryKind, planStatus) from the UNLINK branch (:360-368); behaviour identical.
+- M InstallmentPlanDetailViewModel: InstallmentEntryRowUi.canUnlink.
+- M InstallmentPlanDetailScreen :151: the menu opens when there are actions or canUnlink; Unlink calls openUnlink (InstallmentPlanActions :261-263).
+- M the InstallmentEntryActionMenuSheet file: an Unlink item.
+- M InstallmentPlanActions: KDoc "unrestricted (owner-approvals 56)".
+- Tests:
+  - canUnlink over the full product;
+  - isUnlinkable parity with the UNLINK transition;
+  - openUnlink → confirm → coordinator.unlinkExpense exactly once;
+  - the owner-56 characterization: unlink a PAID AUTO_RECORD entry, then catch-up.
+- Gates: architecture-guardian; reviewer-strict at Batch 1.
+- STOP if:
+  - a table outcome changes;
+  - the characterization contradicts U-1 rule 5;
+  - a link-origin read is needed;
+  - a DAO, TLC or deleteExpense( reference appears in installment UI.
+
+### PE-C — read-path triggers and performance, Home fallback, CashFlow dot and row
+- InstallmentPlanReadRepository.observeChanges(): Flow<Unit>, with a default `observeOverview().map{}`; the Impl uses the cheap private changes() (:102-106).
+- HomeInstallmentWeatherSource:
+  - trigger becomes observeChanges() (:118-121);
+  - localized fallback label (:233, :286), resolved per computation.
+- BudgetViewModel (:144-160): with the flag on, inputs load only on observeChanges (mapLatest; CE rethrown; failure means Unavailable). With the flag off, nothing is read.
+- CashFlowCalendarScreen:
+  - an installment dot (:370-376);
+  - a day-list section (:482-492), take(3), plan currency from amountMinor, never converted;
+  - a pure internal formatter.
+- Strings: the fallback plan label and the CashFlow section header (es/el DRAFT).
+- Docs:
+  - LEGAL_PATHS (Home weather invalidation);
+  - an item-8 clarification in domain-spec.
+- Tests:
+  - ReadRepositoryImpl observeChanges;
+  - HomeInstallmentWeatherSource trigger and fallback;
+  - the DashboardBriefingInstallmentExclusion World ctor (cloud equality unchanged);
+  - BudgetViewModelInstallmentLine reload rules;
+  - N CashFlowCalendarInstallmentRowsTest.
+- Gates: privacy-security-guardian, architecture-guardian, reviewer-strict.
+- Validation: shards data and runtime-ui; installment_cloud_reachability; lint.
+- STOP if:
+  - any cloud-surface file needs an edit;
+  - the reachability scanned set changes;
+  - a budget-line value changes on existing fixtures;
+  - no locale-aware resolver exists;
+  - CashFlow needs conversion or navigation.
+
+### PE-D — Transactions delete-dialog role lines, retry-loop key, marks memoise
+- TransactionsScreen:
+  - :757-768 and :1891-1935: the role line plus View plan (via onOpenInstallmentPlan);
+  - :287: with the filter on, the effect key is (base count, hasReachedEnd, isLoading), with a single loadMore per key; with the filter off, the key stays -1.
+- TransactionsInstallmentViewModel:
+  - TransactionsLoadMorePolicy.effectKey;
+  - InstallmentRowMarksLoader: one snapshot read plus loadSuggestions instead of N×loadDetail; fail-closed and the CE rethrow kept.
+- TransactionsInstallmentUi: InstallmentDeleteRole.of(expense, marks) → PURCHASE/INSTALLMENT/REVERSED/null, with the INSTALLMENT_PURCHASE flag as fallback.
+- Strings: 3 role lines, verbatim from ux-flows :822-826 (es/el DRAFT).
+- Tests:
+  - LoadMorePolicy: filter-off 32-combination table unchanged; filter-on key stable across a failed page;
+  - the marks loader makes 0 loadDetail calls;
+  - N TransactionsInstallmentDeleteRoleTest.
+- Gates: privacy-security-guardian, cheap review; reviewer-strict at the Batch 2 candidate.
+- STOP if:
+  - TransactionsViewModel.kt needs an edit;
+  - the role needs a plan read beyond the marks;
+  - filter-off paging differs;
+  - the delete path changes.
+
+### Batches
+- Batch 1 = PE-A + PE-B. Batch 2 = PE-C + PE-D.
+- Candidate: static-guards, app-check and lint once, plus the item-17 registry description edit validated by guard_docs_truth.
+- Then the device G-check for item 14.

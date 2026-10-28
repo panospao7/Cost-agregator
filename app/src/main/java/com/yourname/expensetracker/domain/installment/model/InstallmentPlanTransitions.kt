@@ -359,9 +359,7 @@ object InstallmentPlanTransitions {
 
             EntryTrigger.UNLINK -> when {
                 c.entryStatus == InstallmentEntryStatus.SCHEDULED -> EntryTransitionResult.AlreadyInState(c.entryStatus)
-                c.entryStatus == InstallmentEntryStatus.PAID &&
-                    c.entryKind == InstallmentEntryKind.REGULAR &&
-                    planActiveOrCompleted ->
+                isUnlinkable(c.entryStatus, c.entryKind, c.planStatus) ->
                     EntryTransitionResult.Move(InstallmentEntryStatus.SCHEDULED, recordGenerationDelta = 1)
 
                 else -> illegalEntry()
@@ -540,6 +538,21 @@ object InstallmentPlanTransitions {
         }
         return BulkMarkResult.Allowed(toMark = toMark, alreadyMarked = alreadyMarked)
     }
+
+    /**
+     * The one statement of the Unlink rule (spec 3.2, owner-approvals 56): only a PAID REGULAR entry of
+     * an ACTIVE or COMPLETED plan moves back to SCHEDULED. Pure and total, so the plan-detail UI can use
+     * it to decide whether to offer Unlink. This is a table question only: the coordinator still
+     * re-checks inside its transaction, and a SCHEDULED entry answers `AlreadyInState`, not a move.
+     */
+    fun isUnlinkable(
+        entryStatus: InstallmentEntryStatus,
+        entryKind: InstallmentEntryKind,
+        planStatus: InstallmentPlanStatus
+    ): Boolean =
+        entryStatus == InstallmentEntryStatus.PAID &&
+            entryKind == InstallmentEntryKind.REGULAR &&
+            (planStatus == InstallmentPlanStatus.ACTIVE || planStatus == InstallmentPlanStatus.COMPLETED)
 
     // ------------------------------------------------------------------ helpers
 
