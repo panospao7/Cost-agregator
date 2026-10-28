@@ -60,7 +60,7 @@ Owner GO 2026-10-16 ("go quick-add"). Scope source: `docs/features/ai-evolution/
   H-4 add_expense_error_currency_loading included. N1-N11 stop-and-asks stand.
 
 ## Next action
-Merge into feature/ai-evolution. This is approved (owner-approvals 73b).
+DONE: merged to feature/ai-evolution as 73c593dd (see Final acceptance). The items below are history.
 - Merge in Cost-agregator-int from origin/feature/ai-evolution e6967db1 (a fast-forward-able base).
 - Validate the merge commit, then push.
 - This must land before loan-installments S11.
@@ -618,4 +618,11 @@ Owner decision (owner-approvals 73, 2026-10-28):
 - The merge to feature/ai-evolution is approved.
 - Greek sign-off stays a store-release condition.
 
-Next: merge feature/nl-quick-add into feature/ai-evolution in the integration worktree (Cost-agregator-int), validate the merge commit, then fast-forward push.
+MERGED (2026-10-28):
+- merge commit 73c593dd (from origin/feature/ai-evolution e6967db1; tree identical to 01d7e84b);
+- app-check on the merge commit vr-20261028-071920-34b9cb12 PASS;
+- fast-forward pushed to origin/feature/ai-evolution.
+Increment 1 is CLOSED. Open items:
+- Greek sign-off (store-release condition);
+- N3 / follow-up #11 together with the TalkBack device pass (pre-store-release);
+- the follow-ups listed above.
