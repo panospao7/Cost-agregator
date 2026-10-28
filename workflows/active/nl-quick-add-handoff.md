@@ -546,3 +546,34 @@ Validation to request: `targeted-unit-test` `"*QuickAddUiMapper*,*AddExpenseView
 - The el/es strings are DRAFTS (owner sign-off; G2-15). TalkBack and device checks are carried to Z.
 - Committed.
 - Next: slice Z (closeout + bundle acceptance gate).
+
+### Increment 1 follow-ups (Z)
+Recorded per G2-17. None is in increment 1 scope; each needs an owner or a later plan, not an edit here.
+
+1. "(€)" / "Euro" label: goes to manual-entry-currency (MEC).
+2. Domain-spec section 15 findings F2-F5 (F1, the clipboard comma-decimal x100 defect, was fixed by slice D):
+   - F2 `MerchantNormalizer.normalize(autoCreate=false)` writes aliases and logs `rawName` (`:102`);
+   - F3 `CategorizationEngine.categorizeWithContext` logs the raw merchant at `Timber.d` (`:185-186`);
+   - F4 `ManualExpenseRepository :252` `Timber.e(e, ...)` attaches a throwable, and `:214-216` passes the raw `exception.message` upward;
+   - F5 `GreeklishNormalizer.toLatinStatic` does not fold accented diphthongs, so merchant keys split on accents (dedup and history matching only).
+3. Runner shard-coverage gap: `validation-runner` has no check that every test package belongs to a shard, so a new package outside every shard is silently skipped by sharded runs. `domain.quickadd.*` was added to `domain-n-z` (G2-7); other new packages (ai-fixes, loan) should be checked.
+4. Native Spanish review, and the el/es DRAFT sign-off: owner native review of all `quick_add_*` and `add_expense_error_*` strings in `values-el` and `values-es` (es still shows the English example; plan: owner reviews Greek).
+5. Localisation of the 2 transfer and 5 OwnershipValidator messages (item 54b): they are still `UiText.DynamicString` of the existing English constants (OwnershipValidator not edited in increment 1).
+6. Clipboard pre-existing fragment cases (slice D review; regex frozen):
+   - space, apostrophe or NBSP-grouped numbers give a leading-integer fragment ("1 234,56" gives 1.00);
+   - a dropped minus sign;
+   - a trailing period;
+   - an unvalidated currency word.
+   Possible fix: reject a match followed by `[\s'’NBSP]\d`, or gate on the whole clipboard string being one amount.
+7. Spec-exact values in the summary (item 71b): the summary names fields only and does not echo the filled values (see Slice F design notes); showing spec-exact values is an owner decision and a follow-up.
+8. TalkBack device pass (not done): the Error and Duplicate cards (assertive live region, glyph-free content description) and the quick-add summary (polite live region). Also still open from slice F: the one-node chip row with a custom Remove action (ux 10).
+9. MEC rebase notes:
+   - expect `ManualExpenseRepository` conflicts;
+   - add a `mapSaveError` branch for `RECURRING_FOREIGN_CURRENCY_ERROR_CODE` (otherwise A's generic `Result.Error` mapping hides the bounded code; see S0 note on the MEC seam).
+10. Loan-installments S11 rebases onto quick-add (G2-16): `AddExpenseViewModel` and `AddExpenseSheet` are the shared write set.
+
+### Slice Z docs (2026-10-28, implementer; NOT validated)
+Docs only. Nothing was built, tested or run; no `app/` edit, no commit.
+- M `docs/architecture/CODEBASE_INVENTORY.md`: header line now "Generated/verified: 2026-10-28 (nl-quick-add increment 1 refresh ...)"; NEW "Drift Sync (2026-10-28 / nl-quick-add increment 1)" section (domain files, UI files, new tests, shard entry, strings, no schema change); one line under "Transaction Parsing". Manual refresh (S0 D-10: no regeneration script). Other sections untouched.
+- M `workflows/active/nl-quick-add-handoff.md`: the "Increment 1 follow-ups (Z)" section above and this entry.
+- Still to do in Z: bundle gate through the validation-runner, then the final review in a fresh session separate from the discovery reviewers.
