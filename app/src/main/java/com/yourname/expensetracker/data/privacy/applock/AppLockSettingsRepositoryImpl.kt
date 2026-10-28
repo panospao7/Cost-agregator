@@ -95,29 +95,10 @@ class AppLockSettingsRepositoryImpl @VisibleForTesting internal constructor(
             AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.IO_ERROR)
         }
 
-    override suspend fun setDiscreetNotifications(enabled: Boolean): AppLockSettingsWriteResult =
-        try {
-            val after = store.edit { prefs ->
-                // INV-44: nothing is written while unreadable. An unchanged result is not rewritten
-                // by DataStore, so the sentinel stays exactly as it was.
-                if (prefs.toLoadState() is AppLockSettingsLoadState.Unreadable) return@edit
-                prefs[Keys.DISCREET_NOTIFICATIONS] = enabled
-                prefs[LOAD_STATE_KEY] = LOAD_STATE_NORMAL
-            }
-            when (val state = after.toLoadState()) {
-                is AppLockSettingsLoadState.Loaded -> AppLockSettingsWriteResult.Committed(state.settings)
-                is AppLockSettingsLoadState.FirstRunDefault -> AppLockSettingsWriteResult.Committed(state.settings)
-                is AppLockSettingsLoadState.Unreadable ->
-                    AppLockSettingsWriteResult.Rejected(AppLockWriteRejection.UNREADABLE)
-            }
-        } catch (e: IOException) {
-            writeFailure(e, AppLockSettingField.DISCREET, rejectOnPersistentUnreadable = true)
-        }
-
     override suspend fun setAppLockEnabled(enabled: Boolean): AppLockSettingsWriteResult =
         try {
             val after = store.edit { prefs ->
-                // INV-44: nothing is written while unreadable (same read-check-write as the discreet write).
+                // INV-44: nothing is written while unreadable (read-check-write inside one store edit).
                 if (prefs.toLoadState() is AppLockSettingsLoadState.Unreadable) return@edit
                 prefs[Keys.APP_LOCK_ENABLED] = enabled
                 prefs[LOAD_STATE_KEY] = LOAD_STATE_NORMAL

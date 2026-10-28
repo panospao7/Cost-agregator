@@ -173,11 +173,11 @@ enum class ReviewSaveResult {
  * The state move is bound to the attempt: it passes the attempt id, and the controller derives enable or
  * disable from the prompt it recorded for that id (F2).
  *
- * Review-save (S18 ii-d, T27, INV-45): [requestReviewSave] recovers a persistently unreadable store. It is the second
- * production caller of `AppLockSettingsRepository.reviewSave` (with the 1a ViewModel until S18-ii-h) and the only one
- * behind the controller. A weakening record confirms through the CHANGE prompt, then applies like the other prompt
- * paths (serializer, `NonCancellable`, F7 re-read, id-bound state move, completion in a `finally`). It has no
- * production caller yet (dormant).
+ * Review-save (S18 ii-d, T27, INV-45): [requestReviewSave] recovers a persistently unreadable store. It is the only
+ * production caller of `AppLockSettingsRepository.reviewSave` (since S20-e) and the only one behind the controller. A
+ * weakening record confirms through the CHANGE prompt, then applies like the other prompt paths (serializer,
+ * `NonCancellable`, F7 re-read, id-bound state move, completion in a `finally`). Its one production caller is the 1a
+ * privacy settings ViewModel.
  */
 @Singleton
 class AppLockSettingsOperations @Inject constructor(
@@ -388,8 +388,10 @@ class AppLockSettingsOperations @Inject constructor(
      * diagnostics (`LOCK_SETTINGS_REVIEW_SAVED`, `LOCK_SETTING_PERSIST_FAILED(REVIEW_SAVE)`) are claimed and recorded by
      * the controller (D7), fire and forget, so a diagnostics failure never fails a committed save.
      *
-     * Single caller note: this request has NO production caller yet. The 1a ViewModel routes through it with S18-ii-h
-     * together with S20 (D1); until then it is dormant (a source-scan pin holds that).
+     * Single caller note (S20-e, S18-ii-h, D1): the 1a privacy settings ViewModel is the one production caller, and
+     * this class is the only production caller of `AppLockSettingsRepository.reviewSave` (a source-scan pin holds both).
+     * The ViewModel sends the D2 record (lock off, `IMMEDIATE`, discreet = the user's choice, secure screen on) under
+     * `NonCancellable` and takes no outer serializer.
      */
     suspend fun requestReviewSave(record: AppLockPrivacySettings): ReviewSaveResult {
         if (applyRunning.get()) return ReviewSaveResult.ALREADY_IN_FLIGHT
@@ -864,8 +866,8 @@ class AppLockSettingsOperations @Inject constructor(
     }
 
     /**
-     * The effective discreet value before the lock write, mapped exactly as `UpdateDiscreetNotificationsUseCase`
-     * does (F1, INV-13): `Loaded` and `FirstRunDefault` give the effective value; `Unreadable` is NOT evidence that
+     * The effective discreet value before the lock write, mapped as the retired `UpdateDiscreetNotificationsUseCase`
+     * did (F1, INV-13; retired in S20-d, D4): `Loaded` and `FirstRunDefault` give the effective value; `Unreadable` is NOT evidence that
      * the notifications were already discreet, so it counts as "not discreet yet" (false). A thrown read counts
      * the same. So the sweep may run (idempotent and only more private), never be skipped for lack of a read.
      */

@@ -32,11 +32,6 @@ internal class RelayRegistration internal constructor(
     internal val adopter: AttemptAdopter
 )
 
-/** Posts [task] to the main looper (production default of the relay's "post to main" seam). */
-private fun postToMainLooper(task: Runnable) {
-    Handler(Looper.getMainLooper()).post(task)
-}
-
 /**
  * The process-level [DeviceAuthenticator] the app-lock controller talks to (S20-a, TECH-1 A). The real prompt
  * adapter is bound to one Activity instance, so it cannot be a singleton; this relay is the one binding for
@@ -99,11 +94,17 @@ class AppLockAuthenticatorRelay @VisibleForTesting internal constructor(
 ) : DeviceAuthenticator {
 
     @Inject
-    constructor() : this({ Looper.myLooper() === Looper.getMainLooper() }, ::postToMainLooper)
+    constructor() : this(
+        { Looper.myLooper() === Looper.getMainLooper() },
+        { task -> Handler(Looper.getMainLooper()).post(task) }
+    )
 
     /** Test seam for the main-thread check only; orphan checks go to the real main looper. */
     @VisibleForTesting
-    internal constructor(onMainThread: () -> Boolean) : this(onMainThread, ::postToMainLooper)
+    internal constructor(onMainThread: () -> Boolean) : this(
+        onMainThread,
+        { task -> Handler(Looper.getMainLooper()).post(task) }
+    )
 
     /**
      * The open attempt. [holder] is null when it is orphaned (the holding host was destroyed in a rotation);

@@ -340,7 +340,7 @@ class AppLockControllerEnableDisableTest {
 
         assertEquals(listOf(true), h.repository.lockWrites)
         assertEquals(AppLockState.Unlocked, rig.controller.state.value)
-        // INV-13: Unreadable is not evidence of "already discreet" (same mapping as UpdateDiscreetNotificationsUseCase).
+        // INV-13: Unreadable is not evidence of "already discreet" (same mapping as AppLockSettingsOperations.readEffectiveDiscreetBeforeWrite).
         assertEquals(listOf(false to true), rig.triggerCalls)
         assertTrue(rig.uncaught.isEmpty())
     }

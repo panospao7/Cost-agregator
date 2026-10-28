@@ -737,8 +737,8 @@ class AppLockControllerIllegalTransitionTest {
             "onTimeoutWrittenWithoutPrompt",
             // S18 (i-b2), exact addition: the forced-aware plain-setting record.
             "onPlainSettingWritten",
-            // S18 (ii-c), exact addition: the settings re-read request has ZERO production callers. The settings
-            // section's retry (S20) allows exactly its own file as the one caller and extends this pin.
+            // S18 (ii-c), exact addition: the settings re-read request. S20-e allows exactly one production caller, the
+            // 1a settings section's retry (its own file), and nothing else.
             "requestSettingsReread",
             // S18 (ii-d), exact additions: the review-save start, the no-prompt review-save record and the internal
             // persistent-unreadable accessor. Exactly one production caller each, the settings operations file.
@@ -773,10 +773,12 @@ class AppLockControllerIllegalTransitionTest {
                 .filter { relativeToRoot(it, root) != "$APPLOCK_PACKAGE_PATH/AppLockController.kt" }
                 .filter { file ->
                     val text = file.readText()
-                    val allowed = if (relativeToRoot(file, root) == "$APPLOCK_PACKAGE_PATH/AppLockSettingsOperations.kt") {
-                        settingsOperationsOnly
-                    } else {
-                        emptySet()
+                    val allowed = when (relativeToRoot(file, root)) {
+                        "$APPLOCK_PACKAGE_PATH/AppLockSettingsOperations.kt" -> settingsOperationsOnly
+                        // S20-e (S18-ii-h): the 1a settings ViewModel's retry is the ONE production caller of the
+                        // settings re-read request, and gets exactly that token and nothing else.
+                        SETTINGS_VIEW_MODEL_PATH -> setOf("requestSettingsReread")
+                        else -> emptySet()
                     }
                     (forbidden - allowed).any { text.contains(it) }
                 }
@@ -791,36 +793,68 @@ class AppLockControllerIllegalTransitionTest {
     fun `S18 i-a dormancy - AppLockSettingsOperations, requestEnable and requestDisable have no production caller outside their own file`() {
         // DORMANT pin (arch review F2). The enable and disable requests exist and are tested, but nothing in
         // production may call them yet: no ViewModel, Activity, module or screen. There is no DI module for the class
-        // (it is `@Singleton @Inject constructor`), so the single exempt file is AppLockSettingsOperations.kt itself.
-        // Lifting this pin (allowing the settings UI as a caller) needs the BLOCKING list closed first: see
-        // LEGAL_PATHS WRITE 3/4 and handoff S18 (i-b1) item 5.
+        // (it is `@Singleton @Inject constructor`), so the exempt files are listed in the per-file map below:
+        // AppLockSettingsOperations.kt itself (every token) and, from S20-d/S20-e (S18-ii-g, S18-ii-h), the 1a settings
+        // ViewModel for EXACTLY {AppLockSettingsOperations, requestDiscreetChange, requestReviewSave} (the type for the
+        // constructor, the discreet request, the review-save request).
+        // Lifting this pin further (allowing the settings UI as a caller of anything else) needs the BLOCKING list
+        // closed first: see LEGAL_PATHS WRITE 3/4 and handoff S18 (i-b1) item 5.
         // The scan skips comment lines (KDoc links such as [AppLockSettingsOperations] are not calls).
-        val dormant = listOf(
-            "AppLockSettingsOperations",
-            "requestEnable",
-            "requestDisable",
-            "requestTimeoutChange",
-            // S18 (i-b2), exact additions.
-            "requestDiscreetChange",
-            "requestSecureScreenChange",
-            // S18 (ii-d), exact addition: dormant until the 1a ViewModel routes through it (S18-ii-h, with S20).
-            "requestReviewSave"
+        // The token list is shared with the reflection pin below (S20 candidate F6), which keeps it equal to the
+        // Operations' public request surface.
+        val dormant = DORMANT_TOKENS
+        // Per-file exemptions (S20-d, S20-e), keyed by the EXACT path under the source root. Operations.kt keeps every
+        // token; the 1a ViewModel gets exactly the type, the discreet request and the review-save request.
+        val exemptTokensByFile = mapOf(
+            "$APPLOCK_PACKAGE_PATH/AppLockSettingsOperations.kt" to dormant.toSet(),
+            SETTINGS_VIEW_MODEL_PATH to
+                setOf("AppLockSettingsOperations", "requestDiscreetChange", "requestReviewSave")
         )
         val offenders = locateProductionSourceRoots().flatMap { root ->
             root.walkTopDown()
                 .filter { it.isFile && (it.extension == "kt" || it.extension == "java") }
-                .filter { relativeToRoot(it, root) != "$APPLOCK_PACKAGE_PATH/AppLockSettingsOperations.kt" }
                 .filter { file ->
+                    val exempt = exemptTokensByFile[relativeToRoot(file, root)] ?: emptySet()
                     file.readLines()
                         .map { it.trim() }
                         .filterNot { it.startsWith("*") || it.startsWith("/*") || it.startsWith("//") }
-                        .any { line -> dormant.any { line.contains(it) } }
+                        .any { line -> (dormant - exempt).any { line.contains(it) } }
                 }
                 .map { it.path }
                 .toList()
         }
 
         assertEquals(emptyList<String>(), offenders)
+    }
+
+    @Test
+    fun `S20 F6 - the dormancy token list equals the public request surface of AppLockSettingsOperations`() {
+        // Strengthening only: a new public `request*` entry on the Operations that is missing from the dormancy list
+        // (or a listed token that no longer exists) fails here instead of silently escaping the dormancy scan.
+        val publicRequests = AppLockSettingsOperations::class.java.declaredMethods
+            .filter { Modifier.isPublic(it.modifiers) && !it.isSynthetic && !it.name.contains('$') }
+            .map { it.name }
+            .filter { it.startsWith("request") }
+            .toSet()
+        assertTrue("the Operations must expose public request entries", publicRequests.isNotEmpty())
+        assertEquals(publicRequests, DORMANT_TOKENS.filter { it.startsWith("request") }.toSet())
+        assertTrue(DORMANT_TOKENS.contains(AppLockSettingsOperations::class.java.simpleName))
+    }
+
+    @Test
+    fun `S20 F6 - the settings ViewModel's only use of the controller is requestSettingsReread`() {
+        // Per-file pin (strengthening): the per-file token exemption above allows `requestSettingsReread` in the 1a
+        // ViewModel; this keeps every OTHER member access on its `controller` property out. Comments and string
+        // literals are stripped so KDoc and messages are not calls.
+        val roots = locateProductionSourceRoots()
+        val viewModelFile = roots.map { File(it, SETTINGS_VIEW_MODEL_PATH) }.firstOrNull { it.isFile }
+            ?: error("The 1a settings ViewModel was not found under the production roots")
+        val code = viewModelFile.readText()
+            .replace(Regex("/\\*[\\s\\S]*?\\*/"), " ")
+            .replace(Regex("//[^\\n]*"), " ")
+            .replace(Regex("\"(?:\\\\.|[^\"\\\\])*\""), "\"\"")
+        val members = Regex("\\bcontroller\\s*\\??\\.\\s*(\\w+)").findAll(code).map { it.groupValues[1] }.toSet()
+        assertEquals(setOf("requestSettingsReread"), members)
     }
 
     @Test
@@ -845,31 +879,26 @@ class AppLockControllerIllegalTransitionTest {
 
     @Test
     fun `S18 i-b2 - the forced-aware discreet and secure-screen writes each have exactly one production call site, AppLockSettingsOperations`() {
-        // Pins the call sites (the declarations have no leading dot). The 1a `.setDiscreetNotifications(` caller, the
-        // use case, is a different method name and is unchanged. Comment lines skipped.
+        // Pins the call sites (the declarations have no leading dot). The unforced `.setDiscreetNotifications(` is
+        // retired (see the D4 pin below). Comment lines skipped.
         assertSingleProductionCaller(".setDiscreetNotificationsIfNotForced(", "$APPLOCK_PACKAGE_PATH/AppLockSettingsOperations.kt")
         assertSingleProductionCaller(".setSecureScreenIfNotForced(", "$APPLOCK_PACKAGE_PATH/AppLockSettingsOperations.kt")
     }
 
     @Test
-    fun `S18 i-b2 privacy review F3 - the unforced 1a discreet write has exactly one production call site, UpdateDiscreetNotificationsUseCase`() {
-        // Pins the call site `.setDiscreetNotifications(` (the declarations and the IfNotForced variant have no match:
-        // the variant's name continues after `Notifications`). The 1a use case is the only caller; the 1a secure-screen
-        // path has no unforced `.setSecureScreen(` call site in production today. An exact addition. Comment lines skipped.
-        assertSingleProductionCaller(".setDiscreetNotifications(", "$APPLOCK_PACKAGE_PATH/UpdateDiscreetNotificationsUseCase.kt")
+    fun `D4 retired - no production call site of the unforced discreet write`() {
+        // S20-d (S18-ii-g, owner item 51a): UpdateDiscreetNotificationsUseCase and the unforced
+        // `AppLockSettingsRepository.setDiscreetNotifications` are retired, so the F3 pin flips from one caller to
+        // zero. Pins the call site `.setDiscreetNotifications(` (the IfNotForced variant has no match: its name
+        // continues after `Notifications`). Comment lines skipped.
+        assertProductionCallers(".setDiscreetNotifications(", emptySet())
     }
 
     @Test
-    fun `S18 ii-d - reviewSave has exactly two production callers, the 1a privacy settings ViewModel and AppLockSettingsOperations`() {
-        // The 1a review card still calls it directly until S18-ii-h (with S20) routes it through requestReviewSave;
-        // that change reduces this set to AppLockSettingsOperations alone, deliberately.
-        assertProductionCallers(
-            ".reviewSave(",
-            setOf(
-                "com/yourname/expensetracker/ui/screens/privacysettings/AppLockPrivacySettingsViewModel.kt",
-                "$APPLOCK_PACKAGE_PATH/AppLockSettingsOperations.kt"
-            )
-        )
+    fun `S20-e - reviewSave has exactly one production caller, AppLockSettingsOperations`() {
+        // S18-ii-h (S20-e, D1): the 1a review card routes through requestReviewSave, so the former second caller (the
+        // privacy settings ViewModel) is gone and the set is AppLockSettingsOperations alone.
+        assertSingleProductionCaller(".reviewSave(", "$APPLOCK_PACKAGE_PATH/AppLockSettingsOperations.kt")
     }
 
     private fun assertSingleProductionCaller(callSite: String, allowedRelativePath: String) =
@@ -910,6 +939,21 @@ class AppLockControllerIllegalTransitionTest {
 
     private companion object {
         const val APPLOCK_PACKAGE_PATH = "com/yourname/expensetracker/domain/privacy/applock"
+        const val SETTINGS_VIEW_MODEL_PATH =
+            "com/yourname/expensetracker/ui/screens/privacysettings/AppLockPrivacySettingsViewModel.kt"
+
+        /** The dormancy scan's tokens (S18 i-a); the type name plus every public `request*` entry of the Operations. */
+        val DORMANT_TOKENS = listOf(
+            "AppLockSettingsOperations",
+            "requestEnable",
+            "requestDisable",
+            "requestTimeoutChange",
+            // S18 (i-b2), exact additions.
+            "requestDiscreetChange",
+            "requestSecureScreenChange",
+            // S18 (ii-d), exact addition: the 1a ViewModel routes through it from S20-e (S18-ii-h).
+            "requestReviewSave"
+        )
     }
 
     /**

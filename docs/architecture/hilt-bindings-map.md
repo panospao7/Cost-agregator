@@ -391,8 +391,7 @@ Auto-provided (no module entry; @Inject constructors) — app-lock 1a:
   @Singleton NotificationPresentationApplier           (@ApplicationContext Context, NotificationPresentationTexts)
   @Singleton NotificationPresentationTexts             (resource-backed discreet / public-version texts)
   DiscreetRepostTrigger                                (NotificationService, PrivacyDiagnosticsEmitter)
-  UpdateDiscreetNotificationsUseCase                   (AppLockSettingsRepository, DiscreetRepostTrigger,
-                                                        PrivacyDiagnosticsEmitter)
+  (UpdateDiscreetNotificationsUseCase retired in S20-d; WRITE 5 goes through AppLockSettingsOperations)
   MarkDashboardBriefingOpenedUseCase                   (AiEngagementRepository)
   DeepLinkApplier                                      (ExpenseRepository, MarkDashboardBriefingOpenedUseCase,
                                                         PrivacyDiagnosticsEmitter, BankFeatureAvailability,
@@ -403,15 +402,21 @@ Auto-provided (no module entry; @Inject constructors) — app-lock 1a:
                                                         ViewModel and AppLockSettingsOperations; moved from the ui
                                                         package by S18 ii-a)
   @Singleton AppLockSettingsOperations additionally takes AppLockSettingsWriteSerializer (S18 ii-a)
-  @HiltViewModel AppLockPrivacySettingsViewModel       (AppLockSettingsRepository, UpdateDiscreetNotificationsUseCase,
-                                                        PrivacyDiagnosticsEmitter, AppLockSettingsWriteSerializer,
-                                                        DiscreetRepostTrigger, @ApplicationScope CoroutineScope)
+  @HiltViewModel AppLockPrivacySettingsViewModel       (AppLockSettingsRepository, AppLockSettingsOperations (S20-d),
+                                                        AppLockController (S20-e, retry re-read),
+                                                        PrivacyDiagnosticsEmitter, @ApplicationScope CoroutineScope;
+                                                        AppLockSettingsWriteSerializer and DiscreetRepostTrigger were
+                                                        removed in S20-e)
   BillReminderWorker (@HiltWorker assisted) additionally takes NotificationPresentationResolver and
                                                         NotificationPresentationApplier (appended after timeProvider)
 ```
 `AppLockPrivacySettingsViewModel` uses `@ApplicationScope` (IO dispatcher, SupervisorJob) deliberately: every
 settings write (per-field discreet toggle and review-save) is launched there under
 `withContext(NonCancellable)` so a committed ON still runs its re-post sweep after the screen is left.
+Since S20-d the discreet toggle calls `AppLockSettingsOperations.requestDiscreetChange`, and since S20-e the review-save
+calls `requestReviewSave` (both serialise inside), so the ViewModel holds no serializer around either; the graph resolves because `AppLockSettingsOperations` is a `@Singleton`
+`@Inject` class whose dependencies are all bound (`AppLockController` since S20-c, `DeviceAuthenticator` via the relay
+binding of S20-a).
 
 ### `BackupRepositoryModule` — `di/BackupRepositoryModule.kt`
 ```

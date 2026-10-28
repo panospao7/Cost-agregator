@@ -1553,7 +1553,7 @@ RE-POST sweep (turning discreet on, see APP LOCK SETTINGS WRITE PATH):
   a settle of at least 500 ms, one paced re-post of every sweep-kind notification whose token is NOT "D"
   (an absent token counts: pre-1a / marker-less originals and the residuals above), one COUNT-only
   diagnostic (NOTIF_REPOST_UNCONFIRMED); the token stays off the public version; it never blocks cleanup.
-  Triggers: per-field discreet write (UpdateDiscreetNotificationsUseCase) and a committed review-save
+  Triggers: per-field discreet write (AppLockSettingsOperations.requestDiscreetChange, WRITE 5) and a committed review-save
   (AppLockPrivacySettingsViewModel, before value "was off"); both go through DiscreetRepostTrigger.
 
 FORBIDDEN:
@@ -1653,7 +1653,7 @@ STORE:
 
 READ for a notification: NotificationPresentationResolver (see NOTIFICATION PRESENTATION).
 READ for the UI: AppLockPrivacySettingsViewModel ← AppLockSettingsRepository.observeLoadState().
-READ + RECOVERY for the app-lock state (S18 ii-c, INV-47, INV-51; DORMANT, no production caller): AppLockController
+READ + RECOVERY for the app-lock state (S18 ii-c, INV-47, INV-51; requestSettingsReread has ONE production caller since S20-e, the 1a ViewModel retry): AppLockController
   is the only reader that drives lock state. Cold start: resolve() (T1-T6, T6b). While the load state is
   transient-unreadable (IO_ERROR, TIMEOUT) it re-reads on its own scope at each APP_FOREGROUNDED (never awaited by
   the foreground evaluation) and on requestSettingsReread() (ZERO production callers; the settings retry binds it
@@ -1677,17 +1677,21 @@ READ + RECOVERY for the app-lock state (S18 ii-c, INV-47, INV-51; DORMANT, no pr
   AppLockController.notice, version-stamped with the state, after the monitor is released (R2), and republished on
   a load-state-only change.
 
-WRITE 1 — per-field discreet toggle (1a; the only WIRED per-field writer. WRITE 3 (lock flag) and
-WRITE 4 (auto-lock timeout) are DORMANT per-field writers that nothing may call yet):
+WRITE 1 — per-field discreet toggle (1a; since S20-d (S18-ii-g, D4 option (a)) it is WRITE 5 reached from the
+ViewModel: the unforced UpdateDiscreetNotificationsUseCase and AppLockSettingsRepository.setDiscreetNotifications
+are RETIRED, and the F3 pin counts zero production call sites of `.setDiscreetNotifications(`. WRITE 3 (lock flag)
+and WRITE 4 (auto-lock timeout) remain DORMANT per-field writers that nothing may call yet):
   → AppLockPrivacySection (UI) → AppLockPrivacySettingsViewModel.setDiscreetNotifications
      (ignored unless Ready and idle, INV-44)
   → appScope.launch (@ApplicationScope, IO) { withContext(NonCancellable) {
-        AppLockSettingsWriteSerializer.withExclusiveWrite { ... } } }   (domain-owned, shared with WRITE 3-5)
-  → UpdateDiscreetNotificationsUseCase(enabled)
+        handlePlain(AppLockSettingsOperations.requestDiscreetChange(enabled)) } }
+     (NO outer AppLockSettingsWriteSerializer: the operations take it inside, and the lock is non-reentrant)
+  → AppLockSettingsOperations.requestDiscreetChange(enabled)  (= WRITE 5, below)
       1. before = effective discreet from getLoadState() (trusted only for Loaded / FirstRunDefault;
          Unreadable counts as was-off)
-      2. AppLockSettingsRepository.setDiscreetNotifications(enabled)
-         (Rejected(UNREADABLE) when the store is unreadable; Failed(DISCREET) when the commit fails)
+      2. AppLockSettingsRepository.setDiscreetNotificationsIfNotForced(enabled)
+         (Rejected(UNREADABLE) when the store is unreadable; Rejected(FORCED) while the lock is on;
+         Failed(DISCREET) when the commit fails)
       3. on Committed ONLY → DiscreetRepostTrigger.onCommittedWrite(before, after)
             sweeps only on the false → true edge: NotificationService.repostActiveAsDiscreet()
             (see NOTIFICATION PRESENTATION); off never re-posts; on → on is not an edge;
@@ -1695,34 +1699,50 @@ WRITE 4 (auto-lock timeout) are DORMANT per-field writers that nothing may call 
             NOTIF_REPOST_FAILED(EXCEPTION_CLASS); the committed write is NOT failed; CancellationException
             rethrown. Per-notification failures, and a SecurityException on the active-notification query,
             come back as RepostResult.failed with their own NOTIF_REPOST_FAILED and the trigger returns SWEPT
-      4. Failed → the use case records LOCK_SETTING_PERSIST_FAILED(FIELD=DISCREET) (the repository
-         leaves diagnostics to its caller); Rejected records nothing and sweeps nothing
-  → the committed value reaches the UI only through the store observer; Failed and Rejected show the
-    SAVE_FAILED notice (owner decision 2026-10-24)
+      4. Failed or UNREADABLE → the operations report it to the controller, which records
+         LOCK_SETTING_PERSIST_FAILED(FIELD=DISCREET) once per (code, field); REJECTED_FORCED records nothing and
+         sweeps nothing
+  → the committed value reaches the UI only through the store observer. The ViewModel maps PlainSettingResult
+    exhaustively (no else): COMMITTED does nothing; FAILED, REJECTED_FORCED and ALREADY_IN_FLIGHT show the
+    SAVE_FAILED notice (owner decision 2026-10-24) and re-read. An exception from the operations (non-cancellation)
+    still shows SAVE_FAILED and records PERSIST_FAILED(DISCREET) in the ViewModel (the one retained VM diagnostic)
 
-WRITE 2 — review-save (1a; replaces a CORRUPTED / INVALID_VALUE store):
+WRITE 2 — review-save (1a; replaces a CORRUPTED / INVALID_VALUE store). SINGLE PATH since S20-e (S18-ii-h, D1):
   → AppLockPrivacySettingsViewModel.saveReview (review card; the only write accepted in that state)
-  → same scope + NonCancellable + AppLockSettingsWriteSerializer wrapper as WRITE 1
-  → AppLockSettingsRepository.reviewSave(AppLockPrivacySettings(discreet = choice))
-     (one atomic whole-record write, marker NORMAL; the only write that clears the sentinel, only on success)
-  → 1a has no lock, so no authentication applies (INV-45, 1a note); 1b moves authorisation into
-    AppLockController
-  → diagnostics are owned by the ViewModel in 1a (INTERIM, retired at S18):
-      Committed → LOCK_SETTINGS_REVIEW_SAVED; Failed / Rejected / unexpected exception →
-      LOCK_SETTING_PERSIST_FAILED(FIELD=REVIEW_SAVE); every emit is wrapped so a diagnostics failure
-      cannot turn a committed save into a reported failure
-  → on Committed → DiscreetRepostTrigger.onCommittedWrite(false, after), inside the same serializer /
-    NonCancellable block; Failed, Rejected or thrown saves never reach it
+  → @ApplicationScope + withContext(NonCancellable) { AppLockSettingsOperations.requestReviewSave(record) }
+    with NO outer serializer (the operations take the shared AppLockSettingsWriteSerializer inside; the mutex is
+    non-reentrant). The VM no longer calls AppLockSettingsRepository.reviewSave and holds no serializer or trigger.
+  → the record is the D2 record, until the S22 UI fields: {lock off, IMMEDIATE, discreet = the user's choice,
+    secure screen ON (the fail-closed value)}. REJECTED_CAPABILITY is unreachable with it (lock off). A lock-off
+    record is a WEAKENING (ReviewSaveAuthorisation): from UNLOCKED it confirms through the CHANGE prompt
+    (WRITE 2b), from INERT under D3 it needs none
+  → the rest of the path is WRITE 2b below. Diagnostics (LOCK_SETTINGS_REVIEW_SAVED,
+    LOCK_SETTING_PERSIST_FAILED(REVIEW_SAVE)) and the post-commit sweep are owned by the controller and the
+    operations (D7), once per (code, field) per process; the ViewModel emits nothing for a review-save
+  → the ViewModel maps ReviewSaveResult exhaustively (no else): COMMITTED resets the choice, keeps the card busy
+    until the observer reports and shows REVIEW_SAVED; STARTED shows no notice at once and arms a VM-private
+    pending-review-save flag (owner-approvals 64): the confirmed save commits later and reaches the UI only through
+    the store observer (INV-46), and when the observer moves from the review category to a readable state while the
+    flag is armed it shows REVIEW_SAVED exactly once and consumes the flag (no controller or Operations API added).
+    The flag is replaced by every later review-save result except ALREADY_IN_FLIGHT (the confirmed apply may still
+    be writing), and cleared by retry() or by the
+    observer leaving the review category for loading/transient; a readable state without the flag shows no notice.
+    FAILED shows SAVE_FAILED;
+    REJECTED_CAPABILITY, NOT_IN_REVIEW, NOT_IN_ORIGIN and ALREADY_IN_FLIGHT show SAVE_FAILED and re-read.
+    An exception from the operations (non-cancellation) shows SAVE_FAILED and records nothing in the VM
+  → retry() (and the foreground refresh while transient-unreadable) also calls AppLockController.requestSettingsReread()
+    (its ONE production caller, the 1a ViewModel; pinned)
   → CONDITIONAL since S18 ii-d (F4(a), D8): reviewSave writes ONLY if, INSIDE the same store edit, the stored
     state is persistent-unreadable (CORRUPTED or INVALID_VALUE). Loaded, a first run or a transient state gives
     Rejected(NOT_UNDER_REVIEW) and nothing is written, so a stale 1a card can never overwrite a committed
-    record (the ViewModel shows SAVE_FAILED).
+    record (the operations answer NOT_IN_REVIEW and the ViewModel shows SAVE_FAILED).
+  → `.reviewSave(` has exactly ONE production caller: AppLockSettingsOperations.kt (pinned)
 
-WRITE 2b — review-save (1b, S18 ii-d; the controller-owned path, DORMANT: no production caller, the ViewModel
-still uses the 1a path above until S18-ii-h):
+WRITE 2b — review-save (1b, S18 ii-d; the controller-owned path, LIVE since S20-e: its one caller is the 1a
+ViewModel above):
   OWNER: AppLockSettingsOperations.requestReviewSave(record) (the only production caller of
-  AppLockController.startReviewSaveAttempt / onReviewSavedWithoutPrompt; the `.reviewSave(` callers are pinned
-  to exactly {AppLockPrivacySettingsViewModel, AppLockSettingsOperations}).
+  AppLockController.startReviewSaveAttempt / onReviewSavedWithoutPrompt; the `.reviewSave(` caller is pinned
+  to exactly {AppLockSettingsOperations}).
   → ReviewSaveAuthorisation.classify(record): weakening = lock off, or a timeout longer than IMMEDIATE
     (forced discreet and secure do not count)
   → applyRunning check, review-open check (persistent-unreadable only), fresh capability read, then ONE of:
@@ -1807,25 +1827,28 @@ WRITE 3 — lock flag (S18 part (i-a), DORMANT: implemented and tested, no produ
     finding 8: CLOSED by S18-ii-f (setAppLockEnabled, setAutoLockTimeout, setAutoLockTimeoutIfNotWeakening,
         setDiscreetNotificationsIfNotForced and setSecureScreenIfNotForced are abstract; their fail-closed
         default bodies are gone and every fake overrides them, failing closed unless the test needs behaviour);
-    INV-45: ViewModel routing (S18-ii-h, merges with S20). The controller-side review authorisation is
-        CLOSED by S18-ii-d (WRITE 2b: classify, prompt for a weakening, D3, conditional write); what remains is
-        routing the review card through AppLockSettingsOperations.requestReviewSave, with the record starting
-        from F for every 1b field (the timeout included: IMMEDIATE). Today the 1a review card still writes
-        lock=false with no authentication (AppLockPrivacySettingsViewModel.kt:195/:200);
-    WRITE 5 routing (S18 i-b2): the 1a ViewModel's discreet and secure-screen writes are routed through
-        WRITE 5 (requestDiscreetChange / requestSecureScreenChange), so the 1a setDiscreetNotifications
-        path (no FORCED check) can never write a forced value while the lock is on.
-        EXIT CRITERION (S18 i-b2 final gate ISSUE-4): before ANY wiring, either (a) retire
-        UpdateDiscreetNotificationsUseCase -> setDiscreetNotifications (and flip the F3 pin to zero
-        production call sites), or (b) make setDiscreetNotifications forced-aware. Routing the settings
-        ViewModel alone is insufficient (the use case would remain a reachable unforced write path);
+    INV-45: ViewModel routing (S18-ii-h): CLOSED by S20-e (owner D1). The controller-side review authorisation
+        was closed by S18-ii-d (WRITE 2b); the review card now routes through
+        AppLockSettingsOperations.requestReviewSave with the D2 record (lock off, IMMEDIATE, discreet = the
+        choice, secure screen on), so a weakening review-save authenticates once (CHANGE prompt) or, under D3,
+        needs none. ONLY the S22 UI fields remain (a real timeout/secure-screen choice), plus the 61c
+        carry-forwards. Release condition (owner item 55a): no release ships S20 without S22;
+    WRITE 5 routing (S18 i-b2): CLOSED by S20-d (S18-ii-g). The 1a ViewModel's discreet write is routed through
+        WRITE 5 (requestDiscreetChange), so a forced value can never be written while the lock is on. The
+        secure-screen writer does not exist in 1a (no 1a secure-screen path; F-c), so requestSecureScreenChange
+        stays dormant until S22.
+        EXIT CRITERION (S18 i-b2 final gate ISSUE-4): MET by option (a) (owner item 51a): the use case
+        UpdateDiscreetNotificationsUseCase and the unforced setDiscreetNotifications (interface and Impl) are
+        retired, with their tests, and the F3 pin counts ZERO production call sites;
   Source-scan tests allow zero callers of AppLockSettingsOperations, requestEnable, requestDisable,
-  requestTimeoutChange, requestDiscreetChange and requestSecureScreenChange outside
-  AppLockSettingsOperations.kt, exactly one call site of setAppLockEnabled, of setAutoLockTimeout, of
+  requestTimeoutChange, requestDiscreetChange, requestSecureScreenChange and requestReviewSave outside
+  AppLockSettingsOperations.kt, with ONE per-file exemption (S20-d): AppLockPrivacySettingsViewModel.kt may
+  contain exactly the tokens AppLockSettingsOperations, requestDiscreetChange and requestReviewSave (S20-e). The
+  controller-entry pin allows the ViewModel exactly the token requestSettingsReread (its retry). They also allow
+  exactly one call site of setAppLockEnabled, of setAutoLockTimeout, of
   setAutoLockTimeoutIfNotWeakening, of setDiscreetNotificationsIfNotForced and of
-  setSecureScreenIfNotForced (that file), exactly one of the unforced 1a setDiscreetNotifications
-  (UpdateDiscreetNotificationsUseCase) and exactly one of reviewSave (the 1a ViewModel); lifting them
-  needs the items above. S18-ii-e adds beginInertDisable and onInertDisableApplied to the controller-entry
+  setSecureScreenIfNotForced (that file), ZERO of the retired unforced setDiscreetNotifications, and exactly
+  ONE of reviewSave (that file, since S20-e); lifting them needs the items above. S18-ii-e adds beginInertDisable and onInertDisableApplied to the controller-entry
   pins (exactly one production caller each: AppLockSettingsOperations.kt).
 
 WRITE 4 — auto-lock timeout (S18 part (i-b1), DORMANT: implemented and tested, no production caller):
@@ -1853,8 +1876,8 @@ WRITE 4 — auto-lock timeout (S18 part (i-b1), DORMANT: implemented and tested,
   DORMANT / NOT LEGAL TO WIRE until the same BLOCKING list as WRITE 3 is closed (F3, F4, F7, finding 8,
   INV-45), with the WRITE 4 scope stated there.
 
-WRITE 5 — discreet and secure screen, forced-aware (S18 part (i-b2), DORMANT: implemented and tested, no
-production caller):
+WRITE 5 — discreet and secure screen, forced-aware (S18 part (i-b2); requestDiscreetChange has had ONE production
+caller since S20-d, the 1a ViewModel (WRITE 1); requestSecureScreenChange is DORMANT, no production caller):
   OWNER: AppLockSettingsOperations (same class as WRITE 3 and 4). Entries: suspend requestDiscreetChange(enabled)
   and suspend requestSecureScreenChange(enabled). Under INV-48 / OD-2 (a) both values are FORCED while the lock
   is on (also in INERT), so there is no weakening that needs a prompt: they are refused, not authenticated.
@@ -1871,22 +1894,22 @@ production caller):
       5. the enable / disable apply of WRITE 3 holds the SAME serializer across its pre-read, write, state move and
          trigger (privacy review C1), so a plain discreet write cannot commit between the apply's pre-read and
          its lock write (a stale "was discreet" would skip the sweep)
-  The 1a UpdateDiscreetNotificationsUseCase / ViewModel path (setDiscreetNotifications, no FORCED check) is NOT
-  replaced here. DORMANT / NOT LEGAL TO WIRE until the WRITE 3 BLOCKING list is closed (F3, F4, F7, finding 8,
-  INV-45, and the WRITE 5 routing item listed there) AND the settings ViewModel's discreet and secure-screen
-  writes are routed through WRITE 5 (so a forced value can never be written by the 1a path while the lock is on).
-  EXIT CRITERION (ISSUE-4): routing the ViewModel alone is insufficient. Before wiring, either retire
-  UpdateDiscreetNotificationsUseCase -> setDiscreetNotifications (and flip the F3 pin to zero production call
-  sites), or make setDiscreetNotifications forced-aware.
+  The 1a UpdateDiscreetNotificationsUseCase / setDiscreetNotifications path (no FORCED check) was RETIRED in S20-d
+  (S18-ii-g, owner D4 option (a), item 51a), and the ViewModel's discreet toggle is routed here, so no unforced
+  discreet write path remains (F3 pin: zero call sites of `.setDiscreetNotifications(`). The WRITE 3 and WRITE 4
+  paths and requestSecureScreenChange stay DORMANT / NOT LEGAL TO WIRE until the S22 UI fields land (INV-45's
+  ViewModel routing, S18-ii-h, is CLOSED by S20-e).
 
 SERIALISATION (domain-owned since S18 ii-a, F4 serializer part CLOSED (S18-ii-a); F4(a) review-save in-edit
 guard (D8) CLOSED (S18-ii-d)): AppLockSettingsWriteSerializer (@Singleton,
 domain/privacy/applock, a process-wide non-reentrant Mutex, withExclusiveWrite) so a write started by an
 earlier ViewModel instance still excludes the next one's before-read / write / sweep. ONE instance is shared
-by the ViewModel's WRITE 1 and WRITE 2 wrappers and by every AppLockSettingsOperations path (WRITE 3 lock
-apply, WRITE 4 timeout apply and direct timeout write, WRITE 5 plain writes): the pre-read, the durable
+by every AppLockSettingsOperations path (WRITE 2b review-save, WRITE 3 lock
+apply, WRITE 4 timeout apply and direct timeout write, WRITE 5 plain writes). WRITE 1 reaches it only inside
+WRITE 5 (S20-d) and WRITE 2 only inside WRITE 2b (S20-e): the ViewModel holds no serializer and must NOT wrap a
+call to the operations, the mutex is non-reentrant. The pre-read, the durable
 write, the controller entry and the trigger are one critical section, and no prompt is held inside it.
-Nothing called inside it may re-enter it (the ViewModel wrappers never call Operations; Operations never
+Nothing called inside it may re-enter it (the ViewModel holds no serializer; Operations never
 calls the ViewModel). The former Operations-private directWriteMutex is gone. The store-level D8 guard and
 the controller-side review-save diagnostics ownership (WRITE 2b) landed in S18 ii-d.
 

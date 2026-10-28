@@ -2,6 +2,7 @@ package com.yourname.expensetracker.domain.privacy.applock
 
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -341,6 +342,31 @@ class AppLockControllerRereadTest {
             assertEquals(label, AppLockState.Disabled, controller.state.value)
         }
     }
+
+    @Test
+    fun `D6 a discreet write committed through requestDiscreetChange after a kept snapshot drops that snapshot (S20-d WRITE 5)`() =
+        runBlocking {
+            // S20-d: the 1a ViewModel now reaches the controller only through the operations. The REAL
+            // requestDiscreetChange (not a direct onPlainSettingWritten call) must advance the write sequence.
+            val (h, controller) = transientLocked()
+            val rig = SettingsOperationsRig(h, controller)
+            h.repository.scriptRead(AppLockTestSettings.DISABLED)
+            controller.onAppForegrounded() // the re-read result is kept (T29)
+            // The store commits the discreet write (the harness view stays transient, so the snapshot is the only difference).
+            h.repository.plainWriteResult = { _, value ->
+                AppLockSettingsWriteResult.Committed(AppLockPrivacySettings(discreetNotifications = value))
+            }
+
+            assertEquals(PlainSettingResult.COMMITTED, rig.ops.requestDiscreetChange(true))
+            unlockOnce(h, controller)
+
+            assertEquals(AppLockState.Unlocked, controller.state.value) // dropped: not DISABLED
+            // The view is still transient, so the next foreground re-reads and recovers.
+            h.repository.scriptRead(AppLockTestSettings.DISABLED)
+            controller.onAppForegrounded()
+            assertEquals(AppLockState.Disabled, controller.state.value)
+            assertTrue(rig.uncaught.isEmpty())
+        }
 
     @Test
     fun `D6 a write that did not commit does not drop the snapshot`() {

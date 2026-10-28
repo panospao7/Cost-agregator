@@ -19,6 +19,7 @@ import com.yourname.expensetracker.domain.privacy.applock.AppLockState
 import com.yourname.expensetracker.domain.privacy.applock.AuthPurpose
 import com.yourname.expensetracker.domain.privacy.applock.LockCause
 import com.yourname.expensetracker.domain.privacy.applock.LockNotice
+import com.yourname.expensetracker.ui.applock.AppLockContent
 import com.yourname.expensetracker.ui.navigation.NavigationDestination
 import kotlinx.coroutines.flow.StateFlow
 import timber.log.Timber
@@ -155,7 +156,7 @@ fun AppLockShell(
     operationalState: StateFlow<AppOperationalState>,
     navigateTo: (NavigationDestination) -> Unit,
     modifier: Modifier = Modifier,
-    content: @Composable () -> Unit
+    content: AppLockContent
 ) {
     val context = LocalContext.current
     val source = remember(controller) { ControllerGateSource(controller) }
@@ -181,9 +182,9 @@ internal fun AppLockShell(
     onOpenAppLockSettings: () -> Unit,
     onBackWhileClosed: () -> Unit = {},
     modifier: Modifier = Modifier,
-    content: @Composable () -> Unit
+    content: AppLockContent
 ) {
-    val operational = operationalState.collectAsState().value
+    val operational =operationalState.collectAsState().value
     val tracker = remember(source) { UnlockMessageTracker() }
     val gateState = source.state.collectAsState().value
     val unlockMessage = tracker.messageFor(gateState)

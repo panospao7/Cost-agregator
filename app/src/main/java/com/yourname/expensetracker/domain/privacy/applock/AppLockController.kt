@@ -1094,8 +1094,8 @@ class AppLockController @Inject constructor(
 
     /**
      * `SETTINGS_REREAD` (INV-47): reads the settings store once on the controller scope and offers the result to
-     * the private, sequence-checked [onSettingsReread]. The settings section's retry binds this later; it has NO
-     * production caller yet (a source-scan pin holds it). It does nothing unless the load state is transient
+     * the private, sequence-checked [onSettingsReread]. It has one production caller, the 1a settings section's
+     * retry (S20-e; pinned). It does nothing unless the load state is transient
      * unreadable (`IO_ERROR`, `TIMEOUT`): a readable view needs no re-read, and a persistent cause (`CORRUPTED`,
      * `INVALID_VALUE`) stays until a review-save (INV-33). A new request makes every older re-read stale. The
      * foreground does the same on its own at each `APP_FOREGROUNDED` ([onAppForegrounded]).

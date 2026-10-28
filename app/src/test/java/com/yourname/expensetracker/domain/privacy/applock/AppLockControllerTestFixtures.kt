@@ -99,11 +99,6 @@ internal class FakeAppLockSettingsRepository(var loadState: AppLockSettingsLoadS
 
     override fun observeLoadState(): Flow<AppLockSettingsLoadState> = flowOf(loadState)
 
-    override suspend fun setDiscreetNotifications(enabled: Boolean): AppLockSettingsWriteResult {
-        writeAttempts++
-        return AppLockSettingsWriteResult.Failed(AppLockSettingField.DISCREET)
-    }
-
     /** Every `reviewSave` call that passed the D8 check (the store was persistent-unreadable), in order. */
     val reviewSaves = mutableListOf<AppLockPrivacySettings>()
 

@@ -127,9 +127,6 @@ class AndroidNotificationServiceTest {
 
         override fun observeLoadState(): Flow<AppLockSettingsLoadState> = emptyFlow()
 
-        override suspend fun setDiscreetNotifications(enabled: Boolean): AppLockSettingsWriteResult =
-            error("not used by the notification service")
-
         override suspend fun reviewSave(record: AppLockPrivacySettings): AppLockSettingsWriteResult =
             error("not used by the notification service")
 

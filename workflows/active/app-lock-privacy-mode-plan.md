@@ -1886,3 +1886,109 @@ Supersedes:
 ### Decision (orchestrator, standing approval; owner-approvals item 55)
 - D2 vs S20 FLAG_SECURE: KEEP D2 (fail-closed: a review-save writes secure on), on the CONDITION that no release ships S20 without S22.
 - An interim S20-only release would need the owner to approve changing h's record to the store default for secureScreen.
+
+
+## Amendment (2026-10-28) — S21/S22 plan and 61c carry-forwards (feature-planner; orchestrator-persisted; BINDING)
+
+T3. S21 starts after the S20 candidate is committed. One lane, a → b → c. P = app/src/main/java/com/yourname/expensetracker; T = app/src/test/java/com/yourname/expensetracker.
+
+### Facts
+- F-1: MainActivity.
+  - Fields :115-150 (deepLinkApplier :116-117); DB gate :158-165; install/attach/bind :169-171; intent block :173-180; setContent :181; onNewIntent :210-219.
+  - handleIntent :233-239. Line :237 applies every accepted link with no LOCK_QUERY (this is #9).
+- F-2: P/ui/navigation/DeepLinkApplier.kt.
+  - apply :60-66, applyRejection :68-79, applyAccepted :81-107.
+  - The briefing write is at :88, the lookup at :143, and DL_APPLIED AFTER_UNLOCK=false is hard-coded at :103-106.
+- F-4: controller.
+  - onLockQuery :1266-1275 returns HOLD or APPLY_NOW.
+  - releaseHeldLink :1293-1309 returns None, Apply(request, afterUnlock) or Expired. The caller must call it from a separate main-thread call after each open publication, at ON_START, and after onOpenOriginApplyCompleted.
+- F-5 GAP: there is no observable trigger after T33 (onOpenOriginApplyCompleted :1318-1324 changes no flow). A link held during a CONFIRM_CHANGE prompt is released late.
+- F-6 #2 mechanics: a RESOLVE_TIMEOUT sets loadState = null and resolvedByTimeout (:1910-1912). transientUnreadableLocked (:1131-1135) excludes that case, so the re-read never runs; only T6b (:497-514) recovers.
+- F-7 pins:
+  - controller-entry pin :706-790 (raw text, comments included);
+  - dormancy pin :792-828, DORMANT_TOKENS :946-956;
+  - MainScreenCallSiteTest :245-257.
+- F-8: UnsupportedDatabaseActivity is a plain ComponentActivity with no DI. Its SAF export (:87-114) has no lock check. The R25 pin (UnsupportedDatabaseActivityTest :224-236) forbids @AndroidEntryPoint, AppDatabase, Dao, exportDatabase and PrivacyGate. The controller is never resolved on this path.
+- F-10: the mec handleIntent (:188-260) is pre-1a parseDeepLink code. Loan S13 C1 is a HARD requirement.
+
+### S21-a — controller: #2 timeout re-read + post-T33 release signal (AppLockController.kt only)
+- transientUnreadableLocked returns true also for `loadState == null && resolvedByTimeout`.
+- applyRereadLocked :1201-1204: priorCause = TIMEOUT for a timeout prior view (the D9 allowlist already covers it), and clear resolvedByTimeout.
+- Bounded re-read: withTimeoutOrNull(RESOLVE_TIMEOUT_MILLIS) at :1127, if readLoadState is unbounded (VERIFY).
+- T29 and T6b are unchanged; LOCKED is never opened by a re-read.
+- D-S21-1: a new public read-only `releaseOpportunity: StateFlow<Long>`. It is bumped after the lock is released in onOpenOriginApplyCompleted (matching id, link held) and carries no link data.
+- Tests:
+  - AppLockControllerRereadTest "61c-2" cases (12 listed in the planner report);
+  - AppLockControllerHeldLinkTest signal cases.
+- Pins: releaseOpportunity is added to the public-surface and signature pins (an exact addition) and to the controller-entry forbidden list (a strengthening).
+- Gates: privacy-security-guardian (lead), reviewer-strict.
+- STOP on:
+  - any LOCKED → open path other than T8/T6b;
+  - an AE that encodes "no re-read after timeout";
+  - a new diagnostic code or allowlist entry;
+  - any API beyond releaseOpportunity.
+
+### S21-b — held deep links via the controller (PRV-16; closes #9)
+- N P/ui/applock/AppLockDeepLinkRouter.kt: @Inject, unscoped, per Activity.
+  - route(result, scope, vm):
+    - Accepted → onLockQuery: APPLY_NOW → applier.apply; HOLD → applier.onHeld (drops only).
+    - Rejected → open state → applier.apply; otherwise → applier.onRejectedWhileClosed (bounded code only; no navigation; the held slot is untouched; D-S21-3).
+  - startReleasing(owner, vm): repeatOnLifecycle(STARTED) collecting state + releaseOpportunity. On an open state it posts launch(Dispatchers.Main) (NOT immediate) to releaseHeldLink: Apply → applyReleased, Expired → applyExpired (Home), None → nothing.
+  - Its KDoc must not name other forbidden tokens.
+- M DeepLinkApplier:
+  - applyAccepted(afterUnlock, reportDrops);
+  - onHeld;
+  - onRejectedWhileClosed;
+  - applyReleased;
+  - applyExpired.
+  apply() keeps its signature.
+- M MainActivity, ONLY these hunks:
+  - (1) the field becomes deepLinkRouter;
+  - (2) after :171, deepLinkRouter.startReleasing(this, mainViewModel);
+  - (3) handleIntent :237 becomes route(...), and the PRV-16 KDoc is rewritten.
+  onNewIntent and the intent block are unchanged.
+- Tests:
+  - N AppLockDeepLinkRouterTest (Robolectric, paused main looper, real controller): AE-55..60, AE-118, the RESOLVING hold, the timeout hold, the T33 signal, rejected-while-locked, F1 background, posted-never-inline, and a feature-scoped scan (no immediate/Unconfined).
+  - N DeepLinkApplierHoldTest.
+  - M DeepLinkDiagnosticsSentinelTest.
+  - M MainScreenCallSiteTest strengthening (router-only handleIntent; startReleasing order; not from onNewIntent; onLockQuery and releaseHeldLink forbidden in MainActivity).
+- Pins: the controller-entry pin `when` allows exactly AppLockDeepLinkRouter.kt the set {onLockQuery, releaseHeldLink, releaseOpportunity}.
+- Accepted residuals:
+  - R-S21-1: a lookup that began while open can finish after a re-lock; the navigation is buffered and nothing is composed.
+  - R-S21-2: a rotation during a released-link lookup loses that apply.
+- Gates: privacy-security-guardian (lead), architecture-guardian, reviewer-strict.
+
+### S21-c — #10 UnsupportedDatabaseActivity export (OWNER DECISION PENDING, item 69)
+- (A), recommended: device auth before the export when the committed lock is on (or the store is unreadable) and capability is AVAILABLE or CHECK_FAILED.
+  - Read through one narrow Hilt @EntryPoint (AppLockSettingsRepository read + DeviceAuthCapabilityProvider), bounded at 2 s.
+  - A per-Activity BiometricPromptDeviceAuthenticator with constant copy; the activity becomes a FragmentActivity.
+  - Files: N UnsupportedDatabaseExportAuth.kt; strings with es/el DRAFT.
+  - The R25 pin test is renamed and allows exactly one EntryPointAccessors.fromApplication( (a pin change, hence the owner).
+- (B): an owner exception (LEGAL_PATHS line plus a release note).
+
+### Coordination with loan S13-a
+- app-lock S21 owns: the MainActivity field block, onCreate :166-180, onNewIntent, handleIntent, the router, and the DeepLinkApplier signatures.
+- loan S13-a owns:
+  - the DeepLinkHost entries plus DeepLinkRequest.planId;
+  - DeepLinkPolicy installment hosts behind ENABLED;
+  - additive DeepLinkApplier host branches (calling a MainViewModel confirmation, not navigateTo);
+  - the confirmation dialog inside MainScreen;
+  - the manifest hosts.
+- S21 lands on the integration line first (a merge request goes to the owner); mec then rebases. The loan planner restates C1 against the 1a pipeline.
+
+### S21 validation (one batch for a + b + c)
+- targeted *AppLockController*,*DeepLink*,*AppLockDeepLinkRouter*,*MainScreenCallSite*,*AppLockShell*,*MainViewModel*,*GsonR8KeepRulesContract*,*UnsupportedDatabase*,*AppLockBiometricSourceScan*,*AppLockRelaySourceScan*,*BiometricPrompt*;
+- shards domain-n-z, runtime-ui;
+- cancellation, ui_dao, known_good_state (new files must avoid top-level fun interface and @Composable function types);
+- lint;
+- then static-guards and app-check at the candidate.
+
+### S22 outline (first user-enableable)
+- S22-a: the lock switch, enable/disable dialogs and Authenticating states (AE-34..36, 65, 113, 114, 118 UI). The dormancy VM exemption gains {requestEnable, requestDisable}.
+- S22-b: the timeout dialog (TECH-13 INERT row), forced rows read-only, the secure-screen row, the API 30 note and the review card (AE-70, 85-87, 93, 103, 116). The exemption gains {requestTimeoutChange, requestSecureScreenChange}; the pin becomes an exact two-file caller set.
+- One atomic S22 candidate.
+- S23 before G1b: USE_BIOMETRIC in the release evidence, the ux 4.3 row, release-note-1b, LEGAL_PATHS DEEP LINKS.
+- G1b before ANY release containing S20: the full device list (AE-38..AE-118, R3, RP-5, RP-11 recovery, CF-6, Back, insets/TalkBack, F6, the #10 check, the G1a post-sweep check).
+
+### Decisions (orchestrator under item 62; owner-approvals 69)
+D-S21-1 releaseOpportunity; D-S21-2 RECOVERED(TIMEOUT); D-S21-3 rejected-while-closed; D-S21-4 drops reported at receipt.

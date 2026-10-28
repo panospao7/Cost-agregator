@@ -16,7 +16,14 @@ import androidx.compose.ui.platform.testTag
 import com.yourname.expensetracker.domain.privacy.applock.AppLockState
 import com.yourname.expensetracker.domain.privacy.applock.LockCause
 import com.yourname.expensetracker.domain.privacy.applock.LockNotice
+import com.yourname.expensetracker.ui.applock.AppLockContent
 import kotlinx.coroutines.flow.StateFlow
+
+/**
+ * The gate's content slot. A named alias (not an inline function type) so the db_guard callable parser, which
+ * has no `@` token, resolves every parameter type of the gate and shell composables.
+ */
+typealias AppLockContent = @Composable () -> Unit
 
 /** What the gate draws for a state (domain-spec 3.6, INV-26, INV-53). */
 enum class AppLockGateRender {
@@ -91,7 +98,7 @@ fun AppLockGate(
     onReviewSettings: () -> Unit,
     modifier: Modifier = Modifier,
     unlockMessage: LockSurfaceMessage? = null,
-    content: @Composable () -> Unit
+    content: AppLockContent
 ) {
     when (state.toGateRender()) {
         AppLockGateRender.NEUTRAL ->
@@ -159,7 +166,7 @@ fun AppLockGate(
     onReviewSettings: () -> Unit,
     modifier: Modifier = Modifier,
     unlockMessage: LockSurfaceMessage? = null,
-    content: @Composable () -> Unit
+    content: AppLockContent
 ) {
     val state = source.state.collectAsState().value
     val notice = source.notice.collectAsState().value

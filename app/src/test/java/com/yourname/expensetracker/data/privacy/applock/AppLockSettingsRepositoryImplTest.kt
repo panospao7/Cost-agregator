@@ -193,131 +193,15 @@ class AppLockSettingsRepositoryImplTest {
         assertTrue("CancellationException must propagate from getLoadState", propagated)
     }
 
-    @Test
-    fun cancellation_during_write_propagates_and_is_not_a_typed_failure() = runBlocking {
-        faulty.failWrite = CancellationException("cancelled")
-
-        var propagated = false
-        try {
-            repository.setDiscreetNotifications(true)
-        } catch (e: CancellationException) {
-            propagated = true
-        }
-        assertTrue("CancellationException must propagate from setDiscreetNotifications", propagated)
-    }
-
-    // ---------------------------------------------------------------------------------
-    // Per-field write (INV-46)
-    // ---------------------------------------------------------------------------------
-
-    @Test
-    fun setDiscreet_from_first_run_commits_and_marks_normal() = runBlocking {
-        val result = repository.setDiscreetNotifications(true)
-
-        assertEquals(
-            AppLockSettingsWriteResult.Committed(AppLockPrivacySettings(discreetNotifications = true)),
-            result
-        )
-        assertEquals(
-            AppLockSettingsLoadState.Loaded(AppLockPrivacySettings(discreetNotifications = true)),
-            repository.getLoadState()
-        )
-        assertEquals("NORMAL", real.data.first()[markerKey])
-    }
-
-    @Test
-    fun setDiscreet_false_on_first_run_still_writes_marker_so_it_is_loaded_not_first_run() = runBlocking {
-        repository.setDiscreetNotifications(false)
-
-        assertEquals(
-            AppLockSettingsLoadState.Loaded(AppLockPrivacySettings(discreetNotifications = false)),
-            repository.getLoadState()
-        )
-    }
-
-    @Test
-    fun setDiscreet_can_turn_the_value_back_off_when_readable() = runBlocking {
-        repository.setDiscreetNotifications(true)
-
-        val result = repository.setDiscreetNotifications(false)
-
-        assertEquals(
-            AppLockSettingsWriteResult.Committed(AppLockPrivacySettings(discreetNotifications = false)),
-            result
-        )
-        assertEquals(
-            AppLockSettingsLoadState.Loaded(AppLockPrivacySettings(discreetNotifications = false)),
-            repository.getLoadState()
-        )
-    }
-
-    // ---------------------------------------------------------------------------------
-    // AE-88: per-field write while unreadable
-    // ---------------------------------------------------------------------------------
-
-    @Test
-    fun setDiscreet_while_sentinel_present_is_rejected_unreadable_and_writes_nothing() = runBlocking {
-        real.edit { it[markerKey] = "CORRUPTED" }
-        val before = real.data.first().asMap()
-
-        val result = repository.setDiscreetNotifications(true)
-
-        assertEquals(AppLockSettingsWriteResult.Rejected(AppLockWriteRejection.UNREADABLE), result)
-        assertEquals(before, real.data.first().asMap())
-        assertEquals(
-            AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.CORRUPTED),
-            repository.getLoadState()
-        )
-    }
-
-    @Test
-    fun setDiscreet_while_invalid_value_is_rejected_unreadable() = runBlocking {
-        real.edit { it[markerKey] = "BOGUS" }
-
-        val result = repository.setDiscreetNotifications(true)
-
-        assertEquals(AppLockSettingsWriteResult.Rejected(AppLockWriteRejection.UNREADABLE), result)
-        assertEquals(
-            AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.INVALID_VALUE),
-            repository.getLoadState()
-        )
-    }
-
-    @Test
-    fun setDiscreet_when_the_read_fails_with_io_error_is_rejected_unreadable() = runBlocking {
-        faulty.failRead = IOException("disk")
-        faulty.failWrite = IOException("disk")
-
-        val result = repository.setDiscreetNotifications(true)
-
-        assertEquals(AppLockSettingsWriteResult.Rejected(AppLockWriteRejection.UNREADABLE), result)
-    }
-
-    // ---------------------------------------------------------------------------------
-    // AE-105 (store part): typed failure, committed value kept
-    // ---------------------------------------------------------------------------------
-
-    @Test
-    fun setDiscreet_write_failure_is_typed_failed_and_keeps_the_committed_value() = runBlocking {
-        repository.setDiscreetNotifications(false)
-        faulty.failWrite = IOException("disk full")
-
-        val result = repository.setDiscreetNotifications(true)
-
-        assertEquals(AppLockSettingsWriteResult.Failed(AppLockSettingField.DISCREET), result)
-        faulty.failWrite = null
-        assertEquals(
-            AppLockSettingsLoadState.Loaded(AppLockPrivacySettings(discreetNotifications = false)),
-            repository.getLoadState()
-        )
-        assertFalse(real.data.first()[discreetKey] == true)
-    }
+    // S20-d (D4, owner item 51a): the unforced `setDiscreetNotifications` is retired, together with its store-level
+    // cases. The equivalent behaviours stay covered by the setAppLockEnabled_* and forced-aware cases below.
 
     @Test
     fun observe_emits_committed_state_only_and_a_failed_write_changes_nothing() = runBlocking {
-        repository.setDiscreetNotifications(false)
+        // S20-d: ported from the retired unforced write to the forced-aware write (the lock is off, so it commits).
+        repository.setDiscreetNotificationsIfNotForced(false)
         faulty.failWrite = IOException("disk full")
-        repository.setDiscreetNotifications(true)
+        repository.setDiscreetNotificationsIfNotForced(true)
 
         val observed = repository.observeLoadState().first()
 
@@ -329,7 +213,8 @@ class AppLockSettingsRepositoryImplTest {
 
     @Test
     fun observe_reflects_a_committed_write() = runBlocking {
-        repository.setDiscreetNotifications(true)
+        // S20-d: ported from the retired unforced write to the forced-aware write (the lock is off, so it commits).
+        repository.setDiscreetNotificationsIfNotForced(true)
 
         assertEquals(
             AppLockSettingsLoadState.Loaded(AppLockPrivacySettings(discreetNotifications = true)),
@@ -605,25 +490,11 @@ class AppLockSettingsRepositoryImplTest {
         }
         val before = real.data.first().asMap()
 
-        val result = repository.setDiscreetNotifications(true)
+        // S20-d: ported from the retired unforced write to the forced-aware write (same Unreadable rejection, INV-44).
+        val result = repository.setDiscreetNotificationsIfNotForced(true)
 
         assertEquals(AppLockSettingsWriteResult.Rejected(AppLockWriteRejection.UNREADABLE), result)
         assertEquals(before, real.data.first().asMap())
-    }
-
-    @Test
-    fun setDiscreet_keeps_the_stored_1b_values() = runBlocking {
-        val record = AppLockPrivacySettings(
-            discreetNotifications = false,
-            appLockEnabled = true,
-            autoLockTimeout = AutoLockTimeout.S30,
-            secureScreen = true
-        )
-        commitViaReview(record)
-
-        val result = repository.setDiscreetNotifications(true)
-
-        assertEquals(AppLockSettingsWriteResult.Committed(record.copy(discreetNotifications = true)), result)
     }
 
     @Test
@@ -944,20 +815,6 @@ class AppLockSettingsRepositoryImplTest {
                 "secure_screen" to true
             ),
             real.data.first().asMap().mapKeys { it.key.name }
-        )
-    }
-
-    @Test
-    fun setDiscreet_leaves_the_lock_flag_untouched_after_setAppLockEnabled() = runBlocking {
-        repository.setAppLockEnabled(true)
-
-        val result = repository.setDiscreetNotifications(true)
-
-        assertEquals(
-            AppLockSettingsWriteResult.Committed(
-                AppLockPrivacySettings(discreetNotifications = true, appLockEnabled = true)
-            ),
-            result
         )
     }
 

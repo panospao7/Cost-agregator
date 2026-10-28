@@ -74,12 +74,6 @@ interface AppLockSettingsRepository {
     fun observeLoadState(): Flow<AppLockSettingsLoadState>
 
     /**
-     * Per-field write of `discreetNotifications` (INV-44, INV-46). Returns `Rejected(UNREADABLE)` and
-     * writes nothing for any `Unreadable` state; `Failed(DISCREET)` if the commit fails.
-     */
-    suspend fun setDiscreetNotifications(enabled: Boolean): AppLockSettingsWriteResult
-
-    /**
      * Review-save (INV-44): one atomic write that replaces the whole store with the complete [record]
      * and marker `NORMAL`. This is the only write that clears a `CORRUPTED` / `INVALID_VALUE` state, and
      * only on success. Authorisation (INV-45) is the caller's concern, not the store's.
@@ -95,7 +89,7 @@ interface AppLockSettingsRepository {
 
     /**
      * Per-field write of `appLockEnabled` (T17, T18; INV-3, INV-44, INV-46). Same contract as
-     * [setDiscreetNotifications]: `Rejected(UNREADABLE)` and nothing written for any `Unreadable` state;
+     * [setDiscreetNotificationsIfNotForced]: `Rejected(UNREADABLE)` and nothing written for any `Unreadable` state;
      * `Failed(APP_LOCK_ENABLED)` if the commit fails; `Committed` only after the durable commit. Authorisation
      * (the fresh prompt) is the caller's concern.
      *
