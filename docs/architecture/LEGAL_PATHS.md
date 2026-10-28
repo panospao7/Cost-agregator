@@ -1,6 +1,6 @@
 # Legal Paths — Architecture Law
 
-> **Last updated:** 2026-10-24 (app-lock-privacy-mode 1a: NOTIFICATION PRESENTATION, DEEP LINKS and APP LOCK SETTINGS WRITE PATH sections added; DISPATCH reminder and Anomaly Alerting steps corrected). Earlier: 2026-10-13 (schema/savings delta verified against code: DB v151; prior guarded-worker/CI verification retained)
+> **Last updated:** 2026-10-29 (app-lock-privacy-mode S23 docs: DEEP LINKS 1a/1b with the AE-118 settings-prompt hold; APP LOCK write path status). Earlier: 2026-10-24 (app-lock-privacy-mode 1a: NOTIFICATION PRESENTATION, DEEP LINKS and APP LOCK SETTINGS WRITE PATH sections added; DISPATCH reminder and Anomaly Alerting steps corrected). Earlier: 2026-10-13 (schema/savings delta verified against code: DB v151; prior guarded-worker/CI verification retained)
 >
 > **Purpose:** Define the ONE allowed implementation path for each major operation.  
 > **Rule:** Any code that uses a different path is a bug, regardless of whether it "works."  
@@ -1595,7 +1595,10 @@ FORBIDDEN:
 
 ---
 
-## Deep Links (app-lock-privacy-mode, increment 1a)
+## Deep Links (app-lock-privacy-mode, increments 1a / 1b)
+
+Increment 1a is the policy, applier and manifest below; increment 1b (S21) is the router with the held-link gate. Both
+ship together with the lock (S20 never ships without S22; G1b before release).
 
 ```
 ENTRY (the only one):
@@ -1625,6 +1628,14 @@ caller of AppLockController.onLockQuery / releaseHeldLink / releaseOpportunity):
               lookup and the briefing write happen here)
       Expired → DeepLinkApplier.applyExpired: Home only (the controller recorded DL_HELD_EXPIRED)
       None → nothing (locked, resolving, prompt pending, T33 gate open, or backgrounded: the link stays held)
+  • AE-118 settings-prompt hold (1b): a link that arrives, or is held, while an app-lock settings prompt is open
+      (ENABLE / DISABLE / CHANGE: lock switch, timeout change, review-save) is HELD: releaseHeldLink returns None
+      while the prompt is pending and while the T33 gate is open, so no navigation and no lookup happens under the
+      prompt, and the settings screen stays composed (INV-53). The prompt ending (success, cancel, error or host
+      loss, T35) does not release the link by itself: the controller bumps releaseOpportunity (S21-a, after
+      onOpenOriginApplyCompleted closes the T33 gate with a link held) and the router's collector posts
+      releaseHeldLink() on Main. A link held across PROMPT_HOST_LOST is applied once, whether it arrived before or
+      after the host loss. T_held (5 min) still applies; an expired link goes Home only.
   • Accepted residuals: R-S21-1 a lookup that began while open can finish after a re-lock (the navigation is
     buffered and nothing is composed, and its bounded DL_APPLIED / DL_BRIEFING_* outcome may be recorded
     after the re-lock); R-S21-2 a rotation during a released-link lookup loses that apply.
@@ -1690,7 +1701,14 @@ FORBIDDEN:
 
 ---
 
-## App Lock Settings Write Path (app-lock-privacy-mode, increment 1a)
+## App Lock Settings Write Path (app-lock-privacy-mode, increments 1a / 1b)
+
+S23 status (docs, 2026-10-29): WRITE 3 (lock enable/disable, incl. T19), WRITE 4 (timeout), WRITE 5 (discreet and
+secure screen) and WRITE 2b (the FULL review record, D-S22-7) are all LIVE through the 1a settings ViewModel; nothing
+is dormant. Cancelled, failed, refused and not-launched outcomes of the lock switch, timeout and review-save follow
+ux-flows 4.3: silent outcomes show nothing, and a refusal shows only a bounded, own-string notice (never library
+text). The device-mode disable dialog does not exist (D-S22-2): turning the lock off is one system prompt (or none in
+INERT, T19). Release gate: S20 never ships without S22; G1b before release.
 
 ```
 STORE:

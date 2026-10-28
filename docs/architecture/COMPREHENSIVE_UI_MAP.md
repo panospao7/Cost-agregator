@@ -696,7 +696,7 @@ Group expense/member mutations flow through the domain group use cases injected 
 - Privacy audit log viewer
 - Raw storage mode indicators
 - Risky action confirmation dialogs
-- "App lock & privacy" section (app-lock 1a; `AppLockPrivacySection.kt` + `AppLockPrivacySettingsViewModel.kt`, inserted once before the Notification Capture section): a "Discreet notifications" switch driven by committed store state only (Loading shows no switch; transient-unreadable shows On, disabled, with a retry; corrupted/invalid shows a review card with one Save), and inline notices for SAVE_FAILED / REVIEW_SAVED. `PrivacySettingsViewModel` is untouched.
+- "App lock & privacy" section (app-lock 1a; `AppLockPrivacySection.kt` + `AppLockPrivacySettingsViewModel.kt`, inserted once before the Notification Capture section): a "Discreet notifications" switch driven by committed store state only (Loading shows no switch; transient-unreadable shows On, disabled, with a retry; corrupted/invalid shows a review card with one Save), and inline notices for SAVE_FAILED / REVIEW_SAVED. S22 (1b) adds: the "App lock" switch (committed value only; `AppLockEnableDialog` explainer, then one system prompt; turning off is one prompt, no disable dialog, D-S22-2), the "Lock after leaving the app" timeout row (`AutoLockTimeoutDialog`; TECH-13: longer options disabled while the lock is paused), the forced-aware "Secure screen" row, the Android 11 note, an Unavailable(OS) state with "Open security settings" where useful, and a review card that saves the full record `{lock, timeout, discreet, secure}`. `PrivacySettingsViewModel` is untouched.
 
 ---
 

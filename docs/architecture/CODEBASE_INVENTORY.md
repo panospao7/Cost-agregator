@@ -608,7 +608,8 @@ One DAO per entity (mostly 1-to-1 mapping)
 - **SnoozeReminderReceiver** (`service/reminder/`) - Hilt @AndroidEntryPoint for reminder snooze (injected RecurringReminderDeliveryDao, TimeProvider, RestoreMaintenanceMode)
 - **DismissReminderReceiver** (`service/reminder/`) - Hilt @AndroidEntryPoint for reminder dismiss (injected RecurringReminderDeliveryDao, TimeProvider, RestoreMaintenanceMode)
 
-### Permissions (11)
+### Permissions (12)
+- App lock (1): USE_BIOMETRIC (normal, install-time; merged from androidx.biometric, app-lock-privacy-mode S15/S20; no runtime prompt; USE_FINGERPRINT is not declared and must not appear in release evidence)
 - Foreground service (3): FOREGROUND_SERVICE, FOREGROUND_SERVICE_DATA_SYNC, FOREGROUND_SERVICE_LOCATION
 - Notifications (2): POST_NOTIFICATIONS, RECEIVE_BOOT_COMPLETED
 - Camera (1): CAMERA permission + hardware feature

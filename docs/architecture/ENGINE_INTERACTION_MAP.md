@@ -172,13 +172,23 @@ AppLockPrivacySettingsViewModel.setDiscreetNotifications  (@ApplicationScope, No
                     └── NOTIF_REPOSTED_DISCREET(COUNT) / NOTIF_REPOST_FAILED(EXCEPTION_CLASS)
 
 AppLockPrivacySettingsViewModel.saveReview  (@ApplicationScope, NonCancellable; NO outer serializer; S20-e)
-  └── AppLockSettingsOperations.requestReviewSave(D2 record)   (WRITE 2b; takes AppLockSettingsWriteSerializer inside)
+  └── AppLockSettingsOperations.requestReviewSave(full review record: lock, timeout, discreet, secure screen; D-S22-7)   (WRITE 2b; takes AppLockSettingsWriteSerializer inside)
         ├── weakening (lock off) from UNLOCKED: CHANGE prompt via AppLockController.startReviewSaveAttempt (STARTED)
         ├── AppLockSettingsRepository.reviewSave()            (the ONLY production caller of the conditional write)
         ├── AppLockController.onReviewSavedWithoutPrompt / onOpenOriginSettingApplied (state move, D6 sequence, D7 diagnostics)
         └── on Committed → DiscreetRepostTrigger.onCommittedWrite(false, after)
               └── same sweep as above (a committed review-save with discreet on sweeps; refused / failed never does)
 AppLockPrivacySettingsViewModel.retry / refreshIfTransient → AppLockController.requestSettingsReread()  (S20-e, INV-47)
+
+S22 settings writes (all @ApplicationScope, NonCancellable, NO outer serializer; each takes AppLockSettingsWriteSerializer inside Operations):
+AppLockPrivacySettingsViewModel.onTurnOnRequested / onTurnOffRequested  (S22-a.1)
+  └── AppLockSettingsOperations.requestEnable / requestDisable          (WRITE 3; ENABLE / DISABLE prompt via AppLockController.startOpenOriginAttempt; T19 inert-disable without a prompt)
+        └── T33 hand-off: setAppLockEnabled → AppLockController.onOpenOriginSettingApplied → onOpenOriginApplyCompleted → openOriginEnd + releaseOpportunity (held deep link)
+AppLockPrivacySettingsViewModel.onTimeoutSelected                         (S22-b.1)
+  └── AppLockSettingsOperations.requestTimeoutChange                    (WRITE 4; longer timeout with the lock on = CHANGE prompt from UNLOCKED only; INERT = NOT_IN_ORIGIN, TECH-13)
+AppLockPrivacySettingsViewModel.setSecureScreen                           (S22-b.1)
+  └── AppLockSettingsOperations.requestSecureScreenChange               (WRITE 5; REJECTED_FORCED while the lock is on) → committed settings → SecureWindowController (the single FLAG_SECURE writer)
+Engines affected by a lock/timeout/secure-screen commit: policy lock term (BILL action suppression on API <= 30), FLAG_SECURE, held deep link release; a lock-on commit never triggers the discreet sweep (disable never re-posts, INV-13).
 ```
 
 ### App lock prompt and lifecycle chain (S20-a; LIVE since S20-c wires MainActivity):

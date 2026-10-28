@@ -2971,3 +2971,15 @@ Validation to request: unchanged, targeted `*AppLockController*` (covers both te
   - The secure-screen title and support copy, the timeout note, and enable_point_screen no longer claim the app is removed from recent apps.
   - S22-b is COMMITTED. The atomic S22 candidate (a.0 + a.1 + b) is accepted.
 - Next session (fresh orchestrator, owner-approvals 87): S23 docs (single Sonnet writer plus a combined guardian), then G1b on the AVDs g1b-api30/31/33/34, release-api26 and wave5-api35.
+
+## S23 DONE (docs) (2026-10-29, feature-implementer; NOT validated, no build/test/guard run)
+- Files (docs, plus one KDoc-only Kotlin comment):
+  - `app/src/main/java/.../domain/privacy/applock/AppLockSettingsOperations.kt`: requestReviewSave KDoc "D2 record" -> full review record (comment only, no code token changed).
+  - `docs/features/app-lock-privacy-mode/ux-flows.md`: 4.3 ERROR_CANCELED -> SYSTEM_CANCELED; silent outcomes (DISABLE ERROR/CANCELLED, CHANGE ERROR/not launched, HOST_LOST/BACKGROUNDED, ALREADY_IN_FLIGHT/NOT_IN_ORIGIN/REVIEW_REQUIRED); B-4 decision "keep enable_failed for v1"; REJECTED_CAPABILITY copy note; raw discreet/secure choices stored while forced; TECH-13 INERT timeout row; device-mode disable dialog dropped (D-S22-2); Unavailable(OS)/NOT_SECURE "Open security settings" as built.
+  - `docs/features/app-lock-privacy-mode/release-note-1b.md` (new; USE_BIOMETRIC, features, known limits, gating "S20 never ships without S22; G1b before release").
+  - `docs/architecture/LEGAL_PATHS.md`: DEEP LINKS retitled 1a/1b plus the AE-118 settings-prompt hold and releaseOpportunity trigger; App Lock Settings Write Path retitled 1a/1b with an S23 status note; Last updated.
+  - `docs/architecture/hilt-bindings-map.md`: VM constructor (DeviceAuthCapabilityProvider) and the S22 writes.
+  - `docs/architecture/ENGINE_INTERACTION_MAP.md`: requestReviewSave full record; S22 settings write chains.
+  - `docs/architecture/CODEBASE_INVENTORY.md`: USE_BIOMETRIC in Permissions. `CODEBASE_SEGMENTS.md`: stale S20-c "not user-enableable" wording. `NAVIGATION_ARCHITECTURE.md`, `UI_REFERENCE_INDEX.md`, `COMPREHENSIVE_UI_MAP.md`: router hold, S22 section controls.
+- Owed: release-artifact-evidence must show USE_BIOMETRIC at G1b (a runner artifact, not edited); es/el sign-off O-2; the combined architecture-guardian review of S23; then G1b.
+- S23 accepted (combined guardian ACCEPT-WITH-CONDITIONS; 4 doc fixes applied); guard_docs_truth vr-20261028-220634-f9d864ed "status":"PASS". COMMITTED. Next: G1b device checks on the 6 AVDs.

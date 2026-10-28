@@ -2135,7 +2135,7 @@ Docs: LEGAL_PATHS "App Lock Settings Write Path" (:1687) callers; SEGMENTS; INVE
 - More than 2 + 2 iterations.
 
 ### S23 (docs, before G1b; architecture-guardian)
-- USE_BIOMETRIC in the release evidence and the INVENTORY permissions list (item 9; no new permission).
+- USE_BIOMETRIC in the release evidence and the INVENTORY permissions list (item 9: a normal install-time permission that came with S20; no other new permission).
 - ux 4.3: ERROR_CANCELED moves to SYSTEM_CANCELED.
 - ux: the TECH-13 INERT timeout row; drop the device-mode disable dialog.
 - release-note-1b.md.

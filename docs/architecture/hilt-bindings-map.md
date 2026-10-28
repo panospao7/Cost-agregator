@@ -407,10 +407,13 @@ Auto-provided (no module entry; @Inject constructors) — app-lock 1a:
                                                         package by S18 ii-a)
   @Singleton AppLockSettingsOperations additionally takes AppLockSettingsWriteSerializer (S18 ii-a)
   @HiltViewModel AppLockPrivacySettingsViewModel       (AppLockSettingsRepository, AppLockSettingsOperations (S20-d),
-                                                        AppLockController (S20-e, retry re-read),
+                                                        AppLockController (S20-e retry re-read; S22-a.1 state and
+                                                        openOriginEnd), DeviceAuthCapabilityProvider (S22-a.1, enable
+                                                        hint only; Operations' own T26 read decides),
                                                         PrivacyDiagnosticsEmitter, @ApplicationScope CoroutineScope;
                                                         AppLockSettingsWriteSerializer and DiscreetRepostTrigger were
-                                                        removed in S20-e)
+                                                        removed in S20-e; DeviceAuthCapabilityProvider is bound by the
+                                                        existing relay/capability binding, no new module)
   BillReminderWorker (@HiltWorker assisted) additionally takes NotificationPresentationResolver and
                                                         NotificationPresentationApplier (appended after timeProvider)
 ```
@@ -418,7 +421,10 @@ Auto-provided (no module entry; @Inject constructors) — app-lock 1a:
 settings write (per-field discreet toggle and review-save) is launched there under
 `withContext(NonCancellable)` so a committed ON still runs its re-post sweep after the screen is left.
 Since S20-d the discreet toggle calls `AppLockSettingsOperations.requestDiscreetChange`, and since S20-e the review-save
-calls `requestReviewSave` (both serialise inside), so the ViewModel holds no serializer around either; the graph resolves because `AppLockSettingsOperations` is a `@Singleton`
+calls `requestReviewSave` (both serialise inside), so the ViewModel holds no serializer around either. Since S22-a.1 the
+lock switch calls `requestEnable` / `requestDisable`, and since S22-b.1 the timeout row calls `requestTimeoutChange` and
+the secure-screen row calls `requestSecureScreenChange` (all on `@ApplicationScope` under `NonCancellable`, no outer
+serializer; no DI change); `requestReviewSave` carries the FULL review record (D-S22-7); the graph resolves because `AppLockSettingsOperations` is a `@Singleton`
 `@Inject` class whose dependencies are all bound (`AppLockController` since S20-c, `DeviceAuthenticator` via the relay
 binding of S20-a).
 
