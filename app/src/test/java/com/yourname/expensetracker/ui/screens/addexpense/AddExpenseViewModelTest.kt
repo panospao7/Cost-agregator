@@ -9,8 +9,35 @@ import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.ManualExpenseRepository
+import com.yourname.expensetracker.domain.currency.CurrencyConverter
+import com.yourname.expensetracker.domain.currency.CurrencyRateRefreshOutcome
+import com.yourname.expensetracker.domain.currency.CurrencyRatesRepository
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.currency.DomainExchangeRate
+import com.yourname.expensetracker.domain.currency.ExchangeRateStore
+import com.yourname.expensetracker.domain.currency.RateEligibilityEvaluator
+import com.yourname.expensetracker.domain.currency.RateSourceLabel
+import com.yourname.expensetracker.domain.currency.UserPresentRatePreview
+import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.model.Result
+import com.yourname.expensetracker.domain.privacy.PrivacySettings
+import com.yourname.expensetracker.domain.privacy.PrivacySettingsLoadState
+import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
+import com.yourname.expensetracker.domain.transaction.RateRefusalCodes
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
+import com.yourname.expensetracker.ui.components.currency.CurrencyAmountInvalidKind
+import com.yourname.expensetracker.ui.components.currency.CurrencyBlockOrigin
+import com.yourname.expensetracker.ui.components.currency.CurrencyBlockVariant
+import com.yourname.expensetracker.ui.components.currency.CurrencyOpenSettingRequest
+import com.yourname.expensetracker.ui.components.currency.CurrencyRatesSetting
+import com.yourname.expensetracker.ui.components.currency.CurrencyRefreshStatus
+import com.yourname.expensetracker.ui.components.currency.CurrencyRegionUi
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.flow
+import java.io.IOException
+import java.time.LocalDate
+import java.time.ZoneOffset
 import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.quickadd.CategoryMatch
 import com.yourname.expensetracker.domain.quickadd.CategorySource
@@ -106,10 +133,24 @@ class AddExpenseViewModelTest : ViewModelTestUtils() {
 
         val currencyRepo = mockk<CurrencySettingsRepository>(relaxed = true)
         every { currencyRepo.homeCurrency() } returns flowOf("EUR")
+        // MEC B2a: the exchange-rate setting defaults to Loaded(OFF), so existing tests never refresh.
+        every { privacyRepo.observeLoadState() } returns privacyFlow
         viewModel = createViewModel(currencyRepo)
     }
 
-    private fun createViewModel(currencyRepo: CurrencySettingsRepository) = AddExpenseViewModel(
+    // MEC B2a collaborators: the REAL preview use case over an in-memory rate store (no value-class
+    // mock matchers), a counting rates repository, and a privacy repository that only reads the load state.
+    private val rateStore = AddExpenseRateStoreFake()
+    private val ratesRepo = AddExpenseRatesRepositoryFake()
+    private val privacyFlow = MutableStateFlow<PrivacySettingsLoadState>(
+        PrivacySettingsLoadState.Loaded(PrivacySettings())
+    )
+    private val privacyRepo = mockk<PrivacySettingsRepository>()
+
+    private fun createViewModel(
+        currencyRepo: CurrencySettingsRepository,
+        privacy: PrivacySettingsRepository = privacyRepo
+    ) = AddExpenseViewModel(
         manualExpenseRepository = manualExpenseRepository,
         expenseRepository = expenseRepository,
         categoryRepository = categoryRepository,
@@ -117,6 +158,11 @@ class AddExpenseViewModelTest : ViewModelTestUtils() {
         currencySettingsRepository = currencyRepo,
         quickAddParser = quickAddParser,
         quickAddLearnedCategoryLookup = quickAddLearnedCategoryLookup,
+        userPresentRatePreview = UserPresentRatePreview(
+            RateEligibilityEvaluator(CurrencyConverter(rateStore, timeProvider, testDispatcher))
+        ),
+        currencyRatesRepository = ratesRepo,
+        privacySettingsRepository = privacy
     )
 
     @Test
@@ -2132,10 +2178,11 @@ class AddExpenseViewModelTest : ViewModelTestUtils() {
 
     @Test
     fun `B1 any other repository code or text maps to save-failed and is never shown`() {
+        // MEC B2a rewrite in place: AMOUNT_DIGITS_UNAVAILABLE and RATE_NOT_ELIGIBLE_STALE are now mapped
+        // codes (see the "B2a refusal codes" tests below), so they left this "any other code" list.
         for (message in listOf(
-            com.yourname.expensetracker.domain.transaction.RateRefusalCodes.AMOUNT_DIGITS_UNAVAILABLE,
-            com.yourname.expensetracker.domain.transaction.RateRefusalCodes.NOT_ELIGIBLE_STALE,
-            "first problem; second problem Pacific/Auckland"
+            "first problem; second problem Pacific/Auckland",
+            "SOME_UNMAPPED_CODE"
         )) {
             stubAddManualExpenseReturns(Result.Error(message = message))
 
@@ -2243,5 +2290,1433 @@ class AddExpenseViewModelTest : ViewModelTestUtils() {
                 ZoneId::class.java.isAssignableFrom(field.type) || TimeZone::class.java.isAssignableFrom(field.type)
             )
         }
+    }
+
+    // =====================================================================================
+    // MEC slice B2a: currency selection, rate preview region, refresh, open-setting request.
+    // Oracle: domain-spec AEs 1-4, 6, 7, 11, 15-17, 22, 26, 27, 30, 31, 38 and the plan amendment
+    // "B2 re-anchor and split". The preview use case is the REAL one over an in-memory rate store.
+    // Synthetic rates only. Default context: home EUR, Europe/Athens, now Thu 2025-10-16 14:30.
+    // =====================================================================================
+
+    private fun settle() = testDispatcher.scheduler.advanceUntilIdle()
+
+    /** Virtual time: runs everything due up to and including [ms] from now. */
+    private fun advance(ms: Long) {
+        testDispatcher.scheduler.advanceTimeBy(ms)
+        testDispatcher.scheduler.runCurrent()
+    }
+
+    private fun runNow() = testDispatcher.scheduler.runCurrent()
+
+    private fun at(zone: ZoneId, y: Int, mo: Int, d: Int, h: Int = 12, mi: Int = 0): Long =
+        ZonedDateTime.of(y, mo, d, h, mi, 0, 0, zone).toInstant().toEpochMilli()
+
+    private fun oct(day: Int): LocalDate = LocalDate.of(2025, 10, day)
+
+    private fun utcMidnight(date: LocalDate): Long = date.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
+
+    private fun putRate(from: String, to: String, rate: Double, date: LocalDate, source: String = "ecb") {
+        rateStore.rows += DomainExchangeRate(
+            fromCurrency = from,
+            toCurrency = to,
+            rate = rate,
+            lastUpdated = 0L,
+            source = source,
+            validDate = utcMidnight(date)
+        )
+    }
+
+    private val region: CurrencyRegionUi get() = st.currencyRegion
+
+    private val ratesOn = PrivacySettingsLoadState.Loaded(PrivacySettings(exchangeRateDownloadEnabled = true))
+
+    /** A fresh VM for [home], sheet opened in [zone] at [now]; the rates setting defaults to Loaded(OFF). */
+    private fun openMec(
+        home: String = "EUR",
+        zone: ZoneId = athens,
+        now: Long = at(zone, 2025, 10, 16, 14, 30),
+        privacy: PrivacySettingsLoadState = PrivacySettingsLoadState.Loaded(PrivacySettings())
+    ) {
+        TimeZone.setDefault(TimeZone.getTimeZone(zone))
+        useUs()
+        every { timeProvider.now() } returns now
+        privacyFlow.value = privacy
+        val repo = mockk<CurrencySettingsRepository>(relaxed = true)
+        every { repo.homeCurrency() } returns flowOf(home)
+        viewModel = createViewModel(repo)
+        settle()
+        viewModel.onSheetOpened()
+        settle()
+        loggedLines.clear()
+    }
+
+    /** USD selected, 20.00 entered, dated Wed 15 Oct 12:00 Athens, no stored rate: a blocked preview. */
+    private fun openBlockedUsd(privacy: PrivacySettingsLoadState) {
+        openMec(privacy = privacy)
+        viewModel.updateDate(at(athens, 2025, 10, 15))
+        viewModel.selectCurrency("USD")
+        viewModel.updateAmount("20.00")
+        settle()
+        assertEquals(CurrencyRegionUi.Blocked(CurrencyBlockVariant.NONE, null, CurrencyBlockOrigin.PREVIEW), region)
+    }
+
+    private fun eligibleUsd(
+        rateDate: LocalDate,
+        formatted: String?,
+        source: RateSourceLabel = RateSourceLabel.ECB
+    ) = CurrencyRegionUi.Eligible(rateDate, source, formatted, amountUnavailable = false)
+
+    // ---- defaults: Selected(home) on every open, options from the selection policy ----
+
+    @Test
+    fun `B2a a fresh open selects the home currency and shows no preview`() {
+        openMec()
+
+        assertEquals("EUR", st.selectedCurrency)
+        assertFalse(st.isForeignSelected)
+        assertEquals(CurrencyRegionUi.Home, region)
+        assertFalse(st.isCurrencySaveBlocked)
+        assertEquals(CurrencyRefreshStatus.IDLE, st.rateRefresh)
+        assertEquals(CurrencyOpenSettingRequest.NONE, st.openSettingRequest)
+        assertFalse(st.repeatClearedByCurrency)
+        assertTrue(rateStore.asOfCalls.isEmpty())
+        assertTrue(ratesRepo.calls.isEmpty())
+    }
+
+    @Test
+    fun `B2a while the home currency is loading nothing is selected and a pick is ignored`() {
+        val repo = mockk<CurrencySettingsRepository>(relaxed = true)
+        every { repo.homeCurrency() } returns emptyFlow()
+        viewModel = createViewModel(repo)
+        settle()
+
+        assertNull(st.homeCurrency)
+        assertNull(st.selectedCurrency)
+        assertTrue(st.currencyOptions.isEmpty())
+        assertEquals(CurrencyRegionUi.Loading, region)
+
+        viewModel.selectCurrency("USD")
+        settle()
+
+        assertNull(st.selectedCurrency)
+        assertEquals(CurrencyRegionUi.Loading, region)
+    }
+
+    @Test
+    fun `B2a AE-27 options for a EUR home exclude BGN RUB and HRK and list home first then codes`() {
+        openMec()
+
+        val options = st.currencyOptions
+        assertEquals("EUR", options.first())
+        assertTrue(options.containsAll(listOf("USD", "GBP", "JPY")))
+        assertFalse("BGN" in options)
+        assertFalse("RUB" in options)
+        assertFalse("HRK" in options)
+        assertEquals(options.size, options.distinct().size)
+        assertEquals(options.drop(1).sorted(), options.drop(1))
+    }
+
+    @Test
+    fun `B2a AE-27 a BGN home keeps BGN as home option and a EUR pick is foreign`() {
+        openMec(home = "BGN")
+
+        assertEquals("BGN", st.currencyOptions.first())
+        assertFalse("RUB" in st.currencyOptions)
+        assertEquals("BGN", st.selectedCurrency)
+        assertEquals(CurrencyRegionUi.Home, region)
+
+        viewModel.selectCurrency("EUR")
+        settle()
+
+        assertEquals("EUR", st.selectedCurrency)
+        assertTrue(st.isForeignSelected)
+    }
+
+    @Test
+    fun `B2a AE-27 a non-selectable or unknown pick is ignored and the selection stays`() {
+        openMec()
+
+        viewModel.selectCurrency("BGN")
+        viewModel.selectCurrency("RUB")
+        viewModel.selectCurrency("ZZZ")
+        viewModel.selectCurrency("")
+        settle()
+
+        assertEquals("EUR", st.selectedCurrency)
+        assertEquals(CurrencyRegionUi.Home, region)
+        assertTrue(rateStore.asOfCalls.isEmpty())
+    }
+
+    // ---- AE-1 / AE-38 ----
+
+    @Test
+    fun `B2a AE-1 USD 20_00 dated 15 Oct previews the ECB rate of 15 Oct and saves in USD`() {
+        putRate("USD", "EUR", 1.0 / 1.08, oct(15))
+        openMec()
+        val dateMs = at(athens, 2025, 10, 15)
+
+        viewModel.updateDate(dateMs)
+        viewModel.selectCurrency("USD")
+        viewModel.updateAmount("20.00")
+        settle()
+
+        assertEquals("USD", st.selectedCurrency)
+        assertTrue(st.isForeignSelected)
+        assertEquals(eligibleUsd(oct(15), CurrencyFormatter.formatMoney(18.52, "EUR")), region)
+        assertFalse(st.isCurrencySaveBlocked)
+        // The lookup is bounded by the expense's local date at UTC midnight.
+        assertEquals(utcMidnight(oct(15)), rateStore.asOfCalls.last().third)
+
+        stubAddManualExpenseReturns(Result.Success(1L))
+        viewModel.updateMerchant("Cafe X")
+        viewModel.save()
+        settle()
+
+        assertEquals(SaveResult.Success, st.saveResult)
+        verifyOneSavedExpense("Cafe X", 20.0, "USD", null, PaymentMethod.CASH, dateMs)
+        assertTrue("no fetch at preview or save", ratesRepo.calls.isEmpty())
+        assertTrue(loggedLines.isEmpty())
+    }
+
+    @Test
+    fun `B2a AE-38 the preview text is formatMoney of the snapshot amount in the home currency`() {
+        putRate("USD", "EUR", 1.0 / 1.08, oct(15))
+        openMec()
+        viewModel.updateDate(at(athens, 2025, 10, 15))
+        viewModel.selectCurrency("USD")
+        viewModel.updateAmount("20.00")
+        settle()
+
+        // 18.52 is the spec's stored baseAmount for AE-1.
+        assertEquals(CurrencyFormatter.formatMoney(18.52, "EUR"), (region as CurrencyRegionUi.Eligible).formattedAmountInHome)
+    }
+
+    @Test
+    fun `B2a AE-38 a tie rounds half even in a whole-unit home and the text matches that snapshot`() {
+        putRate("USD", "JPY", 150.0, oct(15))
+        openMec(home = "JPY")
+        viewModel.updateDate(at(athens, 2025, 10, 15))
+        viewModel.selectCurrency("USD")
+        viewModel.updateAmount("10.75")
+        settle()
+
+        // 10.75 * 150 = 1612.5: HALF_EVEN gives 1612 (HALF_UP would show 1613).
+        assertEquals(CurrencyFormatter.formatMoney(1612.0, "JPY"), (region as CurrencyRegionUi.Eligible).formattedAmountInHome)
+    }
+
+    @Test
+    fun `B2a an eligible rate with no amount entered shows the date and no amount, never zero`() {
+        putRate("USD", "EUR", 1.0 / 1.08, oct(15))
+        openMec()
+        viewModel.updateDate(at(athens, 2025, 10, 15))
+        viewModel.selectCurrency("USD")
+        settle()
+
+        assertEquals(eligibleUsd(oct(15), null), region)
+        assertFalse((region as CurrencyRegionUi.Eligible).amountUnavailable)
+    }
+
+    @Test
+    fun `B2a a non-ECB source is labelled OTHER`() {
+        putRate("USD", "EUR", 0.9, oct(15), source = "manual")
+        openMec()
+        viewModel.updateDate(at(athens, 2025, 10, 15))
+        viewModel.selectCurrency("USD")
+        viewModel.updateAmount("10.00")
+        settle()
+
+        assertEquals(eligibleUsd(oct(15), CurrencyFormatter.formatMoney(9.0, "EUR"), RateSourceLabel.OTHER), region)
+    }
+
+    // ---- AE-2 / AE-3 / AE-4 ----
+
+    @Test
+    fun `B2a AE-2 a Sunday entry uses the Friday rate`() {
+        putRate("USD", "EUR", 0.9, oct(10))
+        openMec()
+        viewModel.updateDate(at(athens, 2025, 10, 12))
+        viewModel.selectCurrency("USD")
+        viewModel.updateAmount("20.00")
+        settle()
+
+        assertEquals(eligibleUsd(oct(10), CurrencyFormatter.formatMoney(18.0, "EUR")), region)
+    }
+
+    @Test
+    fun `B2a AE-3 an empty rate table blocks with NONE, disables Save and fetches nothing`() {
+        openMec()
+        viewModel.updateDate(at(athens, 2025, 10, 15))
+        viewModel.selectCurrency("USD")
+        viewModel.updateAmount("20.00")
+        settle()
+
+        assertEquals(CurrencyRegionUi.Blocked(CurrencyBlockVariant.NONE, null, CurrencyBlockOrigin.PREVIEW), region)
+        assertTrue(st.isCurrencySaveBlocked)
+        assertTrue(ratesRepo.calls.isEmpty())
+        assertTrue(rateStore.rows.isEmpty())
+        verifyNoManualExpenseSaved()
+    }
+
+    @Test
+    fun `B2a AE-4 eight days old is STALE with the latest date and a later rate fixes only a later date`() {
+        putRate("USD", "EUR", 0.9, oct(7))
+        openMec()
+        val fifteenth = at(athens, 2025, 10, 15)
+        viewModel.updateDate(fifteenth)
+        viewModel.selectCurrency("USD")
+        viewModel.updateAmount("20.00")
+        settle()
+
+        assertEquals(CurrencyRegionUi.Blocked(CurrencyBlockVariant.STALE, oct(7), CurrencyBlockOrigin.PREVIEW), region)
+        assertTrue(st.isCurrencySaveBlocked)
+
+        putRate("USD", "EUR", 0.9, oct(16))
+        viewModel.updateDate(fifteenth)
+        settle()
+        assertEquals(CurrencyRegionUi.Blocked(CurrencyBlockVariant.STALE, oct(7), CurrencyBlockOrigin.PREVIEW), region)
+
+        viewModel.updateDate(at(athens, 2025, 10, 16, 9, 0))
+        settle()
+        assertEquals(eligibleUsd(oct(16), CurrencyFormatter.formatMoney(18.0, "EUR")), region)
+    }
+
+    @Test
+    fun `B2a AE-4 boundary seven days is eligible and eight days is stale`() {
+        putRate("USD", "EUR", 0.9, oct(8))
+        openMec()
+        viewModel.selectCurrency("USD")
+        viewModel.updateAmount("10.00")
+
+        viewModel.updateDate(at(athens, 2025, 10, 15))
+        settle()
+        assertEquals(eligibleUsd(oct(8), CurrencyFormatter.formatMoney(9.0, "EUR")), region)
+
+        viewModel.updateDate(at(athens, 2025, 10, 16, 9, 0))
+        settle()
+        assertEquals(CurrencyRegionUi.Blocked(CurrencyBlockVariant.STALE, oct(8), CurrencyBlockOrigin.PREVIEW), region)
+    }
+
+    // ---- AE-6 / AE-7 / AE-11: the entry zone decides the local date ----
+
+    @Test
+    fun `B2a AE-6 Athens 01_30 on 16 Oct uses the 16 Oct rate`() {
+        putRate("GBP", "EUR", 34.48 / 30.0, oct(16))
+        openMec()
+        viewModel.updateDate(at(athens, 2025, 10, 16, 1, 30))
+        viewModel.selectCurrency("GBP")
+        viewModel.updateAmount("30.00")
+        settle()
+
+        assertEquals(eligibleUsd(oct(16), CurrencyFormatter.formatMoney(34.48, "EUR")), region)
+        assertEquals(utcMidnight(oct(16)), rateStore.asOfCalls.last().third)
+    }
+
+    @Test
+    fun `B2a AE-7 Athens 23_30 on 15 Oct has no rate when only 16 Oct is stored`() {
+        putRate("GBP", "EUR", 34.48 / 30.0, oct(16))
+        openMec()
+        viewModel.updateDate(at(athens, 2025, 10, 15, 23, 30))
+        viewModel.selectCurrency("GBP")
+        viewModel.updateAmount("30.00")
+        settle()
+
+        assertEquals(CurrencyRegionUi.Blocked(CurrencyBlockVariant.NONE, null, CurrencyBlockOrigin.PREVIEW), region)
+        assertEquals(utcMidnight(oct(15)), rateStore.asOfCalls.last().third)
+    }
+
+    @Test
+    fun `B2a AE-11 New York 21_00 on 15 Oct uses the 15 Oct rate and today is the device-local date`() {
+        val ny = ZoneId.of("America/New_York")
+        putRate("USD", "EUR", 0.9, oct(15))
+        putRate("USD", "EUR", 0.8, oct(16))
+        // 2025-10-15 21:30 in New York is already 16 Oct in UTC.
+        openMec(zone = ny, now = at(ny, 2025, 10, 15, 21, 30))
+        viewModel.updateDate(at(ny, 2025, 10, 15, 21, 0))
+        viewModel.selectCurrency("USD")
+        viewModel.updateAmount("10.00")
+        settle()
+
+        assertEquals(eligibleUsd(oct(15), CurrencyFormatter.formatMoney(9.0, "EUR")), region)
+        assertEquals(oct(15), st.ratesToday)
+        assertEquals(utcMidnight(oct(15)), rateStore.asOfCalls.last().third)
+    }
+
+    // ---- INV-3 timing: Pending, Evaluating at 250 ms, latest wins ----
+
+    @Test
+    fun `B2a a slow evaluation is Pending for 250 ms then Evaluating then Eligible`() {
+        putRate("USD", "EUR", 0.9, oct(15))
+        rateStore.latencyMs = { _, _, _ -> 1_000L }
+        openMec()
+        viewModel.updateDate(at(athens, 2025, 10, 15))
+        viewModel.selectCurrency("USD")
+        viewModel.updateAmount("20.00")
+
+        assertEquals(CurrencyRegionUi.Pending, region)
+        runNow()
+        assertEquals(CurrencyRegionUi.Pending, region)
+        advance(249)
+        assertEquals(CurrencyRegionUi.Pending, region)
+        advance(1)
+        assertEquals(CurrencyRegionUi.Evaluating, region)
+        assertFalse("Save stays enabled while Checking", st.isCurrencySaveBlocked)
+        advance(749)
+        assertEquals(CurrencyRegionUi.Evaluating, region)
+        advance(1)
+        assertEquals(eligibleUsd(oct(15), CurrencyFormatter.formatMoney(18.0, "EUR")), region)
+    }
+
+    @Test
+    fun `B2a a fast evaluation never shows Evaluating`() {
+        putRate("USD", "EUR", 0.9, oct(15))
+        openMec()
+        viewModel.updateDate(at(athens, 2025, 10, 15))
+        viewModel.selectCurrency("USD")
+        viewModel.updateAmount("20.00")
+        runNow()
+
+        assertTrue(region is CurrencyRegionUi.Eligible)
+        advance(1_000)
+        assertTrue(region is CurrencyRegionUi.Eligible)
+    }
+
+    @Test
+    fun `B2a the latest input wins and a superseded slow result is never applied`() {
+        putRate("USD", "EUR", 0.5, oct(15))
+        putRate("USD", "EUR", 0.25, oct(16))
+        val slowBound = utcMidnight(oct(15))
+        rateStore.latencyMs = { _, _, atMillis -> if (atMillis == slowBound) 1_000L else 0L }
+        openMec()
+        viewModel.selectCurrency("USD")
+        viewModel.updateAmount("20.00")
+        settle()
+        assertEquals(eligibleUsd(oct(16), CurrencyFormatter.formatMoney(5.0, "EUR")), region)
+
+        viewModel.updateDate(at(athens, 2025, 10, 15)) // slow
+        runNow()
+        advance(100)
+        viewModel.updateDate(at(athens, 2025, 10, 16, 9, 0)) // fast, supersedes
+        runNow()
+        assertEquals(eligibleUsd(oct(16), CurrencyFormatter.formatMoney(5.0, "EUR")), region)
+
+        advance(5_000)
+        assertEquals(eligibleUsd(oct(16), CurrencyFormatter.formatMoney(5.0, "EUR")), region)
+    }
+
+    @Test
+    fun `B2a a currency or date change drops the shown result to Pending, never a stale Eligible`() {
+        putRate("USD", "EUR", 0.5, oct(15))
+        putRate("GBP", "EUR", 2.0, oct(15))
+        rateStore.latencyMs = { from, _, _ -> if (from == "GBP") 1_000L else 0L }
+        openMec()
+        viewModel.updateDate(at(athens, 2025, 10, 15))
+        viewModel.selectCurrency("USD")
+        viewModel.updateAmount("20.00")
+        settle()
+        assertEquals(eligibleUsd(oct(15), CurrencyFormatter.formatMoney(10.0, "EUR")), region)
+
+        viewModel.selectCurrency("GBP")
+        assertEquals(CurrencyRegionUi.Pending, region)
+        runNow()
+        advance(250)
+        assertEquals(CurrencyRegionUi.Evaluating, region)
+        advance(750)
+        assertEquals(eligibleUsd(oct(15), CurrencyFormatter.formatMoney(40.0, "EUR")), region)
+
+        viewModel.updateDate(at(athens, 2025, 10, 14))
+        assertEquals(CurrencyRegionUi.Pending, region)
+        settle()
+        assertEquals(CurrencyRegionUi.Blocked(CurrencyBlockVariant.NONE, null, CurrencyBlockOrigin.PREVIEW), region)
+    }
+
+    @Test
+    fun `B2a an amount edit drops the shown result to Pending, never the old amount's Eligible`() {
+        putRate("USD", "EUR", 0.5, oct(15))
+        openMec()
+        viewModel.updateDate(at(athens, 2025, 10, 15))
+        viewModel.selectCurrency("USD")
+        viewModel.updateAmount("20.00")
+        settle()
+        assertEquals(eligibleUsd(oct(15), CurrencyFormatter.formatMoney(10.0, "EUR")), region)
+
+        viewModel.updateAmount("40.00")
+        assertEquals(CurrencyRegionUi.Pending, region)
+        settle()
+
+        assertEquals(eligibleUsd(oct(15), CurrencyFormatter.formatMoney(20.0, "EUR")), region)
+    }
+
+    @Test
+    fun `B2a typing an amount re-evaluates silently without an Evaluating flash for a fast store`() {
+        putRate("USD", "EUR", 0.5, oct(15))
+        openMec()
+        viewModel.updateDate(at(athens, 2025, 10, 15))
+        viewModel.selectCurrency("USD")
+        viewModel.updateAmount("20.00")
+        settle()
+
+        viewModel.updateAmount("40.00")
+        settle()
+
+        assertEquals(eligibleUsd(oct(15), CurrencyFormatter.formatMoney(20.0, "EUR")), region)
+    }
+
+    @Test
+    fun `B2a a home currency change re-evaluates and equal home and selection is Home`() {
+        putRate("USD", "EUR", 0.9, oct(15))
+        putRate("USD", "GBP", 0.8, oct(15))
+        val homeFlow = MutableStateFlow("EUR")
+        val repo = mockk<CurrencySettingsRepository>(relaxed = true)
+        every { repo.homeCurrency() } returns homeFlow
+        TimeZone.setDefault(TimeZone.getTimeZone(athens))
+        useUs()
+        every { timeProvider.now() } returns at(athens, 2025, 10, 16, 14, 30)
+        viewModel = createViewModel(repo)
+        settle()
+        viewModel.onSheetOpened()
+        viewModel.updateDate(at(athens, 2025, 10, 15))
+        viewModel.selectCurrency("USD")
+        viewModel.updateAmount("10.00")
+        settle()
+        assertEquals(eligibleUsd(oct(15), CurrencyFormatter.formatMoney(9.0, "EUR")), region)
+
+        homeFlow.value = "GBP"
+        settle()
+        assertEquals("USD", st.selectedCurrency)
+        assertEquals(eligibleUsd(oct(15), CurrencyFormatter.formatMoney(8.0, "GBP")), region)
+
+        homeFlow.value = "USD"
+        settle()
+        assertEquals("USD", st.selectedCurrency)
+        assertFalse(st.isForeignSelected)
+        assertEquals(CurrencyRegionUi.Home, region)
+    }
+
+    // ---- preview failures: bounded code only; cancellation is never swallowed ----
+
+    @Test
+    fun `B2a AE-30 an unreadable rate store fails closed and logs only the bounded code`() {
+        rateStore.failure = IllegalStateException("USD 20.00 rate 1.08 Europe/Athens")
+        openMec()
+        viewModel.updateDate(at(athens, 2025, 10, 15))
+        viewModel.selectCurrency("USD")
+        viewModel.updateAmount("20.00")
+        settle()
+
+        assertEquals(CurrencyRegionUi.Blocked(CurrencyBlockVariant.NONE, null, CurrencyBlockOrigin.PREVIEW), region)
+        assertTrue(st.isCurrencySaveBlocked)
+        assertEquals(listOf("RATE_PREVIEW_FAILED"), loggedLines.map { it.message })
+        assertTrue(loggedLines.all { it.throwable == null })
+    }
+
+    @Test
+    fun `B2a a CancellationException from the preview is rethrown, not mapped to a blocked card`() {
+        rateStore.failure = CancellationException("cancelled")
+        openMec()
+        viewModel.updateDate(at(athens, 2025, 10, 15))
+        viewModel.selectCurrency("USD")
+        viewModel.updateAmount("20.00")
+        settle()
+
+        assertEquals(CurrencyRegionUi.Pending, region)
+        assertTrue(loggedLines.isEmpty())
+    }
+
+    // ---- AE-15 / AE-16 / AE-17: per-currency amount rules through the region ----
+
+    @Test
+    fun `B2a AE-15 JPY 1500 previews and 1500,50 is invalid keeping the text`() {
+        putRate("JPY", "EUR", 1.0 / 162.5, oct(15))
+        openMec()
+        viewModel.updateDate(at(athens, 2025, 10, 15))
+        viewModel.selectCurrency("JPY")
+        viewModel.updateAmount("1500")
+        settle()
+        assertEquals(eligibleUsd(oct(15), CurrencyFormatter.formatMoney(9.23, "EUR")), region)
+
+        useGreek()
+        viewModel.updateAmount("1500,50")
+        settle()
+
+        assertEquals("1500,50", st.amount)
+        assertEquals(CurrencyRegionUi.AmountInvalid(CurrencyAmountInvalidKind.PRECISION_EXCEEDED), region)
+        assertTrue(st.isCurrencySaveBlocked)
+    }
+
+    @Test
+    fun `B2a AE-15 an invalid foreign amount never reads the rate store`() {
+        putRate("JPY", "EUR", 1.0 / 162.5, oct(15))
+        openMec()
+        viewModel.selectCurrency("JPY")
+        viewModel.updateAmount("1500.50")
+        settle()
+
+        assertEquals(CurrencyRegionUi.AmountInvalid(CurrencyAmountInvalidKind.PRECISION_EXCEEDED), region)
+        assertTrue(rateStore.asOfCalls.isEmpty())
+    }
+
+    @Test
+    fun `B2a the per-currency cap shows AmountInvalid ABOVE_CAP`() {
+        openMec()
+        viewModel.selectCurrency("USD")
+        viewModel.updateAmount("2000000.00")
+        settle()
+
+        assertEquals(CurrencyRegionUi.AmountInvalid(CurrencyAmountInvalidKind.ABOVE_CAP), region)
+        assertTrue(st.isCurrencySaveBlocked)
+    }
+
+    @Test
+    fun `B2a AE-16 switching EUR 12_50 to JPY marks it invalid without truncating and EUR makes it valid again`() {
+        openMec()
+        viewModel.updateAmount("12.50")
+        settle()
+        assertNull(st.amountError)
+
+        viewModel.selectCurrency("JPY")
+        settle()
+
+        assertEquals("12.50", st.amount)
+        assertEquals(noDecimalsText("JPY"), st.amountError)
+        assertEquals(CurrencyRegionUi.AmountInvalid(CurrencyAmountInvalidKind.PRECISION_EXCEEDED), region)
+        assertTrue(st.isCurrencySaveBlocked)
+
+        viewModel.selectCurrency("EUR")
+        settle()
+
+        assertEquals("12.50", st.amount)
+        assertNull(st.amountError)
+        assertEquals(CurrencyRegionUi.Home, region)
+        assertFalse(st.isCurrencySaveBlocked)
+    }
+
+    @Test
+    fun `B2a AE-16 save with a JPY selection and 12_50 stores nothing and reports the no-decimals error`() {
+        openMec()
+        stubAddManualExpense()
+        viewModel.selectCurrency("JPY")
+        viewModel.updateMerchant("Shop")
+        viewModel.updateAmount("12.50")
+        settle()
+
+        viewModel.save()
+        settle()
+
+        assertEquals(noDecimalsText("JPY"), st.amountError)
+        assertEquals("12.50", st.amount)
+        verifyNoManualExpenseSaved()
+    }
+
+    @Test
+    fun `B2a AE-17 JPY 1,500 is 1500 and valid while 1_500 is 1_5 and a precision error`() {
+        putRate("JPY", "EUR", 1.0 / 162.5, oct(16))
+        openMec()
+        stubAddManualExpense()
+        viewModel.selectCurrency("JPY")
+        viewModel.updateMerchant("Shop")
+
+        viewModel.updateAmount("1,500")
+        settle()
+        assertFalse(region is CurrencyRegionUi.AmountInvalid)
+        viewModel.save()
+        settle()
+        verifySavedAmount(1500.0)
+
+        viewModel.updateAmount("1.500")
+        settle()
+        assertEquals(CurrencyRegionUi.AmountInvalid(CurrencyAmountInvalidKind.PRECISION_EXCEEDED), region)
+        viewModel.save()
+        settle()
+        assertEquals(noDecimalsText("JPY"), st.amountError)
+        verifySavedAmount(1500.0, times = 1)
+    }
+
+    // ---- AE-26: Repeat is home-currency only ----
+
+    @Test
+    fun `B2a AE-26 choosing a foreign currency turns Repeat off with a note and Repeat stays off`() {
+        openMec()
+        viewModel.toggleRecurring()
+        viewModel.setRecurrenceFrequency(RecurrenceFrequency.WEEKLY)
+        assertTrue(st.isRecurring)
+
+        viewModel.selectCurrency("USD")
+        settle()
+
+        assertFalse(st.isRecurring)
+        assertEquals(RecurrenceFrequency.MONTHLY, st.recurrenceFrequency)
+        assertTrue(st.repeatClearedByCurrency)
+
+        viewModel.toggleRecurring()
+        viewModel.setRecurrenceFrequency(RecurrenceFrequency.WEEKLY)
+        assertFalse("toggle is ignored while foreign", st.isRecurring)
+        assertEquals(RecurrenceFrequency.MONTHLY, st.recurrenceFrequency)
+    }
+
+    @Test
+    fun `B2a AE-26 no note when Repeat was off and Repeat works again after returning home`() {
+        openMec()
+        viewModel.selectCurrency("USD")
+        settle()
+        assertFalse(st.repeatClearedByCurrency)
+
+        viewModel.selectCurrency("EUR")
+        settle()
+        viewModel.toggleRecurring()
+        assertTrue(st.isRecurring)
+    }
+
+    @Test
+    fun `B2a AE-26 a foreign save passes no recurrence and an EUR save keeps the monthly rule`() {
+        putRate("USD", "EUR", 0.9, oct(16))
+        openMec()
+        stubAddManualExpenseReturns(Result.Success(1L))
+        viewModel.toggleRecurring()
+        viewModel.selectCurrency("USD")
+        viewModel.updateMerchant("Shop")
+        viewModel.updateAmount("10.00")
+        settle()
+
+        viewModel.save()
+        settle()
+        coVerify(exactly = 1) {
+            manualExpenseRepository.addManualExpense(
+                merchant = any(), amount = any(), currency = eq("USD"), categoryId = any(),
+                transactionType = any(), paymentMethod = any(), date = any(), notes = any(),
+                transferDirection = any(), transferAccountName = any(), isNotMine = any(),
+                ownerName = any(), isSharedExpense = any(), sharedWithName = any(),
+                mySharePercentage = any(), myShareAmount = any(), latitude = any(),
+                longitude = any(), locationSource = any(), recurrenceFrequency = isNull(),
+                recurringNote = any(), entryZone = any()
+            )
+        }
+
+        viewModel.selectCurrency("EUR")
+        viewModel.toggleRecurring()
+        viewModel.clearSaveResult()
+        viewModel.save()
+        settle()
+        coVerify(exactly = 1) {
+            manualExpenseRepository.addManualExpense(
+                merchant = any(), amount = any(), currency = eq("EUR"), categoryId = any(),
+                transactionType = any(), paymentMethod = any(), date = any(), notes = any(),
+                transferDirection = any(), transferAccountName = any(), isNotMine = any(),
+                ownerName = any(), isSharedExpense = any(), sharedWithName = any(),
+                mySharePercentage = any(), myShareAmount = any(), latitude = any(),
+                longitude = any(), locationSource = any(),
+                recurrenceFrequency = eq(RecurrenceFrequency.MONTHLY),
+                recurringNote = any(), entryZone = any()
+            )
+        }
+    }
+
+    @Test
+    fun `B2a P1 the recurring-foreign code names the HOME currency while USD is selected`() {
+        putRate("USD", "EUR", 0.9, oct(16))
+        openMec()
+        stubAddManualExpenseReturns(Result.Error(message = ManualExpenseRepository.RECURRING_FOREIGN_CURRENCY_ERROR_CODE))
+        viewModel.selectCurrency("USD")
+        viewModel.updateMerchant("Shop")
+        viewModel.updateAmount("10.00")
+        settle()
+
+        viewModel.save()
+        settle()
+
+        assertEquals(
+            SaveResult.Error(UiText.StringResource(R.string.mec_repeat_home_only, listOf("EUR"))),
+            st.saveResult
+        )
+    }
+
+    // ---- AE-22 / refusal codes after the tap ----
+
+    private fun openEligibleUsdForm() {
+        putRate("USD", "EUR", 0.9, oct(15))
+        openMec()
+        viewModel.updateDate(at(athens, 2025, 10, 15))
+        viewModel.selectCurrency("USD")
+        viewModel.updateMerchant("Shop")
+        viewModel.updateAmount("20.00")
+        settle()
+        assertEquals(eligibleUsd(oct(15), CurrencyFormatter.formatMoney(18.0, "EUR")), region)
+    }
+
+    private fun assertFormKept() {
+        assertEquals("Shop", st.merchant)
+        assertEquals("20.00", st.amount)
+        assertEquals("USD", st.selectedCurrency)
+        assertFalse(st.isSaving)
+        assertNull(st.mutation.error)
+    }
+
+    @Test
+    fun `B2a AE-3 AE-22 the rate vanishing before Save shows the NONE card from SAVE and keeps the form`() {
+        openEligibleUsdForm()
+        rateStore.rows.clear()
+        stubAddManualExpenseReturns(Result.Error(message = RateRefusalCodes.NOT_ELIGIBLE_NONE))
+
+        viewModel.save()
+        settle()
+
+        assertEquals(CurrencyRegionUi.Blocked(CurrencyBlockVariant.NONE, null, CurrencyBlockOrigin.SAVE), region)
+        assertNull(st.saveResult)
+        assertTrue(st.isCurrencySaveBlocked)
+        assertFormKept()
+        assertTrue(ratesRepo.calls.isEmpty())
+    }
+
+    @Test
+    fun `B2a AE-22 a STALE refusal re-reads the latest rate date locally with origin SAVE`() {
+        openEligibleUsdForm()
+        rateStore.rows.clear()
+        putRate("USD", "EUR", 0.9, oct(7))
+        stubAddManualExpenseReturns(Result.Error(message = RateRefusalCodes.NOT_ELIGIBLE_STALE))
+
+        viewModel.save()
+        settle()
+
+        assertEquals(CurrencyRegionUi.Blocked(CurrencyBlockVariant.STALE, oct(7), CurrencyBlockOrigin.SAVE), region)
+        assertNull(st.saveResult)
+        assertFormKept()
+        assertTrue(ratesRepo.calls.isEmpty())
+    }
+
+    @Test
+    fun `B2a AE-22 a STALE refusal keeps the SAVE card when the local re-read disagrees and the next input clears it`() {
+        // The coordinator refused as stale but the local preview still sees an eligible rate.
+        openEligibleUsdForm()
+        stubAddManualExpenseReturns(Result.Error(message = RateRefusalCodes.NOT_ELIGIBLE_STALE))
+
+        viewModel.save()
+        settle()
+
+        assertEquals(CurrencyRegionUi.Blocked(CurrencyBlockVariant.STALE, null, CurrencyBlockOrigin.SAVE), region)
+        assertTrue(st.isCurrencySaveBlocked)
+        assertNull(st.saveResult)
+        assertFormKept()
+
+        viewModel.updateAmount("30.00")
+        assertEquals(CurrencyRegionUi.Pending, region)
+        settle()
+        assertEquals(eligibleUsd(oct(15), CurrencyFormatter.formatMoney(27.0, "EUR")), region)
+    }
+
+    @Test
+    fun `B2a AE-22 an UNSUPPORTED refusal shows the card from SAVE`() {
+        openEligibleUsdForm()
+        stubAddManualExpenseReturns(Result.Error(message = RateRefusalCodes.NOT_ELIGIBLE_UNSUPPORTED))
+
+        viewModel.save()
+        settle()
+
+        assertEquals(CurrencyRegionUi.Blocked(CurrencyBlockVariant.UNSUPPORTED, null, CurrencyBlockOrigin.SAVE), region)
+        assertNull(st.saveResult)
+        assertFormKept()
+    }
+
+    @Test
+    fun `B2a AE-14 a HOME_UNRESOLVED refusal shows the card, keeps the error text and stays retryable`() {
+        openEligibleUsdForm()
+        stubAddManualExpenseReturns(Result.Error(message = RateRefusalCodes.NOT_ELIGIBLE_HOME_UNRESOLVED))
+
+        viewModel.save()
+        settle()
+
+        assertEquals(CurrencyRegionUi.Blocked(CurrencyBlockVariant.HOME_UNRESOLVED, null, CurrencyBlockOrigin.SAVE), region)
+        assertEquals(
+            SaveResult.Error(UiText.StringResource(R.string.mec_block_home_unresolved)),
+            st.saveResult
+        )
+        assertFalse("Save stays enabled for a retry", st.isCurrencySaveBlocked)
+        assertEquals("Shop", st.merchant)
+        assertEquals("20.00", st.amount)
+        assertFalse(st.isSaving)
+    }
+
+    @Test
+    fun `B2a AE-19 AMOUNT_DIGITS_UNAVAILABLE maps to the invalid-amount text and AMOUNT_PRECISION_EXCEEDED to the selected currency`() {
+        openEligibleUsdForm()
+        stubAddManualExpenseReturns(Result.Error(message = RateRefusalCodes.AMOUNT_DIGITS_UNAVAILABLE))
+        viewModel.save()
+        settle()
+        assertEquals(SaveResult.Error(amountInvalidText), st.saveResult)
+        assertFalse(st.isSaving)
+
+        stubAddManualExpenseReturns(Result.Error(message = RateRefusalCodes.AMOUNT_PRECISION_EXCEEDED))
+        viewModel.save()
+        settle()
+        assertEquals(
+            SaveResult.Error(UiText.StringResource(R.string.mec_amount_max_decimals, listOf("USD", 2))),
+            st.saveResult
+        )
+    }
+
+    @Test
+    fun `B2a an unmapped repository text maps to save-failed and is never shown`() {
+        openEligibleUsdForm()
+        stubAddManualExpenseReturns(Result.Error(message = "USD 20.00 constraint failed Europe/Athens"))
+
+        viewModel.save()
+        settle()
+
+        assertEquals(SaveResult.Error(saveFailedText), st.saveResult)
+        assertEquals(CurrencyRegionUi.Eligible(oct(15), RateSourceLabel.ECB, CurrencyFormatter.formatMoney(18.0, "EUR"), false), region)
+    }
+
+    @Test
+    fun `B2a AE-31 a duplicate foreign save keeps the existing duplicate handling`() {
+        openEligibleUsdForm()
+        stubAddManualExpenseReturns(Result.Duplicate)
+
+        viewModel.save()
+        settle()
+
+        assertEquals(SaveResult.Duplicate, st.saveResult)
+        assertTrue(region is CurrencyRegionUi.Eligible)
+    }
+
+    @Test
+    fun `B2a AE-22 a refresh storing the 15 Oct rate re-evaluates the preview`() {
+        putRate("USD", "EUR", 0.9, oct(14))
+        ratesRepo.outcome = {
+            putRate("USD", "EUR", 0.8, oct(15))
+            CurrencyRateRefreshOutcome.Refreshed(1)
+        }
+        openMec(privacy = ratesOn)
+        viewModel.updateDate(at(athens, 2025, 10, 15))
+        viewModel.selectCurrency("USD")
+        viewModel.updateAmount("20.00")
+        settle()
+        assertEquals(eligibleUsd(oct(14), CurrencyFormatter.formatMoney(18.0, "EUR")), region)
+
+        viewModel.refreshRates()
+        settle()
+
+        assertEquals(eligibleUsd(oct(15), CurrencyFormatter.formatMoney(16.0, "EUR")), region)
+        assertEquals(CurrencyRefreshStatus.IDLE, st.rateRefresh)
+        assertEquals(listOf("EUR"), ratesRepo.calls)
+    }
+
+    // ---- rates setting mapping (R23) and no refresh when Off or Unknown ----
+
+    @Test
+    fun `B2a the rates setting maps Loaded and FirstRunDefault by flag`() {
+        openMec(privacy = PrivacySettingsLoadState.Loaded(PrivacySettings(exchangeRateDownloadEnabled = true)))
+        assertEquals(CurrencyRatesSetting.ON, st.ratesSetting)
+
+        openMec(privacy = PrivacySettingsLoadState.Loaded(PrivacySettings(exchangeRateDownloadEnabled = false)))
+        assertEquals(CurrencyRatesSetting.OFF, st.ratesSetting)
+
+        openMec(privacy = PrivacySettingsLoadState.FirstRunDefault(PrivacySettings()))
+        assertEquals(CurrencyRatesSetting.OFF, st.ratesSetting)
+
+        openMec(privacy = PrivacySettingsLoadState.FirstRunDefault(PrivacySettings(exchangeRateDownloadEnabled = true)))
+        assertEquals(CurrencyRatesSetting.ON, st.ratesSetting)
+    }
+
+    @Test
+    fun `B2a a corrupted fail-closed setting is Unknown even if its flag says on`() {
+        openMec(
+            privacy = PrivacySettingsLoadState.CorruptedFailClosed(
+                PrivacySettings(exchangeRateDownloadEnabled = true),
+                reason = "READ_FAILED"
+            )
+        )
+
+        assertEquals(CurrencyRatesSetting.UNKNOWN, st.ratesSetting)
+    }
+
+    @Test
+    fun `B2a the setting follows later changes and the VM never writes it`() {
+        openMec()
+        assertEquals(CurrencyRatesSetting.OFF, st.ratesSetting)
+
+        privacyFlow.value = ratesOn
+        settle()
+        assertEquals(CurrencyRatesSetting.ON, st.ratesSetting)
+
+        privacyFlow.value = PrivacySettingsLoadState.CorruptedFailClosed(PrivacySettings(), "X")
+        settle()
+        assertEquals(CurrencyRatesSetting.UNKNOWN, st.ratesSetting)
+        coVerify(exactly = 0) { privacyRepo.updateSettings(any()) }
+    }
+
+    @Test
+    fun `B2a a setting read error is Unknown and logs only the bounded code`() {
+        val failing = mockk<PrivacySettingsRepository>()
+        every { failing.observeLoadState() } returns flow { throw IllegalStateException("datastore /data/user/0/x") }
+        val repo = mockk<CurrencySettingsRepository>(relaxed = true)
+        every { repo.homeCurrency() } returns flowOf("EUR")
+        viewModel = createViewModel(repo, failing)
+        settle()
+
+        assertEquals(CurrencyRatesSetting.UNKNOWN, st.ratesSetting)
+        assertEquals(listOf("RATES_SETTING_READ_FAILED"), loggedLines.map { it.message })
+        assertTrue(loggedLines.all { it.throwable == null })
+    }
+
+    @Test
+    fun `B2a no refresh is ever started while the setting is Off`() {
+        openBlockedUsd(PrivacySettingsLoadState.Loaded(PrivacySettings()))
+
+        viewModel.refreshRates()
+        settle()
+
+        assertTrue(ratesRepo.calls.isEmpty())
+        assertEquals(CurrencyRefreshStatus.IDLE, st.rateRefresh)
+        assertEquals(CurrencyRatesSetting.OFF, st.ratesSetting)
+    }
+
+    @Test
+    fun `B2a no refresh is ever started while the setting is Unknown`() {
+        openBlockedUsd(PrivacySettingsLoadState.CorruptedFailClosed(PrivacySettings(exchangeRateDownloadEnabled = true), "X"))
+
+        viewModel.refreshRates()
+        settle()
+
+        assertTrue(ratesRepo.calls.isEmpty())
+        assertEquals(CurrencyRefreshStatus.IDLE, st.rateRefresh)
+    }
+
+    @Test
+    fun `B2a no refresh when On but the home currency is selected or the home is loading`() {
+        openMec(privacy = ratesOn)
+        viewModel.refreshRates()
+        settle()
+        assertTrue(ratesRepo.calls.isEmpty())
+
+        val repo = mockk<CurrencySettingsRepository>(relaxed = true)
+        every { repo.homeCurrency() } returns emptyFlow()
+        viewModel = createViewModel(repo)
+        settle()
+        viewModel.refreshRates()
+        settle()
+        assertTrue(ratesRepo.calls.isEmpty())
+    }
+
+    // ---- refresh outcomes (INV-20) ----
+
+    @Test
+    fun `B2a refresh passes the home code, shows RUNNING once and a still-blocked outcome`() {
+        ratesRepo.outcome = {
+            delay(500)
+            CurrencyRateRefreshOutcome.Refreshed(0)
+        }
+        openBlockedUsd(ratesOn)
+
+        viewModel.refreshRates()
+        runNow()
+        assertEquals(CurrencyRefreshStatus.RUNNING, st.rateRefresh)
+        viewModel.refreshRates() // double tap
+        runNow()
+        assertEquals(1, ratesRepo.calls.size)
+
+        advance(500)
+        runNow()
+        settle()
+
+        assertEquals(listOf("EUR"), ratesRepo.calls)
+        assertEquals(CurrencyRefreshStatus.DONE_STILL_BLOCKED, st.rateRefresh)
+        assertEquals(CurrencyRegionUi.Blocked(CurrencyBlockVariant.NONE, null, CurrencyBlockOrigin.PREVIEW), region)
+    }
+
+    @Test
+    fun `B2a a refresh that finds the rate ends Idle with an Eligible region`() {
+        ratesRepo.outcome = {
+            putRate("USD", "EUR", 0.9, oct(15))
+            CurrencyRateRefreshOutcome.Refreshed(1)
+        }
+        openBlockedUsd(ratesOn)
+
+        viewModel.refreshRates()
+        settle()
+
+        assertEquals(CurrencyRefreshStatus.IDLE, st.rateRefresh)
+        assertEquals(eligibleUsd(oct(15), CurrencyFormatter.formatMoney(18.0, "EUR")), region)
+    }
+
+    @Test
+    fun `B2a a refresh disabled by privacy shows the Off variant without a failure`() {
+        ratesRepo.outcome = { CurrencyRateRefreshOutcome.DisabledByPrivacy }
+        openBlockedUsd(ratesOn)
+
+        viewModel.refreshRates()
+        settle()
+
+        assertEquals(CurrencyRatesSetting.OFF, st.ratesSetting)
+        assertEquals(CurrencyRefreshStatus.IDLE, st.rateRefresh)
+    }
+
+    @Test
+    fun `B2a a privacy-check failure shows Unknown without a failure`() {
+        ratesRepo.outcome = { CurrencyRateRefreshOutcome.PrivacyCheckFailed("PRIVACY_READ_FAILED") }
+        openBlockedUsd(ratesOn)
+
+        viewModel.refreshRates()
+        settle()
+
+        assertEquals(CurrencyRatesSetting.UNKNOWN, st.ratesSetting)
+        assertEquals(CurrencyRefreshStatus.IDLE, st.rateRefresh)
+    }
+
+    @Test
+    fun `B2a an IOException is FAILED_OFFLINE and logs only the bounded code`() {
+        ratesRepo.outcome = { throw IOException("unreachable host usd 20.00") }
+        openBlockedUsd(ratesOn)
+
+        viewModel.refreshRates()
+        settle()
+
+        assertEquals(CurrencyRefreshStatus.FAILED_OFFLINE, st.rateRefresh)
+        assertEquals(listOf("RATE_REFRESH_FAILED"), loggedLines.map { it.message })
+        assertTrue(loggedLines.all { it.throwable == null })
+    }
+
+    @Test
+    fun `B2a other refresh failures map to bounded statuses by exact token`() {
+        openBlockedUsd(ratesOn)
+
+        ratesRepo.outcome = { throw IllegalStateException("HOME_CURRENCY_QUOTE_UNAVAILABLE") }
+        viewModel.refreshRates()
+        settle()
+        assertEquals(CurrencyRefreshStatus.FAILED_HOME_UNAVAILABLE, st.rateRefresh)
+
+        ratesRepo.outcome = { throw IllegalStateException("INVALID_HOME_CURRENCY") }
+        viewModel.refreshRates()
+        settle()
+        assertEquals(CurrencyRefreshStatus.FAILED_HOME_UNAVAILABLE, st.rateRefresh)
+
+        ratesRepo.outcome = { throw IllegalStateException("HOME_CURRENCY_QUOTE_UNAVAILABLE for USD") }
+        viewModel.refreshRates()
+        settle()
+        assertEquals(CurrencyRefreshStatus.FAILED, st.rateRefresh)
+        assertTrue(loggedLines.all { it.message == "RATE_REFRESH_FAILED" && it.throwable == null })
+    }
+
+    @Test
+    fun `B2a a CancellationException from the refresh is rethrown and records no failure`() {
+        ratesRepo.outcome = { throw CancellationException("cancelled") }
+        openBlockedUsd(ratesOn)
+
+        viewModel.refreshRates()
+        settle()
+
+        assertFalse(
+            st.rateRefresh in setOf(
+                CurrencyRefreshStatus.FAILED,
+                CurrencyRefreshStatus.FAILED_OFFLINE,
+                CurrencyRefreshStatus.FAILED_HOME_UNAVAILABLE
+            )
+        )
+        assertTrue(loggedLines.isEmpty())
+    }
+
+    @Test
+    fun `B2a reset cancels an in-flight refresh and the next open starts clean on home`() {
+        ratesRepo.outcome = {
+            delay(1_000)
+            putRate("USD", "EUR", 0.9, oct(15))
+            CurrencyRateRefreshOutcome.Refreshed(1)
+        }
+        openBlockedUsd(ratesOn)
+        viewModel.refreshRates()
+        runNow()
+        assertEquals(CurrencyRefreshStatus.RUNNING, st.rateRefresh)
+
+        viewModel.reset()
+        advance(5_000)
+        settle()
+
+        assertEquals("EUR", st.selectedCurrency)
+        assertEquals(CurrencyRegionUi.Home, region)
+        assertEquals(CurrencyRefreshStatus.IDLE, st.rateRefresh)
+        assertTrue(rateStore.rows.isEmpty())
+        assertEquals(CurrencyRatesSetting.ON, st.ratesSetting)
+    }
+
+    // ---- D-11: open the exchange-rate setting ----
+
+    @Test
+    fun `B2a open-setting navigates at once when no amount was entered`() {
+        openMec()
+
+        viewModel.requestOpenExchangeRateSetting()
+        assertEquals(CurrencyOpenSettingRequest.NAVIGATE, st.openSettingRequest)
+
+        viewModel.consumeOpenSettingRequest()
+        assertEquals(CurrencyOpenSettingRequest.NONE, st.openSettingRequest)
+    }
+
+    @Test
+    fun `B2a open-setting asks to confirm when an amount was entered and navigates only after confirm`() {
+        openMec()
+        viewModel.updateAmount("12.50")
+
+        viewModel.requestOpenExchangeRateSetting()
+        assertEquals(CurrencyOpenSettingRequest.CONFIRM_NEEDED, st.openSettingRequest)
+
+        viewModel.confirmOpenExchangeRateSetting()
+        assertEquals(CurrencyOpenSettingRequest.NAVIGATE, st.openSettingRequest)
+
+        viewModel.consumeOpenSettingRequest()
+        assertEquals(CurrencyOpenSettingRequest.NONE, st.openSettingRequest)
+        assertEquals("12.50", st.amount)
+    }
+
+    @Test
+    fun `B2a declining the open-setting confirmation clears the request and keeps the form`() {
+        openMec()
+        viewModel.updateMerchant("Shop")
+        viewModel.updateAmount("12.50")
+        viewModel.requestOpenExchangeRateSetting()
+
+        viewModel.consumeOpenSettingRequest()
+
+        assertEquals(CurrencyOpenSettingRequest.NONE, st.openSettingRequest)
+        assertEquals("Shop", st.merchant)
+        assertEquals("12.50", st.amount)
+    }
+
+    @Test
+    fun `B2a confirm without a pending request does nothing and the VM never enables the setting`() {
+        openMec()
+
+        viewModel.confirmOpenExchangeRateSetting()
+        assertEquals(CurrencyOpenSettingRequest.NONE, st.openSettingRequest)
+
+        viewModel.updateAmount("1.00")
+        viewModel.requestOpenExchangeRateSetting()
+        viewModel.confirmOpenExchangeRateSetting()
+        coVerify(exactly = 0) { privacyRepo.updateSettings(any()) }
+        assertEquals(CurrencyRatesSetting.OFF, st.ratesSetting)
+    }
+
+    // ---- 80c: Fill compares against the SELECTED currency and never changes it ----
+
+    @Test
+    fun `B2a 80c with USD selected 12 USD fills and the selection stays USD`() {
+        putRate("USD", "EUR", 1.0 / 1.08, oct(16))
+        openMec()
+        viewModel.selectCurrency("USD")
+        settle()
+
+        viewModel.fill("coffee 12 USD")
+        settle()
+
+        assertEquals("12.00", st.amount)
+        assertNull(st.fieldFlags[QuickAddField.AMOUNT])
+        assertFalse(LineHint.FOREIGN_CURRENCY_NOT_SUPPORTED in st.lineHints)
+        assertNotEquals(OutcomeCode.FOREIGN_CURRENCY_BLOCKED, st.lastFillOutcome)
+        assertEquals("USD", st.selectedCurrency)
+        assertEquals("EUR", st.homeCurrency)
+        assertEquals(eligibleUsd(oct(16), CurrencyFormatter.formatMoney(11.11, "EUR")), region)
+    }
+
+    @Test
+    fun `B2a 80c with USD selected 12 GBP is still foreign-blocked and the selection stays USD`() {
+        openMec()
+        viewModel.selectCurrency("USD")
+        settle()
+        loggedLines.clear()
+
+        viewModel.fill("coffee 12 GBP")
+        settle()
+
+        assertEquals("", st.amount)
+        assertEquals(FlagReason.AMOUNT_FOREIGN_CURRENCY, st.fieldFlags[QuickAddField.AMOUNT])
+        assertEquals(OutcomeCode.FOREIGN_CURRENCY_BLOCKED, st.lastFillOutcome)
+        assertEquals("USD", st.selectedCurrency)
+        assertEquals(listOf("FOREIGN_CURRENCY_BLOCKED"), loggedLines.map { it.message })
+    }
+
+    @Test
+    fun `B2a 80c with USD selected a home-code line is foreign to the selection and blocked`() {
+        openMec()
+        viewModel.selectCurrency("USD")
+        settle()
+
+        viewModel.fill("coffee 12 EUR")
+        settle()
+
+        assertEquals("", st.amount)
+        assertEquals(OutcomeCode.FOREIGN_CURRENCY_BLOCKED, st.lastFillOutcome)
+        assertEquals("USD", st.selectedCurrency)
+    }
+
+    @Test
+    fun `B2a 80c with the home currency selected 12 USD stays blocked and Fill never selects USD`() {
+        openMec()
+
+        viewModel.fill("coffee 12 USD")
+        settle()
+
+        assertEquals("", st.amount)
+        assertEquals(OutcomeCode.FOREIGN_CURRENCY_BLOCKED, st.lastFillOutcome)
+        assertEquals("EUR", st.selectedCurrency)
+        assertEquals(CurrencyRegionUi.Home, region)
+    }
+
+    // ---- reset and new sessions start on home ----
+
+    @Test
+    fun `B2a reset returns to the home currency and clears the foreign session state`() {
+        openMec(privacy = ratesOn)
+        viewModel.toggleRecurring()
+        viewModel.updateAmount("12.50")
+        viewModel.selectCurrency("USD")
+        viewModel.requestOpenExchangeRateSetting()
+        settle()
+        assertTrue(st.repeatClearedByCurrency)
+
+        viewModel.reset()
+        settle()
+
+        assertEquals("EUR", st.selectedCurrency)
+        assertEquals(CurrencyRegionUi.Home, region)
+        assertFalse(st.repeatClearedByCurrency)
+        assertEquals(CurrencyOpenSettingRequest.NONE, st.openSettingRequest)
+        assertEquals(CurrencyRefreshStatus.IDLE, st.rateRefresh)
+        assertEquals("", st.amount)
+        assertEquals(CurrencyRatesSetting.ON, st.ratesSetting)
+    }
+
+    @Test
+    fun `B2a a new sheet session starts on home but a configuration change keeps the choice`() {
+        openMec()
+        viewModel.selectCurrency("USD")
+        settle()
+
+        viewModel.onSheetOpened() // re-composition after a configuration change: zone already captured
+        settle()
+        assertEquals("USD", st.selectedCurrency)
+
+        viewModel.onSheetLeft()
+        viewModel.onSheetOpened()
+        settle()
+        assertEquals("EUR", st.selectedCurrency)
+        assertEquals(CurrencyRegionUi.Home, region)
+    }
+
+    // ---- AE-30: nothing about amounts, currencies, rates or dates is ever logged ----
+
+    @Test
+    fun `B2a AE-30 a full foreign session logs nothing`() {
+        putRate("USD", "EUR", 1.0 / 1.08, oct(15))
+        ratesRepo.outcome = { CurrencyRateRefreshOutcome.Refreshed(1) }
+        openMec(privacy = ratesOn)
+        stubAddManualExpenseReturns(Result.Error(message = RateRefusalCodes.NOT_ELIGIBLE_NONE))
+
+        viewModel.updateDate(at(athens, 2025, 10, 15))
+        viewModel.selectCurrency("USD")
+        viewModel.updateMerchant("Shop")
+        viewModel.updateAmount("20.00")
+        settle()
+        viewModel.selectCurrency("JPY")
+        viewModel.selectCurrency("USD")
+        settle()
+        viewModel.refreshRates()
+        settle()
+        viewModel.requestOpenExchangeRateSetting()
+        viewModel.save()
+        settle()
+        viewModel.reset()
+        settle()
+
+        assertTrue(loggedLines.joinToString { it.message }, loggedLines.isEmpty())
+    }
+
+    @Test
+    fun `B2a the observable state never renders the captured zone name`() {
+        putRate("USD", "EUR", 1.0 / 1.08, oct(15))
+        openMec(zone = ZoneId.of("Pacific/Auckland"), now = at(ZoneId.of("Pacific/Auckland"), 2025, 10, 16, 14, 30))
+        viewModel.updateDate(at(ZoneId.of("Pacific/Auckland"), 2025, 10, 15))
+        viewModel.selectCurrency("USD")
+        viewModel.updateAmount("20.00")
+        settle()
+
+        val rendered = st.toString()
+        assertFalse(rendered.contains("Auckland"))
+        assertTrue(region is CurrencyRegionUi.Eligible)
+    }
+
+    // ---- derived flags ----
+
+    @Test
+    fun `B2a isCurrencySaveBlocked is true only for a blocked rate, an invalid amount or an unset currency`() {
+        fun blockedFor(region: CurrencyRegionUi) = AddExpenseState(currencyRegion = region).isCurrencySaveBlocked
+
+        assertTrue(blockedFor(CurrencyRegionUi.Blocked(CurrencyBlockVariant.NONE, null, CurrencyBlockOrigin.PREVIEW)))
+        assertTrue(blockedFor(CurrencyRegionUi.Blocked(CurrencyBlockVariant.STALE, oct(1), CurrencyBlockOrigin.SAVE)))
+        assertTrue(blockedFor(CurrencyRegionUi.Blocked(CurrencyBlockVariant.UNSUPPORTED, null, CurrencyBlockOrigin.PREVIEW)))
+        assertTrue(blockedFor(CurrencyRegionUi.AmountInvalid(CurrencyAmountInvalidKind.ABOVE_CAP)))
+        assertTrue(blockedFor(CurrencyRegionUi.Unset(com.yourname.expensetracker.domain.currency.CurrencyUnsetReason.NONE_PROPOSED)))
+
+        assertFalse(blockedFor(CurrencyRegionUi.Blocked(CurrencyBlockVariant.HOME_UNRESOLVED, null, CurrencyBlockOrigin.SAVE)))
+        assertFalse(blockedFor(CurrencyRegionUi.Evaluating))
+        assertFalse(blockedFor(CurrencyRegionUi.Pending))
+        assertFalse(blockedFor(CurrencyRegionUi.Loading))
+        assertFalse(blockedFor(CurrencyRegionUi.Home))
+        assertFalse(blockedFor(CurrencyRegionUi.ReadOnly))
+        assertFalse(blockedFor(eligibleUsd(oct(1), null)))
+    }
+
+    @Test
+    fun `B2a isForeignSelected needs both currencies known and different`() {
+        assertFalse(AddExpenseState(homeCurrency = null, selectedCurrency = "USD").isForeignSelected)
+        assertFalse(AddExpenseState(homeCurrency = "EUR", selectedCurrency = null).isForeignSelected)
+        assertFalse(AddExpenseState(homeCurrency = "EUR", selectedCurrency = "EUR").isForeignSelected)
+        assertTrue(AddExpenseState(homeCurrency = "EUR", selectedCurrency = "USD").isForeignSelected)
+    }
+}
+
+/** In-memory rate store for the add-expense VM tests (no mocks): optional per-call virtual latency and failure. */
+internal class AddExpenseRateStoreFake : ExchangeRateStore {
+    val rows = mutableListOf<DomainExchangeRate>()
+    val asOfCalls = mutableListOf<Triple<String, String, Long>>()
+
+    /** Virtual milliseconds one `getRateAsOf` takes, by (from, to, atMillis). */
+    var latencyMs: (String, String, Long) -> Long = { _, _, _ -> 0L }
+    var failure: Throwable? = null
+
+    override suspend fun getRate(fromCurrency: String, toCurrency: String): DomainExchangeRate? = null
+
+    override suspend fun getLatestRateForPair(fromCurrency: String, toCurrency: String): DomainExchangeRate? = null
+
+    override suspend fun getRateAsOf(fromCurrency: String, toCurrency: String, atMillis: Long): DomainExchangeRate? {
+        asOfCalls += Triple(fromCurrency, toCurrency, atMillis)
+        val wait = latencyMs(fromCurrency, toCurrency, atMillis)
+        if (wait > 0L) delay(wait)
+        failure?.let { throw it }
+        return rows
+            .filter { it.fromCurrency == fromCurrency && it.toCurrency == toCurrency }
+            .filter { row -> row.validDate?.let { it <= atMillis } ?: false }
+            .maxByOrNull { it.validDate ?: Long.MIN_VALUE }
+    }
+
+    override suspend fun insertOrUpdate(rate: DomainExchangeRate) {
+        rows += rate
+    }
+
+    override suspend fun insertOrUpdateAll(rates: List<DomainExchangeRate>) {
+        rows += rates
+    }
+
+    override fun getRatesToCurrency(targetCurrency: String): Flow<List<DomainExchangeRate>> = flowOf(emptyList())
+
+    override suspend fun getLatestRate(): DomainExchangeRate? = null
+
+    override suspend fun deleteOldRates(olderThan: Long) = Unit
+}
+
+/** Counts user-started refreshes; the outcome is scripted per test. */
+internal class AddExpenseRatesRepositoryFake : CurrencyRatesRepository {
+    val calls = mutableListOf<String>()
+    var outcome: suspend (String) -> CurrencyRateRefreshOutcome = { CurrencyRateRefreshOutcome.Refreshed(0) }
+
+    override suspend fun refresh(homeCurrency: String): CurrencyRateRefreshOutcome {
+        calls += homeCurrency
+        return outcome(homeCurrency)
     }
 }

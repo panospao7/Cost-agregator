@@ -102,7 +102,9 @@ data class MultiConversionAggregate(
 @Singleton
 class CurrencyConverter @Inject constructor(
     private val exchangeRateStore: ExchangeRateStore,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    @com.yourname.expensetracker.di.IoDispatcher
+    private val ioDispatcher: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.IO
 ) {
     companion object {
         const val DEFAULT_BASE_CURRENCY = "EUR"
@@ -155,7 +157,7 @@ class CurrencyConverter @Inject constructor(
         amount: Double,
         fromCurrency: String,
         toCurrency: String
-    ): ConversionResult? = withContext(Dispatchers.IO) {
+    ): ConversionResult? = withContext(ioDispatcher) {
         val from = SupportedCurrency.fromCode(fromCurrency)?.code ?: return@withContext null
         val to = SupportedCurrency.fromCode(toCurrency)?.code ?: return@withContext null
 
@@ -265,7 +267,7 @@ class CurrencyConverter @Inject constructor(
         fromCurrency: String,
         toCurrency: String,
         atMillis: Long
-    ): ConversionResult? = withContext(Dispatchers.IO) {
+    ): ConversionResult? = withContext(ioDispatcher) {
         val from = SupportedCurrency.fromCode(fromCurrency)?.code ?: return@withContext null
         val to = SupportedCurrency.fromCode(toCurrency)?.code ?: return@withContext null
 
@@ -345,7 +347,7 @@ class CurrencyConverter @Inject constructor(
         rateBasis: RateBasis,
         atMillis: Long? = null,
         stalePolicy: StaleRatePolicy = StaleRatePolicy.Default
-    ): ConversionOutcome = withContext(Dispatchers.IO) {
+    ): ConversionOutcome = withContext(ioDispatcher) {
         val normalizedFrom = SupportedCurrency.normalizeCode(fromCurrency)
         val normalizedTo = SupportedCurrency.normalizeCode(toCurrency)
         val sourceCurrency = SupportedCurrency.fromCode(normalizedFrom)
@@ -556,7 +558,7 @@ class CurrencyConverter @Inject constructor(
     suspend fun convertMultiple(
         amounts: List<Pair<Double, String>>,
         targetCurrency: String
-    ): MultiConversionAggregate = withContext(Dispatchers.IO) {
+    ): MultiConversionAggregate = withContext(ioDispatcher) {
         val stalePolicy = StaleRatePolicy.forBasis(RateBasis.LATEST_AVAILABLE)
         var total = 0.0
         val failures = mutableListOf<FailedConversion>()

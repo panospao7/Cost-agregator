@@ -41,6 +41,30 @@ import com.yourname.expensetracker.domain.quickadd.LineHint
 import com.yourname.expensetracker.domain.quickadd.QuickAddInput
 import com.yourname.expensetracker.domain.quickadd.QuickAddLearnedCategoryLookup
 import com.yourname.expensetracker.domain.quickadd.QuickAddParser
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.currency.CurrencyAmountPolicy
+import com.yourname.expensetracker.domain.currency.CurrencyEntryMode
+import com.yourname.expensetracker.domain.currency.CurrencyRateRefreshOutcome
+import com.yourname.expensetracker.domain.currency.CurrencyRatesRepository
+import com.yourname.expensetracker.domain.currency.CurrencySelectionPolicy
+import com.yourname.expensetracker.domain.currency.RateEligibility
+import com.yourname.expensetracker.domain.currency.UserPresentRatePreview
+import com.yourname.expensetracker.domain.currency.UserPresentRatePreviewResult
+import com.yourname.expensetracker.domain.privacy.PrivacySettingsLoadState
+import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
+import com.yourname.expensetracker.domain.transaction.RateRefusalCodes
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
+import com.yourname.expensetracker.ui.components.currency.CurrencyAmountInvalidKind
+import com.yourname.expensetracker.ui.components.currency.CurrencyBlockOrigin
+import com.yourname.expensetracker.ui.components.currency.CurrencyBlockVariant
+import com.yourname.expensetracker.ui.components.currency.CurrencyOpenSettingRequest
+import com.yourname.expensetracker.ui.components.currency.CurrencyRatesSetting
+import com.yourname.expensetracker.ui.components.currency.CurrencyRefreshStatus
+import com.yourname.expensetracker.ui.components.currency.CurrencyRegionUi
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import java.time.LocalDate
 
 data class AddExpenseState(
  val merchant: String = "",
@@ -90,8 +114,43 @@ data class AddExpenseState(
   * edits). Computed once in the single Fill apply, so it survives later edits and rotation. Enums, sets
   * and a Boolean only; cleared by [AddExpenseViewModel.reset].
   */
- val fillSummary: QuickAddSummarySnapshot? = null
-)
+ val fillSummary: QuickAddSummarySnapshot? = null,
+ /**
+  * MEC B2a: the currency the amount is entered in. Defaults to home on every sheet open; null while
+  * home is loading. An ISO code only; never persisted (no SavedStateHandle) and never logged.
+  */
+ val selectedCurrency: String? = null,
+ /** MEC INV-10: options from [CurrencySelectionPolicy] (STANDARD): home first, the others by code. */
+ val currencyOptions: List<String> = emptyList(),
+ /** MEC INV-15/INV-6: the preview or blocked-card state under the amount (enums, codes, LocalDate). */
+ val currencyRegion: CurrencyRegionUi = CurrencyRegionUi.Loading,
+ /** MEC R23: the exchange-rate download setting; UNKNOWN is treated as OFF. The VM never enables it. */
+ val ratesSetting: CurrencyRatesSetting = CurrencyRatesSetting.UNKNOWN,
+ /** MEC INV-20: progress and bounded outcome of a user-started refresh. */
+ val rateRefresh: CurrencyRefreshStatus = CurrencyRefreshStatus.IDLE,
+ /** MEC INV-16: true when Repeat was switched off (and cleared) because a foreign currency was chosen. */
+ val repeatClearedByCurrency: Boolean = false,
+ /** MEC D-11: what the "Open exchange-rate setting" action needs from the host. */
+ val openSettingRequest: CurrencyOpenSettingRequest = CurrencyOpenSettingRequest.NONE,
+ /** The device-local calendar date of "today" (injected clock, entry zone) for rate-date wording; set on evaluation. */
+ val ratesToday: LocalDate? = null
+) {
+ /** True when the selected currency is known and differs from home. */
+ val isForeignSelected: Boolean
+  get() = selectedCurrency != null && homeCurrency != null && selectedCurrency != homeCurrency
+
+ /**
+  * MEC ux section 4: Save is disabled for a blocked rate (except a retryable home-unresolved refusal),
+  * an invalid amount, or an unset currency. While [CurrencyRegionUi.Evaluating] Save stays enabled
+  * (the coordinator is authoritative, INV-6).
+  */
+ val isCurrencySaveBlocked: Boolean
+  get() = when (val region = currencyRegion) {
+   is CurrencyRegionUi.Blocked -> region.variant != CurrencyBlockVariant.HOME_UNRESOLVED
+   is CurrencyRegionUi.AmountInvalid, is CurrencyRegionUi.Unset -> true
+   else -> false
+  }
+}
 
 sealed class SaveResult {
     object Success : SaveResult()
@@ -107,7 +166,10 @@ class AddExpenseViewModel @Inject constructor(
  private val timeProvider: TimeProvider,
  private val currencySettingsRepository: CurrencySettingsRepository,
  private val quickAddParser: QuickAddParser,
- private val quickAddLearnedCategoryLookup: QuickAddLearnedCategoryLookup
+ private val quickAddLearnedCategoryLookup: QuickAddLearnedCategoryLookup,
+ private val userPresentRatePreview: UserPresentRatePreview,
+ private val currencyRatesRepository: CurrencyRatesRepository,
+ private val privacySettingsRepository: PrivacySettingsRepository
 ) : ViewModel() {
 
     private companion object {
@@ -121,6 +183,18 @@ class AddExpenseViewModel @Inject constructor(
         const val LOG_FILL_PARTIAL = "FILL_PARTIAL"
         const val LOG_FILL_NONE = "FILL_NONE"
         const val LOG_FOREIGN_CURRENCY_BLOCKED = "FOREIGN_CURRENCY_BLOCKED"
+
+        // MEC: bounded diagnostic codes only (INV-19): never an amount, currency, rate, date or throwable.
+        const val LOG_RATE_PREVIEW_FAILED = "RATE_PREVIEW_FAILED"
+        const val LOG_RATE_REFRESH_FAILED = "RATE_REFRESH_FAILED"
+        const val LOG_RATES_SETTING_READ_FAILED = "RATES_SETTING_READ_FAILED"
+
+        // MEC ux section 3: "Checking exchange rate" shows only if an evaluation exceeds this delay.
+        const val EVALUATING_DELAY_MS = 250L
+
+        // Bounded message tokens of the existing refresh failures (matched by equality, never displayed).
+        const val REFRESH_HOME_QUOTE_UNAVAILABLE = "HOME_CURRENCY_QUOTE_UNAVAILABLE"
+        const val REFRESH_INVALID_HOME_CURRENCY = "INVALID_HOME_CURRENCY"
     }
 
     private val _state = MutableStateFlow(AddExpenseState(date = timeProvider.now()))
@@ -141,11 +215,45 @@ class AddExpenseViewModel @Inject constructor(
  // persisted or logged (QuickAddPrivacy G-1). Cleared by reset().
  private var sessionZone: java.time.ZoneId? = null
 
+ // MEC B2a: the user's explicit currency choice for this sheet session; null = follow home. A plain
+ // field (never persisted or logged, QuickAddPrivacy G-1). Cleared by reset() and on a new session.
+ // Held in a non-inline wrapper so no field compiles to a JVM String (AE-50 field reflection).
+ private data class CurrencyOverride(val code: CurrencyCode)
+
+ private var currencyOverride: CurrencyOverride? = null
+
+ // MEC INV-3: latest-wins evaluation, and the single user-started refresh.
+ private var evaluationJob: Job? = null
+ private var refreshJob: Job? = null
+ private var ratesSettingJob: Job? = null
+
  init {
  homeCurrencyJob = viewModelScope.launch {
  currencySettingsRepository.homeCurrency().collect { hc ->
- _state.update { it.copy(homeCurrency = hc) }
+ _state.update { applyHomeAndSelection(it.copy(homeCurrency = hc)) }
+ reevaluateRegion(invalidate = true)
  }
+ }
+ ratesSettingJob = viewModelScope.launch {
+ // R23: the setting is read, never written. Loaded/FirstRunDefault map by flag; a corrupted
+ // (fail-closed) state or a read error is Unknown, which the UI treats as Off.
+ privacySettingsRepository.observeLoadState()
+  .map { loadState ->
+   when (loadState) {
+    is PrivacySettingsLoadState.Loaded ->
+     if (loadState.settings.exchangeRateDownloadEnabled) CurrencyRatesSetting.ON else CurrencyRatesSetting.OFF
+    is PrivacySettingsLoadState.FirstRunDefault ->
+     if (loadState.settings.exchangeRateDownloadEnabled) CurrencyRatesSetting.ON else CurrencyRatesSetting.OFF
+    is PrivacySettingsLoadState.CorruptedFailClosed -> CurrencyRatesSetting.UNKNOWN
+   }
+  }
+  .distinctUntilChanged()
+  .catch { e ->
+   if (e is CancellationException) throw e
+   Timber.w(LOG_RATES_SETTING_READ_FAILED)
+   emit(CurrencyRatesSetting.UNKNOWN)
+  }
+  .collect { setting -> _state.update { it.copy(ratesSetting = setting) } }
  }
  }
 
@@ -227,6 +335,9 @@ class AddExpenseViewModel @Inject constructor(
                 saveResult = null
             ).withUserEdit(QuickAddField.AMOUNT)
         }
+        // MEC INV-3: the figure changed; drop to Pending at once so a converted amount for the
+        // previous figure (or a SAVE-origin card) is never shown for the new one.
+        reevaluateRegion(invalidate = true)
     }
 
     fun selectCategory(categoryId: Long) {
@@ -264,6 +375,8 @@ class AddExpenseViewModel @Inject constructor(
 
     fun updateDate(dateMs: Long) {
         _state.update { it.copy(date = dateMs).withUserEdit(QuickAddField.DATE) }
+        // MEC INV-3: a new date can change eligibility.
+        reevaluateRegion(invalidate = true)
     }
 
     fun updateNotes(value: String) {
@@ -279,11 +392,12 @@ class AddExpenseViewModel @Inject constructor(
     }
     
     fun toggleRecurring() {
-        _state.update { it.copy(isRecurring = !it.isRecurring) }
+        // MEC INV-16: Repeat is home-currency only; a foreign currency can never carry a recurrence.
+        _state.update { if (it.isForeignSelected) it else it.copy(isRecurring = !it.isRecurring) }
     }
-    
+
     fun setRecurrenceFrequency(frequency: RecurrenceFrequency) {
-        _state.update { it.copy(recurrenceFrequency = frequency) }
+        _state.update { if (it.isForeignSelected) it else it.copy(recurrenceFrequency = frequency) }
     }
 
     fun setTransferDirection(direction: TransferDirection?) {
@@ -354,11 +468,15 @@ class AddExpenseViewModel @Inject constructor(
 
         // S5-001: Block save until currency is loaded — null means still loading
         // Real EUR users (homeCurrency == "EUR") are allowed through once loaded
-        val currency = currentState.homeCurrency
-        if (currency == null) {
+        val homeCurrency = currentState.homeCurrency
+        if (homeCurrency == null) {
             _state.update { it.withSaveError(UiText.StringResource(R.string.add_expense_error_currency_loading)) }
             return
         }
+        // MEC INV-11: the currency the user selected (home by default), captured at save-tap. The
+        // transaction coordinator, not this screen, decides whether a foreign rate qualifies.
+        val currency = currentState.selectedCurrency ?: homeCurrency
+        val isForeign = currency != homeCurrency
 
         // Validate
         val merchantTrimmed = currentState.merchant.trim()
@@ -477,7 +595,7 @@ class AddExpenseViewModel @Inject constructor(
                     },
                     mySharePercentage = sharePercentage,
                     myShareAmount = shareAmount,
-                    recurrenceFrequency = currentState.recurrenceFrequency.takeIf { currentState.isRecurring },
+                    recurrenceFrequency = currentState.recurrenceFrequency.takeIf { currentState.isRecurring && !isForeign },
                     entryZone = entryZone
                 )
 
@@ -495,7 +613,22 @@ class AddExpenseViewModel @Inject constructor(
                     is Result.Error -> {
                         // S5-003: Update mutation so Save button re-enables.
                         // INV-15: repository message/exception are never displayed.
-                        _state.update { it.withSaveError(mapSaveError(result, currency)) }
+                        val refusal = blockVariantFor(result.message)
+                        if (refusal != null) {
+                            // MEC INV-6/AE-22: a post-tap rate refusal keeps the form and shows the card.
+                            _state.update { it.withSaveRefusal(refusal) }
+                            // A stale refusal carries only a bounded code; re-read the latest date locally.
+                            if (refusal == CurrencyBlockVariant.STALE) {
+                                reevaluateRegion(
+                                    invalidate = false,
+                                    showEvaluating = false,
+                                    origin = CurrencyBlockOrigin.SAVE,
+                                    keepSaveBlock = true
+                                )
+                            }
+                        } else {
+                            _state.update { it.withSaveError(mapSaveError(result, currency, homeCurrency)) }
+                        }
                     }
                     Result.Loading -> {
                         // S5-003: Result.Loading is not a valid terminal state for one-shot save
@@ -569,15 +702,19 @@ class AddExpenseViewModel @Inject constructor(
      * Maps a repository error to a bounded, localised message. The repository message and
      * exception are never displayed (INV-15). Only bounded repository error codes are matched, by
      * equality; the default is the generic save-failed resource. Non-suspend by design.
-     * [currency] is the home currency captured at save-tap.
+     * [currency] is the selected currency and [home] the home currency, both captured at save-tap.
+     * Rate refusals (the four RATE_NOT_ELIGIBLE codes) are handled before this by [blockVariantFor].
      */
-    private fun mapSaveError(result: Result.Error, currency: String): UiText = when (result.message) {
-        // S4 / INV-16: recurring rule refused for a currency other than home.
+    private fun mapSaveError(result: Result.Error, currency: String, home: String): UiText = when (result.message) {
+        // S4 / INV-16: recurring rule refused for a currency other than home; P1: names the HOME code.
         ManualExpenseRepository.RECURRING_FOREIGN_CURRENCY_ERROR_CODE ->
-            UiText.StringResource(R.string.mec_repeat_home_only, listOf(currency))
+            UiText.StringResource(R.string.mec_repeat_home_only, listOf(home))
         // AE-14: the home currency could not be resolved at save; nothing was saved.
         com.yourname.expensetracker.domain.transaction.RateRefusalCodes.NOT_ELIGIBLE_HOME_UNRESOLVED ->
             UiText.StringResource(R.string.mec_block_home_unresolved)
+        // OD-6: the currency's digits are unavailable; fail closed with the generic invalid-amount error.
+        RateRefusalCodes.AMOUNT_DIGITS_UNAVAILABLE ->
+            UiText.StringResource(R.string.add_expense_error_amount_invalid)
         // AE-19: the coordinator refused the amount's precision; digits null falls back to save-failed.
         com.yourname.expensetracker.domain.transaction.RateRefusalCodes.AMOUNT_PRECISION_EXCEEDED -> {
             val digits = com.yourname.expensetracker.domain.core.money.CurrencyCode.parse(currency)
@@ -588,6 +725,351 @@ class AddExpenseViewModel @Inject constructor(
     }
 
     private fun saveFailedText(): UiText = UiText.StringResource(R.string.add_expense_error_save_failed)
+
+    /** MEC INV-6: maps a bounded coordinator refusal code to the card variant; null for any other code. */
+    private fun blockVariantFor(code: String?): CurrencyBlockVariant? = when (code) {
+        RateRefusalCodes.NOT_ELIGIBLE_NONE -> CurrencyBlockVariant.NONE
+        RateRefusalCodes.NOT_ELIGIBLE_STALE -> CurrencyBlockVariant.STALE
+        RateRefusalCodes.NOT_ELIGIBLE_UNSUPPORTED -> CurrencyBlockVariant.UNSUPPORTED
+        RateRefusalCodes.NOT_ELIGIBLE_HOME_UNRESOLVED -> CurrencyBlockVariant.HOME_UNRESOLVED
+        else -> null
+    }
+
+    /**
+     * MEC AE-22: a post-tap refusal. Nothing was saved; every input is kept and the card is shown with
+     * origin SAVE. A home-unresolved refusal also keeps the B1 save error text (retry via Save).
+     */
+    private fun AddExpenseState.withSaveRefusal(variant: CurrencyBlockVariant): AddExpenseState {
+        val withCard = copy(
+            isSaving = false,
+            saveResult = null,
+            mutation = com.yourname.expensetracker.ui.model.MutationState.idle(),
+            currencyRegion = CurrencyRegionUi.Blocked(variant, latestRateDate = null, origin = CurrencyBlockOrigin.SAVE)
+        )
+        return if (variant == CurrencyBlockVariant.HOME_UNRESOLVED) {
+            withCard.withSaveError(UiText.StringResource(R.string.mec_block_home_unresolved))
+        } else {
+            withCard
+        }
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // MEC B2a: currency selection, rate preview, refresh and open-setting request
+    // ---------------------------------------------------------------------------------------------
+
+    /**
+     * Derives [AddExpenseState.selectedCurrency] and [AddExpenseState.currencyOptions] from the home
+     * currency and [currencyOverride] (INV-10). An override that is no longer selectable (or equals
+     * home) is dropped, so the selection falls back to home. Idempotent.
+     */
+    private fun applyHomeAndSelection(s: AddExpenseState): AddExpenseState {
+        val home = s.homeCurrency
+        if (home == null) {
+            currencyOverride = null
+            return s.copy(selectedCurrency = null, currencyOptions = emptyList())
+        }
+        val homeCode = CurrencyCode.parse(home)
+        if (homeCode == null) {
+            currencyOverride = null
+            return s.copy(selectedCurrency = home, currencyOptions = listOf(home))
+        }
+        val options = CurrencySelectionPolicy.selectable(homeCode, CurrencyEntryMode.STANDARD).map { it.code }
+        val chosen = currencyOverride?.code?.takeIf { it.code in options && it != homeCode && it.code != home }
+        currencyOverride = chosen?.let { CurrencyOverride(it) }
+        return s.copy(selectedCurrency = chosen?.code ?: home, currencyOptions = options)
+    }
+
+    /**
+     * MEC INV-10/11: the user picked [code] in the currency control. Ignored unless it is selectable
+     * for the home currency. Keeps the amount text, re-validates it for the new currency (AE-16),
+     * turns Repeat off and clears it for a foreign currency (INV-16), and re-evaluates the rate.
+     */
+    fun selectCurrency(code: String) {
+        val snapshot = _state.value
+        val home = snapshot.homeCurrency ?: return
+        val homeCode = CurrencyCode.parse(home)
+        val chosen = CurrencyCode.parse(code) ?: return
+        val allowed = if (homeCode == null) chosen.code == home else
+            CurrencySelectionPolicy.isSelectable(chosen, homeCode, CurrencyEntryMode.STANDARD)
+        if (!allowed) return
+
+        currencyOverride = chosen.takeIf { it.code != home }?.let { CurrencyOverride(it) }
+        _state.update { current ->
+            val withSelection = applyHomeAndSelection(current)
+            val selected = withSelection.selectedCurrency
+            val foreign = withSelection.isForeignSelected
+            withSelection.copy(
+                saveResult = null,
+                amountError = if (selected == null) null else revalidatedAmountError(current.amount, selected),
+                isRecurring = if (foreign) false else withSelection.isRecurring,
+                recurrenceFrequency = if (foreign) RecurrenceFrequency.MONTHLY else withSelection.recurrenceFrequency,
+                repeatClearedByCurrency = foreign && (withSelection.repeatClearedByCurrency || current.isRecurring)
+            )
+        }
+        reevaluateRegion(invalidate = true)
+    }
+
+    /**
+     * AE-16: re-validates the unchanged amount text for [currency]. A blank or unparsable text, or a
+     * valid amount, returns null (the existing save-time check still reports a blank or invalid amount).
+     */
+    private fun revalidatedAmountError(amountText: String, currency: String): UiText? {
+        if (amountText.isBlank()) return null
+        val parsed = com.yourname.expensetracker.ui.util.AmountInputSanitizer.parseOrNull(amountText) ?: return null
+        if (parsed <= 0) return null
+        return checkAmountForCurrency(parsed, currency)
+    }
+
+    /** The bounded invalid-amount kind for the region, or null when the amount passes (INV-12/13/14). */
+    private fun amountInvalidKind(amount: Double, currency: CurrencyCode): CurrencyAmountInvalidKind? =
+        when (val check = CurrencyAmountPolicy.check(amount, currency)) {
+            com.yourname.expensetracker.domain.currency.AmountCheck.Ok -> null
+            com.yourname.expensetracker.domain.currency.AmountCheck.NotPositive -> CurrencyAmountInvalidKind.NOT_POSITIVE
+            // OD-6: digits unknown. Never assume 2 digits; treat as an invalid amount.
+            com.yourname.expensetracker.domain.currency.AmountCheck.DigitsUnavailable -> CurrencyAmountInvalidKind.NOT_POSITIVE
+            is com.yourname.expensetracker.domain.currency.AmountCheck.PrecisionExceeded -> CurrencyAmountInvalidKind.PRECISION_EXCEEDED
+            is com.yourname.expensetracker.domain.currency.AmountCheck.AboveCap -> CurrencyAmountInvalidKind.ABOVE_CAP
+        }
+
+    /**
+     * MEC INV-3/INV-15: recomputes [AddExpenseState.currencyRegion]. Latest wins: the previous
+     * evaluation is cancelled. Home and Loading need no evaluation. For a foreign currency a valid
+     * amount (or none) is evaluated through the single read-only [UserPresentRatePreview]; "Checking"
+     * ([CurrencyRegionUi.Evaluating]) appears only after [EVALUATING_DELAY_MS]. No fetch, no logging
+     * of amounts, currencies, rates or dates.
+     *
+     * @param invalidate true when the currency, date, home or zone changed: the displayed result is
+     * dropped to [CurrencyRegionUi.Pending] immediately so a stale amount is never shown.
+     * @param refreshCompleted true when called after a user-started refresh finished.
+     * @param keepSaveBlock true after a post-tap refusal: a SAVE-origin Blocked card stays unless the
+     * re-read is also Blocked (then only its details are updated). Cleared by the next user input.
+     */
+    private fun reevaluateRegion(
+        invalidate: Boolean,
+        showEvaluating: Boolean = true,
+        refreshCompleted: Boolean = false,
+        origin: CurrencyBlockOrigin = CurrencyBlockOrigin.PREVIEW,
+        keepSaveBlock: Boolean = false
+    ) {
+        evaluationJob?.cancel()
+        evaluationJob = null
+
+        val s = _state.value
+        val home = s.homeCurrency
+        val selected = s.selectedCurrency
+        val today = todayFor(sessionZone ?: java.time.ZoneId.systemDefault())
+        if (home == null || selected == null) {
+            _state.update { it.copy(currencyRegion = CurrencyRegionUi.Loading, ratesToday = today) }
+            return
+        }
+        if (selected == home) {
+            _state.update { it.copy(currencyRegion = CurrencyRegionUi.Home, ratesToday = today, rateRefresh = settledRefresh(it, false)) }
+            return
+        }
+        val homeCode = CurrencyCode.parse(home)
+        val selectedCode = CurrencyCode.parse(selected)
+        if (homeCode == null || selectedCode == null) {
+            val variant = if (homeCode == null) CurrencyBlockVariant.HOME_UNRESOLVED else CurrencyBlockVariant.UNSUPPORTED
+            _state.update {
+                it.copy(
+                    currencyRegion = CurrencyRegionUi.Blocked(variant, null, origin),
+                    ratesToday = today,
+                    rateRefresh = settledRefresh(it, refreshCompleted)
+                )
+            }
+            return
+        }
+
+        val amountText = s.amount
+        val parsedAmount = if (amountText.isBlank()) null
+        else com.yourname.expensetracker.ui.util.AmountInputSanitizer.parseOrNull(amountText)
+        val invalidKind = when {
+            amountText.isBlank() -> null
+            parsedAmount == null -> CurrencyAmountInvalidKind.NOT_POSITIVE
+            else -> amountInvalidKind(parsedAmount, selectedCode)
+        }
+        if (invalidKind != null) {
+            _state.update {
+                it.copy(currencyRegion = CurrencyRegionUi.AmountInvalid(invalidKind), ratesToday = today, rateRefresh = settledRefresh(it, refreshCompleted))
+            }
+            return
+        }
+
+        if (invalidate) {
+            _state.update { it.copy(currencyRegion = CurrencyRegionUi.Pending, ratesToday = today) }
+        }
+
+        val atMillis = s.date
+        val zone = sessionZone ?: java.time.ZoneId.systemDefault()
+        evaluationJob = viewModelScope.launch {
+            val marker = if (showEvaluating) {
+                launch {
+                    delay(EVALUATING_DELAY_MS)
+                    _state.update { it.copy(currencyRegion = CurrencyRegionUi.Evaluating) }
+                }
+            } else {
+                null
+            }
+            val region: CurrencyRegionUi = try {
+                val result = userPresentRatePreview.preview(
+                    parsedAmount = parsedAmount ?: 1.0,
+                    currency = selectedCode,
+                    home = homeCode,
+                    expenseAtMillis = atMillis,
+                    entryZone = zone
+                )
+                regionFor(result, hasAmount = parsedAmount != null, origin = origin)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // INV-19: bounded code only. An unreadable rate store fails closed: no preview, blocked.
+                Timber.w(LOG_RATE_PREVIEW_FAILED)
+                CurrencyRegionUi.Blocked(CurrencyBlockVariant.NONE, null, origin)
+            }
+            marker?.cancel()
+            ensureActive()
+            _state.update {
+                val current = it.currencyRegion
+                val keep = keepSaveBlock && region !is CurrencyRegionUi.Blocked &&
+                    current is CurrencyRegionUi.Blocked && current.origin == CurrencyBlockOrigin.SAVE
+                it.copy(
+                    currencyRegion = if (keep) current else region,
+                    ratesToday = today,
+                    rateRefresh = settledRefresh(it, refreshCompleted && region is CurrencyRegionUi.Blocked)
+                )
+            }
+        }
+    }
+
+    /**
+     * The refresh status after an evaluation: RUNNING is kept; a finished refresh that is still blocked
+     * becomes DONE_STILL_BLOCKED; any other settled evaluation clears an earlier outcome to IDLE.
+     */
+    private fun settledRefresh(current: AddExpenseState, doneStillBlocked: Boolean): CurrencyRefreshStatus = when {
+        current.rateRefresh == CurrencyRefreshStatus.RUNNING -> CurrencyRefreshStatus.RUNNING
+        doneStillBlocked -> CurrencyRefreshStatus.DONE_STILL_BLOCKED
+        else -> CurrencyRefreshStatus.IDLE
+    }
+
+    private fun todayFor(zone: java.time.ZoneId): LocalDate =
+        java.time.Instant.ofEpochMilli(timeProvider.now()).atZone(zone).toLocalDate()
+
+    /** MEC AE-38: the preview text is the shared formatter applied to the exact snapshot amount. */
+    private fun regionFor(
+        result: UserPresentRatePreviewResult,
+        hasAmount: Boolean,
+        origin: CurrencyBlockOrigin
+    ): CurrencyRegionUi = when (result) {
+        UserPresentRatePreviewResult.NotApplicableHome -> CurrencyRegionUi.Home
+        is UserPresentRatePreviewResult.ConvertedPreview -> CurrencyRegionUi.Eligible(
+            rateDate = result.rateDate,
+            sourceLabel = result.sourceLabel,
+            formattedAmountInHome = if (hasAmount) CurrencyFormatter.formatMoney(result.amountInHome, result.home.code) else null,
+            amountUnavailable = false
+        )
+        // INV-15: eligible rate but no computable amount. Never shown as zero; the date still is.
+        is UserPresentRatePreviewResult.AmountUnavailable -> CurrencyRegionUi.Eligible(
+            rateDate = result.rateDate,
+            sourceLabel = result.sourceLabel,
+            formattedAmountInHome = null,
+            amountUnavailable = hasAmount
+        )
+        is UserPresentRatePreviewResult.Blocked -> when (val eligibility = result.eligibility) {
+            is RateEligibility.Stale ->
+                CurrencyRegionUi.Blocked(CurrencyBlockVariant.STALE, eligibility.latestRateDate, origin)
+            RateEligibility.None ->
+                CurrencyRegionUi.Blocked(CurrencyBlockVariant.NONE, null, origin)
+            is RateEligibility.Unsupported ->
+                CurrencyRegionUi.Blocked(CurrencyBlockVariant.UNSUPPORTED, null, origin)
+            // Not produced by the use case for a blocked result; fail closed.
+            RateEligibility.Home, is RateEligibility.Eligible ->
+                CurrencyRegionUi.Blocked(CurrencyBlockVariant.NONE, null, origin)
+        }
+    }
+
+    /**
+     * MEC INV-20: user-started "Refresh rates". Runs only when the setting is On and home is loaded;
+     * the only network path is [CurrencyRatesRepository.refresh], which is privacy-gated. The VM never
+     * enables the setting. On success the region is re-evaluated; failures map to bounded statuses.
+     */
+    fun refreshRates() {
+        val snapshot = _state.value
+        val home = snapshot.homeCurrency ?: return
+        if (snapshot.ratesSetting != CurrencyRatesSetting.ON) return
+        if (!snapshot.isForeignSelected) return
+        if (snapshot.rateRefresh == CurrencyRefreshStatus.RUNNING) return
+
+        _state.update { it.copy(rateRefresh = CurrencyRefreshStatus.RUNNING) }
+        refreshJob?.cancel()
+        refreshJob = viewModelScope.launch {
+            var status = CurrencyRefreshStatus.IDLE
+            var setting: CurrencyRatesSetting? = null
+            var refreshed = false
+            try {
+                when (currencyRatesRepository.refresh(home)) {
+                    is CurrencyRateRefreshOutcome.Refreshed -> refreshed = true
+                    // The setting was turned off meanwhile: show the Off variant, no failure line.
+                    CurrencyRateRefreshOutcome.DisabledByPrivacy -> setting = CurrencyRatesSetting.OFF
+                    is CurrencyRateRefreshOutcome.PrivacyCheckFailed -> setting = CurrencyRatesSetting.UNKNOWN
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: java.io.IOException) {
+                Timber.w(LOG_RATE_REFRESH_FAILED)
+                status = CurrencyRefreshStatus.FAILED_OFFLINE
+            } catch (e: Exception) {
+                // INV-19: bounded code only; the exception message is matched by equality, never shown.
+                Timber.w(LOG_RATE_REFRESH_FAILED)
+                status = if (e.message == REFRESH_HOME_QUOTE_UNAVAILABLE || e.message == REFRESH_INVALID_HOME_CURRENCY) {
+                    CurrencyRefreshStatus.FAILED_HOME_UNAVAILABLE
+                } else {
+                    CurrencyRefreshStatus.FAILED
+                }
+            }
+            _state.update {
+                it.copy(
+                    rateRefresh = status,
+                    ratesSetting = setting ?: it.ratesSetting
+                )
+            }
+            if (refreshed) {
+                reevaluateRegion(invalidate = false, showEvaluating = false, refreshCompleted = true)
+            }
+        }
+    }
+
+    /**
+     * MEC D-11: the user tapped "Open exchange-rate setting". If an amount was entered the host must
+     * confirm first ([CurrencyOpenSettingRequest.CONFIRM_NEEDED]); otherwise navigate now. The VM never
+     * enables the setting.
+     */
+    fun requestOpenExchangeRateSetting() {
+        _state.update {
+            it.copy(
+                openSettingRequest = if (it.amount.isNotBlank()) {
+                    CurrencyOpenSettingRequest.CONFIRM_NEEDED
+                } else {
+                    CurrencyOpenSettingRequest.NAVIGATE
+                }
+            )
+        }
+    }
+
+    /** The user confirmed leaving the form to open the setting. */
+    fun confirmOpenExchangeRateSetting() {
+        _state.update {
+            if (it.openSettingRequest == CurrencyOpenSettingRequest.CONFIRM_NEEDED) {
+                it.copy(openSettingRequest = CurrencyOpenSettingRequest.NAVIGATE)
+            } else {
+                it
+            }
+        }
+    }
+
+    /** The user declined the confirmation or the host finished navigating: clears the request. */
+    fun consumeOpenSettingRequest() {
+        _state.update { it.copy(openSettingRequest = CurrencyOpenSettingRequest.NONE) }
+    }
 
     private fun AddExpenseState.withSaveError(message: UiText): AddExpenseState = copy(
         isSaving = false,
@@ -628,7 +1110,10 @@ class AddExpenseViewModel @Inject constructor(
                 line = line,
                 nowEpochMs = nowMs,
                 zone = java.time.ZoneId.systemDefault(),
-                homeCurrency = homeCurrency,
+                // MEC 80c: the SELECTED currency is the "home" the parser compares against, so "12 USD"
+                // fills when USD is selected and "12 GBP" stays foreign-blocked. Fill never changes the
+                // selection (INV-11).
+                homeCurrency = snapshot.selectedCurrency ?: homeCurrency,
                 categories = categoryRefs
             )
         )
@@ -669,7 +1154,13 @@ class AddExpenseViewModel @Inject constructor(
                     current.withFillApplication(application)
                 }
             }
-            applied?.let { logFillOutcome(it.outcome) }
+            applied?.let {
+                logFillOutcome(it.outcome)
+                // MEC INV-3: Fill may have written the amount and/or the date.
+                if (QuickAddField.AMOUNT in it.writtenFields || QuickAddField.DATE in it.writtenFields) {
+                    reevaluateRegion(invalidate = QuickAddField.DATE in it.writtenFields)
+                }
+            }
         }
     }
 
@@ -734,6 +1225,11 @@ class AddExpenseViewModel @Inject constructor(
     fun onSheetOpened() {
         if (sessionZone == null) {
             sessionZone = java.time.ZoneId.systemDefault()
+            // MEC: a new sheet session starts on the home currency (Selected(home) on every open).
+            currencyOverride = null
+            _state.update { applyHomeAndSelection(it).copy(repeatClearedByCurrency = false) }
+            // MEC INV-3: the captured zone may differ from the one used so far.
+            reevaluateRegion(invalidate = true)
         }
     }
 
@@ -751,10 +1247,25 @@ class AddExpenseViewModel @Inject constructor(
         searchJob = null
         fillJob?.cancel()
         fillJob = null
+        evaluationJob?.cancel()
+        evaluationJob = null
+        refreshJob?.cancel()
+        refreshJob = null
+        currencyOverride = null
         initialValuesApplied = false
         // S5-002: Preserve loaded currency — do not reset to null sentinel
         val loadedCurrency = _state.value.homeCurrency
-        _state.value = AddExpenseState(date = timeProvider.now(), homeCurrency = loadedCurrency)
+        // MEC: the currency choice is session-only; the next open starts on home. The rates setting is
+        // a live observation of stored settings and is kept.
+        val keptSetting = _state.value.ratesSetting
+        _state.value = applyHomeAndSelection(
+            AddExpenseState(date = timeProvider.now(), homeCurrency = loadedCurrency, ratesSetting = keptSetting)
+        ).let { fresh ->
+            fresh.copy(
+                currencyRegion = if (fresh.homeCurrency == null) CurrencyRegionUi.Loading else CurrencyRegionUi.Home,
+                ratesToday = todayFor(java.time.ZoneId.systemDefault())
+            )
+        }
     }
 
     fun setInitialValuesIfBlank(amount: String? = null, merchant: String? = null) {

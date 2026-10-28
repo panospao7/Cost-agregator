@@ -359,3 +359,82 @@ Base: 59275eac plus B0′. T3. Lane mec, one writer. B0′ comes first (it share
   - Privacy P1: mec_repeat_home_only should receive the resolved home code explicitly once B2 separates selected vs home currency.
   - Privacy P2: ManualExpenseRepository Error branch puts exception.message into Result.Error.message (never displayed); replace with a bounded code in a later slice.
 - F1 FIXED (option b′, owner-approvals 85): null-guarded capture plus a sheet-scoped DisposableEffect that clears the zone on dispose unless the Activity is changing configurations; MainActivity untouched.
+
+
+## Amendment (2026-10-29): B2 re-anchor and split (feature-planner, Sonnet; orchestrator-persisted; BINDING)
+Base: 7d22041f. T3 money slice. Owner-approvals 87 applies: a Sonnet writer plus a separate Sonnet test-author, one combined guardian, and reviewer-strict at the MEC candidate.
+
+### Anchors
+- **AddExpenseViewModel:**
+  - ctor :103-111; state :45-94 (only `homeCurrency` :76);
+  - save() :349-524 (currency = home :357, checkAmountForCurrency :380/:531, entryZone :449, addManualExpense :480);
+  - mapSaveError :574 (P1 at :577); toggleRecurring :282;
+  - fill() :610-674 (QuickAddInput(homeCurrency=…) :631 is the 80c spot);
+  - zone seam onSheetOpened :734, onSheetLeft :744, reset :748.
+- **AddExpenseSheet:** signature :96-101; zone DisposableEffect :124-131; amount field :251, cd :248, leading symbol :275-281; Repeat :471-476; DateSelector :912. The only host is MainActivity.kt:666.
+- **A1 (no production consumer yet):**
+  - UserPresentRatePreview.preview(...) returns NotApplicableHome | ConvertedPreview | AmountUnavailable | Blocked;
+  - RateEligibilityEvaluator.evaluate :102;
+  - CurrencySelectionPolicy.selectable/resolveProposal.
+- **Rates:**
+  - CurrencyRatesRepository.refresh(home) returns Refreshed | DisabledByPrivacy | PrivacyCheckFailed.
+  - The R23 setting is READABLE: PrivacySettingsRepository.observeLoadState() / PrivacySettings.exchangeRateDownloadEnabled (pattern: CurrencyManagementViewModel:159-176). So N8 does NOT fire.
+- **Periodic rate refresh:** NONE. H-1 stands: B2, C and loan S11 stay unreleased until MEC 1b.
+- **Quick-add (N17):**
+  - FOREIGN_CURRENCY_BLOCKED at QuickAddFillContract.kt:19,182; isForeign at QuickAddAmountRules :166;
+  - copy at QuickAddUiMapper :87-88 and :194-196;
+  - pins at QuickAddUiMapperTest :178-189/:257/:294-304 and AddExpenseViewModelTest :893-898 etc.
+
+### Split (6 Kotlin production files is over the threshold)
+- **B2a (VM + model, no visible UI):**
+  - Files: AddExpenseViewModel; N ui/components/currency/CurrencyRateRegion.kt (the CurrencyRegionUi model only); QuickAddUiMapper only if its arguments change; strings ×3 (~35 mec_ keys from ux §14; quick-add foreign copy edited in place, keys kept).
+  - Behaviour:
+    - Selected(home) on every open; options come from CurrencySelectionPolicy STANDARD.
+    - Evaluating after 250 ms; the latest input wins.
+    - Re-evaluate on currency, date, home, zone or refresh changes.
+    - No fetch at preview or save.
+    - A foreign currency turns Repeat off and clears it, with a note.
+    - Save passes the selected currency, and every post-tap refusal maps to a bounded code.
+    - The ratesSetting maps Loaded/FirstRunDefault by flag to On/Off, and anything else to Unknown (treated as Off).
+    - refresh(home) is called only when the setting is On; the VM never enables it.
+    - Open-setting confirms first if an amount was entered (D-11).
+    - Preview text = formatMoney(amountInHome, home) (AE-38); no preview logging.
+    - Fill passes the SELECTED code (80c), and Fill never changes the selection.
+    - P1: mec_repeat_home_only receives the resolved HOME code.
+- **B2b (UI):**
+  - Files: AddExpenseSheet; N CurrencySelectionControl.kt; the CurrencyRateRegion composables; a MainActivity :666 `onOpenExchangeRateSetting` callback only (a shared surface; it stays a callback-only hunk).
+  - Layout: the control/amount row stacks at fontScale ≥ 1.3 or width < 360dp; preview line; the blocked card is assertive when it comes from Save; Repeat is hidden with a note; TalkBack order and 48dp per ux §13.
+  - Tests: plus the ISSUE-1 sheet F1 Robolectric test.
+
+### Tests
+- AddExpenseViewModelTest: the createViewModel fakes for the new deps, and AEs 1, 2, 3, 4, 6, 7, 11, 15, 16, 17, 22, 26, 27, 30, 31, 38.
+- No refresh when the setting is Off or Unknown; the open-setting confirm.
+- 80c: with USD selected, "12 USD" fills; "12 GBP" is still blocked.
+- P1.
+- N AddExpenseViewModelStressTest (rapid currency and date switching).
+- Existing FOREIGN_CURRENCY_BLOCKED tests use a line currency different from the selected one.
+
+### Pins
+- None loosened. If quick-add keys or arguments change, the QuickAddUiMapperTest pins are REWRITTEN in place and flagged to reviewer-strict.
+
+### Validation
+- targeted `*AddExpense*,*QuickAddUiMapperTest*,*QuickAddFillContractTest*,*CancellationSafetyArchitectureGuardTest*,*ManualEntryCurrencySetterAllowListGuardTest*,*QuickAddPrivacyArchitectureGuardTest*`
+- then runtime-ui and architecture-contracts, then lint (no baseline growth), then static-guards.
+- app-check at the MEC candidate.
+
+### STOP
+- Any guard edit or lint baseline refresh.
+- rememberSaveable.
+- A new network or permission path.
+- A refresh while the setting is Off.
+- Non-rewrite pin edits.
+- Loan S11/S13 in flight on the same files.
+- Follow-up: 3-decimal homes.
+
+### B2a review dispositions (2026-10-29)
+- F1 (MEDIUM, fixed): `updateAmount` now drops the region to Pending immediately (`reevaluateRegion(invalidate = true)`), so a converted amount for a previous figure is never shown. Test added: amount edit is Pending, then Eligible with the new formatted amount.
+- F2 (LOW, fixed): after a STALE save refusal the SAVE-origin Blocked card is kept unless the local re-read is also Blocked (then its details are updated); the next amount/currency/date input clears it. Test added.
+- F3: the 35 `mec_` strings are unused until B2b. Lint/app-check run after B2b; no baseline refresh.
+- F4: B2b must pass `selectedCurrency` to `QuickAddUiMapper.fieldNote` / `summaryLines`, and fix the amount content description and the leading symbol (AddExpenseSheet :114, :227, :248, :276). The `%1$s` of `quick_add_hint_foreign` is no longer used; the QuickAddUiMapperTest pin is REWRITTEN in place (flag to reviewer-strict).
+- F5: `isCurrencySaveBlocked` is UI-only by design (the coordinator remains the enforcing owner).
+- Test rewrite note: the "B1 any other repository code..." list was rewritten in place (AMOUNT_DIGITS_UNAVAILABLE and RATE_NOT_ELIGIBLE_STALE are now mapped codes).

@@ -187,3 +187,11 @@ Next: loan-installments S1 in this lane (after the S0 D-10/D-12/D-13/D-20 discov
 - Follow-ups: F4 capFor; P1 home code for mec_repeat_home_only (B2); P2 bounded code instead of exception.message; D-B1-2 edit precision plus myShareAmount; 3-decimal typing; HomeScreen.kt:1531 stale picker (Home owner).
 - Process (owner-approvals 86): from now on there is one writer per slice (it writes its own tests) and one combined guardian. reviewer-strict runs only at merges and candidates. Sonnet for writers.
 - Next: B2 (currency control, preview, blocked card; quick-add selected currency 80c; the ISSUE-1 test), then C, then loan S11, then Z.
+
+## 2026-10-29: B2a COMMITTED (checkpoint)
+- VM currency selection, preview and refresh logic, the CurrencyRateRegion model, and 35 mec_ strings (es/el DRAFT).
+- CurrencyConverter gains a defaulted @IoDispatcher seam (behaviour-neutral; fixes test determinism).
+- targeted vr-20261028-233743-0bb33234 PASS.
+- Combined guardian ACCEPT-WITH-CONDITIONS: F1/F2 fixed; F3/F4 are B2b items.
+- Shards, lint, static-guards and app-check run at the B2 candidate after B2b, when the strings get consumers.
+- Next: B2b UI (sheet, CurrencySelectionControl, region composables, a callback-only MainActivity hunk, the ISSUE-1 sheet test).
