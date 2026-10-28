@@ -91,6 +91,19 @@ fun AddExpenseSheet(
     val focusManager = LocalFocusManager.current
     val scrollState = rememberScrollState()
 
+    // nl-quick-add (C4): the summary describes the last Fill and survives later edits and rotation (G2-13,
+    // item 71a): the snapshot lives in the ViewModel state; only the per-field markers follow the live
+    // origins. No edit mode exists in this sheet (create only), so the quick-add section is always shown (U2).
+    val fieldNotes = QuickAddField.values().associateWith { field ->
+        QuickAddUiMapper.fieldNote(
+            origin = state.fieldOrigins[field] ?: FieldOrigin.DEFAULT,
+            flag = state.fieldFlags[field],
+            homeCurrency = state.homeCurrency
+        )
+    }
+    val selectedCategory = categories.firstOrNull { it.id == state.selectedCategoryId }
+    val categoryChip = QuickAddUiMapper.categoryChip(state.categoryFillSource, selectedCategory?.name)
+
     // Handle save result
     LaunchedEffect(state.mutation.isSuccess) {
         if (state.mutation.isSuccess) {
@@ -183,6 +196,14 @@ fun AddExpenseSheet(
             ) {
                 Spacer(modifier = Modifier.height(8.dp))
 
+                // === Quick add (typed line, fill-only) ===
+                QuickAddSection(
+                    summary = QuickAddUiMapper.summaryLines(state.fillSummary, state.homeCurrency),
+                    homeCurrencyLoaded = state.homeCurrency != null,
+                    isSaving = state.isSaving,
+                    onFill = { viewModel.fill(it) }
+                )
+
                 // === Merchant Field with Autocomplete ===
                 MerchantFieldWithSuggestions(
                     merchant = state.merchant,
@@ -193,11 +214,14 @@ fun AddExpenseSheet(
                     onDismissSuggestions = { viewModel.dismissSuggestions() },
                     error = state.merchantError,
                     categories = categories,
-                    onNextFocus = { focusManager.moveFocus(FocusDirection.Down) }
+                    onNextFocus = { focusManager.moveFocus(FocusDirection.Down) },
+                    fillNote = fieldNotes[QuickAddField.MERCHANT]
                 )
 
                 // === Amount Field ===
                 val amountCd = stringResource(R.string.add_expense_amount_cd, state.amount)
+                val amountError = state.amountError
+                val amountNote = fieldNotes[QuickAddField.AMOUNT]
                 OutlinedTextField(
                     value = state.amount,
                     onValueChange = { viewModel.updateAmount(it) },
@@ -211,8 +235,17 @@ fun AddExpenseSheet(
                     keyboardActions = KeyboardActions(
                         onDone = { focusManager.clearFocus() }
                     ),
-                    isError = state.amountError != null,
-                    supportingText = state.amountError?.let { { Text(it.asString()) } },
+                    // A quick-add amount flag blocks Save (empty amount), so it uses the error style.
+                    isError = amountError != null || amountNote?.kind == QuickAddFieldNoteKind.FLAG,
+                    supportingText = when {
+                        amountError != null -> {
+                            { Text(amountError.asString()) }
+                        }
+                        amountNote != null -> {
+                            { QuickAddNoteText(amountNote) }
+                        }
+                        else -> null
+                    },
                     leadingIcon = {
  val currencySymbol = remember(state.homeCurrency) {
      val hc = state.homeCurrency ?: ""
@@ -273,12 +306,36 @@ fun AddExpenseSheet(
                     )
                 }
 
+                fieldNotes[QuickAddField.PAYMENT]?.let { QuickAddNoteText(it) }
+
                 // === Category Selector ===
                 Text(
                     stringResource(com.yourname.expensetracker.R.string.category_label),
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.Medium
                 )
+                // The Fill chip is the category's "Filled" marker; a flag, or a Fill-set category the chip
+                // cannot show, falls back to the note. G2-14: the auto-assign caption shows in every add flow.
+                val categoryNote = fieldNotes[QuickAddField.CATEGORY]
+                if (categoryNote != null &&
+                    (categoryNote.kind == QuickAddFieldNoteKind.FLAG || categoryChip == null)
+                ) {
+                    QuickAddNoteText(categoryNote)
+                }
+                if (state.selectedCategoryId == null) {
+                    Text(
+                        stringResource(R.string.add_expense_category_auto_hint),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                if (categoryChip != null && selectedCategory != null) {
+                    QuickAddCategoryChipRow(
+                        chip = categoryChip,
+                        category = selectedCategory,
+                        onRemove = { viewModel.clearCategory() }
+                    )
+                }
                 CategoryGrid(
                     categories = categories,
                     selectedId = state.selectedCategoryId,
@@ -290,6 +347,7 @@ fun AddExpenseSheet(
                     dateMs = state.date,
                     onDateSelected = { viewModel.updateDate(it) }
                 )
+                fieldNotes[QuickAddField.DATE]?.let { QuickAddNoteText(it) }
 
                 // === Transaction Type (collapsible) ===
                 val transactionTypeLabel = getTransactionTypeLabel(state.transactionType)
@@ -604,7 +662,8 @@ fun MerchantFieldWithSuggestions(
     onDismissSuggestions: () -> Unit,
     error: UiText?,
     categories: List<Category>,
-    onNextFocus: () -> Unit
+    onNextFocus: () -> Unit,
+    fillNote: QuickAddFieldNote? = null
 ) {
     val categoryMap = remember(categories) { categories.associateBy { it.id } }
 
@@ -616,7 +675,15 @@ fun MerchantFieldWithSuggestions(
             placeholder = { Text(stringResource(com.yourname.expensetracker.R.string.merchant_placeholder)) },
             singleLine = true,
             isError = error != null,
-            supportingText = error?.let { { Text(it.asString()) } },
+            supportingText = when {
+                error != null -> {
+                    { Text(error.asString()) }
+                }
+                fillNote != null -> {
+                    { QuickAddNoteText(fillNote) }
+                }
+                else -> null
+            },
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
             keyboardActions = KeyboardActions(onNext = { onNextFocus() }),
             modifier = Modifier.fillMaxWidth()

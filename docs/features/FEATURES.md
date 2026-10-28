@@ -1025,6 +1025,26 @@ CarbonFootprintScreen(onNavigateBack = { /* navigation */ })
 
 ---
 
+### Quick add (typed, deterministic, fill-only)
+
+**Status**: Increment 1 (typed line). Specs: `docs/features/nl-quick-add/`.
+
+Type one line such as `coffee 3.50 yesterday` at the top of the Add Expense sheet and tap **Fill**
+(or the keyboard Done key). The form is filled on the device by a deterministic, offline parser. Nothing is
+saved until you press Save.
+
+- ✅ Understands English, Greek and Greeklish (amount, merchant, date, payment method, category)
+- ✅ Fill-only: never overwrites a field you edited, never saves, never converts currency
+- ✅ Ambiguous or unsupported input is flagged on its field instead of guessed (foreign currency, quantities, several numbers, future dates)
+- ✅ Every filled field is marked "Filled"; a category set from your line shows a chip with a one-tap **Remove**
+- ✅ The typed line is kept in memory only (not saved, logged, restored after rotation or sent anywhere)
+- ✅ No network, no AI model, no new permission
+- ✅ The summary of the last Fill stays visible while you edit fields and after you rotate the device
+- ✅ The Add Expense sheet and the receipt review screen now say when no category is chosen (one is assigned automatically on save, and may be Uncategorized)
+- Greek and Spanish copy is a draft pending native review
+
+---
+
 ## Database Schema Update
 
 ### Migration 46→47: Enhanced Split Transactions

@@ -84,7 +84,13 @@ data class AddExpenseState(
  /** G2-13: describes the last Fill and survives later edits; only [AddExpenseViewModel.reset] clears it. */
  val lastFillOutcome: OutcomeCode? = null,
  /** G2-11: why the current category was set by Fill; null once the user edits or removes the category. */
- val categoryFillSource: CategoryFillSource? = null
+ val categoryFillSource: CategoryFillSource? = null,
+ /**
+  * Item 71a / G2-13: what the last Fill reported (outcome, hints, filled and flagged field sets, kept
+  * edits). Computed once in the single Fill apply, so it survives later edits and rotation. Enums, sets
+  * and a Boolean only; cleared by [AddExpenseViewModel.reset].
+  */
+ val fillSummary: QuickAddSummarySnapshot? = null
 )
 
 sealed class SaveResult {
@@ -646,6 +652,12 @@ class AddExpenseViewModel @Inject constructor(
             categoryFillSource = form.categorySource,
             lineHints = application.lineHints,
             lastFillOutcome = application.outcome,
+            fillSummary = QuickAddUiMapper.snapshotOf(
+                outcome = application.outcome,
+                hints = application.lineHints,
+                origins = form.origins,
+                flags = form.flags
+            ),
             // Step 5: a stale save result and the errors of the fields Fill rewrote are cleared.
             saveResult = null,
             amountError = if (QuickAddField.AMOUNT in written) null else amountError,

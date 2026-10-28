@@ -452,3 +452,97 @@ Filter to request unchanged: `targeted-unit-test` `"*QuickAddPrivacyArchitecture
 - Validation PASS: targeted vr-20261028-022757-e52f7575; architecture-contracts vr-20261028-023013-02302b23. Test-only, so no static-guards re-run.
 - Committed.
 - Next: slice F (Sheet UI + strings).
+
+### Slice F implementation (2026-10-28, implementer; NOT validated)
+Nothing was compiled or run. Roots: `A` = `app/src/main/java/com/yourname/expensetracker`, `T` = `app/src/test/java/com/yourname/expensetracker`. No VM, guard, config, baseline or allowlist edit.
+
+Files:
+- NEW `A/ui/screens/addexpense/QuickAddUiMapper.kt` (pure; never receives the line, only its length and blankness): counter from 180, Fill gating (`fillBlock`: currency loading, saving, blank) and state descriptions, per-field `fieldNote` (flag wins and is never "Filled"; "Filled" iff origin FILL and no flag), `flagText` for all 13 `FlagReason`s, `categoryChip` (G2-11), `nextSnapshot` / `summaryLines` (G2-12, G2-13). Output type is `UiText` plus a `QuickAddFieldNames(resIds)` argument for the joined field names.
+- NEW `A/ui/screens/addexpense/QuickAddSection.kt`: line in plain `remember` (max 200, edit rejected past it, counter from 180), 48dp Fill with content description and `stateDescription` when disabled, IME Done = Fill (KeyboardType.Text, capitalization None, `autoCorrectEnabled = false`, singleLine), keyboard hidden and focus cleared after Fill (also on Done with a blank line), summary column `liveRegion = Polite`, `QuickAddNoteText` (marker/flag caption), `QuickAddCategoryChipRow` (48dp Remove), `quickAddText` resolver. No composable-typed parameters, no `fun interface`, no saveable holder; the line leaves only as the `onFill` argument.
+- M `A/ui/screens/addexpense/AddExpenseSheet.kt`: section at the top of the scroll column; summary snapshot in `remember` (advanced by a `LaunchedEffect` over the VM enums); markers and flags in merchant and amount `supportingText` (amount flag uses `isError`), captions under payment and date, category flag caption, chip row with Remove calling `clearCategory()`, empty-category caption (G2-14, `selectedCategoryId == null`, neutral colour). `MerchantFieldWithSuggestions` gained a defaulted `fillNote` parameter.
+- M `res/values/strings.xml`, `values-el/strings.xml`, `values-es/strings.xml`: all keys below. el and es additions carry the comment `DRAFT: owner native sign-off pending`; es shows the English example.
+- M `docs/features/FEATURES.md`: quick-add entry before "Database Schema Update".
+
+String keys (EN text):
+- `quick_add_label` "Quick add"; `quick_add_placeholder` "e.g. coffee 3.50 yesterday"; `quick_add_helper` "English or Greek (Greeklish too). Your line is not saved."; `quick_add_counter` "%1$d / %2$d"
+- `quick_add_fill_button` "Fill"; `quick_add_fill_cd` "Fill the form from the quick add line"; `quick_add_fill_disabled_blank` "Type a line first"; `quick_add_fill_disabled_loading` "Loading currency settings"
+- `quick_add_summary_filled` "Filled: %1$s."; `_review` "Needs your check: %1$s."; `_check_save` "Check the details, then Save."; `_kept_edits` "Fields you edited were kept."; `_none` "Nothing recognised. Try an amount and a place, like "coffee 3.50 yesterday"."; `_nothing_new` "Nothing new was filled."
+- `quick_add_field_amount` / `_merchant` / `_date` / `_category` / `_payment`: "amount" / "merchant" / "date" / "category" / "payment method"
+- `quick_add_filled_marker` "Filled"; `quick_add_category_exact_fmt` "%1$s · matched from your line"; `_learned_fmt` "%1$s · from your history"; `quick_add_category_remove` "Remove"; `_remove_cd` "Remove category %1$s"
+- `quick_add_hint_foreign` "Foreign currency isn't supported here yet. This expense will be saved in %1$s."; `_time_ignored` "Time of day was ignored."; `_too_long` "The line is too long (max %1$d characters)."
+- `quick_add_flag_amount_foreign` / `_quantity` / `_multiple` / `_separator` / `_unclear` / `_not_positive` / `_over_limit`; `quick_add_flag_date_future` / `_ambiguous` / `_unsupported` / `_invalid`; `quick_add_flag_payment_conflict`; `quick_add_flag_category_ambiguous` (ux section 11 text, unchanged)
+- `add_expense_category_auto_hint` "No category chosen. One is assigned automatically when you save."
+- Greek (el) and Spanish (es): DRAFT, owner native sign-off pending (plan: owner reviews Greek).
+
+Tests:
+- NEW `T/ui/screens/addexpense/QuickAddUiMapperTest.kt` (plain JUnit, 20 tests): counter; Fill gating and descriptions; Idle; Filled-full; Filled-partial; Nothing recognised; Fill-none without hint; Foreign blocked; Line too long; Time ignored; Flagged never Filled (all 13 reasons); Filled marker only for FILL without flag; every flag has its own copy; category chip; kept edits iff any origin USER (per field); foreign hint persists after a typed amount; summary stable after edits; new Fill replaces and reset clears; outputs carry only resource ids and bounded arguments.
+- NEW `T/ui/screens/addexpense/QuickAddSectionTest.kt` (Robolectric Compose, 9 tests, harness copied from `CloudAiToggleDisclosureTest`): blank disables Fill with description; button passes the exact line once; IME Done fills and clears focus; Done on blank line only clears focus; currency loading disables Fill and Done; saving disables Fill; counter from 180 and 201-char edit rejected; summary is a Polite live region; no summary node when empty.
+
+Design notes / deviations:
+- G2-13 needs to know which fields the last Fill filled after the user edits them (origin becomes USER). The VM state holds no such set, and the VM is not in slice F's write set, so the Sheet keeps a summary snapshot in `remember` and `QuickAddUiMapper.nextSnapshot` keeps it unless the new state differs by something other than fields turning USER. Known gap: a second Fill that changes nothing observable (same outcome, same hints, no non-USER origin move) after a user edit keeps the older snapshot (a field the user edited may still be listed as filled, and "Fields you edited were kept." can be missing). A clean fix needs one enum/Int in VM state that changes on every Fill (e.g. a fill sequence number); recommended as a small follow-up to slice C if the owner wants it exact. Rotation re-derives the snapshot from the current state.
+- Summary names fields only (ux section 11 strings); values are not echoed in the summary (avoids stale values after edits and keeps copy from repeating form content). The fields themselves, the markers and the category chip show the values. ux section 2.4 INV-20 is met by naming every filled/flagged field in the summary plus on-field markers.
+- G2-14 caption: initially added in `AddExpenseSheet` only (CORRECTED: `ReceiptScanScreen` also got the caption as a follow-up under item 70c, see the follow-ups section; it is no longer "NOT changed", and item 71 #5 moved it above the grid).
+- The sheet has no edit mode, so no hide logic (U2). No Fill spinner. The scroll-to/assertive-live-region items in ux section 9 were already present.
+- `quick_add_fill_disabled_*` has no string for "save in flight"; Fill is just disabled then (no stateDescription).
+- Compose layout: the Fill button stacks under the field when width < 360dp or fontScale >= 1.3.
+
+Privacy / guard reasoning (not run): G-1 no `rememberSaveable` / `SavedStateHandle` token anywhere under `ui/screens/addexpense` (KDoc reworded to avoid even the tokens); line is `remember { mutableStateOf("") }` only. G-3/G-2/G-4 untouched (VM, domain files not edited; no new Timber call anywhere in slice F). db_guard: no `@Composable` function-type parameters, no `fun interface`, no functions named like DB verbs.
+
+Validation to request: `targeted-unit-test` `"*QuickAddUiMapper*,*AddExpenseViewModel*,*QuickAddPrivacyArchitectureGuardTest*,*QuickAddSection*"`; then `lint` (MissingTranslation), `unit-test-shard -Shard runtime-ui`, `static-guards` (db_guard parser on the new files).
+Compile risks (first run): Compose test imports (`SemanticsMatcher.expectValue`, `performImeAction` focus requirement), `KeyboardOptions(autoCorrectEnabled = ...)` (BOM 2024.11.00 has it), `when`-branch lambdas for `supportingText`.
+
+### Slice F follow-ups (item 70) (2026-10-28, implementer; NOT validated)
+Nothing was compiled or run. Roots as above (`A`, `T`).
+
+(a) fillSequence
+- M `A/ui/screens/addexpense/AddExpenseViewModel.kt`: `AddExpenseState.fillSequence: Int = 0`. Incremented only in `withFillApplication` (the single `_state.update` that applies a Fill). The gated-out path (`isSaving` at apply time) returns `current` unchanged, produces no outcome and does not touch state, so it does not increment. `reset()` builds a fresh `AddExpenseState`, so it returns to 0. No String, no line content; no Timber change; no `rememberSaveable`.
+- M `A/ui/screens/addexpense/QuickAddUiMapper.kt`: `QuickAddFillView` gained `fillSequence`; `QuickAddSummarySnapshot` gained `fillSequence` and lost `origins`. `nextSnapshot` is now: no outcome -> null; same `fillSequence` as the held snapshot -> keep it; otherwise build a fresh snapshot.
+- M `A/ui/screens/addexpense/AddExpenseSheet.kt`: the snapshot `LaunchedEffect` is keyed on `(state.fillSequence, state.lastFillOutcome)` and passes `fillSequence` into the view. Still plain `remember`.
+- Known limit (unchanged): rotation drops the `remember`, so the snapshot is re-derived from the current state (edited fields then appear as kept edits, not filled).
+
+(c) ReceiptScanScreen
+- M `A/ui/screens/receiptscan/ReceiptScanScreen.kt`: after `CategoryGrid` (~:973), `if (state.selectedCategoryId == null)` shows `add_expense_category_auto_hint` (bodySmall, `onSurfaceVariant`), same as the Sheet. `ReceiptScanState.selectedCategoryId` is `Long?`, so the hunk is minimal (7 lines). Verified afterwards (trace done): `ReceiptScanViewModel.saveExpenseInternal` (~:1276) falls back to `HybridExpenseClassifier` when no category is selected, so the claim "a category is assigned automatically on save" is true for receipts, with the caveat that the assigned category may be Uncategorized (FEATURES.md says so).
+
+Tests:
+- `T/ui/screens/addexpense/AddExpenseViewModelTest.kt`: NEW `item 70 fillSequence increments per applied Fill survives edits and reset returns it to 0`; AE-50 test extended with a reflection assertion that `AddExpenseState.fillSequence` is a primitive `Int`.
+- `T/ui/screens/addexpense/QuickAddUiMapperTest.kt`: `view()` helper gained `fillSequence` (default 1); `a new Fill replaces the summary and reset clears it` now uses distinct sequences (2, 3) and a `fillSequence = 0` reset view; NEW `a second no-op Fill after a user edit produces a fresh summary` (edited field no longer listed as filled, kept-edits line appears). Existing stability tests are unchanged and pass the same sequence.
+- No test for ReceiptScanScreen (Compose screen, no existing harness checked).
+
+Validation to request: `targeted-unit-test` `"*QuickAddUiMapper*,*AddExpenseViewModel*,*QuickAddPrivacyArchitectureGuardTest*,*QuickAddSection*"`; then `unit-test-shard -Shard runtime-ui`; `static-guards` only if the owner counts the VM edit as guard-relevant. Receipt screen compile is covered by the compile step of the targeted run.
+
+### Slice F review fixes (item 71) (2026-10-28, implementer; NOT validated)
+Nothing was compiled or run. Roots: `A`, `T` as above. This supersedes the item 70a Sheet-side snapshot and `fillSequence`.
+
+1. Snapshot moved into VM state (item 71a, ux 1, G2-13)
+- M `A/ui/screens/addexpense/AddExpenseViewModel.kt`: `AddExpenseState.fillSequence` REMOVED; NEW `fillSummary: QuickAddSummarySnapshot? = null`, set only in `withFillApplication` (the single Fill apply) via `QuickAddUiMapper.snapshotOf(application.outcome, application.lineHints, form.origins, form.flags)`. Edits do not touch it; `reset()` builds a fresh state, so it returns to null. No Timber change, no `rememberSaveable` / `SavedStateHandle`.
+- M `A/ui/screens/addexpense/QuickAddUiMapper.kt`: `QuickAddFillView` and `nextSnapshot` REMOVED; NEW `snapshotOf(outcome, hints, origins, flags)`. `QuickAddSummarySnapshot` is now `(outcome: OutcomeCode, hints: Set<LineHint>, filled: Set<QuickAddField>, flagged: Set<QuickAddField>, keptEdits: Boolean)` (enums, sets, Boolean; `fillSequence` dropped; sets keep the `QuickAddField` declaration order). Flag reasons are not stored (the summary names fields only; per-field flags come from live `fieldFlags`).
+- M `A/ui/screens/addexpense/AddExpenseSheet.kt`: the Sheet-side `remember` + `LaunchedEffect` snapshot removed; it passes `state.fillSummary` to `summaryLines`. Nothing Sheet-side remains to compute.
+
+2. M `A/ui/screens/addexpense/QuickAddSection.kt`: the polite live-region Column (with `QUICK_ADD_SUMMARY_TAG`) is always composed; the rows are inside `if (summary.isNotEmpty())`. Known cosmetic effect: an empty Column is still a child of the sheet's `spacedBy` Column, so it adds one spacing gap while empty.
+
+4. Same file: the chip row's emoji `Text` has `Modifier.clearAndSetSemantics { }`. The one-node merge with a custom Remove action (ux 10) was NOT done: it risks changing the Remove button's click and content-description semantics that existing tests and TalkBack rely on; recommended as a follow-up.
+
+5. M `A/ui/screens/receiptscan/ReceiptScanScreen.kt`: the empty-category caption moved above `CategoryGrid`, under the category label, with a 4dp spacer before (after the label) and after it. M `docs/features/FEATURES.md`: mentions the receipt review screen, the "may be Uncategorized" caveat and that the summary survives edits and rotation.
+
+7. Handoff hygiene: the slice F design note "ReceiptScanScreen ... NOT changed" and follow-up (c) "did not verify" were corrected in place. Trace done: `ReceiptScanViewModel.saveExpenseInternal` (~:1276) falls back to `HybridExpenseClassifier`; the claim is true, the assigned category may be Uncategorized.
+
+Tests (all NOT run):
+- `T/ui/screens/addexpense/AddExpenseViewModelTest.kt`: NEW `item 71a the summary snapshot is computed in the Fill apply, survives edits, and reset clears it`; NEW `item 71a a second Fill after a user edit replaces the snapshot and records the kept edit`; NEW `item 71a edited then rotated - the retained VM state gives the same summary lines`; REMOVED `item 70 fillSequence increments ...`; AE-50 test now asserts `AddExpenseState.fillSummary` is a `QuickAddSummarySnapshot` and that none of the snapshot's instance fields is String, CharSequence, QuickAddInput, QuickAddParseResult or MerchantText (the existing VM-field type guard is unchanged).
+- `T/ui/screens/addexpense/QuickAddUiMapperTest.kt`: helper now builds a snapshot through `snapshotOf` (test-local `FillInput`); `foreign hint persists after the user types an amount`, `summary is stable after the user edits filled fields`, `a second no-op Fill after a user edit produces a fresh summary` and the privacy test rewritten; `a new Fill replaces the summary and reset clears it` became `a new Fill builds a new snapshot that replaces the old one and never stacks`; NEW `snapshot fields keep declaration order and flagged fields are never filled`; `Idle and Typing have no summary` no longer calls `nextSnapshot`.
+- `T/ui/screens/addexpense/QuickAddSectionTest.kt`: `no summary node while there is nothing to report` became `no summary rows while there is nothing to report but the live region is composed` (node exists, Polite, zero children); NEW `INV-12 the typed line is lost on saved-state restoration and is nowhere else in the semantics tree` (StateRestorationTester: type a sentinel, assert it is only in the line field, `emulateSavedInstanceStateRestore()`, assert the line is empty, Fill disabled and the sentinel absent from text and content descriptions of every node, merged and unmerged).
+
+Compile risks (first run): `androidx.compose.ui.test.junit4.StateRestorationTester` import and `SemanticsMatcher` `or` / `and` / `!` operators; `onChildren` on an unmerged interaction.
+
+Validation to request: `targeted-unit-test` `"*QuickAddUiMapper*,*AddExpenseViewModel*,*QuickAddPrivacyArchitectureGuardTest*,*QuickAddSection*"`; then `unit-test-shard -Shard runtime-ui`; `static-guards` (the VM changed, the db_guard parser sees `QuickAddUiMapper.kt` and the Sheet again).
+- 2026-10-28 slice F targeted vr-20261028-035735-f93735d7 FAILED compile: SemanticsConfiguration.getOrNull unresolved; replaced with getOrElseNullable(key) { null } (test-only).
+- 2026-10-28 slice F targeted vr-20261028-043343-c60c05f1: 2 failures (QuickAddSectionTest IME Done focus asserts, Focused stayed true). Cause: `submit` in QuickAddSection.kt called `focusManager.clearFocus()` without force, which does not reliably release a text field's focus; test timing excluded (compose asserts auto-wait for idle). Fix (production): `clearFocus(force = true)`; tests unchanged. Needs re-run of `*QuickAddSection*`.
+- 2026-10-28 slice F vr-20261028-043800-170a5b22: the same 2 QuickAddSectionTest IME Done tests still failed (`Focused = 'false'`) after `clearFocus(force = true)`. Robolectric focus semantics are unreliable (host view keeps/regains focus), so the tests now wrap the content in `CompositionLocalProvider(LocalFocusManager, LocalSoftwareKeyboardController)` fakes and verify `clearFocus(force = true)` and `hide()` calls (plus fill exactly once / not at all); production unchanged. Needs re-run of `*QuickAddSection*`.
+
+### Slice F ACCEPTED (2026-10-28)
+- Gate: privacy-security-guardian + cheap review ACCEPT-WITH-CONDITIONS; findings applied (items 70, 71).
+- Validation:
+  - final tree: targeted vr-20261028-051232-e4fad8e2; runtime-ui vr-20261028-051449-100cb511
+  - static-guards vr-20261028-040441-8ce03b5a and lint vr-20261028-040108-2cddc81c, on the tree before the one-line clearFocus(force = true) and test-only fixes, which are not guard- or string-relevant
+- The el/es strings are DRAFTS (owner sign-off; G2-15). TalkBack and device checks are carried to Z.
+- Committed.
+- Next: slice Z (closeout + bundle acceptance gate).

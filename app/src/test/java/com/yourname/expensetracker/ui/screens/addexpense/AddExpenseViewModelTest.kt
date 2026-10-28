@@ -43,6 +43,7 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.After
@@ -1410,6 +1411,18 @@ class AddExpenseViewModelTest : ViewModelTestUtils() {
             com.yourname.expensetracker.domain.quickadd.QuickAddParseResult::class.java,
             com.yourname.expensetracker.domain.quickadd.MerchantText::class.java
         )
+        // Item 71a: the VM-held summary snapshot is enums, sets and a Boolean only.
+        assertEquals(
+            QuickAddSummarySnapshot::class.java,
+            AddExpenseState::class.java.getDeclaredField("fillSummary").type
+        )
+        for (field in QuickAddSummarySnapshot::class.java.declaredFields.filterNot { java.lang.reflect.Modifier.isStatic(it.modifiers) }) {
+            assertFalse(
+                "snapshot field ${field.name} has the forbidden type ${field.type.simpleName}",
+                forbiddenTypes.any { it.isAssignableFrom(field.type) }
+            )
+        }
+        assertFalse(st.fillSummary.toString().contains("κάρτα"))
         // Static fields are the bounded log-code constants, not instance state.
         for (field in AddExpenseViewModel::class.java.declaredFields.filterNot { java.lang.reflect.Modifier.isStatic(it.modifiers) }) {
             assertFalse(
@@ -1578,6 +1591,71 @@ class AddExpenseViewModelTest : ViewModelTestUtils() {
         assertTrue(st.fieldFlags.isEmpty())
         assertNull(st.categoryFillSource)
         assertTrue(st.fieldOrigins.values.all { it == FieldOrigin.DEFAULT })
+    }
+
+    @Test
+    fun `item 71a the summary snapshot is computed in the Fill apply, survives edits, and reset clears it`() {
+        beginFill()
+        assertNull(st.fillSummary)
+
+        fillAndSettle("dinner 20 usd")
+        val atFill = st.fillSummary!!
+        assertEquals(OutcomeCode.FOREIGN_CURRENCY_BLOCKED, atFill.outcome)
+        assertEquals(setOf(LineHint.FOREIGN_CURRENCY_NOT_SUPPORTED), atFill.hints)
+        assertEquals(st.fieldFlags.keys, atFill.flagged)
+        assertTrue(QuickAddField.AMOUNT in atFill.flagged)
+        assertEquals(
+            QuickAddField.values().filter { st.fieldOrigins[it] == FieldOrigin.FILL && it !in st.fieldFlags }.toSet(),
+            atFill.filled
+        )
+        assertTrue(atFill.filled.none { it in atFill.flagged })
+        assertFalse(atFill.keptEdits)
+
+        // User edits never rewrite the snapshot; the live origins and flags do change.
+        viewModel.updateAmount("18")
+        viewModel.updateMerchant("Dinner Place")
+        viewModel.selectPaymentMethod(PaymentMethod.CARD)
+        assertEquals(atFill, st.fillSummary)
+        assertTrue(st.fieldFlags.isEmpty())
+        assertEquals(FieldOrigin.USER, st.fieldOrigins[QuickAddField.AMOUNT])
+
+        viewModel.reset()
+        assertNull(st.fillSummary)
+    }
+
+    @Test
+    fun `item 71a a second Fill after a user edit replaces the snapshot and records the kept edit`() {
+        beginFill()
+        fillAndSettle("dinner 20 usd")
+        val first = st.fillSummary!!
+        assertFalse(first.keptEdits)
+
+        viewModel.updateAmount("18")
+        fillAndSettle("dinner 20 usd")
+
+        val second = st.fillSummary!!
+        assertNotEquals(first, second)
+        assertTrue(second.keptEdits)
+        assertFalse(QuickAddField.AMOUNT in second.filled)
+        assertFalse(QuickAddField.AMOUNT in second.flagged)
+    }
+
+    @Test
+    fun `item 71a edited then rotated - the retained VM state gives the same summary lines`() {
+        beginFill()
+        fillAndSettle("dinner 20 usd")
+        val linesAtFill = QuickAddUiMapper.summaryLines(st.fillSummary, st.homeCurrency)
+        assertTrue(linesAtFill.isNotEmpty())
+
+        viewModel.updateAmount("18")
+        viewModel.updateMerchant("Dinner Place")
+        val linesAfterEdits = QuickAddUiMapper.summaryLines(st.fillSummary, st.homeCurrency)
+
+        // Rotation recreates the UI but keeps the ViewModel: a fresh read of the retained state (no Sheet-side
+        // holder involved) renders the same summary as before the rotation.
+        val linesAfterRotation = QuickAddUiMapper.summaryLines(viewModel.state.value.fillSummary, st.homeCurrency)
+        assertEquals(linesAtFill, linesAfterEdits)
+        assertEquals(linesAfterEdits, linesAfterRotation)
     }
 
     @Test
