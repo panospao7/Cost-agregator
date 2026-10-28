@@ -138,3 +138,28 @@ Next: loan-installments S1 in this lane (after the S0 D-10/D-12/D-13/D-20 discov
 
 ## Note from nl-quick-add final review (2026-10-28, N4)
 - B1 must add an AddExpenseViewModel.mapSaveError branch mapping RECURRING_FOREIGN_CURRENCY_ERROR_CODE to a bounded mec_ resource. Slice A's default maps every Result.Error to add_expense_error_save_failed.
+
+## Merge of feature/ai-evolution 4add2466 (2026-10-28; NOT validated)
+- This lane (feature/manual-entry-currency) merged origin/feature/ai-evolution 4add2466 (merge-base bcd8e921) with `--no-ff --no-commit`; plan `workflows/active/mec-merge-ai-evolution-plan.md`. Resolved without builds, tests or guards; the orchestrator stages and validates. Not committed.
+- Room: this lane is v152 (`152.json` unchanged); int is v151 and did not bump. No schema change from the merge.
+- MEC-side conflicts resolved as unions: `ManualExpenseRepository` imports (the 4 currency imports plus `AppConfig`), `DiagnosticReasonCode` (`MANUAL_SAVE_BLOCKED_NO_RATE` first, then int's NOTIF_/DL_/LOCK_ block), es/el strings (loan block then int block, no duplicate names), docs, ownership pins at 454.
+- S3: `ManualExpenseRepositoryRecommendationTest` gets a `currencySettingsRepository` mock stubbed with `resolveHomeCurrency()` returning `HomeCurrencyResolution.Resolved(CurrencyCode.EUR)`, like `ManualExpenseRepositoryTest`.
+- D-M1 = A (owner-approvals 79a): `BillReminderWorker` installment reminders use the BILL presentation (resolver plus applier, 10-param constructor). Loan-owned code; see the loan handoff entry.
+- S13-a C1 now targets `DeepLinkPolicy` / `DeepLinkHost` / `DeepLinkApplier` (host branches inside `DeepLinkApplier.kt` only; `MainActivity` stays router-only). The mec pre-1a `handleIntent` host switch is gone.
+- Q1 OWNER-PENDING (owner-approvals 79): the 3 enabled-path `parseDeepLink` tests in `DeepLinkParserTest.kt` (lines 152 to 196) are left in place and do not compile until the owner retires or restates them.
+- S4 follow-up (MEC B1, separate post-merge commit): `AddExpenseViewModel.mapSaveError` hides `RECURRING_FOREIGN_CURRENCY_ERROR_CODE`; it fails closed. Add a bounded `mec_` string (es/el DRAFT).
+
+## Merge review fixes (2026-10-28; NOT validated)
+- Guardian verdicts on the staged merge: privacy-security-guardian ACCEPT-WITH-CONDITIONS; architecture-guardian ACCEPT-WITH-CONDITIONS. Fixes decided by the orchestrator under standing approval item 62.
+- Fixes applied (test, docs and config only; no production Kotlin):
+  - Privacy P3 #2: `BillReminderWorkerInstallmentTest` gains `presentation resolve cancellation after the claim releases the claim and propagates` (claim released, nothing posted, nothing marked sent, cancellation rethrown).
+  - Privacy P3 #5: `LEGAL_PATHS.md` builder owner 2 now lists `sendInstallmentNotification` (S7b, D-M1 A) and notes that int's INV-12 "six composition sites" now has a seventh BILL site, so loan S13-a must re-count.
+  - Architecture P3 #2: `CODEBASE_SEGMENTS.md` header v152 / 2026-10-28; added `QuickAddSection.kt`, `QuickAddUiMapper.kt` (Segment 9), `domain/receipt/statement/*` (Segment 4) and `ui/navigation/InstallmentsFeature.kt` (Segment 40).
+  - Architecture P2 #1 (strengthening): `config/validation/test-shards.json` now assigns the 7 previously unassigned classes (`domain.diagnostics.*` and `domain.LifecycleWritersWriteBarrierTest` to domain-a-m; `di.RetentionModuleBatchedPurgeTest` to data). No filter was removed or narrowed.
+- Q1 is still OWNER-PENDING (the enabled-path `parseDeepLink` block in `DeepLinkParserTest.kt` is untouched).
+- MEC B1/B2 follow-up: once B2 adds the currency selector, the quick-add Fill must parse with the SELECTED entry currency, not `snapshot.homeCurrency` (`AddExpenseViewModel.kt:551-570`). `FOREIGN_CURRENCY_BLOCKED` (`QuickAddFillContract.kt:182`) and the `quick_add_hint_foreign` / `quick_add_flag_amount_foreign` copy (`QuickAddUiMapper.kt:194-196`, `strings.xml` ~:1977) must be revisited in that slice, with a test.
+- S4 (`mapSaveError` hiding `RECURRING_FOREIGN_CURRENCY_ERROR_CODE`) is tracked as above.
+
+## 2026-10-28: Q1 approved (owner-approvals 81a)
+- The 3 enabled-path parseDeepLink tests are retired from DeepLinkParserTest.kt and restated as S13-a acceptance examples in loan-installments-handoff.md.
+- The merge is now compile-eligible. The validation ladder from mec-merge-ai-evolution-plan.md is queued serially. Then reviewer-strict, then the merge commit and a push of feature/manual-entry-currency.

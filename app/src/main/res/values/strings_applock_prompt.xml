@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- S15: constant system-prompt text for the app lock (INV-53, ux-flows 9.2). No user data, no description. -->
+    <string name="applock_prompt_title_enable">Turn on app lock</string>
+    <string name="applock_prompt_subtitle_enable">Confirm with your fingerprint or screen lock.</string>
+    <string name="applock_prompt_title_disable">Turn off app lock</string>
+    <string name="applock_prompt_title_change">Change app lock settings</string>
+    <string name="applock_prompt_title_unlock">Unlock</string>
+</resources>

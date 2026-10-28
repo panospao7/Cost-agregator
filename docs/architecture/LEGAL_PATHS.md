@@ -1,6 +1,6 @@
 # Legal Paths — Architecture Law
 
-> **Last updated:** 2026-10-23 loan-installments S2: DB v152 (installment tables exist, no writer) (installment-plan paths added as planned contracts: loan-installments S1; earlier 2026-10-13 schema/savings delta verified against code: DB v151; prior guarded-worker/CI verification retained)
+> **Last updated:** 2026-10-28 (merge of feature/ai-evolution 4add2466 into feature/manual-entry-currency, NOT validated: unions the loan-installments and app-lock-privacy-mode / ai-fixes sections; DB v152). Earlier: 2026-10-24 (app-lock-privacy-mode 1a: NOTIFICATION PRESENTATION, DEEP LINKS and APP LOCK SETTINGS WRITE PATH sections added; DISPATCH reminder and Anomaly Alerting steps corrected). 2026-10-23 loan-installments S2: DB v152 (installment tables exist, no writer) (installment-plan paths added as planned contracts: loan-installments S1; earlier 2026-10-13 schema/savings delta verified against code: DB v151; prior guarded-worker/CI verification retained)
 >
 > **Purpose:** Define the ONE allowed implementation path for each major operation.  
 > **Rule:** Any code that uses a different path is a bug, regardless of whether it "works."  
@@ -46,6 +46,18 @@ ENFORCEMENT:
     writeBarrier.checkWritesAllowed(...) at entry and writeBarrier.runWrite(...)
     around database.withTransaction. (The former ExpenseWriteStore facade was
     removed as a dead layer — GR-14u35.)
+
+PREFILL AIDS (not a write path):
+  • Clipboard amount prefill (ClipboardAmountParser → AddExpenseViewModel.setInitialValuesIfBlank),
+    merchant suggestion (AddExpenseViewModel merchant suggestion search, read-only) and
+    nl-quick-add Fill (AddExpenseViewModel.fill) only write in-memory Add-Expense form state
+    (amount, merchant, date, category, payment). They perform no DB or preference write.
+  • The only persisted effect is the unchanged manual Save above:
+    AddExpenseViewModel.save() → ManualExpenseRepository.addManualExpense() →
+    TransactionLifecycleCoordinator.createExpenseDbOnlyV2() → ExpenseDao.insertAtomic(),
+    source = MANUAL_ENTRY.
+  • Fill must not call categorize*, MerchantNormalizer or any repository write
+    (see Categorization / Merchant Learning, read-only learned category lookup).
 ```
 
 ```
@@ -442,6 +454,12 @@ RECONCILE linked expenses after bulk update:
 DISPATCH reminder:
   → BillReminderWorker → RecurringLifecycleCoordinator.getDispatchableClaimedReminder()
   → Post-claim revalidation: verify occurrence still PLANNED
+  → Per reminder, after claim + revalidation and immediately before the post:
+    NotificationPresentationResolver.resolve(NotificationKind.BILL, Build.VERSION.SDK_INT)
+    (bounded read, fail-closed to DISCREET; CancellationException propagates, nothing is posted)
+  → sendNotification(..., decision) builds channel/icon/priority itself, then
+    NotificationPresentationApplier.apply(...) sets title/text, PRIVATE visibility, the generic
+    public version, the action policy and the BILL kind marker (see NOTIFICATION PRESENTATION)
   → sendNotification() returns NotificationSendResult.Sent/Failed
   → Runtime settings check (enabled/quiet hours via BillReminderSettingsRepository)
 
@@ -473,7 +491,9 @@ CLOUD AI call:
   → If redactBeforeCloud: apply CloudPayloadPolicy via DefaultCloudPayloadPolicy.prepareText()
     / prepareReceiptAssist() / prepareBankStatementValidation() (no generic prepare())
   → PreparedCloudPayload contract used by all 8 cloud providers
-    (data/ai/provider/Cloud*Service)
+    (data/ai/provider/Cloud*Service). CloudWarrantyExtractionService remains one of the 8 but has
+    no production caller (retired from the warranty path by ai-fixes B1a; only di/AiModule.kt may
+    reference it, enforced by SourceScanningArchitectureGuardTest)
   → Audit via CompositePrivacyGate final decision
 
 INSTALLMENT PLAN DATA is NOT cloud payload input (loan-installments INV-31; guard registered in S1,
@@ -511,6 +531,29 @@ payload exclusion seam planned for S8a):
     payload test. Known limit: a simple string template "$identifier" (e.g. "$installmentPlans") is
     masked with the string literal, so rule 03 does not see it; ${...} expressions are scanned
 
+On-device-only capabilities (NOTIFICATION_PARSE, REVIEW_PRIORITIZATION, SEMANTIC_DEDUPE,
+TRANSACTION_INSIGHT):
+  → AiPolicyImpl.canUseCloudFor is false for every settings combination
+  → the router reaches CLOUD only via DefaultAiCapabilityRouter.canUseCloud →
+    AiPolicy.canUseCloudFor, which is false for these, so it never returns CLOUD for them
+    (additionally, none is in CLOUD_FIRST_CAPABILITIES)
+  → TRANSACTION_INSIGHT has no PrivacyCapability / CloudPayloadPurpose / EffectiveCloudAiPolicy
+    row (ai-fixes B2a)
+
+Transaction insight (GenerateTransactionInsightUseCase, ai-fixes B2d):
+  → on-device only: gated by aiEnabled AND transactionInsightEnabled AND allowOnDeviceAi,
+    then a foreground-only short-circuit (AppForegroundState) BEFORE any router or AICore call,
+    then router.decide(TRANSACTION_INSIGHT); a CLOUD decision is rejected (ROUTE_REJECTED) with
+    zero provider calls; input is unredacted because nothing leaves the device
+  → uses OnDeviceDashboardBriefingService only; it must not reference HybridDashboardBriefingService or
+    CloudDashboardBriefingService (SourceScanningArchitectureGuardTest)
+  → returns TransactionInsightOutcome (Generated | Skipped(reason)); never written to ai_artifacts:
+    the artifact is an in-memory hand-off to DashboardFollowThroughEngine only; its summaryText may
+    become recommendation text persisted via the existing RecommendationRepository.saveAll path
+    (7-day expiresAt, INV-20); recommendations are generated for every outcome when aiEnabled by the
+    existing caller path (ManualExpenseRepository / NotificationProcessingPipeline)
+  → diagnostics: bounded reason code only (recordInteraction("transaction_insight", reason.name))
+
 RAW DATA storage:
   → Check RawStorageMode (STORE_RAW / STORE_REDACTED / STORE_METADATA_ONLY / DO_NOT_STORE)
   → RawContentSanitizer applies per-mode sanitization for every source:
@@ -536,9 +579,10 @@ PRIVACY BLOCKED states:
     OverpassDisabled, DebugDataPersistenceDisabled, ExchangeRateDownloadDisabled, Custom
   → PrivacyDecision.FailClosed: never proceed; blocks execution unconditionally
   → toPrivacyBlocked() maps any denial + capability to a typed PrivacyBlocked
-  → 39 call sites across 27 files use blocksExecution() before proceeding
+  → 38 call sites across 26 files use blocksExecution() before proceeding
     (blocksExecution() metric; `PrivacyGate.check(...)` itself is invoked from
-    51 call sites across 34 production files — different metric, both current)
+    50 call sites across 33 production files — different metric; both reduced by one by
+    ai-fixes B1a removing the AutoCreateWarrantyFromReceiptUseCase cloud gate)
 
 FORBIDDEN:
   ❌ Cloud HTTP without privacy gate check (must pass through CompositePrivacyGate)
@@ -550,6 +594,10 @@ FORBIDDEN:
   ❌ Gating non-AI network calls by CLOUD_AI_* capabilities
   ❌ Referencing installment plan types, repositories, DAOs or the projection port from cloud payload
      assembly (INV-31; installment_cloud_reachability)
+  ❌ ASSISTANT/SYSTEM turns or app-computed answers in any query-interpretation prompt
+     (model history = prior USER queries, shaped only by FinancialQueryInterpretationInputBuilder)
+  ❌ Assistant query interpretation reading PrivacySettings.redactBeforeCloud directly or OR-ing
+     redaction flags outside EffectiveCloudAiPolicyResolver
 ```
 
 ---
@@ -598,6 +646,17 @@ DATABASE OPEN GATE (R25):
   → UnsupportedDatabaseActivity is the only UI for a refused DB. Its single data exception is an
     owner-approved export of the UNTOUCHED file, started by the user through the SAF picker
     (never automatic, never background, never to a non-user-chosen destination).
+  → APP LOCK GATE ON THAT EXPORT (app-lock S21-c, #10; owner decision 73a): at the export tap, BEFORE the
+    SAF picker opens, the activity reads the committed lock and the device-auth capability through the one
+    narrow read-only Hilt @EntryPoint in ui/unsupported/UnsupportedDatabaseExportAuth.kt (the lock settings
+    reader and the capability port only; no AppDatabase, no Dao, nothing Room-backed), bounded at 2 s. Device
+    auth is required when (lock ON, or the store is unreadable / the read failed / timed out) AND capability
+    is AVAILABLE or CHECK_FAILED, or no answer (provider threw or entry point unresolved). For UNSUPPORTED_API, NO_CREDENTIAL, HW_UNAVAILABLE and UNKNOWN the lock is
+    INERT (the main app opens without a prompt in those states), so the export is not gated. The prompt is a
+    per-Activity BiometricPromptDeviceAuthenticator with the constant UNLOCK copy. Cancel, failure or a prompt
+    that cannot launch exports nothing and shows one constant message; onStop cancels an open prompt and
+    denies; no diagnostic code is added and nothing platform-supplied is kept. The activity never binds AppLockController and the lock gate in MainActivity
+    is unchanged.
 
 BACKUP SCHEMA FLOOR (R25-C):
   → Supported backup schema range == app open range: v145..v151. Both restoreCostBackup
@@ -631,6 +690,8 @@ FORBIDDEN:
   ❌ Opening the live DB while the open gate blocks it, or during RESTORE_SWAPPING
   ❌ Destructive fallback / auto-reset of an unsupported, newer, or unreadable DB
   ❌ Any raw-file export of a blocked DB other than the user-started SAF export in UnsupportedDatabaseActivity
+  ❌ That export without device auth while the lock is on or unreadable and the device can authenticate (S21-c)
+  ❌ A second @EntryPoint lookup, or any Room-backed binding, reachable from the UnsupportedDatabaseActivity surface
   ❌ Restoring a backup below v145 or above v151
   ❌ Any DB read during restore stages (DatabaseReadBarrier denies during restore)
   ❌ Using stale Room instance after DB swap (forced restart)
@@ -677,7 +738,21 @@ EVERY worker:
   → WorkerRunLogger records RUNNING → SUCCESS/FAILED/SKIPPED/RETRY
   → Checkpoint before long loops (ensureActive / writeBarrier.checkWritesAllowed)
   → Guard enforces requiresNotificationPermission via NotificationPermissionChecker
-       (durable skip: NOTIFICATION_PERMISSION_DENIED)
+       (durable skip: NOTIFICATION_PERMISSION_DENIED) for workers whose whole purpose is
+       a notification
+  → Optional-notification pattern (PR12K-3; ReceiptMatchingWorker, DailyBriefingWorker,
+       WarrantyExpirationWorker): requiresNotificationPermission = false, and the worker
+       checks notificationPermissionChecker.areNotificationsEnabled() locally immediately
+       before posting. Core work (receipt matching, briefing generation + persistence,
+       warranty expiry reconciliation via reconcileExpiredItems) never depends on
+       notification permission. When denied: no post, no notification count, run still
+       SUCCESS. DailyBriefingWorker and WarrantyExpirationWorker additionally record a
+       bounded NOTIFICATION_PERMISSION_DENIED skip diagnostic (DailyBriefingWorker only when
+       DeliverProactiveBriefingNotificationUseCase reports that outcome, i.e. after its
+       settings, dedupe and artifact checks, or when an attempted post was refused by a
+       SecurityException).
+       (ai-fixes INV-24, INV-27, INV-29; enforced by SourceScanningArchitectureGuardTest
+       notification_posting_workers_require_permission_flag)
   → PrivacyRuntimeWorkerPolicy checks per-worker privacy consent
 
 RETRY CONTRACT:
@@ -1242,9 +1317,29 @@ FORBIDDEN:
 CATEGORIZE expense (auto):
   → CategorizationEngine.categorize(merchant) /
     categorizeWithContext(merchant, amount, timestamp)
-  → Read-only: 6-layer cascade (Exact → Canonical → Greeklish → Fuzzy → Semantic → Context)
+  → 6-layer cascade (Exact → Canonical → Greeklish → Fuzzy → Semantic → Context)
   → Returns CategorizationResult with MatchType + confidence
-  → No persistent side effects
+  → NOT write-free: the cascade calls MerchantNormalizer.normalize(), which even with
+    autoCreate = false can INSERT or UPDATE a merchant_aliases row on a fuzzy match >= 0.95
+    (MerchantNormalizer.kt:98-103 → MerchantNormalizationRepository.linkAliasToCanonical →
+    DAO insertAlias / occurrenceCount update) and logs the raw name (Timber.w, :102). A
+    merchant_canonicals row is created only when autoCreate = true (createNewMerchant() /
+    repository.insertCanonical(), :111-114). Any caller
+    that must be write-free (for example the quick-add Fill) must NOT call categorize*,
+    CategorizationEngine.normalize(), MerchantCategoryRepository.getCategoryForMerchant()
+    (it calls normalize()) or MerchantNormalizer.
+
+READ-ONLY learned category lookup (nl-quick-add C2, no persistent side effects):
+  → QuickAddLearnedCategoryLookup.lookup(merchant, pickerCategories)  [domain/quickadd, suspend]
+  → key = CategorizationEngine.normalizedCanonicalNameForMerchant(merchant)
+    (pure: MerchantCanonicalizer.canonicalize + GreeklishNormalizer.normalize; no I/O, no logging)
+  → MerchantCategoryRepository.getCategoryByNormalizedCanonical(key)  (pure DAO read; deterministic
+    order: confidence DESC, timesUsed DESC, merchantPattern ASC)
+  → the row is used only if its categoryId is in the picker list; else Absent
+  → a non-cancellation exception becomes a failure result (the caller logs the bounded code
+    QUICK_ADD_CATEGORY_LOOKUP_FAILED, no throwable); CancellationException is rethrown
+  → Result feeds the Add-Expense form only (AddExpenseViewModel.fill); persisted solely by the
+    normal Save path (EXPENSE CREATE above), never by the lookup
 
 LEARN merchant category (user feedback):
   → CategorizationEngine.learnMerchantCategory(merchantName, categoryId)
@@ -1262,6 +1357,9 @@ FORBIDDEN:
   ❌ MerchantCanonicalizer.canonicalize() used for writes (read-only normalization)
   ❌ Direct cache map mutation (must go through invalidateAllCaches)
   ❌ Skipping layers in the cascade (must respect 6-layer priority order)
+  ❌ QuickAddLearnedCategoryLookup (domain/quickadd) calling categorize*/categorizeWithContext/
+     debugCategorize, CategorizationEngine.normalize(), getCategoryForMerchant(), MerchantNormalizer,
+     traceDecision, or any write (insert/learnPattern/learnMerchantCategory), or logging merchant/key
 ```
 
 ---
@@ -1283,7 +1381,29 @@ PROCESS bank statement (image/PDF):
   → PendingReviewDao.batchInsert() all validated items
   → Full lifecycle: import is NOT a separate step — everything happens in processBankStatement()
 
+TEXT-PDF ROUTING (statement-import, debug-only feature):
+  → ReceiptOcrService.processStatementUri() reads every text page (<= 200 pages / 2M chars) and
+    exposes OcrResult.pdfTextPages; non-text PDFs and images keep the OCR path (5-page cap)
+  → processor routes pdfTextPages through domain/receipt/statement/TextStatementParser
+    (Revolut, NBG account, Eurobank card, Eurobank transfers layouts). A recognised layout that
+    fails fails the run cleanly; an unknown layout uses BankStatementParser with requireDate = true
+  → parser output is authoritative for amount, currency, date, type, direction and counterparty
+    label on recognised layouts; AI may only offer a scrubbed merchant on non-TRANSFER rows and
+    never drops a row. AI validation is batched (40 candidates per call, at most 5 calls = 200
+    candidates per run; later candidates stay unvalidated, never dropped). TRANSFER rows on a
+    recognised layout are not AI candidates; the AI text is whitespace-collapsed, scrubbed, then cut
+    to 4,000 chars at a token boundary
+  → unreadable/undated/cancelled/unsettled/over-ceiling (100,000) rows become STATUS_SKIPPED
+    ledger items with bounded reason codes; run status COMPLETED_WITH_SKIPS (FAILED only if an
+    item failed or every row was skipped)
+  → transfers: TRANSFER with direction and label; IBANs are never stored (label is
+    "<BANK> ****last4"); TRANSFER rows skip merchant learning
+  → pending-duplicate check excludes reviews created by the same run
+
 FORBIDDEN:
+  ❌ Dating a row without a date as "today" on the text path (skip it as NO_DATE)
+  ❌ Persisting an IBAN, a card number, or a digit run of 12+ digits (9+ on transfer labels) in any merchant/label/account field
+  ❌ Letting AI output override parser money on a recognised layout
   ❌ BankStatementImportItemDao.insert outside processor
   ❌ BankStatementImportRunDao.insertRun outside processor
   ❌ Bypassing pre-OCR dedup (creates duplicate import runs)
@@ -1389,7 +1509,8 @@ CHECK AND ALERT:
   → Cooldown check: 24h per merchant, 12h per category
   → Dedup check against recent alerts (same expenseId)
   → Severity filter: only HIGH severity triggers notification
-  → NotificationService.send() if all checks pass
+  → NotificationService.postAnomalyAlertForKind(ANOMALY, ...) if all checks pass
+    (kind-aware path only; see NOTIFICATION PRESENTATION)
   → AnomalyAlertDao.insert for audit trail
 
 FORBIDDEN:
@@ -1436,21 +1557,56 @@ FORBIDDEN:
 
 ```
 AUTO-CREATE warranty from receipt:
-  → AutoCreateWarrantyFromReceiptUseCase.execute(receiptId, ocrText)
-  → WarrantyTextExtractor extracts warranty terms via regex patterns
-  → Confidence threshold: high ≥ 70%, medium ≥ 40%, low < 40%
-  → Checks existing warranties on same receipt (dedup)
-  → High confidence → auto-create Warranty record
-  → Low/medium confidence → creates WarrantyReviewDraft for user approval
+  → ReceiptSideEffectPlanner (Policy A: ephemeral raw OCR only) →
+    AutoCreateWarrantyFromReceiptUseCase.execute(receiptId, ephemeralOcrText)
+  → WarrantyTextExtractor extracts warranty terms via regex patterns (local only)
+  → Confidence bands (independent of cloud/privacy settings):
+      c ≥ 0.70          → Warranty with status=ACTIVE, needsReview=false
+      0.40 ≤ c < 0.70   → Warranty with status=PENDING_REVIEW, needsReview=true,
+                          extractionSource="ocr" (no separate draft entity)
+      c < 0.40          → nothing persisted
+  → Checks existing warranties on same receipt (dedup; AlreadyExists only upserts the return window)
   → Half-open (exclusive) end-date semantics
-  → PrivacyGate.check() before accessing receipt data
+  → Receipt OCR text reaches the use case only as ephemeral raw text via
+    ReceiptSideEffectPlanner Policy A. There is no fallback to persisted or sanitized text; when
+    the ephemeral text is unavailable the side effect is Skipped (SIDE_EFFECT_SKIPPED_PRIVACY) and
+    the use case is not invoked. Receipt rows are read only through ReceiptRepository.
+    No PrivacyGate capability applies to local regex extraction. Any future cloud or model step
+    requires PrivacyGate.check(CLOUD_AI_*) before data leaves the device.
+  → WarrantyTrackerRepository is the sole warranty writer (addWarrantyIgnoreConflicts → WarrantyDao)
+
+RETURN WINDOW (receipt-driven):
+  → WarrantyTrackerRepository.upsertReturnWindowForReceipt(receiptId, warranty?)
+  → writeBarrier.checkWritesAllowed → structured receipt fields via ReceiptRepository
+    (parsedMerchant, parsedDate/createdAt, expenseId, sourceType, documentType, processingStatus)
+  → returnDays = merchant default table (Amazon 30, Best Buy 15, Apple 14, else 30);
+    returnConditions / returnPolicyUrl are never produced (null on insert)
+  → insert, or update preserving status, returnedAt, refundAmount, createdAt and existing
+    conditions / policy URL
+
+CONFIRM / EXPIRE (review lifecycle):
+  → WarrantyTrackerRepository.confirmWarranty(warrantyId): barrier check first → one transaction:
+    fresh read by id → NotFound | AlreadyConfirmed (no write, no event) | needsReview=false,
+    status = EXPIRED if already EXPIRED or warrantyEndDate < now, else ACTIVE → CONFIRMED
+    lifecycle event (fail-closed in transaction). Never moves EXPIRED → ACTIVE.
+  → WarrantyTrackerRepository.reconcileExpiredItems(now): barrier check first → sole writer of any
+    transition into EXPIRED: status ACTIVE/PENDING_REVIEW with warrantyEndDate < now → EXPIRED
+    (needsReview unchanged; expired pending = "expired unconfirmed"); one batch EXPIRED event with
+    counts only; idempotent
+  → rejectAutoDetectedWarranty (existing): deletes warranty + return window atomically
+  → Review state for UI is derived only by WarrantyReviewState.of(warranty, now)
+  → Reminders consider status='ACTIVE' only (PENDING_REVIEW / EXPIRED never get reminders)
 
 FORBIDDEN:
+  ❌ Warranty promotion out of review (needsReview=false / status ACTIVE / PENDING_REVIEW→ACTIVE) by any path other than WarrantyTrackerRepository (confirmWarranty, or promoteReviewDraft which applies a content-only edit to a fresh in-transaction read and then runs confirmWarranty in the same transaction) (F-AI-1; AutoCreateWarrantyFromReceiptUseCase calls promoteReviewDraft only; WarrantyPromotionBypassGuardTest enforces that no function outside WarrantyTrackerRepository.kt pairs an updateWarranty call with a promotion write; DAO writes are covered by the db_access ownership guards)
   ❌ Creating warranty without confidence assessment
-  ❌ Auto-creating warranty below 70% confidence threshold
+  ❌ Auto-creating an ACTIVE warranty below 70% confidence threshold
   ❌ Creating duplicate warranties for same receipt
-  ❌ Accessing receipt data without PrivacyGate check
   ❌ Using inclusive end-date semantics for warranty expiry
+  ❌ Cloud/AI extraction in the warranty or return-window path
+  ❌ Reminders for non-ACTIVE warranties
+  ❌ Reading persisted rawOcrText for warranty or return-window derivation
+  ❌ ViewModel-built warranty status/needsReview changes (use confirm/reject/claim)
 ```
 
 ---
@@ -1937,4 +2093,680 @@ FORBIDDEN:
   ❌ SpendingChallengeRepository.deactivateChallenges() without a write-barrier check
   ❌ Adding new raw Double SUM aggregation paths for challenge progress
      (must migrate to MultiCurrencyRepository — ownership- and currency-safe)
+```
+
+---
+
+## Assistant / Financial Query
+
+```
+SUBMIT assistant query (no expense/receipt/recurring writes; the only writes are the
+chat rows via AiChatRepository.appendMessage, which checks the write barrier):
+  → AssistantViewModel.submitQuery
+      snapshots prior chat rows BEFORE persisting the current user turn
+      (only when AiSettings.storeConversationHistory is on AND a session id exists;
+      otherwise empty)
+  → InterpretFinancialQueryUseCase (passes the raw prior rows through unchanged;
+    falls back to local interpretation when no provider answers)
+  → FinancialQueryInterpretationInputBuilder (SOLE constructor of
+    FinancialQueryInterpretationInput):
+      priorUserQueries = USER rows only, last
+      AppConfig.Ai.MAX_QUERY_HISTORY_USER_TURNS_FOR_MODEL, oldest first,
+      each sanitized, blanks dropped; no ASSISTANT/SYSTEM text, no payloadJson
+      redaction = AiPolicy.canUseCloudFor(QUERY_INTERPRETATION)
+                  && EffectiveCloudAiPolicyResolver.resolve().redactBeforeCloud
+  → HybridRouter / providers
+      on-device: OnDeviceQueryInterpretationService (renders "- USER: <text>" lines)
+      cloud: CloudQueryInterpretationService → CloudAiPrivacyGate →
+             DefaultCloudPayloadPolicy.prepareText → audit
+  → ExecuteFinancialQueryUseCase (read-only)
+
+Clarification completion (structured clarification option tap; in-memory pending state only):
+  → AssistantViewModel.onClarificationOptionSelected(itemId, optionIndex)
+      consume the live pending clarification FIRST, then execute
+  → CompleteFinancialQueryClarificationUseCase (pure slot fill; PERIOD via AssistantPeriodResolver)
+  → ExecuteFinancialQueryUseCase (read-only; no re-interpretation)
+  retryLast on a completed turn re-executes the completed intent the same way.
+
+Assistant period ranges and comparison cue only via AssistantPeriodResolver.
+
+FORBIDDEN:
+  ❌ Constructing FinancialQueryInterpretationInput outside FinancialQueryInterpretationInputBuilder
+  ❌ ASSISTANT/SYSTEM turns, app-computed answers or message payloadJson in any
+     query-interpretation prompt (on-device or cloud)
+  ❌ AssistantViewModel (or any UI layer) shaping, filtering or redacting model history
+  ❌ Assistant query interpretation reading PrivacySettings.redactBeforeCloud directly or OR-ing
+     redaction flags outside EffectiveCloudAiPolicyResolver
+  ❌ Re-interpreting a structured clarification tap (calling InterpretFinancialQueryUseCase with the
+     option label)
+  ❌ Calling providers or the network on clarification completion
+  ❌ Persisting pending clarification state (it is in-memory only; restored transcripts never regain it)
+```
+
+---
+
+## Notification Presentation (app-lock-privacy-mode, increment 1a)
+
+```
+SCOPE:
+  Every app-built notification of the six kinds BILL, ANOMALY, BUDGET, WARRANTY, BRIEFING,
+  RECEIPT_MATCH (domain/notification/presentation/NotificationKind, closed registry, INV-12).
+  The capture foreground-service notification (NotificationCaptureService) is NOT a kind: it keeps
+  its constant generic text and never goes through the policy.
+
+POST an app notification (one path):
+  → caller (BudgetMonitor, AnomalyAlertOrchestrator, DeliverProactiveBriefingNotificationUseCase,
+    WarrantyExpirationWorker, ReceiptMatchingWorker) passes its own kind to a kind-aware method:
+    NotificationService.sendBudgetAlertForKind / postBudgetAlertForKind /
+    sendAiBriefingReadyForKind / sendAnomalyAlertForKind / postAnomalyAlertForKind
+    (there is no kind-less method; the legacy send*/post* forms were removed in S9a, INV-12)
+  → AndroidNotificationService.postForKind (areNotificationsEnabled check first, so a disabled app
+    never reads the settings)
+  → NotificationPresentationResolver.resolve(kind, Build.VERSION.SDK_INT)   [@Singleton]
+      one bounded read of AppLockSettingsRepository.getLoadState() (withTimeoutOrNull, T_read 500 ms,
+      no runBlocking); unreadable / timeout / unexpected exception → DISCREET (fail-closed) with a
+      bounded NOTIF_POLICY_SETTINGS_UNREADABLE(cause) or NOTIF_POLICY_FALLBACK_EXCEPTION(exception
+      class) diagnostic launched on @ApplicationScope and never awaited;
+      CancellationException is rethrown before the fallback catch
+  → NotificationContentPolicy.decide(kind, loadState, sdkInt)   [pure domain object; the single
+    owner of mode FULL/DISCREET, expanded-style permission and the action policy
+    UNCHANGED / AUTH_REQUIRED / NONE; BILL actions are AUTH_REQUIRED on API 31+, UNCHANGED on API 30
+    and below in 1a]
+  → NotificationPresentationApplier.apply(builder, decision, channelId, smallIcon, title, text, actions)
+      [@Singleton, data/service; the ONE place a decision is applied to a builder]
+      PRIVATE visibility always (never PUBLIC); generic public version always attached (no actions,
+      no style, no marker, no content intent); FULL shows caller text, DISCREET shows only the
+      kind's resource constants (NotificationPresentationTexts) and never reads the detailed text;
+      BigText only in FULL for BRIEFING/ANOMALY; actions per policy; the hidden kind marker is
+      stamped on the PRIVATE version only (NotificationKindMarker, extras key
+      com.yourname.expensetracker.extra.NOTIFICATION_KIND, value = NotificationKind.stableToken)
+  → NotificationManager.notify(id, notification)
+      SecurityException → DeliveryResult.PERMISSION_DENIED (bounded Log.w: kind token + class only);
+      every other exception, including CancellationException, propagates to the caller
+
+BUILDER OWNERS (exactly two; both call the applier, neither sets title/text/style/actions/marker itself):
+  1. AndroidNotificationService — postForKind (live posts) and rebuildDiscreet (re-post sweep)
+  2. BillReminderWorker — resolves the BILL decision inside the guard lambda per reminder, after
+     claim and revalidation, then applies it in sendNotification (still no content intent)
+     and `sendInstallmentNotification` (S7b, D-M1 A; no actions, no content intent; resolved
+     inside the claim→post try)
+  NOTE: int's INV-12 "six composition sites" now has a seventh BILL site (installment reminders,
+  `sendInstallmentNotification`), so loan S13-a must re-count the composition sites.
+
+RE-POST sweep (turning discreet on, see APP LOCK SETTINGS WRITE PATH):
+  → NotificationService.repostActiveAsDiscreet() → AndroidNotificationService
+  → ONE NotificationManager.activeNotifications query (SecurityException → RepostResult(0, 1) +
+    NOTIF_REPOST_FAILED(EXCEPTION_CLASS))
+  → per notification, inside one try (CancellationException rethrown first; any other Exception
+    counts failed++, Log.w class name only, NOTIF_REPOST_FAILED(EXCEPTION_CLASS), the sweep goes on):
+      • skip Notification.FLAG_GROUP_SUMMARY (system ranker_group summary; the app never posts
+        summaries; neither reposted nor failed)
+      • NotificationKindClassifier.classify(channelId, notificationId, rawMarker)
+          1. marker first — only when present, a known stableToken, AND allowed on that channel
+             (budget_alerts: BUDGET/WARRANTY/RECEIPT_MATCH; bill_reminders: BILL; anomaly_alerts:
+             ANOMALY; ai_briefings: BRIEFING)
+          2. else channel / id-range fallback for marker-less (pre-1a) notifications:
+             bill_reminders = BILL, anomaly_alerts = ANOMALY, ai_briefings = BRIEFING;
+             budget_alerts id 10000..19999 = WARRANTY, 20000..29999 = RECEIPT_MATCH, other = BUDGET
+          3. any other channel (including the capture channel) → null → skipped
+      • BILL: NotificationPresentationResolver.resolve(BILL, sdkInt) (bounded T_read; actionsSuppressed =
+        actionPolicy != UNCHANGED; D5 NOTIF_ACTIONS_SUPPRESSED_LOCK(SDK_INT); NOTIF_POLICY_SETTINGS_UNREADABLE
+        when the store is unreadable) → NotificationContentPolicy.decideDiscreet(kind, sdkInt, actionsSuppressed);
+        other kinds: actionsSuppressed = false, no read (S18-ii-b)
+      • fresh builder → NotificationPresentationApplier.apply (stamps the kind marker again);
+        from the original it reuses only id, tag, channel, content intent, action PendingIntents
+        (BILL only, mapped by position onto resource-titled templates) and the post time;
+        setOnlyAlertOnce(true); copies no text, extra, style, group, sort key or large icon
+  → PACING: before EVERY re-post (including the first) SweepPacer.pause(SWEEP_REPOST_SPACING_MS = 300)
+    runs, so the platform's per-app post rate limit does not silently drop sweep updates. The pause
+    is cancellable (CancellationException propagates). Skipped notifications (group summary, null kind,
+    failed classify) are not paused. The window is N x 300 ms (about 15 s at 50 notifications).
+  → NOTIF_REPOSTED_DISCREET(COUNT) when at least one was re-posted
+  Accepted residuals (spec 4.6):
+    • a notification dismissed between the query and its re-post (up to N x 300 ms) comes back as a
+      new post and can alert on a HIGH-importance channel; the content is discreet
+    • a post by other code within about 300 ms of a sweep update, including BillReminderWorker's
+      direct post and back-to-back budget alerts, can still make the platform drop that update
+      silently, leaving FULL content
+    • reposted / NOTIF_REPOSTED_DISCREET count accepted notify() calls, not displayed updates
+    • a FULL decision resolved just before the setting commit but posted after the sweep's single query
+      stays FULL (millisecond window; postForKind / BillReminderWorker)
+    • process death mid-sweep leaves the remaining notifications FULL until they are replaced
+  G1b carry-forward (binding, plan "Orchestrator carry-forwards from the G1a reviews"): post-sweep
+  verification via a content-free presentation-mode token (D / F) next to NotificationKindMarker.EXTRA_KEY,
+  a settle of at least 500 ms, one paced re-post of every sweep-kind notification whose token is NOT "D"
+  (an absent token counts: pre-1a / marker-less originals and the residuals above), one COUNT-only
+  diagnostic (NOTIF_REPOST_UNCONFIRMED); the token stays off the public version; it never blocks cleanup.
+  Triggers: per-field discreet write (AppLockSettingsOperations.requestDiscreetChange, WRITE 5) and a committed review-save
+  (AppLockPrivacySettingsViewModel, before value "was off"); both go through DiscreetRepostTrigger.
+
+FORBIDDEN:
+  ❌ Any kind-less notification method on NotificationService (INV-12)
+  ❌ A third builder owner, or setting title/text/style/actions/visibility/public version/marker
+     outside NotificationPresentationApplier
+  ❌ Choosing FULL/DISCREET or the action policy anywhere but NotificationContentPolicy
+  ❌ VISIBILITY_PUBLIC on an app notification
+  ❌ Stamping the kind marker anywhere but the applier, or putting it on the public version
+  ❌ Putting merchant/amount/product/OCR text in a log, diagnostic or the marker (diagnostics carry
+     bounded codes, kind tokens, counts and exception class names only)
+  ❌ A new non-service importer of BillReminderWorker from NotificationKindClassifier: the classifier
+     may import ONLY the const-inlined `internal const val CHANNEL_ID` (S8 architecture ruling;
+     follow-up: move the BILL channel/shape/action templates into one data/service holder)
+  ❌ Running the sweep on a failed or rejected write, or when discreet turns off (see below)
+  ❌ Calling DiscreetRepostTrigger without NonCancellable (a committed ON must not miss its sweep)
+  ❌ Re-posting in the sweep without the SweepPacer pause, or a non-cancellable pause
+  ❌ Swallowing CancellationException anywhere in resolve / post / sweep
+```
+
+---
+
+## Deep Links (app-lock-privacy-mode, increment 1a)
+
+```
+ENTRY (the only one):
+  → MainActivity.handleIntent(intent)
+  → DeepLinkPolicy.evaluate(intent.action, intent.dataString)   [ui/navigation, object in
+    DeepLinkParser.kt; pure, no IO, never throws, never logs; the ONLY parser of expensetracker://]
+  → NotADeepLink → handleIntent returns false (not a link at all)
+  → otherwise AppLockDeepLinkRouter.route(result, lifecycleScope, mainViewModel)   (S21-b; true = the
+    intent data is consumed one-shot, even for a rejected link)
+
+ROUTER (S21-b, PRV-16; ui/applock/AppLockDeepLinkRouter, unscoped, one per Activity; the ONLY production
+caller of AppLockController.onLockQuery / releaseHeldLink / releaseOpportunity):
+  • route(Accepted) → controller.onLockQuery(request):
+      APPLY_NOW → scope.launch { DeepLinkApplier.apply }  (afterUnlock = false, drops reported)
+      HOLD → DeepLinkApplier.onHeld: the dropped-parameter codes only (D-S21-4); no lookup, no
+             briefing write, no navigation. The controller holds the link in memory (never persisted;
+             process death drops it; newest wins; T_held = 5 min).
+  • route(Rejected) → open state (DISABLED, UNLOCKED, INERT) → DeepLinkApplier.apply (Home, or ignored
+    for a non-VIEW action); otherwise DeepLinkApplier.onRejectedWhileClosed: the bounded DL_REJECTED_*
+    code only, no navigation, the held slot untouched (D-S21-3)
+  • startReleasing(owner, mainViewModel) (once, MainActivity.onCreate after the DB gate and the secure-window
+    bind, before handleIntent and setContent; never from onNewIntent): while STARTED, collects
+    controller.state combined with controller.releaseOpportunity (the post-T33 signal). On each emission
+    with an open state it POSTS launch(Dispatchers.Main) (never Main.immediate, never Unconfined, never
+    inline under the publication) which calls controller.releaseHeldLink():
+      Apply → DeepLinkApplier.applyReleased (afterUnlock from the release; drops not re-reported; the
+              lookup and the briefing write happen here)
+      Expired → DeepLinkApplier.applyExpired: Home only (the controller recorded DL_HELD_EXPIRED)
+      None → nothing (locked, resolving, prompt pending, T33 gate open, or backgrounded: the link stays held)
+  • Accepted residuals: R-S21-1 a lookup that began while open can finish after a re-lock (the navigation is
+    buffered and nothing is composed, and its bounded DL_APPLIED / DL_BRIEFING_* outcome may be recorded
+    after the re-lock); R-S21-2 a rotation during a released-link lookup loses that apply.
+  • Ordering note (not a privacy issue, the app is unlocked): while the app is open but the T33 gate is still
+    open, a rejected link goes Home immediately and an older held link still applies after the gate closes
+    (reversed order).
+
+EVERY expensetracker: URI is untrusted, internal notification taps included (F9). The manifest is
+not the security boundary: the exported launcher activity accepts any URI, so validation here is.
+
+POLICY (spec 5):
+  • action must be ACTION_VIEW, else Rejected(ACTION) → ignored, no navigation
+  • raw data string > 2048 chars → Rejected(MALFORMED) before parsing
+  • not hierarchical, any '#', non-ASCII before the query, userinfo, port, or a path other than
+    empty or "/" → Rejected(MALFORMED)
+  • host: exact-case closed set DeepLinkHost = home, dashboard, activity, review, plan, add,
+    analytics, map; bank hosts → Rejected(BANK_HOST); any other host → Rejected(UNKNOWN_HOST)
+    (installment hosts are not in DeepLinkHost until S13-a: `installments` and `installment_plan` are
+    Rejected(UNKNOWN_HOST) and land on Home; S13-a adds the DeepLinkHost, policy and applier branches)
+  • one allowed parameter per host, everything else dropped and counted:
+      home/dashboard: briefingKey = "dashboard_home:" + real yyyy-MM-dd (<= 32 chars)
+      activity: expenseId = 1..Long.MAX_VALUE (1..19 ASCII digits)
+      analytics: period from TimePeriodTokens (shared allowlist)
+      map: location, trimmed, 1..100 chars, no control/format characters
+      review/plan/add: none (no link creates or prefills data, INV-17)
+    duplicate or invalid values are dropped to the host default
+  • result carries DeepLinkRequest (host + validated fields; toString names the host only) — no raw
+    URI, host string or parameter value exists after this point
+
+APPLIER (ui/navigation/DeepLinkApplier, the only code that acts on a link):
+  • Rejected(ACTION) → no navigation; every other rejection → Home
+  • navigates only through MainViewModel's existing methods
+  • home/dashboard with a validated briefingKey → MarkDashboardBriefingOpenedUseCase: writes
+    lastOpenedDashboardBriefingKey ONLY when the key equals the persisted last delivered key (read
+    at apply time) — the single persistent write reachable from a link (INV-16, closes advisory C4)
+  • activity with a valid expenseId → read-only ExpenseRepository.getExpenseById; not found,
+    read failure or no id degrades to Transactions with a bounded code; CancellationException propagates
+  • add → opens an empty add sheet (never prefilled)
+  • diagnostics: bounded DL_* codes (host / parameter enums, booleans, counts, exception class)
+    launched on @ApplicationScope, never awaited; no raw URI, host string, briefingKey or parameter
+    value in any log, diagnostic or AiRuntimeDiagnostics message (INV-18)
+  • apply (APPLY_NOW) uses afterUnlock = false; a released link uses the controller's afterUnlock
+    (S21-b: the held-link gate is the router above, no longer "increment 1b")
+
+MANIFEST (INV-20, OD-3a):
+  • MainActivity VIEW filter: action VIEW + category DEFAULT + 8 <data> entries for the scheme
+    expensetracker (hosts above). NO BROWSABLE category: links from web browsers no longer open
+    the app. Other installed apps can still send VIEW; DeepLinkPolicy is the boundary.
+  • Notification taps use an explicit MainActivity component + ACTION_VIEW + FLAG_IMMUTABLE
+    (built only in AndroidNotificationService; BillReminderWorker builds no content intent)
+
+FORBIDDEN:
+  ❌ Parsing, matching or logging an expensetracker: URI anywhere outside DeepLinkPolicy
+  ❌ Acting on a link anywhere but DeepLinkApplier
+  ❌ Applying a link without the router's controller query (MainActivity calls only router.route and
+     router.startReleasing; it never touches the controller's link entries)
+  ❌ Calling the held-link release inline, from Main.immediate / Unconfined, or off the main thread
+  ❌ Persisting a held link, or reporting a held link's lookup / briefing write before its release
+  ❌ A link that creates, edits, deletes or prefills data (INV-17)
+  ❌ A persistent write from a link other than MarkDashboardBriefingOpenedUseCase (equals-last-delivered)
+  ❌ Re-adding android.intent.category.BROWSABLE to the expensetracker filter
+  ❌ Raw URI / host / briefingKey / parameter values in logs or diagnostics
+  ❌ Swallowing CancellationException in the applier
+```
+
+---
+
+## App Lock Settings Write Path (app-lock-privacy-mode, increment 1a)
+
+```
+STORE:
+  AppLockSettingsRepository (domain/privacy/applock; impl data/privacy/applock, own DataStore,
+  device-local, never Room, never in .costbackup) is the ONLY reader and writer of the app-lock /
+  privacy settings (INV-1). Consumers observe committed state only (INV-46): no optimistic value.
+  Unreadable states never render or evaluate as Off (INV-2): the effective discreet value is
+  fail-closed (on) via EffectivePrivacyValues.
+
+READ for a notification: NotificationPresentationResolver (see NOTIFICATION PRESENTATION).
+READ for the UI: AppLockPrivacySettingsViewModel ← AppLockSettingsRepository.observeLoadState().
+READ for the unsupported-database export gate (app-lock S21-c, #10): UnsupportedDatabaseExportAuth calls
+  AppLockSettingsRepository.getLoadState() once per export tap, bounded at 2 s (a timeout, a throw or an unreadable
+  store all count as unreadable, never as off). Read-only: no write, no controller, no observeLoadState.
+READ + RECOVERY for the app-lock state (S18 ii-c, INV-47, INV-51; requestSettingsReread has ONE production caller since S20-e, the 1a ViewModel retry): AppLockController
+  is the only reader that drives lock state. Cold start: resolve() (T1-T6, T6b). While the load state is
+  transient-unreadable it re-reads on its own scope at each APP_FOREGROUNDED (never awaited by the foreground
+  evaluation) and on requestSettingsReread() (its ONE production caller, the 1a ViewModel retry). "Transient
+  unreadable" is an Unreadable view with cause IO_ERROR or TIMEOUT, and also (S21-a, 61c-2) the controller's own
+  RESOLVE_TIMEOUT fallback: no loaded view yet (loadState == null) and resolvedByTimeout. Every re-read is
+  bounded at RESOLVE_TIMEOUT_MILLIS (2 s); a re-read that outlives the bound changes nothing (no view, no state
+  change; the next foreground re-reads). The result goes through the PRIVATE, sequence-checked onSettingsReread, never through onLateSettingsResolved:
+  a stale sequence, an unreadable result, or a settings write committed since the read was issued (D6, write
+  counter bumped by the committed-write entries; F3: the open-origin entry bumps the counter BEFORE its token
+  check, so a committed write with no matching token still drops older re-reads) is dropped. F5: a newer
+  unreadable re-read result (past the sequence, D6 and transient checks) clears a kept snapshot while the state
+  is LOCKED / AUTHENTICATING; in every other state it changes nothing. T28 from UNLOCKED / INERT: lock off → DISABLED, lock on
+  and lockActive → UNLOCKED, else INERT(reason); no auth, never locks, no write. T29 in LOCKED / AUTHENTICATING: the
+  snapshot is kept and offered to T28 only after an UNLOCK success or after an open-origin prompt that ends in an
+  open state; LOCKED is never relaxed (only T6b may). The one T28 point (applyRereadLocked) emits
+  LOCK_SETTINGS_RECOVERED (D9, owner-approvals item 51a; PrivacyDiagnosticsEmitter entry, CAUSE key only): the
+  PRIOR load state's transient cause (IO_ERROR or TIMEOUT) is captured before the view is overwritten, claimed once
+  per process per (code, cause) in claimedCodeCauses, and recorded after the monitor is released. A new INERT
+  diagnostic can coincide, so up to two diagnostics are recorded per T28. The CAUSE value limit (IO_ERROR or TIMEOUT
+  only) is enforced by the controller; emission is fire-and-forget (INV-37).
+  The one lock notice (INV-51) is derived by the pure LockNoticeDerivation (INERT > REVIEW_SETTINGS from the load
+  state, persistent causes only > biometric, always false in Increment 1; none in RESOLVING / LOCKED /
+  AUTHENTICATING(UNLOCK); the origin's notice during ENABLE / CONFIRM_CHANGE, AMD-22) and published as
+  AppLockController.notice, version-stamped with the state, after the monitor is released (R2), and republished on
+  a load-state-only change.
+
+WRITE 1 — per-field discreet toggle (1a; since S20-d (S18-ii-g, D4 option (a)) it is WRITE 5 reached from the
+ViewModel: the unforced UpdateDiscreetNotificationsUseCase and AppLockSettingsRepository.setDiscreetNotifications
+are RETIRED, and the F3 pin counts zero production call sites of `.setDiscreetNotifications(`. WRITE 3 (lock flag)
+and WRITE 4 (auto-lock timeout) remain DORMANT per-field writers that nothing may call yet):
+  → AppLockPrivacySection (UI) → AppLockPrivacySettingsViewModel.setDiscreetNotifications
+     (ignored unless Ready and idle, INV-44)
+  → appScope.launch (@ApplicationScope, IO) { withContext(NonCancellable) {
+        handlePlain(AppLockSettingsOperations.requestDiscreetChange(enabled)) } }
+     (NO outer AppLockSettingsWriteSerializer: the operations take it inside, and the lock is non-reentrant)
+  → AppLockSettingsOperations.requestDiscreetChange(enabled)  (= WRITE 5, below)
+      1. before = effective discreet from getLoadState() (trusted only for Loaded / FirstRunDefault;
+         Unreadable counts as was-off)
+      2. AppLockSettingsRepository.setDiscreetNotificationsIfNotForced(enabled)
+         (Rejected(UNREADABLE) when the store is unreadable; Rejected(FORCED) while the lock is on;
+         Failed(DISCREET) when the commit fails)
+      3. on Committed ONLY → DiscreetRepostTrigger.onCommittedWrite(before, after)
+            sweeps only on the false → true edge: NotificationService.repostActiveAsDiscreet()
+            (see NOTIFICATION PRESENTATION); off never re-posts; on → on is not an edge;
+            SWEEP_FAILED is returned only when the sweep itself throws (non-cancellation): recorded as
+            NOTIF_REPOST_FAILED(EXCEPTION_CLASS); the committed write is NOT failed; CancellationException
+            rethrown. Per-notification failures, and a SecurityException on the active-notification query,
+            come back as RepostResult.failed with their own NOTIF_REPOST_FAILED and the trigger returns SWEPT
+      4. Failed or UNREADABLE → the operations report it to the controller, which records
+         LOCK_SETTING_PERSIST_FAILED(FIELD=DISCREET) once per (code, field); REJECTED_FORCED records nothing and
+         sweeps nothing
+  → the committed value reaches the UI only through the store observer. The ViewModel maps PlainSettingResult
+    exhaustively (no else): COMMITTED does nothing; FAILED, REJECTED_FORCED and ALREADY_IN_FLIGHT show the
+    SAVE_FAILED notice (owner decision 2026-10-24) and re-read. An exception from the operations (non-cancellation)
+    still shows SAVE_FAILED and records PERSIST_FAILED(DISCREET) in the ViewModel (the one retained VM diagnostic)
+
+WRITE 2 — review-save (1a; replaces a CORRUPTED / INVALID_VALUE store). SINGLE PATH since S20-e (S18-ii-h, D1):
+  → AppLockPrivacySettingsViewModel.saveReview (review card; the only write accepted in that state)
+  → @ApplicationScope + withContext(NonCancellable) { AppLockSettingsOperations.requestReviewSave(record) }
+    with NO outer serializer (the operations take the shared AppLockSettingsWriteSerializer inside; the mutex is
+    non-reentrant). The VM no longer calls AppLockSettingsRepository.reviewSave and holds no serializer or trigger.
+  → the record is the D2 record, until the S22 UI fields: {lock off, IMMEDIATE, discreet = the user's choice,
+    secure screen ON (the fail-closed value)}. REJECTED_CAPABILITY is unreachable with it (lock off). A lock-off
+    record is a WEAKENING (ReviewSaveAuthorisation): from UNLOCKED it confirms through the CHANGE prompt
+    (WRITE 2b), from INERT under D3 it needs none
+  → the rest of the path is WRITE 2b below. Diagnostics (LOCK_SETTINGS_REVIEW_SAVED,
+    LOCK_SETTING_PERSIST_FAILED(REVIEW_SAVE)) and the post-commit sweep are owned by the controller and the
+    operations (D7), once per (code, field) per process; the ViewModel emits nothing for a review-save
+  → the ViewModel maps ReviewSaveResult exhaustively (no else): COMMITTED resets the choice, keeps the card busy
+    until the observer reports and shows REVIEW_SAVED; STARTED shows no notice at once and arms a VM-private
+    pending-review-save flag (owner-approvals 64): the confirmed save commits later and reaches the UI only through
+    the store observer (INV-46), and when the observer moves from the review category to a readable state while the
+    flag is armed it shows REVIEW_SAVED exactly once and consumes the flag (no controller or Operations API added).
+    The flag is replaced by every later review-save result except ALREADY_IN_FLIGHT (the confirmed apply may still
+    be writing), and cleared by retry() or by the
+    observer leaving the review category for loading/transient; a readable state without the flag shows no notice.
+    FAILED shows SAVE_FAILED;
+    REJECTED_CAPABILITY, NOT_IN_REVIEW, NOT_IN_ORIGIN and ALREADY_IN_FLIGHT show SAVE_FAILED and re-read.
+    An exception from the operations (non-cancellation) shows SAVE_FAILED and records nothing in the VM
+  → retry() (and the foreground refresh while transient-unreadable) also calls AppLockController.requestSettingsReread()
+    (its ONE production caller, the 1a ViewModel; pinned)
+  → CONDITIONAL since S18 ii-d (F4(a), D8): reviewSave writes ONLY if, INSIDE the same store edit, the stored
+    state is persistent-unreadable (CORRUPTED or INVALID_VALUE). Loaded, a first run or a transient state gives
+    Rejected(NOT_UNDER_REVIEW) and nothing is written, so a stale 1a card can never overwrite a committed
+    record (the operations answer NOT_IN_REVIEW and the ViewModel shows SAVE_FAILED).
+  → `.reviewSave(` has exactly ONE production caller: AppLockSettingsOperations.kt (pinned)
+
+WRITE 2b — review-save (1b, S18 ii-d; the controller-owned path, LIVE since S20-e: its one caller is the 1a
+ViewModel above):
+  OWNER: AppLockSettingsOperations.requestReviewSave(record) (the only production caller of
+  AppLockController.startReviewSaveAttempt / onReviewSavedWithoutPrompt; the `.reviewSave(` caller is pinned
+  to exactly {AppLockSettingsOperations}).
+  → ReviewSaveAuthorisation.classify(record): weakening = lock off, or a timeout longer than IMMEDIATE
+    (forced discreet and secure do not count)
+  → applyRunning check, review-open check (persistent-unreadable only), fresh capability read, then ONE of:
+      (a) weakening from UNLOCKED: CHANGE prompt (AppLockController.startReviewSaveAttempt; INV-54), the
+          one-shot T33 token carries the record, the apply runs in the shared AppLockSettingsWriteSerializer
+          under NonCancellable with the F7 re-read (settleCancelledWrite)
+      (b) D3: no authentication available in INERT → the direct write, no prompt. The D3 decision is made
+          outside the serializer, so it is re-proved INSIDE it before the write (INV-45): the state must still
+          be INERT and a fresh capability must be neither AVAILABLE nor CHECK_FAILED, else NOT_IN_ORIGIN with
+          nothing written
+      (c) direct (not a weakening): the direct write, no prompt; a lock-on record re-requires a fresh
+          AVAILABLE capability inside the serializer, else REJECTED_CAPABILITY with nothing written
+  → AppLockSettingsRepository.reviewSave(record): the CONDITIONAL write (D8) above, never a per-field write
+  → AppLockController.onOpenOriginSettingApplied (prompt path) / onReviewSavedWithoutPrompt (direct path):
+    the T27 entries; a commit moves the state only from UNLOCKED / INERT with no open attempt (fail closed
+    otherwise) and replaces the settings view with the committed record. Guard (ISSUE-1, fail closed): on the
+    DIRECT path a weakening record (ReviewSaveAuthorisation.isWeakening) moves the state only when it is INERT;
+    from UNLOCKED it never moves on the caller's word (the commit is still taken: sequence bump, view, diagnostic).
+    The PROMPT path is token-bound and unaffected. A non-commit (Failed, Rejected(UNREADABLE), throw; and on the
+    PROMPT path also Rejected(NOT_UNDER_REVIEW)) records LOCK_SETTING_PERSIST_FAILED(REVIEW_SAVE) once per
+    (code, field) and moves nothing;
+    LOCK_SETTINGS_REVIEW_SAVED is owned by the controller (once per process).
+    Asymmetry between the two paths (D8): on the DIRECT path a Rejected(NOT_UNDER_REVIEW) returns
+    NOT_IN_REVIEW with no record and no controller call; only the PROMPT path records
+    PERSIST_FAILED(REVIEW_SAVE), via onOpenOriginSettingApplied(id, false)
+  → on Committed → DiscreetRepostTrigger.onCommittedWrite(false, effective after), inside the serializer; the
+    completion (onOpenOriginApplyCompleted) runs in a finally
+
+WRITE 3 — lock flag (S18 part (i-a), DORMANT: implemented and tested, no production caller):
+  OWNER: AppLockSettingsOperations (domain/privacy/applock, @Singleton, @ApplicationScope). The only
+  production caller of AppLockController.startOpenOriginAttempt / onOpenOriginApplyCompleted /
+  onEnableRefusedAtRequest / onOpenOriginSettingApplied (source-scan pinned).
+  → requestEnable() / requestDisable() (no ViewModel, Activity, Compose or Android type)
+      1. T26 (enable only): capability read; anything but AVAILABLE (a failed read = CHECK_FAILED) →
+         onEnableRefusedAtRequest, REFUSED_UNAVAILABLE, no prompt, nothing written
+      2. ENABLE / DISABLE prompt (AppLockController.startOpenOriginAttempt; INV-54 one prompt in flight)
+      3. T33 one-shot token: on a matching success the controller closes the attempt, returns to the
+         origin state and hands the attempt id to the operations' handler, which only starts the apply
+         (ATOMIC launch on the application scope); the token is consumed by exactly that id
+      4. withContext(NonCancellable) { enable: effective discreet pre-read (Unreadable / failed read =
+         not discreet); AppLockSettingsRepository.setAppLockEnabled(enabled) (one atomic per-field edit) }
+      5. AppLockController.onOpenOriginSettingApplied(attemptId, committed): re-checks the origin state
+         under the monitor and moves DISABLED → UNLOCKED (T17) or UNLOCKED → DISABLED (T18); a write that
+         did not commit moves nothing and records LOCK_SETTING_PERSIST_FAILED(APP_LOCK_ENABLED)
+      6. enable and committed ONLY → DiscreetRepostTrigger.onCommittedWrite(before, after); disable
+         never re-posts
+      7. completion: onOpenOriginApplyCompleted(attemptId) in a finally (also on failure or
+         cancellation, which is rethrown), after the state move; releases the T33 gate
+      T19 BRANCH (S18-ii-e): requestDisable() while the state is INERT takes NO prompt (nothing can authenticate):
+         a. applyRunning is claimed atomically (compareAndSet; ALREADY_IN_FLIGHT if taken) and released on every
+            path that does not launch the apply;
+         b. AppLockController.beginInertDisable(): INERT(SETTINGS_UNREADABLE_NO_AUTH) or any unreadable /
+            unresolved load state -> REVIEW_REQUIRED, nothing written (INV-44: the review-save is the way); not
+            INERT or an attempt open -> NOT_IN_ORIGIN; else an id-bound one-shot token (own id sequence);
+         c. the capability is read FRESH; AVAILABLE or CHECK_FAILED (a failed read) -> NOT_IN_ORIGIN, nothing
+            written (D3: the no-auth path exists only when the device cannot authenticate);
+         d. ATOMIC launch on the application scope, STARTED; the apply runs inside the shared
+            AppLockSettingsWriteSerializer under NonCancellable and RE-PROVES D3 there (state still INERT, FRESH
+            capability still neither AVAILABLE nor CHECK_FAILED, store readable) before the single
+            setAppLockEnabled(false) call (F7 re-read after a cancelled write; the cancellation is rethrown);
+         e. AppLockController.onInertDisableApplied(id, committed): id-bound, bumps writeSequence on a commit
+            (F2, D6), moves INERT -> DISABLED ONLY after Committed and only if the state is still INERT with no
+            attempt open (a moved state is never moved; view and LOCK_DISABLED follow the commit); a failed
+            write stays INERT and records LOCK_SETTING_PERSIST_FAILED(APP_LOCK_ENABLED) once per process; if the
+            device regains authentication between the in-serializer re-proof and the NonCancellable commit, the
+            store keeps the user's lock-off and the state is NOT moved; the view follows the commit, so an
+            UNLOCKED session stays open with the lock off and a LOCKED state stays LOCKED until a real unlock
+            (accepted residual, same as D1);
+         f. no DiscreetRepostTrigger call (disable never re-posts, INV-13); no T33 gate and no held link are
+            involved (no attempt); applyRunning is cleared in the apply's finally.
+         Still DORMANT: the same request entry (requestDisable) and the same source-scan pins; beginInertDisable and
+         onInertDisableApplied have exactly one production caller, AppLockSettingsOperations.kt.
+  DORMANT / NOT LEGAL TO WIRE until ALL of these BLOCKING items are closed:
+    F3: CLOSED by S18-ii-b (adopted resolver form, actionPolicy != UNCHANGED; see the plan amendment
+        "S18-ii-b accepted deviation"; the API 26/30 device re-run stays with G1b);
+    F4: CLOSED: serializer part (S18-ii-a) and F4(a) review-save in-edit guard (D8) (S18-ii-d: reviewSave is
+        conditional inside the store edit, Rejected(NOT_UNDER_REVIEW)) (the domain-owned serializer is shared
+        with the ViewModel and covers the WRITE 3, WRITE 4, WRITE 5 and WRITE 2b paths);
+    F7: CLOSED by S18 ii-a (a store re-read after a cancelled NonCancellable write on WRITE 3, both WRITE 4
+        paths and WRITE 5; loaded + equal = committed path, otherwise not committed: no move, failure recorded
+        once, no trigger; the CancellationException is rethrown and the completion finally still runs);
+    finding 8: CLOSED by S18-ii-f (setAppLockEnabled, setAutoLockTimeout, setAutoLockTimeoutIfNotWeakening,
+        setDiscreetNotificationsIfNotForced and setSecureScreenIfNotForced are abstract; their fail-closed
+        default bodies are gone and every fake overrides them, failing closed unless the test needs behaviour);
+    INV-45: ViewModel routing (S18-ii-h): CLOSED by S20-e (owner D1). The controller-side review authorisation
+        was closed by S18-ii-d (WRITE 2b); the review card now routes through
+        AppLockSettingsOperations.requestReviewSave with the D2 record (lock off, IMMEDIATE, discreet = the
+        choice, secure screen on), so a weakening review-save authenticates once (CHANGE prompt) or, under D3,
+        needs none. ONLY the S22 UI fields remain (a real timeout/secure-screen choice), plus the 61c
+        carry-forwards. Release condition (owner item 55a): no release ships S20 without S22;
+    WRITE 5 routing (S18 i-b2): CLOSED by S20-d (S18-ii-g). The 1a ViewModel's discreet write is routed through
+        WRITE 5 (requestDiscreetChange), so a forced value can never be written while the lock is on. The
+        secure-screen writer does not exist in 1a (no 1a secure-screen path; F-c), so requestSecureScreenChange
+        stays dormant until S22.
+        EXIT CRITERION (S18 i-b2 final gate ISSUE-4): MET by option (a) (owner item 51a): the use case
+        UpdateDiscreetNotificationsUseCase and the unforced setDiscreetNotifications (interface and Impl) are
+        retired, with their tests, and the F3 pin counts ZERO production call sites;
+  Source-scan tests allow zero callers of AppLockSettingsOperations, requestEnable, requestDisable,
+  requestTimeoutChange, requestDiscreetChange, requestSecureScreenChange and requestReviewSave outside
+  AppLockSettingsOperations.kt, with ONE per-file exemption (S20-d): AppLockPrivacySettingsViewModel.kt may
+  contain exactly the tokens AppLockSettingsOperations, requestDiscreetChange and requestReviewSave (S20-e). The
+  controller-entry pin allows the ViewModel exactly the token requestSettingsReread (its retry). They also allow
+  exactly one call site of setAppLockEnabled, of setAutoLockTimeout, of
+  setAutoLockTimeoutIfNotWeakening, of setDiscreetNotificationsIfNotForced and of
+  setSecureScreenIfNotForced (that file), ZERO of the retired unforced setDiscreetNotifications, and exactly
+  ONE of reviewSave (that file, since S20-e); lifting them needs the items above. S18-ii-e adds beginInertDisable and onInertDisableApplied to the controller-entry
+  pins (exactly one production caller each: AppLockSettingsOperations.kt).
+
+WRITE 4 — auto-lock timeout (S18 part (i-b1), DORMANT: implemented and tested, no production caller):
+  OWNER: AppLockSettingsOperations (same class as WRITE 3). Entry: suspend requestTimeoutChange(timeout)
+  (no ViewModel, Activity, Compose or Android type).
+      1. applyRunning check, then the pre-read of the committed settings; an unreadable store or a
+         throwing pre-read = FAILED, nothing written, no prompt, LOCK_SETTING_PERSIST_FAILED(AUTO_LOCK_TIMEOUT)
+      2. equal or shorter timeout, or the lock is off (NO prompt): inside the shared serializer across the pre-read
+         and the write (applyRunning re-checked inside it), withContext(NonCancellable) {
+         AppLockSettingsRepository.setAutoLockTimeoutIfNotWeakening(timeout) } - ONE store edit that
+         re-checks "lock on and timeout longer than stored" and writes nothing then
+         (Rejected(WOULD_WEAKEN) = NOT_IN_ORIGIN, no view change, no record; Rejected(UNREADABLE) or
+         Failed = FAILED + record). Committed → AppLockController.onTimeoutWrittenWithoutPrompt(timeout, true),
+         which takes the timeout into the settings view unless that would lengthen a lock-on view
+         (fail closed)
+      3. longer timeout with the lock on: only from UNLOCKED (INERT = NOT_IN_ORIGIN = the spec's
+         Rejected(AUTH_UNAVAILABLE), TECH-13, S18 i-b2: no write, no prompt, no state change);
+         CONFIRM_CHANGE prompt with the CHANGE copy (AppLockController.startTimeoutChangeAttempt;
+         INV-54 one prompt in flight); nothing is written until it succeeds
+      4. the T33 hand-off as WRITE 3: ATOMIC apply on the application scope, withContext(NonCancellable) {
+         AppLockSettingsRepository.setAutoLockTimeout(timeout) } (UNconditional: the user authenticated for
+         that exact value), then onOpenOriginSettingApplied(attemptId, committed) (applies the token's
+         timeout; a failed write records LOCK_SETTING_PERSIST_FAILED(AUTO_LOCK_TIMEOUT)), then
+         onOpenOriginApplyCompleted in a finally; the state never moves (UNLOCKED stays)
+  DORMANT / NOT LEGAL TO WIRE until the same BLOCKING list as WRITE 3 is closed (F3, F4, F7, finding 8,
+  INV-45), with the WRITE 4 scope stated there.
+
+WRITE 5 — discreet and secure screen, forced-aware (S18 part (i-b2); requestDiscreetChange has had ONE production
+caller since S20-d, the 1a ViewModel (WRITE 1); requestSecureScreenChange is DORMANT, no production caller):
+  OWNER: AppLockSettingsOperations (same class as WRITE 3 and 4). Entries: suspend requestDiscreetChange(enabled)
+  and suspend requestSecureScreenChange(enabled). Under INV-48 / OD-2 (a) both values are FORCED while the lock
+  is on (also in INERT), so there is no weakening that needs a prompt: they are refused, not authenticated.
+      1. applyRunning check (ALREADY_IN_FLIGHT), then the shared AppLockSettingsWriteSerializer (the same one as WRITE 1-4) held across
+         [discreet only: the effective-discreet pre-read], the write and the trigger, applyRunning re-checked inside
+      2. withContext(NonCancellable) { AppLockSettingsRepository.setDiscreetNotificationsIfNotForced(enabled) or
+         setSecureScreenIfNotForced(enabled) } - ONE store edit: Unreadable = Rejected(UNREADABLE) (FAILED +
+         LOCK_SETTING_PERSIST_FAILED(DISCREET | SECURE_SCREEN)); stored lock on = Rejected(FORCED)
+         (REJECTED_FORCED: nothing written, no prompt, no record); else the write (lock off is not a weakening)
+      3. Committed → AppLockController.onPlainSettingWritten(field, value, true) (settings view only, the state never
+         changes); Failed / throw / UNREADABLE → onPlainSettingWritten(field, value, false) (record once per
+         (code, field))
+      4. discreet only, Committed: DiscreetRepostTrigger.onCommittedWrite(before, after effective) (INV-13, INV-46)
+      5. the enable / disable apply of WRITE 3 holds the SAME serializer across its pre-read, write, state move and
+         trigger (privacy review C1), so a plain discreet write cannot commit between the apply's pre-read and
+         its lock write (a stale "was discreet" would skip the sweep)
+  The 1a UpdateDiscreetNotificationsUseCase / setDiscreetNotifications path (no FORCED check) was RETIRED in S20-d
+  (S18-ii-g, owner D4 option (a), item 51a), and the ViewModel's discreet toggle is routed here, so no unforced
+  discreet write path remains (F3 pin: zero call sites of `.setDiscreetNotifications(`). The WRITE 3 and WRITE 4
+  paths and requestSecureScreenChange stay DORMANT / NOT LEGAL TO WIRE until the S22 UI fields land (INV-45's
+  ViewModel routing, S18-ii-h, is CLOSED by S20-e).
+
+SERIALISATION (domain-owned since S18 ii-a, F4 serializer part CLOSED (S18-ii-a); F4(a) review-save in-edit
+guard (D8) CLOSED (S18-ii-d)): AppLockSettingsWriteSerializer (@Singleton,
+domain/privacy/applock, a process-wide non-reentrant Mutex, withExclusiveWrite) so a write started by an
+earlier ViewModel instance still excludes the next one's before-read / write / sweep. ONE instance is shared
+by every AppLockSettingsOperations path (WRITE 2b review-save, WRITE 3 lock
+apply, WRITE 4 timeout apply and direct timeout write, WRITE 5 plain writes). WRITE 1 reaches it only inside
+WRITE 5 (S20-d) and WRITE 2 only inside WRITE 2b (S20-e): the ViewModel holds no serializer and must NOT wrap a
+call to the operations, the mutex is non-reentrant. The pre-read, the durable
+write, the controller entry and the trigger are one critical section, and no prompt is held inside it.
+Nothing called inside it may re-enter it (the ViewModel holds no serializer; Operations never
+calls the ViewModel). The former Operations-private directWriteMutex is gone. The store-level D8 guard and
+the controller-side review-save diagnostics ownership (WRITE 2b) landed in S18 ii-d.
+
+FORBIDDEN:
+  ❌ Writing the settings store anywhere but AppLockSettingsRepositoryImpl
+  ❌ A per-field write while the store is Unreadable (INV-44); only reviewSave clears it
+  ❌ Running the re-post sweep before the write is committed, or on a failed / rejected write (INV-46, AE-105)
+  ❌ Re-posting when discreet turns off, or on an on → on write
+  ❌ Failing or rolling back a committed write because the sweep failed
+  ❌ A settings write outside the serializer, or launched in viewModelScope (a committed ON would then
+     miss its sweep when the screen is left)
+  ❌ Optimistic UI state not derived from the committed load state
+  ❌ A second diagnostics owner for review-save in 1a (the ViewModel is the interim owner until S18)
+  ❌ Calling DiscreetRepostTrigger without NonCancellable and the serializer (review-save included)
+  ❌ Raw settings text, paths or stack traces in diagnostics (bounded codes + FIELD enum only)
+```
+
+## App Lock Prompt Path and Lifecycle Signals (app-lock-privacy-mode, increment 1b, S20-a/b/c)
+
+```
+LIVE from S20-c: MainActivity now installs the binder, attaches the prompt host, applies and binds the secure window
+and hosts MainScreen inside the app-lock shell. The lock is still not user-enableable (S22 adds the switch), so for
+every user with a readable lock-off store the controller resolves to DISABLED and the shell renders the open branch;
+the fail-closed paths (T5, T6b, RP-11) can show LOCKED or INERT. S20-c is release-safe only
+together with S20-d and S20-e (one atomic S20 candidate, D1).
+
+MAINSCREEN IS COMPOSED ONLY FROM THE GATE (S20-c, INV-26):
+  MainActivity.setContent → ExpenseTrackerTheme → ProvideNavigationController → Surface
+    → AppLockShell(controller, mainViewModel.operationalState, mainViewModel::navigateTo) { MainScreen(...) }
+    → AppLockGate (source overload, no gate effects) → the content slot, only in an open state.
+  RESOLVING/LOCKED/AUTHENTICATING(UNLOCK) never compose MainScreen. There is exactly one production `MainScreen(`
+  call and it sits inside the AppLockShell content lambda (MainScreenCallSiteTest). The shell sits INSIDE
+  ProvideNavigationController so navigation state survives a lock; the content's rememberSaveable state is kept by a
+  SaveableStateHolder (T14). No Dialog, AlertDialog or Popup in setContent outside the shell (CF-5, FLAG_SECURE
+  inheritance).
+  Shell rules: the gate reads controller.state / controller.notice directly (ControllerGateSource, CF-1); Unlock is a
+  tap calling onUnlockTapped() only (INV-34); the notice's Security settings action sends a constant
+  ACTION_SECURITY_SETTINGS intent with no extras straight from the tap (ActivityNotFoundException → one bounded Timber
+  reason, no PrivacyDiagnosticCode; CF-3); the app-lock-settings and review actions re-check
+  MainViewModel.operationalState.value at tap time and then navigate to NavigationDestination.PrivacySettings;
+  inAppActionsAllowed comes from the operational state (INV-52); the status line is derived only from the published
+  AppLockState sequence (an UNLOCK prompt that returns to LOCKED → "try again"; cleared outside LOCKED and on a new
+  episode; CF-4).
+  MainActivity.onCreate order: super.onCreate → secureWindow.applyInitial(window) → DB gate → binder.install(application)
+  → promptHost.attach(this) → secureWindow.bind(this) → deepLinkRouter.startReleasing(this, mainViewModel) →
+  enableEdgeToEdge → handleIntent → setContent. handleIntent routes only through AppLockDeepLinkRouter (Deep Links,
+  ROUTER); onNewIntent unchanged. The binder is installed in MainActivity.onCreate (MainApplication
+  is not edited): started Activities are counted by IDENTITY, so an Activity started before install (a rescue or
+  database-gate Activity) is never counted and its later stop is ignored; it can neither cancel a counted start nor
+  cause a missed background (S20-c review #1).
+  Back while the gate is closed (RESOLVING, LOCKED, AUTHENTICATING(UNLOCK)) moves the task to the back (AppLockShell
+  BackHandler, S19 decision 4).
+  POST_NOTIFICATIONS: the R24 auto-prompt effect starts with NotificationPermissionPromptOnce.tryClaim(), so the
+  decision runs at most once per process however often the shell re-enters MainScreen; NotificationPromptPolicy and
+  NotificationPromptStore still decide whether it shows.
+  FLAG_SECURE: the single writer (SecureWindowController) is now live; a source scan pins that FLAG_SECURE and window
+  flag writes appear in no other production file (MainScreenCallSiteTest).
+  The binder owns resolve() and the INV-25 lifecycle signals; MainActivity calls neither the controller's lifecycle API nor
+  resolve() itself.
+
+PROMPT PATH (the only path to the system prompt):
+  AppLockController (the only caller; on its @AppLockMainDispatcher, outside its monitor)
+  → DeviceAuthenticator port, bound @Singleton to AppLockAuthenticatorRelay (di/AppLockModule)
+  → the CURRENT registered adapter, held WEAKLY: BiometricPromptDeviceAuthenticator (ui/applock, one per Activity,
+     created by AppLockPromptHost.attach in onCreate)
+  → androidx.biometric BiometricPrompt (the only library entry point; AppLockBiometricSourceScanTest allowlist)
+  Outcome path back: adapter → relay-owned callback (bound to the open-attempt record and the holding
+  registration) → the controller's callback. Forwarded at most once, only while the record is open, the id matches
+  and that registration holds the attempt; anything else is dropped. The relay records the open attempt BEFORE it
+  calls the adapter (an outcome may be re-entrant). The AuthPromptCopy is passed through unchanged.
+  RELAY RULES (handoff S16 binding (a)-(e)):
+    (a) weak holder, cleared at the host's ON_DESTROY; (b) no adapter → HOST_UNAVAILABLE and no callback;
+    (c) cancel(id) goes to the adapter that launched or adopted id; if that adapter is gone the relay itself delivers
+        Failed(SYSTEM_CANCELED), once, synchronously; (d) host loss only from the registration holding the attempt,
+        only when !isChangingConfigurations, exactly once (record removed first); (e) reachable only through the DI
+        binding and AppLockPromptHost (never workers, receivers or services; pinned by the relay source scan).
+
+HOST LOSS (T35, PROMPT_HOST_LOST) and ROTATION:
+  Activity ON_DESTROY → AppLockPromptHost → relay.unregister(registration, isChangingConfigurations)
+    - !isChangingConfigurations and this registration holds an open attempt: the relay removes the record and returns
+      its id once → AppLockController.onPromptHostLost(id) (closes the attempt first, then asks the adapter to cancel;
+      the relay finds no record and ignores that cancel)
+    - isChangingConfigurations: no report. The record is kept ORPHANED; the next AppLockPromptHost.attach →
+      relay.register hands the open attempt (id and callback) to the new adapter through
+      BiometricPromptDeviceAuthenticator.adopt (only when idle and not awaiting a terminal; at most one outcome, stale
+      terminals dropped by reference). Adoption is immediate; the controller's watchdog is never the rotation path. A
+      refused adoption closes the attempt with the relay's own Failed(SYSTEM_CANCELED).
+    - a newer host created before the older one is destroyed (CLEAR_TASK) never adopts a record whose holder is alive.
+    - orphan close (no watchdog): orphaning posts ONE check to the main looper (injectable "post to main" seam,
+      default Handler(Looper.getMainLooper()).post). A relaunch adopts inside one main-thread message, so a real
+      adoption always wins and the check then does nothing; a record still orphaned when the check runs (the
+      recreated instance never attached) is closed once with the relay's own Failed(SYSTEM_CANCELED). Each
+      orphaning has its own sequence number, so a stale check never closes a later orphaning.
+  Activity ON_START → AppLockPromptHost → relay.activate(registration): the started host re-asserts itself as the
+    relay's CURRENT registration (a second instance, for example the exported MainActivity VIEW launch, must not
+    strand the visible host's prompt). activate never adopts and never touches the open record.
+
+FOREGROUND / BACKGROUND SIGNALS (INV-25) — AppLockLifecycleBinder is the SOLE source:
+  Application.registerActivityLifecycleCallbacks (installed once per process, idempotent; S20-c calls it from
+  MainActivity.onCreate, MainApplication is not edited) keeps an exact started-activity count:
+    0 → 1 → AppLockController.onAppForegrounded()
+    1 → 0 and !isChangingConfigurations → AppLockController.onAppBackgrounded()
+    a configuration-change stop and its matching start are NOT reported (AE-41); the shade and split-screen never
+    stop the Activity. Every real stop is reported, including stops caused by the app's own prompts (no
+    suppression while a prompt is in flight; the controller decides, T32-T34).
+    an UNPAIRED configuration-change stop (the relaunched instance is destroyed without ever starting, for example it
+    finishes in onCreate) is reported at onActivityDestroyed: count == 0, a pending suppression and
+    !isChangingConfigurations → onAppBackgrounded() once; the next start is then a foreground (fail-closed).
+  The binder also launches AppLockController.resolve() on @ApplicationScope at install and on every start while the
+  state is Resolving (CancellationException rethrown; other exceptions logged by class name only).
+
+FLAG_SECURE (INV-29, INV-53; S20-b adds the class, EFFECTIVE only from the S20-c wiring):
+  SecureWindowController is the SINGLE writer of FLAG_SECURE on the app window. Nothing else may add or clear it.
+  MainActivity.onCreate → applyInitial(window)  (first statement after super.onCreate, synchronous, before setContent)
+  MainActivity.onCreate → bind(activity)        (Activity lifecycleScope; ends at ON_DESTROY; once per Activity instance,
+                                                  never from onNewIntent)
+  flag = EffectivePrivacyValues.effectiveSecureScreen(committed load state, controller.state is Resolving)
+    inputs: AppLockSettingsRepository.observeLoadState() (COMMITTED only, INV-46) and the Resolving flag. NOTHING else.
+    AUTHENTICATING of any purpose is never an input: ENABLE keeps the flag off while the committed lock is off and
+    secure-screen is off, and turns it on at the first emission after the commit (AE-113); CONFIRM_CHANGE keeps it on,
+    a weakening clears it only after its write commits, and a persist failure leaves it on (AE-114).
+    cleared ONLY by a computed false from a real emission; before the first emission, with a null or absent state, and
+    while the load-state stream is down it stays set (fail-closed). When the stream ends (the repository's terminal
+    Unreadable(IO_ERROR) then completion, an error, or a clean completion) a null state is emitted (set) and the stream
+    is re-subscribed with a bounded backoff (1 s doubling, capped at 30 s; INV-47, AE-97), so the flag can clear again
+    after recovery. distinctUntilChanged: no redundant window writes.
+  NotificationPermissionPromptOnce.tryClaim() (in-memory, once per process, AE-39) caps the R24 auto-prompt; R24's
+    NotificationPromptPolicy and NotificationPromptStore remain the deciders.
+
+FORBIDDEN:
+  ❌ A second FLAG_SECURE writer, or any AppLockState other than Resolving (AUTHENTICATING included) as a flag input
+  ❌ Clearing FLAG_SECURE on an unknown, null, absent or failed state
+  ❌ A second source of foreground/background signals (ProcessLifecycleOwner, onResume/onPause, a ViewModel)
+  ❌ Calling the relay, the adapter or the controller's prompt API from a worker, receiver or service
+  ❌ Registering anything other than the prompt host's adapter with the relay; a singleton or static Activity reference
+  ❌ Relying on the controller's watchdog to recover a rotation
+  ❌ Reporting PROMPT_HOST_LOST for a configuration change, or more than once per attempt
 ```

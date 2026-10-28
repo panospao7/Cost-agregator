@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- S15: constant system-prompt text for the app lock. Best-effort translation, owner review pending. -->
+    <string name="applock_prompt_title_enable">Ενεργοποίηση κλειδώματος εφαρμογής</string>
+    <string name="applock_prompt_subtitle_enable">Επιβεβαιώστε με το δακτυλικό αποτύπωμα ή το κλείδωμα οθόνης.</string>
+    <string name="applock_prompt_title_disable">Απενεργοποίηση κλειδώματος εφαρμογής</string>
+    <string name="applock_prompt_title_change">Αλλαγή ρυθμίσεων κλειδώματος εφαρμογής</string>
+    <string name="applock_prompt_title_unlock">Ξεκλείδωμα</string>
+</resources>

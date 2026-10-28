@@ -4,6 +4,7 @@ import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.ai.provider.CloudDashboardBriefingService
 import com.yourname.expensetracker.data.ai.provider.DashboardBriefingPromptFormatter
 import com.yourname.expensetracker.data.ai.provider.HybridDashboardBriefingService
+import com.yourname.expensetracker.data.ai.provider.OnDeviceDashboardBriefingService
 import com.yourname.expensetracker.data.database.dao.RecurringOccurrenceDao
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
@@ -20,14 +21,17 @@ import com.yourname.expensetracker.data.repository.PlannedExpenseRepository
 import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
 import com.yourname.expensetracker.data.repository.ReviewQueueRepository
 import com.yourname.expensetracker.data.security.SecureKeyStorage
+import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiRoute
 import com.yourname.expensetracker.domain.ai.model.AiRouteDecision
+import com.yourname.expensetracker.domain.ai.model.AiServiceResult
 import com.yourname.expensetracker.domain.ai.model.AiSettings
+import com.yourname.expensetracker.domain.ai.model.DashboardBriefing
 import com.yourname.expensetracker.domain.ai.model.DashboardBriefingInput
-import com.yourname.expensetracker.domain.ai.policy.AiPolicy
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
+import com.yourname.expensetracker.domain.ai.service.AppForegroundState
 import com.yourname.expensetracker.domain.analytics.AnalyticsCategoryBreakdown
 import com.yourname.expensetracker.domain.analytics.AnalyticsCategoryRef
 import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
@@ -43,6 +47,7 @@ import com.yourname.expensetracker.domain.core.money.RateBasis
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
+import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
 import com.yourname.expensetracker.domain.dto.AiArtifactRecord
 import com.yourname.expensetracker.domain.forecasting.ForecastInputAssembler
 import com.yourname.expensetracker.domain.forecasting.MergedRecurringPatternsProvider
@@ -78,7 +83,6 @@ import com.yourname.expensetracker.domain.privacy.PrivacyAuditLogger
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
-import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
 import com.yourname.expensetracker.domain.recurring.RecurringInstallmentEligibility
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardAnalyticsRepository
@@ -88,6 +92,7 @@ import com.yourname.expensetracker.domain.usecase.dashboard.ProcessedDashboardDa
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.domain.util.TimeBoundaryTicker
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.flow.first
@@ -150,8 +155,13 @@ import com.yourname.expensetracker.domain.savings.SavingsGoalRepository as Domai
  * - HybridDashboardBriefingService (route selection only) is a mock whose generate() forwards the
  *   exact input the use case built to the REAL CloudDashboardBriefingService, whose OkHttp client
  *   is an interceptor capturing the request body instead of a network call.
- * - AiCapabilityRouter, AiSettingsRepository, AiArtifactRepository, AiPolicy and
- *   PrivacySettingsRepository are mocks (peripheral policy and storage).
+ * - AiCapabilityRouter, AiSettingsRepository and AiArtifactRepository are mocks (peripheral policy
+ *   and storage). For the B2d on-device-only transaction insight chain, AppForegroundState and
+ *   OnDeviceDashboardBriefingService are mocks too (the latter records the input it receives). The
+ *   insight chain has no cloud route: that half is proven by a structural check that
+ *   GenerateTransactionInsightUseCase's constructor takes no cloud or hybrid briefing service (so
+ *   no cloud call can be made from it), plus GenerateTransactionInsightUseCaseTest (a CLOUD route
+ *   decision is rejected with ROUTE_REJECTED).
  *
  * What the other tests in this class enforce: the builder allow-list drops an unmapped
  * [UpcomingItem] variant whole before the cap, and the sealed-variant tripwire fails when a new
@@ -587,44 +597,66 @@ class DashboardBriefingInstallmentExclusionTest {
         BriefingCapture(processedData, inputs.single(), bodies.single(), stored.map { it.sourceHash })
     }
 
-    private class InsightCapture(val input: DashboardBriefingInput, val requestBody: String)
+    private class InsightCapture(
+        val input: DashboardBriefingInput,
+        val artifact: AiArtifactRecord
+    )
 
-    /** Runs the real GenerateTransactionInsightUseCase for one fixed expense through the real cloud service. */
-    private fun runInsightChain(world: World, redact: Boolean): InsightCapture = runBlocking {
+    /**
+     * Runs the real GenerateTransactionInsightUseCase (B2d on-device-only contract) for one fixed
+     * expense. The on-device service is a mock that records the exact [DashboardBriefingInput] the
+     * use case hands it. Cloud is fully enabled in settings (with [redactBeforeCloud] varied); the
+     * use case has no cloud dependency, which is asserted structurally in the AE-23 test.
+     */
+    private fun runInsightChain(world: World, redactBeforeCloud: Boolean): InsightCapture = runBlocking {
         val settingsRepository = mockk<AiSettingsRepository>()
-        every { settingsRepository.settings() } returns flowOf(enabledSettings())
-        val artifacts = mockk<AiArtifactRepository>(relaxed = true)
+        every { settingsRepository.settings() } returns flowOf(
+            AiSettings(
+                aiEnabled = true,
+                allowOnDeviceAi = true,
+                transactionInsightEnabled = true,
+                allowCloudAi = true,
+                dashboardBriefingEnabled = true,
+                redactBeforeCloud = redactBeforeCloud
+            )
+        )
         val router = mockk<AiCapabilityRouter>()
-        coEvery { router.decide(any(), any(), any()) } returns cloudRoute()
-        val aiPolicy = mockk<AiPolicy>(relaxed = true)
-        coEvery { aiPolicy.shouldRedact(any(), any()) } returns redact
-        val privacySettings = mockk<PrivacySettingsRepository>(relaxed = true)
+        coEvery { router.decide(any(), any(), any()) } returns AiRouteDecision(
+            route = AiRoute.ON_DEVICE,
+            reason = "S8B4_TEST",
+            providerName = "on-device-test",
+            modelName = "test-model"
+        )
+        val foreground = mockk<AppForegroundState>()
+        every { foreground.isAppInForeground() } returns true
 
-        val bodies = mutableListOf<String>()
-        val cloud = cloudService(bodies, redact)
         val inputs = mutableListOf<DashboardBriefingInput>()
-        val hybrid = mockk<HybridDashboardBriefingService>()
-        coEvery { hybrid.generate(any()) } coAnswers {
-            val input = firstArg<DashboardBriefingInput>()
-            inputs += input
-            cloud.generate(input)
+        val onDevice = mockk<OnDeviceDashboardBriefingService>()
+        coEvery { onDevice.generate(any()) } coAnswers {
+            inputs += firstArg<DashboardBriefingInput>()
+            AiServiceResult.Success(
+                DashboardBriefing(title = "Insight", text = "Spend looks typical.", tone = "neutral")
+            )
         }
 
-        val record = GenerateTransactionInsightUseCase(
+        val outcome = GenerateTransactionInsightUseCase(
             aiSettingsRepository = settingsRepository,
-            aiArtifactRepository = artifacts,
-            dashboardBriefingService = hybrid,
+            onDeviceBriefingService = onDevice,
             aiCapabilityRouter = router,
-            aiPolicy = aiPolicy,
+            appForegroundState = foreground,
             inputBuilder = TransactionInsightInputBuilder(),
             timeProvider = world.timeProvider,
-            privacySettingsRepository = privacySettings
+            aiRuntimeDiagnostics = AiRuntimeDiagnostics(world.timeProvider)
         )(purchase(42L, 42.0, jan(12)).copy(merchant = "Corner Shop"))
 
-        assertNotNull("the insight chain must produce an artifact", record)
-        assertEquals(1, inputs.size)
-        assertEquals(1, bodies.size)
-        InsightCapture(inputs.single(), bodies.single())
+        assertTrue(
+            "the insight chain must reach the Generated outcome but was $outcome",
+            outcome is TransactionInsightOutcome.Generated
+        )
+        assertEquals("the use case must hand exactly one input to the on-device service", 1, inputs.size)
+        coVerify(exactly = 1) { router.decide(AiCapability.TRANSACTION_INSIGHT, any(), any()) }
+        coVerify(exactly = 0) { router.decide(AiCapability.DASHBOARD_BRIEFING, any(), any()) }
+        InsightCapture(inputs.single(), outcome.artifactOrNull!!)
     }
 
     private fun assertNoPlanFacts(label: String, text: String) {
@@ -757,21 +789,51 @@ class DashboardBriefingInstallmentExclusionTest {
         assertNull(runBlocking { withoutPlans.home.observe().first() })
         assertNotNull(runBlocking { withPlans.home.observe().first() })
 
+        // B2d: the insight is on-device only. Structural proof that no cloud-capable service can
+        // be reached from the use case: none of its constructor parameter types is (or is
+        // assignable to) the cloud or hybrid briefing service. Non-vacuity: the constructor has
+        // parameters and includes the on-device service, so the reflection really inspects it.
+        val constructorParamTypes = GenerateTransactionInsightUseCase::class.java.constructors
+            .flatMap { it.parameterTypes.toList() }
+        assertTrue("the use case must expose constructor parameters", constructorParamTypes.isNotEmpty())
+        assertTrue(
+            "the use case must depend on the on-device briefing service",
+            constructorParamTypes.any { it == OnDeviceDashboardBriefingService::class.java }
+        )
+        for (forbidden in listOf(
+            CloudDashboardBriefingService::class.java,
+            HybridDashboardBriefingService::class.java
+        )) {
+            assertTrue(
+                "the insight use case must not depend on ${forbidden.simpleName}",
+                constructorParamTypes.none { forbidden.isAssignableFrom(it) || it.isAssignableFrom(forbidden) }
+            )
+        }
+
+        // redactBeforeCloud no longer influences the insight, so the loop proves the setting
+        // changes nothing.
         for (redact in listOf(false, true)) {
             val a = runInsightChain(withoutPlans, redact)
             val b = runInsightChain(withPlans, redact)
-            val label = "redact=$redact"
+            val label = "redactBeforeCloud=$redact"
 
             assertEquals("$label insight input", a.input, b.input)
+            // The on-device service builds its prompt with the default (unredacted) formatter call;
+            // both redaction modes are compared so no formatter branch can carry plan facts.
             assertEquals(
-                "$label insight prompt",
-                formatter.buildPrompt(a.input, shouldRedact = redact),
-                formatter.buildPrompt(b.input, shouldRedact = redact)
+                "$label insight prompt (on-device, unredacted)",
+                formatter.buildPrompt(a.input),
+                formatter.buildPrompt(b.input)
             )
-            assertEquals("$label insight cloud request body", a.requestBody, b.requestBody)
+            assertEquals(
+                "$label insight prompt (shouldRedact=true)",
+                formatter.buildPrompt(a.input, shouldRedact = true),
+                formatter.buildPrompt(b.input, shouldRedact = true)
+            )
+            assertEquals("$label generated insight artifact", a.artifact, b.artifact)
             assertTrue(b.input.upcomingItems.isEmpty())
             assertNoPlanFacts("$label insight input", payloadText(b.input))
-            assertNoPlanFacts("$label insight request body", b.requestBody)
+            assertNoPlanFacts("$label insight artifact", b.artifact.toString())
         }
     }
 }

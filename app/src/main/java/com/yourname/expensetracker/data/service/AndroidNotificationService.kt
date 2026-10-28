@@ -1,33 +1,112 @@
 package com.yourname.expensetracker.data.service
 
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.service.notification.StatusBarNotification
+import android.util.Log
 import androidx.core.app.NotificationCompat
+import com.yourname.expensetracker.R
+import com.yourname.expensetracker.domain.notification.presentation.NotificationActionPolicy
+import com.yourname.expensetracker.domain.notification.presentation.NotificationContentPolicy
+import com.yourname.expensetracker.domain.notification.presentation.NotificationKind
+import com.yourname.expensetracker.domain.notification.presentation.NotificationPresentationResolver
+import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticCode
+import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticKey
+import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticMetadata
+import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticsEmitter
 import com.yourname.expensetracker.domain.service.NotificationService
+import com.yourname.expensetracker.ui.MainActivity
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
+
+/**
+ * Suspends the discreet re-post sweep between two consecutive notify calls so the sweep stays under the
+ * platform enqueue rate. A fun interface so unit tests can record the spacing and run without waiting.
+ * The production pacer is [AndroidNotificationService.DELAY_PACER]; [pause] is cancellable.
+ */
+internal fun interface SweepPacer {
+    suspend fun pause(millis: Long)
+}
 
 @Singleton
-class AndroidNotificationService @Inject constructor(
-    @ApplicationContext private val context: Context
+class AndroidNotificationService internal constructor(
+    private val context: Context,
+    private val presentationResolver: NotificationPresentationResolver,
+    private val presentationApplier: NotificationPresentationApplier,
+    private val privacyDiagnostics: PrivacyDiagnosticsEmitter,
+    private val sweepPacer: SweepPacer
 ) : NotificationService {
 
+    // Hilt entry point: the pacer is not part of the graph, so the injected constructor fixes the real delay.
+    @Inject
+    constructor(
+        @ApplicationContext context: Context,
+        presentationResolver: NotificationPresentationResolver,
+        presentationApplier: NotificationPresentationApplier,
+        privacyDiagnostics: PrivacyDiagnosticsEmitter
+    ) : this(context, presentationResolver, presentationApplier, privacyDiagnostics, DELAY_PACER)
+
     companion object {
-        private const val BUDGET_CHANNEL_ID = "budget_alerts"
+        private const val TAG = "AndroidNotificationService"
+
+        /** Production pacer: a plain cancellable coroutine delay. */
+        internal val DELAY_PACER = SweepPacer { millis -> delay(millis) }
+
+        /**
+         * Fixed gap between two consecutive re-posts of the discreet sweep. The platform silently drops
+         * updates to already-posted notifications once a package exceeds its enqueue rate (default
+         * 5 per second, notify does not throw), which would leave a FULL notification in place. 300 ms keeps
+         * the sweep at about 3.3 posts per second; with one foreign post landing just before a re-post the
+         * worst case is about 4.2 per second, a margin under the limit.
+         */
+        internal const val SWEEP_REPOST_SPACING_MS = 300L
+
+        // The three channel ids are read by NotificationKindClassifier (S9b); one literal each.
+        internal const val BUDGET_CHANNEL_ID = "budget_alerts"
         private const val BUDGET_CHANNEL_NAME = "Budget Alerts"
         private const val BUDGET_CHANNEL_DESC = "Notifications when budget thresholds are exceeded"
-        private const val AI_CHANNEL_ID = "ai_briefings"
+        internal const val AI_CHANNEL_ID = "ai_briefings"
         private const val AI_CHANNEL_NAME = "AI Briefings"
         private const val AI_CHANNEL_DESC = "Read-only notifications for proactive AI finance briefings"
-        private const val ANOMALY_CHANNEL_ID = "anomaly_alerts"
+        internal const val ANOMALY_CHANNEL_ID = "anomaly_alerts"
         private const val ANOMALY_CHANNEL_NAME = "Unusual Activity Alerts"
         private const val ANOMALY_CHANNEL_DESC = "Real-time alerts for anomalous or suspicious charges"
+
+        // Per-channel builder shape, shared by the kind-aware posts and the discreet re-post sweep so the two
+        // cannot drift. The bill shape mirrors the one BillReminderWorker builds (the second builder owner).
+        private val BUDGET_SHAPE = PostShape(
+            android.R.drawable.ic_dialog_alert, NotificationCompat.PRIORITY_HIGH, NotificationCompat.CATEGORY_REMINDER
+        )
+        private val AI_SHAPE = PostShape(
+            android.R.drawable.ic_dialog_info, NotificationCompat.PRIORITY_DEFAULT, NotificationCompat.CATEGORY_REMINDER
+        )
+        private val ANOMALY_SHAPE = PostShape(
+            android.R.drawable.ic_dialog_alert, NotificationCompat.PRIORITY_HIGH, NotificationCompat.CATEGORY_ALARM
+        )
+        private val BILL_SHAPE = PostShape(
+            android.R.drawable.ic_dialog_info, NotificationCompat.PRIORITY_DEFAULT, category = null
+        )
+
+        /** BILL action templates in the order the worker adds them: Snooze, then Dismiss. */
+        private val BILL_ACTION_TEMPLATES = listOf(
+            R.drawable.ic_snooze to R.string.notif_action_snooze,
+            R.drawable.ic_dismiss to R.string.action_dismiss
+        )
     }
+
+    private class PostShape(
+        val smallIcon: Int,
+        val priority: Int,
+        val category: String?
+    )
 
     private val notificationManager: NotificationManager by lazy {
         context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -62,114 +141,253 @@ class AndroidNotificationService @Inject constructor(
         notificationManager.createNotificationChannels(listOf(budgetChannel, aiChannel, anomalyChannel))
     }
 
-    override fun sendBudgetAlert(
+    // ── Kind-aware methods (S5a: TECH-2 option a, TECH-9, TECH-12) ────────────────────────────────
+    // resolve(kind) -> build -> NotificationPresentationApplier -> notify. These are the only posting
+    // methods (S9a removed the kind-less legacy forms). A SecurityException from notify() is returned as
+    // PERMISSION_DENIED; every other exception, including CancellationException, propagates to the caller.
+
+    override suspend fun sendBudgetAlertForKind(
+        kind: NotificationKind,
         notificationId: Int,
         title: String,
         message: String
-    ): NotificationService.DeliveryResult {
-        if (!notificationManager.areNotificationsEnabled()) {
-            return NotificationService.DeliveryResult.NOT_DELIVERED
-        }
-
-        val notification = NotificationCompat.Builder(context, BUDGET_CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_dialog_alert)
-            .setContentTitle(title)
-            .setContentText(message)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setAutoCancel(true)
-            .setContentIntent(mainActivityIntent())
-            .setCategory(NotificationCompat.CATEGORY_REMINDER)
-            .build()
-
-        notificationManager.notify(notificationId, notification)
-        return NotificationService.DeliveryResult.DELIVERED
-    }
-
-    override fun sendAiBriefingReady(
-        notificationId: Int,
-        title: String,
-        message: String,
-        targetKey: String
-    ) {
-        sendAiBriefingReadyWithResult(
+    ): NotificationService.DeliveryResult =
+        postForKind(
+            kind = kind,
             notificationId = notificationId,
+            channelId = BUDGET_CHANNEL_ID,
+            shape = BUDGET_SHAPE,
             title = title,
             message = message,
-            targetKey = targetKey
+            contentIntent = { homeTapIntent() }
         )
-    }
 
-    override fun sendAiBriefingReadyWithResult(
+    override suspend fun sendAiBriefingReadyForKind(
+        kind: NotificationKind,
         notificationId: Int,
         title: String,
         message: String,
         targetKey: String
-    ): NotificationService.DeliveryResult {
-        if (!notificationManager.areNotificationsEnabled()) {
-            return NotificationService.DeliveryResult.NOT_DELIVERED
-        }
-
-        val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse("expensetracker://dashboard?briefingKey=$targetKey")).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-        }
-        val pendingIntent = PendingIntent.getActivity(
-            context,
-            notificationId,
-            intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+    ): NotificationService.DeliveryResult =
+        postForKind(
+            kind = kind,
+            notificationId = notificationId,
+            channelId = AI_CHANNEL_ID,
+            shape = AI_SHAPE,
+            title = title,
+            message = message,
+            contentIntent = { briefingTapIntent(notificationId, targetKey) }
         )
 
-        val notification = NotificationCompat.Builder(context, AI_CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
-            .setContentTitle(title)
-            .setContentText(message)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(message))
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-            .setAutoCancel(true)
-            .setContentIntent(pendingIntent)
-            .setCategory(NotificationCompat.CATEGORY_REMINDER)
-            .build()
-
-        notificationManager.notify(notificationId, notification)
-        return NotificationService.DeliveryResult.DELIVERED
-    }
-
-    override fun sendAnomalyAlert(
+    override suspend fun sendAnomalyAlertForKind(
+        kind: NotificationKind,
         notificationId: Int,
         title: String,
         message: String,
         expenseId: Long
-    ) {
-        if (!notificationManager.areNotificationsEnabled()) {
-            return
-        }
-
-        val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse("expensetracker://activity?expenseId=$expenseId")).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-        }
-        val pendingIntent = PendingIntent.getActivity(
-            context,
-            notificationId,
-            intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+    ): NotificationService.DeliveryResult =
+        postForKind(
+            kind = kind,
+            notificationId = notificationId,
+            channelId = ANOMALY_CHANNEL_ID,
+            shape = ANOMALY_SHAPE,
+            title = title,
+            message = message,
+            contentIntent = { anomalyTapIntent(notificationId, expenseId) }
         )
 
-        val notification = NotificationCompat.Builder(context, ANOMALY_CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_dialog_alert)
-            .setContentTitle(title)
-            .setContentText(message)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(message))
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setAutoCancel(true)
-            .setContentIntent(pendingIntent)
-            .setCategory(NotificationCompat.CATEGORY_ALARM)
-            .build()
+    /**
+     * The one post path for every kind-aware method. The enabled check comes first, so a disabled app
+     * never reads the settings. The decision is resolved once per post
+     * (bounded, fail-closed to DISCREET inside the resolver) and applied by the shared applier. The log
+     * line carries the kind token and exception class only, never notification text.
+     */
+    private suspend fun postForKind(
+        kind: NotificationKind,
+        notificationId: Int,
+        channelId: String,
+        shape: PostShape,
+        title: String,
+        message: String,
+        contentIntent: () -> PendingIntent
+    ): NotificationService.DeliveryResult {
+        if (!notificationManager.areNotificationsEnabled()) {
+            return NotificationService.DeliveryResult.NOT_DELIVERED
+        }
 
-        notificationManager.notify(notificationId, notification)
+        val decision = presentationResolver.resolve(kind, Build.VERSION.SDK_INT)
+
+        val builder = NotificationCompat.Builder(context, channelId)
+            .setSmallIcon(shape.smallIcon)
+            .setPriority(shape.priority)
+            .setAutoCancel(true)
+            .setContentIntent(contentIntent())
+        shape.category?.let { builder.setCategory(it) }
+        val notification = presentationApplier.apply(
+            builder = builder,
+            decision = decision,
+            channelId = channelId,
+            smallIcon = shape.smallIcon,
+            detailedTitle = title,
+            detailedText = message
+        ).build()
+
+        return try {
+            notificationManager.notify(notificationId, notification)
+            NotificationService.DeliveryResult.DELIVERED
+        } catch (e: SecurityException) {
+            Log.w(TAG, "NOTIFICATION_PERMISSION_DENIED kind=${kind.stableToken} class=${e::class.java.simpleName}")
+            NotificationService.DeliveryResult.PERMISSION_DENIED
+        }
     }
 
-    private fun mainActivityIntent(): PendingIntent {
-        val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse("expensetracker://home")).apply {
+    // ── Discreet re-post sweep (S9b, INV-13, AMD-7, AMD-21, AMD-22, spec 4.6) ────────────────────────
+    // Reads the active notifications once, never recovers a builder from a posted notification, and
+    // rebuilds each one from the DISCREET decision for its detected kind. From the original it reuses
+    // only the id, tag, channel, content intent, action PendingIntents (action policy re-applied) and the
+    // post time. Titles come from resources per kind. It copies no text, extra or style. The marker is
+    // read only to classify, and the rebuilt notification gets a fresh marker from the applier.
+    //
+    // Pacing: the platform drops (without throwing) updates to already-posted notifications once the package
+    // exceeds its enqueue rate (max_notification_enqueue_rate, default 5 per second). A dropped re-post would
+    // leave the FULL content on screen, a fail-open privacy gap, so consecutive notify calls are spaced by
+    // SWEEP_REPOST_SPACING_MS, including BEFORE the first re-post, so a post from any source just before the
+    // sweep cannot push the first update over the rate. Total added time is bounded by
+    // re-posts x SWEEP_REPOST_SPACING_MS. The pause is cancellable and CancellationException propagates; the
+    // NonCancellable scope comes from the caller (AppLockPrivacySettingsViewModel runs the trigger inside
+    // appScope.launch { withContext(NonCancellable) { ... } }), not from DiscreetRepostTrigger. Any other caller
+    // of the trigger (for example the lock-enable path, S18) must do the same. Skipped notifications cost no
+    // pause.
+    // Residual risk: posts by other code DURING the sweep are not paced here. Any budget, anomaly or bill post
+    // within 300 ms before a sweep update can still make the platform drop that update; the exposed window is
+    // about N x 300 ms for N re-posts. BillReminderWorker posts directly through NotificationManager, so this
+    // service cannot track it. A dropped update leaves the FULL content until it is replaced or dismissed.
+
+    override suspend fun repostActiveAsDiscreet(): NotificationService.RepostResult {
+        val active: Array<StatusBarNotification> = try {
+            notificationManager.activeNotifications
+        } catch (e: SecurityException) {
+            emitRepostFailed(e)
+            return NotificationService.RepostResult(reposted = 0, failed = 1)
+        }
+
+        var reposted = 0
+        var failed = 0
+        for (original in active) {
+            // Totality: one notification's failure (marker read, classify, rebuild or notify) never stops the
+            // rest of the sweep. Cancellation is rethrown; the log and the diagnostic carry the class only.
+            try {
+                // The system may post its own group summary (ranker_group) on one of our channels. The app never
+                // posts summaries, so one is never ours to rebuild: skipped, neither reposted nor failed.
+                if ((original.notification.flags and Notification.FLAG_GROUP_SUMMARY) != 0) continue
+
+                val kind = NotificationKindClassifier.classify(
+                    channelId = original.notification.channelId,
+                    notificationId = original.id,
+                    rawMarker = NotificationKindMarker.read(original.notification)
+                ) ?: continue
+
+                sweepPacer.pause(SWEEP_REPOST_SPACING_MS)
+                notificationManager.notify(original.tag, original.id, rebuildDiscreet(original, kind))
+                reposted++
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                failed++
+                Log.w(TAG, "NOTIFICATION_REPOST_FAILED class=${e::class.java.simpleName}")
+                emitRepostFailed(e)
+            }
+        }
+
+        if (reposted > 0) {
+            privacyDiagnostics.emit(
+                PrivacyDiagnosticCode.NOTIF_REPOSTED_DISCREET,
+                PrivacyDiagnosticMetadata.builder().put(PrivacyDiagnosticKey.COUNT, reposted).build()
+            )
+        }
+        return NotificationService.RepostResult(reposted = reposted, failed = failed)
+    }
+
+    /**
+     * Whether a sweep rebuild of [kind] must drop its actions because the lock is enabled or the settings
+     * are unreadable (INV-10, S18-ii-b). Only BILL has actions; every other kind answers false without a read.
+     *
+     * For BILL it asks the post path itself ([NotificationPresentationResolver.resolve]) instead of keeping a
+     * second copy of the rule: the resolver does the bounded committed-state read, applies
+     * `EffectivePrivacyValues.effectiveLockEnabled` (a timeout, an unreadable store or a thrown read all count as
+     * lock on, fail-closed), and records the bounded `NOTIF_ACTIONS_SUPPRESSED_LOCK(sdkInt)` (D5) through its
+     * own emitter helper. The check is fail-closed: any policy other than `UNCHANGED` counts as suppressed, so an
+     * unexpected value can never keep actions. On API 30 and below `NONE` is exactly the lock-on-or-unreadable
+     * term. On API 31+ the policy is `AUTH_REQUIRED`, so the answer is now true there too, but
+     * `NotificationContentPolicy.decideDiscreet` returns `AUTH_REQUIRED` first on those levels, so the output is
+     * unchanged. `CancellationException` propagates from the resolver.
+     */
+    private suspend fun actionsSuppressedFor(kind: NotificationKind): Boolean {
+        if (kind != NotificationKind.BILL) return false
+        return presentationResolver.resolve(kind, Build.VERSION.SDK_INT).actionPolicy != NotificationActionPolicy.UNCHANGED
+    }
+
+    private suspend fun rebuildDiscreet(original: StatusBarNotification, kind: NotificationKind): Notification {
+        val old = original.notification
+        val channelId = old.channelId
+        val shape = shapeFor(kind)
+        val decision = NotificationContentPolicy.decideDiscreet(
+            kind = kind,
+            sdkInt = Build.VERSION.SDK_INT,
+            actionsSuppressed = actionsSuppressedFor(kind)
+        )
+
+        val builder = NotificationCompat.Builder(context, channelId)
+            .setSmallIcon(shape.smallIcon)
+            .setPriority(shape.priority)
+            .setAutoCancel(true)
+            .setOnlyAlertOnce(true)
+            .setWhen(old.`when`)
+        shape.category?.let { builder.setCategory(it) }
+        old.contentIntent?.let { builder.setContentIntent(it) }
+
+        return presentationApplier.apply(
+            builder = builder,
+            decision = decision,
+            channelId = channelId,
+            smallIcon = shape.smallIcon,
+            // Never read in DISCREET; empty on purpose so no detailed content can reach the rebuild.
+            detailedTitle = "",
+            detailedText = "",
+            actions = if (kind == NotificationKind.BILL) billActionSpecs(old) else emptyList()
+        ).build()
+    }
+
+    /** Reuses only the PendingIntents of the original actions, mapped by position to the resource-titled templates. */
+    private fun billActionSpecs(old: Notification): List<NotificationActionSpec> {
+        val originalActions = old.actions ?: return emptyList()
+        return BILL_ACTION_TEMPLATES.mapIndexedNotNull { index, (iconRes, titleRes) ->
+            originalActions.getOrNull(index)?.actionIntent?.let { NotificationActionSpec(iconRes, titleRes, it) }
+        }
+    }
+
+    private fun shapeFor(kind: NotificationKind): PostShape =
+        when (kind) {
+            NotificationKind.BUDGET, NotificationKind.WARRANTY, NotificationKind.RECEIPT_MATCH -> BUDGET_SHAPE
+            NotificationKind.ANOMALY -> ANOMALY_SHAPE
+            NotificationKind.BRIEFING -> AI_SHAPE
+            NotificationKind.BILL -> BILL_SHAPE
+        }
+
+    private suspend fun emitRepostFailed(e: Exception) {
+        privacyDiagnostics.emit(
+            PrivacyDiagnosticCode.NOTIF_REPOST_FAILED,
+            PrivacyDiagnosticMetadata.builder().exceptionClass(e).build()
+        )
+    }
+
+    // Explicit-component tap targets (TECH-6): one builder per target, same data URI, flags, request
+    // codes and FLAG_IMMUTABLE as before; ACTION_VIEW kept so DeepLinkPolicy accepts the tap.
+
+    private fun homeTapIntent(): PendingIntent {
+        val intent = Intent(context, MainActivity::class.java).apply {
+            action = Intent.ACTION_VIEW
+            data = android.net.Uri.parse("expensetracker://home")
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
         }
         return PendingIntent.getActivity(
@@ -179,4 +397,41 @@ class AndroidNotificationService @Inject constructor(
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
     }
+
+    private fun briefingTapIntent(notificationId: Int, targetKey: String): PendingIntent {
+        val intent = Intent(context, MainActivity::class.java).apply {
+            action = Intent.ACTION_VIEW
+            data = briefingUri(targetKey)
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        return PendingIntent.getActivity(
+            context,
+            notificationId,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+    }
+
+    private fun anomalyTapIntent(notificationId: Int, expenseId: Long): PendingIntent {
+        val intent = Intent(context, MainActivity::class.java).apply {
+            action = Intent.ACTION_VIEW
+            data = android.net.Uri.parse("expensetracker://activity?expenseId=$expenseId")
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        return PendingIntent.getActivity(
+            context,
+            notificationId,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+    }
+
+    // `expensetracker://dashboard?briefingKey=<key>`, with the key percent-encoded by the Uri builder
+    // (":" becomes "%3A"). DeepLinkPolicy reads it with getQueryParameter, which decodes it.
+    private fun briefingUri(targetKey: String): android.net.Uri =
+        android.net.Uri.Builder()
+            .scheme("expensetracker")
+            .authority("dashboard")
+            .appendQueryParameter("briefingKey", targetKey)
+            .build()
 }

@@ -178,8 +178,14 @@ class BankStatementParser @Inject constructor(
      * @param homeCurrency Optional legacy assumption label, never source evidence.
      *            Missing/unsupported settings use XXX with UNKNOWN provenance;
      *            explicit supported source currency does not depend on settings.
+     * @param requireDate When true (text-PDF fallback), a row without a parsed date is dropped
+     *            instead of being returned with a null date. Default false keeps legacy behavior.
      */
-    fun parse(blocks: List<TextBlock>, homeCurrency: String?): List<ParsedTransaction> {
+    fun parse(
+        blocks: List<TextBlock>,
+        homeCurrency: String?,
+        requireDate: Boolean = false
+    ): List<ParsedTransaction> {
         if (blocks.isEmpty()) return emptyList()
         val resolvedHomeCurrency = CurrencyCode.parse(homeCurrency)
             ?.takeIf { it in CurrencyCode.ALL_SUPPORTED }?.code ?: UNKNOWN_CURRENCY
@@ -207,30 +213,31 @@ class BankStatementParser @Inject constructor(
 
         val transactions = mutableListOf<ParsedTransaction>()
 
+        // Auto-detect statement format from full OCR text (same for every row, so computed once).
+        // This determines parser priority order to avoid wrong-format matches.
+        val fullText = blocks.joinToString(" ") { it.text }
+        val isRevolut = fullText.contains("Revolut", ignoreCase = true)
+        val isGreekBank = fullText.contains("Τράπεζα") || fullText.contains("Εθνική") ||
+                fullText.contains("ALPHA BANK", ignoreCase = true) ||
+                fullText.contains("EUROBANK", ignoreCase = true) ||
+                fullText.contains("ΠΕΙΡΑΙΩΣ")
+
+        // Try parsers in priority order based on detected format
+        val parserOrder = when {
+            isGreekBank -> listOf("greek", "generic", "revolut")
+            isRevolut -> listOf("revolut", "generic", "greek")
+            else -> listOf("generic", "greek", "revolut")
+        }
+
         for (i in filteredRows.indices) {
             val rowBlocks = filteredRows[i]
             val rowText = rowStrings[i]
-
-            // Auto-detect statement format from full OCR text.
-            // This determines parser priority order to avoid wrong-format matches.
-            val fullText = blocks.joinToString(" ") { it.text }
-            val isRevolut = fullText.contains("Revolut", ignoreCase = true)
-            val isGreekBank = fullText.contains("Τράπεζα") || fullText.contains("Εθνική") ||
-                    fullText.contains("ALPHA BANK", ignoreCase = true) ||
-                    fullText.contains("EUROBANK", ignoreCase = true) ||
-                    fullText.contains("ΠΕΙΡΑΙΩΣ")
-
-            // Try parsers in priority order based on detected format
-            val parserOrder = when {
-                isGreekBank -> listOf("greek", "generic", "revolut")
-                isRevolut -> listOf("revolut", "generic", "greek")
-                else -> listOf("generic", "greek", "revolut")
-            }
 
             for (parser in parserOrder) {
                 when (parser) {
                     "revolut" -> {
                         val revolutTx = tryParseRevolutTransaction(rowBlocks, resolvedHomeCurrency)
+                            ?.takeIf { !requireDate || it.date != null }
                         if (revolutTx != null) {
                             transactions.add(revolutTx)
                             break
@@ -238,6 +245,7 @@ class BankStatementParser @Inject constructor(
                     }
                     "greek" -> {
                         val greekNbgTx = tryParseGreekNbgTransaction(rowText, resolvedHomeCurrency)
+                            ?.takeIf { !requireDate || it.date != null }
                         if (greekNbgTx != null) {
                             transactions.add(greekNbgTx)
                             break
@@ -249,7 +257,7 @@ class BankStatementParser @Inject constructor(
                             columnInfo,
                             resolvedHomeCurrency,
                             dayFirst
-                        )
+                        )?.takeIf { !requireDate || it.date != null }
                         if (genericTx != null) {
                             transactions.add(genericTx)
                             break
@@ -607,6 +615,13 @@ class BankStatementParser @Inject constructor(
         merchant = merchant.replace(Regex("""(?i)\bTop-up by\s+"""), "")
 
         if (merchant.isBlank()) merchant = "Revolut Transaction"
+
+        // ParsedTransaction rejects amounts above 1,000,000 by throwing; skip such a row
+        // instead of aborting the whole statement parse.
+        if (absAmount > GENERIC_ROW_MAX_AMOUNT) {
+            if (BuildConfig.DEBUG) Timber.d("BANK_STATEMENT_AMOUNT_INVALID")
+            return null
+        }
 
         val tx = ParsedTransaction(
             amount = absAmount,

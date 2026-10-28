@@ -970,6 +970,15 @@ private fun ReviewStep(
         fontWeight = FontWeight.Medium
     )
     Spacer(modifier = Modifier.height(4.dp))
+    // G2-14 (item 71 #5): the auto-assign caption sits under the label, above the grid, as in the add sheet.
+    if (state.selectedCategoryId == null) {
+        Text(
+            stringResource(R.string.add_expense_category_auto_hint),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+    }
     CategoryGrid(
         categories = categories,
         selectedId = state.selectedCategoryId,

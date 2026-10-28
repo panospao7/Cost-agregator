@@ -2,6 +2,8 @@ package com.yourname.expensetracker.domain.util
 
 import com.google.common.truth.Truth.assertThat
 import com.google.common.truth.Truth.assertWithMessage
+import com.yourname.expensetracker.domain.notification.presentation.NotificationKind
+import kotlinx.coroutines.runBlocking
 import org.junit.Test
 
 /**
@@ -224,7 +226,9 @@ class NotificationIdGeneratorTest {
         val fake = CapturingNotificationService()
 
         val sourceId = 4_500_000_000L // > Int.MAX_VALUE — legacy (id % Int.MAX_VALUE) would overflow/collide
-        fake.postBudgetAlert(NotificationId.forBill(sourceId), "title", "msg")
+        runBlocking {
+            fake.postBudgetAlertForKind(NotificationKind.BUDGET, NotificationId.forBill(sourceId), "title", "msg")
+        }
 
         assertThat(fake.lastPostedId).isEqualTo(NotificationIdGenerator.forBill(sourceId))
         assertThat(fake.lastPostedId).isAtLeast(30000)
@@ -235,7 +239,9 @@ class NotificationIdGeneratorTest {
     fun `posting helper for anomaly uses generator general range`() {
         val fake = CapturingNotificationService()
 
-        fake.postAnomalyAlert(NotificationId.forGeneral(77L), "t", "m", 77L)
+        runBlocking {
+            fake.postAnomalyAlertForKind(NotificationKind.ANOMALY, NotificationId.forGeneral(77L), "t", "m", 77L)
+        }
 
         assertThat(fake.lastPostedId).isEqualTo(NotificationIdGenerator.forGeneral(77L))
         assertThat(fake.lastPostedId).isAtLeast(40000)
@@ -246,18 +252,40 @@ class NotificationIdGeneratorTest {
     private class CapturingNotificationService : com.yourname.expensetracker.domain.service.NotificationService {
         var lastPostedId: Int = -1
 
-        override fun sendBudgetAlert(notificationId: Int, title: String, message: String): com.yourname.expensetracker.domain.service.NotificationService.DeliveryResult {
+        override suspend fun sendBudgetAlertForKind(
+            kind: com.yourname.expensetracker.domain.notification.presentation.NotificationKind,
+            notificationId: Int,
+            title: String,
+            message: String
+        ): com.yourname.expensetracker.domain.service.NotificationService.DeliveryResult {
             lastPostedId = notificationId
             return com.yourname.expensetracker.domain.service.NotificationService.DeliveryResult.DELIVERED
         }
 
-        override fun sendAiBriefingReady(notificationId: Int, title: String, message: String, targetKey: String) {
+        override suspend fun sendAiBriefingReadyForKind(
+            kind: com.yourname.expensetracker.domain.notification.presentation.NotificationKind,
+            notificationId: Int,
+            title: String,
+            message: String,
+            targetKey: String
+        ): com.yourname.expensetracker.domain.service.NotificationService.DeliveryResult {
             lastPostedId = notificationId
+            return com.yourname.expensetracker.domain.service.NotificationService.DeliveryResult.DELIVERED
         }
 
-        override fun sendAnomalyAlert(notificationId: Int, title: String, message: String, expenseId: Long) {
+        override suspend fun sendAnomalyAlertForKind(
+            kind: com.yourname.expensetracker.domain.notification.presentation.NotificationKind,
+            notificationId: Int,
+            title: String,
+            message: String,
+            expenseId: Long
+        ): com.yourname.expensetracker.domain.service.NotificationService.DeliveryResult {
             lastPostedId = notificationId
+            return com.yourname.expensetracker.domain.service.NotificationService.DeliveryResult.DELIVERED
         }
+
+        override suspend fun repostActiveAsDiscreet(): com.yourname.expensetracker.domain.service.NotificationService.RepostResult =
+            com.yourname.expensetracker.domain.service.NotificationService.RepostResult.NONE
     }
 
     @Test

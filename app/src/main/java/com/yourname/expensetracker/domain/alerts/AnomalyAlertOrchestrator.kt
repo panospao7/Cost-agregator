@@ -13,6 +13,7 @@ import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.DomainTransferDirection
 import com.yourname.expensetracker.domain.model.ExpenseSnapshot
+import com.yourname.expensetracker.domain.notification.presentation.NotificationKind
 import com.yourname.expensetracker.domain.service.NotificationService
 import com.yourname.expensetracker.domain.util.CancellationSafe
 import com.yourname.expensetracker.domain.util.NotificationId
@@ -191,20 +192,26 @@ class AnomalyAlertOrchestrator @Inject constructor(
                 Timber.d("Created anomaly alert $alertId for expense $expenseId")
 
                 // Send the notification
-                notificationService.postAnomalyAlert(
+                // S6 (INV-4, INV-12): declare the ANOMALY kind. The alert row above stays inserted
+                // before the post (TECH-9: insert-then-post), so a refused post never rolls it back.
+                val deliveryResult = notificationService.postAnomalyAlertForKind(
+                    kind = NotificationKind.ANOMALY,
                     notificationId = notificationId,
                     title = "Unusual Charge Detected",
                     message = message,
                     expenseId = expenseId
                 )
-                Timber.i(
-                    "Anomaly alert sent for %s: %s",
-                    expense.expense.merchant,
-                    CurrencyFormatter.format(
-                        normalizedExpense?.effectiveAmount ?: expense.expense.effectiveAmount,
-                        normalizedExpense?.currency ?: homeCurrency
-                    )
-                )
+                // C7: constant bounded messages only (no merchant, no amount). PERMISSION_DENIED keeps a
+                // diagnostic at the level the legacy SecurityException path logged (Timber.e via the
+                // catch below), without the throwable.
+                when (deliveryResult) {
+                    NotificationService.DeliveryResult.DELIVERED ->
+                        Timber.i("Anomaly alert sent")
+                    NotificationService.DeliveryResult.PERMISSION_DENIED ->
+                        Timber.e("Anomaly alert not posted: notification permission denied")
+                    NotificationService.DeliveryResult.NOT_DELIVERED ->
+                        Timber.d("Anomaly alert not delivered")
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -251,7 +258,7 @@ class AnomalyAlertOrchestrator @Inject constructor(
             // Only alert if deviation is very high (5x normal)
             val maxDeviation = anomalies.maxOf { it.deviationMultiple }
             if (maxDeviation < 5.0f) {
-                Timber.d("Merchant $merchant marked as normal $looksNormalCount times, suppressing alert (deviation: $maxDeviation)")
+                Timber.d("Anomaly alert suppressed: merchant marked normal %d times", looksNormalCount)
                 return false
             }
         }

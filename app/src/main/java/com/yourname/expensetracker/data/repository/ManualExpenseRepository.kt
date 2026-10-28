@@ -12,6 +12,7 @@ import com.yourname.expensetracker.di.ApplicationScope
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.usecase.GenerateTransactionInsightUseCase
 import com.yourname.expensetracker.domain.categorization.CategorizationEngine
+import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.currency.CurrencyAmountPolicy
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
@@ -30,6 +31,7 @@ import com.yourname.expensetracker.domain.transaction.ExpenseSource
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimeProvider
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -74,7 +76,6 @@ class ManualExpenseRepository @Inject constructor(
     companion object {
         // TODO: Replace with actual UserSessionProvider
         private const val DEFAULT_RECOMMENDATION_USER_ID = "default_user"
-        private const val RECOMMENDATION_JOB_TIMEOUT_MS = 3_000L
         private const val MAX_CONCURRENT_RECOMMENDATION_JOBS = 2
 
         /** MEC INV-16: bounded `Result.Error.message` constant; never payload-derived. */
@@ -262,23 +263,27 @@ class ManualExpenseRepository @Inject constructor(
             asyncScope.launch {
                 recommendationSemaphore.withPermit {
                     try {
-                        withTimeoutOrNull(RECOMMENDATION_JOB_TIMEOUT_MS) {
+                        withTimeoutOrNull(AppConfig.Ai.RECOMMENDATION_JOB_TIMEOUT_MS) {
                             val aiSettings = aiSettingsRepository.settings().first()
                             if (aiSettings.aiEnabled) {
                                 val insertedExpense = insertedExpenseForHook ?: return@withTimeoutOrNull
 
-                                val aiArtifact = generateTransactionInsightUseCase(insertedExpense)
+                                // The use case never throws except for cancellation; a Skipped
+                                // outcome yields a null artifact and deterministic
+                                // recommendations are still generated and saved (INV-18).
+                                val outcome = generateTransactionInsightUseCase(insertedExpense)
 
                                 val recommendations = dashboardFollowThroughEngine.generateRecommendations(
                                     transaction = insertedExpense,
-                                    aiArtifact = aiArtifact,
+                                    aiArtifact = outcome.artifactOrNull,
                                     userId = DEFAULT_RECOMMENDATION_USER_ID
                                 )
                                 recommendationRepository.saveAll(recommendations)
                             }
-                        } ?: Timber.w("Recommendation generation timed out after ${RECOMMENDATION_JOB_TIMEOUT_MS}ms")
+                        } ?: Timber.w("Recommendation generation timed out after ${AppConfig.Ai.RECOMMENDATION_JOB_TIMEOUT_MS}ms")
                     } catch (e: Exception) {
-                        Timber.e(e, "Failed to generate recommendations")
+                        if (e is CancellationException) throw e
+                        Timber.e("Failed to generate recommendations class=%s", e.javaClass.simpleName)
                     }
                 }
             }

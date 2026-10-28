@@ -454,7 +454,14 @@ BillReminderSettingsRepository             [domain/reminder/BillReminderSettings
   │
   ▼
 BillReminderWorker                         [service/reminder/BillReminderWorker.kt]
-  └──► Checks runtime settings before dispatching notifications
+  ├──► Checks runtime settings before dispatching notifications
+  ├──► NotificationPresentationResolver.resolve(BILL, SDK_INT) → NotificationPresentationApplier.apply()
+  └──► exposes `internal const CHANNEL_ID`, imported const-only (compiler-inlined) by
+       data/service/NotificationKindClassifier — the only permitted member import (S8 ruling)
+
+AndroidNotificationService                 [data/service/AndroidNotificationService.kt]
+  └──► ui/MainActivity (explicit component `Intent(context, MainActivity::class.java)` for
+       notification taps; data/service → ui edge approved under TECH-6, architecture-guardian G1a)
 
 TransactionLifecycleCoordinator
    └──► RecurringLifecycleCoordinator.linkExpenseToOccurrence()  — auto-link hook
@@ -478,7 +485,7 @@ SnoozeReminderReceiver / DismissReminderReceiver
 | `FinancialWeatherRepository` | `data/repository/FinancialWeatherRepository.kt` | `RecurringExpenseRepository`, `PlannedExpenseRepository` |
 | `CashFlowCalculator` | `domain/cashflow/CashFlowCalculator.kt` | `RecurringLifecycleCoordinator` |
 | `ForecastInputAssembler` | `domain/forecasting/ForecastInputAssembler.kt` | `RecurringLifecycleCoordinator` |
-| `BillReminderWorker` | `service/reminder/BillReminderWorker.kt` | `RecurringLifecycleCoordinator.getDueReminders()`, `BillReminderSettingsRepository` |
+| `BillReminderWorker` | `service/reminder/BillReminderWorker.kt` | `RecurringLifecycleCoordinator.getDueReminders()`, `BillReminderSettingsRepository`, `NotificationPresentationResolver`, `NotificationPresentationApplier` |
 | `BillRemindersViewModel` | `ui/screens/reminder/BillRemindersViewModel.kt` | `BillReminderManager`, `CurrencySettingsRepository` |
 | `RecurringRuleLifecycleCoordinator` | `domain/recurring/lifecycle/RecurringRuleLifecycleCoordinator.kt` | Single writer for rule CRUD (consumed by ViewModel) |
 | `RecurringArchitectureGuardTest` | `test/.../RecurringArchitectureGuardTest.kt` | 19 static enforcements for single-writer + typed results |
@@ -588,7 +595,7 @@ PrivacyDecision.FailClosed(reason)         [domain/privacy/PrivacyDecision.kt]
   ├──► CloudReceiptAssistService
   ├──► CloudReceiptItemCategorizationService
   ├──► CloudReviewExplanationService
-  ├──► CloudWarrantyExtractionService
+  ├──► CloudWarrantyExtractionService        (retained; no production caller since ai-fixes B1a)
   ├──► SmartReceiptAssistService
   ├──► DailyBriefingWorker                   (via WorkerExecutionGuard)
   ├──► DataRetentionWorker                   (via WorkerExecutionGuard)
@@ -797,7 +804,7 @@ PrivacyAuditContext                        [domain/privacy/PrivacyAuditContext.k
 | `BACKGROUND_LOCATION_BACKFILL` | `LocationBackfillWorker` | `data/location/LocationBackfillWorker.kt` |
 | `RAWBACKUP_EXPORT` | `DatabaseBackupRepositoryImpl` | `data/repository/DatabaseBackupRepositoryImpl.kt` |
 | `ENCRYPTED_BACKUP` | `DatabaseBackupRepositoryImpl` | `data/repository/DatabaseBackupRepositoryImpl.kt` |
-| `CLOUD_AI_WARRANTY_EXTRACTION` | `CloudWarrantyExtractionService` | `data/ai/provider/CloudWarrantyExtractionService.kt` |
+| `CLOUD_AI_WARRANTY_EXTRACTION` | `CloudWarrantyExtractionService` (retained, no production caller since ai-fixes B1a; `WarrantyTrackerRepository` and `AutoCreateWarrantyFromReceiptUseCase` no longer inject it or call `PrivacyGate`) | `data/ai/provider/CloudWarrantyExtractionService.kt` |
 | `CLOUD_AI_RECEIPT_ITEM_CATEGORIZATION` | `HybridReceiptItemCategorizationService` | `data/ai/provider/HybridReceiptItemCategorizationService.kt` |
 | `DEVICE_GPS_LOCATION` | `LocationResolver` | `domain/location/LocationResolver.kt` |
 | `OVERPASS_API` | `OverpassNearbyService` | `data/location/OverpassNearbyService.kt` |
@@ -895,7 +902,8 @@ MainApplication (@HiltAndroidApp)
                     │     └──► RawNotificationDao, ScannedReceiptDao, PrivacyAuditDao
                     │
                     ├── BillReminderWorker                [service/reminder/BillReminderWorker.kt]
-                    │     └──► RecurringLifecycleCoordinator, NotificationService
+                    │     └──► RecurringLifecycleCoordinator, NotificationPresentationResolver,
+                    │          NotificationPresentationApplier (builds its own notification; does not use NotificationService)
                     │
                     └── ReceiptMatchingWorker             [service/receiptmatching/ReceiptMatchingWorker.kt]
                           └──► ReceiptRepository, ExpenseRepository
@@ -1261,7 +1269,7 @@ All Hybrid services use:
 | `TransactionsViewModel` | NotificationRepository, ExpenseRepository, CategoryRepository, RecurringExpenseRepository, MerchantLocationRepository, TimeProvider, GeocodingService, CurrencySettingsRepository, SourceLinkQueryService |
 | `ReviewViewModel` | NotificationRepository, ReviewQueueRepository, CategoryRepository, ReceiptRepository, ExpenseRepository, DebugDataStorage, GeocodingService, PrivacyGate, ExplainPendingReviewUseCase, SuggestCategoryFallbackUseCase, SuggestReceiptExtractionUseCase, JudgePendingReviewDuplicateUseCase, AiArtifactRepository, AiSettingsRepository, AiRuntimeDiagnostics, ReceiptLifecycleCoordinator, ReceiptDebugExporter |
 | `BudgetViewModel` | BudgetRepository, CategoryRepository, SharedExpenseBudgetOffsetEngine, BudgetAutopilotEngine, TimeProvider, CurrencySettingsRepository, AppDatabase |
-| `AddExpenseViewModel` | ManualExpenseRepository, ExpenseRepository, CategoryRepository, TimeProvider, CurrencySettingsRepository |
+| `AddExpenseViewModel` | ManualExpenseRepository, ExpenseRepository, CategoryRepository, TimeProvider, CurrencySettingsRepository, QuickAddParser, QuickAddLearnedCategoryLookup (→ CategorizationEngine, MerchantCategoryRepository; read-only) |
 | `ReceiptScanViewModel` | ReceiptRepository, CategoryRepository, CurrencySettingsRepository, AiSettingsRepository, SavedStateHandle, TimeProvider, SuggestReceiptExtractionUseCase, SuggestCategoryFallbackUseCase, CategorizeReceiptItemsUseCase, ReceiptItemCategorizationRepository, AiArtifactRepository, AiRuntimeDiagnostics, ReceiptLifecycleCoordinator, ReceiptParser, TransactionLifecycleCoordinator, ReceiptLinkService, MerchantNormalizer, HybridExpenseClassifier |
 | `AnalyticsViewModel` | ExpenseRepository, CategoryRepository, BudgetRepository, InsightsEngine, RecurringExpenseEngine, AnalyticsRepository, AdvancedAnalyticsEngine, AnalyticsCurrencyNormalizer, LocationInsightsEngine, AreaSpendingEngine, TravelDetectionEngine, SpendingPersonalityClassifier, TimeProvider, AnalyticsInputAssembler, CurrencyConverter, CurrencySettingsRepository, BudgetVsActualEngine, DailyBucketEngine |
 | `AdvancedAnalyticsViewModel` | AdvancedAnalyticsDashboard, CurrencySettingsRepository, TimeProvider |
@@ -1280,7 +1288,7 @@ All Hybrid services use:
 | `BankConnectionsViewModel` | BankConnectionLifecycleCoordinator |
 | `ReceiptMatchingViewModel` | ReceiptRepository, ReceiptTransactionMatcher, ReceiptLinkService, ReceiptMatchLifecycleService |
 | `AiSettingsViewModel` | AiSettingsRepository, GetAiRuntimeStatusUseCase, AiRuntimeDiagnostics, SyncProactiveBriefingWorkUseCase, SecureKeyStorage, PrivacyGate, CloudProviderConnectionTester |
-| `AssistantViewModel` | Application, AiSettingsRepository, AiChatRepository, GetAiRuntimeStatusUseCase, InterpretFinancialQueryUseCase, ExecuteFinancialQueryUseCase, MapFinancialQueryToNavigationUseCase, PrivacySettingsRepository, MonotonicTimeProvider |
+| `AssistantViewModel` | Application, AiSettingsRepository, AiChatRepository, GetAiRuntimeStatusUseCase, InterpretFinancialQueryUseCase, ExecuteFinancialQueryUseCase, CompleteFinancialQueryClarificationUseCase, MapFinancialQueryToNavigationUseCase, MonotonicTimeProvider |
 | `BillRemindersViewModel` | BillReminderManager, CurrencySettingsRepository |
 | `RecurringExpensesViewModel` (inline in RecurringExpensesScreen.kt) | FinancialWeatherRepository, RecurringExpenseRepository, PlannedExpenseRepository, RecurringExpenseEngine, ExpenseRepository, CurrencySettingsRepository, TimeProvider |
 | `ManualRecurringExpenseViewModel` | ManualRecurringExpenseRepository, TimeProvider, CurrencySettingsRepository |

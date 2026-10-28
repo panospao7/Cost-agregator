@@ -241,6 +241,18 @@ For every exposed host:
 
 Add release smoke cases for every declared host.
 
+### 6.4 status note (app-lock-privacy-mode increment 1a, 2026-10-24)
+
+This section is the PR E requirement. The 1a implementation changes how each bullet is met:
+
+- Validation: `DeepLinkPolicy` (`ui/navigation/DeepLinkParser.kt`) is the only parser. It validates every host and parameter, drops and counts unknown or invalid parameters, caps the raw link at 2048 characters, and rejects fragments, userinfo, ports and any path other than empty or "/". Malformed input maps to a `MALFORMED` rejection and lands on Home; it cannot throw into navigation.
+- Mutations: `DeepLinkApplier` is the only code that acts on a link. No link creates, edits, deletes or prefills data (`add` opens an empty sheet). The one persistent write reachable from a link is "briefing opened", and only when the validated key equals the last delivered key.
+- Confirmation screen: NOT implemented. The earlier allow/confirm/reject classifier (a test-only duplicate) was removed. Authentication or unlocked-app gating for held links arrives with increment 1b (PRV-16); in 1a the app has no lock, so accepted links apply immediately.
+- Manifest: the `expensetracker` VIEW filter declares `DEFAULT` and no `BROWSABLE`, so web-browser links no longer open the app. Other installed apps can still send VIEW, so validation (not the manifest) remains the boundary.
+- Diagnostics: bounded `DL_*` codes only; no raw URI, host string, `briefingKey` or parameter value is logged or recorded.
+- Evidence still owed at G1a (not yet produced): the merged release manifest dump (for example `aapt2 xmltree`) showing no `BROWSABLE` on the filter, the browser-link no-op, and a malformed-link `adb shell am start` no-crash check. `scripts/verify_release_artifact.py` has no intent-filter check, so `release-artifact-evidence` alone does not prove this.
+- Smoke cases for every declared host remain a PR E item; the 1a unit tests (`DeepLinkPolicyTest`, `DeepLinkApplierTest`, `DeepLinkDiagnosticsSentinelTest`) cover the policy and applier, not the release artifact.
+
 ---
 
 # 7. Workstream E2 — Make the release build genuinely release-safe

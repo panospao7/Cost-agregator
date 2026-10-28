@@ -136,6 +136,97 @@ class AiPolicyTest {
         }
     }
 
+    // ── TRANSACTION_INSIGHT (ai-fixes B2a, INV-16, AE-27) ─────────────────────
+
+    @Test
+    fun `canUseCloudFor TRANSACTION_INSIGHT is false for every combination of cloud-relevant settings`() {
+        val booleans = listOf(false, true)
+        var checked = 0
+        for (aiEnabled in booleans) for (allowCloudAi in booleans) for (allowOnDeviceAi in booleans) {
+            for (briefing in booleans) for (review in booleans) for (redact in booleans) {
+                for (insight in booleans) {
+                    val settings = AiSettings(
+                        aiEnabled = aiEnabled,
+                        allowCloudAi = allowCloudAi,
+                        allowOnDeviceAi = allowOnDeviceAi,
+                        dashboardBriefingEnabled = briefing,
+                        reviewExplanationEnabled = review,
+                        redactBeforeCloud = redact,
+                        transactionInsightEnabled = insight
+                    )
+                    assertEquals(
+                        "canUseCloudFor(TRANSACTION_INSIGHT) for $settings",
+                        false,
+                        policy.canUseCloudFor(settings, AiCapability.TRANSACTION_INSIGHT)
+                    )
+                    checked++
+                }
+            }
+        }
+        assertEquals("combination count guard", 128, checked)
+    }
+
+    @Test
+    fun `shouldAllowOnDevice TRANSACTION_INSIGHT requires aiEnabled allowOnDeviceAi and the insight toggle`() {
+        val rows = listOf(
+            CapabilityRow(
+                "ai off",
+                AiSettings(aiEnabled = false, allowOnDeviceAi = true, transactionInsightEnabled = true),
+                AiCapability.TRANSACTION_INSIGHT,
+                false
+            ),
+            CapabilityRow(
+                "on-device off",
+                AiSettings(aiEnabled = true, allowOnDeviceAi = false, transactionInsightEnabled = true),
+                AiCapability.TRANSACTION_INSIGHT,
+                false
+            ),
+            CapabilityRow(
+                "ai, on-device and insight toggle on",
+                AiSettings(aiEnabled = true, allowOnDeviceAi = true, transactionInsightEnabled = true),
+                AiCapability.TRANSACTION_INSIGHT,
+                true
+            ),
+            CapabilityRow(
+                "independent of dashboard briefing toggle (briefing off, insight on)",
+                AiSettings(
+                    aiEnabled = true,
+                    allowOnDeviceAi = true,
+                    dashboardBriefingEnabled = false,
+                    transactionInsightEnabled = true
+                ),
+                AiCapability.TRANSACTION_INSIGHT,
+                true
+            ),
+            CapabilityRow(
+                "insight toggle off (default) with ai and on-device on",
+                AiSettings(aiEnabled = true, allowOnDeviceAi = true),
+                AiCapability.TRANSACTION_INSIGHT,
+                false
+            ),
+            CapabilityRow(
+                "insight toggle off even with briefing on",
+                AiSettings(
+                    aiEnabled = true,
+                    allowOnDeviceAi = true,
+                    dashboardBriefingEnabled = true,
+                    transactionInsightEnabled = false
+                ),
+                AiCapability.TRANSACTION_INSIGHT,
+                false
+            )
+        )
+        assertEquals("TRANSACTION_INSIGHT shouldAllowOnDevice table size guard", 6, rows.size)
+
+        rows.forEach { row ->
+            assertEquals(
+                "[${row.name}] shouldAllowOnDevice(${row.capability})",
+                row.expected,
+                policy.shouldAllowOnDevice(row.settings, row.capability)
+            )
+        }
+    }
+
     // ── shouldRedact ──────────────────────────────────────────────────────────
 
     @Test

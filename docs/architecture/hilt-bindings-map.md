@@ -1,7 +1,7 @@
 # Hilt Module Bindings Map
 
-> Complete interface → implementation binding map for all 33 Hilt @Module files (+ 1 @EntryPoint).
-> **Last updated:** 2026-10-01 (verified against source; DB schema v149).
+> Complete interface → implementation binding map for all 35 Hilt @Module files (+ 1 @EntryPoint).
+> **Last updated:** 2026-10-24 (app-lock-privacy-mode 1a delta added: `AppLockModule` and the auto-provided app-lock/notification-presentation singletons; ai-fixes `AppForegroundModule` added; the rest was verified 2026-10-01 against DB schema v149 and is not re-verified here).
 >
 > **Note:** `SubscriptionModule.kt` was deleted in 2026-05-09 refactoring — `SubscriptionManagerEngine`
 > is auto-provided by its `@Singleton @Inject constructor`. Replaced in count by `WorkerModule.kt`.
@@ -110,11 +110,21 @@ Provides:
 `NOTIFICATION_PERMISSION_DENIED` when notifications are disabled).
 Note: `WorkerRunLogger` → `WorkerRunLoggerImpl` is bound by `DiagnosticsModule`, not here.
 
+### `AppForegroundModule` — `di/AppForegroundModule.kt`
+```
+Binds:
+  AppForegroundState                          → ProcessAppForegroundState (@Singleton; same instance is registered as a ProcessLifecycleOwner observer by AppStartupCoordinator)
+```
+
 ### `ServiceModule` — `di/ServiceModule.kt`
 ```
 Provides:
   Gson                                        → GsonBuilder().setLenient().create()
   NotificationService                         → AndroidNotificationService
+                                                (@Inject secondary ctor with 4 params since app-lock 1a:
+                                                @ApplicationContext Context, NotificationPresentationResolver,
+                                                NotificationPresentationApplier, PrivacyDiagnosticsEmitter;
+                                                the internal primary ctor adds SweepPacer)
   PostedAlertCanceller                        → AndroidPostedAlertCanceller
   GeocodingService                            → CompositeGeocodingService
   NearbyPoiService                            → OverpassNearbyService
@@ -154,6 +164,10 @@ Binds:
   AiEnvironmentMonitor                        → DefaultAiEnvironmentMonitor
   AiWorkScheduler                             → AiWorkSchedulerImpl
   DashboardBriefingService                    → HybridDashboardBriefingService
+                                                (briefing only; GenerateTransactionInsightUseCase no longer injects it -
+                                                 it takes OnDeviceDashboardBriefingService, AiCapabilityRouter,
+                                                 AppForegroundState, AiSettingsRepository, input builder, TimeProvider
+                                                 and AiRuntimeDiagnostics; ai-fixes B2d)
   ReviewExplanationService                    → HybridReviewExplanationService
   ReceiptAssistService                        → SmartReceiptAssistService
   CategorizationAssistService                 → HybridCategorizationAssistService
@@ -172,6 +186,10 @@ Provides:
   OnDeviceReceiptItemCategorizationService    → new instance
   CloudReceiptItemCategorizationService       → SecureKeyStorage + OkHttpClient + PrivacyGate + CloudPayloadPolicy + PrivacyAuditLogger
   CloudWarrantyExtractionService              → SecureKeyStorage + OkHttpClient + PrivacyGate + CloudPayloadPolicy + PrivacyAuditLogger
+                                                (provider retained; no production consumer since ai-fixes B1a —
+                                                 WarrantyTrackerRepository no longer injects it or the
+                                                 AiSettingsRepository / AiPolicy / AiCapabilityRouter trio;
+                                                 AutoCreateWarrantyFromReceiptUseCase no longer injects PrivacyGate)
 
 Note: Hybrid services route via `AiCapabilityRouter` + `AiSettingsRepository` directly.
 `HybridRouter` (domain/ai/HybridRouter.kt) is a plain generic helper class (no @Inject
@@ -361,6 +379,63 @@ Provides:
   PrivacyAuditLogger                          → PrivacyAuditLoggerImpl
 ```
 
+### `AppLockModule` — `di/AppLockModule.kt` (app-lock-privacy-mode 1a, S1)
+```
+Binds (@Singleton):
+  AppLockSettingsRepository                   → AppLockSettingsRepositoryImpl
+                                                (own DataStore, device-local, never Room or .costbackup;
+                                                public ctor takes @ApplicationContext Context)
+  DeviceAuthenticator                         → AppLockAuthenticatorRelay      (S20-a; the controller's prompt port.
+                                                process-level relay in ui/applock; holds the Activity-bound
+                                                BiometricPromptDeviceAuthenticator weakly. The adapter itself is NOT
+                                                bound: the prompt host creates it per Activity. Reachable only through
+                                                this binding and AppLockPromptHost; never from workers or receivers)
+
+Auto-provided (no module entry; @Inject constructors) — app-lock S20-a (injected into MainActivity by S20-c):
+  @Singleton AppLockAuthenticatorRelay                 (no deps; main-thread only)
+  AppLockPromptHost                                    (AppLockAuthenticatorRelay, AppLockController; UNSCOPED, one per
+                                                        Activity, attach() in onCreate — called by MainActivity, S20-c)
+  @Singleton AppLockLifecycleBinder                    (AppLockController, @ApplicationScope CoroutineScope; install(app)
+                                                        once per process — called by MainActivity, S20-c)
+
+Auto-provided (no module entry; @Inject constructors) — app-lock 1a:
+  @Singleton PrivacyDiagnosticsEmitter                 (NotificationDiagnosticEmitter, MonotonicTimeProvider)
+  @Singleton NotificationPresentationResolver          (AppLockSettingsRepository, PrivacyDiagnosticsEmitter,
+                                                        @ApplicationScope CoroutineScope)
+  @Singleton NotificationPresentationApplier           (@ApplicationContext Context, NotificationPresentationTexts)
+  @Singleton NotificationPresentationTexts             (resource-backed discreet / public-version texts)
+  DiscreetRepostTrigger                                (NotificationService, PrivacyDiagnosticsEmitter)
+  (UpdateDiscreetNotificationsUseCase retired in S20-d; WRITE 5 goes through AppLockSettingsOperations)
+  MarkDashboardBriefingOpenedUseCase                   (AiEngagementRepository)
+  DeepLinkApplier                                      (ExpenseRepository, MarkDashboardBriefingOpenedUseCase,
+                                                        PrivacyDiagnosticsEmitter, BankFeatureAvailability,
+                                                        AiRuntimeDiagnostics, @ApplicationScope CoroutineScope;
+                                                        injected only through AppLockDeepLinkRouter's constructor
+                                                        since S21-b, no longer field-injected into MainActivity;
+                                                        pinned by DeepLinkApplierCallerPinTest)
+  AppLockDeepLinkRouter                                (AppLockController, DeepLinkApplier; UNSCOPED @Inject, one per
+                                                        Activity — field-injected into MainActivity; S21-b, ui/applock)
+  @Singleton AppLockSettingsWriteSerializer            (no deps; domain/privacy/applock; process-wide Mutex
+                                                        serialising ALL app-lock settings writes, shared by the
+                                                        ViewModel and AppLockSettingsOperations; moved from the ui
+                                                        package by S18 ii-a)
+  @Singleton AppLockSettingsOperations additionally takes AppLockSettingsWriteSerializer (S18 ii-a)
+  @HiltViewModel AppLockPrivacySettingsViewModel       (AppLockSettingsRepository, AppLockSettingsOperations (S20-d),
+                                                        AppLockController (S20-e, retry re-read),
+                                                        PrivacyDiagnosticsEmitter, @ApplicationScope CoroutineScope;
+                                                        AppLockSettingsWriteSerializer and DiscreetRepostTrigger were
+                                                        removed in S20-e)
+  BillReminderWorker (@HiltWorker assisted) additionally takes NotificationPresentationResolver and
+                                                        NotificationPresentationApplier (appended after timeProvider)
+```
+`AppLockPrivacySettingsViewModel` uses `@ApplicationScope` (IO dispatcher, SupervisorJob) deliberately: every
+settings write (per-field discreet toggle and review-save) is launched there under
+`withContext(NonCancellable)` so a committed ON still runs its re-post sweep after the screen is left.
+Since S20-d the discreet toggle calls `AppLockSettingsOperations.requestDiscreetChange`, and since S20-e the review-save
+calls `requestReviewSave` (both serialise inside), so the ViewModel holds no serializer around either; the graph resolves because `AppLockSettingsOperations` is a `@Singleton`
+`@Inject` class whose dependencies are all bound (`AppLockController` since S20-c, `DeviceAuthenticator` via the relay
+binding of S20-a).
+
 ### `BackupRepositoryModule` — `di/BackupRepositoryModule.kt`
 ```
 Binds:
@@ -464,6 +539,14 @@ Provides:
   AppStartupCoordinator                       → obtained via EntryPointAccessors
 ```
 
+### `UnsupportedDatabaseExportAuthEntryPoint` — `ui/unsupported/UnsupportedDatabaseExportAuth.kt` (app-lock S21-c)
+```
+@EntryPoint @InstallIn(SingletonComponent::class), read-only, narrow:
+  AppLockSettingsRepository                   → AppLockSettingsRepositoryImpl (ctor: @ApplicationContext Context only)
+  DeviceAuthCapabilityProvider                → AndroidDeviceAuthCapabilityProvider (ctor: @ApplicationContext Context only)
+```
+Resolved at every export tap, by `UnsupportedDatabaseExportAuth.isAuthRequired`, via `EntryPointAccessors` on the application context. Nothing Room-backed is reachable from it (the screen exists because Room cannot open). Pinned by `UnsupportedDatabaseActivityTest` (exactly one lookup across the two `ui/unsupported` files).
+
 ---
 
 ## Module Dependency Graph (Simplified)
@@ -486,4 +569,4 @@ BackupRepositoryModule ──► Backup/Restore
 ```
 
 ---
-**Stats:** 33 Hilt @Module files · 65+ repositories · 68 DAOs (64 DaoModule + 3 AiModule + 1 unbound) · 70 entities · DB v149 (DatabaseSchemaPolicy.CURRENT_VERSION)
+**Stats:** 35 Hilt @Module files (33 counted 2026-10-01 + `AppLockModule` + `AppForegroundModule`; re-counted 2026-10-26 after the app-lock merge: 35) · 65+ repositories · 68 DAOs (64 DaoModule + 3 AiModule + 1 unbound) · 70 entities · DB v149 (DatabaseSchemaPolicy.CURRENT_VERSION)

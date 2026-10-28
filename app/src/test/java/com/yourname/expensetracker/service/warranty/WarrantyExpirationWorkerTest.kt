@@ -1,6 +1,9 @@
 package com.yourname.expensetracker.service.warranty
 
+import android.app.Notification
+import android.app.NotificationManager
 import android.content.Context
+import android.content.ContextWrapper
 import androidx.test.core.app.ApplicationProvider
 import androidx.work.ListenableWorker.Result
 import androidx.work.WorkerFactory
@@ -15,23 +18,49 @@ import com.yourname.expensetracker.data.database.entity.WarrantyReminderDelivery
 import com.yourname.expensetracker.data.database.entity.WarrantyStatus
 import com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
 import com.yourname.expensetracker.data.repository.WarrantyTrackerRepository.ExpiryReconciliationResult
+import com.yourname.expensetracker.domain.diagnostics.AppPipeline
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
+import com.yourname.expensetracker.domain.diagnostics.EventOutcome
+import com.yourname.expensetracker.R
+import com.yourname.expensetracker.data.service.AndroidNotificationService
+import com.yourname.expensetracker.data.service.NotificationPresentationApplier
+import com.yourname.expensetracker.data.service.NotificationPresentationTexts
+import com.yourname.expensetracker.data.service.PresentationFixtures.ScriptedSettingsRepository
+import com.yourname.expensetracker.data.service.PresentationFixtures.everyString
+import com.yourname.expensetracker.domain.notification.presentation.NotificationKind
+import com.yourname.expensetracker.domain.notification.presentation.NotificationPresentationResolver
+import com.yourname.expensetracker.domain.privacy.applock.AppLockPrivacySettings
+import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsLoadState
+import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticsEmitter
 import com.yourname.expensetracker.domain.service.NotificationService
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
+import com.yourname.expensetracker.domain.util.NotificationIdGenerator
 import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.domain.workers.NotificationPermissionChecker
 import com.yourname.expensetracker.domain.workers.RetryableWorkerException
 import com.yourname.expensetracker.domain.workers.WorkerCheckpointBlockedException
 import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
+import com.yourname.expensetracker.domain.workers.WorkerGuardRequest
 import com.yourname.expensetracker.domain.workers.WorkerGuardResult
 import com.yourname.expensetracker.domain.workers.WorkerRunContext
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.slot
 import io.mockk.verify
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -60,7 +89,11 @@ class WarrantyExpirationWorkerTest {
     private lateinit var executionGuard: WorkerExecutionGuard
     private lateinit var timeProvider: FakeTimeProvider
     private lateinit var lastRunContext: WorkerRunContext
+    private lateinit var lastGuardRequest: WorkerGuardRequest
+    private lateinit var notificationPermissionChecker: NotificationPermissionChecker
+    private lateinit var diagnosticEventWriter: DiagnosticEventWriter
     private val blockedCheckpointLabels = mutableSetOf<String>()
+    private var diagnosticsScope: CoroutineScope? = null
 
     @Before
     fun setup() {
@@ -72,6 +105,10 @@ class WarrantyExpirationWorkerTest {
         warrantyRepository = mockk()
         notificationService = mockk(relaxed = true)
         executionGuard = mockk()
+        // INV-29: permission is checked locally by the worker; default is allowed.
+        notificationPermissionChecker = mockk()
+        every { notificationPermissionChecker.areNotificationsEnabled() } returns true
+        diagnosticEventWriter = mockk(relaxed = true)
         timeProvider = FakeTimeProvider(1_750_000_000_000L)
         // Faithful guard stub: mirror WorkerExecutionGuard's catch precedence exactly —
         // CancellationException rethrown (highest), then an explicit RetryableWorkerException
@@ -84,6 +121,7 @@ class WarrantyExpirationWorkerTest {
                 any<suspend (WorkerRunContext) -> Any>()
             )
         } coAnswers {
+            lastGuardRequest = firstArg<WorkerGuardRequest>()
             val block = secondArg<suspend (WorkerRunContext) -> Any>()
             val ctx = mockk<WorkerRunContext>(relaxed = true)
             // Models WorkerExecutionGuard.checkpoint: a denied write barrier surfaces as
@@ -120,12 +158,13 @@ class WarrantyExpirationWorkerTest {
         coEvery { warrantyRepository.reconcileExpiredItems(any<Long>()) } returns ExpiryReconciliationResult(0, 0)
         coEvery { warrantyRepository.getWarrantiesExpiringSoon(any()) } returns emptyList()
         // Default: deliveries succeed.
-        every { notificationService.sendBudgetAlert(any(), any(), any()) } returns
+        coEvery { notificationService.sendBudgetAlertForKind(any(), any(), any(), any()) } returns
             NotificationService.DeliveryResult.DELIVERED
     }
 
     @After
     fun teardown() {
+        diagnosticsScope?.cancel()
         database.close()
     }
 
@@ -140,8 +179,8 @@ class WarrantyExpirationWorkerTest {
 
         assertEquals(Result.success(), buildWorker().doWork())
 
-        verify(exactly = 0) { notificationService.sendBudgetAlert(any(), any(), any()) }
-        verify(exactly = 0) { lastRunContext.addNotificationsSent() }
+        coVerify(exactly = 0) { notificationService.sendBudgetAlertForKind(any(), any(), any(), any()) }
+        verify(exactly = 0) { lastRunContext.addNotificationsSent(any()) }
         val row = requireNotNull(deliveryDao.getByKey(warranty.id, 7, warranty.warrantyEndDate))
         assertEquals("SCHEDULED", row.status)
         assertEquals(0, row.attemptCount)
@@ -166,8 +205,8 @@ class WarrantyExpirationWorkerTest {
 
         assertEquals(Result.success(), buildWorker().doWork())
 
-        verify(exactly = 0) { notificationService.sendBudgetAlert(any(), any(), any()) }
-        verify(exactly = 0) { lastRunContext.addNotificationsSent() }
+        coVerify(exactly = 0) { notificationService.sendBudgetAlertForKind(any(), any(), any(), any()) }
+        verify(exactly = 0) { lastRunContext.addNotificationsSent(any()) }
         val row = requireNotNull(actualDao.getByKey(warranty.id, 7, warranty.warrantyEndDate))
         assertEquals("FAILED", row.status)
         assertEquals("warranty_parent_not_eligible", row.failureReason)
@@ -189,8 +228,8 @@ class WarrantyExpirationWorkerTest {
 
         assertEquals(Result.success(), buildWorker().doWork())
 
-        verify(exactly = 0) { notificationService.sendBudgetAlert(any(), any(), any()) }
-        verify(exactly = 0) { lastRunContext.addNotificationsSent() }
+        coVerify(exactly = 0) { notificationService.sendBudgetAlertForKind(any(), any(), any(), any()) }
+        verify(exactly = 0) { lastRunContext.addNotificationsSent(any()) }
         assertThat(actualDao.getByKey(warranty.id, 7, warranty.warrantyEndDate)).isNull()
     }
 
@@ -210,10 +249,30 @@ class WarrantyExpirationWorkerTest {
                         deliveryDao = deliveryDao,
                         executionGuard = executionGuard,
                         timeProvider = timeProvider,
+                        notificationPermissionChecker = notificationPermissionChecker,
+                        diagnosticEventWriter = diagnosticEventWriter,
                     )
                 }
             })
             .build()
+    }
+
+    private fun contextWith(manager: NotificationManager): Context =
+        object : ContextWrapper(context) {
+            override fun getSystemService(name: String): Any? =
+                if (name == Context.NOTIFICATION_SERVICE) manager else super.getSystemService(name)
+        }
+
+    /** The real service, resolver and applier; only the settings store and the diagnostics emitter are doubles. */
+    private fun realService(serviceContext: Context, discreet: Boolean): AndroidNotificationService {
+        val scope = CoroutineScope(Job())
+        diagnosticsScope = scope
+        val repo = ScriptedSettingsRepository {
+            AppLockSettingsLoadState.Loaded(AppLockPrivacySettings(discreetNotifications = discreet))
+        }
+        val resolver = NotificationPresentationResolver(repo, mockk<PrivacyDiagnosticsEmitter>(relaxed = true), scope)
+        val applier = NotificationPresentationApplier(context, NotificationPresentationTexts(context))
+        return AndroidNotificationService(serviceContext, resolver, applier, mockk<PrivacyDiagnosticsEmitter>(relaxed = true))
     }
 
     /** Inserts a parent warranty (so the FK is satisfied) and returns it with its real id. */
@@ -247,7 +306,7 @@ class WarrantyExpirationWorkerTest {
         val result = buildWorker().doWork()
 
         assertEquals(Result.success(), result)
-        verify(exactly = 1) { notificationService.sendBudgetAlert(any(), any(), any()) }
+        coVerify(exactly = 1) { notificationService.sendBudgetAlertForKind(any(), any(), any(), any()) }
 
         val row = deliveryDao.getByKey(warranty.id, 7, warranty.warrantyEndDate)
         assertThat(row).isNotNull()
@@ -262,7 +321,7 @@ class WarrantyExpirationWorkerTest {
         val warranty = seedWarranty()
         coEvery { warrantyRepository.getWarrantiesExpiringSoon(7) } returns listOf(warranty)
         coEvery { warrantyRepository.getWarrantiesExpiringSoon(30) } returns emptyList()
-        every { notificationService.sendBudgetAlert(any(), any(), any()) } returns
+        coEvery { notificationService.sendBudgetAlertForKind(any(), any(), any(), any()) } returns
             NotificationService.DeliveryResult.NOT_DELIVERED
 
         val result = buildWorker().doWork()
@@ -273,6 +332,187 @@ class WarrantyExpirationWorkerTest {
         assertThat(row!!.status).isEqualTo("FAILED")
         assertThat(row.notificationId).isNull()
         assertThat(row.failureReason).isEqualTo("notification_not_delivered")
+    }
+
+    // -------------------------------------------------------------------------
+    // S7 (AE-5, AE-11, AE-13): the worker declares kind WARRANTY on the kind-aware method
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `AE-5 AE-13 worker declares kind WARRANTY with unchanged id and text and never BUDGET or the other ForKind form`() = runTest {
+        val warranty = seedWarranty()
+        coEvery { warrantyRepository.getWarrantiesExpiringSoon(7) } returns listOf(warranty)
+        coEvery { warrantyRepository.getWarrantiesExpiringSoon(30) } returns emptyList()
+        val kind = slot<NotificationKind>()
+        val id = slot<Int>()
+        val title = slot<String>()
+        val message = slot<String>()
+        coEvery {
+            notificationService.sendBudgetAlertForKind(capture(kind), capture(id), capture(title), capture(message))
+        } returns NotificationService.DeliveryResult.DELIVERED
+
+        assertEquals(Result.success(), buildWorker().doWork())
+
+        assertEquals(NotificationKind.WARRANTY, kind.captured)
+        assertEquals(NotificationIdGenerator.forWarranty(warranty.id, 7), id.captured)
+        assertEquals(context.getString(R.string.warranty_expiring_soon_title), title.captured)
+        assertEquals(
+            context.getString(R.string.warranty_expires_in_7_days_format, warranty.productName, warranty.merchantName),
+            message.captured
+        )
+        coVerify(exactly = 0) {
+            notificationService.sendBudgetAlertForKind(NotificationKind.BUDGET, any(), any(), any())
+        }
+        // S9a: the legacy kind-less method no longer exists; the typed-id kind-aware form is the other path.
+        coVerify(exactly = 0) { notificationService.postBudgetAlertForKind(any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `AE-5 30-day window also declares kind WARRANTY`() = runTest {
+        val warranty = seedWarranty(endDate = 1_810_000_000_000L)
+        coEvery { warrantyRepository.getWarrantiesExpiringSoon(7) } returns emptyList()
+        coEvery { warrantyRepository.getWarrantiesExpiringSoon(30) } returns listOf(warranty)
+
+        assertEquals(Result.success(), buildWorker().doWork())
+
+        coVerify(exactly = 1) {
+            notificationService.sendBudgetAlertForKind(
+                NotificationKind.WARRANTY,
+                NotificationIdGenerator.forWarranty(warranty.id, 30),
+                any(),
+                any()
+            )
+        }
+        coVerify(exactly = 1) { notificationService.sendBudgetAlertForKind(any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `AE-11 PERMISSION_DENIED takes the NOT_DELIVERED path - FAILED, retryable, no notificationsSent`() = runTest {
+        val warranty = seedWarranty()
+        coEvery { warrantyRepository.getWarrantiesExpiringSoon(7) } returns listOf(warranty)
+        coEvery { warrantyRepository.getWarrantiesExpiringSoon(30) } returns emptyList()
+        coEvery { notificationService.sendBudgetAlertForKind(any(), any(), any(), any()) } returns
+            NotificationService.DeliveryResult.PERMISSION_DENIED
+
+        assertEquals(Result.success(), buildWorker().doWork())
+
+        coVerify(exactly = 1) { notificationService.sendBudgetAlertForKind(any(), any(), any(), any()) }
+        verify(exactly = 0) { lastRunContext.addNotificationsSent(any()) }
+        val row = requireNotNull(deliveryDao.getByKey(warranty.id, 7, warranty.warrantyEndDate))
+        assertThat(row.status).isEqualTo("FAILED")
+        assertThat(row.notificationId).isNull()
+        assertThat(row.failureReason).isEqualTo("notification_not_delivered")
+        assertThat(row.attemptCount).isEqualTo(1)
+    }
+
+    @Test
+    fun `AE-111 real service DISCREET - product, store and window text absent, WARRANTY constants shown, channel and id unchanged`() = runTest {
+        val warranty = seedWarranty()
+        coEvery { warrantyRepository.getWarrantiesExpiringSoon(7) } returns listOf(warranty)
+        coEvery { warrantyRepository.getWarrantiesExpiringSoon(30) } returns emptyList()
+        notificationService = realService(context, discreet = true)
+
+        assertEquals(Result.success(), buildWorker().doWork())
+
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val expectedId = NotificationIdGenerator.forWarranty(warranty.id, 7)
+        val matches = manager.activeNotifications.filter { it.id == expectedId }
+        assertEquals("exactly one active notification with the warranty id", 1, matches.size)
+        val n = matches.single().notification
+        assertEquals("budget_alerts", n.channelId)
+
+        val title = n.extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()
+        val text = n.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()
+        assertEquals(context.getString(R.string.notif_discreet_warranty_title), title)
+        assertEquals(context.getString(R.string.notif_discreet_warranty_text), text)
+        val budget = NotificationPresentationTexts(context).discreet(NotificationKind.BUDGET)
+        assertNotEquals(budget.title, title)
+        assertNotEquals(budget.text, text)
+
+        val everything = everyString(n)
+        assertTrue("the notification carries some text", everything.isNotEmpty())
+        everything.forEach {
+            assertFalse("product name leaked: $it", it.contains(warranty.productName))
+            assertFalse("store name leaked: $it", it.contains(warranty.merchantName))
+            assertFalse("window text leaked: $it", it.contains("7 days"))
+        }
+
+        verify(exactly = 1) { lastRunContext.addNotificationsSent() }
+        val row = requireNotNull(deliveryDao.getByKey(warranty.id, 7, warranty.warrantyEndDate))
+        assertThat(row.status).isEqualTo("SENT")
+        assertThat(row.notificationId).isEqualTo(expectedId)
+    }
+
+    @Test
+    fun `AE-11 real service whose NotificationManager throws SecurityException records FAILED, counts no send and the run continues`() = runTest {
+        val first = seedWarranty(endDate = 1_800_000_000_000L)
+        val second = seedWarranty(endDate = 1_810_000_000_000L)
+        coEvery { warrantyRepository.getWarrantiesExpiringSoon(7) } returns listOf(first)
+        coEvery { warrantyRepository.getWarrantiesExpiringSoon(30) } returns listOf(second)
+        val manager = mockk<NotificationManager>(relaxed = true)
+        every { manager.areNotificationsEnabled() } returns true
+        every { manager.notify(any<Int>(), any<Notification>()) } throws SecurityException("denied") andThen Unit
+        notificationService = realService(contextWith(manager), discreet = true)
+
+        assertEquals(Result.success(), buildWorker().doWork())
+
+        verify(exactly = 2) { manager.notify(any<Int>(), any<Notification>()) }
+        val failed = requireNotNull(deliveryDao.getByKey(first.id, 7, first.warrantyEndDate))
+        assertThat(failed.status).isEqualTo("FAILED")
+        assertThat(failed.notificationId).isNull()
+        assertThat(failed.failureReason).isEqualTo("notification_not_delivered")
+        // The run continued past the denied post: the next reminder was processed and sent.
+        val sent = requireNotNull(deliveryDao.getByKey(second.id, 30, second.warrantyEndDate))
+        assertThat(sent.status).isEqualTo("SENT")
+        verify(exactly = 1) { lastRunContext.addNotificationsSent() }
+    }
+
+    @Test
+    fun `cancellation at the notification post propagates and leaves the row CLAIMED with no outcome write`() = runTest {
+        val warranty = seedWarranty()
+        coEvery { warrantyRepository.getWarrantiesExpiringSoon(7) } returns listOf(warranty)
+        coEvery { warrantyRepository.getWarrantiesExpiringSoon(30) } returns emptyList()
+        coEvery { notificationService.sendBudgetAlertForKind(any(), any(), any(), any()) } throws
+            CancellationException("cancelled")
+
+        try {
+            buildWorker().doWork()
+            throw AssertionError("Expected CancellationException to propagate")
+        } catch (_: CancellationException) {
+            // expected: cancellation at the suspension point must not be swallowed
+        }
+
+        coVerify(exactly = 1) { notificationService.sendBudgetAlertForKind(any(), any(), any(), any()) }
+        verify(exactly = 0) { lastRunContext.addNotificationsSent(any()) }
+        // No markSentFromClaimed and no markFailed ran: the row is still CLAIMED (stale recovery resets it).
+        val row = requireNotNull(deliveryDao.getByKey(warranty.id, 7, warranty.warrantyEndDate))
+        assertThat(row.status).isEqualTo("CLAIMED")
+        assertThat(row.notificationId).isNull()
+        assertThat(row.failureReason).isNull()
+    }
+
+    @Test
+    fun `AE-11 DELIVERED counts exactly one notificationsSent and NOT_DELIVERED counts none`() = runTest {
+        val delivered = seedWarranty(endDate = 1_800_000_000_000L)
+        val notDelivered = seedWarranty(endDate = 1_810_000_000_000L)
+        coEvery { warrantyRepository.getWarrantiesExpiringSoon(7) } returns listOf(delivered)
+        coEvery { warrantyRepository.getWarrantiesExpiringSoon(30) } returns listOf(notDelivered)
+        coEvery {
+            notificationService.sendBudgetAlertForKind(
+                any(), NotificationIdGenerator.forWarranty(delivered.id, 7), any(), any()
+            )
+        } returns NotificationService.DeliveryResult.DELIVERED
+        coEvery {
+            notificationService.sendBudgetAlertForKind(
+                any(), NotificationIdGenerator.forWarranty(notDelivered.id, 30), any(), any()
+            )
+        } returns NotificationService.DeliveryResult.NOT_DELIVERED
+
+        assertEquals(Result.success(), buildWorker().doWork())
+
+        verify(exactly = 1) { lastRunContext.addNotificationsSent() }
+        assertThat(deliveryDao.getByKey(delivered.id, 7, delivered.warrantyEndDate)!!.status).isEqualTo("SENT")
+        assertThat(deliveryDao.getByKey(notDelivered.id, 30, notDelivered.warrantyEndDate)!!.status).isEqualTo("FAILED")
     }
 
     @Test
@@ -286,7 +526,7 @@ class WarrantyExpirationWorkerTest {
         // Second run (e.g. after reboot/reschedule) must NOT re-notify — durable dedup.
         buildWorker().doWork()
 
-        verify(exactly = 1) { notificationService.sendBudgetAlert(any(), any(), any()) }
+        coVerify(exactly = 1) { notificationService.sendBudgetAlertForKind(any(), any(), any(), any()) }
         assertThat(deliveryDao.getByKey(warranty.id, 7, warranty.warrantyEndDate)!!.status)
             .isEqualTo("SENT")
     }
@@ -313,7 +553,7 @@ class WarrantyExpirationWorkerTest {
 
         assertEquals(Result.success(), result)
         // Claim returns 0 because the row is already SENT -> no second notification.
-        verify(exactly = 0) { notificationService.sendBudgetAlert(any(), any(), any()) }
+        coVerify(exactly = 0) { notificationService.sendBudgetAlertForKind(any(), any(), any(), any()) }
     }
 
     @Test
@@ -326,7 +566,7 @@ class WarrantyExpirationWorkerTest {
         val result = buildWorker().doWork()
 
         assertEquals(Result.success(), result)
-        verify(exactly = 2) { notificationService.sendBudgetAlert(any(), any(), any()) }
+        coVerify(exactly = 2) { notificationService.sendBudgetAlertForKind(any(), any(), any(), any()) }
         assertThat(deliveryDao.getByKey(w7.id, 7, w7.warrantyEndDate)!!.status).isEqualTo("SENT")
         assertThat(deliveryDao.getByKey(w30.id, 30, w30.warrantyEndDate)!!.status).isEqualTo("SENT")
     }
@@ -343,7 +583,7 @@ class WarrantyExpirationWorkerTest {
         val result = buildWorker().doWork()
 
         assertEquals(Result.success(), result)
-        verify(exactly = 0) { notificationService.sendBudgetAlert(any(), any(), any()) }
+        coVerify(exactly = 0) { notificationService.sendBudgetAlertForKind(any(), any(), any(), any()) }
     }
 
     @Test
@@ -357,7 +597,7 @@ class WarrantyExpirationWorkerTest {
         val result = buildWorker().doWork()
 
         assertEquals(Result.failure(), result)
-        verify(exactly = 0) { notificationService.sendBudgetAlert(any(), any(), any()) }
+        coVerify(exactly = 0) { notificationService.sendBudgetAlertForKind(any(), any(), any(), any()) }
     }
 
     @Test
@@ -370,7 +610,7 @@ class WarrantyExpirationWorkerTest {
         val result = buildWorker().doWork()
 
         assertEquals(Result.retry(), result)
-        verify(exactly = 0) { notificationService.sendBudgetAlert(any(), any(), any()) }
+        coVerify(exactly = 0) { notificationService.sendBudgetAlertForKind(any(), any(), any(), any()) }
     }
 
     @Test
@@ -383,7 +623,7 @@ class WarrantyExpirationWorkerTest {
         } catch (_: CancellationException) {
             // expected — cancellation must not be swallowed
         }
-        verify(exactly = 0) { notificationService.sendBudgetAlert(any(), any(), any()) }
+        coVerify(exactly = 0) { notificationService.sendBudgetAlertForKind(any(), any(), any(), any()) }
     }
 
     @Test
@@ -398,22 +638,71 @@ class WarrantyExpirationWorkerTest {
     }
 
     @Test
-    fun `warranty run skipped when notifications disabled does not notify`() = runTest {
-        // The guard owns the notification-permission gate (S1): when notifications are
-        // disabled it short-circuits with a durable SKIPPED run and never invokes the
-        // worker block, so no notification is sent.
+    fun `guard request does not require notification permission (INV-29)`() = runTest {
+        buildWorker().doWork()
+
+        assertThat(lastGuardRequest.workerName).isEqualTo("warranty_expiration_check")
+        assertThat(lastGuardRequest.requiresNotificationPermission).isFalse()
+    }
+
+    @Test
+    fun `AE-51 notifications denied still reconciles, posts no reminders and succeeds`() = runTest {
+        val warranty = seedWarranty()
+        coEvery { warrantyRepository.reconcileExpiredItems(any<Long>()) } returns ExpiryReconciliationResult(1, 0)
+        coEvery { warrantyRepository.getWarrantiesExpiringSoon(7) } returns listOf(warranty)
+        coEvery { warrantyRepository.getWarrantiesExpiringSoon(30) } returns emptyList()
+        every { notificationPermissionChecker.areNotificationsEnabled() } returns false
+
+        val result = buildWorker().doWork()
+
+        assertEquals(Result.success(), result)
+        // Reconciliation is independent of notification permission.
+        io.mockk.coVerify(exactly = 1) { warrantyRepository.reconcileExpiredItems(any<Long>()) }
+        verify(exactly = 1) { lastRunContext.addRowsUpdated(1) }
+        // No reminder is looked up, seeded, claimed, sent or counted.
+        io.mockk.coVerify(exactly = 0) { warrantyRepository.getWarrantiesExpiringSoon(any()) }
+        coVerify(exactly = 0) { notificationService.sendBudgetAlertForKind(any(), any(), any(), any()) }
+        verify(exactly = 0) { lastRunContext.addNotificationsSent(any()) }
+        assertThat(deliveryDao.getByKey(warranty.id, 7, warranty.warrantyEndDate)).isNull()
+        // Exactly one bounded skip diagnostic: reason code only.
+        val events = mutableListOf<DiagnosticEvent>()
+        io.mockk.coVerify(exactly = 1) { diagnosticEventWriter.emit(capture(events)) }
+        val event = events.single()
+        assertThat(event.reasonCode).isEqualTo(DiagnosticReasonCode.NOTIFICATION_PERMISSION_DENIED)
+        assertThat(event.outcome).isEqualTo(EventOutcome.SKIPPED)
+        assertThat(event.pipeline).isEqualTo(AppPipeline.WORKER)
+        assertThat(event.entityType).isEqualTo("WarrantyExpirationWorker")
+    }
+
+    @Test
+    fun `notifications enabled emits no permission-denied diagnostic`() = runTest {
+        val warranty = seedWarranty()
+        coEvery { warrantyRepository.getWarrantiesExpiringSoon(7) } returns listOf(warranty)
+        coEvery { warrantyRepository.getWarrantiesExpiringSoon(30) } returns emptyList()
+
+        assertEquals(Result.success(), buildWorker().doWork())
+
+        coVerify(exactly = 1) { notificationService.sendBudgetAlertForKind(any(), any(), any(), any()) }
+        io.mockk.coVerify(exactly = 0) { diagnosticEventWriter.emit(any()) }
+    }
+
+    @Test
+    fun `warranty run skipped by a non-permission guard gate does not notify`() = runTest {
+        // Other guard gates (privacy, restore, write barrier) can still short-circuit with a
+        // durable SKIPPED run without invoking the worker block, so no notification is sent.
+        // Notification permission is no longer one of them (INV-29): see the AE-51 test.
         coEvery {
             executionGuard.runGuardedWithContext(
                 any(),
                 any<suspend (WorkerRunContext) -> Any>()
             )
         } returns
-            WorkerGuardResult.Skipped(DiagnosticReasonCode.NOTIFICATION_PERMISSION_DENIED.name)
+            WorkerGuardResult.Skipped(DiagnosticReasonCode.PRIVACY_DENIED.name)
 
         val result = buildWorker().doWork()
 
         assertEquals(Result.success(), result)
-        verify(exactly = 0) { notificationService.sendBudgetAlert(any(), any(), any()) }
+        coVerify(exactly = 0) { notificationService.sendBudgetAlertForKind(any(), any(), any(), any()) }
     }
 
     // -------------------------------------------------------------------------
@@ -430,8 +719,8 @@ class WarrantyExpirationWorkerTest {
         val result = buildWorker().doWork()
 
         assertEquals(Result.retry(), result)
-        verify(exactly = 0) { notificationService.sendBudgetAlert(any(), any(), any()) }
-        verify(exactly = 0) { lastRunContext.addNotificationsSent() }
+        coVerify(exactly = 0) { notificationService.sendBudgetAlertForKind(any(), any(), any(), any()) }
+        verify(exactly = 0) { lastRunContext.addNotificationsSent(any()) }
         assertThat(deliveryDao.getByKey(warranty.id, 7, warranty.warrantyEndDate)).isNull()
     }
 
@@ -445,7 +734,7 @@ class WarrantyExpirationWorkerTest {
         val result = buildWorker().doWork()
 
         assertEquals(Result.retry(), result)
-        verify(exactly = 0) { lastRunContext.addNotificationsSent() }
+        verify(exactly = 0) { lastRunContext.addNotificationsSent(any()) }
         val row = requireNotNull(deliveryDao.getByKey(warranty.id, 7, warranty.warrantyEndDate))
         // The outcome write was denied: the row stays CLAIMED (recovered by recoverStaleClaimed).
         assertThat(row.status).isEqualTo("CLAIMED")

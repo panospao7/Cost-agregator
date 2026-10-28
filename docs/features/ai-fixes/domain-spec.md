@@ -111,6 +111,8 @@ Routing matrix row (every exhaustive `when` must be updated: `DefaultAiCapabilit
 ### 1.10 BriefingDeliveryOutcome (new closed enum, returned by DeliverProactiveBriefingNotificationUseCase)
 `DELIVERED`, `SKIPPED_SETTINGS_OFF` (ai, briefing or proactive off), `SKIPPED_DUPLICATE` (already delivered or opened), `SKIPPED_NO_FRESH_ARTIFACT`, `NOT_DELIVERED` (platform refused).
 
+[amended B3a, 2026-10-24] Sixth value `NOTIFICATION_PERMISSION_DENIED`: notification permission blocked delivery. The use case takes the caller's local permission check as `notificationsAllowed: Boolean` and evaluates it only AFTER the settings, dedupe and fresh-artifact checks, so a denied permission never masks a skip with another cause. Merge mapping with the app-lock `NotificationService.DeliveryResult`: `DELIVERED` -> `DELIVERED`; `NOT_DELIVERED` -> `NOT_DELIVERED`; `PERMISSION_DENIED` (post refused by a SecurityException) -> `NOTIFICATION_PERMISSION_DENIED`. The worker records the bounded `NOTIFICATION_PERMISSION_DENIED` diagnostic only for this outcome.
+
 The worker-side permission skip is recorded as `NOTIFICATION_PERMISSION_DENIED` (an existing `DiagnosticReasonCode`).
 
 ### 1.11 New AppConfig.Ai constants (single source; replaces the duplicated private constants)
@@ -192,7 +194,7 @@ Format: statement → **Owner** (the single component that holds the rule) → e
 - **INV-13 Confirm ownership (FG-12).**
   - The only legal user-driven exits from review are `WarrantyTrackerRepository.confirmWarranty(warrantyId)` (NEW) and the existing `rejectAutoDetectedWarranty`.
   - The VM passes the id only. It never builds `status` or `needsReview` and never calls `updateWarranty` for that purpose.
-  - Confirm runs one transaction: barrier check → fresh read by id → if the row is missing → `NotFound`; if `needsReview=false` and status ≠ PENDING_REVIEW → `AlreadyConfirmed` (no write, no event); else set `needsReview=false`, `status = EXPIRED` if `warrantyEndDate < now` else `ACTIVE`, `updatedAt=now`, and write a `CONFIRMED` lifecycle event (event failure is non-fatal, as at `Repo:135-138`).
+  - Confirm runs one transaction: barrier check → fresh read by id → if the row is missing → `NotFound`; if `needsReview=false` and status ≠ PENDING_REVIEW → `AlreadyConfirmed` (no write, no event); else set `needsReview=false`, `status = EXPIRED` if `warrantyEndDate < now` else `ACTIVE`, `updatedAt=now`, and write a `CONFIRMED` lifecycle event (event failure fails the whole transaction closed — no confirm without its CONFIRMED event — matching R29 and the sibling in-transaction writers; amended 2026-10-23 at B1a).
   - Confirm never moves EXPIRED → ACTIVE.
   - **Owner:** `WarrantyTrackerRepository`. AE-17 to AE-20.
 - **INV-14 Status/review consistency.**
@@ -270,6 +272,7 @@ Format: statement → **Owner** (the single component that holds the rule) → e
 - **INV-28 On-device users are not newly armed.** For `allowCloudAi = false`, ai-fixes adds no new arming and no new generation path. The only difference: a run that was already armed (proactive on) is no longer skipped for notification permission, and any on-device attempt follows the untouched fallback path. **Owner:** INV-25 predicate. AE-45, AE-46.
 
 ### Conditional on OD-2 = A (recommended)
+[reconciled Z, 2026-10-24] Naming: OD-2 is the warranty expiry-reconciliation decision (INV-29, AE-51). It was decided as A at Gate 2 (2026-10-16), so INV-29 applies. It shipped in slice B3a together with the briefing work, but the B3a briefing arming change is INV-25, not OD-2.
 - **INV-29 Expiry reconciliation does not depend on notification permission.**
   - `WarrantyExpirationWorker` uses `requiresNotificationPermission = false` and runs `reconcileExpiredItems` on every run.
   - Reminder posting is guarded locally by `notificationPermissionChecker.areNotificationsEnabled()`.
@@ -375,7 +378,7 @@ guard(CLOUD_AI_DAILY_BRIEFING, requiresNotificationPermission=false)
 3. **Never throw.** Any failure in provenance → UNKNOWN. The migration must not throw: an exception other than IOException would surface through `settings()` (`AiSettingsRepositoryImpl.kt:67-76`).
 4. **Explicit values win forever.** Once the key exists, no later version re-derives it.
 5. **Warranty flag.** There is no migration and no rewrite. Absent → false by INV-22 default. Explicit true/false is kept (owner decision). Because of F1, an explicit `true` usually means "materialized default", but it is harmless: the flag is inert (INV-7).
-6. **Read fallback.** `transactionInsightEnabled` falls back to `false`. That is only reachable on an IOException read (`emptyPreferences()`) or corruption replacement (`ReplaceFileCorruptionHandler`); after corruption, the migration re-runs and resolves via provenance (UPGRADE → false). The product default "on for new installs" lives only in rule 2(b).
+6. **Read fallback.** `transactionInsightEnabled` falls back to `false`. That is only reachable on an IOException read (`emptyPreferences()`) or corruption replacement (`ReplaceFileCorruptionHandler`); after corruption, the migration re-runs and resolves via provenance (NEW_INSTALL → true; UPGRADE or UNKNOWN → false; so a never-updated install re-enables the insight after corruption). The product default "on for new installs" lives only in rule 2(b).
 7. **Backup and restore.** These do not affect the migration (F12).
 8. **Edge accepted.** If the user installs this version and an update lands before first launch, provenance says UPGRADE and the insight starts off. This fails safe. The user can enable it.
 

@@ -7,10 +7,17 @@ import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.database.dao.WarrantyReminderDeliveryDao
 import com.yourname.expensetracker.data.database.entity.WarrantyReminderDelivery
 import com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
+import com.yourname.expensetracker.domain.diagnostics.AppPipeline
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
+import com.yourname.expensetracker.domain.diagnostics.EventOutcome
+import com.yourname.expensetracker.domain.notification.presentation.NotificationKind
 import com.yourname.expensetracker.domain.service.NotificationService
 import com.yourname.expensetracker.domain.util.NotificationIdGenerator
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.workers.BlockedPolicy
+import com.yourname.expensetracker.domain.workers.NotificationPermissionChecker
 import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
 import com.yourname.expensetracker.domain.workers.WorkerGuardRequest
 import com.yourname.expensetracker.domain.workers.WorkerRunContext
@@ -19,7 +26,6 @@ import com.yourname.expensetracker.domain.workers.WorkerSpecScheduler
 import com.yourname.expensetracker.domain.workers.toWorkerResult
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
-import kotlinx.coroutines.CancellationException
 import timber.log.Timber
 
 /**
@@ -44,6 +50,7 @@ import timber.log.Timber
  *          notificationId; this is the ONLY transition into SENT and only from CLAIMED).
  *        - NOT_DELIVERED → [WarrantyReminderDeliveryDao.markFailed] (records the reason;
  *          the row stays re-claimable on a later run).
+ *        - PERMISSION_DENIED → markFailed, same as NOT_DELIVERED (TECH-9).
  *
  * Crash recovery: any CLAIMED row whose claim is older than [STALE_CLAIM_MS] is reset to
  * SCHEDULED at the start of each run ([WarrantyReminderDeliveryDao.recoverStaleClaimed]),
@@ -52,12 +59,17 @@ import timber.log.Timber
  * Because the state lives in the Room DB (which is snapshotted whole during backup), the
  * sent-state survives backup/restore.
  *
- * ## Notification permission gate
- * Notification permission is enforced by [WorkerExecutionGuard] via
- * [WorkerGuardRequest.requiresNotificationPermission]. When notifications are
- * disabled the guard records a durable SKIPPED run
- * ([com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.NOTIFICATION_PERMISSION_DENIED])
- * and the block below never runs.
+ * ## Notification permission (optional side effect, INV-29)
+ * Reminders are an optional side effect of the run, so the guard request sets
+ * [WorkerGuardRequest.requiresNotificationPermission] to false and the expiry
+ * reconciliation ([WarrantyTrackerRepository.reconcileExpiredItems]) runs on every
+ * guarded run, with or without notification permission. Permission is checked locally
+ * through [NotificationPermissionChecker] immediately before reminders are delivered
+ * (PR12K-3 optional-notification pattern). When notifications are disabled no reminder
+ * is seeded, claimed, sent or counted, a bounded
+ * [com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.NOTIFICATION_PERMISSION_DENIED]
+ * skip event is recorded, and the run still ends SUCCESS. Stale-claim recovery and
+ * delivery pruning also still run.
  */
 @HiltWorker
 class WarrantyExpirationWorker @AssistedInject constructor(
@@ -67,14 +79,16 @@ class WarrantyExpirationWorker @AssistedInject constructor(
     private val notificationService: NotificationService,
     private val deliveryDao: WarrantyReminderDeliveryDao,
     private val executionGuard: WorkerExecutionGuard,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val notificationPermissionChecker: NotificationPermissionChecker,
+    private val diagnosticEventWriter: DiagnosticEventWriter
 ) : CoroutineWorker(context, params) {
 
     override suspend fun doWork(): Result {
         val guardResult = executionGuard.runGuardedWithContext(
             WorkerGuardRequest(
                 workerName = "warranty_expiration_check",
-                requiresNotificationPermission = true,
+                requiresNotificationPermission = false,
                 allowDuringBackupExport = false,
                 blockedPolicy = BlockedPolicy.RETRY,
                 workId = id.toString(),
@@ -82,23 +96,33 @@ class WarrantyExpirationWorker @AssistedInject constructor(
                 specVersion = WorkerSpec.DEFAULTS["warranty_expiration_check"]?.version
             )
         ) { ctx ->
-            try {
-                Timber.d("Checking for expiring warranties...")
-                ctx.checkpoint("warranty_reconcile")
-                val reconciliationResult = warrantyRepository.reconcileExpiredItems(timeProvider.now())
-                ctx.addRowsUpdated(reconciliationResult.expiredWarrantyCount + reconciliationResult.expiredReturnWindowCount)
+            // INV-29: expiry reconciliation never depends on notification permission, so it
+            // runs on every guarded run. Failures (including CancellationException) propagate
+            // unchanged to the guard, which owns classification and cancellation rethrow.
+            Timber.d("Checking for expiring warranties...")
+            ctx.checkpoint("warranty_reconcile")
+            val reconciliationResult = warrantyRepository.reconcileExpiredItems(timeProvider.now())
+            ctx.addRowsUpdated(reconciliationResult.expiredWarrantyCount + reconciliationResult.expiredReturnWindowCount)
 
-                val now = timeProvider.now()
-                val oneDayMs = 86_400_000L
+            val now = timeProvider.now()
+            val oneDayMs = 86_400_000L
 
-                ctx.checkpoint("warranty_recover_stale")
-                deliveryDao.recoverStaleClaimed(
-                    staleClaimThreshold = now - STALE_CLAIM_MS,
-                    now = now
-                )
+            ctx.checkpoint("warranty_recover_stale")
+            deliveryDao.recoverStaleClaimed(
+                staleClaimThreshold = now - STALE_CLAIM_MS,
+                now = now
+            )
 
+            var expiringIn7DaysCount = 0
+            var expiringIn30DaysCount = 0
+
+            // INV-29: the permission check gates reminder posting only (PR12K-3
+            // optional-notification pattern). When denied, no reminder is claimed, sent or
+            // counted; the run stays SUCCESS and records a bounded reason code.
+            if (notificationPermissionChecker.areNotificationsEnabled()) {
                 // Check warranties expiring in 7 days
                 val expiringIn7Days = warrantyRepository.getWarrantiesExpiringSoon(7)
+                expiringIn7DaysCount = expiringIn7Days.size
                 ctx.addRowsScanned(expiringIn7Days.size)
                 expiringIn7Days.forEach { warranty ->
                     ctx.checkpoint("warranty_notify_7d")
@@ -121,6 +145,7 @@ class WarrantyExpirationWorker @AssistedInject constructor(
                 val sevenDayIds = expiringIn7Days.map { it.id }.toSet()
                 val expiringIn30Days = warrantyRepository.getWarrantiesExpiringSoon(30)
                     .filter { it.id !in sevenDayIds }
+                expiringIn30DaysCount = expiringIn30Days.size
                 ctx.addRowsScanned(expiringIn30Days.size)
                 expiringIn30Days.forEach { warranty ->
                     ctx.checkpoint("warranty_notify_30d")
@@ -137,25 +162,40 @@ class WarrantyExpirationWorker @AssistedInject constructor(
                     )
                     if (sent) ctx.addNotificationsSent()
                 }
-
-                // Prune deliveries whose expiry is older than 90 days
-                ctx.checkpoint("warranty_prune_deliveries")
-                deliveryDao.deleteOlderThan(now - 90L * oneDayMs)
-
-                Timber.d(
-                    "Warranty check complete. Expired ${reconciliationResult.expiredWarrantyCount} warranties, " +
-                        "${reconciliationResult.expiredReturnWindowCount} return windows; found ${expiringIn7Days.size} expiring in 7 days, " +
-                        "${expiringIn30Days.size} in 30 days"
-                )
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                Timber.e(e, "Error checking warranty expirations")
-                throw e
+            } else {
+                recordNotificationPermissionDenied()
             }
+
+            // Prune deliveries whose expiry is older than 90 days
+            ctx.checkpoint("warranty_prune_deliveries")
+            deliveryDao.deleteOlderThan(now - 90L * oneDayMs)
+
+            Timber.d(
+                "Warranty check complete. Expired ${reconciliationResult.expiredWarrantyCount} warranties, " +
+                    "${reconciliationResult.expiredReturnWindowCount} return windows; found $expiringIn7DaysCount expiring in 7 days, " +
+                    "$expiringIn30DaysCount in 30 days"
+            )
         }
 
         return guardResult.toWorkerResult()
+    }
+
+    /**
+     * INV-29: durable, bounded diagnostic for reminders that were not attempted because
+     * notification permission is missing. Carries only the reason code; no text, keys or
+     * warranty data. The diagnostic writer owns write-failure fallback and rethrows
+     * cancellation.
+     */
+    private suspend fun recordNotificationPermissionDenied() {
+        diagnosticEventWriter.emit(
+            DiagnosticEvent(
+                pipeline = AppPipeline.WORKER,
+                stage = "warranty_reminder_delivery",
+                outcome = EventOutcome.SKIPPED,
+                reasonCode = DiagnosticReasonCode.NOTIFICATION_PERMISSION_DENIED,
+                entityType = "WarrantyExpirationWorker"
+            )
+        )
     }
 
     /**
@@ -164,6 +204,7 @@ class WarrantyExpirationWorker @AssistedInject constructor(
      *
      * - A row already SENT in a previous run is skipped (claim returns 0) — durable dedup.
      * - DELIVERED → SENT (persists notificationId). NOT_DELIVERED → FAILED (re-claimable).
+     *   PERMISSION_DENIED → markFailed, same as NOT_DELIVERED (TECH-9).
      *
      * Every delivery-state write is preceded by a [WorkerRunContext.checkpoint]
      * (write-barrier + stop-request check) in this function, as required by the
@@ -230,7 +271,10 @@ class WarrantyExpirationWorker @AssistedInject constructor(
 
         // 3. Send and record the outcome. Mark SENT only when delivery actually succeeds.
         val notificationId = NotificationIdGenerator.forWarranty(warranty.id, windowDays)
-        val deliveryResult = notificationService.sendBudgetAlert(
+        // S7 (INV-4/INV-12): the worker declares its kind; the presentation decision is resolved inside
+        // the service. PERMISSION_DENIED (TECH-9) is a non-delivery and takes the same FAILED path.
+        val deliveryResult = notificationService.sendBudgetAlertForKind(
+            kind = NotificationKind.WARRANTY,
             notificationId = notificationId,
             title = title,
             message = message

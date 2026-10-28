@@ -140,6 +140,9 @@ fun PrivacySettingsScreen(
                 }
             }
 
+            // -- App lock & privacy section (S12, 1a: discreet row only; owns its own divider) --
+            item { AppLockPrivacySection() }
+
             // -- Notification section --
             item {
                 SectionHeader(stringResource(R.string.privacy_section_notification))

@@ -1633,6 +1633,19 @@
     <string name="warranty_confidence_format">Confidence: %1$d%%</string>
     <string name="warranty_action_confirm">Confirm</string>
     <string name="warranty_action_reject">Reject</string>
+    <!-- ai-fixes B1b: warranty review states, reject confirmation, filtered-empty states, bounded errors -->
+    <string name="warranty_badge_expired_unconfirmed">Expired - not confirmed</string>
+    <string name="warranty_expired_date">Expired on %1$s</string>
+    <string name="warranty_action_keep_expired">Keep in history</string>
+    <string name="warranty_expired_unconfirmed_count">%1$d expired without confirmation</string>
+    <string name="warranty_reject_confirm_title">Remove this warranty?</string>
+    <string name="warranty_reject_confirm_body">It will be deleted from your warranties. Your receipt is not affected.</string>
+    <string name="warranty_reject_confirm_action">Remove</string>
+    <string name="warranty_empty_filtered_title">Nothing here</string>
+    <string name="warranty_empty_filtered_message">No warranties match this filter.</string>
+    <string name="warranty_empty_review_message">Nothing left to review.</string>
+    <string name="warranty_error_confirm_failed">Couldn\'t confirm this warranty. Please try again.</string>
+    <string name="warranty_error_not_found">This warranty no longer exists.</string>
     <string name="warranty_manual_add_title">Add Warranty Manually</string>
     <string name="warranty_manual_product_name">Product name</string>
     <string name="warranty_manual_merchant_name">Merchant</string>
@@ -1929,6 +1942,55 @@
     <string name="add_expense_account_name_label">Account/Person name</string>
     <string name="add_expense_account_placeholder">e.g., Savings account, John, Bank transfer</string>
     <string name="add_expense_error_format">❌ %1$s</string>
+    <!-- nl-quick-add slice A: bounded save/validation messages (never carry exception or repository text) -->
+    <string name="add_expense_error_save_failed">Couldn\'t save the expense. Please try again.</string>
+    <string name="add_expense_error_currency_loading">Loading currency settings…</string>
+    <string name="add_expense_error_merchant_required">Merchant name is required</string>
+    <string name="add_expense_error_amount_invalid">Enter a valid amount</string>
+    <string name="add_expense_error_amount_too_large">Amount is too large</string>
+    <string name="add_expense_error_date_future">Date cannot be in the future</string>
+    <!-- nl-quick-add slice F: quick add line, summary, per-field flags (never echo the typed line) -->
+    <string name="quick_add_label">Quick add</string>
+    <string name="quick_add_placeholder">e.g. coffee 3.50 yesterday</string>
+    <string name="quick_add_helper">English or Greek (Greeklish too). Your line is not saved.</string>
+    <string name="quick_add_counter">%1$d / %2$d</string>
+    <string name="quick_add_fill_button">Fill</string>
+    <string name="quick_add_fill_cd">Fill the form from the quick add line</string>
+    <string name="quick_add_fill_disabled_blank">Type a line first</string>
+    <string name="quick_add_fill_disabled_loading">Loading currency settings</string>
+    <string name="quick_add_summary_filled">Filled: %1$s.</string>
+    <string name="quick_add_summary_review">Needs your check: %1$s.</string>
+    <string name="quick_add_summary_check_save">Check the details, then Save.</string>
+    <string name="quick_add_summary_kept_edits">Fields you edited were kept.</string>
+    <string name="quick_add_summary_none">Nothing recognised. Try an amount and a place, like \"coffee 3.50 yesterday\".</string>
+    <string name="quick_add_summary_nothing_new">Nothing new was filled.</string>
+    <string name="quick_add_field_amount">amount</string>
+    <string name="quick_add_field_merchant">merchant</string>
+    <string name="quick_add_field_date">date</string>
+    <string name="quick_add_field_category">category</string>
+    <string name="quick_add_field_payment">payment method</string>
+    <string name="quick_add_filled_marker">Filled</string>
+    <string name="quick_add_category_exact_fmt">%1$s · matched from your line</string>
+    <string name="quick_add_category_learned_fmt">%1$s · from your history</string>
+    <string name="quick_add_category_remove">Remove</string>
+    <string name="quick_add_category_remove_cd">Remove category %1$s</string>
+    <string name="quick_add_hint_foreign">Foreign currency isn\'t supported here yet. This expense will be saved in %1$s.</string>
+    <string name="quick_add_hint_time_ignored">Time of day was ignored.</string>
+    <string name="quick_add_hint_too_long">The line is too long (max %1$d characters).</string>
+    <string name="quick_add_flag_amount_foreign">Enter the amount in %1$s.</string>
+    <string name="quick_add_flag_amount_quantity">Quantity detected. Enter the total amount.</string>
+    <string name="quick_add_flag_amount_multiple">More than one number found. Enter the amount.</string>
+    <string name="quick_add_flag_amount_separator">Amount unclear: check the decimal and thousands separators.</string>
+    <string name="quick_add_flag_amount_unclear">Amount unclear. Enter it yourself.</string>
+    <string name="quick_add_flag_amount_not_positive">Amount must be above zero.</string>
+    <string name="quick_add_flag_amount_over_limit">Amount is too large.</string>
+    <string name="quick_add_flag_date_future">Future dates aren\'t allowed. Left as today.</string>
+    <string name="quick_add_flag_date_ambiguous">Date unclear (several dates, or the weekday is today). Left as today.</string>
+    <string name="quick_add_flag_date_unsupported">That date form isn\'t supported yet. Left as today.</string>
+    <string name="quick_add_flag_date_invalid">Not a valid date. Left as today.</string>
+    <string name="quick_add_flag_payment_conflict">Both card and cash found. Choose one.</string>
+    <string name="quick_add_flag_category_ambiguous">More than one category matched. Choose one.</string>
+    <string name="add_expense_category_auto_hint">No category chosen. One is assigned automatically when you save.</string>
     <string name="add_expense_amount_cd">Amount field, current value %1$s Euro</string>
     <string name="add_expense_payment_method_cd_format">%1$s payment method, %2$s</string>
     <string name="add_expense_category_cd_format">%1$s category, %2$s</string>
@@ -1977,6 +2039,7 @@
     <string name="ai_section_general_desc">Control whether AI is active at all and which providers may be used.</string>
     <string name="ai_toggle_enable">Enable AI</string>
     <string name="ai_toggle_cloud">Allow cloud AI</string>
+    <string name="ai_cloud_briefing_disclosure">While Enable AI, Dashboard briefing and Allow cloud AI are all on, the daily briefing is generated in the background using cloud AI.</string>
     <string name="ai_toggle_on_device">Allow on-device AI</string>
     <string name="ai_section_preferred_mode">Preferred Mode</string>
     <string name="ai_section_preferred_mode_desc">Choose how the app should prefer local and cloud AI when both are available.</string>
@@ -2014,6 +2077,13 @@
     <string name="ai_capability_semantic_dedupe">Semantic duplicate detection</string>
     <string name="ai_capability_receipt_item_cat">Receipt item categorization</string>
     <string name="ai_capability_receipt_item_categorization">Receipt item categorization</string>
+    <string name="ai_capability_transaction_insight">Transaction insight</string>
+    <!-- B2e insight row (UX 2.1/2.2). ai_insight_label carries the on-device qualifier; the shorter ai_capability_transaction_insight stays for the runtime status list. -->
+    <string name="ai_insight_label">Transaction insight (on-device)</string>
+    <string name="ai_insight_desc">Adds one on-device sentence to a new recommendation when you add an expense while the app is open. Never uses the cloud.</string>
+    <string name="ai_insight_needs_ai">Turn on AI above to use this.</string>
+    <string name="ai_insight_needs_on_device">Turn on on-device AI above to use this.</string>
+    <string name="ai_warranty_local_note">Warranty periods are read on your device from receipt text. No AI or cloud is used for warranties.</string>
     <string name="assistant_cancel_query">Cancel</string>
     <string name="assistant_clear_history_title">Clear all history?</string>
     <string name="assistant_clear_history_message">This will permanently delete all conversation history. This cannot be undone.</string>
@@ -2026,7 +2096,9 @@
     <string name="ai_toggle_store_history">Store conversation history</string>
     <string name="ai_section_experimental">Phase 4A Experimental</string>
     <string name="ai_section_experimental_desc">Turn on the first guarded automation features. These stay opt-in and keep final confirmation or read-only behavior.</string>
-    <string name="ai_toggle_proactive">Proactive AI briefings</string>
+    <string name="ai_toggle_proactive">Notify me when my daily briefing is ready</string>
+    <string name="ai_proactive_desc">Turning this off does not hide your briefing. It still appears on Home. This only controls the notification. While Enable AI, Dashboard briefing and Allow cloud AI are all on, the daily briefing is generated in the background using cloud AI, whether or not this is on.</string>
+    <string name="ai_proactive_notifications_blocked">Notifications are blocked for this app in system settings, so no alert will be shown. Your briefing still appears on Home.</string>
     <string name="ai_toggle_quick_save">Receipt quick save</string>
     <string name="ai_toggle_quick_approve">Review quick approve</string>
     <string name="ai_experimental_desc">Receipt quick save and review quick approve stay behind confirmation and still use the existing validation and approval paths.</string>
@@ -2053,7 +2125,35 @@
     <string name="ai_toggle_enabled">enabled</string>
     <string name="ai_toggle_disabled">disabled</string>
     <string name="ai_capability_cd_format">%1$s, %2$s, Status: %3$s</string>
-    
+    <!-- ai-fixes Part A (INV-2): bounded, localized AI settings messages. No key takes an exception argument. -->
+    <string name="ai_cloud_blocked_format">Cloud AI blocked: %1$s</string>
+    <string name="ai_cloud_active">Cloud AI is active</string>
+    <string name="ai_blocked_ai_off">AI is turned off</string>
+    <string name="ai_blocked_cloud_off">Cloud AI is turned off in settings</string>
+    <string name="ai_blocked_no_key">No API key configured</string>
+    <string name="ai_blocked_no_network">No network connection</string>
+    <string name="ai_blocked_wifi_only">Wi-Fi required (Wi-Fi-only mode)</string>
+    <string name="ai_blocked_privacy">Blocked by Privacy Settings</string>
+    <string name="ai_error_settings_save_failed">Settings couldn\'t be saved. Please try again.</string>
+    <string name="ai_key_too_short">API key looks too short</string>
+    <string name="ai_key_format_invalid">API key format looks invalid for Gemini</string>
+    <string name="ai_key_enter_valid_before_save">Enter a valid API key before saving.</string>
+    <string name="ai_key_enter_new_or_remove">Enter a new key or use Remove Key to delete the stored key.</string>
+    <string name="ai_key_test_before_save">Run a successful connection test before saving this API key.</string>
+    <string name="ai_key_saved">API key saved securely.</string>
+    <string name="ai_key_removed">API key removed.</string>
+    <string name="ai_key_required_cloud">API key is required for cloud provider.</string>
+    <string name="ai_key_enter_before_test">Enter an API key before testing connection.</string>
+    <string name="ai_key_enter_valid_before_test">Enter a valid API key before testing connection.</string>
+    <string name="ai_key_enable_ai_first">Enable AI first, then run connection test again.</string>
+    <string name="ai_key_enable_cloud_to_test">Enable cloud AI to test provider connectivity.</string>
+    <string name="ai_test_no_network">No network connection. Check internet and retry.</string>
+    <string name="ai_test_wifi_only">Cloud AI is limited to Wi-Fi by settings.</string>
+    <string name="ai_test_status_unavailable">Couldn\'t load runtime status. Please retry.</string>
+    <string name="ai_test_cloud_unavailable">Cloud AI is currently unavailable.</string>
+    <string name="ai_test_passed">Connection test passed. Cloud provider is configured and reachable.</string>
+    <string name="ai_test_failed">Connection test failed. Please retry.</string>
+
     <!-- Analytics Screen -->
     <string name="analytics_insufficient_data">Insufficient data for visualization</string>
     <string name="analytics_insufficient_data_short">Insufficient data</string>
@@ -2403,6 +2503,20 @@
     <!-- Assistant Result Card -->
     <string name="assistant_transactions_found_format">Found %1$d matching transactions.</string>
     <string name="assistant_unsupported">Unsupported</string>
+    <!-- Assistant unsupported reasons (one per AssistantUnsupportedReason code; never echo user text) -->
+    <string name="assistant_unsupported_interpretation_disabled">The assistant is turned off in AI settings.</string>
+    <string name="assistant_unsupported_interpretation_failed">Something went wrong while reading your question. Please try again.</string>
+    <string name="assistant_unsupported_provider_unavailable">The assistant is not available right now. Please try again later.</string>
+    <string name="assistant_unsupported_response_invalid">I could not understand the assistant response. Try rephrasing your question.</string>
+    <string name="assistant_unsupported_model_declined">That kind of question is not supported yet.</string>
+    <string name="assistant_unsupported_metric_not_supported">This query type is not supported yet.</string>
+    <string name="assistant_unsupported_no_matching_transactions">No matching transactions found.</string>
+    <!-- Assistant structured clarification options (labels for typed choices; also the transcript USER turn) -->
+    <string name="assistant_clarification_period_this_month">This month</string>
+    <string name="assistant_clarification_period_this_week">This week</string>
+    <string name="assistant_clarification_period_last_month">Last month</string>
+    <string name="assistant_clarification_presentation_breakdown">Breakdown</string>
+    <string name="assistant_clarification_presentation_transaction_list">Transaction list</string>
     <string name="assistant_open_transactions">Open Transactions</string>
     
     <!-- Domain: Lifestyle Inflation -->
@@ -2463,6 +2577,7 @@
     <string name="domain_ai_top_categories">Top categories</string>
     <string name="domain_ai_top_merchants">Top merchants</string>
     <string name="domain_ai_largest_purchase">Largest purchase</string>
+    <string name="domain_ai_smallest_purchase">Smallest purchase</string>
     <string name="domain_ai_total_spending">Total spending</string>
     <string name="domain_ai_transaction_count">Transaction count</string>
     <string name="domain_ai_average_spending">Average spending</string>
@@ -2631,6 +2746,7 @@
     <string name="unsupported_db_close_button">Close app</string>
     <string name="unsupported_db_export_success">The database file was exported.</string>
     <string name="unsupported_db_export_failed">The database file could not be exported. Try a different location.</string>
+    <string name="unsupported_db_export_auth_denied">Exporting needs your fingerprint or screen lock. Nothing was exported.</string>
     <string name="backup_schema_too_old">This backup is from an app version that is too old to restore.</string>
     <string name="backup_schema_too_new">This backup was made by a newer app version. Update the app to restore it.</string>
 

@@ -133,4 +133,114 @@ class GetAiRuntimeStatusUseCaseTest {
             result.capabilities.first().onDeviceMessage
         )
     }
+
+    @Test
+    fun `runtime label for TRANSACTION_INSIGHT is transaction insight given a mocked router fallback decision`() = runTest {
+        every { aiSettingsRepository.settings() } returns flowOf(AiSettings(aiEnabled = true, allowCloudAi = true))
+        coEvery { aiEnvironmentMonitor.getOnDeviceModelStatus(AiCapability.TRANSACTION_INSIGHT) } returns OnDeviceModelStatus.NOT_INSTALLED
+        coEvery { aiCapabilityRouter.decide(AiCapability.TRANSACTION_INSIGHT, any(), any()) } returns AiRouteDecision(
+            AiRoute.DETERMINISTIC_FALLBACK,
+            "On-device model is not installed on this device."
+        )
+        every { aiEnvironmentMonitor.isNetworkAvailable() } returns true
+        every { aiEnvironmentMonitor.isWifiConnected() } returns true
+        every { timeProvider.now() } returns 2222L
+
+        val result = useCase(listOf(AiCapability.TRANSACTION_INSIGHT))
+
+        val row = result.capabilities.single()
+        assertEquals(AiCapability.TRANSACTION_INSIGHT, row.capability)
+        assertEquals(AiRoute.DETERMINISTIC_FALLBACK, row.route)
+        assertNull(row.providerName)
+        assertEquals("Install required", row.actionLabel)
+        assertEquals(
+            "On-device transaction insight is available but the model is not installed yet.",
+            row.onDeviceMessage
+        )
+    }
+
+    @Test
+    fun `B2e TRANSACTION_INSIGHT fallback shows on-device status text and never the cloud-mentioning route reason`() = runTest {
+        val cloudMentioningReason = "Cloud AI is disabled in settings. On-device AI is disabled by settings or policy for this capability."
+        every { aiSettingsRepository.settings() } returns flowOf(AiSettings(aiEnabled = true, allowOnDeviceAi = true))
+        coEvery { aiEnvironmentMonitor.getOnDeviceModelStatus(AiCapability.TRANSACTION_INSIGHT) } returns OnDeviceModelStatus.NOT_INSTALLED
+        coEvery { aiCapabilityRouter.decide(AiCapability.TRANSACTION_INSIGHT, any(), any()) } returns AiRouteDecision(
+            AiRoute.DETERMINISTIC_FALLBACK,
+            cloudMentioningReason
+        )
+        every { aiEnvironmentMonitor.isNetworkAvailable() } returns true
+        every { aiEnvironmentMonitor.isWifiConnected() } returns true
+        every { timeProvider.now() } returns 3333L
+
+        val row = useCase(listOf(AiCapability.TRANSACTION_INSIGHT)).capabilities.single()
+
+        assertEquals(
+            "On-device transaction insight is available but the model is not installed yet.",
+            row.message
+        )
+    }
+
+    @Test
+    fun `B2e disabled TRANSACTION_INSIGHT with every other capability ready yields a null summary message`() = runTest {
+        every { aiSettingsRepository.settings() } returns flowOf(
+            AiSettings(aiEnabled = true, allowOnDeviceAi = true, transactionInsightEnabled = false)
+        )
+        coEvery { aiEnvironmentMonitor.getOnDeviceModelStatus(any()) } returns OnDeviceModelStatus.AVAILABLE
+        coEvery { aiCapabilityRouter.decide(AiCapability.TRANSACTION_INSIGHT, any(), any()) } returns AiRouteDecision(
+            AiRoute.DISABLED,
+            "Transaction insight is turned off in settings."
+        )
+        coEvery { aiCapabilityRouter.decide(AiCapability.DASHBOARD_BRIEFING, any(), any()) } returns AiRouteDecision(
+            AiRoute.ON_DEVICE,
+            "AUTO mode selected the capability's on-device-first route.",
+            "mlkit-genai-nano",
+            "gemini-nano"
+        )
+        every { aiEnvironmentMonitor.isNetworkAvailable() } returns true
+        every { aiEnvironmentMonitor.isWifiConnected() } returns true
+        every { timeProvider.now() } returns 6666L
+
+        val result = useCase(listOf(AiCapability.TRANSACTION_INSIGHT, AiCapability.DASHBOARD_BRIEFING))
+
+        assertNull(result.highestPriorityMessage)
+        assertEquals(
+            "Transaction insight is turned off in settings.",
+            result.capabilities.first { it.capability == AiCapability.TRANSACTION_INSIGHT }.message
+        )
+    }
+
+    @Test
+    fun `B2e TRANSACTION_INSIGHT fallback with an available model uses the on-device-off message not the route reason`() = runTest {
+        val cloudMentioningReason = "Cloud AI is disabled in settings. On-device AI is disabled by settings or policy for this capability."
+        every { aiSettingsRepository.settings() } returns flowOf(AiSettings(aiEnabled = true, allowOnDeviceAi = false))
+        coEvery { aiEnvironmentMonitor.getOnDeviceModelStatus(AiCapability.TRANSACTION_INSIGHT) } returns OnDeviceModelStatus.AVAILABLE
+        coEvery { aiCapabilityRouter.decide(AiCapability.TRANSACTION_INSIGHT, any(), any()) } returns AiRouteDecision(
+            AiRoute.DETERMINISTIC_FALLBACK,
+            cloudMentioningReason
+        )
+        every { aiEnvironmentMonitor.isNetworkAvailable() } returns true
+        every { aiEnvironmentMonitor.isWifiConnected() } returns true
+        every { timeProvider.now() } returns 4444L
+
+        val row = useCase(listOf(AiCapability.TRANSACTION_INSIGHT)).capabilities.single()
+
+        assertEquals("On-device AI is turned off in settings.", row.message)
+    }
+
+    @Test
+    fun `B2e other capabilities keep the router route reason for DETERMINISTIC_FALLBACK`() = runTest {
+        every { aiSettingsRepository.settings() } returns flowOf(AiSettings(aiEnabled = true, allowOnDeviceAi = true))
+        coEvery { aiEnvironmentMonitor.getOnDeviceModelStatus(AiCapability.DASHBOARD_BRIEFING) } returns OnDeviceModelStatus.NOT_INSTALLED
+        coEvery { aiCapabilityRouter.decide(AiCapability.DASHBOARD_BRIEFING, any(), any()) } returns AiRouteDecision(
+            AiRoute.DETERMINISTIC_FALLBACK,
+            "Cloud AI is disabled in settings. On-device model is not installed on this device."
+        )
+        every { aiEnvironmentMonitor.isNetworkAvailable() } returns true
+        every { aiEnvironmentMonitor.isWifiConnected() } returns true
+        every { timeProvider.now() } returns 5555L
+
+        val row = useCase(listOf(AiCapability.DASHBOARD_BRIEFING)).capabilities.single()
+
+        assertEquals("Cloud AI is disabled in settings. On-device model is not installed on this device.", row.message)
+    }
 }

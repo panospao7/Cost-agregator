@@ -405,7 +405,14 @@ class SourceScanningArchitectureGuardTest {
 
         // PR12K-3: ReceiptMatchingWorker treats notifications as optional side effects.
         // It must NOT require global permission, but MUST locally check before posting.
-        val optionalNotificationWorkers = setOf("ReceiptMatchingWorker.kt")
+        // ai-fixes B3a (INV-24, INV-29): DailyBriefingWorker and WarrantyExpirationWorker
+        // follow the same pattern so generation and expiry reconciliation never depend on
+        // notification permission; only posting is gated locally.
+        val optionalNotificationWorkers = setOf(
+            "ReceiptMatchingWorker.kt",
+            "DailyBriefingWorker.kt",
+            "WarrantyExpirationWorker.kt"
+        )
 
         val requiredViolations = notificationWorkers.filter { file ->
             if (file.name in optionalNotificationWorkers) return@filter false
@@ -577,14 +584,6 @@ class SourceScanningArchitectureGuardTest {
                 reason = "Legacy worker — CancellationException rethrow to be added",
                 issue = "PR12K-6",
                 expires = LocalDate.of(2026, 9, 30)
-            ),
-            ArchitectureAllowlistEntry(
-                fileName = "WarrantyExpirationWorker.kt",
-                rule = "BROAD_CATCH_NO_CANCELLATION_RETHROW",
-                owner = "WorkerArchitecture",
-                reason = "Legacy worker — CancellationException rethrow to be added",
-                issue = "PR12K-6",
-                expires = LocalDate.of(2026, 9, 30)
             )
         )
 
@@ -681,6 +680,609 @@ class SourceScanningArchitectureGuardTest {
         assertTrue(
             "Expired allowlist entry must be detected: ${expiredEntry.fileName}",
             expiredEntry.expires.isBefore(today)
+        )
+    }
+
+    // ── ai-fixes B1a guard (a): cloud warranty extraction has no production caller ────
+    // INV-5 / AE-22 / G2-4. `CloudWarrantyExtractionService` is retained but unreachable: in
+    // app/src/main it may be referenced only from di/AiModule.kt (the Hilt provider). Its own
+    // file and WarrantyExtractionModels.kt are exempt. Reintroducing a caller needs a new reviewed
+    // increment (A6), not an allowlist edit here.
+
+    private val cloudWarrantyServiceToken = "CloudWarrantyExtractionService"
+
+    /** Source-root-relative paths (forward slashes) that may mention the service token. */
+    private val cloudWarrantyServiceAllowedFiles = setOf(
+        "com/yourname/expensetracker/di/AiModule.kt",
+        // Exempt: the service's own file and its model types.
+        "com/yourname/expensetracker/data/ai/provider/CloudWarrantyExtractionService.kt",
+        "com/yourname/expensetracker/domain/ai/model/WarrantyExtractionModels.kt"
+    )
+
+    /**
+     * Pure scan used by the production test and its negative fixture: returns the relative paths
+     * (outside [allowed]) whose comment-stripped text mentions the service token.
+     */
+    private fun cloudWarrantyServiceReferences(
+        sources: Map<String, String>,
+        allowed: Set<String>
+    ): List<String> = sources
+        .filter { (path, _) -> path !in allowed }
+        .filter { (_, text) -> stripComments(text).contains(cloudWarrantyServiceToken) }
+        .keys
+        .sorted()
+
+    private fun relativeSources(): Map<String, String> = kotlinFiles().associate { file ->
+        file.relativeTo(sourceRoot).path.replace('\\', '/') to file.readText()
+    }
+
+    @Test
+    fun `negative_fixture_cloud_warranty_service_reference_outside_di_is_caught`() {
+        val sources = mapOf(
+            "com/yourname/expensetracker/di/AiModule.kt" to
+                "fun provide(): CloudWarrantyExtractionService = CloudWarrantyExtractionService()",
+            "com/yourname/expensetracker/data/repository/BadRepository.kt" to
+                "class BadRepository @Inject constructor(private val svc: CloudWarrantyExtractionService)",
+            "com/yourname/expensetracker/data/repository/OkRepository.kt" to
+                "// CloudWarrantyExtractionService is not used here\nclass OkRepository"
+        )
+        val violations = cloudWarrantyServiceReferences(sources, cloudWarrantyServiceAllowedFiles)
+        assertEquals(
+            "Scanner must flag only the non-DI, non-exempt reference (comments are stripped)",
+            listOf("com/yourname/expensetracker/data/repository/BadRepository.kt"),
+            violations
+        )
+    }
+
+    @Test
+    fun `cloud_warranty_extraction_service_is_referenced_in_production_only_from_AiModule`() {
+        val sources = relativeSources()
+        // Fail closed: the scan must actually see the files it relies on.
+        assertTrue("Source scan found too few files (${sources.size}); source root may be wrong", sources.size > 100)
+        for (required in cloudWarrantyServiceAllowedFiles) {
+            assertTrue("Expected production file not found by the scan: $required", required in sources)
+        }
+        assertTrue(
+            "di/AiModule.kt must still provide CloudWarrantyExtractionService (retained, unreachable)",
+            stripComments(sources.getValue("com/yourname/expensetracker/di/AiModule.kt")).contains(cloudWarrantyServiceToken)
+        )
+
+        val violations = cloudWarrantyServiceReferences(sources, cloudWarrantyServiceAllowedFiles)
+        assertTrue(
+            "CloudWarrantyExtractionService may be referenced in app/src/main only from di/AiModule.kt " +
+                "(INV-5, AE-22). Offending files: $violations",
+            violations.isEmpty()
+        )
+    }
+
+    @Test
+    fun `warranty_tracker_repository_has_no_cloud_or_ai_extraction_references`() {
+        val sources = relativeSources()
+        val repoPath = "com/yourname/expensetracker/data/repository/WarrantyTrackerRepository.kt"
+        assertTrue("WarrantyTrackerRepository.kt not found by the scan", repoPath in sources)
+        val text = stripComments(sources.getValue(repoPath))
+        val forbidden = listOf(
+            cloudWarrantyServiceToken,
+            "AiCapabilityRouter",
+            "WarrantyExtractionResult",
+            "AUTO_ACCEPT_CLOUD_CONFIDENCE"
+        )
+        val present = forbidden.filter { text.contains(it) }
+        assertTrue(
+            "WarrantyTrackerRepository must not reference cloud/AI warranty extraction (INV-5, AE-22): $present",
+            present.isEmpty()
+        )
+    }
+
+    // ── ai-fixes B1b guard (c): the warranty ViewModel never builds review/status transitions ────
+    // INV-13 / FG-12. The only legal user-driven exits from review are
+    // WarrantyTrackerRepository.confirmWarranty(id) and rejectAutoDetectedWarranty. The ViewModel
+    // must not call updateWarranty(...) (its only former use was the confirm copy; S0 D-4) and must
+    // not build a copy(...) that sets `status =` or `needsReview =`. Fail-closed: a missing file or
+    // an unbalanced copy( call is reported as a violation.
+
+    private val warrantyViewModelPath =
+        "com/yourname/expensetracker/ui/screens/warranty/WarrantyTrackerViewModel.kt"
+
+    private val reviewFieldAssignment = Regex("""\b(status|needsReview)\s*=(?!=)""")
+    private val copyCall = Regex("""\bcopy\s*\(""")
+
+    /** Pure scan: returns bounded violation codes for a ViewModel source text. */
+    private fun warrantyViewModelReviewViolations(source: String): List<String> {
+        val text = stripComments(source)
+        val violations = mutableListOf<String>()
+        if (text.contains("updateWarranty(")) violations += "UPDATE_WARRANTY_CALL"
+
+        for (match in copyCall.findAll(text)) {
+            var depth = 1
+            var index = match.range.last + 1
+            val start = index
+            while (index < text.length && depth > 0) {
+                when (text[index]) {
+                    '(' -> depth++
+                    ')' -> depth--
+                }
+                index++
+            }
+            if (depth != 0) {
+                violations += "UNBALANCED_COPY_CALL"
+                continue
+            }
+            val args = text.substring(start, index - 1)
+            if (reviewFieldAssignment.containsMatchIn(args)) violations += "COPY_SETS_STATUS_OR_NEEDS_REVIEW"
+        }
+        return violations
+    }
+
+    @Test
+    fun `negative_fixture_warranty_view_model_review_transition_is_caught`() {
+        assertEquals(
+            listOf("UPDATE_WARRANTY_CALL"),
+            warrantyViewModelReviewViolations("repo.updateWarranty(w)")
+        )
+        assertEquals(
+            listOf("COPY_SETS_STATUS_OR_NEEDS_REVIEW"),
+            warrantyViewModelReviewViolations("val u = w.copy(status = WarrantyStatus.ACTIVE, updatedAt = 1L)")
+        )
+        assertEquals(
+            listOf("COPY_SETS_STATUS_OR_NEEDS_REVIEW"),
+            warrantyViewModelReviewViolations("val u = w.copy(\n    needsReview = false\n)")
+        )
+        assertEquals(
+            "implicit-receiver copy must also be scanned",
+            listOf("COPY_SETS_STATUS_OR_NEEDS_REVIEW"),
+            warrantyViewModelReviewViolations("fun S.f() = copy(needsReview = false)")
+        )
+        assertEquals(
+            "fail-closed on an unbalanced copy call",
+            listOf("UNBALANCED_COPY_CALL"),
+            warrantyViewModelReviewViolations("val u = w.copy(status = X")
+                .filter { it == "UNBALANCED_COPY_CALL" }
+        )
+        assertTrue(
+            "comments and unrelated copy arguments must not be flagged",
+            warrantyViewModelReviewViolations(
+                "// repo.updateWarranty(w) and w.copy(status = X)\n" +
+                    "val s = state.copy(selectedFilter = status, showNeedsReviewOnly = true, needsReviewCount = 2)"
+            ).isEmpty()
+        )
+    }
+
+    @Test
+    fun `warranty_view_model_never_builds_status_or_needs_review_transitions`() {
+        val sources = relativeSources()
+        assertTrue("Source scan found too few files (${sources.size}); source root may be wrong", sources.size > 100)
+        assertTrue("WarrantyTrackerViewModel.kt not found by the scan", warrantyViewModelPath in sources)
+
+        val violations = warrantyViewModelReviewViolations(sources.getValue(warrantyViewModelPath))
+        assertTrue(
+            "WarrantyTrackerViewModel must delegate review transitions to WarrantyTrackerRepository " +
+                "(confirmWarranty / rejectAutoDetectedWarranty): no updateWarranty( and no copy( setting " +
+                "status/needsReview (INV-13, FG-12). Violations: $violations",
+            violations.isEmpty()
+        )
+    }
+
+    // ── ai-fixes Part C guard (Ca): redaction policy is resolved only in the input builder ────
+    // AE-C30. AssistantViewModel must not decide redaction (`redactBeforeCloud`); the
+    // FinancialQueryInterpretationInputBuilder must not read privacy settings, call any `.shouldRedact(`
+    // or read `settings.redactBeforeCloud` (its only legitimate source is the effective-policy resolver).
+    // Fail-closed: a missing file is reported as a violation.
+
+    private val partCAssistantViewModelPath =
+        "com/yourname/expensetracker/ui/screens/assistant/AssistantViewModel.kt"
+    private val partCInputBuilderPath =
+        "com/yourname/expensetracker/domain/ai/usecase/FinancialQueryInterpretationInputBuilder.kt"
+
+    private val partCViewModelForbidden = listOf("redactBeforeCloud")
+    private val partCBuilderForbidden = listOf(
+        "privacySettingsRepository",
+        "PrivacySettingsRepository",
+        "aiPolicy.shouldRedact",
+        ".shouldRedact(",
+        "settings.redactBeforeCloud"
+    )
+
+    /** Pure scan: returns the forbidden tokens present in the comment-stripped source. */
+    private fun forbiddenTokensPresent(source: String, forbidden: List<String>): List<String> {
+        val text = stripComments(source)
+        return forbidden.filter { text.contains(it) }
+    }
+
+    @Test
+    fun `Part C (Ca) negative_fixture_forbidden_redaction_tokens_are_caught`() {
+        assertEquals(
+            listOf("redactBeforeCloud"),
+            forbiddenTokensPresent("val r = policy.redactBeforeCloud", partCViewModelForbidden)
+        )
+        assertEquals(
+            listOf("privacySettingsRepository", "aiPolicy.shouldRedact"),
+            forbiddenTokensPresent(
+                "class B(private val privacySettingsRepository: X) { fun f() = aiPolicy.shouldRedact }",
+                partCBuilderForbidden
+            )
+        )
+        assertEquals(
+            listOf("PrivacySettingsRepository"),
+            forbiddenTokensPresent("class B(r: PrivacySettingsRepository)", partCBuilderForbidden)
+        )
+        assertEquals(
+            listOf(".shouldRedact("),
+            forbiddenTokensPresent("val r = policy.shouldRedact(settings)", partCBuilderForbidden)
+        )
+        assertEquals(
+            listOf("aiPolicy.shouldRedact", ".shouldRedact("),
+            forbiddenTokensPresent("val r = aiPolicy.shouldRedact(settings)", partCBuilderForbidden)
+        )
+        assertEquals(
+            listOf("settings.redactBeforeCloud"),
+            forbiddenTokensPresent("val r = settings.redactBeforeCloud", partCBuilderForbidden)
+        )
+        assertTrue(
+            "the builder's legitimate resolver read and local shouldRedact flag must not be flagged",
+            forbiddenTokensPresent(
+                "val shouldRedact = a && effectiveCloudAiPolicyResolver.resolve().redactBeforeCloud\n" +
+                    "private fun f(value: String, shouldRedact: Boolean) = g(value, shouldRedact = true)",
+                partCBuilderForbidden
+            ).isEmpty()
+        )
+        assertTrue(
+            "comments must not be flagged",
+            forbiddenTokensPresent(
+                "// redactBeforeCloud privacySettingsRepository aiPolicy.shouldRedact " +
+                    "x.shouldRedact( settings.redactBeforeCloud\nclass Ok",
+                partCViewModelForbidden + partCBuilderForbidden
+            ).isEmpty()
+        )
+    }
+
+    @Test
+    fun `Part C (Ca) assistant_view_model_and_input_builder_do_not_resolve_redaction_policy_themselves`() {
+        val sources = relativeSources()
+        assertTrue("Source scan found too few files (${sources.size}); source root may be wrong", sources.size > 100)
+        assertTrue("AssistantViewModel.kt not found by the scan", partCAssistantViewModelPath in sources)
+        assertTrue(
+            "FinancialQueryInterpretationInputBuilder.kt not found by the scan",
+            partCInputBuilderPath in sources
+        )
+
+        val viewModelViolations =
+            forbiddenTokensPresent(sources.getValue(partCAssistantViewModelPath), partCViewModelForbidden)
+        assertTrue(
+            "AssistantViewModel must not reference redactBeforeCloud (AE-C30): $viewModelViolations",
+            viewModelViolations.isEmpty()
+        )
+
+        val builderViolations =
+            forbiddenTokensPresent(sources.getValue(partCInputBuilderPath), partCBuilderForbidden)
+        assertTrue(
+            "FinancialQueryInterpretationInputBuilder must not read privacy settings, call .shouldRedact( " +
+                "or read settings.redactBeforeCloud (AE-C30): $builderViolations",
+            builderViolations.isEmpty()
+        )
+    }
+
+    // ── ai-fixes Part C guard (Cb): single construction site for the interpretation input ────
+    // PC-9 item 2 / spec §8 guard (b). Within app/src/main/java the only file that constructs
+    // FinancialQueryInterpretationInput (directly, via `::FinancialQueryInterpretationInput`, or by
+    // `.copy(priorUserQueries = ...)` / a named `priorUserQueries =` argument) is
+    // FinancialQueryInterpretationInputBuilder.kt. The data class declaration in
+    // FinancialQueryModels.kt (`priorUserQueries: List<String> = ...`) is exempt.
+
+    private val interpretationInputConstructorCall =
+        Regex("""(?<!data class )\bFinancialQueryInterpretationInput\(""")
+
+    /** Constructor reference form, e.g. `.map(::FinancialQueryInterpretationInput)`. */
+    private val interpretationInputConstructorReference =
+        Regex("""::FinancialQueryInterpretationInput\b""")
+
+    /**
+     * Assigns `priorUserQueries` (copy(...) or named ctor arg). The declaration form
+     * `priorUserQueries: List<String> = ...` has a `:` before the `=`, and `==` comparisons are excluded.
+     */
+    private val priorUserQueriesAssignment = Regex("""\bpriorUserQueries\s*=(?!=)""")
+
+    /** Pure scan: returns relative paths whose comment-stripped text constructs the input type. */
+    private fun interpretationInputConstructionSites(sources: Map<String, String>): List<String> = sources
+        .filter { (_, text) -> interpretationInputConstructorCall.containsMatchIn(stripComments(text)) }
+        .keys
+        .sorted()
+
+    /**
+     * Pure scan: returns relative paths, other than the builder, that reference the input constructor
+     * or assign `priorUserQueries` (bypassing the builder's USER-only/redaction handling).
+     */
+    private fun interpretationInputBypassSites(sources: Map<String, String>): List<String> = sources
+        .filter { (path, _) -> path != partCInputBuilderPath }
+        .filter { (_, text) ->
+            val stripped = stripComments(text)
+            interpretationInputConstructorReference.containsMatchIn(stripped) ||
+                priorUserQueriesAssignment.containsMatchIn(stripped)
+        }
+        .keys
+        .sorted()
+
+    @Test
+    fun `Part C (Cb) negative_fixture_extra_interpretation_input_construction_site_is_caught`() {
+        val sources = mapOf(
+            partCInputBuilderPath to "return FinancialQueryInterpretationInput(rawQuery = q)",
+            "com/yourname/expensetracker/domain/ai/model/FinancialQueryModels.kt" to
+                "data class FinancialQueryInterpretationInput(val rawQuery: String)",
+            "com/yourname/expensetracker/ui/screens/assistant/BadViewModel.kt" to
+                "val i = FinancialQueryInterpretationInput(rawQuery = q)",
+            "com/yourname/expensetracker/ui/screens/assistant/OkViewModel.kt" to
+                "// FinancialQueryInterpretationInput(rawQuery = q)\nclass OkViewModel"
+        )
+        assertEquals(
+            "Scanner must flag the builder and the planted caller, but not the declaration or comments",
+            listOf(
+                partCInputBuilderPath,
+                "com/yourname/expensetracker/ui/screens/assistant/BadViewModel.kt"
+            ).sorted(),
+            interpretationInputConstructionSites(sources)
+        )
+    }
+
+    @Test
+    fun `Part C (Cb) financial_query_interpretation_input_is_constructed_only_by_the_input_builder`() {
+        val sources = relativeSources()
+        assertTrue("Source scan found too few files (${sources.size}); source root may be wrong", sources.size > 100)
+
+        val sites = interpretationInputConstructionSites(sources)
+        assertTrue(
+            "Fail closed: FinancialQueryInterpretationInputBuilder.kt must construct the input (found: $sites)",
+            partCInputBuilderPath in sites
+        )
+        val offenders = sites.filter { it != partCInputBuilderPath }
+        assertTrue(
+            "FinancialQueryInterpretationInput may be constructed in app/src/main only by " +
+                "FinancialQueryInterpretationInputBuilder (PC-9 item 2 / spec §8 guard (b)). " +
+                "Offending files: $offenders",
+            offenders.isEmpty()
+        )
+
+        val bypassSites = interpretationInputBypassSites(sources)
+        assertTrue(
+            "No file other than FinancialQueryInterpretationInputBuilder may assign priorUserQueries " +
+                "(copy(priorUserQueries = ...) / named argument) or reference " +
+                "::FinancialQueryInterpretationInput (PC-9 item 2 / spec §8 guard (b)). " +
+                "Offending files: $bypassSites",
+            bypassSites.isEmpty()
+        )
+    }
+
+    @Test
+    fun `Part C (Cb) negative_fixture_prior_user_queries_assignment_and_constructor_reference_are_caught`() {
+        val modelsPath = "com/yourname/expensetracker/domain/ai/model/FinancialQueryModels.kt"
+        val copyPath = "com/yourname/expensetracker/data/ai/provider/BadCopyService.kt"
+        val namedArgPath = "com/yourname/expensetracker/ui/screens/assistant/BadNamedArg.kt"
+        val referencePath = "com/yourname/expensetracker/ui/screens/assistant/BadReference.kt"
+        val okLookupCopyPath = "com/yourname/expensetracker/data/ai/provider/OkLookupCopy.kt"
+        val okCommentPath = "com/yourname/expensetracker/ui/screens/assistant/OkComment.kt"
+        val okComparisonPath = "com/yourname/expensetracker/ui/screens/assistant/OkComparison.kt"
+        val sources = mapOf(
+            // The builder is the one allowed assigner.
+            partCInputBuilderPath to "return Input(priorUserQueries = userRows)",
+            // The declaration (`name: Type = default`) is exempt.
+            modelsPath to "data class FinancialQueryInterpretationInput(\n" +
+                "    val priorUserQueries: List<String> = emptyList()\n)",
+            copyPath to "fun f(i: Input) = i.copy(priorUserQueries = emptyList())",
+            namedArgPath to "fun g() = Other(rawQuery = q, priorUserQueries   =   assistantTexts)",
+            referencePath to "val make = ::FinancialQueryInterpretationInput",
+            // copy() that sets only lookup maps is the legitimate CloudQueryInterpretationService shape.
+            okLookupCopyPath to "fun f(i: Input) = i.copy(merchantLookupMap = m, categoryLookupMap = c)",
+            okCommentPath to "// copy(priorUserQueries = x) and ::FinancialQueryInterpretationInput\nclass Ok",
+            okComparisonPath to "fun same(a: Input, b: Input) = a.priorUserQueries == b.priorUserQueries"
+        )
+        assertEquals(
+            "Scanner must flag copy/named-arg/constructor-reference bypasses only; " +
+                "not the builder, the declaration, lookup-map copies, comments or == comparisons",
+            listOf(copyPath, namedArgPath, referencePath).sorted(),
+            interpretationInputBypassSites(sources)
+        )
+    }
+
+    // ── ai-fixes B2d guard (b): the transaction insight use case is on-device only ────
+    // INV-15 / AE-39. GenerateTransactionInsightUseCase.kt must not import or reference the
+    // hybrid or cloud dashboard-briefing services: the per-transaction insight has no cloud path.
+    // Fail-closed: a missing file is reported as a failure. Reuses forbiddenTokensPresent (comments stripped).
+
+    private val transactionInsightUseCasePath =
+        "com/yourname/expensetracker/domain/ai/usecase/GenerateTransactionInsightUseCase.kt"
+
+    private val transactionInsightForbidden = listOf(
+        "HybridDashboardBriefingService",
+        "CloudDashboardBriefingService"
+    )
+
+    // The bare DashboardBriefingService interface is also forbidden (it can be bound to the hybrid or
+    // cloud implementation). Word-boundary match so OnDeviceDashboardBriefingService is not flagged.
+    private val bareBriefingServiceInterface = Regex("""\bDashboardBriefingService\b""")
+
+    private fun transactionInsightBriefingViolations(source: String): List<String> {
+        val tokens = forbiddenTokensPresent(source, transactionInsightForbidden)
+        val bare = if (bareBriefingServiceInterface.containsMatchIn(stripComments(source))) {
+            listOf("DashboardBriefingService")
+        } else {
+            emptyList()
+        }
+        return tokens + bare
+    }
+
+    @Test
+    fun `B2d (b) negative_fixture_bare_dashboard_briefing_service_interface_is_caught`() {
+        assertEquals(
+            listOf("DashboardBriefingService"),
+            transactionInsightBriefingViolations(
+                "import com.yourname.expensetracker.domain.ai.service.DashboardBriefingService\nclass U"
+            )
+        )
+        assertEquals(
+            listOf("DashboardBriefingService"),
+            transactionInsightBriefingViolations("class U(private val svc: DashboardBriefingService)")
+        )
+        assertTrue(
+            "OnDeviceDashboardBriefingService and comments must not be flagged by the bare-interface rule",
+            transactionInsightBriefingViolations(
+                "// DashboardBriefingService\n" +
+                    "import com.yourname.expensetracker.domain.ai.service.OnDeviceDashboardBriefingService\n" +
+                    "class U(private val svc: OnDeviceDashboardBriefingService)"
+            ).isEmpty()
+        )
+    }
+
+    @Test
+    fun `B2d (b) negative_fixture_transaction_insight_cloud_or_hybrid_reference_is_caught`() {
+        assertEquals(
+            listOf("HybridDashboardBriefingService"),
+            forbiddenTokensPresent(
+                "import com.yourname.expensetracker.domain.ai.service.HybridDashboardBriefingService\nclass U",
+                transactionInsightForbidden
+            )
+        )
+        assertEquals(
+            listOf("CloudDashboardBriefingService"),
+            forbiddenTokensPresent(
+                "class U(private val svc: CloudDashboardBriefingService)",
+                transactionInsightForbidden
+            )
+        )
+        assertTrue(
+            "the on-device service and comments must not be flagged",
+            forbiddenTokensPresent(
+                "// HybridDashboardBriefingService CloudDashboardBriefingService\n" +
+                    "import com.yourname.expensetracker.domain.ai.service.OnDeviceDashboardBriefingService\nclass U",
+                transactionInsightForbidden
+            ).isEmpty()
+        )
+    }
+
+    @Test
+    fun `B2d (b) generate_transaction_insight_use_case_imports_neither_hybrid_nor_cloud_briefing_service`() {
+        val sources = relativeSources()
+        assertTrue("Source scan found too few files (${sources.size}); source root may be wrong", sources.size > 100)
+        assertTrue("GenerateTransactionInsightUseCase.kt not found by the scan", transactionInsightUseCasePath in sources)
+
+        val violations = transactionInsightBriefingViolations(sources.getValue(transactionInsightUseCasePath))
+        assertTrue(
+            "GenerateTransactionInsightUseCase must not reference the hybrid, cloud or bare briefing service " +
+                "(INV-15, AE-39): $violations",
+            violations.isEmpty()
+        )
+    }
+
+    // ── ai-fixes B2c carry-forward: foreground observer registration is pinned ────
+    // ProcessAppForegroundState is the only source of the foreground signal that gates the transaction
+    // insight (INV-17). It must be added as a process lifecycle observer exactly once, and only inside
+    // AppStartupCoordinator.registerLifecycleObserver, which initialize() must still call. Removing that
+    // line would silently skip every insight, so it is pinned here. Fail-closed on a missing file/body.
+
+    private val appStartupCoordinatorPath =
+        "com/yourname/expensetracker/startup/AppStartupCoordinator.kt"
+
+    private val foregroundObserverRegistration =
+        Regex("""addObserver\(\s*(foregroundStateObserver|ProcessAppForegroundState)\b""")
+
+    /** Returns the brace-matched body of the named function, or null when absent or unbalanced. */
+    private fun functionBody(text: String, functionName: String): String? {
+        val declaration = Regex("""\bfun\s+""" + Regex.escape(functionName) + """\s*\(""").find(text) ?: return null
+        val open = text.indexOf('{', declaration.range.last)
+        if (open < 0) return null
+        var depth = 0
+        for (i in open until text.length) {
+            when (text[i]) {
+                '{' -> depth++
+                '}' -> {
+                    depth--
+                    if (depth == 0) return text.substring(open + 1, i)
+                }
+            }
+        }
+        return null
+    }
+
+    /** Pure scan: returns human-readable violations of the foreground-observer registration rule. */
+    private fun foregroundObserverRegistrationViolations(sources: Map<String, String>): List<String> {
+        val violations = mutableListOf<String>()
+        sources
+            .filter { (path, _) -> path != appStartupCoordinatorPath }
+            .filter { (_, text) -> foregroundObserverRegistration.containsMatchIn(stripComments(text)) }
+            .keys.sorted()
+            .forEach { violations += "registered outside AppStartupCoordinator: $it" }
+
+        val coordinator = sources[appStartupCoordinatorPath]?.let { stripComments(it) }
+        if (coordinator == null) {
+            violations += "AppStartupCoordinator.kt not found"
+            return violations
+        }
+        val body = functionBody(coordinator, "registerLifecycleObserver")
+        if (body == null) {
+            violations += "registerLifecycleObserver body not found"
+            return violations
+        }
+        val inBody = foregroundObserverRegistration.findAll(body).count()
+        val inFile = foregroundObserverRegistration.findAll(coordinator).count()
+        if (inBody != 1) violations += "registerLifecycleObserver must register the foreground observer exactly once (found $inBody)"
+        if (inFile != inBody) violations += "foreground observer also registered outside registerLifecycleObserver"
+        val callSites = Regex("""\bregisterLifecycleObserver\s*\(\s*\)""").findAll(coordinator).count()
+        if (callSites < 2) violations += "registerLifecycleObserver() is declared but never called"
+        return violations
+    }
+
+    @Test
+    fun `B2c negative_fixture_foreground_observer_registration_violations_are_caught`() {
+        val okCoordinator = "class C { fun initialize() { registerLifecycleObserver() }\n" +
+            "private fun registerLifecycleObserver() {\n" +
+            "  ProcessLifecycleOwner.get().lifecycle.addObserver(backgroundLifecycleObserver)\n" +
+            "  ProcessLifecycleOwner.get().lifecycle.addObserver(foregroundStateObserver)\n}\n}"
+        assertTrue(
+            "the legitimate registration must not be flagged",
+            foregroundObserverRegistrationViolations(mapOf(appStartupCoordinatorPath to okCoordinator)).isEmpty()
+        )
+
+        val removed = okCoordinator.replace("  ProcessLifecycleOwner.get().lifecycle.addObserver(foregroundStateObserver)\n", "")
+        assertEquals(
+            listOf("registerLifecycleObserver must register the foreground observer exactly once (found 0)"),
+            foregroundObserverRegistrationViolations(mapOf(appStartupCoordinatorPath to removed))
+        )
+
+        val moved = okCoordinator.replace(
+            "  ProcessLifecycleOwner.get().lifecycle.addObserver(foregroundStateObserver)\n", ""
+        ) + "\nfun other() { x.addObserver(foregroundStateObserver) }"
+        assertEquals(
+            listOf(
+                "registerLifecycleObserver must register the foreground observer exactly once (found 0)",
+                "foreground observer also registered outside registerLifecycleObserver"
+            ),
+            foregroundObserverRegistrationViolations(mapOf(appStartupCoordinatorPath to moved))
+        )
+
+        val uncalled = okCoordinator.replace("registerLifecycleObserver() }", "}")
+        assertEquals(
+            listOf("registerLifecycleObserver() is declared but never called"),
+            foregroundObserverRegistrationViolations(mapOf(appStartupCoordinatorPath to uncalled))
+        )
+
+        val elsewhere = mapOf(
+            appStartupCoordinatorPath to okCoordinator,
+            "com/yourname/expensetracker/ui/Other.kt" to "fun f() { lifecycle.addObserver(foregroundStateObserver) }",
+            "com/yourname/expensetracker/ui/Commented.kt" to "// lifecycle.addObserver(foregroundStateObserver)\nclass Ok"
+        )
+        assertEquals(
+            listOf("registered outside AppStartupCoordinator: com/yourname/expensetracker/ui/Other.kt"),
+            foregroundObserverRegistrationViolations(elsewhere)
+        )
+    }
+
+    @Test
+    fun `B2c foreground_state_observer_is_registered_only_in_app_startup_coordinator_register_lifecycle_observer`() {
+        val sources = relativeSources()
+        assertTrue("Source scan found too few files (${sources.size}); source root may be wrong", sources.size > 100)
+        val violations = foregroundObserverRegistrationViolations(sources)
+        assertTrue(
+            "ProcessAppForegroundState must be added as a lifecycle observer exactly once, only inside " +
+                "AppStartupCoordinator.registerLifecycleObserver (INV-17). Violations: $violations",
+            violations.isEmpty()
         )
     }
 }

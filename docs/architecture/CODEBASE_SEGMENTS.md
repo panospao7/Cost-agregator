@@ -2,7 +2,7 @@
 
 Canonical guide for segment ownership and AI analysis.
 
-**Last updated:** 2026-10-13 (schema/savings delta verified against source). Database schema version: v151 (`data/database/AppDatabase.kt`).
+**Last updated:** 2026-10-28 (manual-entry-currency / loan-installments merge into ai-evolution: schema v152; added Segment 4 `domain/receipt/statement/*`, Segment 9 `QuickAddSection` / `QuickAddUiMapper`, Segment 40 `InstallmentsFeature`); earlier 2026-10-24 (app-lock-privacy-mode 1a: Segment 11 and Segment 28 file lists), 2026-10-13 (schema/savings delta verified against source). Database schema version: v152 (`data/database/AppDatabase.kt`).
 
 ## Rules
 - One segment list, one ascending order, one owning section per segment.
@@ -123,6 +123,13 @@ Owns receipt capture, OCR extraction, receipt parsing, scanned-receipt review fl
 - `domain/receipt/ReceiptDocumentType.kt` — Enum: RETAIL_RECEIPT, EMAIL_RECEIPT, BANK_STATEMENT, etc.
 - `domain/receipt/ReceiptProcessingStatus.kt` — Enum: CAPTURED → DELETED (14 values)
 - `domain/receipt/EmailReceiptData.kt` — Structured email receipt data
+- `domain/receipt/statement/TextStatementParser.kt` — Pure, total text-statement parser: picks the layout its header names, falls back to the generic `BankStatementParser` only when no layout matches
+- `domain/receipt/statement/TextStatementLayout.kt` — `TextStatementLayout` interface, `StatementContext` and internal `StatementText` helpers shared by the layouts
+- `domain/receipt/statement/EurobankTransfersLayout.kt` / `EurobankCardLayout.kt` / `NbgAccountLayout.kt` / `RevolutTextLayout.kt` — per-bank statement layouts
+- `domain/receipt/statement/StatementRow.kt` — `StatementLayoutId`, `CurrencyEvidence`, `StatementSkipReason`, `StatementRow`, `TextStatementParseResult`
+- `domain/receipt/statement/StatementImportGate.kt` — Pure per-row processor gate (amount ceiling, mandatory date, source-currency evidence); no row content in summaries
+- `domain/receipt/statement/StatementAmountParser.kt` / `StatementDates.kt` — Statement amount and date parsing helpers
+- `domain/receipt/statement/CounterpartyLabel.kt` — Merchant/account labels for statement transfers; a counterparty IBAN is never part of a label
 - `domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt` — **Single entry point for ALL receipt processing**
 - `domain/receipt/lifecycle/ReceiptLinkService.kt` — Centralized receipt-expense linking (join table)
 - `domain/receipt/lifecycle/ReceiptAssetStore.kt` — File persistence, hashing, backup manifest
@@ -170,6 +177,8 @@ Owns merchant-name normalization and category prediction for ordinary expenses.
 - `domain/intelligence/ml/ExpenseCategoryClassifier.kt`
 - `data/repository/CategoryRepository.kt`
 - `data/repository/MerchantCategoryRepository.kt`
+
+**Boundary note:** `domain/quickadd/QuickAddLearnedCategoryLookup.kt` (nl-quick-add C2, registered under Segment 9) is a read-only consumer of this segment: it calls only the pure `CategorizationEngine.normalizedCanonicalNameForMerchant()` and `MerchantCategoryRepository.getCategoryByNormalizedCanonical()`. It must never call `categorize*`, `normalize(`, `getCategoryForMerchant`, `MerchantNormalizer` or any write (`MerchantNormalizer.normalize` can insert/update a `merchant_aliases` row even with `autoCreate = false` on a fuzzy match >= 0.95 via `linkAliasToCanonical`, and logs the raw name; it creates a `merchant_canonicals` row only with `autoCreate = true`).
 
 ## SEGMENT 7: Recurring Expenses
 
@@ -249,6 +258,15 @@ Owns the base expense CRUD surface, shared core expense models, and the **transa
 - `domain/transaction/SideEffectMode.kt` — Enum: IMMEDIATE, DEFER
 - `domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt` — **Single entry point for ALL expense CUD**
 - `domain/transaction/lifecycle/TransactionSideEffectDispatcher.kt` — Post-creation side effects
+- `domain/quickadd/QuickAddParser.kt` — Quick-add line parser (C1): pure `parse(QuickAddInput): QuickAddParseResult`; fill-only, no persistence
+- `domain/quickadd/QuickAddModels.kt` — Parser value objects (`QuickAddInput`, `FieldParse`, `QuickAddParseResult`, `FlagReason`, `LineHint`); no raw line, tokens, currency or foreign amount in the result
+- `domain/quickadd/QuickAddAmountRules.kt` — Amount rules; `QuickAddAmountRules.canonicalize` is the single owner of amount canonicalisation
+- `domain/quickadd/QuickAddDateRules.kt` — Date and time-of-day rules (LocalDate arithmetic in the input zone)
+- `domain/quickadd/QuickAddVocabulary.kt` — Date/payment/currency vocabulary and the embedded non-catalog ISO list
+- `domain/quickadd/QuickAddLearnedCategoryLookup.kt` — Quick-add learned-category lookup (C2): suspend and READ-ONLY (pure key + `getCategoryByNormalizedCanonical`); no writes, no logging, CancellationException rethrown; see Segment 6 boundary note
+- `ui/screens/addexpense/QuickAddFillContract.kt` — Quick-add fill contract (C3): `QuickAddField`/`FieldOrigin`/`OutcomeCode`/`CategoryFillSource` enums, the pure apply table (spec 5.3) and outcome function (5.4); the single owner of fillability. Fill writes in-memory form state only; Save is unchanged (`AddExpenseViewModel.save` → `ManualExpenseRepository.addManualExpense` → TLC)
+- `ui/screens/addexpense/QuickAddUiMapper.kt` — Quick-add presentation mapper: pure outcome → `UiText` lines, field notes, category chips and fill-block codes; no persistence
+- `ui/screens/addexpense/QuickAddSection.kt` — Quick-add Compose section of the add-expense sheet (`QuickAddSection`, `QuickAddNoteText`, `QuickAddCategoryChipRow`); renders `QuickAddUiMapper` output only
 - `docs/development/DAO_ACCESS_GUARDRAILS.md` — DAO access policy
 - `scripts/guardrails/dao-access-check.kts` — Guardrail enforcement
 - `util/ImportCoordinator.kt` — CSV/JSON import orchestration (format detection, delegation, result reporting)
@@ -259,6 +277,8 @@ Owns the base expense CRUD surface, shared core expense models, and the **transa
 **Boundary note:** The `transaction_events` table is owned by this segment. It is an immutable append-only log; no updates or deletes should be performed on it.
 
 **Boundary note:** entity provenance/source-link persistence (`domain/provenance/` writers, `entity_source_links` table via `EntitySourceLinkDao`, bound in `di/ProvenanceModule.kt`) rides along with expense lifecycle creation; CI enforces it via `scripts/verify_source_provenance_boundaries.py` (Segment 39).
+
+**Boundary note:** `domain/quickadd/*` (nl-quick-add, G2-10) is a pure, deterministic parser package owned by this segment. It is not a mutation path: the parser performs no persistence, no logging and no clock or locale reads, and its result never carries the typed line. The parser files import nothing from `android.*`, `timber`, `data.*` or `domain.ai`; `now` and the zone arrive through `QuickAddInput`. Quick-add Fill writes in-memory form state only; every persisted effect stays on the existing Save path (`ManualExpenseRepository` to `TransactionLifecycleCoordinator` to `ExpenseDao.insertAtomic()`).
 
 ## SEGMENT 10: Dashboard Totals & Widgets
 
@@ -283,8 +303,21 @@ Owns the dashboard home composition and all totals aggregation logic.
 Owns notification delivery plumbing for budget and app alerts.
 
 **Representative files**
-- `domain/service/NotificationService.kt`
-- `data/service/AndroidNotificationService.kt`
+- `domain/service/NotificationService.kt` — kind-aware methods only (`*ForKind`, INV-12), `repostActiveAsDiscreet()`, `DeliveryResult.PERMISSION_DENIED`
+- `data/service/AndroidNotificationService.kt` — builder owner 1 (`postForKind` + `rebuildDiscreet` sweep); `@Inject` secondary ctor with 4 params incl. `PrivacyDiagnosticsEmitter`; internal primary ctor adds `SweepPacer` (paced discreet sweep, 300 ms before every re-post)
+
+**Notification presentation (app-lock-privacy-mode 1a; legal path: LEGAL_PATHS "Notification Presentation")**
+- `domain/notification/presentation/NotificationKind.kt` — closed six-kind registry + literal `stableToken`
+- `domain/notification/presentation/NotificationPresentationDecision.kt` — decision model (mode, visibility, public version, action policy, fallback reason)
+- `domain/notification/presentation/NotificationContentPolicy.kt` — pure policy; `decide` / `decideFailClosed` / `decideDiscreet` (single owner of FULL vs DISCREET and the action policy)
+- `domain/notification/presentation/NotificationPresentationResolver.kt` — `@Singleton`, bounded (500 ms) fail-closed settings read before each post
+- `data/service/NotificationPresentationApplier.kt` — `@Singleton`, the one place a decision is applied to a builder; stamps the kind marker
+- `data/service/NotificationPresentationTexts.kt` — kind → discreet / public-version string resources
+- `data/service/NotificationKindMarker.kt` — hidden kind marker (extras key + `stableToken`), private version only
+- `data/service/NotificationKindClassifier.kt` — sweep classifier: marker first, channel / id-range fallback, group-summary skipped by the caller; imports only the const `BillReminderWorker.CHANNEL_ID`
+- `res/values{,-es,-el}/strings_notification_presentation.xml`
+- Builder owner 2: `service/reminder/BillReminderWorker.kt` (Segment 36) resolves the BILL decision and calls the applier.
+- Writer side of the sweep (`DiscreetRepostTrigger`, called from `AppLockSettingsOperations.requestDiscreetChange`; the former `UpdateDiscreetNotificationsUseCase` was retired in S20-d) is owned by Segment 28 (settings write path); Segment 11 owns only the sweep executor (`repostActiveAsDiscreet`).
 
 ## SEGMENT 12: Startup & Background Runtime
 
@@ -294,6 +327,7 @@ Owns startup wiring, service lifecycle recovery, and background runtime jobs.
 - `startup/AppStartupDelegate.kt`
 - `startup/AppStartupCoordinator.kt`
 - `startup/AppBackgroundLifecycleObserver.kt`
+- `startup/ProcessAppForegroundState.kt` — process-lifecycle observer (onStart → true, onStop → false, default false) implementing the `domain/ai/service/AppForegroundState` port (ai-fixes B2c); registered only in `AppStartupCoordinator.registerLifecycleObserver`; bound by `di/AppForegroundModule.kt`; no consumer until B2d
 - `data/ai/worker/DailyBriefingWorker.kt`
 - `data/location/LocationBackfillWorker.kt`
 - `data/location/MerchantKeyBackfillWorker.kt`
@@ -304,7 +338,7 @@ Owns startup wiring, service lifecycle recovery, and background runtime jobs.
 - `domain/workers/WorkerExecutionGuard.kt` — Structured guarded execution with restore check, `RetryableWorkerException` retry contract, and notification-permission gate
 - `domain/workers/WorkerRegistry.kt` — Single-source-of-truth registry for all 7 workers (specName + schedule lambda); replaces hardcoded lists in RestoreMaintenanceMode/AppStartupCoordinator
 - `domain/workers/RetryableWorkerException.kt` — Typed retry signal; guard catch precedence: CancellationException → RetryableWorkerException (Retry) → classifyTransient → otherwise permanent Failed
-- `domain/workers/NotificationPermissionChecker.kt` — Guard-enforced notification-permission gate for WarrantyExpirationWorker
+- `domain/workers/NotificationPermissionChecker.kt` — Notification-permission check: guard-enforced for BillReminderWorker; called directly by the optional-notification workers (ReceiptMatchingWorker, DailyBriefingWorker, WarrantyExpirationWorker — ai-fixes B3a)
 - `domain/workers/PrivacyRuntimeWorkerPolicy.kt` — Maps privacy toggles to gated workers; PrivacySettingsRepositoryImpl.applyPrivacyChange() is policy-driven
 - `domain/workers/WorkerDrainController.kt` — Worker drain lifecycle controller
 - `domain/workers/WorkerLease.kt` / `WorkerLeaseRegistry.kt` / `WorkerLeaseRegistryImpl.kt` — Worker lease acquisition for exclusive execution
@@ -470,9 +504,22 @@ Owns the app-wide AI platform surface: policy, assistant sheet, AI settings, pro
 - `domain/ai/policy/AiPolicy.kt`
 - `domain/ai/HybridRouter.kt` — Consolidates routing logic previously duplicated across 6 hybrid AI services (cloud/on-device/fallback routing; AID-4)
 - `ui/screens/assistant/AssistantSheet.kt`
+- `ui/screens/assistant/AssistantViewModel.kt` — snapshots prior chat rows before persisting the current turn; does not shape or redact model history
+- `domain/ai/usecase/FinancialQueryInterpretationInputBuilder.kt` — sole constructor of `FinancialQueryInterpretationInput`; model history = prior USER queries only (last `MAX_QUERY_HISTORY_USER_TURNS_FOR_MODEL` = 4), redaction source = `EffectiveCloudAiPolicyResolver`
+- `domain/ai/usecase/AssistantPeriodResolver.kt` — the only assistant period lexicon: EN phrase precedence, model `periodKeyword` (incl. `LAST_WEEK`/`LAST_QUARTER`/`LAST_YEAR`), clarification period choices, the single comparison cue, and calendar-aware `previousEquivalent`; pure (explicit `nowMs` and zone), returns plain values (callers wrap into their own range type)
+- `domain/ai/usecase/CompleteFinancialQueryClarificationUseCase.kt` — pure completion of a structured clarification (`ClarificationCompletion` on the executor period clarification and the fallback presentation clarification): PERIOD sets period and granularity via `AssistantPeriodResolver.resolveChoice`, BREAKDOWN → TOTAL, TRANSACTION_LIST → LIST + grouping NONE; no interpreter/provider/network
+- `ui/components/ai/AssistantClarificationChoiceText.kt` — single exhaustive `ClarificationChoice` → `@StringRes` label mapping (card, sheet and the VM transcript turn); `AssistantViewModel` holds the in-memory live pending clarification (consume-first, expires on new query/result/error/clear; stale options render disabled; never persisted)
+- `data/ai/provider/OnDeviceQueryInterpretationService.kt` / `CloudQueryInterpretationService.kt` — share `buildPrompt`; history rendered as `- USER:` lines only
+- `domain/ai/model/AssistantUnsupportedReason.kt` — closed 7-code enum; the only value `Unsupported` results carry (optional bounded `DiagnosticReasonCode`, never rendered or persisted; the producing site logs it); the model's own unsupported text is discarded
+- `ui/components/ai/AssistantUnsupportedReasonText.kt` — single exhaustive reason → `@StringRes` mapping, used by `AssistantResultCard` and `AssistantViewModel` (persisted text; payload `{"type":"unsupported","reason":"<CODE_NAME>"}`)
 - `domain/ai/model/AssistantHistoryMode.kt` — Enum (OFF/REDACTED/RAW) for conversation history redaction in AiChatRepositoryImpl
 - `ui/screens/aisettings/AiSettingsScreen.kt`
 - `data/ai/provider/DefaultAiEnvironmentMonitor.kt`
+- `data/repository/AiSettingsRepositoryImpl.kt` — `ai_settings` DataStore; `produceMigrations` registers the sole resolver of `ai_transaction_insight_enabled`
+- `data/repository/AiInsightSettingsMigration.kt` — the one never-throwing `DataMigration` (INV-23): stored briefing value wins, else `InstallProvenance` (NEW_INSTALL → on, UPGRADE/UNKNOWN → off); runs before first read and first edit; never overwrites an existing key
+- `domain/ai/service/InstallProvenance.kt` — port (`InstallOrigin` NEW_INSTALL/UPGRADE/UNKNOWN); `data/repository/PackageInstallProvenance.kt` — own-package install/update times only, any failure → UNKNOWN; not Hilt-bound (built from the application context inside `produceMigrations`)
+- `domain/ai/service/AppForegroundState.kt` — port (`isAppInForeground()`, default false = fail-safe skip) for the INV-17 foreground short-circuit; impl `startup/ProcessAppForegroundState.kt` (Segment 12); consumed by `domain/ai/usecase/GenerateTransactionInsightUseCase.kt` (B2d); its registration is pinned by `SourceScanningArchitectureGuardTest`
+- `domain/ai/usecase/GenerateTransactionInsightUseCase.kt` + `TransactionInsightOutcome.kt` — on-device only, foreground-only, never written to `ai_artifacts`; `summaryText` may become recommendation text persisted via the existing `RecommendationRepository.saveAll` path (7-day `expiresAt`, INV-20); recommendations are generated for every outcome when `aiEnabled` (B2d, INV-15..21); returns `Generated`/`Skipped(reason)`; callers `ManualExpenseRepository` and `NotificationProcessingPipeline` consume `outcome.artifactOrNull`
 - `data/ai/provider/StrictAiJsonParsing.kt`
 - `data/ai/provider/DashboardBriefingPromptFormatter.kt`
 - `data/ai/provider/DashboardBriefingResponseParser.kt`
@@ -587,6 +634,39 @@ Owns encrypted key storage and security/network bindings.
 - `domain/privacy/PrivacyDecision.kt` — Sealed interface: `Allowed`, `NotApplicable`, `Denied(reason)`, `FailClosed(reason)`; `blocksExecution()` returns true for both Denied and FailClosed; `reason()` for all variants; 30+ callers use for fail-closed propagation
 - `ui/components/PrivacyBlockedCard.kt` — Reusable Compose card for privacy-blocked state with lock icon, "Feature disabled" title, and specific PrivacyBlocked reason
 
+**App lock & privacy mode, increment 1a (legal paths: LEGAL_PATHS "App Lock Settings Write Path" and "Deep Links")**
+- `domain/privacy/applock/AppLockSettingsRepository.kt` (+ `AppLockPrivacySettings.kt`, `AppLockSettingsLoadState.kt`, `EffectivePrivacyValues.kt`) — contract of the only reader/writer of device-local app-lock settings (INV-1)
+- `data/privacy/applock/AppLockSettingsRepositoryImpl.kt` + `di/AppLockModule.kt` — own DataStore, CORRUPTED sentinel, fail-closed effective values
+- `domain/privacy/applock/PrivacyDiagnosticsEmitter.kt` — typed, bounded `PrivacyDiagnosticCode` emitter (per-code limiter)
+- `domain/privacy/applock/DiscreetRepostTrigger.kt` — post-commit false → true edge detector; calls `NotificationService.repostActiveAsDiscreet()` (reused by S18)
+- (S20-d: `domain/privacy/applock/UpdateDiscreetNotificationsUseCase.kt` and the unforced `AppLockSettingsRepository.setDiscreetNotifications` are RETIRED; the per-field discreet write → trigger is `AppLockSettingsOperations.requestDiscreetChange`, WRITE 5)
+- `domain/privacy/deeplink/DeepLinkRequest.kt` — validated deep-link value types (`DeepLinkHost`, `DeepLinkParameter`, `DeepLinkLimits`)
+- `ui/navigation/DeepLinkParser.kt` — hosts `DeepLinkPolicy` (pure validation, the only `expensetracker://` parser); `ui/navigation/DeepLinkApplier.kt` — the only code that acts on a link; `domain/ai/usecase/MarkDashboardBriefingOpenedUseCase.kt` — the single link-reachable write (INV-16); `domain/analytics/TimePeriodTokens.kt` — shared period allowlist. (No segment owned `ui/navigation` before; the deep-link validation boundary is recorded here because it is a privacy boundary.)
+- `ui/screens/privacysettings/AppLockPrivacySettingsViewModel.kt` + `AppLockPrivacySection.kt` — "App lock & privacy" section (discreet row, review card); inserted once into `PrivacySettingsScreen.kt`; `PrivacySettingsViewModel` untouched
+- `domain/privacy/applock/AppLockSettingsWriteSerializer.kt` — domain-owned `@Singleton` write serialiser shared by the settings ViewModel (WRITE 1, 2) and `AppLockSettingsOperations` (WRITE 3, 4, 5); moved from `ui/screens/privacysettings/` by S18 ii-a (F4)
+- `domain/privacy/applock/AppLockSettingsOperations.kt` — S18 part (i-a), DORMANT lock-flag writer (LEGAL_PATHS "App Lock Settings Write Path", WRITE 3) and, since part (i-b1), the DORMANT auto-lock timeout writer `requestTimeoutChange` (WRITE 4: no-prompt path = conditional `setAutoLockTimeoutIfNotWeakening` under a mutex; longer-with-lock-on = CONFIRM_CHANGE prompt then unconditional `setAutoLockTimeout`); zero production callers (source-scan pinned); not legal to wire until the BLOCKING list is closed: F3 (CLOSED by S18-ii-b; originally whole plan :1490-1493 binding: remove the `decideDiscreet` default, pass `actionsSuppressed`, SDK <= 30 lock-on parity row, decide `NOTIF_ACTIONS_SUPPRESSED_LOCK`), F4 (domain write serializer shared with the ViewModel and covering the timeout writes; serializer part CLOSED by S18-ii-a, F4(a)/D8 CLOSED by S18-ii-d), F7 (CLOSED by S18-ii-a: store re-read after a cancelled NonCancellable write, for the lock write AND both timeout paths, updating the controller view), finding 8 (CLOSED by S18-ii-f: `setAppLockEnabled`, `setAutoLockTimeout`, `setAutoLockTimeoutIfNotWeakening`, `setDiscreetNotificationsIfNotForced` and `setSecureScreenIfNotForced` are abstract and every fake overrides them), and WRITE 5 routing and the ISSUE-4 exit (CLOSED by S20-d / S18-ii-g, owner D4 option (a): the ViewModel discreet write goes through `requestDiscreetChange`; `UpdateDiscreetNotificationsUseCase` and the unforced `setDiscreetNotifications` are retired and the F3 pin is zero; the dormancy pin exempts the 1a ViewModel for exactly `AppLockSettingsOperations`, `requestDiscreetChange` and `requestReviewSave`, and the controller-entry pin allows it exactly `requestSettingsReread`), INV-45 (controller-side authorisation CLOSED by S18-ii-d; ViewModel routing CLOSED by S20-e / S18-ii-h, owner D1: `AppLockPrivacySettingsViewModel.saveReview` sends the D2 record {lock off, IMMEDIATE, discreet = choice, secure on} to `requestReviewSave`, the single caller of `.reviewSave(` is the operations file, and the review-save diagnostics and sweep are owned by the controller and the operations (D7); only the S22 UI fields remain)
+- `res/values{,-es,-el}/strings_privacy_section.xml`
+
+**App lock & privacy mode, increment 1b, S20-a (wired by S20-c; legal path: LEGAL_PATHS "App Lock Prompt Path and Lifecycle Signals")**
+- `ui/applock/BiometricPromptDeviceAuthenticator.kt` — the Activity-bound prompt adapter (the only `BiometricPrompt` entry point); S20-a adds the internal `adopt(attemptId, callback)` rotation seam
+- `ui/applock/AppLockAuthenticatorRelay.kt` — `@Singleton` main-thread-only `DeviceAuthenticator` bound in `di/AppLockModule.kt`; holds the current adapter weakly; reachable only through that binding and the prompt host
+- `ui/applock/AppLockPromptHost.kt` — per-Activity: builds and registers the adapter in `onCreate`, adopts the open attempt on rotation, reports `PROMPT_HOST_LOST` once at a real `ON_DESTROY`
+- `ui/applock/AppLockLifecycleBinder.kt` — `@Singleton`, idempotent `install(application)`: the sole INV-25 foreground/background signal source (exact started-activity count) and the caller of `AppLockController.resolve()`
+
+**App lock & privacy mode, increment 1b, S20-b (wired by S20-c; legal path: LEGAL_PATHS "App Lock Prompt Path and Lifecycle Signals", FLAG_SECURE section)**
+- `ui/applock/SecureWindowController.kt` — `@Singleton`; the single `FLAG_SECURE` writer: `applyInitial(window)` (synchronous) and `bind(activity)` (follows `EffectivePrivacyValues.effectiveSecureScreen` from the COMMITTED `observeLoadState()` plus `controller.state is Resolving` only; clears only on a computed false; fail-closed on null, absent or error); internal `WindowFlagSink` seam
+- `ui/applock/NotificationPermissionPromptOnce.kt` — `@Singleton`, `tryClaim()` backed by an `AtomicBoolean`, not persisted: the once-per-process cap for the R24 POST_NOTIFICATIONS auto-prompt (R24's policy and store stay the deciders)
+
+**App lock & privacy mode, increment 1b, S20-c (LIVE: the controller goes live in MainActivity; the lock is not user-enableable until S22; legal path: LEGAL_PATHS "App Lock Prompt Path and Lifecycle Signals")**
+- `ui/applock/AppLockShell.kt` — the Activity-side shell: `ControllerGateSource` (the controller's own `state`/`notice` flows), the source overload of `AppLockGate`, a `SaveableStateHolder` around the content, tap-only Unlock, the constant `ACTION_SECURITY_SETTINGS` hand-off (`SecuritySettingsLauncher`), tap-time operational-state re-checks, and the CF-4 status line derived from `AppLockState` only
+- `ui/MainActivity.kt` — now a `FragmentActivity`; injects the controller, binder, prompt-host provider, `SecureWindowController` and `NotificationPermissionPromptOnce`; `applyInitial` first, then (after the DB gate) `install`, `attach`, `bind`; `MainScreen` is composed only inside `AppLockShell` (`MainScreen` gains the `notificationPromptOnce` parameter; the R24 effect starts with the claim); S21-b adds `deepLinkRouter.startReleasing(this, mainViewModel)` in `onCreate` (after `bind`, before `handleIntent` and `setContent`) and `handleIntent` calls `deepLinkRouter.route(result, lifecycleScope, mainViewModel)` (`onNewIntent` unchanged)
+
+**App lock & privacy mode, increment 1b, S21-b (held deep links; legal path: LEGAL_PATHS "Deep Links" / ROUTER)**
+- `ui/applock/AppLockDeepLinkRouter.kt` — S21-b (PRV-16): unscoped, per Activity; `route(result, scope, vm)` asks the controller for the link decision (apply now, or hold) and `startReleasing(owner, vm)` posts the held-link release to `Dispatchers.Main` while STARTED; the ONLY production caller of the controller's link query, held-link release and release signal (pinned in `AppLockControllerIllegalTransitionTest`) and the only caller of `DeepLinkApplier` (pinned in `DeepLinkApplierCallerPinTest`); `ui/navigation/DeepLinkApplier.kt` gains `onHeld`, `onRejectedWhileClosed`, `applyReleased`, `applyExpired`
+
+**App lock & privacy mode, increment 1b, S21-c (#10 export authentication; legal path: LEGAL_PATHS "DATABASE OPEN GATE")**
+- `ui/unsupported/UnsupportedDatabaseExportAuth.kt` — S21-c (#10): the one narrow read-only `@EntryPoint` (`AppLockSettingsRepository` + `DeviceAuthCapabilityProvider`; nothing Room-backed) and the pure export-auth decision (lock ON or unreadable, AND capability AVAILABLE or CHECK_FAILED; read bounded at 2 s). `UnsupportedDatabaseActivity` (now a `FragmentActivity`) runs a per-Activity `BiometricPromptDeviceAuthenticator` (UNLOCK copy) before the SAF export picker; it still never binds the controller (LEGAL_PATHS DATABASE OPEN GATE)
+
 ## SEGMENT 29: Debug & Diagnostics
 
 Owns debug surfaces, diagnostics pipeline, pipeline diagnostics, data integrity scanning, and retention system.
@@ -682,7 +762,9 @@ Owns global configuration, hot-path performance helpers, and accessibility polis
 Owns warranty tracking, subscription management, bill negotiation, and price protection surfaces.
 
 **Representative files**
-- `data/repository/WarrantyTrackerRepository.kt`
+- `data/repository/WarrantyTrackerRepository.kt` — sole warranty writer (`confirmWarranty`, `reconcileExpiredItems`); no AI/cloud dependency (ai-fixes B1a)
+- `domain/usecase/warranty/AutoCreateWarrantyFromReceiptUseCase.kt` — local-only extraction, no `PrivacyGate`
+- `domain/usecase/warranty/WarrantyReviewState.kt` — single derived review state (`NOT_IN_REVIEW`/`AWAITING_REVIEW`/`EXPIRED_UNCONFIRMED`); never persisted
 - `ui/screens/warranty/WarrantyTrackerScreen.kt`
 - `data/repository/SubscriptionManagementRepository.kt`
 - `ui/screens/subscription/SubscriptionManagementScreen.kt`
@@ -784,6 +866,7 @@ Owns installment plans (loan and pay-in-installments tracking): plan and entry s
 - `service/installment/` — `InstallmentDueRecordingWorker` only (S7a); no coordinator, read model or port lives here
 - `data/database/` — `installment_plans` / `installment_entries` entities (`InstallmentPlan`, `InstallmentEntry`) and `InstallmentPlanDao` exist (schema 152, S2); the only writer is `InstallmentPlanLifecycleCoordinator` (S6a)
 - `ui/screens/installments/` — overview, detail, history, create/edit screens (hidden entry until final enablement)
+- `ui/navigation/InstallmentsFeature.kt` — compile-time `ENABLED` gate (false until the S13 enablement slice): withholds the Features menu entry, redirects installment destinations Home, and keeps the `installments` / `installment_plan` deep-link hosts rejected (S10a)
 
 **Boundary notes**
 - Expense rows stay in Segment 9: plan code never touches `ExpenseDao`; expenses are created and flagged only through `TransactionLifecycleCoordinator` DbOnly ops (`createExpenseDbOnlyV2`, `setSpendingExclusionDbOnly`).

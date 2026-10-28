@@ -257,7 +257,13 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.activity.compose)
-    
+
+    // App lock (S15, TECH-1 A): BiometricPrompt needs a FragmentActivity host. The fragment version is
+    // pinned explicitly, aligned with activity-compose 1.9.x, so the older fragment that biometric 1.1.0
+    // declares does not win resolution (ActivityResultRegistry request-code clash).
+    implementation(libs.androidx.biometric)
+    implementation(libs.androidx.fragment)
+
     // Compose
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.ui)

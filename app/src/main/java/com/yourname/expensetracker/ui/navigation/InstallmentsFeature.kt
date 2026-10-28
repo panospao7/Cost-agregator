@@ -7,7 +7,7 @@ package com.yourname.expensetracker.ui.navigation
  *  - the Features menu entry is withheld ([FeatureConfig.availableFeatures]);
  *  - the installment destinations are never rendered (MainActivity redirects Home);
  *  - the `installments` and `installment_plan` deep-link tokens are rejected
- *    ([parseDeepLink] and the MainActivity intent router) and no manifest host is registered.
+ *    (DeepLinkPolicy rejects these hosts (UNKNOWN_HOST) until loan S13-a) and no manifest host is registered.
  *
  * The flag is flipped only by the enablement slice (S13), together with the manifest hosts.
  */

@@ -82,5 +82,58 @@ enum class DiagnosticReasonCode {
     // MEC A2 (INV-19): a user-present manual-entry create was refused by the
     // coordinator because no eligible rate / unresolved home. Sub-reason lives in
     // metadata `reason` (none|stale|unsupported|home_unresolved); origin in sourceType.
-    MANUAL_SAVE_BLOCKED_NO_RATE
+    MANUAL_SAVE_BLOCKED_NO_RATE,
+
+    // app-lock-privacy-mode S2 (OD-12a): controlled privacy-pipeline codes, emitted only through
+    // PrivacyDiagnosticsEmitter (typed metadata, never payload-derived). Append-only: persisted by
+    // name as TEXT and parsed with runCatching readers, so older builds tolerate unknown names.
+    // Notification content policy (spec 10).
+    NOTIF_POLICY_SETTINGS_UNREADABLE,
+    NOTIF_POLICY_FALLBACK_EXCEPTION,
+    NOTIF_ACTIONS_SUPPRESSED_LOCK,
+    NOTIF_REPOSTED_DISCREET,
+    NOTIF_REPOST_FAILED,
+
+    // Deep-link policy (spec 5.7, closed set).
+    DL_APPLIED,
+    DL_HELD_LOCKED,
+    DL_HELD_REPLACED,
+    DL_HELD_EXPIRED,
+    DL_REJECTED_ACTION,
+    DL_REJECTED_MALFORMED,
+    DL_REJECTED_UNKNOWN_HOST,
+    DL_REJECTED_BANK_HOST,
+    DL_PARAM_UNKNOWN_DROPPED,
+    DL_PARAM_INVALID_DROPPED,
+    DL_BRIEFING_KEY_NOT_DELIVERED,
+    DL_BRIEFING_STATE_UNREADABLE,
+    DL_TARGET_NOT_FOUND,
+    DL_TARGET_READ_BLOCKED,
+    DL_DIAGNOSTICS_SUPPRESSED,
+
+    // App-lock settings durability (spec 10; AMD-1, AMD-10).
+    LOCK_SETTING_PERSIST_FAILED,
+    LOCK_SETTINGS_UNREADABLE,
+    LOCK_SETTINGS_REVIEW_SAVED,
+
+    // App-lock controller (S16, spec 10 "Lock" group; INV-37). Appended at the tail, existing order
+    // kept. The bucket / cause enums named in the spec travel as typed metadata, never as codes.
+    LOCK_SHOWN_COLD_START,
+    LOCK_SHOWN_TIMEOUT,
+    LOCK_SHOWN_SETTINGS_UNREADABLE,
+    LOCK_UNLOCKED,
+    LOCK_AUTH_CANCELLED,
+    LOCK_AUTH_LOCKOUT,
+    LOCK_AUTH_ERROR,
+    LOCK_UNAVAILABLE_API,
+    LOCK_UNAVAILABLE_NOT_SECURE,
+    LOCK_UNAVAILABLE_CAPABILITY,
+    LOCK_INERT_NO_CREDENTIAL,
+    LOCK_INERT_HW_UNAVAILABLE,
+    LOCK_INERT_UNKNOWN,
+    LOCK_INERT_API_UNSUPPORTED,
+    LOCK_INERT_SETTINGS_UNREADABLE,
+    LOCK_ENABLED,
+    LOCK_DISABLED,
+    LOCK_SETTINGS_RECOVERED
 }

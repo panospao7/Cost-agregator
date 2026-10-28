@@ -1,6 +1,6 @@
 # ExpenseTracker Android Codebase - Ground-Truth Inventory
 
-**Generated:** 2026-10-02 (verified snapshot; re-verified against source)
+**Generated/verified:** 2026-10-28 (merge of feature/ai-evolution 4add2466 into feature/manual-entry-currency; nl-quick-add increment 1 refresh; base snapshot 2026-10-02, re-verified against source)
 **Database Version:** v152
 **Architecture:** Clean Architecture + MVVM + Jetpack Compose + Room + Hilt DI
 
@@ -9,6 +9,45 @@
 ## EXECUTIVE SUMMARY
 
 Snapshot summary only: this inventory tracks the current UI, domain, data, and DI surfaces without freezing volatile counts.
+
+### Drift Sync (2026-10-28 / merge of feature/ai-evolution 4add2466 into feature/manual-entry-currency; NOT validated)
+
+DB **v152** (mec/loan S2; int was v151 and did not bump the version, so there is no schema conflict; `152.json` is unchanged). The merge unions the sections below. `BillReminderWorker` now has 10 constructor parameters: `..., timeProvider, presentationResolver, presentationApplier, billReminderManager`; installment reminders (S7b) use the BILL presentation (D-M1 A, owner-approvals 79a). The mec pre-1a `MainActivity.handleIntent` host `when` was dropped for the policy/router path (`DeepLinkPolicy.evaluate`, then `AppLockDeepLinkRouter.route`); installment hosts are not in `DeepLinkHost` until loan S13-a and are rejected as `UNKNOWN_HOST`. Ownership policy: 454 entries (loan 452 plus the ai-fixes net +2).
+
+### Drift Sync (2026-10-28 / nl-quick-add increment 1, branch feature/nl-quick-add)
+
+Manual snapshot refresh (D-10: no generator script exists; none was run). DB **v151** unchanged (no schema change, no migration, no new Hilt module; `QuickAddParser` and `QuickAddLearnedCategoryLookup` are `@Inject constructor` classes). Counts of DAOs/ViewModels/workers unchanged. Not compiled or validated in this docs slice; validation is recorded in `workflows/active/nl-quick-add-handoff.md`.
+
+- **Domain (`domain/quickadd/`, pure Kotlin, no Android):** `QuickAddParser` (local, deterministic line parser; the line is never persisted or logged), `QuickAddModels` (`QuickAddInput`, `QuickAddParseResult`, `FieldParse`, `AmountText`, `ResolvedDate`, `MerchantText`, `QuickAddPayment`, `CategoryRef`, `CategoryMatch`, `CategorySource`, `FlagReason`, `LineHint`), `QuickAddAmountRules` (amount canonicaliser, shared with the clipboard parser), `QuickAddDateRules` (internal; `DateExpr`, explicit zone/clock input), `QuickAddVocabulary` (internal; English, Greek and Greeklish tokens), `QuickAddLearnedCategoryLookup` (read-only lookup returning `LearnedCategoryLookupResult`; no writes).
+- **UI (`ui/screens/addexpense/`):** `QuickAddFillContract` (`QuickAddField`, `FieldOrigin`, `OutcomeCode`, `CategoryFillSource`, `QuickAddFormFields`, `QuickAddFillApplication`; the single pure rule for applying a parse to the form), `QuickAddUiMapper` (pure state to `UiText` mapping: counter, Fill gating, field notes, flags, category chip, summary snapshot via `snapshotOf`), `QuickAddSection` (Compose section: 200-char line held in plain `remember`, Fill button, polite live-region summary, `QuickAddNoteText`, `QuickAddCategoryChipRow`). `AddExpenseViewModel` / `AddExpenseSheet` host the section; `ReceiptScanScreen` gains only the empty-category caption.
+- **Tests (new):** `domain/quickadd/` `QuickAddParserGoldenTest` (+ `QuickAddParserGoldenFixtures`), `QuickAddParserPurityTest`, `QuickAddParserForeignCurrencyTest`, `QuickAddLearnedCategoryLookupTest`; `ui/screens/addexpense/` `QuickAddFillContractTest`, `QuickAddUiMapperTest`, `QuickAddSectionTest` (Robolectric Compose); `architecture/QuickAddPrivacyArchitectureGuardTest` (G-1..G-4: no `rememberSaveable`/`SavedStateHandle` under `addexpense`; `domain.quickadd` import boundary; no throwable or interpolated Timber message in `AddExpenseViewModel`; the lookup file references no categorise/normalise or write paths).
+- **Shard entry:** `config/validation/test-shards.json` `domain-n-z` gains `com.yourname.expensetracker.domain.quickadd.*` (G2-7). The UI tests fall under the existing `runtime-ui` shard. Known gap: the runner has no shard-coverage check, so a new package outside every shard is silently skipped by sharded runs (follow-up recorded in the handoff).
+- **Strings:** `quick_add_*`, `add_expense_error_*` and `add_expense_category_auto_hint` in `res/values{,-el,-es}/strings.xml`; el/es are DRAFT pending owner native sign-off.
+
+### Drift Sync (2026-10-24 / ai-fixes Parts A, B, C, branch feature/ai-fixes)
+
+Hand-maintained, like every section here (D-10: no generator script exists; none was run for this refresh). DB **v151** unchanged (no schema change, no migration; one new DataStore key). Hilt `@Module` files: 35 after the app-lock merge (`AppForegroundModule` added here, `AppLockModule` by app-lock; see `hilt-bindings-map.md`). Counts of DAOs/ViewModels/workers are unchanged by ai-fixes.
+
+- **Assistant (Part C)** — `domain/ai/model/AssistantUnsupportedReason` (7 bounded codes; `Unsupported(reason, diagnostic)`), `ui/components/ai/AssistantUnsupportedReasonText` (code to localized text) and `ui/components/ai/AssistantClarificationChoiceText` (choice label mapping); `domain/ai/usecase/AssistantPeriodResolver` (pure calendar-period arithmetic, explicit zone, `PeriodGranularity`/`PeriodChoice`); `domain/ai/usecase/CompleteFinancialQueryClarificationUseCase` (pure completion of a pending intent, filters kept). `ExecuteFinancialQueryUseCase` gains a MIN executor and an exhaustive metric `when`; the interpretation input carries `priorUserQueries` (USER turns only, last 4) and the assistant redaction decision comes from `EffectiveCloudAiPolicyResolver`.
+- **Warranty (B1)** — `WarrantyTrackerRepository.confirmWarranty(id)` is the single confirm path; `domain/usecase/warranty/WarrantyReviewState` derives counts/filters/ordering; the cloud warranty path is gone from the repository (service retained but referenced only from `di/AiModule`); `warrantyExtractionEnabled` default is off and its settings row is replaced by a local-only caption.
+- **Transaction insight (B2)** — `AiCapability.TRANSACTION_INSIGHT` (appended last; on-device only, never cloud); `AiSettings.transactionInsightEnabled` with a one-time `data/repository/AiInsightSettingsMigration` (DataStore `DataMigration`) fed by the `domain/ai/service/InstallProvenance` port (`InstallOrigin`) and `data/repository/PackageInstallProvenance`; `domain/ai/service/AppForegroundState` port with `startup/ProcessAppForegroundState` (registered once in `AppStartupCoordinator.registerLifecycleObserver`) and `di/AppForegroundModule`; `GenerateTransactionInsightUseCase` rewritten on-device and returns `domain/ai/usecase/TransactionInsightOutcome` (`Generated` | `Skipped(reason)`).
+- **Workers (B3)** — `DailyBriefingWorker` and `WarrantyExpirationWorker` no longer declare `requiresNotificationPermission`; each checks `NotificationPermissionChecker` locally before posting. `DeliverProactiveBriefingNotificationUseCase` returns `domain/ai/usecase/BriefingDeliveryOutcome`. `SyncProactiveBriefingWorkUseCase` arms iff `aiEnabled` and briefing and (cloud allowed or proactive).
+- **AI settings UI (B2e/B3b)** — transaction-insight row, relabelled proactive toggle (`ai_toggle_proactive`) with `ai_proactive_desc` and the notifications-blocked caption.
+
+### Drift Sync (2026-10-24 / app-lock-privacy-mode increment 1a, branch feature/app-lock-privacy-mode)
+
+New production files (verified against source). No Room change (settings are a device-local DataStore, not in `.costbackup`).
+
+- **Settings store and diagnostics (`domain/privacy/applock/`, `data/privacy/applock/`):** `AppLockSettingsRepository` (+ `AppLockPrivacySettings`, `AppLockSettingsLoadState`, `EffectivePrivacyValues`), `AppLockSettingsRepositoryImpl`, `PrivacyDiagnosticsEmitter` (typed `PrivacyDiagnosticCode` / `PrivacyDiagnosticKey` / `PrivacyDiagnosticMetadata`), `DiscreetRepostTrigger` (the 1a `UpdateDiscreetNotificationsUseCase` was retired in S20-d; the discreet write is `AppLockSettingsOperations.requestDiscreetChange`); DI: `di/AppLockModule.kt`.
+- **App lock prompt wiring, S20-a (wired by S20-c; `ui/applock/`):** `AppLockAuthenticatorRelay` (`@Singleton`, main-thread-only `DeviceAuthenticator`, bound in `di/AppLockModule.kt`), `AppLockPromptHost` (per-Activity adapter registration, rotation adoption, host-loss report), `AppLockLifecycleBinder` (`@Singleton`, idempotent `install(application)`, exact started-activity count, calls `AppLockController.resolve()`); `BiometricPromptDeviceAuthenticator` gains the internal `adopt(attemptId, callback)`. No Room change.
+- **App lock window flag and prompt-once, S20-b (wired by S20-c; `ui/applock/`):** `SecureWindowController` (`@Singleton`, the single `FLAG_SECURE` writer: `applyInitial(window)`, `bind(activity)`; committed settings plus the `Resolving` flag only), `NotificationPermissionPromptOnce` (`@Singleton`, in-memory `tryClaim()`). No Room change, no DI module change.
+- **App lock shell integration, S20-c (LIVE; `ui/applock/AppLockShell.kt`, `ui/MainActivity.kt`):** `MainActivity` is now a `FragmentActivity` and wires `AppLockLifecycleBinder.install`, `AppLockPromptHost.attach` (provider; unscoped), `SecureWindowController.applyInitial`/`bind` and `NotificationPermissionPromptOnce`; `MainScreen` is composed only inside `AppLockShell` (gate source overload, saveable state holder). The lock is not user-enableable until S22. No Room change, no DI module change, `handleIntent` unchanged in S20-c (S21-b below changes it).
+- **App lock held deep links, S21-b (`ui/applock/AppLockDeepLinkRouter.kt`, `ui/navigation/DeepLinkApplier.kt`, `ui/MainActivity.kt`):** `AppLockDeepLinkRouter` (unscoped `@Inject`, one per Activity; `route(result, scope, vm)` and `startReleasing(owner, vm)`) is the only production caller of the controller's `onLockQuery` / `releaseHeldLink` / `releaseOpportunity` and the only caller of `DeepLinkApplier`; `handleIntent` now routes only through the router and `onCreate` calls `startReleasing` after the secure-window bind (`onNewIntent` unchanged). `DeepLinkApplier` gains `onHeld`, `onRejectedWhileClosed`, `applyReleased`, `applyExpired`. No Room change, no DI module change.
+- **App lock gate on the unsupported-database export, S21-c (`ui/unsupported/UnsupportedDatabaseExportAuth.kt`, `ui/unsupported/UnsupportedDatabaseActivity.kt`):** `UnsupportedDatabaseExportAuth` (internal object: `isAuthRequired(context)`, `decide`, `readLock`, `readCapability`, `capabilityRequiresAuth`; `ExportLockRead`; `EXPORT_AUTH_READ_TIMEOUT_MILLIS` = 2000) plus the read-only `UnsupportedDatabaseExportAuthEntryPoint` (`@EntryPoint @InstallIn(SingletonComponent)`, exactly `AppLockSettingsRepository` and `DeviceAuthCapabilityProvider`; Room-free). `UnsupportedDatabaseActivity` is now a `FragmentActivity` with a per-Activity `BiometricPromptDeviceAuthenticator`; it gates the SAF picker on the decision and keeps two `@VisibleForTesting` companion seams (`exportAuthRequiredForTest`, `authenticatorFactoryForTest`). New strings `unsupported_db_export_auth_*` in `res/values{,-es,-el}/strings.xml`. No Room change, no DI module change.
+- **Notification presentation:** `domain/notification/presentation/` — `NotificationKind`, `NotificationPresentationDecision`, `NotificationContentPolicy`, `NotificationPresentationResolver`; `data/service/` — `NotificationPresentationApplier`, `NotificationPresentationTexts`, `NotificationKindMarker`, `NotificationKindClassifier`; `res/values{,-es,-el}/strings_notification_presentation.xml`. `NotificationService` is kind-aware only (`*ForKind`) and gains `repostActiveAsDiscreet()`; `AndroidNotificationService` takes 4 constructor params.
+- **Deep links:** `domain/privacy/deeplink/DeepLinkRequest.kt` (`DeepLinkHost`, `DeepLinkParameter`, `DeepLinkLimits`, `DeepLinkRequest`), `ui/navigation/DeepLinkApplier.kt`, `domain/ai/usecase/MarkDashboardBriefingOpenedUseCase.kt`, `domain/analytics/TimePeriodTokens.kt`; `ui/navigation/DeepLinkParser.kt` now hosts `DeepLinkPolicy` (the allow/confirm/reject classifier is gone). Manifest: the `expensetracker` VIEW filter no longer declares `BROWSABLE`.
+- **Settings UI (`ui/screens/privacysettings/`):** `AppLockPrivacySettingsViewModel`, `AppLockPrivacySection` (`AppLockSettingsWriteSerializer` is now domain-owned, `domain/privacy/applock/`, shared with `AppLockSettingsOperations`, S18 ii-a); `PrivacySettingsScreen` gains one `item { AppLockPrivacySection() }`. Strings: `res/values{,-es,-el}/strings_privacy_section.xml` (es/el best effort, owner review pending).
+- `BillReminderWorker` takes `NotificationPresentationResolver` + `NotificationPresentationApplier` (appended after `timeProvider`) and exposes `internal const CHANNEL_ID`.
 
 ### Drift Sync (2026-10-23 / loan-installments S2)
 
@@ -187,7 +226,7 @@ Assistant is an overlay/entry surface, not a bottom tab.
 - Category: CategoryViewModel
 - Debug: DebugViewModel, CategorizationDebugViewModel, SourceLinkDebugViewModel
 - Settings: SourceLinkBackfillViewModel
-- Privacy: PrivacySettingsViewModel
+- Privacy: PrivacySettingsViewModel, AppLockPrivacySettingsViewModel (section VM, app-lock 1a)
 - Backup: BackupRestoreViewModel
 
 ---
@@ -245,7 +284,8 @@ Assistant is an overlay/entry surface, not a bottom tab.
 - **NavigationController.kt:** State management for navigation
 - **NavigationDestination.kt:** Sealed class with all routes + token serialization
 - **FeatureConfig.kt:** Feature menu configuration
-- **DeepLinkParser.kt:** Deep link parsing with security classification (Allow/RequireConfirmation/Reject)
+- **DeepLinkParser.kt:** hosts `DeepLinkPolicy`, the pure validator of every `expensetracker:` link (Accepted / Rejected / NotADeepLink)
+- **DeepLinkApplier.kt:** the only code that acts on a validated link (navigation, briefing-opened write, bounded `DL_*` diagnostics); S21-b adds the held-link entries `onHeld`, `onRejectedWhileClosed`, `applyReleased`, `applyExpired` (the router in `ui/applock/AppLockDeepLinkRouter.kt` is their only caller)
 - **DestinationPersistencePolicy.kt:** Classifies destinations as FULL/DEGRADED/EPHEMERAL
 - **MainActivity.kt:** Navigation host and activity setup
 
@@ -264,6 +304,7 @@ Assistant is an overlay/entry surface, not a bottom tab.
 - AiEngagementRepository, AiEnvironmentMonitor, AiSettingsRepository
 - AiModels: AiServiceResult, FinancialQueryModels, AssistantHistorySettings (OFF/REDACTED/RAW)
 - AiWorkScheduler, CategorizationAssistService, DashboardBriefingService
+- AppForegroundState (port), InstallProvenance + InstallOrigin (port)
 - DedupeJudgeService, NotificationFallbackParser, QueryInterpretationService
 - ReceiptAssistService, ReceiptItemCategorizationService
 - ReviewExplanationService, ReviewPriorityScorer, SemanticDuplicateDetector
@@ -277,6 +318,9 @@ Assistant is an overlay/entry surface, not a bottom tab.
 - MapFinancialQueryToNavigationUseCase, PrioritizeReviewItemsUseCase
 - SuggestCategoryFallbackUseCase, SuggestReceiptExtractionUseCase
 - SyncProactiveBriefingWorkUseCase
+- CompleteFinancialQueryClarificationUseCase, AssistantPeriodResolver
+- TransactionInsightOutcome, BriefingDeliveryOutcome (typed outcomes of GenerateTransactionInsightUseCase / DeliverProactiveBriefingNotificationUseCase)
+- WarrantyReviewState (`domain/usecase/warranty/`)
 - AiArtifactFreshness, TransactionInsightInputBuilder
 - ValidateBankStatementTransactionsUseCase
 - Plus 7 InputBuilder classes
@@ -289,6 +333,7 @@ Assistant is an overlay/entry surface, not a bottom tab.
 - ReviewPriorityModels, SemanticDuplicateModels, DefaultAiCapabilityRouter
 - AiRuntimeStatusModels
 - ExtractedAmountFilter, FinancialQueryDataQuality
+- AssistantUnsupportedReason (`domain/ai/model/`); UI text mappings AssistantUnsupportedReasonText, AssistantClarificationChoiceText (`ui/components/ai/`)
 
 ### Analytics
 - AdvancedAnalyticsEngine, AdvancedAnalyticsDashboard, AdvancedAnalyticsModels
@@ -319,6 +364,7 @@ Assistant is an overlay/entry surface, not a bottom tab.
 - AppParserRegistry, GenericTransactionParser
 - TransferDirectionDetector
 - Parsers: GoogleWalletParser, GreekBankParser, RevolutParser, SmsParser
+- Quick add (manual entry line, `domain/quickadd/`): QuickAddParser, QuickAddModels, QuickAddAmountRules, QuickAddDateRules, QuickAddVocabulary, QuickAddLearnedCategoryLookup
 
 ### Location & Geolocation
 - AreaSpendingEngine, GeocodingResult, LocatedExpense
@@ -367,7 +413,7 @@ Assistant is an overlay/entry surface, not a bottom tab.
 - ComputeDashboardWidgetsUseCase, DashboardDataProvider
 
 ### Additional Domain Packages
-- **privacy/** - Privacy settings & data portability (includes PrivacyBlocked sealed interface)
+- **privacy/** - Privacy settings & data portability (includes PrivacyBlocked sealed interface); `privacy/applock/` (app-lock settings contract, diagnostics emitter, discreet write use case + re-post trigger); `privacy/deeplink/` (validated deep-link types)
 - **transaction/** - Transaction parsing & validation
 - **core/money/** - Money, currency, amount utilities (incl. MoneyAggregateBuilder)
 - **core/time/** - Time providers & period utilities
@@ -375,7 +421,7 @@ Assistant is an overlay/entry surface, not a bottom tab.
 - **recurring/** - Recurring expense lifecycle
 - **alerts/** - Anomaly & alert domain models
 - **bank/** - Bank connection domain
-- **notification/** - Raw notification fingerprinting & dedup
+- **notification/** - Raw notification fingerprinting & dedup; `notification/presentation/` (kind registry, content policy, resolver for app-posted notifications)
 - **common/** - Shared utilities (hashing)
 - **workers/** - Worker specification and scheduling
 - **business/** - Business expense reporting
@@ -404,7 +450,7 @@ Actual repository inventory (interfaces and implementations); counts shift as im
 - AiArtifactRepositoryImpl
 - AiChatRepositoryImpl
 - AiEngagementRepositoryImpl
-- AiSettingsRepositoryImpl
+- AiSettingsRepositoryImpl (single-source defaults; DataStore migration `AiInsightSettingsMigration` + `PackageInstallProvenance` in the same package)
 
 ### Specialized
 - AccountingExportRepository
@@ -543,6 +589,7 @@ One DAO per entity (mostly 1-to-1 mapping)
 
 ### Feature Modules
 - **AiModule** - AI/ML services
+- **AppForegroundModule** - binds `AppForegroundState` to `ProcessAppForegroundState` (same singleton as the registered lifecycle observer)
 - **DashboardContractsModule** - Dashboard wiring
 - **DashboardAnomalyModule** - Dashboard anomaly bindings
 - **CashFlowModule** - Cash flow calculations
@@ -567,6 +614,7 @@ One DAO per entity (mostly 1-to-1 mapping)
 - **BackupRepositoryModule** - Backup/restore
 - **SecurityModule** - Encryption & security
 - **PrivacyModule** - Privacy settings bindings
+- **AppLockModule** - Binds `AppLockSettingsRepository` → `AppLockSettingsRepositoryImpl` (app-lock 1a)
 - **LocationResolverPortsModule** - Location abstractions
 - **EmptyStateModule** - Empty-state wiring
 - **EmptyStatePresentationModule** - Empty-state presentation wiring (lives in `ui/components/emptystate/`)
@@ -586,7 +634,7 @@ One DAO per entity (mostly 1-to-1 mapping)
 - **DataSyncFgsTimeoutGuard** (`service/`) - Android 15 dataSync FGS timeout budget guard; stores an elapsed-realtime timestamp, cleared on boot by BootReceiver
 
 ### Activities (2)
-- **MainActivity** (`ui/`) - Launcher activity; deep-link host (`expensetracker://`)
+- **MainActivity** (`ui/`) - Launcher activity; deep-link host (`expensetracker://`, VIEW + DEFAULT, no BROWSABLE)
 - **RescueActivity** (`data/rescue/`) - Manually triggered database recovery (ADB-launched; exported only in rescue builds)
 
 ### Receivers (4)
@@ -650,6 +698,7 @@ One DAO per entity (mostly 1-to-1 mapping)
  2. **AppStartupDelegate** - Startup entry-point bootstrap
  3. **AppStartupCoordinator** - Startup orchestration + lifecycle hooks
  4. **AppBackgroundLifecycleObserver** - Background lifecycle observer
+ 4a. **ProcessAppForegroundState** (`startup/`) - `@Singleton` process-lifecycle observer implementing the `AppForegroundState` port (default not-foreground = fail-safe skip); registered once in `AppStartupCoordinator.registerLifecycleObserver`, bound by `di/AppForegroundModule`
 
 ### Main Services
  5. **NotificationCaptureService** - Notification listener
@@ -665,10 +714,10 @@ One DAO per entity (mostly 1-to-1 mapping)
  13. **RecommendationStateManager** - Reactive StateFlow, max 5 limit, user-specific
 
 ### Workers (all 7 paused during restore via RestoreMaintenanceMode; all use WorkerSpecScheduler for centralized scheduling)
-  14. **DailyBriefingWorker** - Proactive briefing delivery (privacy-gated, midnight one-shot reschedule chain)
+  14. **DailyBriefingWorker** - Briefing generation + proactive delivery (privacy-gated; requiresNotificationPermission=false, local `NotificationPermissionChecker` check before posting, `BriefingDeliveryOutcome`; midnight one-shot reschedule chain)
   15. **LocationBackfillWorker** - Location enrichment backfill (overwrite guard, RetryableWorkerException)
   16. **MerchantKeyBackfillWorker** - Merchant key backfill (one-shot, RetryableWorkerException, REPLACE policy)
-  17. **WarrantyExpirationWorker** - Warranty expiry tracking (requiresNotificationPermission, room-backed delivery)
+  17. **WarrantyExpirationWorker** - Warranty expiry tracking (requiresNotificationPermission=false; reconciliation always runs, reminders gated by a local `NotificationPermissionChecker` check; room-backed delivery)
   18. **ReceiptMatchingWorker** - Receipt matching background work (atomic claim-for-auto-match)
   19. **BillReminderWorker** - Bill reminder delivery (disabled by default, runtime settings check)
   20. **DataRetentionWorker** - Privacy data purging (RetentionRegistry-based)

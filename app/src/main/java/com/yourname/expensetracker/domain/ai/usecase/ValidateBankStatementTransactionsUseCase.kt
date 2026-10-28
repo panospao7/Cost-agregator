@@ -86,6 +86,19 @@ object StatementValidationContracts {
     const val SOURCE_AI_VALIDATED = "AI_VALIDATED"
     const val SOURCE_AI_CORRECTED = "AI_CORRECTED"
     const val SOURCE_AI_REJECTED = "AI_REJECTED"
+
+    /**
+     * Most candidates sent in one AI call. Larger candidate lists (statements can hold hundreds
+     * of rows) are validated in consecutive calls of at most this many candidates each.
+     */
+    const val MAX_CANDIDATES_PER_AI_CALL = 40
+
+    /**
+     * Most AI calls ("chunks") made for one statement run. Candidates in chunks beyond this cap
+     * ([MAX_CHUNKS_PER_RUN] x [MAX_CANDIDATES_PER_AI_CALL] = 200 candidates) are not sent: they get the
+     * parser echo, exactly like an AI that gave no opinion. They are never dropped.
+     */
+    const val MAX_CHUNKS_PER_RUN = 5
 }
 
 /**
@@ -184,10 +197,88 @@ class ValidateBankStatementTransactionsUseCase @Inject constructor(
         candidateTransactions: List<DebugTransaction>,
         homeCurrency: String
     ): StatementValidationOutcome {
-        val candidates = candidateTransactions
-        if (candidates.isEmpty()) {
+        if (candidateTransactions.isEmpty()) {
             return StatementValidationOutcome.Validated(emptyList())
         }
+        if (candidateTransactions.size <= StatementValidationContracts.MAX_CANDIDATES_PER_AI_CALL) {
+            return validateBatch(rawOcrText, candidateTransactions)
+        }
+        return validateInBatches(rawOcrText, candidateTransactions)
+    }
+
+    /**
+     * Large candidate lists: consecutive AI calls of at most
+     * [StatementValidationContracts.MAX_CANDIDATES_PER_AI_CALL] candidates, each with the same
+     * raw-text cap. Inside a call the identity contract is positional (ids 0..n-1), so each chunk is
+     * sent with local ids and the caller's candidateIds are restored on the way back; ownership is
+     * still by id, never by response position. A chunk whose call is unusable (or throws a non
+     * cancellation exception) falls back to the parser echo for that chunk AND every later chunk (no
+     * further AI calls are made after the first unusable one); cancellation always propagates. At most
+     * [StatementValidationContracts.MAX_CHUNKS_PER_RUN] calls are made; later chunks get the parser echo.
+     */
+    private suspend fun validateInBatches(
+        rawOcrText: String,
+        candidates: List<DebugTransaction>
+    ): StatementValidationOutcome {
+        val merged = ArrayList<CleanTransaction>(candidates.size)
+        var anyValidated = false
+        var mismatchDetail: String? = null
+        var parserOnlyReason: String? = null
+        // Privacy/cost: once one chunk is not usable (unavailable, blocked or contract violation) the
+        // remaining chunks are NOT sent: every further call would resend the same statement header to
+        // the same unavailable or misbehaving provider. They get the parser echo directly.
+        var stopCalling = false
+        val chunks = candidates.chunked(StatementValidationContracts.MAX_CANDIDATES_PER_AI_CALL)
+        for ((chunkIndex, chunk) in chunks.withIndex()) {
+            // Cost/latency bound: chunks past the per-run cap are left unvalidated (parser echo).
+            if (stopCalling || chunkIndex >= StatementValidationContracts.MAX_CHUNKS_PER_RUN) {
+                merged += parserEcho(chunk)
+                continue
+            }
+            val localChunk = chunk.mapIndexed { localId, tx -> tx.copy(candidateId = localId) }
+            val outcome = try {
+                validateBatch(rawOcrText, localChunk)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Timber.d("AI chunk validation failed (class=${e::class.simpleName}); parser echo for this chunk")
+                StatementValidationOutcome.ParserOnly(
+                    reasonCode = StatementValidationContracts.REASON_AI_UNAVAILABLE,
+                    transactions = parserEcho(localChunk)
+                )
+            }
+            when (outcome) {
+                is StatementValidationOutcome.Validated -> {
+                    anyValidated = true
+                }
+                is StatementValidationOutcome.IdentityMismatch -> {
+                    if (mismatchDetail == null) mismatchDetail = outcome.detailCode
+                    stopCalling = true
+                }
+                is StatementValidationOutcome.ParserOnly -> {
+                    if (parserOnlyReason == null) parserOnlyReason = outcome.reasonCode
+                    stopCalling = true
+                }
+            }
+            outcome.transactions.forEach { tx ->
+                merged += tx.copy(candidateId = chunk[tx.candidateId].candidateId)
+            }
+        }
+        return when {
+            anyValidated -> StatementValidationOutcome.Validated(merged)
+            mismatchDetail != null -> StatementValidationOutcome.IdentityMismatch(mismatchDetail, merged)
+            else -> StatementValidationOutcome.ParserOnly(
+                reasonCode = parserOnlyReason ?: StatementValidationContracts.REASON_AI_UNAVAILABLE,
+                transactions = merged
+            )
+        }
+    }
+
+    /** One AI round trip for at most [StatementValidationContracts.MAX_CANDIDATES_PER_AI_CALL] candidates. */
+    private suspend fun validateBatch(
+        rawOcrText: String,
+        candidates: List<DebugTransaction>
+    ): StatementValidationOutcome {
 
         Timber.d(
             "validateTransactions: validating %d candidate transactions, OCR length=%d",

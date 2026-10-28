@@ -24,6 +24,8 @@ import com.yourname.expensetracker.domain.alerts.AnomalyAlertOrchestrator
 import com.yourname.expensetracker.domain.analytics.TransferDirectionAnalytics
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.usecase.GenerateTransactionInsightUseCase
+import com.yourname.expensetracker.domain.ai.usecase.TransactionInsightOutcome
+import com.yourname.expensetracker.domain.ai.usecase.TransactionInsightSkipReason
 import com.yourname.expensetracker.domain.budget.BudgetMonitor
 import com.yourname.expensetracker.domain.intelligence.ConfidenceRouter
 import com.yourname.expensetracker.domain.intelligence.DuplicateDetectionPolicy
@@ -454,6 +456,76 @@ class NotificationProcessingPipelineReliabilityTest {
         }
         coVerify(exactly = 0) { sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, any()) }
     }
+
+    @Test
+    fun `AE-28 skipped insight still generates and saves deterministic recommendations with a null artifact`() =
+        runTest(testDispatcher) {
+            val notification = testNotification("com.wallet")
+            val parsed = ParsedTransaction(
+                amount = 50.0,
+                currency = "EUR",
+                merchant = "Shop",
+                type = ParsedTransactionType.PURCHASE,
+                confidence = 0.95f,
+                date = notification.timestamp
+            )
+            coEvery {
+                parserRegistry.parseWithProvenance(
+                    notification.title,
+                    notification.text,
+                    notification.bigText,
+                    notification.subText,
+                    notification.packageName
+                )
+            } returns ParseOutcome.Parsed(parsed, mockk(relaxed = true))
+            coEvery { confidenceRouter.route(parsed, notification.packageName, any()) } returns RoutingResult(
+                decision = RoutingDecision.AUTO_ACCEPT,
+                adjustedConfidence = 0.95f,
+                reason = "high confidence"
+            )
+            coEvery {
+                hybridClassifier.classify(
+                    merchantName = "Shop",
+                    amount = 50.0,
+                    notificationTitle = notification.title,
+                    notificationText = notification.text,
+                    packageName = notification.packageName
+                )
+            } returns ClassificationResult(
+                categoryId = 0L,
+                categoryName = "Unknown",
+                confidence = 0f,
+                matchType = MatchType.FALLBACK
+            )
+            coEvery { rawDao.insertOrIgnore(any()) } returns 123L
+            coEvery {
+                expenseDao.isDuplicateCurrencyAware(
+                    amount = 50.0,
+                    merchant = "Shop",
+                    date = notification.timestamp,
+                    currency = "EUR",
+                    transactionType = "PURCHASE",
+                    windowMs = DuplicateDetectionPolicy.DUPLICATE_WINDOW_MS,
+                    merchantKey = any(),
+                    dedupeKey = any()
+                )
+            } returns false
+            coEvery { coordinator.createExpenseDbOnlyV2(any()) } returns MutationResult(
+                com.yourname.expensetracker.domain.transaction.CreateExpenseResult.Created(456L),
+                PostCommitActionBatch.empty("test")
+            )
+            every { aiSettingsRepository.settings() } returns flowOf(AiSettings(aiEnabled = true))
+            coEvery { generateTransactionInsightUseCase(any()) } returns
+                TransactionInsightOutcome.Skipped(TransactionInsightSkipReason.APP_NOT_FOREGROUND)
+
+            val result = pipeline.process(notification)
+            testDispatcher.scheduler.advanceUntilIdle()
+
+            assertTrue("Expected AutoAccepted outcome, got $result", result is NotificationPipelineOutcome.AutoAccepted)
+            coVerify(exactly = 1) { generateTransactionInsightUseCase(any()) }
+            coVerify(exactly = 1) { dashboardFollowThroughEngine.generateRecommendations(any(), null, any()) }
+            coVerify(exactly = 1) { recommendationRepository.saveAll(any()) }
+        }
 
     @Test
     fun `process remains stable when concurrent subscription detections insert same pending candidate`() = runTest(testDispatcher) {

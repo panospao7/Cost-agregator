@@ -5623,12 +5623,19 @@ def test_checked_in_structural_only_manifest_contract_via_production_apis():
     Loan-installments S6b adds 7 more exact identities (the same coordinator's
     helpers cancelScheduledEntry, editDetails, insertEntryRow, moveEndedPlan,
     rescheduleEntry, reverseSettledEntry, updatePlanShape), yielding 452.
+    The merge of feature/ai-evolution (4add2466) adds the ai-fixes net +2
+    (B1a -1 +2, Z2 +1), yielding 454.
     Re-derive this pin after every policy promotion.
     """
     from scripts.db_guard.source_roots import load_source_root_manifest
 
     entries = load_db_ownership_policy()
-    assert len(entries) == 452
+    # ai-fixes B1a (owner-approved 2026-10-22): -1 dead toWarrantyEntityOrNull
+    # identity, +2 exact confirmWarranty(Long) identities: -1 +2.
+    # ai-fixes Z2 review fix: +1 exact promoteReviewDraft identity
+    # (warrantyDao.updateWarranty): +1.
+    # mec merge of feature/ai-evolution (4add2466): loan chain 452 plus the ai-fixes +2 = 454.
+    assert len(entries) == 454
     sweep_path = (
         "app/src/main/java/com/yourname/expensetracker/data/repository/"
         "SavingsSweepAcceptanceCoordinator.kt"
@@ -6109,8 +6116,11 @@ def test_current_db_gate_activated_policy_real_config_pipeline(tmp_path, monkeyp
     # (TransactionLifecycleCoordinator.setSpendingExclusionDbOnly), yielding 432;
     # loan-installments S6a adds 13 approved exact identities
     # (InstallmentPlanLifecycleCoordinator x InstallmentPlanDao writes), yielding 445; loan S6b adds 7 more, yielding 452.
+    # ai-fixes B1a (owner-approved 2026-10-22): -1 dead toWarrantyEntityOrNull
+    # identity, +2 exact confirmWarranty(Long) identities; ai-fixes Z2 review fix: +1 exact
+    # promoteReviewDraft identity (warrantyDao.updateWarranty): +2 net, yielding 454 after the merge.
     # Re-derived per the checked-in-manifest contract pin above.
-    assert len(entries) == 452
+    assert len(entries) == 454
 
     # The structural gate really ran (post-activation it is no longer
     # short-circuited by a loader block) and stayed clean.

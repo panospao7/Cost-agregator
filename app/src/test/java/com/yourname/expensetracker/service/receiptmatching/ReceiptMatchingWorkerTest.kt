@@ -1,6 +1,11 @@
 package com.yourname.expensetracker.service.receiptmatching
 
+import android.app.Notification
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
+import android.content.ContextWrapper
+import android.content.Intent
 import androidx.test.core.app.ApplicationProvider
 import androidx.work.ListenableWorker.Result
 import androidx.work.WorkerFactory
@@ -18,7 +23,21 @@ import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptMatchLifecycleService
 import com.yourname.expensetracker.domain.receiptmatching.MatchResult
 import com.yourname.expensetracker.domain.receiptmatching.ReceiptTransactionMatcher
+import com.yourname.expensetracker.data.service.AndroidNotificationService
+import com.yourname.expensetracker.data.service.NotificationPresentationApplier
+import com.yourname.expensetracker.data.service.NotificationPresentationTexts
+import com.yourname.expensetracker.R
+import com.yourname.expensetracker.data.service.PresentationFixtures.ScriptedSettingsRepository
+import com.yourname.expensetracker.data.service.PresentationFixtures.everyString
+import com.yourname.expensetracker.domain.privacy.applock.SettingsUnreadableCause
+import com.yourname.expensetracker.ui.MainActivity
+import com.yourname.expensetracker.domain.notification.presentation.NotificationKind
+import com.yourname.expensetracker.domain.notification.presentation.NotificationPresentationResolver
+import com.yourname.expensetracker.domain.privacy.applock.AppLockPrivacySettings
+import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsLoadState
+import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticsEmitter
 import com.yourname.expensetracker.domain.service.NotificationService
+import com.yourname.expensetracker.domain.util.NotificationId
 import com.yourname.expensetracker.domain.workers.NotificationPermissionChecker
 import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
 import com.yourname.expensetracker.domain.workers.WorkerGuardResult
@@ -28,12 +47,25 @@ import io.mockk.coVerify
 import kotlinx.coroutines.CancellationException
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.slot
+import io.mockk.verify
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.test.runTest
+import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
+import org.robolectric.shadows.ShadowLog
+import timber.log.Timber
 
 @RunWith(RobolectricTestRunner::class)
 @Suppress("DEPRECATION_ERROR")
@@ -51,6 +83,13 @@ class ReceiptMatchingWorkerTest {
     // Relaxed run context so behavioral tests can run the guarded block AND
     // coVerify the worker's per-receipt counter calls.
     private lateinit var ctx: WorkerRunContext
+
+    private var diagnosticsScope: CoroutineScope? = null
+
+    @After
+    fun tearDownDiagnosticsScope() {
+        diagnosticsScope?.cancel()
+    }
 
     @Before
     fun setup() {
@@ -226,7 +265,7 @@ class ReceiptMatchingWorkerTest {
             matchService.recordAutoMatchLinkFailed(30L, 900L, "RECEIPT_LINK_INVALID_STATE", "IllegalStateException")
         }
         // A failed link must not be treated as an auto-match success notification.
-        coVerify(exactly = 0) { notificationService.postBudgetAlert(any(), any(), any()) }
+        coVerify(exactly = 0) { notificationService.postBudgetAlertForKind(any(), any(), any(), any()) }
     }
 
     @Test
@@ -244,13 +283,13 @@ class ReceiptMatchingWorkerTest {
             )
         } returns kotlin.Result.success(sampleLink(receiptId = 40L, expenseId = 901L))
         // RP-16 16-D: worker counts only DELIVERED results as notificationsSent.
-        coEvery { notificationService.postBudgetAlert(any(), any(), any()) } returns
+        coEvery { notificationService.postBudgetAlertForKind(any(), any(), any(), any()) } returns
             NotificationService.DeliveryResult.DELIVERED
 
         val result = buildWorker().doWork()
 
         assertEquals(Result.success(), result)
-        coVerify(exactly = 1) { notificationService.postBudgetAlert(any(), any(), any()) }
+        coVerify(exactly = 1) { notificationService.postBudgetAlertForKind(any(), any(), any(), any()) }
         coVerify(exactly = 0) { matchService.recordAutoMatchLinkFailed(any(), any(), any(), any()) }
         // P9-S4 counts: a successful auto-match scans, updates, and notifies.
         coVerify(exactly = 1) { ctx.addRowsScanned() }
@@ -279,7 +318,7 @@ class ReceiptMatchingWorkerTest {
         assertEquals(Result.success(), result)
         // Already-claimed is a benign no-op, not a link failure.
         coVerify(exactly = 0) { matchService.recordAutoMatchLinkFailed(any(), any(), any(), any()) }
-        coVerify(exactly = 0) { notificationService.postBudgetAlert(any(), any(), any()) }
+        coVerify(exactly = 0) { notificationService.postBudgetAlertForKind(any(), any(), any(), any()) }
     }
 
     // ── PR12L-2: structured link-failure diagnostics ─────────────────────────
@@ -377,7 +416,7 @@ class ReceiptMatchingWorkerTest {
         coEvery {
             receiptLinkService.linkReceiptToExpense(any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
         } returns kotlin.Result.success(sampleLink(receiptId = 81L, expenseId = 931L))
-        coEvery { notificationService.postBudgetAlert(any(), any(), any()) } throws SecurityException("notif denied")
+        coEvery { notificationService.postBudgetAlertForKind(any(), any(), any(), any()) } throws SecurityException("notif denied")
 
         val result = buildWorker().doWork()
 
@@ -396,7 +435,7 @@ class ReceiptMatchingWorkerTest {
 
     @Test
     fun `notification_service_exception_records_suppression_and_worker_succeeds`() = runTest {
-        // When sendBudgetAlert throws a non-cancellation, non-SecurityException,
+        // When postBudgetAlertForKind throws a non-cancellation, non-SecurityException,
         // the worker must catch it, record a SERVICE_FAILURE suppression diagnostic,
         // and still succeed.
         val receipt = sampleReceipt(id = 82L)
@@ -407,7 +446,7 @@ class ReceiptMatchingWorkerTest {
         coEvery {
             receiptLinkService.linkReceiptToExpense(any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
         } returns kotlin.Result.success(sampleLink(receiptId = 82L, expenseId = 932L))
-        coEvery { notificationService.postBudgetAlert(any(), any(), any()) } throws RuntimeException("notification service unavailable")
+        coEvery { notificationService.postBudgetAlertForKind(any(), any(), any(), any()) } throws RuntimeException("notification service unavailable")
 
         val result = buildWorker().doWork()
 
@@ -428,7 +467,7 @@ class ReceiptMatchingWorkerTest {
 
     @Test
     fun `notification_service_cancellation_rethrows`() = runTest {
-        // When sendBudgetAlert throws CancellationException, it must propagate
+        // When postBudgetAlertForKind throws CancellationException, it must propagate
         // through the notification catch, the worker's outer catch and the guard
         // (which rethrows cancellation), so doWork() throws instead of returning a Result.
         val receipt = sampleReceipt(id = 83L)
@@ -439,7 +478,7 @@ class ReceiptMatchingWorkerTest {
         coEvery {
             receiptLinkService.linkReceiptToExpense(any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
         } returns kotlin.Result.success(sampleLink(receiptId = 83L, expenseId = 933L))
-        coEvery { notificationService.postBudgetAlert(any(), any(), any()) } throws CancellationException("job cancelled")
+        coEvery { notificationService.postBudgetAlertForKind(any(), any(), any(), any()) } throws CancellationException("job cancelled")
 
         // CancellationException must propagate out of doWork(), not be mapped to a Result.
         // try/fail pattern: an AssertionError (not a CancellationException) is raised if
@@ -452,7 +491,7 @@ class ReceiptMatchingWorkerTest {
             assertEquals("job cancelled", e.message)
         }
         // The notification call was actually reached (the CE originated from it).
-        coVerify(exactly = 1) { notificationService.postBudgetAlert(any(), any(), any()) }
+        coVerify(exactly = 1) { notificationService.postBudgetAlertForKind(any(), any(), any(), any()) }
         // No suppression diagnostic should be recorded for cancellation.
         coVerify(exactly = 0) { matchService.recordNotificationSuppressed(any(), any(), any(), any()) }
         // No notification-sent metric.
@@ -594,7 +633,7 @@ class ReceiptMatchingWorkerTest {
         val result = buildWorker().doWork()
 
         assertEquals(Result.success(), result)
-        coVerify(exactly = 0) { notificationService.postBudgetAlert(any(), any(), any()) }
+        coVerify(exactly = 0) { notificationService.postBudgetAlertForKind(any(), any(), any(), any()) }
         coVerify(exactly = 0) { ctx.addNotificationsSent() }
         // Link and metric for rows updated must still happen.
         coVerify(exactly = 1) { ctx.addRowsUpdated() }
@@ -612,13 +651,13 @@ class ReceiptMatchingWorkerTest {
         coEvery {
             receiptLinkService.linkReceiptToExpense(any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
         } returns kotlin.Result.success(sampleLink(receiptId = 104L, expenseId = 913L))
-        coEvery { notificationService.postBudgetAlert(any(), any(), any()) } throws SecurityException("notif denied")
+        coEvery { notificationService.postBudgetAlertForKind(any(), any(), any(), any()) } throws SecurityException("notif denied")
 
         val result = buildWorker().doWork()
 
         assertEquals(Result.success(), result)
         // Notification was attempted but threw; metric must NOT be incremented.
-        coVerify(exactly = 1) { notificationService.postBudgetAlert(any(), any(), any()) }
+        coVerify(exactly = 1) { notificationService.postBudgetAlertForKind(any(), any(), any(), any()) }
         coVerify(exactly = 0) { ctx.addNotificationsSent() }
         // Link still succeeded.
         coVerify(exactly = 1) { ctx.addRowsUpdated() }
@@ -635,13 +674,13 @@ class ReceiptMatchingWorkerTest {
         coEvery {
             receiptLinkService.linkReceiptToExpense(any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
         } returns kotlin.Result.success(sampleLink(receiptId = 105L, expenseId = 914L))
-        coEvery { notificationService.postBudgetAlert(any(), any(), any()) } returns
+        coEvery { notificationService.postBudgetAlertForKind(any(), any(), any(), any()) } returns
             NotificationService.DeliveryResult.DELIVERED
 
         val result = buildWorker().doWork()
 
         assertEquals(Result.success(), result)
-        coVerify(exactly = 1) { notificationService.postBudgetAlert(any(), any(), any()) }
+        coVerify(exactly = 1) { notificationService.postBudgetAlertForKind(any(), any(), any(), any()) }
         coVerify(exactly = 1) { ctx.addNotificationsSent() }
     }
 
@@ -663,14 +702,14 @@ class ReceiptMatchingWorkerTest {
             kotlin.Result.success(sampleLink(receiptId = 106L, expenseId = 915L)),
             kotlin.Result.success(sampleLink(receiptId = 107L, expenseId = 916L))
         )
-        coEvery { notificationService.postBudgetAlert(any(), any(), any()) } returns
+        coEvery { notificationService.postBudgetAlertForKind(any(), any(), any(), any()) } returns
             NotificationService.DeliveryResult.DELIVERED
 
         val result = buildWorker().doWork()
 
         assertEquals(Result.success(), result)
         // Exactly one notification sent (second receipt allowed), so metric is 1.
-        coVerify(exactly = 1) { notificationService.postBudgetAlert(any(), any(), any()) }
+        coVerify(exactly = 1) { notificationService.postBudgetAlertForKind(any(), any(), any(), any()) }
         coVerify(exactly = 1) { ctx.addNotificationsSent() }
         // Both receipts were updated (linked).
         coVerify(exactly = 2) { ctx.addRowsUpdated() }
@@ -689,13 +728,13 @@ class ReceiptMatchingWorkerTest {
         coEvery {
             receiptLinkService.linkReceiptToExpense(any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
         } returns kotlin.Result.success(sampleLink(receiptId = 108L, expenseId = 917L))
-        coEvery { notificationService.postBudgetAlert(any(), any(), any()) } returns
+        coEvery { notificationService.postBudgetAlertForKind(any(), any(), any(), any()) } returns
             NotificationService.DeliveryResult.NOT_DELIVERED
 
         val result = buildWorker().doWork()
 
         assertEquals(Result.success(), result)
-        coVerify(exactly = 1) { notificationService.postBudgetAlert(any(), any(), any()) }
+        coVerify(exactly = 1) { notificationService.postBudgetAlertForKind(any(), any(), any(), any()) }
         coVerify(exactly = 0) { ctx.addNotificationsSent() }
         coVerify(exactly = 1) { ctx.addRowsSkipped() }
         coVerify(exactly = 1) {
@@ -708,6 +747,289 @@ class ReceiptMatchingWorkerTest {
         }
         // Link still counted as updated work.
         coVerify(exactly = 1) { ctx.addRowsUpdated() }
+    }
+
+    // ── S7 (AE-11, AE-13, AE-111, TECH-9 / owner decision C6): kind RECEIPT_MATCH + explicit PERMISSION_DENIED ──
+
+    private fun stubAutoMatchLinkSuccess(receipt: ScannedReceipt, expense: Expense) {
+        coEvery { notificationPermissionChecker.areNotificationsEnabled() } returns true
+        coEvery { receiptRepository.getProcessableReceipts() } returns listOf(receipt)
+        coEvery { matcher.findBestMatch(receipt, any()) } returns MatchResult.AutoMatch(expense, 0.98)
+        coEvery {
+            receiptLinkService.linkReceiptToExpense(any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+        } returns kotlin.Result.success(sampleLink(receiptId = receipt.id, expenseId = expense.id))
+    }
+
+    @Test
+    fun `AE-13 worker declares kind RECEIPT_MATCH with the unchanged receipt id and never BUDGET or the other ForKind form`() = runTest {
+        val receipt = sampleReceipt(id = 120L, parsedMerchant = "SentinelMerchant")
+        val expense = sampleExpense(id = 940L)
+        stubAutoMatchLinkSuccess(receipt, expense)
+        val kind = slot<NotificationKind>()
+        val id = slot<NotificationId>()
+        val title = slot<String>()
+        val message = slot<String>()
+        coEvery {
+            notificationService.postBudgetAlertForKind(capture(kind), capture(id), capture(title), capture(message))
+        } returns NotificationService.DeliveryResult.DELIVERED
+
+        assertEquals(Result.success(), buildWorker().doWork())
+
+        assertEquals(NotificationKind.RECEIPT_MATCH, kind.captured)
+        // NotificationId has no equals: compare the value.
+        assertEquals(NotificationId.forReceipt(120L).value, id.captured.value)
+        assertEquals(context.getString(com.yourname.expensetracker.R.string.receipt_matching_auto_matched_title), title.captured)
+        assertEquals(
+            context.getString(com.yourname.expensetracker.R.string.receipt_matching_auto_matched_message_format, "SentinelMerchant"),
+            message.captured
+        )
+        coVerify(exactly = 0) {
+            notificationService.postBudgetAlertForKind(NotificationKind.BUDGET, any(), any(), any())
+        }
+        // S9a: the legacy kind-less methods no longer exist; the raw-id kind-aware form is the other path.
+        coVerify(exactly = 0) { notificationService.sendBudgetAlertForKind(any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `AE-11 DELIVERED keeps parity - one notificationsSent, no skipped row, no suppression, link called once`() = runTest {
+        val receipt = sampleReceipt(id = 121L)
+        val expense = sampleExpense(id = 941L)
+        stubAutoMatchLinkSuccess(receipt, expense)
+        coEvery { notificationService.postBudgetAlertForKind(any(), any(), any(), any()) } returns
+            NotificationService.DeliveryResult.DELIVERED
+
+        assertEquals(Result.success(), buildWorker().doWork())
+
+        coVerify(exactly = 1) { notificationService.postBudgetAlertForKind(any(), any(), any(), any()) }
+        coVerify(exactly = 1) { ctx.addNotificationsSent() }
+        coVerify(exactly = 0) { ctx.addRowsSkipped() }
+        coVerify(exactly = 1) { ctx.addRowsUpdated() }
+        coVerify(exactly = 0) { matchService.recordNotificationSuppressed(any(), any(), any(), any()) }
+        coVerify(exactly = 1) {
+            receiptLinkService.linkReceiptToExpense(
+                receiptId = 121L, expenseId = 941L, linkType = "AUTO_MATCH", source = "MATCHING_WORKER",
+                requireUnmatchedClaim = true, confidence = any(), createdBy = any(),
+                allowRelink = any(), matchStatus = any(), writeSourceLink = any()
+            )
+        }
+    }
+
+    @Test
+    fun `AE-11 TECH-9 PERMISSION_DENIED result records PERMISSION_REVOKED with constant error class and no skipped row`() = runTest {
+        val receipt = sampleReceipt(id = 122L, parsedMerchant = "SentinelMerchant")
+        val expense = sampleExpense(id = 942L)
+        stubAutoMatchLinkSuccess(receipt, expense)
+        coEvery { notificationService.postBudgetAlertForKind(any(), any(), any(), any()) } returns
+            NotificationService.DeliveryResult.PERMISSION_DENIED
+
+        assertEquals(Result.success(), buildWorker().doWork())
+
+        coVerify(exactly = 1) { notificationService.postBudgetAlertForKind(any(), any(), any(), any()) }
+        coVerify(exactly = 1) {
+            matchService.recordNotificationSuppressed(
+                receiptId = 122L,
+                expenseId = 942L,
+                reasonCode = "RECEIPT_MATCH_NOTIFICATION_SUPPRESSED_PERMISSION_REVOKED",
+                errorClass = "SecurityException"
+            )
+        }
+        coVerify(exactly = 1) { matchService.recordNotificationSuppressed(any(), any(), any(), any()) }
+        coVerify(exactly = 0) { ctx.addRowsSkipped() }
+        coVerify(exactly = 0) { ctx.addNotificationsSent() }
+        coVerify(exactly = 1) { ctx.addRowsUpdated() }
+        coVerify(exactly = 0) { matchService.recordAutoMatchLinkFailed(any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `AE-11 a service that still throws SecurityException keeps the defensive catch with the same diagnostic`() = runTest {
+        val receipt = sampleReceipt(id = 123L)
+        val expense = sampleExpense(id = 943L)
+        stubAutoMatchLinkSuccess(receipt, expense)
+        coEvery { notificationService.postBudgetAlertForKind(any(), any(), any(), any()) } throws
+            SecurityException("notif denied")
+
+        assertEquals(Result.success(), buildWorker().doWork())
+
+        coVerify(exactly = 1) {
+            matchService.recordNotificationSuppressed(
+                receiptId = 123L,
+                expenseId = 943L,
+                reasonCode = "RECEIPT_MATCH_NOTIFICATION_SUPPRESSED_PERMISSION_REVOKED",
+                errorClass = "SecurityException"
+            )
+        }
+        coVerify(exactly = 0) { ctx.addRowsSkipped() }
+        coVerify(exactly = 0) { ctx.addNotificationsSent() }
+    }
+
+    @Test
+    fun `AE-11 parity - real service with a throwing NotificationManager yields the same counters and diagnostic as a PERMISSION_DENIED result`() = runTest {
+        val receipt = sampleReceipt(id = 124L, parsedMerchant = "SentinelMerchant")
+        val expense = sampleExpense(id = 944L)
+        stubAutoMatchLinkSuccess(receipt, expense)
+        val manager = mockk<NotificationManager>(relaxed = true)
+        every { manager.areNotificationsEnabled() } returns true
+        every { manager.notify(any<Int>(), any<Notification>()) } throws SecurityException("denied for SentinelMerchant")
+        notificationService = realService(contextWith(manager), discreet = true)
+
+        // Capture both android.util.Log (ShadowLog, used by the service) and Timber (used by the worker).
+        ShadowLog.clear()
+        val timberLines = mutableListOf<String>()
+        val timberTree = object : Timber.Tree() {
+            override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
+                timberLines += "$tag $message ${t?.toString().orEmpty()}"
+            }
+        }
+        Timber.plant(timberTree)
+        try {
+            assertEquals(Result.success(), buildWorker().doWork())
+        } finally {
+            Timber.uproot(timberTree)
+        }
+
+        val logLines = ShadowLog.getLogs().map { "${it.tag} ${it.msg} ${it.throwable?.toString().orEmpty()}" } + timberLines
+        assertTrue("the denied path logged at least one line", logLines.isNotEmpty())
+        logLines.forEach { assertFalse("sentinel merchant leaked into log '$it'", it.contains("SentinelMerchant")) }
+
+        verify(exactly = 1) { manager.notify(NotificationId.forReceipt(124L).value, any<Notification>()) }
+        coVerify(exactly = 1) {
+            matchService.recordNotificationSuppressed(
+                receiptId = 124L,
+                expenseId = 944L,
+                reasonCode = "RECEIPT_MATCH_NOTIFICATION_SUPPRESSED_PERMISSION_REVOKED",
+                errorClass = "SecurityException"
+            )
+        }
+        coVerify(exactly = 1) { matchService.recordNotificationSuppressed(any(), any(), any(), any()) }
+        coVerify(exactly = 0) { ctx.addRowsSkipped() }
+        coVerify(exactly = 0) { ctx.addNotificationsSent() }
+        coVerify(exactly = 1) { ctx.addRowsUpdated() }
+    }
+
+    @Test
+    fun `AE-111 real service DISCREET - sentinel merchant absent, channel budget_alerts, receipt id, tap target home with CLEAR_TASK`() = runTest {
+        val sentinel = "SentinelMerchant4242"
+        val receipt = sampleReceipt(id = 125L, parsedMerchant = sentinel)
+        val expense = sampleExpense(id = 945L)
+        stubAutoMatchLinkSuccess(receipt, expense)
+        notificationService = realService(context, discreet = true)
+
+        assertEquals(Result.success(), buildWorker().doWork())
+
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val expectedId = NotificationId.forReceipt(125L).value
+        val matches = manager.activeNotifications.filter { it.id == expectedId }
+        assertEquals("exactly one active notification with the receipt id", 1, matches.size)
+        val n = matches.single().notification
+        assertEquals("budget_alerts", n.channelId)
+        coVerify(exactly = 1) { ctx.addNotificationsSent() }
+        coVerify(exactly = 0) { matchService.recordNotificationSuppressed(any(), any(), any(), any()) }
+
+        assertDiscreetReceiptNotification(n, sentinel)
+
+        val intent = shadowOf(n.contentIntent).savedIntent
+        assertNotNull(intent)
+        assertEquals("expensetracker://home", intent.data.toString())
+        assertEquals(Intent.ACTION_VIEW, intent.action)
+        assertTrue((intent.flags and Intent.FLAG_ACTIVITY_CLEAR_TASK) != 0)
+        assertTrue((intent.flags and Intent.FLAG_ACTIVITY_NEW_TASK) != 0)
+    }
+
+    @Test
+    fun `AE-111 INV-6 real service with an unreadable settings store posts DISCREET`() = runTest {
+        val sentinel = "SentinelMerchant4242"
+        val receipt = sampleReceipt(id = 127L, parsedMerchant = sentinel)
+        val expense = sampleExpense(id = 947L)
+        stubAutoMatchLinkSuccess(receipt, expense)
+        notificationService = realService(context, discreet = false, settingsUnreadable = true)
+
+        assertEquals(Result.success(), buildWorker().doWork())
+
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val expectedId = NotificationId.forReceipt(127L).value
+        val matches = manager.activeNotifications.filter { it.id == expectedId }
+        assertEquals("exactly one active notification with the receipt id", 1, matches.size)
+        val n = matches.single().notification
+        assertEquals("budget_alerts", n.channelId)
+        assertDiscreetReceiptNotification(n, sentinel)
+        coVerify(exactly = 1) { ctx.addNotificationsSent() }
+        coVerify(exactly = 0) { matchService.recordNotificationSuppressed(any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `AE-111 real service FULL - the detailed merchant text is shown on the same channel and id`() = runTest {
+        val merchant = "FullModeMerchant"
+        val receipt = sampleReceipt(id = 126L, parsedMerchant = merchant)
+        val expense = sampleExpense(id = 946L)
+        stubAutoMatchLinkSuccess(receipt, expense)
+        notificationService = realService(context, discreet = false)
+
+        assertEquals(Result.success(), buildWorker().doWork())
+
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val n = manager.activeNotifications.single { it.id == NotificationId.forReceipt(126L).value }.notification
+        assertEquals("budget_alerts", n.channelId)
+        assertTrue(everyString(n).any { it.contains(merchant) })
+        coVerify(exactly = 1) { ctx.addNotificationsSent() }
+    }
+
+    private fun contextWith(manager: NotificationManager): Context =
+        object : ContextWrapper(context) {
+            override fun getSystemService(name: String): Any? =
+                if (name == Context.NOTIFICATION_SERVICE) manager else super.getSystemService(name)
+        }
+
+    private fun realService(
+        serviceContext: Context,
+        discreet: Boolean,
+        settingsUnreadable: Boolean = false
+    ): AndroidNotificationService {
+        val scope = CoroutineScope(Job())
+        diagnosticsScope = scope
+        val repo = ScriptedSettingsRepository {
+            if (settingsUnreadable) {
+                AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.IO_ERROR)
+            } else {
+                AppLockSettingsLoadState.Loaded(AppLockPrivacySettings(discreetNotifications = discreet))
+            }
+        }
+        val resolver = NotificationPresentationResolver(repo, mockk<PrivacyDiagnosticsEmitter>(relaxed = true), scope)
+        val applier = NotificationPresentationApplier(context, NotificationPresentationTexts(context))
+        return AndroidNotificationService(serviceContext, resolver, applier, mockk<PrivacyDiagnosticsEmitter>(relaxed = true))
+    }
+
+    /**
+     * The DISCREET contract for a receipt-match notification: the RECEIPT_MATCH constants (never the BUDGET
+     * ones), no merchant and no "Receipt from" text anywhere, an explicit MainActivity immutable tap target,
+     * and the generic public version. The recursive string scan is [PresentationFixtures.everyString].
+     */
+    private fun assertDiscreetReceiptNotification(n: Notification, sentinel: String) {
+        val title = n.extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()
+        val text = n.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()
+        assertEquals(context.getString(R.string.notif_discreet_receipt_match_title), title)
+        assertEquals(context.getString(R.string.notif_discreet_receipt_match_text), text)
+        val budget = NotificationPresentationTexts(context).discreet(NotificationKind.BUDGET)
+        assertNotEquals(budget.title, title)
+        assertNotEquals(budget.text, text)
+
+        val everything = everyString(n)
+        assertTrue("the notification carries some text", everything.isNotEmpty())
+        everything.forEach {
+            assertFalse("sentinel merchant leaked: $it", it.contains(sentinel))
+            assertFalse("'Receipt from' leaked: $it", it.contains("Receipt from"))
+        }
+
+        val shadow = shadowOf(n.contentIntent)
+        val intent = shadow.savedIntent
+        assertNotNull(intent)
+        assertNotNull("explicit intent component", intent.component)
+        assertEquals(MainActivity::class.java.name, intent.component!!.className)
+        assertTrue("content PendingIntent is immutable", (shadow.flags and PendingIntent.FLAG_IMMUTABLE) != 0)
+
+        val pub = n.publicVersion
+        assertNotNull("public version present", pub)
+        assertEquals(context.getString(R.string.notif_public_title), pub!!.extras.getCharSequence(Notification.EXTRA_TITLE)?.toString())
+        assertEquals(context.getString(R.string.notif_public_text), pub.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString())
     }
 
     private fun sampleReceipt(

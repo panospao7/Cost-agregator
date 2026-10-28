@@ -69,4 +69,29 @@ class MapFinancialQueryToNavigationUseCaseTest {
         requireNotNull(result)
         assertNull(result.ownership)
     }
+
+    @Test
+    fun `invoke maps MIN to the same non-null drilldown filter as MAX`() = runTest {
+        fun intentFor(metric: QueryMetric) = FinancialQueryIntent(
+            rawQuery = "extreme purchase",
+            normalizedQuery = "extreme purchase",
+            filters = ExpenseQueryFilters(
+                period = PeriodRange(100L, 200L),
+                categoryIds = setOf(2L),
+                transactionTypes = setOf(DomainTransactionType.PURCHASE),
+                ownership = QueryOwnershipScope.MINE
+            ),
+            metric = metric
+        )
+
+        val minResult = useCase(intentFor(QueryMetric.MIN))
+        val maxResult = useCase(intentFor(QueryMetric.MAX))
+
+        requireNotNull(minResult)
+        requireNotNull(maxResult)
+        assertEquals(maxResult, minResult)
+        assertEquals(2L, minResult.categoryId)
+        assertEquals(Pair(100L, 200L), minResult.dateRange)
+        assertEquals(DomainOwnershipFilter.MINE, minResult.ownership)
+    }
 }

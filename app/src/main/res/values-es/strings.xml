@@ -17,6 +17,8 @@
     <string name="unsupported_db_close_button">Cerrar la aplicación</string>
     <string name="unsupported_db_export_success">El archivo de la base de datos se exportó correctamente.</string>
     <string name="unsupported_db_export_failed">No se pudo exportar el archivo de la base de datos. Prueba con otra ubicación.</string>
+    <!-- S21-c: DRAFT: owner native sign-off pending -->
+    <string name="unsupported_db_export_auth_denied">Para exportar se necesita tu huella o el bloqueo de pantalla. No se exportó nada.</string>
     <string name="backup_schema_too_old">Esta copia de seguridad es de una versión de la app demasiado antigua para restaurarla.</string>
     <string name="backup_schema_too_new">Esta copia de seguridad se creó con una versión más reciente de la app. Actualiza la app para restaurarla.</string>
 
@@ -218,6 +220,34 @@
 
     <!-- Screen Titles -->
     <string name="ai_settings_title">Configuración de IA</string>
+    <!-- ai-fixes Part A (INV-2): mensajes de IA acotados y localizados. Ninguna clave recibe argumentos de excepción. -->
+    <string name="ai_cloud_blocked_format">IA en la nube bloqueada: %1$s</string>
+    <string name="ai_cloud_active">La IA en la nube está activa</string>
+    <string name="ai_blocked_ai_off">La IA está desactivada</string>
+    <string name="ai_blocked_cloud_off">La IA en la nube está desactivada en los ajustes</string>
+    <string name="ai_blocked_no_key">No hay clave de API configurada</string>
+    <string name="ai_blocked_no_network">Sin conexión de red</string>
+    <string name="ai_blocked_wifi_only">Se requiere Wi-Fi (modo solo Wi-Fi)</string>
+    <string name="ai_blocked_privacy">Bloqueado por los ajustes de privacidad</string>
+    <string name="ai_error_settings_save_failed">No se pudieron guardar los ajustes. Inténtalo de nuevo.</string>
+    <string name="ai_key_too_short">La clave de API parece demasiado corta</string>
+    <string name="ai_key_format_invalid">El formato de la clave de API no parece válido para Gemini</string>
+    <string name="ai_key_enter_valid_before_save">Introduce una clave de API válida antes de guardar.</string>
+    <string name="ai_key_enter_new_or_remove">Introduce una clave nueva o usa Eliminar clave para borrar la clave guardada.</string>
+    <string name="ai_key_test_before_save">Realiza una prueba de conexión correcta antes de guardar esta clave de API.</string>
+    <string name="ai_key_saved">Clave de API guardada de forma segura.</string>
+    <string name="ai_key_removed">Clave de API eliminada.</string>
+    <string name="ai_key_required_cloud">Se requiere una clave de API para el proveedor en la nube.</string>
+    <string name="ai_key_enter_before_test">Introduce una clave de API antes de probar la conexión.</string>
+    <string name="ai_key_enter_valid_before_test">Introduce una clave de API válida antes de probar la conexión.</string>
+    <string name="ai_key_enable_ai_first">Activa primero la IA y vuelve a ejecutar la prueba de conexión.</string>
+    <string name="ai_key_enable_cloud_to_test">Activa la IA en la nube para probar la conectividad del proveedor.</string>
+    <string name="ai_test_no_network">Sin conexión de red. Comprueba tu conexión a internet y vuelve a intentarlo.</string>
+    <string name="ai_test_wifi_only">La IA en la nube está limitada a Wi-Fi según los ajustes.</string>
+    <string name="ai_test_status_unavailable">No se pudo cargar el estado de ejecución. Inténtalo de nuevo.</string>
+    <string name="ai_test_cloud_unavailable">La IA en la nube no está disponible en este momento.</string>
+    <string name="ai_test_passed">Prueba de conexión superada. El proveedor en la nube está configurado y accesible.</string>
+    <string name="ai_test_failed">Falló la prueba de conexión. Inténtalo de nuevo.</string>
     <string name="screen_manage_categories">Gestionar Categorías</string>
     <string name="analytics_screen_title">Informes Financieros</string>
     <string name="recurring_screen_title">Gestionar Recurrentes</string>
@@ -333,6 +363,19 @@
     <string name="groups_balances_unavailable">Los saldos no están disponibles</string>
     <string name="groups_currency_not_selected">Selecciona una moneda</string>
     <string name="warranty_mutation_failed">No se pudo guardar el cambio. Inténtalo de nuevo.</string>
+    <!-- ai-fixes B1b: warranty review states, reject confirmation, filtered-empty states, bounded errors -->
+    <string name="warranty_badge_expired_unconfirmed">Caducada: sin confirmar</string>
+    <string name="warranty_expired_date">Caducó el %1$s</string>
+    <string name="warranty_action_keep_expired">Conservar en el historial</string>
+    <string name="warranty_expired_unconfirmed_count">Caducadas sin confirmar: %1$d</string>
+    <string name="warranty_reject_confirm_title">¿Eliminar esta garantía?</string>
+    <string name="warranty_reject_confirm_body">Se eliminará de tus garantías. Tu recibo no se verá afectado.</string>
+    <string name="warranty_reject_confirm_action">Eliminar</string>
+    <string name="warranty_empty_filtered_title">Nada por aquí</string>
+    <string name="warranty_empty_filtered_message">Ninguna garantía coincide con este filtro.</string>
+    <string name="warranty_empty_review_message">No queda nada por revisar.</string>
+    <string name="warranty_error_confirm_failed">No se pudo confirmar esta garantía. Inténtalo de nuevo.</string>
+    <string name="warranty_error_not_found">Esta garantía ya no existe.</string>
     <string name="recurring_mark_paid_dialog_title">Marcar factura como pagada</string>
     <string name="recurring_mark_paid_dialog_body">¿Quieres registrar un pago de %2$s para %1$s o este pago ya estaba registrado?</string>
     <string name="recurring_mark_paid_creates_expense">Marcar como pagada (crea un gasto)</string>
@@ -700,4 +743,82 @@
     <string name="budget_includes_installments_format">Incluye %1$s en cuotas</string>
     <string name="budget_includes_installments_unavailable">Importe de cuotas no disponible</string>
 
+    <!-- ai-fixes B3b. Best-effort translation, pending native review. -->
+    <string name="ai_toggle_proactive">Avisarme cuando mi resumen diario esté listo</string>
+    <string name="ai_cloud_briefing_disclosure">Mientras Enable AI, Dashboard briefing y Allow cloud AI estén activados, el resumen diario se genera en segundo plano con IA en la nube.</string>
+    <string name="ai_proactive_desc">Desactivar esto no oculta tu resumen. Sigue apareciendo en Inicio. Solo controla la notificación. Mientras Enable AI, Dashboard briefing y Allow cloud AI estén activados, el resumen diario se genera en segundo plano con IA en la nube, tengas esto activado o no.</string>
+    <string name="ai_proactive_notifications_blocked">Las notificaciones están bloqueadas para esta app en los ajustes del sistema, así que no se mostrará ningún aviso. Tu resumen sigue apareciendo en Inicio.</string>
+    <string name="ai_warranty_local_note">Los periodos de garantía se leen en tu dispositivo a partir del texto del recibo. No se usa IA ni la nube para las garantías.</string>
+    <!-- Assistant unsupported reasons. Best-effort translation, pending native review. -->
+    <string name="assistant_unsupported_interpretation_disabled">El asistente está desactivado en los ajustes de IA.</string>
+    <string name="assistant_unsupported_interpretation_failed">Algo salió mal al leer tu pregunta. Inténtalo de nuevo.</string>
+    <string name="assistant_unsupported_provider_unavailable">El asistente no está disponible en este momento. Inténtalo de nuevo más tarde.</string>
+    <string name="assistant_unsupported_response_invalid">No pude entender la respuesta del asistente. Prueba a reformular tu pregunta.</string>
+    <string name="assistant_unsupported_model_declined">Este tipo de pregunta aún no es compatible.</string>
+    <string name="assistant_unsupported_metric_not_supported">Este tipo de consulta aún no es compatible.</string>
+    <string name="assistant_unsupported_no_matching_transactions">No se encontraron transacciones coincidentes.</string>
+    <!-- Assistant structured clarification options. Best-effort translation, pending native review. -->
+    <string name="assistant_clarification_period_this_month">Este mes</string>
+    <string name="assistant_clarification_period_this_week">Esta semana</string>
+    <string name="assistant_clarification_period_last_month">El mes pasado</string>
+    <string name="assistant_clarification_presentation_breakdown">Desglose</string>
+    <string name="assistant_clarification_presentation_transaction_list">Lista de transacciones</string>
+    <!-- Assistant MIN result title. Best-effort translation, pending native review. -->
+    <string name="domain_ai_smallest_purchase">Compra más pequeña</string>
+    <!-- AI capability label (transaction insight). Best-effort translation, pending native review. -->
+    <string name="ai_capability_transaction_insight">Análisis de transacción</string>
+    <!-- B2e insight row. Best-effort translations, pending native review. -->
+    <string name="ai_insight_label">Análisis de transacción (en el dispositivo)</string>
+    <string name="ai_insight_desc">Añade una frase generada en el dispositivo a una nueva recomendación cuando registras un gasto mientras la app está abierta. Nunca usa la nube.</string>
+    <string name="ai_insight_needs_ai">Activa la IA arriba para usar esto.</string>
+    <string name="ai_insight_needs_on_device">Activa la IA en el dispositivo arriba para usar esto.</string>
+    <!-- nl-quick-add slice A: DRAFT Spanish, native sign-off pending -->
+    <string name="add_expense_error_save_failed">No se pudo guardar el gasto. Inténtalo de nuevo.</string>
+    <string name="add_expense_error_currency_loading">Cargando la configuración de moneda…</string>
+    <string name="add_expense_error_merchant_required">El nombre del comercio es obligatorio</string>
+    <string name="add_expense_error_amount_invalid">Introduce un importe válido</string>
+    <string name="add_expense_error_amount_too_large">El importe es demasiado grande</string>
+    <string name="add_expense_error_date_future">La fecha no puede ser futura</string>
+    <!-- nl-quick-add slice F: DRAFT: owner native sign-off pending (Spanish shows the English example: the parser knows English, Greek and Greeklish only) -->
+    <string name="quick_add_label">Añadir rápido</string>
+    <string name="quick_add_placeholder">p. ej. coffee 3.50 yesterday</string>
+    <string name="quick_add_helper">Inglés o griego (también greeklish). La línea no se guarda.</string>
+    <string name="quick_add_counter">%1$d / %2$d</string>
+    <string name="quick_add_fill_button">Rellenar</string>
+    <string name="quick_add_fill_cd">Rellenar el formulario con la línea</string>
+    <string name="quick_add_fill_disabled_blank">Escribe primero una línea</string>
+    <string name="quick_add_fill_disabled_loading">Cargando la configuración de moneda</string>
+    <string name="quick_add_summary_filled">Rellenado: %1$s.</string>
+    <string name="quick_add_summary_review">Revisa: %1$s.</string>
+    <string name="quick_add_summary_check_save">Revisa los datos y pulsa Guardar.</string>
+    <string name="quick_add_summary_kept_edits">Se mantuvieron los campos que editaste.</string>
+    <string name="quick_add_summary_none">No se reconoció nada. Prueba con un importe y un lugar, como \"coffee 3.50 yesterday\".</string>
+    <string name="quick_add_summary_nothing_new">No se rellenó nada nuevo.</string>
+    <string name="quick_add_field_amount">importe</string>
+    <string name="quick_add_field_merchant">comercio</string>
+    <string name="quick_add_field_date">fecha</string>
+    <string name="quick_add_field_category">categoría</string>
+    <string name="quick_add_field_payment">método de pago</string>
+    <string name="quick_add_filled_marker">Rellenado</string>
+    <string name="quick_add_category_exact_fmt">%1$s · según tu línea</string>
+    <string name="quick_add_category_learned_fmt">%1$s · según tu historial</string>
+    <string name="quick_add_category_remove">Quitar</string>
+    <string name="quick_add_category_remove_cd">Quitar la categoría %1$s</string>
+    <string name="quick_add_hint_foreign">Aún no se admite moneda extranjera aquí. El gasto se guardará en %1$s.</string>
+    <string name="quick_add_hint_time_ignored">Se ignoró la hora.</string>
+    <string name="quick_add_hint_too_long">La línea es demasiado larga (máx. %1$d caracteres).</string>
+    <string name="quick_add_flag_amount_foreign">Introduce el importe en %1$s.</string>
+    <string name="quick_add_flag_amount_quantity">Se detectó una cantidad. Introduce el importe total.</string>
+    <string name="quick_add_flag_amount_multiple">Hay más de un número. Introduce el importe.</string>
+    <string name="quick_add_flag_amount_separator">Importe poco claro: revisa los separadores de decimales y miles.</string>
+    <string name="quick_add_flag_amount_unclear">Importe poco claro. Introdúcelo tú.</string>
+    <string name="quick_add_flag_amount_not_positive">El importe debe ser mayor que cero.</string>
+    <string name="quick_add_flag_amount_over_limit">El importe es demasiado grande.</string>
+    <string name="quick_add_flag_date_future">No se permiten fechas futuras. Se dejó hoy.</string>
+    <string name="quick_add_flag_date_ambiguous">Fecha poco clara (varias fechas, o el día de la semana es hoy). Se dejó hoy.</string>
+    <string name="quick_add_flag_date_unsupported">Ese formato de fecha aún no se admite. Se dejó hoy.</string>
+    <string name="quick_add_flag_date_invalid">Fecha no válida. Se dejó hoy.</string>
+    <string name="quick_add_flag_payment_conflict">Se encontraron tarjeta y efectivo. Elige uno.</string>
+    <string name="quick_add_flag_category_ambiguous">Coinciden varias categorías. Elige una.</string>
+    <string name="add_expense_category_auto_hint">Sin categoría. Se asignará una automáticamente al guardar.</string>
 </resources>

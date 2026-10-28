@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- S12: 1a "App lock & privacy" section. Best-effort translation, owner review pending. -->
+    <string name="privacy_section_app_lock">Bloqueo de la app y privacidad</string>
+    <string name="privacy_toggle_discreet_notifications">Notificaciones discretas</string>
+    <string name="privacy_discreet_notifications_support">Las notificaciones dicen «Factura por pagar» o «Alerta de presupuesto» en lugar de importes, comercios y nombres de productos. También se aplica a relojes inteligentes y pantallas de coche.</string>
+    <string name="privacy_discreet_notifications_unreadable">Se muestran como discretas hasta que se pueda leer el ajuste.</string>
+    <string name="privacy_app_lock_checking">Comprobando…</string>
+    <string name="privacy_section_unreadable">No se pueden leer tus ajustes de privacidad. Las notificaciones se muestran como discretas hasta que se puedan leer los ajustes.</string>
+    <string name="privacy_app_lock_retry">Reintentar</string>
+    <string name="privacy_review_card_title">Revisa tus ajustes de privacidad</string>
+    <string name="privacy_review_card_body">La app no pudo leer tus ajustes de privacidad guardados, así que usa las opciones más seguras. Elige tus ajustes abajo y guarda.</string>
+    <string name="privacy_review_card_save">Guardar ajustes</string>
+    <string name="privacy_review_saved">Ajustes guardados</string>
+    <string name="privacy_setting_save_failed">No se pudo guardar el ajuste. Inténtalo de nuevo.</string>
+</resources>

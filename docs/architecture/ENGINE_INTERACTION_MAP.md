@@ -1,6 +1,6 @@
 # Engine Interaction Map
 
-> **Last updated:** 2026-10-13 (schema/savings delta verified against code: DB v151; prior guarded-worker/guard verification retained)
+> **Last updated:** 2026-10-28 (merge of feature/ai-evolution 4add2466 into feature/manual-entry-currency, NOT validated: BillReminderWorker row unions installment reminders (S7b) with the BILL presentation (D-M1); both mec and int rows kept). Earlier: 2026-10-24 (app-lock-privacy-mode 1a: notification presentation, re-post and deep-link rows added; BillReminderWorker row updated). Earlier: 2026-10-13 (schema/savings delta verified against code: DB v151; prior guarded-worker/guard verification retained)
 >
 > **Purpose:** Before fixing any engine, check this map to know which pipelines will be affected.  
 > **Rule:** Any engine change requires verifying ALL affected pipelines still work.
@@ -13,8 +13,8 @@
 |--------|-------------------|------------|
 | **CurrencyConverter** | 5 (Dashboard), 6 (Budget/Forecast/Cashflow), 12 (Export), Groups, Investment, Tax, `RateEligibilityEvaluator` (user-present rate eligibility, via `convertOutcome`) | 🔴 CRITICAL |
 | **RateEligibilityEvaluator** (`domain/currency`) | Read-only rule owner for "does a stored rate qualify for a user-present save" (calendar date in an injected entry zone, age <= 7 days, older leg for via-EUR). Reads rates only through `CurrencyConverter.convertOutcome(TRANSACTION_DATE)`; no clock, network or logging. Follows the `CurrencyConverter` CRITICAL row: a converter or `ExchangeRateStore` lookup change affects its result. Siblings: `CurrencyAmountPolicy`, `CurrencySelectionPolicy`, `UserPresentRatePreview`. manual-entry-currency A1: no production consumer yet (A2 adds the coordinator consumer) | 🟡 HIGH |
-| **MerchantNormalizer** | 1 (Notification dedupe), 2 (Transaction dedupe), 3 (Receipt matching), 4 (Recurring matching), 11 (Email), Analytics | 🔴 CRITICAL |
-| **CategorizationEngine** | 1 (Auto-categorize), 3 (Receipt items), 11 (Email), Budget (category totals) | 🟡 HIGH |
+| **MerchantNormalizer** | 1 (Notification dedupe), 2 (Transaction dedupe), 3 (Receipt matching), 4 (Recurring matching), 11 (Email), Analytics. `normalize()` can WRITE even with `autoCreate = false` (fuzzy match >= 0.95 inserts/updates a merchant_aliases row via `linkAliasToCanonical`, and logs the raw name); a merchant_canonicals row (`createNewMerchant`) only with `autoCreate = true`, so write-free callers (quick-add Fill) must not reach it | 🔴 CRITICAL |
+| **CategorizationEngine** | 1 (Auto-categorize), 3 (Receipt items), 11 (Email), Budget (category totals), Add-Expense quick-add Fill (read-only consumer of the pure `normalizedCanonicalNameForMerchant()` only) | 🟡 HIGH |
 | **ReceiptParser** | 3 (OCR), 11 (Email providers), 10 (Bank statement) | 🟡 HIGH |
 | **MoneyAggregate/Builder** | 5 (Dashboard), 6 (Budget), 12 (Export), Analytics | 🟡 HIGH |
 | **TimeProvider/TimePeriodUtils** | ALL pipelines (timestamps, periods, scheduling) | 🔴 CRITICAL |
@@ -34,7 +34,12 @@
 | **RecurringRuleLifecycleCoordinator** | 4 (Recurring lifecycle), 2 (Transaction reconcile) | 🟡 HIGH |
 | **RecurringLifecycleEventWriter** | 4 (Recurring), 7 (Backup audit) | 🟢 LOW |
 | **InstallmentProjectionPort** (implemented: BillReminderManager (S7b), CashFlowCalculator (S8b-2), FinancialStressForecastEngine (S8b-2), HomeInstallmentWeatherSource (S8b-3)) | Read-only projection of future SCHEDULED installment entries (sibling `InstallmentUpcomingProjection`; RECURRING_RULE contract unchanged). Wired readers: `CashFlowCalculator` (dated outflows), `FinancialStressForecastEngine` (known bounded outflows), `HomeInstallmentWeatherSource` → `HomeViewModel` weather-widget replace (never `UpcomingItems`; `RecurringPlanProjectionService` itself unchanged); reminder reader: `BillReminderManager` / `BillReminderWorker` (per-entry delivery dedupe key). Owner of plan state and writes: `InstallmentPlanLifecycleCoordinator` (see LEGAL_PATHS "Installment Plan Mutations"). MUST NOT be reachable from any cloud payload assembly (briefing, insight, assistant inputs): guard `installment_cloud_reachability`. Any cash-flow/forecast output feeding a cloud payload is computed without this projection. A currency-mixed projection is converted by the engine or reported partial, never summed as home currency and never shown as 0 | 🟡 HIGH |
-| **BillReminderWorker** | 4 (Reminder dispatch), BillReminderSettings runtime check | 🟢 LOW |
+| **BillReminderWorker** | 4 (Reminder dispatch), BillReminderSettings runtime check; installment reminders via BillReminderManager (S7b), BILL presentation applied (D-M1); builder owner 2 of the notification presentation (resolves the BILL decision, calls `NotificationPresentationApplier`); `internal const CHANNEL_ID` is imported (const-inlined) by `NotificationKindClassifier` | 🟡 HIGH |
+| **NotificationService / AndroidNotificationService** (`domain/service`, `data/service`) | Kind-aware posts only (`*ForKind`, INV-12) from BudgetMonitor (BUDGET), AnomalyAlertOrchestrator (ANOMALY), DeliverProactiveBriefingNotificationUseCase (BRIEFING), WarrantyExpirationWorker (WARRANTY), ReceiptMatchingWorker (RECEIPT_MATCH); builder owner 1 (`postForKind` + `rebuildDiscreet` sweep). `DeliveryResult.PERMISSION_DENIED` is returned for a platform `SecurityException`; every caller must handle it explicitly. 4 constructor params (context, resolver, applier, `PrivacyDiagnosticsEmitter`) | 🟡 HIGH |
+| **NotificationPresentationApplier / NotificationContentPolicy / NotificationPresentationResolver** | Every app notification of the six kinds (5 service callers + BillReminderWorker + the re-post sweep). Applier = the one place a decision becomes builder state (PRIVATE, generic public version, FULL/DISCREET text, BigText, action policy, kind marker). Policy = pure single owner of FULL/DISCREET and the action policy (BILL AUTH_REQUIRED on API 31+). Resolver = bounded 500 ms fail-closed read of `AppLockSettingsRepository`. Texts: `strings_notification_presentation.xml` (en/es/el) | 🟡 HIGH |
+| **NotificationKindClassifier / NotificationKindMarker** | Re-post sweep only: marker first, channel / id-range fallback, other channels (incl. capture) skipped; marker value = `NotificationKind.stableToken` (renaming a constant must not change it) | 🟡 HIGH |
+| **Post-commit discreet re-post** (`AppLockSettingsOperations.requestDiscreetChange` → `DiscreetRepostTrigger` → `NotificationService.repostActiveAsDiscreet()`; the 1a `UpdateDiscreetNotificationsUseCase` was retired in S20-d) | Runs only after a committed discreet write on the false → true edge; never on a failed / rejected write, never when turned off. Diagnostics: `NOTIF_REPOSTED_DISCREET(COUNT)` (at least one re-posted), `NOTIF_REPOST_FAILED(EXCEPTION_CLASS)` (per-notification failure, query failure, or a sweep failure caught at the trigger boundary). A sweep failure never fails the committed write. Called from `AppLockPrivacySettingsViewModel` in `@ApplicationScope` under `NonCancellable` with NO outer serializer: the domain-owned `AppLockSettingsWriteSerializer` (`domain/privacy/applock`, S18 ii-a) is taken inside `AppLockSettingsOperations` (S20-d) | 🟡 HIGH |
+| **DeepLinkPolicy / DeepLinkApplier** (`ui/navigation`) + **AppLockDeepLinkRouter** (`ui/applock`, S21-b) | MainActivity deep-link intake (`handleIntent`, `onCreate` + `onNewIntent`), every notification tap (explicit MainActivity + ACTION_VIEW), `MarkDashboardBriefingOpenedUseCase` (the only link-reachable write), read-only `ExpenseRepository.getExpenseById`. Policy is pure; the applier alone navigates; the router is the only caller of the controller's link query / held-link release / release signal (a held link is memory-only and released by a posted `Dispatchers.Main` task once the lock is open). Installment hosts (`installments`, `installment_plan`) are not in `DeepLinkHost` until loan S13-a; the policy rejects them as UNKNOWN_HOST (Home) | 🟡 HIGH |
 | **WorkerExecutionGuard** | ALL workers (all 10 CoroutineWorkers run through it, incl. `NotificationIntakeWorker` + snooze/dismiss reminder action workers), 7 (Backup restore gating) | 🟡 HIGH |
 | **WorkerRegistry** | 12 (Startup scheduling), 7 (Backup resume via spec lookup) | 🟢 LOW |
 | **SharedExpenseManager** | Groups, shared expenses (domain facade over `SharedExpenseDataPort` → `SharedExpenseDataPortAdapter` → `GroupTransactionCoordinator`; the GroupLifecycleCoordinator wrapper was removed, GR-14u36) | 🟡 HIGH |
@@ -102,6 +107,14 @@ MerchantNormalizer.normalize()
   ├── EmailReceiptIngestionService (expense creation)
   ├── MerchantKeyBackfillWorker (backfill existing rows via MerchantKeyGenerator)
   └── MerchantInsightEngine (merchant grouping via merchantKey)
+
+NOTE: normalize() is NOT read-only, even with autoCreate = false. A fuzzy match with
+confidence >= 0.95 calls linkAliasToCanonical (MerchantNormalizer.kt:98-103 →
+MerchantNormalizationRepository.linkAliasToCanonical → DAO insert of a merchant_aliases row or
+an occurrenceCount update on an existing one) and logs the raw name (Timber.w, :102, on a link
+conflict). A merchant_canonicals row (createNewMerchant → repository.insertCanonical) is created
+only when autoCreate = true (:111-114). The quick-add lookup (QuickAddLearnedCategoryLookup)
+therefore never calls it; see CategorizationEngine below.
 ```
 
 ### CategorizationEngine changes affect:
@@ -113,6 +126,14 @@ CategorizationEngine.categorize() / categorizeWithContext()
   ├── EmailReceiptIngestionService (email expense category)
   ├── BudgetRepository (category budget matching)
   └── AdvancedAnalyticsEngine (category analytics)
+
+CategorizationEngine.normalizedCanonicalNameForMerchant()   [pure: canonicalize + Greeklish fold; no I/O]
+  └── QuickAddLearnedCategoryLookup (nl-quick-add C2, domain/quickadd; READ-ONLY)
+        → MerchantCategoryRepository.getCategoryByNormalizedCanonical(key)
+        → AddExpenseViewModel.fill (fills the form only; Save persists via the unchanged manual path)
+  Changing the key function changes which learned category quick-add finds (it must stay the single
+  owner of key derivation). Reader: QuickAddLearnedCategoryLookupTest. Writer side: the user
+  CategoryRepository.kt:87 (learning stores the key in merchant_categories.normalizedCanonicalName).
 ```
 
 ### ReceiptMatchLifecycleService changes affect:
@@ -139,8 +160,73 @@ RecurringRuleLifecycleCoordinator.createRule() / updateRule() / deactivateRule()
 ```
 BillReminderWorker.doWork()
   ├── RecurringLifecycleCoordinator.getDispatchableClaimedReminder()
-  ├── BillReminderWorker.sendNotification() → NotificationSendResult (private sealed interface)
+  ├── NotificationPresentationResolver.resolve(BILL, SDK_INT)   (per reminder, after claim + revalidation)
+  ├── BillReminderWorker.sendNotification(…, decision) → NotificationSendResult (private sealed interface)
+  │     └── NotificationPresentationApplier.apply(…)  (title/text, PRIVATE, public version, actions, BILL marker)
   └── BillReminderSettingsRepository (runtime enabled/quiet hours check)
+
+Also affected by BillReminderWorker.CHANNEL_ID / BILL shape / Snooze+Dismiss action templates:
+  NotificationKindClassifier (const-only import) and AndroidNotificationService.rebuildDiscreet
+  (BILL_SHAPE, BILL_ACTION_TEMPLATES are duplicated there; BillNotificationSweepParityTest pins the two)
+```
+
+### NotificationPresentationApplier / NotificationContentPolicy changes affect:
+```
+AndroidNotificationService.postForKind
+  ├── BudgetMonitor (BUDGET), AnomalyAlertOrchestrator (ANOMALY), DeliverProactiveBriefingNotificationUseCase (BRIEFING)
+  ├── WarrantyExpirationWorker (WARRANTY), ReceiptMatchingWorker (RECEIPT_MATCH)
+  └── DeliveryResult.PERMISSION_DENIED handling in every caller
+AndroidNotificationService.rebuildDiscreet (re-post sweep: BILL via NotificationPresentationResolver.resolve for the action term, then NotificationContentPolicy.decideDiscreet; S18-ii-b)
+BillReminderWorker.sendNotification
+NotificationKindMarker (stamped by the applier, read by NotificationKindClassifier)
+```
+
+### Post-commit discreet re-post chain:
+```
+AppLockPrivacySettingsViewModel.setDiscreetNotifications  (@ApplicationScope, NonCancellable; NO outer serializer)
+  └── AppLockSettingsOperations.requestDiscreetChange       (WRITE 5, S20-d; takes AppLockSettingsWriteSerializer inside)
+        ├── AppLockSettingsRepository.getLoadState()          (before value)
+        ├── AppLockSettingsRepository.setDiscreetNotificationsIfNotForced()   (Rejected(FORCED) while the lock is on)
+        ├── AppLockController.onPlainSettingWritten(...)      (write-sequence counter, D6)
+        └── on Committed → DiscreetRepostTrigger.onCommittedWrite(before, after)
+              └── false → true only → NotificationService.repostActiveAsDiscreet()
+                    ├── NotificationKindClassifier.classify() + NotificationKindMarker.read()
+                    ├── SweepPacer.pause(SWEEP_REPOST_SPACING_MS = 300) before every re-post (cancellable; skipped ones not paused)
+                    ├── BILL: NotificationPresentationResolver.resolve (bounded read; actionsSuppressed = actionPolicy != UNCHANGED)
+                    ├── NotificationContentPolicy.decideDiscreet(kind, sdk, actionsSuppressed) → NotificationPresentationApplier
+                    └── NOTIF_REPOSTED_DISCREET(COUNT) / NOTIF_REPOST_FAILED(EXCEPTION_CLASS)
+
+AppLockPrivacySettingsViewModel.saveReview  (@ApplicationScope, NonCancellable; NO outer serializer; S20-e)
+  └── AppLockSettingsOperations.requestReviewSave(D2 record)   (WRITE 2b; takes AppLockSettingsWriteSerializer inside)
+        ├── weakening (lock off) from UNLOCKED: CHANGE prompt via AppLockController.startReviewSaveAttempt (STARTED)
+        ├── AppLockSettingsRepository.reviewSave()            (the ONLY production caller of the conditional write)
+        ├── AppLockController.onReviewSavedWithoutPrompt / onOpenOriginSettingApplied (state move, D6 sequence, D7 diagnostics)
+        └── on Committed → DiscreetRepostTrigger.onCommittedWrite(false, after)
+              └── same sweep as above (a committed review-save with discreet on sweeps; refused / failed never does)
+AppLockPrivacySettingsViewModel.retry / refreshIfTransient → AppLockController.requestSettingsReread()  (S20-e, INV-47)
+```
+
+### App lock prompt and lifecycle chain (S20-a; LIVE since S20-c wires MainActivity):
+```
+MainActivity.onCreate (S20-c): secureWindow.applyInitial(window) → DB gate → binder.install(application) → promptHost.attach(this)
+  → secureWindow.bind(this) → setContent { ... AppLockShell { MainScreen } }  (MainScreen only inside the gate's open branch)
+  Changing MainActivity.onCreate order, the shell or the gate affects: MainScreenCallSiteTest, AppLockShellTest, AppLockGateSourceScanTest,
+  SecureWindowController (single FLAG_SECURE writer), the R24 prompt-once claim, deep-link intake (S21 will gate handleIntent).
+AppLockLifecycleBinder (Application.ActivityLifecycleCallbacks; exact started-activity count; sole INV-25 source)
+  ├── 0→1 → AppLockController.onAppForegrounded()
+  ├── 1→0 and !isChangingConfigurations → AppLockController.onAppBackgrounded()   (config-change stop/start pair not reported)
+  └── install and every start while Resolving → AppLockController.resolve()  (@ApplicationScope)
+
+AppLockController → DeviceAuthenticator (DI binding) → AppLockAuthenticatorRelay (weak holder, main thread only)
+  └── BiometricPromptDeviceAuthenticator (one per Activity, built by AppLockPromptHost.attach)
+        └── androidx.biometric BiometricPrompt
+AppLockPromptHost (per Activity, ON_DESTROY)
+  ├── relay.unregister(registration, isChangingConfigurations)
+  │     └── lost attempt id (once, !isChangingConfigurations) → AppLockController.onPromptHostLost(id)
+  └── relay.register on the recreated Activity → BiometricPromptDeviceAuthenticator.adopt(id, callback) (rotation)
+Changing the relay, host or binder affects: AppLockController attempt closing (T9-T12, T35), T32-T34 prompt background,
+  the adapter state machine (BiometricPromptAdapterStateMachineTest), AppLockRelaySourceScanTest (no worker/receiver/service reach).
+Workers, receivers and services do NOT participate (INV-36).
 ```
 
 ### InstallmentProjectionPort changes affect (implemented: BillReminderManager (S7b), CashFlowCalculator (S8b-2), FinancialStressForecastEngine (S8b-2), HomeInstallmentWeatherSource (S8b-3)):
@@ -274,7 +360,9 @@ SharedExpenseManager.createGroup() / addMember() / removeMember() / addExpense()
 ### HybridRouter changes affect:
 ```
 HybridRouter.execute()
-  ├── HybridDashboardBriefingService (cloud/on-device/fallback)
+  ├── HybridDashboardBriefingService (cloud/on-device/fallback; DASHBOARD_BRIEFING only - the per-transaction
+  │     insight no longer uses it: GenerateTransactionInsightUseCase is on-device only via
+  │     OnDeviceDashboardBriefingService, ai-fixes B2d)
   ├── HybridCategorizationAssistService
   ├── HybridDedupeJudgeService
   ├── HybridQueryInterpretationService
@@ -302,9 +390,12 @@ PrivacyGate.check(capability, context)
   ├── LocationBackfillWorker (background location)
   ├── DataRetentionWorker (data purging)
   └── DailyBriefingWorker (AI briefing)
-  ↑ PrivacyDecision.FailClosed: 39 call sites across 27 files now use blocksExecution()
-    (blocksExecution() metric; `PrivacyGate.check(...)` itself: 51 call sites
-    across 34 production files — different metric, both current)
+  (AutoCreateWarrantyFromReceiptUseCase no longer calls PrivacyGate: ai-fixes B1a removed the
+   CLOUD_AI_WARRANTY_EXTRACTION gate; warranty extraction is local-only and guarded upstream by
+   ReceiptSideEffectPlanner Policy A. CloudWarrantyExtractionService has no production caller.)
+  ↑ PrivacyDecision.FailClosed: 38 call sites across 26 files now use blocksExecution()
+    (blocksExecution() metric; `PrivacyGate.check(...)` itself: 50 call sites
+    across 33 production files — different metric; both reduced by one by ai-fixes B1a)
     which returns true for both Denied and FailClosed variants,
     providing consistent fail-closed behavior across all pipelines.
 ```
@@ -320,7 +411,7 @@ PrivacyGate.check(capability, context)
 - TaxEstimator — isolated tax reports
 - LocationBackfill — isolated enrichment
 - ReceiptMatchLifecycleService — isolated receipt matching domain
-- BillReminderWorker — isolated reminder dispatch
+- BillReminderWorker — reminder dispatch (no longer fully isolated since app-lock 1a: shares the notification presentation applier and its CHANNEL_ID/shape with the sweep)
 - DailyBucketEngine — isolated daily bucket computation
 - BudgetVsActualEngine — isolated budget comparison
 - RecurringLifecycleEventWriter — isolated event writing
@@ -345,6 +436,8 @@ PrivacyGate.check(capability, context)
 - TotalsAggregationEngine — verify dashboard totals consumers
 - MoneyNormalizationEngine — verify all money conversion/bucket-policy consumers in `domain/core/money/`
 - SubscriptionManagerEngine — verify subscriptions, price history, usage, candidates, negotiation outcome writes
+- NotificationPresentationApplier / NotificationContentPolicy / AndroidNotificationService — verify all six notification kinds (FULL and DISCREET), BillReminderWorker, the re-post sweep, the kind marker and the PERMISSION_DENIED handling of every caller
+- DeepLinkPolicy / DeepLinkApplier — verify MainActivity intake, notification tap intents, the manifest filter and the DL_* diagnostics
 
 ### VERY DANGEROUS to change (foundational):
 - MoneyAggregate model — verify every consumer of financial totals

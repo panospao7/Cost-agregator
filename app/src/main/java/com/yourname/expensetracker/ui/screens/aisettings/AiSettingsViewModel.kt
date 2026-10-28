@@ -2,6 +2,7 @@ package com.yourname.expensetracker.ui.screens.aisettings
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.data.security.getGeminiKey
 import com.yourname.expensetracker.domain.ai.model.AiCapability
@@ -11,13 +12,17 @@ import com.yourname.expensetracker.domain.ai.model.AiRuntimeStatusSummary
 import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticThrowableSummary
+import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.usecase.GetAiRuntimeStatusUseCase
 import com.yourname.expensetracker.domain.ai.usecase.SyncProactiveBriefingWorkUseCase
+import com.yourname.expensetracker.domain.workers.NotificationPermissionChecker
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -35,14 +40,19 @@ data class AiSettingsUiState(
     val providerName: String = AppConfig.Ai.QUERY_INTERPRETATION_CLOUD_PROVIDER,
     val apiKeyInput: String = "",
     val hasStoredApiKey: Boolean = false,
-    val apiKeyValidationMessage: String? = null,
+    val apiKeyValidationMessage: UiText? = null,
     val isTestingConnection: Boolean = false,
-    val connectionTestMessage: String? = null,
+    val connectionTestMessage: UiText? = null,
     val isConnectionTestSuccess: Boolean? = null,
-    /** S11-007: non-null when a settings write failed */
-    val settingsWriteError: String? = null,
-    /** S11-002: non-null when cloud AI is blocked by privacy/environment */
-    val effectiveCloudBlocked: String? = null
+    /** S11-007: non-null when a settings write failed (INV-2: string resource, never exception text) */
+    val settingsWriteError: UiText? = null,
+    /** S11-002: non-null (reason string resource) when cloud AI is blocked by privacy/environment */
+    val effectiveCloudBlocked: UiText? = null,
+    /**
+     * ai-fixes B3b (G2-10 / UX-Q-3): true only when the OS reports notifications are disabled for the app.
+     * State read only; the settings screen never requests the permission or deep links to system settings.
+     */
+    val notificationsBlocked: Boolean = false
 )
 
 @HiltViewModel
@@ -54,7 +64,9 @@ class AiSettingsViewModel @Inject constructor(
     private val secureKeyStorage: SecureKeyStorage,
     private val privacyGate: PrivacyGate,
     /** S11-003: Injected tester — no OkHttp construction in ViewModel */
-    private val connectionTester: com.yourname.expensetracker.domain.ai.service.CloudProviderConnectionTester
+    private val connectionTester: com.yourname.expensetracker.domain.ai.service.CloudProviderConnectionTester,
+    /** ai-fixes B3b: read-only notification-enabled state; no permission request API is used here. */
+    private val notificationPermissionChecker: NotificationPermissionChecker
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(AiSettingsUiState())
@@ -88,7 +100,11 @@ class AiSettingsViewModel @Inject constructor(
         runtimeRefreshJob?.cancel()
         runtimeRefreshJob = viewModelScope.launch {
             try {
-                _uiState.value = _uiState.value.copy(isRefreshingRuntime = true)
+                // B3b: re-read the OS notification state at this (existing) refresh point only.
+                _uiState.value = _uiState.value.copy(
+                    isRefreshingRuntime = true,
+                    notificationsBlocked = readNotificationsBlocked()
+                )
                 val summary = getAiRuntimeStatusUseCase(
                     capabilities = listOf(
                         AiCapability.QUERY_INTERPRETATION,
@@ -97,20 +113,23 @@ class AiSettingsViewModel @Inject constructor(
                         AiCapability.RECEIPT_EXTRACTION,
                         AiCapability.CATEGORIZATION_FALLBACK,
                         AiCapability.DEDUPE_JUDGE,
-                        AiCapability.RECEIPT_ITEM_CATEGORIZATION
+                        AiCapability.RECEIPT_ITEM_CATEGORIZATION,
+                        // B2e: appended last; the use case excludes it from highestPriorityMessage (own row).
+                        AiCapability.TRANSACTION_INSIGHT
                     )
                 )
                 // S11-006: Discard stale result
                 if (requestId != runtimeRefreshSeq) return@launch
                 // S11-002: Compute effective cloud blocked reason
                 val effectiveCloudBlocked = when {
-                    !_uiState.value.settings.aiEnabled -> "AI is disabled"
-                    !_uiState.value.settings.allowCloudAi -> "Cloud AI is disabled in settings"
-                    !secureKeyStorage.hasKey(SecureKeyStorage.KEY_GEMINI) -> "No API key configured"
-                    !summary.networkAvailable -> "No network connection"
-                    _uiState.value.settings.wifiOnlyForCloud && !summary.wifiConnected -> "Wi-Fi required (Wi-Fi-only mode)"
+                    !_uiState.value.settings.aiEnabled -> UiText.StringResource(R.string.ai_blocked_ai_off)
+                    !_uiState.value.settings.allowCloudAi -> UiText.StringResource(R.string.ai_blocked_cloud_off)
+                    !secureKeyStorage.hasKey(SecureKeyStorage.KEY_GEMINI) -> UiText.StringResource(R.string.ai_blocked_no_key)
+                    !summary.networkAvailable -> UiText.StringResource(R.string.ai_blocked_no_network)
+                    _uiState.value.settings.wifiOnlyForCloud && !summary.wifiConnected ->
+                        UiText.StringResource(R.string.ai_blocked_wifi_only)
                     privacyGate.check(PrivacyCapability.CLOUD_AI_GENERAL).blocksExecution() ->
-                        "Blocked by Privacy Settings"
+                        UiText.StringResource(R.string.ai_blocked_privacy)
                     else -> null
                 }
                 _uiState.value = _uiState.value.copy(
@@ -126,13 +145,26 @@ class AiSettingsViewModel @Inject constructor(
                 throw e
             } catch (e: Exception) {
                 if (requestId != runtimeRefreshSeq) return@launch
-                Timber.e(e, "Runtime refresh failed")
+                // INV-3: class name only; never the throwable or its message.
+                Timber.e("Runtime refresh failed (%s)", DiagnosticThrowableSummary.className(e))
             } finally {
                 if (requestId == runtimeRefreshSeq) {
                     _uiState.value = _uiState.value.copy(isRefreshingRuntime = false)
                 }
             }
         }
+    }
+
+    /**
+     * Fail-quiet read: if the platform check throws, report "not blocked" so the caption never
+     * makes a claim we could not verify. Cancellation propagates.
+     */
+    private fun readNotificationsBlocked(): Boolean = try {
+        !notificationPermissionChecker.areNotificationsEnabled()
+    } catch (e: Exception) {
+        if (e is CancellationException) throw e
+        Timber.w("Notification state read failed (%s)", DiagnosticThrowableSummary.className(e))
+        false
     }
 
     fun updateApiKeyInput(value: String) {
@@ -150,7 +182,7 @@ class AiSettingsViewModel @Inject constructor(
         if (validation != null) {
             _uiState.value = _uiState.value.copy(
                 apiKeyValidationMessage = validation,
-                connectionTestMessage = "Enter a valid API key before saving.",
+                connectionTestMessage = UiText.StringResource(R.string.ai_key_enter_valid_before_save),
                 isConnectionTestSuccess = false
             )
             return
@@ -160,7 +192,7 @@ class AiSettingsViewModel @Inject constructor(
         if (key.isBlank()) {
             if (_uiState.value.hasStoredApiKey) {
                 _uiState.value = _uiState.value.copy(
-                    apiKeyValidationMessage = "Enter a new key or use Remove Key to delete the stored key.",
+                    apiKeyValidationMessage = UiText.StringResource(R.string.ai_key_enter_new_or_remove),
                     connectionTestMessage = null
                 )
             }
@@ -170,7 +202,7 @@ class AiSettingsViewModel @Inject constructor(
         if (_uiState.value.isConnectionTestSuccess != true) {
             _uiState.value = _uiState.value.copy(
                 apiKeyValidationMessage = null,
-                connectionTestMessage = "Run a successful connection test before saving this API key.",
+                connectionTestMessage = UiText.StringResource(R.string.ai_key_test_before_save),
                 isConnectionTestSuccess = false
             )
             return
@@ -181,7 +213,7 @@ class AiSettingsViewModel @Inject constructor(
             apiKeyInput = "",
             hasStoredApiKey = true,
             apiKeyValidationMessage = null,
-            connectionTestMessage = "API key saved securely.",
+            connectionTestMessage = UiText.StringResource(R.string.ai_key_saved),
             isConnectionTestSuccess = true
         )
     }
@@ -196,7 +228,7 @@ class AiSettingsViewModel @Inject constructor(
             hasStoredApiKey = false,
             apiKeyInput = "",
             apiKeyValidationMessage = null,
-            connectionTestMessage = "API key removed.",
+            connectionTestMessage = UiText.StringResource(R.string.ai_key_removed),
             isConnectionTestSuccess = null
         )
     }
@@ -223,8 +255,8 @@ class AiSettingsViewModel @Inject constructor(
 
                 if (keyToUse.isBlank()) {
                     _uiState.value = _uiState.value.copy(
-                        apiKeyValidationMessage = "API key is required for cloud provider.",
-                        connectionTestMessage = "Enter an API key before testing connection.",
+                        apiKeyValidationMessage = UiText.StringResource(R.string.ai_key_required_cloud),
+                        connectionTestMessage = UiText.StringResource(R.string.ai_key_enter_before_test),
                         isConnectionTestSuccess = false
                     )
                     return@launch
@@ -234,7 +266,7 @@ class AiSettingsViewModel @Inject constructor(
                 if (keyValidation != null) {
                     _uiState.value = _uiState.value.copy(
                         apiKeyValidationMessage = keyValidation,
-                        connectionTestMessage = "Enter a valid API key before testing connection.",
+                        connectionTestMessage = UiText.StringResource(R.string.ai_key_enter_valid_before_test),
                         isConnectionTestSuccess = false
                     )
                     return@launch
@@ -243,7 +275,7 @@ class AiSettingsViewModel @Inject constructor(
                 val settings = _uiState.value.settings
                 if (!settings.aiEnabled) {
                     _uiState.value = _uiState.value.copy(
-                        connectionTestMessage = "Enable AI first, then run connection test again.",
+                        connectionTestMessage = UiText.StringResource(R.string.ai_key_enable_ai_first),
                         isConnectionTestSuccess = false
                     )
                     return@launch
@@ -251,7 +283,7 @@ class AiSettingsViewModel @Inject constructor(
 
                 if (!settings.allowCloudAi) {
                     _uiState.value = _uiState.value.copy(
-                        connectionTestMessage = "Enable cloud AI to test provider connectivity.",
+                        connectionTestMessage = UiText.StringResource(R.string.ai_key_enable_cloud_to_test),
                         isConnectionTestSuccess = false
                     )
                     return@launch
@@ -260,27 +292,33 @@ class AiSettingsViewModel @Inject constructor(
                 val summary = getAiRuntimeStatusUseCase(listOf(AiCapability.QUERY_INTERPRETATION))
                 val capability = summary.capabilities.firstOrNull { it.capability == AiCapability.QUERY_INTERPRETATION }
                 val runtimeFailure = when {
-                    !summary.networkAvailable -> "No network connection. Check internet and retry."
-                    settings.wifiOnlyForCloud && !summary.wifiConnected -> "Cloud AI is limited to Wi-Fi by settings."
-                    capability == null -> "Couldn’t load runtime status. Please retry."
+                    !summary.networkAvailable -> UiText.StringResource(R.string.ai_test_no_network)
+                    settings.wifiOnlyForCloud && !summary.wifiConnected -> UiText.StringResource(R.string.ai_test_wifi_only)
+                    capability == null -> UiText.StringResource(R.string.ai_test_status_unavailable)
                     capability.route == AiRoute.DISABLED || capability.route == AiRoute.DETERMINISTIC_FALLBACK ->
-                        capability.message ?: "Cloud AI is currently unavailable."
+                        // INV-2 / spec 15.6: runtime.message is a verified-bounded router/status constant (English, not localized here).
+                        capability.message?.let { UiText.from(it) }
+                            ?: UiText.StringResource(R.string.ai_test_cloud_unavailable)
                     else -> null
                 }
 
-                val providerFailure = runtimeFailure ?: connectionTester.testGemini(keyToUse)
+                // The connection tester returns a bounded, constant provider-failure message (or null on success).
+                val providerFailure = runtimeFailure ?: connectionTester.testGemini(keyToUse)?.let { UiText.from(it) }
 
                 _uiState.value = _uiState.value.copy(
                     runtimeSummary = summary,
                     apiKeyValidationMessage = null,
                     connectionTestMessage = providerFailure
-                        ?: "Connection test passed. Cloud provider is configured and reachable.",
+                        ?: UiText.StringResource(R.string.ai_test_passed),
                     isConnectionTestSuccess = providerFailure == null
                 )
             } catch (e: Exception) {
-                Timber.e(e, "AI settings connection test failed")
+                // INV-4: parent cancellation must propagate (finally still clears isTestingConnection).
+                if (e is CancellationException) throw e
+                // INV-3: class name only; never the throwable or its message.
+                Timber.e("AI settings connection test failed (%s)", DiagnosticThrowableSummary.className(e))
                 _uiState.value = _uiState.value.copy(
-                    connectionTestMessage = "Connection test failed. Please retry.",
+                    connectionTestMessage = UiText.StringResource(R.string.ai_test_failed),
                     isConnectionTestSuccess = false
                 )
             } finally {
@@ -293,7 +331,10 @@ class AiSettingsViewModel @Inject constructor(
         transform = { it.copy(aiEnabled = enabled) },
         syncProactiveBriefings = true
     )
-    fun setAllowCloudAi(enabled: Boolean) = update(transform = { it.copy(allowCloudAi = enabled) })
+    fun setAllowCloudAi(enabled: Boolean) = update(
+        transform = { it.copy(allowCloudAi = enabled) },
+        syncProactiveBriefings = true
+    )
     fun setAllowOnDeviceAi(enabled: Boolean) = update(transform = { it.copy(allowOnDeviceAi = enabled) })
     fun setAssistantEnabled(enabled: Boolean) = update(transform = { it.copy(assistantEnabled = enabled) })
     fun setQueryInterpretationEnabled(enabled: Boolean) = update(transform = { it.copy(queryInterpretationEnabled = enabled) })
@@ -301,9 +342,17 @@ class AiSettingsViewModel @Inject constructor(
         transform = { it.copy(dashboardBriefingEnabled = enabled) },
         syncProactiveBriefings = true
     )
+
+    /**
+     * AE-32: the on-device transaction insight toggle is independent of the daily briefing.
+     * It deliberately does NOT request proactive-briefing work syncing (no
+     * [SyncProactiveBriefingWorkUseCase] call), so briefing arming is unaffected.
+     */
+    fun setTransactionInsightEnabled(enabled: Boolean) = update(
+        transform = { it.copy(transactionInsightEnabled = enabled) }
+    )
     fun setReviewExplanationEnabled(enabled: Boolean) = update(transform = { it.copy(reviewExplanationEnabled = enabled) })
     fun setReceiptAssistEnabled(enabled: Boolean) = update(transform = { it.copy(receiptAssistEnabled = enabled) })
-    fun setWarrantyExtractionEnabled(enabled: Boolean) = update(transform = { it.copy(warrantyExtractionEnabled = enabled) })
     fun setReceiptImageCloudEnabled(enabled: Boolean) = update(transform = { it.copy(receiptImageCloudEnabled = enabled) })
     fun setReceiptItemCategorizationEnabled(enabled: Boolean) = update(transform = { it.copy(receiptItemCategorizationEnabled = enabled) })
     fun setCategorizationFallbackEnabled(enabled: Boolean) = update(transform = { it.copy(categorizationFallbackEnabled = enabled) })
@@ -331,8 +380,14 @@ class AiSettingsViewModel @Inject constructor(
                     syncProactiveBriefingWorkUseCase(updated)
                 }
             } catch (e: Exception) {
-                Timber.e(e, "AI settings write failed")
-                _uiState.value = _uiState.value.copy(settingsWriteError = "Settings could not be saved: ${e.message}")
+                // INV-4: parent cancellation must propagate and must not surface as a settings error.
+                if (e is CancellationException) throw e
+                // INV-3: class name only; never the throwable or its message.
+                Timber.e("AI settings write failed (%s)", DiagnosticThrowableSummary.className(e))
+                // INV-2: bounded, localized message; never interpolate exception text.
+                _uiState.value = _uiState.value.copy(
+                    settingsWriteError = UiText.StringResource(R.string.ai_error_settings_save_failed)
+                )
             }
         }
     }
@@ -341,14 +396,14 @@ class AiSettingsViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(settingsWriteError = null)
     }
 
-    private fun validateApiKey(value: String): String? {
+    private fun validateApiKey(value: String): UiText? {
         val trimmed = value.trim()
         if (trimmed.isBlank()) return null
         if (trimmed.length < 20) {
-            return "API key looks too short"
+            return UiText.StringResource(R.string.ai_key_too_short)
         }
         if (!trimmed.startsWith("AIza")) {
-            return "API key format looks invalid for Gemini"
+            return UiText.StringResource(R.string.ai_key_format_invalid)
         }
         return null
     }

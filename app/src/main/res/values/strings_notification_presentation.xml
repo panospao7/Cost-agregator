@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Notification presentation copy (app-lock-privacy-mode, S5a; ux-flows 2.7 and 9.4).
+
+  Discreet pairs name the KIND only: no amount, currency, merchant, product, category, severity, date,
+  count or AI text, and no emoji (INV-5, INV-8, OD-10a). The generic public pair is one app-wide pair for
+  all six kinds and names no kind (OD-21a, INV-7).
+
+  The briefing discreet title reuses the existing notification_briefing_ready_title (same text in Normal
+  and Discreet, ux-flows 9.4); its el/es entries are added in the localized files of this set.
+  The dismiss action reuses action_dismiss (its el entry is added in the el file of this set).
+-->
+<resources>
+    <!-- Kind BILL -->
+    <string name="notif_discreet_bill_title">Bill due</string>
+    <string name="notif_discreet_bill_text">Open the app to see details.</string>
+
+    <!-- Kind ANOMALY -->
+    <string name="notif_discreet_anomaly_title">Unusual charge detected</string>
+    <string name="notif_discreet_anomaly_text">Open the app to review.</string>
+
+    <!-- Kind BUDGET -->
+    <string name="notif_discreet_budget_title">Budget alert</string>
+    <string name="notif_discreet_budget_text">A budget needs your attention. Open the app to review.</string>
+
+    <!-- Kind WARRANTY -->
+    <string name="notif_discreet_warranty_title">Warranty reminder</string>
+    <string name="notif_discreet_warranty_text">A warranty needs your attention. Open the app to review.</string>
+
+    <!-- Kind RECEIPT_MATCH (no emoji, no merchant) -->
+    <string name="notif_discreet_receipt_match_title">Receipt matched</string>
+    <string name="notif_discreet_receipt_match_text">Open the app to review.</string>
+
+    <!-- Kind BRIEFING: title is notification_briefing_ready_title (defined in strings.xml) -->
+    <string name="notif_discreet_briefing_text">Open the app to read it.</string>
+
+    <!-- Generic public version, identical for all six kinds -->
+    <string name="notif_public_title">Reminder</string>
+    <string name="notif_public_text">Open the app to see details.</string>
+
+    <!-- Bill reminder action label (moved out of BillReminderWorker; dismiss reuses action_dismiss) -->
+    <string name="notif_action_snooze">Snooze</string>
+</resources>

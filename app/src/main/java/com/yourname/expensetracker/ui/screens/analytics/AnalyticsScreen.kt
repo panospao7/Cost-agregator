@@ -82,7 +82,7 @@ fun AnalyticsScreen(
 
     LaunchedEffect(initialPeriod) {
         initialPeriod
-            ?.let(::parseTimePeriodOrNull)
+            ?.let { TimePeriodTokens.parseOrNull(it) }
             ?.takeIf { it != state.selectedPeriod }
             ?.let(viewModel::selectPeriod)
     }
@@ -1835,18 +1835,6 @@ fun AnalyticsWarningsCard(warnings: List<AnalyticsConversionWarning>) {
                 )
             }
         }
-    }
-}
-
-private fun parseTimePeriodOrNull(value: String): TimePeriod? {
-    return when (value.trim().lowercase()) {
-        "today" -> TimePeriod.TODAY
-        "week" -> TimePeriod.WEEK
-        "month" -> TimePeriod.MONTH
-        "quarter" -> TimePeriod.QUARTER
-        "year" -> TimePeriod.YEAR
-        "all" -> TimePeriod.ALL
-        else -> null
     }
 }
 

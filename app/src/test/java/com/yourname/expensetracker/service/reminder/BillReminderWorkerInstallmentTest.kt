@@ -9,8 +9,17 @@ import androidx.work.ListenableWorker.Result
 import androidx.work.WorkerFactory
 import androidx.work.WorkerParameters
 import androidx.work.testing.TestListenableWorkerBuilder
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.database.entity.RecurringReminderDelivery
+import com.yourname.expensetracker.data.service.NotificationPresentationApplier
+import com.yourname.expensetracker.data.service.NotificationPresentationTexts
+import com.yourname.expensetracker.data.service.PresentationFixtures
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
+import com.yourname.expensetracker.domain.notification.presentation.NotificationActionPolicy
+import com.yourname.expensetracker.domain.notification.presentation.NotificationKind
+import com.yourname.expensetracker.domain.notification.presentation.NotificationPresentationDecision
+import com.yourname.expensetracker.domain.notification.presentation.NotificationPresentationMode
+import com.yourname.expensetracker.domain.notification.presentation.NotificationPresentationResolver
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
 import com.yourname.expensetracker.domain.reminder.BillReminderManager
 import com.yourname.expensetracker.domain.reminder.BillReminderSettings
@@ -69,6 +78,14 @@ class BillReminderWorkerInstallmentTest {
     private lateinit var reminderSettingsRepository: BillReminderSettingsRepository
     private lateinit var timeProvider: FakeTimeProvider
     private lateinit var billReminderManager: BillReminderManager
+    private lateinit var presentationResolver: NotificationPresentationResolver
+
+    private fun decisionFor(mode: NotificationPresentationMode) = NotificationPresentationDecision(
+        kind = NotificationKind.BILL,
+        mode = mode,
+        expandedStyleAllowed = false,
+        actionPolicy = NotificationActionPolicy.UNCHANGED
+    )
 
     private val candidate = InstallmentReminder(
         planUuid = "plan-a",
@@ -99,6 +116,10 @@ class BillReminderWorkerInstallmentTest {
         diagnosticEventWriter = mockk(relaxed = true)
         reminderSettingsRepository = mockk()
         timeProvider = FakeTimeProvider(1_700_000_000_000L)
+        // The legacy installment tests run in FULL mode (today's visible text); the DISCREET case below
+        // pins the D-M1 A contract (installment reminders use the BILL presentation).
+        presentationResolver = mockk()
+        coEvery { presentationResolver.resolve(any(), any()) } returns decisionFor(NotificationPresentationMode.FULL)
 
         coEvery { executionGuard.runGuardedWithContext(any(), any<suspend (WorkerRunContext) -> Any>()) } coAnswers {
             val block = secondArg<suspend (WorkerRunContext) -> Any>()
@@ -171,6 +192,8 @@ class BillReminderWorkerInstallmentTest {
                     diagnosticEventWriter,
                     reminderSettingsRepository,
                     timeProvider,
+                    presentationResolver,
+                    NotificationPresentationApplier(context, NotificationPresentationTexts(context)),
                     billReminderManager
                 )
             })
@@ -198,6 +221,8 @@ class BillReminderWorkerInstallmentTest {
                     diagnosticEventWriter,
                     reminderSettingsRepository,
                     timeProvider,
+                    presentationResolver,
+                    NotificationPresentationApplier(context, NotificationPresentationTexts(context)),
                     billReminderManager
                 )
             })
@@ -346,6 +371,25 @@ class BillReminderWorkerInstallmentTest {
     }
 
     @Test
+    fun `presentation resolve cancellation after the claim releases the claim and propagates`() = runTest {
+        // Resolution happens inside the claim -> post try (D-M1 A): a cancelled resolve must give the
+        // claim back, post nothing, finalize nothing, and rethrow. NotificationKind is an enum and the
+        // sdk parameter is a plain Int, so any() is safe for both.
+        coEvery { presentationResolver.resolve(any(), any()) } throws CancellationException("cancelled")
+        val nm = mockNotificationManagerCompat()
+        every { nm.notify(any(), any()) } returns Unit
+        val before = ShadowLog.getLogs().size
+
+        assertFailsWith<CancellationException> { buildWorker().doWork() }
+
+        coVerify(exactly = 1) { billReminderManager.releaseInstallmentReminder(claimed) }
+        coVerify(exactly = 0) { nm.notify(any(), any()) }
+        coVerify(exactly = 0) { billReminderManager.markInstallmentReminderSent(any()) }
+        coVerify(exactly = 0) { coordinator.recoverAndGetDueReminders() }
+        assertTrue(workerLogsSince(before).none { it.type >= android.util.Log.WARN })
+    }
+
+    @Test
     fun `text build failure after the claim releases the claim and does not block the recurring dispatch`() = runTest {
         every { billReminderManager.buildInstallmentReminderText(claimed) } throws
             RuntimeException("Demo Electronics plan-a 125.00")
@@ -450,6 +494,41 @@ class BillReminderWorkerInstallmentTest {
         assertTrue(postedIds.single() in 30000..39999)
         // No Snooze/Dismiss actions: those receivers act on recurring delivery rows only.
         assertTrue(posted.single().actions == null || posted.single().actions.isEmpty())
+    }
+
+    // D-M1 A (owner-approvals 79a): installment reminders use the BILL presentation, so DISCREET
+    // hides the plan name and the amount everywhere the notification carries text.
+    @Test
+    fun `DISCREET installment reminder carries no plan name or amount in title text public version or extras`() = runTest {
+        coEvery { presentationResolver.resolve(any(), any()) } returns decisionFor(NotificationPresentationMode.DISCREET)
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val shadow = shadowOf(manager)
+        val notificationsBefore = shadow.allNotifications.size
+
+        assertEquals(Result.success(), buildWorker().doWork())
+
+        coVerify(exactly = 1) { presentationResolver.resolve(NotificationKind.BILL, any()) }
+        coVerify(exactly = 1) { billReminderManager.markInstallmentReminderSent(claimed) }
+        coVerify(exactly = 0) { billReminderManager.releaseInstallmentReminder(any()) }
+        val posted = shadow.allNotifications.drop(notificationsBefore).single()
+        assertEquals(
+            context.getString(R.string.notif_discreet_bill_title),
+            posted.extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()
+        )
+        assertEquals(
+            context.getString(R.string.notif_discreet_bill_text),
+            posted.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()
+        )
+        val everyString = PresentationFixtures.everyString(posted)
+        assertTrue(everyString.isNotEmpty())
+        listOf("Demo Electronics", "125.00", "12500", "USD", "plan-a").forEach { sentinel ->
+            everyString.forEach { s ->
+                assertTrue("'$sentinel' leaked into a DISCREET installment notification", !s.contains(sentinel))
+            }
+        }
+        assertEquals(Notification.VISIBILITY_PRIVATE, posted.visibility)
+        // No Snooze/Dismiss actions: those receivers act on recurring delivery rows only.
+        assertTrue(posted.actions == null || posted.actions.isEmpty())
     }
 
     @Test

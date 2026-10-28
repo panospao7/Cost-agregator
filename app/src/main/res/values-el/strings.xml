@@ -26,6 +26,8 @@
     <string name="unsupported_db_close_button">Κλείσιμο εφαρμογής</string>
     <string name="unsupported_db_export_success">Το αρχείο της βάσης δεδομένων εξήχθη.</string>
     <string name="unsupported_db_export_failed">Δεν ήταν δυνατή η εξαγωγή του αρχείου της βάσης δεδομένων. Δοκιμάστε άλλη τοποθεσία.</string>
+    <!-- S21-c: DRAFT: owner native sign-off pending -->
+    <string name="unsupported_db_export_auth_denied">Η εξαγωγή απαιτεί το δακτυλικό αποτύπωμα ή το κλείδωμα οθόνης σας. Δεν εξήχθη τίποτα.</string>
     <string name="backup_schema_too_old">Αυτό το αντίγραφο ασφαλείας προέρχεται από πολύ παλιά έκδοση της εφαρμογής και δεν μπορεί να επαναφερθεί.</string>
     <string name="backup_schema_too_new">Αυτό το αντίγραφο ασφαλείας δημιουργήθηκε από νεότερη έκδοση της εφαρμογής. Ενημερώστε την εφαρμογή για να το επαναφέρετε.</string>
     <string name="bank_sync_result_success">Ο συγχρονισμός ολοκληρώθηκε</string>
@@ -85,6 +87,19 @@
     <string name="groups_balances_unavailable">Τα υπόλοιπα δεν είναι διαθέσιμα</string>
     <string name="groups_currency_not_selected">Επιλέξτε νόμισμα</string>
     <string name="warranty_mutation_failed">Δεν ήταν δυνατή η αποθήκευση της αλλαγής. Δοκιμάστε ξανά.</string>
+    <!-- ai-fixes B1b: warranty review states, reject confirmation, filtered-empty states, bounded errors -->
+    <string name="warranty_badge_expired_unconfirmed">Έληξε - δεν επιβεβαιώθηκε</string>
+    <string name="warranty_expired_date">Έληξε στις %1$s</string>
+    <string name="warranty_action_keep_expired">Διατήρηση στο ιστορικό</string>
+    <string name="warranty_expired_unconfirmed_count">Έληξαν χωρίς επιβεβαίωση: %1$d</string>
+    <string name="warranty_reject_confirm_title">Αφαίρεση αυτής της εγγύησης;</string>
+    <string name="warranty_reject_confirm_body">Θα διαγραφεί από τις εγγυήσεις σας. Η απόδειξή σας δεν επηρεάζεται.</string>
+    <string name="warranty_reject_confirm_action">Αφαίρεση</string>
+    <string name="warranty_empty_filtered_title">Δεν υπάρχει τίποτα εδώ</string>
+    <string name="warranty_empty_filtered_message">Καμία εγγύηση δεν ταιριάζει με αυτό το φίλτρο.</string>
+    <string name="warranty_empty_review_message">Δεν απομένει τίποτα προς έλεγχο.</string>
+    <string name="warranty_error_confirm_failed">Δεν ήταν δυνατή η επιβεβαίωση αυτής της εγγύησης. Δοκιμάστε ξανά.</string>
+    <string name="warranty_error_not_found">Αυτή η εγγύηση δεν υπάρχει πλέον.</string>
     <string name="recurring_mark_paid_dialog_title">Σήμανση λογαριασμού ως πληρωμένου</string>
     <string name="recurring_mark_paid_dialog_body">Θέλετε να καταγράψετε πληρωμή %2$s για %1$s ή η πληρωμή έχει ήδη καταγραφεί;</string>
     <string name="recurring_mark_paid_creates_expense">Πληρωμένο (δημιουργεί έξοδο)</string>
@@ -100,6 +115,34 @@
     </plurals>
     <string name="feature_privacy_settings">Ρυθμίσεις απορρήτου</string>
     <string name="feature_privacy_settings_desc">Ελέγξτε πώς χρησιμοποιούνται τα δεδομένα σας</string>
+    <!-- ai-fixes Part A (INV-2): bounded, localized AI settings messages. Best-effort translation, pending owner review. -->
+    <string name="ai_cloud_blocked_format">Το cloud AI είναι αποκλεισμένο: %1$s</string>
+    <string name="ai_cloud_active">Το cloud AI είναι ενεργό</string>
+    <string name="ai_blocked_ai_off">Το AI είναι απενεργοποιημένο</string>
+    <string name="ai_blocked_cloud_off">Το cloud AI είναι απενεργοποιημένο στις ρυθμίσεις</string>
+    <string name="ai_blocked_no_key">Δεν έχει ρυθμιστεί κλειδί API</string>
+    <string name="ai_blocked_no_network">Δεν υπάρχει σύνδεση δικτύου</string>
+    <string name="ai_blocked_wifi_only">Απαιτείται Wi-Fi (λειτουργία μόνο Wi-Fi)</string>
+    <string name="ai_blocked_privacy">Αποκλείστηκε από τις Ρυθμίσεις απορρήτου</string>
+    <string name="ai_error_settings_save_failed">Δεν ήταν δυνατή η αποθήκευση των ρυθμίσεων. Δοκιμάστε ξανά.</string>
+    <string name="ai_key_too_short">Το κλειδί API φαίνεται πολύ σύντομο</string>
+    <string name="ai_key_format_invalid">Η μορφή του κλειδιού API δεν φαίνεται έγκυρη για το Gemini</string>
+    <string name="ai_key_enter_valid_before_save">Εισαγάγετε έγκυρο κλειδί API πριν την αποθήκευση.</string>
+    <string name="ai_key_enter_new_or_remove">Εισαγάγετε νέο κλειδί ή χρησιμοποιήστε την Αφαίρεση κλειδιού για να διαγράψετε το αποθηκευμένο κλειδί.</string>
+    <string name="ai_key_test_before_save">Εκτελέστε μια επιτυχημένη δοκιμή σύνδεσης πριν αποθηκεύσετε αυτό το κλειδί API.</string>
+    <string name="ai_key_saved">Το κλειδί API αποθηκεύτηκε με ασφάλεια.</string>
+    <string name="ai_key_removed">Το κλειδί API αφαιρέθηκε.</string>
+    <string name="ai_key_required_cloud">Απαιτείται κλειδί API για τον πάροχο cloud.</string>
+    <string name="ai_key_enter_before_test">Εισαγάγετε κλειδί API πριν τη δοκιμή σύνδεσης.</string>
+    <string name="ai_key_enter_valid_before_test">Εισαγάγετε έγκυρο κλειδί API πριν τη δοκιμή σύνδεσης.</string>
+    <string name="ai_key_enable_ai_first">Ενεργοποιήστε πρώτα το AI και εκτελέστε ξανά τη δοκιμή σύνδεσης.</string>
+    <string name="ai_key_enable_cloud_to_test">Ενεργοποιήστε το cloud AI για να δοκιμάσετε τη συνδεσιμότητα του παρόχου.</string>
+    <string name="ai_test_no_network">Δεν υπάρχει σύνδεση δικτύου. Ελέγξτε το διαδίκτυο και δοκιμάστε ξανά.</string>
+    <string name="ai_test_wifi_only">Το cloud AI περιορίζεται σε Wi-Fi βάσει των ρυθμίσεων.</string>
+    <string name="ai_test_status_unavailable">Δεν ήταν δυνατή η φόρτωση της κατάστασης λειτουργίας. Δοκιμάστε ξανά.</string>
+    <string name="ai_test_cloud_unavailable">Το cloud AI δεν είναι διαθέσιμο αυτή τη στιγμή.</string>
+    <string name="ai_test_passed">Η δοκιμή σύνδεσης ολοκληρώθηκε. Ο πάροχος cloud έχει ρυθμιστεί και είναι προσβάσιμος.</string>
+    <string name="ai_test_failed">Η δοκιμή σύνδεσης απέτυχε. Δοκιμάστε ξανά.</string>
     <!-- R24b: notification permission dialog button when the system will no longer ask -->
     <string name="notification_open_settings_button">Άνοιγμα ρυθμίσεων</string>
     <!-- R24c: shown when the receipt currency could not be read and the home currency was assumed -->
@@ -448,4 +491,82 @@
     <!-- loan-installments S12b: DRAFT translations, pending owner sign-off -->
     <string name="budget_includes_installments_format">Περιλαμβάνει %1$s σε δόσεις</string>
     <string name="budget_includes_installments_unavailable">Το ποσό των δόσεων δεν είναι διαθέσιμο</string>
+    <!-- ai-fixes B3b. Best-effort translation, pending owner review. -->
+    <string name="ai_toggle_proactive">Ειδοποίησέ με όταν είναι έτοιμη η ημερήσια ενημέρωσή μου</string>
+    <string name="ai_cloud_briefing_disclosure">Όσο είναι ενεργά το Enable AI, το Dashboard briefing και το Allow cloud AI, η ημερήσια ενημέρωση δημιουργείται στο παρασκήνιο με cloud AI.</string>
+    <string name="ai_proactive_desc">Η απενεργοποίηση δεν κρύβει την ενημέρωσή σας. Εμφανίζεται κανονικά στην Αρχική. Ελέγχει μόνο την ειδοποίηση. Όσο είναι ενεργά το Enable AI, το Dashboard briefing και το Allow cloud AI, η ημερήσια ενημέρωση δημιουργείται στο παρασκήνιο με cloud AI, είτε αυτή η επιλογή είναι ενεργή είτε όχι.</string>
+    <string name="ai_proactive_notifications_blocked">Οι ειδοποιήσεις είναι αποκλεισμένες για αυτή την εφαρμογή στις ρυθμίσεις συστήματος, επομένως δεν θα εμφανιστεί ειδοποίηση. Η ενημέρωσή σας εμφανίζεται κανονικά στην Αρχική.</string>
+    <string name="ai_warranty_local_note">Οι περίοδοι εγγύησης διαβάζονται στη συσκευή σας από το κείμενο της απόδειξης. Δεν χρησιμοποιείται AI ή cloud για τις εγγυήσεις.</string>
+    <!-- Assistant unsupported reasons. Best-effort translation, pending owner review. -->
+    <string name="assistant_unsupported_interpretation_disabled">Ο βοηθός είναι απενεργοποιημένος στις ρυθμίσεις AI.</string>
+    <string name="assistant_unsupported_interpretation_failed">Παρουσιάστηκε πρόβλημα κατά την ανάγνωση της ερώτησής σας. Δοκιμάστε ξανά.</string>
+    <string name="assistant_unsupported_provider_unavailable">Ο βοηθός δεν είναι διαθέσιμος αυτή τη στιγμή. Δοκιμάστε ξανά αργότερα.</string>
+    <string name="assistant_unsupported_response_invalid">Δεν κατάλαβα την απάντηση του βοηθού. Δοκιμάστε να αναδιατυπώσετε την ερώτησή σας.</string>
+    <string name="assistant_unsupported_model_declined">Αυτός ο τύπος ερώτησης δεν υποστηρίζεται ακόμη.</string>
+    <string name="assistant_unsupported_metric_not_supported">Αυτός ο τύπος αναζήτησης δεν υποστηρίζεται ακόμη.</string>
+    <string name="assistant_unsupported_no_matching_transactions">Δεν βρέθηκαν αντίστοιχες συναλλαγές.</string>
+    <!-- Assistant structured clarification options. Best-effort translation, pending owner review. -->
+    <string name="assistant_clarification_period_this_month">Αυτόν τον μήνα</string>
+    <string name="assistant_clarification_period_this_week">Αυτή την εβδομάδα</string>
+    <string name="assistant_clarification_period_last_month">Τον προηγούμενο μήνα</string>
+    <string name="assistant_clarification_presentation_breakdown">Ανάλυση</string>
+    <string name="assistant_clarification_presentation_transaction_list">Λίστα συναλλαγών</string>
+    <!-- Assistant MIN result title. Best-effort translation, pending owner review. -->
+    <string name="domain_ai_smallest_purchase">Μικρότερη αγορά</string>
+    <!-- AI capability label (transaction insight). Best-effort translation, pending owner review. -->
+    <string name="ai_capability_transaction_insight">Ανάλυση συναλλαγής</string>
+    <!-- B2e insight row. Best-effort translations, pending owner review. -->
+    <string name="ai_insight_label">Ανάλυση συναλλαγής (στη συσκευή)</string>
+    <string name="ai_insight_desc">Προσθέτει μία φράση που δημιουργείται στη συσκευή σε μια νέα πρόταση ενέργειας όταν προσθέτετε μια δαπάνη ενώ η εφαρμογή είναι ανοιχτή. Δεν χρησιμοποιεί ποτέ το cloud.</string>
+    <string name="ai_insight_needs_ai">Ενεργοποιήστε το AI παραπάνω για να το χρησιμοποιήσετε.</string>
+    <string name="ai_insight_needs_on_device">Ενεργοποιήστε το AI στη συσκευή παραπάνω για να το χρησιμοποιήσετε.</string>
+    <!-- nl-quick-add slice A: DRAFT Greek, owner native sign-off pending -->
+    <string name="add_expense_error_save_failed">Δεν ήταν δυνατή η αποθήκευση του εξόδου. Δοκιμάστε ξανά.</string>
+    <string name="add_expense_error_currency_loading">Φόρτωση ρυθμίσεων νομίσματος…</string>
+    <string name="add_expense_error_merchant_required">Το όνομα καταστήματος είναι υποχρεωτικό</string>
+    <string name="add_expense_error_amount_invalid">Εισάγετε έγκυρο ποσό</string>
+    <string name="add_expense_error_amount_too_large">Το ποσό είναι πολύ μεγάλο</string>
+    <string name="add_expense_error_date_future">Η ημερομηνία δεν μπορεί να είναι στο μέλλον</string>
+    <!-- nl-quick-add slice F: DRAFT: owner native sign-off pending -->
+    <string name="quick_add_label">Γρήγορη προσθήκη</string>
+    <string name="quick_add_placeholder">π.χ. καφές 3,50 χθες</string>
+    <string name="quick_add_helper">Αγγλικά ή ελληνικά (και greeklish). Η γραμμή δεν αποθηκεύεται.</string>
+    <string name="quick_add_counter">%1$d / %2$d</string>
+    <string name="quick_add_fill_button">Συμπλήρωση</string>
+    <string name="quick_add_fill_cd">Συμπλήρωση της φόρμας από τη γραμμή</string>
+    <string name="quick_add_fill_disabled_blank">Πληκτρολογήστε πρώτα μια γραμμή</string>
+    <string name="quick_add_fill_disabled_loading">Φόρτωση ρυθμίσεων νομίσματος</string>
+    <string name="quick_add_summary_filled">Συμπληρώθηκαν: %1$s.</string>
+    <string name="quick_add_summary_review">Χρειάζεται έλεγχο: %1$s.</string>
+    <string name="quick_add_summary_check_save">Ελέγξτε τα στοιχεία και πατήστε Αποθήκευση.</string>
+    <string name="quick_add_summary_kept_edits">Τα πεδία που αλλάξατε διατηρήθηκαν.</string>
+    <string name="quick_add_summary_none">Δεν αναγνωρίστηκε τίποτα. Δοκιμάστε ποσό και μέρος, π.χ. \"καφές 3,50 χθες\".</string>
+    <string name="quick_add_summary_nothing_new">Δεν συμπληρώθηκε κάτι νέο.</string>
+    <string name="quick_add_field_amount">ποσό</string>
+    <string name="quick_add_field_merchant">κατάστημα</string>
+    <string name="quick_add_field_date">ημερομηνία</string>
+    <string name="quick_add_field_category">κατηγορία</string>
+    <string name="quick_add_field_payment">τρόπος πληρωμής</string>
+    <string name="quick_add_filled_marker">Συμπληρώθηκε</string>
+    <string name="quick_add_category_exact_fmt">%1$s · από τη γραμμή σας</string>
+    <string name="quick_add_category_learned_fmt">%1$s · από το ιστορικό σας</string>
+    <string name="quick_add_category_remove">Αφαίρεση</string>
+    <string name="quick_add_category_remove_cd">Αφαίρεση κατηγορίας %1$s</string>
+    <string name="quick_add_hint_foreign">Το ξένο νόμισμα δεν υποστηρίζεται ακόμη εδώ. Το έξοδο θα αποθηκευτεί σε %1$s.</string>
+    <string name="quick_add_hint_time_ignored">Η ώρα αγνοήθηκε.</string>
+    <string name="quick_add_hint_too_long">Η γραμμή είναι πολύ μεγάλη (έως %1$d χαρακτήρες).</string>
+    <string name="quick_add_flag_amount_foreign">Εισάγετε το ποσό σε %1$s.</string>
+    <string name="quick_add_flag_amount_quantity">Εντοπίστηκε ποσότητα. Εισάγετε το συνολικό ποσό.</string>
+    <string name="quick_add_flag_amount_multiple">Βρέθηκαν περισσότεροι αριθμοί. Εισάγετε το ποσό.</string>
+    <string name="quick_add_flag_amount_separator">Μη σαφές ποσό: ελέγξτε τα διαχωριστικά δεκαδικών και χιλιάδων.</string>
+    <string name="quick_add_flag_amount_unclear">Μη σαφές ποσό. Εισάγετέ το εσείς.</string>
+    <string name="quick_add_flag_amount_not_positive">Το ποσό πρέπει να είναι μεγαλύτερο από μηδέν.</string>
+    <string name="quick_add_flag_amount_over_limit">Το ποσό είναι πολύ μεγάλο.</string>
+    <string name="quick_add_flag_date_future">Δεν επιτρέπονται μελλοντικές ημερομηνίες. Έμεινε η σημερινή.</string>
+    <string name="quick_add_flag_date_ambiguous">Μη σαφής ημερομηνία (πολλές ημερομηνίες ή η σημερινή ημέρα). Έμεινε η σημερινή.</string>
+    <string name="quick_add_flag_date_unsupported">Αυτή η μορφή ημερομηνίας δεν υποστηρίζεται ακόμη. Έμεινε η σημερινή.</string>
+    <string name="quick_add_flag_date_invalid">Μη έγκυρη ημερομηνία. Έμεινε η σημερινή.</string>
+    <string name="quick_add_flag_payment_conflict">Βρέθηκαν και κάρτα και μετρητά. Επιλέξτε ένα.</string>
+    <string name="quick_add_flag_category_ambiguous">Ταίριαξαν περισσότερες κατηγορίες. Επιλέξτε μία.</string>
+    <string name="add_expense_category_auto_hint">Δεν επιλέχθηκε κατηγορία. Θα ανατεθεί αυτόματα κατά την αποθήκευση.</string>
 </resources>

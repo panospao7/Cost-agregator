@@ -22,6 +22,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.data.database.entity.Warranty
 import com.yourname.expensetracker.data.database.entity.WarrantyStatus
+import com.yourname.expensetracker.domain.usecase.warranty.WarrantyReviewState
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.ui.components.asString
@@ -76,6 +77,8 @@ fun WarrantyTrackerScreen(
     val completedActionKeys by actionRegistry.completedActions.collectAsState()
     val dateFormat = remember { DateTimeFormatter.ofPattern("MMM dd, yyyy", Locale.getDefault()) }
     var showManualAddDialog by remember { mutableStateOf(false) }
+    // G2-9: Reject is irreversible (no undo path), so it always goes through a confirmation dialog.
+    var pendingRejectWarranty by remember { mutableStateOf<Warranty?>(null) }
 
     // Get contextual actions for empty state
     val emptyStateActions by remember(completedActionKeys) {
@@ -224,6 +227,13 @@ fun WarrantyTrackerScreen(
                 Spacer(modifier = Modifier.height(8.dp))
             }
 
+            // G2-8: rows past their end date that were never confirmed (shown only when N > 0).
+            if (state.expiredUnconfirmedCount > 0) {
+                TextButton(onClick = { viewModel.filterByStatus(WarrantyStatus.EXPIRED) }) {
+                    Text(stringResource(R.string.warranty_expired_unconfirmed_count, state.expiredUnconfirmedCount))
+                }
+            }
+
             Spacer(modifier = Modifier.height(8.dp))
 
             // Filter Chips
@@ -273,6 +283,32 @@ fun WarrantyTrackerScreen(
                 ) {
                     CircularProgressIndicator()
                 }
+            } else if (state.warranties.isEmpty() && state.allWarranties.isNotEmpty()) {
+                // Warranties exist but the active filter matches none (plain readable text).
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Text(
+                        text = stringResource(R.string.warranty_empty_filtered_title),
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = stringResource(
+                            if (state.showNeedsReviewOnly) {
+                                R.string.warranty_empty_review_message
+                            } else {
+                                R.string.warranty_empty_filtered_message
+                            }
+                        ),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             } else if (state.warranties.isEmpty()) {
                 // Enhanced empty state with contextual actions
                 EnhancedEmptyState(
@@ -310,16 +346,41 @@ fun WarrantyTrackerScreen(
                             warranty = warranty,
                             dateFormat = dateFormat,
                             referenceNowMillis = state.referenceNowMillis,
+                            reviewState = state.reviewStateOf(warranty),
+                            isMutating = warranty.id in state.mutatingWarrantyIds,
                             onMarkClaimed = { viewModel.markAsClaimed(warranty.id) },
                             onDelete = { viewModel.deleteWarranty(warranty) },
-                            // F1: Review callbacks
-                            onConfirm = { viewModel.confirmWarranty(warranty) },
-                            onReject = { viewModel.rejectAutoDetectedWarranty(warranty) }
+                            // F1: Review callbacks (INV-13: the ViewModel receives the id only)
+                            onConfirm = { viewModel.confirmWarranty(warranty.id) },
+                            onReject = { pendingRejectWarranty = warranty }
                         )
                     }
                 }
             }
         }
+    }
+
+    pendingRejectWarranty?.let { target ->
+        AlertDialog(
+            onDismissRequest = { pendingRejectWarranty = null },
+            title = { Text(stringResource(R.string.warranty_reject_confirm_title)) },
+            text = { Text(stringResource(R.string.warranty_reject_confirm_body)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        pendingRejectWarranty = null
+                        viewModel.rejectAutoDetectedWarranty(target)
+                    }
+                ) {
+                    Text(stringResource(R.string.warranty_reject_confirm_action))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingRejectWarranty = null }) {
+                    Text(stringResource(R.string.action_cancel))
+                }
+            }
+        )
     }
 
     if (showManualAddDialog) {
@@ -475,6 +536,10 @@ private fun WarrantyCard(
     warranty: Warranty,
     dateFormat: DateTimeFormatter,
     referenceNowMillis: Long,
+    // INV-10: the single review-state derivation drives border, badge, date line and actions.
+    reviewState: WarrantyReviewState,
+    // Buttons are disabled while this card's id is in mutatingWarrantyIds.
+    isMutating: Boolean,
     onMarkClaimed: () -> Unit,
     onDelete: () -> Unit,
     // F1: Review callbacks
@@ -486,14 +551,20 @@ private fun WarrantyCard(
     val isExpired = daysRemaining < 0
     // F1: Check if auto-detected
     val isAutoDetected = warranty.autoDetected
-    val needsReview = warranty.needsReview
+    val awaitingReview = reviewState == WarrantyReviewState.AWAITING_REVIEW
+    val expiredUnconfirmed = reviewState == WarrantyReviewState.EXPIRED_UNCONFIRMED
 
     Card(
         modifier = Modifier.fillMaxWidth(),
-        // F1: Different border for items needing review
-        border = if (needsReview) {
-            androidx.compose.foundation.BorderStroke(2.dp, MaterialTheme.colorScheme.error)
-        } else null
+        // F1: error border only while a review is still actionable; expired-unconfirmed gets a
+        // neutral outline (nothing is urgent any more).
+        border = when {
+            awaitingReview ->
+                androidx.compose.foundation.BorderStroke(2.dp, MaterialTheme.colorScheme.error)
+            expiredUnconfirmed ->
+                androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+            else -> null
+        }
     ) {
         Column(
             modifier = Modifier.padding(16.dp)
@@ -530,8 +601,17 @@ private fun WarrantyCard(
                     )
                 }
                 
-                // F1: Needs review badge
-                if (needsReview) {
+                // Badge precedence: expired-unconfirmed, awaiting review, expired, days left.
+                if (expiredUnconfirmed) {
+                    Badge(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    ) {
+                        Text(
+                            stringResource(R.string.warranty_badge_expired_unconfirmed),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                } else if (awaitingReview) {
                     Badge(
                         containerColor = MaterialTheme.colorScheme.errorContainer
                     ) {
@@ -569,7 +649,10 @@ private fun WarrantyCard(
 
             Text(
                 // S12-007: warrantyEndDate is exclusive — display the day before
-                text = stringResource(R.string.warranty_expires_date, dateFormat.format(Instant.ofEpochMilli(warranty.warrantyEndDate - 1).atZone(ZoneId.systemDefault()))),
+                text = stringResource(
+                    if (expiredUnconfirmed || warranty.status == WarrantyStatus.EXPIRED) R.string.warranty_expired_date else R.string.warranty_expires_date,
+                    dateFormat.format(Instant.ofEpochMilli(warranty.warrantyEndDate - 1).atZone(ZoneId.systemDefault()))
+                ),
                 style = MaterialTheme.typography.bodyMedium
             )
 
@@ -591,26 +674,42 @@ private fun WarrantyCard(
             }
 
             // F1: Review actions for warranties needing review
-            if (needsReview) {
+            // Both review states offer confirm ("Keep in history" when expired) and reject; never Claim.
+            if (awaitingReview || expiredUnconfirmed) {
                 Spacer(modifier = Modifier.height(8.dp))
-                Row(
+                // Vertical stack so long labels wrap instead of truncating at large font scales.
+                Column(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Button(
                         onClick = onConfirm,
-                        modifier = Modifier.weight(1f),
+                        enabled = !isMutating,
+                        modifier = Modifier.fillMaxWidth(),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = MaterialTheme.colorScheme.primary
                         )
                     ) {
-                        Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(stringResource(R.string.warranty_action_confirm))
+                        if (isMutating) {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                        } else {
+                            Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                stringResource(
+                                    if (expiredUnconfirmed) {
+                                        R.string.warranty_action_keep_expired
+                                    } else {
+                                        R.string.warranty_action_confirm
+                                    }
+                                )
+                            )
+                        }
                     }
                     OutlinedButton(
                         onClick = onReject,
-                        modifier = Modifier.weight(1f)
+                        enabled = !isMutating,
+                        modifier = Modifier.fillMaxWidth()
                     ) {
                         Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(4.dp))

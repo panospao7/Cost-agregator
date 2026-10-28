@@ -6,7 +6,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
-import androidx.activity.ComponentActivity
+import androidx.fragment.app.FragmentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -36,13 +36,18 @@ import androidx.activity.viewModels
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.lifecycleScope
 import com.google.gson.Gson
-import com.yourname.expensetracker.domain.ai.service.AiEngagementRepository
-import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.backup.AppOperationalState
 import com.yourname.expensetracker.data.backup.RestoreRestartSignal
 import com.yourname.expensetracker.data.database.DatabaseOpenGate
 import com.yourname.expensetracker.ui.unsupported.UnsupportedDatabaseActivity
+import com.yourname.expensetracker.domain.privacy.applock.AppLockController
+import com.yourname.expensetracker.ui.applock.AppLockDeepLinkRouter
+import com.yourname.expensetracker.ui.applock.AppLockLifecycleBinder
+import com.yourname.expensetracker.ui.applock.AppLockPromptHost
+import com.yourname.expensetracker.ui.applock.AppLockShell
+import com.yourname.expensetracker.ui.applock.NotificationPermissionPromptOnce
+import com.yourname.expensetracker.ui.applock.SecureWindowController
 import kotlinx.coroutines.flow.first
 import com.yourname.expensetracker.data.database.entity.Budget as BudgetEntity
 import com.yourname.expensetracker.data.repository.ExpenseRepository
@@ -87,6 +92,8 @@ import com.yourname.expensetracker.ui.screens.subscription.SubscriptionManagemen
 import com.yourname.expensetracker.ui.screens.tax.TaxConfigurationScreen
 import com.yourname.expensetracker.ui.theme.ExpenseTrackerTheme
 import com.yourname.expensetracker.ui.components.emptystate.ContextualActionRegistry
+import com.yourname.expensetracker.ui.navigation.DeepLinkPolicy
+import com.yourname.expensetracker.ui.navigation.DeepLinkPolicyResult
 import com.yourname.expensetracker.ui.navigation.NavigationDestination
 import com.yourname.expensetracker.ui.navigation.NavigationResult
 import com.yourname.expensetracker.ui.navigation.ProvideNavigationController
@@ -102,17 +109,16 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import javax.inject.Inject
+import javax.inject.Provider
 import kotlin.math.roundToInt
 
 @AndroidEntryPoint
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {
     private val mainViewModel: MainViewModel by viewModels()
 
+    /** S21-b: routes validated deep links through the app-lock controller (INV-14..INV-22, PRV-16); unscoped, one per Activity. */
     @Inject
-    lateinit var aiRuntimeDiagnostics: AiRuntimeDiagnostics
-
-    @Inject
-    lateinit var aiEngagementRepository: AiEngagementRepository
+    lateinit var deepLinkRouter: AppLockDeepLinkRouter
 
     @Inject
     lateinit var actionRegistry: ContextualActionRegistry
@@ -127,12 +133,30 @@ class MainActivity : ComponentActivity() {
     @Inject
     lateinit var restoreRestartSignal: RestoreRestartSignal
 
-    /** RP-17 17-A: central bank-sync availability gate (D1). */
+    /** S20-c: the process-wide app-lock controller (state and notice feed the shell). */
     @Inject
-    lateinit var bankFeatureAvailability: com.yourname.expensetracker.domain.bank.BankFeatureAvailability
+    lateinit var appLockController: AppLockController
+
+    /** S20-c: sole INV-25 lifecycle signal and the owner of `resolve()`; installed once per process. */
+    @Inject
+    lateinit var appLockLifecycleBinder: AppLockLifecycleBinder
+
+    /** S20-c: [AppLockPromptHost] is unscoped (one per Activity instance), so it is injected as a provider. */
+    @Inject
+    lateinit var appLockPromptHostProvider: Provider<AppLockPromptHost>
+
+    /** S20-c: the single FLAG_SECURE writer. */
+    @Inject
+    lateinit var secureWindowController: SecureWindowController
+
+    /** S20-c: caps the POST_NOTIFICATIONS auto-prompt to once per process (AE-39). */
+    @Inject
+    lateinit var notificationPromptOnce: NotificationPermissionPromptOnce
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // S20-c / INV-29: the window is secure before anything else can draw (synchronous add; never cleared here).
+        secureWindowController.applyInitial(window)
         // R25 B2: a blocked live database (too old / too new / unreadable) must never reach the
         // normal UI; redirect to the plain export-only screen before any intent handling.
         if (DatabaseOpenGate.blockedReasonOrNull(applicationContext) != null) {
@@ -143,6 +167,13 @@ class MainActivity : ComponentActivity() {
             finish()
             return
         }
+        // S20-c: install the lifecycle binder before any other in-process Activity can start (S20-a F4; Activities
+        // started before this point are not counted), attach this Activity's prompt host, then bind the secure
+        // window once for this Activity instance (never from onNewIntent).
+        appLockLifecycleBinder.install(application)
+        appLockPromptHostProvider.get().attach(this)
+        secureWindowController.bind(this)
+        deepLinkRouter.startReleasing(this, mainViewModel)
         enableEdgeToEdge()
         if (savedInstanceState == null) {
             val consumed = handleIntent(intent)
@@ -161,13 +192,20 @@ class MainActivity : ComponentActivity() {
                         modifier = Modifier.fillMaxSize(),
                         color = MaterialTheme.colorScheme.background
                     ) {
-                        MainScreen(
-                            mainViewModel = mainViewModel,
-                            actionRegistry = actionRegistry,
-                            expenseRepository = expenseRepository,
-                            gson = gson,
-                            restoreRestartSignal = restoreRestartSignal
-                        )
+                        AppLockShell(
+                            controller = appLockController,
+                            operationalState = mainViewModel.operationalState,
+                            navigateTo = mainViewModel::navigateTo
+                        ) {
+                            MainScreen(
+                                mainViewModel = mainViewModel,
+                                actionRegistry = actionRegistry,
+                                expenseRepository = expenseRepository,
+                                gson = gson,
+                                restoreRestartSignal = restoreRestartSignal,
+                                notificationPromptOnce = notificationPromptOnce
+                            )
+                        }
                     }
                 }
             }
@@ -186,113 +224,23 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * PRV-16: Deep links exported without auth.
+     * Deep-link entry point (INV-14). Every `expensetracker:` intent, internal notification taps
+     * included, is untrusted: it is evaluated only by [DeepLinkPolicy] (pure, no IO) and acted on only
+     * by the deep-link applier. This function never parses or logs the link, so no raw URI, host or
+     * parameter value can reach a log or a diagnostic (INV-18; closes advisory C4).
      *
-     * TODO: Add authentication confirmation prompt before processing deep links.
-     * Currently deep links are processed without any auth gate, which could allow
-     * other apps on the device to trigger navigation without user consent.
-     * Consider showing a confirmation dialog for sensitive deep link actions
-     * (e.g. navigating to specific expense IDs, triggering bulk navigation).
+     * PRV-16 (S21-b): the link goes only through [AppLockDeepLinkRouter]. While the app is locked, resolving or
+     * waiting for a prompt, the app-lock controller holds the link in memory and the router releases it once the
+     * app is open again (spec 5.5); only an open app applies it now.
      *
-     * Security recommendation: Integrate with BiometricPrompt or
-     * DevicePolicyManager to verify user identity before handling deep links
-     * that expose personal financial data.
+     * @return true when the intent carried an `expensetracker:` link (even a rejected one), so the
+     * caller consumes the data one-shot; false when it was not a link at all.
      */
     private fun handleIntent(intent: Intent?): Boolean {
-        val data = intent?.data ?: return false
-        if (data.scheme != "expensetracker") return false
+        val result = DeepLinkPolicy.evaluate(intent?.action, intent?.dataString)
+        if (result is DeepLinkPolicyResult.NotADeepLink) return false
 
-        // RP-17 17-A: bank deep-link hosts are recognized and REJECTED at the
-        // contract boundary. There is intentionally no bank deep-link route and
-        // none may appear implicitly: routing a bank host later requires
-        // consciously removing it from BANK_DEEP_LINK_HOSTS and passing the
-        // central availability gate (D1). Rejection lands on Home — never a
-        // silent no-op, never provider integration.
-        if (com.yourname.expensetracker.domain.bank.BankFeatureAvailability.isBankDeepLinkHost(data.host)) {
-            Timber.w(
-                "Bank deep link rejected: reason=FEATURE_UNAVAILABLE available=%s",
-                bankFeatureAvailability.isBankSyncAvailable
-            )
-            mainViewModel.navigateTo(NavigationDestination.Home)
-            return true
-        }
-
-        when (data.host) {
-            "home", "dashboard" -> {
-                mainViewModel.navigateTo(NavigationDestination.Home)
-                data.getQueryParameter("briefingKey")?.let { briefingKey ->
-                    lifecycleScope.launch {
-                        aiEngagementRepository.setLastOpenedDashboardBriefingKey(briefingKey)
-                    }
-                }
-                aiRuntimeDiagnostics.recordInteraction(
-                    type = "phase4_open",
-                    message = "dashboard deep link opened${data.getQueryParameter("briefingKey")?.let { " ($it)" } ?: ""}"
-                )
-            }
-            "activity" -> {
-                val expenseId = data.getQueryParameter("expenseId")?.toLongOrNull()
-                if (expenseId != null) {
-                    lifecycleScope.launch {
-                        val expense = expenseRepository.getExpenseById(expenseId)
-                        if (expense != null) {
-                            // G-TIME-01: pure derivation from expense.date (java.time,
-                            // system default timezone — same day boundaries the Calendar produced).
-                            val zone = java.time.ZoneId.systemDefault()
-                            val expenseDate = java.time.Instant.ofEpochMilli(expense.date).atZone(zone).toLocalDate()
-                            val startOfDay = expenseDate.atStartOfDay(zone).toInstant().toEpochMilli()
-                            val endOfNextDayStart = expenseDate.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
-                            mainViewModel.navigateToTransactions(
-                                TransactionFilter(dateRange = startOfDay to endOfNextDayStart)
-                            )
-                        } else {
-                            mainViewModel.navigateTo(NavigationDestination.Transactions(initialExpenseId = expenseId))
-                        }
-                    }
-                } else {
-                    mainViewModel.navigateTo(NavigationDestination.Transactions())
-                }
-            }
-            "review" -> mainViewModel.navigateTo(NavigationDestination.Review)
-            // loan-installments S10a: dormant behind InstallmentsFeature.ENABLED. A disabled or
-            // malformed link lands on Home (same as an unsupported host), never on the feature.
-            InstallmentsFeature.DEEP_LINK_HOST_OVERVIEW -> mainViewModel.navigateTo(
-                if (InstallmentsFeature.ENABLED) NavigationDestination.Installments else NavigationDestination.Home
-            )
-            InstallmentsFeature.DEEP_LINK_HOST_PLAN -> {
-                val planId = data.getQueryParameter("id")?.toLongOrNull()?.takeIf { it > 0L }
-                mainViewModel.navigateTo(
-                    if (InstallmentsFeature.ENABLED && planId != null) {
-                        NavigationDestination.InstallmentPlanDetail(planId)
-                    } else {
-                        NavigationDestination.Home
-                    }
-                )
-            }
-            "plan" -> mainViewModel.navigateTo(NavigationDestination.Budget)
-            "add" -> {
-                mainViewModel.triggerAddExpense()
-            }
-            "analytics" -> {
-                mainViewModel.navigateTo(
-                    NavigationDestination.Analytics(
-                        initialPeriod = data.getQueryParameter("period")
-                    )
-                )
-            }
-            "map" -> {
-                mainViewModel.navigateTo(
-                    NavigationDestination.SpendingMap(
-                        initialLocationQuery = data.getQueryParameter("location")
-                    )
-                )
-            }
-            else -> {
-                Timber.w("Ignoring unsupported deep link host: ${data.host}")
-                mainViewModel.navigateTo(NavigationDestination.Home)
-            }
-        }
-
+        deepLinkRouter.route(result, lifecycleScope, mainViewModel)
         return true
     }
 }
@@ -355,7 +303,8 @@ fun MainScreen(
     actionRegistry: ContextualActionRegistry,
     expenseRepository: ExpenseRepository,
     gson: Gson,
-    restoreRestartSignal: RestoreRestartSignal
+    restoreRestartSignal: RestoreRestartSignal,
+    notificationPromptOnce: NotificationPermissionPromptOnce
 ) {
     // RP-17 17-A / D1: availability resolved here (same seam as
     // NavigationController/HomeScreen) — the Activity's injected instance is
@@ -546,6 +495,8 @@ fun MainScreen(
     }
 
     LaunchedEffect(Unit) {
+        // S20-c / AE-39: at most one auto-prompt decision per process, however often the shell re-enters.
+        if (!notificationPromptOnce.tryClaim()) return@LaunchedEffect
         val granted = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
             PackageManager.PERMISSION_GRANTED

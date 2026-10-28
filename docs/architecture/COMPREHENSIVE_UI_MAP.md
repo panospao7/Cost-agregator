@@ -696,6 +696,7 @@ Group expense/member mutations flow through the domain group use cases injected 
 - Privacy audit log viewer
 - Raw storage mode indicators
 - Risky action confirmation dialogs
+- "App lock & privacy" section (app-lock 1a; `AppLockPrivacySection.kt` + `AppLockPrivacySettingsViewModel.kt`, inserted once before the Notification Capture section): a "Discreet notifications" switch driven by committed store state only (Loading shows no switch; transient-unreadable shows On, disabled, with a retry; corrupted/invalid shows a review card with one Save), and inline notices for SAVE_FAILED / REVIEW_SAVED. `PrivacySettingsViewModel` is untouched.
 
 ---
 
@@ -943,10 +944,11 @@ Assistant              → Bottom sheet modal
 
 **Query Parameters**:
 - `briefingKey`: AI briefing identifier (for home deep link)
+- `briefingKey` is accepted only as `dashboard_home:yyyy-MM-dd` and marks the briefing opened only if it equals the last delivered key
 - `expenseId`: on `activity`, opens Transactions filtered to that expense's day when the expense exists; otherwise highlights it via `Transactions(initialExpenseId)`
-- `period` (analytics) / `location` (map): pre-fill the respective screens
+- `period` (analytics, shared allowlist) / `location` (map, 1..100 chars): pre-fill the respective screens' filters only
 
-**Handling**: `MainActivity.handleIntent` (from `onCreate` and `onNewIntent`) parses these hosts inline and navigates immediately; the link is consumed one-shot (`intent.data` cleared). `DeepLinkParser.kt` additionally provides the tested Allow/RequireConfirmation/Reject classification, but its confirmation gate is not wired into the Activity yet (PRV-16 TODO).
+**Handling** (app-lock 1a): `MainActivity.handleIntent` (from `onCreate` and `onNewIntent`) passes the action and data string to `DeepLinkPolicy.evaluate` (`ui/navigation/DeepLinkParser.kt`), then `DeepLinkApplier.apply` navigates; the link is consumed one-shot (`intent.data` cleared). Only the parameter listed above for a host is read, every other key is dropped, and `add` opens an empty sheet (no link prefills data). Invalid or unknown links land on Home; a non-VIEW action is ignored. The held-link gate behind authentication (PRV-16) arrives with increment 1b.
 
 ---
 
@@ -1114,10 +1116,11 @@ Handles configuration-driven feature display and integration with Home screen, F
 ```xml
 <intent-filter>
     <action android:name="android.intent.action.VIEW" />
-    <category android:name="android.intent.category.BROWSABLE" />
+    <category android:name="android.intent.category.DEFAULT" />
+    <!-- No BROWSABLE category (INV-20, app-lock 1a): web-browser links do not open the app -->
     <data android:scheme="expensetracker" android:host="home" />
     <data android:scheme="expensetracker" android:host="dashboard" />
-    <!-- ... more hosts ... -->
+    <!-- ... more hosts (8 total: home, dashboard, activity, review, plan, add, analytics, map) ... -->
 </intent-filter>
 ```
 

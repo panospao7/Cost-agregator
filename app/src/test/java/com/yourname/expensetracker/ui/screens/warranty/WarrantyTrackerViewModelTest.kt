@@ -9,8 +9,12 @@ import com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
 import com.yourname.expensetracker.util.ViewModelTestUtils
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.every
 import io.mockk.mockk
+import com.yourname.expensetracker.domain.usecase.warranty.WarrantyReviewState
+import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -281,28 +285,200 @@ class WarrantyTrackerViewModelTest : ViewModelTestUtils() {
         assertFalse(viewModel.state.value.addWarrantySuccess)
     }
 
+    // ---- ai-fixes B1b: confirm goes through repository.confirmWarranty(id) only (INV-13) ----
+
+    private val expectedConfirmFailedError =
+        UiText.StringResource(R.string.warranty_error_confirm_failed)
+
+    /** AE-3: bounded "could not confirm" resource, no raw/SQL text, in-flight id released. */
     @Test
     fun `confirmWarranty repository failure sets bounded error without raw message`() = runTest(testDispatcher) {
-        val target = warranty(id = 51L, product = "Lamp", warrantyEndDate = FIXED_NOW + DAY_MS)
-        coEvery { warrantyRepository.updateWarranty(any()) } throws RuntimeException("secret raw detail")
+        coEvery { warrantyRepository.confirmWarranty(51L) } throws
+            IllegalStateException("no such table: warranties")
 
-        viewModel.confirmWarranty(target)
+        viewModel.confirmWarranty(51L)
         advanceUntilIdle()
 
-        assertEquals(expectedMutationError, viewModel.state.value.mutationError)
+        assertEquals(expectedConfirmFailedError, viewModel.state.value.mutationError)
         assertTrue(viewModel.state.value.mutatingWarrantyIds.isEmpty())
     }
 
     @Test
     fun `confirmWarranty cancellation propagates and is not converted to error`() = runTest(testDispatcher) {
-        val target = warranty(id = 52L, product = "Lamp", warrantyEndDate = FIXED_NOW + DAY_MS)
-        coEvery { warrantyRepository.updateWarranty(any()) } throws CancellationException("cancelled")
+        coEvery { warrantyRepository.confirmWarranty(52L) } throws CancellationException("cancelled")
 
-        viewModel.confirmWarranty(target)
+        viewModel.confirmWarranty(52L)
         advanceUntilIdle()
 
         assertNull(viewModel.state.value.mutationError)
         assertTrue(viewModel.state.value.mutatingWarrantyIds.isEmpty())
+    }
+
+    @Test
+    fun `confirmWarranty delegates the id to the repository and never builds a status copy`() = runTest(testDispatcher) {
+        coEvery { warrantyRepository.confirmWarranty(60L) } returns
+            WarrantyTrackerRepository.ConfirmWarrantyResult.Confirmed(60L, WarrantyStatus.ACTIVE)
+
+        viewModel.confirmWarranty(60L)
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { warrantyRepository.confirmWarranty(60L) }
+        coVerify(exactly = 0) { warrantyRepository.updateWarranty(any()) }
+        assertNull(viewModel.state.value.mutationError)
+        assertTrue(viewModel.state.value.mutatingWarrantyIds.isEmpty())
+    }
+
+    @Test
+    fun `confirmWarranty AlreadyConfirmed is a silent success`() = runTest(testDispatcher) {
+        coEvery { warrantyRepository.confirmWarranty(61L) } returns
+            WarrantyTrackerRepository.ConfirmWarrantyResult.AlreadyConfirmed
+
+        viewModel.confirmWarranty(61L)
+        advanceUntilIdle()
+
+        assertNull(viewModel.state.value.mutationError)
+        assertTrue(viewModel.state.value.mutatingWarrantyIds.isEmpty())
+    }
+
+    @Test
+    fun `confirmWarranty NotFound shows the bounded not found message`() = runTest(testDispatcher) {
+        coEvery { warrantyRepository.confirmWarranty(62L) } returns
+            WarrantyTrackerRepository.ConfirmWarrantyResult.NotFound
+
+        viewModel.confirmWarranty(62L)
+        advanceUntilIdle()
+
+        assertEquals(
+            UiText.StringResource(R.string.warranty_error_not_found),
+            viewModel.state.value.mutationError
+        )
+        assertTrue(viewModel.state.value.mutatingWarrantyIds.isEmpty())
+    }
+
+    @Test
+    fun `confirmWarranty in-flight guard ignores a second tap for the same id`() = runTest(testDispatcher) {
+        val gate = CompletableDeferred<WarrantyTrackerRepository.ConfirmWarrantyResult>()
+        coEvery { warrantyRepository.confirmWarranty(63L) } coAnswers { gate.await() }
+
+        viewModel.confirmWarranty(63L)
+        advanceUntilIdle()
+        assertTrue(63L in viewModel.state.value.mutatingWarrantyIds)
+
+        viewModel.confirmWarranty(63L)
+        advanceUntilIdle()
+        coVerify(exactly = 1) { warrantyRepository.confirmWarranty(63L) }
+
+        gate.complete(WarrantyTrackerRepository.ConfirmWarrantyResult.AlreadyConfirmed)
+        advanceUntilIdle()
+        assertTrue(viewModel.state.value.mutatingWarrantyIds.isEmpty())
+    }
+
+    // ---- ai-fixes B1b: INV-10 counts/filters from WarrantyReviewState ----
+
+    private fun reviewViewModel(): WarrantyTrackerViewModel {
+        val clock = mockk<TimeProvider>()
+        every { clock.now() } returns FIXED_NOW
+        return WarrantyTrackerViewModel(warrantyRepository, timeProvider = clock)
+    }
+
+    private fun reviewRow(id: Long, status: WarrantyStatus, endOffsetDays: Long, needsReview: Boolean) =
+        warranty(id = id, product = "P$id", warrantyEndDate = FIXED_NOW + endOffsetDays * DAY_MS, status = status)
+            .copy(autoDetected = true, needsReview = needsReview)
+
+    /** AE-16: a PENDING_REVIEW row past its end date is EXPIRED_UNCONFIRMED before reconcile runs. */
+    @Test
+    fun `pending review row past end date is expired unconfirmed and excluded from review count`() =
+        runTest(testDispatcher) {
+            val staleCaught = reviewRow(1L, WarrantyStatus.PENDING_REVIEW, endOffsetDays = -1, needsReview = true)
+            val awaiting = reviewRow(2L, WarrantyStatus.PENDING_REVIEW, endOffsetDays = 5, needsReview = true)
+            warrantiesFlow.value = listOf(staleCaught, awaiting)
+
+            viewModel = reviewViewModel()
+            advanceUntilIdle()
+
+            val state = viewModel.state.value
+            assertEquals(1, state.needsReviewCount)
+            assertEquals(1, state.expiredUnconfirmedCount)
+            assertEquals(WarrantyReviewState.EXPIRED_UNCONFIRMED, state.reviewStateOf(staleCaught))
+            assertEquals(WarrantyReviewState.AWAITING_REVIEW, state.reviewStateOf(awaiting))
+        }
+
+    @Test
+    fun `needs review filter lists awaiting rows only`() = runTest(testDispatcher) {
+        val staleCaught = reviewRow(1L, WarrantyStatus.PENDING_REVIEW, endOffsetDays = -1, needsReview = true)
+        val awaiting = reviewRow(2L, WarrantyStatus.PENDING_REVIEW, endOffsetDays = 5, needsReview = true)
+        val confirmedActive = reviewRow(3L, WarrantyStatus.ACTIVE, endOffsetDays = 90, needsReview = false)
+        warrantiesFlow.value = listOf(staleCaught, awaiting, confirmedActive)
+        viewModel = reviewViewModel()
+        advanceUntilIdle()
+
+        viewModel.showNeedsReview()
+        advanceUntilIdle()
+
+        assertEquals(listOf(2L), viewModel.state.value.warranties.map { it.id })
+    }
+
+    /** G2-8 + never handled as ACTIVE: expired-unconfirmed rows are under Expired, not Active. */
+    @Test
+    fun `expired filter includes expired unconfirmed rows and active filter excludes review rows`() =
+        runTest(testDispatcher) {
+            val unreconciled = reviewRow(1L, WarrantyStatus.PENDING_REVIEW, endOffsetDays = -1, needsReview = true)
+            val reconciled = reviewRow(2L, WarrantyStatus.EXPIRED, endOffsetDays = -3, needsReview = true)
+            val confirmedExpired = reviewRow(3L, WarrantyStatus.EXPIRED, endOffsetDays = -9, needsReview = false)
+            val awaiting = reviewRow(4L, WarrantyStatus.PENDING_REVIEW, endOffsetDays = 5, needsReview = true)
+            val active = reviewRow(5L, WarrantyStatus.ACTIVE, endOffsetDays = 60, needsReview = false)
+            warrantiesFlow.value = listOf(unreconciled, reconciled, confirmedExpired, awaiting, active)
+            viewModel = reviewViewModel()
+            advanceUntilIdle()
+
+            viewModel.filterByStatus(WarrantyStatus.EXPIRED)
+            advanceUntilIdle()
+            assertEquals(setOf(1L, 2L, 3L), viewModel.state.value.warranties.map { it.id }.toSet())
+
+            viewModel.filterByStatus(WarrantyStatus.ACTIVE)
+            advanceUntilIdle()
+            assertEquals(listOf(5L), viewModel.state.value.warranties.map { it.id })
+            assertEquals(2, viewModel.state.value.expiredUnconfirmedCount)
+        }
+
+    @Test
+    fun `list orders awaiting review rows first then by end date`() = runTest(testDispatcher) {
+        val later = reviewRow(1L, WarrantyStatus.ACTIVE, endOffsetDays = 20, needsReview = false)
+        val sooner = reviewRow(2L, WarrantyStatus.ACTIVE, endOffsetDays = 10, needsReview = false)
+        val awaiting = reviewRow(3L, WarrantyStatus.PENDING_REVIEW, endOffsetDays = 40, needsReview = true)
+        warrantiesFlow.value = listOf(later, sooner, awaiting)
+        viewModel = reviewViewModel()
+        advanceUntilIdle()
+
+        assertEquals(listOf(3L, 2L, 1L), viewModel.state.value.warranties.map { it.id })
+    }
+
+    // ---- :93 fix: protected-value lookup must not swallow CancellationException ----
+
+    @Test
+    fun `loadStats rethrows cancellation from the protected value lookup`() = runTest(testDispatcher) {
+        warrantiesFlow.value = listOf(warranty(id = 70L, product = "TV", warrantyEndDate = FIXED_NOW + DAY_MS))
+        coEvery { warrantyRepository.getTotalProtectedValueAggregate() } throws CancellationException("cancelled")
+
+        viewModel = WarrantyTrackerViewModel(warrantyRepository, timeProvider = mockk(relaxed = true))
+        advanceUntilIdle()
+
+        // The stats coroutine is cancelled, not continued with a zero value.
+        assertEquals(0, viewModel.state.value.activeCount)
+        assertEquals(0.0, viewModel.state.value.totalProtectedValue, 0.0)
+        assertNull(viewModel.state.value.mutationError)
+    }
+
+    @Test
+    fun `loadStats still completes when the protected value lookup fails`() = runTest(testDispatcher) {
+        warrantiesFlow.value = listOf(warranty(id = 71L, product = "TV", warrantyEndDate = FIXED_NOW + DAY_MS))
+        coEvery { warrantyRepository.getTotalProtectedValueAggregate() } throws RuntimeException("secret raw detail")
+
+        viewModel = WarrantyTrackerViewModel(warrantyRepository, timeProvider = mockk(relaxed = true))
+        advanceUntilIdle()
+
+        assertEquals(1, viewModel.state.value.activeCount)
+        assertNull(viewModel.state.value.mutationError)
     }
 
     @Test

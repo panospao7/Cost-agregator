@@ -1,19 +1,11 @@
 package com.yourname.expensetracker.data.repository
 
 import androidx.room.withTransaction
-import com.yourname.expensetracker.data.ai.provider.CloudWarrantyExtractionService
 import com.yourname.expensetracker.data.database.dao.ReturnWindowDao
 import com.yourname.expensetracker.data.database.dao.WarrantyDao
 import com.yourname.expensetracker.data.database.dao.WarrantyLifecycleEventDao
 import com.yourname.expensetracker.data.database.entity.*
-import com.yourname.expensetracker.domain.ai.model.AiCapability
-import com.yourname.expensetracker.domain.ai.model.AiRoute
-import com.yourname.expensetracker.domain.ai.model.AiRouteDecision
-import com.yourname.expensetracker.domain.ai.model.AiSettings
-import com.yourname.expensetracker.domain.ai.model.WarrantyExtractionResult
-import com.yourname.expensetracker.domain.ai.policy.AiPolicy
-import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
-import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
+import com.yourname.expensetracker.data.repository.WarrantyTrackerRepository.ConfirmWarrantyResult
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.data.repository.ReceiptRepository
 import com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException
@@ -28,7 +20,6 @@ import com.yourname.expensetracker.domain.transaction.DomainTransactionRunner
 import dagger.Lazy
 import io.mockk.*
 import kotlin.time.Duration.Companion.seconds
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.test.runTest
@@ -36,8 +27,6 @@ import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
-import java.time.Instant
-import java.time.ZoneId
 
 class WarrantyTrackerRepositoryTest {
 
@@ -48,12 +37,7 @@ class WarrantyTrackerRepositoryTest {
     private val returnWindowDao: ReturnWindowDao = mockk()
     private val warrantyLifecycleEventDao: WarrantyLifecycleEventDao = mockk(relaxed = true)
     private val receiptRepository: ReceiptRepository = mockk(relaxed = true)
-    private val cloudExtractionService: CloudWarrantyExtractionService = mockk()
-    private val aiSettingsRepository: AiSettingsRepository = mockk()
-    private val aiPolicy: AiPolicy = mockk()
-    private val aiCapabilityRouter: AiCapabilityRouter = mockk()
     private val timeProvider = FakeTimeProvider(1_700_000_000_000L)
-    private val settingsFlow = MutableStateFlow(AiSettings())
 
     @Before
     fun setup() {
@@ -77,10 +61,6 @@ class WarrantyTrackerRepositoryTest {
             receiptRepository = object : Lazy<ReceiptRepository> {
                 override fun get() = receiptRepository
             },
-            cloudExtractionService = cloudExtractionService,
-            aiSettingsRepository = aiSettingsRepository,
-            aiPolicy = aiPolicy,
-            aiCapabilityRouter = aiCapabilityRouter,
             timeProvider = timeProvider,
             currencyConverter = mockk(relaxed = true),
             currencySettingsRepository = currencySettingsRepository,
@@ -88,12 +68,6 @@ class WarrantyTrackerRepositoryTest {
             receiptLifecycleEventWriter = mockk(relaxed = true),
             transactionRunner = mockk(relaxed = true)
         )
-
-        every { aiSettingsRepository.settings() } returns settingsFlow
-        coEvery {
-            aiCapabilityRouter.decide(AiCapability.WARRANTY_EXTRACTION, any(), any())
-        } returns AiRouteDecision(AiRoute.CLOUD, "test")
-        every { aiPolicy.shouldRedact(any(), AiCapability.WARRANTY_EXTRACTION) } returns false
     }
 
     @After
@@ -127,118 +101,38 @@ class WarrantyTrackerRepositoryTest {
         }
     }
 
+    // ai-fixes B1a (G2-6 retarget of `extractWarrantyFromReceipt delegates to cloud service`):
+    // the cloud path is retired, so the return window is derived from merchant defaults only.
+    // Two sibling retired tests were retargeted into AutoCreateWarrantyFromReceiptUseCaseTest:
+    //   - calendar month end date  -> AE-24 (production end-date path)
+    //   - route-not-cloud skip     -> AE-11 (review draft without any cloud gate)
     @Test
-    fun `extractWarrantyFromReceipt delegates to cloud service`() = runTest(timeout = 60.seconds) {
+    fun `upsertReturnWindowForReceipt uses merchant default and no AI even when rawOcrText contains a return policy`() = runTest(timeout = 60.seconds) {
+        // AE-9 (INV-5, INV-6)
         val receipt = ScannedReceipt(
-            id = 1,
+            id = 10,
             imagePath = "/path/to/image.jpg",
-            rawOcrText = "Receipt text",
+            rawOcrText = "Returns accepted within 60 days. Items must be unopened.",
             parsedTotal = 100.0,
-            parsedMerchant = "Test Store",
-            parsedDate = 1000,
+            parsedMerchant = "Best Buy",
+            parsedDate = 1_700_000_000_000L,
             parsedItems = null,
             parsedTaxAmount = null,
             confidence = 0.95f
         )
-        val extractionResult = WarrantyExtractionResult(
-            productName = "MacBook Pro",
-            warrantyMonths = 12,
-            warrantyType = "MANUFACTURER",
-            supportPhone = null,
-            supportEmail = null,
-            returnDays = null,
-            returnConditions = "Original packaging required",
-            confidence = 0.95f
-        )
+        coEvery { receiptRepository.getReceiptById(10) } returns receipt
+        coEvery { returnWindowDao.getReturnWindowByReceiptId(10) } returns null
+        val inserted = slot<ReturnWindow>()
+        coEvery { returnWindowDao.insertReturnWindow(capture(inserted)) } returns 5L
 
-        coEvery {
-            cloudExtractionService.extractWarranty(
-                match {
-                    it.receiptText == receipt.rawOcrText &&
-                        it.merchant == receipt.parsedMerchant &&
-                        it.totalAmount == receipt.parsedTotal &&
-                        it.purchaseDate == receipt.parsedDate &&
-                        it.currency == receipt.currency
-                }
-            )
-        } returns extractionResult
+        val id = repository.upsertReturnWindowForReceipt(10)
 
-        val result = repository.extractWarrantyFromReceipt(receipt)
-        
-        assertNotNull(result)
-        assertEquals("MacBook Pro", result?.productName)
-        assertEquals(12, result?.warrantyDurationMonths)
-        assertEquals("Original packaging required", result?.notes)
-    }
-
-    @Test
-    fun `extractWarrantyFromReceipt uses calendar month addition for warranty end date`() = runTest(timeout = 60.seconds) {
-        val purchaseDate = Instant.parse("2024-01-31T00:00:00Z").toEpochMilli()
-        val receipt = ScannedReceipt(
-            id = 3,
-            imagePath = "/path/to/image.jpg",
-            rawOcrText = "Receipt text",
-            parsedTotal = 100.0,
-            parsedMerchant = "Calendar Store",
-            parsedDate = purchaseDate,
-            parsedItems = null,
-            parsedTaxAmount = null,
-            confidence = 0.95f
-        )
-        val extractionResult = WarrantyExtractionResult(
-            productName = "Camera",
-            warrantyMonths = 1,
-            warrantyType = "MANUFACTURER",
-            supportPhone = null,
-            supportEmail = null,
-            returnDays = null,
-            returnConditions = null,
-            confidence = 0.95f
-        )
-
-        coEvery { cloudExtractionService.extractWarranty(any()) } returns extractionResult
-
-        val result = repository.extractWarrantyFromReceipt(receipt)
-
-        // Stored warranty ends are exclusive: Jan 31 plus one calendar month is
-        // covered through Feb 29, so the stored boundary is Mar 1 at 00:00.
-        val exclusiveEndDate = Instant.ofEpochMilli(result!!.warrantyEndDate)
-            .atZone(ZoneId.systemDefault())
-            .toLocalDate()
-        assertEquals(2024, exclusiveEndDate.year)
-        assertEquals(3, exclusiveEndDate.monthValue)
-        assertEquals(1, exclusiveEndDate.dayOfMonth)
-
-        val lastCoveredDate = Instant.ofEpochMilli(result.warrantyEndDate - 1L)
-            .atZone(ZoneId.systemDefault())
-            .toLocalDate()
-        assertEquals(2024, lastCoveredDate.year)
-        assertEquals(2, lastCoveredDate.monthValue)
-        assertEquals(29, lastCoveredDate.dayOfMonth)
-    }
-
-    @Test
-    fun `extractWarrantyFromReceipt skips cloud extraction when route is not cloud`() = runTest(timeout = 60.seconds) {
-        val receipt = ScannedReceipt(
-            id = 2,
-            imagePath = "/path/to/image.jpg",
-            rawOcrText = "Receipt text",
-            parsedTotal = 50.0,
-            parsedMerchant = "Test Store",
-            parsedDate = 2000,
-            parsedItems = null,
-            parsedTaxAmount = null,
-            confidence = 0.95f
-        )
-
-        coEvery {
-            aiCapabilityRouter.decide(AiCapability.WARRANTY_EXTRACTION, any(), any())
-        } returns AiRouteDecision(AiRoute.ON_DEVICE, "on-device selected")
-
-        val result = repository.extractWarrantyFromReceipt(receipt)
-
-        assertNull(result)
-        coVerify(exactly = 0) { cloudExtractionService.extractWarranty(any()) }
+        assertEquals(5L, id)
+        // Merchant default for Best Buy (15), not the 60 days found in the receipt text.
+        assertEquals(15, inserted.captured.returnDays)
+        assertNull(inserted.captured.returnConditions)
+        assertNull(inserted.captured.returnPolicyUrl)
+        assertEquals("Purchase from Best Buy", inserted.captured.productName)
     }
 
     @Test
@@ -317,9 +211,10 @@ class WarrantyTrackerRepositoryTest {
     }
 
     @Test
-    fun `extractReturnWindow persists extracted return metadata`() = runTest(timeout = 60.seconds) {
+    fun `upsertReturnWindowForReceipt recomputes returnDays on a legacy row and preserves conditions and status`() = runTest(timeout = 60.seconds) {
+        // AE-23 (INV-6, legacy): retarget of `extractReturnWindow persists extracted return metadata`.
         val receipt = ScannedReceipt(
-            id = 4,
+            id = 13,
             imagePath = "/path/to/image.jpg",
             rawOcrText = "Receipt",
             parsedTotal = 100.0,
@@ -329,26 +224,44 @@ class WarrantyTrackerRepositoryTest {
             parsedTaxAmount = null,
             confidence = 0.9f
         )
-        val extractionResult = WarrantyExtractionResult(
+        val legacy = ReturnWindow(
+            id = 77L,
+            receiptId = 13L,
             productName = "Sneakers",
-            warrantyMonths = null,
-            warrantyType = "MANUFACTURER",
-            supportPhone = null,
-            supportEmail = null,
+            merchantName = "Policy Store",
+            purchaseDate = 1_700_000_000_000L,
             returnDays = 45,
+            returnDeadline = 1_700_000_000_000L + 45L * 86_400_000L,
             returnConditions = "Tags attached",
-            confidence = 0.8f
+            status = ReturnStatus.RETURNED,
+            returnedAt = 1_700_100_000_000L,
+            refundAmount = 99.5,
+            createdAt = 1_690_000_000_000L,
+            updatedAt = 1_690_000_000_000L
         )
+        coEvery { receiptRepository.getReceiptById(13) } returns receipt
+        coEvery { returnWindowDao.getReturnWindowByReceiptId(13) } returns legacy
+        val updated = slot<ReturnWindow>()
+        coEvery { returnWindowDao.updateReturnWindow(capture(updated)) } just Runs
 
-        val result = repository.extractReturnWindow(receipt, null, extractionResult)
+        val id = repository.upsertReturnWindowForReceipt(13)
 
-        assertNotNull(result)
-        assertEquals(45, result?.returnDays)
-        assertEquals("Tags attached", result?.returnConditions)
+        assertEquals(77L, id)
+        val saved = updated.captured
+        // returnDays is the merchant default (30), and the deadline is recomputed from it.
+        assertEquals(30, saved.returnDays)
+        assertNotEquals(legacy.returnDeadline, saved.returnDeadline)
+        // User-visible state is preserved.
+        assertEquals("Tags attached", saved.returnConditions)
+        assertEquals(ReturnStatus.RETURNED, saved.status)
+        assertEquals(legacy.returnedAt, saved.returnedAt)
+        assertEquals(legacy.refundAmount, saved.refundAmount)
+        assertEquals(legacy.createdAt, saved.createdAt)
     }
 
     @Test
-    fun `processReceiptForWarranty creates return window for return policy only extraction`() = runTest(timeout = 60.seconds) {
+    fun `upsertReturnWindowForReceipt with no warranty creates a merchant default window named after the merchant`() = runTest(timeout = 60.seconds) {
+        // Retarget of `processReceiptForWarranty creates return window for return policy only extraction`.
         val receipt = ScannedReceipt(
             id = 5,
             imagePath = "/path/to/image.jpg",
@@ -360,29 +273,22 @@ class WarrantyTrackerRepositoryTest {
             parsedTaxAmount = null,
             confidence = 0.95f
         )
-        val extractionResult = WarrantyExtractionResult(
-            productName = "Jacket",
-            warrantyMonths = null,
-            warrantyType = "MANUFACTURER",
-            supportPhone = null,
-            supportEmail = null,
-            returnDays = 21,
-            returnConditions = "Receipt required",
-            confidence = 0.85f
-        )
+        coEvery { receiptRepository.getReceiptById(5) } returns receipt
+        coEvery { returnWindowDao.getReturnWindowByReceiptId(5) } returns null
+        val inserted = slot<ReturnWindow>()
+        coEvery { returnWindowDao.insertReturnWindow(capture(inserted)) } returns 6L
 
-        coEvery { cloudExtractionService.extractWarranty(any()) } returns extractionResult
+        val id = repository.upsertReturnWindowForReceipt(5, fallbackWarranty = null)
 
-        val result = repository.processReceiptForWarranty(receipt)
-
-        assertNull(result.first)
-        assertNotNull(result.second)
-        assertEquals(21, result.second?.returnDays)
-        assertEquals("Receipt required", result.second?.returnConditions)
+        assertEquals(6L, id)
+        assertEquals(30, inserted.captured.returnDays)
+        assertEquals("Purchase from Returns Store", inserted.captured.productName)
+        assertNull(inserted.captured.returnConditions)
     }
 
     @Test
     fun `reconcileExpiredItems marks active records as expired`() = runTest(timeout = 60.seconds) {
+        coEvery { warrantyDao.getExpirablePendingWarrantyCount(any()) } returns 0
         coEvery { warrantyDao.markExpiredWarranties(any(), any()) } returns 2
         coEvery { returnWindowDao.markExpiredReturnWindows(any(), any()) } returns 3
 
@@ -390,8 +296,62 @@ class WarrantyTrackerRepositoryTest {
 
         assertEquals(2, result.expiredWarrantyCount)
         assertEquals(3, result.expiredReturnWindowCount)
+        assertEquals(0, result.expiredPendingWarrantyCount)
         coVerify { warrantyDao.markExpiredWarranties(1_700_000_000_000L, 1_700_000_000_000L) }
         coVerify { returnWindowDao.markExpiredReturnWindows(1_700_000_000_000L, 1_700_000_000_000L) }
+    }
+
+    @Test
+    fun `reconcileExpiredItems reports pending subset and writes a counts-only batch event`() = runTest(timeout = 60.seconds) {
+        // AE-14 (INV-11): W1 pending + W2 active expired -> total 2, pending 1.
+        coEvery { warrantyDao.getExpirablePendingWarrantyCount(any()) } returns 1
+        coEvery { warrantyDao.markExpiredWarranties(any(), any()) } returns 2
+        coEvery { returnWindowDao.markExpiredReturnWindows(any(), any()) } returns 0
+
+        val result = repository.reconcileExpiredItems(1_700_000_000_000L)
+
+        assertEquals(2, result.expiredWarrantyCount)
+        assertEquals(1, result.expiredPendingWarrantyCount)
+        coVerify(exactly = 1) {
+            warrantyLifecycleEventDao.insert(match {
+                it.eventType == WarrantyLifecycleEventTypes.EXPIRED &&
+                    it.warrantyId == -1L &&
+                    it.description == "Batch expired: 2 warranties (1 unconfirmed), 0 return windows"
+            })
+        }
+        // The count is read before the sweep within the same transaction.
+        coVerifyOrder {
+            warrantyDao.getExpirablePendingWarrantyCount(1_700_000_000_000L)
+            warrantyDao.markExpiredWarranties(1_700_000_000_000L, 1_700_000_000_000L)
+        }
+    }
+
+    @Test
+    fun `reconcileExpiredItems second run is idempotent and writes no event`() = runTest(timeout = 60.seconds) {
+        // AE-14 (second run) / AE-15 (future pending row is not expired by the sweep).
+        coEvery { warrantyDao.getExpirablePendingWarrantyCount(any()) } returns 0
+        coEvery { warrantyDao.markExpiredWarranties(any(), any()) } returns 0
+        coEvery { returnWindowDao.markExpiredReturnWindows(any(), any()) } returns 0
+
+        val result = repository.reconcileExpiredItems(1_700_000_000_000L)
+
+        assertEquals(0, result.expiredWarrantyCount)
+        assertEquals(0, result.expiredPendingWarrantyCount)
+        coVerify(exactly = 0) { warrantyLifecycleEventDao.insert(any()) }
+    }
+
+    @Test
+    fun `reconcileExpiredItems checks the write barrier before touching any dao`() = runTest(timeout = 60.seconds) {
+        val barrier = mockk<DatabaseWriteBarrier>(relaxed = true)
+        val op = "WarrantyTrackerRepository.reconcileExpiredItems"
+        every { barrier.checkWritesAllowed(op) } throws blockedException(op)
+        val blockedRepository = repositoryWith(barrier, mockk(relaxed = true))
+
+        val thrown = runCatching { blockedRepository.reconcileExpiredItems(1_700_000_000_000L) }
+
+        assertTrue(thrown.exceptionOrNull() is DatabaseAccessBlockedException)
+        coVerify(exactly = 0) { warrantyDao.markExpiredWarranties(any(), any()) }
+        coVerify(exactly = 0) { returnWindowDao.markExpiredReturnWindows(any(), any()) }
     }
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -615,6 +575,7 @@ class WarrantyTrackerRepositoryTest {
 
     @Test
     fun `reconcileExpiredItems_writesBatchExpiredEventWhenWarrantiesExpired`() = runTest(timeout = 60.seconds) {
+        coEvery { warrantyDao.getExpirablePendingWarrantyCount(any()) } returns 0
         coEvery { warrantyDao.markExpiredWarranties(any(), any()) } returns 2
         coEvery { returnWindowDao.markExpiredReturnWindows(any(), any()) } returns 1
 
@@ -629,6 +590,7 @@ class WarrantyTrackerRepositoryTest {
 
     @Test
     fun `reconcileExpiredItems_writesNoEventWhenNothingExpired`() = runTest(timeout = 60.seconds) {
+        coEvery { warrantyDao.getExpirablePendingWarrantyCount(any()) } returns 0
         coEvery { warrantyDao.markExpiredWarranties(any(), any()) } returns 0
         coEvery { returnWindowDao.markExpiredReturnWindows(any(), any()) } returns 0
 
@@ -638,165 +600,190 @@ class WarrantyTrackerRepositoryTest {
     }
 
     // ──────────────────────────────────────────────────────────────────────────
-    // PR4 — Three-band confidence threshold
+    // ai-fixes B1a — confirmWarranty (INV-13/INV-14) and reject of an expired-unconfirmed row
+    // (The five PR4 `cloudWarrantyConfidence_*` band tests were deleted with the retired
+    // cloud extraction path: G2-6.)
     // ──────────────────────────────────────────────────────────────────────────
 
+    private val dayMs = 86_400_000L
+
+    private fun reviewWarranty(
+        id: Long,
+        status: WarrantyStatus,
+        needsReview: Boolean,
+        endDate: Long,
+        receiptId: Long? = id
+    ) = Warranty(
+        id = id,
+        receiptId = receiptId,
+        productName = "Synthetic Product",
+        merchantName = "Synthetic Merchant",
+        purchaseDate = 1_600_000_000_000L,
+        warrantyDurationMonths = 12,
+        warrantyEndDate = endDate,
+        status = status,
+        autoDetected = true,
+        extractionSource = "ocr",
+        needsReview = needsReview,
+        createdAt = 1_600_000_000_000L,
+        updatedAt = 1_600_000_000_000L
+    )
+
     @Test
-    fun `cloudWarrantyConfidence_0_8_autoCreatesWithoutReview`() = runTest(timeout = 60.seconds) {
-        val receipt = ScannedReceipt(
-            id = 10,
-            imagePath = "/path/to/image.jpg",
-            rawOcrText = "Receipt text",
-            parsedTotal = 100.0,
-            parsedMerchant = "Test Store",
-            parsedDate = 1000,
-            parsedItems = null,
-            parsedTaxAmount = null,
-            confidence = 0.95f
-        )
-        val extractionResult = WarrantyExtractionResult(
-            productName = "MacBook Pro",
-            warrantyMonths = 12,
-            warrantyType = "MANUFACTURER",
-            supportPhone = null,
-            supportEmail = null,
-            returnDays = null,
-            returnConditions = null,
-            confidence = 0.8f
-        )
-        coEvery { cloudExtractionService.extractWarranty(any()) } returns extractionResult
+    fun `confirmWarranty clears review and activates an awaiting-review draft and writes a CONFIRMED event`() = runTest(timeout = 60.seconds) {
+        // AE-17
+        val now = timeProvider.now()
+        val w3 = reviewWarranty(3L, WarrantyStatus.PENDING_REVIEW, needsReview = true, endDate = now + 5 * dayMs)
+        coEvery { warrantyDao.getWarrantyById(3L) } returns w3
+        val updated = slot<Warranty>()
+        coEvery { warrantyDao.updateWarranty(capture(updated)) } just Runs
+        val barrier = mockk<DatabaseWriteBarrier>(relaxed = true)
+        val confirmRepository = repositoryWith(barrier, mockk(relaxed = true))
 
-        val result = repository.extractWarrantyFromReceipt(receipt)
+        val result = confirmRepository.confirmWarranty(3L)
 
-        assertNotNull(result)
-        assertFalse(result!!.needsReview)
-        assertEquals(WarrantyStatus.ACTIVE, result.status)
+        assertEquals(ConfirmWarrantyResult.Confirmed(3L, WarrantyStatus.ACTIVE), result)
+        assertEquals(WarrantyStatus.ACTIVE, updated.captured.status)
+        assertFalse(updated.captured.needsReview)
+        assertEquals(now, updated.captured.updatedAt)
+        coVerify(exactly = 1) {
+            warrantyLifecycleEventDao.insert(match {
+                it.warrantyId == 3L && it.eventType == WarrantyLifecycleEventTypes.CONFIRMED
+            })
+        }
+        // The write barrier is checked before any dao access.
+        coVerifyOrder {
+            barrier.checkWritesAllowed("WarrantyTrackerRepository.confirmWarranty")
+            warrantyDao.getWarrantyById(3L)
+        }
     }
 
     @Test
-    fun `cloudWarrantyConfidence_0_4_createsNeedsReviewDraft`() = runTest(timeout = 60.seconds) {
-        val receipt = ScannedReceipt(
-            id = 11,
-            imagePath = "/path/to/image.jpg",
-            rawOcrText = "Receipt text",
-            parsedTotal = 100.0,
-            parsedMerchant = "Test Store",
-            parsedDate = 1000,
-            parsedItems = null,
-            parsedTaxAmount = null,
-            confidence = 0.95f
-        )
-        val extractionResult = WarrantyExtractionResult(
-            productName = "Tablet",
-            warrantyMonths = 12,
-            warrantyType = "MANUFACTURER",
-            supportPhone = null,
-            supportEmail = null,
-            returnDays = null,
-            returnConditions = null,
-            confidence = 0.4f
-        )
-        coEvery { cloudExtractionService.extractWarranty(any()) } returns extractionResult
+    fun `confirmWarranty keeps an expired-unconfirmed row EXPIRED and never reactivates it`() = runTest(timeout = 60.seconds) {
+        // AE-18 (INV-13, INV-12)
+        val now = timeProvider.now()
+        val w1 = reviewWarranty(1L, WarrantyStatus.EXPIRED, needsReview = true, endDate = now - dayMs)
+        coEvery { warrantyDao.getWarrantyById(1L) } returns w1
+        val updated = slot<Warranty>()
+        coEvery { warrantyDao.updateWarranty(capture(updated)) } just Runs
 
-        val result = repository.extractWarrantyFromReceipt(receipt)
+        val result = repository.confirmWarranty(1L)
 
-        assertNotNull(result)
-        assertTrue(result!!.needsReview)
-        assertEquals(WarrantyStatus.PENDING_REVIEW, result.status)
+        assertEquals(ConfirmWarrantyResult.Confirmed(1L, WarrantyStatus.EXPIRED), result)
+        assertEquals(WarrantyStatus.EXPIRED, updated.captured.status)
+        assertFalse(updated.captured.needsReview)
     }
 
     @Test
-    fun `cloudWarrantyConfidence_0_1_discardsWithDiagnostic`() = runTest(timeout = 60.seconds) {
-        val receipt = ScannedReceipt(
-            id = 12,
-            imagePath = "/path/to/image.jpg",
-            rawOcrText = "Receipt text",
-            parsedTotal = 100.0,
-            parsedMerchant = "Test Store",
-            parsedDate = 1000,
-            parsedItems = null,
-            parsedTaxAmount = null,
-            confidence = 0.95f
-        )
-        val extractionResult = WarrantyExtractionResult(
-            productName = "Phone",
-            warrantyMonths = 12,
-            warrantyType = "MANUFACTURER",
-            supportPhone = null,
-            supportEmail = null,
-            returnDays = null,
-            returnConditions = null,
-            confidence = 0.1f
-        )
-        coEvery { cloudExtractionService.extractWarranty(any()) } returns extractionResult
+    fun `confirmWarranty on a pending row already past its end date confirms to EXPIRED not ACTIVE`() = runTest(timeout = 60.seconds) {
+        // INV-13: past-end predicate is `warrantyEndDate < now` (reconcile not yet run).
+        val now = timeProvider.now()
+        val pendingPastEnd = reviewWarranty(4L, WarrantyStatus.PENDING_REVIEW, needsReview = true, endDate = now - 1L)
+        coEvery { warrantyDao.getWarrantyById(4L) } returns pendingPastEnd
+        val updated = slot<Warranty>()
+        coEvery { warrantyDao.updateWarranty(capture(updated)) } just Runs
 
-        val result = repository.extractWarrantyFromReceipt(receipt)
+        val result = repository.confirmWarranty(4L)
 
-        assertNull(result)
+        assertEquals(ConfirmWarrantyResult.Confirmed(4L, WarrantyStatus.EXPIRED), result)
+        assertEquals(WarrantyStatus.EXPIRED, updated.captured.status)
+        assertFalse(updated.captured.needsReview)
     }
 
     @Test
-    fun `cloudWarrantyConfidence_0_75_exactBoundary_autoAccepts`() = runTest(timeout = 60.seconds) {
-        val receipt = ScannedReceipt(
-            id = 13,
-            imagePath = "/path/to/image.jpg",
-            rawOcrText = "Receipt text",
-            parsedTotal = 100.0,
-            parsedMerchant = "Test Store",
-            parsedDate = 1000,
-            parsedItems = null,
-            parsedTaxAmount = null,
-            confidence = 0.95f
-        )
-        val extractionResult = WarrantyExtractionResult(
-            productName = "Laptop",
-            warrantyMonths = 24,
-            warrantyType = "MANUFACTURER",
-            supportPhone = null,
-            supportEmail = null,
-            returnDays = null,
-            returnConditions = null,
-            confidence = 0.75f
-        )
-        coEvery { cloudExtractionService.extractWarranty(any()) } returns extractionResult
+    fun `confirmWarranty is an idempotent no-op for a confirmed or claimed row and NotFound for a missing id`() = runTest(timeout = 60.seconds) {
+        // AE-19
+        val now = timeProvider.now()
+        val w2 = reviewWarranty(2L, WarrantyStatus.EXPIRED, needsReview = false, endDate = now - 2 * dayMs)
+        val claimed = reviewWarranty(5L, WarrantyStatus.CLAIMED, needsReview = true, endDate = now + dayMs)
+        coEvery { warrantyDao.getWarrantyById(2L) } returns w2
+        coEvery { warrantyDao.getWarrantyById(5L) } returns claimed
+        coEvery { warrantyDao.getWarrantyById(999L) } returns null
 
-        val result = repository.extractWarrantyFromReceipt(receipt)
+        assertEquals(ConfirmWarrantyResult.AlreadyConfirmed, repository.confirmWarranty(2L))
+        assertEquals(ConfirmWarrantyResult.AlreadyConfirmed, repository.confirmWarranty(5L))
+        assertEquals(ConfirmWarrantyResult.NotFound, repository.confirmWarranty(999L))
 
-        assertNotNull(result)
-        assertFalse(result!!.needsReview)
-        assertEquals(WarrantyStatus.ACTIVE, result.status)
+        coVerify(exactly = 0) { warrantyDao.updateWarranty(any()) }
+        coVerify(exactly = 0) { warrantyLifecycleEventDao.insert(any()) }
     }
 
     @Test
-    fun `cloudWarrantyConfidence_0_30_exactBoundary_createsReviewDraft`() = runTest(timeout = 60.seconds) {
-        val receipt = ScannedReceipt(
-            id = 14,
-            imagePath = "/path/to/image.jpg",
-            rawOcrText = "Receipt text",
-            parsedTotal = 100.0,
-            parsedMerchant = "Test Store",
-            parsedDate = 1000,
-            parsedItems = null,
-            parsedTaxAmount = null,
-            confidence = 0.95f
-        )
-        val extractionResult = WarrantyExtractionResult(
-            productName = "Headphones",
-            warrantyMonths = 12,
-            warrantyType = "MANUFACTURER",
-            supportPhone = null,
-            supportEmail = null,
-            returnDays = null,
-            returnConditions = null,
-            confidence = 0.30f
-        )
-        coEvery { cloudExtractionService.extractWarranty(any()) } returns extractionResult
+    fun `confirmWarranty fails closed under maintenance mode and does not read or write`() = runTest(timeout = 60.seconds) {
+        // AE-20
+        val barrier = mockk<DatabaseWriteBarrier>(relaxed = true)
+        val op = "WarrantyTrackerRepository.confirmWarranty"
+        every { barrier.checkWritesAllowed(op) } throws blockedException(op)
+        val blockedRepository = repositoryWith(barrier, mockk(relaxed = true))
 
-        val result = repository.extractWarrantyFromReceipt(receipt)
+        val thrown = runCatching { blockedRepository.confirmWarranty(3L) }
 
-        assertNotNull(result)
-        assertTrue(result!!.needsReview)
-        assertEquals(WarrantyStatus.PENDING_REVIEW, result.status)
+        assertTrue(thrown.exceptionOrNull() is DatabaseAccessBlockedException)
+        coVerify(exactly = 0) { warrantyDao.getWarrantyById(any()) }
+        coVerify(exactly = 0) { warrantyDao.updateWarranty(any()) }
+        coVerify(exactly = 0) { warrantyLifecycleEventDao.insert(any()) }
+    }
+
+    @Test
+    fun `promoteReviewDraft fails closed under maintenance mode and does not read write or invoke the edit`() = runTest(timeout = 60.seconds) {
+        val barrier = mockk<DatabaseWriteBarrier>(relaxed = true)
+        val op = "WarrantyTrackerRepository.promoteReviewDraft"
+        every { barrier.checkWritesAllowed(op) } throws blockedException(op)
+        val blockedRepository = repositoryWith(barrier, mockk(relaxed = true))
+        var invocations = 0
+
+        val thrown = runCatching {
+            blockedRepository.promoteReviewDraft(3L) { fresh ->
+                invocations++
+                fresh
+            }
+        }
+
+        assertTrue(thrown.exceptionOrNull() is DatabaseAccessBlockedException)
+        assertEquals(0, invocations)
+        coVerify(exactly = 0) { warrantyDao.getWarrantyById(any()) }
+        coVerify(exactly = 0) { warrantyDao.updateWarranty(any()) }
+        coVerify(exactly = 0) { warrantyLifecycleEventDao.insert(any()) }
+    }
+
+    @Test
+    fun `confirmWarranty propagates a failed CONFIRMED event write instead of reporting success`()= runTest(timeout = 60.seconds) {
+        // R29: fail closed inside the transaction.
+        val now = timeProvider.now()
+        coEvery { warrantyDao.getWarrantyById(3L) } returns
+            reviewWarranty(3L, WarrantyStatus.PENDING_REVIEW, needsReview = true, endDate = now + dayMs)
+        coEvery { warrantyDao.updateWarranty(any()) } just Runs
+        coEvery { warrantyLifecycleEventDao.insert(any()) } throws RuntimeException("Simulated DB failure")
+
+        val thrown = runCatching { repository.confirmWarranty(3L) }
+
+        assertEquals("Simulated DB failure", thrown.exceptionOrNull()?.message)
+    }
+
+    @Test
+    fun `rejectAutoDetectedWarranty deletes an expired-unconfirmed warranty and its return window`() = runTest(timeout = 60.seconds) {
+        // AE-21
+        val now = timeProvider.now()
+        val w1 = reviewWarranty(1L, WarrantyStatus.EXPIRED, needsReview = true, endDate = now - dayMs, receiptId = 31L)
+        val window = ReturnWindow(
+            id = 9L,
+            receiptId = 31L,
+            productName = "Synthetic Product",
+            merchantName = "Synthetic Merchant",
+            purchaseDate = 1_600_000_000_000L,
+            returnDays = 30,
+            returnDeadline = now - dayMs,
+            createdAt = 1_600_000_000_000L,
+            updatedAt = 1_600_000_000_000L
+        )
+        coEvery { returnWindowDao.getReturnWindowByReceiptId(31L) } returns window
+        coEvery { returnWindowDao.deleteReturnWindow(any()) } just Runs
+        coEvery { warrantyDao.deleteWarranty(any()) } just Runs
+
+        repository.rejectAutoDetectedWarranty(w1)
+
+        coVerify(exactly = 1) { returnWindowDao.deleteReturnWindow(window) }
+        coVerify(exactly = 1) { warrantyDao.deleteWarranty(w1) }
     }
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -850,7 +837,8 @@ class WarrantyTrackerRepositoryTest {
     }
 
     // ──────────────────────────────────────────────────────────────────────────
-    // G3 S5 — write-barrier handling for discard audit and AID-9 audit
+    // G3 S5 — write-barrier handling for AID-9 audit (the discard-audit test was deleted with
+    // the retired cloud extraction path, G2-6)
     // ──────────────────────────────────────────────────────────────────────────
 
     private fun repositoryWith(
@@ -864,10 +852,6 @@ class WarrantyTrackerRepositoryTest {
         receiptRepository = object : Lazy<ReceiptRepository> {
             override fun get() = receiptRepository
         },
-        cloudExtractionService = cloudExtractionService,
-        aiSettingsRepository = aiSettingsRepository,
-        aiPolicy = aiPolicy,
-        aiCapabilityRouter = aiCapabilityRouter,
         timeProvider = timeProvider,
         currencyConverter = mockk(relaxed = true),
         currencySettingsRepository = currencySettingsRepository,
@@ -881,59 +865,6 @@ class WarrantyTrackerRepositoryTest {
         operation = DatabaseAccessOperation(operation),
         mode = RestoreMaintenanceMode.Mode.RESTORE_STAGING
     )
-
-    private fun lowConfidenceReceiptAndResult(): Pair<ScannedReceipt, WarrantyExtractionResult> {
-        val receipt = ScannedReceipt(
-            id = 21,
-            imagePath = "/path/to/image.jpg",
-            rawOcrText = "Synthetic receipt text",
-            parsedTotal = 100.0,
-            parsedMerchant = "Synthetic Store",
-            parsedDate = 1000,
-            parsedItems = null,
-            parsedTaxAmount = null,
-            confidence = 0.95f
-        )
-        val result = WarrantyExtractionResult(
-            productName = "Synthetic Phone",
-            warrantyMonths = 12,
-            warrantyType = "MANUFACTURER",
-            supportPhone = null,
-            supportEmail = null,
-            returnDays = null,
-            returnConditions = null,
-            confidence = 0.1f
-        )
-        return receipt to result
-    }
-
-    @Test
-    fun `discard audit is skipped when write barrier denies and result is unchanged`() = runTest(timeout = 60.seconds) {
-        val (receipt, extractionResult) = lowConfidenceReceiptAndResult()
-        coEvery { cloudExtractionService.extractWarranty(any()) } returns extractionResult
-
-        // Barrier open: audit is written, result is null.
-        val openResult = repository.extractWarrantyFromReceipt(receipt)
-        assertNull(openResult)
-        coVerify(exactly = 1) {
-            warrantyLifecycleEventDao.insert(match {
-                it.eventType == WarrantyLifecycleEventTypes.AI_EXTRACTION_DISCARDED
-            })
-        }
-        clearMocks(warrantyLifecycleEventDao, answers = false)
-
-        // Barrier denied for the discard operation: no insert, same result, no exception.
-        val barrier = mockk<DatabaseWriteBarrier>(relaxed = true)
-        val discardOp = "WarrantyTrackerRepository.extractWarrantyFromReceipt.discard"
-        every { barrier.checkWritesAllowed(discardOp) } throws blockedException(discardOp)
-        val deniedRepository = repositoryWith(barrier, mockk(relaxed = true))
-
-        val deniedResult = deniedRepository.extractWarrantyFromReceipt(receipt)
-
-        assertEquals(openResult, deniedResult)
-        verify { barrier.checkWritesAllowed(discardOp) }
-        coVerify(exactly = 0) { warrantyLifecycleEventDao.insert(any()) }
-    }
 
     @Test
     fun `addWarrantyIgnoreConflicts propagates blocked AID-9 audit write`() = runTest(timeout = 60.seconds) {

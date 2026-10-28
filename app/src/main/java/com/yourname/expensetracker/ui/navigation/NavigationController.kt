@@ -550,7 +550,9 @@ fun ConsumeNavigationEvents(
                     is NavigationEvent.NavigateTo -> {
                         // G-TIME-01: Timber already stamps every log line with the
                         // wall-clock time, so no explicit timestamp is needed here.
-                        Timber.d("Navigation: screen=%s", event.destination.toString())
+                        // Destination class name only: a data-class toString would log link
+                        // parameters (initialLocationQuery, initialExpenseId) - INV-18/AE-21.
+                        Timber.d("Navigation: screen=%s", event.destination::class.simpleName ?: "unknown")
                     }
                     is NavigationEvent.NavigateBack -> {
                         Timber.d("Navigation: back")

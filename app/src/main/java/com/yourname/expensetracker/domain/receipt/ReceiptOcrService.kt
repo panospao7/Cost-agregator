@@ -19,6 +19,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -89,11 +90,107 @@ data class OcrResult(
     val totalPages: Int? = null,
     // RP-13 13a (P3-003): pages whose OCR failed after retries while sibling
     // pages succeeded (per-page isolation). Null when no page failed.
-    val failedPages: Int? = null
+    val failedPages: Int? = null,
+    // Statement import: per-page text lines. Non-null ONLY when the PDF TEXT path produced this
+    // result (index = page number - 1); null for images and the OCR path.
+    val pdfTextPages: List<List<String>>? = null
 ) {
     /** Also recognizes older producers that reported attempted pages as processed. */
     val isPartial: Boolean
         get() = ReceiptOcrCoverage(pagesProcessed, totalPages, failedPages).isPartial
+}
+
+/** Direct-text PDF extraction is used only when it yields more than this many characters. */
+internal const val PDF_DIRECT_TEXT_MIN_CHARS = 100
+
+/** Pages whose concatenated length decides direct-text vs OCR (same 5 pages the receipt path reads). */
+internal const val PDF_DIRECT_TEXT_DECISION_PAGES = 5
+
+/** Statement text path: every page up to this cap is read (receipts and OCR keep 5 pages). */
+internal const val STATEMENT_TEXT_PAGE_CAP = 200
+
+/** Statement text path: total page-text characters kept; bounds memory for the text path. */
+internal const val STATEMENT_TEXT_CHAR_CAP = 2_000_000
+
+/** Bounded diagnostic code for a failed PDF text extraction (logged with the exception class only). */
+internal const val PDF_TEXT_EXTRACT_FAILED = "PDF_TEXT_EXTRACT_FAILED"
+
+/**
+ * Pure assembly of a PDF text-path [OcrResult] from already extracted page texts (no PDFBox).
+ *
+ * Keeps whole pages in order while the page count stays within [pageCap] and the summed page
+ * text stays within [charCap]; the first page that would exceed [charCap] and every later page
+ * is dropped. [failedPages] pages (extracted as blank text so indexes stay aligned) and every other
+ * page without text are not counted as processed (the result is then partial). Returns null when the joined text is not longer than
+ * [PDF_DIRECT_TEXT_MIN_CHARS], so the caller falls back to OCR. [OcrResult.savedImagePath] is
+ * empty; the caller attaches the thumbnail.
+ */
+internal fun buildPdfTextResult(
+    pages: List<String>,
+    totalPages: Int,
+    pageCap: Int,
+    charCap: Int,
+    failedPages: Int = 0
+): OcrResult? {
+    val limit = minOf(pages.size, pageCap)
+    var chars = 0
+    var taken = 0
+    while (taken < limit) {
+        val length = pages[taken].length
+        if (chars + length > charCap) break
+        chars += length
+        taken++
+    }
+    if (taken == 0) return null
+
+    val fullText = StringBuilder(chars + taken).also { builder ->
+        for (index in 0 until taken) {
+            if (index > 0) builder.append('\n')
+            builder.append(pages[index])
+        }
+    }.toString()
+    // Same decision as the 5-page receipt path: the first pages alone must clear the threshold, so
+    // a tiny per-page text layer (page footers) or blank-page separators cannot add up to "text".
+    val leadingLength = (0 until minOf(taken, PDF_DIRECT_TEXT_DECISION_PAGES)).sumOf { pages[it].length }
+    if (leadingLength <= PDF_DIRECT_TEXT_MIN_CHARS) return null
+    if (fullText.count { !it.isWhitespace() } <= PDF_DIRECT_TEXT_MIN_CHARS) return null
+
+    val pdfTextPages = ArrayList<List<String>>(taken)
+    for (index in 0 until taken) pdfTextPages += pages[index].lines()
+
+    var blockIndex = 0
+    val blocks = ArrayList<TextBlock>()
+    for (pageLines in pdfTextPages) {
+        for (line in pageLines) {
+            if (line.isBlank()) continue
+            blocks += TextBlock(
+                text = line.trim(),
+                confidence = 1.0f, // Direct extraction has perfect confidence
+                left = 0,
+                top = blockIndex * 20, // Approximate line height
+                right = 1000,
+                bottom = (blockIndex + 1) * 20
+            )
+            blockIndex++
+        }
+    }
+
+    val failed = failedPages.coerceIn(0, taken)
+    // In a document that IS text, a page without any text (a scanned page, or a page whose extraction
+    // failed and was kept as blank to stay aligned) was not read: it does not count as processed, so
+    // pagesProcessed < totalPages and the import is reported partial. Failed pages are blank pages,
+    // so the larger of the two counts is the number of pages not read.
+    val blankPages = (0 until taken).count { pages[it].isBlank() }
+    val notProcessed = maxOf(failed, blankPages)
+    return OcrResult(
+        fullText = fullText,
+        blocks = blocks,
+        savedImagePath = "",
+        pagesProcessed = taken - notProcessed,
+        totalPages = maxOf(totalPages, taken),
+        failedPages = failed.takeIf { it > 0 },
+        pdfTextPages = pdfTextPages
+    )
 }
 
 data class TextBlock(
@@ -244,14 +341,35 @@ class ReceiptOcrService @Inject constructor(
      * to extension-based detection so that files with a valid extension but no
      * provider MIME (e.g. some content:// URIs) still route correctly.
      */
-    suspend fun processUri(uri: Uri): OcrResult {
+    suspend fun processUri(uri: Uri): OcrResult = processUriWithMime(uri, resolveMimeType(uri))
+
+    private fun resolveMimeType(uri: Uri): String {
         val providerMime = context.contentResolver.getType(uri)
-        val mimeType = if (!providerMime.isNullOrBlank()) {
+        return if (!providerMime.isNullOrBlank()) {
             providerMime
         } else {
             detectMimeFromExtension(uri) ?: ""
         }
-        return processUriWithMime(uri, mimeType)
+    }
+
+    /**
+     * Statement-only entry point. Same MIME routing, size validation and unsupported-type error
+     * as [processUri]; the difference is PDFs with enough direct text, which are read page by
+     * page up to [STATEMENT_TEXT_PAGE_CAP] pages / [STATEMENT_TEXT_CHAR_CAP] characters and carry
+     * [OcrResult.pdfTextPages]. Images and PDFs with too little text use the unchanged OCR path
+     * (5-page cap). Receipts keep using [processUri] and its 5-page cap.
+     */
+    suspend fun processStatementUri(uri: Uri): OcrResult {
+        val mimeType = resolveMimeType(uri)
+        if (mimeType != "application/pdf") return processUriWithMime(uri, mimeType)
+        validateFileSize(uri)
+        val textResult = statementTextResult(uri)
+        if (textResult != null) {
+            Timber.d("Using direct PDF text extraction for statement (${textResult.fullText.length} chars)")
+            return textResult.copy(savedImagePath = renderPdfFirstPageThumbnail(uri))
+        }
+        Timber.d("Statement PDF has minimal text, falling back to OCR")
+        return processPdfWithOcr(uri)
     }
 
     /**
@@ -438,7 +556,7 @@ class ReceiptOcrService @Inject constructor(
         val (extractedText, totalPages) = extractPdfText(pdfUri)
         
         // If we got substantial text (>100 chars), use it
-        if (extractedText.length > 100) {
+        if (extractedText.length > PDF_DIRECT_TEXT_MIN_CHARS) {
             Timber.d("Using direct PDF text extraction (${extractedText.length} chars)")
             return processPdfWithTextExtraction(pdfUri, extractedText, totalPages)
         }
@@ -492,19 +610,93 @@ class ReceiptOcrService @Inject constructor(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            // MED-01 FIX: Add logging instead of silent catch
-            Timber.e(e, "PDF text extraction failed")
+            // Bounded code + exception class only: no message, throwable or page text.
+            Timber.w("%s class=%s", PDF_TEXT_EXTRACT_FAILED, e.javaClass.simpleName ?: "Unknown")
             return@withContext Pair("", 0)
         } finally {
-            // MED-01 FIX: Add logging to catch blocks
             try { document?.close() } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
-                Timber.e(e, "Failed to close PDF document")
+                Timber.w("%s class=%s", PDF_TEXT_EXTRACT_FAILED, e.javaClass.simpleName ?: "Unknown")
             }
             if (tempFile.exists()) tempFile.delete()
         }
     }
     
+    private class StatementPdfPages(val pages: List<String>, val totalPages: Int, val failedPages: Int)
+
+    /** Own function so the raw per-page strings are unreachable once the result is built. */
+    private suspend fun statementTextResult(pdfUri: Uri): OcrResult? {
+        val extracted = extractStatementPdfPages(pdfUri) ?: return null
+        return buildPdfTextResult(
+            pages = extracted.pages,
+            totalPages = extracted.totalPages,
+            pageCap = STATEMENT_TEXT_PAGE_CAP,
+            charCap = STATEMENT_TEXT_CHAR_CAP,
+            failedPages = extracted.failedPages
+        )
+    }
+
+    /**
+     * Statement text extraction: one page at a time, cancellation checked between pages, stopping
+     * at [STATEMENT_TEXT_PAGE_CAP] pages or once the kept text exceeds [STATEMENT_TEXT_CHAR_CAP]
+     * (the final page read is then dropped by [buildPdfTextResult]). A page that fails to extract
+     * is kept as blank text so page indexes stay aligned, and is counted as failed. Logs carry
+     * only [PDF_TEXT_EXTRACT_FAILED] and the exception class name, never page text or messages.
+     * @return null when the stream cannot be opened or the document cannot be loaded.
+     */
+    private suspend fun extractStatementPdfPages(pdfUri: Uri): StatementPdfPages? =
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val tempFile = File(context.cacheDir, uniqueTempFileName("temp_pdf_statement", "pdf"))
+            var document: PDDocument? = null
+            try {
+                context.contentResolver.openInputStream(pdfUri)?.use { input ->
+                    tempFile.outputStream().use { output ->
+                        input.copyTo(output)
+                    }
+                } ?: return@withContext null
+
+                document = PDDocument.load(tempFile)
+                val totalPages = document.numberOfPages
+                val limit = minOf(totalPages, STATEMENT_TEXT_PAGE_CAP)
+                val stripper = PDFTextStripper()
+                val pages = ArrayList<String>(limit)
+                var chars = 0
+                var failed = 0
+                for (pageNumber in 1..limit) {
+                    currentCoroutineContext().ensureActive()
+                    try {
+                        stripper.startPage = pageNumber
+                        stripper.endPage = pageNumber
+                        val text = stripper.getText(document)
+                        pages += text
+                        chars += text.length
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        failed++
+                        pages += ""
+                        Timber.w("%s class=%s", PDF_TEXT_EXTRACT_FAILED, e.javaClass.simpleName ?: "Unknown")
+                    }
+                    if (chars > STATEMENT_TEXT_CHAR_CAP) break
+                }
+                StatementPdfPages(pages, totalPages, failed)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Timber.w("%s class=%s", PDF_TEXT_EXTRACT_FAILED, e.javaClass.simpleName ?: "Unknown")
+                null
+            } finally {
+                try {
+                    document?.close()
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                    Timber.w("%s class=%s", PDF_TEXT_EXTRACT_FAILED, e.javaClass.simpleName ?: "Unknown")
+                } finally {
+                    if (tempFile.exists()) tempFile.delete()
+                }
+            }
+        }
+
     /**
      * Process PDF using direct text extraction (for digital PDFs).
      */

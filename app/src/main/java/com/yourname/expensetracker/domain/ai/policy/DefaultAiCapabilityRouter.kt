@@ -265,6 +265,8 @@ class DefaultAiCapabilityRouter @Inject constructor(
             AiCapability.REVIEW_PRIORITIZATION -> settings.aiEnabled // Uses general AI toggle
             AiCapability.SEMANTIC_DEDUPE -> settings.aiEnabled // Uses general AI toggle
             AiCapability.RECEIPT_ITEM_CATEGORIZATION -> settings.receiptItemCategorizationEnabled
+            // Own toggle, independent of the briefing flag (spec §1.6, INV-15); the use case also gates INSIGHT_DISABLED (AE-32).
+            AiCapability.TRANSACTION_INSIGHT -> settings.transactionInsightEnabled
         }
     }
 
@@ -285,6 +287,7 @@ class DefaultAiCapabilityRouter @Inject constructor(
         AiCapability.REVIEW_PRIORITIZATION -> "Review prioritization"
         AiCapability.SEMANTIC_DEDUPE -> "Semantic duplicate detection"
         AiCapability.RECEIPT_ITEM_CATEGORIZATION -> "Receipt item categorization"
+        AiCapability.TRANSACTION_INSIGHT -> "Transaction insight"
     }
 
     private fun AiCapability.defaultCloudProviderName(): String = when (this) {
@@ -300,6 +303,7 @@ class DefaultAiCapabilityRouter @Inject constructor(
         AiCapability.REVIEW_PRIORITIZATION -> "unsupported" // On-device only for privacy
         AiCapability.SEMANTIC_DEDUPE -> "unsupported" // On-device only for privacy
         AiCapability.RECEIPT_ITEM_CATEGORIZATION -> AppConfig.Ai.RECEIPT_ITEM_CATEGORIZATION_CLOUD_PROVIDER
+        AiCapability.TRANSACTION_INSIGHT -> "unsupported" // On-device only for privacy
     }
 
     private fun AiCapability.defaultCloudModelName(): String = when (this) {
@@ -315,6 +319,7 @@ class DefaultAiCapabilityRouter @Inject constructor(
         AiCapability.REVIEW_PRIORITIZATION -> "unsupported" // On-device only for privacy
         AiCapability.SEMANTIC_DEDUPE -> "unsupported" // On-device only for privacy
         AiCapability.RECEIPT_ITEM_CATEGORIZATION -> AppConfig.Ai.RECEIPT_ITEM_CATEGORIZATION_CLOUD_MODEL
+        AiCapability.TRANSACTION_INSIGHT -> "unsupported" // On-device only for privacy
     }
 
     private fun AiCapability.defaultOnDeviceModelName(): String = when (this) {
@@ -330,6 +335,7 @@ class DefaultAiCapabilityRouter @Inject constructor(
         AiCapability.REVIEW_PRIORITIZATION -> "gemini-nano-priority" // On-device only
         AiCapability.SEMANTIC_DEDUPE -> "gemini-nano-semantic" // On-device only
         AiCapability.RECEIPT_ITEM_CATEGORIZATION -> AppConfig.Ai.ON_DEVICE_RECEIPT_ITEM_MODEL
+        AiCapability.TRANSACTION_INSIGHT -> AppConfig.Ai.ON_DEVICE_BRIEFING_MODEL // Same on-device briefing model
     }
 
     private companion object {
@@ -350,7 +356,8 @@ class DefaultAiCapabilityRouter @Inject constructor(
             AiCapability.NOTIFICATION_PARSE, // NEW: On-device only, no cloud for privacy
             AiCapability.REVIEW_PRIORITIZATION, // NEW: On-device only for privacy and latency
             AiCapability.SEMANTIC_DEDUPE, // NEW: On-device only for privacy
-            AiCapability.RECEIPT_ITEM_CATEGORIZATION // NEW: Receipt item categorization
+            AiCapability.RECEIPT_ITEM_CATEGORIZATION, // NEW: Receipt item categorization
+            AiCapability.TRANSACTION_INSIGHT // On-device only (INV-16); deliberately not in CLOUD_FIRST_CAPABILITIES
         )
     }
 }

@@ -8,10 +8,12 @@ import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor
 import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.data.security.getGeminiKey
 import com.yourname.expensetracker.di.CloudAiHttpClient
+import com.yourname.expensetracker.domain.ai.model.AssistantUnsupportedReason
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryInterpretationInput
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryInterpretationResult
 import com.yourname.expensetracker.domain.ai.service.QueryInterpretationService
 import com.yourname.expensetracker.domain.config.AppConfig
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
 import com.yourname.expensetracker.domain.privacy.CloudPayloadPurpose
 import com.yourname.expensetracker.domain.privacy.CloudPayloadPolicy
 import com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver
@@ -104,7 +106,7 @@ class CloudQueryInterpretationService @VisibleForTesting internal constructor(
         val gateDecision = privacyGate.check(PrivacyCapability.CLOUD_AI_GENERAL)
         if (gateDecision.blocksExecution()) {
             Timber.d("CloudQueryInterpretationService: PROVIDER_DISABLED stage=privacy_gate")
-            return unsupported("PROVIDER_DISABLED")
+            return unsupported(DiagnosticReasonCode.PROVIDER_DISABLED)
         }
 
         val prompt = promptHelper.buildPrompt(input.toCloudPromptInput())
@@ -114,7 +116,7 @@ class CloudQueryInterpretationService @VisibleForTesting internal constructor(
             throw e
         } catch (e: Exception) {
             Timber.w("CloudQueryInterpretationService: UNKNOWN_ERROR stage=payload_policy class=%s", e::class.java.simpleName)
-            return unsupported("UNKNOWN_ERROR")
+            return unsupported(DiagnosticReasonCode.UNKNOWN_ERROR)
         }
         // Audit and transport share the policy-owned payload, not separately prepared text.
         auditLogger.logCloudCall(
@@ -157,7 +159,8 @@ class CloudQueryInterpretationService @VisibleForTesting internal constructor(
                             return@use unsupported()
                         }
 
-                        val body = response.body?.string() ?: return@use unsupported("PARSER_FAILED")
+                        val body = response.body?.string()
+                            ?: return@use unsupported(DiagnosticReasonCode.PARSER_FAILED)
                         return@use parseResponse(input, body)
                     }
 
@@ -170,12 +173,12 @@ class CloudQueryInterpretationService @VisibleForTesting internal constructor(
                 } catch (e: SocketTimeoutException) {
                     Timber.w("CloudQueryInterpretationService: TIMEOUT class=%s attempt=%d/%d", e::class.java.simpleName, attempt, CloudRetryPolicy.MAX_RETRY_ATTEMPTS)
                     if (attempt >= CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
-                        return@withContext unsupported("TIMEOUT")
+                        return@withContext unsupported(DiagnosticReasonCode.TIMEOUT)
                     }
                 } catch (e: SSLException) {
                     Timber.w("CloudQueryInterpretationService: UNKNOWN_ERROR stage=ssl class=%s attempt=%d", e::class.java.simpleName, attempt)
                     if (!CloudRetryPolicy.isRetryableIoException(e) || attempt >= CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
-                        return@withContext unsupported("UNKNOWN_ERROR")
+                        return@withContext unsupported(DiagnosticReasonCode.UNKNOWN_ERROR)
                     }
                 } catch (e: IOException) {
                     Timber.w(
@@ -185,16 +188,16 @@ class CloudQueryInterpretationService @VisibleForTesting internal constructor(
                         CloudRetryPolicy.MAX_RETRY_ATTEMPTS
                     )
                     if (!CloudRetryPolicy.isRetryableIoException(e) || attempt >= CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
-                        return@withContext unsupported("NETWORK_UNAVAILABLE")
+                        return@withContext unsupported(DiagnosticReasonCode.NETWORK_UNAVAILABLE)
                     }
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: JSONException) {
                     Timber.w("CloudQueryInterpretationService: PARSER_FAILED class=%s attempt=%d", e::class.java.simpleName, attempt)
-                    return@withContext unsupported("PARSER_FAILED")
+                    return@withContext unsupported(DiagnosticReasonCode.PARSER_FAILED)
                 } catch (e: Exception) {
                     Timber.w("CloudQueryInterpretationService: UNKNOWN_ERROR class=%s attempt=%d", e::class.java.simpleName, attempt)
-                    return@withContext unsupported("UNKNOWN_ERROR")
+                    return@withContext unsupported(DiagnosticReasonCode.UNKNOWN_ERROR)
                 }
 
                 if (attempt < CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
@@ -242,17 +245,21 @@ class CloudQueryInterpretationService @VisibleForTesting internal constructor(
         body: String
     ): FinancialQueryInterpretationResult {
         val root = JSONObject(body)
-        val candidates = root.optJSONArray("candidates") ?: return unsupported()
-        if (candidates.length() == 0) return unsupported()
+        val candidates = root.optJSONArray("candidates")
+            ?: return unsupported(reason = AssistantUnsupportedReason.PROVIDER_RESPONSE_INVALID)
+        if (candidates.length() == 0) {
+            return unsupported(reason = AssistantUnsupportedReason.PROVIDER_RESPONSE_INVALID)
+        }
         val text = candidates.optJSONObject(0)
             ?.optJSONObject("content")
             ?.optJSONArray("parts")
             ?.optJSONObject(0)
             ?.optString("text")
             ?.trim()
-            ?: return unsupported()
+            ?: return unsupported(reason = AssistantUnsupportedReason.PROVIDER_RESPONSE_INVALID)
 
-        return promptHelper.parseResponse(input, text) ?: unsupported()
+        return promptHelper.parseResponse(input, text)
+            ?: unsupported(reason = AssistantUnsupportedReason.PROVIDER_RESPONSE_INVALID)
     }
 
     private fun FinancialQueryInterpretationInput.toCloudPromptInput(): FinancialQueryInterpretationInput {
@@ -269,9 +276,21 @@ class CloudQueryInterpretationService @VisibleForTesting internal constructor(
         )
     }
 
+    /**
+     * Typed bounded result. [diagnostic] carries the existing cloud failure code (bounded; the
+     * producing site logs it); never rendered or persisted. A parser failure maps to PROVIDER_RESPONSE_INVALID,
+     * every other transport/gate failure to PROVIDER_UNAVAILABLE.
+     */
     private fun unsupported(
-        reason: String = "UNKNOWN_ERROR"
-    ): FinancialQueryInterpretationResult = FinancialQueryInterpretationResult.Unsupported(reason)
+        diagnostic: DiagnosticReasonCode = DiagnosticReasonCode.UNKNOWN_ERROR,
+        reason: AssistantUnsupportedReason =
+            if (diagnostic == DiagnosticReasonCode.PARSER_FAILED) {
+                AssistantUnsupportedReason.PROVIDER_RESPONSE_INVALID
+            } else {
+                AssistantUnsupportedReason.PROVIDER_UNAVAILABLE
+            }
+    ): FinancialQueryInterpretationResult =
+        FinancialQueryInterpretationResult.Unsupported(reason = reason, diagnostic = diagnostic)
 
     private companion object {
         val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()

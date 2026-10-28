@@ -7,6 +7,7 @@ import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.database.entity.MatchStatus
 import com.yourname.expensetracker.data.repository.ReceiptRepository
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
+import com.yourname.expensetracker.domain.notification.presentation.NotificationKind
 import com.yourname.expensetracker.domain.receipt.ReceiptDocumentType
 import com.yourname.expensetracker.domain.receipt.ReceiptProcessingStatus
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptAlreadyClaimedException
@@ -105,22 +106,43 @@ class ReceiptMatchingWorker @AssistedInject constructor(
                                         // RP-16 16-D: only an actual DELIVERED result counts as a
                                         // sent notification; NOT_DELIVERED is recorded as a
                                         // controlled suppression and a skipped row.
-                                        val deliveryResult = notificationService.postBudgetAlert(
+                                        // S7 (INV-4/INV-12): the worker declares kind RECEIPT_MATCH; the
+                                        // presentation decision is resolved inside the service.
+                                        val deliveryResult = notificationService.postBudgetAlertForKind(
+                                            kind = NotificationKind.RECEIPT_MATCH,
                                             notificationId = com.yourname.expensetracker.domain.util.NotificationId.forReceipt(receipt.id),
                                             title = applicationContext.getString(R.string.receipt_matching_auto_matched_title),
                                             message = applicationContext.getString(R.string.receipt_matching_auto_matched_message_format, receipt.parsedMerchant ?: applicationContext.getString(R.string.label_unknown))
                                         )
-                                        if (deliveryResult == com.yourname.expensetracker.domain.service.NotificationService.DeliveryResult.DELIVERED) {
-                                            ctx.addNotificationsSent()
-                                        } else {
-                                            ctx.addRowsSkipped()
-                                            safeRecordMatchEvent("NOTIFICATION_SUPPRESSED for receipt ${receipt.id}") {
-                                                matchService.recordNotificationSuppressed(
-                                                    receiptId = receipt.id,
-                                                    expenseId = matchResult.transaction.id,
-                                                    reasonCode = "RECEIPT_MATCH_NOTIFICATION_SUPPRESSED_NOT_DELIVERED",
-                                                    errorClass = null
-                                                )
+                                        when (deliveryResult) {
+                                            com.yourname.expensetracker.domain.service.NotificationService.DeliveryResult.DELIVERED -> {
+                                                ctx.addNotificationsSent()
+                                            }
+                                            // TECH-9 (owner decision C6): the service maps a platform
+                                            // SecurityException to PERMISSION_DENIED. Same diagnostic and
+                                            // counters as the legacy SecurityException catch below (no
+                                            // addRowsSkipped); the error class is a bounded constant.
+                                            com.yourname.expensetracker.domain.service.NotificationService.DeliveryResult.PERMISSION_DENIED -> {
+                                                Timber.w("Notification permission revoked after check for receipt ${receipt.id}")
+                                                safeRecordMatchEvent("NOTIFICATION_SUPPRESSED for receipt ${receipt.id}") {
+                                                    matchService.recordNotificationSuppressed(
+                                                        receiptId = receipt.id,
+                                                        expenseId = matchResult.transaction.id,
+                                                        reasonCode = "RECEIPT_MATCH_NOTIFICATION_SUPPRESSED_PERMISSION_REVOKED",
+                                                        errorClass = SECURITY_EXCEPTION_CLASS
+                                                    )
+                                                }
+                                            }
+                                            com.yourname.expensetracker.domain.service.NotificationService.DeliveryResult.NOT_DELIVERED -> {
+                                                ctx.addRowsSkipped()
+                                                safeRecordMatchEvent("NOTIFICATION_SUPPRESSED for receipt ${receipt.id}") {
+                                                    matchService.recordNotificationSuppressed(
+                                                        receiptId = receipt.id,
+                                                        expenseId = matchResult.transaction.id,
+                                                        reasonCode = "RECEIPT_MATCH_NOTIFICATION_SUPPRESSED_NOT_DELIVERED",
+                                                        errorClass = null
+                                                    )
+                                                }
                                             }
                                         }
                                     } catch (e: CancellationException) {
@@ -257,6 +279,9 @@ class ReceiptMatchingWorker @AssistedInject constructor(
 
     companion object {
         private const val WORK_NAME = "receipt_matching"
+
+        /** Constant error class recorded for a PERMISSION_DENIED delivery (TECH-9); equals SecurityException's simple name. */
+        private const val SECURITY_EXCEPTION_CLASS = "SecurityException"
 
         /**
          * Lookback window (days) for candidate expense search during receipt matching.
