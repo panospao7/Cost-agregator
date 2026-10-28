@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- S19: lock surface, paused banners and review banner (ux-flows 9.2). Content-free by design (INV-35). -->
+    <string name="applock_lock_title">App locked</string>
+    <string name="applock_lock_subtitle">Unlock to continue.</string>
+    <string name="applock_unlock_button">Unlock</string>
+    <string name="applock_msg_try_again">Couldn\'t unlock. Try again.</string>
+    <string name="applock_msg_too_many_attempts">Too many attempts. Wait a moment, then try again.</string>
+    <string name="applock_msg_biometric_locked">Fingerprint is locked. Use your screen lock instead.</string>
+    <string name="applock_msg_unavailable_now">Unlock isn\'t available right now. Try again in a moment.</string>
+    <string name="applock_msg_setting_unreadable">Couldn\'t check the lock setting. Unlock to continue.</string>
+
+    <string name="applock_banner_inactive_title">App lock is paused</string>
+    <string name="applock_banner_inactive_body">Your phone no longer has a screen lock, so the app can\'t ask you to unlock it. Set a screen lock to turn protection back on.</string>
+    <string name="applock_banner_inactive_body_unavailable">Your phone can\'t check your screen lock right now, so app lock is paused. It turns back on the next time the app locks.</string>
+    <string name="applock_banner_inactive_body_os">App lock isn\'t supported on this Android version, so it is paused. You can turn it off in settings.</string>
+    <string name="applock_banner_inactive_body_unreadable">The app couldn\'t read your app lock setting and your phone has no screen lock, so app lock is paused.</string>
+    <string name="applock_banner_open_settings">App lock settings</string>
+    <string name="applock_banner_open_security_settings">Open security settings</string>
+    <string name="applock_banner_review_title">Review your privacy settings</string>
+    <string name="applock_banner_review_body">The app couldn\'t read your saved privacy settings, so it is using the safest options until you review them.</string>
+    <string name="applock_banner_review_action">Review settings</string>
+    <!-- Accessibility: one focus stop for the banner text, "{title}. {body}". -->
+    <string name="applock_banner_description">%1$s. %2$s</string>
+</resources>

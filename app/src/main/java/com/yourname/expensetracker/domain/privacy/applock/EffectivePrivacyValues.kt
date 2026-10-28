@@ -4,8 +4,8 @@ package com.yourname.expensetracker.domain.privacy.applock
  * Derived effective values (domain-spec 2.3). Computed, never persisted, and the only place that
  * turns an unreadable or missing read into fail-closed values (INV-2).
  *
- * 1a covers `effectiveDiscreet` and the fail-closed record `F`. The 1b terms (lock enabled, secure
- * screen, timeout) are added by S14.
+ * Every value is computed from the committed load state only (INV-46); there is no `AppLockState`
+ * input except the single `RESOLVING` flag of [effectiveSecureScreen] (INV-53).
  */
 object EffectivePrivacyValues {
 
@@ -22,13 +22,33 @@ object EffectivePrivacyValues {
         }
 
     /**
-     * 1a: `discreetNotifications OR load state is Unreadable OR the read exceeded T_read`
-     * (a null [loadState]).
+     * `discreetNotifications OR appLockEnabled OR load state is Unreadable OR the read exceeded T_read`
+     * (a null [loadState]). The lock term (1b, OD-2a) holds in every lock state, including inert and
+     * API-unsupported, because it reads the stored flag, not the lock state.
      */
-    fun effectiveDiscreet(loadState: AppLockSettingsLoadState?): Boolean =
-        when (loadState) {
-            is AppLockSettingsLoadState.Loaded -> loadState.settings.discreetNotifications
-            is AppLockSettingsLoadState.FirstRunDefault -> loadState.settings.discreetNotifications
-            is AppLockSettingsLoadState.Unreadable, null -> true
-        }
+    fun effectiveDiscreet(loadState: AppLockSettingsLoadState?): Boolean {
+        val settings = effectiveSettings(loadState)
+        return settings.discreetNotifications || settings.appLockEnabled
+    }
+
+    /**
+     * The stored lock flag, or true for an unreadable or timed-out read (fail-closed record `F`).
+     * Used for the API 30 and below action rule (INV-10).
+     */
+    fun effectiveLockEnabled(loadState: AppLockSettingsLoadState?): Boolean =
+        effectiveSettings(loadState).appLockEnabled
+
+    /**
+     * The settings part of `effectiveSecureScreen` (spec 2.3, INV-29):
+     * `secureScreen OR appLockEnabled OR load state is Unreadable OR state = RESOLVING`.
+     *
+     * [resolving] is the one non-settings input: whether `AppLockState` is `RESOLVING`. There is no
+     * `AUTHENTICATING` term: during a prompt the flag follows committed settings only (INV-53, INV-46).
+     * A null [loadState] (no usable read) is fail-closed.
+     */
+    fun effectiveSecureScreen(loadState: AppLockSettingsLoadState?, resolving: Boolean): Boolean {
+        if (resolving) return true
+        val settings = effectiveSettings(loadState)
+        return settings.secureScreen || settings.appLockEnabled
+    }
 }

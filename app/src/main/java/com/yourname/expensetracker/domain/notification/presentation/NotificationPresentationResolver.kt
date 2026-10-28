@@ -60,7 +60,7 @@ class NotificationPresentationResolver @Inject constructor(
                 kind = kind,
                 sdkInt = sdkInt,
                 reason = NotificationFallbackReason.POLICY_EXCEPTION
-            )
+            ).also { reportActionsSuppressed(it, sdkInt) }
         }
 
         val decision = NotificationContentPolicy.decide(kind, loadState, sdkInt)
@@ -69,7 +69,21 @@ class NotificationPresentationResolver @Inject constructor(
             is AppLockSettingsLoadState.Unreadable -> reportUnreadable(loadState.cause)
             is AppLockSettingsLoadState.Loaded, is AppLockSettingsLoadState.FirstRunDefault -> Unit
         }
+        reportActionsSuppressed(decision, sdkInt)
         return decision
+    }
+
+    /**
+     * INV-10: a BILL decision on API 30 and below that drops its actions because the lock is enabled
+     * or the settings are unreadable records the bounded `NOTIF_ACTIONS_SUPPRESSED_LOCK(sdkInt)`.
+     * The emitter rate limits it per code, so repeated posts do not flood the log.
+     */
+    private fun reportActionsSuppressed(decision: NotificationPresentationDecision, sdkInt: Int) {
+        if (decision.kind == NotificationKind.BILL && decision.actionPolicy == NotificationActionPolicy.NONE) {
+            reportFailure(PrivacyDiagnosticCode.NOTIF_ACTIONS_SUPPRESSED_LOCK, PrivacyDiagnosticMetadata.builder().apply {
+                put(PrivacyDiagnosticKey.SDK_INT, sdkInt)
+            }.build())
+        }
     }
 
     private fun reportUnreadable(cause: SettingsUnreadableCause) {

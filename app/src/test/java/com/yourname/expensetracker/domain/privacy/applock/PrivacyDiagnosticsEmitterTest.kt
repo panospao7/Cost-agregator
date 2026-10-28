@@ -7,6 +7,8 @@ import com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
 import com.yourname.expensetracker.domain.diagnostics.EventMetadataSanitizer
+import com.yourname.expensetracker.domain.diagnostics.EventOutcome
+import com.yourname.expensetracker.domain.diagnostics.EventSeverity
 import com.yourname.expensetracker.domain.diagnostics.NotificationDiagnosticEmitter
 import com.yourname.expensetracker.domain.util.FakeMonotonicTimeProvider
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
@@ -166,6 +168,157 @@ class PrivacyDiagnosticsEmitterTest {
         for (code in PrivacyDiagnosticCode.entries) {
             assertTrue(code.allowedKeys.none { it == PrivacyDiagnosticKey.SUPPRESSED_REASON_CODE })
         }
+    }
+
+    @Test
+    fun `the nine S16 lock codes carry no metadata keys at all`() {
+        val lockControllerCodes = listOf(
+            PrivacyDiagnosticCode.LOCK_SHOWN_COLD_START,
+            PrivacyDiagnosticCode.LOCK_SHOWN_TIMEOUT,
+            PrivacyDiagnosticCode.LOCK_SHOWN_SETTINGS_UNREADABLE,
+            PrivacyDiagnosticCode.LOCK_UNLOCKED,
+            PrivacyDiagnosticCode.LOCK_INERT_NO_CREDENTIAL,
+            PrivacyDiagnosticCode.LOCK_INERT_HW_UNAVAILABLE,
+            PrivacyDiagnosticCode.LOCK_INERT_UNKNOWN,
+            PrivacyDiagnosticCode.LOCK_INERT_API_UNSUPPORTED,
+            PrivacyDiagnosticCode.LOCK_INERT_SETTINGS_UNREADABLE
+        )
+
+        // The emitter's real S16 part (i) entries: shown, unlocked and inert (not the settings-durability
+        // LOCK_SETTING* codes). A new such code must be added here on purpose.
+        val emitterLockCodes = PrivacyDiagnosticCode.entries.filter {
+            it.name.startsWith("LOCK_SHOWN_") || it.name.startsWith("LOCK_INERT_") || it.name == "LOCK_UNLOCKED"
+        }
+        assertEquals(
+            listOf(
+                "LOCK_SHOWN_COLD_START",
+                "LOCK_SHOWN_TIMEOUT",
+                "LOCK_SHOWN_SETTINGS_UNREADABLE",
+                "LOCK_UNLOCKED",
+                "LOCK_INERT_NO_CREDENTIAL",
+                "LOCK_INERT_HW_UNAVAILABLE",
+                "LOCK_INERT_UNKNOWN",
+                "LOCK_INERT_API_UNSUPPORTED",
+                "LOCK_INERT_SETTINGS_UNREADABLE"
+            ).sorted(),
+            emitterLockCodes.map { it.name }.sorted()
+        )
+        assertEquals(lockControllerCodes.toSet(), emitterLockCodes.toSet())
+        for (code in lockControllerCodes) {
+            assertTrue("${code.name} must allow no metadata key", code.allowedKeys.isEmpty())
+        }
+    }
+
+    @Test
+    fun `the four S16 part ii-a codes allow exactly their closed key sets`() {
+        val expected: Map<PrivacyDiagnosticCode, Set<PrivacyDiagnosticKey>> = mapOf(
+            PrivacyDiagnosticCode.LOCK_AUTH_CANCELLED to emptySet(),
+            PrivacyDiagnosticCode.LOCK_AUTH_LOCKOUT to emptySet(),
+            PrivacyDiagnosticCode.LOCK_AUTH_ERROR to setOf(PrivacyDiagnosticKey.CAUSE),
+            PrivacyDiagnosticCode.LOCK_UNAVAILABLE_CAPABILITY to setOf(PrivacyDiagnosticKey.CAUSE)
+        )
+
+        // The set of ii-a codes is itself pinned: a new LOCK_AUTH_* code must be added here on purpose.
+        assertEquals(
+            setOf("LOCK_AUTH_CANCELLED", "LOCK_AUTH_LOCKOUT", "LOCK_AUTH_ERROR"),
+            PrivacyDiagnosticCode.entries.map { it.name }.filter { it.startsWith("LOCK_AUTH_") }.toSet()
+        )
+        for ((code, keys) in expected) {
+            assertEquals("${code.name} allowedKeys", keys, code.allowedKeys)
+        }
+    }
+
+    @Test
+    fun `the four S18 part i-a codes allow exactly their closed key sets`() {
+        val expected: Map<PrivacyDiagnosticCode, Set<PrivacyDiagnosticKey>> = mapOf(
+            PrivacyDiagnosticCode.LOCK_UNAVAILABLE_NOT_SECURE to setOf(PrivacyDiagnosticKey.CAUSE),
+            PrivacyDiagnosticCode.LOCK_UNAVAILABLE_API to setOf(PrivacyDiagnosticKey.CAUSE),
+            PrivacyDiagnosticCode.LOCK_ENABLED to emptySet(),
+            PrivacyDiagnosticCode.LOCK_DISABLED to emptySet()
+        )
+
+        // The set of lock-enable, lock-disable and unavailable codes is itself pinned on purpose.
+        assertEquals(
+            setOf(
+                "LOCK_UNAVAILABLE_CAPABILITY",
+                "LOCK_UNAVAILABLE_NOT_SECURE",
+                "LOCK_UNAVAILABLE_API",
+                "LOCK_ENABLED",
+                "LOCK_DISABLED"
+            ),
+            PrivacyDiagnosticCode.entries.map { it.name }
+                .filter { it.startsWith("LOCK_UNAVAILABLE_") || it == "LOCK_ENABLED" || it == "LOCK_DISABLED" }
+                .toSet()
+        )
+        for ((code, keys) in expected) {
+            assertEquals("${code.name} allowedKeys", keys, code.allowedKeys)
+        }
+    }
+
+    @Test
+    fun `D9 LOCK_SETTINGS_RECOVERED allows exactly the CAUSE key`() {
+        assertEquals(setOf(PrivacyDiagnosticKey.CAUSE), PrivacyDiagnosticCode.LOCK_SETTINGS_RECOVERED.allowedKeys)
+        assertEquals(
+            DiagnosticReasonCode.LOCK_SETTINGS_RECOVERED,
+            PrivacyDiagnosticCode.LOCK_SETTINGS_RECOVERED.reasonCode
+        )
+        // The settings-durability family is pinned on purpose: a new LOCK_SETTING* code must be added here.
+        assertEquals(
+            setOf(
+                "LOCK_SETTING_PERSIST_FAILED",
+                "LOCK_SETTINGS_UNREADABLE",
+                "LOCK_SETTINGS_REVIEW_SAVED",
+                "LOCK_SETTINGS_RECOVERED"
+            ),
+            PrivacyDiagnosticCode.entries.map { it.name }.filter { it.startsWith("LOCK_SETTING") }.toSet()
+        )
+    }
+
+    @Test
+    fun `D9 LOCK_SETTINGS_RECOVERED is stored as a completed info privacy event with the cause as an enum name`() = runTest {
+        emitter.emit(
+            PrivacyDiagnosticCode.LOCK_SETTINGS_RECOVERED,
+            PrivacyDiagnosticMetadata.builder().put(PrivacyDiagnosticKey.CAUSE, SettingsUnreadableCause.TIMEOUT).build()
+        )
+
+        val event = written.single()
+        assertEquals(AppPipeline.PRIVACY, event.pipeline)
+        assertEquals(PrivacyDiagnosticsEmitter.STAGE, event.stage)
+        assertEquals(DiagnosticReasonCode.LOCK_SETTINGS_RECOVERED, event.reasonCode)
+        assertEquals(EventOutcome.COMPLETED, event.outcome)
+        assertEquals(EventSeverity.INFO, event.severity)
+        assertTrue(event.isTerminal)
+        assertNull(event.exception)
+        val json = metadataOf(event)
+        assertEquals(setOf("cause"), json.keys().asSequence().toSet())
+        assertEquals("TIMEOUT", json.getString("cause"))
+    }
+
+    @Test
+    fun `D9 LOCK_SETTINGS_RECOVERED drops every key other than CAUSE and keeps CAUSE`() = runTest {
+        emitter.emit(
+            PrivacyDiagnosticCode.LOCK_SETTINGS_RECOVERED,
+            PrivacyDiagnosticMetadata.builder()
+                .put(PrivacyDiagnosticKey.CAUSE, SettingsUnreadableCause.IO_ERROR)
+                .put(PrivacyDiagnosticKey.HOST, FakeHost.ADD)
+                .put(PrivacyDiagnosticKey.FIELD, FakeHost.ANALYTICS)
+                .put(PrivacyDiagnosticKey.COUNT, 3)
+                .put(PrivacyDiagnosticKey.AFTER_UNLOCK, true)
+                .exceptionClass(IllegalStateException("merchant ACME /data/user/0/secret.db"))
+                .build()
+        )
+
+        val json = metadataOf(written.single())
+        assertEquals(setOf("cause"), json.keys().asSequence().toSet())
+        assertEquals("IO_ERROR", json.getString("cause"))
+        assertFalse(written.single().metadata.toJson().contains("ACME"))
+    }
+
+    @Test
+    fun `D9 LOCK_SETTINGS_RECOVERED without metadata stores none`() = runTest {
+        emitter.emit(PrivacyDiagnosticCode.LOCK_SETTINGS_RECOVERED)
+
+        assertTrue(written.single().metadata.isEmpty())
     }
 
     @Test

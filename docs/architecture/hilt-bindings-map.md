@@ -385,6 +385,18 @@ Binds (@Singleton):
   AppLockSettingsRepository                   → AppLockSettingsRepositoryImpl
                                                 (own DataStore, device-local, never Room or .costbackup;
                                                 public ctor takes @ApplicationContext Context)
+  DeviceAuthenticator                         → AppLockAuthenticatorRelay      (S20-a; the controller's prompt port.
+                                                process-level relay in ui/applock; holds the Activity-bound
+                                                BiometricPromptDeviceAuthenticator weakly. The adapter itself is NOT
+                                                bound: the prompt host creates it per Activity. Reachable only through
+                                                this binding and AppLockPromptHost; never from workers or receivers)
+
+Auto-provided (no module entry; @Inject constructors) — app-lock S20-a (injected into MainActivity by S20-c):
+  @Singleton AppLockAuthenticatorRelay                 (no deps; main-thread only)
+  AppLockPromptHost                                    (AppLockAuthenticatorRelay, AppLockController; UNSCOPED, one per
+                                                        Activity, attach() in onCreate — called by MainActivity, S20-c)
+  @Singleton AppLockLifecycleBinder                    (AppLockController, @ApplicationScope CoroutineScope; install(app)
+                                                        once per process — called by MainActivity, S20-c)
 
 Auto-provided (no module entry; @Inject constructors) — app-lock 1a:
   @Singleton PrivacyDiagnosticsEmitter                 (NotificationDiagnosticEmitter, MonotonicTimeProvider)
@@ -393,25 +405,36 @@ Auto-provided (no module entry; @Inject constructors) — app-lock 1a:
   @Singleton NotificationPresentationApplier           (@ApplicationContext Context, NotificationPresentationTexts)
   @Singleton NotificationPresentationTexts             (resource-backed discreet / public-version texts)
   DiscreetRepostTrigger                                (NotificationService, PrivacyDiagnosticsEmitter)
-  UpdateDiscreetNotificationsUseCase                   (AppLockSettingsRepository, DiscreetRepostTrigger,
-                                                        PrivacyDiagnosticsEmitter)
+  (UpdateDiscreetNotificationsUseCase retired in S20-d; WRITE 5 goes through AppLockSettingsOperations)
   MarkDashboardBriefingOpenedUseCase                   (AiEngagementRepository)
   DeepLinkApplier                                      (ExpenseRepository, MarkDashboardBriefingOpenedUseCase,
                                                         PrivacyDiagnosticsEmitter, BankFeatureAvailability,
                                                         AiRuntimeDiagnostics, @ApplicationScope CoroutineScope;
-                                                        field-injected into MainActivity)
-  @Singleton AppLockSettingsWriteSerializer            (no deps; ui/screens/privacysettings; INTERIM process-wide
-                                                        Mutex serialising settings writes; retired at S18 when it
-                                                        moves to the domain owner)
-  @HiltViewModel AppLockPrivacySettingsViewModel       (AppLockSettingsRepository, UpdateDiscreetNotificationsUseCase,
-                                                        PrivacyDiagnosticsEmitter, AppLockSettingsWriteSerializer,
-                                                        DiscreetRepostTrigger, @ApplicationScope CoroutineScope)
+                                                        injected only through AppLockDeepLinkRouter's constructor
+                                                        since S21-b, no longer field-injected into MainActivity;
+                                                        pinned by DeepLinkApplierCallerPinTest)
+  AppLockDeepLinkRouter                                (AppLockController, DeepLinkApplier; UNSCOPED @Inject, one per
+                                                        Activity — field-injected into MainActivity; S21-b, ui/applock)
+  @Singleton AppLockSettingsWriteSerializer            (no deps; domain/privacy/applock; process-wide Mutex
+                                                        serialising ALL app-lock settings writes, shared by the
+                                                        ViewModel and AppLockSettingsOperations; moved from the ui
+                                                        package by S18 ii-a)
+  @Singleton AppLockSettingsOperations additionally takes AppLockSettingsWriteSerializer (S18 ii-a)
+  @HiltViewModel AppLockPrivacySettingsViewModel       (AppLockSettingsRepository, AppLockSettingsOperations (S20-d),
+                                                        AppLockController (S20-e, retry re-read),
+                                                        PrivacyDiagnosticsEmitter, @ApplicationScope CoroutineScope;
+                                                        AppLockSettingsWriteSerializer and DiscreetRepostTrigger were
+                                                        removed in S20-e)
   BillReminderWorker (@HiltWorker assisted) additionally takes NotificationPresentationResolver and
                                                         NotificationPresentationApplier (appended after timeProvider)
 ```
 `AppLockPrivacySettingsViewModel` uses `@ApplicationScope` (IO dispatcher, SupervisorJob) deliberately: every
 settings write (per-field discreet toggle and review-save) is launched there under
 `withContext(NonCancellable)` so a committed ON still runs its re-post sweep after the screen is left.
+Since S20-d the discreet toggle calls `AppLockSettingsOperations.requestDiscreetChange`, and since S20-e the review-save
+calls `requestReviewSave` (both serialise inside), so the ViewModel holds no serializer around either; the graph resolves because `AppLockSettingsOperations` is a `@Singleton`
+`@Inject` class whose dependencies are all bound (`AppLockController` since S20-c, `DeviceAuthenticator` via the relay
+binding of S20-a).
 
 ### `BackupRepositoryModule` — `di/BackupRepositoryModule.kt`
 ```
@@ -515,6 +538,14 @@ Provides:
 @EntryPoint @InstallIn(SingletonComponent::class):
   AppStartupCoordinator                       → obtained via EntryPointAccessors
 ```
+
+### `UnsupportedDatabaseExportAuthEntryPoint` — `ui/unsupported/UnsupportedDatabaseExportAuth.kt` (app-lock S21-c)
+```
+@EntryPoint @InstallIn(SingletonComponent::class), read-only, narrow:
+  AppLockSettingsRepository                   → AppLockSettingsRepositoryImpl (ctor: @ApplicationContext Context only)
+  DeviceAuthCapabilityProvider                → AndroidDeviceAuthCapabilityProvider (ctor: @ApplicationContext Context only)
+```
+Resolved at every export tap, by `UnsupportedDatabaseExportAuth.isAuthRequired`, via `EntryPointAccessors` on the application context. Nothing Room-backed is reachable from it (the screen exists because Room cannot open). Pinned by `UnsupportedDatabaseActivityTest` (exactly one lookup across the two `ui/unsupported` files).
 
 ---
 

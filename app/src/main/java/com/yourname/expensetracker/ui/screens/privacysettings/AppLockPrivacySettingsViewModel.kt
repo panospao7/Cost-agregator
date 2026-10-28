@@ -4,20 +4,20 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.yourname.expensetracker.di.ApplicationScope
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticThrowableSummary
+import com.yourname.expensetracker.domain.privacy.applock.AppLockController
 import com.yourname.expensetracker.domain.privacy.applock.AppLockPrivacySettings
 import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingField
 import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsLoadState
+import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsOperations
 import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsRepository
-import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsWriteResult
-import com.yourname.expensetracker.domain.privacy.applock.DiscreetRepostTrigger
-import com.yourname.expensetracker.domain.privacy.applock.EffectivePrivacyValues
+import com.yourname.expensetracker.domain.privacy.applock.AutoLockTimeout
 import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticCode
 import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticKey
 import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticMetadata
+import com.yourname.expensetracker.domain.privacy.applock.PlainSettingResult
 import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticsEmitter
+import com.yourname.expensetracker.domain.privacy.applock.ReviewSaveResult
 import com.yourname.expensetracker.domain.privacy.applock.SettingsUnreadableCause
-import com.yourname.expensetracker.domain.privacy.applock.UpdateDiscreetNotificationsResult
-import com.yourname.expensetracker.domain.privacy.applock.UpdateDiscreetNotificationsUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -31,6 +31,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import timber.log.Timber
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
 
 /** Bounded, content-free notice shown under the section after a write attempt. */
@@ -81,18 +82,20 @@ sealed interface AppLockPrivacySectionState {
 /**
  * ViewModel of the 1a "App lock & privacy" section (S12). [PrivacySettingsViewModel] is untouched.
  *
- * Legal path: the only writers are [UpdateDiscreetNotificationsUseCase] (per-field discreet write plus
- * the post-commit re-post sweep) and [AppLockSettingsRepository.reviewSave] (INV-44). Both end in the
- * settings repository (INV-1). The section never holds an optimistic value: [uiState] is derived from
- * the repository's committed load state (INV-46).
+ * Legal path: the only writers are [AppLockSettingsOperations.requestDiscreetChange] (WRITE 5: the forced-aware
+ * per-field discreet write plus the post-commit re-post sweep, serialised inside the operations; S20-d) and
+ * [AppLockSettingsOperations.requestReviewSave] (INV-44, INV-45; S20-e). Both end in the settings repository (INV-1).
+ * The section never holds an optimistic value: [uiState] is derived from the repository's committed load state
+ * (INV-46).
  *
- * A committed review-save also runs the discreet sweep trigger (before value "was off"), so a review that
- * saves discreet on re-posts the shade in place like the per-field path.
+ * The review-save diagnostics (`LOCK_SETTINGS_REVIEW_SAVED`, `LOCK_SETTING_PERSIST_FAILED(REVIEW_SAVE)`) and the
+ * post-commit discreet sweep are owned by the controller and the operations (D7), once each. This ViewModel
+ * emits neither.
  *
  * Write discipline (S9b carry-forwards):
- * - Serialised: every write runs under the singleton [AppLockSettingsWriteSerializer], so two taps, or a
- *   write started by a previous instance of this ViewModel, can never interleave their before-read, write
- *   and sweep.
+ * - Serialised: both writes are serialised INSIDE [AppLockSettingsOperations] (the singleton, domain-owned
+ *   write serializer), so this ViewModel must NOT wrap them in a serializer: the lock is non-reentrant and a wrap
+ *   would deadlock.
  * - Survives screen exit: writes are launched in the [ApplicationScope] and run inside
  *   `withContext(NonCancellable)`, off Main (the scope uses the IO dispatcher). A committed ON therefore
  *   cannot miss its re-post sweep because the screen was left. `NonCancellable` defers cancellation; it
@@ -101,10 +104,9 @@ sealed interface AppLockPrivacySectionState {
 @HiltViewModel
 class AppLockPrivacySettingsViewModel @Inject constructor(
     private val repository: AppLockSettingsRepository,
-    private val updateDiscreetNotifications: UpdateDiscreetNotificationsUseCase,
+    private val operations: AppLockSettingsOperations,
+    private val controller: AppLockController,
     private val privacyDiagnostics: PrivacyDiagnosticsEmitter,
-    private val writeSerializer: AppLockSettingsWriteSerializer,
-    private val discreetRepostTrigger: DiscreetRepostTrigger,
     @ApplicationScope private val appScope: CoroutineScope
 ) : ViewModel() {
 
@@ -120,6 +122,30 @@ class AppLockPrivacySettingsViewModel @Inject constructor(
      * review state, so it can never stay stale.
      */
     private val reviewCommitted = MutableStateFlow(false)
+
+    /**
+     * VM-internal, never rendered and never exposed (S20-e review-save notice, owner-approvals 64).
+     *
+     * Armed when [AppLockSettingsOperations.requestReviewSave] returns STARTED (the CHANGE prompt is open, nothing is
+     * committed yet). It is consumed exactly once, by the load-state observer, when the observed state moves from the
+     * review (persistent-unreadable) category to a readable one: that is the confirmed save committing, and only then
+     * is REVIEW_SAVED shown. A commit that reaches the observer without this flag armed shows no notice.
+     *
+     * Clearing rule (no controller observation, no new API; the prompt outcome is not observable from here):
+     * - consumed by the commit (above), so a second emission can never show the notice again;
+     * - replaced by every later review-save result, except ALREADY_IN_FLIGHT (the confirmed apply may still be
+     *   writing):
+     *   STARTED re-arms it, COMMITTED, FAILED, REJECTED_CAPABILITY, NOT_IN_REVIEW and NOT_IN_ORIGIN clear it. A user
+     *   who cancelled the prompt and saves again therefore never carries a stale flag into the next outcome;
+     * - cleared by [retry] (the user re-reads) and when the observed state leaves the review category for anything
+     *   but a readable state (loading or transient-unreadable);
+     * - dies with the ViewModel.
+     * A prompt that was cancelled and followed by no further action leaves the flag armed. The store stays
+     * persistently unreadable then, so nothing is shown; the only effect is that an unrelated external recovery of the
+     * store before the next action would show the notice. That is the accepted residual of choosing the simplest rule.
+     * Atomic: it is armed from the application scope (IO) and consumed from the observer (Main).
+     */
+    private val pendingReviewSave = AtomicBoolean(false)
 
     @Volatile
     private var observeJob: Job? = null
@@ -160,11 +186,10 @@ class AppLockPrivacySettingsViewModel @Inject constructor(
         if (!beginWrite()) return
         appScope.launch {
             try {
-                // Whole sequence (before-read, write, sweep) is uninterruptible and serialised.
+                // Whole sequence (before-read, write, sweep) is uninterruptible. It is serialised inside the
+                // operations, so there is deliberately NO outer serializer here (non-reentrant: it would deadlock).
                 withContext(NonCancellable) {
-                    writeSerializer.withExclusiveWrite {
-                        handleDiscreetResult(updateDiscreetNotifications(enabled))
-                    }
+                    handlePlain(operations.requestDiscreetChange(enabled))
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -186,35 +211,49 @@ class AppLockPrivacySettingsViewModel @Inject constructor(
     }
 
     /**
-     * Review-save of the whole 1a record (INV-44). 1a has no lock, so no authentication applies
-     * (INV-45, 1a note). Ignored unless the review card is showing and idle.
+     * Review-save of the whole record through [AppLockSettingsOperations.requestReviewSave] (INV-44, INV-45, S20-e).
+     * Until the full settings UI (S22) the record is the D2 record: lock off, [AutoLockTimeout.IMMEDIATE], discreet =
+     * the user's choice, secure screen on (the fail-closed value). It has no lock to enable, so the capability
+     * refusal is unreachable here. Ignored unless the review card is showing and idle.
      */
     fun saveReview() {
         val current = uiState.value
         if (current !is AppLockPrivacySectionState.NeedsReview || current.isSaving) return
-        val record = AppLockPrivacySettings(discreetNotifications = reviewChoice.value)
+        val record = AppLockPrivacySettings(
+            discreetNotifications = reviewChoice.value,
+            appLockEnabled = false,
+            autoLockTimeout = AutoLockTimeout.IMMEDIATE,
+            secureScreen = true
+        )
         if (!beginWrite()) return
         appScope.launch {
             try {
+                // Serialised inside the operations: deliberately NO outer serializer (non-reentrant: it would deadlock).
                 withContext(NonCancellable) {
-                    writeSerializer.withExclusiveWrite { handleReviewResult(repository.reviewSave(record)) }
+                    handleReviewResult(operations.requestReviewSave(record))
                 }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
+                // The diagnostics of a review-save are owned by the controller and the operations (D7).
                 Timber.w("Review save failed: class=%s", DiagnosticThrowableSummary.className(e))
                 notice.value = AppLockPrivacySectionNotice.SAVE_FAILED
-                recordPersistFailed(AppLockSettingField.REVIEW_SAVE)
             } finally {
                 isWriting.value = false
             }
         }
     }
 
-    /** "Try again" on the transient unreadable variant: shows Checking... and re-reads (INV-47). */
+    /**
+     * "Try again" on the transient unreadable variant: shows Checking... and re-reads (INV-47). The controller's own
+     * view is re-read as well, through its settings re-read request (it does nothing unless that view is
+     * transient-unreadable).
+     */
     fun retry() {
+        pendingReviewSave.set(false)
         applyLoadState(null)
         startObserving()
+        controller.requestSettingsReread()
     }
 
     /**
@@ -232,71 +271,66 @@ class AppLockPrivacySettingsViewModel @Inject constructor(
         return true
     }
 
-    private suspend fun handleDiscreetResult(result: UpdateDiscreetNotificationsResult) {
+    /**
+     * Exhaustive over [PlainSettingResult] (no else: a new value must be mapped here). The failure diagnostic and
+     * the re-post sweep are owned by the operations and the controller, not by this ViewModel.
+     */
+    private fun handlePlain(result: PlainSettingResult) {
         when (result) {
             // The committed value arrives through the store observer (INV-46). A failed sweep is
             // silent by design (spec 4.6) and already recorded by the trigger.
-            is UpdateDiscreetNotificationsResult.Committed -> Unit
-            // The store became unreadable under us and nothing was written (owner decision 2026-10-24:
-            // the tap must not be silently ignored). Show the save-failed notice and re-read so the
-            // observer reports the true state. No diagnostic: nothing was written. The notice survives
-            // a re-read that lands in the same readable category; applyLoadState clears it on a category
-            // change, and beginWrite clears it on the next write.
-            is UpdateDiscreetNotificationsResult.Rejected -> {
+            PlainSettingResult.COMMITTED -> Unit
+            // FAILED: the commit failed or the store was unreadable; nothing changed (AE-105). The tap must not be
+            // silently ignored (owner decision 2026-10-24), so show the save-failed notice and re-read so the
+            // observer reports the true state. REJECTED_FORCED (INV-48: the lock became on, the value is
+            // forced) and ALREADY_IN_FLIGHT (INV-54: a lock apply is running) wrote nothing; the same notice
+            // and re-read apply. The notice survives a re-read that lands in the same readable category;
+            // applyLoadState clears it on a category change, and beginWrite clears it on the next write.
+            PlainSettingResult.FAILED,
+            PlainSettingResult.REJECTED_FORCED,
+            PlainSettingResult.ALREADY_IN_FLIGHT -> {
                 notice.value = AppLockPrivacySectionNotice.SAVE_FAILED
-                resubscribeOnMain()
-            }
-            // AE-105: the committed value is unchanged; the use case recorded the diagnostic.
-            is UpdateDiscreetNotificationsResult.Failed ->
-                notice.value = AppLockPrivacySectionNotice.SAVE_FAILED
-        }
-    }
-
-    private suspend fun handleReviewResult(result: AppLockSettingsWriteResult) {
-        when (result) {
-            is AppLockSettingsWriteResult.Committed -> {
-                // The next review (if the store is corrupted again) starts from the fail-closed choice.
-                reviewChoice.value = FAIL_CLOSED_DISCREET
-                // Keep the card busy until the observer shows a readable state: no duplicate review-save.
-                reviewCommitted.value = true
-                notice.value = AppLockPrivacySectionNotice.REVIEW_SAVED
-                emitSafely { privacyDiagnostics.emit(PrivacyDiagnosticCode.LOCK_SETTINGS_REVIEW_SAVED) }
-                sweepAfterCommittedReview(result.settings)
-            }
-            is AppLockSettingsWriteResult.Failed -> {
-                notice.value = AppLockPrivacySectionNotice.SAVE_FAILED
-                recordPersistFailed(result.field)
-            }
-            is AppLockSettingsWriteResult.Rejected -> {
-                // Reachable: the repository answers Rejected(UNREADABLE) when the read after a failed
-                // commit is transient. Nothing was written. Keep the error and the diagnostic, and
-                // re-read so the observer reports the true state.
-                notice.value = AppLockPrivacySectionNotice.SAVE_FAILED
-                recordPersistFailed(AppLockSettingField.REVIEW_SAVE)
                 resubscribeOnMain()
             }
         }
     }
 
     /**
-     * A committed review-save can set discreet on, and the review path has no trustworthy before value
-     * (the store was unreadable), so the before value is "was off": a committed on sweeps, a committed
-     * off does not. Runs inside the same serialised, uninterruptible block as the write. The trigger
-     * records its own failures; a failure here never turns the committed save into a reported failure.
+     * Exhaustive over [ReviewSaveResult] (no else: a new value must be mapped here). The review-save diagnostics and
+     * the post-commit discreet sweep are owned by the controller and the operations (D7), not by this ViewModel.
      */
-    private suspend fun sweepAfterCommittedReview(committed: AppLockPrivacySettings) {
-        try {
-            discreetRepostTrigger.onCommittedWrite(
-                wasEffectiveDiscreet = false,
-                isEffectiveDiscreet = EffectivePrivacyValues.effectiveDiscreet(
-                    AppLockSettingsLoadState.Loaded(committed)
-                )
-            )
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            Timber.w("Review-save sweep trigger failed: class=%s", DiagnosticThrowableSummary.className(e))
+    private fun handleReviewResult(result: ReviewSaveResult) {
+        // Every result except ALREADY_IN_FLIGHT (the confirmed apply may still be writing) replaces the pending flag.
+        if (result != ReviewSaveResult.ALREADY_IN_FLIGHT) pendingReviewSave.set(result == ReviewSaveResult.STARTED)
+        when (result) {
+            ReviewSaveResult.COMMITTED -> {
+                markReviewCommitted()
+                notice.value = AppLockPrivacySectionNotice.REVIEW_SAVED
+            }
+            // STARTED: a weakening record confirms through the CHANGE prompt first. Nothing is committed yet and no
+            // notice is shown now; the flag armed above makes the observer show REVIEW_SAVED once, when it reports
+            // the commit (INV-46).
+            ReviewSaveResult.STARTED -> Unit
+            // FAILED: the write did not commit; the store and the sentinel are unchanged (AE-89).
+            ReviewSaveResult.FAILED -> notice.value = AppLockPrivacySectionNotice.SAVE_FAILED
+            // Nothing was written. Show the error and re-read so the observer reports the true state.
+            // REJECTED_CAPABILITY is unreachable with the D2 record (lock off) and is mapped fail-closed.
+            ReviewSaveResult.REJECTED_CAPABILITY,
+            ReviewSaveResult.NOT_IN_REVIEW,
+            ReviewSaveResult.NOT_IN_ORIGIN,
+            ReviewSaveResult.ALREADY_IN_FLIGHT -> {
+                notice.value = AppLockPrivacySectionNotice.SAVE_FAILED
+                resubscribeOnMain()
+            }
         }
+    }
+
+    /** Shared by both commit paths (COMMITTED result, and STARTED then the observed commit). */
+    private fun markReviewCommitted() {
+        // The next review (if the store is corrupted again) starts from the fail-closed choice.
+        reviewChoice.value = FAIL_CLOSED_DISCREET
+        // Keep the card busy until the observer shows a readable state: no duplicate review-save.
+        reviewCommitted.value = true
     }
 
     private suspend fun recordPersistFailed(field: AppLockSettingField) {
@@ -329,7 +363,10 @@ class AppLockPrivacySettingsViewModel @Inject constructor(
      * - the notice is cleared when the load-state category changes, except that a review-saved notice
      *   survives the move to a readable state it announces;
      * - moving into the review state from any other category resets the review choice to the fail-closed
-     *   value and the post-commit busy flag.
+     *   value and the post-commit busy flag;
+     * - a move from the review category to a readable one while [pendingReviewSave] is armed is the confirmed
+     *   review-save committing: REVIEW_SAVED is shown once and the flag is consumed. Leaving the review category for
+     *   loading or transient-unreadable clears the flag without a notice.
      */
     private fun applyLoadState(new: AppLockSettingsLoadState?) {
         val oldCategory = categoryOf(loadState.value)
@@ -337,6 +374,15 @@ class AppLockPrivacySettingsViewModel @Inject constructor(
         if (newCategory == LoadCategory.REVIEW && oldCategory != LoadCategory.REVIEW) {
             reviewChoice.value = FAIL_CLOSED_DISCREET
             reviewCommitted.value = false
+        }
+        if (oldCategory == LoadCategory.REVIEW && newCategory != LoadCategory.REVIEW) {
+            val committed = newCategory == LoadCategory.READY && pendingReviewSave.compareAndSet(true, false)
+            if (committed) {
+                markReviewCommitted()
+                notice.value = AppLockPrivacySectionNotice.REVIEW_SAVED
+            } else if (newCategory != LoadCategory.READY) {
+                pendingReviewSave.set(false)
+            }
         }
         if (newCategory != oldCategory) {
             val keepReviewSaved = newCategory == LoadCategory.READY &&

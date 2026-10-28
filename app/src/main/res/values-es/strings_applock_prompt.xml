@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- S15: constant system-prompt text for the app lock. Best-effort translation, owner review pending. -->
+    <string name="applock_prompt_title_enable">Activar el bloqueo de la app</string>
+    <string name="applock_prompt_subtitle_enable">Confirma con tu huella o con el bloqueo de pantalla.</string>
+    <string name="applock_prompt_title_disable">Desactivar el bloqueo de la app</string>
+    <string name="applock_prompt_title_change">Cambiar los ajustes del bloqueo de la app</string>
+    <string name="applock_prompt_title_unlock">Desbloquear</string>
+</resources>

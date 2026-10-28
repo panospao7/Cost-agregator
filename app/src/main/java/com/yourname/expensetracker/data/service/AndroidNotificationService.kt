@@ -11,6 +11,7 @@ import android.service.notification.StatusBarNotification
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.yourname.expensetracker.R
+import com.yourname.expensetracker.domain.notification.presentation.NotificationActionPolicy
 import com.yourname.expensetracker.domain.notification.presentation.NotificationContentPolicy
 import com.yourname.expensetracker.domain.notification.presentation.NotificationKind
 import com.yourname.expensetracker.domain.notification.presentation.NotificationPresentationResolver
@@ -307,11 +308,34 @@ class AndroidNotificationService internal constructor(
         return NotificationService.RepostResult(reposted = reposted, failed = failed)
     }
 
-    private fun rebuildDiscreet(original: StatusBarNotification, kind: NotificationKind): Notification {
+    /**
+     * Whether a sweep rebuild of [kind] must drop its actions because the lock is enabled or the settings
+     * are unreadable (INV-10, S18-ii-b). Only BILL has actions; every other kind answers false without a read.
+     *
+     * For BILL it asks the post path itself ([NotificationPresentationResolver.resolve]) instead of keeping a
+     * second copy of the rule: the resolver does the bounded committed-state read, applies
+     * `EffectivePrivacyValues.effectiveLockEnabled` (a timeout, an unreadable store or a thrown read all count as
+     * lock on, fail-closed), and records the bounded `NOTIF_ACTIONS_SUPPRESSED_LOCK(sdkInt)` (D5) through its
+     * own emitter helper. The check is fail-closed: any policy other than `UNCHANGED` counts as suppressed, so an
+     * unexpected value can never keep actions. On API 30 and below `NONE` is exactly the lock-on-or-unreadable
+     * term. On API 31+ the policy is `AUTH_REQUIRED`, so the answer is now true there too, but
+     * `NotificationContentPolicy.decideDiscreet` returns `AUTH_REQUIRED` first on those levels, so the output is
+     * unchanged. `CancellationException` propagates from the resolver.
+     */
+    private suspend fun actionsSuppressedFor(kind: NotificationKind): Boolean {
+        if (kind != NotificationKind.BILL) return false
+        return presentationResolver.resolve(kind, Build.VERSION.SDK_INT).actionPolicy != NotificationActionPolicy.UNCHANGED
+    }
+
+    private suspend fun rebuildDiscreet(original: StatusBarNotification, kind: NotificationKind): Notification {
         val old = original.notification
         val channelId = old.channelId
         val shape = shapeFor(kind)
-        val decision = NotificationContentPolicy.decideDiscreet(kind, Build.VERSION.SDK_INT)
+        val decision = NotificationContentPolicy.decideDiscreet(
+            kind = kind,
+            sdkInt = Build.VERSION.SDK_INT,
+            actionsSuppressed = actionsSuppressedFor(kind)
+        )
 
         val builder = NotificationCompat.Builder(context, channelId)
             .setSmallIcon(shape.smallIcon)

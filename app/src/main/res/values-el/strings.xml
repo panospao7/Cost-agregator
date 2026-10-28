@@ -26,6 +26,8 @@
     <string name="unsupported_db_close_button">Κλείσιμο εφαρμογής</string>
     <string name="unsupported_db_export_success">Το αρχείο της βάσης δεδομένων εξήχθη.</string>
     <string name="unsupported_db_export_failed">Δεν ήταν δυνατή η εξαγωγή του αρχείου της βάσης δεδομένων. Δοκιμάστε άλλη τοποθεσία.</string>
+    <!-- S21-c: DRAFT: owner native sign-off pending -->
+    <string name="unsupported_db_export_auth_denied">Η εξαγωγή απαιτεί το δακτυλικό αποτύπωμα ή το κλείδωμα οθόνης σας. Δεν εξήχθη τίποτα.</string>
     <string name="backup_schema_too_old">Αυτό το αντίγραφο ασφαλείας προέρχεται από πολύ παλιά έκδοση της εφαρμογής και δεν μπορεί να επαναφερθεί.</string>
     <string name="backup_schema_too_new">Αυτό το αντίγραφο ασφαλείας δημιουργήθηκε από νεότερη έκδοση της εφαρμογής. Ενημερώστε την εφαρμογή για να το επαναφέρετε.</string>
     <string name="bank_sync_result_success">Ο συγχρονισμός ολοκληρώθηκε</string>

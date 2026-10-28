@@ -7,6 +7,7 @@ import com.yourname.expensetracker.domain.privacy.applock.AppLockPrivacySettings
 import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsLoadState
 import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsWriteResult
 import com.yourname.expensetracker.domain.privacy.applock.AppLockWriteRejection
+import com.yourname.expensetracker.domain.privacy.applock.AutoLockTimeout
 import com.yourname.expensetracker.domain.privacy.applock.EffectivePrivacyValues
 import com.yourname.expensetracker.domain.privacy.applock.SettingsUnreadableCause
 import java.io.File
@@ -133,7 +134,8 @@ class AppLockSettingsRepositoryImplCorruptionTest {
     fun per_field_write_after_corruption_is_rejected_and_sentinel_remains() = runBlocking {
         val file = writeCorruptFile()
 
-        val result = repository.setDiscreetNotifications(false)
+        // S20-d: ported from the retired unforced write to the forced-aware write (same Unreadable rejection, INV-44).
+        val result = repository.setDiscreetNotificationsIfNotForced(false)
 
         assertHandlerReplacedFile(file)
         assertEquals(AppLockSettingsWriteResult.Rejected(AppLockWriteRejection.UNREADABLE), result)
@@ -171,8 +173,41 @@ class AppLockSettingsRepositoryImplCorruptionTest {
     }
 
     @Test
+    fun corruption_effective_values_are_the_full_1b_fail_closed_record() = runBlocking {
+        val file = writeCorruptFile()
+
+        val state = repository.getLoadState()
+
+        assertHandlerReplacedFile(file)
+        val effective = EffectivePrivacyValues.effectiveSettings(state)
+        assertTrue(effective.appLockEnabled)
+        assertEquals(AutoLockTimeout.IMMEDIATE, effective.autoLockTimeout)
+        assertTrue(effective.secureScreen)
+        assertTrue(EffectivePrivacyValues.effectiveSecureScreen(state, resolving = false))
+        assertTrue(EffectivePrivacyValues.effectiveLockEnabled(state))
+    }
+
+    @Test
+    fun reviewSave_of_a_1b_record_after_corruption_clears_the_sentinel_and_survives_a_cold_start() = runBlocking {
+        val file = writeCorruptFile()
+        val record = AppLockPrivacySettings(
+            discreetNotifications = false,
+            appLockEnabled = true,
+            autoLockTimeout = AutoLockTimeout.M5,
+            secureScreen = true
+        )
+
+        val result = repository.reviewSave(record)
+
+        assertHandlerReplacedFile(file)
+        assertEquals(AppLockSettingsWriteResult.Committed(record), result)
+        assertEquals(AppLockSettingsLoadState.Loaded(record), coldStartFromDisk(file).getLoadState())
+    }
+
+    @Test
     fun store_uses_its_own_file_and_never_touches_the_privacy_settings_store() = runBlocking {
-        repository.setDiscreetNotifications(true)
+        // S20-d: ported from the retired unforced write to the forced-aware write (the lock is off, so it commits).
+        repository.setDiscreetNotificationsIfNotForced(true)
 
         val dir = File(context.filesDir, "datastore")
         assertTrue(File(dir, "app_lock_privacy_settings.preferences_pb").exists())

@@ -140,6 +140,97 @@ enum class PrivacyDiagnosticCode(
     LOCK_SETTINGS_REVIEW_SAVED(
         DiagnosticReasonCode.LOCK_SETTINGS_REVIEW_SAVED, EventOutcome.COMPLETED, EventSeverity.INFO,
         emptySet()
+    ),
+
+    // App-lock controller (S18-ii-c, owner-approvals item 51a, D9): T28, a re-read recovered a transient unreadable
+    // store. CAUSE carries the bounded PRIOR unreadable cause, only IO_ERROR or TIMEOUT (the controller never
+    // emits a persistent cause here), as an enum name only.
+    LOCK_SETTINGS_RECOVERED(
+        DiagnosticReasonCode.LOCK_SETTINGS_RECOVERED, EventOutcome.COMPLETED, EventSeverity.INFO,
+        setOf(PrivacyDiagnosticKey.CAUSE)
+    ),
+
+    // App-lock controller (S16 part (i)): lock shown, unlocked, inert. No metadata: the cause or
+    // reason is the code itself. The enable/disable and recovery codes arrive with their slices.
+    LOCK_SHOWN_COLD_START(
+        DiagnosticReasonCode.LOCK_SHOWN_COLD_START, EventOutcome.BLOCKED, EventSeverity.INFO,
+        emptySet()
+    ),
+    LOCK_SHOWN_TIMEOUT(
+        DiagnosticReasonCode.LOCK_SHOWN_TIMEOUT, EventOutcome.BLOCKED, EventSeverity.INFO,
+        emptySet()
+    ),
+    LOCK_SHOWN_SETTINGS_UNREADABLE(
+        DiagnosticReasonCode.LOCK_SHOWN_SETTINGS_UNREADABLE, EventOutcome.BLOCKED, EventSeverity.WARNING,
+        emptySet()
+    ),
+    LOCK_UNLOCKED(
+        DiagnosticReasonCode.LOCK_UNLOCKED, EventOutcome.COMPLETED, EventSeverity.INFO,
+        emptySet()
+    ),
+    LOCK_INERT_NO_CREDENTIAL(
+        DiagnosticReasonCode.LOCK_INERT_NO_CREDENTIAL, EventOutcome.SKIPPED, EventSeverity.WARNING,
+        emptySet()
+    ),
+    LOCK_INERT_HW_UNAVAILABLE(
+        DiagnosticReasonCode.LOCK_INERT_HW_UNAVAILABLE, EventOutcome.SKIPPED, EventSeverity.WARNING,
+        emptySet()
+    ),
+    LOCK_INERT_UNKNOWN(
+        DiagnosticReasonCode.LOCK_INERT_UNKNOWN, EventOutcome.SKIPPED, EventSeverity.WARNING,
+        emptySet()
+    ),
+    LOCK_INERT_API_UNSUPPORTED(
+        DiagnosticReasonCode.LOCK_INERT_API_UNSUPPORTED, EventOutcome.SKIPPED, EventSeverity.WARNING,
+        emptySet()
+    ),
+    LOCK_INERT_SETTINGS_UNREADABLE(
+        DiagnosticReasonCode.LOCK_INERT_SETTINGS_UNREADABLE, EventOutcome.SKIPPED, EventSeverity.WARNING,
+        emptySet()
+    ),
+
+    // App-lock controller (S16 part (ii-a)): UNLOCK prompt outcomes (T9, T10, T35). LOCK_AUTH_CANCELLED
+    // and LOCK_AUTH_LOCKOUT carry no metadata. LOCK_AUTH_ERROR carries the bounded prompt error bucket
+    // (HW_UNAVAILABLE / TIMEOUT / SYSTEM_CANCELED / OTHER) under the closed CAUSE key, as an enum name only.
+    LOCK_AUTH_CANCELLED(
+        DiagnosticReasonCode.LOCK_AUTH_CANCELLED, EventOutcome.SKIPPED, EventSeverity.INFO,
+        emptySet()
+    ),
+    LOCK_AUTH_LOCKOUT(
+        DiagnosticReasonCode.LOCK_AUTH_LOCKOUT, EventOutcome.BLOCKED, EventSeverity.WARNING,
+        emptySet()
+    ),
+    LOCK_AUTH_ERROR(
+        DiagnosticReasonCode.LOCK_AUTH_ERROR, EventOutcome.BLOCKED, EventSeverity.WARNING,
+        setOf(PrivacyDiagnosticKey.CAUSE)
+    ),
+
+    // App-lock controller (S16 part (ii-a), owner-approvals item 32): a failed capability check at an Unlock
+    // tap (spec 10 LOCK_UNAVAILABLE_CAPABILITY), and (S16 part (ii-b)) an ENABLE prompt whose NotAvailable
+    // re-check refuses. CAUSE carries the bounded DeviceAuthCapability enum name, never text.
+    LOCK_UNAVAILABLE_CAPABILITY(
+        DiagnosticReasonCode.LOCK_UNAVAILABLE_CAPABILITY, EventOutcome.SKIPPED, EventSeverity.WARNING,
+        setOf(PrivacyDiagnosticKey.CAUSE)
+    ),
+
+    // App-lock controller (S18 part (i-a)): the T26 request-time refusals for the two causes that have their
+    // own code (spec 10), and the enable / disable results (T17, T18). The refusals carry the bounded
+    // DeviceAuthCapability enum name under the closed CAUSE key; LOCK_ENABLED and LOCK_DISABLED carry nothing.
+    LOCK_UNAVAILABLE_NOT_SECURE(
+        DiagnosticReasonCode.LOCK_UNAVAILABLE_NOT_SECURE, EventOutcome.SKIPPED, EventSeverity.WARNING,
+        setOf(PrivacyDiagnosticKey.CAUSE)
+    ),
+    LOCK_UNAVAILABLE_API(
+        DiagnosticReasonCode.LOCK_UNAVAILABLE_API, EventOutcome.SKIPPED, EventSeverity.WARNING,
+        setOf(PrivacyDiagnosticKey.CAUSE)
+    ),
+    LOCK_ENABLED(
+        DiagnosticReasonCode.LOCK_ENABLED, EventOutcome.COMPLETED, EventSeverity.INFO,
+        emptySet()
+    ),
+    LOCK_DISABLED(
+        DiagnosticReasonCode.LOCK_DISABLED, EventOutcome.COMPLETED, EventSeverity.INFO,
+        emptySet()
     )
 }
 
@@ -194,6 +285,9 @@ class PrivacyDiagnosticMetadata private constructor(
  * suppressed code and the suppressed count), then writes itself and opens a new window. The
  * count is memory-only: it is a lower bound if the process dies, and a window with no later
  * call for the same code never produces a summary.
+ *
+ * The window is per code, not per metadata value: a second `LOCK_AUTH_ERROR` bucket emitted within 60 s
+ * of the first is counted but not written (accepted, privacy review F5).
  *
  * ## Contract for callers
  *

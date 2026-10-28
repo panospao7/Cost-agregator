@@ -17,6 +17,7 @@ import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsLoadSta
 import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsRepository
 import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsWriteResult
 import com.yourname.expensetracker.domain.privacy.applock.AppLockWriteRejection
+import com.yourname.expensetracker.domain.privacy.applock.AutoLockTimeout
 import com.yourname.expensetracker.domain.privacy.applock.SettingsUnreadableCause
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.IOException
@@ -69,6 +70,9 @@ class AppLockSettingsRepositoryImpl @VisibleForTesting internal constructor(
 
     private object Keys {
         val DISCREET_NOTIFICATIONS = booleanPreferencesKey("discreet_notifications")
+        val APP_LOCK_ENABLED = booleanPreferencesKey("app_lock_enabled")
+        val AUTO_LOCK_TIMEOUT = stringPreferencesKey("auto_lock_timeout")
+        val SECURE_SCREEN = booleanPreferencesKey("secure_screen")
     }
 
     override fun observeLoadState(): Flow<AppLockSettingsLoadState> =
@@ -91,13 +95,12 @@ class AppLockSettingsRepositoryImpl @VisibleForTesting internal constructor(
             AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.IO_ERROR)
         }
 
-    override suspend fun setDiscreetNotifications(enabled: Boolean): AppLockSettingsWriteResult =
+    override suspend fun setAppLockEnabled(enabled: Boolean): AppLockSettingsWriteResult =
         try {
             val after = store.edit { prefs ->
-                // INV-44: nothing is written while unreadable. An unchanged result is not rewritten
-                // by DataStore, so the sentinel stays exactly as it was.
+                // INV-44: nothing is written while unreadable (read-check-write inside one store edit).
                 if (prefs.toLoadState() is AppLockSettingsLoadState.Unreadable) return@edit
-                prefs[Keys.DISCREET_NOTIFICATIONS] = enabled
+                prefs[Keys.APP_LOCK_ENABLED] = enabled
                 prefs[LOAD_STATE_KEY] = LOAD_STATE_NORMAL
             }
             when (val state = after.toLoadState()) {
@@ -107,23 +110,140 @@ class AppLockSettingsRepositoryImpl @VisibleForTesting internal constructor(
                     AppLockSettingsWriteResult.Rejected(AppLockWriteRejection.UNREADABLE)
             }
         } catch (e: IOException) {
-            writeFailure(e, AppLockSettingField.DISCREET, rejectOnPersistentUnreadable = true)
+            writeFailure(e, AppLockSettingField.APP_LOCK_ENABLED, rejectOnPersistentUnreadable = true)
         }
 
-    override suspend fun reviewSave(record: AppLockPrivacySettings): AppLockSettingsWriteResult =
+    override suspend fun setAutoLockTimeout(timeout: AutoLockTimeout): AppLockSettingsWriteResult =
         try {
+            val after = store.edit { prefs ->
+                // INV-44: nothing is written while unreadable (same read-check-write as the lock flag write).
+                if (prefs.toLoadState() is AppLockSettingsLoadState.Unreadable) return@edit
+                prefs[Keys.AUTO_LOCK_TIMEOUT] = timeout.token
+                prefs[LOAD_STATE_KEY] = LOAD_STATE_NORMAL
+            }
+            when (val state = after.toLoadState()) {
+                is AppLockSettingsLoadState.Loaded -> AppLockSettingsWriteResult.Committed(state.settings)
+                is AppLockSettingsLoadState.FirstRunDefault -> AppLockSettingsWriteResult.Committed(state.settings)
+                is AppLockSettingsLoadState.Unreadable ->
+                    AppLockSettingsWriteResult.Rejected(AppLockWriteRejection.UNREADABLE)
+            }
+        } catch (e: IOException) {
+            writeFailure(e, AppLockSettingField.AUTO_LOCK_TIMEOUT, rejectOnPersistentUnreadable = true)
+        }
+
+    override suspend fun setAutoLockTimeoutIfNotWeakening(timeout: AutoLockTimeout): AppLockSettingsWriteResult {
+        // Set inside the edit, read after it: the check and the write are ONE atomic store edit (S18 i-b1 F1).
+        var weakening = false
+        return try {
+            val after = store.edit { prefs ->
+                weakening = false
+                val stored = when (val state = prefs.toLoadState()) {
+                    is AppLockSettingsLoadState.Loaded -> state.settings
+                    is AppLockSettingsLoadState.FirstRunDefault -> state.settings
+                    // INV-44: nothing is written while unreadable.
+                    is AppLockSettingsLoadState.Unreadable -> return@edit
+                }
+                // A longer timeout with the lock on is a weakening: it needs the prompt path, so nothing is written
+                // here. An invalid stored timeout already reads as IMMEDIATE, so any other value is longer.
+                if (stored.appLockEnabled && timeout.millis > stored.autoLockTimeout.millis) {
+                    weakening = true
+                    return@edit
+                }
+                prefs[Keys.AUTO_LOCK_TIMEOUT] = timeout.token
+                prefs[LOAD_STATE_KEY] = LOAD_STATE_NORMAL
+            }
+            if (weakening) {
+                AppLockSettingsWriteResult.Rejected(AppLockWriteRejection.WOULD_WEAKEN)
+            } else {
+                when (val state = after.toLoadState()) {
+                    is AppLockSettingsLoadState.Loaded -> AppLockSettingsWriteResult.Committed(state.settings)
+                    is AppLockSettingsLoadState.FirstRunDefault -> AppLockSettingsWriteResult.Committed(state.settings)
+                    is AppLockSettingsLoadState.Unreadable ->
+                        AppLockSettingsWriteResult.Rejected(AppLockWriteRejection.UNREADABLE)
+                }
+            }
+        } catch (e: IOException) {
+            writeFailure(e, AppLockSettingField.AUTO_LOCK_TIMEOUT, rejectOnPersistentUnreadable = true)
+        }
+    }
+
+    override suspend fun setDiscreetNotificationsIfNotForced(enabled: Boolean): AppLockSettingsWriteResult =
+        setBooleanIfNotForced(Keys.DISCREET_NOTIFICATIONS, AppLockSettingField.DISCREET, enabled)
+
+    override suspend fun setSecureScreenIfNotForced(enabled: Boolean): AppLockSettingsWriteResult =
+        setBooleanIfNotForced(Keys.SECURE_SCREEN, AppLockSettingField.SECURE_SCREEN, enabled)
+
+    /**
+     * The forced-aware boolean write (S18 i-b2, INV-48): ONE store edit. Unreadable gives `Rejected(UNREADABLE)` and
+     * writes nothing (INV-44); a stored lock flag that is on gives `Rejected(FORCED)` and writes nothing (the value is
+     * forced and read-only); otherwise the write. IO and cancellation as the other per-field writes.
+     */
+    private suspend fun setBooleanIfNotForced(
+        key: Preferences.Key<Boolean>,
+        field: AppLockSettingField,
+        enabled: Boolean
+    ): AppLockSettingsWriteResult {
+        var forced = false
+        return try {
+            val after = store.edit { prefs ->
+                forced = false
+                val stored = when (val state = prefs.toLoadState()) {
+                    is AppLockSettingsLoadState.Loaded -> state.settings
+                    is AppLockSettingsLoadState.FirstRunDefault -> state.settings
+                    is AppLockSettingsLoadState.Unreadable -> return@edit
+                }
+                if (stored.appLockEnabled) {
+                    forced = true
+                    return@edit
+                }
+                prefs[key] = enabled
+                prefs[LOAD_STATE_KEY] = LOAD_STATE_NORMAL
+            }
+            if (forced) {
+                AppLockSettingsWriteResult.Rejected(AppLockWriteRejection.FORCED)
+            } else {
+                when (val state = after.toLoadState()) {
+                    is AppLockSettingsLoadState.Loaded -> AppLockSettingsWriteResult.Committed(state.settings)
+                    is AppLockSettingsLoadState.FirstRunDefault -> AppLockSettingsWriteResult.Committed(state.settings)
+                    is AppLockSettingsLoadState.Unreadable ->
+                        AppLockSettingsWriteResult.Rejected(AppLockWriteRejection.UNREADABLE)
+                }
+            }
+        } catch (e: IOException) {
+            writeFailure(e, field, rejectOnPersistentUnreadable = true)
+        }
+    }
+
+    override suspend fun reviewSave(record: AppLockPrivacySettings): AppLockSettingsWriteResult {
+        // Set inside the edit, read after it: the check and the write are ONE atomic store edit (S18 ii-d, F4(a), D8).
+        var notUnderReview = false
+        return try {
             // One atomic replace of the whole store: every field explicit, marker NORMAL. The
             // sentinel is cleared only if this commit succeeds (INV-44).
             val after = store.edit { prefs ->
+                notUnderReview = false
+                val stored = prefs.toLoadState()
+                if (stored !is AppLockSettingsLoadState.Unreadable || !stored.cause.isPersistent) {
+                    notUnderReview = true
+                    return@edit
+                }
                 prefs.clear()
                 prefs[Keys.DISCREET_NOTIFICATIONS] = record.discreetNotifications
+                prefs[Keys.APP_LOCK_ENABLED] = record.appLockEnabled
+                prefs[Keys.AUTO_LOCK_TIMEOUT] = record.autoLockTimeout.token
+                prefs[Keys.SECURE_SCREEN] = record.secureScreen
                 prefs[LOAD_STATE_KEY] = LOAD_STATE_NORMAL
             }
-            val committed = (after.toLoadState() as? AppLockSettingsLoadState.Loaded)?.settings ?: record
-            AppLockSettingsWriteResult.Committed(committed)
+            if (notUnderReview) {
+                AppLockSettingsWriteResult.Rejected(AppLockWriteRejection.NOT_UNDER_REVIEW)
+            } else {
+                val committed = (after.toLoadState() as? AppLockSettingsLoadState.Loaded)?.settings ?: record
+                AppLockSettingsWriteResult.Committed(committed)
+            }
         } catch (e: IOException) {
             writeFailure(e, AppLockSettingField.REVIEW_SAVE, rejectOnPersistentUnreadable = false)
         }
+    }
 
     /**
      * Classifies an IO failure of a write. If the store cannot be read at all, the write is a
@@ -153,8 +273,10 @@ class AppLockSettingsRepositoryImpl @VisibleForTesting internal constructor(
      * Load-state precedence:
      * 1. CORRUPTED sentinel -> Unreadable(CORRUPTED)
      * 2. A marker that is not a known token (or not a string) -> Unreadable(INVALID_VALUE)
-     * 3. No marker and no real key -> FirstRunDefault (normal defaults)
-     * 4. NORMAL marker or any real key present -> Loaded; an absent field takes its default and an
+     * 3. A lock flag that is not a Boolean -> Unreadable(INVALID_VALUE), with or without a marker; a
+     *    bare invalid lock key is never a first run
+     * 4. No marker and no real key -> FirstRunDefault (normal defaults)
+     * 5. NORMAL marker or any real key present -> Loaded; an absent field takes its default and an
      *    invalid field takes its most restrictive value (spec 2.1).
      */
     private fun Preferences.toLoadState(): AppLockSettingsLoadState {
@@ -170,7 +292,17 @@ class AppLockSettingsRepositoryImpl @VisibleForTesting internal constructor(
             }
         }
         val discreetRaw = raw[Keys.DISCREET_NOTIFICATIONS]
-        if (marker == null && discreetRaw == null) {
+        val lockEnabledRaw = raw[Keys.APP_LOCK_ENABLED]
+        val timeoutRaw = raw[Keys.AUTO_LOCK_TIMEOUT]
+        val secureScreenRaw = raw[Keys.SECURE_SCREEN]
+        // An invalid lock flag cannot be mapped to a safe value: the whole state is unreadable (spec 2.1).
+        // This precedes the first-run check, so a bare invalid lock key is never read as a first run.
+        if (lockEnabledRaw != null && lockEnabledRaw !is Boolean) {
+            return AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.INVALID_VALUE)
+        }
+        if (marker == null && discreetRaw == null && lockEnabledRaw == null &&
+            timeoutRaw == null && secureScreenRaw == null
+        ) {
             return AppLockSettingsLoadState.FirstRunDefault(AppLockPrivacySettings.DEFAULTS)
         }
         val discreet = when (discreetRaw) {
@@ -179,6 +311,26 @@ class AppLockSettingsRepositoryImpl @VisibleForTesting internal constructor(
             // Invalid persisted value: most restrictive (spec 2.1).
             else -> true
         }
-        return AppLockSettingsLoadState.Loaded(AppLockPrivacySettings(discreetNotifications = discreet))
+        val lockEnabled = (lockEnabledRaw as Boolean?) ?: AppLockPrivacySettings.DEFAULT_APP_LOCK_ENABLED
+        val timeout = when (timeoutRaw) {
+            null -> AutoLockTimeout.DEFAULT
+            // An unknown token or a non-string value maps to IMMEDIATE, the most restrictive (spec 2.1).
+            is String -> AutoLockTimeout.fromToken(timeoutRaw) ?: AutoLockTimeout.FAIL_CLOSED
+            else -> AutoLockTimeout.FAIL_CLOSED
+        }
+        val secureScreen = when (secureScreenRaw) {
+            null -> AppLockPrivacySettings.DEFAULT_SECURE_SCREEN
+            is Boolean -> secureScreenRaw
+            // Invalid persisted value: most restrictive (spec 2.1).
+            else -> true
+        }
+        return AppLockSettingsLoadState.Loaded(
+            AppLockPrivacySettings(
+                discreetNotifications = discreet,
+                appLockEnabled = lockEnabled,
+                autoLockTimeout = timeout,
+                secureScreen = secureScreen
+            )
+        )
     }
 }

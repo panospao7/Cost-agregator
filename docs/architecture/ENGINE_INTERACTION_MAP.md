@@ -36,8 +36,8 @@
 | **NotificationService / AndroidNotificationService** (`domain/service`, `data/service`) | Kind-aware posts only (`*ForKind`, INV-12) from BudgetMonitor (BUDGET), AnomalyAlertOrchestrator (ANOMALY), DeliverProactiveBriefingNotificationUseCase (BRIEFING), WarrantyExpirationWorker (WARRANTY), ReceiptMatchingWorker (RECEIPT_MATCH); builder owner 1 (`postForKind` + `rebuildDiscreet` sweep). `DeliveryResult.PERMISSION_DENIED` is returned for a platform `SecurityException`; every caller must handle it explicitly. 4 constructor params (context, resolver, applier, `PrivacyDiagnosticsEmitter`) | 🟡 HIGH |
 | **NotificationPresentationApplier / NotificationContentPolicy / NotificationPresentationResolver** | Every app notification of the six kinds (5 service callers + BillReminderWorker + the re-post sweep). Applier = the one place a decision becomes builder state (PRIVATE, generic public version, FULL/DISCREET text, BigText, action policy, kind marker). Policy = pure single owner of FULL/DISCREET and the action policy (BILL AUTH_REQUIRED on API 31+). Resolver = bounded 500 ms fail-closed read of `AppLockSettingsRepository`. Texts: `strings_notification_presentation.xml` (en/es/el) | 🟡 HIGH |
 | **NotificationKindClassifier / NotificationKindMarker** | Re-post sweep only: marker first, channel / id-range fallback, other channels (incl. capture) skipped; marker value = `NotificationKind.stableToken` (renaming a constant must not change it) | 🟡 HIGH |
-| **Post-commit discreet re-post** (`UpdateDiscreetNotificationsUseCase` → `DiscreetRepostTrigger` → `NotificationService.repostActiveAsDiscreet()`) | Runs only after a committed discreet write on the false → true edge; never on a failed / rejected write, never when turned off. Diagnostics: `NOTIF_REPOSTED_DISCREET(COUNT)` (at least one re-posted), `NOTIF_REPOST_FAILED(EXCEPTION_CLASS)` (per-notification failure, query failure, or a sweep failure caught at the trigger boundary). A sweep failure never fails the committed write. Called from `AppLockPrivacySettingsViewModel` in `@ApplicationScope` under `NonCancellable` + `AppLockSettingsWriteSerializer` (interim, S18) | 🟡 HIGH |
-| **DeepLinkPolicy / DeepLinkApplier** (`ui/navigation`) | MainActivity deep-link intake (`handleIntent`, `onCreate` + `onNewIntent`), every notification tap (explicit MainActivity + ACTION_VIEW), `MarkDashboardBriefingOpenedUseCase` (the only link-reachable write), read-only `ExpenseRepository.getExpenseById`. Policy is pure; the applier alone navigates | 🟡 HIGH |
+| **Post-commit discreet re-post** (`AppLockSettingsOperations.requestDiscreetChange` → `DiscreetRepostTrigger` → `NotificationService.repostActiveAsDiscreet()`; the 1a `UpdateDiscreetNotificationsUseCase` was retired in S20-d) | Runs only after a committed discreet write on the false → true edge; never on a failed / rejected write, never when turned off. Diagnostics: `NOTIF_REPOSTED_DISCREET(COUNT)` (at least one re-posted), `NOTIF_REPOST_FAILED(EXCEPTION_CLASS)` (per-notification failure, query failure, or a sweep failure caught at the trigger boundary). A sweep failure never fails the committed write. Called from `AppLockPrivacySettingsViewModel` in `@ApplicationScope` under `NonCancellable` with NO outer serializer: the domain-owned `AppLockSettingsWriteSerializer` (`domain/privacy/applock`, S18 ii-a) is taken inside `AppLockSettingsOperations` (S20-d) | 🟡 HIGH |
+| **DeepLinkPolicy / DeepLinkApplier** (`ui/navigation`) + **AppLockDeepLinkRouter** (`ui/applock`, S21-b) | MainActivity deep-link intake (`handleIntent`, `onCreate` + `onNewIntent`), every notification tap (explicit MainActivity + ACTION_VIEW), `MarkDashboardBriefingOpenedUseCase` (the only link-reachable write), read-only `ExpenseRepository.getExpenseById`. Policy is pure; the applier alone navigates; the router is the only caller of the controller's link query / held-link release / release signal (a held link is memory-only and released by a posted `Dispatchers.Main` task once the lock is open) | 🟡 HIGH |
 | **WorkerExecutionGuard** | ALL workers (all 10 CoroutineWorkers run through it, incl. `NotificationIntakeWorker` + snooze/dismiss reminder action workers), 7 (Backup restore gating) | 🟡 HIGH |
 | **WorkerRegistry** | 12 (Startup scheduling), 7 (Backup resume via spec lookup) | 🟢 LOW |
 | **SharedExpenseManager** | Groups, shared expenses (domain facade over `SharedExpenseDataPort` → `SharedExpenseDataPortAdapter` → `GroupTransactionCoordinator`; the GroupLifecycleCoordinator wrapper was removed, GR-14u36) | 🟡 HIGH |
@@ -167,27 +167,57 @@ AndroidNotificationService.postForKind
   ├── BudgetMonitor (BUDGET), AnomalyAlertOrchestrator (ANOMALY), DeliverProactiveBriefingNotificationUseCase (BRIEFING)
   ├── WarrantyExpirationWorker (WARRANTY), ReceiptMatchingWorker (RECEIPT_MATCH)
   └── DeliveryResult.PERMISSION_DENIED handling in every caller
-AndroidNotificationService.rebuildDiscreet (re-post sweep, via NotificationContentPolicy.decideDiscreet)
+AndroidNotificationService.rebuildDiscreet (re-post sweep: BILL via NotificationPresentationResolver.resolve for the action term, then NotificationContentPolicy.decideDiscreet; S18-ii-b)
 BillReminderWorker.sendNotification
 NotificationKindMarker (stamped by the applier, read by NotificationKindClassifier)
 ```
 
 ### Post-commit discreet re-post chain:
 ```
-AppLockPrivacySettingsViewModel.setDiscreetNotifications  (@ApplicationScope, NonCancellable, AppLockSettingsWriteSerializer)
-  └── UpdateDiscreetNotificationsUseCase
+AppLockPrivacySettingsViewModel.setDiscreetNotifications  (@ApplicationScope, NonCancellable; NO outer serializer)
+  └── AppLockSettingsOperations.requestDiscreetChange       (WRITE 5, S20-d; takes AppLockSettingsWriteSerializer inside)
         ├── AppLockSettingsRepository.getLoadState()          (before value)
-        ├── AppLockSettingsRepository.setDiscreetNotifications()
+        ├── AppLockSettingsRepository.setDiscreetNotificationsIfNotForced()   (Rejected(FORCED) while the lock is on)
+        ├── AppLockController.onPlainSettingWritten(...)      (write-sequence counter, D6)
         └── on Committed → DiscreetRepostTrigger.onCommittedWrite(before, after)
               └── false → true only → NotificationService.repostActiveAsDiscreet()
                     ├── NotificationKindClassifier.classify() + NotificationKindMarker.read()
                     ├── SweepPacer.pause(SWEEP_REPOST_SPACING_MS = 300) before every re-post (cancellable; skipped ones not paused)
-                    ├── NotificationContentPolicy.decideDiscreet() → NotificationPresentationApplier
+                    ├── BILL: NotificationPresentationResolver.resolve (bounded read; actionsSuppressed = actionPolicy != UNCHANGED)
+                    ├── NotificationContentPolicy.decideDiscreet(kind, sdk, actionsSuppressed) → NotificationPresentationApplier
                     └── NOTIF_REPOSTED_DISCREET(COUNT) / NOTIF_REPOST_FAILED(EXCEPTION_CLASS)
 
-AppLockPrivacySettingsViewModel.saveReview  (same scope / NonCancellable / serializer)
-  └── AppLockSettingsRepository.reviewSave() → on Committed → DiscreetRepostTrigger.onCommittedWrite(false, after)
-        └── same sweep as above (a committed review-save with discreet on sweeps; refused / failed never does)
+AppLockPrivacySettingsViewModel.saveReview  (@ApplicationScope, NonCancellable; NO outer serializer; S20-e)
+  └── AppLockSettingsOperations.requestReviewSave(D2 record)   (WRITE 2b; takes AppLockSettingsWriteSerializer inside)
+        ├── weakening (lock off) from UNLOCKED: CHANGE prompt via AppLockController.startReviewSaveAttempt (STARTED)
+        ├── AppLockSettingsRepository.reviewSave()            (the ONLY production caller of the conditional write)
+        ├── AppLockController.onReviewSavedWithoutPrompt / onOpenOriginSettingApplied (state move, D6 sequence, D7 diagnostics)
+        └── on Committed → DiscreetRepostTrigger.onCommittedWrite(false, after)
+              └── same sweep as above (a committed review-save with discreet on sweeps; refused / failed never does)
+AppLockPrivacySettingsViewModel.retry / refreshIfTransient → AppLockController.requestSettingsReread()  (S20-e, INV-47)
+```
+
+### App lock prompt and lifecycle chain (S20-a; LIVE since S20-c wires MainActivity):
+```
+MainActivity.onCreate (S20-c): secureWindow.applyInitial(window) → DB gate → binder.install(application) → promptHost.attach(this)
+  → secureWindow.bind(this) → setContent { ... AppLockShell { MainScreen } }  (MainScreen only inside the gate's open branch)
+  Changing MainActivity.onCreate order, the shell or the gate affects: MainScreenCallSiteTest, AppLockShellTest, AppLockGateSourceScanTest,
+  SecureWindowController (single FLAG_SECURE writer), the R24 prompt-once claim, deep-link intake (S21 will gate handleIntent).
+AppLockLifecycleBinder (Application.ActivityLifecycleCallbacks; exact started-activity count; sole INV-25 source)
+  ├── 0→1 → AppLockController.onAppForegrounded()
+  ├── 1→0 and !isChangingConfigurations → AppLockController.onAppBackgrounded()   (config-change stop/start pair not reported)
+  └── install and every start while Resolving → AppLockController.resolve()  (@ApplicationScope)
+
+AppLockController → DeviceAuthenticator (DI binding) → AppLockAuthenticatorRelay (weak holder, main thread only)
+  └── BiometricPromptDeviceAuthenticator (one per Activity, built by AppLockPromptHost.attach)
+        └── androidx.biometric BiometricPrompt
+AppLockPromptHost (per Activity, ON_DESTROY)
+  ├── relay.unregister(registration, isChangingConfigurations)
+  │     └── lost attempt id (once, !isChangingConfigurations) → AppLockController.onPromptHostLost(id)
+  └── relay.register on the recreated Activity → BiometricPromptDeviceAuthenticator.adopt(id, callback) (rotation)
+Changing the relay, host or binder affects: AppLockController attempt closing (T9-T12, T35), T32-T34 prompt background,
+  the adapter state machine (BiometricPromptAdapterStateMachineTest), AppLockRelaySourceScanTest (no worker/receiver/service reach).
+Workers, receivers and services do NOT participate (INV-36).
 ```
 
 ### WorkerExecutionGuard changes affect:

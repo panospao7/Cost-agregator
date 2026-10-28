@@ -10,9 +10,11 @@ import com.yourname.expensetracker.ui.MainActivity
 import com.yourname.expensetracker.domain.notification.presentation.NotificationKind
 import com.yourname.expensetracker.domain.notification.presentation.NotificationPresentationResolver
 import com.yourname.expensetracker.domain.privacy.applock.AppLockPrivacySettings
+import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingField
 import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsLoadState
 import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsRepository
 import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsWriteResult
+import com.yourname.expensetracker.domain.privacy.applock.AutoLockTimeout
 import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticsEmitter
 import com.yourname.expensetracker.domain.service.NotificationService
 import io.mockk.every
@@ -125,11 +127,24 @@ class AndroidNotificationServiceTest {
 
         override fun observeLoadState(): Flow<AppLockSettingsLoadState> = emptyFlow()
 
-        override suspend fun setDiscreetNotifications(enabled: Boolean): AppLockSettingsWriteResult =
-            error("not used by the notification service")
-
         override suspend fun reviewSave(record: AppLockPrivacySettings): AppLockSettingsWriteResult =
             error("not used by the notification service")
+
+        // S18 ii-f (finding 8): the write methods are abstract; this fake does not support them, so they fail closed.
+        override suspend fun setAppLockEnabled(enabled: Boolean): AppLockSettingsWriteResult =
+            AppLockSettingsWriteResult.Failed(AppLockSettingField.APP_LOCK_ENABLED)
+
+        override suspend fun setAutoLockTimeout(timeout: AutoLockTimeout): AppLockSettingsWriteResult =
+            AppLockSettingsWriteResult.Failed(AppLockSettingField.AUTO_LOCK_TIMEOUT)
+
+        override suspend fun setAutoLockTimeoutIfNotWeakening(timeout: AutoLockTimeout): AppLockSettingsWriteResult =
+            AppLockSettingsWriteResult.Failed(AppLockSettingField.AUTO_LOCK_TIMEOUT)
+
+        override suspend fun setDiscreetNotificationsIfNotForced(enabled: Boolean): AppLockSettingsWriteResult =
+            AppLockSettingsWriteResult.Failed(AppLockSettingField.DISCREET)
+
+        override suspend fun setSecureScreenIfNotForced(enabled: Boolean): AppLockSettingsWriteResult =
+            AppLockSettingsWriteResult.Failed(AppLockSettingField.SECURE_SCREEN)
     }
 
     private fun newService(context: Context): AndroidNotificationService {

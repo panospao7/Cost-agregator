@@ -2746,6 +2746,7 @@
     <string name="unsupported_db_close_button">Close app</string>
     <string name="unsupported_db_export_success">The database file was exported.</string>
     <string name="unsupported_db_export_failed">The database file could not be exported. Try a different location.</string>
+    <string name="unsupported_db_export_auth_denied">Exporting needs your fingerprint or screen lock. Nothing was exported.</string>
     <string name="backup_schema_too_old">This backup is from an app version that is too old to restore.</string>
     <string name="backup_schema_too_new">This backup was made by a newer app version. Update the app to restore it.</string>
 
