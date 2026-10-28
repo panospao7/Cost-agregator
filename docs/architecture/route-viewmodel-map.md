@@ -141,7 +141,7 @@ App Chrome (6 tabs)
 | `ReviewViewModel` | 14+ dependencies | 🔴 High |
 | `ReceiptScanViewModel` | 18+ dependencies | 🔴 High |
 | `BudgetViewModel` | 7 dependencies | 🟡 Medium |
-| `AddExpenseViewModel` | 5 dependencies | 🟢 Low |
+| `AddExpenseViewModel` | 7 dependencies | 🟡 Medium |
 | `SavingsGoalsViewModel` | 8 dependencies | 🟡 Medium |
 | `AnalyticsViewModel` | 15+ dependencies | 🔴 High |
 | Most other VMs | 3-10 dependencies | 🟡 Medium |

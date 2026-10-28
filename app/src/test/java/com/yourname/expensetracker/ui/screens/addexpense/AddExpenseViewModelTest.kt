@@ -1,31 +1,59 @@
 package com.yourname.expensetracker.ui.screens.addexpense
 
+import android.database.sqlite.SQLiteException
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.database.dao.MerchantSuggestion
+import com.yourname.expensetracker.data.database.entity.Category
+import com.yourname.expensetracker.data.database.entity.PaymentMethod
+import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.ManualExpenseRepository
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.model.Result
+import com.yourname.expensetracker.domain.model.UiText
+import com.yourname.expensetracker.domain.quickadd.CategoryMatch
+import com.yourname.expensetracker.domain.quickadd.CategorySource
+import com.yourname.expensetracker.domain.quickadd.FlagReason
+import com.yourname.expensetracker.domain.quickadd.LearnedCategoryLookupResult
+import com.yourname.expensetracker.domain.quickadd.LineHint
+import com.yourname.expensetracker.domain.quickadd.QuickAddLearnedCategoryLookup
+import com.yourname.expensetracker.domain.quickadd.QuickAddParser
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.util.ViewModelTestUtils
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.confirmVerified
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.verify
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.After
 import org.junit.Before
 import org.junit.Test
+import timber.log.Timber
+import java.time.ZoneId
+import java.time.ZonedDateTime
 import java.util.Locale
+import java.util.TimeZone
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class AddExpenseViewModelTest : ViewModelTestUtils() {
@@ -35,25 +63,61 @@ class AddExpenseViewModelTest : ViewModelTestUtils() {
     private val categoryRepository = mockk<CategoryRepository>(relaxed = true)
     private val timeProvider = mockk<TimeProvider>(relaxed = true)
 
+    // nl-quick-add slice C: the real parser (pure) and a mocked read-only learned-category lookup.
+    private val quickAddParser = QuickAddParser()
+    private val quickAddLearnedCategoryLookup = mockk<QuickAddLearnedCategoryLookup>()
+
     private lateinit var viewModel: AddExpenseViewModel
+    private var categoriesJob: Job? = null
+    private val originalTimeZone: TimeZone = TimeZone.getDefault()
+
+    // INV-13 capture: every log line (any priority) with its throwable.
+    private data class LoggedLine(val priority: Int, val message: String, val throwable: Throwable?)
+
+    private val loggedLines = mutableListOf<LoggedLine>()
+    private val logTree = object : Timber.Tree() {
+        override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
+            loggedLines += LoggedLine(priority, message, t)
+        }
+    }
+
+    private val amountInvalidText = UiText.StringResource(R.string.add_expense_error_amount_invalid)
+    private val saveFailedText = UiText.StringResource(R.string.add_expense_error_save_failed)
+
+    @After
+    override fun tearDown() {
+        try {
+            categoriesJob?.cancel()
+            TimeZone.setDefault(originalTimeZone)
+            Timber.uproot(logTree)
+        } finally {
+            super.tearDown()
+        }
+    }
 
     @Before
     override fun setup() {
         super.setup()
+        Timber.plant(logTree)
         every { timeProvider.now() } returns 1_700_000_000_000L
         every { categoryRepository.allCategories } returns flowOf(emptyList())
         coEvery { expenseRepository.searchMerchants(any()) } returns emptyList()
+        coEvery { quickAddLearnedCategoryLookup.lookup(any(), any()) } returns LearnedCategoryLookupResult.Absent
 
         val currencyRepo = mockk<CurrencySettingsRepository>(relaxed = true)
         every { currencyRepo.homeCurrency() } returns flowOf("EUR")
-        viewModel = AddExpenseViewModel(
-            manualExpenseRepository = manualExpenseRepository,
-            expenseRepository = expenseRepository,
-            categoryRepository = categoryRepository,
-            timeProvider = timeProvider,
-            currencySettingsRepository = currencyRepo,
-        )
+        viewModel = createViewModel(currencyRepo)
     }
+
+    private fun createViewModel(currencyRepo: CurrencySettingsRepository) = AddExpenseViewModel(
+        manualExpenseRepository = manualExpenseRepository,
+        expenseRepository = expenseRepository,
+        categoryRepository = categoryRepository,
+        timeProvider = timeProvider,
+        currencySettingsRepository = currencyRepo,
+        quickAddParser = quickAddParser,
+        quickAddLearnedCategoryLookup = quickAddLearnedCategoryLookup,
+    )
 
     @Test
     fun `reset cancels pending merchant search and prevents stale suggestions`() = runTest(testDispatcher) {
@@ -233,7 +297,7 @@ class AddExpenseViewModelTest : ViewModelTestUtils() {
     fun `mixed separators with invalid grouping are rejected with the existing error and never saved`() {
         useGreek()
         saveWithAmount("1,23.4")
-        assertEquals("Enter a valid amount", viewModel.state.value.amountError)
+        assertEquals(amountInvalidText, viewModel.state.value.amountError)
         verifySavedAmount(1.234, times = 0)
         coVerify(exactly = 0) {
             manualExpenseRepository.addManualExpense(
@@ -262,6 +326,13 @@ class AddExpenseViewModelTest : ViewModelTestUtils() {
         useUs()
         viewModel.setInitialValuesIfBlank(amount = "1,234", merchant = "Clip")
         assertEquals("1234.00", viewModel.state.value.amount)
+    }
+
+    @Test
+    fun `clipboard canonical 12_50 prefills 12_50`() {
+        useUs()
+        viewModel.setInitialValuesIfBlank("12.50")
+        assertEquals("12.50", viewModel.state.value.amount)
     }
 
     @Test
@@ -320,7 +391,7 @@ class AddExpenseViewModelTest : ViewModelTestUtils() {
         testDispatcher.scheduler.advanceUntilIdle()
 
         val state = viewModel.state.value
-        assertEquals("Merchant name is required", state.merchantError)
+        assertEquals(UiText.StringResource(R.string.add_expense_error_merchant_required), state.merchantError)
         assertNull(state.amountError)
         assertNull(state.saveResult)
         verifyNoManualExpenseSaved()
@@ -339,7 +410,7 @@ class AddExpenseViewModelTest : ViewModelTestUtils() {
         testDispatcher.scheduler.advanceUntilIdle()
 
         val state = viewModel.state.value
-        assertEquals("Enter a valid amount", state.amountError)
+        assertEquals(amountInvalidText, state.amountError)
         assertNull(state.merchantError)
         assertNull(state.saveResult)
         verifyNoManualExpenseSaved()
@@ -408,5 +479,1232 @@ class AddExpenseViewModelTest : ViewModelTestUtils() {
         assertEquals("", state.amount)
         assertEquals("EUR", state.homeCurrency)
         assertEquals(1_700_000_000_000L, state.date)
+    }
+
+    // ---- nl-quick-add slice A: error hygiene (INV-13, INV-15; AE-51..AE-53) ----
+
+    private fun stubAddManualExpenseThrows(t: Throwable) {
+        coEvery {
+            manualExpenseRepository.addManualExpense(
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any()
+            )
+        } throws t
+    }
+
+    private fun stubAddManualExpenseReturns(result: Result<Long>) {
+        coEvery {
+            manualExpenseRepository.addManualExpense(
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any()
+            )
+        } returns result
+    }
+
+    private fun fillValidFormAndSave() {
+        useUs()
+        testDispatcher.scheduler.advanceUntilIdle() // home currency load
+        viewModel.reset()
+        viewModel.updateMerchant("Valid Merchant")
+        viewModel.updateAmount("50.00")
+        testDispatcher.scheduler.advanceUntilIdle()
+        loggedLines.clear()
+        viewModel.save()
+        testDispatcher.scheduler.advanceUntilIdle()
+    }
+
+    @Test
+    fun `AE-52 suggestion search failure logs exactly the bounded code with no throwable and no text`() = runTest(testDispatcher) {
+        coEvery { expenseRepository.searchMerchants("καφ") } throws
+            SQLiteException("no such column near WHERE merchant LIKE 'καφ%' AND secret=42")
+
+        viewModel.updateMerchant("καφ")
+        advanceTimeBy(350)
+        advanceUntilIdle()
+
+        assertEquals(listOf("MERCHANT_SUGGESTION_SEARCH_FAILED"), loggedLines.map { it.message })
+        assertTrue(loggedLines.all { it.throwable == null })
+        assertTrue(viewModel.state.value.suggestions.isEmpty())
+        assertFalse(viewModel.state.value.showSuggestions)
+    }
+
+    @Test
+    fun `suggestion search cancellation is rethrown and not logged or treated as failure`() = runTest(testDispatcher) {
+        coEvery { expenseRepository.searchMerchants("co") } throws CancellationException("cancelled")
+
+        viewModel.updateMerchant("co")
+        advanceTimeBy(350)
+        advanceUntilIdle()
+
+        assertTrue(loggedLines.isEmpty())
+    }
+
+    @Test
+    fun `AE-53 save exception shows the generic resource clears isSaving and logs only the code`() {
+        stubAddManualExpenseThrows(IllegalStateException("Created expense 42 was not found for Valid Merchant"))
+
+        fillValidFormAndSave()
+
+        val state = viewModel.state.value
+        assertEquals(SaveResult.Error(saveFailedText), state.saveResult)
+        assertEquals(saveFailedText, state.mutation.error)
+        assertFalse(state.isSaving)
+        assertFalse(state.mutation.isRunning)
+        assertEquals(listOf("ADD_EXPENSE_SAVE_FAILED"), loggedLines.map { it.message })
+        assertTrue(loggedLines.all { it.throwable == null })
+    }
+
+    @Test
+    fun `AE-53 save SQLiteException never surfaces SQL text`() {
+        stubAddManualExpenseThrows(SQLiteException("UNIQUE constraint failed: expenses.dedupe_key (merchant=Valid Merchant)"))
+
+        fillValidFormAndSave()
+
+        assertEquals(SaveResult.Error(saveFailedText), viewModel.state.value.saveResult)
+        assertEquals(listOf("ADD_EXPENSE_SAVE_FAILED"), loggedLines.map { it.message })
+        assertTrue(loggedLines.all { it.throwable == null })
+    }
+
+    @Test
+    fun `AE-53 save cancellation propagates without an Error result and isSaving is cleared`() {
+        stubAddManualExpenseThrows(CancellationException("scope cancelled"))
+
+        fillValidFormAndSave()
+
+        val state = viewModel.state.value
+        assertNull(state.saveResult)
+        assertNull(state.mutation.error)
+        assertFalse(state.isSaving)
+        assertFalse(state.mutation.isRunning)
+        assertTrue(loggedLines.isEmpty())
+    }
+
+    @Test
+    fun `Result Error with a repository message maps to the bounded resource and never shows the message`() {
+        stubAddManualExpenseReturns(
+            Result.Error(IllegalStateException("db path /data/user/0/secret"), "Failed: UNIQUE constraint expenses.dedupe_key")
+        )
+
+        fillValidFormAndSave()
+
+        val state = viewModel.state.value
+        assertEquals(SaveResult.Error(saveFailedText), state.saveResult)
+        assertEquals(saveFailedText, state.mutation.error)
+        assertFalse(state.isSaving)
+        assertTrue(loggedLines.isEmpty())
+    }
+
+    @Test
+    fun `Result Error without a message maps to the seam default resource`() {
+        stubAddManualExpenseReturns(Result.Error())
+
+        fillValidFormAndSave()
+
+        assertEquals(SaveResult.Error(saveFailedText), viewModel.state.value.saveResult)
+        assertFalse(viewModel.state.value.isSaving)
+    }
+
+    @Test
+    fun `Result Loading maps to the generic save failed resource`() {
+        stubAddManualExpenseReturns(Result.Loading)
+
+        fillValidFormAndSave()
+
+        assertEquals(SaveResult.Error(saveFailedText), viewModel.state.value.saveResult)
+        assertFalse(viewModel.state.value.isSaving)
+    }
+
+    @Test
+    fun `Result Duplicate keeps the Duplicate state and uses the existing duplicate resource for the mutation`() {
+        stubAddManualExpenseReturns(Result.Duplicate)
+
+        fillValidFormAndSave()
+
+        val state = viewModel.state.value
+        assertEquals(SaveResult.Duplicate, state.saveResult)
+        assertEquals(UiText.StringResource(R.string.error_duplicate_transaction), state.mutation.error)
+        assertFalse(state.isSaving)
+    }
+
+    @Test
+    fun `validation messages are resource ids - amount too large`() {
+        useUs()
+        stubAddManualExpense()
+        testDispatcher.scheduler.advanceUntilIdle()
+        viewModel.updateMerchant("Shop")
+        viewModel.updateAmount("2000000.00")
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        viewModel.save()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(
+            UiText.StringResource(R.string.add_expense_error_amount_too_large),
+            viewModel.state.value.amountError
+        )
+        verifyNoManualExpenseSaved()
+    }
+
+    @Test
+    fun `validation messages are resource ids - future date`() {
+        useUs()
+        stubAddManualExpense()
+        testDispatcher.scheduler.advanceUntilIdle()
+        viewModel.updateMerchant("Shop")
+        viewModel.updateAmount("10.00")
+        viewModel.updateDate(1_700_000_000_000L + 3L * 24 * 60 * 60 * 1000)
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        viewModel.save()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        val expected = UiText.StringResource(R.string.add_expense_error_date_future)
+        assertEquals(SaveResult.Error(expected), viewModel.state.value.saveResult)
+        assertEquals(expected, viewModel.state.value.mutation.error)
+        assertFalse(viewModel.state.value.isSaving)
+        verifyNoManualExpenseSaved()
+    }
+
+    @Test
+    fun `validation messages are resource ids - currency still loading`() {
+        useUs()
+        val loadingCurrencyRepo = mockk<CurrencySettingsRepository>(relaxed = true)
+        every { loadingCurrencyRepo.homeCurrency() } returns emptyFlow()
+        val loadingViewModel = createViewModel(loadingCurrencyRepo)
+        testDispatcher.scheduler.advanceUntilIdle()
+        loadingViewModel.updateMerchant("Shop")
+        loadingViewModel.updateAmount("10.00")
+
+        loadingViewModel.save()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertNull(loadingViewModel.state.value.homeCurrency)
+        assertEquals(
+            SaveResult.Error(UiText.StringResource(R.string.add_expense_error_currency_loading)),
+            loadingViewModel.state.value.saveResult
+        )
+        verifyNoManualExpenseSaved()
+    }
+
+    // =====================================================================================
+    // nl-quick-add slice C: Fill contract at VM level (INV-1..3, 7..13, 15..18; AE-1..5, 9, 20..31,
+    // 41..43, 50, 51 Fill part; G2-11, G2-13). Context CTX-A: home EUR, Europe/Athens,
+    // now 2026-10-16T14:30:15.250+03:00. Nothing here compiles against a real clock or locale.
+    // =====================================================================================
+
+    private val athens = ZoneId.of("Europe/Athens")
+
+    private fun athensEpoch(y: Int, mo: Int, d: Int, h: Int, mi: Int, s: Int, nano: Int = 0): Long =
+        ZonedDateTime.of(y, mo, d, h, mi, s, nano, athens).toInstant().toEpochMilli()
+
+    private val ctxNow = athensEpoch(2026, 10, 16, 14, 30, 15, 250_000_000)
+    private val ctxToday = athensEpoch(2026, 10, 16, 14, 30, 15)
+    private val ctxYesterday = athensEpoch(2026, 10, 15, 14, 30, 15)
+
+    private val ctxCategories = listOf(
+        Category(id = 1L, name = "Groceries", icon = "G", color = "#000001"),
+        Category(id = 2L, name = "Transport", icon = "T", color = "#000002"),
+        Category(id = 3L, name = "Food", icon = "F", color = "#000003"),
+        Category(id = 15L, name = "Home", icon = "H", color = "#000004"),
+        Category(id = 16L, name = "Kids", icon = "K", color = "#000005"),
+        Category(id = 17L, name = "Gifts", icon = "I", color = "#000006"),
+        Category(id = 19L, name = "Legal & Gov", icon = "L", color = "#000007"),
+        Category(id = 20L, name = "Uncategorized", icon = "U", color = "#000008")
+    )
+
+    private val st: AddExpenseState get() = viewModel.state.value
+
+    private fun beginFill(pickerCategories: List<Category> = ctxCategories) {
+        TimeZone.setDefault(TimeZone.getTimeZone("Europe/Athens"))
+        useUs()
+        every { timeProvider.now() } returns ctxNow
+        every { categoryRepository.allCategories } returns flowOf(pickerCategories)
+        val currencyRepo = mockk<CurrencySettingsRepository>(relaxed = true)
+        every { currencyRepo.homeCurrency() } returns flowOf("EUR")
+        viewModel = createViewModel(currencyRepo)
+        // The picker list is a WhileSubscribed StateFlow: subscribe as the Sheet does.
+        categoriesJob = CoroutineScope(testDispatcher).launch { viewModel.categories.collect { } }
+        testDispatcher.scheduler.advanceUntilIdle()
+        loggedLines.clear()
+    }
+
+    private fun fillAndSettle(line: String) {
+        viewModel.fill(line)
+        testDispatcher.scheduler.advanceUntilIdle()
+    }
+
+    private fun stubLearned(merchant: String, categoryId: Long) {
+        coEvery { quickAddLearnedCategoryLookup.lookup(match { it.text == merchant }, any()) } returns
+            LearnedCategoryLookupResult.Found(CategoryMatch(categoryId, CategorySource.LEARNED))
+    }
+
+    private fun stubAddManualExpenseSuspending() {
+        coEvery {
+            manualExpenseRepository.addManualExpense(
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any()
+            )
+        } coAnswers {
+            delay(10_000)
+            Result.Success(1L)
+        }
+    }
+
+    private fun verifyOneSavedExpense(
+        merchant: String,
+        amount: Double,
+        currency: String,
+        categoryId: Long?,
+        paymentMethod: PaymentMethod,
+        date: Long
+    ) {
+        coVerify(exactly = 1) {
+            manualExpenseRepository.addManualExpense(
+                merchant = eq(merchant),
+                amount = eq(amount),
+                currency = eq(currency),
+                categoryId = if (categoryId == null) isNull() else eq(categoryId),
+                transactionType = eq(TransactionType.PURCHASE),
+                paymentMethod = eq(paymentMethod),
+                date = eq(date),
+                notes = any(),
+                transferDirection = any(),
+                transferAccountName = any(),
+                isNotMine = any(),
+                ownerName = any(),
+                isSharedExpense = any(),
+                sharedWithName = any(),
+                mySharePercentage = any(),
+                myShareAmount = any(),
+                latitude = any(),
+                longitude = any(),
+                locationSource = any(),
+                recurrenceFrequency = any(),
+                recurringNote = any()
+            )
+        }
+    }
+
+    // ---- AE-1 .. AE-4: learned parts ----
+
+    @Test
+    fun `AE-1 fill with a learned row fills all fields marks the category LEARNED and logs FILL_FULL`() {
+        beginFill()
+        stubLearned("καφές", 3L)
+
+        fillAndSettle("καφές 3,50 χθες")
+
+        assertEquals("3.50", st.amount)
+        assertEquals("καφές", st.merchant)
+        assertEquals(ctxYesterday, st.date)
+        assertEquals(PaymentMethod.CASH, st.paymentMethod)
+        assertEquals(3L, st.selectedCategoryId)
+        assertEquals(CategoryFillSource.LEARNED, st.categoryFillSource)
+        assertTrue(st.fieldFlags.isEmpty())
+        assertEquals(OutcomeCode.FILL_FULL, st.lastFillOutcome)
+        assertEquals(FieldOrigin.FILL, st.fieldOrigins[QuickAddField.AMOUNT])
+        assertEquals(FieldOrigin.FILL, st.fieldOrigins[QuickAddField.MERCHANT])
+        assertEquals(FieldOrigin.FILL, st.fieldOrigins[QuickAddField.DATE])
+        assertEquals(FieldOrigin.FILL, st.fieldOrigins[QuickAddField.CATEGORY])
+        assertEquals(FieldOrigin.DEFAULT, st.fieldOrigins[QuickAddField.PAYMENT])
+        assertEquals(listOf("FILL_FULL"), loggedLines.map { it.message })
+        coVerify(exactly = 1) { quickAddLearnedCategoryLookup.lookup(any(), any()) }
+
+        // Fill writes nothing: no repository write or read beyond the category picker flow (INV-1).
+        verify(atLeast = 1) { categoryRepository.allCategories }
+        confirmVerified(manualExpenseRepository, expenseRepository, categoryRepository)
+    }
+
+    @Test
+    fun `AE-1 without a learned row the category stays null and everything else is identical`() {
+        beginFill()
+
+        fillAndSettle("καφές 3,50 χθες")
+
+        assertEquals("3.50", st.amount)
+        assertEquals("καφές", st.merchant)
+        assertEquals(ctxYesterday, st.date)
+        assertNull(st.selectedCategoryId)
+        assertNull(st.categoryFillSource)
+        assertEquals(OutcomeCode.FILL_FULL, st.lastFillOutcome)
+    }
+
+    @Test
+    fun `AE-2 an exact category name wins and the learned lookup is not consulted`() {
+        beginFill()
+        val dateBefore = st.date
+
+        fillAndSettle("groceries 42.30 lidl")
+
+        assertEquals("42.30", st.amount)
+        assertEquals("lidl", st.merchant)
+        assertEquals(1L, st.selectedCategoryId)
+        assertEquals(CategoryFillSource.EXACT_NAME, st.categoryFillSource)
+        assertEquals(dateBefore, st.date)
+        assertEquals(OutcomeCode.FILL_FULL, st.lastFillOutcome)
+        coVerify(exactly = 0) { quickAddLearnedCategoryLookup.lookup(any(), any()) }
+    }
+
+    @Test
+    fun `AE-3 taxi 15 euro today card fills CARD and the learned Transport category`() {
+        beginFill()
+        stubLearned("taxi", 2L)
+
+        fillAndSettle("taxi 15€ σήμερα κάρτα")
+
+        assertEquals("15.00", st.amount)
+        assertEquals("taxi", st.merchant)
+        assertEquals(ctxToday, st.date)
+        assertEquals(PaymentMethod.CARD, st.paymentMethod)
+        assertEquals(2L, st.selectedCategoryId)
+        assertEquals(CategoryFillSource.LEARNED, st.categoryFillSource)
+        assertEquals(OutcomeCode.FILL_FULL, st.lastFillOutcome)
+    }
+
+    @Test
+    fun `AE-4 the lookup is keyed on the merchant text the same Fill wrote`() {
+        beginFill()
+        stubLearned("kafes", 3L)
+
+        fillAndSettle("kafes 3.50")
+
+        assertEquals("3.50", st.amount)
+        assertEquals("kafes", st.merchant)
+        assertEquals(3L, st.selectedCategoryId)
+        coVerify(exactly = 1) {
+            quickAddLearnedCategoryLookup.lookup(match { it.text == "kafes" }, any())
+        }
+    }
+
+    // ---- AE-5 foreign + save tail ----
+
+    @Test
+    fun `AE-5 foreign amount is flagged blank and Save shows the invalid amount error and persists nothing`() {
+        beginFill()
+        stubAddManualExpense()
+
+        fillAndSettle("dinner 20 usd")
+
+        assertEquals("", st.amount)
+        assertEquals(FlagReason.AMOUNT_FOREIGN_CURRENCY, st.fieldFlags[QuickAddField.AMOUNT])
+        assertEquals("dinner", st.merchant)
+        assertNull(st.selectedCategoryId)
+        assertEquals(setOf(LineHint.FOREIGN_CURRENCY_NOT_SUPPORTED), st.lineHints)
+        assertEquals(OutcomeCode.FOREIGN_CURRENCY_BLOCKED, st.lastFillOutcome)
+        assertEquals(listOf("FOREIGN_CURRENCY_BLOCKED"), loggedLines.map { it.message })
+
+        viewModel.save()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(amountInvalidText, st.amountError)
+        verifyNoManualExpenseSaved()
+    }
+
+    @Test
+    fun `AE-5 tail typing 18 clears the flag and Save creates exactly one expense in the home currency`() {
+        beginFill()
+        stubAddManualExpense()
+        fillAndSettle("dinner 20 usd")
+
+        viewModel.updateAmount("18")
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(FieldOrigin.USER, st.fieldOrigins[QuickAddField.AMOUNT])
+        assertNull(st.fieldFlags[QuickAddField.AMOUNT])
+
+        viewModel.save()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(SaveResult.Success, st.saveResult)
+        verifyOneSavedExpense("dinner", 18.0, "EUR", null, PaymentMethod.CASH, ctxNow)
+    }
+
+    // ---- AE-9, AE-20 .. AE-31 ----
+
+    @Test
+    fun `AE-9 a USER amount is kept and merchant and category are still filled`() {
+        beginFill()
+        stubLearned("καφές", 3L)
+        viewModel.updateAmount("4.00")
+
+        fillAndSettle("καφές 3,50")
+
+        assertEquals("4.00", st.amount)
+        assertNull(st.fieldFlags[QuickAddField.AMOUNT])
+        assertEquals("καφές", st.merchant)
+        assertEquals(3L, st.selectedCategoryId)
+        assertEquals(OutcomeCode.FILL_PARTIAL, st.lastFillOutcome)
+    }
+
+    @Test
+    fun `AE-20 a clipboard amount survives an amount-less line is replaced by a typed one and cleared by a foreign one`() {
+        beginFill()
+        viewModel.setInitialValuesIfBlank("12.40")
+        assertEquals(FieldOrigin.PREFILL, st.fieldOrigins[QuickAddField.AMOUNT])
+        fillAndSettle("lidl χθες")
+        assertEquals("12.40", st.amount)
+        assertEquals(FieldOrigin.PREFILL, st.fieldOrigins[QuickAddField.AMOUNT])
+        assertEquals("lidl", st.merchant)
+
+        viewModel.reset()
+        viewModel.setInitialValuesIfBlank("12.40")
+        fillAndSettle("lidl 9,99")
+        assertEquals("9.99", st.amount)
+
+        viewModel.reset()
+        viewModel.setInitialValuesIfBlank("12.40")
+        fillAndSettle("dinner 20 usd")
+        assertEquals("", st.amount)
+        assertEquals(FlagReason.AMOUNT_FOREIGN_CURRENCY, st.fieldFlags[QuickAddField.AMOUNT])
+    }
+
+    @Test
+    fun `AE-21 a clipboard prefill arriving after a Fill is ignored`() {
+        beginFill()
+        fillAndSettle("χθες")
+
+        viewModel.setInitialValuesIfBlank("5.00")
+
+        assertEquals("", st.amount)
+        assertEquals(FieldOrigin.DEFAULT, st.fieldOrigins[QuickAddField.AMOUNT])
+    }
+
+    @Test
+    fun `AE-21 a prefill before the Fill marks PREFILL and a blank form counts as not edited`() {
+        beginFill()
+
+        viewModel.setInitialValuesIfBlank(amount = "12.40", merchant = "Clip")
+
+        assertEquals(FieldOrigin.PREFILL, st.fieldOrigins[QuickAddField.AMOUNT])
+        assertEquals(FieldOrigin.PREFILL, st.fieldOrigins[QuickAddField.MERCHANT])
+        fillAndSettle("kafes 3.50")
+        assertEquals("3.50", st.amount)
+        assertEquals("kafes", st.merchant)
+    }
+
+    @Test
+    fun `AE-22 a FILL payment not mentioned by the second Fill resets to CASH and DEFAULT`() {
+        beginFill()
+        fillAndSettle("taxi 15 κάρτα")
+        assertEquals(PaymentMethod.CARD, st.paymentMethod)
+
+        fillAndSettle("taxi 15")
+
+        assertEquals(PaymentMethod.CASH, st.paymentMethod)
+        assertEquals(FieldOrigin.DEFAULT, st.fieldOrigins[QuickAddField.PAYMENT])
+    }
+
+    @Test
+    fun `AE-23 a merchant edited after Fill is kept by the next Fill`() {
+        beginFill()
+        fillAndSettle("taxi 15")
+
+        viewModel.updateMerchant("Taxi Beat")
+        fillAndSettle("uber 20 χθες")
+
+        assertEquals("Taxi Beat", st.merchant)
+        assertEquals("20.00", st.amount)
+        assertEquals(ctxYesterday, st.date)
+        coVerify(exactly = 0) { expenseRepository.searchMerchants(any()) }
+    }
+
+    @Test
+    fun `AE-24 a user-cleared amount is fillable again`() {
+        beginFill()
+        viewModel.updateAmount("4")
+        viewModel.updateAmount("")
+
+        fillAndSettle("καφές 3,50")
+
+        assertEquals("3.50", st.amount)
+        assertEquals(FieldOrigin.FILL, st.fieldOrigins[QuickAddField.AMOUNT])
+    }
+
+    @Test
+    fun `AE-25 a picked date is kept while amount and merchant are filled`() {
+        beginFill()
+        val picked = athensEpoch(2026, 10, 10, 12, 0, 0)
+        viewModel.updateDate(picked)
+
+        fillAndSettle("καφές 3,50 χθες")
+
+        assertEquals(picked, st.date)
+        assertEquals(FieldOrigin.USER, st.fieldOrigins[QuickAddField.DATE])
+        assertEquals("3.50", st.amount)
+        assertEquals("καφές", st.merchant)
+    }
+
+    @Test
+    fun `AE-26 a suggestion tap after a foreign Fill keeps the amount blank and flagged`() {
+        beginFill()
+        fillAndSettle("dinner 20 usd")
+
+        viewModel.selectSuggestion(
+            MerchantSuggestion(merchant = "Dinner Place", categoryId = 3L, avgAmount = 25.0, txCount = 4)
+        )
+
+        assertEquals("Dinner Place", st.merchant)
+        assertEquals(FieldOrigin.USER, st.fieldOrigins[QuickAddField.MERCHANT])
+        assertEquals(3L, st.selectedCategoryId)
+        assertEquals(FieldOrigin.USER, st.fieldOrigins[QuickAddField.CATEGORY])
+        assertEquals("", st.amount)
+        assertEquals(FlagReason.AMOUNT_FOREIGN_CURRENCY, st.fieldFlags[QuickAddField.AMOUNT])
+    }
+
+    @Test
+    fun `a suggestion tap writes a blank unflagged amount as a USER edit`() {
+        beginFill()
+
+        viewModel.selectSuggestion(
+            MerchantSuggestion(merchant = "Dinner Place", categoryId = null, avgAmount = 25.0, txCount = 4)
+        )
+
+        assertEquals("25.00", st.amount)
+        assertEquals(FieldOrigin.USER, st.fieldOrigins[QuickAddField.AMOUNT])
+        assertEquals(FieldOrigin.DEFAULT, st.fieldOrigins[QuickAddField.CATEGORY])
+    }
+
+    @Test
+    fun `AE-27 Fill never searches merchants and hides open suggestions`() = runTest(testDispatcher) {
+        beginFill()
+        coEvery { expenseRepository.searchMerchants("ka") } returns
+            listOf(MerchantSuggestion(merchant = "Kafes Place", categoryId = null, avgAmount = 3.5, txCount = 2))
+        viewModel.updateMerchant("ka")
+        advanceTimeBy(350)
+        assertTrue(st.showSuggestions)
+        coVerify(exactly = 1) { expenseRepository.searchMerchants("ka") }
+
+        fillAndSettle("kafes 3.50")
+
+        assertFalse(st.showSuggestions)
+        assertTrue(st.suggestions.isEmpty())
+        assertEquals("3.50", st.amount)
+        coVerify(exactly = 1) { expenseRepository.searchMerchants(any()) }
+    }
+
+    @Test
+    fun `AE-27 Fill cancels a pending debounced search before it runs`() = runTest(testDispatcher) {
+        beginFill()
+        viewModel.updateMerchant("ka")
+
+        viewModel.fill("kafes 3.50")
+        advanceUntilIdle()
+
+        coVerify(exactly = 0) { expenseRepository.searchMerchants(any()) }
+        assertFalse(st.showSuggestions)
+    }
+
+    @Test
+    fun `AE-28 Fill has no effect while a save is running`() = runTest(testDispatcher) {
+        beginFill()
+        stubAddManualExpenseSuspending()
+        viewModel.updateMerchant("Shop")
+        viewModel.updateAmount("10.00")
+        advanceUntilIdle()
+        viewModel.save()
+        advanceTimeBy(100)
+        assertTrue(st.isSaving)
+        val before = st
+        loggedLines.clear()
+
+        viewModel.fill("kafes 3.50")
+        advanceTimeBy(100)
+
+        assertEquals(before, st)
+        assertNull(st.lastFillOutcome)
+        assertTrue(loggedLines.isEmpty())
+        advanceUntilIdle()
+    }
+
+    @Test
+    fun `AE-28 Fill has no effect while the home currency is still loading and for a blank line`() {
+        beginFill()
+        val loadingRepo = mockk<CurrencySettingsRepository>(relaxed = true)
+        every { loadingRepo.homeCurrency() } returns emptyFlow()
+        val loading = createViewModel(loadingRepo)
+        testDispatcher.scheduler.advanceUntilIdle()
+        val before = loading.state.value
+
+        loading.fill("kafes 3.50")
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertNull(before.homeCurrency)
+        assertEquals(before, loading.state.value)
+
+        val blankBefore = st
+        viewModel.fill("   ")
+        viewModel.fill("")
+        testDispatcher.scheduler.advanceUntilIdle()
+        assertEquals(blankBefore, st)
+        assertTrue(loggedLines.isEmpty())
+    }
+
+    @Test
+    fun `AE-29 a suspended lookup result never overwrites a category the user picked meanwhile`() = runTest(testDispatcher) {
+        beginFill()
+        val gate = CompletableDeferred<LearnedCategoryLookupResult>()
+        coEvery { quickAddLearnedCategoryLookup.lookup(any(), any()) } coAnswers { gate.await() }
+        viewModel.fill("kafes 3.50")
+        advanceUntilIdle()
+        assertNull(st.lastFillOutcome)
+
+        viewModel.selectCategory(2L)
+        gate.complete(LearnedCategoryLookupResult.Found(CategoryMatch(3L, CategorySource.LEARNED)))
+        advanceUntilIdle()
+
+        assertEquals(2L, st.selectedCategoryId)
+        assertEquals(FieldOrigin.USER, st.fieldOrigins[QuickAddField.CATEGORY])
+        assertNull(st.categoryFillSource)
+        assertEquals("3.50", st.amount)
+        assertEquals("kafes", st.merchant)
+    }
+
+    @Test
+    fun `AE-29 a newer Fill supersedes a pending older one and only the newer result is applied`() = runTest(testDispatcher) {
+        beginFill()
+        val gateA = CompletableDeferred<LearnedCategoryLookupResult>()
+        var calls = 0
+        coEvery { quickAddLearnedCategoryLookup.lookup(any(), any()) } coAnswers {
+            if (calls++ == 0) gateA.await() else LearnedCategoryLookupResult.Absent
+        }
+        viewModel.fill("kafes 3.50")
+        advanceUntilIdle()
+
+        viewModel.fill("taxi 9")
+        advanceUntilIdle()
+        gateA.complete(LearnedCategoryLookupResult.Found(CategoryMatch(3L, CategorySource.LEARNED)))
+        advanceUntilIdle()
+
+        assertEquals("taxi", st.merchant)
+        assertEquals("9.00", st.amount)
+        assertNull(st.selectedCategoryId)
+        assertEquals(listOf("FILL_FULL"), loggedLines.map { it.message })
+    }
+
+    @Test
+    fun `reset cancels a pending Fill so a late result is never applied`() = runTest(testDispatcher) {
+        beginFill()
+        val gate = CompletableDeferred<LearnedCategoryLookupResult>()
+        coEvery { quickAddLearnedCategoryLookup.lookup(any(), any()) } coAnswers { gate.await() }
+        viewModel.fill("kafes 3.50")
+        advanceUntilIdle()
+
+        viewModel.reset()
+        gate.complete(LearnedCategoryLookupResult.Found(CategoryMatch(3L, CategorySource.LEARNED)))
+        advanceUntilIdle()
+
+        assertEquals("", st.amount)
+        assertEquals("", st.merchant)
+        assertNull(st.lastFillOutcome)
+        assertTrue(loggedLines.isEmpty())
+    }
+
+    @Test
+    fun `AE-28 a Fill waiting on its lookup is skipped when a save is running at apply time`() = runTest(testDispatcher) {
+        beginFill()
+        stubAddManualExpenseSuspending()
+        val gate = CompletableDeferred<LearnedCategoryLookupResult>()
+        coEvery { quickAddLearnedCategoryLookup.lookup(any(), any()) } coAnswers { gate.await() }
+
+        viewModel.fill("kafes 3.50")
+        advanceTimeBy(100)
+        assertNull(st.lastFillOutcome)
+
+        viewModel.updateMerchant("Shop")
+        viewModel.updateAmount("10.00")
+        viewModel.save()
+        advanceTimeBy(100)
+        assertTrue(st.isSaving)
+        val before = st
+        loggedLines.clear()
+
+        gate.complete(LearnedCategoryLookupResult.Found(CategoryMatch(3L, CategorySource.LEARNED)))
+        advanceTimeBy(100)
+
+        assertEquals(before, st)
+        assertNull(st.lastFillOutcome)
+        assertEquals("Shop", st.merchant)
+        assertEquals("10.00", st.amount)
+        assertTrue(loggedLines.isEmpty())
+        advanceUntilIdle()
+    }
+
+    @Test
+    fun `INV-18 a lookup that ignores cancellation is not applied after reset`() = runTest(testDispatcher) {
+        beginFill()
+        val gate = CompletableDeferred<LearnedCategoryLookupResult>()
+        coEvery { quickAddLearnedCategoryLookup.lookup(any(), any()) } coAnswers {
+            withContext(NonCancellable) { gate.await() }
+        }
+        viewModel.fill("kafes 3.50")
+        advanceUntilIdle()
+
+        viewModel.reset()
+        gate.complete(LearnedCategoryLookupResult.Found(CategoryMatch(3L, CategorySource.LEARNED)))
+        advanceUntilIdle()
+
+        assertEquals("", st.amount)
+        assertEquals("", st.merchant)
+        assertNull(st.selectedCategoryId)
+        assertNull(st.lastFillOutcome)
+        assertTrue(loggedLines.isEmpty())
+    }
+
+    @Test
+    fun `INV-18 a lookup that ignores cancellation is not applied after a newer Fill`() = runTest(testDispatcher) {
+        beginFill()
+        val gateA = CompletableDeferred<LearnedCategoryLookupResult>()
+        var calls = 0
+        coEvery { quickAddLearnedCategoryLookup.lookup(any(), any()) } coAnswers {
+            if (calls++ == 0) withContext(NonCancellable) { gateA.await() } else LearnedCategoryLookupResult.Absent
+        }
+        viewModel.fill("kafes 3.50")
+        advanceUntilIdle()
+
+        viewModel.fill("taxi 9")
+        advanceUntilIdle()
+        gateA.complete(LearnedCategoryLookupResult.Found(CategoryMatch(3L, CategorySource.LEARNED)))
+        advanceUntilIdle()
+
+        assertEquals("taxi", st.merchant)
+        assertEquals("9.00", st.amount)
+        assertNull(st.selectedCategoryId)
+        assertEquals(listOf("FILL_FULL"), loggedLines.map { it.message })
+    }
+
+    @Test
+    fun `AE-30 filling the same line twice gives an identical state and the same outcome`() {
+        beginFill()
+        stubLearned("καφές", 3L)
+
+        fillAndSettle("καφές 3,50 χθες")
+        val first = st
+        fillAndSettle("καφές 3,50 χθες")
+
+        assertEquals(first, st)
+        assertEquals(listOf("FILL_FULL", "FILL_FULL"), loggedLines.map { it.message })
+    }
+
+    @Test
+    fun `AE-31 Fill leaves notes recurring transaction type and home currency alone`() {
+        beginFill()
+        viewModel.updateNotes("x")
+        viewModel.toggleRecurring()
+        viewModel.selectTransactionType(TransactionType.TRANSFER)
+
+        fillAndSettle("kafes 3.50 χθες κάρτα")
+
+        assertEquals("x", st.notes)
+        assertTrue(st.isRecurring)
+        assertEquals(TransactionType.TRANSFER, st.transactionType)
+        assertEquals("EUR", st.homeCurrency)
+        assertEquals("3.50", st.amount)
+    }
+
+    @Test
+    fun `Fill clears a stale save result and the errors of the fields it wrote`() {
+        beginFill()
+        stubAddManualExpenseReturns(Result.Error())
+
+        // A stale save result is cleared.
+        viewModel.updateMerchant("Shop")
+        viewModel.updateAmount("10.00")
+        testDispatcher.scheduler.advanceUntilIdle()
+        viewModel.save()
+        testDispatcher.scheduler.advanceUntilIdle()
+        assertTrue(st.saveResult is SaveResult.Error)
+        fillAndSettle("kafes 3.50")
+        assertNull(st.saveResult)
+
+        // A merchant error is cleared when Fill writes the merchant.
+        viewModel.reset()
+        viewModel.updateAmount("10.00")
+        viewModel.save()
+        testDispatcher.scheduler.advanceUntilIdle()
+        assertTrue(st.merchantError != null)
+        fillAndSettle("kafes 3.50")
+        assertNull(st.merchantError)
+
+        // An amount error is cleared when Fill writes the amount.
+        viewModel.reset()
+        viewModel.updateMerchant("Shop")
+        viewModel.save()
+        testDispatcher.scheduler.advanceUntilIdle()
+        assertTrue(st.amountError != null)
+        fillAndSettle("kafes 3.50")
+        assertNull(st.amountError)
+    }
+
+    // ---- AE-41 .. AE-43 ----
+
+    @Test
+    fun `AE-41 Fill then Save calls addManualExpense exactly once with the filled values in the home currency`() {
+        beginFill()
+        stubAddManualExpense()
+        stubLearned("καφές", 3L)
+        fillAndSettle("καφές 3,50 χθες")
+
+        viewModel.save()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(SaveResult.Success, st.saveResult)
+        verifyOneSavedExpense("καφές", 3.5, "EUR", 3L, PaymentMethod.CASH, ctxYesterday)
+    }
+
+    @Test
+    fun `AE-42 a Duplicate result is shown and the filled fields are kept`() {
+        beginFill()
+        stubAddManualExpenseReturns(Result.Duplicate)
+        fillAndSettle("καφές 3,50 χθες")
+
+        viewModel.save()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(SaveResult.Duplicate, st.saveResult)
+        assertFalse(st.isSaving)
+        assertEquals("3.50", st.amount)
+        assertEquals("καφές", st.merchant)
+        assertEquals(ctxYesterday, st.date)
+    }
+
+    @Test
+    fun `AE-43 the same line saved twice is a Duplicate the second time`() {
+        beginFill()
+        coEvery {
+            manualExpenseRepository.addManualExpense(
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any()
+            )
+        } returnsMany listOf<Result<Long>>(Result.Success(1L), Result.Duplicate)
+        fillAndSettle("καφές 3,50")
+        viewModel.save()
+        testDispatcher.scheduler.advanceUntilIdle()
+        assertEquals(SaveResult.Success, st.saveResult)
+
+        viewModel.reset()
+        fillAndSettle("καφές 3,50")
+        viewModel.save()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(SaveResult.Duplicate, st.saveResult)
+        assertEquals("3.50", st.amount)
+    }
+
+    // ---- AE-50, AE-51 ----
+
+    @Test
+    fun `AE-50 state toString and every VM field are free of the typed line and consumed tokens`() {
+        beginFill()
+        val line = "taxi 15 κάρτα χθες"
+
+        fillAndSettle(line)
+
+        val rendered = st.toString()
+        assertFalse(rendered.contains("κάρτα"))
+        assertFalse(rendered.contains("χθες"))
+        assertFalse(rendered.contains(line))
+        // Type-based guard (owner-approvals item 63): no field may be able to hold the typed line.
+        val forbiddenTypes = listOf<Class<*>>(
+            String::class.java,
+            CharSequence::class.java,
+            com.yourname.expensetracker.domain.quickadd.QuickAddInput::class.java,
+            com.yourname.expensetracker.domain.quickadd.QuickAddParseResult::class.java,
+            com.yourname.expensetracker.domain.quickadd.MerchantText::class.java
+        )
+        // Item 71a: the VM-held summary snapshot is enums, sets and a Boolean only.
+        assertEquals(
+            QuickAddSummarySnapshot::class.java,
+            AddExpenseState::class.java.getDeclaredField("fillSummary").type
+        )
+        for (field in QuickAddSummarySnapshot::class.java.declaredFields.filterNot { java.lang.reflect.Modifier.isStatic(it.modifiers) }) {
+            assertFalse(
+                "snapshot field ${field.name} has the forbidden type ${field.type.simpleName}",
+                forbiddenTypes.any { it.isAssignableFrom(field.type) }
+            )
+        }
+        assertFalse(st.fillSummary.toString().contains("κάρτα"))
+        // Static fields are the bounded log-code constants, not instance state.
+        for (field in AddExpenseViewModel::class.java.declaredFields.filterNot { java.lang.reflect.Modifier.isStatic(it.modifiers) }) {
+            assertFalse(
+                "field ${field.name} has the forbidden type ${field.type.simpleName}",
+                forbiddenTypes.any { it.isAssignableFrom(field.type) }
+            )
+        }
+        for (field in AddExpenseViewModel::class.java.declaredFields) {
+            field.isAccessible = true
+            val text = field.get(viewModel)?.toString().orEmpty()
+            assertFalse("field ${field.name} holds the line", text.contains(line))
+            assertFalse("field ${field.name} holds a consumed token", text.contains("κάρτα") || text.contains("χθες"))
+        }
+    }
+
+    @Test
+    fun `AE-51 a lookup failure logs only the bounded code and the outcome and keeps the category empty`() {
+        beginFill()
+        coEvery { quickAddLearnedCategoryLookup.lookup(any(), any()) } throws
+            SQLiteException("no such column near 'καφές' secret=42")
+
+        fillAndSettle("καφές 3,50")
+
+        assertEquals(
+            listOf("QUICK_ADD_CATEGORY_LOOKUP_FAILED", "FILL_FULL"),
+            loggedLines.map { it.message }
+        )
+        assertTrue(loggedLines.all { it.throwable == null })
+        assertNull(st.selectedCategoryId)
+        assertEquals("3.50", st.amount)
+        assertEquals("καφές", st.merchant)
+    }
+
+    @Test
+    fun `AE-51 a Failed lookup result also logs only the bounded code`() {
+        beginFill()
+        coEvery { quickAddLearnedCategoryLookup.lookup(any(), any()) } returns LearnedCategoryLookupResult.Failed
+
+        fillAndSettle("καφές 3,50")
+
+        assertEquals(
+            listOf("QUICK_ADD_CATEGORY_LOOKUP_FAILED", "FILL_FULL"),
+            loggedLines.map { it.message }
+        )
+        assertNull(st.selectedCategoryId)
+    }
+
+    @Test
+    fun `a lookup cancellation is rethrown logs nothing and applies nothing`() {
+        beginFill()
+        coEvery { quickAddLearnedCategoryLookup.lookup(any(), any()) } throws CancellationException("cancelled")
+
+        fillAndSettle("καφές 3,50")
+
+        assertTrue(loggedLines.isEmpty())
+        assertEquals("", st.amount)
+        assertNull(st.lastFillOutcome)
+    }
+
+    @Test
+    fun `AE-51 Fill plus search failure plus save failure only ever log allowed constants without throwables or line text`() = runTest(testDispatcher) {
+        beginFill()
+        val line = "καφές 3,50 χθες"
+        coEvery { quickAddLearnedCategoryLookup.lookup(any(), any()) } throws IllegalStateException("db path $line")
+        coEvery { expenseRepository.searchMerchants("Sh") } throws SQLiteException("LIKE '$line'")
+        stubAddManualExpenseThrows(IllegalStateException("Created expense 42 was not found for $line"))
+
+        viewModel.fill(line)
+        advanceUntilIdle()
+        viewModel.updateMerchant("Sh")
+        advanceTimeBy(350)
+        advanceUntilIdle()
+        viewModel.updateMerchant("Shop")
+        viewModel.updateAmount("10.00")
+        advanceUntilIdle()
+        viewModel.save()
+        advanceUntilIdle()
+
+        val allowed = setOf(
+            "FILL_FULL", "FILL_PARTIAL", "FILL_NONE", "FOREIGN_CURRENCY_BLOCKED",
+            "MERCHANT_SUGGESTION_SEARCH_FAILED", "ADD_EXPENSE_SAVE_FAILED", "QUICK_ADD_CATEGORY_LOOKUP_FAILED"
+        )
+        assertTrue(loggedLines.isNotEmpty())
+        assertTrue(loggedLines.all { it.message in allowed })
+        assertTrue(loggedLines.all { it.throwable == null })
+        assertTrue(loggedLines.none { it.message.contains("καφ") || it.message.contains("3,50") || it.message.contains("χθες") })
+        assertTrue(loggedLines.any { it.message == "QUICK_ADD_CATEGORY_LOOKUP_FAILED" })
+        assertTrue(loggedLines.any { it.message == "MERCHANT_SUGGESTION_SEARCH_FAILED" })
+        assertTrue(loggedLines.any { it.message == "ADD_EXPENSE_SAVE_FAILED" })
+    }
+
+    // ---- G2-11: category source and clearCategory ----
+
+    @Test
+    fun `G2-11 the category source follows the fill and is cleared by any user category edit`() {
+        beginFill()
+        fillAndSettle("groceries 42.30 lidl")
+        assertEquals(CategoryFillSource.EXACT_NAME, st.categoryFillSource)
+
+        viewModel.selectCategory(2L)
+
+        assertNull(st.categoryFillSource)
+        assertEquals(FieldOrigin.USER, st.fieldOrigins[QuickAddField.CATEGORY])
+        assertEquals(2L, st.selectedCategoryId)
+    }
+
+    @Test
+    fun `G2-11 clearCategory removes the category as a USER edit and no later Fill refills it`() {
+        beginFill()
+        stubLearned("kafes", 3L)
+        fillAndSettle("kafes 3.50")
+        assertEquals(3L, st.selectedCategoryId)
+        assertEquals(CategoryFillSource.LEARNED, st.categoryFillSource)
+
+        viewModel.clearCategory()
+
+        assertNull(st.selectedCategoryId)
+        assertNull(st.categoryFillSource)
+        assertEquals(FieldOrigin.USER, st.fieldOrigins[QuickAddField.CATEGORY])
+
+        fillAndSettle("kafes 4.00")
+        assertNull(st.selectedCategoryId)
+        fillAndSettle("groceries 5.00 lidl")
+        assertNull(st.selectedCategoryId)
+        assertNull(st.categoryFillSource)
+        assertEquals("5.00", st.amount)
+    }
+
+    @Test
+    fun `a suggestion with a category is a USER category edit and clears the category source`() {
+        beginFill()
+        fillAndSettle("groceries 42.30 lidl")
+
+        viewModel.selectSuggestion(
+            MerchantSuggestion(merchant = "Dinner Place", categoryId = 3L, avgAmount = 25.0, txCount = 4)
+        )
+
+        assertEquals(3L, st.selectedCategoryId)
+        assertNull(st.categoryFillSource)
+        assertEquals(FieldOrigin.USER, st.fieldOrigins[QuickAddField.CATEGORY])
+    }
+
+    // ---- G2-13: the summary survives edits ----
+
+    @Test
+    fun `G2-13 lastFillOutcome and line hints survive later edits and only reset clears them`() {
+        beginFill()
+        fillAndSettle("dinner 20 usd")
+        assertEquals(OutcomeCode.FOREIGN_CURRENCY_BLOCKED, st.lastFillOutcome)
+        assertEquals(setOf(LineHint.FOREIGN_CURRENCY_NOT_SUPPORTED), st.lineHints)
+
+        viewModel.updateAmount("18")
+        viewModel.updateMerchant("Dinner Place")
+        viewModel.selectCategory(3L)
+        viewModel.clearCategory()
+        viewModel.updateDate(ctxYesterday)
+        viewModel.selectPaymentMethod(PaymentMethod.CARD)
+
+        assertEquals(OutcomeCode.FOREIGN_CURRENCY_BLOCKED, st.lastFillOutcome)
+        assertEquals(setOf(LineHint.FOREIGN_CURRENCY_NOT_SUPPORTED), st.lineHints)
+
+        viewModel.reset()
+
+        assertNull(st.lastFillOutcome)
+        assertTrue(st.lineHints.isEmpty())
+        assertTrue(st.fieldFlags.isEmpty())
+        assertNull(st.categoryFillSource)
+        assertTrue(st.fieldOrigins.values.all { it == FieldOrigin.DEFAULT })
+    }
+
+    @Test
+    fun `item 71a the summary snapshot is computed in the Fill apply, survives edits, and reset clears it`() {
+        beginFill()
+        assertNull(st.fillSummary)
+
+        fillAndSettle("dinner 20 usd")
+        val atFill = st.fillSummary!!
+        assertEquals(OutcomeCode.FOREIGN_CURRENCY_BLOCKED, atFill.outcome)
+        assertEquals(setOf(LineHint.FOREIGN_CURRENCY_NOT_SUPPORTED), atFill.hints)
+        assertEquals(st.fieldFlags.keys, atFill.flagged)
+        assertTrue(QuickAddField.AMOUNT in atFill.flagged)
+        assertEquals(
+            QuickAddField.values().filter { st.fieldOrigins[it] == FieldOrigin.FILL && it !in st.fieldFlags }.toSet(),
+            atFill.filled
+        )
+        assertTrue(atFill.filled.none { it in atFill.flagged })
+        assertFalse(atFill.keptEdits)
+
+        // User edits never rewrite the snapshot; the live origins and flags do change.
+        viewModel.updateAmount("18")
+        viewModel.updateMerchant("Dinner Place")
+        viewModel.selectPaymentMethod(PaymentMethod.CARD)
+        assertEquals(atFill, st.fillSummary)
+        assertTrue(st.fieldFlags.isEmpty())
+        assertEquals(FieldOrigin.USER, st.fieldOrigins[QuickAddField.AMOUNT])
+
+        viewModel.reset()
+        assertNull(st.fillSummary)
+    }
+
+    @Test
+    fun `item 71a a second Fill after a user edit replaces the snapshot and records the kept edit`() {
+        beginFill()
+        fillAndSettle("dinner 20 usd")
+        val first = st.fillSummary!!
+        assertFalse(first.keptEdits)
+
+        viewModel.updateAmount("18")
+        fillAndSettle("dinner 20 usd")
+
+        val second = st.fillSummary!!
+        assertNotEquals(first, second)
+        assertTrue(second.keptEdits)
+        assertFalse(QuickAddField.AMOUNT in second.filled)
+        assertFalse(QuickAddField.AMOUNT in second.flagged)
+    }
+
+    @Test
+    fun `item 71a edited then rotated - the retained VM state gives the same summary lines`() {
+        beginFill()
+        fillAndSettle("dinner 20 usd")
+        val linesAtFill = QuickAddUiMapper.summaryLines(st.fillSummary, st.homeCurrency)
+        assertTrue(linesAtFill.isNotEmpty())
+
+        viewModel.updateAmount("18")
+        viewModel.updateMerchant("Dinner Place")
+        val linesAfterEdits = QuickAddUiMapper.summaryLines(st.fillSummary, st.homeCurrency)
+
+        // Rotation recreates the UI but keeps the ViewModel: a fresh read of the retained state (no Sheet-side
+        // holder involved) renders the same summary as before the rotation.
+        val linesAfterRotation = QuickAddUiMapper.summaryLines(viewModel.state.value.fillSummary, st.homeCurrency)
+        assertEquals(linesAtFill, linesAfterEdits)
+        assertEquals(linesAfterEdits, linesAfterRotation)
+    }
+
+    @Test
+    fun `origin transitions - every user gesture marks USER even when the value is unchanged`() {
+        beginFill()
+
+        viewModel.updateDate(st.date)
+        viewModel.selectPaymentMethod(PaymentMethod.CASH)
+        viewModel.updateMerchant("m")
+        viewModel.updateAmount("1")
+        viewModel.selectCategory(1L)
+
+        assertTrue(QuickAddField.values().all { st.fieldOrigins[it] == FieldOrigin.USER })
+    }
+
+    @Test
+    fun `a foreign hint is shown even when the amount is a USER edit and the amount stays untouched`() {
+        beginFill()
+        viewModel.updateAmount("18")
+
+        fillAndSettle("dinner 20 usd")
+
+        assertEquals("18", st.amount)
+        assertNull(st.fieldFlags[QuickAddField.AMOUNT])
+        assertEquals(setOf(LineHint.FOREIGN_CURRENCY_NOT_SUPPORTED), st.lineHints)
+        assertEquals(OutcomeCode.FOREIGN_CURRENCY_BLOCKED, st.lastFillOutcome)
+    }
+
+    @Test
+    fun `NOTHING_RECOGNISED comes from the parser and a too-long line yields FILL_NONE with LINE_TOO_LONG`() {
+        beginFill()
+
+        fillAndSettle("!!! ;")
+        assertEquals(OutcomeCode.FILL_NONE, st.lastFillOutcome)
+        assertEquals(setOf(LineHint.NOTHING_RECOGNISED), st.lineHints)
+
+        fillAndSettle("a".repeat(201))
+        assertEquals(OutcomeCode.FILL_NONE, st.lastFillOutcome)
+        assertEquals(setOf(LineHint.LINE_TOO_LONG), st.lineHints)
+    }
+
+    @Test
+    fun `with an empty picker the lookup finds nothing to attach and the category stays null`() {
+        beginFill(pickerCategories = emptyList())
+
+        fillAndSettle("groceries 5")
+
+        assertNull(st.selectedCategoryId)
+        assertEquals("groceries", st.merchant)
+        assertEquals("5.00", st.amount)
     }
 }

@@ -142,7 +142,6 @@ class CancellationSafetyArchitectureGuardTest {
             ArchitectureAllowlistEntry("NaturalLanguageSearchViewModel.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
             ArchitectureAllowlistEntry("ReceiptScanViewModel.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
             ArchitectureAllowlistEntry("TransactionsViewModel.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("AddExpenseViewModel.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
             ArchitectureAllowlistEntry("AssistantViewModel.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
             ArchitectureAllowlistEntry("BackupRestoreViewModel.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
             ArchitectureAllowlistEntry("CarbonFootprintViewModel.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),

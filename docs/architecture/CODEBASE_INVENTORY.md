@@ -1,6 +1,6 @@
 # ExpenseTracker Android Codebase - Ground-Truth Inventory
 
-**Generated:** 2026-10-02 (verified snapshot; re-verified against source)
+**Generated/verified:** 2026-10-28 (nl-quick-add increment 1 refresh; base snapshot 2026-10-02, re-verified against source)
 **Database Version:** v151
 **Architecture:** Clean Architecture + MVVM + Jetpack Compose + Room + Hilt DI
 
@@ -9,6 +9,16 @@
 ## EXECUTIVE SUMMARY
 
 Snapshot summary only: this inventory tracks the current UI, domain, data, and DI surfaces without freezing volatile counts.
+
+### Drift Sync (2026-10-28 / nl-quick-add increment 1, branch feature/nl-quick-add)
+
+Manual snapshot refresh (D-10: no generator script exists; none was run). DB **v151** unchanged (no schema change, no migration, no new Hilt module; `QuickAddParser` and `QuickAddLearnedCategoryLookup` are `@Inject constructor` classes). Counts of DAOs/ViewModels/workers unchanged. Not compiled or validated in this docs slice; validation is recorded in `workflows/active/nl-quick-add-handoff.md`.
+
+- **Domain (`domain/quickadd/`, pure Kotlin, no Android):** `QuickAddParser` (local, deterministic line parser; the line is never persisted or logged), `QuickAddModels` (`QuickAddInput`, `QuickAddParseResult`, `FieldParse`, `AmountText`, `ResolvedDate`, `MerchantText`, `QuickAddPayment`, `CategoryRef`, `CategoryMatch`, `CategorySource`, `FlagReason`, `LineHint`), `QuickAddAmountRules` (amount canonicaliser, shared with the clipboard parser), `QuickAddDateRules` (internal; `DateExpr`, explicit zone/clock input), `QuickAddVocabulary` (internal; English, Greek and Greeklish tokens), `QuickAddLearnedCategoryLookup` (read-only lookup returning `LearnedCategoryLookupResult`; no writes).
+- **UI (`ui/screens/addexpense/`):** `QuickAddFillContract` (`QuickAddField`, `FieldOrigin`, `OutcomeCode`, `CategoryFillSource`, `QuickAddFormFields`, `QuickAddFillApplication`; the single pure rule for applying a parse to the form), `QuickAddUiMapper` (pure state to `UiText` mapping: counter, Fill gating, field notes, flags, category chip, summary snapshot via `snapshotOf`), `QuickAddSection` (Compose section: 200-char line held in plain `remember`, Fill button, polite live-region summary, `QuickAddNoteText`, `QuickAddCategoryChipRow`). `AddExpenseViewModel` / `AddExpenseSheet` host the section; `ReceiptScanScreen` gains only the empty-category caption.
+- **Tests (new):** `domain/quickadd/` `QuickAddParserGoldenTest` (+ `QuickAddParserGoldenFixtures`), `QuickAddParserPurityTest`, `QuickAddParserForeignCurrencyTest`, `QuickAddLearnedCategoryLookupTest`; `ui/screens/addexpense/` `QuickAddFillContractTest`, `QuickAddUiMapperTest`, `QuickAddSectionTest` (Robolectric Compose); `architecture/QuickAddPrivacyArchitectureGuardTest` (G-1..G-4: no `rememberSaveable`/`SavedStateHandle` under `addexpense`; `domain.quickadd` import boundary; no throwable or interpolated Timber message in `AddExpenseViewModel`; the lookup file references no categorise/normalise or write paths).
+- **Shard entry:** `config/validation/test-shards.json` `domain-n-z` gains `com.yourname.expensetracker.domain.quickadd.*` (G2-7). The UI tests fall under the existing `runtime-ui` shard. Known gap: the runner has no shard-coverage check, so a new package outside every shard is silently skipped by sharded runs (follow-up recorded in the handoff).
+- **Strings:** `quick_add_*`, `add_expense_error_*` and `add_expense_category_auto_hint` in `res/values{,-el,-es}/strings.xml`; el/es are DRAFT pending owner native sign-off.
 
 ### Drift Sync (2026-10-24 / ai-fixes Parts A, B, C, branch feature/ai-fixes)
 
@@ -341,6 +351,7 @@ Assistant is an overlay/entry surface, not a bottom tab.
 - AppParserRegistry, GenericTransactionParser
 - TransferDirectionDetector
 - Parsers: GoogleWalletParser, GreekBankParser, RevolutParser, SmsParser
+- Quick add (manual entry line, `domain/quickadd/`): QuickAddParser, QuickAddModels, QuickAddAmountRules, QuickAddDateRules, QuickAddVocabulary, QuickAddLearnedCategoryLookup
 
 ### Location & Geolocation
 - AreaSpendingEngine, GeocodingResult, LocatedExpense

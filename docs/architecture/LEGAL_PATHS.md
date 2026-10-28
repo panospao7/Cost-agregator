@@ -46,6 +46,18 @@ ENFORCEMENT:
     writeBarrier.checkWritesAllowed(...) at entry and writeBarrier.runWrite(...)
     around database.withTransaction. (The former ExpenseWriteStore facade was
     removed as a dead layer — GR-14u35.)
+
+PREFILL AIDS (not a write path):
+  • Clipboard amount prefill (ClipboardAmountParser → AddExpenseViewModel.setInitialValuesIfBlank),
+    merchant suggestion (AddExpenseViewModel merchant suggestion search, read-only) and
+    nl-quick-add Fill (AddExpenseViewModel.fill) only write in-memory Add-Expense form state
+    (amount, merchant, date, category, payment). They perform no DB or preference write.
+  • The only persisted effect is the unchanged manual Save above:
+    AddExpenseViewModel.save() → ManualExpenseRepository.addManualExpense() →
+    TransactionLifecycleCoordinator.createExpenseDbOnlyV2() → ExpenseDao.insertAtomic(),
+    source = MANUAL_ENTRY.
+  • Fill must not call categorize*, MerchantNormalizer or any repository write
+    (see Categorization / Merchant Learning, read-only learned category lookup).
 ```
 
 ```
@@ -975,9 +987,29 @@ FORBIDDEN:
 CATEGORIZE expense (auto):
   → CategorizationEngine.categorize(merchant) /
     categorizeWithContext(merchant, amount, timestamp)
-  → Read-only: 6-layer cascade (Exact → Canonical → Greeklish → Fuzzy → Semantic → Context)
+  → 6-layer cascade (Exact → Canonical → Greeklish → Fuzzy → Semantic → Context)
   → Returns CategorizationResult with MatchType + confidence
-  → No persistent side effects
+  → NOT write-free: the cascade calls MerchantNormalizer.normalize(), which even with
+    autoCreate = false can INSERT or UPDATE a merchant_aliases row on a fuzzy match >= 0.95
+    (MerchantNormalizer.kt:98-103 → MerchantNormalizationRepository.linkAliasToCanonical →
+    DAO insertAlias / occurrenceCount update) and logs the raw name (Timber.w, :102). A
+    merchant_canonicals row is created only when autoCreate = true (createNewMerchant() /
+    repository.insertCanonical(), :111-114). Any caller
+    that must be write-free (for example the quick-add Fill) must NOT call categorize*,
+    CategorizationEngine.normalize(), MerchantCategoryRepository.getCategoryForMerchant()
+    (it calls normalize()) or MerchantNormalizer.
+
+READ-ONLY learned category lookup (nl-quick-add C2, no persistent side effects):
+  → QuickAddLearnedCategoryLookup.lookup(merchant, pickerCategories)  [domain/quickadd, suspend]
+  → key = CategorizationEngine.normalizedCanonicalNameForMerchant(merchant)
+    (pure: MerchantCanonicalizer.canonicalize + GreeklishNormalizer.normalize; no I/O, no logging)
+  → MerchantCategoryRepository.getCategoryByNormalizedCanonical(key)  (pure DAO read; deterministic
+    order: confidence DESC, timesUsed DESC, merchantPattern ASC)
+  → the row is used only if its categoryId is in the picker list; else Absent
+  → a non-cancellation exception becomes a failure result (the caller logs the bounded code
+    QUICK_ADD_CATEGORY_LOOKUP_FAILED, no throwable); CancellationException is rethrown
+  → Result feeds the Add-Expense form only (AddExpenseViewModel.fill); persisted solely by the
+    normal Save path (EXPENSE CREATE above), never by the lookup
 
 LEARN merchant category (user feedback):
   → CategorizationEngine.learnMerchantCategory(merchantName, categoryId)
@@ -995,6 +1027,9 @@ FORBIDDEN:
   ❌ MerchantCanonicalizer.canonicalize() used for writes (read-only normalization)
   ❌ Direct cache map mutation (must go through invalidateAllCaches)
   ❌ Skipping layers in the cascade (must respect 6-layer priority order)
+  ❌ QuickAddLearnedCategoryLookup (domain/quickadd) calling categorize*/categorizeWithContext/
+     debugCategorize, CategorizationEngine.normalize(), getCategoryForMerchant(), MerchantNormalizer,
+     traceDecision, or any write (insert/learnPattern/learnMerchantCategory), or logging merchant/key
 ```
 
 ---

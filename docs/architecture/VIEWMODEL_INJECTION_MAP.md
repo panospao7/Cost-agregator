@@ -65,8 +65,8 @@
 
 ### AddExpenseViewModel
 **File:** `ui/screens/addexpense/AddExpenseViewModel.kt`
-**Injections:** ManualExpenseRepository, ExpenseRepository, CategoryRepository, TimeProvider, CurrencySettingsRepository
-**Complexity:** 🟢 Low (5 dependencies)
+**Injections:** ManualExpenseRepository, ExpenseRepository, CategoryRepository, TimeProvider, CurrencySettingsRepository, QuickAddParser, QuickAddLearnedCategoryLookup
+**Complexity:** 🟡 Medium (7 dependencies; the last two are nl-quick-add C1/C2, both `@Inject`, no Hilt module)
 
 ### ReceiptScanViewModel
 **File:** `ui/screens/receiptscan/ReceiptScanViewModel.kt`

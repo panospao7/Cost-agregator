@@ -11,9 +11,13 @@ import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ManualExpenseRepository
 import com.yourname.expensetracker.domain.model.Result
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
+import com.yourname.expensetracker.R
+import com.yourname.expensetracker.domain.model.UiText
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -28,6 +32,15 @@ import com.yourname.expensetracker.domain.util.AmountUtils
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.quickadd.CategoryRef
+import com.yourname.expensetracker.domain.quickadd.CategoryMatch
+import com.yourname.expensetracker.domain.quickadd.FieldParse
+import com.yourname.expensetracker.domain.quickadd.FlagReason
+import com.yourname.expensetracker.domain.quickadd.LearnedCategoryLookupResult
+import com.yourname.expensetracker.domain.quickadd.LineHint
+import com.yourname.expensetracker.domain.quickadd.QuickAddInput
+import com.yourname.expensetracker.domain.quickadd.QuickAddLearnedCategoryLookup
+import com.yourname.expensetracker.domain.quickadd.QuickAddParser
 
 data class AddExpenseState(
  val merchant: String = "",
@@ -46,8 +59,8 @@ data class AddExpenseState(
  val isSaving: Boolean = false,
  val saveResult: SaveResult? = null,
  val mutation: com.yourname.expensetracker.ui.model.MutationState = com.yourname.expensetracker.ui.model.MutationState.idle(),
- val merchantError: String? = null,
- val amountError: String? = null,
+ val merchantError: UiText? = null,
+ val amountError: UiText? = null,
  val transferDirection: TransferDirection? = null,
  val transferAccountName: String = "",
  val isNotMine: Boolean = false,
@@ -60,13 +73,30 @@ data class AddExpenseState(
   * S5-001/S5-002: Typed currency state — never defaults to "EUR" sentinel.
   * null = still loading; non-null = loaded (including real "EUR" users).
   */
- val homeCurrency: String? = null
+ val homeCurrency: String? = null,
+ /**
+  * nl-quick-add fill bookkeeping (spec 2.9, G2-11, G2-13). Enums only: no String, so the typed
+  * line (INV-12) and any raw text can never be held here. All cleared by [AddExpenseViewModel.reset].
+  */
+ val fieldOrigins: Map<QuickAddField, FieldOrigin> = QuickAddFillContract.DEFAULT_ORIGINS,
+ val fieldFlags: Map<QuickAddField, FlagReason> = emptyMap(),
+ val lineHints: Set<LineHint> = emptySet(),
+ /** G2-13: describes the last Fill and survives later edits; only [AddExpenseViewModel.reset] clears it. */
+ val lastFillOutcome: OutcomeCode? = null,
+ /** G2-11: why the current category was set by Fill; null once the user edits or removes the category. */
+ val categoryFillSource: CategoryFillSource? = null,
+ /**
+  * Item 71a / G2-13: what the last Fill reported (outcome, hints, filled and flagged field sets, kept
+  * edits). Computed once in the single Fill apply, so it survives later edits and rotation. Enums, sets
+  * and a Boolean only; cleared by [AddExpenseViewModel.reset].
+  */
+ val fillSummary: QuickAddSummarySnapshot? = null
 )
 
 sealed class SaveResult {
     object Success : SaveResult()
     object Duplicate : SaveResult()
-    data class Error(val message: String) : SaveResult()
+    data class Error(val message: UiText) : SaveResult()
 }
 
 @HiltViewModel
@@ -75,8 +105,23 @@ class AddExpenseViewModel @Inject constructor(
     private val expenseRepository: com.yourname.expensetracker.data.repository.ExpenseRepository,
  private val categoryRepository: CategoryRepository,
  private val timeProvider: TimeProvider,
- private val currencySettingsRepository: CurrencySettingsRepository
+ private val currencySettingsRepository: CurrencySettingsRepository,
+ private val quickAddParser: QuickAddParser,
+ private val quickAddLearnedCategoryLookup: QuickAddLearnedCategoryLookup
 ) : ViewModel() {
+
+    private companion object {
+        // INV-13: bounded diagnostic codes. No throwable, query, merchant or message text is ever attached.
+        const val LOG_MERCHANT_SUGGESTION_SEARCH_FAILED = "MERCHANT_SUGGESTION_SEARCH_FAILED"
+        const val LOG_ADD_EXPENSE_SAVE_FAILED = "ADD_EXPENSE_SAVE_FAILED"
+        const val LOG_QUICK_ADD_CATEGORY_LOOKUP_FAILED = "QUICK_ADD_CATEGORY_LOOKUP_FAILED"
+
+        // Spec 7.2: exactly one outcome constant per applied Fill.
+        const val LOG_FILL_FULL = "FILL_FULL"
+        const val LOG_FILL_PARTIAL = "FILL_PARTIAL"
+        const val LOG_FILL_NONE = "FILL_NONE"
+        const val LOG_FOREIGN_CURRENCY_BLOCKED = "FOREIGN_CURRENCY_BLOCKED"
+    }
 
     private val _state = MutableStateFlow(AddExpenseState(date = timeProvider.now()))
     val state: StateFlow<AddExpenseState> = _state.asStateFlow()
@@ -85,6 +130,9 @@ class AddExpenseViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
  private var searchJob: Job? = null
+
+ // INV-18: latest-wins. Holds the Job only; the typed line is never stored (INV-12).
+ private var fillJob: Job? = null
  private var initialValuesApplied: Boolean = false
 
  private var homeCurrencyJob: Job? = null
@@ -104,7 +152,7 @@ class AddExpenseViewModel @Inject constructor(
                 merchant = sanitized,
                 merchantError = null,
                 saveResult = null
-            )
+            ).withUserEdit(QuickAddField.MERCHANT)
         }
 
         // Debounced search
@@ -123,9 +171,12 @@ class AddExpenseViewModel @Inject constructor(
                             showSuggestions = suggestions.isNotEmpty()
                         )
                     }
+                } catch (e: CancellationException) {
+                    throw e
                 } catch (e: Exception) {
                     // S5-008: Silently clear suggestions on failure (non-critical)
-                    Timber.w(e, "Merchant suggestion search failed for: $sanitized")
+                    // INV-13: bounded code only; no throwable, query or merchant text.
+                    Timber.w(LOG_MERCHANT_SUGGESTION_SEARCH_FAILED)
                     if (isActive) {
                         _state.update { it.copy(suggestions = emptyList(), showSuggestions = false) }
                     }
@@ -138,14 +189,24 @@ class AddExpenseViewModel @Inject constructor(
 
     fun selectSuggestion(suggestion: MerchantSuggestion) {
         _state.update {
-            it.copy(
+            // INV-9: a suggestion tap is a USER edit; it writes the amount only if the amount is
+            // blank AND carries no flag (a flagged blank amount stays flagged and blank, AE-26).
+            val writeAmount = it.amount.isBlank() && QuickAddField.AMOUNT !in it.fieldFlags
+            var next = it.copy(
                 merchant = suggestion.merchant,
                 selectedCategoryId = suggestion.categoryId ?: it.selectedCategoryId,
-                amount = if (it.amount.isBlank()) com.yourname.expensetracker.ui.util.AmountInputSanitizer.sanitize(String.format(java.util.Locale.US, "%.2f", suggestion.avgAmount)) else it.amount,
+                amount = if (writeAmount) com.yourname.expensetracker.ui.util.AmountInputSanitizer.sanitize(String.format(java.util.Locale.US, "%.2f", suggestion.avgAmount)) else it.amount,
                 suggestions = emptyList(),
                 showSuggestions = false,
                 merchantError = null
-            )
+            ).withUserEdit(QuickAddField.MERCHANT)
+            if (suggestion.categoryId != null) {
+                next = next.copy(categoryFillSource = null).withUserEdit(QuickAddField.CATEGORY)
+            }
+            if (writeAmount) {
+                next = next.withUserEdit(QuickAddField.AMOUNT)
+            }
+            next
         }
     }
 
@@ -160,16 +221,30 @@ class AddExpenseViewModel @Inject constructor(
                 amount = sanitized,
                 amountError = null,
                 saveResult = null
-            )
+            ).withUserEdit(QuickAddField.AMOUNT)
         }
     }
 
     fun selectCategory(categoryId: Long) {
-        _state.update { it.copy(selectedCategoryId = categoryId) }
+        _state.update {
+            it.copy(selectedCategoryId = categoryId, categoryFillSource = null)
+                .withUserEdit(QuickAddField.CATEGORY)
+        }
+    }
+
+    /**
+     * G2-11: removes the category (the chip's Remove). Counts as a USER edit, so a later Fill never
+     * refills it. A null category at Save is still resolved by the existing classifier.
+     */
+    fun clearCategory() {
+        _state.update {
+            it.copy(selectedCategoryId = null, categoryFillSource = null)
+                .withUserEdit(QuickAddField.CATEGORY)
+        }
     }
 
     fun selectPaymentMethod(method: PaymentMethod) {
-        _state.update { it.copy(paymentMethod = method) }
+        _state.update { it.copy(paymentMethod = method).withUserEdit(QuickAddField.PAYMENT) }
     }
 
     fun selectTransactionType(type: TransactionType) {
@@ -184,7 +259,7 @@ class AddExpenseViewModel @Inject constructor(
     }
 
     fun updateDate(dateMs: Long) {
-        _state.update { it.copy(date = dateMs) }
+        _state.update { it.copy(date = dateMs).withUserEdit(QuickAddField.DATE) }
     }
 
     fun updateNotes(value: String) {
@@ -277,14 +352,14 @@ class AddExpenseViewModel @Inject constructor(
         // Real EUR users (homeCurrency == "EUR") are allowed through once loaded
         val currency = currentState.homeCurrency
         if (currency == null) {
-            _state.update { it.copy(saveResult = SaveResult.Error("Loading currency settings..."), mutation = com.yourname.expensetracker.ui.model.MutationState.error("save", com.yourname.expensetracker.domain.model.UiText.DynamicString("Loading currency settings..."))) }
+            _state.update { it.withSaveError(UiText.StringResource(R.string.add_expense_error_currency_loading)) }
             return
         }
 
         // Validate
         val merchantTrimmed = currentState.merchant.trim()
         if (merchantTrimmed.isBlank()) {
-            _state.update { it.copy(merchantError = "Merchant name is required") }
+            _state.update { it.copy(merchantError = UiText.StringResource(R.string.add_expense_error_merchant_required)) }
             return
         }
 
@@ -292,12 +367,12 @@ class AddExpenseViewModel @Inject constructor(
         // Ambiguous or invalid input keeps the existing invalid-amount error.
         val amount = com.yourname.expensetracker.ui.util.AmountInputSanitizer.parseOrNull(currentState.amount)
         if (amount == null || amount <= 0) {
-            _state.update { it.copy(amountError = "Enter a valid amount") }
+            _state.update { it.copy(amountError = UiText.StringResource(R.string.add_expense_error_amount_invalid)) }
             return
         }
 
         if (amount > 1_000_000) { // Reasonable upper limit
-            _state.update { it.copy(amountError = "Amount is too large") }
+            _state.update { it.copy(amountError = UiText.StringResource(R.string.add_expense_error_amount_too_large)) }
             return
         }
 
@@ -306,7 +381,7 @@ class AddExpenseViewModel @Inject constructor(
             TimePeriodUtils.getEndOfDay(timeProvider.now()) - 1
         }
         if (currentState.date > endOfToday) {
-            _state.update { it.copy(saveResult = SaveResult.Error("Date cannot be in the future"), mutation = com.yourname.expensetracker.ui.model.MutationState.error("save", com.yourname.expensetracker.domain.model.UiText.DynamicString("Date cannot be in the future"))) }
+            _state.update { it.withSaveError(UiText.StringResource(R.string.add_expense_error_date_future)) }
             return
         }
 
@@ -314,13 +389,13 @@ class AddExpenseViewModel @Inject constructor(
         if (currentState.transactionType == TransactionType.TRANSFER) {
             if (currentState.transferDirection == null) {
                 _state.update {
-                    it.copy(saveResult = SaveResult.Error("Transfer direction is required for transfer transactions"), mutation = com.yourname.expensetracker.ui.model.MutationState.error("save", com.yourname.expensetracker.domain.model.UiText.DynamicString("Transfer direction is required for transfer transactions")))
+                    it.withSaveError(UiText.DynamicString("Transfer direction is required for transfer transactions"))
                 }
                 return
             }
             if (transferAccountNameTrimmed.isBlank()) {
                 _state.update {
-                    it.copy(saveResult = SaveResult.Error("Transfer account name is required for transfer transactions"), mutation = com.yourname.expensetracker.ui.model.MutationState.error("save", com.yourname.expensetracker.domain.model.UiText.DynamicString("Transfer account name is required for transfer transactions")))
+                    it.withSaveError(UiText.DynamicString("Transfer account name is required for transfer transactions"))
                 }
                 return
             }
@@ -340,12 +415,8 @@ class AddExpenseViewModel @Inject constructor(
             shareAmountText = shareAmountText
         )
         if (ownershipResult is com.yourname.expensetracker.ui.util.OwnershipValidator.ValidationResult.Invalid) {
-            _state.update {
-                it.copy(
-                    saveResult = SaveResult.Error(ownershipResult.message),
-                    mutation = com.yourname.expensetracker.ui.model.MutationState.error("save", com.yourname.expensetracker.domain.model.UiText.DynamicString(ownershipResult.message))
-                )
-            }
+            // OwnershipValidator messages are fixed user-safe English constants (localisation deferred).
+            _state.update { it.withSaveError(UiText.DynamicString(ownershipResult.message)) }
             return
         }
 
@@ -412,51 +483,193 @@ class AddExpenseViewModel @Inject constructor(
                     }
                     is Result.Duplicate -> {
                         _state.update {
-                            it.copy(isSaving = false, saveResult = SaveResult.Duplicate, mutation = com.yourname.expensetracker.ui.model.MutationState.error("save", com.yourname.expensetracker.domain.model.UiText.DynamicString("Duplicate expense")))
+                            it.copy(isSaving = false, saveResult = SaveResult.Duplicate, mutation = com.yourname.expensetracker.ui.model.MutationState.error("save", UiText.StringResource(R.string.error_duplicate_transaction)))
                         }
                     }
                     is Result.Error -> {
-                        // S5-003: Update mutation so Save button re-enables
-                        val msg = result.message ?: "Failed to save expense"
-                        _state.update {
-                            it.copy(
-                                isSaving = false,
-                                saveResult = SaveResult.Error(msg),
-                                mutation = com.yourname.expensetracker.ui.model.MutationState.error("save", com.yourname.expensetracker.domain.model.UiText.DynamicString(msg))
-                            )
-                        }
+                        // S5-003: Update mutation so Save button re-enables.
+                        // INV-15: repository message/exception are never displayed.
+                        _state.update { it.withSaveError(mapSaveError(result)) }
                     }
                     Result.Loading -> {
                         // S5-003: Result.Loading is not a valid terminal state for one-shot save
-                        val msg = "Unexpected loading result"
-                        _state.update {
-                            it.copy(
-                                isSaving = false,
-                                saveResult = SaveResult.Error(msg),
-                                mutation = com.yourname.expensetracker.ui.model.MutationState.error("save", com.yourname.expensetracker.domain.model.UiText.DynamicString(msg))
-                            )
-                        }
+                        _state.update { it.withSaveError(saveFailedText()) }
                     }
                 }
 
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
-                // S5-003: Update mutation so Save button re-enables after exception
-                val msg = e.message ?: "Unknown error"
+                // S5-003: Update mutation so Save button re-enables after exception.
+                // INV-13/INV-15: bounded code only; no throwable or message text.
+                Timber.e(LOG_ADD_EXPENSE_SAVE_FAILED)
+                _state.update { it.withSaveError(saveFailedText()) }
+            } finally {
+                // INV-15: isSaving never stays true, including on cancellation.
                 _state.update {
-                    it.copy(
-                        isSaving = false,
-                        saveResult = SaveResult.Error(msg),
-                        mutation = com.yourname.expensetracker.ui.model.MutationState.error("save", com.yourname.expensetracker.domain.model.UiText.DynamicString(msg))
-                    )
+                    if (it.isSaving) {
+                        it.copy(isSaving = false, mutation = com.yourname.expensetracker.ui.model.MutationState.idle())
+                    } else {
+                        it
+                    }
                 }
             }
         }
     }
 
+    /**
+     * Maps a repository error to a bounded, localised message. The repository message and
+     * exception are never displayed (INV-15). Add bounded repository error codes as `when`
+     * branches; the default is the generic save-failed resource. Non-suspend by design.
+     */
+    private fun mapSaveError(result: Result.Error): UiText = when (result.message) {
+        else -> saveFailedText()
+    }
+
+    private fun saveFailedText(): UiText = UiText.StringResource(R.string.add_expense_error_save_failed)
+
+    private fun AddExpenseState.withSaveError(message: UiText): AddExpenseState = copy(
+        isSaving = false,
+        saveResult = SaveResult.Error(message),
+        mutation = com.yourname.expensetracker.ui.model.MutationState.error("save", message)
+    )
+
+
+    /**
+     * Quick-add Fill (C3, spec 5.2). The typed [line] exists only as this argument and inside the
+     * launched job (INV-12); it is never stored in a field or in [AddExpenseState].
+     *
+     * Gate (INV-17): blank line, unknown home currency or a save in flight is a no-op. Otherwise the
+     * one-shot initial-values channel is consumed (INV-8), the previous Fill job and the suggestion
+     * search are cancelled and suggestions hidden (INV-9, INV-18), and a single job parses, runs the
+     * read-only learned-category lookup only when the contract asks for it, and applies the result in
+     * one atomic [MutableStateFlow.update] that re-evaluates fillability at apply time.
+     * Not a suspend function by design (S0 D-3).
+     */
+    fun fill(line: String) {
+        val snapshot = _state.value
+        val homeCurrency = snapshot.homeCurrency
+        if (line.isBlank() || homeCurrency == null || snapshot.isSaving) return
+
+        initialValuesApplied = true
+        fillJob?.cancel()
+        searchJob?.cancel()
+        searchJob = null
+        _state.update { it.copy(suggestions = emptyList(), showSuggestions = false) }
+
+        val nowMs = timeProvider.now()
+        val categoryRefs = categories.value.map { CategoryRef(id = it.id, name = it.name) }
+        // Owner-approvals item 63: parse synchronously so the launched job captures only the parsed
+        // result, the category refs and nowMs - never the QuickAddInput or the typed line.
+        // The parser is pure and total (golden-tested); only the C2 read can fail.
+        val parsed = quickAddParser.parse(
+            QuickAddInput(
+                line = line,
+                nowEpochMs = nowMs,
+                zone = java.time.ZoneId.systemDefault(),
+                homeCurrency = homeCurrency,
+                categories = categoryRefs
+            )
+        )
+
+        fillJob = viewModelScope.launch {
+            var learned: CategoryMatch? = null
+            val merchantValue = (parsed.merchant as? FieldParse.Value)?.value
+            if (merchantValue != null &&
+                QuickAddFillContract.wantsLearnedLookup(parsed, _state.value.toFillFields())
+            ) {
+                try {
+                    when (val lookup = quickAddLearnedCategoryLookup.lookup(merchantValue, categoryRefs)) {
+                        is LearnedCategoryLookupResult.Found -> learned = lookup.match
+                        LearnedCategoryLookupResult.Absent -> Unit
+                        LearnedCategoryLookupResult.Failed -> {
+                            // INV-13: bounded code only; no throwable, merchant or key. Category stays Absent.
+                            Timber.w(LOG_QUICK_ADD_CATEGORY_LOOKUP_FAILED)
+                        }
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    // INV-13: bounded code only; no throwable, merchant or key. Category stays Absent.
+                    Timber.w(LOG_QUICK_ADD_CATEGORY_LOOKUP_FAILED)
+                }
+            }
+
+            // INV-18: a cancelled (superseded) job must never apply a stale result.
+            ensureActive()
+            var applied: QuickAddFillApplication? = null
+            _state.update { current ->
+                if (current.isSaving) {
+                    applied = null
+                    current
+                } else {
+                    val application = QuickAddFillContract.apply(current.toFillFields(), parsed, learned, nowMs)
+                    applied = application
+                    current.withFillApplication(application)
+                }
+            }
+            applied?.let { logFillOutcome(it.outcome) }
+        }
+    }
+
+    private fun logFillOutcome(outcome: OutcomeCode) {
+        when (outcome) {
+            OutcomeCode.FILL_FULL -> Timber.i(LOG_FILL_FULL)
+            OutcomeCode.FILL_PARTIAL -> Timber.i(LOG_FILL_PARTIAL)
+            OutcomeCode.FILL_NONE -> Timber.i(LOG_FILL_NONE)
+            OutcomeCode.FOREIGN_CURRENCY_BLOCKED -> Timber.i(LOG_FOREIGN_CURRENCY_BLOCKED)
+        }
+    }
+
+    /** A user gesture on [field]: origin USER and its flag cleared (spec 5.1). */
+    private fun AddExpenseState.withUserEdit(field: QuickAddField): AddExpenseState = copy(
+        fieldOrigins = fieldOrigins + (field to FieldOrigin.USER),
+        fieldFlags = fieldFlags - field
+    )
+
+    private fun AddExpenseState.toFillFields(): QuickAddFormFields = QuickAddFormFields(
+        amount = amount,
+        merchant = merchant,
+        dateMs = date,
+        categoryId = selectedCategoryId,
+        payment = paymentMethod,
+        origins = fieldOrigins,
+        flags = fieldFlags,
+        categorySource = categoryFillSource
+    )
+
+    private fun AddExpenseState.withFillApplication(application: QuickAddFillApplication): AddExpenseState {
+        val form = application.form
+        val written = application.writtenFields
+        return copy(
+            amount = form.amount,
+            merchant = form.merchant,
+            date = form.dateMs,
+            selectedCategoryId = form.categoryId,
+            paymentMethod = form.payment,
+            fieldOrigins = form.origins,
+            fieldFlags = form.flags,
+            categoryFillSource = form.categorySource,
+            lineHints = application.lineHints,
+            lastFillOutcome = application.outcome,
+            fillSummary = QuickAddUiMapper.snapshotOf(
+                outcome = application.outcome,
+                hints = application.lineHints,
+                origins = form.origins,
+                flags = form.flags
+            ),
+            // Step 5: a stale save result and the errors of the fields Fill rewrote are cleared.
+            saveResult = null,
+            amountError = if (QuickAddField.AMOUNT in written) null else amountError,
+            merchantError = if (QuickAddField.MERCHANT in written) null else merchantError
+        )
+    }
 
     fun reset() {
         searchJob?.cancel()
         searchJob = null
+        fillJob?.cancel()
+        fillJob = null
         initialValuesApplied = false
         // S5-002: Preserve loaded currency — do not reset to null sentinel
         val loadedCurrency = _state.value.homeCurrency
@@ -478,18 +691,26 @@ class AddExpenseViewModel @Inject constructor(
             }
 
             initialValuesApplied = true
+            // S5-020: Sanitize prefilled amount — same path as manual input
+            // R16: the clipboard parser now hands over canonical text ("12.50"; ambiguous values such as
+            // "1,234" are rejected there), but a direct caller may still pass machine-style text, so
+            // convert to a number first and format locale-independently, as selectSuggestion does.
+            val prefilledAmount = amount?.let { raw ->
+                AmountUtils.parseAmount(raw)?.let { parsed ->
+                    com.yourname.expensetracker.ui.util.AmountInputSanitizer.sanitize(
+                        String.format(java.util.Locale.US, "%.2f", parsed)
+                    )
+                }
+            }
+            val prefilledMerchant = merchant?.take(100)?.trim()
+            var origins = current.fieldOrigins
+            // Spec 5.1: PREFILL is recorded only for a prefill that actually wrote a non-blank value.
+            if (!prefilledAmount.isNullOrBlank()) origins = origins + (QuickAddField.AMOUNT to FieldOrigin.PREFILL)
+            if (!prefilledMerchant.isNullOrBlank()) origins = origins + (QuickAddField.MERCHANT to FieldOrigin.PREFILL)
             current.copy(
-                // S5-020: Sanitize prefilled amount — same path as manual input
-                // R16: clipboard text is machine-style (ClipboardAmountParser accepts "1,234" as 1234),
-                // so convert to a number first and format locale-independently, as selectSuggestion does.
-                amount = amount?.let { raw ->
-                    AmountUtils.parseAmount(raw)?.let { parsed ->
-                        com.yourname.expensetracker.ui.util.AmountInputSanitizer.sanitize(
-                            String.format(java.util.Locale.US, "%.2f", parsed)
-                        )
-                    }
-                } ?: current.amount,
-                merchant = merchant?.take(100)?.trim() ?: current.merchant
+                amount = prefilledAmount ?: current.amount,
+                merchant = prefilledMerchant ?: current.merchant,
+                fieldOrigins = origins
             )
         }
     }
