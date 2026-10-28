@@ -2931,3 +2931,30 @@ Validation to request: unchanged, targeted `*AppLockController*` (covers both te
   - domain-n-z: vr-20261028-104541-1c694e02
 - architecture-guardian and reviewer-strict run at the atomic S22 candidate.
 - Next: S22-a.1 (settings UI). It is BLOCKED on owner decision O-1, the VM controller-member pin {requestSettingsReread, state, openOriginEnd}.
+
+## 2026-10-28: O-1 / O-3 approved (owner-approvals 81)
+- O-1 APPROVED: the VM controller-member pin is exactly {requestSettingsReread, state, openOriginEnd}; the controller-entry VM allow-set gains "penOriginEnd".
+- O-3 APPROVED: downloading the API 30/31/33/34 google_apis x86_64 images for G1b. AVDs are created after the download.
+- O-2 (es/el sign-off) is still open and needed before a store release.
+- S22-a.1: feature-implementer is running (VM, Section, N AppLockEnableDialog, strings ×3, pin test, docs).
+- Next: test-author (VM/Section/Dialog/Strings tests, B-1/B-2), then Batch a validation, privacy-security-guardian and architecture-guardian.
+- O-3 DONE (2026-10-28): the API 30/31/33/34 google_apis x86_64 images are installed. AVDs g1b-api30, g1b-api31, g1b-api33 and g1b-api34 exist (pixel_6), alongside release-api26 and wave5-api35. The full G1b matrix is now runnable after S22/S23.
+- S22-a.1 IMPLEMENTED (uncommitted, not compiled):
+  - Changed: VM, Section, N AppLockEnableDialog, strings ×3 (24 keys, es/el DRAFT, O-2), pin test (O-1 plus dormancy {requestEnable, requestDisable}, plus 2 strengthenings), LEGAL_PATHS/SEGMENTS/INVENTORY.
+  - Deviations 1-7 are under privacy and architecture review.
+  - Docs follow-up for S23: hilt-bindings-map.md ~:409 lists a stale VM constructor.
+  - In progress: test-author (VM/Section/Dialog/Strings tests), privacy-security-guardian, architecture-guardian.
+  - Next: Batch a validation (targeted *AppLockController*,*AppLockPrivacy*,*AppLockEnableDialog*,*PrivacySettings*,*AppLockShell*; domain-n-z, runtime-ui; known_good_state, cancellation, ui_dao; lint). It runs after the mec ladder in the serial queue.
+- S22-a.1 VALIDATED and COMMITTED (2026-10-28).
+  - Batch a, all PASS:
+    - targeted vr-20261028-155950-f72ad87f;
+    - domain-n-z vr-20261028-160708-3dfc488e;
+    - runtime-ui vr-20261028-160854-bd2f50f6;
+    - known_good_state vr-20261028-161113-dcf0fea5;
+    - cancellation vr-20261028-161402-abd12bd0;
+    - ui_dao vr-20261028-161420-709255e9;
+    - guard_docs_truth vr-20261028-161438-dd575a77;
+    - lint vr-20261028-161454-0c95b037.
+  - privacy-security-guardian and architecture-guardian: ACCEPT-WITH-CONDITIONS. All fixes are applied and the dispositions are in the plan (corrected face-unlock copy, purpose-aware refusal, the discreet-forced guard, LEGAL_PATHS WRITE 3 live).
+  - Next: S22-b (b.1 timeout/secure/review card; b.2 F6 watchdog plus EXPORT copy), then the atomic S22 candidate (union targeted, runtime-ui, domain-n-z, static-guards, app-check) and reviewer-strict, then S23 docs, then G1b on the 6 AVDs.
+  - The S22-b UI-files pin must add AutoLockTimeoutDialog.kt.

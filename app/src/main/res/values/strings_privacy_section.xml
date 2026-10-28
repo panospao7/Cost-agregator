@@ -13,4 +13,30 @@
     <string name="privacy_review_card_save">Save settings</string>
     <string name="privacy_review_saved">Settings saved</string>
     <string name="privacy_setting_save_failed">Couldn\'t save the setting. Try again.</string>
+
+    <!-- S22-a.1: 1b lock row, enable explainer and inline notices (ux-flows 9.1). Lockout copy reuses applock_msg_too_many_attempts; Cancel reuses privacy_confirm_cancel. -->
+    <string name="privacy_toggle_app_lock">App lock</string>
+    <string name="privacy_app_lock_support">Ask for your fingerprint or screen lock when the app opens.</string>
+    <string name="privacy_app_lock_waiting">Waiting for confirmation…</string>
+    <string name="privacy_app_lock_unavailable_os">App lock needs Android 11 or newer. This device runs an older version.</string>
+    <string name="privacy_app_lock_unavailable_os_paused">App lock isn\'t supported on this Android version, so it is paused. Turn it off to remove this notice.</string>
+    <string name="privacy_app_lock_unavailable_no_secure">Set a PIN, pattern or password as your phone\'s screen lock to use app lock.</string>
+    <string name="privacy_app_lock_unavailable_now">App lock isn\'t available right now. Try again in a moment.</string>
+    <string name="privacy_app_lock_open_security_settings">Open security settings</string>
+    <string name="privacy_app_lock_unreadable">Can\'t read the app lock setting. If your phone has a screen lock, the app will ask you to unlock it.</string>
+    <string name="privacy_discreet_notifications_forced">Always on while app lock is on.</string>
+    <string name="privacy_review_lock_paused">App lock is paused, so Off is the only choice.</string>
+    <string name="privacy_app_lock_enable_title">Turn on app lock?</string>
+    <string name="privacy_app_lock_enable_point_unlock">The app asks for your fingerprint or screen lock when it opens, and after you leave it for the time you choose.</string>
+    <string name="privacy_app_lock_enable_point_notifications">Notifications show no amounts or details while app lock is on.</string>
+    <string name="privacy_app_lock_enable_point_replaced">Notifications already showing are replaced with the private version.</string>
+    <string name="privacy_app_lock_enable_point_screen">Screenshots and screen recording are blocked and the app is hidden in recent apps.</string>
+    <string name="privacy_app_lock_enable_point_background">Reminders and automatic capture keep working while the app is locked.</string>
+    <string name="privacy_app_lock_enable_point_face">Only your screen lock or a strong biometric, like your fingerprint, can unlock the app. Basic face unlock isn\'t used.</string>
+    <string name="privacy_app_lock_enable_point_api30_actions">Bill reminders won\'t show Snooze or Dismiss while app lock is on.</string>
+    <string name="privacy_app_lock_enable_continue">Continue</string>
+    <string name="privacy_app_lock_snackbar_on">App lock is on</string>
+    <string name="privacy_app_lock_snackbar_off">App lock is off</string>
+    <string name="privacy_app_lock_not_enabled">App lock was not turned on.</string>
+    <string name="privacy_app_lock_enable_failed">Couldn\'t turn on app lock. Try again.</string>
 </resources>

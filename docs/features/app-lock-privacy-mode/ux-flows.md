@@ -48,7 +48,7 @@ below describe only the decided option. The rejected alternatives survive solely
 3. **Neutral lock screen with one explicit "Unlock" button.** No timed auto-prompt (INV-34: the prompt is launched only by
    explicit user action), no countdown that triggers anything, no content from the app (no counts, badges, names, amounts,
    last-opened screen, or deep-link destination; INV-35).
-4. **Authentication UI is the system prompt** (strong biometric or device credential, no face; INV-23). The app never
+4. **Authentication UI is the system prompt** (strong biometric or device credential; basic/Class 2 face is not accepted, Class 3 face is allowed by BIOMETRIC_STRONG; INV-23) (corrected 2026-10-28: Class 3 face is allowed by BIOMETRIC_STRONG). The app never
    draws its own fingerprint dialog. In app-PIN mode (Inc 2) the app draws a PIN pad.
 5. **Fail-closed in the UI**: while a setting or availability result is unknown, the lock row is disabled with
    "Checking..." and never drawn as Off; an unreadable lock setting shows the lock (if the device can authenticate;
@@ -342,7 +342,10 @@ All use the existing `AlertDialog` + `TextButton` pattern from `privacy_confirm_
 |   apps.                                   |
 | - Reminders and automatic capture keep    |
 |   working while the app is locked.        |
-| - Face unlock isn't used.                 |
+| - Only your screen lock or a strong       |
+|   biometric, like your fingerprint, can   |
+|   unlock the app. Basic face unlock isn't |
+|   used.                                   |
 | - (Android 11 only) Bill reminders won't  |
 |   show Snooze or Dismiss while app lock   |
 |   is on.                                  |
@@ -1330,7 +1333,7 @@ only. There is no per-decision variant text left in this table: rows that existe
 | `privacy_app_lock_enable_point_replaced` | Notifications already showing are replaced with the private version. | 1b | G2. OD-6a, silent re-post (AMD-7) |
 | `privacy_app_lock_enable_point_screen` | Screenshots and screen recording are blocked and the app is hidden in recent apps. | 1b | |
 | `privacy_app_lock_enable_point_background` | Reminders and automatic capture keep working while the app is locked. | 1b | |
-| `privacy_app_lock_enable_point_face` | Face unlock isn't used. | 1b | |
+| `privacy_app_lock_enable_point_face` | Only your screen lock or a strong biometric, like your fingerprint, can unlock the app. Basic face unlock isn't used. (corrected 2026-10-28: Class 3 face is allowed by BIOMETRIC_STRONG) | 1b | |
 | `privacy_app_lock_enable_point_api30_actions` | Bill reminders won't show Snooze or Dismiss while app lock is on. | 1b | Rec. Rendered only on `SDK_INT == 30` |
 | `privacy_app_lock_enable_continue` | Continue | 1b | |
 | `privacy_app_lock_snackbar_on` | App lock is on | 1b | |

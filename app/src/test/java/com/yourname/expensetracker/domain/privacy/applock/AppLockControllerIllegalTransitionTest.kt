@@ -774,10 +774,11 @@ class AppLockControllerIllegalTransitionTest {
             // allows exactly the router file the set {onLockQuery, releaseHeldLink, releaseOpportunity}, and nothing else.
             // The token omits the first letter so it also matches the Java-facing getter name `getReleaseOpportunity`.
             "eleaseOpportunity",
-            // S22-a.0 (D-S22-1), exact addition (a strengthening): the open-origin end signal has NO production reader
-            // yet; S22-a.1 allows exactly the settings ViewModel. The token omits the first letter so it also matches
-            // the Java-facing getter `getOpenOriginEnd`. The only other file naming it is the one that DECLARES the
-            // bounded value type, AppLockState.kt (OpenOriginEnd, OpenOriginEndKind), allowed below for this token only.
+            // S22-a.0 (D-S22-1), exact addition (a strengthening): the open-origin end signal had NO production reader;
+            // S22-a.1 (owner item 81b, O-1) allows exactly the settings ViewModel. The token omits the first letter so it
+            // also matches the Java-facing getter `getOpenOriginEnd`. The only other file naming it is the one that
+            // DECLARES the bounded value type, AppLockState.kt (OpenOriginEnd, OpenOriginEndKind), allowed below for
+            // this token only.
             "penOriginEnd"
         )
         // S18 (i-a, i-b1, i-b2, ii-d, ii-e): these twelve have exactly one production caller, the settings operations file.
@@ -806,8 +807,9 @@ class AppLockControllerIllegalTransitionTest {
                     val allowed = when (relativeToRoot(file, root)) {
                         "$APPLOCK_PACKAGE_PATH/AppLockSettingsOperations.kt" -> settingsOperationsOnly
                         // S20-e (S18-ii-h): the 1a settings ViewModel's retry is the ONE production caller of the
-                        // settings re-read request, and gets exactly that token and nothing else.
-                        SETTINGS_VIEW_MODEL_PATH -> setOf("requestSettingsReread")
+                        // settings re-read request. S22-a.1 (owner item 81b, O-1): it is also the ONE production reader
+                        // of the open-origin end signal. It gets exactly those two tokens and nothing else.
+                        SETTINGS_VIEW_MODEL_PATH -> setOf("requestSettingsReread", "penOriginEnd")
                         // S21-b (PRV-16): the deep-link router is the ONE production caller of the link decision, the
                         // held-link release and the release signal, and gets exactly those tokens (the signal token
                         // omits its first letter, as in the forbidden list).
@@ -861,25 +863,36 @@ class AppLockControllerIllegalTransitionTest {
     }
 
     @Test
-    fun `S18 i-a dormancy - AppLockSettingsOperations, requestEnable and requestDisable have no production caller outside their own file`() {
-        // DORMANT pin (arch review F2). The enable and disable requests exist and are tested, but nothing in
-        // production may call them yet: no ViewModel, Activity, module or screen. There is no DI module for the class
+    fun `S18 i-a dormancy - AppLockSettingsOperations, requestEnable and requestDisable have no production caller outside AppLockSettingsOperations kt and the settings ViewModel exemption (S22-a-1, owner-approvals 81b)`() {
+        // DORMANT pin (arch review F2). The enable and disable requests exist and are tested. Since S22-a.1
+        // (owner-approvals 81b) exactly one production caller outside AppLockSettingsOperations.kt is allowed: the 1a
+        // settings ViewModel (the lock switch), via the per-file exemption below. Every other ViewModel, Activity,
+        // module or screen must not call them. There is no DI module for the class
         // (it is `@Singleton @Inject constructor`), so the exempt files are listed in the per-file map below:
         // AppLockSettingsOperations.kt itself (every token) and, from S20-d/S20-e (S18-ii-g, S18-ii-h), the 1a settings
         // ViewModel for EXACTLY {AppLockSettingsOperations, requestDiscreetChange, requestReviewSave} (the type for the
-        // constructor, the discreet request, the review-save request).
+        // constructor, the discreet request, the review-save request). S22-a.1 adds exactly {requestEnable,
+        // requestDisable} to the ViewModel's set (the lock switch); requestTimeoutChange and requestSecureScreenChange
+        // stay dormant until S22-b. The section and the dialog files get no token at all (see the pin below).
         // Lifting this pin further (allowing the settings UI as a caller of anything else) needs the BLOCKING list
         // closed first: see LEGAL_PATHS WRITE 3/4 and handoff S18 (i-b1) item 5.
         // The scan skips comment lines (KDoc links such as [AppLockSettingsOperations] are not calls).
         // The token list is shared with the reflection pin below (S20 candidate F6), which keeps it equal to the
         // Operations' public request surface.
         val dormant = DORMANT_TOKENS
-        // Per-file exemptions (S20-d, S20-e), keyed by the EXACT path under the source root. Operations.kt keeps every
-        // token; the 1a ViewModel gets exactly the type, the discreet request and the review-save request.
+        // Per-file exemptions (S20-d, S20-e, S22-a.1), keyed by the EXACT path under the source root. Operations.kt keeps
+        // every token; the settings ViewModel gets exactly the type, the discreet request, the review-save request and
+        // (S22-a.1) the enable and disable requests.
         val exemptTokensByFile = mapOf(
             "$APPLOCK_PACKAGE_PATH/AppLockSettingsOperations.kt" to dormant.toSet(),
             SETTINGS_VIEW_MODEL_PATH to
-                setOf("AppLockSettingsOperations", "requestDiscreetChange", "requestReviewSave")
+                setOf(
+                    "AppLockSettingsOperations",
+                    "requestDiscreetChange",
+                    "requestReviewSave",
+                    "requestEnable",
+                    "requestDisable"
+                )
         )
         val offenders = locateProductionSourceRoots().flatMap { root ->
             root.walkTopDown()
@@ -896,6 +909,44 @@ class AppLockControllerIllegalTransitionTest {
         }
 
         assertEquals(emptyList<String>(), offenders)
+
+        // S22-a.1 strengthening: every exempt token must really be present (in a code line) in its exempt file, so a
+        // token that is no longer used cannot stay silently exempt.
+        val roots = locateProductionSourceRoots()
+        exemptTokensByFile.forEach { (relativePath, exempt) ->
+            val file = roots.map { File(it, relativePath) }.firstOrNull { it.isFile }
+                ?: error("The exempt file $relativePath was not found under the production roots")
+            val codeLines = file.readLines()
+                .map { it.trim() }
+                .filterNot { it.startsWith("*") || it.startsWith("/*") || it.startsWith("//") }
+            exempt.forEach { token ->
+                assertTrue("exempt token $token must be present in $relativePath", codeLines.any { it.contains(token) })
+            }
+        }
+    }
+
+    @Test
+    fun `S22-a_1 - the section and dialog files name neither the controller, the operations, the authenticator nor the relay`() {
+        // Strengthening (owner item 81b): the UI composables reach the lock only through the ViewModel. Their files, in
+        // full (comments included), must not mention the controller, the settings operations, the authenticator port
+        // or the authenticator relay, so they can never become a caller of any of them.
+        val roots = locateProductionSourceRoots()
+        val uiFiles = listOf(
+            "com/yourname/expensetracker/ui/screens/privacysettings/AppLockPrivacySection.kt",
+            "com/yourname/expensetracker/ui/screens/privacysettings/AppLockEnableDialog.kt"
+        )
+        val forbidden = listOf("AppLockController", "AppLockSettingsOperations", "DeviceAuthenticator", "relay")
+        fun offending(text: String): List<String> = forbidden.filter { text.lowercase().contains(it.lowercase()) }
+
+        // Self-check, so the scan cannot be vacuous.
+        assertEquals(forbidden, offending("AppLockController AppLockSettingsOperations DeviceAuthenticator Relay"))
+        assertEquals(emptyList<String>(), offending("AppLockPrivacySettingsViewModel viewModel::onEnableConfirmed"))
+
+        uiFiles.forEach { relativePath ->
+            val file = roots.map { File(it, relativePath) }.firstOrNull { it.isFile }
+                ?: error("The UI file $relativePath was not found under the production roots")
+            assertEquals("forbidden names in $relativePath", emptyList<String>(), offending(file.readText()))
+        }
     }
 
     @Test
@@ -913,10 +964,12 @@ class AppLockControllerIllegalTransitionTest {
     }
 
     @Test
-    fun `S20 F6 - the settings ViewModel's only use of the controller is requestSettingsReread`() {
-        // Per-file pin (strengthening): the per-file token exemption above allows `requestSettingsReread` in the 1a
-        // ViewModel; this keeps every OTHER member access on its `controller` property out. Comments and string
-        // literals are stripped so KDoc and messages are not calls.
+    fun `S20 F6 and S22-a_1 O-1 - the settings ViewModel's only uses of the controller are requestSettingsReread, state and openOriginEnd`() {
+        // Per-file pin (strengthening): the per-file token exemption above allows `requestSettingsReread` and the end
+        // signal in the settings ViewModel; this keeps every OTHER member access on its `controller` property out.
+        // S22-a.1 (owner item 81b, O-1): the member set is EXACTLY {requestSettingsReread, state, openOriginEnd}, the
+        // retry's re-read request plus the two read-only StateFlows (the lock row's Waiting and the lock notices).
+        // Comments and string literals are stripped so KDoc and messages are not calls.
         val roots = locateProductionSourceRoots()
         val viewModelFile = roots.map { File(it, SETTINGS_VIEW_MODEL_PATH) }.firstOrNull { it.isFile }
             ?: error("The 1a settings ViewModel was not found under the production roots")
@@ -925,7 +978,7 @@ class AppLockControllerIllegalTransitionTest {
             .replace(Regex("//[^\\n]*"), " ")
             .replace(Regex("\"(?:\\\\.|[^\"\\\\])*\""), "\"\"")
         val members = Regex("\\bcontroller\\s*\\??\\.\\s*(\\w+)").findAll(code).map { it.groupValues[1] }.toSet()
-        assertEquals(setOf("requestSettingsReread"), members)
+        assertEquals(setOf("requestSettingsReread", "state", "openOriginEnd"), members)
     }
 
     @Test

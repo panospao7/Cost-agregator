@@ -2191,3 +2191,14 @@ Source: privacy-security-guardian, S22-a.0, ACCEPT-WITH-CONDITIONS (privacy PASS
 - **B-4 (UX note for S23, ux 4.3): ERROR_CANCELED from a background.**
   - BiometricPrompt ERROR_CANCELED delivered from a background during an ENABLE prompt maps to ERROR, so the VM shows enable_failed.
   - S23 decides the copy (together with the ux 4.3 move of ERROR_CANCELED to SYSTEM_CANCELED).
+
+### S22-a.1 review dispositions (2026-10-28)
+Source: privacy-security-guardian ACCEPT-WITH-CONDITIONS and architecture-guardian ACCEPT-WITH-CONDITIONS on S22-a.1; orchestrator decisions under standing approval item 62. Applied in one fix pass:
+- **Fix 1 (privacy finding 1, MEDIUM): face-unlock claim.** `privacy_app_lock_enable_point_face` (key kept) said "Face unlock isn't used.", which is false for Class 3 (strong) face, allowed by BIOMETRIC_STRONG or DEVICE_CREDENTIAL. The English value is now "Only your screen lock or a strong biometric, like your fingerprint, can unlock the app. Basic face unlock isn't used."; es and el DRAFT values updated to the same meaning; ux-flows (principle 4, the explainer mock and the copy table) corrected.
+- **Fix 2 (privacy finding 2): hint wording.** The capability hint may suppress an enable tap (fail-closed) and never authorizes a request; Operations' own T26 read decides. Replaces "never gates a request" in the ViewModel KDoc and LEGAL_PATHS.
+- **Fix 3 (privacy finding 3 / arch F5c): defence in depth.** `setDiscreetNotifications` also returns when `discreetForced`.
+- **Fix 4 (test-author finding 2): purpose-aware refusal notice.** `handleLockRequestResult` takes the request purpose; a REFUSED_UNAVAILABLE whose re-read reads AVAILABLE shows ENABLE_FAILED for an enable and SAVE_FAILED for a disable (the `when` stays exhaustive, no else).
+- **Fix 5 (arch F1, MEDIUM): LEGAL_PATHS self-contradiction.** WRITE 3 (requestEnable / requestDisable, incl. the T19 branch) is recorded as wired by S22-a.1 under the S22 plan amendment and owner-approvals 81b (O-1); the DORMANT / BLOCKING list is narrowed to WRITE 4 (timeout) and requestSecureScreenChange (wired by S22-b); INV-45 "only the S22-b UI fields remain"; "neither writes on the caller's thread; the apply is launched and serialised inside the Operations".
+- **Deferred to S23:** `hilt-bindings-map.md` ~:409 stale ViewModel constructor; ENGINE_INTERACTION_MAP; ux 4.3 feedback for the silent turn-off outcomes (DISABLE ERROR / CANCELLED, ALREADY_IN_FLIGHT / NOT_IN_ORIGIN / REVIEW_REQUIRED, and REVIEW_REQUIRED without a controller re-read); the Unavailable(OS) "Open security settings" action "only if useful" (ux :230).
+- **Deferred to S22-b:** the UI-files pin must add `AutoLockTimeoutDialog.kt` (or scan the package minus the ViewModel); the NeedsReview lock row via the full review record, in the same atomic S22 candidate (item 55).
+- **Accepted deviations 1-7** as listed in the S22-a.1 privacy review.
