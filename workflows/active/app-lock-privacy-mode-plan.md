@@ -2173,3 +2173,21 @@ If O-3 is denied, the minimum is API 30 + 31; without them 1b stays PARTIAL.
 
 ### Merge note
 S22 lands after the S20/S21 merge 4add2466. It does not touch MainActivity, strings.xml, DeepLink*, MainScreen or the manifest (the loan S13-a / mec surfaces). Docs overlap: LEGAL_PATHS, SEGMENTS, INVENTORY.
+
+### S22-a.1 bindings from the S22-a.0 privacy review (2026-10-28; BINDING)
+Source: privacy-security-guardian, S22-a.0, ACCEPT-WITH-CONDITIONS (privacy PASS). Findings 1-3 bind the S22-a.1 ViewModel; they refine the "End kind" mapping above and do not loosen it.
+- **B-1 (finding 1): the lock notice follows the end's prompt.**
+  - LOCK_ON only when the end's prompt is ENABLE; LOCK_OFF only when it is DISABLE. This includes T19's end, whose attemptId is negative (the prompt is still DISABLE).
+  - CHANGE ends never produce a lock notice, whatever their kind (an APPLIED CHANGE is a timeout or review-save, not a lock change).
+  - Tests: one VM test per prompt (ENABLE, DISABLE, CHANGE), each with an APPLIED end.
+- **B-2 (finding 2): replay baseline.**
+  - `openOriginEnd` is a StateFlow, so a new collector gets the latest end replayed.
+  - The VM snapshots `openOriginEnd.value` at init as its baseline and reacts only to a later, different value. A value equal to the baseline is never an event.
+  - Tests: "a VM created after an end shows no notice" and "a replayed end equal to the baseline shows nothing".
+- **B-3 (finding 3): some success paths publish no end.**
+  - Examples: an apply that never reaches `onOpenOriginSettingApplied`; a T19 refused by the D3 re-check.
+  - The lock row and any progress state must never wait for an end.
+  - Waiting is derived from `state is Authenticating` only, and the row value comes from committed settings only (INV-46).
+- **B-4 (UX note for S23, ux 4.3): ERROR_CANCELED from a background.**
+  - BiometricPrompt ERROR_CANCELED delivered from a background during an ENABLE prompt maps to ERROR, so the VM shows enable_failed.
+  - S23 decides the copy (together with the ux 4.3 move of ERROR_CANCELED to SYSTEM_CANCELED).

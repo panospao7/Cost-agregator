@@ -607,7 +607,10 @@ class AppLockControllerIllegalTransitionTest {
                 "onInertDisableApplied",
                 // S21-a (D-S21-1), exact addition: the read-only post-T33 release signal (a monotonic counter, no link
                 // data). Its only production reader will be the S21-b router file.
-                "getReleaseOpportunity"
+                "getReleaseOpportunity",
+                // S22-a.0 (D-S22-1), exact addition: the read-only open-origin end signal (a StateFlow of a bounded
+                // value, no settings or link data). It has no production reader yet (pinned below).
+                "getOpenOriginEnd"
             ),
             production
         )
@@ -711,6 +714,13 @@ class AppLockControllerIllegalTransitionTest {
         assertEquals(listOf("getReleaseOpportunity"), signal.map { it.name })
         assertEquals(emptyList<Class<*>>(), signal.single().parameterTypes.toList())
         assertEquals(kotlinx.coroutines.flow.StateFlow::class.java, signal.single().returnType)
+
+        // S22-a.0 (D-S22-1), exact addition: the open-origin end signal is a read-only StateFlow getter with no
+        // argument. The controller declares no setter or mutable handle for it, and no other public member mentions it.
+        val endSignal = own.filter { it.name.contains("penOriginEnd") }
+        assertEquals(listOf("getOpenOriginEnd"), endSignal.map { it.name })
+        assertEquals(emptyList<Class<*>>(), endSignal.single().parameterTypes.toList())
+        assertEquals(kotlinx.coroutines.flow.StateFlow::class.java, endSignal.single().returnType)
     }
 
     @Test
@@ -763,7 +773,12 @@ class AppLockControllerIllegalTransitionTest {
             // S21-a (D-S21-1), exact addition (a strengthening): the release signal has NO production reader yet. S21-b
             // allows exactly the router file the set {onLockQuery, releaseHeldLink, releaseOpportunity}, and nothing else.
             // The token omits the first letter so it also matches the Java-facing getter name `getReleaseOpportunity`.
-            "eleaseOpportunity"
+            "eleaseOpportunity",
+            // S22-a.0 (D-S22-1), exact addition (a strengthening): the open-origin end signal has NO production reader
+            // yet; S22-a.1 allows exactly the settings ViewModel. The token omits the first letter so it also matches
+            // the Java-facing getter `getOpenOriginEnd`. The only other file naming it is the one that DECLARES the
+            // bounded value type, AppLockState.kt (OpenOriginEnd, OpenOriginEndKind), allowed below for this token only.
+            "penOriginEnd"
         )
         // S18 (i-a, i-b1, i-b2, ii-d, ii-e): these twelve have exactly one production caller, the settings operations file.
         val settingsOperationsOnly = setOf(
@@ -798,6 +813,8 @@ class AppLockControllerIllegalTransitionTest {
                         // omits its first letter, as in the forbidden list).
                         "com/yourname/expensetracker/ui/applock/AppLockDeepLinkRouter.kt" ->
                             setOf("onLockQuery", "releaseHeldLink", "eleaseOpportunity")
+                        // S22-a.0: the declaring file of the end value type, for the end token only.
+                        "$APPLOCK_PACKAGE_PATH/AppLockState.kt" -> setOf("penOriginEnd")
                         else -> emptySet()
                     }
                     (forbidden - allowed).any { text.contains(it) }
@@ -807,6 +824,40 @@ class AppLockControllerIllegalTransitionTest {
         }
 
         assertEquals(emptyList<String>(), offenders)
+    }
+
+    @Test
+    fun `S22-a_0 privacy review F6 - the code of AppLockState_kt names neither the controller nor its end getter`() {
+        // Strengthening only (owner-approvals item 62). The exact-path allowance above lets AppLockState.kt carry the
+        // end value TYPE (OpenOriginEnd, OpenOriginEndKind). That must stay a declaration only: the code lines of the
+        // file (comments excluded) must not mention the controller or its `getOpenOriginEnd` signal, so the file can
+        // never become a reader of the signal. KDoc may name them.
+        val roots = locateProductionSourceRoots()
+        val stateFile = roots.map { File(it, "$APPLOCK_PACKAGE_PATH/AppLockState.kt") }.firstOrNull { it.isFile }
+            ?: error("AppLockState.kt was not found under the production roots")
+        val rawText = stateFile.readText()
+        val code = stateFile.readLines()
+            .map { it.trim() }
+            .filterNot { it.startsWith("*") || it.startsWith("/*") || it.startsWith("//") }
+
+        // Self-check, so the comment filter cannot make this pin vacuous: the declaring code is seen, the filter
+        // really removes comment lines (the raw file names the controller in its KDoc), and the scan flags a planted
+        // offender in a code line but not in a comment line.
+        assertTrue("the end value type must be declared in code", code.any { it.contains("class OpenOriginEnd(") })
+        assertTrue("the raw file names the controller in comments", rawText.contains("AppLockController"))
+        val forbidden = listOf("AppLockController", "getOpenOriginEnd")
+        fun offending(lines: List<String>): Boolean = lines.any { line -> forbidden.any { line.contains(it) } }
+        assertTrue(offending(code + "val leak = controller.getOpenOriginEnd()"))
+        assertTrue(offending(code + "private val c: AppLockController? = null"))
+        assertFalse(offending(code + listOf("// AppLockController.getOpenOriginEnd", "* AppLockController")
+            .map { it.trim() }
+            .filterNot { it.startsWith("*") || it.startsWith("/*") || it.startsWith("//") }))
+
+        assertEquals(
+            "code lines of AppLockState.kt that name the controller or its end getter",
+            emptyList<String>(),
+            code.filter { line -> forbidden.any { line.contains(it) } }
+        )
     }
 
     @Test

@@ -2857,3 +2857,77 @@ Debug iteration 1 (debugger): DeepLinkApplierCallerPinTest self-check regex over
   - the Inc-2 PIN-mode export rule;
   - the G1b device check for #10.
 - Next: merge app-lock (S20 + S21) into feature/ai-evolution (owner-approvals 73b) in Cost-agregator-int. The trial merge against 73c593dd is clean. Then S22.
+
+### S22-a.0 implementation (2026-10-28, implementer; NOT validated)
+
+Nothing was built or run. No guard, baseline, allowlist, diagnostic-code, schema, Operations, manifest or string change. No STOP condition was hit: no existing transition outcome changed, no new diagnostic code, no existing test expectation changed (only the planned pin additions), `AppLockSettingsOperations.kt` is untouched.
+
+Files changed (P = app/src/main/java/com/yourname/expensetracker, T = app/src/test/java/com/yourname/expensetracker):
+- M `P/domain/privacy/applock/AppLockState.kt`: `enum class OpenOriginEndKind {APPLIED, NOT_COMMITTED, CANCELLED, LOCKED_OUT, NOT_AVAILABLE, ERROR, HOST_LOST, BACKGROUNDED}` and `data class OpenOriginEnd(val attemptId: Long, val prompt: OpenOriginPrompt, val kind: OpenOriginEndKind)`. No top-level fun.
+- M `P/domain/privacy/applock/AppLockController.kt`: `val openOriginEnd: StateFlow<OpenOriginEnd?>` (private `MutableStateFlow(null)` behind `asStateFlow()`); private `openOriginEndKindOf(Closing)` (exhaustive `when`, no else), `publishOpenOriginClose(attempt, kind)` and `publishOpenOriginEnd(...)`; publication calls in `closeWith`, `onOpenOriginSettingApplied` and `onInertDisableApplied`. Every publication is outside `stateLock` and `publishLock`, after the transition published its state.
+- N `T/domain/privacy/applock/AppLockControllerOpenOriginEndTest.kt`.
+- M `T/domain/privacy/applock/AppLockControllerIllegalTransitionTest.kt` (pins only, below).
+
+Kind mapping per closing path (open-origin attempts only; an UNLOCK attempt never publishes):
+- Cancelled (user dismissal) -> CANCELLED.
+- LockedOut (either permanence) -> LOCKED_OUT.
+- Failed(any bucket) -> ERROR. NotAvailable on DISABLE / CHANGE, and on ENABLE when the re-check says AVAILABLE, is Closing.Error(OTHER) -> ERROR.
+- ENABLE NotAvailable refused by the re-check (HW_UNAVAILABLE, UNKNOWN, CHECK_FAILED, NO_CREDENTIAL, UNSUPPORTED_API) = Closing.EnableRefused -> NOT_AVAILABLE.
+- T35 host loss, the watchdog (P3 / F5) and a cancellation that races a LAUNCHED answer all close as Closing.Abandoned -> HOST_LOST.
+- Closing.NotLaunched (ALREADY_IN_FLIGHT / HOST_UNAVAILABLE / PROMPT_UNAVAILABLE launch, a throwing authenticate, an exhausted AWAITING_PRIOR_TERMINAL budget, a foreign cancellation before the launch) -> ERROR.
+- Closing.BecameInert -> NOT_AVAILABLE in the exhaustive `when`; it is UNLOCK-only today, so it is never published.
+- Closing.Success (UNLOCK) -> none. Closing.OpenOriginSuccess -> none at the close.
+- A close that finds its state out of step (the F4 / ISSUE-1 guard, `staleClose`) of an open-origin attempt -> ERROR, so a consumer is never left waiting.
+- onOpenOriginSettingApplied (T17 / T18 / timeout change / review-save token) -> APPLIED when committed, NOT_COMMITTED otherwise, only for the exact one-shot token, published after the transition (and so after the state move). A call with no token, a wrong id or a repeat publishes nothing.
+- onInertDisableApplied (T19) -> APPLIED / NOT_COMMITTED for the exact token, published after the move to DISABLED, with prompt DISABLE and attemptId = the NEGATED token id (T19 has no attempt; negation keeps it from ever equalling an attempt id, so a StateFlow cannot drop it as equal to an earlier DISABLE end).
+- BACKGROUNDED has NO producer: no controller path closes an attempt because the app went to the background (T32 only records `promptBackgroundAt`). The kind is reserved by the plan's enum; a test pins that backgrounds, foregrounds and queries publish nothing.
+
+Ambiguous mappings (conservative choices, for the guardians):
+1. Closing.Abandoned covers host loss AND the 5 min watchdog (and a cancellation racing a launch); all map to HOST_LOST. The S22-a.1 UI maps HOST_LOST to "nothing", so a watchdog timeout shows no notice. Splitting them would need a new private Closing subtype.
+2. Closing.NotLaunched maps to ERROR, not HOST_LOST, even for HOST_UNAVAILABLE: the person asked and the prompt never showed, so ENABLE shows enable_failed rather than nothing.
+3. Closing.Error(SYSTEM_CANCELED) (an OEM / system dismissal) is ERROR, not CANCELLED. S23's ux 4.3 move of ERROR_CANCELED to SYSTEM_CANCELED does not change this.
+4. A committed apply publishes APPLIED even when the state did not move (T17 / T18 only move from exactly the origin with no open attempt; the commit itself happened). A CHANGE token with neither a timeout nor a record (test-only use of `startOpenOriginAttempt(CHANGE)`) also publishes by `committed`.
+
+Tests (`*AppLockController*` covers all of them):
+- N `AppLockControllerOpenOriginEndTest` (22 cases): shape and read-only; UNLOCK never publishes (9 endings); the non-success matrix per prompt (cancel, both lockouts, every error bucket; a second attempt with the same kind is a new value); NotAvailable by capability (ENABLE vs DISABLE / CHANGE); launch failures, retry budget, foreign cancellation, cancellation racing LAUNCHED; T35 host loss; watchdog; T34 (the end after the T34 lock at 60_000 ms and after UNLOCKED at 59_999 ms, per closer); out-of-step close; T12 stale ids (while open, after close, older callback while a newer attempt is open); T32 background events; T33 success publishes nothing at the close and the apply completion alone publishes nothing; T17 / T18 APPLIED after the state move and NOT_COMMITTED, consumed token, wrong ids; CHANGE timeout; no-token moves; end-to-end ENABLE / DISABLE through `SettingsOperationsRig` (committed and failed writes); T19 direct (exact id, replaced token, NOT_COMMITTED stays INERT) and end-to-end. A collector records the state and whether `stateLock` or `publishLock` was held at each emission (never).
+- M `AppLockControllerIllegalTransitionTest`, pin additions only: `getOpenOriginEnd` added to the public-method-set pin; a signature block (the only member matching "penOriginEnd", no args, returns `StateFlow`); "penOriginEnd" added to the controller-entry forbidden list with no allowed production reader.
+  - Deviation from "NO allowed file yet": the scan also reads `AppLockState.kt`, which declares `OpenOriginEnd` / `OpenOriginEndKind` and so contains the substring. It gets an exact-path allowance for this token only (`APPLOCK_PACKAGE_PATH/AppLockState.kt -> setOf("penOriginEnd")`). Every other file, including the VM, still gets none. S22-a.1 must add the settings ViewModel path (O-1).
+
+Validation to request: targeted `*AppLockController*` (includes IllegalTransition and the new OpenOriginEnd test). Batch a per the plan adds `*AppLockPrivacy*`, `*AppLockEnableDialog*`, `*PrivacySettings*`, `*AppLockShell*`, domain-n-z, runtime-ui, known_good_state, cancellation, ui_dao, lint.
+
+Residual risks (unrun):
+- The test file was written without a compile: the least-certain parts are the nested private `Ends` collector (unconfined, records `Thread.holdsLock` of the two monitors by reflection on the private fields `stateLock` / `publishLock`) and the `private inline fun collecting`.
+- The out-of-step ERROR path is exercised only through the same reflection forcing of `current` that the F5 tests use.
+- Replay: the StateFlow replays the latest end to a new collector, so S22-a.1 must treat the first value it sees as a baseline, not an event, or a re-entry to the settings screen would show an old attempt's notice (documented on the property).
+- Two ends published from different threads are not ordered against each other; attempts are serial and a new prompt cannot start and end before the previous end is published, so this is theoretical. T19 ends can interleave with an attempt end only if both run at once (the one-apply flag in the Operations prevents it).
+
+### S22-a.0 privacy review (2026-10-28)
+
+Verdict: ACCEPT-WITH-CONDITIONS (privacy PASS), privacy-security-guardian. Nothing was built or run for the follow-up below.
+
+Findings and dispositions:
+1. LOCK_ON / LOCK_OFF must follow the end's prompt (ENABLE / DISABLE only, T19's negative id included; CHANGE never). Disposition: plan binding B-1 for S22-a.1.
+2. Replay of the latest end to a new collector. Disposition: plan binding B-2 (init baseline) for S22-a.1.
+3. Some success paths publish no end, so nothing may wait for one. Disposition: plan binding B-3 for S22-a.1. (B-4, the ERROR_CANCELED-from-background copy, is added as a UX note for S23.)
+4. (P3) APPLIED is published even when the state was no longer at the origin. Disposition: a test plus a KDoc fix. Test: `AppLockControllerOpenOriginEndTest` "S22-a_0 privacy review F4 - an applied DISABLE whose app timed out first still publishes APPLIED while the state stays LOCKED" (DISABLE success, background past 60_000 ms, foreground to LOCKED(TIMEOUT), then `onOpenOriginSettingApplied(id, true)` publishes APPLIED(DISABLE) with the state still LOCKED(TIMEOUT); the token is consumed). KDoc: `OpenOriginEndKind.APPLIED` now reads "after the apply's state move, if the state was still at the origin" (KDoc only, no code change).
+5. The claim-carrying cases run inline. Disposition: acceptable, no change.
+6. Optional tightening, approved as a strengthening under owner-approvals item 62. Disposition: added in `AppLockControllerIllegalTransitionTest`, test "S22-a_0 privacy review F6 - the code of AppLockState_kt names neither the controller nor its end getter": the code lines of `AppLockState.kt` (comment lines excluded) contain neither `AppLockController` nor `getOpenOriginEnd`. The file's pins had no planted self-check pattern, so the test carries a small inline one (the end type is declared in code, the raw file does name the controller in KDoc so the comment filter is not vacuous, a planted offending code line is flagged and a planted comment line is not).
+   - The AppLockState.kt exact-path allowance (`setOf("penOriginEnd")`) is acknowledged as a necessary plan deviation (orchestrator, item 62): the file declares `OpenOriginEnd` / `OpenOriginEndKind`, so the substring is unavoidable there.
+
+Files changed (this follow-up):
+- T `domain/privacy/applock/AppLockControllerOpenOriginEndTest.kt` (one test added, now 23 cases)
+- T `domain/privacy/applock/AppLockControllerIllegalTransitionTest.kt` (one test added)
+- P `domain/privacy/applock/AppLockState.kt` (KDoc only)
+- plan: "### S22-a.1 bindings from the S22-a.0 privacy review" (B-1..B-4)
+
+Validation to request: unchanged, targeted `*AppLockController*` (covers both test classes). Not compiled or run.
+
+### S22-a.0 ACCEPTED (2026-10-28)
+- Gate: privacy-security-guardian ACCEPT-WITH-CONDITIONS (privacy PASS). F4 and F6 applied. F1-F3 are now plan bindings B-1..B-3 for S22-a.1.
+- Validation, all PASS:
+  - targeted `*AppLockController*,*AppLockShell*,*AppLockDeepLinkRouter*`: vr-20261028-103702-9d360dc4
+  - known_good_state: vr-20261028-104221-37e46084
+  - cancellation: vr-20261028-104525-19a72076
+  - domain-n-z: vr-20261028-104541-1c694e02
+- architecture-guardian and reviewer-strict run at the atomic S22 candidate.
+- Next: S22-a.1 (settings UI). It is BLOCKED on owner decision O-1, the VM controller-member pin {requestSettingsReread, state, openOriginEnd}.
