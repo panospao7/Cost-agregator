@@ -29,10 +29,17 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.verify
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -135,12 +142,99 @@ class BudgetViewModelInstallmentLineTest : ViewModelTestUtils() {
 
         var thrown: CancellationException? = null
         try {
-            vm.installmentLinesFor(listOf(status(1L, "EUR")))
+            vm.loadInstallmentInputs()
         } catch (e: CancellationException) {
             thrown = e
         }
 
         assertNotNull(thrown)
+    }
+
+    @Test
+    fun `a non-cancellation failure of loadBudgetInputs is mapped to Failed`() = runTest(testDispatcher) {
+        coEvery { installmentRepository.loadBudgetInputs() } throws IllegalStateException("boom")
+        val vm = viewModel(enabled = true, statuses = listOf(status(1L, "EUR")))
+
+        assertEquals(BudgetViewModel.InstallmentInputsResult.Failed, vm.loadInstallmentInputs())
+    }
+
+    @Test
+    fun `PE-C a statuses-only emission does not reload the installment inputs`() = runTest(testDispatcher) {
+        coEvery { installmentRepository.loadBudgetInputs() } returns inputs(
+            plan(1L, "EUR", entry(1L, "EUR", 5_000L))
+        )
+        val statusFlow = MutableStateFlow(listOf(status(1L, "EUR")))
+        val vm = viewModel(enabled = true, statuses = statusFlow.value, statusFlow = statusFlow)
+        val collector = launch { vm.uiState.collect { } }
+
+        advanceUntilIdle()
+        coVerify(exactly = 1) { installmentRepository.loadBudgetInputs() }
+
+        // A budget status changes (a spend), no installment table changes.
+        statusFlow.value = listOf(status(1L, "EUR"), status(2L, "EUR"))
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { installmentRepository.loadBudgetInputs() }
+        val state = vm.uiState.value
+        assertEquals(2, state.budgets.size)
+        // The new status still gets its line, computed from the inputs already loaded.
+        assertTrue(state.installmentLines[2L] is BudgetInstallmentLine.Included)
+        collector.cancel()
+    }
+
+    @Test
+    fun `PE-C an installment change reloads the inputs and updates the lines`() = runTest(testDispatcher) {
+        var current = inputs(plan(1L, "EUR", entry(1L, "EUR", 5_000L)))
+        coEvery { installmentRepository.loadBudgetInputs() } answers { current }
+        val changes = MutableSharedFlow<Unit>(replay = 1)
+        changes.tryEmit(Unit)
+        val vm = viewModel(enabled = true, statuses = listOf(status(1L, "EUR")), changes = changes)
+        val collector = launch { vm.uiState.collect { } }
+
+        advanceUntilIdle()
+        coVerify(exactly = 1) { installmentRepository.loadBudgetInputs() }
+        val before = vm.uiState.value.installmentLines.getValue(1L) as BudgetInstallmentLine.Included
+        assertEquals(50.0, before.amount.amount, 0.0001)
+
+        current = inputs(plan(1L, "EUR", entry(1L, "EUR", 5_000L), entry(2L, "EUR", 2_500L)))
+        changes.emit(Unit)
+        advanceUntilIdle()
+
+        coVerify(exactly = 2) { installmentRepository.loadBudgetInputs() }
+        val after = vm.uiState.value.installmentLines.getValue(1L) as BudgetInstallmentLine.Included
+        assertEquals(75.0, after.amount.amount, 0.0001)
+        collector.cancel()
+    }
+
+    @Test
+    fun `PE-C a failing change flow is unavailable for every budget never zero`() = runTest(testDispatcher) {
+        val vm = viewModel(
+            enabled = true,
+            statuses = listOf(status(1L, "EUR"), status(2L, "USD")),
+            changes = flow { throw IllegalStateException("boom") }
+        )
+
+        val state = vm.uiState.first { it.budgets.isNotEmpty() }
+
+        assertEquals(BudgetInstallmentLine.Unavailable, state.installmentLines[1L])
+        assertEquals(BudgetInstallmentLine.Unavailable, state.installmentLines[2L])
+        coVerify(exactly = 0) { installmentRepository.loadBudgetInputs() }
+    }
+
+    @Test
+    fun `PE-C the pure line function gives the same lines as the ui state on the same inputs`() = runTest(testDispatcher) {
+        val loaded = inputs(plan(1L, "EUR", entry(1L, "EUR", 5_000L)))
+        coEvery { installmentRepository.loadBudgetInputs() } returns loaded
+        val statuses = listOf(status(1L, "EUR"), status(2L, "EUR", categoryId = 2L))
+        val vm = viewModel(enabled = true, statuses = statuses)
+
+        val state = vm.uiState.first { it.budgets.size == 2 }
+
+        assertEquals(
+            vm.installmentLinesFor(statuses, BudgetViewModel.InstallmentInputsResult.Loaded(loaded)),
+            state.installmentLines
+        )
+        assertTrue(vm.installmentLinesFor(statuses, null).isEmpty())
     }
 
     @Test
@@ -190,6 +284,8 @@ class BudgetViewModelInstallmentLineTest : ViewModelTestUtils() {
 
         assertTrue(state.installmentLines.isEmpty())
         coVerify(exactly = 0) { installmentRepository.loadBudgetInputs() }
+        // PE-C: with the flag off the repository is not touched at all (no change subscription either).
+        verify(exactly = 0) { installmentRepository.observeChanges() }
     }
 
     @Test
@@ -224,8 +320,14 @@ class BudgetViewModelInstallmentLineTest : ViewModelTestUtils() {
 
     // ------------------------------------------------------------------ builders
 
-    private fun viewModel(enabled: Boolean?, statuses: List<BudgetStatus>): BudgetViewModel {
-        every { budgetRepository.getBudgetStatuses() } returns flowOf(statuses)
+    private fun viewModel(
+        enabled: Boolean?,
+        statuses: List<BudgetStatus>,
+        changes: Flow<Unit> = flowOf(Unit),
+        statusFlow: Flow<List<BudgetStatus>> = flowOf(statuses)
+    ): BudgetViewModel {
+        every { budgetRepository.getBudgetStatuses() } returns statusFlow
+        every { installmentRepository.observeChanges() } returns changes
         val vm = BudgetViewModel(
             budgetRepository = budgetRepository,
             categoryRepository = categoryRepository,

@@ -65,6 +65,9 @@ class InstallmentPlanReadRepositoryImpl @Inject constructor(
 
     override fun observeHistory(): Flow<List<InstallmentHistoryItem>> = changes().mapLatest { loadHistory() }
 
+    /** PE-C: the table-change flows only; no load, no new query. */
+    override fun observeChanges(): Flow<Unit> = changes()
+
     override suspend fun loadOverview(): InstallmentOverview {
         val zone = ZoneId.systemDefault()
         val today = todayEpochDay(zone)

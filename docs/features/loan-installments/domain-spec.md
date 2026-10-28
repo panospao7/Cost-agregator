@@ -1467,7 +1467,7 @@ PURCHASE_ATTACHED declaration on an existing expense:
    `EQUAL_SPLIT` state later.
 
 **Implemented behaviour (evidence, as of this date).**
-- The rule has ONE owner today, the declare-sheet state. `DeclareInstallmentsUiState.effectiveSplit` returns
+- The rule has ONE owner today, the declare-sheet state (superseded by PE-A below). `DeclareInstallmentsUiState.effectiveSplit` returns
   `f.split` only when `f.currency?.code == t.currency`, otherwise `FIXED_PAYMENT`
   (`DeclareInstallmentsSheet.kt:141-147`). `currencyDiffers` is at :151. `canSave` is at :159-167: a null plan
   currency blocks saving, and `FIXED_PAYMENT` needs a parsed fixed amount.
@@ -1481,7 +1481,7 @@ PURCHASE_ATTACHED declaration on an existing expense:
   fixed payment`: `currencyDiffers`, `effectiveSplit == FIXED_PAYMENT`, `canSave` false until a fixed payment is
   typed, then terms `FIXED_PAYMENT` / `USD` / 50.0 / `declaredTotal == null`) and :151-160 (a CHF purchase needs a plan
   currency pick before saving).
-- The coordinator does NOT enforce it. `declareOnExpense` (`InstallmentPlanLifecycleCoordinator.kt:133-179`) reads
+- The coordinator does NOT enforce it (superseded by PE-A below). `declareOnExpense` (`InstallmentPlanLifecycleCoordinator.kt:133-179`) reads
   the purchase facts (:149) and checks the declaration policy (:156-168), but it never compares `terms.currency` or
   `terms.splitMethod` with the purchase currency. `editDetails` accepts a currency change on an ACTIVE plan with no
   PAID or REVERSED entries whatever the split method and purchase currency are (:690-708). Its only UI caller sends
@@ -1556,3 +1556,17 @@ and in which scope it applies. Schema: none. New invariants: none. New refusal c
   `NarrativeGenerator`, `DashboardDataProvider`, `DashboardBriefingInputBuilder`) stays installment-free; the registered
   guard `installment_cloud_reachability` fences it (INV-31). No `FinancialWeather` field carries installment data.
   Other Home widgets (Monte Carlo is handled in S8b-2; runway and health score) are not changed by S8b-3.
+
+## Clarification 2026-10-28 — early bank charge over-count accepted for v1 (owner-approvals 65a)
+
+Append-only. Nothing above this heading is rewritten. Schema: none. New invariants: none. New refusal codes: none.
+
+- **Accepted conservative over-count.** An early bank charge that the INV-13 deferral holds unlinked can be counted twice
+  in the Home installment-aware weather and the other projection readers: once as an actual expense (current-month
+  month-to-date) and once as the still-SCHEDULED projected entry, until the user links it. The over-count is on the
+  cautious side (committed outflow is overstated, never understated). Owner-approvals 65a accepts it for v1; it is not a
+  defect and needs no code. It ends as soon as the charge is linked (the entry is PAID and no longer projected).
+- **Pre-enable item 8 closed as a decision, not a fix.** Dispositions of the other pre-enable items are unchanged: the
+  invalidation trigger of the Home weather source and the Budget installment line is now
+  `InstallmentPlanReadRepository.observeChanges()` (PE-C), and the Home narrative fallback label is the localized
+  string `installment_plan_fallback_label`.

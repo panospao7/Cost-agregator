@@ -1006,8 +1006,10 @@ HOME INSTALLMENT-AWARE WEATHER read path (implemented — loan-installments S8b-
     DashboardDataProvider, DashboardData or FinancialWeather, and no FinancialWeather field is added
   → HomeInstallmentWeatherSource (data/repository, OFF the cloud surface) is the one merge source. It reads the same
     inputs as FinancialWeatherRepository plus InstallmentProjectionPort (31-day window via
-    InstallmentUpcomingProjection), RecurringInstallmentEligibility and InstallmentPlanReadRepository.observeOverview
-    (invalidation trigger only; it re-emits on plan and entry row changes). Port empty → null → Home keeps the baseline
+    InstallmentUpcomingProjection), RecurringInstallmentEligibility and InstallmentPlanReadRepository.observeChanges
+    (PE-C: the invalidation trigger only; it re-emits on plan and entry row changes without loading an overview, so the
+    pipeline is not re-run through observeOverview). A blank plan name falls back to the localized string
+    installment_plan_fallback_label, resolved per computation. Port empty → null → Home keeps the baseline
   → INV-29 (single owner RecurringInstallmentEligibility.excludedSnapshotIds): while at least one entry is projected,
     installment-linked and plan-purchase history dated BEFORE the current month (home time zone) is removed from the
     aware view's snapshots (global-while-projected, owner-approvals 53a; before-the-month only, 60b). Current-month

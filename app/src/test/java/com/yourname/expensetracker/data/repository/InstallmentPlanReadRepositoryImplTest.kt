@@ -15,6 +15,7 @@ import com.yourname.expensetracker.domain.installment.readmodel.InstallmentUnava
 import com.yourname.expensetracker.domain.transaction.SpendingExclusionReason
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import java.time.LocalDate
@@ -24,8 +25,13 @@ import java.time.ZoneOffset
 import java.time.ZonedDateTime
 import java.util.TimeZone
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -643,6 +649,39 @@ class InstallmentPlanReadRepositoryImplTest {
 
         assertEquals(listOf(1L), overview.plans.map { it.planId })
         assertEquals(InstallmentPlanStatus.ACTIVE, overview.plans.single().status)
+    }
+
+    @Test
+    fun `PE-C observeChanges emits on a plan change and on an entry change and loads nothing`() = runTest {
+        val plans = MutableSharedFlow<List<InstallmentPlan>>(replay = 1)
+        val entries = MutableSharedFlow<List<InstallmentEntry>>(replay = 1)
+        every { planDao.observeAllPlans() } returns plans
+        every { planDao.observeAllEntries() } returns entries
+        val emissions = Channel<Unit>(Channel.UNLIMITED)
+        val job = launch(UnconfinedTestDispatcher(testScheduler)) {
+            repo.observeChanges().collect { emissions.send(it) }
+        }
+
+        plans.emit(listOf(planRow(1L)))
+        entries.emit(listOf(entryRow(1L)))
+        runCurrent()
+        assertNotNull("first combined emission", emissions.tryReceive().getOrNull())
+
+        // A plan row change.
+        plans.emit(listOf(planRow(1L), planRow(2L)))
+        runCurrent()
+        assertNotNull("emits on a plan change", emissions.tryReceive().getOrNull())
+
+        // An entry row change.
+        entries.emit(listOf(entryRow(1L), entryRow(2L, planId = 2L)))
+        runCurrent()
+        assertNotNull("emits on an entry change", emissions.tryReceive().getOrNull())
+
+        job.cancel()
+        coVerify(exactly = 0) { planDao.getAllPlans() }
+        coVerify(exactly = 0) { planDao.getPlanById(any()) }
+        coVerify(exactly = 0) { planDao.getEntriesForPlan(any()) }
+        assertTrue("no expense money was read", reader.ranges.isEmpty())
     }
 
     @Test

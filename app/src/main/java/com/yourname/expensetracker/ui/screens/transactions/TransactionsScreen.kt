@@ -83,6 +83,7 @@ import com.yourname.expensetracker.ui.components.TransferDirectionBadge
 import com.yourname.expensetracker.ui.components.LocationSearchPicker
 import com.yourname.expensetracker.ui.components.common.ListSkeleton
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.util.*
 
@@ -278,14 +279,23 @@ fun TransactionsScreen(
         }
     }
 
-    // Trigger load more when needed. While the filter is on, the key also carries the loaded base row
-    // count: each completed page (or a refresh that resets the list) restarts the effect, so a state
-    // change that StateFlow conflation hid cannot leave the paging stalled. The row-count key adds no
-    // loop, but a page that keeps failing is still retried through the isLoadingMore toggle (as before,
-    // and with the filter on not stopped by scrolling): a pre-enable item. Filter off: the key part is
-    // constant, behaviour unchanged.
-    LaunchedEffect(shouldLoadMore, if (installmentFilterOn) transactions.size else -1) {
-        if (shouldLoadMore) {
+    // Trigger load more when needed. Filter off: keyed by shouldLoadMore alone (the key part is the
+    // constant -1), behaviour unchanged. Filter on (PE-D): the effect is keyed by the loaded base row
+    // count, hasReachedEnd and isLoading, never by the isLoadingMore toggle. It waits once for
+    // shouldLoadMore and then calls loadMore() once. A completed page changes the count and restarts
+    // the effect; a refresh changes isLoading; a failed page changes none of them, so it is not
+    // relaunched and a permanently failing page cannot spin in a retry loop.
+    val loadMoreEffectKey = TransactionsLoadMorePolicy.effectKey(
+        installmentFilterOn = installmentFilterOn,
+        baseRowCount = transactions.size,
+        hasReachedEnd = hasReachedEnd,
+        isLoading = isLoading
+    )
+    LaunchedEffect(loadMoreEffectKey, if (installmentFilterOn) false else shouldLoadMore) {
+        if (installmentFilterOn) {
+            snapshotFlow { shouldLoadMore }.first { it }
+            viewModel.loadMore()
+        } else if (shouldLoadMore) {
             viewModel.loadMore()
         }
     }
@@ -756,8 +766,19 @@ fun TransactionsScreen(
 
         // Delete confirmation dialog
         if (expenseToDelete != null) {
+            val deleteTarget = expenseToDelete!!
+            // PE-D: the role line shows only when the installments view model exists (dormant otherwise).
+            val deleteRole = if (installmentVm != null) InstallmentDeleteRole.of(deleteTarget, installmentMarks) else null
+            val deletePlanId = if (deleteRole != null) installmentMarks.byExpenseId[deleteTarget.id]?.planId else null
             DeleteConfirmationDialog(
-                expense = expenseToDelete!!,
+                expense = deleteTarget,
+                installmentRole = deleteRole,
+                onViewPlan = deletePlanId?.let { planId ->
+                    {
+                        expenseToDelete = null
+                        onOpenInstallmentPlan(planId)
+                    }
+                },
                 onDismiss = { expenseToDelete = null },
                 onConfirm = {
                     // S5-012: Don't close immediately - close on success event
@@ -1891,6 +1912,8 @@ private fun TransactionType.toDomainType(): DomainTransactionType {
 @Composable
 private fun DeleteConfirmationDialog(
     expense: Expense,
+    installmentRole: InstallmentDeleteRole? = null,
+    onViewPlan: (() -> Unit)? = null,
     onDismiss: () -> Unit,
     onConfirm: () -> Unit
 ) {
@@ -1905,13 +1928,27 @@ private fun DeleteConfirmationDialog(
             ) 
         },
         title = { Text(stringResource(R.string.delete_transaction_title)) },
-        text = { 
-            Text(
-                stringResource(
-                    R.string.delete_transaction_confirmation, 
-                    expense.merchant
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    stringResource(
+                        R.string.delete_transaction_confirmation,
+                        expense.merchant
+                    )
                 )
-            ) 
+                // PE-D: static role line from the row marks (flag fallback); no plan read.
+                if (installmentRole != null) {
+                    Text(
+                        stringResource(installmentRole.messageRes()),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    if (onViewPlan != null) {
+                        TextButton(onClick = onViewPlan) {
+                            Text(stringResource(R.string.declare_installments_snackbar_view_plan))
+                        }
+                    }
+                }
+            }
         },
         confirmButton = {
             TextButton(

@@ -144,6 +144,10 @@
     <string name="installments_title">Δόσεις και δάνεια</string>
     <string name="feature_installments_desc">Παρακολουθήστε τις πληρωμές που οφείλετε και πότε λήγουν</string>
     <string name="installments_back">Πίσω</string>
+    <!-- DRAFT: owner native sign-off pending -->
+    <string name="installment_plan_fallback_label">Δόση</string>
+    <!-- DRAFT: owner native sign-off pending -->
+    <string name="cashflow_installments_header">Δόσεις προς πληρωμή</string>
     <string name="installments_remaining_label">Υπολειπόμενες προγραμματισμένες πληρωμές</string>
     <string name="installments_remaining_note">Άθροισμα των πληρωμών που απομένουν. Δεν είναι το οφειλόμενο υπόλοιπο του δανειστή σας.</string>
     <plurals name="installments_plan_count">
@@ -358,7 +362,8 @@
     <string name="installments_delete_body_purchase">Το πλάνο και το πρόγραμμά του θα αφαιρεθούν. Η αγορά σας θα μετράει ξανά ολόκληρη στην αρχική της ημερομηνία, οπότε θα αλλάξουν τα σύνολα και οι προϋπολογισμοί του μήνα. Δεν μπορεί να αναιρεθεί.</string>
     <string name="installments_delete_confirm">Διαγραφή πλάνου</string>
     <string name="installments_unlink_title">Αποσύνδεση της δόσης %1$d;</string>
-    <string name="installments_unlink_body">Το έξοδο παραμένει στη λίστα σας και συνεχίζει να μετράει. Η δόση γίνεται απλήρωτη. Αν η πληρωμή δεν έγινε, διαγράψτε το έξοδο στις Συναλλαγές.</string>
+    <!-- DRAFT: owner native sign-off pending (last sentence added by PE-D, owner-approvals 68) -->
+    <string name="installments_unlink_body">Το έξοδο παραμένει στη λίστα σας και συνεχίζει να μετράει. Η δόση γίνεται απλήρωτη. Αν η πληρωμή δεν έγινε, διαγράψτε το έξοδο στις Συναλλαγές. Αν καταγράψετε αυτή τη δόση ξανά αργότερα, δημιουργείται νέο έξοδο.</string>
     <string name="installments_unlink_confirm">Αποσύνδεση</string>
     <string name="installments_plan_notice_stopped">Το πλάνο διακόπηκε</string>
     <string name="installments_plan_notice_refunded">Η επιστροφή καταγράφηκε</string>
@@ -392,6 +397,12 @@
     <string name="transactions_installment_menu_view">Προβολή πλάνου δόσεων</string>
     <string name="transactions_installment_menu_disabled_not_mine">Οι δόσεις δεν είναι διαθέσιμες για έξοδα που δεν είναι δικά σας.</string>
     <string name="transactions_installment_menu_disabled_shared">Οι δόσεις δεν είναι ακόμη διαθέσιμες για κοινά ή μοιρασμένα έξοδα.</string>
+    <!-- DRAFT: owner native sign-off pending -->
+    <string name="transactions_installment_delete_role_installment">Αυτό το έξοδο ανήκει σε πλάνο δόσεων. Η δόση θα γίνει απλήρωτη και δεν θα καταγραφεί ξανά αυτόματα.</string>
+    <!-- DRAFT: owner native sign-off pending -->
+    <string name="transactions_installment_delete_role_purchase">Αυτή είναι η αγορά ενός πλάνου δόσεων. Το πλάνο θα μείνει χωρίς εγγραφή αγοράς και το κόστος χρηματοδότησης δεν θα είναι διαθέσιμο.</string>
+    <!-- DRAFT: owner native sign-off pending -->
+    <string name="transactions_installment_delete_role_reversed">Αυτή είναι μια δόση που έχει επιστραφεί. Η διαγραφή της την αφαιρεί μόνο από τη λίστα σας.</string>
     <plurals name="transactions_installment_chip_paid_in">
         <item quantity="one">Πληρώθηκε σε %d δόση</item>
         <item quantity="other">Πληρώθηκε σε %d δόσεις</item>

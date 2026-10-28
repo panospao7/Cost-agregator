@@ -65,7 +65,7 @@ import timber.log.Timber
 
 /**
  * Plan level flows of loan-installments S10b-2 (create, edit, End plan: Stop / Refund / Pay off early
- * / Delete, and the restricted entry Unlink). Shared by the create, edit and end ViewModels.
+ * / Delete, and the unrestricted entry Unlink, owner-approvals 56). Shared by the create, edit and end ViewModels.
  */
 enum class InstallmentPlanOperation { CREATE, EDIT, STOP, REFUND, PAY_OFF, DELETE, UNLINK }
 

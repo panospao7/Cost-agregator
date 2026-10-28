@@ -770,13 +770,19 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
         "description": "Installment plan cloud reachability (G-INSTALLMENT-CLOUD-01..03, "
                        "INV-31) — fails closed when any file in the cloud AI payload "
                        "surface (data/ai, domain/ai, domain/privacy, data/privacy, "
-                       "AI/privacy DI modules, cloud payload and briefing/insight/"
-                       "assistant input builders) imports a plan package "
+                       "AI/privacy DI modules, the S8b cloud briefing chain files "
+                       "FinancialWeatherRepository, ForecastInputAssembler, "
+                       "SynthesisEngine, NarrativeGenerator, DashboardDataProvider "
+                       "and DashboardContractsAdapter, cloud payload and briefing/"
+                       "insight/assistant input builders) imports a plan package "
                        "(domain.installment, service.installment, ui.screens."
                        "installments), references one by qualified name, or "
                        "uses any identifier containing 'installment' "
                        "(case-insensitive); also fails closed when a surface "
-                       "directory or exact-file entry matches no scanned file",
+                       "directory or exact-file entry matches no scanned file; the "
+                       "Home-only HomeInstallmentWeatherSource stays off-surface "
+                       "and is pinned by the Home weather consumer pin in "
+                       "InstallmentPlanArchitectureGuardTest",
         "execution": {
             "engine": "python-direct",
             "entrypoint": "scripts/verify_installment_cloud_reachability.py",

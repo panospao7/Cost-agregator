@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.ui.screens.transactions
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Test
 
 /**
@@ -49,5 +50,39 @@ class TransactionsLoadMorePolicyTest {
     fun `other tabs never page in either mode`() {
         assertEquals(false, policy(isAllTab = false, filterOn = true))
         assertEquals(false, policy(isAllTab = false, filterOn = false))
+    }
+
+    private fun key(
+        filterOn: Boolean,
+        rows: Int = 20,
+        end: Boolean = false,
+        loading: Boolean = false
+    ) = TransactionsLoadMorePolicy.effectKey(filterOn, rows, end, loading)
+
+    @Test
+    fun `effectKey filter off is the constant whatever the paging state`() {
+        val constant = key(filterOn = false)
+        val bools = listOf(false, true)
+        for (rows in listOf(0, 20, 40)) for (end in bools) for (loading in bools) {
+            assertEquals("rows=$rows end=$end loading=$loading", constant, key(false, rows, end, loading))
+        }
+        assertEquals(listOf<Any>(-1), constant)
+    }
+
+    @Test
+    fun `effectKey filter on is stable across a failed page`() {
+        // A failed page flips isLoadingMore only (not an input of the key): rows, end and loading stay.
+        val before = key(filterOn = true, rows = 20)
+        val afterFailure = key(filterOn = true, rows = 20)
+        assertEquals(before, afterFailure)
+    }
+
+    @Test
+    fun `effectKey filter on changes after a successful page, the end, or a refresh`() {
+        val base = key(filterOn = true, rows = 20)
+        assertNotEquals("a successful page adds rows", base, key(filterOn = true, rows = 40))
+        assertNotEquals("the end was reached", base, key(filterOn = true, rows = 20, end = true))
+        assertNotEquals("a refresh runs", base, key(filterOn = true, rows = 20, loading = true))
+        assertNotEquals("toggling the filter restarts the effect", key(filterOn = false), base)
     }
 }

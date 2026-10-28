@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.ui.screens.transactions
 
+import androidx.annotation.StringRes
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -20,6 +21,40 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.yourname.expensetracker.R
+import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.domain.transaction.SpendingExclusionReason
+
+/**
+ * PE-D: the role of an expense in the Transactions delete dialog (ux-flows 3.7, spec 7.6). A static
+ * label from the row marks; the stored flag is the fallback when no mark exists (marks failed or not
+ * loaded yet), so the dialog never needs a plan read. A PAYOFF payment counts as [INSTALLMENT].
+ */
+enum class InstallmentDeleteRole {
+    PURCHASE,
+    INSTALLMENT,
+    REVERSED;
+
+    @StringRes
+    fun messageRes(): Int = when (this) {
+        PURCHASE -> R.string.transactions_installment_delete_role_purchase
+        INSTALLMENT -> R.string.transactions_installment_delete_role_installment
+        REVERSED -> R.string.transactions_installment_delete_role_reversed
+    }
+
+    companion object {
+        /** Null when the expense has no installment role (the dialog is then unchanged). */
+        fun of(expense: Expense, marks: InstallmentRowMarks): InstallmentDeleteRole? =
+            when (val mark = marks.byExpenseId[expense.id]) {
+                is InstallmentRowMark.PurchaseRecord -> PURCHASE
+                is InstallmentRowMark.Payment -> if (mark.reversed) REVERSED else INSTALLMENT
+                null -> when (expense.spendingExclusionReason) {
+                    SpendingExclusionReason.INSTALLMENT_PURCHASE.name -> PURCHASE
+                    SpendingExclusionReason.INSTALLMENT_REVERSED.name -> REVERSED
+                    else -> null
+                }
+            }
+    }
+}
 
 /** Chips of one row (OQ-22, AE-17). Rendered only when [ui] is non-null, that is never while dormant. */
 @Composable

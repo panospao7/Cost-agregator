@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.ai.usecase
 
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.ai.provider.CloudDashboardBriefingService
 import com.yourname.expensetracker.data.ai.provider.DashboardBriefingPromptFormatter
 import com.yourname.expensetracker.data.ai.provider.HybridDashboardBriefingService
@@ -251,6 +252,7 @@ class DashboardBriefingInstallmentExclusionTest {
         private val currencyConverter = mockk<CurrencyConverter>(relaxed = true)
         private val normalizer = mockk<AnalyticsCurrencyNormalizer>(relaxed = true)
         private val readRepository = mockk<InstallmentPlanReadRepository>(relaxed = true)
+        private val appContext = mockk<android.content.Context>(relaxed = true)
         private val categoryRepository = mockk<CategoryRepository>(relaxed = true)
         private val reviewQueueRepository = mockk<ReviewQueueRepository>(relaxed = true)
         private val analyticsRepository = mockk<AnalyticsRepository>(relaxed = true)
@@ -362,6 +364,9 @@ class DashboardBriefingInstallmentExclusionTest {
                 )
             }
             every { readRepository.observeOverview() } returns flowOf(mockk<InstallmentOverview>(relaxed = true))
+            // PE-C: the Home source's invalidation trigger is observeChanges().
+            every { readRepository.observeChanges() } returns flowOf(Unit)
+            every { appContext.getString(R.string.installment_plan_fallback_label) } returns "Synthetic installment label"
 
             val assembler = ForecastInputAssembler(
                 timeProvider = timeProvider,
@@ -406,7 +411,8 @@ class DashboardBriefingInstallmentExclusionTest {
                 recurringInstallmentEligibility = RecurringInstallmentEligibility(
                     dagger.Lazy { EmptyLinkReader() }
                 ),
-                installmentPlanReadRepository = readRepository
+                installmentPlanReadRepository = readRepository,
+                context = appContext
             )
 
             // The REAL production adapter: the cloud path sees the weather exactly as production wires it.

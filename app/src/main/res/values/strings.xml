@@ -2657,6 +2657,9 @@
     <string name="installments_title">Installments &amp; loans</string>
     <string name="feature_installments_desc">Track payments you still owe and when they end</string>
     <string name="installments_back">Back</string>
+    <!-- PE-C: shared fallback for a plan without a display name (Home weather, CashFlow row) and the CashFlow day-list header -->
+    <string name="installment_plan_fallback_label">Installment</string>
+    <string name="cashflow_installments_header">Installments due</string>
     <string name="installments_remaining_label">Remaining scheduled payments</string>
     <string name="installments_remaining_note">Sum of payments still to be made. Not your lender\'s outstanding balance.</string>
     <plurals name="installments_plan_count">
@@ -2834,6 +2837,10 @@
     <string name="transactions_installment_menu_view">View installment plan</string>
     <string name="transactions_installment_menu_disabled_not_mine">Installments aren\'t available for expenses that aren\'t yours.</string>
     <string name="transactions_installment_menu_disabled_shared">Installments aren\'t available for shared or split expenses yet.</string>
+    <!-- loan-installments PE-D: role line of the Transactions delete dialog (ux-flows 3.7) -->
+    <string name="transactions_installment_delete_role_installment">This expense is part of an installment plan. The installment will become unpaid and will not be recorded again automatically.</string>
+    <string name="transactions_installment_delete_role_purchase">This is the purchase of an installment plan. The plan will remain without a purchase record, and financing cost won\'t be available.</string>
+    <string name="transactions_installment_delete_role_reversed">This is a refunded installment. Deleting it only removes it from your list.</string>
     <plurals name="transactions_installment_chip_paid_in">
         <item quantity="one">Paid in %d installment</item>
         <item quantity="other">Paid in %d installments</item>
@@ -2918,7 +2925,7 @@
     <string name="installments_delete_body_purchase">The plan and its schedule will be removed. Your purchase will count in full again on its original date, so totals and budgets for that month will change. This can\'t be undone.</string>
     <string name="installments_delete_confirm">Delete plan</string>
     <string name="installments_unlink_title">Unlink installment %1$d?</string>
-    <string name="installments_unlink_body">The expense stays in your list and still counts as spending. The installment becomes unpaid. If the payment did not happen, delete the expense in Transactions instead.</string>
+    <string name="installments_unlink_body">The expense stays in your list and still counts as spending. The installment becomes unpaid. If the payment did not happen, delete the expense in Transactions instead. Recording this installment again later creates a new expense.</string>
     <string name="installments_unlink_confirm">Unlink</string>
     <string name="installments_plan_notice_stopped">Plan stopped</string>
     <string name="installments_plan_notice_refunded">Refund recorded</string>

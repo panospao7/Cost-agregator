@@ -1,5 +1,7 @@
 package com.yourname.expensetracker.data.repository
 
+import android.content.Context
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
 import com.yourname.expensetracker.domain.forecasting.ForecastInputAssembler
@@ -22,12 +24,12 @@ import com.yourname.expensetracker.domain.recurring.RecurringInstallmentEligibil
 import com.yourname.expensetracker.domain.savings.SavingsGoalRepository as DomainSavingsGoalRepository
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.flow.map
 import timber.log.Timber
 import java.time.Instant
 import java.time.LocalDate
@@ -79,10 +81,16 @@ data class HomeInstallmentWeather(
  * baseline does. On any failure the flow emits null (Home keeps the baseline widget, fail closed);
  * cancellation propagates through the flow operators and is never swallowed here.
  *
- * Invalidation: the 6th input is [InstallmentPlanReadRepository.observeOverview], which re-emits on
- * every installment_plans / installment_entries row change (verified: it combines
- * `observeAllPlans()` and `observeAllEntries()`), so a status change of an entry re-runs the pipeline.
- * The emitted overview value itself is not used.
+ * Invalidation: the 6th input is [InstallmentPlanReadRepository.observeChanges] (PE-C), which re-emits
+ * on every installment_plans / installment_entries row change (it combines `observeAllPlans()` and
+ * `observeAllEntries()` without loading or computing an overview), so a status change of an entry
+ * re-runs the pipeline. The emitted value carries no data.
+ *
+ * Fallback label (PE-C, owner-approvals 60d-2): a projected entry whose plan has a blank display
+ * name gets the localized string resource `installment_plan_fallback_label`, resolved from the
+ * application context on every computation (so a locale change is picked up). The label is only the
+ * description of the internal MUST planned input; the Home narrative itself (`NarrativeGenerator`)
+ * is English-only and does not use it.
  */
 @Singleton
 class HomeInstallmentWeatherSource @Inject constructor(
@@ -99,7 +107,8 @@ class HomeInstallmentWeatherSource @Inject constructor(
     private val timeProvider: TimeProvider,
     private val installmentProjectionPort: InstallmentProjectionPort,
     private val recurringInstallmentEligibility: RecurringInstallmentEligibility,
-    private val installmentPlanReadRepository: InstallmentPlanReadRepository
+    private val installmentPlanReadRepository: InstallmentPlanReadRepository,
+    @ApplicationContext private val context: Context
 ) {
 
     /** Emits the aware weather, or null when the port has no entry in the 31-day window (or on failure). */
@@ -114,9 +123,9 @@ class HomeInstallmentWeatherSource @Inject constructor(
         ) { expenses, budgetStatuses, recurringEntities, plannedEntities, savingsGoals ->
             WeatherInputs(expenses, budgetStatuses, recurringEntities, plannedEntities, savingsGoals)
         }
-        // The overview is only an invalidation trigger; a failure of its flow must not stop the weather.
-        val trigger = installmentPlanReadRepository.observeOverview()
-            .map { }
+        // observeChanges is only an invalidation trigger (no overview is loaded); a failure of its flow
+        // must not stop the weather.
+        val trigger = installmentPlanReadRepository.observeChanges()
             .catch { emit(Unit) }
         return combine(inputs, trigger) { weatherInputs, _ -> weatherInputs }
             // One isolated flow per emission: a failed computation yields null for that emission only
@@ -148,7 +157,9 @@ class HomeInstallmentWeatherSource @Inject constructor(
         val rows = InstallmentUpcomingProjection.load(installmentProjectionPort, todayEpochDay)
         // No entry in the window: nothing to project, nothing to exclude, so Home keeps the baseline.
         if (rows.isEmpty()) return null
-        val projectedPlanned = rows.map { toPlannedExpense(it, zone) }
+        // Resolved per computation so the label follows the current app locale.
+        val fallbackLabel = context.getString(R.string.installment_plan_fallback_label)
+        val projectedPlanned = rows.map { toPlannedExpense(it, zone, fallbackLabel) }
 
         // INV-29 (single owner RecurringInstallmentEligibility): linked history leaves the baseline
         // while entries are projected, so the plan is counted by its projection and not by its history.
@@ -227,10 +238,10 @@ class HomeInstallmentWeatherSource @Inject constructor(
      * Negative id: real planned-expense ids are positive, so the two can never collide and the
      * projected items can be told apart. Rows are guaranteed positive by [InstallmentUpcomingProjection.load].
      */
-    private fun toPlannedExpense(row: InstallmentUpcomingRow, zone: ZoneId): PlannedExpense {
+    private fun toPlannedExpense(row: InstallmentUpcomingRow, zone: ZoneId, fallbackLabel: String): PlannedExpense {
         return PlannedExpense(
             id = -row.entryId,
-            description = row.displayName.ifBlank { FALLBACK_DESCRIPTION },
+            description = row.displayName.ifBlank { fallbackLabel },
             amount = InstallmentMinorUnits.fromMinor(row.amountMinor),
             currency = row.currency.code,
             date = LocalDate.ofEpochDay(row.dueEpochDay).atStartOfDay(zone).toInstant().toEpochMilli(),
@@ -279,10 +290,5 @@ class HomeInstallmentWeatherSource @Inject constructor(
             .forEach { items.add(UpcomingItem.Planned(it)) }
 
         return items.sortedBy { it.date }
-    }
-
-    private companion object {
-        /** PlannedExpense requires a non-blank description; plan display names are never blank. */
-        const val FALLBACK_DESCRIPTION = "Installment"
     }
 }

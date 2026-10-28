@@ -6,6 +6,7 @@ import com.yourname.expensetracker.domain.installment.readmodel.InstallmentLinkS
 import com.yourname.expensetracker.domain.installment.readmodel.InstallmentOverview
 import com.yourname.expensetracker.domain.installment.readmodel.InstallmentPlanDetail
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
 
 /**
  * Read-only access to installment plans for the overview, detail, history and suggestions
@@ -28,6 +29,16 @@ interface InstallmentPlanReadRepository {
 
     /** History of COMPLETED, CANCELLED, REFUNDED and PAID_OFF plans (AE-11). */
     fun observeHistory(): Flow<List<InstallmentHistoryItem>>
+
+    /**
+     * PE-C: a cheap invalidation trigger that re-emits whenever a plan or entry row changes, without
+     * loading or computing any overview. Collectors that only need to know "something changed" (the
+     * Home weather source, the Budget installment line) use it instead of [observeOverview], which
+     * loads every plan on each emission. The emitted value carries no data. The default derives it
+     * from [observeOverview] (same change set, more work); the implementation overrides it with the
+     * bare table-change flows.
+     */
+    fun observeChanges(): Flow<Unit> = observeOverview().map { }
 
     suspend fun loadOverview(): InstallmentOverview
 

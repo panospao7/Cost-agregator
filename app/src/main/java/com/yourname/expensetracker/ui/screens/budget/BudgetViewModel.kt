@@ -20,6 +20,7 @@ import com.yourname.expensetracker.domain.groups.SharedExpenseBudgetOffsetEngine
 import com.yourname.expensetracker.domain.installment.InstallmentPlanReadRepository
 import com.yourname.expensetracker.domain.installment.model.InstallmentCurrency
 import com.yourname.expensetracker.domain.installment.model.InstallmentMinorUnits
+import com.yourname.expensetracker.domain.installment.readmodel.InstallmentBudgetInputs
 import com.yourname.expensetracker.domain.installment.readmodel.InstallmentPlanReadModel
 import com.yourname.expensetracker.ui.model.MoneyDisplayUi
 import com.yourname.expensetracker.ui.navigation.InstallmentsFeature
@@ -141,22 +142,62 @@ class BudgetViewModel @Inject constructor(
                 }
             }
 
+    /** PE-C: the installment inputs of the Budget lines, loaded once per installment change. */
+    internal sealed interface InstallmentInputsResult {
+        data class Loaded(val inputs: InstallmentBudgetInputs) : InstallmentInputsResult
+
+        /** The read failed (other than cancellation): every budget line is Unavailable, never a zero. */
+        data object Failed : InstallmentInputsResult
+    }
+
     /**
-     * S12b: each emission of the statuses carries the installment info lines. Flag off: the read
-     * repository is never touched and the map is empty. A failed read (other than cancellation)
-     * yields [BudgetInstallmentLine.Unavailable] for every budget, never a zero or a partial figure.
+     * PE-C: the installment inputs are (re)loaded only when the installment tables change
+     * ([InstallmentPlanReadRepository.observeChanges]), never on a statuses-only emission. Flag off:
+     * the read repository is never touched and the value is null (no line). The flag is read when
+     * the flow is collected, so the test seam still works after construction.
      */
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-    private val statusesWithInstallmentLines: Flow<Pair<List<BudgetStatus>, Map<Long, BudgetInstallmentLine>>> =
-        adjustedBudgetStatuses.mapLatest { statuses -> statuses to installmentLinesFor(statuses) }
+    private val installmentInputs: Flow<InstallmentInputsResult?> = flow {
+        if (!installmentsEnabled) {
+            emit(null)
+            return@flow
+        }
+        emitAll(
+            installmentReadRepository.observeChanges()
+                .mapLatest { loadInstallmentInputs() }
+                .catch { e ->
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    emit(InstallmentInputsResult.Failed)
+                }
+        )
+    }
 
-    internal suspend fun installmentLinesFor(statuses: List<BudgetStatus>): Map<Long, BudgetInstallmentLine> {
-        if (!installmentsEnabled || statuses.isEmpty()) return emptyMap()
-        val inputs = try {
-            installmentReadRepository.loadBudgetInputs()
-        } catch (e: Exception) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
-            return statuses.associate { it.budget.id to BudgetInstallmentLine.Unavailable }
+    internal suspend fun loadInstallmentInputs(): InstallmentInputsResult = try {
+        InstallmentInputsResult.Loaded(installmentReadRepository.loadBudgetInputs())
+    } catch (e: Exception) {
+        if (e is kotlinx.coroutines.CancellationException) throw e
+        InstallmentInputsResult.Failed
+    }
+
+    /**
+     * S12b: each emission of the statuses carries the installment info lines, computed from the
+     * latest loaded inputs. A failed read yields [BudgetInstallmentLine.Unavailable] for every
+     * budget, never a zero or a partial figure.
+     */
+    private val statusesWithInstallmentLines: Flow<Pair<List<BudgetStatus>, Map<Long, BudgetInstallmentLine>>> =
+        combine(adjustedBudgetStatuses, installmentInputs) { statuses, inputs ->
+            statuses to installmentLinesFor(statuses, inputs)
+        }
+
+    internal fun installmentLinesFor(
+        statuses: List<BudgetStatus>,
+        loaded: InstallmentInputsResult?
+    ): Map<Long, BudgetInstallmentLine> {
+        if (loaded == null || statuses.isEmpty()) return emptyMap()
+        val inputs = when (loaded) {
+            is InstallmentInputsResult.Loaded -> loaded.inputs
+            InstallmentInputsResult.Failed ->
+                return statuses.associate { it.budget.id to BudgetInstallmentLine.Unavailable }
         }
         val lines = LinkedHashMap<Long, BudgetInstallmentLine>()
         for (status in statuses) {

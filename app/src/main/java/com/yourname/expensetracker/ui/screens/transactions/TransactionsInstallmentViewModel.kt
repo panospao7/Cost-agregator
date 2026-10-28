@@ -90,6 +90,11 @@ data class MarkEntryInput(
  * Builds [InstallmentRowMarks] through the existing read repository only (no new store query, no
  * write). While the feature is disabled nothing is read. A failed read returns null; the caller then
  * shows no marks (fail closed: a mark is never guessed).
+ *
+ * PE-D: one snapshot read ([InstallmentPlanReadRepository.loadBudgetInputs], every readable plan of any
+ * status with all its entries) plus [InstallmentPlanReadRepository.loadSuggestions], instead of an
+ * overview, a history and one detail read per plan. The plans are the same set (ACTIVE plus the history
+ * statuses), and the entry fields are the ones the detail read carried, so the marks are unchanged.
  */
 class InstallmentRowMarksLoader @Inject constructor(
     private val readRepository: InstallmentPlanReadRepository
@@ -97,16 +102,23 @@ class InstallmentRowMarksLoader @Inject constructor(
     suspend fun load(enabled: Boolean = InstallmentsFeature.ENABLED): InstallmentRowMarks? {
         if (!enabled) return InstallmentRowMarks.EMPTY
         return try {
-            val planIds = (readRepository.loadOverview().plans.map { it.planId } +
-                readRepository.loadHistory().map { it.planId }).distinct()
-            val inputs = planIds.mapNotNull { id ->
-                val detail = readRepository.loadDetail(id) ?: return@mapNotNull null
+            val inputs = readRepository.loadBudgetInputs().plans.map { plan ->
                 MarkPlanInput(
-                    planId = id,
-                    currencyCode = detail.summary.currency.code,
-                    purchaseExpenseId = detail.purchaseExpenseId,
-                    entries = detail.entries.map {
-                        MarkEntryInput(it.seq, it.kind, it.status, it.linkedExpenseId, it.dueEpochDay, it.scheduledMinor)
+                    planId = plan.planId,
+                    currencyCode = plan.currency.code,
+                    purchaseExpenseId = plan.purchaseExpenseId,
+                    // Same order as the detail read (due date, seq, entry id): first-match rules stay stable.
+                    entries = plan.entries.sortedWith(
+                        compareBy({ it.money.dueEpochDay }, { it.seq }, { it.entryId })
+                    ).map {
+                        MarkEntryInput(
+                            seq = it.seq,
+                            kind = it.money.kind,
+                            status = it.money.status,
+                            linkedExpenseId = it.linkedExpenseId,
+                            dueEpochDay = it.money.dueEpochDay,
+                            scheduledMinor = it.money.scheduledMinor
+                        )
                     }
                 )
             }
@@ -245,6 +257,22 @@ object TransactionsLoadMorePolicy {
         (if (installmentFilterOn) !isLoading else nearEnd) &&
         !isLoadingMore &&
         !hasReachedEnd
+
+    /**
+     * PE-D: the key of the load-more effect. Filter off: the constant -1, so the effect is keyed by
+     * [shouldLoadMore] alone, exactly as before. Filter on: the loaded base row count, [hasReachedEnd]
+     * and [isLoading] (never the isLoadingMore toggle). A completed page changes the count and a
+     * refresh changes [isLoading], so the effect restarts; a failed page changes none of them, so the
+     * effect does not relaunch and a permanently failing page is not retried in a loop.
+     */
+    fun effectKey(
+        installmentFilterOn: Boolean,
+        baseRowCount: Int,
+        hasReachedEnd: Boolean,
+        isLoading: Boolean
+    ): List<Any> = if (installmentFilterOn) listOf(baseRowCount, hasReachedEnd, isLoading) else NO_KEY
+
+    private val NO_KEY: List<Any> = listOf(-1)
 }
 
 /**

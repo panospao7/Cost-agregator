@@ -7,7 +7,10 @@ import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentCoordinatorFixture.Companion.ATHENS
 import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentCoordinatorFixture.Companion.athensMillis
 import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentCoordinatorFixture.Companion.day
+import com.yourname.expensetracker.data.repository.InstallmentCandidateChargeProbeImpl
+import com.yourname.expensetracker.domain.installment.model.InstallmentCurrency
 import com.yourname.expensetracker.domain.installment.model.InstallmentEntryStatus
+import com.yourname.expensetracker.domain.installment.model.InstallmentMinorUnits
 import com.yourname.expensetracker.domain.installment.model.InstallmentFulfilmentMode
 import com.yourname.expensetracker.domain.installment.model.InstallmentPlanStatus
 import com.yourname.expensetracker.domain.installment.model.InstallmentRefusalCode
@@ -626,6 +629,45 @@ class InstallmentPlanLifecycleCoordinatorLinkConfirmTest {
         )
         assertEquals("the unlinked payment and the new one both count (U-1 rule 5)", 100.0, fx.spending(2027, 4), 0.0)
         assertEquals(1, entry(planId, 1).recordGeneration)
+    }
+
+    /**
+     * Owner-approvals 68 (PE-D): the Unlink dialog now says that recording the installment again later
+     * creates a new expense. The reason is that the old expense stays, and after Unlink it is an
+     * ordinary unlinked charge, so it is offered as a Link suggestion for the reopened entry (the
+     * same candidate scan the read model uses for its suggestions).
+     */
+    @Test
+    fun PED_item68_after_unlink_the_old_expense_is_a_link_suggestion_for_the_reopened_entry() = runTest {
+        val planId = standalone(mode = InstallmentFulfilmentMode.AUTO_RECORD, uuid = "auto-uuid")
+        coordinator.recordDueEntries(today, ATHENS)
+        val oldExpenseId = entry(planId, 1).linkedExpenseId!!
+        val probe = InstallmentCandidateChargeProbeImpl(fx.facts, fx.planDao)
+
+        suspend fun candidatesFor(seq: Int): List<Long> {
+            val row = entry(planId, seq)
+            val state = InstallmentCandidateChargeProbeImpl.ScanState()
+            probe.collectCandidates(
+                mode = InstallmentFulfilmentMode.AUTO_RECORD,
+                currency = InstallmentCurrency.EUR,
+                entryId = row.id,
+                dueEpochDay = row.dueDate,
+                scheduledMinor = InstallmentMinorUnits.toMinorOrNull(row.scheduledAmount)!!,
+                zone = ATHENS,
+                state = state,
+                stopAtFirst = false
+            )
+            return state.candidates().map { it.expenseId }
+        }
+
+        // While linked, the expense belongs to the entry and is no candidate for it.
+        assertTrue(candidatesFor(1).isEmpty())
+
+        assertTrue(coordinator.unlinkExpense(entryId(planId, 1)) is InstallmentOpResult.Done)
+
+        assertEquals("SCHEDULED", entry(planId, 1).status)
+        assertEquals(listOf(oldExpenseId), candidatesFor(1))
+        assertNotNull("the old expense is untouched", fx.expenseDao.getById(oldExpenseId))
     }
 
     // ------------------------------------------------------------------ AE-16 skip / unskip

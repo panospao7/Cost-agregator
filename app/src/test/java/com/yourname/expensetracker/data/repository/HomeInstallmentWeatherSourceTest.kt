@@ -1,5 +1,7 @@
 package com.yourname.expensetracker.data.repository
 
+import android.content.Context
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.database.dao.RecurringOccurrenceDao
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
@@ -44,9 +46,11 @@ import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.spyk
+import io.mockk.verify
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
@@ -108,6 +112,11 @@ class HomeInstallmentWeatherSourceTest {
     private lateinit var synthesisEngine: SynthesisEngine
     private lateinit var readRepository: InstallmentPlanReadRepository
     private lateinit var reader: CountingLinkReader
+    private lateinit var context: Context
+
+    private companion object {
+        const val FALLBACK_LABEL = "Synthetic localized installment label"
+    }
 
     /** Currency -> rate to EUR; a currency that is not in the table has no rate. */
     private var rates: Map<String, Double> = emptyMap()
@@ -239,7 +248,9 @@ class HomeInstallmentWeatherSourceTest {
         }
 
         readRepository = mockk(relaxed = true)
-        every { readRepository.observeOverview() } returns flowOf(mockk<InstallmentOverview>(relaxed = true))
+        every { readRepository.observeChanges() } returns flowOf(Unit)
+        context = mockk(relaxed = true)
+        every { context.getString(R.string.installment_plan_fallback_label) } returns FALLBACK_LABEL
         reader = CountingLinkReader()
     }
 
@@ -262,7 +273,8 @@ class HomeInstallmentWeatherSourceTest {
         timeProvider = timeProvider,
         installmentProjectionPort = port,
         recurringInstallmentEligibility = RecurringInstallmentEligibility(dagger.Lazy { linkReader }),
-        installmentPlanReadRepository = readRepository
+        installmentPlanReadRepository = readRepository,
+        context = context
     )
 
     private fun baseline() = FinancialWeatherRepository(
@@ -299,8 +311,9 @@ class HomeInstallmentWeatherSourceTest {
         id: Long,
         entries: List<ProjectionEntryInput>,
         status: InstallmentPlanStatus = InstallmentPlanStatus.ACTIVE,
-        currency: InstallmentCurrency = InstallmentCurrency.EUR
-    ) = ProjectionPlanInput(id, "plan-uuid-$id", "Synthetic plan $id", currency, status, entries)
+        currency: InstallmentCurrency = InstallmentCurrency.EUR,
+        name: String = "Synthetic plan $id"
+    ) = ProjectionPlanInput(id, "plan-uuid-$id", name, currency, status, entries)
 
     private fun portOf(vararg plans: ProjectionPlanInput) =
         fakeInstallmentProjectionPort(plans.toList(), today.toEpochDay())
@@ -626,9 +639,9 @@ class HomeInstallmentWeatherSourceTest {
     // ── Invalidation and failure ─────────────────────────────────────────────
 
     @Test
-    fun `an overview emission re-runs the pipeline so an entry status change is picked up`() = runTest {
-        val trigger = MutableSharedFlow<InstallmentOverview>(replay = 1)
-        every { readRepository.observeOverview() } returns trigger
+    fun `PE-C a change emission re-runs the pipeline so an entry status change is picked up`() = runTest {
+        val trigger = MutableSharedFlow<Unit>(replay = 1)
+        every { readRepository.observeChanges() } returns trigger
         var plans = listOf(plan(1L, listOf(entry(11L, jan(20)), entry(12L, jan(28)))))
         val livePort = object : InstallmentProjectionPort {
             override suspend fun upcomingEntries(horizonEndEpochDay: Long?): List<InstallmentProjectedEntry> =
@@ -637,7 +650,7 @@ class HomeInstallmentWeatherSourceTest {
         val seen = mutableListOf<HomeInstallmentWeather?>()
         val job = launch(UnconfinedTestDispatcher(testScheduler)) { source(livePort).observe().toList(seen) }
 
-        trigger.emit(mockk(relaxed = true))
+        trigger.emit(Unit)
         runCurrent()
         assertEquals(1, seen.size)
         assertEquals(listOf(11L, 12L), seen[0]!!.installmentRows.map { it.entryId })
@@ -645,7 +658,7 @@ class HomeInstallmentWeatherSourceTest {
 
         // Entry 11 becomes PAID: the plan rows change, the read repository re-emits.
         plans = listOf(plan(1L, listOf(entry(11L, jan(20), status = InstallmentEntryStatus.PAID), entry(12L, jan(28)))))
-        trigger.emit(mockk(relaxed = true))
+        trigger.emit(Unit)
         runCurrent()
         assertEquals(2, seen.size)
         assertEquals(listOf(12L), seen[1]!!.installmentRows.map { it.entryId })
@@ -653,11 +666,53 @@ class HomeInstallmentWeatherSourceTest {
 
         // The last plan entry is paid: nothing is projected any more.
         plans = emptyList()
-        trigger.emit(mockk(relaxed = true))
+        trigger.emit(Unit)
         runCurrent()
         assertEquals(3, seen.size)
         assertNull(seen[2])
         job.cancel()
+        // The trigger is the cheap change flow: the overview (which loads every plan) is never observed.
+        verify(exactly = 0) { readRepository.observeOverview() }
+    }
+
+    @Test
+    fun `PE-C a failing change trigger still lets the weather compute once`() = runTest {
+        every { readRepository.observeChanges() } returns flow { throw IllegalStateException("trigger failed") }
+        val p = plan(1L, listOf(entry(11L, jan(20))))
+
+        val result = source(portOf(p)).observe().first()
+
+        assertNotNull(result)
+        assertEquals(listOf(11L), result!!.installmentRows.map { it.entryId })
+    }
+
+    // ── Fallback label (PE-C, owner-approvals 60d-2) ─────────────────────────
+
+    @Test
+    fun `PE-C a blank plan name gets the localized fallback label as the planned description`() = runTest {
+        val p = plan(1L, listOf(entry(11L, jan(20))), name = "   ")
+
+        source(portOf(p)).observe().first()
+
+        assertEquals(FALLBACK_LABEL, assembledInputs.single().plannedExpenses.single().description)
+    }
+
+    @Test
+    fun `PE-C a named plan keeps its own name and the label is resolved per computation`() = runTest {
+        val p = plan(1L, listOf(entry(11L, jan(20))))
+        val blank = plan(2L, listOf(entry(21L, jan(21))), name = "")
+
+        val named = source(portOf(p)).observe().first()
+        assertNotNull(named)
+        assertEquals("Synthetic plan 1", assembledInputs.single().plannedExpenses.single().description)
+        assembledInputs.clear()
+
+        every { context.getString(R.string.installment_plan_fallback_label) } returnsMany listOf("first", "second")
+        val src = source(portOf(blank))
+        src.observe().first()
+        src.observe().first()
+
+        assertEquals(listOf("second", "first").sorted(), assembledInputs.map { it.plannedExpenses.single().description }.sorted())
     }
 
     @Test

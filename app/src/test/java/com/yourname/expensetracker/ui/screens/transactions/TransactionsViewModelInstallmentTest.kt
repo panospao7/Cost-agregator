@@ -7,10 +7,14 @@ import com.yourname.expensetracker.domain.installment.InstallmentPlanReadReposit
 import com.yourname.expensetracker.domain.installment.model.InstallmentCurrency
 import com.yourname.expensetracker.domain.installment.model.InstallmentEntryKind
 import com.yourname.expensetracker.domain.installment.model.InstallmentEntryStatus
-import com.yourname.expensetracker.domain.installment.readmodel.InstallmentEntryLine
-import com.yourname.expensetracker.domain.installment.readmodel.InstallmentOverview
-import com.yourname.expensetracker.domain.installment.readmodel.InstallmentPlanDetail
-import com.yourname.expensetracker.domain.installment.readmodel.InstallmentPlanSummary
+import com.yourname.expensetracker.domain.installment.model.InstallmentFulfilmentMode
+import com.yourname.expensetracker.domain.installment.model.InstallmentPlanKind
+import com.yourname.expensetracker.domain.installment.model.InstallmentPlanStatus
+import com.yourname.expensetracker.domain.installment.readmodel.EntryMoney
+import com.yourname.expensetracker.domain.installment.readmodel.EntrySnapshot
+import com.yourname.expensetracker.domain.installment.readmodel.InstallmentBudgetInputs
+import com.yourname.expensetracker.domain.installment.readmodel.InstallmentLinkSuggestion
+import com.yourname.expensetracker.domain.installment.readmodel.PlanSnapshot
 import com.yourname.expensetracker.util.ViewModelTestUtils
 import io.mockk.coVerify
 import io.mockk.every
@@ -229,8 +233,10 @@ class TransactionsViewModelInstallmentTest : ViewModelTestUtils() {
         val repository = mockk<InstallmentPlanReadRepository>() // strict: any call fails the test
         val loader = InstallmentRowMarksLoader(repository)
         assertEquals(InstallmentRowMarks.EMPTY, loader.load())
+        coVerify(exactly = 0) { repository.loadBudgetInputs() }
         coVerify(exactly = 0) { repository.loadOverview() }
         coVerify(exactly = 0) { repository.loadHistory() }
+        coVerify(exactly = 0) { repository.loadDetail(any()) }
         coVerify(exactly = 0) { repository.loadSuggestions() }
 
         val vm = TransactionsInstallmentViewModel(loader)
@@ -241,39 +247,44 @@ class TransactionsViewModelInstallmentTest : ViewModelTestUtils() {
         assertFalse(vm.filterOn.value)
     }
 
-    private fun overviewOf(vararg ids: Long): InstallmentOverview = mockk {
-        every { plans } returns ids.map { planId ->
-            mockk<InstallmentPlanSummary> { every { this@mockk.planId } returns planId }
-        }
-    }
+    /** PE-D: a plan snapshot as the single bulk read returns it (one PAID regular entry, purchase attached). */
+    private fun snapshotOf(
+        planId: Long,
+        purchaseId: Long?,
+        paidLinked: Long,
+        status: InstallmentPlanStatus = InstallmentPlanStatus.ACTIVE
+    ) = PlanSnapshot(
+        planId = planId,
+        planUuid = "uuid-$planId",
+        displayName = "Plan $planId",
+        lenderLabel = null,
+        kind = InstallmentPlanKind.PURCHASE_ATTACHED,
+        fulfilmentMode = InstallmentFulfilmentMode.CONFIRM,
+        status = status,
+        currency = InstallmentCurrency.EUR,
+        purchaseExpenseId = purchaseId,
+        purchase = null,
+        terminalEpochDay = null,
+        entries = listOf(
+            EntrySnapshot(
+                entryId = planId * 100 + 1,
+                seq = 1,
+                originalScheduledMinor = null,
+                linkedExpenseId = paidLinked,
+                statusReason = null,
+                money = EntryMoney(InstallmentEntryKind.REGULAR, InstallmentEntryStatus.PAID, 100L, 5_000L)
+            )
+        )
+    )
 
-    private fun detailOf(planId: Long, purchaseId: Long, paidLinked: Long): InstallmentPlanDetail {
-        val summaryMock = mockk<InstallmentPlanSummary> {
-            every { currency } returns InstallmentCurrency.EUR
-        }
-        val line = mockk<InstallmentEntryLine> {
-            every { seq } returns 1
-            every { kind } returns InstallmentEntryKind.REGULAR
-            every { status } returns InstallmentEntryStatus.PAID
-            every { linkedExpenseId } returns paidLinked
-            every { dueEpochDay } returns 100L
-            every { scheduledMinor } returns 5_000L
-        }
-        return mockk {
-            every { summary } returns summaryMock
-            every { purchaseExpenseId } returns purchaseId
-            every { entries } returns listOf(line)
-        }
-    }
+    private fun inputsOf(vararg plans: PlanSnapshot) = InstallmentBudgetInputs(plans.toList(), unreadablePlanCount = 0)
 
+    /** Strict mock: loadOverview, loadHistory and loadDetail are not stubbed, so any call fails the test. */
     private fun readRepository(vararg planIds: Long): InstallmentPlanReadRepository {
         val repository = mockk<InstallmentPlanReadRepository>()
-        io.mockk.coEvery { repository.loadOverview() } returns overviewOf(*planIds)
-        io.mockk.coEvery { repository.loadHistory() } returns emptyList()
+        io.mockk.coEvery { repository.loadBudgetInputs() } returns
+            inputsOf(*planIds.map { id -> snapshotOf(id, purchaseId = id * 10, paidLinked = id * 10 + 1) }.toTypedArray())
         io.mockk.coEvery { repository.loadSuggestions() } returns emptyList()
-        planIds.forEach { id ->
-            io.mockk.coEvery { repository.loadDetail(id) } returns detailOf(id, purchaseId = id * 10, paidLinked = id * 10 + 1)
-        }
         return repository
     }
 
@@ -299,13 +310,48 @@ class TransactionsViewModelInstallmentTest : ViewModelTestUtils() {
     }
 
     @Test
-    fun `enabled - the loader maps plan details to marks`() = runTest(testDispatcher) {
+    fun `enabled - the loader maps plan snapshots to marks`() = runTest(testDispatcher) {
         val loaded = InstallmentRowMarksLoader(readRepository(3L)).load(enabled = true)!!
         assertEquals(InstallmentRowMark.PurchaseRecord(3L, installmentCount = 1), loaded.byExpenseId[30L])
         assertEquals(InstallmentRowMark.Payment(3L, seq = 1, total = 1, reversed = false), loaded.byExpenseId[31L])
         assertEquals(setOf(30L, 31L), loaded.byExpenseId.keys)
         assertEquals(listOf(InstallmentPaidEntryRef(3L, 1, "EUR", 100L, 5_000L)), loaded.paidEntries)
     }
+
+    @Test
+    fun `PE-D the loader makes one snapshot read, one suggestions read and no per-plan detail read`() = runTest(testDispatcher) {
+        val repository = readRepository(3L, 4L, 5L)
+        val loaded = InstallmentRowMarksLoader(repository).load(enabled = true)!!
+
+        coVerify(exactly = 1) { repository.loadBudgetInputs() }
+        coVerify(exactly = 1) { repository.loadSuggestions() }
+        coVerify(exactly = 0) { repository.loadDetail(any()) }
+        coVerify(exactly = 0) { repository.loadOverview() }
+        coVerify(exactly = 0) { repository.loadHistory() }
+        assertEquals(setOf(30L, 31L, 40L, 41L, 50L, 51L), loaded.byExpenseId.keys)
+    }
+
+    @Test
+    fun `PE-D plans of every status are marked, as the former overview plus history plus detail reads were`() =
+        runTest(testDispatcher) {
+            val repository = mockk<InstallmentPlanReadRepository>()
+            io.mockk.coEvery { repository.loadBudgetInputs() } returns inputsOf(
+                snapshotOf(3L, purchaseId = 30L, paidLinked = 31L, status = InstallmentPlanStatus.ACTIVE),
+                snapshotOf(4L, purchaseId = 40L, paidLinked = 41L, status = InstallmentPlanStatus.COMPLETED),
+                snapshotOf(5L, purchaseId = 50L, paidLinked = 51L, status = InstallmentPlanStatus.CANCELLED),
+                snapshotOf(6L, purchaseId = 60L, paidLinked = 61L, status = InstallmentPlanStatus.REFUNDED),
+                snapshotOf(7L, purchaseId = null, paidLinked = 71L, status = InstallmentPlanStatus.PAID_OFF)
+            )
+            io.mockk.coEvery { repository.loadSuggestions() } returns listOf(
+                InstallmentLinkSuggestion(3L, 301L, 2, 99L, 5_000L, 100L, 0L)
+            )
+
+            val loaded = InstallmentRowMarksLoader(repository).load(enabled = true)!!
+
+            assertEquals(setOf(30L, 31L, 40L, 41L, 50L, 51L, 60L, 61L, 71L), loaded.byExpenseId.keys)
+            assertEquals(InstallmentRowMark.Payment(7L, seq = 1, total = 1, reversed = false), loaded.byExpenseId[71L])
+            assertEquals(mapOf(99L to 2), loaded.suggestionSeqByExpenseId)
+        }
 
     @Test
     fun `two quick refreshes cause one read after the debounce`() = runTest(testDispatcher) {
@@ -316,10 +362,10 @@ class TransactionsViewModelInstallmentTest : ViewModelTestUtils() {
         vm.refresh(enabled = true)
         testDispatcher.scheduler.advanceTimeBy(TransactionsInstallmentViewModel.REFRESH_DEBOUNCE_MS - 1)
         testDispatcher.scheduler.runCurrent()
-        coVerify(exactly = 0) { repository.loadOverview() }
+        coVerify(exactly = 0) { repository.loadBudgetInputs() }
 
         testDispatcher.scheduler.advanceUntilIdle()
-        coVerify(exactly = 1) { repository.loadOverview() }
+        coVerify(exactly = 1) { repository.loadBudgetInputs() }
         assertEquals(setOf(30L, 31L), vm.marks.value.byExpenseId.keys)
     }
 
@@ -327,19 +373,16 @@ class TransactionsViewModelInstallmentTest : ViewModelTestUtils() {
     fun `a refresh cancels an in-flight read so a slow older read never lands`() = runTest(testDispatcher) {
         val repository = mockk<InstallmentPlanReadRepository>()
         var calls = 0
-        io.mockk.coEvery { repository.loadOverview() } coAnswers {
+        io.mockk.coEvery { repository.loadBudgetInputs() } coAnswers {
             calls++
             if (calls == 1) {
                 kotlinx.coroutines.delay(10_000)
-                overviewOf(3L)
+                inputsOf(snapshotOf(3L, 30L, 31L))
             } else {
-                overviewOf(4L)
+                inputsOf(snapshotOf(4L, 40L, 41L))
             }
         }
-        io.mockk.coEvery { repository.loadHistory() } returns emptyList()
         io.mockk.coEvery { repository.loadSuggestions() } returns emptyList()
-        io.mockk.coEvery { repository.loadDetail(3L) } returns detailOf(3L, 30L, 31L)
-        io.mockk.coEvery { repository.loadDetail(4L) } returns detailOf(4L, 40L, 41L)
         val vm = TransactionsInstallmentViewModel(InstallmentRowMarksLoader(repository))
 
         vm.refresh(enabled = true)
@@ -370,7 +413,7 @@ class TransactionsViewModelInstallmentTest : ViewModelTestUtils() {
         testDispatcher.scheduler.advanceUntilIdle()
         assertEquals(setOf(30L, 31L), vm.marks.value.byExpenseId.keys)
 
-        io.mockk.coEvery { repository.loadOverview() } throws IllegalStateException("db text Demo 600")
+        io.mockk.coEvery { repository.loadBudgetInputs() } throws IllegalStateException("db text Demo 600")
         timber.log.Timber.plant(tree)
         try {
             vm.refresh(enabled = true)
@@ -395,7 +438,7 @@ class TransactionsViewModelInstallmentTest : ViewModelTestUtils() {
     @Test
     fun `a CancellationException from a read is rethrown by the loader`() = runTest(testDispatcher) {
         val repository = mockk<InstallmentPlanReadRepository>()
-        io.mockk.coEvery { repository.loadOverview() } throws CancellationException("cancelled")
+        io.mockk.coEvery { repository.loadBudgetInputs() } throws CancellationException("cancelled")
         try {
             InstallmentRowMarksLoader(repository).load(enabled = true)
             fail("CancellationException must propagate")

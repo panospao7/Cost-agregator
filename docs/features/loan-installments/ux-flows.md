@@ -1266,7 +1266,7 @@ fixed-width chips. Use plurals resources; positional args (`%1$d of %2$d`), neve
 | Skip dialog | Skip installment %d? It won't be counted and no payment is added at the end of the plan. You can undo this. |
 | Record dialog | Creates an expense of %1$s dated %2$s and marks this installment paid. |
 | Record all dialog | Creates %1$d expenses totalling %2$s, each dated on its due date. Totals for those months will change. If you already have these charges, link them instead. |
-| Unlink dialog | Unlink this expense from installment %d? The expense stays in your list and still counts as spending. The installment becomes unpaid. If the payment did not happen, delete the expense in Transactions instead. |
+| Unlink dialog | Unlink this expense from installment %d? The expense stays in your list and still counts as spending. The installment becomes unpaid. If the payment did not happen, delete the expense in Transactions instead. Recording this installment again later creates a new expense. (last sentence: PE-D, owner-approvals 68) |
 | Stop dialog | Stop this plan? %1$d unpaid payments (%2$s) will be removed. Payments already made stay in your spending. This purchase stays at 0. This can't be undone. |
 | Stop (overdue) | %d unrecorded past payments will not count. |
 | Refund question | Is the refund already recorded as a transaction? |
@@ -1420,7 +1420,7 @@ needed a guard change or a new wrapper outside the installment packages (handoff
 | Entry | Where | Original | Now |
 |---|---|---|---|
 | OQ-21 | section 10, :1373-1376 | PLANNER question: "is user-facing Unlink safe? ... consider limiting Unlink ..., or offering 'Delete expense and reopen' as one action through the standard expense-delete path." | CLOSED. The delete half is dropped. The Unlink half is answered by U-1 rule 4 (record: owner-approvals item 56, orchestrator, standing approval; owner FYI). |
-| Unlink expense (Paid rows) | section 3.6, :726-730 | The dialog paragraph ends "OQ-21 asks whether Unlink should be user-facing at all". | Closed: Unlink is user-facing. Dialog text and the "creates a new expense" warning are unchanged. |
+| Unlink expense (Paid rows) | section 3.6, :726-730 | The dialog paragraph ends "OQ-21 asks whether Unlink should be user-facing at all". | Closed: Unlink is user-facing. The dialog text is NOT unchanged: owner-approvals item 68 (PE-D) appends the sentence "Recording this installment again later creates a new expense." to `installments_unlink_body` (EN; es/el DRAFT), so the "creates a new expense" warning is now in the dialog itself. |
 | OQ-21 resolution and S10b-2 goal | `loan-installments-plan.md` :543 and :446 (cross-file) | "AUTO_RECORDED and USER_CONFIRMED entries get 'Delete expense and reopen' via the standard expense-delete use case." | The "Delete expense and reopen" half is dropped. The "Unlink only for USER_LINKED" half is not carried by the decision (see rule 4). |
 
 No wireframe, copy key or state in this file ever carried "Delete expense and reopen". The action existed only in the
@@ -1456,12 +1456,15 @@ plan and handoff text, so no string is removed.
 5. Known risk, unchanged: unlinking without deleting leaves the expense counting while the entry is open, and a later
    Record creates a second expense (new generation key). The consequence-first dialog is the only mitigation.
 
-**Not built yet (pre-enable items, not part of 51c).**
-- The Unlink row entry point. `openUnlink` (`InstallmentPlanActions.kt:261-263`) has no caller and the detail row
-  mapper has no `canUnlink` flag, so today the route (a) above has no UI trigger. Route (b) works without it.
-- The role-dependent lines in the Transactions delete dialog (:820-826). `DeleteConfirmationDialog`
-  (`TransactionsScreen.kt:1892`) has no installment text and no string exists for them. With OQ-21 dropped, these
-  lines are what tells the user that deleting an installment expense makes the installment unpaid.
+**Pre-enable items (not part of 51c).**
+- The Unlink row entry point: BUILT by PE-B (2026-10-28). `canUnlink` on the detail row and the entry menu item
+  call `openUnlink` (`InstallmentPlanActions.kt`), so route (a) above has a UI trigger. (Before PE-B, `openUnlink`
+  had no caller.)
+- The role-dependent lines in the Transactions delete dialog (:820-826): BUILT by PE-D (2026-10-28, implemented, not
+  yet validated). `DeleteConfirmationDialog` (`TransactionsScreen.kt`) shows one of three role lines from the row
+  marks (the stored flag is the fallback) plus a neutral **View plan** button, only when the installments view
+  model exists (dormant while the flag is false). With OQ-21 dropped, these lines are what tells the user that
+  deleting an installment expense makes the installment unpaid.
 
 ### U-2. F4 accepted: the Transactions installments filter is a single toggle
 

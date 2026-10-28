@@ -135,3 +135,6 @@ Next: A2.
 ## A2 DONE (2026-10-23)
 Validation on the final tree: db_access vr-20261023-031650-60125163 PASS; db_artifact_sync vr-20261023-031923-ce05fed5 PASS; shards data vr-20261023-032125-fa719ea9 PASS, architecture-contracts vr-20261023-032457-9b653e21 PASS; static-guards vr-20261023-032545-b2c14873 PASS. The first targeted run (vr-20261023-030500-d49428f3) and domain-n-z (vr-20261023-031939-06972765) both FAILED on one test only: `flagged amount precision error from the validator is a plain validation failure with no rate read` built TransactionValidationError positionally (code, message, field), so message = "amount". That was a test bug; TLC correctly maps `.message`. Fixed with named args (test-only); targeted rerun vr-20261023-042923-c12acee8 PASS, which covers the only domain-n-z failure.
 Next: loan-installments S1 in this lane (after the S0 D-10/D-12/D-13/D-20 discovery); MEC B1/B2/C wait for nl-quick-add inc 1.
+
+## Note from nl-quick-add final review (2026-10-28, N4)
+- B1 must add an AddExpenseViewModel.mapSaveError branch mapping RECURRING_FOREIGN_CURRENCY_ERROR_CODE to a bounded mec_ resource. Slice A's default maps every Result.Error to add_expense_error_save_failed.

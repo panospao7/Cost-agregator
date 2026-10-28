@@ -393,6 +393,10 @@
     <string name="installments_title">Cuotas y préstamos</string>
     <string name="feature_installments_desc">Controla los pagos que aún debes y cuándo terminan</string>
     <string name="installments_back">Atrás</string>
+    <!-- DRAFT: owner native sign-off pending -->
+    <string name="installment_plan_fallback_label">Cuota</string>
+    <!-- DRAFT: owner native sign-off pending -->
+    <string name="cashflow_installments_header">Cuotas a pagar</string>
     <string name="installments_remaining_label">Pagos programados restantes</string>
     <string name="installments_remaining_note">Suma de los pagos que faltan. No es el saldo pendiente de tu prestamista.</string>
     <plurals name="installments_plan_count">
@@ -609,7 +613,8 @@
     <string name="installments_delete_body_purchase">Se eliminarán el plan y su calendario. Tu compra volverá a contar completa en su fecha original, así que cambiarán los totales y presupuestos de ese mes. No se puede deshacer.</string>
     <string name="installments_delete_confirm">Eliminar plan</string>
     <string name="installments_unlink_title">¿Desvincular la cuota %1$d?</string>
-    <string name="installments_unlink_body">El gasto sigue en tu lista y sigue contando. La cuota queda sin pagar. Si el pago no ocurrió, elimina el gasto en Transacciones.</string>
+    <!-- DRAFT: owner native sign-off pending (last sentence added by PE-D, owner-approvals 68) -->
+    <string name="installments_unlink_body">El gasto sigue en tu lista y sigue contando. La cuota queda sin pagar. Si el pago no ocurrió, elimina el gasto en Transacciones. Si más adelante registras esta cuota de nuevo, se crea un gasto nuevo.</string>
     <string name="installments_unlink_confirm">Desvincular</string>
     <string name="installments_plan_notice_stopped">Plan detenido</string>
     <string name="installments_plan_notice_refunded">Reembolso registrado</string>
@@ -643,6 +648,12 @@
     <string name="transactions_installment_menu_view">Ver plan de cuotas</string>
     <string name="transactions_installment_menu_disabled_not_mine">Las cuotas no están disponibles para gastos que no son tuyos.</string>
     <string name="transactions_installment_menu_disabled_shared">Las cuotas aún no están disponibles para gastos compartidos o divididos.</string>
+    <!-- DRAFT: owner native sign-off pending -->
+    <string name="transactions_installment_delete_role_installment">Este gasto forma parte de un plan de cuotas. La cuota quedará sin pagar y no se volverá a registrar automáticamente.</string>
+    <!-- DRAFT: owner native sign-off pending -->
+    <string name="transactions_installment_delete_role_purchase">Esta es la compra de un plan de cuotas. El plan se quedará sin registro de compra y el coste de financiación no estará disponible.</string>
+    <!-- DRAFT: owner native sign-off pending -->
+    <string name="transactions_installment_delete_role_reversed">Esta es una cuota reembolsada. Al eliminarla solo se quita de tu lista.</string>
     <plurals name="transactions_installment_chip_paid_in">
         <item quantity="one">Pagado en %d cuota</item>
         <item quantity="other">Pagado en %d cuotas</item>
