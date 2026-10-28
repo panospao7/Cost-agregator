@@ -3,6 +3,7 @@ package com.yourname.expensetracker.ui.unsupported
 import com.yourname.expensetracker.architecture.SourceTextSanitizer
 import java.io.File
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -145,7 +146,8 @@ class UnsupportedDatabaseActivitySourceScanTest {
 
         assertTrue(attemptId in 0 until recorded)
         assertTrue("state must be AUTHENTICATING before authenticate is called", recorded in 0 until call)
-        assertTrue("the constant UNLOCK copy is the only prompt copy", begin.contains("AuthPromptCopy.UNLOCK"))
+        assertTrue("the constant EXPORT copy is the only prompt copy", begin.contains("AuthPromptCopy.EXPORT"))
+        assertFalse("the generic unlock copy is no longer used by the export prompt", begin.contains("AuthPromptCopy.UNLOCK"))
         assertEquals(1, countOf(source, Regex("""\bAuthPromptCopy\s*\.""")))
     }
 
@@ -203,6 +205,167 @@ class UnsupportedDatabaseActivitySourceScanTest {
         )
     }
 
+    // ---- S22-b.2: F6-i (gate read) and F6-ii (prompt watchdog) pins ----------------------------------------------
+
+    @Test
+    fun s22_f6_pin_theWatchdogFunctionsNeverOpenThePicker() {
+        val picker = Regex("""\blaunchPicker\b|\blauncher\b|(?<!fun )\bstartExport\b""")
+        for (name in listOf("armExportAuthWatchdog", "disarmExportAuthWatchdog", "onExportAuthWatchdogFired")) {
+            assertEquals("$name must not reference the picker or the export", 0, countOf(bodyOf(source, name), picker))
+        }
+        assertEquals(
+            "the picker call count is unchanged: one after a not-required gate, one after Succeeded",
+            2,
+            countOf(source, Regex("""\blaunchPicker\s*\(\s*\)"""))
+        )
+    }
+
+    @Test
+    fun s22_f6_pin_theWatchdogFiredPathChecksStaleAndStateThenCancelsAndFailsClosed() {
+        val fired = bodyOf(source, "onExportAuthWatchdogFired")
+        val staleGuard = fired.indexOf("attemptId != exportAuthAttemptId")
+        val stateGuard = fired.indexOf("exportState != ExportState.AUTHENTICATING")
+        val cancel = fired.indexOf("exportAuthenticator?.cancel(attemptId)")
+        val denied = fired.indexOf("ExportState.AUTH_DENIED")
+
+        assertTrue("stale-attempt guard missing", staleGuard >= 0)
+        assertTrue("state guard missing", stateGuard >= 0)
+        assertTrue("cancel(attemptId) missing", cancel >= 0)
+        assertTrue("the guards come before the cancel", staleGuard < cancel && stateGuard < cancel)
+        assertTrue("the denied fallback comes after the cancel", cancel in 0 until denied)
+        assertTrue(
+            "the guard returns",
+            Regex("""attemptId\s*!=\s*exportAuthAttemptId\s*\|\|\s*exportState\s*!=\s*ExportState\.AUTHENTICATING\s*\)\s*return""")
+                .containsMatchIn(fired)
+        )
+    }
+
+    @Test
+    fun s22_f6_pin_theWatchdogDelayIsTheExportConstantWithTheTestSeamOverride() {
+        val arm = bodyOf(source, "armExportAuthWatchdog")
+
+        assertTrue(
+            "the delay is the seam or EXPORT_AUTH_PROMPT_TIMEOUT_MILLIS",
+            Regex("""exportAuthPromptTimeoutMillisForTest\s*\?:\s*EXPORT_AUTH_PROMPT_TIMEOUT_MILLIS""").containsMatchIn(arm)
+        )
+        assertTrue("the watchdog delays", Regex("""\bdelay\s*\(""").containsMatchIn(arm))
+        assertEquals(
+            "EXPORT_AUTH_PROMPT_TIMEOUT_MILLIS is used once in the activity",
+            1,
+            countOf(source, Regex("""\bEXPORT_AUTH_PROMPT_TIMEOUT_MILLIS\b"""))
+        )
+        assertTrue("the old watchdog is replaced before a new one is armed", arm.indexOf("disarmExportAuthWatchdog()") in 0 until arm.indexOf("delay("))
+    }
+
+    @Test
+    fun s22_f6_pin_theWatchdogIsArmedOnlyAfterALaunchedPromptStillAuthenticating() {
+        val begin = bodyOf(source, "beginExportAuthentication")
+        val arm = begin.indexOf("armExportAuthWatchdog(attemptId)")
+        val launchCall = begin.indexOf(".authenticate(")
+
+        assertEquals("armed once", 1, countOf(source, Regex("""(?<!fun )\barmExportAuthWatchdog\s*\(""")))
+        assertTrue("armed after the authenticate call", arm > launchCall && launchCall >= 0)
+        assertTrue(
+            "armed only in the branch where the state is still AUTHENTICATING",
+            Regex("""else\s+if\s*\(\s*exportState\s*==\s*ExportState\.AUTHENTICATING\s*\)\s*\{[^}]*armExportAuthWatchdog""")
+                .containsMatchIn(begin)
+        )
+    }
+
+    @Test
+    fun s22_f6_pin_anyAcceptedOutcomeDisarmsTheWatchdogBeforeDeciding() {
+        val outcome = bodyOf(source, "onExportAuthOutcome")
+        val stateGuard = outcome.indexOf("exportState != ExportState.AUTHENTICATING")
+        val disarm = outcome.indexOf("disarmExportAuthWatchdog()")
+        val picker = outcome.indexOf("launchPicker()")
+
+        assertTrue("disarm missing in the outcome handler", disarm >= 0)
+        assertTrue("disarm comes after the stale guard and before the decision", disarm > stateGuard && disarm < picker)
+    }
+
+    @Test
+    fun s22_f6_pin_onStopDisarmsTheWatchdogAndCancelsTheGateJob() {
+        val stop = bodyOf(source, "onStop")
+        val gateCancel = stop.indexOf("exportGateJob?.cancel()")
+        val disarm = stop.indexOf("disarmExportAuthWatchdog()")
+        val promptCancel = stop.indexOf("exportAuthenticator?.cancel(")
+        val superStop = stop.indexOf("super.onStop()")
+
+        assertTrue("gate job cancel missing", gateCancel >= 0)
+        assertTrue("watchdog disarm missing", disarm >= 0)
+        assertTrue("the watchdog is disarmed before the prompt is cancelled", disarm in 0 until promptCancel)
+        assertTrue("super.onStop() is still called", superStop > promptCancel)
+        assertTrue(
+            "CHECKING is reset to IDLE in onStop",
+            Regex("""exportState\s*==\s*ExportState\.CHECKING\s*\)\s*exportState\s*=\s*ExportState\.IDLE""").containsMatchIn(stop)
+        )
+        assertEquals("no picker call in onStop", 0, countOf(stop, Regex("""\blaunchPicker\b|\blauncher\b""")))
+    }
+
+    @Test
+    fun s22_f6_pin_theGateReadChecksCancellationAndLifecycleBeforeAnyPromptOrPicker() {
+        val gate = bodyOf(source, "onExportRequested")
+        val ensure = gate.indexOf("ensureActive()")
+        val lifecycleCheck = gate.indexOf("lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)")
+        val finishing = gate.indexOf("isFinishing")
+        val begin = gate.indexOf("beginExportAuthentication(")
+        val picker = gate.indexOf("launchPicker()")
+
+        assertTrue("ensureActive() missing", ensure >= 0)
+        assertTrue("lifecycle STARTED check missing", lifecycleCheck > ensure)
+        assertTrue("isFinishing check missing", finishing > ensure)
+        assertTrue("the checks come before the prompt", lifecycleCheck < begin && finishing < begin)
+        assertTrue("the checks come before the picker", lifecycleCheck < picker && finishing < picker)
+        assertTrue("the gate job is kept so onStop can cancel it", gate.contains("exportGateJob = lifecycleScope.launch"))
+    }
+
+    @Test
+    fun s22_pin_theExportCopyIsReferencedOnlyByTheExportPromptAndTheAdapterMapping() {
+        val allowed = setOf(
+            "main/java/$activityFile",
+            "main/java/com/yourname/expensetracker/ui/applock/BiometricPromptDeviceAuthenticator.kt",
+            "main/java/com/yourname/expensetracker/domain/privacy/applock/DeviceAuthenticator.kt"
+        )
+        val reference = Regex("""\bAuthPromptCopy\s*\.\s*EXPORT\b""")
+        val files = productionFiles()
+        assertTrue("scan found suspiciously few files: ${files.size}", files.size > 200)
+
+        val referencing = files
+            .filter { (_, raw) -> reference.containsMatchIn(SourceTextSanitizer.stripCommentsAndStringBodies(raw)) }
+            .map { it.first }
+            .toSet()
+
+        assertEquals("unexpected files reference AuthPromptCopy.EXPORT", emptySet<String>(), referencing - allowed)
+        assertTrue("the activity must reference AuthPromptCopy.EXPORT", "main/java/$activityFile" in referencing)
+        assertTrue(
+            "the adapter must map AuthPromptCopy.EXPORT",
+            "main/java/com/yourname/expensetracker/ui/applock/BiometricPromptDeviceAuthenticator.kt" in referencing
+        )
+    }
+
+    @Test
+    fun s22_pin_selfCheck_theWatchdogSeamIsCoveredByTheAssignmentRule() {
+        val planted = listOf(
+            "main/java/p/A.kt" to "fun f() { UnsupportedDatabaseActivity.exportAuthPromptTimeoutMillisForTest = 1L }",
+            "debug/java/p/B.java" to
+                "class B { void x() { UnsupportedDatabaseActivity.Companion.setExportAuthPromptTimeoutMillisForTest\$app_debug(null); } }",
+            "release/java/p/C.kt" to "fun r() { val p = ::exportAuthPromptTimeoutMillisForTest }"
+        )
+        assertEquals(
+            listOf(
+                "main/java/p/A.kt:1:exportAuthPromptTimeoutMillisForTest",
+                "debug/java/p/B.java:1:exportAuthPromptTimeoutMillisForTest",
+                "release/java/p/C.kt:1:exportAuthPromptTimeoutMillisForTest"
+            ).sorted(),
+            seamAssignments(planted).sorted()
+        )
+        val allowed = listOf(
+            "main/java/p/Decl.kt" to "@VisibleForTesting\ninternal var exportAuthPromptTimeoutMillisForTest: Long? = null",
+            "main/java/p/Read.kt" to "val d = exportAuthPromptTimeoutMillisForTest ?: 300_000L\nval n = exportAuthPromptTimeoutMillisForTest == null"
+        )
+        assertEquals(emptyList<String>(), seamAssignments(allowed))
+    }
+
     // ---- pin hardening (privacy-security-guardian P2, owner-approvals item 75b) -----------------------------------
     //
     // The unsupported-database surface is the activity file plus UnsupportedDatabaseExportAuth.kt. Rules:
@@ -231,7 +394,11 @@ class UnsupportedDatabaseActivitySourceScanTest {
         "fromActivity(" to Regex("""\bfromActivity\s*\("""),
         "fromFragment(" to Regex("""\bfromFragment\s*\(""")
     )
-    private val seamNames = listOf("exportAuthRequiredForTest", "authenticatorFactoryForTest")
+    private val seamNames = listOf(
+        "exportAuthRequiredForTest",
+        "authenticatorFactoryForTest",
+        "exportAuthPromptTimeoutMillisForTest"
+    )
 
     /** The text between the braces of the entry point interface, or null when it is missing or not closed. */
     private fun entryPointBody(sanitized: String): String? {

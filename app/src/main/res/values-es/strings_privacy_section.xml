@@ -30,7 +30,7 @@
     <string name="privacy_app_lock_enable_point_unlock">La app pide tu huella o el bloqueo de pantalla al abrirse y cuando la dejas durante el tiempo que elijas.</string>
     <string name="privacy_app_lock_enable_point_notifications">Las notificaciones no muestran importes ni detalles mientras el bloqueo de la app esté activado.</string>
     <string name="privacy_app_lock_enable_point_replaced">Las notificaciones que ya se muestran se sustituyen por la versión privada.</string>
-    <string name="privacy_app_lock_enable_point_screen">Se bloquean las capturas y la grabación de pantalla, y la app se oculta en las apps recientes.</string>
+    <string name="privacy_app_lock_enable_point_screen">Se bloquean las capturas y la grabación de pantalla, y el contenido de la app se oculta en las apps recientes.</string>
     <string name="privacy_app_lock_enable_point_background">Los recordatorios y la captura automática siguen funcionando mientras la app está bloqueada.</string>
     <string name="privacy_app_lock_enable_point_face">Solo el bloqueo de pantalla o un dato biométrico seguro, como tu huella, puede desbloquear la app. No se usa el desbloqueo facial básico.</string>
     <string name="privacy_app_lock_enable_point_api30_actions">Los recordatorios de facturas no mostrarán Posponer ni Descartar mientras el bloqueo de la app esté activado.</string>
@@ -39,4 +39,21 @@
     <string name="privacy_app_lock_snackbar_off">Bloqueo de la app desactivado</string>
     <string name="privacy_app_lock_not_enabled">No se activó el bloqueo de la app.</string>
     <string name="privacy_app_lock_enable_failed">No se pudo activar el bloqueo de la app. Inténtalo de nuevo.</string>
+
+    <!-- S22-b.1: timeout row and picker, secure-screen row, Android 11 note, footnote. DRAFT translation, owner sign-off pending (O-2). -->
+    <string name="privacy_app_lock_api30_actions_note">En Android 11, los recordatorios de facturas no muestran Posponer ni Descartar mientras el bloqueo de la app esté activado.</string>
+    <string name="privacy_app_lock_timeout_label">Bloquear al salir de la app</string>
+    <string name="privacy_app_lock_timeout_note">Cuando el bloqueo de la app está activado, la app siempre se bloquea cuando se inicia de nuevo.</string>
+    <string name="applock_timeout_immediately">Inmediatamente</string>
+    <string name="applock_timeout_30s">Después de 30 segundos</string>
+    <string name="applock_timeout_1m">Después de 1 minuto</string>
+    <string name="applock_timeout_5m">Después de 5 minutos</string>
+    <string name="applock_timeout_15m">Después de 15 minutos</string>
+    <string name="applock_timeout_immediately_hint">Se bloquea en cuanto sales de la app, también después de la cámara o de un selector de archivos. Elige un tiempo mayor si adjuntas fotos o recibos con frecuencia.</string>
+    <string name="applock_timeout_30s_hint">Se bloquea si la cámara o un selector de archivos tarda más que esto.</string>
+    <string name="applock_timeout_paused_note">El bloqueo de la app está en pausa, así que solo puedes elegir un tiempo más corto o mantener el actual.</string>
+    <string name="privacy_toggle_secure_screen">Pantalla segura</string>
+    <string name="privacy_secure_screen_support">Oculta el contenido de la app en las apps recientes y bloquea las capturas de pantalla, la grabación de pantalla y la transmisión.</string>
+    <string name="privacy_secure_screen_forced">Siempre activado mientras el bloqueo de la app esté activado. No podrás hacer capturas de tus propios informes.</string>
+    <string name="privacy_app_lock_footnote">Cualquiera que conozca el bloqueo de pantalla de tu teléfono puede desbloquear la app. Las apps con acceso de accesibilidad aún pueden leer la pantalla.</string>
 </resources>

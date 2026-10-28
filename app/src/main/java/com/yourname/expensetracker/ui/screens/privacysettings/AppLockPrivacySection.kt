@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.ui.screens.privacysettings
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -39,6 +40,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.yourname.expensetracker.R
+import com.yourname.expensetracker.domain.privacy.applock.AutoLockTimeout
 import com.yourname.expensetracker.domain.privacy.applock.InertReason
 import com.yourname.expensetracker.ui.applock.SecuritySettingsLauncher
 import com.yourname.expensetracker.ui.theme.SemanticColors
@@ -60,10 +62,21 @@ object AppLockPrivacySectionTags {
     const val LOCK_TRANSIENT = "app_lock_privacy_lock_transient"
     const val LOCK_SECURITY_SETTINGS = "app_lock_privacy_lock_security_settings"
     const val LOCK_TRY_AGAIN = "app_lock_privacy_lock_try_again"
+
+    // S22-b.1: timeout row, secure-screen row, Android 11 note, footnote and the review card's full record.
+    const val TIMEOUT_ROW = "app_lock_privacy_timeout_row"
+    const val SECURE_ROW = "app_lock_privacy_secure_row"
+    const val SECURE_CHECKING = "app_lock_privacy_secure_checking"
+    const val API30_NOTE = "app_lock_privacy_api30_note"
+    const val FOOTNOTE = "app_lock_privacy_footnote"
+    const val REVIEW_LOCK_ROW = "app_lock_privacy_review_lock_row"
+    const val REVIEW_TIMEOUT_ROW = "app_lock_privacy_review_timeout_row"
+    const val REVIEW_SECURE_ROW = "app_lock_privacy_review_secure_row"
 }
 
 /**
- * The "App lock & privacy" section: the app lock row (S22-a.1) and the discreet-notifications row (S12).
+ * The "App lock & privacy" section: the app lock row (S22-a.1), the timeout row and the secure-screen row (S22-b.1) and
+ * the discreet-notifications row (S12).
  *
  * Stateful wrapper. It re-reads at each foreground while the setting is transiently unreadable (INV-47) and re-reads
  * the capability hint (display only), then renders [AppLockPrivacySectionContent]. It holds no request of its own: every
@@ -97,6 +110,11 @@ fun AppLockPrivacySection(
         onTurnOff = viewModel::onTurnOffRequested,
         onLockTryAgain = viewModel::refreshCapabilityHint,
         onOpenSecuritySettings = { SecuritySettingsLauncher.open(context) },
+        onTimeoutSelected = viewModel::onTimeoutSelected,
+        onSecureChange = viewModel::setSecureScreen,
+        onReviewLockChange = viewModel::setReviewLockChoice,
+        onReviewTimeoutChange = viewModel::setReviewTimeoutChoice,
+        onReviewSecureChange = viewModel::setReviewSecureChoice,
         modifier = modifier
     )
 }
@@ -107,6 +125,13 @@ fun AppLockPrivacySection(
  * The explainer's visibility is local UI state (saved across rotation). It is dropped as soon as the lock row is no
  * longer Off, so it can never reappear later. The lock switch shows the COMMITTED value only (INV-46): tapping it from
  * Off opens the explainer, tapping it from On asks the ViewModel to turn off, and neither moves the switch.
+ *
+ * S22-b.1: the timeout row (present only while the committed lock is on) opens the picker, which is also local UI state
+ * and is dropped as soon as the row can no longer be used; the picked value is reported to the ViewModel and the row keeps
+ * showing the committed timeout (AE-116). The secure-screen row is read-only while forced (AE-103). The Android 11 note
+ * ([showApi30ActionsPoint], default read at the call) is a second line of the lock row, only while the committed lock is
+ * on. The review card shows the full record: the lock choice, the timeout choice while the lock choice is on, and the
+ * discreet and secure choices (read-only while the lock choice is on).
  */
 @Composable
 internal fun AppLockPrivacySectionContent(
@@ -120,12 +145,29 @@ internal fun AppLockPrivacySectionContent(
     onLockTryAgain: () -> Unit,
     onOpenSecuritySettings: () -> Unit,
     modifier: Modifier = Modifier,
-    showApi30ActionsPoint: Boolean = isAndroid11()
+    showApi30ActionsPoint: Boolean = isAndroid11(),
+    onTimeoutSelected: (AutoLockTimeout) -> Unit = {},
+    onSecureChange: (Boolean) -> Unit = {},
+    onReviewLockChange: (Boolean) -> Unit = {},
+    onReviewTimeoutChange: (AutoLockTimeout) -> Unit = {},
+    onReviewSecureChange: (Boolean) -> Unit = {}
 ) {
     val lockIsOff = state is AppLockPrivacySectionState.Ready && state.lock == AppLockRowState.Off
     var explainerVisible by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(lockIsOff) {
         if (!lockIsOff) explainerVisible = false
+    }
+    val timeoutRow = (state as? AppLockPrivacySectionState.Ready)?.timeoutRow
+    val timeoutPickable = state is AppLockPrivacySectionState.Ready && timeoutRow != null &&
+        !state.isWriting && state.lock !is AppLockRowState.Waiting
+    var timeoutDialogVisible by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(timeoutPickable) {
+        if (!timeoutPickable) timeoutDialogVisible = false
+    }
+    val reviewTimeoutPickable = state is AppLockPrivacySectionState.NeedsReview && state.lockChoice && !state.isSaving
+    var reviewTimeoutDialogVisible by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(reviewTimeoutPickable) {
+        if (!reviewTimeoutPickable) reviewTimeoutDialogVisible = false
     }
     Column(
         modifier = modifier
@@ -156,16 +198,31 @@ internal fun AppLockPrivacySectionContent(
                     supportText = stringResource(R.string.privacy_app_lock_checking),
                     tag = AppLockPrivacySectionTags.DISCREET_CHECKING
                 )
+                NoSwitchRow(
+                    title = stringResource(R.string.privacy_toggle_secure_screen),
+                    supportText = stringResource(R.string.privacy_app_lock_checking),
+                    tag = AppLockPrivacySectionTags.SECURE_CHECKING
+                )
             }
 
             is AppLockPrivacySectionState.Ready -> {
+                val lockOn = isLockCommittedOn(state.lock)
                 LockRow(
                     lock = state.lock,
+                    showApi30Note = showApi30ActionsPoint && lockOn,
                     onSwitchOn = { explainerVisible = true },
                     onTurnOff = onTurnOff,
                     onTryAgain = onLockTryAgain,
                     onOpenSecuritySettings = onOpenSecuritySettings
                 )
+                if (state.timeoutRow != null) {
+                    TimeoutRow(
+                        timeout = state.timeoutRow.committed,
+                        enabled = timeoutPickable,
+                        onClick = { timeoutDialogVisible = true },
+                        tag = AppLockPrivacySectionTags.TIMEOUT_ROW
+                    )
+                }
                 SwitchRow(
                     title = stringResource(R.string.privacy_toggle_discreet_notifications),
                     checked = state.discreetOn,
@@ -180,6 +237,23 @@ internal fun AppLockPrivacySectionContent(
                     onCheckedChange = onDiscreetChange,
                     tag = AppLockPrivacySectionTags.DISCREET_ROW
                 )
+                // AE-103, OD-20a: the secure-screen row is functional on every API level while the lock is off, and
+                // read-only (checked, disabled) while the committed lock is on.
+                SwitchRow(
+                    title = stringResource(R.string.privacy_toggle_secure_screen),
+                    checked = state.secureOn,
+                    enabled = !state.isWriting && !state.secureForced,
+                    supportText = stringResource(
+                        if (state.secureForced) {
+                            R.string.privacy_secure_screen_forced
+                        } else {
+                            R.string.privacy_secure_screen_support
+                        }
+                    ),
+                    onCheckedChange = onSecureChange,
+                    tag = AppLockPrivacySectionTags.SECURE_ROW
+                )
+                if (lockOn) Footnote()
                 NoticeText(state.notice)
             }
 
@@ -201,6 +275,15 @@ internal fun AppLockPrivacySectionContent(
                     onCheckedChange = {},
                     tag = AppLockPrivacySectionTags.DISCREET_ROW
                 )
+                // Same for the secure screen: the fail-closed effective value (on), checked and disabled.
+                SwitchRow(
+                    title = stringResource(R.string.privacy_toggle_secure_screen),
+                    checked = true,
+                    enabled = false,
+                    supportText = stringResource(R.string.privacy_secure_screen_support),
+                    onCheckedChange = {},
+                    tag = AppLockPrivacySectionTags.SECURE_ROW
+                )
                 Text(
                     text = stringResource(R.string.privacy_section_unreadable),
                     style = MaterialTheme.typography.bodySmall,
@@ -216,13 +299,54 @@ internal fun AppLockPrivacySectionContent(
 
             is AppLockPrivacySectionState.NeedsReview -> {
                 ReviewCard(onReviewSave = onReviewSave, enabled = !state.isSaving)
+                // The full record (item 55). "On" is not an enable flow: no explainer, no prompt. While paused (INERT)
+                // Off is the only choice (INV-45), shown as Off, disabled, with the reason.
+                SwitchRow(
+                    title = stringResource(R.string.privacy_toggle_app_lock),
+                    checked = state.lockChoice,
+                    enabled = !state.isSaving && !state.lockPaused,
+                    supportText = stringResource(
+                        if (state.lockPaused) R.string.privacy_review_lock_paused else R.string.privacy_app_lock_support
+                    ),
+                    onCheckedChange = onReviewLockChange,
+                    tag = AppLockPrivacySectionTags.REVIEW_LOCK_ROW
+                )
+                if (state.lockChoice) {
+                    TimeoutRow(
+                        timeout = state.timeoutChoice,
+                        enabled = reviewTimeoutPickable,
+                        onClick = { reviewTimeoutDialogVisible = true },
+                        tag = AppLockPrivacySectionTags.REVIEW_TIMEOUT_ROW
+                    )
+                }
+                // Discreet and secure are forced (checked, read-only) while the lock choice is on, editable while off.
                 SwitchRow(
                     title = stringResource(R.string.privacy_toggle_discreet_notifications),
-                    checked = state.discreetChoice,
-                    enabled = !state.isSaving,
-                    supportText = stringResource(R.string.privacy_discreet_notifications_support),
+                    checked = state.discreetChoice || state.lockChoice,
+                    enabled = !state.isSaving && !state.lockChoice,
+                    supportText = stringResource(
+                        if (state.lockChoice) {
+                            R.string.privacy_discreet_notifications_forced
+                        } else {
+                            R.string.privacy_discreet_notifications_support
+                        }
+                    ),
                     onCheckedChange = onReviewDiscreetChange,
                     tag = AppLockPrivacySectionTags.REVIEW_DISCREET_ROW
+                )
+                SwitchRow(
+                    title = stringResource(R.string.privacy_toggle_secure_screen),
+                    checked = state.secureChoice || state.lockChoice,
+                    enabled = !state.isSaving && !state.lockChoice,
+                    supportText = stringResource(
+                        if (state.lockChoice) {
+                            R.string.privacy_secure_screen_forced
+                        } else {
+                            R.string.privacy_secure_screen_support
+                        }
+                    ),
+                    onCheckedChange = onReviewSecureChange,
+                    tag = AppLockPrivacySectionTags.REVIEW_SECURE_ROW
                 )
                 NoticeText(state.notice)
             }
@@ -239,6 +363,42 @@ internal fun AppLockPrivacySectionContent(
             showApi30ActionsPoint = showApi30ActionsPoint
         )
     }
+    if (timeoutDialogVisible && timeoutRow != null) {
+        AutoLockTimeoutDialog(
+            selected = timeoutRow.committed,
+            longerDisabled = timeoutRow.paused,
+            onSelect = { chosen ->
+                timeoutDialogVisible = false
+                onTimeoutSelected(chosen)
+            },
+            onDismiss = { timeoutDialogVisible = false }
+        )
+    }
+    if (reviewTimeoutDialogVisible && state is AppLockPrivacySectionState.NeedsReview) {
+        AutoLockTimeoutDialog(
+            selected = state.timeoutChoice,
+            longerDisabled = false,
+            onSelect = { chosen ->
+                reviewTimeoutDialogVisible = false
+                onReviewTimeoutChange(chosen)
+            },
+            onDismiss = { reviewTimeoutDialogVisible = false }
+        )
+    }
+}
+
+/**
+ * True while the COMMITTED lock is on, including while paused (`INERT`) and while a prompt about an already-on lock is
+ * open. Exhaustive (no else): a new row state must be mapped here.
+ */
+private fun isLockCommittedOn(lock: AppLockRowState): Boolean = when (lock) {
+    AppLockRowState.On -> true
+    is AppLockRowState.InertOn -> true
+    is AppLockRowState.Waiting -> lock.committedOn
+    AppLockRowState.Checking,
+    AppLockRowState.Off,
+    AppLockRowState.Transient,
+    is AppLockRowState.Unavailable -> false
 }
 
 /**
@@ -252,9 +412,12 @@ private fun LockRow(
     onSwitchOn: () -> Unit,
     onTurnOff: () -> Unit,
     onTryAgain: () -> Unit,
-    onOpenSecuritySettings: () -> Unit
+    onOpenSecuritySettings: () -> Unit,
+    showApi30Note: Boolean = false
 ) {
     val title = stringResource(R.string.privacy_toggle_app_lock)
+    // Android 11 only, committed lock on (spec 4.4, R9, UQ-3): a second supporting line of the lock row.
+    val api30Note = if (showApi30Note) stringResource(R.string.privacy_app_lock_api30_actions_note) else null
     when (lock) {
         AppLockRowState.Checking -> NoSwitchRow(
             title = title,
@@ -283,7 +446,8 @@ private fun LockRow(
             enabled = true,
             supportText = stringResource(R.string.privacy_app_lock_support),
             onCheckedChange = { turnedOn -> if (!turnedOn) onTurnOff() },
-            tag = AppLockPrivacySectionTags.LOCK_ROW
+            tag = AppLockPrivacySectionTags.LOCK_ROW,
+            extraSupportText = api30Note
         )
 
         is AppLockRowState.Waiting -> SwitchRow(
@@ -292,7 +456,8 @@ private fun LockRow(
             enabled = false,
             supportText = stringResource(R.string.privacy_app_lock_waiting),
             onCheckedChange = {},
-            tag = AppLockPrivacySectionTags.LOCK_ROW
+            tag = AppLockPrivacySectionTags.LOCK_ROW,
+            extraSupportText = api30Note
         )
 
         // Paused (INERT): the switch shows On and can only be turned off, with no prompt (T19, AE-54).
@@ -308,7 +473,8 @@ private fun LockRow(
                 }
             ),
             onCheckedChange = { turnedOn -> if (!turnedOn) onTurnOff() },
-            tag = AppLockPrivacySectionTags.LOCK_ROW
+            tag = AppLockPrivacySectionTags.LOCK_ROW,
+            extraSupportText = api30Note
         )
 
         is AppLockRowState.Unavailable -> {
@@ -383,7 +549,8 @@ private fun SwitchRow(
     enabled: Boolean,
     supportText: String,
     onCheckedChange: (Boolean) -> Unit,
-    tag: String
+    tag: String,
+    extraSupportText: String? = null
 ) {
     Row(
         modifier = Modifier
@@ -411,6 +578,14 @@ private fun SwitchRow(
                 style = MaterialTheme.typography.bodySmall,
                 color = SemanticColors.TextSecondary
             )
+            if (extraSupportText != null) {
+                Text(
+                    text = extraSupportText,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = SemanticColors.TextSecondary,
+                    modifier = Modifier.testTag(AppLockPrivacySectionTags.API30_NOTE)
+                )
+            }
         }
         Switch(
             checked = checked,
@@ -418,6 +593,62 @@ private fun SwitchRow(
             enabled = enabled
         )
     }
+}
+
+/**
+ * The "Lock after leaving the app" row (ux 2.1): label, the fixed note and the COMMITTED timeout as the value. The whole
+ * row is one merged button node ("Lock after leaving the app, 1 minute, double tap to change"); a tap opens the picker
+ * and never changes the value by itself (INV-46, AE-116). It is disabled while a write or a prompt is in flight.
+ */
+@Composable
+private fun TimeoutRow(
+    timeout: AutoLockTimeout,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    tag: String
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 48.dp)
+            .padding(vertical = 6.dp)
+            .testTag(tag)
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = stringResource(R.string.privacy_app_lock_timeout_label),
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (enabled) SemanticColors.TextPrimary else SemanticColors.TextSecondary
+            )
+            Text(
+                text = stringResource(R.string.privacy_app_lock_timeout_note),
+                style = MaterialTheme.typography.bodySmall,
+                color = SemanticColors.TextSecondary
+            )
+        }
+        Text(
+            text = stringResource(autoLockTimeoutLabelRes(timeout)),
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (enabled) SemanticColors.PrimaryIndigo else SemanticColors.TextSecondary,
+            modifier = Modifier.padding(start = 8.dp)
+        )
+    }
+}
+
+/** The honest residual-risk footnote (ux 9.1), shown while the committed lock is on. */
+@Composable
+private fun Footnote() {
+    Text(
+        text = stringResource(R.string.privacy_app_lock_footnote),
+        style = MaterialTheme.typography.bodySmall,
+        color = SemanticColors.TextSecondary,
+        modifier = Modifier
+            .padding(vertical = 4.dp)
+            .testTag(AppLockPrivacySectionTags.FOOTNOTE)
+    )
 }
 
 @Composable

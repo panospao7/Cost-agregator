@@ -2202,3 +2202,10 @@ Source: privacy-security-guardian ACCEPT-WITH-CONDITIONS and architecture-guardi
 - **Deferred to S23:** `hilt-bindings-map.md` ~:409 stale ViewModel constructor; ENGINE_INTERACTION_MAP; ux 4.3 feedback for the silent turn-off outcomes (DISABLE ERROR / CANCELLED, ALREADY_IN_FLIGHT / NOT_IN_ORIGIN / REVIEW_REQUIRED, and REVIEW_REQUIRED without a controller re-read); the Unavailable(OS) "Open security settings" action "only if useful" (ux :230).
 - **Deferred to S22-b:** the UI-files pin must add `AutoLockTimeoutDialog.kt` (or scan the package minus the ViewModel); the NeedsReview lock row via the full review record, in the same atomic S22 candidate (item 55).
 - **Accepted deviations 1-7** as listed in the S22-a.1 privacy review.
+
+### S22-b review dispositions (2026-10-28)
+
+- **privacy-security-guardian: ACCEPT-WITH-CONDITIONS.** The seam-pin condition is done in the tests. Finding 2 (the gate-read race) is the same defect as architecture F5 and is fixed by the gate generation token in `UnsupportedDatabaseActivity`. Infos 3-6 are accepted; the optional item in info 4 is not taken (the Ready defaults are kept for test compatibility).
+- **architecture-guardian: ACCEPT-WITH-CONDITIONS.** F1-F4 (docs: EXPORT copy and F6-i / F6-ii in LEGAL_PATHS, CODEBASE_SEGMENTS, CODEBASE_INVENTORY; stale DORMANT wording; ViewModel description) fixed. F5 (LOW correctness) fixed: `exportGateGeneration` makes a stale gate job a no-op. NIT 6 goes to a test helper (test-author). NIT 7 fixed: `saveReview` takes `discreetNotifications` from `current.discreetChoice`, behaviour identical.
+- **Follow-ups for S23:** `hilt-bindings-map.md` :409-420 (ViewModel constructor plus the timeout and secure-screen writes); ENGINE_INTERACTION_MAP; a ux doc note that the review record stores the raw discreet / secure choices while they are forced (privacy info 3); the REJECTED_CAPABILITY copy (privacy info 6).
+- **More S23 follow-ups (reviewer-strict, 2026-10-29):** `AppLockSettingsOperations.kt:393` KDoc still says "D2 record"; `ENGINE_INTERACTION_MAP.md:175` still says "requestReviewSave(D2 record)"; ux 4.3 add "CHANGE ERROR / not launched" to the silent outcomes.

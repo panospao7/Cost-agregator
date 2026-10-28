@@ -5,12 +5,16 @@ package com.yourname.expensetracker.domain.privacy.applock
  *
  * The controller selects one value per attempt. The set is closed, so no caller can pass free text,
  * and no value carries user data. Only [ENABLE] has a subtitle, and no value has a description.
+ *
+ * [EXPORT] (S22-b, D-S22-6) is NOT selected by the controller: it is the constant title of the device
+ * authentication that gates the user-started database export on the unsupported-database screen ("Export backup").
  */
 enum class AuthPromptCopy {
     UNLOCK,
     ENABLE,
     DISABLE,
-    CHANGE
+    CHANGE,
+    EXPORT
 }
 
 /** Bounded bucket for a prompt error that is neither a cancel, a lockout nor an availability loss (INV-37). */

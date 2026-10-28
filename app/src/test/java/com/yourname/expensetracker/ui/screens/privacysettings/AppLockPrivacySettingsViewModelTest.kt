@@ -26,6 +26,7 @@ import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticsEmit
 import com.yourname.expensetracker.domain.privacy.applock.ReviewSaveResult
 import com.yourname.expensetracker.domain.privacy.applock.SettingsRequestResult
 import com.yourname.expensetracker.domain.privacy.applock.SettingsUnreadableCause
+import com.yourname.expensetracker.domain.privacy.applock.TimeoutChangeResult
 import com.yourname.expensetracker.util.ViewModelTestUtils
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -57,9 +58,12 @@ import java.io.File
 
 /**
  * S12: the ViewModel of the 1a "App lock & privacy" section (INV-44, INV-46, INV-47, AE-85, AE-88,
- * AE-89, AE-105). S20-e: the review-save routes through [AppLockSettingsOperations.requestReviewSave] with the D2
- * record, and the ViewModel emits no review-save diagnostic and runs no sweep (the controller and the operations own
- * them, D7).
+ * AE-89, AE-105). S20-e: the review-save routes through [AppLockSettingsOperations.requestReviewSave], and the
+ * ViewModel emits no review-save diagnostic and runs no sweep (the controller and the operations own them, D7). Since
+ * S22-b.1 the record is the FULL record (lock, timeout, discreet, secure; item 55), which replaced the old D2 record.
+ *
+ * S22-b.1: the timeout row (AE-116, TECH-13), the secure-screen row (AE-103) and the full review card (AE-85, AE-86,
+ * AE-87, INV-45, INV-48).
  *
  * S22-a.1: the lock row (AE-34, 35, 36, 54, 65, 70, 93, 113, 114, 118) and the open-origin end notices, including the
  * S22-a.0 privacy-review bindings B-1 (the notice follows the end's prompt), B-2 (the replay baseline) and B-3 (no
@@ -74,12 +78,49 @@ class AppLockPrivacySettingsViewModelTest : ViewModelTestUtils() {
     /** Committed lock on, stored discreet off: discreet is forced on (AE-65). */
     private val lockOn = AppLockPrivacySettings(discreetNotifications = false, appLockEnabled = true)
 
-    /** The D2 record (S18-ii-h): lock off, IMMEDIATE, discreet = the user's choice, secure screen on. */
-    private fun d2Record(discreet: Boolean) = AppLockPrivacySettings(
+    /**
+     * A committed lock-off record the STORE may report after a review-save (store state, never a record the VM sends):
+     * lock off, IMMEDIATE, secure screen off (the stored default).
+     */
+    private fun committedOff(discreet: Boolean) = AppLockPrivacySettings(
         discreetNotifications = discreet,
         appLockEnabled = false,
         autoLockTimeout = AutoLockTimeout.IMMEDIATE,
+        secureScreen = false
+    )
+
+    /** The exact FULL review-save record (S22-b.1, item 55). Written out field by field in each test. */
+    private fun fullRecord(
+        lock: Boolean,
+        timeout: AutoLockTimeout,
+        discreet: Boolean,
+        secure: Boolean
+    ) = AppLockPrivacySettings(
+        discreetNotifications = discreet,
+        appLockEnabled = lock,
+        autoLockTimeout = timeout,
+        secureScreen = secure
+    )
+
+    /** The fail-closed record F as the review card starts: lock on, IMMEDIATE, discreet on, secure on (spec 2.3). */
+    private val recordF = AppLockPrivacySettings(
+        discreetNotifications = true,
+        appLockEnabled = true,
+        autoLockTimeout = AutoLockTimeout.IMMEDIATE,
         secureScreen = true
+    )
+
+    /** Store settings with every field explicit; the defaults are the store defaults (timeout M1, discreet off, secure off). */
+    private fun settingsOf(
+        lock: Boolean,
+        timeout: AutoLockTimeout = AutoLockTimeout.M1,
+        discreet: Boolean = false,
+        secure: Boolean = false
+    ) = AppLockPrivacySettings(
+        discreetNotifications = discreet,
+        appLockEnabled = lock,
+        autoLockTimeout = timeout,
+        secureScreen = secure
     )
 
     private class FakeRepository(initial: AppLockSettingsLoadState) : AppLockSettingsRepository {
@@ -155,13 +196,17 @@ class AppLockPrivacySettingsViewModelTest : ViewModelTestUtils() {
     private fun readyLockOff(
         discreetOn: Boolean,
         isWriting: Boolean,
-        notice: AppLockPrivacySectionNotice?
+        notice: AppLockPrivacySectionNotice?,
+        secureOn: Boolean = false
     ) = AppLockPrivacySectionState.Ready(
         discreetOn = discreetOn,
         isWriting = isWriting,
         notice = notice,
         discreetForced = false,
-        lock = AppLockRowState.Off
+        lock = AppLockRowState.Off,
+        timeoutRow = null,
+        secureOn = secureOn,
+        secureForced = false
     )
 
     private fun readyOf(viewModel: AppLockPrivacySettingsViewModel): AppLockPrivacySectionState.Ready {
@@ -425,7 +470,7 @@ class AppLockPrivacySettingsViewModelTest : ViewModelTestUtils() {
     }
 
     @Test
-    fun `review save sends the D2 record through the operations and shows Settings saved (AE-85 1a record)`() =
+    fun `AE-85 review save sends the full record through the operations and shows Settings saved`() =
         runTest(testDispatcher) {
             val repository = FakeRepository(AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.CORRUPTED))
             val sent = slot<AppLockPrivacySettings>()
@@ -436,14 +481,36 @@ class AppLockPrivacySettingsViewModelTest : ViewModelTestUtils() {
             val viewModel = viewModel(repository)
             advanceUntilIdle()
 
+            // AE-85's record: {lock off, M1, discreet off, secure off}. The timeout is chosen while the lock choice is On
+            // (the row is hidden once the lock choice is Off, but the choice is kept in the record).
+            viewModel.setReviewTimeoutChoice(AutoLockTimeout.M1)
+            advanceUntilIdle()
+            viewModel.setReviewLockChoice(false)
+            advanceUntilIdle()
             viewModel.setReviewDiscreetChoice(false)
             advanceUntilIdle()
-            assertEquals(AppLockPrivacySectionState.NeedsReview(false, false, null), viewModel.uiState.value)
+            viewModel.setReviewSecureChoice(false)
+            advanceUntilIdle()
+            assertEquals(
+                AppLockPrivacySectionState.NeedsReview(
+                    discreetChoice = false,
+                    isSaving = false,
+                    notice = null,
+                    lockChoice = false,
+                    lockPaused = false,
+                    timeoutChoice = AutoLockTimeout.M1,
+                    secureChoice = false
+                ),
+                viewModel.uiState.value
+            )
 
             viewModel.saveReview()
             advanceUntilIdle()
 
-            assertEquals(d2Record(false), sent.captured)
+            assertEquals(
+                fullRecord(lock = false, timeout = AutoLockTimeout.M1, discreet = false, secure = false),
+                sent.captured
+            )
             assertEquals(
                 readyLockOff(false, false, AppLockPrivacySectionNotice.REVIEW_SAVED),
                 viewModel.uiState.value
@@ -456,7 +523,7 @@ class AppLockPrivacySettingsViewModelTest : ViewModelTestUtils() {
         }
 
     @Test
-    fun `the review-save record is exactly the D2 record for both discreet choices (S18-ii-h)`() =
+    fun `the review-save record is the full record for both discreet choices once the lock choice is Off (replaces the D2 record)`() =
         runTest(testDispatcher) {
             listOf(true, false).forEach { choice ->
                 val sent = slot<AppLockPrivacySettings>()
@@ -464,21 +531,23 @@ class AppLockPrivacySettingsViewModelTest : ViewModelTestUtils() {
                 val viewModel = viewModel(FakeRepository(AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.CORRUPTED)))
                 advanceUntilIdle()
 
+                viewModel.setReviewLockChoice(false)
+                advanceUntilIdle()
                 viewModel.setReviewDiscreetChoice(choice)
+                advanceUntilIdle()
                 viewModel.saveReview()
                 advanceUntilIdle()
 
                 val record = sent.captured
-                assertEquals("$choice", d2Record(choice), record)
                 assertEquals("$choice", choice, record.discreetNotifications)
                 assertFalse("$choice lock off", record.appLockEnabled)
-                assertEquals("$choice IMMEDIATE", AutoLockTimeout.IMMEDIATE, record.autoLockTimeout)
-                assertTrue("$choice secure screen on (fail closed)", record.secureScreen)
+                assertEquals("$choice IMMEDIATE (untouched default)", AutoLockTimeout.IMMEDIATE, record.autoLockTimeout)
+                assertTrue("$choice secure screen on (untouched fail-closed default)", record.secureScreen)
             }
         }
 
     @Test
-    fun `the review-save record keeps the fail closed discreet choice when the user did not change it`() =
+    fun `the review-save record is the fail closed record F when the user changed nothing (item 55 defaults)`() =
         runTest(testDispatcher) {
             val sent = slot<AppLockPrivacySettings>()
             coEvery { operations.requestReviewSave(capture(sent)) } returns ReviewSaveResult.STARTED
@@ -488,7 +557,11 @@ class AppLockPrivacySettingsViewModelTest : ViewModelTestUtils() {
             viewModel.saveReview()
             advanceUntilIdle()
 
-            assertEquals(d2Record(true), sent.captured)
+            assertEquals(
+                fullRecord(lock = true, timeout = AutoLockTimeout.IMMEDIATE, discreet = true, secure = true),
+                sent.captured
+            )
+            assertEquals(recordF, sent.captured)
         }
 
     @Test
@@ -542,7 +615,7 @@ class AppLockPrivacySettingsViewModelTest : ViewModelTestUtils() {
 
             // The operations apply the confirmed save later; the VM shows what the observer reports (INV-46),
             // and the pending STARTED makes it announce the commit (owner-approvals 64).
-            repository.state.value = AppLockSettingsLoadState.Loaded(d2Record(true))
+            repository.state.value = AppLockSettingsLoadState.Loaded(committedOff(true))
             advanceUntilIdle()
             assertEquals(
                 readyLockOff(true, false, AppLockPrivacySectionNotice.REVIEW_SAVED),
@@ -561,13 +634,13 @@ class AppLockPrivacySettingsViewModelTest : ViewModelTestUtils() {
 
             viewModel.saveReview()
             advanceUntilIdle()
-            repository.state.value = AppLockSettingsLoadState.Loaded(d2Record(true))
+            repository.state.value = AppLockSettingsLoadState.Loaded(committedOff(true))
             advanceUntilIdle()
             // A second emission after the commit (a re-read, or the discreet value changing): still the one notice,
             // never a second REVIEW_SAVED transition.
-            repository.state.value = AppLockSettingsLoadState.Loaded(d2Record(false))
+            repository.state.value = AppLockSettingsLoadState.Loaded(committedOff(false))
             advanceUntilIdle()
-            repository.state.value = AppLockSettingsLoadState.Loaded(d2Record(true))
+            repository.state.value = AppLockSettingsLoadState.Loaded(committedOff(true))
             advanceUntilIdle()
 
             // The notice stays on the section (same readable category); the emissions did not re-arm or re-show it.
@@ -578,7 +651,7 @@ class AppLockPrivacySettingsViewModelTest : ViewModelTestUtils() {
             // The flag was consumed: the store turning unreadable and then readable again shows no second notice.
             repository.state.value = AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.CORRUPTED)
             advanceUntilIdle()
-            repository.state.value = AppLockSettingsLoadState.Loaded(d2Record(true))
+            repository.state.value = AppLockSettingsLoadState.Loaded(committedOff(true))
             advanceUntilIdle()
             assertEquals(readyLockOff(true, false, null), viewModel.uiState.value)
         }
@@ -604,7 +677,7 @@ class AppLockPrivacySettingsViewModelTest : ViewModelTestUtils() {
             )
 
             // A commit that now arrives from elsewhere is not announced: no pending STARTED.
-            repository.state.value = AppLockSettingsLoadState.Loaded(d2Record(true))
+            repository.state.value = AppLockSettingsLoadState.Loaded(committedOff(true))
             advanceUntilIdle()
             assertEquals(readyLockOff(true, false, null), viewModel.uiState.value)
         }
@@ -621,7 +694,7 @@ class AppLockPrivacySettingsViewModelTest : ViewModelTestUtils() {
             advanceUntilIdle()
             viewModel.retry()
             advanceUntilIdle()
-            repository.state.value = AppLockSettingsLoadState.Loaded(d2Record(true))
+            repository.state.value = AppLockSettingsLoadState.Loaded(committedOff(true))
             advanceUntilIdle()
 
             assertEquals(readyLockOff(true, false, null), viewModel.uiState.value)
@@ -660,7 +733,7 @@ class AppLockPrivacySettingsViewModelTest : ViewModelTestUtils() {
             advanceUntilIdle()
             repository.state.value = AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.CORRUPTED)
             advanceUntilIdle()
-            repository.state.value = AppLockSettingsLoadState.Loaded(d2Record(true))
+            repository.state.value = AppLockSettingsLoadState.Loaded(committedOff(true))
             advanceUntilIdle()
 
             assertEquals(readyLockOff(true, false, null), viewModel.uiState.value)
@@ -675,7 +748,7 @@ class AppLockPrivacySettingsViewModelTest : ViewModelTestUtils() {
 
             repository.state.value = AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.CORRUPTED)
             advanceUntilIdle()
-            repository.state.value = AppLockSettingsLoadState.Loaded(d2Record(true))
+            repository.state.value = AppLockSettingsLoadState.Loaded(committedOff(true))
             advanceUntilIdle()
 
             assertEquals(
@@ -702,7 +775,7 @@ class AppLockPrivacySettingsViewModelTest : ViewModelTestUtils() {
                 viewModel.uiState.value
             )
 
-            repository.state.value = AppLockSettingsLoadState.Loaded(d2Record(true))
+            repository.state.value = AppLockSettingsLoadState.Loaded(committedOff(true))
             advanceUntilIdle()
 
             assertEquals(
@@ -727,7 +800,7 @@ class AppLockPrivacySettingsViewModelTest : ViewModelTestUtils() {
 
             repository.state.value = AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.CORRUPTED)
             advanceUntilIdle()
-            repository.state.value = AppLockSettingsLoadState.Loaded(d2Record(true))
+            repository.state.value = AppLockSettingsLoadState.Loaded(committedOff(true))
             advanceUntilIdle()
 
             assertEquals(readyLockOff(true, false, null), viewModel.uiState.value)
@@ -762,7 +835,7 @@ class AppLockPrivacySettingsViewModelTest : ViewModelTestUtils() {
             val viewModel = viewModel(repository)
             advanceUntilIdle()
 
-            repository.state.value = AppLockSettingsLoadState.Loaded(d2Record(true))
+            repository.state.value = AppLockSettingsLoadState.Loaded(committedOff(true))
             advanceUntilIdle()
 
             assertEquals(readyLockOff(true, false, null), viewModel.uiState.value)
@@ -770,37 +843,47 @@ class AppLockPrivacySettingsViewModelTest : ViewModelTestUtils() {
         }
 
     @Test
-    fun `committed review save with discreet on sends the on record and runs no VM sweep or diagnostic`() =
+    fun `committed review save with the default choices sends record F and runs no VM sweep or diagnostic`() =
         runTest(testDispatcher) {
             val repository = FakeRepository(AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.CORRUPTED))
             coEvery { operations.requestReviewSave(any()) } returns ReviewSaveResult.COMMITTED
             val viewModel = viewModel(repository)
             advanceUntilIdle()
 
-            viewModel.setReviewDiscreetChoice(true)
             viewModel.saveReview()
             advanceUntilIdle()
 
             // The re-post sweep after the commit is owned by the operations (their trigger call is covered by
             // AppLockControllerReviewSaveTest); the ViewModel has no trigger at all.
-            coVerify(exactly = 1) { operations.requestReviewSave(d2Record(true)) }
+            coVerify(exactly = 1) {
+                operations.requestReviewSave(
+                    fullRecord(lock = true, timeout = AutoLockTimeout.IMMEDIATE, discreet = true, secure = true)
+                )
+            }
             coVerify(exactly = 1) { operations.requestReviewSave(any()) }
             confirmVerified(emitter)
         }
 
     @Test
-    fun `committed review save with discreet off sends the off record and runs no VM sweep or diagnostic`() =
+    fun `committed review save with the lock choice Off and discreet off sends that full record and runs no VM sweep or diagnostic`() =
         runTest(testDispatcher) {
             val repository = FakeRepository(AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.CORRUPTED))
             coEvery { operations.requestReviewSave(any()) } returns ReviewSaveResult.COMMITTED
             val viewModel = viewModel(repository)
             advanceUntilIdle()
 
+            viewModel.setReviewLockChoice(false)
+            advanceUntilIdle()
             viewModel.setReviewDiscreetChoice(false)
+            advanceUntilIdle()
             viewModel.saveReview()
             advanceUntilIdle()
 
-            coVerify(exactly = 1) { operations.requestReviewSave(d2Record(false)) }
+            coVerify(exactly = 1) {
+                operations.requestReviewSave(
+                    fullRecord(lock = false, timeout = AutoLockTimeout.IMMEDIATE, discreet = false, secure = true)
+                )
+            }
             coVerify(exactly = 1) { operations.requestReviewSave(any()) }
             confirmVerified(emitter)
         }
@@ -876,11 +959,10 @@ class AppLockPrivacySettingsViewModelTest : ViewModelTestUtils() {
             val viewModel = viewModel(repository)
             advanceUntilIdle()
 
-            viewModel.setReviewDiscreetChoice(true)
             viewModel.saveReview()
             advanceUntilIdle()
 
-            coVerify(exactly = 1) { operations.requestReviewSave(d2Record(true)) }
+            coVerify(exactly = 1) { operations.requestReviewSave(recordF) }
             assertEquals(
                 AppLockPrivacySectionState.NeedsReview(true, false, AppLockPrivacySectionNotice.SAVE_FAILED),
                 viewModel.uiState.value
@@ -941,7 +1023,15 @@ class AppLockPrivacySettingsViewModelTest : ViewModelTestUtils() {
             val viewModel = viewModel(repository)
             advanceUntilIdle()
 
+            // Every choice is moved off its default (lock Off lets the discreet and secure choices change).
+            viewModel.setReviewTimeoutChoice(AutoLockTimeout.M15)
+            advanceUntilIdle()
+            viewModel.setReviewLockChoice(false)
+            advanceUntilIdle()
             viewModel.setReviewDiscreetChoice(false)
+            advanceUntilIdle()
+            viewModel.setReviewSecureChoice(false)
+            advanceUntilIdle()
             viewModel.saveReview()
             advanceUntilIdle()
             assertEquals(
@@ -949,11 +1039,22 @@ class AppLockPrivacySettingsViewModelTest : ViewModelTestUtils() {
                 viewModel.uiState.value
             )
 
-            // The store is corrupted again later: the card must not keep the earlier Off choice.
+            // The store is corrupted again later: the card must not keep ANY earlier choice (item 55).
             repository.state.value = AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.INVALID_VALUE)
             advanceUntilIdle()
 
-            assertEquals(AppLockPrivacySectionState.NeedsReview(true, false, null), viewModel.uiState.value)
+            assertEquals(
+                AppLockPrivacySectionState.NeedsReview(
+                    discreetChoice = true,
+                    isSaving = false,
+                    notice = null,
+                    lockChoice = true,
+                    lockPaused = false,
+                    timeoutChoice = AutoLockTimeout.IMMEDIATE,
+                    secureChoice = true
+                ),
+                viewModel.uiState.value
+            )
         }
 
     @Test
@@ -962,16 +1063,45 @@ class AppLockPrivacySettingsViewModelTest : ViewModelTestUtils() {
             val repository = FakeRepository(AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.CORRUPTED))
             val viewModel = viewModel(repository)
             advanceUntilIdle()
+            viewModel.setReviewTimeoutChoice(AutoLockTimeout.M5)
+            advanceUntilIdle()
+            viewModel.setReviewLockChoice(false)
+            advanceUntilIdle()
             viewModel.setReviewDiscreetChoice(false)
             advanceUntilIdle()
-            assertEquals(AppLockPrivacySectionState.NeedsReview(false, false, null), viewModel.uiState.value)
+            viewModel.setReviewSecureChoice(false)
+            advanceUntilIdle()
+            assertEquals(
+                AppLockPrivacySectionState.NeedsReview(
+                    discreetChoice = false,
+                    isSaving = false,
+                    notice = null,
+                    lockChoice = false,
+                    lockPaused = false,
+                    timeoutChoice = AutoLockTimeout.M5,
+                    secureChoice = false
+                ),
+                viewModel.uiState.value
+            )
 
             repository.state.value = AppLockSettingsLoadState.Loaded(on)
             advanceUntilIdle()
             repository.state.value = AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.CORRUPTED)
             advanceUntilIdle()
 
-            assertEquals(AppLockPrivacySectionState.NeedsReview(true, false, null), viewModel.uiState.value)
+            // Re-entry into the review category: all four choices are back at the fail-closed record F.
+            assertEquals(
+                AppLockPrivacySectionState.NeedsReview(
+                    discreetChoice = true,
+                    isSaving = false,
+                    notice = null,
+                    lockChoice = true,
+                    lockPaused = false,
+                    timeoutChoice = AutoLockTimeout.IMMEDIATE,
+                    secureChoice = true
+                ),
+                viewModel.uiState.value
+            )
         }
 
     @Test
@@ -1187,7 +1317,7 @@ class AppLockPrivacySettingsViewModelTest : ViewModelTestUtils() {
                 advanceUntilIdle()
 
                 assertTrue(completed)
-                coVerify(exactly = 1) { operations.requestReviewSave(d2Record(true)) }
+                coVerify(exactly = 1) { operations.requestReviewSave(recordF) }
             } finally {
                 gate.complete(Unit)
             }
@@ -1238,7 +1368,10 @@ class AppLockPrivacySettingsViewModelTest : ViewModelTestUtils() {
                     isWriting = false,
                     notice = null,
                     discreetForced = false,
-                    lock = AppLockRowState.Unavailable(AppLockUnavailableReason.OS)
+                    lock = AppLockRowState.Unavailable(AppLockUnavailableReason.OS),
+                    timeoutRow = null,
+                    secureOn = false,
+                    secureForced = false
                 ),
                 viewModel.uiState.value
             )
@@ -1312,7 +1445,10 @@ class AppLockPrivacySettingsViewModelTest : ViewModelTestUtils() {
                 isWriting = false,
                 notice = null,
                 discreetForced = true,
-                lock = AppLockRowState.On
+                lock = AppLockRowState.On,
+                timeoutRow = AutoLockTimeoutRowState(AutoLockTimeout.M1, paused = false),
+                secureOn = true,
+                secureForced = true
             ),
             viewModel.uiState.value
         )
@@ -1528,7 +1664,10 @@ class AppLockPrivacySettingsViewModelTest : ViewModelTestUtils() {
                     isWriting = false,
                     notice = AppLockPrivacySectionNotice.SAVE_FAILED,
                     discreetForced = true,
-                    lock = AppLockRowState.On
+                    lock = AppLockRowState.On,
+                    timeoutRow = AutoLockTimeoutRowState(AutoLockTimeout.M1, paused = false),
+                    secureOn = true,
+                    secureForced = true
                 ),
                 viewModel.uiState.value
             )
@@ -1776,7 +1915,10 @@ class AppLockPrivacySettingsViewModelTest : ViewModelTestUtils() {
                     isWriting = false,
                     notice = AppLockPrivacySectionNotice.LOCK_ON,
                     discreetForced = true,
-                    lock = AppLockRowState.On
+                    lock = AppLockRowState.On,
+                    timeoutRow = AutoLockTimeoutRowState(AutoLockTimeout.M1, paused = false),
+                    secureOn = true,
+                    secureForced = true
                 ),
                 viewModel.uiState.value
             )
@@ -2704,4 +2846,1114 @@ class AppLockPrivacySettingsViewModelTest : ViewModelTestUtils() {
 
             assertEquals(readyLockOff(false, false, null), viewModel.uiState.value)
         }
+
+    // ---------------------------------------------------------------------------------------------------------
+    // S22-b.1: the timeout row (AE-116, INV-3, OD-8a, INV-46)
+    // ---------------------------------------------------------------------------------------------------------
+
+    @Test
+    fun `AE-116 the timeout row is absent while the committed lock is off, also while the enable prompt is open`() =
+        runTest(testDispatcher) {
+            val viewModel = openSection(FakeRepository(AppLockSettingsLoadState.Loaded(settingsOf(lock = false, timeout = AutoLockTimeout.M5))))
+            assertNull(readyOf(viewModel).timeoutRow)
+
+            // No optimistic row: the enable prompt is open, nothing is committed yet.
+            controllerState.value = AppLockState.Authenticating(70L, AuthPurpose.ENABLE)
+            advanceUntilIdle()
+            assertNull(readyOf(viewModel).timeoutRow)
+
+            // An Inert controller with the lock committed off shows no row either.
+            controllerState.value = AppLockState.Inert(InertReason.NO_CREDENTIAL)
+            advanceUntilIdle()
+            assertNull(readyOf(viewModel).timeoutRow)
+        }
+
+    @Test
+    fun `AE-116 the timeout row shows the committed value and is not paused while the lock is on, for every timeout`() =
+        runTest(testDispatcher) {
+            controllerState.value = AppLockState.Unlocked
+            AutoLockTimeout.values().forEach { timeout ->
+                val viewModel = openSection(
+                    FakeRepository(AppLockSettingsLoadState.Loaded(settingsOf(lock = true, timeout = timeout)))
+                )
+                assertEquals("$timeout", AutoLockTimeoutRowState(timeout, paused = false), readyOf(viewModel).timeoutRow)
+            }
+        }
+
+    @Test
+    fun `AE-116 a longer timeout starts the prompt, the row keeps the old value and the lock row waits for the controller`() =
+        runTest(testDispatcher) {
+            coEvery { operations.requestTimeoutChange(AutoLockTimeout.M5) } returns TimeoutChangeResult.STARTED
+            controllerState.value = AppLockState.Unlocked
+            val viewModel = openSection(
+                FakeRepository(AppLockSettingsLoadState.Loaded(settingsOf(lock = true, timeout = AutoLockTimeout.M1)))
+            )
+
+            viewModel.onTimeoutSelected(AutoLockTimeout.M5)
+            advanceUntilIdle()
+
+            coVerify(exactly = 1) { operations.requestTimeoutChange(AutoLockTimeout.M5) }
+            val afterStart = readyOf(viewModel)
+            assertEquals("no optimistic value", AutoLockTimeoutRowState(AutoLockTimeout.M1, paused = false), afterStart.timeoutRow)
+            assertNull(afterStart.notice)
+            assertFalse(afterStart.isWriting)
+
+            // The prompt is open: the lock row waits (derived from the controller state only, B-3).
+            controllerState.value = AppLockState.Authenticating(71L, AuthPurpose.CONFIRM_CHANGE)
+            advanceUntilIdle()
+            val waiting = readyOf(viewModel)
+            assertEquals(AppLockRowState.Waiting(AuthPurpose.CONFIRM_CHANGE, committedOn = true), waiting.lock)
+            assertEquals(AutoLockTimeoutRowState(AutoLockTimeout.M1, paused = false), waiting.timeoutRow)
+
+            // A second pick while the prompt is open never reaches the operations.
+            viewModel.onTimeoutSelected(AutoLockTimeout.M15)
+            advanceUntilIdle()
+            coVerify(exactly = 0) { operations.requestTimeoutChange(AutoLockTimeout.M15) }
+            coVerify(exactly = 1) { operations.requestTimeoutChange(any()) }
+        }
+
+    @Test
+    fun `AE-116 a CANCELLED CHANGE end leaves the old timeout and shows no notice`() = runTest(testDispatcher) {
+        coEvery { operations.requestTimeoutChange(AutoLockTimeout.M5) } returns TimeoutChangeResult.STARTED
+        controllerState.value = AppLockState.Unlocked
+        val viewModel = openSection(
+            FakeRepository(AppLockSettingsLoadState.Loaded(settingsOf(lock = true, timeout = AutoLockTimeout.M1)))
+        )
+        viewModel.onTimeoutSelected(AutoLockTimeout.M5)
+        controllerState.value = AppLockState.Authenticating(72L, AuthPurpose.CONFIRM_CHANGE)
+        advanceUntilIdle()
+
+        controllerState.value = AppLockState.Unlocked
+        endSignal.value = endOf(OpenOriginEndKind.CANCELLED, OpenOriginPrompt.CHANGE, attemptId = 72L)
+        advanceUntilIdle()
+
+        val ready = readyOf(viewModel)
+        assertNull(ready.notice)
+        assertEquals(AutoLockTimeoutRowState(AutoLockTimeout.M1, paused = false), ready.timeoutRow)
+        assertEquals(AppLockRowState.On, ready.lock)
+    }
+
+    @Test
+    fun `B-1 AE-116 an APPLIED CHANGE end shows no lock notice, and the row moves only when the store emits the new value`() =
+        runTest(testDispatcher) {
+            coEvery { operations.requestTimeoutChange(AutoLockTimeout.M5) } returns TimeoutChangeResult.STARTED
+            controllerState.value = AppLockState.Unlocked
+            val repository = FakeRepository(
+                AppLockSettingsLoadState.Loaded(settingsOf(lock = true, timeout = AutoLockTimeout.M1))
+            )
+            val viewModel = openSection(repository)
+            viewModel.onTimeoutSelected(AutoLockTimeout.M5)
+            controllerState.value = AppLockState.Authenticating(73L, AuthPurpose.CONFIRM_CHANGE)
+            advanceUntilIdle()
+
+            // The end arrives before the observer shows the commit (a lagging observer).
+            controllerState.value = AppLockState.Unlocked
+            endSignal.value = endOf(OpenOriginEndKind.APPLIED, OpenOriginPrompt.CHANGE, attemptId = 73L)
+            advanceUntilIdle()
+            val beforeEmit = readyOf(viewModel)
+            assertNull("an APPLIED CHANGE is a timeout, not a lock change", beforeEmit.notice)
+            assertEquals(AutoLockTimeoutRowState(AutoLockTimeout.M1, paused = false), beforeEmit.timeoutRow)
+
+            repository.state.value = AppLockSettingsLoadState.Loaded(settingsOf(lock = true, timeout = AutoLockTimeout.M5))
+            advanceUntilIdle()
+            val afterEmit = readyOf(viewModel)
+            assertEquals(AutoLockTimeoutRowState(AutoLockTimeout.M5, paused = false), afterEmit.timeoutRow)
+            assertNull(afterEmit.notice)
+        }
+
+    @Test
+    fun `AE-116 a NOT_COMMITTED CHANGE end shows SAVE_FAILED and the row keeps the old timeout`() =
+        runTest(testDispatcher) {
+            coEvery { operations.requestTimeoutChange(AutoLockTimeout.M5) } returns TimeoutChangeResult.STARTED
+            controllerState.value = AppLockState.Unlocked
+            val viewModel = openSection(
+                FakeRepository(AppLockSettingsLoadState.Loaded(settingsOf(lock = true, timeout = AutoLockTimeout.M1)))
+            )
+            viewModel.onTimeoutSelected(AutoLockTimeout.M5)
+            controllerState.value = AppLockState.Authenticating(74L, AuthPurpose.CONFIRM_CHANGE)
+            advanceUntilIdle()
+
+            controllerState.value = AppLockState.Unlocked
+            endSignal.value = endOf(OpenOriginEndKind.NOT_COMMITTED, OpenOriginPrompt.CHANGE, attemptId = 74L)
+            advanceUntilIdle()
+
+            val ready = readyOf(viewModel)
+            assertEquals(AppLockPrivacySectionNotice.SAVE_FAILED, ready.notice)
+            assertEquals(AutoLockTimeoutRowState(AutoLockTimeout.M1, paused = false), ready.timeoutRow)
+        }
+
+    @Test
+    fun `AE-116 a shorter timeout with the lock on is requested once and commits through the store, with no notice`() =
+        runTest(testDispatcher) {
+            controllerState.value = AppLockState.Unlocked
+            val repository = FakeRepository(
+                AppLockSettingsLoadState.Loaded(settingsOf(lock = true, timeout = AutoLockTimeout.M5))
+            )
+            coEvery { operations.requestTimeoutChange(AutoLockTimeout.S30) } coAnswers {
+                repository.state.value = AppLockSettingsLoadState.Loaded(settingsOf(lock = true, timeout = AutoLockTimeout.S30))
+                TimeoutChangeResult.COMMITTED
+            }
+            val viewModel = openSection(repository)
+
+            viewModel.onTimeoutSelected(AutoLockTimeout.S30)
+            advanceUntilIdle()
+
+            coVerify(exactly = 1) { operations.requestTimeoutChange(AutoLockTimeout.S30) }
+            val ready = readyOf(viewModel)
+            assertEquals(AutoLockTimeoutRowState(AutoLockTimeout.S30, paused = false), ready.timeoutRow)
+            assertNull(ready.notice)
+            assertFalse(ready.isWriting)
+            assertEquals("COMMITTED does not re-read", 1, repository.observeCalls)
+        }
+
+    @Test
+    fun `AE-116 the committed value is shown while the write is in flight, and the row is busy (INV-46)`() =
+        runTest(testDispatcher) {
+            controllerState.value = AppLockState.Unlocked
+            val repository = FakeRepository(
+                AppLockSettingsLoadState.Loaded(settingsOf(lock = true, timeout = AutoLockTimeout.M5))
+            )
+            val gate = CompletableDeferred<Unit>()
+            coEvery { operations.requestTimeoutChange(AutoLockTimeout.M1) } coAnswers {
+                gate.await()
+                repository.state.value = AppLockSettingsLoadState.Loaded(settingsOf(lock = true, timeout = AutoLockTimeout.M1))
+                TimeoutChangeResult.COMMITTED
+            }
+            val viewModel = openSection(repository)
+            try {
+                viewModel.onTimeoutSelected(AutoLockTimeout.M1)
+                advanceUntilIdle()
+                val writing = readyOf(viewModel)
+                assertTrue(writing.isWriting)
+                assertEquals(AutoLockTimeoutRowState(AutoLockTimeout.M5, paused = false), writing.timeoutRow)
+
+                gate.complete(Unit)
+                advanceUntilIdle()
+                val done = readyOf(viewModel)
+                assertFalse(done.isWriting)
+                assertEquals(AutoLockTimeoutRowState(AutoLockTimeout.M1, paused = false), done.timeoutRow)
+            } finally {
+                gate.complete(Unit)
+            }
+        }
+
+    @Test
+    fun `a timeout equal to the committed one sends no request and changes nothing`() = runTest(testDispatcher) {
+        controllerState.value = AppLockState.Unlocked
+        val repository = FakeRepository(
+            AppLockSettingsLoadState.Loaded(settingsOf(lock = true, timeout = AutoLockTimeout.M1))
+        )
+        val viewModel = openSection(repository)
+        val before = viewModel.uiState.value
+
+        viewModel.onTimeoutSelected(AutoLockTimeout.M1)
+        advanceUntilIdle()
+
+        coVerify(exactly = 0) { operations.requestTimeoutChange(any()) }
+        assertEquals(before, viewModel.uiState.value)
+        assertEquals(1, repository.observeCalls)
+    }
+
+    @Test
+    fun `a timeout pick is ignored while writing, while Waiting and while the timeout row is absent`() =
+        runTest(testDispatcher) {
+            // Writing: the first request is held at the gate, the second pick never reaches the operations.
+            controllerState.value = AppLockState.Unlocked
+            val gate = CompletableDeferred<TimeoutChangeResult>()
+            coEvery { operations.requestTimeoutChange(any()) } coAnswers { gate.await() }
+            val writingVm = openSection(
+                FakeRepository(AppLockSettingsLoadState.Loaded(settingsOf(lock = true, timeout = AutoLockTimeout.M1)))
+            )
+            try {
+                writingVm.onTimeoutSelected(AutoLockTimeout.M5)
+                advanceUntilIdle()
+                assertTrue(readyOf(writingVm).isWriting)
+                writingVm.onTimeoutSelected(AutoLockTimeout.M15)
+                advanceUntilIdle()
+                coVerify(exactly = 1) { operations.requestTimeoutChange(any()) }
+            } finally {
+                gate.complete(TimeoutChangeResult.COMMITTED)
+            }
+            advanceUntilIdle()
+
+            // Waiting: a CONFIRM_CHANGE prompt about the committed-on lock is open.
+            controllerState.value = AppLockState.Authenticating(75L, AuthPurpose.CONFIRM_CHANGE)
+            val waitingVm = openSection(
+                FakeRepository(AppLockSettingsLoadState.Loaded(settingsOf(lock = true, timeout = AutoLockTimeout.M1)))
+            )
+            assertTrue(readyOf(waitingVm).lock is AppLockRowState.Waiting)
+            waitingVm.onTimeoutSelected(AutoLockTimeout.S30)
+            advanceUntilIdle()
+            coVerify(exactly = 1) { operations.requestTimeoutChange(any()) }
+
+            // The timeout row is absent (committed lock off), and nothing is Ready (Loading, transient, review).
+            controllerState.value = AppLockState.Disabled
+            val offVm = openSection(FakeRepository(AppLockSettingsLoadState.Loaded(settingsOf(lock = false))))
+            assertNull(readyOf(offVm).timeoutRow)
+            offVm.onTimeoutSelected(AutoLockTimeout.S30)
+            val loadingVm = viewModel(FakeRepository(AppLockSettingsLoadState.Loaded(settingsOf(lock = true))))
+            loadingVm.onTimeoutSelected(AutoLockTimeout.S30)
+            val transientVm = openSection(
+                FakeRepository(AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.IO_ERROR))
+            )
+            transientVm.onTimeoutSelected(AutoLockTimeout.S30)
+            val reviewVm = openSection(
+                FakeRepository(AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.CORRUPTED))
+            )
+            reviewVm.onTimeoutSelected(AutoLockTimeout.S30)
+            advanceUntilIdle()
+
+            coVerify(exactly = 1) { operations.requestTimeoutChange(any()) }
+        }
+
+    @Test
+    fun `every TimeoutChangeResult value is mapped, with the notice and the re-read count per result`() =
+        runTest(testDispatcher) {
+            TimeoutChangeResult.values().forEach { result ->
+                coEvery { operations.requestTimeoutChange(AutoLockTimeout.M5) } returns result
+                controllerState.value = AppLockState.Unlocked
+                val repository = FakeRepository(
+                    AppLockSettingsLoadState.Loaded(settingsOf(lock = true, timeout = AutoLockTimeout.M1))
+                )
+                val viewModel = openSection(repository)
+
+                viewModel.onTimeoutSelected(AutoLockTimeout.M5)
+                advanceUntilIdle()
+
+                // (notice, observer subscriptions): the initial subscription + 1 per re-read.
+                val expected: Pair<AppLockPrivacySectionNotice?, Int> = when (result) {
+                    TimeoutChangeResult.COMMITTED,
+                    TimeoutChangeResult.STARTED -> null to 1
+                    TimeoutChangeResult.FAILED,
+                    TimeoutChangeResult.ALREADY_IN_FLIGHT,
+                    TimeoutChangeResult.NOT_IN_ORIGIN -> AppLockPrivacySectionNotice.SAVE_FAILED to 2
+                }
+                val ready = readyOf(viewModel)
+                assertEquals("$result notice", expected.first, ready.notice)
+                assertEquals("$result observer subscriptions", expected.second, repository.observeCalls)
+                assertFalse("$result row freed", ready.isWriting)
+                assertEquals(
+                    "$result keeps the committed value",
+                    AutoLockTimeoutRowState(AutoLockTimeout.M1, paused = false),
+                    ready.timeoutRow
+                )
+            }
+            confirmVerified(emitter)
+        }
+
+    @Test
+    fun `an exception from requestTimeoutChange shows SAVE_FAILED, frees the row and records no VM diagnostic`() =
+        runTest(testDispatcher) {
+            coEvery { operations.requestTimeoutChange(any()) } coAnswers { throw IllegalStateException("boom") }
+            controllerState.value = AppLockState.Unlocked
+            val viewModel = openSection(
+                FakeRepository(AppLockSettingsLoadState.Loaded(settingsOf(lock = true, timeout = AutoLockTimeout.M1)))
+            )
+
+            viewModel.onTimeoutSelected(AutoLockTimeout.M5)
+            advanceUntilIdle()
+
+            val ready = readyOf(viewModel)
+            assertEquals(AppLockPrivacySectionNotice.SAVE_FAILED, ready.notice)
+            assertFalse(ready.isWriting)
+            assertEquals(AutoLockTimeoutRowState(AutoLockTimeout.M1, paused = false), ready.timeoutRow)
+            confirmVerified(emitter)
+        }
+
+    @Test
+    fun `a CancellationException from requestTimeoutChange is rethrown, not mapped to SAVE_FAILED, and the row is freed`() =
+        runTest(testDispatcher) {
+            coEvery { operations.requestTimeoutChange(any()) } coAnswers { throw CancellationException("cancelled") }
+            controllerState.value = AppLockState.Unlocked
+            val viewModel = openSection(
+                FakeRepository(AppLockSettingsLoadState.Loaded(settingsOf(lock = true, timeout = AutoLockTimeout.M1)))
+            )
+
+            viewModel.onTimeoutSelected(AutoLockTimeout.M5)
+            advanceUntilIdle()
+
+            val ready = readyOf(viewModel)
+            assertNull(ready.notice)
+            assertFalse(ready.isWriting)
+        }
+
+    @Test
+    fun `a timeout request survives the ViewModel scope being cancelled (application scope, NonCancellable)`() =
+        runTest(testDispatcher) {
+            controllerState.value = AppLockState.Unlocked
+            val gate = CompletableDeferred<Unit>()
+            var completed = false
+            coEvery { operations.requestTimeoutChange(AutoLockTimeout.M5) } coAnswers {
+                gate.await()
+                completed = true
+                TimeoutChangeResult.STARTED
+            }
+            val viewModel = openSection(
+                FakeRepository(AppLockSettingsLoadState.Loaded(settingsOf(lock = true, timeout = AutoLockTimeout.M1)))
+            )
+            try {
+                viewModel.onTimeoutSelected(AutoLockTimeout.M5)
+                advanceUntilIdle()
+                viewModel.viewModelScope.cancel()
+                gate.complete(Unit)
+                advanceUntilIdle()
+
+                assertTrue(completed)
+                coVerify(exactly = 1) { operations.requestTimeoutChange(AutoLockTimeout.M5) }
+            } finally {
+                gate.complete(Unit)
+            }
+        }
+
+    @Test
+    fun `a timeout request whose application scope is cancelled mid request still completes (NonCancellable)`() =
+        runTest(testDispatcher) {
+            controllerState.value = AppLockState.Unlocked
+            val scope = appScope()
+            val gate = CompletableDeferred<Unit>()
+            var completed = false
+            coEvery { operations.requestTimeoutChange(AutoLockTimeout.M5) } coAnswers {
+                gate.await()
+                completed = true
+                TimeoutChangeResult.STARTED
+            }
+            val viewModel = viewModel(
+                FakeRepository(AppLockSettingsLoadState.Loaded(settingsOf(lock = true, timeout = AutoLockTimeout.M1))),
+                scope = scope
+            )
+            try {
+                advanceUntilIdle()
+                viewModel.onTimeoutSelected(AutoLockTimeout.M5)
+                advanceUntilIdle()
+                scope.cancel()
+                gate.complete(Unit)
+                advanceUntilIdle()
+
+                assertTrue(completed)
+                coVerify(exactly = 1) { operations.requestTimeoutChange(AutoLockTimeout.M5) }
+            } finally {
+                gate.complete(Unit)
+            }
+        }
+
+    @Test
+    fun `the timeout path emits no diagnostic for any result, throw or end`() = runTest(testDispatcher) {
+        controllerState.value = AppLockState.Unlocked
+        TimeoutChangeResult.values().forEach { result ->
+            coEvery { operations.requestTimeoutChange(any()) } returns result
+            val viewModel = openSection(
+                FakeRepository(AppLockSettingsLoadState.Loaded(settingsOf(lock = true, timeout = AutoLockTimeout.M1)))
+            )
+            viewModel.onTimeoutSelected(AutoLockTimeout.M5)
+            advanceUntilIdle()
+        }
+        coEvery { operations.requestTimeoutChange(any()) } coAnswers { throw IllegalStateException("boom") }
+        openSection(
+            FakeRepository(AppLockSettingsLoadState.Loaded(settingsOf(lock = true, timeout = AutoLockTimeout.M1)))
+        ).onTimeoutSelected(AutoLockTimeout.M5)
+        advanceUntilIdle()
+
+        coVerify(exactly = 0) { emitter.emit(any()) }
+        coVerify(exactly = 0) { emitter.emit(any(), any()) }
+        confirmVerified(emitter)
+    }
+
+    // ---------------------------------------------------------------------------------------------------------
+    // S22-b.1: TECH-13, the timeout row while the lock is paused (INERT)
+    // ---------------------------------------------------------------------------------------------------------
+
+    @Test
+    fun `TECH-13 the timeout row is paused while the controller is Inert, for every reason`() = runTest(testDispatcher) {
+        controllerState.value = AppLockState.Inert(InertReason.NO_CREDENTIAL)
+        val viewModel = openSection(
+            FakeRepository(AppLockSettingsLoadState.Loaded(settingsOf(lock = true, timeout = AutoLockTimeout.M5)))
+        )
+
+        InertReason.values().forEach { reason ->
+            controllerState.value = AppLockState.Inert(reason)
+            advanceUntilIdle()
+            assertEquals(
+                "$reason",
+                AutoLockTimeoutRowState(AutoLockTimeout.M5, paused = true),
+                readyOf(viewModel).timeoutRow
+            )
+        }
+
+        // Control: once the controller is no longer Inert the row is not paused.
+        controllerState.value = AppLockState.Unlocked
+        advanceUntilIdle()
+        assertEquals(AutoLockTimeoutRowState(AutoLockTimeout.M5, paused = false), readyOf(viewModel).timeoutRow)
+    }
+
+    @Test
+    fun `TECH-13 a longer timeout while paused never reaches the operations and shows no notice`() =
+        runTest(testDispatcher) {
+            controllerState.value = AppLockState.Inert(InertReason.NO_CREDENTIAL)
+            val repository = FakeRepository(
+                AppLockSettingsLoadState.Loaded(settingsOf(lock = true, timeout = AutoLockTimeout.M1))
+            )
+            val viewModel = openSection(repository)
+
+            viewModel.onTimeoutSelected(AutoLockTimeout.M5)
+            viewModel.onTimeoutSelected(AutoLockTimeout.M15)
+            advanceUntilIdle()
+
+            coVerify(exactly = 0) { operations.requestTimeoutChange(any()) }
+            val ready = readyOf(viewModel)
+            assertNull(ready.notice)
+            assertFalse(ready.isWriting)
+            assertEquals(1, repository.observeCalls)
+        }
+
+    @Test
+    fun `TECH-13 a shorter timeout while paused is requested and commits, and an equal one sends nothing`() =
+        runTest(testDispatcher) {
+            controllerState.value = AppLockState.Inert(InertReason.NO_CREDENTIAL)
+            val repository = FakeRepository(
+                AppLockSettingsLoadState.Loaded(settingsOf(lock = true, timeout = AutoLockTimeout.M5))
+            )
+            coEvery { operations.requestTimeoutChange(AutoLockTimeout.S30) } coAnswers {
+                repository.state.value = AppLockSettingsLoadState.Loaded(settingsOf(lock = true, timeout = AutoLockTimeout.S30))
+                TimeoutChangeResult.COMMITTED
+            }
+            val viewModel = openSection(repository)
+
+            viewModel.onTimeoutSelected(AutoLockTimeout.M5)
+            advanceUntilIdle()
+            coVerify(exactly = 0) { operations.requestTimeoutChange(any()) }
+
+            viewModel.onTimeoutSelected(AutoLockTimeout.S30)
+            advanceUntilIdle()
+
+            coVerify(exactly = 1) { operations.requestTimeoutChange(AutoLockTimeout.S30) }
+            val ready = readyOf(viewModel)
+            assertEquals(AutoLockTimeoutRowState(AutoLockTimeout.S30, paused = true), ready.timeoutRow)
+            assertNull(ready.notice)
+        }
+
+    @Test
+    fun `TECH-13 NOT_IN_ORIGIN from a paused shorter timeout shows SAVE_FAILED and re-reads`() =
+        runTest(testDispatcher) {
+            controllerState.value = AppLockState.Inert(InertReason.HW_UNAVAILABLE)
+            coEvery { operations.requestTimeoutChange(AutoLockTimeout.S30) } returns TimeoutChangeResult.NOT_IN_ORIGIN
+            val repository = FakeRepository(
+                AppLockSettingsLoadState.Loaded(settingsOf(lock = true, timeout = AutoLockTimeout.M5))
+            )
+            val viewModel = openSection(repository)
+
+            viewModel.onTimeoutSelected(AutoLockTimeout.S30)
+            advanceUntilIdle()
+
+            val ready = readyOf(viewModel)
+            assertEquals(AppLockPrivacySectionNotice.SAVE_FAILED, ready.notice)
+            assertEquals(AutoLockTimeoutRowState(AutoLockTimeout.M5, paused = true), ready.timeoutRow)
+            assertEquals(2, repository.observeCalls)
+        }
+
+    // ---------------------------------------------------------------------------------------------------------
+    // S22-b.1: the secure-screen row (AE-103, INV-48, INV-46)
+    // ---------------------------------------------------------------------------------------------------------
+
+    @Test
+    fun `AE-103 secureOn is the stored value or the committed lock, and secureForced follows the committed lock only`() =
+        runTest(testDispatcher) {
+            controllerState.value = AppLockState.Unlocked
+            // (stored secure, committed lock, expected secureOn, expected secureForced)
+            listOf(
+                listOf(false, false, false, false),
+                listOf(true, false, true, false),
+                listOf(false, true, true, true),
+                listOf(true, true, true, true)
+            ).forEach { (stored, lock, expectedOn, expectedForced) ->
+                val viewModel = openSection(
+                    FakeRepository(AppLockSettingsLoadState.Loaded(settingsOf(lock = lock, secure = stored)))
+                )
+                val ready = readyOf(viewModel)
+                assertEquals("stored=$stored lock=$lock on", expectedOn, ready.secureOn)
+                assertEquals("stored=$stored lock=$lock forced", expectedForced, ready.secureForced)
+            }
+        }
+
+    @Test
+    fun `AE-103 the secure row stays forced while the lock is paused (Inert), and follows the committed lock not the prompt`() =
+        runTest(testDispatcher) {
+            controllerState.value = AppLockState.Inert(InertReason.NO_CREDENTIAL)
+            val pausedVm = openSection(FakeRepository(AppLockSettingsLoadState.Loaded(settingsOf(lock = true, secure = false))))
+            assertTrue(readyOf(pausedVm).secureOn)
+            assertTrue(readyOf(pausedVm).secureForced)
+
+            controllerState.value = AppLockState.Disabled
+            val repository = FakeRepository(AppLockSettingsLoadState.Loaded(settingsOf(lock = false, secure = false)))
+            val viewModel = openSection(repository)
+            assertFalse(readyOf(viewModel).secureForced)
+
+            // The enable prompt is open: nothing is committed, so nothing is forced yet (INV-46).
+            controllerState.value = AppLockState.Authenticating(80L, AuthPurpose.ENABLE)
+            advanceUntilIdle()
+            assertFalse(readyOf(viewModel).secureForced)
+            assertFalse(readyOf(viewModel).secureOn)
+
+            repository.state.value = AppLockSettingsLoadState.Loaded(settingsOf(lock = true, secure = false))
+            controllerState.value = AppLockState.Unlocked
+            advanceUntilIdle()
+            assertTrue(readyOf(viewModel).secureForced)
+            assertTrue(readyOf(viewModel).secureOn)
+        }
+
+    @Test
+    fun `AE-103 a secure-screen write is ignored while forced, with no request and no state change`() =
+        runTest(testDispatcher) {
+            controllerState.value = AppLockState.Unlocked
+            val repository = FakeRepository(AppLockSettingsLoadState.Loaded(settingsOf(lock = true, secure = false)))
+            val viewModel = openSection(repository)
+            val before = viewModel.uiState.value
+
+            viewModel.setSecureScreen(true)
+            viewModel.setSecureScreen(false)
+            advanceUntilIdle()
+
+            coVerify(exactly = 0) { operations.requestSecureScreenChange(any()) }
+            assertEquals(before, viewModel.uiState.value)
+            assertEquals("no re-read", 1, repository.observeCalls)
+
+            // Paused (Inert) is forced too.
+            controllerState.value = AppLockState.Inert(InertReason.NO_CREDENTIAL)
+            advanceUntilIdle()
+            viewModel.setSecureScreen(false)
+            advanceUntilIdle()
+            coVerify(exactly = 0) { operations.requestSecureScreenChange(any()) }
+        }
+
+    @Test
+    fun `AE-103 a secure-screen write with the lock off is requested once, committed state only, and COMMITTED shows no notice`() =
+        runTest(testDispatcher) {
+            val repository = FakeRepository(AppLockSettingsLoadState.Loaded(settingsOf(lock = false, secure = false)))
+            val gate = CompletableDeferred<Unit>()
+            coEvery { operations.requestSecureScreenChange(true) } coAnswers {
+                gate.await()
+                repository.state.value = AppLockSettingsLoadState.Loaded(settingsOf(lock = false, secure = true))
+                PlainSettingResult.COMMITTED
+            }
+            val viewModel = openSection(repository)
+            try {
+                viewModel.setSecureScreen(true)
+                advanceUntilIdle()
+                val writing = readyOf(viewModel)
+                assertTrue(writing.isWriting)
+                assertFalse("still the committed value while in flight (INV-46)", writing.secureOn)
+
+                gate.complete(Unit)
+                advanceUntilIdle()
+                val done = readyOf(viewModel)
+                assertTrue(done.secureOn)
+                assertFalse(done.secureForced)
+                assertFalse(done.isWriting)
+                assertNull(done.notice)
+                coVerify(exactly = 1) { operations.requestSecureScreenChange(true) }
+                assertEquals("COMMITTED does not re-read", 1, repository.observeCalls)
+            } finally {
+                gate.complete(Unit)
+            }
+        }
+
+    @Test
+    fun `every PlainSettingResult value is mapped for the secure-screen write, with no VM diagnostic`() =
+        runTest(testDispatcher) {
+            PlainSettingResult.values().forEach { result ->
+                coEvery { operations.requestSecureScreenChange(true) } returns result
+                val repository = FakeRepository(AppLockSettingsLoadState.Loaded(settingsOf(lock = false, secure = false)))
+                val viewModel = openSection(repository)
+
+                viewModel.setSecureScreen(true)
+                advanceUntilIdle()
+
+                val expected: Pair<AppLockPrivacySectionNotice?, Int> = when (result) {
+                    PlainSettingResult.COMMITTED -> null to 1
+                    PlainSettingResult.FAILED,
+                    PlainSettingResult.REJECTED_FORCED,
+                    PlainSettingResult.ALREADY_IN_FLIGHT -> AppLockPrivacySectionNotice.SAVE_FAILED to 2
+                }
+                val ready = readyOf(viewModel)
+                assertEquals("$result notice", expected.first, ready.notice)
+                assertEquals("$result observer subscriptions", expected.second, repository.observeCalls)
+                assertFalse("$result row freed", ready.isWriting)
+                assertFalse("$result keeps the committed value", ready.secureOn)
+            }
+            // D7: the operations own every secure-screen diagnostic; the VM emits none, not even a persist-failed.
+            coVerify(exactly = 0) { emitter.emit(any()) }
+            coVerify(exactly = 0) { emitter.emit(any(), any()) }
+            confirmVerified(emitter)
+        }
+
+    @Test
+    fun `an exception from requestSecureScreenChange shows SAVE_FAILED, frees the row and the VM records nothing`() =
+        runTest(testDispatcher) {
+            coEvery { operations.requestSecureScreenChange(any()) } coAnswers { throw IllegalStateException("boom") }
+            val viewModel = openSection(FakeRepository(AppLockSettingsLoadState.Loaded(settingsOf(lock = false))))
+
+            viewModel.setSecureScreen(true)
+            advanceUntilIdle()
+
+            val ready = readyOf(viewModel)
+            assertEquals(AppLockPrivacySectionNotice.SAVE_FAILED, ready.notice)
+            assertFalse(ready.isWriting)
+            assertFalse(ready.secureOn)
+            confirmVerified(emitter)
+        }
+
+    @Test
+    fun `a CancellationException from requestSecureScreenChange is rethrown, not mapped to SAVE_FAILED, and the row is freed`() =
+        runTest(testDispatcher) {
+            coEvery { operations.requestSecureScreenChange(any()) } coAnswers { throw CancellationException("cancelled") }
+            val viewModel = openSection(FakeRepository(AppLockSettingsLoadState.Loaded(settingsOf(lock = false))))
+
+            viewModel.setSecureScreen(true)
+            advanceUntilIdle()
+
+            val ready = readyOf(viewModel)
+            assertNull(ready.notice)
+            assertFalse(ready.isWriting)
+        }
+
+    @Test
+    fun `a secure-screen write is ignored while writing, and unless the section is Ready`() = runTest(testDispatcher) {
+        val gate = CompletableDeferred<PlainSettingResult>()
+        coEvery { operations.requestSecureScreenChange(any()) } coAnswers { gate.await() }
+        val writingVm = openSection(FakeRepository(AppLockSettingsLoadState.Loaded(settingsOf(lock = false))))
+        try {
+            writingVm.setSecureScreen(true)
+            advanceUntilIdle()
+            writingVm.setSecureScreen(false)
+            advanceUntilIdle()
+            coVerify(exactly = 1) { operations.requestSecureScreenChange(any()) }
+        } finally {
+            gate.complete(PlainSettingResult.COMMITTED)
+        }
+        advanceUntilIdle()
+
+        val loadingVm = viewModel(FakeRepository(AppLockSettingsLoadState.Loaded(settingsOf(lock = false))))
+        loadingVm.setSecureScreen(true)
+        openSection(FakeRepository(AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.IO_ERROR)))
+            .setSecureScreen(true)
+        openSection(FakeRepository(AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.CORRUPTED)))
+            .setSecureScreen(true)
+        advanceUntilIdle()
+        coVerify(exactly = 1) { operations.requestSecureScreenChange(any()) }
+    }
+
+    @Test
+    fun `a secure-screen request survives the ViewModel scope being cancelled (application scope, NonCancellable)`() =
+        runTest(testDispatcher) {
+            val gate = CompletableDeferred<Unit>()
+            var completed = false
+            coEvery { operations.requestSecureScreenChange(true) } coAnswers {
+                gate.await()
+                completed = true
+                PlainSettingResult.COMMITTED
+            }
+            val viewModel = openSection(FakeRepository(AppLockSettingsLoadState.Loaded(settingsOf(lock = false))))
+            try {
+                viewModel.setSecureScreen(true)
+                advanceUntilIdle()
+                viewModel.viewModelScope.cancel()
+                gate.complete(Unit)
+                advanceUntilIdle()
+
+                assertTrue(completed)
+            } finally {
+                gate.complete(Unit)
+            }
+        }
+
+    @Test
+    fun `AE-103 the stored secure value false is preserved while forced and applies again when the lock turns off (AMD-8)`() =
+        runTest(testDispatcher) {
+            controllerState.value = AppLockState.Unlocked
+            val repository = FakeRepository(AppLockSettingsLoadState.Loaded(settingsOf(lock = true, secure = false)))
+            val viewModel = openSection(repository)
+            assertTrue("forced display", readyOf(viewModel).secureOn)
+
+            repository.state.value = AppLockSettingsLoadState.Loaded(settingsOf(lock = false, secure = false))
+            controllerState.value = AppLockState.Disabled
+            advanceUntilIdle()
+
+            val ready = readyOf(viewModel)
+            assertFalse("the stored false shows again", ready.secureOn)
+            assertFalse(ready.secureForced)
+            // The turn-off never wrote the secure value (the restore is a display rule).
+            coVerify(exactly = 0) { operations.requestSecureScreenChange(any()) }
+            coVerify(exactly = 0) { operations.requestReviewSave(any()) }
+        }
+
+    // ---------------------------------------------------------------------------------------------------------
+    // S22-b.1: the review card with the full record (item 55; AE-85, AE-86, AE-87)
+    // ---------------------------------------------------------------------------------------------------------
+
+    @Test
+    fun `item 55 the initial review card is the fail closed record F with the lock choice On and the forced rows`() =
+        runTest(testDispatcher) {
+            controllerState.value = AppLockState.Unlocked
+            val viewModel = openSection(
+                FakeRepository(AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.CORRUPTED))
+            )
+
+            assertEquals(
+                AppLockPrivacySectionState.NeedsReview(
+                    discreetChoice = true,
+                    isSaving = false,
+                    notice = null,
+                    lockChoice = true,
+                    lockPaused = false,
+                    timeoutChoice = AutoLockTimeout.IMMEDIATE,
+                    secureChoice = true
+                ),
+                viewModel.uiState.value
+            )
+        }
+
+    @Test
+    fun `item 55 the lock choice toggles Off and On, and each toggle is a pure choice with no request`() =
+        runTest(testDispatcher) {
+            controllerState.value = AppLockState.Unlocked
+            val viewModel = openSection(
+                FakeRepository(AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.CORRUPTED))
+            )
+
+            viewModel.setReviewLockChoice(false)
+            advanceUntilIdle()
+            assertFalse((viewModel.uiState.value as AppLockPrivacySectionState.NeedsReview).lockChoice)
+
+            viewModel.setReviewLockChoice(true)
+            advanceUntilIdle()
+            val on = viewModel.uiState.value as AppLockPrivacySectionState.NeedsReview
+            assertTrue(on.lockChoice)
+            assertFalse(on.lockPaused)
+
+            // No explainer, no prompt, no write: the record is only built at save time.
+            verify(exactly = 0) { operations.requestEnable() }
+            verify(exactly = 0) { operations.requestDisable() }
+            coVerify(exactly = 0) { operations.requestReviewSave(any()) }
+        }
+
+    @Test
+    fun `INV-45 the effective lock choice is Off whenever the controller is Inert, and On is refused while paused`() =
+        runTest(testDispatcher) {
+            controllerState.value = AppLockState.Inert(InertReason.SETTINGS_UNREADABLE_NO_AUTH)
+            val viewModel = openSection(
+                FakeRepository(AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.CORRUPTED))
+            )
+
+            InertReason.values().forEach { reason ->
+                controllerState.value = AppLockState.Inert(reason)
+                advanceUntilIdle()
+                val state = viewModel.uiState.value as AppLockPrivacySectionState.NeedsReview
+                assertFalse("$reason lockChoice", state.lockChoice)
+                assertTrue("$reason lockPaused", state.lockPaused)
+            }
+
+            viewModel.setReviewLockChoice(true)
+            advanceUntilIdle()
+            val afterOn = viewModel.uiState.value as AppLockPrivacySectionState.NeedsReview
+            assertFalse("On is refused while paused", afterOn.lockChoice)
+            assertTrue(afterOn.lockPaused)
+        }
+
+    @Test
+    fun `INV-45 control - a controller that is not Inert accepts the On choice`() = runTest(testDispatcher) {
+        controllerState.value = AppLockState.Unlocked
+        val viewModel = openSection(
+            FakeRepository(AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.CORRUPTED))
+        )
+        viewModel.setReviewLockChoice(false)
+        advanceUntilIdle()
+        viewModel.setReviewLockChoice(true)
+        advanceUntilIdle()
+
+        val state = viewModel.uiState.value as AppLockPrivacySectionState.NeedsReview
+        assertTrue(state.lockChoice)
+        assertFalse(state.lockPaused)
+    }
+
+    @Test
+    fun `INV-48 the review discreet and secure choices are ignored while the lock choice is On and work while it is Off`() =
+        runTest(testDispatcher) {
+            controllerState.value = AppLockState.Unlocked
+            val viewModel = openSection(
+                FakeRepository(AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.CORRUPTED))
+            )
+            val before = viewModel.uiState.value
+
+            viewModel.setReviewDiscreetChoice(false)
+            viewModel.setReviewSecureChoice(false)
+            advanceUntilIdle()
+            assertEquals("forced rows are read-only", before, viewModel.uiState.value)
+
+            viewModel.setReviewLockChoice(false)
+            advanceUntilIdle()
+            viewModel.setReviewDiscreetChoice(false)
+            advanceUntilIdle()
+            viewModel.setReviewSecureChoice(false)
+            advanceUntilIdle()
+            val off = viewModel.uiState.value as AppLockPrivacySectionState.NeedsReview
+            assertFalse(off.lockChoice)
+            assertFalse(off.discreetChoice)
+            assertFalse(off.secureChoice)
+
+            viewModel.setReviewDiscreetChoice(true)
+            advanceUntilIdle()
+            viewModel.setReviewSecureChoice(true)
+            advanceUntilIdle()
+            val back = viewModel.uiState.value as AppLockPrivacySectionState.NeedsReview
+            assertTrue(back.discreetChoice)
+            assertTrue(back.secureChoice)
+        }
+
+    @Test
+    fun `the review timeout choice is ignored while the lock choice is Off and works while it is On`() =
+        runTest(testDispatcher) {
+            controllerState.value = AppLockState.Unlocked
+            val viewModel = openSection(
+                FakeRepository(AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.CORRUPTED))
+            )
+
+            viewModel.setReviewTimeoutChoice(AutoLockTimeout.M5)
+            advanceUntilIdle()
+            assertEquals(AutoLockTimeout.M5, (viewModel.uiState.value as AppLockPrivacySectionState.NeedsReview).timeoutChoice)
+
+            viewModel.setReviewLockChoice(false)
+            advanceUntilIdle()
+            viewModel.setReviewTimeoutChoice(AutoLockTimeout.M15)
+            advanceUntilIdle()
+            assertEquals(
+                "the timeout row is hidden while the lock choice is Off",
+                AutoLockTimeout.M5,
+                (viewModel.uiState.value as AppLockPrivacySectionState.NeedsReview).timeoutChoice
+            )
+        }
+
+    @Test
+    fun `the review choices are ignored while saving and unless the review card is showing`() =
+        runTest(testDispatcher) {
+            controllerState.value = AppLockState.Unlocked
+            // Saving: the request is held at the gate, so the card is busy.
+            val gate = CompletableDeferred<ReviewSaveResult>()
+            coEvery { operations.requestReviewSave(any()) } coAnswers { gate.await() }
+            val savingVm = openSection(
+                FakeRepository(AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.CORRUPTED))
+            )
+            try {
+                savingVm.saveReview()
+                advanceUntilIdle()
+                val saving = savingVm.uiState.value
+                assertTrue((saving as AppLockPrivacySectionState.NeedsReview).isSaving)
+
+                savingVm.setReviewLockChoice(false)
+                savingVm.setReviewTimeoutChoice(AutoLockTimeout.M15)
+                savingVm.setReviewDiscreetChoice(false)
+                savingVm.setReviewSecureChoice(false)
+                advanceUntilIdle()
+                assertEquals(saving, savingVm.uiState.value)
+            } finally {
+                gate.complete(ReviewSaveResult.FAILED)
+            }
+            advanceUntilIdle()
+
+            // Not showing: the section is Ready, so every review setter is a no-op.
+            val readyVm = openSection(FakeRepository(AppLockSettingsLoadState.Loaded(settingsOf(lock = false))))
+            val before = readyVm.uiState.value
+            readyVm.setReviewLockChoice(true)
+            readyVm.setReviewTimeoutChoice(AutoLockTimeout.M15)
+            readyVm.setReviewDiscreetChoice(true)
+            readyVm.setReviewSecureChoice(true)
+            advanceUntilIdle()
+            assertEquals(before, readyVm.uiState.value)
+            coVerify(exactly = 1) { operations.requestReviewSave(any()) }
+        }
+
+    @Test
+    fun `AE-86 the saved record carries lock on and IMMEDIATE, and keeps the discreet and secure choices hidden by forcing`() =
+        runTest(testDispatcher) {
+            controllerState.value = AppLockState.Unlocked
+            val sent = slot<AppLockPrivacySettings>()
+            coEvery { operations.requestReviewSave(capture(sent)) } returns ReviewSaveResult.STARTED
+            val viewModel = openSection(
+                FakeRepository(AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.CORRUPTED))
+            )
+
+            // AE-86's record is {lock on, IMMEDIATE, discreet off, secure off}: the two choices are made while the lock
+            // choice is Off, then hidden (forced) by turning it On.
+            viewModel.setReviewLockChoice(false)
+            advanceUntilIdle()
+            viewModel.setReviewDiscreetChoice(false)
+            advanceUntilIdle()
+            viewModel.setReviewSecureChoice(false)
+            advanceUntilIdle()
+            viewModel.setReviewLockChoice(true)
+            advanceUntilIdle()
+            viewModel.saveReview()
+            advanceUntilIdle()
+
+            assertEquals(
+                fullRecord(lock = true, timeout = AutoLockTimeout.IMMEDIATE, discreet = false, secure = false),
+                sent.captured
+            )
+        }
+
+    @Test
+    fun `AE-86 the saved record carries the chosen timeout while the lock choice is On`() = runTest(testDispatcher) {
+        controllerState.value = AppLockState.Unlocked
+        val sent = slot<AppLockPrivacySettings>()
+        coEvery { operations.requestReviewSave(capture(sent)) } returns ReviewSaveResult.STARTED
+        val viewModel = openSection(
+            FakeRepository(AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.CORRUPTED))
+        )
+
+        viewModel.setReviewTimeoutChoice(AutoLockTimeout.M5)
+        advanceUntilIdle()
+        viewModel.saveReview()
+        advanceUntilIdle()
+
+        assertEquals(
+            fullRecord(lock = true, timeout = AutoLockTimeout.M5, discreet = true, secure = true),
+            sent.captured
+        )
+    }
+
+    @Test
+    fun `AE-87 while Inert the saved record has the lock Off, never On`() = runTest(testDispatcher) {
+        controllerState.value = AppLockState.Inert(InertReason.SETTINGS_UNREADABLE_NO_AUTH)
+        val sent = slot<AppLockPrivacySettings>()
+        coEvery { operations.requestReviewSave(capture(sent)) } returns ReviewSaveResult.COMMITTED
+        val viewModel = openSection(
+            FakeRepository(AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.CORRUPTED))
+        )
+
+        // The default raw lock choice is On, but while paused the effective choice is Off (INV-45).
+        viewModel.saveReview()
+        advanceUntilIdle()
+
+        assertEquals(
+            fullRecord(lock = false, timeout = AutoLockTimeout.IMMEDIATE, discreet = true, secure = true),
+            sent.captured
+        )
+    }
+
+    @Test
+    fun `AE-87 while Inert the record {lock off, discreet on, secure off} is saved as chosen`() = runTest(testDispatcher) {
+        controllerState.value = AppLockState.Inert(InertReason.SETTINGS_UNREADABLE_NO_AUTH)
+        val sent = slot<AppLockPrivacySettings>()
+        coEvery { operations.requestReviewSave(capture(sent)) } returns ReviewSaveResult.COMMITTED
+        val viewModel = openSection(
+            FakeRepository(AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.CORRUPTED))
+        )
+
+        // The lock choice is Off while paused, so the discreet and secure rows are editable.
+        viewModel.setReviewLockChoice(true) // refused
+        advanceUntilIdle()
+        viewModel.setReviewDiscreetChoice(true)
+        advanceUntilIdle()
+        viewModel.setReviewSecureChoice(false)
+        advanceUntilIdle()
+        viewModel.saveReview()
+        advanceUntilIdle()
+
+        assertEquals(
+            fullRecord(lock = false, timeout = AutoLockTimeout.IMMEDIATE, discreet = true, secure = false),
+            sent.captured
+        )
+    }
+
+    @Test
+    fun `AE-87 a REJECTED_CAPABILITY review save shows SAVE_FAILED, re-reads and keeps every choice`() =
+        runTest(testDispatcher) {
+            controllerState.value = AppLockState.Unlocked
+            coEvery { operations.requestReviewSave(any()) } returns ReviewSaveResult.REJECTED_CAPABILITY
+            val repository = FakeRepository(AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.CORRUPTED))
+            val viewModel = openSection(repository)
+
+            viewModel.setReviewTimeoutChoice(AutoLockTimeout.M15)
+            advanceUntilIdle()
+            viewModel.saveReview()
+            advanceUntilIdle()
+
+            assertEquals(
+                AppLockPrivacySectionState.NeedsReview(
+                    discreetChoice = true,
+                    isSaving = false,
+                    notice = AppLockPrivacySectionNotice.SAVE_FAILED,
+                    lockChoice = true,
+                    lockPaused = false,
+                    timeoutChoice = AutoLockTimeout.M15,
+                    secureChoice = true
+                ),
+                viewModel.uiState.value
+            )
+            assertEquals("the true state is re-read", 2, repository.observeCalls)
+
+            // The person can choose Off and save again.
+            coEvery { operations.requestReviewSave(any()) } returns ReviewSaveResult.COMMITTED
+            viewModel.setReviewLockChoice(false)
+            advanceUntilIdle()
+            viewModel.saveReview()
+            advanceUntilIdle()
+            coVerify(exactly = 1) {
+                operations.requestReviewSave(
+                    fullRecord(lock = false, timeout = AutoLockTimeout.M15, discreet = true, secure = true)
+                )
+            }
+        }
+
+    @Test
+    fun `the review choices reset to record F after a committed review save`() = runTest(testDispatcher) {
+        controllerState.value = AppLockState.Unlocked
+        val repository = FakeRepository(AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.CORRUPTED))
+        coEvery { operations.requestReviewSave(any()) } returns ReviewSaveResult.COMMITTED
+        val viewModel = openSection(repository)
+
+        viewModel.setReviewTimeoutChoice(AutoLockTimeout.M5)
+        advanceUntilIdle()
+        viewModel.setReviewLockChoice(false)
+        advanceUntilIdle()
+        viewModel.setReviewSecureChoice(false)
+        advanceUntilIdle()
+        viewModel.saveReview()
+        advanceUntilIdle()
+
+        // COMMITTED: the choices reset at once and the card stays busy until the observer reports a readable state.
+        assertEquals(
+            AppLockPrivacySectionState.NeedsReview(
+                discreetChoice = true,
+                isSaving = true,
+                notice = AppLockPrivacySectionNotice.REVIEW_SAVED,
+                lockChoice = true,
+                lockPaused = false,
+                timeoutChoice = AutoLockTimeout.IMMEDIATE,
+                secureChoice = true
+            ),
+            viewModel.uiState.value
+        )
+        // A tap on the busy card changes nothing and sends no second record.
+        viewModel.setReviewLockChoice(false)
+        viewModel.saveReview()
+        advanceUntilIdle()
+        coVerify(exactly = 1) { operations.requestReviewSave(any()) }
+    }
+
+    @Test
+    fun `the review paths emit no VM diagnostic for any result of a full-record save`() = runTest(testDispatcher) {
+        controllerState.value = AppLockState.Unlocked
+        ReviewSaveResult.values().forEach { result ->
+            coEvery { operations.requestReviewSave(any()) } returns result
+            val viewModel = openSection(
+                FakeRepository(AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.CORRUPTED))
+            )
+            viewModel.setReviewTimeoutChoice(AutoLockTimeout.M5)
+            advanceUntilIdle()
+            viewModel.saveReview()
+            advanceUntilIdle()
+        }
+        coVerify(exactly = 0) { emitter.emit(any()) }
+        coVerify(exactly = 0) { emitter.emit(any(), any()) }
+        confirmVerified(emitter)
+    }
 }

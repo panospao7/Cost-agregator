@@ -5,6 +5,7 @@ import android.content.Context
 import androidx.activity.ComponentActivity
 import androidx.annotation.StringRes
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
@@ -17,6 +18,7 @@ import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isToggleable
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -24,9 +26,11 @@ import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.test.core.app.ApplicationProvider
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.privacy.applock.AuthPurpose
+import com.yourname.expensetracker.domain.privacy.applock.AutoLockTimeout
 import com.yourname.expensetracker.domain.privacy.applock.InertReason
 import org.junit.Assert.assertEquals
 import org.junit.Rule
@@ -78,6 +82,13 @@ class AppLockPrivacySectionTest {
     private var lockTryAgains = 0
     private var securitySettingsOpens = 0
 
+    // S22-b.1 callbacks.
+    private val timeoutSelections = mutableListOf<AutoLockTimeout>()
+    private val secureChanges = mutableListOf<Boolean>()
+    private val reviewLockChanges = mutableListOf<Boolean>()
+    private val reviewTimeoutChanges = mutableListOf<AutoLockTimeout>()
+    private val reviewSecureChanges = mutableListOf<Boolean>()
+
     private fun text(@StringRes id: Int): String =
         ApplicationProvider.getApplicationContext<Context>().getString(id)
 
@@ -87,19 +98,51 @@ class AppLockPrivacySectionTest {
         discreetOn: Boolean = false,
         isWriting: Boolean = false,
         notice: AppLockPrivacySectionNotice? = null,
-        discreetForced: Boolean = false
+        discreetForced: Boolean = false,
+        timeoutRow: AutoLockTimeoutRowState? = null,
+        secureOn: Boolean = true,
+        secureForced: Boolean = false
     ) = AppLockPrivacySectionState.Ready(
         discreetOn = discreetOn,
         isWriting = isWriting,
         notice = notice,
         discreetForced = discreetForced,
-        lock = lock
+        lock = lock,
+        timeoutRow = timeoutRow,
+        secureOn = secureOn,
+        secureForced = secureForced
+    )
+
+    /** A Ready state with the committed lock On: timeout row, forced discreet and forced secure rows. */
+    private fun readyLockOn(
+        lock: AppLockRowState = AppLockRowState.On,
+        timeout: AutoLockTimeout = AutoLockTimeout.M1,
+        paused: Boolean = false,
+        isWriting: Boolean = false,
+        notice: AppLockPrivacySectionNotice? = null
+    ) = ready(
+        lock = lock,
+        discreetOn = true,
+        isWriting = isWriting,
+        notice = notice,
+        discreetForced = true,
+        timeoutRow = AutoLockTimeoutRowState(committed = timeout, paused = paused),
+        secureOn = true,
+        secureForced = true
     )
 
     private fun show(state: AppLockPrivacySectionState, showApi30ActionsPoint: Boolean = false) {
+        showLive(mutableStateOf(state), showApi30ActionsPoint)
+    }
+
+    /** Like [show], but the state can change while the composition stays alive. */
+    private fun showLive(
+        state: MutableState<AppLockPrivacySectionState>,
+        showApi30ActionsPoint: Boolean = false
+    ) {
         composeRule.setContent {
             AppLockPrivacySectionContent(
-                state = state,
+                state = state.value,
                 onDiscreetChange = { discreetChanges += it },
                 onRetry = { retries++ },
                 onReviewDiscreetChange = { reviewChanges += it },
@@ -108,10 +151,27 @@ class AppLockPrivacySectionTest {
                 onTurnOff = { turnOffs++ },
                 onLockTryAgain = { lockTryAgains++ },
                 onOpenSecuritySettings = { securitySettingsOpens++ },
-                showApi30ActionsPoint = showApi30ActionsPoint
+                showApi30ActionsPoint = showApi30ActionsPoint,
+                onTimeoutSelected = { timeoutSelections += it },
+                onSecureChange = { secureChanges += it },
+                onReviewLockChange = { reviewLockChanges += it },
+                onReviewTimeoutChange = { reviewTimeoutChanges += it },
+                onReviewSecureChange = { reviewSecureChanges += it }
             )
         }
     }
+
+    private fun setState(state: MutableState<AppLockPrivacySectionState>, value: AppLockPrivacySectionState) {
+        composeRule.runOnIdle { state.value = value }
+        composeRule.waitForIdle()
+    }
+
+    private fun timeoutDialogCount(): Int =
+        composeRule.onAllNodesWithTag(AutoLockTimeoutDialogTags.DIALOG).fetchSemanticsNodes().size
+
+    private fun api30NoteCount(): Int =
+        composeRule.onAllNodesWithTag(AppLockPrivacySectionTags.API30_NOTE, useUnmergedTree = true)
+            .fetchSemanticsNodes().size
 
     /** Like [show], but leaves the Android 11 bullet to the production default (read from the SDK level). */
     private fun showWithDefaultApi30Point(state: AppLockPrivacySectionState) {
@@ -223,8 +283,16 @@ class AppLockPrivacySectionTest {
     }
 
     @Test
-    fun `needs review shows the card, an editable row defaulting to On, and saves`() {
-        show(AppLockPrivacySectionState.NeedsReview(discreetChoice = true, isSaving = false, notice = null))
+    fun `needs review shows the card, an editable discreet row once the lock choice is Off, and saves`() {
+        // S22-b.1: the lock choice defaults to On, which forces the discreet row; an editable row needs lockChoice = false.
+        show(
+            AppLockPrivacySectionState.NeedsReview(
+                discreetChoice = true,
+                isSaving = false,
+                notice = null,
+                lockChoice = false
+            )
+        )
 
         composeRule.onNodeWithTag(AppLockPrivacySectionTags.REVIEW_CARD).assertExists()
         composeRule.onNodeWithText(text(R.string.privacy_review_card_title)).assertExists()
@@ -269,9 +337,21 @@ class AppLockPrivacySectionTest {
 
     @Test
     fun `while saving the review controls are disabled`() {
-        show(AppLockPrivacySectionState.NeedsReview(discreetChoice = false, isSaving = true, notice = null))
+        show(
+            AppLockPrivacySectionState.NeedsReview(
+                discreetChoice = false,
+                isSaving = true,
+                notice = null,
+                lockChoice = false,
+                secureChoice = false
+            )
+        )
 
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.REVIEW_LOCK_ROW).assertIsOff().assertIsNotEnabled()
         composeRule.onNodeWithTag(AppLockPrivacySectionTags.REVIEW_DISCREET_ROW)
+            .assertIsOff()
+            .assertIsNotEnabled()
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.REVIEW_SECURE_ROW)
             .assertIsOff()
             .assertIsNotEnabled()
         composeRule.onNodeWithTag(AppLockPrivacySectionTags.REVIEW_SAVE).assertIsNotEnabled()
@@ -478,7 +558,7 @@ class AppLockPrivacySectionTest {
     }
 
     @Test
-    fun `the Transient lock row draws no switch and no checked state, while the discreet row keeps its own switch`() {
+    fun `the Transient lock row draws no switch and no checked state, while the discreet and secure rows keep their own switches`() {
         show(AppLockPrivacySectionState.TransientUnreadable)
 
         composeRule.onNodeWithTag(AppLockPrivacySectionTags.LOCK_TRANSIENT)
@@ -486,8 +566,8 @@ class AppLockPrivacySectionTest {
             .assert(hasText(text(R.string.privacy_toggle_app_lock)))
             .assert(hasText(text(R.string.privacy_app_lock_unreadable)))
         composeRule.onNodeWithTag(AppLockPrivacySectionTags.LOCK_ROW).assertDoesNotExist()
-        // Only the discreet row is a switch.
-        composeRule.onAllNodes(isToggleable()).assertCountEquals(1)
+        // Only the discreet row and the secure-screen row (S22-b.1) are switches.
+        composeRule.onAllNodes(isToggleable()).assertCountEquals(2)
         composeRule.onNodeWithTag(AppLockPrivacySectionTags.DISCREET_ROW).assertIsOn().assertIsNotEnabled()
     }
 
@@ -772,5 +852,596 @@ class AppLockPrivacySectionTest {
 
         assertEquals("a stale explainer must not reappear", 0, explainerCount())
         assertEquals(0, enableConfirms)
+    }
+
+    // ---------------------------------------------------------------------------------------------------------
+    // S22-b.1: the timeout row (AE-116, INV-46, TECH-13)
+    // ---------------------------------------------------------------------------------------------------------
+
+    @Test
+    fun `timeout row is absent while the committed lock is off or unknown`() {
+        val state = mutableStateOf<AppLockPrivacySectionState>(ready())
+        showLive(state)
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.TIMEOUT_ROW).assertDoesNotExist()
+
+        setState(state, AppLockPrivacySectionState.Loading)
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.TIMEOUT_ROW).assertDoesNotExist()
+    }
+
+    @Test
+    fun `timeout row is absent for an Unavailable lock and for a Waiting lock that is committed off`() {
+        val state = mutableStateOf<AppLockPrivacySectionState>(
+            ready(lock = AppLockRowState.Unavailable(AppLockUnavailableReason.NOW))
+        )
+        showLive(state)
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.TIMEOUT_ROW).assertDoesNotExist()
+
+        setState(state, ready(lock = AppLockRowState.Waiting(AuthPurpose.ENABLE, committedOn = false)))
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.TIMEOUT_ROW).assertDoesNotExist()
+    }
+
+    @Test
+    fun `timeout row is absent in the transient unreadable state`() {
+        show(AppLockPrivacySectionState.TransientUnreadable)
+
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.TIMEOUT_ROW).assertDoesNotExist()
+    }
+
+    @Test
+    fun `timeout row is shown, enabled, with label note and the committed timeout when the lock is on`() {
+        show(readyLockOn(timeout = AutoLockTimeout.M1))
+
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.TIMEOUT_ROW)
+            .assertIsEnabled()
+            .assert(hasText(text(R.string.privacy_app_lock_timeout_label)))
+            .assert(hasText(text(R.string.privacy_app_lock_timeout_note)))
+            .assert(hasText(text(R.string.applock_timeout_1m)))
+    }
+
+    @Test
+    fun `timeout row shows the committed label for every timeout`() {
+        val state = mutableStateOf<AppLockPrivacySectionState>(readyLockOn(timeout = AutoLockTimeout.IMMEDIATE))
+        showLive(state)
+        val labels = listOf(
+            AutoLockTimeout.IMMEDIATE to R.string.applock_timeout_immediately,
+            AutoLockTimeout.S30 to R.string.applock_timeout_30s,
+            AutoLockTimeout.M1 to R.string.applock_timeout_1m,
+            AutoLockTimeout.M5 to R.string.applock_timeout_5m,
+            AutoLockTimeout.M15 to R.string.applock_timeout_15m
+        )
+        labels.forEach { (timeout, labelRes) ->
+            setState(state, readyLockOn(timeout = timeout))
+            composeRule.onNodeWithTag(AppLockPrivacySectionTags.TIMEOUT_ROW).assert(hasText(text(labelRes)))
+        }
+    }
+
+    @Test
+    fun `timeout row is shown for a paused and for a Waiting committed-on lock`() {
+        val state = mutableStateOf<AppLockPrivacySectionState>(
+            readyLockOn(lock = AppLockRowState.InertOn(InertReason.NO_CREDENTIAL), paused = true)
+        )
+        showLive(state)
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.TIMEOUT_ROW).assertExists()
+
+        setState(
+            state,
+            readyLockOn(lock = AppLockRowState.Waiting(AuthPurpose.CONFIRM_CHANGE, committedOn = true))
+        )
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.TIMEOUT_ROW).assertExists()
+    }
+
+    @Test
+    fun `timeout row is disabled while a write is in flight and a tap opens nothing`() {
+        show(readyLockOn(isWriting = true))
+
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.TIMEOUT_ROW)
+            .assertIsNotEnabled()
+            .assert(hasText(text(R.string.applock_timeout_1m)))
+            .performClick()
+
+        assertEquals(0, timeoutDialogCount())
+        assertEquals(emptyList<AutoLockTimeout>(), timeoutSelections)
+    }
+
+    @Test
+    fun `timeout row is disabled while the lock row is Waiting and a tap opens nothing`() {
+        show(readyLockOn(lock = AppLockRowState.Waiting(AuthPurpose.CONFIRM_CHANGE, committedOn = true)))
+
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.TIMEOUT_ROW)
+            .assertIsNotEnabled()
+            .performClick()
+
+        assertEquals(0, timeoutDialogCount())
+        assertEquals(emptyList<AutoLockTimeout>(), timeoutSelections)
+    }
+
+    @Test
+    fun `a tap on the timeout row opens the picker with the committed timeout selected and calls nothing`() {
+        show(readyLockOn(timeout = AutoLockTimeout.M5))
+
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.TIMEOUT_ROW).performClick()
+
+        composeRule.onNodeWithTag(AutoLockTimeoutDialogTags.DIALOG).assertExists()
+        composeRule.onNodeWithTag(AutoLockTimeoutDialogTags.option(AutoLockTimeout.M5)).assertIsSelected()
+        composeRule.onNodeWithTag(AutoLockTimeoutDialogTags.PAUSED_NOTE).assertDoesNotExist()
+        assertEquals(emptyList<AutoLockTimeout>(), timeoutSelections)
+        // INV-46: the row keeps showing the committed value.
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.TIMEOUT_ROW).assert(hasText(text(R.string.applock_timeout_5m)))
+    }
+
+    @Test
+    fun `selecting an option calls onTimeoutSelected once, closes the picker and the row keeps the committed label`() {
+        show(readyLockOn(timeout = AutoLockTimeout.M1))
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.TIMEOUT_ROW).performClick()
+
+        composeRule.onNodeWithTag(AutoLockTimeoutDialogTags.option(AutoLockTimeout.M15)).performScrollTo().performClick()
+
+        assertEquals(listOf(AutoLockTimeout.M15), timeoutSelections)
+        assertEquals(0, timeoutDialogCount())
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.TIMEOUT_ROW)
+            .assert(hasText(text(R.string.applock_timeout_1m)))
+        assertEquals(emptyList<AutoLockTimeout>(), reviewTimeoutChanges)
+    }
+
+    @Test
+    fun `Cancel in the timeout picker closes it and selects nothing`() {
+        show(readyLockOn())
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.TIMEOUT_ROW).performClick()
+
+        composeRule.onNodeWithTag(AutoLockTimeoutDialogTags.CANCEL).performClick()
+
+        assertEquals(0, timeoutDialogCount())
+        assertEquals(emptyList<AutoLockTimeout>(), timeoutSelections)
+    }
+
+    @Test
+    fun `TECH-13 a paused row opens a picker with the longer options disabled and the paused note`() {
+        show(readyLockOn(lock = AppLockRowState.InertOn(InertReason.NO_CREDENTIAL), timeout = AutoLockTimeout.M1, paused = true))
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.TIMEOUT_ROW).assertIsEnabled().performClick()
+
+        composeRule.onNodeWithTag(AutoLockTimeoutDialogTags.PAUSED_NOTE).assertExists()
+        composeRule.onNodeWithTag(AutoLockTimeoutDialogTags.option(AutoLockTimeout.M5)).performScrollTo().assertIsNotEnabled()
+        composeRule.onNodeWithTag(AutoLockTimeoutDialogTags.option(AutoLockTimeout.S30)).assertIsEnabled().performClick()
+
+        assertEquals(listOf(AutoLockTimeout.S30), timeoutSelections)
+    }
+
+    @Test
+    fun `the timeout picker is dropped when the lock turns off and does not return when it turns on again`() {
+        val state = mutableStateOf<AppLockPrivacySectionState>(readyLockOn())
+        showLive(state)
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.TIMEOUT_ROW).performClick()
+        composeRule.onNodeWithTag(AutoLockTimeoutDialogTags.DIALOG).assertExists()
+
+        setState(state, ready())
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.TIMEOUT_ROW).assertDoesNotExist()
+        assertEquals(0, timeoutDialogCount())
+
+        setState(state, readyLockOn())
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.TIMEOUT_ROW).assertExists()
+        assertEquals("a stale picker must not reappear", 0, timeoutDialogCount())
+        assertEquals(emptyList<AutoLockTimeout>(), timeoutSelections)
+    }
+
+    @Test
+    fun `the timeout picker is dropped when a write starts and when the lock row turns Waiting`() {
+        val state = mutableStateOf<AppLockPrivacySectionState>(readyLockOn())
+        showLive(state)
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.TIMEOUT_ROW).performClick()
+        composeRule.onNodeWithTag(AutoLockTimeoutDialogTags.DIALOG).assertExists()
+
+        setState(state, readyLockOn(isWriting = true))
+        assertEquals(0, timeoutDialogCount())
+        setState(state, readyLockOn())
+        assertEquals("a stale picker must not reappear", 0, timeoutDialogCount())
+
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.TIMEOUT_ROW).performClick()
+        composeRule.onNodeWithTag(AutoLockTimeoutDialogTags.DIALOG).assertExists()
+        setState(state, readyLockOn(lock = AppLockRowState.Waiting(AuthPurpose.CONFIRM_CHANGE, committedOn = true)))
+        assertEquals(0, timeoutDialogCount())
+        assertEquals(emptyList<AutoLockTimeout>(), timeoutSelections)
+    }
+
+    @Test
+    fun `control - the timeout picker stays open through an unrelated state change`() {
+        val state = mutableStateOf<AppLockPrivacySectionState>(readyLockOn())
+        showLive(state)
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.TIMEOUT_ROW).performClick()
+
+        setState(state, readyLockOn(notice = AppLockPrivacySectionNotice.SAVE_FAILED))
+
+        assertEquals(1, timeoutDialogCount())
+    }
+
+    // ---------------------------------------------------------------------------------------------------------
+    // S22-b.1: the secure-screen row (AE-103, INV-48)
+    // ---------------------------------------------------------------------------------------------------------
+
+    @Test
+    fun `secure row not forced is enabled, shows the normal support text and toggles to onSecureChange`() {
+        show(ready(secureOn = false, secureForced = false))
+
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.SECURE_ROW)
+            .assertIsOff()
+            .assertIsEnabled()
+            .assert(hasText(text(R.string.privacy_toggle_secure_screen)))
+            .assert(hasText(text(R.string.privacy_secure_screen_support)))
+            .assert(!hasText(text(R.string.privacy_secure_screen_forced)))
+            .performClick()
+
+        assertEquals(listOf(true), secureChanges)
+        assertEquals(emptyList<Boolean>(), discreetChanges)
+    }
+
+    @Test
+    fun `secure row not forced and on requests Off on a tap`() {
+        show(ready(secureOn = true, secureForced = false))
+
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.SECURE_ROW).assertIsOn().assertIsEnabled().performClick()
+
+        assertEquals(listOf(false), secureChanges)
+    }
+
+    @Test
+    fun `secure row forced is checked, disabled, shows the forced text and a tap changes nothing`() {
+        show(readyLockOn())
+
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.SECURE_ROW)
+            .assertIsOn()
+            .assertIsNotEnabled()
+            .assert(hasText(text(R.string.privacy_secure_screen_forced)))
+            .assert(!hasText(text(R.string.privacy_secure_screen_support)))
+            .performClick()
+
+        assertEquals(emptyList<Boolean>(), secureChanges)
+    }
+
+    @Test
+    fun `secure row is disabled while a write is in flight and keeps its committed value`() {
+        show(ready(secureOn = false, isWriting = true))
+
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.SECURE_ROW)
+            .assertIsOff()
+            .assertIsNotEnabled()
+            .performClick()
+
+        assertEquals(emptyList<Boolean>(), secureChanges)
+    }
+
+    @Test
+    fun `secure row while Loading draws no switch and is announced as checking`() {
+        show(AppLockPrivacySectionState.Loading)
+
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.SECURE_CHECKING)
+            .assertIsNotEnabled()
+            .assert(hasText(text(R.string.privacy_toggle_secure_screen)))
+            .assert(hasText(text(R.string.privacy_app_lock_checking)))
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.SECURE_ROW).assertDoesNotExist()
+        composeRule.onAllNodes(isToggleable()).assertCountEquals(0)
+    }
+
+    @Test
+    fun `secure row in the transient state is checked and disabled`() {
+        show(AppLockPrivacySectionState.TransientUnreadable)
+
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.SECURE_ROW)
+            .assertIsOn()
+            .assertIsNotEnabled()
+            .assert(hasText(text(R.string.privacy_toggle_secure_screen)))
+            .performClick()
+
+        assertEquals(emptyList<Boolean>(), secureChanges)
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.SECURE_CHECKING).assertDoesNotExist()
+    }
+
+    // ---------------------------------------------------------------------------------------------------------
+    // S22-b.1: the Android 11 note and the footnote
+    // ---------------------------------------------------------------------------------------------------------
+
+    @Test
+    fun `the Android 11 note is shown on the lock row for On, InertOn and a Waiting committed-on lock`() {
+        val states = listOf(
+            readyLockOn(lock = AppLockRowState.On),
+            readyLockOn(lock = AppLockRowState.InertOn(InertReason.NO_CREDENTIAL), paused = true),
+            readyLockOn(lock = AppLockRowState.Waiting(AuthPurpose.CONFIRM_CHANGE, committedOn = true))
+        )
+        val state = mutableStateOf<AppLockPrivacySectionState>(states.first())
+        showLive(state, showApi30ActionsPoint = true)
+
+        states.forEach { value ->
+            setState(state, value)
+            assertEquals("$value", 1, api30NoteCount())
+            composeRule.onNodeWithTag(AppLockPrivacySectionTags.LOCK_ROW)
+                .assert(hasText(text(R.string.privacy_app_lock_api30_actions_note)))
+        }
+    }
+
+    @Test
+    fun `the Android 11 note is absent when the point is not asked for, even with the lock on`() {
+        show(readyLockOn(), showApi30ActionsPoint = false)
+
+        assertEquals(0, api30NoteCount())
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.LOCK_ROW)
+            .assert(!hasText(text(R.string.privacy_app_lock_api30_actions_note)))
+    }
+
+    @Test
+    fun `the Android 11 note is absent while the committed lock is off`() {
+        val states = listOf(
+            ready(lock = AppLockRowState.Off),
+            ready(lock = AppLockRowState.Waiting(AuthPurpose.ENABLE, committedOn = false)),
+            ready(lock = AppLockRowState.Unavailable(AppLockUnavailableReason.OS)),
+            ready(lock = AppLockRowState.Unavailable(AppLockUnavailableReason.NOT_SECURE)),
+            ready(lock = AppLockRowState.Unavailable(AppLockUnavailableReason.NOW))
+        )
+        val state = mutableStateOf<AppLockPrivacySectionState>(states.first())
+        showLive(state, showApi30ActionsPoint = true)
+
+        states.forEach { value ->
+            setState(state, value)
+            assertEquals("$value", 0, api30NoteCount())
+            composeRule.onNodeWithTag(AppLockPrivacySectionTags.LOCK_ROW)
+                .assert(!hasText(text(R.string.privacy_app_lock_api30_actions_note)))
+        }
+    }
+
+    @Test
+    fun `the footnote is shown whenever the committed lock is on`() {
+        val states = listOf(
+            readyLockOn(lock = AppLockRowState.On),
+            readyLockOn(lock = AppLockRowState.InertOn(InertReason.NO_CREDENTIAL), paused = true),
+            readyLockOn(lock = AppLockRowState.Waiting(AuthPurpose.CONFIRM_CHANGE, committedOn = true))
+        )
+        val state = mutableStateOf<AppLockPrivacySectionState>(states.first())
+        showLive(state)
+
+        states.forEach { value ->
+            setState(state, value)
+            composeRule.onNodeWithTag(AppLockPrivacySectionTags.FOOTNOTE)
+                .assert(hasText(text(R.string.privacy_app_lock_footnote)))
+        }
+    }
+
+    @Test
+    fun `the footnote is absent while the committed lock is off or unknown`() {
+        val states = listOf(
+            ready(lock = AppLockRowState.Off),
+            ready(lock = AppLockRowState.Waiting(AuthPurpose.ENABLE, committedOn = false)),
+            ready(lock = AppLockRowState.Unavailable(AppLockUnavailableReason.NOW)),
+            AppLockPrivacySectionState.Loading,
+            AppLockPrivacySectionState.TransientUnreadable,
+            AppLockPrivacySectionState.NeedsReview(discreetChoice = true, isSaving = false, notice = null)
+        )
+        val state = mutableStateOf<AppLockPrivacySectionState>(states.first())
+        showLive(state)
+
+        states.forEach { value ->
+            setState(state, value)
+            composeRule.onNodeWithTag(AppLockPrivacySectionTags.FOOTNOTE).assertDoesNotExist()
+        }
+    }
+
+    // ---------------------------------------------------------------------------------------------------------
+    // S22-b.1: the review card's full record (item 55, INV-44, INV-45)
+    // ---------------------------------------------------------------------------------------------------------
+
+    @Test
+    fun `review card defaults to the fail-closed record with lock On, IMMEDIATE, discreet and secure forced`() {
+        show(AppLockPrivacySectionState.NeedsReview(discreetChoice = true, isSaving = false, notice = null))
+
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.REVIEW_LOCK_ROW)
+            .assertIsOn()
+            .assertIsEnabled()
+            .assert(hasText(text(R.string.privacy_toggle_app_lock)))
+            .assert(hasText(text(R.string.privacy_app_lock_support)))
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.REVIEW_TIMEOUT_ROW)
+            .assertIsEnabled()
+            .assert(hasText(text(R.string.applock_timeout_immediately)))
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.REVIEW_DISCREET_ROW)
+            .assertIsOn()
+            .assertIsNotEnabled()
+            .assert(hasText(text(R.string.privacy_discreet_notifications_forced)))
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.REVIEW_SECURE_ROW)
+            .assertIsOn()
+            .assertIsNotEnabled()
+            .assert(hasText(text(R.string.privacy_secure_screen_forced)))
+        // The review card replaces the normal rows.
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.LOCK_ROW).assertDoesNotExist()
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.TIMEOUT_ROW).assertDoesNotExist()
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.SECURE_ROW).assertDoesNotExist()
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.DISCREET_ROW).assertDoesNotExist()
+    }
+
+    @Test
+    fun `review forced discreet and secure rows ignore taps while the lock choice is On`() {
+        show(AppLockPrivacySectionState.NeedsReview(discreetChoice = false, isSaving = false, notice = null, secureChoice = false))
+
+        // Forced on even though the stored choices are off.
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.REVIEW_DISCREET_ROW)
+            .assertIsOn().assertIsNotEnabled().performClick()
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.REVIEW_SECURE_ROW)
+            .assertIsOn().assertIsNotEnabled().performClick()
+
+        assertEquals(emptyList<Boolean>(), reviewChanges)
+        assertEquals(emptyList<Boolean>(), reviewSecureChanges)
+    }
+
+    @Test
+    fun `review lock row On reports false on a tap, without moving the switch`() {
+        show(AppLockPrivacySectionState.NeedsReview(discreetChoice = true, isSaving = false, notice = null))
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.REVIEW_LOCK_ROW).assertIsOn().performClick()
+        assertEquals(listOf(false), reviewLockChanges)
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.REVIEW_LOCK_ROW).assertIsOn()
+    }
+
+    @Test
+    fun `review lock row Off reports true on a tap`() {
+        show(
+            AppLockPrivacySectionState.NeedsReview(
+                discreetChoice = true,
+                isSaving = false,
+                notice = null,
+                lockChoice = false
+            )
+        )
+
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.REVIEW_LOCK_ROW).assertIsOff().assertIsEnabled().performClick()
+
+        assertEquals(listOf(true), reviewLockChanges)
+        assertEquals(0, enableConfirms)
+        assertEquals("no explainer in the review card", 0, explainerCount())
+    }
+
+    @Test
+    fun `review lock row while paused is Off, disabled, shows the paused reason and a tap changes nothing (INV-45)`() {
+        show(
+            AppLockPrivacySectionState.NeedsReview(
+                discreetChoice = true,
+                isSaving = false,
+                notice = null,
+                lockChoice = false,
+                lockPaused = true
+            )
+        )
+
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.REVIEW_LOCK_ROW)
+            .assertIsOff()
+            .assertIsNotEnabled()
+            .assert(hasText(text(R.string.privacy_review_lock_paused)))
+            .assert(!hasText(text(R.string.privacy_app_lock_support)))
+            .performClick()
+
+        assertEquals(emptyList<Boolean>(), reviewLockChanges)
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.REVIEW_TIMEOUT_ROW).assertDoesNotExist()
+    }
+
+    @Test
+    fun `review timeout row is shown only while the lock choice is On`() {
+        val state = mutableStateOf<AppLockPrivacySectionState>(
+            AppLockPrivacySectionState.NeedsReview(
+                discreetChoice = true,
+                isSaving = false,
+                notice = null,
+                lockChoice = true,
+                timeoutChoice = AutoLockTimeout.M5
+            )
+        )
+        showLive(state)
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.REVIEW_TIMEOUT_ROW)
+            .assert(hasText(text(R.string.applock_timeout_5m)))
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.TIMEOUT_ROW).assertDoesNotExist()
+
+        setState(
+            state,
+            AppLockPrivacySectionState.NeedsReview(
+                discreetChoice = true,
+                isSaving = false,
+                notice = null,
+                lockChoice = false,
+                timeoutChoice = AutoLockTimeout.M5
+            )
+        )
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.REVIEW_TIMEOUT_ROW).assertDoesNotExist()
+    }
+
+    @Test
+    fun `review timeout dialog opens with the choice selected, reports once to onReviewTimeoutChange and closes`() {
+        show(
+            AppLockPrivacySectionState.NeedsReview(
+                discreetChoice = true,
+                isSaving = false,
+                notice = null,
+                timeoutChoice = AutoLockTimeout.M1
+            )
+        )
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.REVIEW_TIMEOUT_ROW).performClick()
+
+        composeRule.onNodeWithTag(AutoLockTimeoutDialogTags.DIALOG).assertExists()
+        composeRule.onNodeWithTag(AutoLockTimeoutDialogTags.option(AutoLockTimeout.M1)).assertIsSelected()
+        composeRule.onNodeWithTag(AutoLockTimeoutDialogTags.PAUSED_NOTE).assertDoesNotExist()
+        assertEquals(emptyList<AutoLockTimeout>(), reviewTimeoutChanges)
+
+        composeRule.onNodeWithTag(AutoLockTimeoutDialogTags.option(AutoLockTimeout.M15)).performScrollTo().performClick()
+
+        assertEquals(listOf(AutoLockTimeout.M15), reviewTimeoutChanges)
+        assertEquals(0, timeoutDialogCount())
+        assertEquals("the committed-section callback is not used", emptyList<AutoLockTimeout>(), timeoutSelections)
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.REVIEW_TIMEOUT_ROW)
+            .assert(hasText(text(R.string.applock_timeout_1m)))
+    }
+
+    @Test
+    fun `review timeout dialog is dropped when the lock choice turns Off or saving starts, and does not return`() {
+        val state = mutableStateOf<AppLockPrivacySectionState>(
+            AppLockPrivacySectionState.NeedsReview(discreetChoice = true, isSaving = false, notice = null)
+        )
+        showLive(state)
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.REVIEW_TIMEOUT_ROW).performClick()
+        composeRule.onNodeWithTag(AutoLockTimeoutDialogTags.DIALOG).assertExists()
+
+        setState(
+            state,
+            AppLockPrivacySectionState.NeedsReview(discreetChoice = true, isSaving = false, notice = null, lockChoice = false)
+        )
+        assertEquals(0, timeoutDialogCount())
+        setState(
+            state,
+            AppLockPrivacySectionState.NeedsReview(discreetChoice = true, isSaving = false, notice = null)
+        )
+        assertEquals("a stale picker must not reappear", 0, timeoutDialogCount())
+
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.REVIEW_TIMEOUT_ROW).performClick()
+        composeRule.onNodeWithTag(AutoLockTimeoutDialogTags.DIALOG).assertExists()
+        setState(
+            state,
+            AppLockPrivacySectionState.NeedsReview(discreetChoice = true, isSaving = true, notice = null)
+        )
+        assertEquals(0, timeoutDialogCount())
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.REVIEW_TIMEOUT_ROW).assertIsNotEnabled()
+        assertEquals(emptyList<AutoLockTimeout>(), reviewTimeoutChanges)
+    }
+
+    @Test
+    fun `review discreet and secure rows are editable and report their choice while the lock choice is Off`() {
+        show(
+            AppLockPrivacySectionState.NeedsReview(
+                discreetChoice = false,
+                isSaving = false,
+                notice = null,
+                lockChoice = false,
+                secureChoice = true
+            )
+        )
+
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.REVIEW_DISCREET_ROW)
+            .assertIsOff()
+            .assertIsEnabled()
+            .assert(hasText(text(R.string.privacy_discreet_notifications_support)))
+            .assert(!hasText(text(R.string.privacy_discreet_notifications_forced)))
+            .performClick()
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.REVIEW_SECURE_ROW)
+            .assertIsOn()
+            .assertIsEnabled()
+            .assert(hasText(text(R.string.privacy_secure_screen_support)))
+            .assert(!hasText(text(R.string.privacy_secure_screen_forced)))
+            .performClick()
+
+        assertEquals(listOf(true), reviewChanges)
+        assertEquals(listOf(false), reviewSecureChanges)
+        assertEquals(emptyList<Boolean>(), discreetChanges)
+        assertEquals(emptyList<Boolean>(), secureChanges)
+    }
+
+    @Test
+    fun `review save is reported once and review callbacks do not leak into the committed ones`() {
+        show(AppLockPrivacySectionState.NeedsReview(discreetChoice = true, isSaving = false, notice = null))
+
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.REVIEW_SAVE).performClick()
+
+        assertEquals(1, reviewSaves)
+        assertEquals(emptyList<Boolean>(), reviewLockChanges)
+        assertEquals(emptyList<AutoLockTimeout>(), reviewTimeoutChanges)
+        assertEquals(emptyList<Boolean>(), reviewSecureChanges)
+        assertEquals(0, turnOffs + enableConfirms)
     }
 }

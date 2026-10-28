@@ -863,46 +863,66 @@ class AppLockControllerIllegalTransitionTest {
     }
 
     @Test
-    fun `S18 i-a dormancy - AppLockSettingsOperations, requestEnable and requestDisable have no production caller outside AppLockSettingsOperations kt and the settings ViewModel exemption (S22-a-1, owner-approvals 81b)`() {
-        // DORMANT pin (arch review F2). The enable and disable requests exist and are tested. Since S22-a.1
-        // (owner-approvals 81b) exactly one production caller outside AppLockSettingsOperations.kt is allowed: the 1a
-        // settings ViewModel (the lock switch), via the per-file exemption below. Every other ViewModel, Activity,
-        // module or screen must not call them. There is no DI module for the class
-        // (it is `@Singleton @Inject constructor`), so the exempt files are listed in the per-file map below:
-        // AppLockSettingsOperations.kt itself (every token) and, from S20-d/S20-e (S18-ii-g, S18-ii-h), the 1a settings
-        // ViewModel for EXACTLY {AppLockSettingsOperations, requestDiscreetChange, requestReviewSave} (the type for the
-        // constructor, the discreet request, the review-save request). S22-a.1 adds exactly {requestEnable,
-        // requestDisable} to the ViewModel's set (the lock switch); requestTimeoutChange and requestSecureScreenChange
-        // stay dormant until S22-b. The section and the dialog files get no token at all (see the pin below).
-        // Lifting this pin further (allowing the settings UI as a caller of anything else) needs the BLOCKING list
-        // closed first: see LEGAL_PATHS WRITE 3/4 and handoff S18 (i-b1) item 5.
+    fun `S22-b dormancy - the Operations request surface has EXACTLY two production caller files, AppLockSettingsOperations kt and the settings ViewModel (owner-approvals 81b, S22-b)`() {
+        // Caller-set pin (arch review F2; S22-b rewrite, a strengthening). The Operations' request entries now have
+        // exactly two production files that name any of them: AppLockSettingsOperations.kt itself and the 1a settings
+        // ViewModel (the lock switch, the timeout row, the secure-screen row, the discreet row and the review card).
+        // Every other ViewModel, Activity, module or screen must not call them, and the section and dialog files get no
+        // token at all (see the UI-files pin below). There is no DI module for the class (it is
+        // `@Singleton @Inject constructor`). History: S20-d/S20-e gave the ViewModel {AppLockSettingsOperations,
+        // requestDiscreetChange, requestReviewSave}; S22-a.1 added {requestEnable, requestDisable}; S22-b adds EXACTLY
+        // {requestTimeoutChange, requestSecureScreenChange}, so the ViewModel's set now equals the full token list.
         // The scan skips comment lines (KDoc links such as [AppLockSettingsOperations] are not calls).
         // The token list is shared with the reflection pin below (S20 candidate F6), which keeps it equal to the
         // Operations' public request surface.
         val dormant = DORMANT_TOKENS
-        // Per-file exemptions (S20-d, S20-e, S22-a.1), keyed by the EXACT path under the source root. Operations.kt keeps
-        // every token; the settings ViewModel gets exactly the type, the discreet request, the review-save request and
-        // (S22-a.1) the enable and disable requests.
+        val operationsPath = "$APPLOCK_PACKAGE_PATH/AppLockSettingsOperations.kt"
+        // Per-file exemptions, keyed by the EXACT path under the source root.
         val exemptTokensByFile = mapOf(
-            "$APPLOCK_PACKAGE_PATH/AppLockSettingsOperations.kt" to dormant.toSet(),
+            operationsPath to dormant.toSet(),
             SETTINGS_VIEW_MODEL_PATH to
                 setOf(
                     "AppLockSettingsOperations",
                     "requestDiscreetChange",
                     "requestReviewSave",
                     "requestEnable",
-                    "requestDisable"
+                    "requestDisable",
+                    "requestTimeoutChange",
+                    "requestSecureScreenChange"
                 )
         )
+        // One shared comment filter: the scan and the self-check below both go through it.
+        fun codeLines(lines: List<String>): List<String> = lines
+            .map { it.trim() }
+            .filterNot { it.startsWith("*") || it.startsWith("/*") || it.startsWith("//") }
+
+        fun codeLinesOf(file: File): List<String> = codeLines(file.readLines())
+
+        fun namesAnyToken(lines: List<String>): Boolean = lines.any { line -> dormant.any { line.contains(it) } }
+
+        // Self-check, so the caller scan cannot be vacuous: a code line naming a request is seen, a comment line is not.
+        assertTrue(namesAnyToken(codeLines(listOf("operations.requestTimeoutChange(x)"))))
+        assertFalse(namesAnyToken(codeLines(listOf("// operations.requestTimeoutChange(x)", "* [AppLockSettingsOperations]"))))
+
+        val callerFiles = locateProductionSourceRoots().flatMap { root ->
+            root.walkTopDown()
+                .filter { it.isFile && (it.extension == "kt" || it.extension == "java") }
+                .filter { namesAnyToken(codeLinesOf(it)) }
+                .map { relativeToRoot(it, root) }
+                .toList()
+        }.toSet()
+        assertEquals(setOf(operationsPath, SETTINGS_VIEW_MODEL_PATH), callerFiles)
+
+        // The ViewModel's exemption is the full token list: nothing the Operations exposes is left out, nothing extra.
+        assertEquals(dormant.toSet(), exemptTokensByFile.getValue(SETTINGS_VIEW_MODEL_PATH))
+
+        // Per-file offenders: a file naming a token it is not exempt for (a defence beyond the caller set above).
         val offenders = locateProductionSourceRoots().flatMap { root ->
             root.walkTopDown()
                 .filter { it.isFile && (it.extension == "kt" || it.extension == "java") }
                 .filter { file ->
                     val exempt = exemptTokensByFile[relativeToRoot(file, root)] ?: emptySet()
-                    file.readLines()
-                        .map { it.trim() }
-                        .filterNot { it.startsWith("*") || it.startsWith("/*") || it.startsWith("//") }
-                        .any { line -> (dormant - exempt).any { line.contains(it) } }
+                    codeLinesOf(file).any { line -> (dormant - exempt).any { line.contains(it) } }
                 }
                 .map { it.path }
                 .toList()
@@ -933,7 +953,9 @@ class AppLockControllerIllegalTransitionTest {
         val roots = locateProductionSourceRoots()
         val uiFiles = listOf(
             "com/yourname/expensetracker/ui/screens/privacysettings/AppLockPrivacySection.kt",
-            "com/yourname/expensetracker/ui/screens/privacysettings/AppLockEnableDialog.kt"
+            "com/yourname/expensetracker/ui/screens/privacysettings/AppLockEnableDialog.kt",
+            // S22-b (S22-a.1 review disposition): the timeout picker joins the UI-files set.
+            "com/yourname/expensetracker/ui/screens/privacysettings/AutoLockTimeoutDialog.kt"
         )
         val forbidden = listOf("AppLockController", "AppLockSettingsOperations", "DeviceAuthenticator", "relay")
         fun offending(text: String): List<String> = forbidden.filter { text.lowercase().contains(it.lowercase()) }

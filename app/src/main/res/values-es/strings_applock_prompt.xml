@@ -6,4 +6,6 @@
     <string name="applock_prompt_title_disable">Desactivar el bloqueo de la app</string>
     <string name="applock_prompt_title_change">Cambiar los ajustes del bloqueo de la app</string>
     <string name="applock_prompt_title_unlock">Desbloquear</string>
+    <!-- S22-b (D-S22-6): DRAFT translation, owner sign-off pending (O-2). -->
+    <string name="applock_prompt_title_export">Exportar copia de seguridad</string>
 </resources>

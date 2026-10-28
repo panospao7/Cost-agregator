@@ -2958,3 +2958,16 @@ Validation to request: unchanged, targeted `*AppLockController*` (covers both te
   - privacy-security-guardian and architecture-guardian: ACCEPT-WITH-CONDITIONS. All fixes are applied and the dispositions are in the plan (corrected face-unlock copy, purpose-aware refusal, the discreet-forced guard, LEGAL_PATHS WRITE 3 live).
   - Next: S22-b (b.1 timeout/secure/review card; b.2 F6 watchdog plus EXPORT copy), then the atomic S22 candidate (union targeted, runtime-ui, domain-n-z, static-guards, app-check) and reviewer-strict, then S23 docs, then G1b on the 6 AVDs.
   - The S22-b UI-files pin must add AutoLockTimeoutDialog.kt.
+
+## S22-b (2026-10-29): atomic S22 candidate validated; reviewer-strict ACCEPT-WITH-CONDITIONS, copy fix applied (uncommitted)
+- Files: AppLockPrivacySettingsViewModel (VM), AppLockPrivacySection (Section), AutoLockTimeoutDialog, strings_privacy_section ×3 (en/es/el, es/el DRAFT, O-2), UnsupportedDatabaseActivity, UnsupportedDatabaseExportAuth, DeviceAuthenticator (EXPORT purpose), BiometricPromptDeviceAuthenticator, strings_applock_prompt ×3, pins, docs (LEGAL_PATHS / SEGMENTS / INVENTORY / ux-flows).
+- Guardian dispositions: plan "### S22-b review dispositions".
+- Candidate validation, all PASS: targeted vr-20261028-192353-0325429c; runtime-ui vr-20261028-193126-f4069a01; domain-n-z vr-20261028-193513-fb47bc57; known_good_state, cancellation, ui_dao, guard_docs_truth; lint vr-20261028-194214-de06c5cb; static-guards vr-20261028-194718-ba5e63e5; app-check vr-20261028-200352-5aa22cc7.
+- reviewer-strict ACCEPT-WITH-CONDITIONS; conditions applied 2026-10-29 (strings and docs only, no code change): (1) secure-screen title "Secure screen" and support "Hides the app's content in recent apps and blocks screenshots, screen recording and casting." (FLAG_SECURE does not remove the app from recents), en/es/el; (2) timeout note qualified "When App lock is on, ..." en/es/el; (3) ux-flows 4.x mocks and 9.1 updated; (4) AppLockPrivacySectionStringsTest English expectations updated for the 3 changed keys.
+- The strings-only edit is after the validated tree: re-run the targeted AppLockPrivacySectionStringsTest (and lint if the runner requires it) before commit.
+- S23 follow-ups added to the plan (end of "### S22-b review dispositions").
+- Next: S23 docs, then G1b.
+- S22 copy fix re-validated: targeted vr-20261028-211654-8077dc98 PASS, lint vr-20261028-212026-92511d91 PASS.
+  - The secure-screen title and support copy, the timeout note, and enable_point_screen no longer claim the app is removed from recent apps.
+  - S22-b is COMMITTED. The atomic S22 candidate (a.0 + a.1 + b) is accepted.
+- Next session (fresh orchestrator, owner-approvals 87): S23 docs (single Sonnet writer plus a combined guardian), then G1b on the AVDs g1b-api30/31/33/34, release-api26 and wave5-api35.

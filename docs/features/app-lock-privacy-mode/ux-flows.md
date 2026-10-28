@@ -146,9 +146,12 @@ Wireframe, Inc 1b complete, lock OFF, API 30+, secure device (default state):
 |  Ask for your fingerprint or screen lock when     |
 |  the app opens.                                   |
 |                                                   |
-| Block screenshots and hide in recent apps [ o--]  |
-|  Hides the app in the recent apps list and blocks |
-|  screenshots, screen recording and casting.       |
+| Secure screen                             [ o--]  |
+|  Hides the app's content in recent apps and       |
+|  blocks screenshots, screen recording and         |
+|  casting.                                         |
+|  (corrected 2026-10-29: FLAG_SECURE does not      |
+|  remove the app from recents)                     |
 |                                                   |
 |  Anyone who knows your phone's screen lock can    |
 |  unlock the app. Apps with accessibility access   |
@@ -165,12 +168,13 @@ Wireframe, lock ON (device-credential method, API 31+):
 |  the app opens.                                   |
 |                                                   |
 | Lock after leaving the app            1 minute >  |   <- 48dp row, opens picker (2.2b)
-|  The app always locks when it starts fresh.       |
+|  When App lock is on, the app always locks when   |
+|  it starts fresh.                                 |
 |                                                   |
 | Discreet notifications                    [--o ]  |   <- checked, DISABLED
 |  Always on while app lock is on.                  |
 |                                                   |
-| Block screenshots and hide in recent apps [--o ]  |   <- checked, DISABLED
+| Secure screen                             [--o ]  |   <- checked, DISABLED
 |  Always on while app lock is on. You won't be     |
 |  able to take screenshots of your own reports.    |
 |                                                   |
@@ -291,7 +295,7 @@ write is one **review-save** of the whole record (INV-44, AMD-1):
 | App lock                                  [--o ]  |   <- ENABLED, shows On (the effective safe state)
 | Lock after leaving the app          Immediately >  |   <- shown while the lock choice is On
 | Discreet notifications                    [--o ]  |   <- checked, DISABLED (forced while the lock choice is On)
-| Block screenshots and hide in recent apps [--o ]  |   <- checked, DISABLED (forced while the lock choice is On)
+| Secure screen                             [--o ]  |   <- checked, DISABLED (forced while the lock choice is On)
 ```
 Review-save rules as the user sees them (INV-44, INV-45, T27, AE-85..AE-90):
 - **"On" is not a separate enable flow.** The lock is already effectively on while settings are unreadable (the
@@ -1314,7 +1318,7 @@ only. There is no per-decision variant text left in this table: rows that existe
 | `privacy_review_lock_paused` | App lock is paused, so Off is the only choice. | 1b | G2. Review card, `INERT` (INV-45) |
 | `privacy_review_pin_removed_note` | Turning app lock off also removes your app PIN. | 2 | G2. Review card, PIN mode, while Off is chosen |
 | `privacy_app_lock_timeout_label` | Lock after leaving the app | 1b | |
-| `privacy_app_lock_timeout_note` | The app always locks when it starts fresh. | 1b | |
+| `privacy_app_lock_timeout_note` | When App lock is on, the app always locks when it starts fresh. (corrected 2026-10-29: the old text also showed while the lock is paused) | 1b | |
 | `applock_timeout_immediately` | Immediately | 1b | |
 | `applock_timeout_30s` | After 30 seconds | 1b | |
 | `applock_timeout_1m` | After 1 minute | 1b | Default |
@@ -1322,8 +1326,8 @@ only. There is no per-decision variant text left in this table: rows that existe
 | `applock_timeout_15m` | After 15 minutes | 1b | |
 | `applock_timeout_immediately_hint` | Locks as soon as you leave the app, including after the camera or a file picker. Choose a longer time if you attach photos or receipts often. | 1b | Rec. Replaces the exemption wording (no exemption in spec 3.4). No "lost" wording: OD-9a preserves input |
 | `applock_timeout_30s_hint` | Locks if the camera or a file picker takes longer than this. | 1b | Rec |
-| `privacy_toggle_secure_screen` | Block screenshots and hide in recent apps | 1b | |
-| `privacy_secure_screen_support` | Hides the app in the recent apps list and blocks screenshots, screen recording and casting. | 1b | |
+| `privacy_toggle_secure_screen` | Secure screen (corrected 2026-10-29: FLAG_SECURE does not remove the app from recents) | 1b | |
+| `privacy_secure_screen_support` | Hides the app's content in recent apps and blocks screenshots, screen recording and casting. (corrected 2026-10-29: FLAG_SECURE does not remove the app from recents) | 1b | |
 | `privacy_secure_screen_forced` | Always on while app lock is on. You won't be able to take screenshots of your own reports. | 1b | |
 | `privacy_app_lock_footnote` | Anyone who knows your phone's screen lock can unlock the app. Apps with accessibility access can still read the screen. | 1b | |
 | `privacy_app_lock_footnote_pin` | Anyone who knows your phone's screen lock can unlock the app. Set an app PIN to help prevent this. | 2 | Rec. "help": spec admits residual bypasses (OD-19). Replaces footnote when Inc 2 ships. Accessibility sentence moves to the App PIN screen or an info line (implementer decision) |
@@ -1331,7 +1335,7 @@ only. There is no per-decision variant text left in this table: rows that existe
 | `privacy_app_lock_enable_point_unlock` | The app asks for your fingerprint or screen lock when it opens, and after you leave it for the time you choose. | 1b | |
 | `privacy_app_lock_enable_point_notifications` | Notifications show no amounts or details while app lock is on. | 1b | OD-2a |
 | `privacy_app_lock_enable_point_replaced` | Notifications already showing are replaced with the private version. | 1b | G2. OD-6a, silent re-post (AMD-7) |
-| `privacy_app_lock_enable_point_screen` | Screenshots and screen recording are blocked and the app is hidden in recent apps. | 1b | |
+| `privacy_app_lock_enable_point_screen` | Screenshots and screen recording are blocked and the app's content is hidden in recent apps. (corrected 2026-10-29) | 1b | |
 | `privacy_app_lock_enable_point_background` | Reminders and automatic capture keep working while the app is locked. | 1b | |
 | `privacy_app_lock_enable_point_face` | Only your screen lock or a strong biometric, like your fingerprint, can unlock the app. Basic face unlock isn't used. (corrected 2026-10-28: Class 3 face is allowed by BIOMETRIC_STRONG) | 1b | |
 | `privacy_app_lock_enable_point_api30_actions` | Bill reminders won't show Snooze or Dismiss while app lock is on. | 1b | Rec. Rendered only on `SDK_INT == 30` |

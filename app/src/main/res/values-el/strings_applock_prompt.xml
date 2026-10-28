@@ -6,4 +6,6 @@
     <string name="applock_prompt_title_disable">Απενεργοποίηση κλειδώματος εφαρμογής</string>
     <string name="applock_prompt_title_change">Αλλαγή ρυθμίσεων κλειδώματος εφαρμογής</string>
     <string name="applock_prompt_title_unlock">Ξεκλείδωμα</string>
+    <!-- S22-b (D-S22-6): DRAFT translation, owner sign-off pending (O-2). -->
+    <string name="applock_prompt_title_export">Εξαγωγή αντιγράφου ασφαλείας</string>
 </resources>

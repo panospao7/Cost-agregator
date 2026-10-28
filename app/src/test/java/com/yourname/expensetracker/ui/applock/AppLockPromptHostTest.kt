@@ -505,7 +505,8 @@ class AppLockPromptHostTest {
             AuthPromptCopy.UNLOCK to R.string.applock_prompt_title_unlock,
             AuthPromptCopy.ENABLE to R.string.applock_prompt_title_enable,
             AuthPromptCopy.DISABLE to R.string.applock_prompt_title_disable,
-            AuthPromptCopy.CHANGE to R.string.applock_prompt_title_change
+            AuthPromptCopy.CHANGE to R.string.applock_prompt_title_change,
+            AuthPromptCopy.EXPORT to R.string.applock_prompt_title_export
         )
         assertEquals("every copy value must have an expectation", AuthPromptCopy.entries.toSet(), expectedTitles.keys)
         for ((copy, titleRes) in expectedTitles) {

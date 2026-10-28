@@ -27,6 +27,7 @@ import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticsEmit
 import com.yourname.expensetracker.domain.privacy.applock.ReviewSaveResult
 import com.yourname.expensetracker.domain.privacy.applock.SettingsRequestResult
 import com.yourname.expensetracker.domain.privacy.applock.SettingsUnreadableCause
+import com.yourname.expensetracker.domain.privacy.applock.TimeoutChangeResult
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -110,7 +111,15 @@ sealed interface AppLockRowState {
 }
 
 /**
- * What the "App lock & privacy" section renders (1a discreet row, 1b lock row).
+ * The "Lock after leaving the app" row (S22-b.1), present only while the COMMITTED lock is on (ux 2.1). [committed] is the
+ * committed timeout and is the only value the row ever shows (AE-116, INV-46: no optimistic value). [paused] is true
+ * while the lock is paused (`INERT`): TECH-13, options longer than [committed] are disabled in the picker, because
+ * nothing can authenticate (a UI hint only; the controller enforces it).
+ */
+data class AutoLockTimeoutRowState(val committed: AutoLockTimeout, val paused: Boolean)
+
+/**
+ * What the "App lock & privacy" section renders (1a discreet row, 1b lock, timeout and secure-screen rows).
  *
  * Every state is derived from the committed store state (INV-46). There is no optimistic value, and
  * an unknown state never renders as Off (INV-2): [Loading] has no switch at all and the unreadable
@@ -124,14 +133,20 @@ sealed interface AppLockPrivacySectionState {
     /**
      * Readable store. [discreetOn] is the EFFECTIVE discreet value (stored value, or on while the committed lock is on);
      * [discreetForced] is true while the committed lock is on or paused, when the row is read-only (INV-48, AE-65).
-     * [isWriting] disables the discreet row. [lock] is the lock row (S22-a.1).
+     * [isWriting] disables every write row. [lock] is the lock row (S22-a.1). From S22-b.1: [timeoutRow] is the timeout
+     * row, null while the committed lock is off; [secureOn] is the EFFECTIVE secure-screen value (stored value, or on
+     * while the committed lock is on) and [secureForced] is true while the committed lock is on (INV-48, AE-103: the row
+     * is read-only). The three new fields have defaults only so a state built without them reads as "lock off".
      */
     data class Ready(
         val discreetOn: Boolean,
         val isWriting: Boolean,
         val notice: AppLockPrivacySectionNotice?,
         val discreetForced: Boolean,
-        val lock: AppLockRowState
+        val lock: AppLockRowState,
+        val timeoutRow: AutoLockTimeoutRowState? = null,
+        val secureOn: Boolean = true,
+        val secureForced: Boolean = false
     ) : AppLockPrivacySectionState
 
     /**
@@ -142,25 +157,40 @@ sealed interface AppLockPrivacySectionState {
 
     /**
      * `CORRUPTED` or `INVALID_VALUE`. The review card is shown; the only accepted write is one
-     * review-save of the whole record (INV-44). [discreetChoice] starts at the fail-closed value (on).
+     * review-save of the whole record (INV-44). The choices start at the fail-closed record `F` (S22-b.1, item 55, the
+     * full record): [lockChoice] On, [timeoutChoice] `IMMEDIATE`, [discreetChoice] on and [secureChoice] on.
+     *
+     * [lockChoice] is the EFFECTIVE choice: it is always false while [lockPaused] (`INERT`, INV-45: Off is the only choice,
+     * and a record with the lock on would be rejected). While [lockChoice] is on, the discreet and secure rows are forced
+     * (read-only, shown on) and the timeout row is shown; while it is off they are editable and the timeout row is hidden.
+     * The three new fields have defaults (the fail-closed record) only so a state built without them reads as `F`.
      */
     data class NeedsReview(
         val discreetChoice: Boolean,
         val isSaving: Boolean,
-        val notice: AppLockPrivacySectionNotice?
+        val notice: AppLockPrivacySectionNotice?,
+        val lockChoice: Boolean = true,
+        val lockPaused: Boolean = false,
+        val timeoutChoice: AutoLockTimeout = AutoLockTimeout.IMMEDIATE,
+        val secureChoice: Boolean = true
     ) : AppLockPrivacySectionState
 }
 
 /**
- * ViewModel of the "App lock & privacy" section (S12; the lock row is S22-a.1). [PrivacySettingsViewModel] is untouched.
+ * ViewModel of the "App lock & privacy" section (S12; the lock row is S22-a.1; the timeout row, the secure-screen row and
+ * the full review card are S22-b.1). [PrivacySettingsViewModel] is untouched.
  *
  * Legal path: the only writers are [AppLockSettingsOperations.requestDiscreetChange] (WRITE 5: the forced-aware
  * per-field discreet write plus the post-commit re-post sweep, serialised inside the operations; S20-d),
- * [AppLockSettingsOperations.requestReviewSave] (INV-44, INV-45; S20-e) and, from S22-a.1, the lock requests
- * [AppLockSettingsOperations.requestEnable] and [AppLockSettingsOperations.requestDisable] (WRITE 3/4: T26, T17, T18,
- * T19). The two lock requests are not suspend and are called directly on Main; the controller starts the prompt on its
- * own main dispatcher. All of them end in the settings repository (INV-1). The section never holds an optimistic
- * value: [uiState] is derived from the repository's committed load state (INV-46).
+ * [AppLockSettingsOperations.requestReviewSave] (INV-44, INV-45; S20-e), from S22-a.1 the lock requests
+ * [AppLockSettingsOperations.requestEnable] and [AppLockSettingsOperations.requestDisable] (WRITE 3: T26, T17, T18,
+ * T19) and, from S22-b.1, [AppLockSettingsOperations.requestTimeoutChange] (WRITE 4: INV-3, OD-8a, TECH-13) and
+ * [AppLockSettingsOperations.requestSecureScreenChange] (INV-48, AE-103). The two lock requests are not suspend and are
+ * called directly on Main; the controller starts the prompt on its own main dispatcher. The suspend requests (timeout,
+ * secure screen, discreet, review-save) run in the application scope under `NonCancellable`. All of them end in the
+ * settings repository (INV-1). The section never holds an optimistic value: [uiState] is derived from the repository's
+ * committed load state (INV-46), so a timeout whose prompt was cancelled or never confirmed keeps showing the old value
+ * (AE-116).
  *
  * Reads of the controller (S22-a.1, owner item 81b): exactly its published `state` (the lock row is Waiting only while
  * the state is `Authenticating`, B-3) and its read-only `openOriginEnd` signal (the notices). The signal is a
@@ -196,6 +226,15 @@ class AppLockPrivacySettingsViewModel @Inject constructor(
     private val isWriting = MutableStateFlow(false)
     private val notice = MutableStateFlow<AppLockPrivacySectionNotice?>(null)
     private val reviewChoice = MutableStateFlow(FAIL_CLOSED_DISCREET)
+
+    /**
+     * The review card's other three choices (S22-b.1, item 55). They start at the fail-closed record `F`: the lock On, the
+     * timeout `IMMEDIATE`, the secure screen on. Nothing is written until [saveReview]. The lock choice is the RAW choice;
+     * the effective one is always false while the lock is paused (INV-45).
+     */
+    private val reviewLockChoice = MutableStateFlow(FAIL_CLOSED_LOCK)
+    private val reviewTimeoutChoice = MutableStateFlow(FAIL_CLOSED_TIMEOUT)
+    private val reviewSecureChoice = MutableStateFlow(FAIL_CLOSED_SECURE)
 
     /**
      * The latest capability read. A display hint only (INV-23): it picks the unavailable explanation of the lock row and
@@ -241,8 +280,14 @@ class AppLockPrivacySettingsViewModel @Inject constructor(
     @Volatile
     private var observeJob: Job? = null
 
-    /** The two review-card inputs, folded into one flow so the section combine stays within five typed sources. */
-    private data class ReviewInputs(val choice: Boolean, val committed: Boolean)
+    /** The review-card inputs, folded into one flow so the section combine stays within five typed sources. */
+    private data class ReviewInputs(
+        val choice: Boolean,
+        val committed: Boolean,
+        val lock: Boolean,
+        val timeout: AutoLockTimeout,
+        val secure: Boolean
+    )
 
     /** What the lock row needs besides the committed settings: the controller state and the display hint (B-3). */
     private data class LockInputs(
@@ -251,8 +296,15 @@ class AppLockPrivacySettingsViewModel @Inject constructor(
         val refusedNow: Boolean
     )
 
-    private val reviewInputs: Flow<ReviewInputs> =
-        combine(reviewChoice, reviewCommitted) { choice, committed -> ReviewInputs(choice, committed) }
+    private val reviewInputs: Flow<ReviewInputs> = combine(
+        reviewChoice,
+        reviewCommitted,
+        reviewLockChoice,
+        reviewTimeoutChoice,
+        reviewSecureChoice
+    ) { choice, committed, lockChoice, timeoutChoice, secureChoice ->
+        ReviewInputs(choice, committed, lockChoice, timeoutChoice, secureChoice)
+    }
 
     private val lockInputs: Flow<LockInputs> =
         combine(controller.state, capabilityHint, refusedNow) { controllerState, capability, refused ->
@@ -272,7 +324,17 @@ class AppLockPrivacySettingsViewModel @Inject constructor(
             is AppLockSettingsLoadState.FirstRunDefault -> readySection(state.settings, writing, currentNotice, lock)
             is AppLockSettingsLoadState.Unreadable ->
                 if (state.cause.isPersistent) {
-                    AppLockPrivacySectionState.NeedsReview(review.choice, writing || review.committed, currentNotice)
+                    // INV-45: while the lock is paused (INERT) Off is the only choice, whatever was chosen before.
+                    val paused = lock.state is AppLockState.Inert
+                    AppLockPrivacySectionState.NeedsReview(
+                        discreetChoice = review.choice,
+                        isSaving = writing || review.committed,
+                        notice = currentNotice,
+                        lockChoice = review.lock && !paused,
+                        lockPaused = paused,
+                        timeoutChoice = review.timeout,
+                        secureChoice = review.secure
+                    )
                 } else {
                     AppLockPrivacySectionState.TransientUnreadable
                 }
@@ -318,27 +380,120 @@ class AppLockPrivacySettingsViewModel @Inject constructor(
         }
     }
 
-    /** Sets the review card's discreet choice. Nothing is written until [saveReview]. */
-    fun setReviewDiscreetChoice(enabled: Boolean) {
+    /**
+     * Per-field secure-screen write (S22-b.1, INV-48, AE-103) through [AppLockSettingsOperations.requestSecureScreenChange].
+     * Ignored unless the section is [AppLockPrivacySectionState.Ready], idle and the row is not forced (the operations
+     * reject a forced value as well: REJECTED_FORCED shows the save-failed notice and re-reads). Same discipline as the
+     * discreet write: application scope, `NonCancellable`, no outer serializer, `CancellationException` rethrown. Neither
+     * the failure diagnostic nor any other `LOCK_*` code is emitted here (D7): the operations own them.
+     */
+    fun setSecureScreen(enabled: Boolean) {
         val current = uiState.value
-        if (current !is AppLockPrivacySectionState.NeedsReview || current.isSaving) return
-        reviewChoice.value = enabled
+        if (current !is AppLockPrivacySectionState.Ready || current.isWriting || current.secureForced) return
+        if (!beginWrite()) return
+        appScope.launch {
+            try {
+                withContext(NonCancellable) {
+                    handlePlain(operations.requestSecureScreenChange(enabled))
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Timber.w("Secure screen write failed: class=%s", DiagnosticThrowableSummary.className(e))
+                notice.value = AppLockPrivacySectionNotice.SAVE_FAILED
+            } finally {
+                isWriting.value = false
+            }
+        }
     }
 
     /**
-     * Review-save of the whole record through [AppLockSettingsOperations.requestReviewSave] (INV-44, INV-45, S20-e).
-     * Until the full review card (S22-b, item 55) the record is the D2 record: lock off, [AutoLockTimeout.IMMEDIATE],
-     * discreet = the user's choice, secure screen on (the fail-closed value). It has no lock to enable, so the
-     * capability refusal is unreachable here. Ignored unless the review card is showing and idle.
+     * The timeout picker's choice (S22-b.1, INV-3, OD-8a, AE-116) through [AppLockSettingsOperations.requestTimeoutChange].
+     * An equal or shorter timeout commits without a prompt; a longer one starts the CHANGE prompt and the row keeps showing
+     * the COMMITTED timeout until (and unless) the apply commits: there is no optimistic value. The Operations return before
+     * the prompt ends, so the lock row shows Waiting from the controller state while it is open (B-3), and a cancelled or
+     * failed prompt leaves the old value (AE-116) with the notice of the end signal.
+     *
+     * Ignored unless the section is Ready, idle, the timeout row is present (committed lock on), no prompt is in flight, and
+     * the choice differs from the committed value. TECH-13: while the lock is paused a LONGER choice is also ignored (a UI
+     * hint only, the picker disables those options; the controller enforces it with NOT_IN_ORIGIN and writes nothing).
+     */
+    fun onTimeoutSelected(timeout: AutoLockTimeout) {
+        val current = uiState.value
+        if (current !is AppLockPrivacySectionState.Ready || current.isWriting) return
+        if (current.lock is AppLockRowState.Waiting) return
+        val row = current.timeoutRow ?: return
+        if (timeout == row.committed) return
+        if (row.paused && timeout.millis > row.committed.millis) return
+        if (!beginWrite()) return
+        appScope.launch {
+            try {
+                // Serialised inside the operations: deliberately NO outer serializer (non-reentrant: it would deadlock).
+                withContext(NonCancellable) {
+                    handleTimeoutResult(operations.requestTimeoutChange(timeout))
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Timber.w("Timeout write failed: class=%s", DiagnosticThrowableSummary.className(e))
+                notice.value = AppLockPrivacySectionNotice.SAVE_FAILED
+            } finally {
+                isWriting.value = false
+            }
+        }
+    }
+
+    /**
+     * Sets the review card's discreet choice. Nothing is written until [saveReview]. Ignored while the lock choice is on
+     * (the row is forced, INV-48) so the stored choice cannot change behind a read-only row.
+     */
+    fun setReviewDiscreetChoice(enabled: Boolean) {
+        val current = uiState.value
+        if (current !is AppLockPrivacySectionState.NeedsReview || current.isSaving || current.lockChoice) return
+        reviewChoice.value = enabled
+    }
+
+    /** Sets the review card's secure-screen choice. Ignored while the lock choice is on (forced, INV-48). */
+    fun setReviewSecureChoice(enabled: Boolean) {
+        val current = uiState.value
+        if (current !is AppLockPrivacySectionState.NeedsReview || current.isSaving || current.lockChoice) return
+        reviewSecureChoice.value = enabled
+    }
+
+    /**
+     * Sets the review card's lock choice (item 55). On is not an enable flow (no explainer, no prompt): it only selects the
+     * record's lock field. While the lock is paused (`INERT`) On is refused (INV-45: Off is the only choice).
+     */
+    fun setReviewLockChoice(enabled: Boolean) {
+        val current = uiState.value
+        if (current !is AppLockPrivacySectionState.NeedsReview || current.isSaving) return
+        if (enabled && current.lockPaused) return
+        reviewLockChoice.value = enabled
+    }
+
+    /** Sets the review card's timeout choice. Ignored unless the lock choice is on (the row is only shown then). */
+    fun setReviewTimeoutChoice(timeout: AutoLockTimeout) {
+        val current = uiState.value
+        if (current !is AppLockPrivacySectionState.NeedsReview || current.isSaving || !current.lockChoice) return
+        reviewTimeoutChoice.value = timeout
+    }
+
+    /**
+     * Review-save of the whole record through [AppLockSettingsOperations.requestReviewSave] (INV-44, INV-45, S20-e). From
+     * S22-b.1 (owner-approvals item 55) the record is the FULL record the review card shows: lock = the lock choice (On
+     * by default, never On while paused), timeout = the timeout choice (default `IMMEDIATE`), discreet and secure = the
+     * stored choices (default on; read-only while the lock choice is on). The weakening classification, the CHANGE prompt,
+     * the INERT exception and the capability check are the operations' (a lock-on record with a capability that is not
+     * available is REJECTED_CAPABILITY, mapped to the save-failed notice). Ignored unless the review card is showing and idle.
      */
     fun saveReview() {
         val current = uiState.value
         if (current !is AppLockPrivacySectionState.NeedsReview || current.isSaving) return
         val record = AppLockPrivacySettings(
-            discreetNotifications = reviewChoice.value,
-            appLockEnabled = false,
-            autoLockTimeout = AutoLockTimeout.IMMEDIATE,
-            secureScreen = true
+            discreetNotifications = current.discreetChoice,
+            appLockEnabled = current.lockChoice,
+            autoLockTimeout = current.timeoutChoice,
+            secureScreen = current.secureChoice
         )
         if (!beginWrite()) return
         appScope.launch {
@@ -484,7 +639,8 @@ class AppLockPrivacySettingsViewModel @Inject constructor(
             // FAILED: the write did not commit; the store and the sentinel are unchanged (AE-89).
             ReviewSaveResult.FAILED -> notice.value = AppLockPrivacySectionNotice.SAVE_FAILED
             // Nothing was written. Show the error and re-read so the observer reports the true state.
-            // REJECTED_CAPABILITY is unreachable with the D2 record (lock off) and is mapped fail-closed.
+            // REJECTED_CAPABILITY (INV-45): the record has the lock on but the fresh capability is not AVAILABLE. The card
+            // stays as it is, so the person can choose Off and save again.
             ReviewSaveResult.REJECTED_CAPABILITY,
             ReviewSaveResult.NOT_IN_REVIEW,
             ReviewSaveResult.NOT_IN_ORIGIN,
@@ -497,10 +653,41 @@ class AppLockPrivacySettingsViewModel @Inject constructor(
 
     /** Shared by both commit paths (COMMITTED result, and STARTED then the observed commit). */
     private fun markReviewCommitted() {
-        // The next review (if the store is corrupted again) starts from the fail-closed choice.
-        reviewChoice.value = FAIL_CLOSED_DISCREET
+        // The next review (if the store is corrupted again) starts from the fail-closed record.
+        resetReviewChoices()
         // Keep the card busy until the observer shows a readable state: no duplicate review-save.
         reviewCommitted.value = true
+    }
+
+    /** Every review-card choice back to the fail-closed record `F` (lock On, `IMMEDIATE`, discreet on, secure on). */
+    private fun resetReviewChoices() {
+        reviewChoice.value = FAIL_CLOSED_DISCREET
+        reviewLockChoice.value = FAIL_CLOSED_LOCK
+        reviewTimeoutChoice.value = FAIL_CLOSED_TIMEOUT
+        reviewSecureChoice.value = FAIL_CLOSED_SECURE
+    }
+
+    /**
+     * Exhaustive over [TimeoutChangeResult] (no else: a new value must be mapped here). The failure diagnostic is owned by
+     * the controller and the operations (D7), not by this ViewModel.
+     */
+    private fun handleTimeoutResult(result: TimeoutChangeResult) {
+        when (result) {
+            // COMMITTED: written with no prompt; the committed value arrives through the store observer (INV-46).
+            // STARTED: the CHANGE prompt is open and nothing is committed; the row keeps the old committed value and the
+            // lock row shows Waiting from the controller state (AE-116); the end signal gives the notice.
+            TimeoutChangeResult.COMMITTED,
+            TimeoutChangeResult.STARTED -> Unit
+            // Nothing changed (the previous value is still in force): the tap must not be silently ignored, so show the
+            // save-failed notice and re-read. NOT_IN_ORIGIN is also the controller's answer for TECH-13 (a longer
+            // timeout while the lock is paused); ALREADY_IN_FLIGHT means a prompt or an apply is running.
+            TimeoutChangeResult.FAILED,
+            TimeoutChangeResult.ALREADY_IN_FLIGHT,
+            TimeoutChangeResult.NOT_IN_ORIGIN -> {
+                notice.value = AppLockPrivacySectionNotice.SAVE_FAILED
+                resubscribeOnMain()
+            }
+        }
     }
 
     /**
@@ -623,14 +810,24 @@ class AppLockPrivacySettingsViewModel @Inject constructor(
         currentNotice: AppLockPrivacySectionNotice?,
         lock: LockInputs
     ): AppLockPrivacySectionState.Ready {
-        // INV-48, AE-65: while the committed lock is on (an `INERT` lock is stored on too) discreet is forced.
+        // INV-48, AE-65, AE-103: while the committed lock is on (an `INERT` lock is stored on too) discreet and secure
+        // screen are forced.
         val forced = settings.appLockEnabled
         return AppLockPrivacySectionState.Ready(
             discreetOn = settings.discreetNotifications || forced,
             isWriting = writing,
             notice = currentNotice,
             discreetForced = forced,
-            lock = lockRowOf(committedOn = settings.appLockEnabled, lock = lock)
+            lock = lockRowOf(committedOn = settings.appLockEnabled, lock = lock),
+            // The timeout row exists only while the COMMITTED lock is on and shows the COMMITTED timeout (AE-116). It is
+            // paused (TECH-13) while the controller is INERT.
+            timeoutRow = if (forced) {
+                AutoLockTimeoutRowState(settings.autoLockTimeout, paused = lock.state is AppLockState.Inert)
+            } else {
+                null
+            },
+            secureOn = settings.secureScreen || forced,
+            secureForced = forced
         )
     }
 
@@ -699,7 +896,7 @@ class AppLockPrivacySettingsViewModel @Inject constructor(
         val oldCategory = categoryOf(loadState.value)
         val newCategory = categoryOf(new)
         if (newCategory == LoadCategory.REVIEW && oldCategory != LoadCategory.REVIEW) {
-            reviewChoice.value = FAIL_CLOSED_DISCREET
+            resetReviewChoices()
             reviewCommitted.value = false
         }
         if (oldCategory == LoadCategory.REVIEW && newCategory != LoadCategory.REVIEW) {
@@ -746,5 +943,10 @@ class AppLockPrivacySettingsViewModel @Inject constructor(
     private companion object {
         /** Fail-closed effective value of the discreet flag (INV-2): on. */
         val FAIL_CLOSED_DISCREET: Boolean = AppLockPrivacySettings.FAIL_CLOSED.discreetNotifications
+
+        /** Fail-closed record `F` for the review card's other choices (spec 2.3, AMD-1): lock On, `IMMEDIATE`, secure on. */
+        val FAIL_CLOSED_LOCK: Boolean = AppLockPrivacySettings.FAIL_CLOSED.appLockEnabled
+        val FAIL_CLOSED_TIMEOUT: AutoLockTimeout = AppLockPrivacySettings.FAIL_CLOSED.autoLockTimeout
+        val FAIL_CLOSED_SECURE: Boolean = AppLockPrivacySettings.FAIL_CLOSED.secureScreen
     }
 }
