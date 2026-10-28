@@ -416,3 +416,39 @@ Validation to request: same targeted filter as above.
   - no N1 finding.
 - Committed.
 - Next: slice E (guards G-1..G-4 in a NEW QuickAddPrivacyArchitectureGuardTest).
+
+### Slice E implementation (2026-10-28, test-author; NOT validated)
+Nothing was compiled or run. Test-only; no production, config, allowlist or existing guard file edited.
+
+File: `app/src/test/java/com/yourname/expensetracker/architecture/QuickAddPrivacyArchitectureGuardTest.kt` (NEW). Uses the shared `SourceTextSanitizer`. G-3 also inspects the raw argument span (offsets preserved) because interpolation lives in string bodies.
+
+Tests (15):
+- G-1: `INV-12 G-1 add-expense package has no rememberSaveable and no SavedStateHandle`; `... G-1 seeded rememberSaveable and SavedStateHandle violations are detected`; `... G-1 plain remember state and comment or string mentions are not flagged` (slice F compatibility: `remember` only).
+- G-2: `INV-14 G-2 quickadd domain imports nothing from android timber or domain ai`; `... only the lookup file reads data and only its pinned repository import`; `... parser files import no data at all`; `... lookup file domain dependencies are exactly the pinned categorization engine`; `... seeded violations are detected`; `... allowed imports and comment mentions are not flagged`.
+- G-3: `INV-13 G-3 add-expense view model has no throwable and no interpolated Timber message`; `... seeded violations are detected`; `... bounded constant calls and comment or string mentions are not flagged`.
+- G-4: `INV-11 G-4 lookup file references no categorize normalize merchant-category or trace API`; `... seeded violations are detected`; `... permitted near-miss names and comment mentions are not flagged`.
+
+Pins read from the real tree: lookup data.* import = `data.repository.MerchantCategoryRepository` only; lookup domain.* import = `domain.categorization.CategorizationEngine` only; parser files = QuickAddParser/Models/AmountRules/DateRules/Vocabulary (no data.* imports). Add-expense dir holds AddExpenseViewModel, AddExpenseSheet, QuickAddFillContract; no rememberSaveable/SavedStateHandle today. AddExpenseViewModel has 9 single-line `Timber.*(LOG_CONSTANT)` calls, none with a throwable or `$`.
+
+Deliberate, same-scope tightenings (all pass today): G-2 also forbids `androidx.*` and inline fully-qualified references; G-3 also rejects extra Timber arguments (format args) and non-constant first arguments (INV-13: only bounded constants). If a later slice needs a different Timber argument shape, stop and ask rather than loosen.
+
+Filter to request: `targeted-unit-test` `"*QuickAddPrivacyArchitectureGuardTest*"`; then `unit-test-shard -Shard architecture-contracts`; `static-guards`. First compile may need fixes (not compiled).
+
+### Slice E review fixes (2026-10-28, test-author; NOT validated)
+Nothing was compiled or run. Only `QuickAddPrivacyArchitectureGuardTest.kt` and this handoff edited; `SourceTextSanitizer` untouched.
+
+1. BLOCKER (compile): the class KDoc contained a slash-star-star path glob; Kotlin block comments nest, so it opened an unclosed comment. Reworded to "the domain.quickadd package tree". Whole-file scan for `/*` and `*/` afterwards: only the proper KDoc open/close delimiters remain (class KDoc, plus four one-line KDocs); no nested sequences.
+2. Removed the test `INV-14 G-2 lookup file domain dependencies are exactly the pinned categorization engine` (new, uncommitted, never validated; widened scope beyond plan E / G2-6). G-2 now has 5 tests and the file has 14 tests in total (the 15-test list and the G-2 list above are superseded).
+3. G-3 non-constant check simplified to `first.isNotEmpty() && !constantNameRegex.matches(first)`; the removed `isBlankLiteral` clause was dead because the sanitizer blanks whole string literals including quotes, so a literal first argument is already empty.
+4. G-3 bypass closed: `TimberCall` now carries the call name; a `Timber.tag(...)` call is reported as "Timber.tag chain not inspected" (fail closed). Seeded case added to `INV-13 G-3 seeded violations are detected`. Confirmed `AddExpenseViewModel` has no `Timber.tag` (its 8 Timber calls are all `Timber.w/e/i(LOG_CONSTANT)`).
+5. G-4 `categorize` matcher is now a plain `Regex("categorize")` substring. Confirmed the lookup file has no false positive: its only `categoriz*` tokens are `categorization` (import package), `CategorizationEngine` and `categorizationEngine`, each "categoriz" + "ation", never "categorize". The near-miss test still covers `categorizationEngine`.
+
+Extra tightenings from the original implementation (androidx.* forbidden, inline fully-qualified references, Timber format args / extra arguments, `traceDecision` in G-4) are reviewed and accepted as in scope.
+
+Filter to request unchanged: `targeted-unit-test` `"*QuickAddPrivacyArchitectureGuardTest*"`; then `unit-test-shard -Shard architecture-contracts`; `static-guards`.
+
+### Slice E ACCEPTED (2026-10-28)
+- Gate: architecture-guardian + privacy (combined) ACCEPT-WITH-CONDITIONS; fixes 1, 2, 4-6 applied; the tightenings are accepted in scope.
+- Validation PASS: targeted vr-20261028-022757-e52f7575; architecture-contracts vr-20261028-023013-02302b23. Test-only, so no static-guards re-run.
+- Committed.
+- Next: slice F (Sheet UI + strings).
