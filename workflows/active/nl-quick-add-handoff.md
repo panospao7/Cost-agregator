@@ -356,3 +356,63 @@ Validation to request: `targeted-unit-test -TestFilter "*ClipboardAmountParserTe
   - a trailing period;
   - an unvalidated currency word.
   Possible fix: reject a match followed by [\s'’NBSP]\d, or gate on the whole clipboard string being one amount.
+
+### Slice C implementation (2026-10-28, implementer; NOT validated)
+Nothing was compiled or run. Roots: `A` = `app/src/main/java/com/yourname/expensetracker`, `T` = `app/src/test/java/com/yourname/expensetracker`. No N-item fired (no allowlist/baseline, no new VM `suspend fun`, no ManualExpenseRepository/save change, no schema change, no expected value changed against the spec).
+
+Production:
+- NEW `A/domain/quickadd/QuickAddLearnedCategoryLookup.kt`: `class QuickAddLearnedCategoryLookup @Inject constructor(CategorizationEngine, MerchantCategoryRepository)`; `suspend fun lookup(merchant: MerchantText, categories: List<CategoryRef>): LearnedCategoryLookupResult` with `Found(CategoryMatch(id, LEARNED)) | Absent | Failed`. Empty picker or a blank derived key gives Absent with no repository read. Non-CE exception gives `Failed` (not logged); CE-first sibling rethrows. No categorize*, normalize(, getCategoryForMerchant, MerchantNormalizer or traceDecision.
+- NEW `A/ui/screens/addexpense/QuickAddFillContract.kt`: enums `QuickAddField {AMOUNT, MERCHANT, DATE, CATEGORY, PAYMENT}`, `FieldOrigin`, `OutcomeCode`, `CategoryFillSource`; `QuickAddFormFields`, `QuickAddFillApplication`; `object QuickAddFillContract` = `isFillable` (INV-1), `wantsLearnedLookup` (spec 4.11 preconditions), `apply(form, parse, learned, nowEpochMs)` (spec 5.3 table, INV-7/10) and the 5.4 outcome. Hints are passed through from the parser; NOTHING_RECOGNISED is NOT re-derived here.
+- `A/ui/screens/addexpense/AddExpenseViewModel.kt`:
+  - ctor gains `quickAddParser`, `quickAddLearnedCategoryLookup` (named, appended last);
+  - state gains `fieldOrigins`, `fieldFlags`, `lineHints`, `lastFillOutcome`, `categoryFillSource` (enums/maps/sets only);
+  - `fill(line)` is a plain `fun` (launch; no new suspend fun): gate (blank / homeCurrency null / isSaving), mark one-shot consumed, cancel previous Fill job and `searchJob`, hide suggestions, then in one job: parse, optional C2 lookup (inner CE-first try: `Failed` or a thrown exception logs only `QUICK_ADD_CATEGORY_LOOKUP_FAILED`, `Timber.w`, no throwable; category stays Absent), `ensureActive()`, one atomic `_state.update` that re-evaluates fillability via the contract (skips the apply if `isSaving` became true), clears `saveResult` and the `amountError`/`merchantError` of written fields, then logs exactly one outcome constant after the update;
+  - origin transitions in `updateAmount`/`updateMerchant`/`selectSuggestion` (amount only if blank AND unflagged; category USER only if the suggestion has one)/`updateDate`/`selectCategory`/`selectPaymentMethod`; NEW `clearCategory()` (null, USER, source null, never refilled); `setInitialValuesIfBlank` records PREFILL only for a prefill that wrote a non-blank value and is a no-op after any Fill; `reset()` also cancels the Fill job;
+  - INV-12: the line is only the `fill` argument and the closure of the launched job; no field holds it;
+  - the stale :501 comment is reworded (ClipboardAmountParser now hands over canonical text).
+- Docs: `docs/architecture/LEGAL_PATHS.md` (Categorization section: stale "Read-only / No persistent side effects" corrected, because `categorize*` goes through `MerchantNormalizer.normalize` which can insert a `merchant_canonicals` row; new READ-ONLY learned category lookup entry and FORBIDDEN line; prefill-aids note under Expense Mutations), `ENGINE_INTERACTION_MAP.md` (matrix rows, normalize() write note, quick-add read-only consumer), `CODEBASE_SEGMENTS.md` (Segment 6 boundary note; Segment 9 lists the lookup and the fill contract), `VIEWMODEL_INJECTION_MAP.md` :66-69, `DEPENDENCY_MAP.md` :1272, `route-viewmodel-map.md` :144 (7 deps, Medium).
+
+Tests:
+- NEW `T/domain/quickadd/QuickAddLearnedCategoryLookupTest.kt` (Robolectric runner): strict-mock repository with `coVerify(exactly = 0)` on insert/learnPattern/getCategoryForMerchant/getAll plus `confirmVerified` on the engine's other collaborators; AE-1, AE-3, AE-4 (real key function, Greek and Latin spellings), no row, not-in-picker, blank key, empty picker, failure result (no message), CE rethrown; the literal AE-40 in-memory Room test (real DAO and repository; every table row count before and after is equal, `merchant_categories` and `expenses` asserted by name).
+- NEW `T/ui/screens/addexpense/QuickAddFillContractTest.kt`: the full 3 x 4 x 5 apply table (60 rows), blank-text rule (AE-24), AE-9, AE-20, INV-4, AE-22, AE-30, learned-category rules (INV-10, AE-29 apply level), `wantsLearnedLookup`, 5.4 outcomes (incl. hints pass-through, no derived NOTHING_RECOGNISED), written/value field sets.
+- M `T/ui/screens/addexpense/AddExpenseViewModelTest.kt`: ctor sites use `createViewModel`; new cases for AE-1, 2, 3, 4, 5 (both tails: Save error with nothing persisted, and "18" gives exactly one `addManualExpense` in EUR), 9, 20, 21, 22, 23, 24, 25, 26, 27 (x2), 28 (x2), 29 (x2: suspended lookup vs USER category; newer Fill supersedes), 30, 31, 41, 42, 43, 50 (state.toString and reflection over VM fields), 51 (lookup throws, Failed result, combined Fill + search failure + save failure with the allowed-constant set), G2-11 (source, clearCategory never refilled, suggestion category), G2-13 (outcome and hints survive edits, reset clears), reset cancels a pending Fill, origin transitions, foreign hint with a USER amount, NOTHING_RECOGNISED from the parser and LINE_TOO_LONG, stale saveResult/errors cleared, empty picker.
+- M `T/ui/util/ClipboardAmountParserTest.kt`: D carry-over cases ("0.01" gives "0.01"; "0.00" and "007" give null).
+
+Notes / residual risk:
+- The picker list is read from `categories.value` (a `WhileSubscribed` StateFlow). The Sheet collects it; the VM tests subscribe explicitly. A Fill from a context with no subscriber would see an empty picker (category Absent, fail-safe).
+- Zone is `ZoneId.systemDefault()` at Fill (spec 2.1); VM tests set the default TimeZone to Europe/Athens and restore it in tearDown.
+- VERIFY-AT-IMPL: no architecture test found with a domain to data.repository rule (Engine5PrimitiveGuardTest is the only file matching the loose pattern). db_access expected unchanged (repository-typed ctor param is not a finding, verdict 2); empirical gate is the db_access then db_artifact_sync runs.
+- Compile risks (first run): MockK generics in the new VM tests, `FieldParse` generic smart-casts in the contract's local `applyField`.
+
+Validation to request: `targeted-unit-test -TestFilter "*QuickAddLearnedCategoryLookup*,*QuickAddFillContract*,*AddExpense*,*MerchantKeyGeneratorTest*,*CategorizationEngineTest*,*ManualExpenseRepository*,*TransactionLifecycleCoordinator*,*ClipboardAmountParserTest*,*QuickAddParser*"`, then `unit-test-shard -Shard runtime-ui`, `-Shard domain-n-z`, `registered-guard -GuardId db_access`, then `db_artifact_sync`, `static-guards`. No connected test.
+
+### Slice C review fixes (2026-10-28, implementer; NOT validated)
+Nothing was compiled or run. Roots as above. Supersedes the "in one job: parse" wording of the Slice C entry.
+
+- Compile error (run vr-20261028-000246-4825a02a): `AddExpenseViewModelTest.verifyOneSavedExpense` used `eq(categoryId)` on a `Long?`; now `if (categoryId == null) isNull() else eq(categoryId)` (+ import `io.mockk.isNull`). The other `eq(` calls are on non-null values (Double, String, enum, Long date) and are unchanged.
+- Docs MAJOR: the `categorize*` write mechanism is corrected in `LEGAL_PATHS.md` (Categorization section), `ENGINE_INTERACTION_MAP.md` (matrix row and the normalize() note) and `CODEBASE_SEGMENTS.md` (Segment 6 boundary note). `normalize(autoCreate = false)` can INSERT or UPDATE a `merchant_aliases` row on a fuzzy match >= 0.95 (MerchantNormalizer.kt:98-103 → MerchantNormalizationRepository.linkAliasToCanonical → DAO) and logs the raw name (Timber.w :102, link conflict only); a `merchant_canonicals` row is created only with `autoCreate = true` (:111-114). Verified against source.
+- Privacy (owner-approvals item 63): `AddExpenseViewModel.fill` now calls `quickAddParser.parse(QuickAddInput(...))` synchronously before `launch`; the job captures only `parsed`, `categoryRefs`, `nowMs` (never the QuickAddInput or the line). KDoc-style comment cites item 63. Behaviour otherwise identical (parser is non-suspend, pure and total).
+- AE-50 now also asserts by type that no non-static VM field is String, CharSequence, QuickAddInput, QuickAddParseResult or MerchantText (static fields are the bounded log-code constants and are excluded).
+- AE-40 (QuickAddLearnedCategoryLookupTest): the Room test now builds a REAL `MerchantNormalizer` (real `MerchantNormalizationRepository(DatabaseWriteBarrier, merchantNormalizationDao, timeProvider)`, `MerchantRulesRepository()`, `GreeklishNormalizer()`) and passes it to the engine. It seeds the spec's canonical "Καφές" (searchKey "kafes"; "kafess" is fuzzy-near with distance 1 and similarity >= 0.95, so a stray `normalize()` would insert an alias), looks up "καφές", "kafess" and "kafesss", and asserts all table counts equal (explicit `merchant_aliases` == 0 and `merchant_canonicals` == 1 before/after) plus `confirmVerified(semanticMatcher, contextEngine)`. The mock normalizer is still used by the other (mock-repository) tests where `confirmVerified(merchantNormalizer, ...)` holds.
+- AE-4: asserts `MerchantKeyGenerator.generate("kafes") == generate("καφές")`.
+- AE-1 (learned row): `verify(atLeast = 1) { categoryRepository.allCategories }` then `confirmVerified(manualExpenseRepository, expenseRepository, categoryRepository)`.
+- Docs: ENGINE_INTERACTION_MAP no longer says "pinned by CategorizationEngineTest" and names the writer side (CategoryRepository.kt:87); LEGAL_PATHS prefill aids now list the merchant suggestion next to clipboard prefill and Fill.
+
+New VM tests (AddExpenseViewModelTest):
+- `AE-28 a Fill waiting on its lookup is skipped when a save is running at apply time` (form unchanged, no outcome, no log).
+- `INV-18 a lookup that ignores cancellation is not applied after reset` (lookup in `withContext(NonCancellable) { gate.await() }`).
+- `INV-18 a lookup that ignores cancellation is not applied after a newer Fill`.
+
+Risks: (1) `withContext(NonCancellable)` may itself throw CancellationException on exit (prompt cancellation) rather than reach `ensureActive()`; either way the observable result (nothing applied, no outcome log) is what is asserted. (2) The AE-40 test relies on Jaro-Winkler("kafess","kafes") >= 0.95 only for its power; the zero-delta assertions hold regardless. (3) `confirmVerified` in AE-1 assumes the VM touches `categoryRepository` only via `allCategories`, and `expenseRepository`/`manualExpenseRepository` not at all during Fill (true in source).
+
+Validation to request: same targeted filter as above.
+- 2026-10-28 slice C targeted vr-20261028-003559-c953f817 FAILED compile: unresolved import io.mockk.isNull (matcher-scope member); import removed.
+
+### Slice C ACCEPTED (2026-10-28)
+- Gate: reviewer-strict (combined strict + privacy + architecture docs) ACCEPT-WITH-CONDITIONS; findings 1-8 applied; item 63 (parse before launch).
+- Validation:
+  - db_access vr-20261028-004020-f0a77c2c; db_artifact_sync vr-20261028-004253-39462d25; static-guards vr-20261028-004311-ba4cfcda (production tree final; only a test import changed afterwards)
+  - after the test import fix: targeted vr-20261028-011400-c5a980c6; runtime-ui vr-20261028-011631-6a7fa1d8; domain-n-z vr-20261028-011818-b4a1a4c1
+  - no N1 finding.
+- Committed.
+- Next: slice E (guards G-1..G-4 in a NEW QuickAddPrivacyArchitectureGuardTest).

@@ -170,6 +170,8 @@ Owns merchant-name normalization and category prediction for ordinary expenses.
 - `data/repository/CategoryRepository.kt`
 - `data/repository/MerchantCategoryRepository.kt`
 
+**Boundary note:** `domain/quickadd/QuickAddLearnedCategoryLookup.kt` (nl-quick-add C2, registered under Segment 9) is a read-only consumer of this segment: it calls only the pure `CategorizationEngine.normalizedCanonicalNameForMerchant()` and `MerchantCategoryRepository.getCategoryByNormalizedCanonical()`. It must never call `categorize*`, `normalize(`, `getCategoryForMerchant`, `MerchantNormalizer` or any write (`MerchantNormalizer.normalize` can insert/update a `merchant_aliases` row even with `autoCreate = false` on a fuzzy match >= 0.95 via `linkAliasToCanonical`, and logs the raw name; it creates a `merchant_canonicals` row only with `autoCreate = true`).
+
 ## SEGMENT 7: Recurring Expenses
 
 Owns recurring pattern detection, future recurring item planning, and the **recurring occurrence lifecycle** (Phase 5).
@@ -248,6 +250,8 @@ Owns the base expense CRUD surface, shared core expense models, and the **transa
 - `domain/quickadd/QuickAddAmountRules.kt` — Amount rules; `QuickAddAmountRules.canonicalize` is the single owner of amount canonicalisation
 - `domain/quickadd/QuickAddDateRules.kt` — Date and time-of-day rules (LocalDate arithmetic in the input zone)
 - `domain/quickadd/QuickAddVocabulary.kt` — Date/payment/currency vocabulary and the embedded non-catalog ISO list
+- `domain/quickadd/QuickAddLearnedCategoryLookup.kt` — Quick-add learned-category lookup (C2): suspend and READ-ONLY (pure key + `getCategoryByNormalizedCanonical`); no writes, no logging, CancellationException rethrown; see Segment 6 boundary note
+- `ui/screens/addexpense/QuickAddFillContract.kt` — Quick-add fill contract (C3): `QuickAddField`/`FieldOrigin`/`OutcomeCode`/`CategoryFillSource` enums, the pure apply table (spec 5.3) and outcome function (5.4); the single owner of fillability. Fill writes in-memory form state only; Save is unchanged (`AddExpenseViewModel.save` → `ManualExpenseRepository.addManualExpense` → TLC)
 - `docs/development/DAO_ACCESS_GUARDRAILS.md` — DAO access policy
 - `scripts/guardrails/dao-access-check.kts` — Guardrail enforcement
 - `util/ImportCoordinator.kt` — CSV/JSON import orchestration (format detection, delegation, result reporting)

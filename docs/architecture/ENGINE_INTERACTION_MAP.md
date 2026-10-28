@@ -12,8 +12,8 @@
 | Engine | Pipelines Affected | Risk Level |
 |--------|-------------------|------------|
 | **CurrencyConverter** | 5 (Dashboard), 6 (Budget/Forecast/Cashflow), 12 (Export), Groups, Investment, Tax | 🔴 CRITICAL |
-| **MerchantNormalizer** | 1 (Notification dedupe), 2 (Transaction dedupe), 3 (Receipt matching), 4 (Recurring matching), 11 (Email), Analytics | 🔴 CRITICAL |
-| **CategorizationEngine** | 1 (Auto-categorize), 3 (Receipt items), 11 (Email), Budget (category totals) | 🟡 HIGH |
+| **MerchantNormalizer** | 1 (Notification dedupe), 2 (Transaction dedupe), 3 (Receipt matching), 4 (Recurring matching), 11 (Email), Analytics. `normalize()` can WRITE even with `autoCreate = false` (fuzzy match >= 0.95 inserts/updates a merchant_aliases row via `linkAliasToCanonical`, and logs the raw name); a merchant_canonicals row (`createNewMerchant`) only with `autoCreate = true`, so write-free callers (quick-add Fill) must not reach it | 🔴 CRITICAL |
+| **CategorizationEngine** | 1 (Auto-categorize), 3 (Receipt items), 11 (Email), Budget (category totals), Add-Expense quick-add Fill (read-only consumer of the pure `normalizedCanonicalNameForMerchant()` only) | 🟡 HIGH |
 | **ReceiptParser** | 3 (OCR), 11 (Email providers), 10 (Bank statement) | 🟡 HIGH |
 | **MoneyAggregate/Builder** | 5 (Dashboard), 6 (Budget), 12 (Export), Analytics | 🟡 HIGH |
 | **TimeProvider/TimePeriodUtils** | ALL pipelines (timestamps, periods, scheduling) | 🔴 CRITICAL |
@@ -98,6 +98,14 @@ MerchantNormalizer.normalize()
   ├── EmailReceiptIngestionService (expense creation)
   ├── MerchantKeyBackfillWorker (backfill existing rows via MerchantKeyGenerator)
   └── MerchantInsightEngine (merchant grouping via merchantKey)
+
+NOTE: normalize() is NOT read-only, even with autoCreate = false. A fuzzy match with
+confidence >= 0.95 calls linkAliasToCanonical (MerchantNormalizer.kt:98-103 →
+MerchantNormalizationRepository.linkAliasToCanonical → DAO insert of a merchant_aliases row or
+an occurrenceCount update on an existing one) and logs the raw name (Timber.w, :102, on a link
+conflict). A merchant_canonicals row (createNewMerchant → repository.insertCanonical) is created
+only when autoCreate = true (:111-114). The quick-add lookup (QuickAddLearnedCategoryLookup)
+therefore never calls it; see CategorizationEngine below.
 ```
 
 ### CategorizationEngine changes affect:
@@ -109,6 +117,14 @@ CategorizationEngine.categorize() / categorizeWithContext()
   ├── EmailReceiptIngestionService (email expense category)
   ├── BudgetRepository (category budget matching)
   └── AdvancedAnalyticsEngine (category analytics)
+
+CategorizationEngine.normalizedCanonicalNameForMerchant()   [pure: canonicalize + Greeklish fold; no I/O]
+  └── QuickAddLearnedCategoryLookup (nl-quick-add C2, domain/quickadd; READ-ONLY)
+        → MerchantCategoryRepository.getCategoryByNormalizedCanonical(key)
+        → AddExpenseViewModel.fill (fills the form only; Save persists via the unchanged manual path)
+  Changing the key function changes which learned category quick-add finds (it must stay the single
+  owner of key derivation). Reader: QuickAddLearnedCategoryLookupTest. Writer side: the user
+  CategoryRepository.kt:87 (learning stores the key in merchant_categories.normalizedCanonicalName).
 ```
 
 ### ReceiptMatchLifecycleService changes affect:

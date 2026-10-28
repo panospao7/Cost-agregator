@@ -80,6 +80,21 @@ class ClipboardAmountParserTest {
     }
 
     @Test
+    fun `parseAmountFromClipboard accepts the 0_01 lower bound`() {
+        assertEquals("0.01", parse("0.01"))
+    }
+
+    @Test
+    fun `parseAmountFromClipboard returns null for zero 0_00`() {
+        assertNull(parse("0.00"))
+    }
+
+    @Test
+    fun `parseAmountFromClipboard returns null for leading-zero 007`() {
+        assertNull(parse("007"))
+    }
+
+    @Test
     fun `parseAmountFromClipboard returns null for malformed grouped amount`() {
         val clipboard = clipboardWithText("Total 1,0000")
 
