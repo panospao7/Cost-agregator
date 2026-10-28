@@ -2,7 +2,12 @@ package com.yourname.expensetracker.domain.privacy.applock
 
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -890,5 +895,351 @@ class AppLockControllerRereadTest {
             assertEquals(label, emptyList<Throwable>(), h.uncaught) // and the failure did not escape
             assertNeverWrote(h)
         }
+    }
+
+    // --- S21-a, 61c-2: the controller's own RESOLVE_TIMEOUT fallback is a transient unreadable view ----------------
+
+    /**
+     * A controller resolved by the controller's own RESOLVE_TIMEOUT (view `null`, `resolvedByTimeout`): `LOCKED(SETTINGS_UNREADABLE)`
+     * for an able device, `INERT(SETTINGS_UNREADABLE_NO_AUTH)` otherwise. The held first read is then released with an
+     * unreadable result, so T6b drops it and the view stays the timeout fallback. Later reads return [unreadableIo]
+     * unless scripted. Exactly one read has been made.
+     */
+    private fun TestScope.timedOut(
+        capability: DeviceAuthCapability = DeviceAuthCapability.AVAILABLE
+    ): Pair<AppLockControllerHarness, AppLockController> {
+        val h = AppLockControllerHarness(AppLockTestSettings.DISABLED, capability, scheduler = testScheduler)
+        val controller = h.newController()
+        resolveTimedOut(h, controller)
+        h.repository.loadState = unreadableIo
+        h.repository.releaseReads()
+        runCurrent()
+        val expected = if (capability == DeviceAuthCapability.AVAILABLE) {
+            AppLockState.Locked(LockCause.SETTINGS_UNREADABLE)
+        } else {
+            AppLockState.Inert(InertReason.SETTINGS_UNREADABLE_NO_AUTH)
+        }
+        assertEquals(expected, controller.state.value)
+        assertEquals(1, h.repository.readCount)
+        return h to controller
+    }
+
+    @Test
+    fun `61c-2 after a resolve timeout the first APP_FOREGROUNDED issues exactly one re-read`() = runTest {
+        val (h, controller) = timedOut()
+        h.repository.scriptRead(unreadableIo)
+
+        controller.onAppForegrounded()
+        runCurrent()
+
+        assertEquals(2, h.repository.readCount) // the resolve read plus exactly one re-read
+        assertEquals(AppLockState.Locked(LockCause.SETTINGS_UNREADABLE), controller.state.value)
+        assertNeverWrote(h)
+    }
+
+    @Test
+    fun `61c-2 requestSettingsReread after a resolve timeout issues one read`() = runTest {
+        val (h, controller) = timedOut()
+        h.repository.scriptRead(unreadableIo)
+
+        controller.requestSettingsReread()
+        runCurrent()
+
+        assertEquals(2, h.repository.readCount)
+        assertEquals(AppLockState.Locked(LockCause.SETTINGS_UNREADABLE), controller.state.value)
+    }
+
+    @Test
+    fun `61c-2 timeout then unlock then a readable lock-off re-read gives DISABLED, with no notice before or after`() = runTest {
+        val (h, controller) = timedOut()
+        h.unlock(controller)
+        assertEquals(AppLockState.Unlocked, controller.state.value)
+        // A missing load state (the timeout fallback) derives no notice (transient causes show none).
+        assertEquals(null, controller.notice.value)
+        h.repository.scriptRead(AppLockTestSettings.DISABLED)
+
+        controller.onAppForegrounded()
+        runCurrent()
+
+        assertEquals(AppLockState.Disabled, controller.state.value)
+        assertEquals(null, controller.notice.value)
+        assertEquals(2, h.repository.readCount) // the resolve read and the one foreground re-read; the unlock reads nothing
+        assertNeverWrote(h)
+    }
+
+    @Test
+    fun `61c-2 timeout in LOCKED keeps a readable re-read, the state stays LOCKED, and T8 applies the snapshot (T29)`() = runTest {
+        val (h, controller) = timedOut()
+        h.forgetEmitted()
+        h.repository.scriptRead(AppLockTestSettings.DISABLED)
+
+        controller.onAppForegrounded()
+        runCurrent()
+
+        assertEquals(AppLockState.Locked(LockCause.SETTINGS_UNREADABLE), controller.state.value) // never opened by a re-read
+        assertTrue(h.authenticator.calls.isEmpty())
+        assertRecoveries("kept", h)
+
+        unlockOnce(h, controller) // T8: the unlock applies the kept snapshot through T28
+
+        assertEquals(AppLockState.Disabled, controller.state.value)
+        assertRecoveries("applied", h, SettingsUnreadableCause.TIMEOUT)
+        assertNeverWrote(h)
+    }
+
+    @Test
+    fun `61c-2 timeout in LOCKED, a readable lock-on re-read is kept and the unlock lands UNLOCKED`() = runTest {
+        val (h, controller) = timedOut()
+        h.repository.scriptRead(enabled)
+
+        controller.requestSettingsReread()
+        runCurrent()
+        assertEquals(AppLockState.Locked(LockCause.SETTINGS_UNREADABLE), controller.state.value)
+
+        unlockOnce(h, controller)
+
+        assertEquals(AppLockState.Unlocked, controller.state.value)
+        // The view is readable now: the next foreground makes no further read.
+        val reads = h.repository.readCount
+        controller.onAppForegrounded()
+        runCurrent()
+        assertEquals(reads, h.repository.readCount)
+    }
+
+    @Test
+    fun `61c-2 timeout then INERT(SETTINGS_UNREADABLE_NO_AUTH), a readable lock-off re-read gives DISABLED`() = runTest {
+        val (h, controller) = timedOut(DeviceAuthCapability.NO_CREDENTIAL)
+        h.forgetEmitted()
+        h.repository.scriptRead(AppLockTestSettings.DISABLED)
+
+        controller.requestSettingsReread()
+        runCurrent()
+
+        assertEquals(AppLockState.Disabled, controller.state.value)
+        assertTrue(h.authenticator.calls.isEmpty()) // no auth
+        assertRecoveries("inert to disabled", h, SettingsUnreadableCause.TIMEOUT)
+        assertNeverWrote(h)
+    }
+
+    @Test
+    fun `61c-2 an unreadable re-read after a resolve timeout changes nothing, and the next foreground re-reads again`() = runTest {
+        val (h, controller) = timedOut()
+        h.forgetEmitted()
+        h.repository.scriptRead(unreadableIo)
+        controller.onAppForegrounded()
+        runCurrent()
+        assertEquals(2, h.repository.readCount)
+        assertEquals(AppLockState.Locked(LockCause.SETTINGS_UNREADABLE), controller.state.value)
+
+        h.repository.scriptRead(AppLockTestSettings.unreadable(SettingsUnreadableCause.CORRUPTED))
+        controller.onAppForegrounded()
+        runCurrent()
+        assertEquals(3, h.repository.readCount) // the in-flight flag was released: the next foreground reads again
+        assertEquals(AppLockState.Locked(LockCause.SETTINGS_UNREADABLE), controller.state.value)
+
+        h.repository.failure = IllegalStateException("secret-path /data/x")
+        controller.onAppForegrounded()
+        runCurrent()
+        assertEquals(4, h.repository.readCount)
+        assertEquals(AppLockState.Locked(LockCause.SETTINGS_UNREADABLE), controller.state.value)
+        assertRecoveries("none", h)
+
+        h.repository.failure = null
+        h.repository.scriptRead(AppLockTestSettings.DISABLED)
+        controller.onAppForegrounded()
+        runCurrent()
+        assertEquals(5, h.repository.readCount)
+        unlockOnce(h, controller)
+        assertEquals(AppLockState.Disabled, controller.state.value) // the view was still the timeout fallback until now
+    }
+
+    @Test
+    fun `61c-2 after T6b no re-read is issued`() = runTest {
+        val h = AppLockControllerHarness(AppLockTestSettings.DISABLED, scheduler = testScheduler)
+        val controller = h.newController()
+        resolveTimedOut(h, controller)
+        h.repository.releaseReads() // the late read is the readable lock-off store (DISABLED)
+        runCurrent()
+        assertEquals(AppLockState.Disabled, controller.state.value) // T6b
+        assertEquals(1, h.repository.readCount)
+
+        controller.onAppForegrounded()
+        controller.requestSettingsReread()
+        runCurrent()
+
+        assertEquals(1, h.repository.readCount)
+        assertEquals(AppLockState.Disabled, controller.state.value)
+    }
+
+    @Test
+    fun `61c-2 a late resolve read after a re-read applied is dropped`() = runTest {
+        val lateGate = CompletableDeferred<Unit>()
+        val h = AppLockControllerHarness(AppLockTestSettings.enabled(), scheduler = testScheduler)
+        try {
+            h.repository.scriptRead(AppLockTestSettings.DISABLED, lateGate) // the resolve read: late, lock off
+            val controller = h.newController()
+            val resolving = launch { controller.resolve() }
+            runCurrent()
+            advanceTimeBy(AppLockController.RESOLVE_TIMEOUT_MILLIS + 1)
+            runCurrent()
+            assertEquals(AppLockState.Locked(LockCause.SETTINGS_UNREADABLE), controller.state.value)
+            h.unlock(controller)
+            h.repository.scriptRead(enabled) // the re-read reads the store (lock on): applies, UNLOCKED stays
+
+            controller.onAppForegrounded()
+            runCurrent()
+            assertEquals(AppLockState.Unlocked, controller.state.value)
+            val readsAfterReread = h.repository.readCount
+
+            lateGate.complete(Unit) // the late resolve read arrives after the re-read applied
+            runCurrent()
+            resolving.join()
+
+            assertEquals(AppLockState.Unlocked, controller.state.value) // not DISABLED
+            controller.onAppForegrounded()
+            runCurrent()
+            assertEquals(readsAfterReread, h.repository.readCount) // the view is readable: no further read
+        } finally {
+            lateGate.complete(Unit)
+        }
+    }
+
+    @Test
+    fun `61c-2 CORRUPTED and INVALID_VALUE resolutions still issue no re-read (regression)`() = runTest {
+        for (cause in SettingsUnreadableCause.entries.filter { it.isPersistent }) {
+            val h = AppLockControllerHarness(AppLockTestSettings.unreadable(cause), scheduler = testScheduler)
+            val controller = h.resolvedController()
+            assertEquals(AppLockState.Locked(LockCause.SETTINGS_UNREADABLE), controller.state.value)
+            h.repository.scriptRead(AppLockTestSettings.DISABLED)
+
+            controller.onAppForegrounded()
+            controller.requestSettingsReread()
+            runCurrent()
+
+            assertEquals("cause $cause", 1, h.repository.readCount) // the resolve only
+            assertEquals("cause $cause", AppLockState.Locked(LockCause.SETTINGS_UNREADABLE), controller.state.value)
+        }
+    }
+
+    @Test
+    fun `61c-2 D6 a settings write committed after the re-read was issued drops it, the view stays the timeout fallback`() = runTest {
+        val (h, controller) = timedOut()
+        h.unlock(controller)
+        val gate = CompletableDeferred<Unit>()
+        try {
+            h.repository.scriptRead(AppLockTestSettings.DISABLED, gate)
+            controller.requestSettingsReread()
+            controller.onPlainSettingWritten(AppLockSettingField.DISCREET, true, committed = true)
+
+            gate.complete(Unit)
+            runCurrent()
+        } finally {
+            gate.complete(Unit)
+        }
+
+        assertEquals(AppLockState.Unlocked, controller.state.value) // dropped: not DISABLED
+        // The view is still the timeout fallback, so the next foreground re-reads and recovers.
+        h.forgetEmitted()
+        h.repository.scriptRead(AppLockTestSettings.DISABLED)
+        controller.onAppForegrounded()
+        runCurrent()
+        assertEquals(AppLockState.Disabled, controller.state.value)
+        assertRecoveries("recovered later", h, SettingsUnreadableCause.TIMEOUT)
+    }
+
+    @Test
+    fun `61c-2 LOCK_SETTINGS_RECOVERED(TIMEOUT) is emitted once, later re-reads and foregrounds record nothing more`() = runTest {
+        val (h, controller) = timedOut()
+        h.unlock(controller)
+        h.forgetEmitted()
+        h.repository.scriptRead(enabled)
+
+        controller.requestSettingsReread()
+        runCurrent()
+        assertEquals(AppLockState.Unlocked, controller.state.value) // the state does not change
+        assertEquals(listOf(recoveredCode), h.emitted)
+        assertRecoveries("first", h, SettingsUnreadableCause.TIMEOUT)
+
+        val reads = h.repository.readCount
+        h.repository.scriptRead(AppLockTestSettings.DISABLED)
+        controller.requestSettingsReread()
+        controller.onAppForegrounded()
+        controller.onAppBackgrounded()
+        controller.onAppForegrounded()
+        runCurrent()
+
+        assertEquals(reads, h.repository.readCount) // readable now: nothing more is read
+        assertRecoveries("later", h, SettingsUnreadableCause.TIMEOUT)
+    }
+
+    @Test
+    fun `61c-2 a re-read that hangs is bounded by RESOLVE_TIMEOUT_MILLIS, makes no change and releases the foreground flag`() = runTest {
+        val (h, controller) = timedOut()
+        h.unlock(controller)
+        h.forgetEmitted()
+        h.repository.scriptRead(AppLockTestSettings.DISABLED) // the hung read WOULD apply if it were not timed out
+        h.repository.holdReads() // every later read hangs
+        try {
+            controller.onAppForegrounded()
+            runCurrent()
+            assertEquals(2, h.repository.readCount)
+            controller.onAppForegrounded() // the first foreground re-read is still in flight
+            runCurrent()
+            assertEquals(2, h.repository.readCount)
+
+            advanceTimeBy(AppLockController.RESOLVE_TIMEOUT_MILLIS + 1) // the bound passes: null means no change
+            runCurrent()
+            assertEquals(AppLockState.Unlocked, controller.state.value)
+            assertEquals(emptyList<Throwable>(), h.uncaught)
+
+            controller.onAppForegrounded() // the flag was released: this one reads again
+            runCurrent()
+            assertEquals(3, h.repository.readCount)
+        } finally {
+            h.repository.releaseReads()
+        }
+        runCurrent()
+        // The timed-out read's readable DISABLED result is never applied, and nothing was recovered or recorded.
+        assertEquals(AppLockState.Unlocked, controller.state.value)
+        assertRecoveries("timed-out read applied nothing", h)
+
+        // A later readable re-read still recovers.
+        h.repository.scriptRead(AppLockTestSettings.DISABLED)
+        controller.onAppForegrounded()
+        runCurrent()
+        assertEquals(AppLockState.Disabled, controller.state.value)
+    }
+
+    @Test
+    fun `61c-2 cancelling the controller jobs during a bounded re-read propagates and frees the next foreground`() = runTest {
+        val (h, controller) = timedOut()
+        h.unlock(controller)
+        h.forgetEmitted()
+        h.repository.scriptRead(AppLockTestSettings.DISABLED) // the held read WOULD apply if it were not cancelled
+        h.repository.holdReads()
+        try {
+            controller.onAppForegrounded()
+            runCurrent()
+            assertEquals(2, h.repository.readCount)
+            h.cancelControllerJobs() // a foreign cancellation is not swallowed by the bounded read
+            runCurrent()
+
+            // The flag was freed by the cancellation: the next foreground reads again, while the first read is released.
+            controller.onAppForegrounded()
+            runCurrent()
+            assertEquals(3, h.repository.readCount)
+        } finally {
+            h.repository.releaseReads()
+        }
+        runCurrent()
+        // The cancelled read's readable DISABLED result was never applied, and nothing was recovered or recorded.
+        assertEquals(AppLockState.Unlocked, controller.state.value)
+        assertRecoveries("cancelled read applied nothing", h)
+        assertEquals(emptyList<Throwable>(), h.uncaught)
+
+        h.repository.scriptRead(AppLockTestSettings.DISABLED)
+        controller.onAppForegrounded()
+        runCurrent()
+        assertEquals(AppLockState.Disabled, controller.state.value)
     }
 }

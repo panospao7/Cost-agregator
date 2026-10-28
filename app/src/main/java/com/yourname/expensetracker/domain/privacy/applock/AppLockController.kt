@@ -16,6 +16,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -429,6 +430,17 @@ class AppLockController @Inject constructor(
      * or collect both flows on Main.
      */
     val notice: StateFlow<LockNotice?> = mutableNotice.asStateFlow()
+
+    private val mutableReleaseOpportunity = MutableStateFlow(0L)
+
+    /**
+     * S21-a (D-S21-1): a monotonic counter, bumped when [onOpenOriginApplyCompleted] closes the T33 gate for a held
+     * link, after the controller's monitor is released. It is the one observable trigger after T33 (which changes no
+     * other flow): a collector reacts by asking [releaseHeldLink] from a separate main-thread call. It carries no link
+     * data and is not a state: only the change matters, never the value. A collector must never call a transition or
+     * the authenticator from the collection itself (R2).
+     */
+    val releaseOpportunity: StateFlow<Long> = mutableReleaseOpportunity.asStateFlow()
 
     /** The pending background (spec 2.4), for inspection by tests. Null when none is pending. */
     internal val pendingBackgroundAtMillis: Long?
@@ -1096,8 +1108,9 @@ class AppLockController @Inject constructor(
      * `SETTINGS_REREAD` (INV-47): reads the settings store once on the controller scope and offers the result to
      * the private, sequence-checked [onSettingsReread]. It has one production caller, the 1a settings section's
      * retry (S20-e; pinned). It does nothing unless the load state is transient
-     * unreadable (`IO_ERROR`, `TIMEOUT`): a readable view needs no re-read, and a persistent cause (`CORRUPTED`,
-     * `INVALID_VALUE`) stays until a review-save (INV-33). A new request makes every older re-read stale. The
+     * unreadable (`IO_ERROR`, `TIMEOUT`, or the controller's own `RESOLVE_TIMEOUT` fallback, 61c-2): a readable view
+     * needs no re-read, and a persistent cause (`CORRUPTED`, `INVALID_VALUE`) stays until a review-save (INV-33). The
+     * read is bounded by [RESOLVE_TIMEOUT_MILLIS]; one that outlives it changes nothing. A new request makes every older re-read stale. The
      * foreground does the same on its own at each `APP_FOREGROUNDED` ([onAppForegrounded]).
      */
     fun requestSettingsReread() {
@@ -1124,13 +1137,26 @@ class AppLockController @Inject constructor(
             if (foreground) foregroundRereadRunning.set(false)
             return
         }
-        val job = scope.launch { onSettingsReread(issued, readLoadState()) }
+        val job = scope.launch {
+            // S21-a: the read is bounded like the cold-start read, so a hung store can neither pin the foreground
+            // in-flight flag nor stay in flight for good. A null result means no change (the view is untouched and
+            // the next foreground re-reads). The timeout is swallowed by withTimeoutOrNull only; a cancellation of
+            // this job propagates.
+            val read = withTimeoutOrNull(RESOLVE_TIMEOUT_MILLIS) { readLoadState() } ?: return@launch
+            onSettingsReread(issued, read)
+        }
         if (foreground) job.invokeOnCompletion { foregroundRereadRunning.set(false) }
     }
 
-    /** True while the load state is `Unreadable` with a transient cause. Must be called with [stateLock] held. */
+    /**
+     * True while the load state is transient unreadable: `Unreadable` with a transient cause, or the controller's own
+     * `RESOLVE_TIMEOUT` fallback (61c-2: `loadState == null && resolvedByTimeout`, the cause is `TIMEOUT`). A cold
+     * start with no view yet (`loadState == null` without the timeout flag) is not transient unreadable. Must be called
+     * with [stateLock] held.
+     */
     private fun transientUnreadableLocked(): Boolean {
         val view = loadState
+        if (view == null) return resolvedByTimeout
         return view is AppLockSettingsLoadState.Unreadable && !view.cause.isPersistent
     }
 
@@ -1198,10 +1224,16 @@ class AppLockController @Inject constructor(
         // D9: the prior cause is captured before the assignment below overwrites it. Only a transient cause is a
         // recovery (T28's trigger); a persistent or absent prior view emits nothing here. A positive allowlist, so a
         // cause added later is never emitted until it is deliberately admitted here.
-        val priorCause = (loadState as? AppLockSettingsLoadState.Unreadable)?.cause?.takeIf {
-            it == SettingsUnreadableCause.IO_ERROR || it == SettingsUnreadableCause.TIMEOUT
+        // 61c-2: the controller's own RESOLVE_TIMEOUT fallback (no view, resolvedByTimeout) is a TIMEOUT recovery.
+        val priorCause = if (loadState == null && resolvedByTimeout) {
+            SettingsUnreadableCause.TIMEOUT
+        } else {
+            (loadState as? AppLockSettingsLoadState.Unreadable)?.cause?.takeIf {
+                it == SettingsUnreadableCause.IO_ERROR || it == SettingsUnreadableCause.TIMEOUT
+            }
         }
         loadState = read
+        resolvedByTimeout = false
         keptReread = null
         if (priorCause != null) {
             claimCodeCause(PrivacyDiagnosticCode.LOCK_SETTINGS_RECOVERED, priorCause)?.let { out += it }
@@ -1311,16 +1343,21 @@ class AppLockController @Inject constructor(
     /**
      * Closes the T33 gate (S18 calls this when the durable apply of an open-origin success completed OR failed).
      * Id-bound: an id other than the one whose success was handed over changes nothing, so a stale or repeated
-     * call is harmless. It releases nothing itself; the caller then asks [releaseHeldLink]. Public rather than
+     * call is harmless. It releases nothing itself; when it closes the gate with a link held it bumps
+     * [releaseOpportunity] (S21-a) and the caller then asks [releaseHeldLink]. Public rather than
      * internal for the same reason as the open-origin start API: its caller is another main file, and the id
      * binding means a wrong call cannot open the gate early for any other attempt.
      */
     fun onOpenOriginApplyCompleted(attemptId: Long) {
-        synchronized(stateLock) {
-            if (applyGateAttemptId == attemptId) applyGateAttemptId = null
+        val signal = synchronized(stateLock) {
+            val matched = applyGateAttemptId == attemptId
+            if (matched) applyGateAttemptId = null
             // The apply is over: its setting move can no longer be applied (the move runs before this call).
             clearPendingApplyLocked(attemptId)
+            matched && heldLink != null
         }
+        // S21-a (D-S21-1): after the monitor is released; only the gate-closing call with a link held signals.
+        if (signal) mutableReleaseOpportunity.update { it + 1 }
     }
 
     /** Drops the one-shot setting-move token when it belongs to [attemptId]. Must be called with [stateLock] held. */

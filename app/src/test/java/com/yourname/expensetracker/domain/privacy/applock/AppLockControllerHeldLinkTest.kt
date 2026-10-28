@@ -721,4 +721,78 @@ class AppLockControllerHeldLinkTest {
         assertEquals(0, h.repository.writeAttempts)
         assertEquals(AppLockState.Locked(LockCause.COLD_START), controller.state.value)
     }
+
+    // --- S21-a (D-S21-1): the post-T33 release signal --------------------------------------------------------------
+
+    @Test
+    fun `S21-a releaseOpportunity bumps exactly once on a matching completion with a link held, and a repeated call does not bump`() {
+        val (h, controller) = unlockedControllerFor()
+        val id = h.startOpenOrigin(controller, OpenOriginPrompt.CHANGE, RecordingSuccessHandler())
+        assertEquals(LinkDecision.HOLD, controller.onLockQuery(home))
+        h.authenticator.deliver(DeviceAuthOutcome.Succeeded)
+        assertEquals(0L, controller.releaseOpportunity.value)
+
+        controller.onOpenOriginApplyCompleted(id)
+        assertEquals(1L, controller.releaseOpportunity.value)
+
+        controller.onOpenOriginApplyCompleted(id) // repeated: the gate is already closed
+        assertEquals(1L, controller.releaseOpportunity.value)
+        // The signal itself released nothing: the caller still pulls the link, once.
+        assertEquals(released(home, afterUnlock = false), controller.releaseHeldLink())
+        assertEquals(1L, controller.releaseOpportunity.value)
+    }
+
+    @Test
+    fun `S21-a releaseOpportunity does not bump for a stale id, and a later matching completion still bumps once`() {
+        val (h, controller) = unlockedControllerFor()
+        val id = h.startOpenOrigin(controller, OpenOriginPrompt.CHANGE, RecordingSuccessHandler())
+        assertEquals(LinkDecision.HOLD, controller.onLockQuery(home))
+        h.authenticator.deliver(DeviceAuthOutcome.Succeeded)
+
+        controller.onOpenOriginApplyCompleted(id + 1)
+        controller.onOpenOriginApplyCompleted(id - 1)
+        assertEquals(0L, controller.releaseOpportunity.value)
+        assertEquals(HeldLinkRelease.None, controller.releaseHeldLink()) // the gate is still open
+
+        controller.onOpenOriginApplyCompleted(id)
+        assertEquals(1L, controller.releaseOpportunity.value)
+    }
+
+    @Test
+    fun `S21-a releaseOpportunity does not bump when no link is held, with or without an open gate`() {
+        val (h, controller) = unlockedControllerFor()
+        val id = h.startOpenOrigin(controller, OpenOriginPrompt.CHANGE, RecordingSuccessHandler())
+        h.authenticator.deliver(DeviceAuthOutcome.Succeeded)
+
+        controller.onOpenOriginApplyCompleted(id) // matching, but nothing is held
+        controller.onOpenOriginApplyCompleted(id)
+        controller.onOpenOriginApplyCompleted(999L) // nothing at all matches
+        assertEquals(0L, controller.releaseOpportunity.value)
+        assertEquals(HeldLinkRelease.None, controller.releaseHeldLink())
+    }
+
+    @Test
+    fun `S21-a releaseOpportunity does not bump for an id whose gate was never opened, even with a link held`() {
+        val (_, controller) = foregroundLockedControllerFor(LockCause.COLD_START)
+        assertEquals(LinkDecision.HOLD, controller.onLockQuery(anomaly))
+
+        controller.onOpenOriginApplyCompleted(1L)
+
+        assertEquals(0L, controller.releaseOpportunity.value)
+    }
+
+    @Test
+    fun `S21-a releaseOpportunity carries no link data - a bare read-only counter that never changes the held link`() {
+        val (h, controller) = unlockedControllerFor()
+        val id = h.startOpenOrigin(controller, OpenOriginPrompt.CHANGE, RecordingSuccessHandler())
+        assertEquals(LinkDecision.HOLD, controller.onLockQuery(place))
+        h.authenticator.deliver(DeviceAuthOutcome.Succeeded)
+        controller.onOpenOriginApplyCompleted(id)
+
+        val signal = controller.releaseOpportunity
+        // The public type is the read-only StateFlow (no mutable handle).
+        assertFalse(signal is kotlinx.coroutines.flow.MutableStateFlow<*>)
+        // Reading the signal consumed nothing: the link is still there for the one pull.
+        assertEquals(released(place, afterUnlock = false), controller.releaseHeldLink())
+    }
 }

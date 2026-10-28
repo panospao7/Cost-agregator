@@ -604,7 +604,10 @@ class AppLockControllerIllegalTransitionTest {
                 // S18 (ii-e), exact additions: the id-bound begin and apply report of an INERT disable (T19). Both have
                 // exactly one production caller, AppLockSettingsOperations.kt.
                 "beginInertDisable",
-                "onInertDisableApplied"
+                "onInertDisableApplied",
+                // S21-a (D-S21-1), exact addition: the read-only post-T33 release signal (a monotonic counter, no link
+                // data). Its only production reader will be the S21-b router file.
+                "getReleaseOpportunity"
             ),
             production
         )
@@ -701,6 +704,13 @@ class AppLockControllerIllegalTransitionTest {
             inertApplied.single().parameterTypes.toList()
         )
         assertEquals(Void.TYPE, inertApplied.single().returnType)
+
+        // S21-a (D-S21-1), exact addition: the release signal is a read-only StateFlow getter with no argument. The
+        // controller declares no setter or mutable handle for it, and no other public member mentions it.
+        val signal = own.filter { it.name.contains("eleaseOpportunity") }
+        assertEquals(listOf("getReleaseOpportunity"), signal.map { it.name })
+        assertEquals(emptyList<Class<*>>(), signal.single().parameterTypes.toList())
+        assertEquals(kotlinx.coroutines.flow.StateFlow::class.java, signal.single().returnType)
     }
 
     @Test
@@ -748,7 +758,11 @@ class AppLockControllerIllegalTransitionTest {
             // S18 (ii-e), exact additions: the INERT disable begin and apply report (T19). Exactly one production
             // caller each, the settings operations file.
             "beginInertDisable",
-            "onInertDisableApplied"
+            "onInertDisableApplied",
+            // S21-a (D-S21-1), exact addition (a strengthening): the release signal has NO production reader yet. S21-b
+            // allows exactly the router file the set {onLockQuery, releaseHeldLink, releaseOpportunity}, and nothing else.
+            // The token omits the first letter so it also matches the Java-facing getter name `getReleaseOpportunity`.
+            "eleaseOpportunity"
         )
         // S18 (i-a, i-b1, i-b2, ii-d, ii-e): these twelve have exactly one production caller, the settings operations file.
         val settingsOperationsOnly = setOf(

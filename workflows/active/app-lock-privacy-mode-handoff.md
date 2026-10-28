@@ -2532,3 +2532,40 @@ Validation to request: targeted `*AppLockPrivacySettingsViewModel*`, `*AppLockCo
 - Committed. D4 retired (approved test deletions only). No release may ship S20 without S22 (55a), and G1b must run before any release containing S20.
 - Next: S21-a (controller #2 timeout re-read + releaseOpportunity), then S21-b (held deep links), then S21-c (#10, OWNER DECISION PENDING item 69).
 - The S21/S22 amendment is persisted in the plan.
+
+### S21-a implementation (2026-10-28, implementer; NOT validated)
+
+Nothing was built or run. Write set: `AppLockController.kt` plus three controller test files (`AppLockControllerRereadTest`, `AppLockControllerHeldLinkTest`, `AppLockControllerIllegalTransitionTest`). No guard, baseline, allowlist, diagnostic-code or schema change.
+
+First pass (an implementer that died on an API timeout; its uncommitted work was kept) and the second-pass verification:
+- Controller. `transientUnreadableLocked` now also returns true for `loadState == null && resolvedByTimeout` (KDoc updated at `launchReread`, `requestSettingsReread` and `transientUnreadableLocked`). `applyRereadLocked` takes priorCause = TIMEOUT for that prior view (the existing D9 `claimCodeCause(LOCK_SETTINGS_RECOVERED, ...)` path; no new code) and clears `resolvedByTimeout` on apply. `launchReread` bounds the read with `withTimeoutOrNull(RESOLVE_TIMEOUT_MILLIS) { readLoadState() }`: null means no change and the foreground in-flight flag is released through `invokeOnCompletion`. `readLoadState` itself was unbounded and rethrows `CancellationException`. `onLateSettingsResolved` (T6b) and `onSettingsReread`'s T29 keep path are untouched. `applyRereadLocked` is reachable only from UNLOCKED or INERT (T28) and the post-unlock keep (T29), so no path opens LOCKED. New public `releaseOpportunity: StateFlow<Long>` (private `MutableStateFlow(0L)` behind `asStateFlow()`), bumped in `onOpenOriginApplyCompleted` after the monitor is released, only when the id matched the T33 gate and a link is held; it carries no link data.
+- Tests: `AppLockControllerRereadTest` has 14 "61c-2" cases; `AppLockControllerHeldLinkTest` has 5 "S21-a releaseOpportunity" cases; `AppLockControllerIllegalTransitionTest` has the pins.
+- Pins: `getReleaseOpportunity` is an exact addition to the public-method-set pin and to the signature pin (no args, returns `StateFlow`, the only member matching `eleaseOpportunity`). `releaseOpportunity` is in the controller-entry forbidden list, with no allowed file yet. S21-b must add the router-file allowance {onLockQuery, releaseHeldLink, releaseOpportunity}.
+
+Completed in the second pass: nothing was missing in the source or the tests. Every item was verified against the code and the helpers the tests use (`resolveTimedOut`, `holdReads`, `cancelControllerJobs`, `startOpenOrigin`, `unlockedControllerFor`, ...). This handoff entry is the only edit.
+
+Validation to request: targeted `*AppLockController*` (includes IllegalTransition, Reread and HeldLink; Resolution, Timer and Notice also run). Then in the S21 batch: `*DeepLink*`, `*MainScreenCallSite*`, shard domain-n-z.
+
+Residual risk: the Reread timeout-bound tests use `advanceTimeBy` on the harness scheduler (not run). `signal.value is Long` in the HeldLink test may warn (USELESS_IS_CHECK); warnings are not errors in this build.
+
+### S21-a review fixes (2026-10-28, test-author; NOT validated)
+
+Test-only; nothing was built or run. Source of the privacy-security-guardian findings F1, F2, F4, F7 (F3 is deferred to the S21-b router tests: a bump while LOCKED returns None).
+- F1 `AppLockControllerRereadTest` (cancellation test): a readable `DISABLED` result is scripted for the held read. After `cancelControllerJobs()` and before `releaseReads()` a second `onAppForegrounded()` + `runCurrent()` asserts `readCount == 3`. After the release the state is still UNLOCKED and `assertRecoveries` proves no LOCK_SETTINGS_RECOVERED was emitted.
+- F2 (hang test): a readable `DISABLED` result is scripted for the hung read. After the release, UNLOCKED stays and no recovery is emitted (the timed-out read's result is never applied); the later readable re-read still recovers.
+- F4 `AppLockControllerIllegalTransitionTest`: the forbidden token is now `eleaseOpportunity`, so it also matches the Java-facing `getReleaseOpportunity`.
+- F7 `AppLockControllerHeldLinkTest`: removed the useless `is Long` checks and the `toString().contains` assertion; kept the "not a MutableStateFlow" check.
+- Note: INERT(SETTINGS_UNREADABLE_NO_AUTH) to DISABLED via a readable re-read lets the fail-closed discreet and secure values give way to the stored values without auth, the same as existing T28.
+
+Validation to request: targeted `*AppLockControllerRereadTest*`, `*AppLockControllerHeldLinkTest*`, `*AppLockControllerIllegalTransitionTest*` (or `*AppLockController*`).
+
+### S21-a ACCEPTED (2026-10-28)
+- Gate: privacy-security-guardian (lead) ACCEPT-WITH-CONDITIONS; C1 met; F1, F2, F4 and F7 applied; F3 is deferred to the S21-b router tests.
+- Validation, final tree, all PASS:
+  - targeted *AppLockController* vr-20261028-044851-7dd79d4c
+  - domain-n-z vr-20261028-050642-9a099821
+  - cancellation vr-20261028-050830-aff4cdc4
+  - pre-fix targeted vr-20261028-041945-c5b073be
+- 61c #2 closed (timeout re-read, LOCKED never relaxed).
+- Committed.
+- Next: S21-b (held deep links via AppLockDeepLinkRouter).
