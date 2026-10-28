@@ -42,6 +42,7 @@ import com.yourname.expensetracker.data.backup.RestoreRestartSignal
 import com.yourname.expensetracker.data.database.DatabaseOpenGate
 import com.yourname.expensetracker.ui.unsupported.UnsupportedDatabaseActivity
 import com.yourname.expensetracker.domain.privacy.applock.AppLockController
+import com.yourname.expensetracker.ui.applock.AppLockDeepLinkRouter
 import com.yourname.expensetracker.ui.applock.AppLockLifecycleBinder
 import com.yourname.expensetracker.ui.applock.AppLockPromptHost
 import com.yourname.expensetracker.ui.applock.AppLockShell
@@ -87,7 +88,6 @@ import com.yourname.expensetracker.ui.screens.subscription.SubscriptionManagemen
 import com.yourname.expensetracker.ui.screens.tax.TaxConfigurationScreen
 import com.yourname.expensetracker.ui.theme.ExpenseTrackerTheme
 import com.yourname.expensetracker.ui.components.emptystate.ContextualActionRegistry
-import com.yourname.expensetracker.ui.navigation.DeepLinkApplier
 import com.yourname.expensetracker.ui.navigation.DeepLinkPolicy
 import com.yourname.expensetracker.ui.navigation.DeepLinkPolicyResult
 import com.yourname.expensetracker.ui.navigation.NavigationDestination
@@ -112,9 +112,9 @@ import kotlin.math.roundToInt
 class MainActivity : FragmentActivity() {
     private val mainViewModel: MainViewModel by viewModels()
 
-    /** Applies validated deep links (INV-14..INV-22); the activity itself never parses a link. */
+    /** S21-b: routes validated deep links through the app-lock controller (INV-14..INV-22, PRV-16); unscoped, one per Activity. */
     @Inject
-    lateinit var deepLinkApplier: DeepLinkApplier
+    lateinit var deepLinkRouter: AppLockDeepLinkRouter
 
     @Inject
     lateinit var actionRegistry: ContextualActionRegistry
@@ -169,6 +169,7 @@ class MainActivity : FragmentActivity() {
         appLockLifecycleBinder.install(application)
         appLockPromptHostProvider.get().attach(this)
         secureWindowController.bind(this)
+        deepLinkRouter.startReleasing(this, mainViewModel)
         enableEdgeToEdge()
         if (savedInstanceState == null) {
             val consumed = handleIntent(intent)
@@ -221,11 +222,12 @@ class MainActivity : FragmentActivity() {
     /**
      * Deep-link entry point (INV-14). Every `expensetracker:` intent, internal notification taps
      * included, is untrusted: it is evaluated only by [DeepLinkPolicy] (pure, no IO) and acted on only
-     * by [DeepLinkApplier]. This function never parses or logs the link, so no raw URI, host or
+     * by the deep-link applier. This function never parses or logs the link, so no raw URI, host or
      * parameter value can reach a log or a diagnostic (INV-18; closes advisory C4).
      *
-     * PRV-16 (links without an auth gate): the lock gate for held links belongs to the app-lock
-     * increment (spec 5.5, plan Inc 1b); until it lands, links apply immediately.
+     * PRV-16 (S21-b): the link goes only through [AppLockDeepLinkRouter]. While the app is locked, resolving or
+     * waiting for a prompt, the app-lock controller holds the link in memory and the router releases it once the
+     * app is open again (spec 5.5); only an open app applies it now.
      *
      * @return true when the intent carried an `expensetracker:` link (even a rejected one), so the
      * caller consumes the data one-shot; false when it was not a link at all.
@@ -234,7 +236,7 @@ class MainActivity : FragmentActivity() {
         val result = DeepLinkPolicy.evaluate(intent?.action, intent?.dataString)
         if (result is DeepLinkPolicyResult.NotADeepLink) return false
 
-        lifecycleScope.launch { deepLinkApplier.apply(result, mainViewModel) }
+        deepLinkRouter.route(result, lifecycleScope, mainViewModel)
         return true
     }
 }

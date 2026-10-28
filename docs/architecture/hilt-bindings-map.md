@@ -397,6 +397,8 @@ Auto-provided (no module entry; @Inject constructors) — app-lock 1a:
                                                         PrivacyDiagnosticsEmitter, BankFeatureAvailability,
                                                         AiRuntimeDiagnostics, @ApplicationScope CoroutineScope;
                                                         field-injected into MainActivity)
+  AppLockDeepLinkRouter                                (AppLockController, DeepLinkApplier; UNSCOPED @Inject, one per
+                                                        Activity — field-injected into MainActivity; S21-b, ui/applock)
   @Singleton AppLockSettingsWriteSerializer            (no deps; domain/privacy/applock; process-wide Mutex
                                                         serialising ALL app-lock settings writes, shared by the
                                                         ViewModel and AppLockSettingsOperations; moved from the ui

@@ -1584,8 +1584,34 @@ ENTRY (the only one):
   → DeepLinkPolicy.evaluate(intent.action, intent.dataString)   [ui/navigation, object in
     DeepLinkParser.kt; pure, no IO, never throws, never logs; the ONLY parser of expensetracker://]
   → NotADeepLink → handleIntent returns false (not a link at all)
-  → otherwise lifecycleScope.launch { DeepLinkApplier.apply(result, mainViewModel) }   (true = the
+  → otherwise AppLockDeepLinkRouter.route(result, lifecycleScope, mainViewModel)   (S21-b; true = the
     intent data is consumed one-shot, even for a rejected link)
+
+ROUTER (S21-b, PRV-16; ui/applock/AppLockDeepLinkRouter, unscoped, one per Activity; the ONLY production
+caller of AppLockController.onLockQuery / releaseHeldLink / releaseOpportunity):
+  • route(Accepted) → controller.onLockQuery(request):
+      APPLY_NOW → scope.launch { DeepLinkApplier.apply }  (afterUnlock = false, drops reported)
+      HOLD → DeepLinkApplier.onHeld: the dropped-parameter codes only (D-S21-4); no lookup, no
+             briefing write, no navigation. The controller holds the link in memory (never persisted;
+             process death drops it; newest wins; T_held = 5 min).
+  • route(Rejected) → open state (DISABLED, UNLOCKED, INERT) → DeepLinkApplier.apply (Home, or ignored
+    for a non-VIEW action); otherwise DeepLinkApplier.onRejectedWhileClosed: the bounded DL_REJECTED_*
+    code only, no navigation, the held slot untouched (D-S21-3)
+  • startReleasing(owner, mainViewModel) (once, MainActivity.onCreate after the DB gate and the secure-window
+    bind, before handleIntent and setContent; never from onNewIntent): while STARTED, collects
+    controller.state combined with controller.releaseOpportunity (the post-T33 signal). On each emission
+    with an open state it POSTS launch(Dispatchers.Main) (never Main.immediate, never Unconfined, never
+    inline under the publication) which calls controller.releaseHeldLink():
+      Apply → DeepLinkApplier.applyReleased (afterUnlock from the release; drops not re-reported; the
+              lookup and the briefing write happen here)
+      Expired → DeepLinkApplier.applyExpired: Home only (the controller recorded DL_HELD_EXPIRED)
+      None → nothing (locked, resolving, prompt pending, T33 gate open, or backgrounded: the link stays held)
+  • Accepted residuals: R-S21-1 a lookup that began while open can finish after a re-lock (the navigation is
+    buffered and nothing is composed, and its bounded DL_APPLIED / DL_BRIEFING_* outcome may be recorded
+    after the re-lock); R-S21-2 a rotation during a released-link lookup loses that apply.
+  • Ordering note (not a privacy issue, the app is unlocked): while the app is open but the T33 gate is still
+    open, a rejected link goes Home immediately and an older held link still applies after the gate closes
+    (reversed order).
 
 EVERY expensetracker: URI is untrusted, internal notification taps included (F9). The manifest is
 not the security boundary: the exported launcher activity accepts any URI, so validation here is.
@@ -1619,8 +1645,8 @@ APPLIER (ui/navigation/DeepLinkApplier, the only code that acts on a link):
   • diagnostics: bounded DL_* codes (host / parameter enums, booleans, counts, exception class)
     launched on @ApplicationScope, never awaited; no raw URI, host string, briefingKey or parameter
     value in any log, diagnostic or AiRuntimeDiagnostics message (INV-18)
-  • 1a has no lock, so links apply immediately (afterUnlock = false); the held-link gate belongs
-    to increment 1b
+  • apply (APPLY_NOW) uses afterUnlock = false; a released link uses the controller's afterUnlock
+    (S21-b: the held-link gate is the router above, no longer "increment 1b")
 
 MANIFEST (INV-20, OD-3a):
   • MainActivity VIEW filter: action VIEW + category DEFAULT + 8 <data> entries for the scheme
@@ -1632,6 +1658,10 @@ MANIFEST (INV-20, OD-3a):
 FORBIDDEN:
   ❌ Parsing, matching or logging an expensetracker: URI anywhere outside DeepLinkPolicy
   ❌ Acting on a link anywhere but DeepLinkApplier
+  ❌ Applying a link without the router's controller query (MainActivity calls only router.route and
+     router.startReleasing; it never touches the controller's link entries)
+  ❌ Calling the held-link release inline, from Main.immediate / Unconfined, or off the main thread
+  ❌ Persisting a held link, or reporting a held link's lookup / briefing write before its release
   ❌ A link that creates, edits, deletes or prefills data (INV-17)
   ❌ A persistent write from a link other than MarkDashboardBriefingOpenedUseCase (equals-last-delivered)
   ❌ Re-adding android.intent.category.BROWSABLE to the expensetracker filter

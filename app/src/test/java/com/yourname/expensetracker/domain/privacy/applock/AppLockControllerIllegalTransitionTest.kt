@@ -732,12 +732,13 @@ class AppLockControllerIllegalTransitionTest {
             // Part (ii-b), exact addition (F3): the open-origin start API has no caller yet. S18 adds exactly its
             // own file as the one caller, and extends this pin to allow that single file and nothing else.
             "startOpenOriginAttempt",
-            // S17 review F4, exact additions: the held-link release has exactly one production caller (S20) and the
+            // S17 review F4, exact additions: the held-link release has exactly one production caller and the
             // T33 apply completion exactly one (S18). Each extends this pin to allow that single file and nothing else.
+            // S21: exactly the router file (RP-1), not MainActivity, may call the release.
             "releaseHeldLink",
             "onOpenOriginApplyCompleted",
-            // S17 final gate (Issue 3), exact addition: the link decision `onLockQuery(link)` has no production caller
-            // yet. S20 allows exactly the host Activity file as its caller (with releaseHeldLink) and nothing else.
+            // S17 final gate (Issue 3), exact addition: the link decision `onLockQuery(link)` and the bare query
+            // `onLockQuery()`. S21: exactly the router file (RP-1), not MainActivity, with releaseHeldLink.
             "onLockQuery",
             // S18 (i-a), exact additions: the T26 refusal claim and the T17 / T18 state move.
             "onEnableRefusedAtRequest",
@@ -792,6 +793,11 @@ class AppLockControllerIllegalTransitionTest {
                         // S20-e (S18-ii-h): the 1a settings ViewModel's retry is the ONE production caller of the
                         // settings re-read request, and gets exactly that token and nothing else.
                         SETTINGS_VIEW_MODEL_PATH -> setOf("requestSettingsReread")
+                        // S21-b (PRV-16): the deep-link router is the ONE production caller of the link decision, the
+                        // held-link release and the release signal, and gets exactly those tokens (the signal token
+                        // omits its first letter, as in the forbidden list).
+                        "com/yourname/expensetracker/ui/applock/AppLockDeepLinkRouter.kt" ->
+                            setOf("onLockQuery", "releaseHeldLink", "eleaseOpportunity")
                         else -> emptySet()
                     }
                     (forbidden - allowed).any { text.contains(it) }

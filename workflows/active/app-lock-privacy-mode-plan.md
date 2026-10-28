@@ -1954,7 +1954,7 @@ T3. S21 starts after the S20 candidate is committed. One lane, a → b → c. P 
   - M MainScreenCallSiteTest strengthening (router-only handleIntent; startReleasing order; not from onNewIntent; onLockQuery and releaseHeldLink forbidden in MainActivity).
 - Pins: the controller-entry pin `when` allows exactly AppLockDeepLinkRouter.kt the set {onLockQuery, releaseHeldLink, releaseOpportunity}.
 - Accepted residuals:
-  - R-S21-1: a lookup that began while open can finish after a re-lock; the navigation is buffered and nothing is composed.
+  - R-S21-1: a lookup that began while open can finish after a re-lock; the navigation is buffered and nothing is composed, and its bounded DL_APPLIED / DL_BRIEFING_* outcome may be recorded after the re-lock.
   - R-S21-2: a rotation during a released-link lookup loses that apply.
 - Gates: privacy-security-guardian (lead), architecture-guardian, reviewer-strict.
 

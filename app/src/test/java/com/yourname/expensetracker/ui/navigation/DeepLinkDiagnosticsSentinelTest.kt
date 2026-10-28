@@ -13,7 +13,13 @@ import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
 import com.yourname.expensetracker.domain.diagnostics.NotificationDiagnosticEmitter
+import com.yourname.expensetracker.domain.privacy.applock.AppLockControllerHarness
+import com.yourname.expensetracker.domain.privacy.applock.AppLockTestSettings
+import com.yourname.expensetracker.domain.privacy.applock.AutoLockTimeout
+import com.yourname.expensetracker.domain.privacy.applock.HeldLinkRelease
+import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticCode
 import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticsEmitter
+import com.yourname.expensetracker.ui.applock.AppLockDeepLinkRouter
 import com.yourname.expensetracker.domain.util.FakeMonotonicTimeProvider
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.ui.MainViewModel
@@ -28,6 +34,7 @@ import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.After
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -201,5 +208,67 @@ class DeepLinkDiagnosticsSentinelTest {
         }
         // The safe interaction record is still written, with a constant message.
         assertTrue(aiRuntimeDiagnostics.getRecentEvents(1_000).any { it.message == "dashboard deep link opened" })
+    }
+
+    @Test
+    fun `S21-b a held then released link and a held then expired link record only bounded DL_HELD and DL_APPLIED metadata`() = runTest {
+        val applier = applier()
+        val expense = mockk<Expense> { every { date } returns 1_700_000_000_000L }
+        coEvery { expenseRepository.getExpenseById(77L) } returns expense
+
+        // The REAL controller (its DL_HELD_* codes go to the harness sink) in front of the real applier chain.
+        val h = AppLockControllerHarness(AppLockTestSettings.enabled(AutoLockTimeout.IMMEDIATE))
+        val controller = h.resolvedController()
+        controller.onAppForegrounded()
+        val router = AppLockDeepLinkRouter(controller, applier)
+
+        // Held, then released after the unlock.
+        monotonic.advanceNanos(61_000_000_000L)
+        router.route(
+            DeepLinkPolicy.evaluate(Intent.ACTION_VIEW, "expensetracker://activity?expenseId=77&secretkey=secretvalue"),
+            this,
+            mainViewModel
+        )
+        h.unlock(controller)
+        val released = controller.releaseHeldLink()
+        assertTrue(released is HeldLinkRelease.Apply)
+        monotonic.advanceNanos(61_000_000_000L)
+        applier.applyReleased(released as HeldLinkRelease.Apply, mainViewModel)
+
+        // Held for six minutes, then expired.
+        controller.onAppBackgrounded()
+        controller.onAppForegrounded()
+        router.route(
+            DeepLinkPolicy.evaluate(Intent.ACTION_VIEW, "expensetracker://map?location=SecretCafe"),
+            this,
+            mainViewModel
+        )
+        h.clock.advance(6 * 60_000L)
+        h.unlock(controller)
+        assertEquals(HeldLinkRelease.Expired, controller.releaseHeldLink())
+        applier.applyExpired(mainViewModel)
+
+        val heldCodes = h.emitted.filter { it.name.startsWith("DL_HELD_") }
+        assertEquals(
+            listOf(
+                PrivacyDiagnosticCode.DL_HELD_LOCKED,
+                PrivacyDiagnosticCode.DL_HELD_LOCKED,
+                PrivacyDiagnosticCode.DL_HELD_EXPIRED
+            ),
+            heldCodes
+        )
+        // Every controller metadata value is a closed enum, a boolean or a count: never a string.
+        val heldMetadata = h.emitted.zip(h.emittedMetadata).filter { it.first.name.startsWith("DL_HELD_") }.map { it.second }
+        heldMetadata.forEach { metadata ->
+            metadata.entries.values.forEach { value ->
+                assertTrue("bounded value only: $value", value is Enum<*> || value is Boolean || value is Int)
+            }
+        }
+        val controllerSide = heldMetadata.joinToString(" ") { it.toString() + it.entries }
+        val recorded = everythingRecorded() + controllerSide
+        assertTrue("Expected diagnostics to have been recorded", durableRows.isNotEmpty())
+        sentinels.forEach { sentinel ->
+            assertFalse("Sink contains '$sentinel':\n$recorded", recorded.contains(sentinel))
+        }
     }
 }

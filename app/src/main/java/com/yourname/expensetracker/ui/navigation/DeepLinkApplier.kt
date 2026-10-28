@@ -5,6 +5,7 @@ import com.yourname.expensetracker.di.ApplicationScope
 import com.yourname.expensetracker.domain.ai.usecase.MarkDashboardBriefingOpenedUseCase
 import com.yourname.expensetracker.domain.bank.BankFeatureAvailability
 import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
+import com.yourname.expensetracker.domain.privacy.applock.HeldLinkRelease
 import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticCode
 import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticKey
 import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticMetadata
@@ -54,18 +55,65 @@ class DeepLinkApplier @Inject constructor(
 ) {
 
     /**
-     * Applies [result] immediately (1a: there is no lock yet, so `afterUnlock` is always false).
+     * Applies [result] immediately: the caller (the app-lock router, S21-b) has decided that the app is open and
+     * nothing is pending, so `afterUnlock` is false and a dropped parameter is reported now. A link that had to wait
+     * goes through [onHeld], [onRejectedWhileClosed], [applyReleased] and [applyExpired] instead.
      * Rethrows [CancellationException]; any other failure is mapped to a bounded code.
      */
     suspend fun apply(result: DeepLinkPolicyResult, mainViewModel: MainViewModel) {
         when (result) {
             DeepLinkPolicyResult.NotADeepLink -> Unit
-            is DeepLinkPolicyResult.Rejected -> applyRejection(result, mainViewModel)
-            is DeepLinkPolicyResult.Accepted -> applyAccepted(result, mainViewModel)
+            is DeepLinkPolicyResult.Rejected -> {
+                reportRejection(result)
+                // Never a silent no-op for a link that was meant for the app; only a non-VIEW action is ignored.
+                if (result.fallsBackToHome) mainViewModel.navigateTo(NavigationDestination.Home)
+            }
+            is DeepLinkPolicyResult.Accepted ->
+                applyAccepted(result, mainViewModel, afterUnlock = false, reportDrops = true)
         }
     }
 
-    private fun applyRejection(result: DeepLinkPolicyResult.Rejected, mainViewModel: MainViewModel) {
+    /**
+     * S21-b (PRV-16, D-S21-4): an accepted link the controller holds. Only the dropped-parameter codes are reported,
+     * at receipt, because the policy result (and so the drops) exists only now. Nothing is looked up, written or
+     * navigated: the briefing write, the expense lookup and every navigation wait for the release.
+     */
+    fun onHeld(result: DeepLinkPolicyResult.Accepted) {
+        reportDroppedParameters(result.request.host, result.drops)
+    }
+
+    /**
+     * S21-b (D-S21-3): a rejected link that arrives while the app is closed. Only the bounded `DL_REJECTED_*` code is
+     * reported; there is no navigation (a Home jump would drop the app behind the lock surface) and a link already
+     * held is left alone.
+     */
+    fun onRejectedWhileClosed(result: DeepLinkPolicyResult.Rejected) {
+        reportRejection(result)
+    }
+
+    /**
+     * S21-b: applies a link the controller released ([HeldLinkRelease.Apply]). Its dropped parameters were reported
+     * when it was held, so they are not reported again. The state-dependent work (the briefing write, the lookup) runs
+     * only here, after the release (INV-16, INV-30).
+     */
+    suspend fun applyReleased(release: HeldLinkRelease.Apply, mainViewModel: MainViewModel) {
+        applyAccepted(
+            DeepLinkPolicyResult.Accepted(release.request),
+            mainViewModel,
+            afterUnlock = release.afterUnlock,
+            reportDrops = false
+        )
+    }
+
+    /**
+     * S21-b (AE-60): a held link that expired. Opens Home and records nothing: the controller already recorded
+     * `DL_HELD_EXPIRED`.
+     */
+    fun applyExpired(mainViewModel: MainViewModel) {
+        mainViewModel.navigateTo(NavigationDestination.Home)
+    }
+
+    private fun reportRejection(result: DeepLinkPolicyResult.Rejected) {
         when (result.reason) {
             DeepLinkRejection.ACTION -> report(PrivacyDiagnosticCode.DL_REJECTED_ACTION)
             DeepLinkRejection.MALFORMED -> report(PrivacyDiagnosticCode.DL_REJECTED_MALFORMED)
@@ -74,13 +122,16 @@ class DeepLinkApplier @Inject constructor(
                 put(PrivacyDiagnosticKey.BANK_SYNC_AVAILABLE, bankFeatureAvailability.isBankSyncAvailable)
             }.build())
         }
-        // Never a silent no-op for a link that was meant for the app; only a non-VIEW action is ignored.
-        if (result.fallsBackToHome) mainViewModel.navigateTo(NavigationDestination.Home)
     }
 
-    private suspend fun applyAccepted(result: DeepLinkPolicyResult.Accepted, mainViewModel: MainViewModel) {
+    private suspend fun applyAccepted(
+        result: DeepLinkPolicyResult.Accepted,
+        mainViewModel: MainViewModel,
+        afterUnlock: Boolean,
+        reportDrops: Boolean
+    ) {
         val request = result.request
-        reportDrops(request.host, result.drops)
+        if (reportDrops) reportDroppedParameters(request.host, result.drops)
 
         when (request.host) {
             DeepLinkHost.HOME, DeepLinkHost.DASHBOARD -> {
@@ -102,11 +153,11 @@ class DeepLinkApplier @Inject constructor(
 
         report(PrivacyDiagnosticCode.DL_APPLIED, PrivacyDiagnosticMetadata.builder().apply {
             put(PrivacyDiagnosticKey.HOST, request.host)
-            put(PrivacyDiagnosticKey.AFTER_UNLOCK, false)
+            put(PrivacyDiagnosticKey.AFTER_UNLOCK, afterUnlock)
         }.build())
     }
 
-    private fun reportDrops(host: DeepLinkHost, drops: DeepLinkDrops) {
+    private fun reportDroppedParameters(host: DeepLinkHost, drops: DeepLinkDrops) {
         if (drops.unknownCount > 0) {
             report(PrivacyDiagnosticCode.DL_PARAM_UNKNOWN_DROPPED, PrivacyDiagnosticMetadata.builder().apply {
                 put(PrivacyDiagnosticKey.HOST, host)

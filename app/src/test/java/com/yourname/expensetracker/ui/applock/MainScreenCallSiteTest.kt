@@ -136,6 +136,13 @@ class MainScreenCallSiteTest {
         return sanitized.substring(open + 1, matching(sanitized, open, '{', '}'))
     }
 
+    private fun handleIntentBody(sanitized: String): String {
+        val start = sanitized.indexOf("private fun handleIntent(")
+        assertTrue("handleIntent not found", start >= 0)
+        val open = sanitized.indexOf('{', start)
+        return sanitized.substring(open + 1, matching(sanitized, open, '{', '}'))
+    }
+
     // --- MainScreen call site -------------------------------------------------------------------------------
 
     @Test
@@ -218,11 +225,40 @@ class MainScreenCallSiteTest {
     fun s20b_f6_bindInstallAndAttachAreNeverCalledFromOnNewIntent() {
         val text = sanitized(mainActivityFile)
         val body = onNewIntentBody(text)
-        listOf("bind(", "install(", "attach(", "applyInitial(", "AppLockShell").forEach {
+        listOf("bind(", "install(", "attach(", "applyInitial(", "AppLockShell", "startReleasing(").forEach {
             assertFalse("onNewIntent must not contain $it", body.contains(it))
         }
         // The only bind call in the whole file is the one in onCreate.
         assertEquals(1, Regex("""\.bind\s*\(""").findAll(text).count())
+        // S21-b: the release watch is started once per Activity instance, in onCreate only.
+        assertEquals(1, Regex("""\.startReleasing\s*\(""").findAll(text).count())
+    }
+
+    @Test
+    fun s21_handleIntentRoutesOnlyThroughTheRouter() {
+        val text = sanitized(mainActivityFile)
+        assertFalse("MainActivity.kt must not reference DeepLinkApplier", text.contains("DeepLinkApplier"))
+        assertEquals("exactly one .route( in MainActivity.kt", 1, Regex("""\.route\s*\(""").findAll(text).count())
+        val body = handleIntentBody(text)
+        assertTrue("the .route( call is in handleIntent", Regex("""deepLinkRouter\s*\.route\s*\(""").containsMatchIn(body))
+        assertFalse("handleIntent must not launch an apply itself", body.contains(".apply("))
+    }
+
+    @Test
+    fun s21_startReleasingIsInOnCreateAfterTheDbGateAndBindAndBeforeHandleIntentAndSetContent() {
+        val body = onCreateBody(sanitized(mainActivityFile))
+        val dbGateReturn = body.indexOf("return", body.indexOf("DatabaseOpenGate"))
+        val bind = body.indexOf("secureWindowController.bind(this)")
+        val startReleasing = body.indexOf("deepLinkRouter.startReleasing(this, mainViewModel)")
+        val handleIntent = body.indexOf("handleIntent(intent)")
+        val setContent = body.indexOf("setContent")
+        assertTrue("DB gate return found", dbGateReturn >= 0)
+        assertTrue("bind found", bind > dbGateReturn)
+        assertTrue("startReleasing after the DB gate", startReleasing > dbGateReturn)
+        assertTrue("startReleasing after bind", startReleasing > bind)
+        assertTrue("handleIntent after startReleasing", handleIntent > startReleasing)
+        assertTrue("setContent after startReleasing", setContent > startReleasing)
+        assertEquals(1, Regex("""\.startReleasing\s*\(""").findAll(body).count())
     }
 
     @Test
@@ -252,7 +288,10 @@ class MainScreenCallSiteTest {
             "onUnlockTapped",
             "onAppForegrounded",
             "onAppBackgrounded",
-            "resolve("
+            "resolve(",
+            // S21-b: the link decision and the held-link release belong to the router, never to the Activity.
+            "onLockQuery",
+            "releaseHeldLink"
         ).forEach { assertFalse("MainActivity.kt must not reference $it", text.contains(it)) }
     }
 

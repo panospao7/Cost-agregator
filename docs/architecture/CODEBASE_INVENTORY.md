@@ -255,7 +255,7 @@ Assistant is an overlay/entry surface, not a bottom tab.
 - **NavigationDestination.kt:** Sealed class with all routes + token serialization
 - **FeatureConfig.kt:** Feature menu configuration
 - **DeepLinkParser.kt:** hosts `DeepLinkPolicy`, the pure validator of every `expensetracker:` link (Accepted / Rejected / NotADeepLink)
-- **DeepLinkApplier.kt:** the only code that acts on a validated link (navigation, briefing-opened write, bounded `DL_*` diagnostics)
+- **DeepLinkApplier.kt:** the only code that acts on a validated link (navigation, briefing-opened write, bounded `DL_*` diagnostics); S21-b adds the held-link entries `onHeld`, `onRejectedWhileClosed`, `applyReleased`, `applyExpired` (the router in `ui/applock/AppLockDeepLinkRouter.kt` is their only caller)
 - **DestinationPersistencePolicy.kt:** Classifies destinations as FULL/DEGRADED/EPHEMERAL
 - **MainActivity.kt:** Navigation host and activity setup
 

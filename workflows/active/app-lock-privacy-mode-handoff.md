@@ -2569,3 +2569,59 @@ Validation to request: targeted `*AppLockControllerRereadTest*`, `*AppLockContro
 - 61c #2 closed (timeout re-read, LOCKED never relaxed).
 - Committed.
 - Next: S21-b (held deep links via AppLockDeepLinkRouter).
+
+### S21-b implementation (2026-10-28, implementer; NOT validated)
+
+Nothing was built or run (no shell was available to this implementer, so `git status` could not be run either). No schema, guard, baseline, allowlist, diagnostic-code or controller change.
+
+Production:
+- N `ui/applock/AppLockDeepLinkRouter.kt` (`@Inject`, unscoped; ctor = controller + `DeepLinkApplier`). `route(result, scope, vm)`: Accepted goes through `controller.onLockQuery(request)` (APPLY_NOW is `scope.launch { applier.apply }`, HOLD is `applier.onHeld`); Rejected asks the no-argument `controller.onLockQuery()` for the state (DISABLED, UNLOCKED, INERT: `scope.launch { applier.apply }`; RESOLVING, LOCKED, AUTHENTICATING: `applier.onRejectedWhileClosed`). `startReleasing(owner, vm)`: `owner.lifecycleScope` + `repeatOnLifecycle(STARTED)` + `combine(state, releaseOpportunity)`; on an open state it posts `ownerScope.launch(Dispatchers.Main)` (the lifecycle scope, not the repeat scope, so a stop does not cancel a release that is in flight) and inside that runs the one `when (controller.releaseHeldLink())`. A backgrounded app gets None from the controller (F1), and the next STARTED re-collects the current state, which is the ON_START opportunity.
+- M `ui/navigation/DeepLinkApplier.kt`: `apply` keeps its signature (rejection reporting extracted to `reportRejection`; an accepted link goes through `applyAccepted(afterUnlock = false, reportDrops = true)`); `applyAccepted` gains `afterUnlock` and `reportDrops`; N `onHeld`, `onRejectedWhileClosed`, `applyReleased`, `applyExpired`; the private drops helper was renamed `reportDroppedParameters` (it clashed with the new `reportDrops` parameter name); KDoc updated.
+- M `ui/MainActivity.kt`: hunks (1) field `deepLinkRouter`, (2) `deepLinkRouter.startReleasing(this, mainViewModel)` after `secureWindowController.bind(this)`, (3) `handleIntent` calls `deepLinkRouter.route(result, lifecycleScope, mainViewModel)` and the PRV-16 KDoc is rewritten. Plus two import lines (the `DeepLinkApplier` import removed because the new pin requires its absence from the sanitized file, and the router import added). onNewIntent and the intent block are untouched.
+
+Tests:
+- N `ui/applock/AppLockDeepLinkRouterTest` (Robolectric, PAUSED looper, real controller via the controller fixtures, real applier over strict mocks). Names (backticked in the file): AE-55 (hold, rotation with a new router, one navigation after unlock, second release None), AE-56, AE-57, AE-58 (both orders), AE-59, AE-60, RESOLVING-to-DISABLED (afterUnlock false), `61c 9` (RESOLVE_TIMEOUT to LOCKED held), T33 signal, AE-118, rejected while LOCKED, rejected while open, F1 background, S21-a F3, posted never inline, INERT applies now, unreadable store keeps the link held, two source-scan tests (no `immediate`/`Unconfined`/`runBlocking`, `releaseHeldLink` once and only inside `launch(Dispatchers.Main)`; no bind/install/attach names, no `fun interface`, no `@Composable`).
+- N `ui/navigation/DeepLinkApplierHoldTest` (applyReleased true/false, no re-reported drops, lookup and briefing write only on release, onHeld drops only, onRejectedWhileClosed no navigation, applyExpired Home only, apply unchanged).
+- M `DeepLinkDiagnosticsSentinelTest`: one held-then-released and held-then-expired case (bounded metadata, no sentinel strings).
+- M `MainScreenCallSiteTest`: `s21_handleIntentRoutesOnlyThroughTheRouter`, `s21_startReleasingIsInOnCreateAfterTheDbGateAndBindAndBeforeHandleIntentAndSetContent`, `s20b_f6` extended (no `startReleasing(` in onNewIntent; exactly one `.startReleasing(` in the file), "onLockQuery" and "releaseHeldLink" added to the MainActivity forbidden list.
+- M `AppLockControllerIllegalTransitionTest`: the controller-entry `when` gains `".../ui/applock/AppLockDeepLinkRouter.kt" -> setOf("onLockQuery", "releaseHeldLink", "eleaseOpportunity")`; comments reworded ("S21: exactly the router file (RP-1), not MainActivity"). `DeepLinkApplierTest` is unchanged (no visible behaviour change).
+
+Docs: LEGAL_PATHS DEEP LINKS (ENTRY, new ROUTER block, APPLIER afterUnlock line, FORBIDDEN), SEGMENTS, INVENTORY, ENGINE. `hilt-bindings-map.md` was not touched (the router is a new unscoped `@Inject` class; add a line at the next docs pass).
+
+Validation to request (one batch): targeted `*AppLockController*,*DeepLink*,*AppLockDeepLinkRouter*,*MainScreenCallSite*,*AppLockShell*,*MainViewModel*,*GsonR8KeepRulesContract*`; then known_good_state, cancellation, ui_dao guards in the S21 batch.
+
+Residual risk (unrun):
+- The Robolectric timing assumptions: the `isIdle == false` assertion in the "posted never inline" test assumes the state publication reaches the collector on the main thread before `runBlocking` returns; the lifecycle `repeatOnLifecycle` restart in the F1 test relies on a stop/start of a bare `LifecycleRegistry`.
+- The S21-a F3 test drives a CONFIRM_CHANGE success, a 2 min background and a foreground to reach LOCKED(TIMEOUT) with the T33 gate still open; the controller keeps the gate in that case per the existing "gate lapsed" test, but this exact order was not run.
+- R-S21-1 and R-S21-2 stay accepted. A release task already posted when the owner is stopped runs after the stop and gets None (F1); the link stays held until the next start.
+
+### S21-b review fixes (2026-10-28, test-author; NOT validated)
+
+Test and docs only; nothing was built or run. Source: privacy-security-guardian findings C2, C3, Info 3.
+- C2 tests in `AppLockDeepLinkRouterTest` (next to F1): `C2 a release task posted before a stop runs after it, gets nothing in the background and the link is released once at the next start` (route while RESOLVING, resolve, background, owner stop, idle: no lookup and no navigation; foreground + start + idle: exactly one day navigation) and `C2 a released lookup that completes only after the owner stops still applies and is not lost` (the lookup is gated on a CompletableDeferred; stop, then complete, idle: one day navigation).
+- Optional router cases: `a link while AUTHENTICATING for the unlock is held and applies once after the success`; `a rejected link while RESOLVING records one bounded code, never navigates and leaves the held slot untouched`.
+- C3: R-S21-1 in the plan and in LEGAL_PATHS (ROUTER block) now says the bounded DL_APPLIED / DL_BRIEFING_* outcome may be recorded after the re-lock.
+- Info 3: LEGAL_PATHS ROUTER block gains an ordering note (open app + open T33 gate: a rejected link goes Home at once, an older held link applies after the gate closes; not a privacy issue).
+- `hilt-bindings-map.md`: line added for `AppLockDeepLinkRouter` (unscoped `@Inject`, per Activity; AppLockController, DeepLinkApplier).
+
+Validation to request: targeted `*AppLockDeepLinkRouterTest*` (with the S21-b batch filter above).
+
+Residual risk (unrun): the second C2 test assumes the gated lookup resumes on the main looper after `gate.complete` + `idle()` and that `applyReleased` awaits the lookup in the posted task; the AUTHENTICATING test assumes `h.tap` leaves the controller in `Authenticating` with the link held (no diagnostic code is asserted there).
+
+### S21-b VALIDATED (2026-10-28)
+- Gate: privacy-security-guardian (lead) ACCEPT-WITH-CONDITIONS. C2, C3 and Info 3 are applied as above (test and docs only).
+- Validation, one batch on the final S21-b tree, all PASS:
+  - targeted `*AppLockController*,*DeepLink*,*AppLockDeepLinkRouter*,*MainScreenCallSite*,*AppLockShell*,*MainViewModel*,*GsonR8KeepRulesContract*`: vr-20261028-063825-6752a72d
+  - runtime-ui: vr-20261028-064442-42bd6eea
+  - domain-n-z: vr-20261028-064659-9b264954
+  - known_good_state: vr-20261028-064847-a1b1d9b1
+  - ui_dao: vr-20261028-065135-3fbeea78
+  - cancellation: vr-20261028-065154-36f6c258
+- #9 is closed: handleIntent routes only through AppLockDeepLinkRouter; a held link is released through releaseHeldLink (posted on Dispatchers.Main).
+- Still due at the S21 candidate (a + b + c): architecture-guardian on S21-b, reviewer-strict on the whole of S21, then static-guards, lint and app-check.
+
+### Owner decision (owner-approvals 73, 2026-10-28)
+- 73a: #10 / S21-c option (A) is APPROVED. Device auth runs before the UnsupportedDatabaseActivity export when the committed lock is on or the store is unreadable, through one narrow read-only Hilt @EntryPoint.
+  - The R25 pin may allow exactly one `EntryPointAccessors.fromApplication(`. All other R25 forbidden tokens stay.
+- 73b: the merge plan is approved. app-lock S20 + S21 go to feature/ai-evolution after the S21 candidate gates pass, after nl-quick-add.
+- Next: S21-c implementation (feature-implementer), in parallel with an architecture-guardian review of S21-b.
