@@ -87,7 +87,7 @@ class PrivacyDiagnosticsEmitterTest {
             assertEquals(code.name, code.reasonCode.name)
         }
         assertTrue(PrivacyDiagnosticCode.entries.none { it.name == "DL_DIAGNOSTICS_SUPPRESSED" })
-        assertEquals(5, PrivacyDiagnosticCode.entries.count { it.name.startsWith("NOTIF_") })
+        assertEquals(6, PrivacyDiagnosticCode.entries.count { it.name.startsWith("NOTIF_") })
         assertEquals(14, PrivacyDiagnosticCode.entries.count { it.name.startsWith("DL_") })
     }
 
@@ -140,6 +140,30 @@ class PrivacyDiagnosticsEmitterTest {
         )
 
         assertEquals(0, metadataOf(written.single()).getInt("count"))
+    }
+
+    @Test
+    fun `G1b-0 NOTIF_REPOST_UNCONFIRMED allows the count key only, stores it, and drops any other key`() = runTest {
+        assertEquals(setOf(PrivacyDiagnosticKey.COUNT), PrivacyDiagnosticCode.NOTIF_REPOST_UNCONFIRMED.allowedKeys)
+        assertEquals(
+            DiagnosticReasonCode.NOTIF_REPOST_UNCONFIRMED,
+            PrivacyDiagnosticCode.NOTIF_REPOST_UNCONFIRMED.reasonCode
+        )
+
+        emitter.emit(
+            PrivacyDiagnosticCode.NOTIF_REPOST_UNCONFIRMED,
+            PrivacyDiagnosticMetadata.builder()
+                .put(PrivacyDiagnosticKey.COUNT, 3)
+                .exceptionClass(IllegalStateException("Lidl 4242"))
+                .build()
+        )
+
+        val event = written.single()
+        assertEquals(DiagnosticReasonCode.NOTIF_REPOST_UNCONFIRMED, event.reasonCode)
+        val json = metadataOf(event)
+        assertEquals(3, json.getInt("count"))
+        assertEquals(setOf("count"), json.keys().asSequence().toSet())
+        assertFalse(event.metadata.toJson().contains("Lidl"))
     }
 
     @Test

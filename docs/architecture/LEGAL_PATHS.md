@@ -1557,6 +1557,7 @@ RE-POST sweep (turning discreet on, see APP LOCK SETTINGS WRITE PATH):
     is cancellable (CancellationException propagates). Skipped notifications (group summary, null kind,
     failed classify) are not paused. The window is N x 300 ms (about 15 s at 50 notifications).
   → NOTIF_REPOSTED_DISCREET(COUNT) when at least one was re-posted
+  → then verifySweepOnce() (G1b-0, implemented 2026-10-29; see "G1b-0 post-sweep verification" below)
   Accepted residuals (spec 4.6):
     • a notification dismissed between the query and its re-post (up to N x 300 ms) comes back as a
       new post and can alert on a HIGH-importance channel; the content is discreet
@@ -1567,11 +1568,21 @@ RE-POST sweep (turning discreet on, see APP LOCK SETTINGS WRITE PATH):
     • a FULL decision resolved just before the setting commit but posted after the sweep's single query
       stays FULL (millisecond window; postForKind / BillReminderWorker)
     • process death mid-sweep leaves the remaining notifications FULL until they are replaced
-  G1b carry-forward (binding, plan "Orchestrator carry-forwards from the G1a reviews"): post-sweep
-  verification via a content-free presentation-mode token (D / F) next to NotificationKindMarker.EXTRA_KEY,
-  a settle of at least 500 ms, one paced re-post of every sweep-kind notification whose token is NOT "D"
-  (an absent token counts: pre-1a / marker-less originals and the residuals above), one COUNT-only
-  diagnostic (NOTIF_REPOST_UNCONFIRMED); the token stays off the public version; it never blocks cleanup.
+  G1b-0 post-sweep verification (IMPLEMENTED 2026-10-29; closes the G1a carry-forward):
+    • NotificationPresentationApplier stamps a content-free mode token "D" (discreet) / "F" (full) in the
+      PRIVATE extras next to NotificationKindMarker.EXTRA_KEY; never on the public version
+    • AndroidNotificationService.repostActiveAsDiscreet then runs verifySweepOnce(): settle
+      SWEEP_VERIFY_SETTLE_MS = 750 ms (paid on every sweep, accepted latency; it never changes
+      RepostResult or the SWEPT outcome) → re-read activeNotifications ONCE → re-post ONCE (paced 300 ms)
+      every sweep-kind, non-summary notification whose token is NOT "D" (an absent token counts: pre-1a /
+      marker-less originals and the residuals above) via rebuildDiscreet → ONE
+      NOTIF_REPOST_UNCONFIRMED(COUNT) via PrivacyDiagnosticsEmitter (COUNT only, no ids/text)
+    • never loops, never blocks cleanup, CancellationException propagates; verify re-posts and failures are
+      NOT counted in RepostResult (a failure emits NOTIF_REPOST_FAILED(EXCEPTION_CLASS))
+    • residuals: the verify pass does not re-check the effective discreet value, so a legitimate FULL post
+      within about 750 ms + N x 300 ms of turning discreet off can be re-posted discreet (fail-closed); a
+      notification dismissed between the read and its paced notify can be resurrected (same accepted race as
+      the first sweep; setOnlyAlertOnce(true))
   Triggers: per-field discreet write (AppLockSettingsOperations.requestDiscreetChange, WRITE 5) and a committed review-save
   (AppLockPrivacySettingsViewModel, before value "was off"); both go through DiscreetRepostTrigger.
 

@@ -69,6 +69,12 @@ enum class PrivacyDiagnosticCode(
         DiagnosticReasonCode.NOTIF_REPOST_FAILED, EventOutcome.FAILED_FINAL, EventSeverity.WARNING,
         setOf(PrivacyDiagnosticKey.EXCEPTION_CLASS)
     ),
+    // G1b-0 post-sweep verification: COUNT of notifications re-posted because their presentation-mode token
+    // was not "D" after the settle. Count only.
+    NOTIF_REPOST_UNCONFIRMED(
+        DiagnosticReasonCode.NOTIF_REPOST_UNCONFIRMED, EventOutcome.COMPLETED, EventSeverity.WARNING,
+        setOf(PrivacyDiagnosticKey.COUNT)
+    ),
 
     // Deep-link policy (DL_DIAGNOSTICS_SUPPRESSED is emitter-internal, not a caller code).
     DL_APPLIED(

@@ -46,6 +46,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.runBlocking
@@ -745,6 +746,96 @@ class NotificationPresentationDeviceTest {
                 assertEquals(label, ctx.getString(R.string.notif_action_snooze), n.actions[0].title.toString())
             }
         }
+    }
+
+    // --- G1b-0 presentation-mode token and post-sweep verification --------------------------------------------------------
+
+    private fun Notification.modeToken(): String? = NotificationPresentationApplier.readModeToken(this)
+
+    @Test
+    // G1b-0 a FULL post carries token F and a DISCREET post carries token D on the private notification, never on the public version
+    fun g1b0_fullPostCarriesTokenF_discreetPostCarriesTokenD_publicVersionCarriesNone() {
+        for ((mode, expected) in listOf(
+            NotificationPresentationMode.FULL to "F",
+            NotificationPresentationMode.DISCREET to "D"
+        )) {
+            val active = postAll(mode)
+            for (case in cases) {
+                val label = "${case.label} $mode sdk=${Build.VERSION.SDK_INT}"
+                val n = active.getValue(case.id).notification
+
+                assertEquals(label, expected, n.modeToken())
+                assertEquals("$label raw extra", expected, n.extras.getString(NotificationPresentationApplier.MODE_EXTRA_KEY))
+                assertEquals("$label kind marker is still beside the token", case.kind.stableToken, NotificationKindMarker.read(n))
+                assertNull("$label public version carries no mode token", n.publicVersion?.modeToken())
+                assertFalse(
+                    "$label public version has no mode key",
+                    n.publicVersion!!.extras.containsKey(NotificationPresentationApplier.MODE_EXTRA_KEY)
+                )
+            }
+        }
+    }
+
+    @Test
+    // G1b-0 after repostActiveAsDiscreet every active notification of every kind has token D
+    fun g1b0_afterRepostActiveAsDiscreet_everyActiveNotificationHasTokenD() {
+        val originals = postAll(NotificationPresentationMode.FULL)
+        cases.forEach { assertEquals("${it.label} control: FULL before the sweep", "F", originals.getValue(it.id).notification.modeToken()) }
+        Thread.sleep(PRE_SWEEP_QUIET_MS)
+
+        val result = runBlocking { serviceFor(NotificationPresentationMode.DISCREET).repostActiveAsDiscreet() }
+
+        assertEquals(NotificationService.RepostResult(reposted = cases.size, failed = 0), result)
+        val after = awaitOwn("sweep tokens") { list ->
+            cases.all { case ->
+                list.singleOrNull { it.id == case.id }?.notification?.titleText() == texts.discreet(case.kind).title
+            }
+        }
+        assertEquals(cases.size, after.size)
+        after.forEach { sbn ->
+            val label = "id ${sbn.id} sdk=${Build.VERSION.SDK_INT}"
+            assertEquals(label, "D", sbn.notification.modeToken())
+            assertNull("$label public version carries no token", sbn.notification.publicVersion?.modeToken())
+        }
+    }
+
+    @Test
+    // G1b-0 a token-less FULL notification that lands after the sweep (a racing foreign post) is re-posted DISCREET by the verification
+    fun g1b0_tokenLessFullNotificationLandingAfterTheSweep_isRepostedDiscreetByTheVerification() {
+        val budget = cases.first { it.kind == NotificationKind.BUDGET }
+        post(budget, NotificationPresentationMode.FULL)
+        awaitOwn("budget FULL") { list -> list.hasTitle(budget, NotificationPresentationMode.FULL) }
+        Thread.sleep(PRE_SWEEP_QUIET_MS)
+        var racedSettle = false
+        val racingPacer = SweepPacer { millis ->
+            if (millis == AndroidNotificationService.SWEEP_VERIFY_SETTLE_MS) {
+                // The sweep has finished and its update is DISCREET. A foreign, token-less FULL post now replaces it.
+                val foreign = NotificationCompat.Builder(ctx, BUDGET_CHANNEL)
+                    .setSmallIcon(android.R.drawable.ic_dialog_info)
+                    .setContentTitle(SENTINEL_TITLE)
+                    .setContentText(SENTINEL_TEXT)
+                    .build()
+                manager.notify(budget.id, foreign)
+                val landed = awaitOwn("foreign FULL post landed") { list -> list.hasTitle(budget, NotificationPresentationMode.FULL) }
+                val n = landed.single { it.id == budget.id }.notification
+                assertNull("control: the foreign post has no mode token", n.modeToken())
+                assertNull("control: the foreign post has no kind marker", NotificationKindMarker.read(n))
+                racedSettle = true
+            }
+            delay(millis)
+        }
+        val service = AndroidNotificationService(ctx, resolverFor(NotificationPresentationMode.DISCREET), applier, diagnostics(), racingPacer)
+
+        val result = runBlocking { service.repostActiveAsDiscreet() }
+
+        assertTrue("the foreign post was injected at the settle", racedSettle)
+        assertEquals("the sweep result counts only the sweep's own re-post", NotificationService.RepostResult(reposted = 1, failed = 0), result)
+        val after = awaitOwn("verification repaired the raced post") { list -> list.hasTitle(budget, NotificationPresentationMode.DISCREET) }
+        val n = after.single { it.id == budget.id }.notification
+        assertEquals("D", n.modeToken())
+        assertEquals(texts.discreet(budget.kind).text, n.contentText())
+        assertEquals(budget.kind.stableToken, NotificationKindMarker.read(n))
+        assertNoSentinel(n, "verified budget")
     }
 
     private companion object {

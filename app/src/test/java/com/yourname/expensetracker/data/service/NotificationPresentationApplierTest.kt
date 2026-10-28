@@ -487,6 +487,62 @@ class NotificationPresentationApplierTest {
         assertNull(NotificationKindMarker.read(n.publicVersion))
     }
 
+    // --- G1b-0 presentation-mode token ------------------------------------------------------------------
+
+    @Test
+    fun `G1b-0 the mode extras key and the two tokens are pinned literals`() {
+        assertEquals("com.yourname.expensetracker.extra.PRESENTATION_MODE", NotificationPresentationApplier.MODE_EXTRA_KEY)
+        assertEquals("D", NotificationPresentationApplier.MODE_TOKEN_DISCREET)
+        assertEquals("F", NotificationPresentationApplier.MODE_TOKEN_FULL)
+        assertNotEquals(NotificationKindMarker.EXTRA_KEY, NotificationPresentationApplier.MODE_EXTRA_KEY)
+    }
+
+    @Test
+    fun `G1b-0 DISCREET stamps token D and FULL stamps token F next to the kind marker for every kind`() {
+        for (kind in NotificationKind.entries) {
+            val discreet = apply(decision(kind, NotificationPresentationMode.DISCREET))
+            val full = apply(decision(kind, NotificationPresentationMode.FULL))
+
+            assertEquals("$kind DISCREET", "D", NotificationPresentationApplier.readModeToken(discreet))
+            assertEquals("$kind FULL", "F", NotificationPresentationApplier.readModeToken(full))
+            assertEquals("$kind DISCREET raw extra", "D", discreet.extras.getString(NotificationPresentationApplier.MODE_EXTRA_KEY))
+            assertEquals("$kind FULL raw extra", "F", full.extras.getString(NotificationPresentationApplier.MODE_EXTRA_KEY))
+            // The kind marker is still present beside the token, unchanged.
+            assertEquals("$kind DISCREET marker", kind.stableToken, NotificationKindMarker.read(discreet))
+            assertEquals("$kind FULL marker", kind.stableToken, NotificationKindMarker.read(full))
+        }
+    }
+
+    @Test
+    fun `G1b-0 the token is absent from the public version in both modes and carries no content`() {
+        for (kind in NotificationKind.entries) {
+            for (mode in NotificationPresentationMode.entries) {
+                val n = apply(decision(kind, mode), actions = specs())
+                val pub = n.publicVersion!!
+                val label = "$kind $mode"
+
+                assertNull(label, NotificationPresentationApplier.readModeToken(pub))
+                assertFalse(label, pub.extras.containsKey(NotificationPresentationApplier.MODE_EXTRA_KEY))
+                // The token is exactly the one-letter literal, so it cannot carry the detailed text.
+                assertTrue(label, NotificationPresentationApplier.readModeToken(n) in setOf("D", "F"))
+            }
+        }
+    }
+
+    @Test
+    fun `G1b-0 readModeToken is null for a null notification an absent token and a non-string value and never throws`() {
+        assertNull(NotificationPresentationApplier.readModeToken(null))
+        assertNull("control: a caller builder without apply has no token", NotificationPresentationApplier.readModeToken(callerBuilder().build()))
+        val wrongType = callerBuilder()
+            .addExtras(Bundle().apply { putInt(NotificationPresentationApplier.MODE_EXTRA_KEY, 7) })
+            .build()
+        assertNull(NotificationPresentationApplier.readModeToken(wrongType))
+        val junk = callerBuilder()
+            .addExtras(Bundle().apply { putString(NotificationPresentationApplier.MODE_EXTRA_KEY, "garbage") })
+            .build()
+        assertEquals("a junk string is returned as is; only D counts as discreet", "garbage", NotificationPresentationApplier.readModeToken(junk))
+    }
+
     // --- builder contract ------------------------------------------------------------------------------
 
     @Test

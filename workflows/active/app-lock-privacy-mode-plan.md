@@ -2209,3 +2209,32 @@ Source: privacy-security-guardian ACCEPT-WITH-CONDITIONS and architecture-guardi
 - **architecture-guardian: ACCEPT-WITH-CONDITIONS.** F1-F4 (docs: EXPORT copy and F6-i / F6-ii in LEGAL_PATHS, CODEBASE_SEGMENTS, CODEBASE_INVENTORY; stale DORMANT wording; ViewModel description) fixed. F5 (LOW correctness) fixed: `exportGateGeneration` makes a stale gate job a no-op. NIT 6 goes to a test helper (test-author). NIT 7 fixed: `saveReview` takes `discreetNotifications` from `current.discreetChoice`, behaviour identical.
 - **Follow-ups for S23:** `hilt-bindings-map.md` :409-420 (ViewModel constructor plus the timeout and secure-screen writes); ENGINE_INTERACTION_MAP; a ux doc note that the review record stores the raw discreet / secure choices while they are forced (privacy info 3); the REJECTED_CAPABILITY copy (privacy info 6).
 - **More S23 follow-ups (reviewer-strict, 2026-10-29):** `AppLockSettingsOperations.kt:393` KDoc still says "D2 record"; `ENGINE_INTERACTION_MAP.md:175` still says "requestReviewSave(D2 record)"; ux 4.3 add "CHANGE ERROR / not launched" to the silent outcomes.
+
+## Amendment (2026-10-29): G1b execution plan (feature-planner, Sonnet; orchestrator-persisted; BINDING)
+- **Precondition slice G1b-0 (production; privacy):** implement the BINDING G1a carry-forward, the post-sweep verification (~:1482-1487). It is absent from main.
+  - Content-free presentation-mode token "D"/"F" in the extras, next to NotificationKindMarker.EXTRA_KEY (not on the public version).
+  - After the sweep, settle ≥500 ms to 1 s, then re-read the active notifications. Re-post once (paced) any sweep-kind notification whose token is not "D"; an absent token counts.
+  - One COUNT-only diagnostic, NOTIF_REPOST_UNCONFIRMED, through the registry. Never blocks cleanup, never loops; CancellationException propagates.
+  - Write set: AndroidNotificationService, NotificationPresentationApplier, DiagnosticReasonCode / the registry and golden, unit tests, plus new NotificationPresentationDeviceTest methods.
+  - Process: Sonnet writer plus a separate test-author (privacy), and one combined guardian.
+- **New androidTest classes** (ui/applock/, AndroidJUnit4 + createEmptyComposeRule; no Hilt runner, no new dependency or permission; Instrumentation.uiAutomation for shell, window and a11y):
+  - AppLockLifecycleDeviceTest (~8 tests): cold start lock on (AE-38/66/69), INERT AE-54, SETTINGS_UNREADABLE, lock off (R14/RP-5).
+  - AppLockPromptHostDeviceTest (~5 tests): rotation during the prompt, cancel echo, double tap, "already showing" skip, Home mid-prompt.
+  - NotificationPresentationDeviceTest gains lock-on SDK 30 rows and the post-sweep verification.
+  - Seeding: the internal appLockPrivacyDataStore in the test process, then ActivityScenario.launch(MainActivity).
+- **Classification per AVD:**
+  - A = existing test; B = new test; C = adb-scripted, with screencap, dumpsys window and uiautomator dump as evidence; D = residual. Full table in the planner report.
+  - D items: real OEM screens, Class 3 face, real fingerprint hardware, AE-61/62/63 (restore fixtures; unit coverage), and AE-43 if not rootable.
+  - CF-6 is defined at handoff ~:2083 and ~:2380: no content frame after a re-lock at APP_FOREGROUNDED; no Activity-scoped ViewModel keeps clipboard listeners or permission flows across a re-lock. It is a C check on API 35.
+- **Order:** one emulator at a time: api35, api26, api30, api31, api33, api34.
+  - `locksettings set-pin 1234` where a credential is needed.
+  - The runner's connected-test-class with -DeviceSerial (with -AllowOverlap -OverlapReasonCode REQUIRED_FINAL_GATE when the serial repeats, as at G1a), then the C steps, then emu kill.
+- **Evidence:** build/release-lead-notes/g1b/<api>/ (runs.md, <AE>.png, <AE>-window.txt, <AE>-ui.xml, residuals.md); a matrix table in the handoff.
+- **STOP:**
+  - any production change outside G1b-0;
+  - any new permission, dependency or guard change;
+  - any leak (FULL content or a missing FLAG_SECURE on a locked, forced or RESOLVING surface);
+  - lock loops;
+  - any network step beyond the installed images.
+  Findings are reported, never patched in place.
+- **Estimate:** ~10 runner runs plus C scripting. reviewer-strict at the app-lock merge candidate.
