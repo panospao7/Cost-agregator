@@ -2608,3 +2608,17 @@ Transactions delete-dialog role lines, retry-loop key, marks-loader memoise, plu
 - Merge-gate notes from part A for a loan slice:
   - N1: `NOTIF_ACTIONS_SUPPRESSED_LOCK` is emitted for action-less installment posts on API ≤ 30 (diagnostic noise; S13-a INV-12 re-count).
   - N2: in BillReminderWorker, the release on the `Failed` path (~:291) is not under NonCancellable, and a throwing release at ~:253 can replace the CancellationException.
+
+## 2026-10-29: loan S11a (add-expense installments, VM and wiring) COMMITTED
+- The plan amendment "S11 re-anchor after MEC B2/C" is persisted. D-8 is closed; one currency control (INSTALLMENT mode EUR/USD); the coordinator path is `declareWithNewExpense`.
+- Writer and separate test-author (about 60 VM tests plus 7 repository parity tests).
+- Combined guardian ACCEPT-WITH-CONDITIONS: the docs chain was added (LEGAL_PATHS, ENGINE_INTERACTION_MAP); the gate seam follows precedent. Condition: S11b calls setInstallmentsEnabled with the default `enabled` only, and reviewer-strict greps for `enabled =`.
+- A home installments draft retained across sessions is intended (D-B2-R1(c)).
+- Validation:
+  - targeted vr-20261029-143542-73e18392;
+  - runtime-ui vr-20261029-144600-e0243ad0;
+  - data vr-20261029-144902-eb56e2fa;
+  - known_good_state vr-20261029-145451-68a18468;
+  - db_access vr-20261029-145810-9b4d8dce.
+  - All PASS.
+- Next: S11b (AddExpenseInstallmentsSection plus the Sheet hook, strings ×3 es/el DRAFT; currencyControlEnabled must allow Unset; add "Repeat and installments can't be combined"). Then the S11 candidate: lint, static-guards, app-check, reviewer-strict.

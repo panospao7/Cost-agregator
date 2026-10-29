@@ -452,20 +452,21 @@ D-1..D-8 are being resolved by the parallel scout. D-9..D-20 are extra planner i
 
 ### S11 — Add expense: installments switch + currency picker (HARD gate: Release 1.0 merged)
 - **Goal / invariants:** INV-27 via `declareWithNewExpense`; INV-16; Repeat and Installments are mutually exclusive; the existing back behaviour is unchanged.
+- **SUPERSEDED (2026-10-29): see "Amendment (2026-10-29): S11 re-anchor after MEC B2/C" at the end of this file (S11a = VM and wiring, S11b = UI). The write set, tests and stop-and-ask below are historical.**
 - **Write set (source; recommended option A, installment-scoped):**
-  - `M:ui/screens/addexpense/AddExpenseSheet.kt`: installments section + EUR/USD segmented control visible only while the switch is on.
+  - `M:ui/screens/addexpense/AddExpenseSheet.kt`: installments section + EUR/USD segmented control visible only while the switch is on. (SUPERSEDED: the general MEC `CurrencySelectionControl` in INSTALLMENT mode; no loan-specific control.)
   - `M:ui/screens/addexpense/AddExpenseViewModel.kt`: installment sub-state + submit branch → coordinator `declareWithNewExpense`. The plain save path is unchanged.
   - Strings.
 - **Write set (tests):** `T:ui/screens/addexpense/AddExpenseInstallmentsTest.kt`:
   - AE-1 via the new-expense path;
   - AE-22 refusals surface as fixed strings;
-  - USD purchase+plan;
-  - FX-unavailable refusal keeps the form (D-8);
+  - ~~USD purchase+plan;~~ (SUPERSEDED: struck by A3 / amendment section 5)
+  - ~~FX-unavailable refusal keeps the form (D-8);~~ (SUPERSEDED: D-8 closed by G2-6; MEC AE-28 UI cases replace it)
   - non-installment save unchanged (regression).
 - **Depends on:** S10a, S6a, S9, S4d; D-8; currency-scope decision; Release merge.
 - **Gates:** architecture-guardian. reviewer-strict YES (money/currency, overlap file).
 - **Validation profiles:** `targeted-unit-test -Filter "*AddExpense*"`, then `unit-test-shard -ShardName runtime-ui`, then `lint`.
-- **Stop-and-ask:** if D-8 shows TLC cannot create manual USD expenses without changing the general save path. That turns this into option B and needs owner approval.
+- **Stop-and-ask:** ~~if D-8 shows TLC cannot create manual USD expenses without changing the general save path. That turns this into option B and needs owner approval.~~ (SUPERSEDED: option-B stop-and-ask struck by A3; see the amendment section 6 for the current STOP list.)
 
 ### S12a — Transactions: row menu declare sheet, chips, filter, badges, suggestions (HARD gate)
 - **Goal / invariants:** OQ-16 entry; OQ-22 auto-recorded visible marking (source badge "Installment plan" + chip "Installment n of N" as a UI join, never stored text); purchase chips "Paid in N installments" / "Not counted as spending"; "Not counted (refunded)"; AE-17 suggestion and "possible duplicate"; locked-edit messaging (INV-22); declare sheet with plan-currency picker (OD-14).
@@ -1362,3 +1363,111 @@ Disposition key: a = do now in a slice; b = S13 or needs S11; c = device-only ch
 - Batch 1 = PE-A + PE-B. Batch 2 = PE-C + PE-D.
 - Candidate: static-guards, app-check and lint once, plus the item-17 registry description edit validated by guard_docs_truth.
 - Then the device G-check for item 14.
+
+
+## Amendment (2026-10-29): S11 re-anchor after MEC B2/C (feature-planner, Sonnet; orchestrator-persisted; BINDING)
+Base: mec accb775a (MEC B2 and C committed). This supersedes the S11 write set at ~:453-468 and the "EUR/USD segmented control". Plan A3 (~:662-671) and handoff ~:174-177 remain in force. H-1: S11 stays unreleased until MEC 1b. Items marked (unverified) are checked by the writer first.
+
+### 1. Anchors
+- Currency control: the MEC `CurrencySelectionControl` (AddExpenseSheet :59, :361, :389). `CurrencyEntryMode.INSTALLMENT` already exists in CurrencySelectionPolicy (EUR/USD only; home kept only if EUR or USD).
+- AddExpenseViewModel:
+  - `applyHomeAndSelection` :779-794 and `selectCurrency` :801-824 hardcode STANDARD. S11 makes them mode-aware.
+  - `save()` :473-671 always calls `addManualExpense`. The installment branch goes to `InstallmentPlanLifecycleCoordinator.declareWithNewExpense(purchaseRequest, entryZone, terms)` (:194). The coordinator sets `userPresentRate` itself (:230) and returns `RateRefused(reason)` before writing the plan (:238).
+  - Refusals reuse `RateRefusalCodes.codeFor` → `blockVariantFor` (:744) → `withSaveRefusal` (:756). No second mapping.
+  - `reset()` :1266; `onSheetOpened()` :1239 (R-1(b)); `confirmOpenExchangeRateSetting` calls reset. The Sheet's BackHandler :256, close :278 and success :227 call reset().
+  - There is no Add-expense discard dialog. Do NOT add one.
+  - Repeat: `toggleRecurring` :404; the Sheet hides Repeat for foreign currencies at :627-633.
+- Form reuse: the `DeclareForm` constants and `InstallmentAmountInput` (DeclareInstallmentsSheet.kt :107). That file is not edited.
+- Dispatch: `InstallmentPostCommitDispatcher.dispatch(batches)`. No fourth dispatch loop (F3 BINDING).
+
+### 2. Currency scope
+- **One control:** plan currency = purchase currency = selected (G2-6, C == P). declaredTotal = the parsed amount, with no conversion. OD-14 (C != P) stays in the S12a declare sheet only.
+- **Installments ON:** options {EUR, USD} (INSTALLMENT mode, INV-16). With a home outside EUR/USD, nothing is preselected (Unset) until a pick.
+- **A disallowed selection** (e.g. JPY when switching ON):
+  - it becomes Unset; the override is stashed in a session-only VM field and restored on switch-off (UX-Q-6);
+  - Save is blocked via `isCurrencySaveBlocked` (Unset) + `mec_save_disabled_currency`;
+  - the save() pre-check refuses without calling the coordinator;
+  - the coordinator's `UNSUPPORTED_CURRENCY` is the backstop, with a fixed string via `declareMutationMessage` / `InstallmentActionMessages` (INV-31), never e.message.
+- **D-8 CLOSED** (A3, G2-6). The coordinator path is required for INV-27 atomicity. The VM never builds `UserPresentRateRequirement`, so the setter allow-list is untouched.
+
+### 3. Mutual exclusion and session
+- Installments ON:
+  - clears Repeat and shows "Repeat and installments can't be combined";
+  - `toggleRecurring` / `setRecurrenceFrequency` become no-ops;
+  - save sends recurrenceFrequency = null.
+  - A foreign currency keeps Repeat hidden.
+- Not mine, Shared and Split disable the switch with a reason (`declare_installments_refused_*`). Setting Not mine or Shared while ON turns installments off and keeps the values.
+- `AddExpenseInstallmentsState` (new file) holds: on/off, count, split, fixed text, first-due, mode, name, planUuid, and the stashed override.
+  - `reset()` clears it, so every dismiss path and the confirmed NAVIGATE discard it.
+  - planUuid is generated once per session and regenerated in reset(). A retry after a refusal reuses it. A double-submit `AlreadyInState` counts as success (AE-15d).
+- `onSheetOpened`: a retained draft with installments ON and a non-home selection, or a stashed override, is `retainedNonHome` and resets the whole draft (no re-denomination).
+- In-session, a currency change keeps the amount and fixed text, then re-validates and re-previews (MEC AE-16).
+- Everything is gated by `InstallmentsFeature.ENABLED`.
+
+### 4. Split
+**S11a (VM and wiring):**
+- `M:ManualExpenseRepository.kt`: extract the request builder (no duplicated merchant normalisation or classification). The setter site stays pinned; plain-save behaviour is identical (builder parity tests).
+- `M:AddExpenseViewModel.kt`: deps InstallmentPlanLifecycleCoordinator and InstallmentPostCommitDispatcher; mode-aware selection; the installment submit branch; the reset and onSheetOpened changes.
+- `N:AddExpenseInstallmentsState.kt`.
+- Docs: supersede notes in ux-flows :221-227 and on plan :455/:462/:464/:467.
+- A writer plus a SEPARATE test-author.
+
+**S11b (UI):**
+- `M:AddExpenseSheet.kt` (section hook only), `N:AddExpenseInstallmentsSection.kt`, strings ×3 (es/el DRAFT).
+- Depends on S11a; not parallel with it.
+- A writer may also write its UI tests; the money-branch tests stay with S11a's test-author.
+
+**Tests:**
+- AddExpenseInstallmentsViewModelTest;
+- ctor fixtures in AddExpenseViewModelTest / StressTest / others (unverified);
+- AddExpenseSheetInstallmentsUiTest;
+- ManualExpenseRepositoryTest builder parity.
+
+### 5. Tests by AE
+- **AE-1 (INV-27/16):** EUR 600/12 reaches `declareWithNewExpense` with request.currency == terms.currency == selected, declaredTotal == amount and the session zone. `addManualExpense` is never called.
+- **AE-22:** each refusal (NOT_MINE, SHARED, SPLIT, INVALID_COUNT, FIRST_DUE_BEFORE_PURCHASE, AMOUNT_TOO_SMALL, UNSUPPORTED_CURRENCY) gives a fixed string and keeps the form.
+- **MEC AE-28:** JPY gives Unset in installment mode; the override is restored on switch-off. A NO_RATE refusal keeps the form, shows the SAVE card and cancels evaluationJob; a late preview loses.
+- **AE-15d:** a double-submit gives one plan.
+- **Exclusion and session:** the rules in section 3; reset clears the sub-state; a USD installment draft in a new session is blank.
+- **Regressions:**
+  - all B2 tests green (R-1..R-4, C-1);
+  - a plain save calls addManualExpense with identical args and has zero coordinator interactions;
+  - Repeat is still hidden for foreign currencies;
+  - the setter allow-list, CancellationSafety and QuickAddPrivacy guards are green with no edits.
+
+### 6. Validation and STOP
+- **Ladder:**
+  1. S11a targeted `*AddExpense*,*ManualExpenseRepository*,*InstallmentPlanLifecycleCoordinator*Declare*,*ManualEntryCurrencySetterAllowListGuardTest*,*CancellationSafetyArchitectureGuardTest*,*QuickAddPrivacyArchitectureGuardTest*,*InstallmentPlanArchitectureGuardTest*`
+  2. runtime-ui, data
+  3. S11b: `*AddExpense*`, runtime-ui, lint
+  4. static-guards once
+  5. app-check per candidate
+  6. reviewer-strict at the candidate (items 86-87; overrides the old per-slice "YES").
+- **STOP (owner):**
+  - any TLC or ExpenseDao general-save-path change (option B);
+  - a setter allow-list or any guard edit;
+  - a CurrencySelectionPolicy, INSTALLMENT mode or `declareWithNewExpense` signature change;
+  - baseline or allowlist growth;
+  - a new permission or network path.
+
+### 7. Decisions
+- **Owner:** the es/el DRAFT sign-off for about 16-20 new keys (S11b counts them exactly); they join the MEC sign-off list. F-B2-A11Y-1 stays the MEC 1b hard gate; S13 enablement needs it.
+- **Orchestrator (item 62), ACCEPTED:**
+  - exclusion UX: auto-off plus a helper;
+  - no async recommendation hook for plan purchases (the coordinator returns no Expense);
+  - name defaults to the merchant;
+  - first-due defaults to purchase + 1 month;
+  - mode defaults to AUTO_RECORD;
+  - paid-before-tracking hidden, sending 0 (deferral 49(b));
+  - Fill with installments ON follows the mode-aware drop to Unset.
+
+### 8. Constraints (B2/C lessons)
+- No re-denomination.
+- A refusal cancels evaluationJob before withSaveRefusal; the installment refusal path does not clobber the region.
+- No `when (val …)` in accessors; use `is` checks or boolean fields.
+- Robolectric hygiene: harness close() in @After; no static snapshot state.
+- No Dispatchers.* literal; the injected TimeProvider and the project dispatcher qualifier. CancellationException is rethrown in the new branch.
+
+### 9. S11a guardian
+- S11a guardian (combined) ACCEPT-WITH-CONDITIONS: (a) docs chain added; (b) S11b must call setInstallmentsEnabled with the default `enabled` only, and reviewer-strict greps production call sites for `enabled =`.
+- S11a test-author note (orchestrator, item 62): a home-currency installments-ON draft retained across onSheetLeft/onSheetOpened (with no dismiss call) is INTENDED and consistent with D-B2-R1(c): home drafts are kept, with no re-denomination risk. Every explicit dismiss path still calls reset().

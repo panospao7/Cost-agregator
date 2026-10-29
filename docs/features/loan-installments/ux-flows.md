@@ -218,7 +218,15 @@ full-amount spend. **Entry:** Add expense overlay (`AddExpenseSheet`).
   "Shared expense" on: switch disabled with "Installments aren't available for shared expenses yet."
   (`SHARED_NOT_SUPPORTED`). **OD-9 variant B:** switch enabled and helper "Installments split your share."
 - Split-category purchases: same disabled treatment (`SPLIT_NOT_SUPPORTED`).
-- Currency: the Add-expense form has no currency picker (home currency only). The plan currency defaults to the
+- **SUPERSEDED (2026-10-29, G2-6, plan amendment "S11 re-anchor after MEC B2/C"):** the next bullet is historical.
+  Add expense now has the general MEC currency control. With installments ON it runs in INSTALLMENT mode
+  (EUR/USD only); plan currency = purchase currency = the selected currency; there is no plan-currency row and
+  no OD-14 note here (OD-14 stays in the existing-expense declare sheet). A selection that installment mode cannot
+  offer (for example JPY) becomes Unset, is parked for the session and is restored when installments are switched
+  off; Save stays blocked (`mec_save_disabled_currency`) until a pick. With a home outside EUR/USD nothing is
+  preselected until a pick.
+- ~~Currency: the Add-expense form has no currency picker (home currency only). The plan currency defaults to the~~
+  (historical text follows) The plan currency defaults to the
   expense currency and the plan currency row is hidden when expense currency is EUR or USD. **OQ-7 stays open:**
   new USD plans need either a currency field in Add expense (change to an existing screen) or only standalone / existing
   USD expenses. If the home currency is neither EUR nor USD the switch shows a currency row (EUR / USD, **OD-14**

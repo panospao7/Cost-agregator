@@ -148,29 +148,16 @@ class ManualExpenseRepository @Inject constructor(
             return Result.Error(message = RECURRING_FOREIGN_CURRENCY_ERROR_CODE)
         }
 
-        // ── Pre-processing (business logic that stays here for now) ──────────
-        // 1. Normalize merchant name
-        val lookupResult = merchantNormalizer.normalize(merchant, autoCreate = true)
-        val normalizedMerchant = lookupResult.canonical.normalizedName
-
-        // 2. Auto-categorize if no category provided
-        val finalCategoryId = categoryId ?: hybridClassifier.classify(
-            merchantName = normalizedMerchant,
-            amount = amount
-        ).categoryId.takeIf { it > 0 }
-
-        // ── Build request for the coordinator ────────────────────────────────
-        val request = CreateExpenseRequest(
-            merchant = normalizedMerchant,
+        // ── Pre-processing + request build (shared builder; see buildRequest) ─
+        val request = buildRequest(
+            merchant = merchant,
             amount = amount,
             currency = currency,
-            date = date,
+            categoryId = categoryId,
             transactionType = transactionType,
-            source = ExpenseSource.MANUAL_ENTRY,
-            categoryId = finalCategoryId,
-            notes = notes,
             paymentMethod = paymentMethod,
-            isManualEntry = true,
+            date = date,
+            notes = notes,
             transferDirection = transferDirection,
             transferAccountName = transferAccountName,
             isNotMine = isNotMine,
@@ -306,6 +293,108 @@ class ManualExpenseRepository @Inject constructor(
         }
 
         return result
+    }
+
+    /**
+     * Loan-installments S11a: builds the purchase request of an installment save from the same
+     * merchant normalisation and classification as [addManualExpense]. The request carries NO
+     * user-present rate flag: `InstallmentPlanLifecycleCoordinator.declareWithNewExpense` sets it
+     * itself (MEC INV-18). Nothing is written here besides the normaliser's own merchant lookup that
+     * [addManualExpense] performs identically. A plan purchase is never shared, not-mine or located.
+     */
+    suspend fun buildInstallmentPurchaseRequest(
+        merchant: String,
+        amount: Double,
+        currency: String,
+        categoryId: Long?,
+        transactionType: TransactionType,
+        paymentMethod: PaymentMethod,
+        date: Long,
+        notes: String?
+    ): CreateExpenseRequest = buildRequest(
+        merchant = merchant,
+        amount = amount,
+        currency = currency,
+        categoryId = categoryId,
+        transactionType = transactionType,
+        paymentMethod = paymentMethod,
+        date = date,
+        notes = notes,
+        transferDirection = null,
+        transferAccountName = null,
+        isNotMine = false,
+        ownerName = null,
+        isSharedExpense = false,
+        sharedWithName = null,
+        mySharePercentage = null,
+        myShareAmount = null,
+        latitude = null,
+        longitude = null,
+        locationSource = null,
+        userPresentRate = null
+    )
+
+    /**
+     * The one builder of a manual-entry [CreateExpenseRequest]: normalises the merchant, classifies
+     * when no category is given, then assembles the request. [userPresentRate] is supplied by the
+     * caller; the flag is set only at the [addManualExpense] call site (MEC setter #1).
+     */
+    private suspend fun buildRequest(
+        merchant: String,
+        amount: Double,
+        currency: String,
+        categoryId: Long?,
+        transactionType: TransactionType,
+        paymentMethod: PaymentMethod,
+        date: Long,
+        notes: String?,
+        transferDirection: TransferDirection?,
+        transferAccountName: String?,
+        isNotMine: Boolean,
+        ownerName: String?,
+        isSharedExpense: Boolean,
+        sharedWithName: String?,
+        mySharePercentage: Int?,
+        myShareAmount: Double?,
+        latitude: Double?,
+        longitude: Double?,
+        locationSource: String?,
+        userPresentRate: UserPresentRateRequirement?
+    ): CreateExpenseRequest {
+        // 1. Normalize merchant name
+        val lookupResult = merchantNormalizer.normalize(merchant, autoCreate = true)
+        val normalizedMerchant = lookupResult.canonical.normalizedName
+
+        // 2. Auto-categorize if no category provided
+        val finalCategoryId = categoryId ?: hybridClassifier.classify(
+            merchantName = normalizedMerchant,
+            amount = amount
+        ).categoryId.takeIf { it > 0 }
+
+        return CreateExpenseRequest(
+            merchant = normalizedMerchant,
+            amount = amount,
+            currency = currency,
+            date = date,
+            transactionType = transactionType,
+            source = ExpenseSource.MANUAL_ENTRY,
+            categoryId = finalCategoryId,
+            notes = notes,
+            paymentMethod = paymentMethod,
+            isManualEntry = true,
+            transferDirection = transferDirection,
+            transferAccountName = transferAccountName,
+            isNotMine = isNotMine,
+            ownerName = ownerName,
+            isSharedExpense = isSharedExpense,
+            sharedWithName = sharedWithName,
+            mySharePercentage = mySharePercentage,
+            myShareAmount = myShareAmount,
+            latitude = latitude,
+            longitude = longitude,
+            locationSource = locationSource,
+            userPresentRate = userPresentRate
+        )
     }
 
     /**

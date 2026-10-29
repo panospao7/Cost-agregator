@@ -105,7 +105,9 @@ class AddExpenseViewModelStressTest : ViewModelTestUtils() {
                 RateEligibilityEvaluator(CurrencyConverter(rateStore, timeProvider, testDispatcher))
             ),
             currencyRatesRepository = ratesRepo,
-            privacySettingsRepository = privacyRepo
+            privacySettingsRepository = privacyRepo,
+            installmentPlanCoordinator = mockk(relaxed = true),
+            installmentPostCommitDispatcher = mockk(relaxed = true)
         )
     }
 

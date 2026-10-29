@@ -7,6 +7,8 @@ import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.currency.RateEligibilityEvaluator
 import com.yourname.expensetracker.domain.currency.UserPresentRatePreview
+import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentPlanLifecycleCoordinator
+import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentPostCommitDispatcher
 import com.yourname.expensetracker.domain.model.Result
 import com.yourname.expensetracker.domain.privacy.PrivacySettings
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsLoadState
@@ -49,6 +51,8 @@ internal class AddExpenseSheetHarness(home: String = "EUR") {
     val quickAddLearnedCategoryLookup = mockk<QuickAddLearnedCategoryLookup>()
     val currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true)
     val privacyRepository = mockk<PrivacySettingsRepository>()
+    val installmentCoordinator = mockk<InstallmentPlanLifecycleCoordinator>(relaxed = true)
+    val installmentDispatcher = mockk<InstallmentPostCommitDispatcher>(relaxed = true)
 
     val rateStore = AddExpenseRateStoreFake()
     val ratesRepository = AddExpenseRatesRepositoryFake()
@@ -118,7 +122,9 @@ internal class AddExpenseSheetHarness(home: String = "EUR") {
             RateEligibilityEvaluator(CurrencyConverter(rateStore, timeProvider, Dispatchers.Unconfined))
         ),
         currencyRatesRepository = ratesRepository,
-        privacySettingsRepository = privacyRepository
+        privacySettingsRepository = privacyRepository,
+        installmentPlanCoordinator = installmentCoordinator,
+        installmentPostCommitDispatcher = installmentDispatcher
     )
 
     companion object {

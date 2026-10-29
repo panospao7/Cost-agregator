@@ -56,6 +56,10 @@ PREFILL AIDS (not a write path):
     AddExpenseViewModel.save() → ManualExpenseRepository.addManualExpense() →
     TransactionLifecycleCoordinator.createExpenseDbOnlyV2() → ExpenseDao.insertAtomic(),
     source = MANUAL_ENTRY.
+  • With installments ON (dormant behind InstallmentsFeature.ENABLED until S13) AddExpenseViewModel routes the
+    save to ManualExpenseRepository.buildInstallmentPurchaseRequest →
+    InstallmentPlanLifecycleCoordinator.declareWithNewExpense (INV-27 atomic: purchase, plan and entries) and
+    never to addManualExpense. The coordinator sets userPresentRate; the builder passes null.
   • Fill must not call categorize*, MerchantNormalizer or any repository write
     (see Categorization / Merchant Learning, read-only learned category lookup).
 ```
@@ -1959,6 +1963,8 @@ OPERATIONS (all on InstallmentPlanLifecycleCoordinator):
                                  TLC setSpendingExclusionDbOnly(purchase, INSTALLMENT_PURCHASE)] → post-commit batch
   declareWithNewExpense       → [txn: TLC createExpenseDbOnlyV2 (standard dedupe) + the declare steps]
                                  → post-commit batches
+                                 (caller: AddExpenseViewModel, loan S11a, via
+                                 ManualExpenseRepository.buildInstallmentPurchaseRequest; DORMANT until S13)
   createStandalone            → [txn: validate category, insert plan + entries]
   OD-14 currency rule (PE-A)  → InstallmentSplitCurrencyRule.equalSplitAllowed is the single definition: an
                                  EQUAL_SPLIT purchase plan must be in the purchase currency. declareOnExpense and

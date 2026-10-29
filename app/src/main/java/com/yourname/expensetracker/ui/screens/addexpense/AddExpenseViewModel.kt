@@ -52,8 +52,26 @@ import com.yourname.expensetracker.domain.currency.UserPresentRatePreview
 import com.yourname.expensetracker.domain.currency.UserPresentRatePreviewResult
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsLoadState
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
+import com.yourname.expensetracker.domain.currency.CurrencyUnsetReason
+import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentOpFailure
+import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentOpResult
+import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentPlanLifecycleCoordinator
+import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentPlanTerms
+import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentPostCommitDispatcher
+import com.yourname.expensetracker.domain.installment.model.InstallmentFulfilmentMode
+import com.yourname.expensetracker.domain.installment.model.InstallmentRefusalCode
+import com.yourname.expensetracker.domain.installment.model.InstallmentResidualPlacement
+import com.yourname.expensetracker.domain.installment.model.InstallmentSplitMethod
+import com.yourname.expensetracker.domain.installment.schedule.InstallmentScheduleCalculator
 import com.yourname.expensetracker.domain.transaction.RateRefusalCodes
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
+import com.yourname.expensetracker.ui.navigation.InstallmentsFeature
+import com.yourname.expensetracker.ui.screens.installments.actions.InstallmentActionMessages
+import com.yourname.expensetracker.ui.screens.installments.actions.InstallmentAmountInput
+import com.yourname.expensetracker.ui.screens.installments.actions.InstallmentPlanMutationState
+import com.yourname.expensetracker.ui.screens.installments.actions.InstallmentPlanOperation
+import com.yourname.expensetracker.ui.screens.installments.declare.DeclareForm
+import com.yourname.expensetracker.ui.screens.installments.declare.declareMutationMessage
 import com.yourname.expensetracker.ui.components.currency.CurrencyAmountInvalidKind
 import com.yourname.expensetracker.ui.components.currency.CurrencyBlockOrigin
 import com.yourname.expensetracker.ui.components.currency.CurrencyBlockVariant
@@ -133,7 +151,9 @@ data class AddExpenseState(
  /** MEC D-11: what the "Open exchange-rate setting" action needs from the host. */
  val openSettingRequest: CurrencyOpenSettingRequest = CurrencyOpenSettingRequest.NONE,
  /** The device-local calendar date of "today" (injected clock, entry zone) for rate-date wording; set on evaluation. */
- val ratesToday: LocalDate? = null
+ val ratesToday: LocalDate? = null,
+ /** Loan-installments S11a: the session-only installment sub-state; default = switch off. */
+ val installments: AddExpenseInstallmentsState = AddExpenseInstallmentsState()
 ) {
  /** True when the selected currency is known and differs from home. */
  val isForeignSelected: Boolean
@@ -169,7 +189,9 @@ class AddExpenseViewModel @Inject constructor(
  private val quickAddLearnedCategoryLookup: QuickAddLearnedCategoryLookup,
  private val userPresentRatePreview: UserPresentRatePreview,
  private val currencyRatesRepository: CurrencyRatesRepository,
- private val privacySettingsRepository: PrivacySettingsRepository
+ private val privacySettingsRepository: PrivacySettingsRepository,
+ private val installmentPlanCoordinator: InstallmentPlanLifecycleCoordinator,
+ private val installmentPostCommitDispatcher: InstallmentPostCommitDispatcher
 ) : ViewModel() {
 
     private companion object {
@@ -221,6 +243,11 @@ class AddExpenseViewModel @Inject constructor(
  private data class CurrencyOverride(val code: CurrencyCode)
 
  private var currencyOverride: CurrencyOverride? = null
+
+ // Loan-installments S11a (MEC UX-Q-6): a STANDARD-mode choice that installment mode cannot offer
+ // (for example JPY) is parked here while installments are ON and restored when they are switched off.
+ // A plain session-only field in the same non-inline wrapper; cleared by reset() and on a new session.
+ private var stashedOverride: CurrencyOverride? = null
 
  // MEC INV-3: latest-wins evaluation, and the single user-started refresh.
  private var evaluationJob: Job? = null
@@ -374,13 +401,23 @@ class AddExpenseViewModel @Inject constructor(
 
     fun selectTransactionType(type: TransactionType) {
         // S5-011: Clear transfer metadata when leaving TRANSFER type
+        var installmentsSwitchedOff = false
         _state.update {
-            if (type == TransactionType.TRANSFER) {
+            installmentsSwitchedOff = false
+            val next = if (type == TransactionType.TRANSFER) {
                 it.copy(transactionType = type)
             } else {
                 it.copy(transactionType = type, transferDirection = null, transferAccountName = "")
             }
+            // Loan-installments S11a: a non-spending type turns installments off (values kept).
+            if (it.installments.on && next.installmentsBlockReason != null) {
+                installmentsSwitchedOff = true
+                leaveInstallmentMode(next)
+            } else {
+                next
+            }
         }
+        if (installmentsSwitchedOff) reevaluateRegion(invalidate = true)
     }
 
     fun updateDate(dateMs: Long) {
@@ -403,11 +440,12 @@ class AddExpenseViewModel @Inject constructor(
     
     fun toggleRecurring() {
         // MEC INV-16: Repeat is home-currency only; a foreign currency can never carry a recurrence.
-        _state.update { if (it.isForeignSelected) it else it.copy(isRecurring = !it.isRecurring) }
+        // Loan-installments S11a: Repeat and installments are mutually exclusive (no-op while ON).
+        _state.update { if (it.isForeignSelected || it.installments.on) it else it.copy(isRecurring = !it.isRecurring) }
     }
 
     fun setRecurrenceFrequency(frequency: RecurrenceFrequency) {
-        _state.update { if (it.isForeignSelected) it else it.copy(recurrenceFrequency = frequency) }
+        _state.update { if (it.isForeignSelected || it.installments.on) it else it.copy(recurrenceFrequency = frequency) }
     }
 
     fun setTransferDirection(direction: TransferDirection?) {
@@ -419,19 +457,29 @@ class AddExpenseViewModel @Inject constructor(
     }
 
     fun setIsNotMine(value: Boolean) {
+        var installmentsSwitchedOff = false
         _state.update {
+            installmentsSwitchedOff = false
             if (value) {
-                it.copy(
+                val next = it.copy(
                     isNotMine = true,
                     isSharedExpense = false,
                     sharedWithName = "",
                     mySharePercentage = "",
                     myShareAmount = ""
                 )
+                // Loan-installments S11a: Not mine turns installments off and keeps the plan values.
+                if (it.installments.on) {
+                    installmentsSwitchedOff = true
+                    leaveInstallmentMode(next)
+                } else {
+                    next
+                }
             } else {
                 it.copy(isNotMine = false)
             }
         }
+        if (installmentsSwitchedOff) reevaluateRegion(invalidate = true)
     }
 
     fun updateOwnerName(name: String) {
@@ -439,13 +487,22 @@ class AddExpenseViewModel @Inject constructor(
     }
 
     fun setIsSharedExpense(value: Boolean) {
+        var installmentsSwitchedOff = false
         _state.update {
+            installmentsSwitchedOff = false
             if (value) {
-                it.copy(
+                val next = it.copy(
                     isSharedExpense = true,
                     isNotMine = false,
                     ownerName = ""
                 )
+                // Loan-installments S11a: Shared (and its split) turns installments off, values kept.
+                if (it.installments.on) {
+                    installmentsSwitchedOff = true
+                    leaveInstallmentMode(next)
+                } else {
+                    next
+                }
             } else {
                 it.copy(
                     isSharedExpense = false,
@@ -455,6 +512,7 @@ class AddExpenseViewModel @Inject constructor(
                 )
             }
         }
+        if (installmentsSwitchedOff) reevaluateRegion(invalidate = true)
     }
 
     fun updateSharedWithName(name: String) {
@@ -485,6 +543,13 @@ class AddExpenseViewModel @Inject constructor(
         }
         // MEC INV-11: the currency the user selected (home by default), captured at save-tap. The
         // transaction coordinator, not this screen, decides whether a foreign rate qualifies.
+        // Loan-installments S11a (MEC AE-28): in installment mode an Unset currency (for example a JPY
+        // choice that installment mode cannot offer) is never replaced by home; refuse before anything.
+        val installmentsOn = currentState.installments.on
+        if (installmentsOn && currentState.selectedCurrency == null) {
+            _state.update { it.withSaveError(UiText.StringResource(R.string.mec_save_disabled_currency)) }
+            return
+        }
         val currency = currentState.selectedCurrency ?: homeCurrency
         val isForeign = currency != homeCurrency
 
@@ -576,6 +641,12 @@ class AddExpenseViewModel @Inject constructor(
         // MEC AE-34: the zone captured when the sheet opened; falls back to the device zone now.
         val entryZone = sessionZone ?: java.time.ZoneId.systemDefault()
 
+        // Loan-installments S11a: the installment submit branch. The plain path below is untouched.
+        if (installmentsOn) {
+            saveWithInstallments(currentState, merchantTrimmed, amount, currency, entryZone)
+            return
+        }
+
         _state.update { it.copy(isSaving = true, saveResult = null, mutation = com.yourname.expensetracker.ui.model.MutationState.running("save")) }
 
         viewModelScope.launch {
@@ -625,21 +696,7 @@ class AddExpenseViewModel @Inject constructor(
                         // INV-15: repository message/exception are never displayed.
                         val refusal = blockVariantFor(result.message)
                         if (refusal != null) {
-                            // MEC R-2: cancel any in-flight preview so a late result cannot overwrite the
-                            // SAVE card or re-enable Save (STALE re-reads below).
-                            evaluationJob?.cancel()
-                            evaluationJob = null
-                            // MEC INV-6/AE-22: a post-tap rate refusal keeps the form and shows the card.
-                            _state.update { it.withSaveRefusal(refusal) }
-                            // A stale refusal carries only a bounded code; re-read the latest date locally.
-                            if (refusal == CurrencyBlockVariant.STALE) {
-                                reevaluateRegion(
-                                    invalidate = false,
-                                    showEvaluating = false,
-                                    origin = CurrencyBlockOrigin.SAVE,
-                                    keepSaveBlock = true
-                                )
-                            }
+                            applyRateRefusal(refusal)
                         } else {
                             _state.update { it.withSaveError(mapSaveError(result, currency, homeCurrency)) }
                         }
@@ -668,6 +725,182 @@ class AddExpenseViewModel @Inject constructor(
                 }
             }
         }
+    }
+
+    /**
+     * MEC R-2 / INV-6 / AE-22, shared by the plain and the installment save paths: a post-tap rate
+     * refusal keeps the form and shows the SAVE card. The in-flight preview is cancelled first so a
+     * late result cannot overwrite the card or re-enable Save; a stale refusal re-reads locally.
+     */
+    private fun applyRateRefusal(variant: CurrencyBlockVariant) {
+        evaluationJob?.cancel()
+        evaluationJob = null
+        _state.update { it.withSaveRefusal(variant) }
+        // A stale refusal carries only a bounded code; re-read the latest date locally.
+        if (variant == CurrencyBlockVariant.STALE) {
+            reevaluateRegion(
+                invalidate = false,
+                showEvaluating = false,
+                origin = CurrencyBlockOrigin.SAVE,
+                keepSaveBlock = true
+            )
+        }
+    }
+
+    /**
+     * Loan-installments S11a (INV-27, AE-1): the installment submit branch. The purchase request is
+     * built by the repository's shared builder (same merchant normalisation and classification as a
+     * plain save, no rate flag), then ONE coordinator call creates the purchase and the plan
+     * atomically. [addManualExpense][ManualExpenseRepository.addManualExpense] is never called. The
+     * coordinator sets the user-present rate flag itself, so this class never builds the requirement.
+     * Plan currency == purchase currency == [currency] (G2-6), declared total == [amount], no
+     * conversion. Refusals map to fixed strings only (INV-31); a rate refusal reuses the MEC card.
+     */
+    private fun saveWithInstallments(
+        s: AddExpenseState,
+        merchant: String,
+        amount: Double,
+        currency: String,
+        entryZone: java.time.ZoneId
+    ) {
+        val plan = s.installments
+        val localRefusal = installmentLocalRefusal(s, currency)
+        if (localRefusal != null) {
+            _state.update { it.withInstallmentRefusal(localRefusal) }
+            return
+        }
+        val count = plan.count ?: return
+        val planUuid = plan.planUuid ?: java.util.UUID.randomUUID().toString()
+        val equal = plan.split == InstallmentSplitMethod.EQUAL_SPLIT
+        val purchaseDay = InstallmentScheduleCalculator.civilEpochDay(s.date, entryZone)
+        val firstDue = plan.firstDueEpochDay ?: LocalDate.ofEpochDay(purchaseDay).plusMonths(1).toEpochDay()
+        val terms = InstallmentPlanTerms(
+            planUuid = planUuid,
+            displayName = plan.effectiveName(merchant),
+            lenderLabel = null,
+            currency = currency,
+            splitMethod = plan.split,
+            declaredTotal = if (equal) amount else null,
+            fixedPaymentAmount = if (equal) null else plan.fixedMinor?.let(InstallmentAmountInput::toAmount),
+            installmentCount = count,
+            firstDueEpochDay = firstDue,
+            residualPlacement = InstallmentResidualPlacement.FIRST,
+            fulfilmentMode = plan.mode,
+            // The paid-before field is hidden (deferral 49(b)): 0 is always sent.
+            paidBeforeTrackingCount = 0,
+            declaredOnEpochDay = todayFor(entryZone).toEpochDay()
+        )
+        val categoryId = s.selectedCategoryId
+        val transactionType = s.transactionType
+        val paymentMethod = s.paymentMethod
+        val date = s.date
+        val notes = s.notes.takeIf { it.isNotBlank() }
+
+        // The plan uuid is kept for the whole session so a retry after a refusal is idempotent (AE-15d).
+        _state.update {
+            it.copy(
+                isSaving = true,
+                saveResult = null,
+                mutation = com.yourname.expensetracker.ui.model.MutationState.running("save"),
+                installments = it.installments.copy(planUuid = planUuid)
+            )
+        }
+
+        viewModelScope.launch {
+            try {
+                val request = manualExpenseRepository.buildInstallmentPurchaseRequest(
+                    merchant = merchant,
+                    amount = amount,
+                    currency = currency,
+                    categoryId = categoryId,
+                    transactionType = transactionType,
+                    paymentMethod = paymentMethod,
+                    date = date,
+                    notes = notes
+                )
+                val result = installmentPlanCoordinator.declareWithNewExpense(request, entryZone, terms)
+                when (result) {
+                    is InstallmentOpResult.Done -> {
+                        // Post-commit batches go through the one shared dispatcher (F3).
+                        installmentPostCommitDispatcher.dispatch(result.postCommit)
+                        _state.update { it.withInstallmentSuccess() }
+                    }
+                    // AE-15d: a double submit finds the plan already there; that is success.
+                    is InstallmentOpResult.AlreadyInState -> _state.update { it.withInstallmentSuccess() }
+                    is InstallmentOpResult.Refused -> _state.update { it.withInstallmentRefusal(result.code) }
+                    is InstallmentOpResult.RateRefused -> {
+                        val variant = blockVariantFor(RateRefusalCodes.codeFor(result.reason))
+                        if (variant != null) {
+                            applyRateRefusal(variant)
+                        } else {
+                            _state.update { it.withSaveError(saveFailedText()) }
+                        }
+                    }
+                    is InstallmentOpResult.Failed -> _state.update { it.withInstallmentFailure(result.failure) }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // INV-13/INV-15/INV-31: bounded code only; no throwable or message text.
+                Timber.e(LOG_ADD_EXPENSE_SAVE_FAILED)
+                _state.update { it.withSaveError(saveFailedText()) }
+            } finally {
+                // INV-15: isSaving never stays true, including on cancellation.
+                _state.update {
+                    if (it.isSaving) {
+                        it.copy(isSaving = false, mutation = com.yourname.expensetracker.ui.model.MutationState.idle())
+                    } else {
+                        it
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Refusals decided locally, before any coordinator call: the switch's block reasons (Not mine,
+     * Shared, non-spending), an invalid count or fixed payment, and a currency outside EUR/USD (the
+     * coordinator's UNSUPPORTED_CURRENCY stays the backstop). Null when the form may be submitted.
+     */
+    private fun installmentLocalRefusal(s: AddExpenseState, currency: String): InstallmentRefusalCode? {
+        val plan = s.installments
+        val blockReason = s.installmentsBlockReason
+        if (blockReason != null) return blockReason
+        if (plan.count == null) return InstallmentRefusalCode.INVALID_COUNT
+        if (plan.split == InstallmentSplitMethod.FIXED_PAYMENT && plan.fixedMinor == null) {
+            return InstallmentRefusalCode.INVALID_AMOUNT
+        }
+        val code = CurrencyCode.parse(currency)
+        if (code == null || code !in CurrencySelectionPolicy.INSTALLMENT_CURRENCIES) {
+            return InstallmentRefusalCode.UNSUPPORTED_CURRENCY
+        }
+        return null
+    }
+
+    /** A committed installment save (or a silent AlreadyInState): the sheet's success path resets the form. */
+    private fun AddExpenseState.withInstallmentSuccess(): AddExpenseState = copy(
+        isSaving = false,
+        saveResult = SaveResult.Success,
+        mutation = com.yourname.expensetracker.ui.model.MutationState.success("save")
+    )
+
+    /** AE-22: a refusal code becomes the fixed declare string; the form is kept. Never a message text. */
+    private fun AddExpenseState.withInstallmentRefusal(code: InstallmentRefusalCode): AddExpenseState {
+        val resId = declareMutationMessage(
+            InstallmentPlanMutationState.Refused(InstallmentPlanOperation.CREATE, code)
+        ) ?: R.string.add_expense_error_save_failed
+        return withSaveError(UiText.StringResource(resId))
+    }
+
+    /** A bounded coordinator failure becomes its fixed string; the form is kept. */
+    private fun AddExpenseState.withInstallmentFailure(failure: InstallmentOpFailure): AddExpenseState {
+        val resId = declareMutationMessage(
+            InstallmentPlanMutationState.Failed(
+                InstallmentPlanOperation.CREATE,
+                InstallmentActionMessages.failureCode(failure)
+            )
+        ) ?: R.string.add_expense_error_save_failed
+        return withSaveError(UiText.StringResource(resId))
     }
 
     /**
@@ -783,6 +1016,8 @@ class AddExpenseViewModel @Inject constructor(
             return s.copy(selectedCurrency = null, currencyOptions = emptyList())
         }
         val homeCode = CurrencyCode.parse(home)
+        // Loan-installments S11a: while installments are ON the control is in INSTALLMENT mode.
+        if (s.installments.on) return applyInstallmentSelection(s, home, homeCode)
         if (homeCode == null) {
             currencyOverride = null
             return s.copy(selectedCurrency = home, currencyOptions = listOf(home))
@@ -794,6 +1029,140 @@ class AddExpenseViewModel @Inject constructor(
     }
 
     /**
+     * INSTALLMENT-mode selection (MEC UX-Q-6, AE-28; EUR/USD only). A choice that is not an option
+     * (for example JPY) is parked in [stashedOverride] and the selection becomes Unset
+     * ([AddExpenseInstallmentsState.currencyUnset]); it is never silently replaced by home or another
+     * currency. A home outside EUR/USD with no pick is also Unset. Idempotent.
+     */
+    private fun applyInstallmentSelection(s: AddExpenseState, home: String, homeCode: CurrencyCode?): AddExpenseState {
+        val options = if (homeCode == null) {
+            emptyList()
+        } else {
+            CurrencySelectionPolicy.selectable(homeCode, CurrencyEntryMode.INSTALLMENT).map { it.code }
+        }
+        val current = currencyOverride
+        val chosen = current?.code?.takeIf { it.code in options && it.code != home }
+        if (current != null && chosen == null) {
+            // Not offered in installment mode: park it; the next pass finds the override empty.
+            stashedOverride = current
+        }
+        currencyOverride = chosen?.let { CurrencyOverride(it) }
+        val selected: String? = when {
+            chosen != null -> chosen.code
+            stashedOverride != null -> null
+            home in options -> home
+            else -> null
+        }
+        val unset: CurrencyUnsetReason? = when {
+            selected != null -> null
+            stashedOverride != null -> CurrencyUnsetReason.PROPOSAL_NOT_SELECTABLE
+            else -> CurrencyUnsetReason.NONE_PROPOSED
+        }
+        return s.copy(
+            selectedCurrency = selected,
+            currencyOptions = options,
+            installments = s.installments.copy(currencyUnset = unset)
+        )
+    }
+
+    /**
+     * Switches installment mode off (explicit switch-off, or Not mine / Shared / a non-spending type
+     * while ON). The plan values are KEPT; the parked STANDARD choice is restored (UX-Q-6), the
+     * selection is re-derived in STANDARD mode and the unchanged amount is re-validated (AE-16).
+     * Callers re-evaluate the region afterwards.
+     */
+    private fun leaveInstallmentMode(s: AddExpenseState): AddExpenseState {
+        val restored = stashedOverride
+        stashedOverride = null
+        if (restored != null) currencyOverride = restored
+        val off = s.copy(
+            installments = s.installments.copy(
+                on = false,
+                currencyUnset = null,
+                repeatClearedByInstallments = false
+            )
+        )
+        val withSelection = applyHomeAndSelection(off)
+        val selected = withSelection.selectedCurrency
+        return withSelection.copy(
+            saveResult = null,
+            amountError = if (selected == null) null else revalidatedAmountError(withSelection.amount, selected)
+        )
+    }
+
+    /**
+     * Switches installment mode on: Repeat is cleared (mutually exclusive), the plan uuid is created
+     * once per session, and the selection is re-derived in INSTALLMENT mode. Callers re-evaluate the
+     * region afterwards.
+     */
+    private fun enterInstallmentMode(s: AddExpenseState): AddExpenseState {
+        val on = s.copy(
+            isRecurring = false,
+            recurrenceFrequency = RecurrenceFrequency.MONTHLY,
+            saveResult = null,
+            installments = s.installments.copy(
+                on = true,
+                planUuid = s.installments.planUuid ?: java.util.UUID.randomUUID().toString(),
+                repeatClearedByInstallments = s.isRecurring || s.installments.repeatClearedByInstallments
+            )
+        )
+        val withSelection = applyHomeAndSelection(on)
+        val selected = withSelection.selectedCurrency
+        return withSelection.copy(
+            amountError = if (selected == null) null else revalidatedAmountError(withSelection.amount, selected)
+        )
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Loan-installments S11a: the installments switch and plan terms (gated by InstallmentsFeature)
+    // ---------------------------------------------------------------------------------------------
+
+    /**
+     * Switches "Pay in installments" on or off. A no-op unless [enabled] ([InstallmentsFeature.ENABLED]
+     * by default): with the feature off the sub-state can never become ON. Refused while saving, while
+     * home is loading, and when the form has a block reason (Not mine, Shared, non-spending): the
+     * switch is disabled in the UI with that reason.
+     */
+    fun setInstallmentsEnabled(on: Boolean, enabled: Boolean = InstallmentsFeature.ENABLED) {
+        if (!enabled) return
+        val snapshot = _state.value
+        if (snapshot.isSaving || snapshot.homeCurrency == null) return
+        if (snapshot.installments.on == on) return
+        if (on && snapshot.installmentsBlockReason != null) return
+        _state.update { current ->
+            if (current.installments.on == on) current
+            else if (on) enterInstallmentMode(current)
+            else leaveInstallmentMode(current)
+        }
+        reevaluateRegion(invalidate = true)
+    }
+
+    private fun editInstallments(change: (AddExpenseInstallmentsState) -> AddExpenseInstallmentsState) {
+        _state.update {
+            if (!it.installments.on || it.isSaving) it
+            else it.copy(installments = change(it.installments), saveResult = null)
+        }
+    }
+
+    fun setInstallmentCountText(value: String) =
+        editInstallments { it.copy(countText = value.filter(Char::isDigit).take(3)) }
+
+    fun setInstallmentSplit(value: InstallmentSplitMethod) = editInstallments { it.copy(split = value) }
+
+    fun setInstallmentFixedText(value: String) =
+        editInstallments { it.copy(fixedText = value.take(DeclareForm.MAX_AMOUNT_CHARS)) }
+
+    /** The plan name; blank returns to following the merchant. */
+    fun setInstallmentName(value: String) = editInstallments {
+        it.copy(nameText = value.take(DeclareForm.MAX_NAME_CHARS).takeIf { text -> text.isNotBlank() })
+    }
+
+    /** The first payment date as an epoch day; null returns to the default (purchase + 1 month). */
+    fun setInstallmentFirstDue(epochDay: Long?) = editInstallments { it.copy(firstDueEpochDay = epochDay) }
+
+    fun setInstallmentMode(value: InstallmentFulfilmentMode) = editInstallments { it.copy(mode = value) }
+
+    /**
      * MEC INV-10/11: the user picked [code] in the currency control. Ignored unless it is selectable
      * for the home currency. Keeps the amount text, re-validates it for the new currency (AE-16),
      * turns Repeat off and clears it for a foreign currency (INV-16), and re-evaluates the rate.
@@ -803,10 +1172,14 @@ class AddExpenseViewModel @Inject constructor(
         val home = snapshot.homeCurrency ?: return
         val homeCode = CurrencyCode.parse(home)
         val chosen = CurrencyCode.parse(code) ?: return
+        // Loan-installments S11a: INSTALLMENT mode (EUR/USD only) while installments are ON.
+        val mode = if (snapshot.installments.on) CurrencyEntryMode.INSTALLMENT else CurrencyEntryMode.STANDARD
         val allowed = if (homeCode == null) chosen.code == home else
-            CurrencySelectionPolicy.isSelectable(chosen, homeCode, CurrencyEntryMode.STANDARD)
+            CurrencySelectionPolicy.isSelectable(chosen, homeCode, mode)
         if (!allowed) return
 
+        // An explicit pick in installment mode supersedes the parked STANDARD choice.
+        if (mode == CurrencyEntryMode.INSTALLMENT) stashedOverride = null
         currencyOverride = chosen.takeIf { it.code != home }?.let { CurrencyOverride(it) }
         _state.update { current ->
             val withSelection = applyHomeAndSelection(current)
@@ -872,6 +1245,14 @@ class AddExpenseViewModel @Inject constructor(
         val home = s.homeCurrency
         val selected = s.selectedCurrency
         val today = todayFor(sessionZone ?: java.time.ZoneId.systemDefault())
+        if (home != null && selected == null && s.installments.currencyUnset != null) {
+            // Loan-installments S11a (MEC AE-28): installment mode has no selectable currency; the
+            // control shows Unset and Save stays blocked until a pick (no preview, no evaluation).
+            _state.update {
+                it.copy(currencyRegion = CurrencyRegionUi.Unset(s.installments.currencyUnset), ratesToday = today)
+            }
+            return
+        }
         if (home == null || selected == null) {
             _state.update { it.copy(currencyRegion = CurrencyRegionUi.Loading, ratesToday = today) }
             return
@@ -1241,7 +1622,11 @@ class AddExpenseViewModel @Inject constructor(
             // MEC R-1(b): a retained draft with a NON-home selection is discarded whole (existing reset
             // path), so its amount is never re-denominated into the home currency. A home draft is kept.
             val retained = _state.value
+            // Loan-installments S11a: a retained draft with installments ON and a non-home (or Unset)
+            // selection, or a parked STANDARD choice, is discarded whole too (no re-denomination).
             val retainedNonHome = currencyOverride != null ||
+                stashedOverride != null ||
+                (retained.installments.on && retained.selectedCurrency != retained.homeCurrency) ||
                 (retained.selectedCurrency != null && retained.selectedCurrency != retained.homeCurrency)
             if (retainedNonHome) {
                 reset()
@@ -1249,6 +1634,7 @@ class AddExpenseViewModel @Inject constructor(
             sessionZone = java.time.ZoneId.systemDefault()
             // MEC: a new sheet session starts on the home currency (Selected(home) on every open).
             currencyOverride = null
+            stashedOverride = null
             _state.update { applyHomeAndSelection(it).copy(repeatClearedByCurrency = false) }
             // MEC INV-3: the captured zone may differ from the one used so far.
             reevaluateRegion(invalidate = true)
@@ -1274,6 +1660,9 @@ class AddExpenseViewModel @Inject constructor(
         refreshJob?.cancel()
         refreshJob = null
         currencyOverride = null
+        // Loan-installments S11a: the installment sub-state is session-only; the fresh AddExpenseState
+        // below drops it (and the plan uuid), so every dismiss path and a confirmed NAVIGATE discard it.
+        stashedOverride = null
         initialValuesApplied = false
         // S5-002: Preserve loaded currency — do not reset to null sentinel
         val loadedCurrency = _state.value.homeCurrency

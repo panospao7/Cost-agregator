@@ -276,6 +276,15 @@ TransactionSideEffectPlanner.planUpdated() / planDeleted()
         Lost in-memory batches are backstopped by the next budget trigger
 ```
 
+### AddExpenseViewModel installment save → InstallmentPlanLifecycleCoordinator.declareWithNewExpense (loan-installments S11a; DORMANT until S13, behind InstallmentsFeature.ENABLED):
+```
+AddExpenseViewModel.save() [installments ON]
+  → ManualExpenseRepository.buildInstallmentPurchaseRequest (builder passes userPresentRate = null)
+  → InstallmentPlanLifecycleCoordinator.declareWithNewExpense (INV-27 atomic: purchase, plan, entries; sets userPresentRate)
+  → post-commit batches via InstallmentPostCommitDispatcher
+  Never calls addManualExpense; plain save (installments OFF) is unchanged.
+```
+
 ### InstallmentPlanLifecycleCoordinator.recordDueEntries and InstallmentCandidateChargeProbe (implemented — loan-installments S7a-1):
 ```
 recordDueEntries(today, zone)   (callers S7a-2 worker and S10 overview: pending)

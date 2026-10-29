@@ -6,6 +6,9 @@ import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.data.database.entity.MerchantCanonical
+import com.yourname.expensetracker.data.database.entity.PaymentMethod
+import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.usecase.GenerateTransactionInsightUseCase
 import com.yourname.expensetracker.domain.categorization.CategorizationEngine
@@ -13,7 +16,9 @@ import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
 import com.yourname.expensetracker.domain.engine.DashboardFollowThroughEngine
+import com.yourname.expensetracker.domain.intelligence.ml.ClassificationResult
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
+import com.yourname.expensetracker.domain.intelligence.ml.MerchantLookupResult
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.model.Result
@@ -40,6 +45,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -62,6 +68,8 @@ class ManualExpenseRepositoryTest {
     private lateinit var recurringExpenseRepository: RecurringExpenseRepository
     private lateinit var currencySettingsRepository: CurrencySettingsRepository
     private lateinit var repository: ManualExpenseRepository
+    private lateinit var merchantNormalizer: MerchantNormalizer
+    private lateinit var hybridClassifier: HybridExpenseClassifier
     private val requestSlot = slot<CreateExpenseRequest>()
 
     @Before
@@ -83,14 +91,16 @@ class ManualExpenseRepositoryTest {
         coEvery { expenseDao.getById(any()) } returns mockk<Expense>(relaxed = true)
         val timeProvider: TimeProvider = mockk()
         every { timeProvider.now() } returns now
+        merchantNormalizer = mockk(relaxed = true)
+        hybridClassifier = mockk(relaxed = true)
 
         repository = ManualExpenseRepository(
             writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true),
             context = mockk<Context>(relaxed = true),
             database = database,
             expenseDao = expenseDao,
-            merchantNormalizer = mockk<MerchantNormalizer>(relaxed = true),
-            hybridClassifier = mockk<HybridExpenseClassifier>(relaxed = true),
+            merchantNormalizer = merchantNormalizer,
+            hybridClassifier = hybridClassifier,
             categorizationEngine = mockk<CategorizationEngine>(relaxed = true),
             timeProvider = timeProvider,
             aiSettingsRepository = mockk<AiSettingsRepository>(relaxed = true),
@@ -302,5 +312,157 @@ class ManualExpenseRepositoryTest {
 
         assertTrue("Expected Error, got $result", result is Result.Error)
         assertEquals("first problem; second problem", (result as Result.Error).message)
+    }
+
+    // ── Loan-installments S11a: builder parity (INV-27 plain-path identity, MEC setter #1 stays pinned) ──
+
+    private fun stubNormalizer(raw: String, normalized: String) {
+        val canonical = mockk<MerchantCanonical>(relaxed = true)
+        every { canonical.normalizedName } returns normalized
+        val lookup = mockk<MerchantLookupResult>(relaxed = true)
+        every { lookup.canonical } returns canonical
+        coEvery { merchantNormalizer.normalize(raw, any(), any()) } returns lookup
+    }
+
+    private fun stubClassifier(categoryId: Long) {
+        val classification = mockk<ClassificationResult>(relaxed = true)
+        every { classification.categoryId } returns categoryId
+        coEvery { hybridClassifier.classify(any(), any(), any(), any(), any(), any()) } returns classification
+    }
+
+    private suspend fun plainRequestFor(
+        merchant: String,
+        amount: Double,
+        currency: String,
+        categoryId: Long?,
+        notes: String?
+    ): CreateExpenseRequest {
+        repository.addManualExpense(
+            merchant = merchant,
+            amount = amount,
+            currency = currency,
+            categoryId = categoryId,
+            transactionType = TransactionType.PURCHASE,
+            paymentMethod = PaymentMethod.CASH,
+            date = now,
+            notes = notes,
+            entryZone = athens
+        )
+        return requestSlot.captured
+    }
+
+    private suspend fun installmentRequestFor(
+        merchant: String,
+        amount: Double,
+        currency: String,
+        categoryId: Long?,
+        notes: String?
+    ): CreateExpenseRequest = repository.buildInstallmentPurchaseRequest(
+        merchant = merchant,
+        amount = amount,
+        currency = currency,
+        categoryId = categoryId,
+        transactionType = TransactionType.PURCHASE,
+        paymentMethod = PaymentMethod.CASH,
+        date = now,
+        notes = notes
+    )
+
+    @Test
+    fun `S11a parity the installment request equals the plain request except for the user-present flag`() =
+        runTest(timeout = 60.seconds) {
+            stubNormalizer("  cafe  ", "Cafe Normalised")
+            stubClassifier(9L)
+
+            val plain = plainRequestFor("  cafe  ", 600.0, "EUR", categoryId = null, notes = "synthetic note")
+            val installment = installmentRequestFor("  cafe  ", 600.0, "EUR", categoryId = null, notes = "synthetic note")
+
+            assertEquals("Cafe Normalised", installment.merchant)
+            assertEquals(9L, installment.categoryId)
+            assertEquals(plain.copy(userPresentRate = null), installment)
+        }
+
+    @Test
+    fun `S11a parity the installment request carries no user-present rate while the plain save still sets it`() =
+        runTest(timeout = 60.seconds) {
+            stubNormalizer("Cafe", "Cafe")
+            stubClassifier(9L)
+
+            val plain = plainRequestFor("Cafe", 20.0, "USD", categoryId = 4L, notes = null)
+            val installment = installmentRequestFor("Cafe", 20.0, "USD", categoryId = 4L, notes = null)
+
+            assertEquals(UserPresentRateRequirement(athens), plain.userPresentRate)
+            assertNull(installment.userPresentRate)
+        }
+
+    @Test
+    fun `S11a parity an explicit category skips the classifier in both paths`() = runTest(timeout = 60.seconds) {
+        stubNormalizer("Cafe", "Cafe")
+        stubClassifier(9L)
+
+        val plain = plainRequestFor("Cafe", 20.0, "EUR", categoryId = 4L, notes = null)
+        val installment = installmentRequestFor("Cafe", 20.0, "EUR", categoryId = 4L, notes = null)
+
+        assertEquals(4L, plain.categoryId)
+        assertEquals(4L, installment.categoryId)
+        coVerify(exactly = 0) { hybridClassifier.classify(any(), any(), any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `S11a parity a classifier answer of zero or less leaves the category null in both paths`() =
+        runTest(timeout = 60.seconds) {
+            stubNormalizer("Cafe", "Cafe")
+            stubClassifier(0L)
+
+            val plain = plainRequestFor("Cafe", 20.0, "EUR", categoryId = null, notes = null)
+            val installment = installmentRequestFor("Cafe", 20.0, "EUR", categoryId = null, notes = null)
+
+            assertNull(plain.categoryId)
+            assertNull(installment.categoryId)
+        }
+
+    @Test
+    fun `S11a the installment request is never shared, not-mine, located or a transfer`() =
+        runTest(timeout = 60.seconds) {
+            stubNormalizer("Cafe", "Cafe")
+            stubClassifier(9L)
+
+            val request = installmentRequestFor("Cafe", 20.0, "EUR", categoryId = null, notes = null)
+
+            assertEquals(false, request.isNotMine)
+            assertNull(request.ownerName)
+            assertEquals(false, request.isSharedExpense)
+            assertNull(request.sharedWithName)
+            assertNull(request.mySharePercentage)
+            assertNull(request.myShareAmount)
+            assertNull(request.latitude)
+            assertNull(request.longitude)
+            assertNull(request.locationSource)
+            assertNull(request.transferDirection)
+            assertNull(request.transferAccountName)
+            assertEquals(true, request.isManualEntry)
+        }
+
+    @Test
+    fun `S11a building the installment request writes nothing through the coordinator or the recurring store`() =
+        runTest(timeout = 60.seconds) {
+            stubNormalizer("Cafe", "Cafe")
+            stubClassifier(9L)
+
+            installmentRequestFor("Cafe", 20.0, "USD", categoryId = null, notes = null)
+
+            coVerify(exactly = 0) { coordinator.createExpenseDbOnlyV2(any()) }
+            coVerify(exactly = 0) { recurringExpenseRepository.insert(any()) }
+        }
+
+    @Test
+    fun `S11a plain addManualExpense keeps its guards after the builder extraction`() = runTest(timeout = 60.seconds) {
+        // The cap, the recurrence rule and the flag are still applied before and around the shared builder.
+        assertTrue(add(1_000_000.01, "EUR") is Result.Error)
+        assertTrue(add(20.0, "USD", RecurrenceFrequency.MONTHLY) is Result.Error)
+        coVerify(exactly = 0) { coordinator.createExpenseDbOnlyV2(any()) }
+
+        assertTrue(add(20.0, "USD") is Result.Success)
+        assertEquals(UserPresentRateRequirement(athens), requestSlot.captured.userPresentRate)
     }
 }

@@ -9,6 +9,8 @@ import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.ManualExpenseRepository
+import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentPlanLifecycleCoordinator
+import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentPostCommitDispatcher
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencyRateRefreshOutcome
 import com.yourname.expensetracker.domain.currency.CurrencyRatesRepository
@@ -146,6 +148,8 @@ class AddExpenseViewModelTest : ViewModelTestUtils() {
         PrivacySettingsLoadState.Loaded(PrivacySettings())
     )
     private val privacyRepo = mockk<PrivacySettingsRepository>()
+    private val installmentCoordinator = mockk<InstallmentPlanLifecycleCoordinator>(relaxed = true)
+    private val installmentDispatcher = mockk<InstallmentPostCommitDispatcher>(relaxed = true)
 
     private fun createViewModel(
         currencyRepo: CurrencySettingsRepository,
@@ -162,7 +166,9 @@ class AddExpenseViewModelTest : ViewModelTestUtils() {
             RateEligibilityEvaluator(CurrencyConverter(rateStore, timeProvider, testDispatcher))
         ),
         currencyRatesRepository = ratesRepo,
-        privacySettingsRepository = privacy
+        privacySettingsRepository = privacy,
+        installmentPlanCoordinator = installmentCoordinator,
+        installmentPostCommitDispatcher = installmentDispatcher
     )
 
     @Test
