@@ -3064,3 +3064,14 @@ Validation to request: unchanged, targeted `*AppLockController*` (covers both te
 - Merge-candidate review (reviewer-strict, 2026-10-29): ACCEPT-WITH-CONDITIONS, no blocker. Fixed: the ENGINE_INTERACTION_MAP lock-on/off sweep sentence; domain-spec AE-102 plus the §10 NOTIF_REPOST_UNCONFIRMED row; the duplicate weSetPin. Pre-release conditions (OWNER): AE-118 discarded-success UX (finding 3), CF-4 sign-off, an OEM device pass for AE-42/117, and an R3 share/SAF/camera pass with the 'Immediately' timeout.
 - MERGE CANDIDATE 5048db7a (integration/ai-evolution-1b, local, NOT pushed) VALIDATED: guard_docs_truth vr-20261029-101048-a1fa2963, static-guards vr-20261029-101106-50c570f9, app-check vr-20261029-102739-9b90ef18, all PASS. AWAITING OWNER approval to push to feature/ai-evolution.
 - 2026-10-29: OWNER approved (owner-approvals 89). Merge 5048db7a pushed to feature/ai-evolution (fast-forward from 4add2466). Next for app-lock: S24-S27 and G2; the pre-release owner items (AE-118, CF-4, OEM pass, R3 pass).
+- G1c (2026-10-29), uncommitted, in progress:
+  - JVM ladder all PASS: targeted vr-20261029-162550-bcfc27eb, runtime-ui vr-20261029-163022-22700b42, cancellation vr-20261029-163310-1535c46c, known_good_state vr-20261029-163328-324f7902, static-guards vr-20261029-163632-8561fac7.
+  - API 34: AppLockLifecycleDeviceTest PASS vr-20261029-171302-d1d668d2; AppLockPromptHostDeviceTest PASS 6/6 vr-20261029-181528-90b01fc1 (after the harness fix: the API 34 prompt window is titled 'BiometricPrompt'). Manual AE-118 PASS (evidence g1c/34).
+  - R3 (API 34): SAF, FLAG_SECURE, screencap and CF-4 PASS; share and camera follow-up running.
+  - Guardian ACCEPT-WITH-CONDITIONS (LOW-2 fixed; LOW-1 declined).
+  - The runner rejects Class#method filters (E_INVALID_TEST_FILTER); use whole classes.
+  - Next: R3 follow-up, API 35 device classes, commit G1c.
+  - R3 (API 34) COMPLETE: share (the chooser shows only the file name, re-lock on return), SAF, camera (re-lock on return; the photo survives unlock into receipt review), FLAG_SECURE, screencap refused, CF-4 silent. No leak. Evidence g1c/34 runs.md Parts A-E. Residual: the credential prompt sometimes needs the PIN re-entered (emulator input timing).
+  - NOW: API 35 device classes for G1c.
+  - API 35: AppLockPromptHostDeviceTest PASS vr-20261029-191103-c329656a; AppLockLifecycleDeviceTest PASS vr-20261029-191234-a9276ccc.
+- G1c COMMITTED (owner-approvals 90 items AE-118, CF-4 and R3 closed; CF-4b deferred; AE-42/117 OEM screens remain the release-candidate real-phone residual). reviewer-strict at the next app-lock merge candidate. Next app-lock: S24-S27, G2.

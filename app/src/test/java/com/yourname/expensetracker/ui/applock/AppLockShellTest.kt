@@ -381,17 +381,12 @@ class AppLockShellTest : AppLockComposeTestBase() {
     // --- CF-4 -----------------------------------------------------------------------------------------------
 
     @Test
-    fun cf4_nextUnlockMessage_isTryAgainOnlyWhenAnUnlockPromptReturnsToLocked() {
+    fun cf4_nextUnlockMessage_isSilentWhenAnUnlockPromptReturnsToLocked() {
         val unlockPrompt = AppLockState.Authenticating(3, AuthPurpose.UNLOCK)
-        assertEquals(
-            LockSurfaceMessage.TRY_AGAIN,
-            nextUnlockMessage(unlockPrompt, AppLockState.Locked(LockCause.COLD_START), null)
-        )
-        assertEquals(
-            LockSurfaceMessage.TRY_AGAIN,
-            nextUnlockMessage(unlockPrompt, AppLockState.Locked(LockCause.TIMEOUT), null)
-        )
-        // The surface's own T5 line stays for an unreadable setting.
+        // G1c: every UNLOCK-prompt end returns silently to the lock surface (no end-kind is published).
+        assertNull(nextUnlockMessage(unlockPrompt, AppLockState.Locked(LockCause.COLD_START), null))
+        assertNull(nextUnlockMessage(unlockPrompt, AppLockState.Locked(LockCause.TIMEOUT), null))
+        // The surface's own T5 line stays for an unreadable setting; the tracker adds none.
         assertNull(nextUnlockMessage(unlockPrompt, AppLockState.Locked(LockCause.SETTINGS_UNREADABLE), null))
         // A new lock episode: entered from anywhere but an UNLOCK prompt.
         listOf(
@@ -403,22 +398,21 @@ class AppLockShellTest : AppLockComposeTestBase() {
             AppLockState.Authenticating(4, AuthPurpose.ENABLE),
             AppLockState.Authenticating(5, AuthPurpose.CONFIRM_CHANGE)
         ).forEach { previous ->
-            assertNull("previous=$previous", nextUnlockMessage(previous, AppLockState.Locked(LockCause.TIMEOUT), LockSurfaceMessage.TRY_AGAIN))
+            assertNull("previous=$previous", nextUnlockMessage(previous, AppLockState.Locked(LockCause.TIMEOUT), null))
         }
-        // The same episode keeps its line; another cause is another episode.
-        assertEquals(
-            LockSurfaceMessage.TRY_AGAIN,
+        // The same cause and another cause, with nothing held, stay silent.
+        assertNull(
             nextUnlockMessage(
                 AppLockState.Locked(LockCause.COLD_START),
                 AppLockState.Locked(LockCause.COLD_START),
-                LockSurfaceMessage.TRY_AGAIN
+                null
             )
         )
         assertNull(
             nextUnlockMessage(
                 AppLockState.Locked(LockCause.COLD_START),
                 AppLockState.Locked(LockCause.TIMEOUT),
-                LockSurfaceMessage.TRY_AGAIN
+                null
             )
         )
     }
@@ -440,40 +434,53 @@ class AppLockShellTest : AppLockComposeTestBase() {
     }
 
     @Test
-    fun cf4_unlockMessageTracker_isIdempotentForTheSameState() {
+    fun cf4_unlockMessageTracker_neverYieldsTryAgain_andIsIdempotentForTheSameState() {
         val tracker = UnlockMessageTracker()
         assertNull(tracker.messageFor(AppLockState.Locked(LockCause.COLD_START)))
         assertNull(tracker.messageFor(AppLockState.Authenticating(1, AuthPurpose.UNLOCK)))
-        assertEquals(LockSurfaceMessage.TRY_AGAIN, tracker.messageFor(AppLockState.Locked(LockCause.COLD_START)))
-        assertEquals(LockSurfaceMessage.TRY_AGAIN, tracker.messageFor(AppLockState.Locked(LockCause.COLD_START)))
-        assertEquals(LockSurfaceMessage.TRY_AGAIN, tracker.messageFor(AppLockState.Locked(LockCause.COLD_START)))
+        assertNull(tracker.messageFor(AppLockState.Locked(LockCause.COLD_START)))
+        assertNull(tracker.messageFor(AppLockState.Locked(LockCause.COLD_START)))
+        assertNull(tracker.messageFor(AppLockState.Locked(LockCause.COLD_START)))
+        // A second failed prompt and a re-lock for another cause stay silent too.
+        assertNull(tracker.messageFor(AppLockState.Authenticating(2, AuthPurpose.UNLOCK)))
+        assertNull(tracker.messageFor(AppLockState.Locked(LockCause.TIMEOUT)))
+        assertNull(tracker.messageFor(AppLockState.Locked(LockCause.TIMEOUT)))
+        assertNull(tracker.messageFor(AppLockState.Unlocked))
+        assertNull(tracker.messageFor(AppLockState.Authenticating(3, AuthPurpose.UNLOCK)))
+        assertNull(tracker.messageFor(AppLockState.Locked(LockCause.SETTINGS_UNREADABLE)))
     }
 
     @Test
-    fun cf4_composed_theLineAppearsAfterAFailedPrompt_andIsClearedByANewPromptAnUnlockAndANewEpisode() {
+    fun cf4_composed_aFailedOrCancelledPromptReturnsSilentlyToTheLockSurface_withUnlockEnabled() {
         val source = FakeSource(AppLockState.Locked(LockCause.COLD_START))
         show(source)
         statusText().assertTextEquals("")
 
         source.set(AppLockState.Authenticating(1, AuthPurpose.UNLOCK))
         source.set(AppLockState.Locked(LockCause.COLD_START))
-        statusText().assertTextEquals(text(R.string.applock_msg_try_again))
+        statusText().assertTextEquals("")
+        composeRule.onAllNodesWithTag(AppLockUiTags.STATUS_MESSAGE).assertCountEquals(1)
+        composeRule.onNodeWithTag(AppLockUiTags.UNLOCK_BUTTON).assertIsEnabled()
 
-        // A new prompt: no line while it is in flight, and none again until it ends.
+        // A new prompt: no line while it is in flight, and none again when it ends.
         source.set(AppLockState.Authenticating(2, AuthPurpose.UNLOCK))
         composeRule.onAllNodesWithTag(AppLockUiTags.STATUS_MESSAGE).assertCountEquals(1)
         statusText().assertTextEquals("")
         composeRule.onNodeWithTag(AppLockUiTags.UNLOCK_BUTTON).assertIsNotEnabled()
+        source.set(AppLockState.Locked(LockCause.COLD_START))
+        statusText().assertTextEquals("")
+        composeRule.onNodeWithTag(AppLockUiTags.UNLOCK_BUTTON).assertIsEnabled()
 
         // Success, then a re-lock for a new reason: a new episode starts with no line.
         source.set(AppLockState.Unlocked)
         source.set(AppLockState.Locked(LockCause.TIMEOUT))
         statusText().assertTextEquals("")
 
-        // Fail again, then leave LOCKED another way (inert): the line does not survive into the next locked state.
+        // Fail again, then leave LOCKED another way (inert): still no line anywhere.
         source.set(AppLockState.Authenticating(3, AuthPurpose.UNLOCK))
         source.set(AppLockState.Locked(LockCause.TIMEOUT))
-        statusText().assertTextEquals(text(R.string.applock_msg_try_again))
+        statusText().assertTextEquals("")
+        composeRule.onNodeWithTag(AppLockUiTags.UNLOCK_BUTTON).assertIsEnabled()
         source.set(AppLockState.Inert(InertReason.NO_CREDENTIAL))
         source.set(AppLockState.Locked(LockCause.TIMEOUT))
         statusText().assertTextEquals("")

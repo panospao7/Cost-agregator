@@ -2238,3 +2238,91 @@ Source: privacy-security-guardian ACCEPT-WITH-CONDITIONS and architecture-guardi
   - any network step beyond the installed images.
   Findings are reported, never patched in place.
 - **Estimate:** ~10 runner runs plus C scripting. reviewer-strict at the app-lock merge candidate.
+
+
+## Amendment (2026-10-29): G1c — AE-118 orphan prompt + CF-4 silent cancel + R3 emulator pass (feature-planner, Sonnet; orchestrator-persisted; BINDING)
+Basis: owner-approvals 90 (owner delegated the open pre-release items to the orchestrator's recommendations). T3 privacy/lifecycle. Process: a Sonnet writer for production, a SEPARATE Sonnet test-author (privacy slice, item 87), one combined guardian, and reviewer-strict at the next app-lock merge candidate.
+
+### Root causes
+- **AE-118:**
+  - AppLockPromptHost.kt:83-88 `onHostDestroyed` clears the relay registration and then calls `controller.onPromptHostLost` (AppLockController.kt:664-667). The controller's `authenticator.cancel` then finds no registration, so `BiometricPrompt.cancelAuthentication()` is never called.
+  - The adapter's ON_DESTROY observer (BiometricPromptDeviceAuthenticator.kt:211-214) only calls `clearAwaiting()`.
+  - So the AOSP prompt window is orphaned.
+  - The adapter `cancel()` (:282-299) delivers `Failed(SYSTEM_CANCELED)` and must NOT be reused for host loss: HOST_LOST ends are silent, Abandoned (ux 4.3, S23).
+- **CF-4:** `nextUnlockMessage` (AppLockShell.kt:91-93) yields TRY_AGAIN for any `Authenticating(UNLOCK) -> Locked` transition. The controller publishes no end-kind (`routeOutcome` AppLockController.kt:1645-1658), so the shell cannot tell a user cancel from a lockout or error.
+
+### Decision (orchestrator under owner-approvals 90)
+- CF-4: remove the TRY_AGAIN derivation. Every UNLOCK-prompt end returns silently to the lock surface.
+  - Fail-closed is unchanged: Locked, Unlock enabled, no auto-reprompt.
+  - The `LockSurfaceMessage.TRY_AGAIN` enum entry and its string are KEPT (not deleted; es/el).
+- **CF-4b (DEFERRED residual):** non-cancel UNLOCK failures (lockout, transient, SYSTEM_CANCELED) also show no line until the controller publishes a bounded `UnlockEnd`. Previously only the generic TRY_AGAIN showed (not the spec text either). The system prompt shows its own lockout UI. This is a later increment.
+
+### Exact behaviour
+1. Host finishing (not a config change) with a prompt in flight (any purpose):
+   - The earliest of ON_PAUSE/ON_STOP with `isFinishing && !isChangingConfigurations`, or ON_DESTROY with `!isChangingConfigurations`, triggers a silent abandon in the adapter:
+     - `inFlight = null`;
+     - `prompt?.cancelAuthentication()` in try/catch (rethrow CancellationException; bounded RuntimeException swallow);
+     - NO callback;
+     - `beginAwaiting()`, so the echo is dropped.
+   - ON_DESTROY still reports `onPromptHostLost(id)` exactly once via the relay record (unchanged).
+   - It is idempotent.
+2. Rotation (`isChangingConfigurations`): no cancel. The prompt survives and a matching success commits (the AE-118 rotation case is unchanged).
+3. Host stopped but NOT finishing (OEM credential screen, Home): no cancel (AE-36/117/120 unchanged).
+4. A late success from an orphan is not applied (stale id, T12, unchanged).
+5. Lock surface after any UNLOCK-prompt end: Locked, no status line (only T5 SETTINGS_UNREADABLE keeps its text), Unlock enabled, no auto-reprompt.
+6. `ERROR_CANCELED` stays `Failed(SYSTEM_CANCELED)` in `mapAuthenticationError` (:100). No remap. The settings B-4 text is untouched.
+
+### Write set
+**Production (writer):**
+- `ui/applock/BiometricPromptDeviceAuthenticator.kt`: `internal fun abandonForHostLoss()`, plus the init observer (:205-220) ON_PAUSE/ON_STOP/ON_DESTROY with the finishing/not-config guard.
+- `ui/applock/AppLockShell.kt`: `nextUnlockMessage` (:84-97) returns null for the UNLOCK transition; update the KDoc (:74-82).
+- AppLockPromptHost.kt only if the adapter observer proves insufficient.
+- No controller, domain, DAO, manifest or permission change.
+
+**Docs (writer):**
+- domain-spec AE-118 (a finishing host cancels the library prompt silently);
+- ux-flows 4.3/4.4 (the CF-4 alignment and the CF-4b residual);
+- LEGAL_PATHS "AE-118 settings-prompt hold" (:1642-1649).
+
+**Tests (test-author):**
+- BiometricPromptAdapterStateMachineTest:
+  - finishing ON_PAUSE cancels once, with no callback; inFlight is cleared and awaiting is set;
+  - a second signal is a no-op;
+  - config change: no cancel, and adopt works;
+  - not finishing: no cancel;
+  - a library RuntimeException is swallowed;
+  - an echo after abandon is dropped.
+- AppLockPromptHostTest: a finishing destroy reports `onPromptHostLost` once; a config-change destroy gives no loss and no cancel.
+- AppLockShellTest: the cf4_* tests (:384-449) are rewritten IN PLACE to null / no TRY_AGAIN.
+- AppLockSurfaceTest:137 stays.
+- BiometricPromptOutcomeMappingTest pins USER_CANCELED / NEGATIVE_BUTTON → Cancelled and CANCELED → Failed(SYSTEM_CANCELED).
+- Re-run AppLockBiometricSourceScanTest and AppLockRelaySourceScanTest.
+- Instrumented:
+  - AppLockPromptHostDeviceTest g1b_AE44 (:189-230) is TIGHTENED to strict silent (an applock_msg_try_again text count of 0; keep the disallowed list and the no-reprompt check).
+  - NEW AE-118 orphan case: a CONFIRM_CHANGE prompt showing, then a CLEAR_TASK restart. The prompt window must be gone without Back, the state Unlocked, and the change not applied.
+  - AppLockLifecycleDeviceTest: re-run only.
+
+### Validation
+1. targeted `*BiometricPromptAdapterStateMachineTest*,*AppLockPromptHostTest*,*AppLockShellTest*,*AppLockSurfaceTest*,*BiometricPromptOutcomeMappingTest*,*BiometricPromptHostGatingTest*,*AppLockBiometricSourceScanTest*,*AppLockRelaySourceScanTest*`
+2. runtime-ui
+3. cancellation, known_good_state
+4. static-guards
+5. connected AppLockPromptHostDeviceTest + AppLockLifecycleDeviceTest on API 34 and API 35
+6. app-check at the candidate
+
+### STOP
+- A new permission; a guard edit or baseline growth; any controller, state-machine or domain change (that is CF-4b).
+- An ERROR_CANCELED remap; deleting the TRY_AGAIN string.
+- Any change to rotation or OEM-stop/AE-117 behaviour.
+- Logging library text or codes.
+- The `isFinishing && !isChangingConfigurations` guard is mandatory and must be test-pinned.
+
+### R3 emulator pass (API 34 or 35, with G1c installed; lock on, timeout "Immediately", secure screen on)
+1. **Share:** with the sheet open while backgrounded, no content in the preview; a blank recents card; on return from the target, the lock surface with no content flash.
+2. **SAF** (backup export/import picker; choose or cancel): on return, re-locked per the timeout rule; no loop; no stranded Authenticating; a held flow is not silently lost (or is dropped per spec).
+3. **Camera** (receipt capture; take or cancel): re-lock on return; record whether a taken photo survives; no content in the return frame.
+4. **For each case:** FLAG_SECURE; no TRY_AGAIN after a prompt cancel; an AE-118 notification tap with a settings prompt up leaves the prompt gone with no Back and nothing applied.
+- Evidence: build/release-lead-notes/g1c/. Failures are findings, not inline fixes.
+- AE-42/117 OEM screens stay the release-candidate real-phone residual.
+
+### G1c guardian dispositions (2026-10-29): combined guardian ACCEPT-WITH-CONDITIONS. LOW-2 (ux TRANSIENT row pointer) fixed. LOW-1 (destroy path re-posts awaitingTimeout, keeping the adapter referenced for AWAITING_TERMINAL_TIMEOUT_MS) DECLINED by the orchestrator: the leak is bounded and transient, it preserves the echo-drop guarantee after destroy, and it is pinned by a test-author test. Process condition: the tests are written; validation follows.

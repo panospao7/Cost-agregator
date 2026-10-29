@@ -2005,6 +2005,10 @@ T18) — AMD-22**
   replaces the task.
 - Then the attempt ends as cancelled. The state is `UNLOCKED`, the change is not applied, and the settings switch is
   enabled again.
+- A finishing host (finishing and not a configuration change) cancels the library prompt silently: the system prompt
+  window is gone without Back, and no outcome is delivered for the attempt (the end is the Abandoned host loss, not a
+  failure). Its echo is dropped. A rotation or a stop that is not finishing never cancels the prompt (AE-36, AE-117,
+  AE-120).
 - The budget link is applied once (Home), whether it arrived before or after the host loss.
 - When a late `AUTH_SUCCEEDED` for the abandoned id arrives, then it is ignored, and no change and no unlock happen.
   This holds even if the app has re-locked in the meantime.

@@ -1646,7 +1646,9 @@ caller of AppLockController.onLockQuery / releaseHeldLink / releaseOpportunity):
       loss, T35) does not release the link by itself: the controller bumps releaseOpportunity (S21-a, after
       onOpenOriginApplyCompleted closes the T33 gate with a link held) and the router's collector posts
       releaseHeldLink() on Main. A link held across PROMPT_HOST_LOST is applied once, whether it arrived before or
-      after the host loss. T_held (5 min) still applies; an expired link goes Home only.
+      after the host loss. T_held (5 min) still applies; an expired link goes Home only. A finishing host (not a
+      configuration change) cancels the system prompt silently (no outcome): the adapter drops its in-flight sink,
+      cancels the library prompt and delivers no callback; the loss itself is reported once by the prompt host.
   • Accepted residuals: R-S21-1 a lookup that began while open can finish after a re-lock (the navigation is
     buffered and nothing is composed, and its bounded DL_APPLIED / DL_BRIEFING_* outcome may be recorded
     after the re-lock); R-S21-2 a rotation during a released-link lookup loses that apply.

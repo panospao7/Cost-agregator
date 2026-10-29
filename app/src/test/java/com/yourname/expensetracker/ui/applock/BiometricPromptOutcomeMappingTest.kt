@@ -68,6 +68,21 @@ class BiometricPromptOutcomeMappingTest {
         assertEquals(DeviceAuthOutcome.Cancelled, mapAuthenticationError(errorNegativeButton))
     }
 
+    /**
+     * G1c pin: the user-initiated ends map to Cancelled while ERROR_CANCELED (the system or a client cancel echo)
+     * stays a bounded failure. The silent host-loss cancel relies on this split: it must never be remapped to Cancelled.
+     */
+    @Test
+    fun g1c_userCancelAndNegativeButton_areCancelled_butLibraryCanceledIsFailedSystemCanceled() {
+        assertEquals(DeviceAuthOutcome.Cancelled, mapAuthenticationError(BiometricPrompt.ERROR_USER_CANCELED))
+        assertEquals(DeviceAuthOutcome.Cancelled, mapAuthenticationError(BiometricPrompt.ERROR_NEGATIVE_BUTTON))
+        assertEquals(
+            DeviceAuthOutcome.Failed(DeviceAuthErrorBucket.SYSTEM_CANCELED),
+            mapAuthenticationError(BiometricPrompt.ERROR_CANCELED)
+        )
+        assertNotEquals(DeviceAuthOutcome.Cancelled, mapAuthenticationError(BiometricPrompt.ERROR_CANCELED))
+    }
+
     // ---- AE-45 lockout ---------------------------------------------------------------------
 
     @Test

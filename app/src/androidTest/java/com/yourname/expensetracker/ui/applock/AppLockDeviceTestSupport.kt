@@ -18,6 +18,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.yourname.expensetracker.data.privacy.applock.appLockPrivacyDataStore
 import com.yourname.expensetracker.domain.privacy.applock.AppLockState
 import com.yourname.expensetracker.ui.MainActivity
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.Assume.assumeTrue
 
@@ -134,16 +135,40 @@ internal class AppLockDeviceHarness {
     private val timeout = stringPreferencesKey("auto_lock_timeout")
     private val marker = stringPreferencesKey("_app_lock_load_state")
 
-    fun seedLock(enabled: Boolean, secureScreenSetting: Boolean = false) = runBlocking {
+    fun seedLock(enabled: Boolean, secureScreenSetting: Boolean = false, timeoutToken: String = "IMMEDIATE") = runBlocking {
         ctx.appLockPrivacyDataStore.edit {
             it.clear()
             it[lockEnabled] = enabled
             it[secureScreen] = secureScreenSetting
-            it[timeout] = "IMMEDIATE"
+            it[timeout] = timeoutToken
             it[marker] = "NORMAL"
         }
         Unit
     }
+
+    /** The persisted auto-lock timeout token as the store holds it right now, or null when none is stored. */
+    fun storedTimeoutToken(): String? = runBlocking {
+        ctx.appLockPrivacyDataStore.data.first()[timeout]
+    }
+
+    /**
+     * True while a system authentication window of the platform prompt is on screen: SystemUI's prompt window
+     * (API 31 and newer) in the window dump, or, on API 30, the system credential activity resumed on top of the app.
+     * Window dumps differ per release, so a caller that needs "gone" must first prove this returns true for a prompt it
+     * knows is up (a positive control), otherwise a false here could be a detector that sees nothing.
+     *
+     * API 34 device evidence: while the prompt is up the dump lists `Window #6 Window{e85ef9b u0 BiometricPrompt}:` and
+     * `mCurrentFocus=Window{... u0 BiometricPrompt}`, with no AuthContainerView; once dismissed there are 0 matches.
+     * So a window whose title is exactly BiometricPrompt is matched in addition to AuthContainerView.
+     */
+    fun isSystemPromptWindowPresent(): Boolean {
+        val dump = shell("dumpsys window windows")
+        return dump.contains("AuthContainerView") ||
+            BIOMETRIC_PROMPT_WINDOW.containsMatchIn(dump) ||
+            isSystemCredentialUiResumed()
+    }
+
+    private val BIOMETRIC_PROMPT_WINDOW = Regex("""Window\{[0-9a-f]+ u\d+ BiometricPrompt\}""")
 
     /**
      * The CORRUPTED sentinel is what the store's corruption handler writes. Overwriting the file itself is not used:

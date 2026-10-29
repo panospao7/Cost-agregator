@@ -208,8 +208,18 @@ class BiometricPromptDeviceAuthenticator @VisibleForTesting internal constructor
                 override fun onStateChanged(source: LifecycleOwner, event: Lifecycle.Event) {
                     when (event) {
                         Lifecycle.Event.ON_START -> clearAwaiting()
+                        // A finishing host (not a configuration change) must not leave the system prompt
+                        // orphaned (AE-118). A stop that is not finishing (OEM credential screen, Home) and a
+                        // rotation never cancel (AE-36/117/120).
+                        Lifecycle.Event.ON_PAUSE,
+                        Lifecycle.Event.ON_STOP -> {
+                            if (activity.isFinishing && !activity.isChangingConfigurations) abandonForHostLoss()
+                        }
                         Lifecycle.Event.ON_DESTROY -> {
+                            // Clear the wait first, then abandon, so the wait started by the abandon survives
+                            // this handler and the echo of the silent cancel is still dropped.
                             clearAwaiting()
+                            if (!activity.isChangingConfigurations) abandonForHostLoss()
                             source.lifecycle.removeObserver(this)
                         }
                         else -> Unit
@@ -295,6 +305,28 @@ class BiometricPromptDeviceAuthenticator @VisibleForTesting internal constructor
             // Bounded: the attempt is already closed on our side.
         } finally {
             flight.callback.onOutcome(flight.attemptId, DeviceAuthOutcome.Failed(DeviceAuthErrorBucket.SYSTEM_CANCELED))
+        }
+    }
+
+    /**
+     * Closes the in-flight attempt silently because the host is finishing (AE-118). The library prompt is
+     * cancelled so its system window is not orphaned, but NO outcome is delivered: the end of a lost host is
+     * reported to the controller by the prompt host (PROMPT_HOST_LOST, INV-54) and is Abandoned, not a failure.
+     * The wait flag is set before the library cancel so a synchronous or late echo is dropped.
+     *
+     * Idempotent: with nothing in flight (already abandoned, cancelled, completed or never launched) it does
+     * nothing, so a repeated lifecycle signal never cancels twice. Main thread only.
+     */
+    internal fun abandonForHostLoss() {
+        if (inFlight == null) return
+        inFlight = null
+        beginAwaiting()
+        try {
+            prompt?.cancelAuthentication()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (ignored: RuntimeException) {
+            // Bounded: the attempt is already closed on our side; no library text is read or logged.
         }
     }
 

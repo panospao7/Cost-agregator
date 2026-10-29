@@ -1094,7 +1094,7 @@ unlock (INV-34).
 | `ERROR_LOCKOUT` (temporary) | `LOCKED_OUT` | "Too many attempts. Wait a moment, then try again." | same text |
 | `ERROR_LOCKOUT_PERMANENT` | `LOCKED_OUT_BIOMETRIC` | Device auth: "Fingerprint is locked. Use your screen lock instead." PIN mode: "Fingerprint is locked. Use your PIN." | Device auth text |
 | `ERROR_NO_DEVICE_CREDENTIAL`, `ERROR_NO_BIOMETRICS`, `ERROR_HW_NOT_PRESENT` | `NOT_AVAILABLE` (re-run capability check; if not `AVAILABLE` -> `Inert`, T11) | If not available -> becomes Inert (3.9); else "Unlock isn't available right now. Try again in a moment." | Availability explanation (2.1) |
-| `ERROR_HW_UNAVAILABLE`, `ERROR_UNABLE_TO_PROCESS`, `ERROR_TIMEOUT`, `ERROR_NO_SPACE`, `ERROR_VENDOR` | `TRANSIENT` (stays `Locked`, T10) | "Couldn't unlock. Try again." | "Couldn't turn on app lock. Try again." |
+| `ERROR_HW_UNAVAILABLE`, `ERROR_UNABLE_TO_PROCESS`, `ERROR_TIMEOUT`, `ERROR_NO_SPACE`, `ERROR_VENDOR` | `TRANSIENT` (stays `Locked`, T10) | "Couldn't unlock. Try again." (G1c: not shown until CF-4b; see the CF-4b note in 4.3) | "Couldn't turn on app lock. Try again." |
 | `ERROR_SECURITY_UPDATE_REQUIRED`, any unknown code | `UNKNOWN` (stays `Locked`) | "Unlock isn't available right now. Try again in a moment." | "Couldn't turn on app lock. Try again." |
 | Wrong fingerprint/credential attempts | handled inside the system prompt | n/a | n/a |
 
@@ -1132,6 +1132,16 @@ unlock (INV-34).
   (default On from the fail-closed record), not a forced `true` rewritten over them. Effective values stay forced by the
   lock (INV-48); the stored choices re-apply when the lock is turned off. (Privacy info 3, accepted.)
 
+- **CF-4 alignment (G1c, 2026-10-29): every UNLOCK-prompt end returns silently to the lock surface.** The controller
+  publishes no end-kind, so the shell derives no "Couldn't unlock. Try again." line from the `Authenticating(UNLOCK)` to
+  `Locked` transition. The state is Locked, Unlock is enabled, there is no auto re-prompt, and only the T5
+  `SETTINGS_UNREADABLE` text is shown. The `applock_msg_try_again` string is kept for later use.
+- **CF-4b (deferred residual):** non-cancel UNLOCK failures (lockout, transient, `SYSTEM_CANCELED`) show no line on the
+  lock surface until the controller publishes a bounded unlock end-kind. The system prompt shows its own lockout UI. The
+  `Error(category)` and `SystemLockout` rows of 4.4 describe the target behaviour for that later increment.
+- **A finishing host cancels the system prompt silently (AE-118).** It delivers no outcome (Abandoned); a rotation or a
+  stop that is not finishing does not cancel it.
+
 On an unrecognised or stale result the lock screen stays Locked (fail-closed, INV-34, T12) - an unknown error is never an
 unlock.
 
@@ -1142,8 +1152,8 @@ unlock.
 | `Idle` | Headline, subtitle, enabled Unlock | Locked, no attempt in progress |
 | `AuthPromptOpen` | Unlock disabled, prompt over screen | User tapped Unlock (T7); double tap yields one prompt (AE-46) |
 | `Cancelled` | Back to `Idle`, no message | 4.3 `CANCELLED`; including prompt dismissed by backgrounding (T9, AE-44) |
-| `Error(category)` | Idle plus status message (4.3) | 4.3 categories |
-| `SystemLockout` | Idle plus "Too many attempts. Wait a moment, then try again."; Unlock stays enabled (the system decides when it works again; the app keeps no timer for this) | `ERROR_LOCKOUT` (AE-45) |
+| `Error(category)` | Idle plus status message (4.3). Currently shows no line (CF-4 alignment; CF-4b deferred, see 4.3) | 4.3 categories |
+| `SystemLockout` | Idle plus "Too many attempts. Wait a moment, then try again."; Unlock stays enabled (the system decides when it works again; the app keeps no timer for this). Currently no line (CF-4b deferred) | `ERROR_LOCKOUT` (AE-45) |
 | `SettingUnreadable` | Locked screen with status "Couldn't check the lock setting. Unlock to continue." | T5 |
 | **Inc 2 PIN substates** | | |
 | `PinEntry(digits 0..12)` | Dots filled, Unlock enabled from 6 digits (OD-13a) | Locked in `APP_PIN` mode |

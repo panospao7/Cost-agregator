@@ -191,6 +191,37 @@ class AppLockPromptHostTest {
     }
 
     @Test
+    fun g1c_ae118_aFinishingDestroy_reportsTheLossOnceWithTheRelayId_andCancelsTheLibraryPromptOnce() {
+        val ctrl = newController()
+        newHost().attach(ctrl.get())
+        val callback = RecordingCallback()
+        relay.authenticate(7L, AuthPromptCopy.CHANGE, callback)
+
+        finish(ctrl)
+
+        verify(exactly = 1) { controller.onPromptHostLost(7L) }
+        verify(exactly = 1) { controller.onPromptHostLost(any()) }
+        assertEquals("the orphaned system prompt is cancelled", 1, handles.single().cancelCalls)
+        assertTrue("a lost host ends silently: no outcome for the attempt", callback.received.isEmpty())
+        assertNull(relay.openAttemptId)
+    }
+
+    @Test
+    fun g1c_ae118_aConfigurationChangeDestroy_reportsNoLoss_andDoesNotCancelThePrompt() {
+        val ctrl = newController()
+        newHost().attach(ctrl.get())
+        val callback = RecordingCallback()
+        relay.authenticate(7L, AuthPromptCopy.CHANGE, callback)
+
+        rotateAway(ctrl)
+
+        verify(exactly = 0) { controller.onPromptHostLost(any()) }
+        assertEquals("a rotation must not cancel the prompt", 0, handles.single().cancelCalls)
+        assertEquals("the attempt survives for adoption", 7L, relay.openAttemptId)
+        assertTrue(callback.received.isEmpty())
+    }
+
+    @Test
     fun ae118_aLateLibraryTerminalAfterTheLoss_isDropped_andReportsNothingMore() {
         val ctrl = newController()
         val host = newHost()
