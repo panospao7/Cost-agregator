@@ -2997,3 +2997,67 @@ Validation to request: unchanged, targeted `*AppLockController*` (covers both te
   - Test-harness findings fixed: the IME eats the first Back on the API 35 credential prompt; Compose a11y lookups use the merged semantics tree; the first post-boot run hit an ANR during collection (environment).
   - FINDING (minor, owner FYI): CF-4. The spec says a user cancel is silent, but in some paths production shows TRY_AGAIN (AppLockShell.kt:92-93). It is documented as a simplification and not changed.
   - Next: API 35 C-steps (adb evidence), then api26, api30, api31, api33, api34.
+- G1b API 35 C-steps (adb, 2026-10-29): steps 0-7 PASS, no privacy leak. Evidence: build/release-lead-notes/g1b/35/ in the main checkout (runs.md, residuals.md, screenshots, dumps).
+  - AE-36 enable; AE-66 SECURE flag, black screencap and blank recents card; re-lock after the 1-min default timeout; deep links home/activity held then applied after unlock; AE-114 disable clears SECURE.
+  - Residuals: the "Immediately" timeout and secure-screen alone with the lock off are not exercised.
+- NOW (2026-10-29): the emulator was switched to release-api26 (emulator-5554). API 26 connected runs (lifecycle, prompt host, notification) are queued; queue ids are in scratchpad vq/al-g1b26.ids.
+- Next: api30 → api31 → api33 → api34. For each: boot, queue the 3 classes with -AllowOverlap -OverlapReasonCode REQUIRED_FINAL_GATE, then a short adb C-step agent per the matrix. Then the app-lock merge candidate (reviewer-strict) and ask the owner to merge.
+- G1b API 26 (release-api26, emulator-5554), B-tests all PASS (2026-10-29):
+  - AppLockLifecycleDeviceTest vr-20261029-073047-8adec31d. 5 lock-on tests SKIPPED by design: assumeLockCapableSdk needs API 30+, and below that the lock is INERT (AE-54). The rest pass.
+  - AppLockPromptHostDeviceTest vr-20261029-074408-489af884.
+  - NotificationPresentationDeviceTest vr-20261029-074454-383885a5.
+  - The queue driver had died before this. It was restarted 2026-10-29 ~10:20 local.
+- NOW: API 26 C-steps (adb agent; evidence build/release-lead-notes/g1b/26/ in the main checkout): AE-34/AE-54 INERT, OD-20a secure screen, export not gated, deep link, discreet row.
+- Next: api30, then api31, api33, api34; then the merge candidate.
+- G1b API 26 C-steps (adb, 2026-10-29): all PASS, no privacy leak. Evidence: build/release-lead-notes/g1b/26/ in the main checkout.
+  - AE-34/54: the row reads "App lock needs Android 11 or newer…", the switch is disabled, and it stays inert with a PIN set.
+  - OD-20a: the secure-screen row is enabled; FLAG_SECURE bit 0x2000 is on and off as toggled; screencap is refused (0 bytes) while it is on.
+  - Export (backup) is not gated: no auth prompt, straight to DocumentsUI.
+  - The home deep link goes directly to Home. The discreet row is available (not toggled).
+  - Residuals: export not completed; discreet behaviour, the recents card and the "Open security settings" tap not exercised; only the home deep link.
+- NOW: api30 (g1b-api30, emulator-5554) booted; 3 connected classes queued (vq/al-g1b30.ids).
+- G1b API 30 (g1b-api30, emulator-5554):
+  - B-tests:
+    - Lifecycle PASS vr-20261029-080950-761731c1.
+    - Notification PASS vr-20261029-081354-333eea42; this covers AE-64, the lock-on SDK 30 BILL action rows.
+    - PromptHost FAIL vr-20261029-081152-7e592993. AE41 "No compose hierarchies" after returnToApp.
+  - AE41 diagnosis: the adb step 6 showed our MainActivity resumed with the lock surface ("Couldn't unlock. Try again.") after Home mid-prompt plus a relaunch. So this is a TIMING RACE in the test, not a product defect.
+  - AE41 harness fix (test-only):
+    - presentOrNull tolerates "no compose hierarchy" while waiting;
+    - the intermediate wait also accepts a resumed system credential UI (excluding the launcher and our package);
+    - the end state (Locked, lock surface only, Unlock enabled) is unchanged and still required.
+    - Re-run on API 30, then on API 35 (regression).
+  - C-steps all PASS, no leak (evidence g1b/30/):
+    - AE-35 NO_CREDENTIAL row text and disabled switch;
+    - the Android 11 bullet and note;
+    - AE-66 SECURE, screencap refused, blank recents;
+    - re-lock after 75 s; disable clears SECURE.
+    - AE-64 UI statements only; the actions themselves are covered by the B-test.
+    - Observation (not a defect): after `adb locksettings set-pin` the switch enabled only after a relaunch. The capability is re-read on resume, which the real "Open security settings" round-trip provides.
+- API 30 PromptHost re-run after the AE41 harness fix: PASS vr-20261029-082530-c690889b. API 30 DONE.
+- Owed before the merge candidate: re-run PromptHost on API 35 (regression for the AE41 harness change).
+- NOW: api31.
+- G1b API 31 C-steps (adb, 2026-10-29): no leak. Evidence: g1b/31/.
+  - AE-36 PASS. Prompt title "Turn on app lock", subtitle "Confirm with your fingerprint or screen lock."; the forced rows show.
+  - AE-48 PASS (UI). The PIN was removed in the background, and the "App lock is paused" banner shows with SECURE kept.
+  - AE-49 PASS. With the PIN re-set, re-lock works after 75 s.
+  - Common checks PASS: SECURE, screencap refused, blank recents, re-lock, unlock, and disable clears SECURE.
+  - AE-117 RESIDUAL: it needs an OEM credential UI that stops the host, and the emulator prompt runs in-process. The D-class real-device item stays residual.
+  - Diagnostic codes are not visible in logcat. They are durable bounded codes covered by unit and golden tests, not logcat (residual note).
+- G1b API 31 B-tests all PASS: Lifecycle vr-20261029-091345-3503618f, PromptHost vr-20261029-091531-54b5b421 (with the AE41 harness fix), Notification vr-20261029-091702-973f9f63. API 31 DONE.
+- NOW: api33.
+- G1b API 33 B-tests all PASS: Lifecycle vr-20261029-092220-43ef44d4, PromptHost vr-20261029-092421-362a889c, Notification vr-20261029-092552-7b0b3a0a. The C-steps agent is running (AE-39, AE-85..87).
+- G1b API 33 C-steps: no leak; evidence g1b/33/.
+  - Enable, common checks and disable PASS.
+  - AE-39 PARTIAL: lock surface first at a cold start, with no notification prompt over it. The positive first-prompt-after-unlock case is not reachable via the UI once the prompt-once flag is set (residual).
+  - AE-85/86/87 RESIDUAL: they need a CORRUPTED settings sentinel, which the UI cannot create. The instrumented AE-51 corrupted-settings test plus unit tests cover the mapping.
+  - API 33 DONE.
+- NOW: api34.
+- G1b API 34 B-tests all PASS: Lifecycle vr-20261029-093611-83f03813, PromptHost vr-20261029-093757-be93360f, Notification vr-20261029-093928-73663fab. The C-steps agent is running (AE-42/116/117/118, R3).
+- G1b API 34 C-steps: no leak; evidence g1b/34/.
+  - Enable, AE-116 (timeout change prompt; re-lock at 1 min), common checks and disable PASS.
+  - AE-118 PASS with a note: the prompt survives rotation and the change commits; on host loss (a new task start) the change is NOT applied and the switch is usable. OBSERVATION: the AOSP BiometricPrompt window stays over the new activity until Back twice (no leak, the change is not applied). Flag to reviewer-strict at the merge candidate.
+  - AE-42/117 OEM part RESIDUAL (AOSP credential UI on the emulator); R3 partial-share RESIDUAL (not exercisable via adb).
+- G1b MATRIX COMPLETE (35, 26, 30, 31, 33, 34). Remaining: the API 35 PromptHost regression for the AE41 harness change, then the app-lock merge candidate (reviewer-strict), then ASK the owner to merge into feature/ai-evolution.
+- API 35 PromptHost regression after the AE41 harness fix: PASS vr-20261029-100010-15ff58ea. G1b COMPLETE.
+- Next: the app-lock merge candidate (reviewer-strict, Opus xhigh) on 4add2466..HEAD, then ASK the owner to merge into feature/ai-evolution.

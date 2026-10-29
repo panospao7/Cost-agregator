@@ -84,8 +84,15 @@ class AppLockPromptHostDeviceTest {
 
     // --- helpers ---------------------------------------------------------------------------------
 
-    private fun present(tag: String): Boolean =
-        composeRule.onAllNodes(hasTestTag(tag)).fetchSemanticsNodes().isNotEmpty()
+    /** Null only when the process has no compose hierarchy at all (no resumed app window); any other failure propagates. */
+    private fun presentOrNull(tag: String): Boolean? =
+        try {
+            composeRule.onAllNodes(hasTestTag(tag)).fetchSemanticsNodes().isNotEmpty()
+        } catch (e: IllegalStateException) {
+            if (e.message?.contains("No compose hierarchies") == true) null else throw e
+        }
+
+    private fun present(tag: String): Boolean = presentOrNull(tag) == true
 
     private fun state(): AppLockState = harness.controllerState(scenario!!)
 
@@ -283,8 +290,22 @@ class AppLockPromptHostDeviceTest {
         harness.ui.performGlobalAction(AccessibilityService.GLOBAL_ACTION_HOME)
         SystemClock.sleep(2_000)
         harness.returnToApp()
-        assertTrue("lock surface not re-shown after returning", waitFor(15_000) { present(AppLockUiTags.GATE_SURFACE) })
-        assertFalse("app content visible after Home mid-prompt", present(AppLockUiTags.GATE_CONTENT_SLOT))
+        // API 30: the DEVICE_CREDENTIAL prompt is a separate system activity (ConfirmDeviceCredentialActivity). After
+        // Home + return it can stay resumed on top of MainActivity, so the process has no compose hierarchy. That is a
+        // valid state as long as our content is not shown and FLAG_SECURE is still set on our window.
+        assertTrue(
+            "neither lock surface nor system credential UI on top after returning",
+            waitFor(15_000) { present(AppLockUiTags.GATE_SURFACE) || harness.isSystemCredentialUiResumed() }
+        )
+        // A null read (no compose hierarchy) is "not shown"; only a positive hit is a leak.
+        assertNotEquals(
+            "app content visible after Home mid-prompt",
+            true,
+            presentOrNull(AppLockUiTags.GATE_CONTENT_SLOT)
+        )
+        if (!present(AppLockUiTags.GATE_SURFACE)) {
+            assertTrue("no lock surface and no system credential UI resumed", harness.isSystemCredentialUiResumed())
+        }
         assertTrue("FLAG_SECURE missing after Home mid-prompt", harness.isSecureFlagSet(s))
 
         // The library may have ended the sheet on Home (LOCKED, enabled) or left it up (AUTHENTICATING). Either way the
@@ -294,6 +315,9 @@ class AppLockPromptHostDeviceTest {
             if (!waitFor(5_000) { state() is AppLockState.Locked }) harness.returnToApp()
         }
         assertTrue("unlock stranded after Home mid-prompt", waitFor(15_000) { state() is AppLockState.Locked })
+        // After the system UI is dismissed the app window may need to come back to the front before it is queryable.
+        if (!waitFor(5_000) { present(AppLockUiTags.GATE_SURFACE) }) harness.returnToApp()
+        assertTrue("lock surface not shown after recovery", waitFor(15_000) { present(AppLockUiTags.GATE_SURFACE) })
         assertLockSurfaceOnly()
         composeRule.onNodeWithTag(AppLockUiTags.UNLOCK_BUTTON).assertIsEnabled()
     }

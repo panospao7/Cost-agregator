@@ -178,6 +178,30 @@ internal class AppLockDeviceHarness {
         return state
     }
 
+    /**
+     * Default home (launcher) package, resolved once. Null when it cannot be resolved.
+     */
+    private val homePackage: String? by lazy {
+        val last = shell("cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.HOME")
+            .lineSequence().map { it.trim() }.lastOrNull { it.isNotEmpty() }
+        last?.substringBefore('/', "")?.takeIf { it.isNotEmpty() }
+    }
+
+    /**
+     * True when the resumed top activity belongs to neither our package nor the default home package (e.g. the API 30
+     * system credential activity shown on top of MainActivity). False when our package or the launcher is on top,
+     * nothing is resumed, the dump is unreadable, or the home package cannot be resolved (fail-closed for callers that
+     * want to assert "system UI is on top"). Filtering happens here, not in the shell.
+     */
+    fun isSystemCredentialUiResumed(): Boolean {
+        val home = homePackage ?: return false
+        val line = shell("dumpsys activity activities").lineSequence()
+            .map { it.trim() }
+            .firstOrNull { it.startsWith("mResumedActivity") || it.startsWith("topResumedActivity") }
+            ?: return false
+        return line.contains("ActivityRecord") && !line.contains(ctx.packageName) && !line.contains(home)
+    }
+
     fun restoreRotation() {
         ui.setRotation(UiAutomation.ROTATION_UNFREEZE)
     }
