@@ -488,6 +488,8 @@
     <string name="declare_installments_snackbar_view_plan">Προβολή πλάνου</string>
     <string name="declare_installments_snackbar_undone">Οι δόσεις αφαιρέθηκαν. Η αγορά υπολογίζεται ξανά ολόκληρη.</string>
     <string name="declare_installments_snackbar_undo_failed">Έχει ήδη καταγραφεί μια πληρωμή. Χρησιμοποιήστε το Τερματισμός πλάνου για να αλλάξετε το πλάνο.</string>
+    <!-- loan-installments S11b: DRAFT translation, pending owner sign-off -->
+    <string name="add_expense_installments_repeat_exclusive">Η επανάληψη και οι δόσεις δεν μπορούν να συνδυαστούν.</string>
     <!-- loan-installments S12b: DRAFT translations, pending owner sign-off -->
     <string name="budget_includes_installments_format">Περιλαμβάνει %1$s σε δόσεις</string>
     <string name="budget_includes_installments_unavailable">Το ποσό των δόσεων δεν είναι διαθέσιμο</string>

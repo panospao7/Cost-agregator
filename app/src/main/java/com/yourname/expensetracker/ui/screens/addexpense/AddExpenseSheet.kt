@@ -58,6 +58,7 @@ import com.yourname.expensetracker.ui.components.currency.CurrencyRateRegionCont
 import com.yourname.expensetracker.ui.components.currency.CurrencyRegionUi
 import com.yourname.expensetracker.ui.components.currency.CurrencySelectionControl
 import com.yourname.expensetracker.ui.components.currency.currencySymbolFor
+import com.yourname.expensetracker.ui.navigation.InstallmentsFeature
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import com.yourname.expensetracker.ui.util.UiTimeUtils
 import java.time.format.DateTimeFormatter
@@ -156,7 +157,9 @@ fun AddExpenseSheet(
     initialAmount: String? = null,
     initialMerchant: String? = null,
     onOpenExchangeRateSetting: () -> Unit = {},
-    viewModel: AddExpenseViewModel = hiltViewModel()
+    viewModel: AddExpenseViewModel = hiltViewModel(),
+    // Loan-installments S11b: the section renders nothing unless the feature flag is on.
+    installmentsFeatureEnabled: Boolean = InstallmentsFeature.ENABLED
 ) {
     val state by viewModel.state.collectAsState()
     val categories by viewModel.categories.collectAsState()
@@ -356,7 +359,10 @@ fun AddExpenseSheet(
                 // ux-flows section 2: the control and the amount stack at fontScale >= 1.3 or width < 360 dp.
                 val stackCurrencyRow = LocalDensity.current.fontScale >= 1.3f ||
                     LocalConfiguration.current.screenWidthDp < 360
-                val currencyControlEnabled = amountCurrency != null && state.currencyRegion !is CurrencyRegionUi.Loading
+                // Loan-installments S11b: an Unset selection (null currency) must stay pickable, else the user could
+                // never leave Unset (for example JPY switched to installment mode).
+                val currencyControlEnabled = (amountCurrency != null || state.currencyRegion is CurrencyRegionUi.Unset) &&
+                    state.currencyRegion !is CurrencyRegionUi.Loading
                 if (stackCurrencyRow) {
                     CurrencySelectionControl(
                         selectedCode = amountCurrency,
@@ -594,7 +600,17 @@ fun AddExpenseSheet(
 
                 // === Recurring Options ===
                 // MEC INV-16: Repeat is hidden (not disabled) for a foreign currency; a note takes its place.
-                if (state.isForeignSelected) {
+                if (state.installments.on) {
+                    // Loan-installments S11b: Repeat is hidden while installments are ON.
+                    Text(
+                        stringResource(R.string.add_expense_installments_repeat_exclusive),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .semantics { liveRegion = LiveRegionMode.Polite }
+                    )
+                } else if (state.isForeignSelected) {
                     if (state.repeatClearedByCurrency) {
                         Text(
                             stringResource(R.string.mec_repeat_cleared),
@@ -661,6 +677,13 @@ fun AddExpenseSheet(
                         }
                     }
                 }
+
+                // === Pay in installments (loan-installments S11b; dormant while the feature flag is off) ===
+                AddExpenseInstallmentsSection(
+                    state = state,
+                    viewModel = viewModel,
+                    featureEnabled = installmentsFeatureEnabled
+                )
 
                 // === Not Mine Expense ===
                 Row(

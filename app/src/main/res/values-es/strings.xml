@@ -739,6 +739,8 @@
     <string name="declare_installments_snackbar_view_plan">Ver plan</string>
     <string name="declare_installments_snackbar_undone">Cuotas eliminadas. Esta compra vuelve a contar completa.</string>
     <string name="declare_installments_snackbar_undo_failed">Ya se registró un pago. Usa Finalizar plan para cambiar este plan.</string>
+    <!-- loan-installments S11b: DRAFT translation, pending owner sign-off -->
+    <string name="add_expense_installments_repeat_exclusive">La repetición y las cuotas no se pueden combinar.</string>
     <!-- loan-installments S12b: DRAFT translations, pending owner sign-off -->
     <string name="budget_includes_installments_format">Incluye %1$s en cuotas</string>
     <string name="budget_includes_installments_unavailable">Importe de cuotas no disponible</string>

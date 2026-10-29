@@ -218,6 +218,17 @@ full-amount spend. **Entry:** Add expense overlay (`AddExpenseSheet`).
   "Shared expense" on: switch disabled with "Installments aren't available for shared expenses yet."
   (`SHARED_NOT_SUPPORTED`). **OD-9 variant B:** switch enabled and helper "Installments split your share."
 - Split-category purchases: same disabled treatment (`SPLIT_NOT_SUPPORTED`).
+- **S11b as built (2026-10-29, plan amendment "S11 re-anchor after MEC B2/C" sections 3 and 4):**
+  - The section lives in `AddExpenseInstallmentsSection.kt` and renders nothing unless `InstallmentsFeature.ENABLED`.
+  - **Supersedes the "hidden for Deposit/Withdrawal/Transfer" bullet above:** for Not mine, Shared (including a
+    share split) and a non-spending type, the switch is shown DISABLED with the reason text (the fixed
+    `declare_installments_refused_*` / not-eligible string). **Supersedes OD-9 variant B:** Shared disables the switch
+    (no "Installments split your share." helper). Setting Not mine or Shared while ON turns installments off and keeps
+    the values.
+  - Repeat is hidden (not disabled) while installments are ON, with the helper "Repeat and installments can't be
+    combined."
+  - The live preview card, the financing-cost lines and the past-due notice are not part of S11b; Save refusals use the
+    sheet's existing save-error card with the fixed declare strings.
 - **SUPERSEDED (2026-10-29, G2-6, plan amendment "S11 re-anchor after MEC B2/C"):** the next bullet is historical.
   Add expense now has the general MEC currency control. With installments ON it runs in INSTALLMENT mode
   (EUR/USD only); plan currency = purchase currency = the selected currency; there is no plan-currency row and

@@ -3040,6 +3040,8 @@
     <string name="declare_installments_snackbar_view_plan">View plan</string>
     <string name="declare_installments_snackbar_undone">Installments removed. This purchase counts in full again.</string>
     <string name="declare_installments_snackbar_undo_failed">A payment was already recorded. Use End plan to change this plan.</string>
+    <!-- loan-installments S11b: Add expense installments section -->
+    <string name="add_expense_installments_repeat_exclusive">Repeat and installments can\'t be combined.</string>
     <!-- loan-installments S10b-2: create, edit, end flows, unlink -->
     <string name="installments_create_add_plan">Add plan</string>
     <string name="installments_plan_actions_menu">Plan actions</string>

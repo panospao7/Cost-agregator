@@ -2622,3 +2622,15 @@ Transactions delete-dialog role lines, retry-loop key, marks-loader memoise, plu
   - db_access vr-20261029-145810-9b4d8dce.
   - All PASS.
 - Next: S11b (AddExpenseInstallmentsSection plus the Sheet hook, strings ×3 es/el DRAFT; currencyControlEnabled must allow Unset; add "Repeat and installments can't be combined"). Then the S11 candidate: lint, static-guards, app-check, reviewer-strict.
+
+## 2026-10-29: loan S11b COMMITTED; S11 candidate ACCEPTED (reviewer-strict ACCEPT-WITH-CONDITIONS)
+- S11b: AddExpenseInstallmentsSection (dormant behind InstallmentsFeature.ENABLED; production calls use the default gate only, verified), the Sheet hook, the Unset control stays pickable, Repeat hidden with a helper while ON. One new key: add_expense_installments_repeat_exclusive (es/el DRAFT, on the sign-off list). 18 UI tests.
+- Validation:
+  - targeted vr-20261029-151731-ec211e54;
+  - runtime-ui vr-20261029-152248-5b122eb8;
+  - lint vr-20261029-153507-42eb5786 (after the SuspiciousIndentation fix);
+  - static-guards vr-20261029-154212-8464e1e4;
+  - app-check vr-20261029-155915-d9a5f90c.
+  - All PASS.
+- Conditions: S11c is a HARD GATE before S13 (preview card and past-due notice; VM-owned first-due via sessionZone; a non-spending reason key; a switch-click UI test at S13). See the plan's 'S11 candidate review dispositions'.
+- Next (loan lane): S11c, then S13 (enablement and final acceptance).

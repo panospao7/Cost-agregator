@@ -1471,3 +1471,13 @@ Base: mec accb775a (MEC B2 and C committed). This supersedes the S11 write set a
 ### 9. S11a guardian
 - S11a guardian (combined) ACCEPT-WITH-CONDITIONS: (a) docs chain added; (b) S11b must call setInstallmentsEnabled with the default `enabled` only, and reviewer-strict greps production call sites for `enabled =`.
 - S11a test-author note (orchestrator, item 62): a home-currency installments-ON draft retained across onSheetLeft/onSheetOpened (with no dismiss call) is INTENDED and consistent with D-B2-R1(c): home drafts are kept, with no re-denomination risk. Every explicit dismiss path still calls reset().
+
+
+### S11 candidate review dispositions (2026-10-29; reviewer-strict ACCEPT-WITH-CONDITIONS; orchestrator, item 62)
+- **C1:** the commit waits for the fresh S11 ladder on the final fingerprint (lint, static-guards, app-check; app-check covers `*AddExpense*` and runtime-ui).
+- **NEW SLICE S11c (HARD GATE before S13 enablement; dormant, no user exposure meanwhile):**
+  - (1) The live installment preview card (N × amount, end date, financing cost; ux-flows :305 "always visible") and the past-due notice (:389). They were deferred by the S11b writer without a decision; the deferral is now recorded as an orchestrator decision.
+  - (2) The default first-due date and the before-purchase warning are exposed from VM state using sessionZone (no `ZoneId.systemDefault()` in the composable, no duplicated "+1 month" rule).
+  - (3) A dedicated disabled-reason key for non-spending types (Deposit/Transfer) in place of `installments_action_refused_expense_not_eligible` ("linked" is the wrong context). New keys are es/el DRAFT and go on the sign-off list.
+  - (4) A UI test that clicks the switch once enablement is testable (S13).
+- **Sign-off list:** `add_expense_installments_repeat_exclusive` (S11b) plus the S11c keys.
