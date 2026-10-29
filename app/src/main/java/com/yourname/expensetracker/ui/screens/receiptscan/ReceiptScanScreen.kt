@@ -1052,7 +1052,8 @@ private fun ReviewStep(
         onRefresh = viewModel::refreshRates,
         onOpenSetting = viewModel::requestOpenExchangeRateSetting,
         onChangeCurrency = { changeCurrencyRequests = 1 },
-        modifier = Modifier.testTag(TAG_RECEIPT_RATE_REGION)
+        modifier = Modifier.testTag(TAG_RECEIPT_RATE_REGION),
+        announceKey = state.previewAnnounceKey
     )
 
     if (state.saveResult is SaveReceiptResult.RateNotEligible) {

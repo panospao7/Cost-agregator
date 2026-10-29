@@ -1501,4 +1501,86 @@ class ReceiptScanViewModelMecC1Test : ViewModelTestUtils() {
         assertEquals("USD", st.editCurrency)
         assertTrue(deps.requests.isEmpty())
     }
+
+    // ---- F-B2-A11Y-1: previewAnnounceKey bumps only on currency/date changes ----
+
+    @Test
+    fun `A11Y-1 updateCurrency then updateDate each increment the preview announce key`() {
+        deps.store.putRate("USD", 0.9, mecDay(14))
+        deps.store.putRate("GBP", 1.1, mecDay(14))
+        scan(mecReceipt(currency = "USD"))
+        val baseline = st.previewAnnounceKey
+
+        model.updateCurrency("GBP")
+        settle()
+        assertEquals(baseline + 1, st.previewAnnounceKey)
+
+        model.updateDate(MEC_DATE + MEC_DAY_MS)
+        settle()
+        assertEquals(baseline + 2, st.previewAnnounceKey)
+    }
+
+    @Test
+    fun `A11Y-1 updateAmount does not change the preview announce key`() {
+        deps.store.putRate("USD", 0.9, mecDay(14))
+        scan(mecReceipt(currency = "USD"))
+        val baseline = st.previewAnnounceKey
+
+        model.updateAmount("11")
+        settle()
+        model.updateAmount("12.5")
+        settle()
+
+        assertEquals(baseline, st.previewAnnounceKey)
+    }
+
+    @Test
+    fun `A11Y-1 INV-10 a non-selectable currency pick does not change the preview announce key`() {
+        scan(mecReceipt(currency = "EUR"))
+        val baseline = st.previewAnnounceKey
+
+        for (pick in listOf("BGN", "RUB", "ZZZ", "")) {
+            model.updateCurrency(pick)
+            settle()
+            assertEquals("pick='$pick'", baseline, st.previewAnnounceKey)
+        }
+    }
+
+    @Test
+    fun `A11Y-1 an AI applied date increments the preview announce key`() {
+        deps.store.putRate("USD", 0.9, mecDay(14))
+        scan(mecReceipt(currency = "USD"))
+        val baseline = st.previewAnnounceKey
+
+        setState(st.copy(receiptAssistState = AiLoadState.Ready(
+            ReceiptAssistSuggestion(date = SuggestedValue(MEC_DATE + MEC_DAY_MS))
+        )))
+        model.applyReceiptAssistDate()
+        settle()
+
+        assertEquals(MEC_DATE + MEC_DAY_MS, st.editDate)
+        assertEquals(baseline + 1, st.previewAnnounceKey)
+    }
+
+    @Test
+    fun `A11Y-1 the preview announce key survives reset and a new scan (monotonic)`() {
+        deps.store.putRate("USD", 0.9, mecDay(14))
+        deps.store.putRate("GBP", 1.1, mecDay(14))
+        scan(mecReceipt(currency = "USD"))
+        model.updateCurrency("GBP")
+        settle()
+        val k = st.previewAnnounceKey
+        assertTrue("key must have incremented above 0", k > 0)
+
+        // New scan after a currency change must not restart the key from 0.
+        scan(mecReceipt(id = 18L, currency = "USD"))
+        assertTrue("after new scan: ${st.previewAnnounceKey} >= $k", st.previewAnnounceKey >= k)
+
+        // Reset must not restart the key from 0 either.
+        val beforeReset = st.previewAnnounceKey
+        model.reset()
+        settle()
+        assertTrue("after reset: ${st.previewAnnounceKey} >= $k", st.previewAnnounceKey >= k)
+        assertTrue(st.previewAnnounceKey >= beforeReset)
+    }
 }

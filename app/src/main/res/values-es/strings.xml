@@ -825,6 +825,7 @@
     <string name="mec_refresh_home_unavailable">No se pueden descargar tipos para tu moneda principal.</string>
     <string name="mec_save_disabled_rate">Necesita un tipo de cambio</string>
     <string name="mec_save_disabled_currency">Elige una moneda</string>
+    <string name="mec_save_disabled_amount">Corrige el importe</string>
     <string name="mec_repeat_cleared">Se desactivó la repetición porque este gasto está en otra moneda.</string>
     <string name="mec_receipt_unmatched">No pudimos identificar la moneda del recibo. Elige una.</string>
     <string name="mec_receipt_not_detected">No se encontró moneda en el recibo. Revísala.</string>

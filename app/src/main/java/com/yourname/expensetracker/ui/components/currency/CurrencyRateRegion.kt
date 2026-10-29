@@ -153,9 +153,14 @@ enum class CurrencyOpenSettingRequest {
  * Every other state renders nothing. [suppressHomeUnresolvedCard] must be true while the B1
  * `SaveResult.Error` card is shown, so a home-unresolved refusal is never rendered twice.
  *
- * The preview line carries no live region while it holds the converted figure (the figure changes per
- * keystroke and is read on focus); "Checking exchange rate" and the blocked card are announced, the card
- * assertively when it comes from Save ([CurrencyBlockOrigin.SAVE]) and politely otherwise.
+ * The preview line holding the converted figure is a polite live region only for the first figure shown
+ * after a currency, date or home change ([announceKey] changed, ux-flows section 13); it carries no live
+ * region while the figure changes per keystroke (the figure is read on focus). "Checking exchange rate"
+ * and the blocked card are announced, the card assertively when it comes from Save
+ * ([CurrencyBlockOrigin.SAVE]) and politely otherwise.
+ *
+ * [announceKey] is the host's monotonically increasing counter, bumped only by currency, date and home
+ * changes. Its initial value is never announced (opening the screen is not a change).
  */
 @Composable
 fun CurrencyRateRegionContent(
@@ -167,8 +172,12 @@ fun CurrencyRateRegionContent(
     onRefresh: () -> Unit,
     onOpenSetting: () -> Unit,
     onChangeCurrency: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    announceKey: Int = 0
 ) {
+    val latch = remember { PreviewAnnounceLatch(announceKey) }
+    val previewText = if (region is CurrencyRegionUi.Eligible) previewLineText(region, ratesToday) else null
+    val announcePreview = latch.observe(announceKey, previewText)
     when (region) {
         is CurrencyRegionUi.Evaluating -> Text(
             text = stringResource(R.string.mec_preview_checking),
@@ -178,7 +187,7 @@ fun CurrencyRateRegionContent(
                 .fillMaxWidth()
                 .semantics { liveRegion = LiveRegionMode.Polite }
         )
-        is CurrencyRegionUi.Eligible -> RatePreviewLine(region, ratesToday, modifier)
+        is CurrencyRegionUi.Eligible -> RatePreviewLine(previewText, announcePreview, modifier)
         is CurrencyRegionUi.Blocked -> {
             val duplicate = region.variant == CurrencyBlockVariant.HOME_UNRESOLVED && suppressHomeUnresolvedCard
             if (!duplicate) {
@@ -198,25 +207,77 @@ fun CurrencyRateRegionContent(
     }
 }
 
+/** The preview line's text, or null when there is nothing to show. Unavailable is never zero. */
 @Composable
-private fun RatePreviewLine(region: CurrencyRegionUi.Eligible, ratesToday: LocalDate?, modifier: Modifier) {
+private fun previewLineText(region: CurrencyRegionUi.Eligible, ratesToday: LocalDate?): String? {
     val dateText = formatRateDate(region.rateDate, ratesToday)
     val amount = region.formattedAmountInHome
     val isEcb = region.sourceLabel == RateSourceLabel.ECB
     // Unavailable is never zero: without a figure only the rate date is shown, and only for the ECB wording.
-    val text = when {
+    return when {
         amount != null && !region.amountUnavailable ->
             stringResource(if (isEcb) R.string.mec_preview_ecb else R.string.mec_preview_other, amount, dateText)
         isEcb -> stringResource(R.string.mec_preview_rate_only, dateText)
         else -> null
     }
+}
+
+@Composable
+private fun RatePreviewLine(text: String?, announce: Boolean, modifier: Modifier) {
     if (text != null) {
         Text(
             text = text,
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = modifier.fillMaxWidth()
+            modifier = modifier
+                .fillMaxWidth()
+                .semantics { if (announce) liveRegion = LiveRegionMode.Polite }
         )
+    }
+}
+
+/**
+ * Decides whether the preview line is a polite live region. It is one only for the first figure shown
+ * after the host's announce key changed (a currency, date or home change), and stops being one as soon
+ * as the figure changes again under the same key (an amount keystroke). Plain fields on purpose: it is
+ * read and updated idempotently during composition for the same inputs, is never saved or logged, and
+ * is held per composition by `remember`.
+ */
+private class PreviewAnnounceLatch(initialKey: Int) {
+    private var consumedKey = initialKey
+    private var seenKey = initialKey
+    private var lastText: String? = null
+    private var baselineText: String? = null
+    private var sawGapSinceKey = false
+    private var armedText: String? = null
+
+    fun observe(key: Int, text: String?): Boolean {
+        if (key != seenKey) {
+            seenKey = key
+            // The text of the previous composition: a stale figure still on screen is not the new one.
+            baselineText = lastText
+            sawGapSinceKey = false
+            armedText = null
+        }
+        if (key != consumedKey) {
+            if (text == null) {
+                sawGapSinceKey = true
+            } else {
+                val armed = armedText
+                if (armed == null) {
+                    if (text != baselineText) {
+                        armedText = text
+                    } else if (sawGapSinceKey) {
+                        consumedKey = key // Same figure came back: nothing changed to announce.
+                    }
+                } else if (text != armed) {
+                    consumedKey = key // The figure moved again (a keystroke): stop announcing.
+                    armedText = null
+                }
+            }
+        }
+        lastText = text
+        return text != null && key != consumedKey && armedText == text
     }
 }
 

@@ -2391,6 +2391,60 @@ class AddExpenseViewModelTest : ViewModelTestUtils() {
     }
 
     @Test
+    fun `F-B2-A11Y-1 previewAnnounceKey increments on a currency and a date change and never on an amount keystroke`() {
+        openMec()
+        val opened = st.previewAnnounceKey
+
+        viewModel.updateAmount("12")
+        settle()
+        viewModel.updateAmount("12.5")
+        settle()
+        assertEquals("keystrokes never bump the key", opened, st.previewAnnounceKey)
+
+        viewModel.selectCurrency("USD")
+        settle()
+        assertEquals(opened + 1, st.previewAnnounceKey)
+
+        viewModel.updateAmount("123")
+        settle()
+        assertEquals("a keystroke after the change does not bump it", opened + 1, st.previewAnnounceKey)
+
+        viewModel.updateDate(at(athens, 2025, 10, 15))
+        settle()
+        assertEquals(opened + 2, st.previewAnnounceKey)
+
+        viewModel.selectCurrency("EUR")
+        settle()
+        assertEquals(opened + 3, st.previewAnnounceKey)
+    }
+
+    @Test
+    fun `F-B2-A11Y-1 previewAnnounceKey increments when the home currency changes`() {
+        val homeFlow = MutableStateFlow<String>("EUR")
+        val repo = mockk<CurrencySettingsRepository>(relaxed = true)
+        every { repo.homeCurrency() } returns homeFlow
+        viewModel = createViewModel(repo)
+        settle()
+        val loaded = st.previewAnnounceKey
+
+        homeFlow.value = "USD"
+        settle()
+
+        assertEquals(loaded + 1, st.previewAnnounceKey)
+    }
+
+    @Test
+    fun `F-B2-A11Y-1 an ignored currency pick does not bump previewAnnounceKey`() {
+        openMec()
+        val opened = st.previewAnnounceKey
+
+        viewModel.selectCurrency("not-a-currency")
+        settle()
+
+        assertEquals(opened, st.previewAnnounceKey)
+    }
+
+    @Test
     fun `B2a while the home currency is loading nothing is selected and a pick is ignored`() {
         val repo = mockk<CurrencySettingsRepository>(relaxed = true)
         every { repo.homeCurrency() } returns emptyFlow()

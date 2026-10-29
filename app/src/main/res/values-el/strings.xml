@@ -574,6 +574,7 @@
     <string name="mec_refresh_home_unavailable">Δεν είναι δυνατή η λήψη ισοτιμιών για το βασικό σας νόμισμα.</string>
     <string name="mec_save_disabled_rate">Χρειάζεται ισοτιμία</string>
     <string name="mec_save_disabled_currency">Επιλέξτε νόμισμα</string>
+    <string name="mec_save_disabled_amount">Διορθώστε το ποσό</string>
     <string name="mec_repeat_cleared">Η επανάληψη απενεργοποιήθηκε επειδή το έξοδο είναι σε άλλο νόμισμα.</string>
     <string name="mec_receipt_unmatched">Δεν αναγνωρίστηκε το νόμισμα της απόδειξης. Επιλέξτε ένα.</string>
     <string name="mec_receipt_not_detected">Δεν βρέθηκε νόμισμα στην απόδειξη. Ελέγξτε το.</string>

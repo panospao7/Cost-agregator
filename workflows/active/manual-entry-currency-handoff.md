@@ -256,3 +256,14 @@ Next: loan-installments S1 in this lane (after the S0 D-10/D-12/D-13/D-20 discov
   - All PASS.
 - Follow-ups: F-C-REGION-DEDUP, F-C-HOME-PRECISION-PARITY, F-C-TAX-OVERRIDE (receipt owner), RF-6/RF-7 (receipt owner), F-B2-A11Y-1 (a HARD GATE for 1b). Note: `parsedReceipt.currency` still holds the raw token in state (pre-existing; not displayed).
 - Next (MEC lane): loan S11, then Z closeout.
+
+## 2026-10-29: F-B2-A11Y-1 CLOSED (MEC 1b HARD GATE) and COMMITTED
+- previewAnnounceKey is bumped only on a currency, date or home change (and the receipt AI date apply), never on keystrokes, and is monotonic across reset (add-expense and receipt). The preview line is a polite live region only after a key change. Save stateDescription 'Fix the amount' (mec_save_disabled_amount, es/el DRAFT) for AmountInvalid; the receipt screen keeps its specific amountError.
+- Combined guardian ACCEPT-WITH-CONDITIONS: F1 (receipt reset dropped the key) FIXED plus a test. F2 (latch writes plain fields in composition; worst case a silently skipped announcement) DECLINED for now and recorded as follow-up F-A11Y-LATCH-PURE for the MEC 1b candidate review. F3 noted (installment toggle does not bump; not a spec trigger).
+- Validation:
+  - targeted vr-20261029-174359-13998ace;
+  - runtime-ui vr-20261029-174716-8f273b41;
+  - lint vr-20261029-175047-e2ce6564;
+  - known_good_state vr-20261029-175436-33dcec1f;
+  - F1 targeted vr-20261029-180239-1b51e504.
+- Next (MEC lane): Z closeout. MEC 1b release still needs the es/el sign-off of the mec_ strings.

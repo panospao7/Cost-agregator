@@ -183,6 +183,11 @@ data class ReceiptScanState(
     val rateRefresh: CurrencyRefreshStatus = CurrencyRefreshStatus.IDLE,
     /** The device-local calendar date of "today" (injected clock, review zone) for rate-date wording. */
     val ratesToday: LocalDate? = null,
+    /**
+     * MEC F-B2-A11Y-1: monotonically increasing counter, bumped only when the currency, the date or the
+     * home currency changes (never on an amount keystroke); the preview is announced only for its change.
+     */
+    val previewAnnounceKey: Int = 0,
     /** MEC D-11/D-C-3: the "Open exchange-rate setting" request; the screen shows the confirm and hands over to the host. */
     val openSettingRequest: CurrencyOpenSettingRequest = CurrencyOpenSettingRequest.NONE
 ) {
@@ -349,7 +354,8 @@ class ReceiptScanViewModel @Inject constructor(
                                 holdForProposal || current.currencyRegion is CurrencyRegionUi.Unset
                             },
                         currencyOptions = optionsFor(homeCurrency),
-                        homeCurrency = homeCurrency
+                        homeCurrency = homeCurrency,
+                        previewAnnounceKey = current.previewAnnounceKey + 1
                     )
                 }
                 applyPendingProposal()
@@ -742,6 +748,7 @@ class ReceiptScanViewModel @Inject constructor(
         _state.update {
             it.copy(
                 editDate = dateMs,
+                previewAnnounceKey = it.previewAnnounceKey + 1,
                 saveResult = it.saveResult.takeUnless { r -> r is SaveReceiptResult.RateNotEligible }
             )
         }
@@ -768,6 +775,7 @@ class ReceiptScanViewModel @Inject constructor(
             it.copy(
                 editCurrency = currency,
                 currencyUnverified = false,
+                previewAnnounceKey = it.previewAnnounceKey + 1,
                 saveResult = it.saveResult.takeUnless { r -> r is SaveReceiptResult.RateNotEligible }
             )
         }
@@ -1239,6 +1247,7 @@ class ReceiptScanViewModel @Inject constructor(
         val dateChanged = after.editDate != before.editDate
         val amountChanged = after.editAmount != before.editAmount
         if (!dateChanged && !amountChanged) return
+        if (dateChanged) _state.update { it.copy(previewAnnounceKey = it.previewAnnounceKey + 1) }
         reevaluateRegion(invalidate = dateChanged || !after.currencyRegion.isAmountIndependentBlock())
     }
 
@@ -1430,7 +1439,8 @@ class ReceiptScanViewModel @Inject constructor(
         homeCurrency = homeCurrencyCode,
         currencyRegion = if (homeCurrencyCode == null) CurrencyRegionUi.Loading else CurrencyRegionUi.Home,
         ratesSetting = previous.ratesSetting,
-        ratesToday = todayFor(ZoneId.systemDefault())
+        ratesToday = todayFor(ZoneId.systemDefault()),
+        previewAnnounceKey = previous.previewAnnounceKey
     )
 
     /** S7-F583-006: Centralized cleanup — cancels all in-flight work and clears assist state. */

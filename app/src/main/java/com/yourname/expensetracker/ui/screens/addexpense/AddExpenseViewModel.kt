@@ -153,6 +153,12 @@ data class AddExpenseState(
  val openSettingRequest: CurrencyOpenSettingRequest = CurrencyOpenSettingRequest.NONE,
  /** The device-local calendar date of "today" (injected clock, entry zone) for rate-date wording; set on evaluation. */
  val ratesToday: LocalDate? = null,
+ /**
+  * MEC F-B2-A11Y-1: monotonically increasing counter, bumped only when the currency, the date or the
+  * home currency changes (never on an amount keystroke). The preview line is announced politely only
+  * for a change of this key. Session-only; not persisted.
+  */
+ val previewAnnounceKey: Int = 0,
  /** Loan-installments S11a: the session-only installment sub-state; default = switch off. */
  val installments: AddExpenseInstallmentsState = AddExpenseInstallmentsState()
 ) {
@@ -282,7 +288,7 @@ class AddExpenseViewModel @Inject constructor(
  init {
  homeCurrencyJob = viewModelScope.launch {
  currencySettingsRepository.homeCurrency().collect { hc ->
- _state.update { applyHomeAndSelection(it.copy(homeCurrency = hc)) }
+ _state.update { applyHomeAndSelection(it.copy(homeCurrency = hc, previewAnnounceKey = it.previewAnnounceKey + 1)) }
  reevaluateRegion(invalidate = true)
  }
  }
@@ -446,7 +452,9 @@ class AddExpenseViewModel @Inject constructor(
     }
 
     fun updateDate(dateMs: Long) {
-        _state.update { it.copy(date = dateMs).withUserEdit(QuickAddField.DATE) }
+        _state.update {
+            it.copy(date = dateMs, previewAnnounceKey = it.previewAnnounceKey + 1).withUserEdit(QuickAddField.DATE)
+        }
         // MEC INV-3: a new date can change eligibility.
         reevaluateRegion(invalidate = true)
     }
@@ -1211,6 +1219,7 @@ class AddExpenseViewModel @Inject constructor(
             val selected = withSelection.selectedCurrency
             val foreign = withSelection.isForeignSelected
             withSelection.copy(
+                previewAnnounceKey = current.previewAnnounceKey + 1,
                 saveResult = null,
                 amountError = if (selected == null) null else revalidatedAmountError(current.amount, selected),
                 isRecurring = if (foreign) false else withSelection.isRecurring,
@@ -1697,8 +1706,15 @@ class AddExpenseViewModel @Inject constructor(
         // MEC: the currency choice is session-only; the next open starts on home. The rates setting is
         // a live observation of stored settings and is kept.
         val keptSetting = _state.value.ratesSetting
+        // F-B2-A11Y-1: the announce key stays monotonic across a reset (a drop would look like a change).
+        val keptAnnounceKey = _state.value.previewAnnounceKey
         _state.value = applyHomeAndSelection(
-            AddExpenseState(date = timeProvider.now(), homeCurrency = loadedCurrency, ratesSetting = keptSetting)
+            AddExpenseState(
+                date = timeProvider.now(),
+                homeCurrency = loadedCurrency,
+                ratesSetting = keptSetting,
+                previewAnnounceKey = keptAnnounceKey
+            )
         ).let { fresh ->
             fresh.copy(
                 currencyRegion = if (fresh.homeCurrency == null) CurrencyRegionUi.Loading else CurrencyRegionUi.Home,

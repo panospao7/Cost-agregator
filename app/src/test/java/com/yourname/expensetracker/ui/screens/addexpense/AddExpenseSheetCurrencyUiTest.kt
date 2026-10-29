@@ -10,6 +10,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
@@ -27,8 +28,12 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.Density
 import androidx.test.core.app.ApplicationProvider
 import com.yourname.expensetracker.R
+import com.yourname.expensetracker.domain.currency.DomainExchangeRate
 import com.yourname.expensetracker.domain.privacy.PrivacySettings
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsLoadState
+import com.yourname.expensetracker.ui.components.currency.CurrencyRegionUi
+import java.time.LocalDate
+import java.time.ZoneOffset
 import java.util.Locale
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -463,5 +468,96 @@ class AddExpenseSheetCurrencyUiTest {
         assertEquals("", viewModel.state.value.amount)
         assertEquals("EUR", viewModel.state.value.selectedCurrency)
         composeRule.onNode(amountMatcher("", "EUR")).assertExists()
+    }
+
+    // ---- F-B2-A11Y-1: Save speaks "Fix the amount" for an invalid amount ---------------------------------
+
+    @Test
+    fun a11y_amountInvalid_giveSaveTheFixTheAmountStateDescription() {
+        showSheet()
+        selectForeign("USD")
+        // The sanitizer truncates extra decimals, so use an above-cap amount (10 integer digits is the input max).
+        composeRule.runOnIdle { viewModel.updateAmount("9999999999") }
+        composeRule.waitForIdle()
+
+        assertTrue(viewModel.state.value.currencyRegion is CurrencyRegionUi.AmountInvalid)
+        saveButton.assertIsNotEnabled()
+        saveButton.assert(
+            SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, string(R.string.mec_save_disabled_amount))
+        )
+        assertEquals("Fix the amount", string(R.string.mec_save_disabled_amount))
+    }
+
+    @Test
+    fun a11y_amountFixed_removesTheFixTheAmountStateDescription() {
+        showSheet()
+        selectForeign("USD")
+        composeRule.runOnIdle { viewModel.updateAmount("9999999999") }
+        composeRule.waitForIdle()
+        composeRule.runOnIdle { viewModel.updateAmount("12.34") }
+        composeRule.waitForIdle()
+
+        // No rate is stored: the state description is now the rate reason, not the amount one.
+        saveButton.assert(
+            SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, string(R.string.mec_save_disabled_rate))
+        )
+    }
+
+    // ---- F-B2-A11Y-1: the preview is a polite live region after a currency or date change only -----------
+
+    private fun utcMidnight(date: LocalDate): Long = date.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
+
+    private fun seedUsdRate(date: LocalDate) {
+        harness.rateStore.rows += DomainExchangeRate(
+            fromCurrency = "USD",
+            toCurrency = "EUR",
+            rate = 0.9,
+            lastUpdated = 0L,
+            source = "ecb",
+            validDate = utcMidnight(date)
+        )
+    }
+
+    private val previewMatcher: SemanticsMatcher get() = hasText("ECB rate of", substring = true)
+
+    private fun politePreviewCount(): Int =
+        composeRule.onAllNodes(
+            previewMatcher and SemanticsMatcher.expectValue(SemanticsProperties.LiveRegion, LiveRegionMode.Polite)
+        ).fetchSemanticsNodes().size
+
+    private fun previewCount(): Int = composeRule.onAllNodes(previewMatcher).fetchSemanticsNodes().size
+
+    @Test
+    fun a11y_preview_isPoliteAfterACurrencyChange_silentOnKeystrokes_andPoliteAgainAfterADateChange() {
+        // FIXED_NOW is 2023-11-14; two stored rates let a date change move the shown rate date.
+        seedUsdRate(LocalDate.of(2023, 11, 13))
+        seedUsdRate(LocalDate.of(2023, 11, 10))
+        showSheet()
+        composeRule.runOnIdle { viewModel.updateAmount("10") }
+        composeRule.waitForIdle()
+
+        // A currency change: the preview appears and is announced politely.
+        selectForeign("USD")
+        assertEquals("the preview is shown", 1, previewCount())
+        assertEquals("a currency change announces the preview", 1, politePreviewCount())
+
+        // An amount keystroke: the preview changes and is not announced.
+        composeRule.runOnIdle { viewModel.updateAmount("100") }
+        composeRule.waitForIdle()
+        assertEquals(1, previewCount())
+        assertEquals("a keystroke must not announce the preview", 0, politePreviewCount())
+
+        // A date change: the preview is announced again.
+        composeRule.runOnIdle {
+            viewModel.updateDate(AddExpenseSheetHarness.FIXED_NOW_MS - 3L * 24 * 60 * 60 * 1000)
+        }
+        composeRule.waitForIdle()
+        composeRule.onNode(hasText("10 Nov", substring = true)).assertExists()
+        assertEquals("a date change announces the preview again", 1, politePreviewCount())
+
+        // And the keystroke after it is silent again.
+        composeRule.runOnIdle { viewModel.updateAmount("1000") }
+        composeRule.waitForIdle()
+        assertEquals(0, politePreviewCount())
     }
 }

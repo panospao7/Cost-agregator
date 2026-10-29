@@ -1984,6 +1984,7 @@
     <string name="mec_refresh_home_unavailable">Rates can\'t be downloaded for your home currency.</string>
     <string name="mec_save_disabled_rate">Needs an exchange rate</string>
     <string name="mec_save_disabled_currency">Choose a currency</string>
+    <string name="mec_save_disabled_amount">Fix the amount</string>
     <string name="mec_repeat_cleared">Repeat was turned off because this expense is in another currency.</string>
     <string name="mec_receipt_unmatched">We couldn\'t match the receipt\'s currency. Choose one.</string>
     <string name="mec_receipt_not_detected">No currency found on the receipt. Check it.</string>

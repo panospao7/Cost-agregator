@@ -290,6 +290,7 @@ fun AddExpenseSheet(
                     val saveBlockedReason = when (state.currencyRegion) {
                         is CurrencyRegionUi.Blocked -> if (state.isCurrencySaveBlocked) stringResource(R.string.mec_save_disabled_rate) else null
                         is CurrencyRegionUi.Unset -> stringResource(R.string.mec_save_disabled_currency)
+                        is CurrencyRegionUi.AmountInvalid -> stringResource(R.string.mec_save_disabled_amount)
                         else -> null
                     }
                     Button(
@@ -429,7 +430,8 @@ fun AddExpenseSheet(
                     suppressHomeUnresolvedCard = state.saveResult is SaveResult.Error,
                     onRefresh = { viewModel.refreshRates() },
                     onOpenSetting = { viewModel.requestOpenExchangeRateSetting() },
-                    onChangeCurrency = { changeCurrencyRequests = 1 }
+                    onChangeCurrency = { changeCurrencyRequests = 1 },
+                    announceKey = state.previewAnnounceKey
                 )
 
                 // === Payment Method ===

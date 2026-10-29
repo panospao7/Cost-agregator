@@ -186,12 +186,126 @@ class CurrencyRateRegionContentTest {
     // ---- Eligible: the preview line ---------------------------------------------------------------------------------
 
     @Test
-    fun eligibleEcb_withAmount_showsTheFormattedAmountAndTheRateDate_withoutALiveRegion() {
+    fun eligibleEcb_withAmount_showsTheFormattedAmountAndTheRateDate_withoutALiveRegionUntilAChangeKeyBump() {
+        // F-B2-A11Y-1 (rewritten in place): opening the screen is not a change, so the first figure shown
+        // under the initial announce key is not a live region.
         show(CurrencyRegionUi.Eligible(rateDate, RateSourceLabel.ECB, "€12.34", amountUnavailable = false))
 
         composeRule.onNodeWithText(string(R.string.mec_preview_ecb, "€12.34", "27 Oct")).assertExists()
-        assertEquals("the figure changes per keystroke and must not be announced", 0, liveRegionCount(LiveRegionMode.Polite))
+        assertEquals("opening the screen must not announce the figure", 0, liveRegionCount(LiveRegionMode.Polite))
         assertEquals(0, liveRegionCount(LiveRegionMode.Assertive))
+    }
+
+    private fun eligible(figure: String, date: LocalDate = rateDate) =
+        CurrencyRegionUi.Eligible(date, RateSourceLabel.ECB, figure, amountUnavailable = false)
+
+    private fun showDriven(
+        region: androidx.compose.runtime.MutableState<CurrencyRegionUi>,
+        key: androidx.compose.runtime.MutableState<Int>
+    ) {
+        composeRule.setContent {
+            MaterialTheme {
+                CurrencyRateRegionContent(
+                    region = region.value,
+                    ratesSetting = CurrencyRatesSetting.OFF,
+                    rateRefresh = CurrencyRefreshStatus.IDLE,
+                    ratesToday = today,
+                    suppressHomeUnresolvedCard = false,
+                    onRefresh = { },
+                    onOpenSetting = { },
+                    onChangeCurrency = { },
+                    announceKey = key.value
+                )
+            }
+        }
+        composeRule.waitForIdle()
+    }
+
+    @Test
+    fun previewAfterACurrencyChange_isAPoliteLiveRegion() {
+        val region = androidx.compose.runtime.mutableStateOf<CurrencyRegionUi>(CurrencyRegionUi.Home)
+        val key = androidx.compose.runtime.mutableStateOf(0)
+        showDriven(region, key)
+
+        // A currency change bumps the key and (after Pending) shows the new figure.
+        key.value = 1
+        region.value = CurrencyRegionUi.Pending
+        composeRule.waitForIdle()
+        region.value = eligible("€12.34")
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithText(string(R.string.mec_preview_ecb, "€12.34", "27 Oct")).assertExists()
+        assertEquals(1, liveRegionCount(LiveRegionMode.Polite))
+    }
+
+    @Test
+    fun previewAfterACurrencyChange_staleFigureStillShownForOneFrame_isNotTheAnnouncedOne() {
+        val region = androidx.compose.runtime.mutableStateOf<CurrencyRegionUi>(eligible("€10.00"))
+        val key = androidx.compose.runtime.mutableStateOf(0)
+        showDriven(region, key)
+
+        // The key moves while the old figure is still displayed; the old figure is not announced.
+        key.value = 1
+        composeRule.waitForIdle()
+        assertEquals(0, liveRegionCount(LiveRegionMode.Polite))
+
+        region.value = CurrencyRegionUi.Pending
+        composeRule.waitForIdle()
+        region.value = eligible("€12.34")
+        composeRule.waitForIdle()
+
+        assertEquals(1, liveRegionCount(LiveRegionMode.Polite))
+    }
+
+    @Test
+    fun anAmountKeystrokeAfterTheChange_isNotAnnounced() {
+        val region = androidx.compose.runtime.mutableStateOf<CurrencyRegionUi>(CurrencyRegionUi.Home)
+        val key = androidx.compose.runtime.mutableStateOf(0)
+        showDriven(region, key)
+        key.value = 1
+        region.value = eligible("€12.34")
+        composeRule.waitForIdle()
+        assertEquals(1, liveRegionCount(LiveRegionMode.Polite))
+
+        // A keystroke: same key, Pending, then a different figure.
+        region.value = CurrencyRegionUi.Pending
+        composeRule.waitForIdle()
+        region.value = eligible("€123.40")
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithText(string(R.string.mec_preview_ecb, "€123.40", "27 Oct")).assertExists()
+        assertEquals("a keystroke must not announce the figure", 0, liveRegionCount(LiveRegionMode.Polite))
+
+        // Further keystrokes stay silent.
+        region.value = CurrencyRegionUi.Pending
+        composeRule.waitForIdle()
+        region.value = eligible("€1,234.00")
+        composeRule.waitForIdle()
+        assertEquals(0, liveRegionCount(LiveRegionMode.Polite))
+    }
+
+    @Test
+    fun aDateChange_announcesAgain() {
+        val region = androidx.compose.runtime.mutableStateOf<CurrencyRegionUi>(eligible("€12.34"))
+        val key = androidx.compose.runtime.mutableStateOf(0)
+        showDriven(region, key)
+        assertEquals(0, liveRegionCount(LiveRegionMode.Polite))
+
+        // Keystroke first (silent), then a date change (key bump) re-announces.
+        region.value = CurrencyRegionUi.Pending
+        composeRule.waitForIdle()
+        region.value = eligible("€123.40")
+        composeRule.waitForIdle()
+        assertEquals(0, liveRegionCount(LiveRegionMode.Polite))
+
+        key.value = 2
+        region.value = CurrencyRegionUi.Pending
+        composeRule.waitForIdle()
+        region.value = eligible("€123.40", date = LocalDate.of(2026, 10, 20))
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithText(string(R.string.mec_preview_ecb, "€123.40", "20 Oct")).assertExists()
+        assertEquals(1, liveRegionCount(LiveRegionMode.Polite))
     }
 
     @Test
