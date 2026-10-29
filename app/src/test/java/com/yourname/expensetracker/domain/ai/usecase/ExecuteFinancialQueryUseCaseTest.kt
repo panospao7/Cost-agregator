@@ -18,6 +18,7 @@ import com.yourname.expensetracker.domain.ai.model.PeriodGranularity
 import com.yourname.expensetracker.domain.ai.model.QueryComparison
 import com.yourname.expensetracker.domain.ai.model.QueryGrouping
 import com.yourname.expensetracker.domain.ai.model.QueryMetric
+import com.yourname.expensetracker.domain.ai.model.QueryOwnershipScope
 import com.yourname.expensetracker.domain.model.PeriodRange
 import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.currency.ConversionResult
@@ -46,6 +47,11 @@ import java.util.TimeZone
 import kotlin.time.Duration.Companion.seconds
 
 class ExecuteFinancialQueryUseCaseTest {
+
+    private companion object {
+        /** Bounded SpendingExclusionReason name stored on installment purchase records. */
+        const val INSTALLMENT_EXCLUSION = "INSTALLMENT_PURCHASE"
+    }
 
     private lateinit var expenseRepository: ExpenseRepository
     private lateinit var categoryRepository: CategoryRepository
@@ -904,13 +910,383 @@ class ExecuteFinancialQueryUseCaseTest {
         }
     }
 
+    // ---- loan-installments S13-0 (INV-1): assistant queries consider only rows that count as spending ----
+    //
+    // A flagged row (spendingExclusionReason != null, e.g. an installment purchase record) is not
+    // spending: it must never be returned as the largest or smallest purchase. Fixtures use the
+    // bounded reason name INSTALLMENT_PURCHASE and a distinctive merchant so a leak is obvious.
+
+    private fun maxIntent() = minIntent().copy(
+        rawQuery = "largest purchase this month",
+        normalizedQuery = "largest purchase this month",
+        metric = QueryMetric.MAX
+    )
+
+    // Note: effectiveAmount is 0.0 for flagged rows, so this test is a behaviour pin; the tie test below is the fix detector.
+    @Test
+    fun `INV-1 largest purchase ignores a flagged row with the highest amount and returns the largest counting row`() = runTest(timeout = 30.seconds) {
+        stubRange(
+            100L,
+            200L,
+            listOf(
+                expenseWithCategory(id = 1L, amount = 5000.0, merchant = "Furniture Store", spendingExclusionReason = INSTALLMENT_EXCLUSION),
+                expenseWithCategory(id = 2L, amount = 40.0, merchant = "Lidl"),
+                expenseWithCategory(id = 3L, amount = 90.0, merchant = "Amazon")
+            )
+        )
+
+        val result = useCase(maxIntent())
+
+        assertTrue("expected Summary but was $result", result is FinancialQueryResult.Summary)
+        result as FinancialQueryResult.Summary
+        assertEquals("Amazon: 90.00 EUR", result.primaryText)
+        assertEquals(UiText.fromKey("domain_ai_largest_purchase"), result.title)
+        assertEquals(setOf("Amazon"), result.drilldownIntent!!.filters.merchants)
+    }
+
+    // Fix detector: a flagged row's effectiveAmount is 0.0, so it ties with a counting row whose amount is 0.0.
+    // The flagged row is listed FIRST; maxByOrNull keeps the first maximum on ties, so without the
+    // spendingExclusionReason filter the flagged row would be returned instead of the counting one.
+    @Test
+    fun `INV-1 largest purchase never returns a flagged row even on an effective-amount tie`() = runTest(timeout = 30.seconds) {
+        stubRange(
+            100L,
+            200L,
+            listOf(
+                expenseWithCategory(id = 1L, amount = 5000.0, merchant = "Furniture Store", spendingExclusionReason = INSTALLMENT_EXCLUSION),
+                expenseWithCategory(id = 2L, amount = 0.0, merchant = "Lidl")
+            )
+        )
+
+        val result = useCase(maxIntent())
+
+        assertTrue("expected Summary but was $result", result is FinancialQueryResult.Summary)
+        result as FinancialQueryResult.Summary
+        assertEquals(setOf("Lidl"), result.drilldownIntent!!.filters.merchants)
+        assertFalse(
+            "flagged row leaked into the largest purchase: ${result.primaryText}",
+            result.primaryText.contains("Furniture Store")
+        )
+    }
+
+    @Test
+    fun `INV-1 largest purchase control without any flagged row still returns the highest amount`() = runTest(timeout = 30.seconds) {
+        stubRange(
+            100L,
+            200L,
+            listOf(
+                expenseWithCategory(id = 1L, amount = 5000.0, merchant = "Furniture Store"),
+                expenseWithCategory(id = 2L, amount = 90.0, merchant = "Amazon")
+            )
+        )
+
+        val result = useCase(maxIntent())
+
+        assertTrue("expected Summary but was $result", result is FinancialQueryResult.Summary)
+        result as FinancialQueryResult.Summary
+        assertEquals("Furniture Store: 5000.00 EUR", result.primaryText)
+    }
+
+    @Test
+    fun `INV-1 smallest purchase ignores a flagged row with the lowest amount and returns the smallest counting row`() = runTest(timeout = 30.seconds) {
+        stubRange(
+            100L,
+            200L,
+            listOf(
+                expenseWithCategory(id = 1L, amount = 0.5, merchant = "Furniture Store", spendingExclusionReason = INSTALLMENT_EXCLUSION),
+                expenseWithCategory(id = 2L, amount = 40.0, merchant = "Lidl"),
+                expenseWithCategory(id = 3L, amount = 12.0, merchant = "Bakery")
+            )
+        )
+
+        val result = useCase(minIntent())
+
+        assertTrue("expected Summary but was $result", result is FinancialQueryResult.Summary)
+        result as FinancialQueryResult.Summary
+        assertEquals("Bakery: 12.00 EUR", result.primaryText)
+        assertEquals(UiText.fromKey("domain_ai_smallest_purchase"), result.title)
+        assertEquals(setOf("Bakery"), result.drilldownIntent!!.filters.merchants)
+    }
+
+    @Test
+    fun `INV-1 smallest purchase control without any flagged row still returns the lowest amount`() = runTest(timeout = 30.seconds) {
+        stubRange(
+            100L,
+            200L,
+            listOf(
+                expenseWithCategory(id = 1L, amount = 0.5, merchant = "Furniture Store"),
+                expenseWithCategory(id = 2L, amount = 12.0, merchant = "Bakery")
+            )
+        )
+
+        val result = useCase(minIntent())
+
+        assertTrue("expected Summary but was $result", result is FinancialQueryResult.Summary)
+        result as FinancialQueryResult.Summary
+        assertEquals("Furniture Store: 0.50 EUR", result.primaryText)
+    }
+
+    @Test
+    fun `INV-1 smallest purchase ignores a flagged foreign currency row and compares only counting rows`() = runTest(timeout = 30.seconds) {
+        // The flagged USD row must not push the query into the mixed-currency path, where the
+        // default converter stub would turn it into a 0.00 EUR "smallest" purchase.
+        stubRange(
+            100L,
+            200L,
+            listOf(
+                expenseWithCategory(id = 1L, amount = 5.0, currency = "EUR", merchant = "Lidl"),
+                expenseWithCategory(id = 2L, amount = 3.0, currency = "EUR", merchant = "Bakery"),
+                expenseWithCategory(id = 3L, amount = 1.0, currency = "USD", merchant = "Furniture Store", spendingExclusionReason = INSTALLMENT_EXCLUSION)
+            )
+        )
+
+        val result = useCase(minIntent())
+
+        assertTrue("expected Summary but was $result", result is FinancialQueryResult.Summary)
+        result as FinancialQueryResult.Summary
+        assertEquals("Bakery: 3.00 EUR", result.primaryText)
+    }
+
+    @Test
+    fun `INV-1 largest purchase with every candidate row flagged returns the NO_MATCHING_TRANSACTIONS code`() = runTest(timeout = 30.seconds) {
+        stubRange(
+            100L,
+            200L,
+            listOf(
+                expenseWithCategory(id = 1L, amount = 5000.0, merchant = "Furniture Store", spendingExclusionReason = INSTALLMENT_EXCLUSION),
+                expenseWithCategory(id = 2L, amount = 800.0, merchant = "Electronics Store", spendingExclusionReason = INSTALLMENT_EXCLUSION)
+            )
+        )
+
+        val result = useCase(maxIntent())
+
+        assertEquals(
+            FinancialQueryResult.Unsupported(AssistantUnsupportedReason.NO_MATCHING_TRANSACTIONS),
+            result
+        )
+    }
+
+    @Test
+    fun `INV-1 smallest purchase with every candidate row flagged returns the NO_MATCHING_TRANSACTIONS code`() = runTest(timeout = 30.seconds) {
+        stubRange(
+            100L,
+            200L,
+            listOf(
+                expenseWithCategory(id = 1L, amount = 5000.0, merchant = "Furniture Store", spendingExclusionReason = INSTALLMENT_EXCLUSION),
+                expenseWithCategory(id = 2L, amount = 800.0, merchant = "Electronics Store", spendingExclusionReason = INSTALLMENT_EXCLUSION)
+            )
+        )
+
+        val result = useCase(minIntent())
+
+        assertEquals(
+            FinancialQueryResult.Unsupported(AssistantUnsupportedReason.NO_MATCHING_TRANSACTIONS),
+            result
+        )
+    }
+
+    // ---- D-S13-1: valid only if the writer includes COUNT/AVERAGE ----
+    // The orchestrator drops this group if the S13-0 writer reports COUNT/AVERAGE as a follow-up.
+
+    @Test
+    fun `D-S13-1 INV-1 count excludes flagged rows`() = runTest(timeout = 30.seconds) {
+        stubRange(
+            100L,
+            200L,
+            listOf(
+                expenseWithCategory(id = 1L, amount = 5000.0, merchant = "Furniture Store", spendingExclusionReason = INSTALLMENT_EXCLUSION),
+                expenseWithCategory(id = 2L, amount = 10.0, merchant = "Lidl"),
+                expenseWithCategory(id = 3L, amount = 20.0, merchant = "Bakery")
+            )
+        )
+
+        val result = useCase(minIntent().copy(metric = QueryMetric.COUNT))
+
+        assertTrue("expected TransactionList but was $result", result is FinancialQueryResult.TransactionList)
+        result as FinancialQueryResult.TransactionList
+        assertEquals(2, result.previewCount)
+    }
+
+    @Test
+    fun `D-S13-1 INV-1 count control without flagged rows counts every row`() = runTest(timeout = 30.seconds) {
+        stubRange(
+            100L,
+            200L,
+            listOf(
+                expenseWithCategory(id = 1L, amount = 5000.0, merchant = "Furniture Store"),
+                expenseWithCategory(id = 2L, amount = 10.0, merchant = "Lidl"),
+                expenseWithCategory(id = 3L, amount = 20.0, merchant = "Bakery")
+            )
+        )
+
+        val result = useCase(minIntent().copy(metric = QueryMetric.COUNT))
+
+        assertTrue("expected TransactionList but was $result", result is FinancialQueryResult.TransactionList)
+        result as FinancialQueryResult.TransactionList
+        assertEquals(3, result.previewCount)
+    }
+
+    @Test
+    fun `D-S13-1 INV-1 count with every row flagged is zero`() = runTest(timeout = 30.seconds) {
+        stubRange(
+            100L,
+            200L,
+            listOf(
+                expenseWithCategory(id = 1L, amount = 5000.0, merchant = "Furniture Store", spendingExclusionReason = INSTALLMENT_EXCLUSION)
+            )
+        )
+
+        val result = useCase(minIntent().copy(metric = QueryMetric.COUNT))
+
+        assertTrue("expected TransactionList but was $result", result is FinancialQueryResult.TransactionList)
+        result as FinancialQueryResult.TransactionList
+        assertEquals(0, result.previewCount)
+    }
+
+    @Test
+    fun `D-S13-1 INV-1 average excludes flagged rows from both numerator and denominator`() = runTest(timeout = 30.seconds) {
+        stubRange(
+            100L,
+            200L,
+            listOf(
+                expenseWithCategory(id = 1L, amount = 5000.0, merchant = "Furniture Store", spendingExclusionReason = INSTALLMENT_EXCLUSION),
+                expenseWithCategory(id = 2L, amount = 10.0, merchant = "Lidl"),
+                expenseWithCategory(id = 3L, amount = 20.0, merchant = "Bakery")
+            )
+        )
+
+        val result = useCase(minIntent().copy(metric = QueryMetric.AVERAGE))
+
+        assertTrue("expected Summary but was $result", result is FinancialQueryResult.Summary)
+        result as FinancialQueryResult.Summary
+        // (10 + 20) / 2 = 15; a flagged row left in the denominator would give 10.00.
+        assertEquals("15.00 EUR", result.primaryText)
+        assertEquals("Across 2 transactions", result.supportingText)
+    }
+
+    @Test
+    fun `D-S13-1 INV-1 average control without flagged rows averages every row`() = runTest(timeout = 30.seconds) {
+        stubRange(
+            100L,
+            200L,
+            listOf(
+                expenseWithCategory(id = 1L, amount = 10.0, merchant = "Lidl"),
+                expenseWithCategory(id = 2L, amount = 20.0, merchant = "Bakery")
+            )
+        )
+
+        val result = useCase(minIntent().copy(metric = QueryMetric.AVERAGE))
+
+        assertTrue("expected Summary but was $result", result is FinancialQueryResult.Summary)
+        result as FinancialQueryResult.Summary
+        assertEquals("15.00 EUR", result.primaryText)
+        assertEquals("Across 2 transactions", result.supportingText)
+    }
+
+    // ---- INV-1: exclusion only; ownership scope stays with the query's ownership filter ----
+    //
+    // A NOT_MINE-scoped query asks the repository for not-mine rows. Those rows are not "flagged"
+    // (no spendingExclusionReason), so they must survive the use case's INV-1 filter. Only a row
+    // with an exclusion reason is dropped. Note: a not-mine row's effectiveAmount is 0.0, so the
+    // largest-purchase test asserts on "a not-mine row is returned", not on a formatted amount.
+
+    private fun notMineIntent(metric: QueryMetric) = FinancialQueryIntent(
+        rawQuery = "not mine purchases this month",
+        normalizedQuery = "not mine purchases this month",
+        filters = ExpenseQueryFilters(
+            period = PeriodRange(100L, 200L),
+            ownership = QueryOwnershipScope.NOT_MINE
+        ),
+        metric = metric,
+        grouping = QueryGrouping.NONE
+    )
+
+    private fun stubNotMineRange(rows: List<ExpenseWithCategory>) {
+        coEvery {
+            expenseRepository.getAssistantExpensesFiltered(
+                startDate = 100L,
+                endDate = 200L,
+                transactionTypes = emptySet(),
+                categoryIds = emptySet(),
+                merchantNames = emptySet(),
+                ownershipFilter = OwnershipFilter.NOT_MINE,
+                minAmount = null,
+                maxAmount = null,
+                sortOrder = any()
+            )
+        } returns rows
+    }
+
+    @Test
+    fun `INV-1 NOT_MINE count keeps not-mine rows`() = runTest(timeout = 30.seconds) {
+        stubNotMineRange(
+            listOf(
+                expenseWithCategory(id = 1L, amount = 10.0, merchant = "Lidl", isNotMine = true),
+                expenseWithCategory(id = 2L, amount = 20.0, merchant = "Bakery", isNotMine = true)
+            )
+        )
+
+        val result = useCase(notMineIntent(QueryMetric.COUNT))
+
+        assertTrue("expected TransactionList but was $result", result is FinancialQueryResult.TransactionList)
+        result as FinancialQueryResult.TransactionList
+        assertEquals(2, result.previewCount)
+    }
+
+    @Test
+    fun `INV-1 NOT_MINE largest returns a not-mine row`() = runTest(timeout = 30.seconds) {
+        stubNotMineRange(
+            listOf(
+                expenseWithCategory(id = 1L, amount = 10.0, merchant = "Lidl", isNotMine = true),
+                expenseWithCategory(id = 2L, amount = 90.0, merchant = "Amazon", isNotMine = true)
+            )
+        )
+
+        val result = useCase(notMineIntent(QueryMetric.MAX))
+
+        assertFalse("not-mine rows must not be dropped as unsupported: $result", result is FinancialQueryResult.Unsupported)
+        assertTrue("expected Summary but was $result", result is FinancialQueryResult.Summary)
+        result as FinancialQueryResult.Summary
+        val returnedMerchants = result.drilldownIntent!!.filters.merchants
+        assertEquals(1, returnedMerchants.size)
+        assertTrue(
+            "expected one of the not-mine rows but was $returnedMerchants",
+            returnedMerchants.single() in setOf("Lidl", "Amazon")
+        )
+    }
+
+    @Test
+    fun `INV-1 NOT_MINE count still drops a flagged row`() = runTest(timeout = 30.seconds) {
+        stubNotMineRange(
+            listOf(
+                expenseWithCategory(id = 1L, amount = 10.0, merchant = "Lidl", isNotMine = true),
+                expenseWithCategory(id = 2L, amount = 20.0, merchant = "Bakery", isNotMine = true),
+                expenseWithCategory(
+                    id = 3L,
+                    amount = 5000.0,
+                    merchant = "Furniture Store",
+                    isNotMine = true,
+                    spendingExclusionReason = INSTALLMENT_EXCLUSION
+                )
+            )
+        )
+
+        val result = useCase(notMineIntent(QueryMetric.COUNT))
+
+        assertTrue("expected TransactionList but was $result", result is FinancialQueryResult.TransactionList)
+        result as FinancialQueryResult.TransactionList
+        assertEquals(2, result.previewCount)
+    }
+
     private fun expenseWithCategory(
         id: Long,
         amount: Double,
         currency: String = "EUR",
         merchant: String = "Lidl",
         merchantKey: String? = merchant.lowercase(),
-        categoryId: Long? = null
+        categoryId: Long? = null,
+        spendingExclusionReason: String? = null,
+        isNotMine: Boolean = false
     ) = ExpenseWithCategory(
         expense = Expense(
             id = id,
@@ -920,7 +1296,9 @@ class ExecuteFinancialQueryUseCaseTest {
             merchantKey = merchantKey,
             categoryId = categoryId,
             transactionType = TransactionType.PURCHASE,
-            date = 150L
+            date = 150L,
+            spendingExclusionReason = spendingExclusionReason,
+            isNotMine = isNotMine
         ),
         category = null
     )

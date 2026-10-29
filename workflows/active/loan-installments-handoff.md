@@ -2646,3 +2646,14 @@ Transactions delete-dialog role lines, retry-loop key, marks-loader memoise, plu
   - known_good_state vr-20261029-170743-e3f42e73.
   - All PASS.
 - Next (loan lane): S13 (enablement and final acceptance; needs F-B2-A11Y-1, the es/el sign-off, the S11c item 4 switch-click test, the S13-a deep-link items, all guardians, and reviewer-strict).
+
+## 2026-10-29: S13 re-anchored; owner approvals 91; S13-0 started
+- Plan: the loan plan's "S13 re-anchor amendment" (BINDING) supersedes the old S13 row. Sub-slices: S13-0 (INV-1 assistant aggregates), S13-a (deep links + confirmation + NavHost wiring + N2), S13-b (flag flip + e2e + switch-click test), S13-c (docs), S13-final (candidate ladder, device checks, three guardians, fresh reviewer-strict).
+- Owner-approvals 91: (a) the two installment hosts on the existing non-BROWSABLE filter are APPROVED; (b) the ENABLED flip on this unreleased branch is APPROVED (stays unreleased under MEC H-1). Still open: es/el sign-off, item-14 device check.
+- Orchestrator decisions D-S13-1..4 recorded in the plan amendment and in owner-approvals 91(d).
+- MEC Z committed and pushed as bf7bd580 (lane is clean except S13 work).
+- S13-0 status: COMMITTED (see below).
+- Next: S13-0 targeted `*ExecuteFinancialQuery*`, combined guardian, commit; then S13-a.
+- S13-0 implemented + tested (2026-10-29): ExecuteFinancialQueryUseCase filters LARGEST/SMALLEST/COUNT/AVERAGE rows with `spendingExclusionReason == null` (D-S13-1 included). Deviation from the plan wording "countsAsSpending" (orchestrator, item 62): `countsAsSpending` also drops `isNotMine` rows and would empty NOT_MINE/TRANSFER-scoped queries, because ownership is decided by the query's OwnershipFilter (ExpenseRepository.kt:482-486); exclusion-only is the correct INV-1 projection here. NOT_MINE regression tests added.
+- S13-0 combined guardian: ACCEPT-WITH-CONDITIONS. Finding A (MAX tests were behaviour pins only, since effectiveAmount is 0.0 for flagged rows) fixed with a tie test that fails without the filter. Accepted LOW residual F-S13-0-COUNT-LIST: COUNT's previewCount now excludes flagged rows while the drilldown list, LIST and the category/merchant breakdown entry counts still include them (no amount affected; follow-up to the assistant owner).
+- S13-0 targeted (pre-Finding-A): vr-20261029-203311-9b259427 PASS; final fingerprint ExecuteFinancialQueryUseCaseTest: vr-20261029-205046-f09a7875 PASS. S13-0 COMMITTED. Next: S13-a.
