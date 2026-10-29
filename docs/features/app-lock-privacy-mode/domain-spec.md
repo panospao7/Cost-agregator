@@ -1312,7 +1312,7 @@ FORBIDDEN:
 | Group | Codes |
 |---|---|
 | Lock | `LOCK_SHOWN_COLD_START`, `LOCK_SHOWN_TIMEOUT`, `LOCK_SHOWN_SETTINGS_UNREADABLE`, `LOCK_UNLOCKED`, `LOCK_AUTH_CANCELLED`, `LOCK_AUTH_LOCKOUT`, `LOCK_AUTH_ERROR` (bucket: `HW_UNAVAILABLE` / `TIMEOUT` / `SYSTEM_CANCELED` / `OTHER`), `LOCK_UNAVAILABLE_API`, `LOCK_UNAVAILABLE_NOT_SECURE`, `LOCK_INERT_NO_CREDENTIAL`, `LOCK_INERT_HW_UNAVAILABLE`, `LOCK_INERT_UNKNOWN`, `LOCK_INERT_API_UNSUPPORTED`, `LOCK_INERT_SETTINGS_UNREADABLE`, `LOCK_ENABLED`, `LOCK_DISABLED`, `LOCK_SETTING_PERSIST_FAILED` (field enum: `APP_LOCK_ENABLED` / `AUTO_LOCK_TIMEOUT` / `DISCREET` / `SECURE_SCREEN` / `LOCK_MODE` / `BIOMETRIC_IN_PIN_MODE` / `REVIEW_SAVE`; AMD-10), `LOCK_SETTINGS_UNREADABLE` (cause enum), `LOCK_UNAVAILABLE_CAPABILITY` (bucket: `HW_UNAVAILABLE` / `UNKNOWN`; AMD-3), `LOCK_SETTINGS_REVIEW_SAVED` (AMD-1), `LOCK_SETTINGS_RECOVERED` (cause: `IO_ERROR` / `TIMEOUT`; AMD-5) |
-| Notification | `NOTIF_POLICY_SETTINGS_UNREADABLE` (cause), `NOTIF_POLICY_FALLBACK_EXCEPTION` (class name), `NOTIF_ACTIONS_SUPPRESSED_LOCK`, `NOTIF_REPOSTED_DISCREET` (count) [OD-6], `NOTIF_REPOST_FAILED` (class name; AMD-7) |
+| Notification | `NOTIF_POLICY_SETTINGS_UNREADABLE` (cause), `NOTIF_POLICY_FALLBACK_EXCEPTION` (class name), `NOTIF_ACTIONS_SUPPRESSED_LOCK`, `NOTIF_REPOSTED_DISCREET` (count) [OD-6], `NOTIF_REPOST_FAILED` (class name; AMD-7), `NOTIF_REPOST_UNCONFIRMED` (count only, no content; G1b-0) |
 | PIN [2] | `PIN_SET`, `PIN_CHANGED`, `PIN_REMOVED`, `PIN_UNLOCKED`, `PIN_FAILED` (bucket 1–4 / 5–8 / 9+), `PIN_DELAY_ENFORCED` (tier index), `PIN_ATTEMPT_STATE_UNREADABLE`, `PIN_VERIFIER_UNREADABLE`, `PIN_BIOMETRIC_ENABLED`, `PIN_BIOMETRIC_DISABLED`, `PIN_BIOMETRIC_INVALIDATED` |
 
 Lock and inert codes are emitted once per process per cause, not per frame.
@@ -1849,7 +1849,9 @@ Defaults as above. In addition: API 33, capability `AVAILABLE`, `DEVICE_AUTH`, u
   `NOTIF_REPOSTED_DISCREET(count = 1)` is recorded.
 - Given `notify` throws `SecurityException` for one of two active notifications.
 - Then that one is skipped with `NOTIF_REPOST_FAILED(SecurityException)`, the other is re-posted, and nothing
-  retries.
+  loops. The G1b-0 post-sweep verification re-posts a skipped or unconfirmed item once (one settle of 750 ms, one
+  re-read, one paced re-post, no loop), then emits the COUNT-only `NOTIF_REPOST_UNCONFIRMED` for any still
+  unconfirmed.
 
 **AE-103 Forced values are read-only (INV-48, OD-2) — AMD-8**
 - Given the lock on and stored discreet = false.

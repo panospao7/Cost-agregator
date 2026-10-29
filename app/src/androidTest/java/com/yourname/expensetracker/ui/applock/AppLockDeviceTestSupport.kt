@@ -94,7 +94,6 @@ internal class AppLockDeviceHarness {
                 assumeTrue("locksettings changes are only allowed on an emulator", isEmulator())
                 shell("locksettings set-pin $PIN")
                 weSetPin = true
-                weSetPin = true
                 waitFor(5_000) { isDeviceSecure() }
             }
             return isDeviceSecure()

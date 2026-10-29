@@ -189,7 +189,7 @@ AppLockPrivacySettingsViewModel.onTimeoutSelected                         (S22-b
   └── AppLockSettingsOperations.requestTimeoutChange                    (WRITE 4; longer timeout with the lock on = CHANGE prompt from UNLOCKED only; INERT = NOT_IN_ORIGIN, TECH-13)
 AppLockPrivacySettingsViewModel.setSecureScreen                           (S22-b.1)
   └── AppLockSettingsOperations.requestSecureScreenChange               (WRITE 5; REJECTED_FORCED while the lock is on) → committed settings → SecureWindowController (the single FLAG_SECURE writer)
-Engines affected by a lock/timeout/secure-screen commit: policy lock term (BILL action suppression on API <= 30), FLAG_SECURE, held deep link release; a lock-on commit never triggers the discreet sweep (disable never re-posts, INV-13).
+Engines affected by a lock/timeout/secure-screen commit: policy lock term (BILL action suppression on API <= 30), FLAG_SECURE, held deep link release; a lock-off commit never triggers the discreet sweep (disable never re-posts, INV-13); only an enable that commits does.
 ```
 
 ### App lock prompt and lifecycle chain (S20-a; LIVE since S20-c wires MainActivity):
