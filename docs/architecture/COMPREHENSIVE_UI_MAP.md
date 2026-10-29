@@ -1120,7 +1120,8 @@ Handles configuration-driven feature display and integration with Home screen, F
     <!-- No BROWSABLE category (INV-20, app-lock 1a): web-browser links do not open the app -->
     <data android:scheme="expensetracker" android:host="home" />
     <data android:scheme="expensetracker" android:host="dashboard" />
-    <!-- ... more hosts (8 total: home, dashboard, activity, review, plan, add, analytics, map) ... -->
+    <!-- ... more hosts (10 total: home, dashboard, activity, review, plan, add, analytics, map, installments, installment_plan) ...
+         installments and installment_plan?id=<positive Long> (loan S13-a): in-app confirmation required before navigating; flag-gated (installments feature) -->
 </intent-filter>
 ```
 

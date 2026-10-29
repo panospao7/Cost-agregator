@@ -38,6 +38,7 @@ import io.mockk.mockk
 import io.mockk.mockkStatic
 import io.mockk.unmockkStatic
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -205,6 +206,8 @@ class BillReminderWorkerInstallmentTest {
     fun tearDown() {
         unmockkStatic(NotificationManagerCompat::class)
     }
+
+    private fun Throwable.causeChain(): List<Throwable> = generateSequence<Throwable>(this) { it.cause }.toList()
 
     private fun buildWorker(): BillReminderWorker =
         TestListenableWorkerBuilder<BillReminderWorker>(context)
@@ -421,6 +424,65 @@ class BillReminderWorkerInstallmentTest {
         coVerify(exactly = 0) { nm.notify(any(), any()) }
         assertTrue(workerLogsSince(before).any { it.msg.contains("INSTALLMENT_REMINDER_NOT_SENT reason=notification_error") })
         assertNoPlanDataInLogs(before)
+    }
+
+    // --- 3a. N2: a failing release never replaces the cancellation (it is suppressed onto it) ---
+
+    @Test
+    fun `claim cancellation with a throwing release rethrows the cancellation with the release failure suppressed`() = runTest {
+        coEvery { billReminderManager.claimInstallmentReminder(candidate) } throws CancellationException("cancelled")
+        val releaseFailure = IllegalStateException("release failed")
+        coEvery { billReminderManager.releaseInstallmentReminder(candidate) } throws releaseFailure
+
+        val thrown = assertFailsWith<CancellationException> { buildWorker().doWork() }
+
+        assertEquals("cancelled", thrown.message)
+        // kotlinx stack-trace recovery may copy the CE across withContext (copy keeps the message, original is its cause).
+        assertTrue(thrown.causeChain().any { c -> c.suppressed.any { s -> s.causeChain().any { it === releaseFailure } } })
+        coVerify(exactly = 1) { billReminderManager.releaseInstallmentReminder(candidate) }
+        coVerify(exactly = 0) { billReminderManager.markInstallmentReminderSent(any()) }
+    }
+
+    @Test
+    fun `post cancellation with a throwing release rethrows the cancellation with the release failure suppressed`() = runTest {
+        val nm = mockNotificationManagerCompat()
+        every { nm.notify(any(), any()) } throws CancellationException("cancelled")
+        val releaseFailure = IllegalStateException("release failed")
+        coEvery { billReminderManager.releaseInstallmentReminder(claimed) } throws releaseFailure
+
+        val thrown = assertFailsWith<CancellationException> { buildWorker().doWork() }
+
+        assertEquals("cancelled", thrown.message)
+        // kotlinx stack-trace recovery may copy the CE across withContext (copy keeps the message, original is its cause).
+        assertTrue(thrown.causeChain().any { c -> c.suppressed.any { s -> s.causeChain().any { it === releaseFailure } } })
+        coVerify(exactly = 1) { billReminderManager.releaseInstallmentReminder(claimed) }
+        coVerify(exactly = 0) { billReminderManager.markInstallmentReminderSent(any()) }
+    }
+
+    @Test
+    fun `failed post while the worker is cancelled still completes the installment release under NonCancellable`() = runTest {
+        val nm = mockNotificationManagerCompat()
+        val releaseCompleted = java.util.concurrent.atomic.AtomicBoolean(false)
+        lateinit var workerJob: kotlinx.coroutines.Job
+        // The post fails (-> Failed result) at the moment the worker coroutine is cancelled.
+        every { nm.notify(any(), any()) } answers {
+            workerJob.cancel()
+            throw RuntimeException("Demo Electronics plan-a")
+        }
+        // yield() throws if the release runs in a cancelled, non-NonCancellable context.
+        coEvery { billReminderManager.releaseInstallmentReminder(claimed) } coAnswers {
+            kotlinx.coroutines.yield()
+            releaseCompleted.set(true)
+        }
+        val worker = buildWorker()
+
+        workerJob = launch { worker.doWork() }
+        workerJob.join()
+
+        assertTrue(workerJob.isCancelled)
+        assertTrue(releaseCompleted.get())
+        coVerify(exactly = 1) { billReminderManager.releaseInstallmentReminder(claimed) }
+        coVerify(exactly = 0) { billReminderManager.markInstallmentReminderSent(any()) }
     }
 
     // --- 3b. Checkpoint blocked: the guard sees it (RETRY); nothing is claimed (ISSUE-1) ---

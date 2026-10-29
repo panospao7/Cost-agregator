@@ -2330,16 +2330,20 @@ POLICY (spec 5):
   • not hierarchical, any '#', non-ASCII before the query, userinfo, port, or a path other than
     empty or "/" → Rejected(MALFORMED)
   • host: exact-case closed set DeepLinkHost = home, dashboard, activity, review, plan, add,
-    analytics, map; bank hosts → Rejected(BANK_HOST); any other host → Rejected(UNKNOWN_HOST)
-    (installment hosts are not in DeepLinkHost until S13-a: `installments` and `installment_plan` are
-    Rejected(UNKNOWN_HOST) and land on Home; S13-a adds the DeepLinkHost, policy and applier branches)
+    analytics, map, installments, installment_plan (10 hosts; owner-approvals 91(a)); bank hosts →
+    Rejected(BANK_HOST); any other host → Rejected(UNKNOWN_HOST). Loan S13-a: `installments` and
+    `installment_plan` are accepted only when evaluate(..., installmentsEnabled = InstallmentsFeature.ENABLED)
+    is true; while false both are Rejected(UNKNOWN_HOST) exactly like any unknown host and land on Home.
   • one allowed parameter per host, everything else dropped and counted:
       home/dashboard: briefingKey = "dashboard_home:" + real yyyy-MM-dd (<= 32 chars)
       activity: expenseId = 1..Long.MAX_VALUE (1..19 ASCII digits)
       analytics: period from TimePeriodTokens (shared allowlist)
       map: location, trimmed, 1..100 chars, no control/format characters
       review/plan/add: none (no link creates or prefills data, INV-17)
-    duplicate or invalid values are dropped to the host default
+      installments: none
+      installment_plan: id = 1..Long.MAX_VALUE (1..19 ASCII digits); a missing, duplicate or invalid id
+        rejects the whole link (Rejected(MALFORMED), no new rejection value)
+    duplicate or invalid values are dropped to the host default (installment_plan excepted, above)
   • result carries DeepLinkRequest (host + validated fields; toString names the host only) — no raw
     URI, host string or parameter value exists after this point
 
@@ -2352,6 +2356,12 @@ APPLIER (ui/navigation/DeepLinkApplier, the only code that acts on a link):
   • activity with a valid expenseId → read-only ExpenseRepository.getExpenseById; not found,
     read failure or no id degrades to Transactions with a bounded code; CancellationException propagates
   • add → opens an empty add sheet (never prefilled)
+  • installments / installment_plan (loan S13-a, C1) → NEVER navigates directly: the applier calls
+    MainViewModel.requestDeepLinkConfirmation(destination); MainScreen (inside AppLockShell) shows a
+    confirm dialog (no plan name or amount: the link is untrusted); Confirm → confirmPendingDeepLink
+    (navigateTo, then clear), Cancel/dismiss → dismissPendingDeepLink (no navigation). A held link reaches
+    applyAccepted only through applyReleased, so the confirmation state is set only after unlock; the router
+    is unchanged. An internal tap (Transactions installment chip) navigates directly, no confirmation.
   • diagnostics: bounded DL_* codes (host / parameter enums, booleans, counts, exception class)
     launched on @ApplicationScope, never awaited; no raw URI, host string, briefingKey or parameter
     value in any log, diagnostic or AiRuntimeDiagnostics message (INV-18)
@@ -2359,8 +2369,9 @@ APPLIER (ui/navigation/DeepLinkApplier, the only code that acts on a link):
     (S21-b: the held-link gate is the router above, no longer "increment 1b")
 
 MANIFEST (INV-20, OD-3a):
-  • MainActivity VIEW filter: action VIEW + category DEFAULT + 8 <data> entries for the scheme
-    expensetracker (hosts above). NO BROWSABLE category: links from web browsers no longer open
+  • MainActivity VIEW filter: action VIEW + category DEFAULT + 10 <data> entries for the scheme
+    expensetracker (hosts above; installments and installment_plan added by loan S13-a, inert while the
+    policy flag is off). NO BROWSABLE category: links from web browsers no longer open
     the app. Other installed apps can still send VIEW; DeepLinkPolicy is the boundary.
   • Notification taps use an explicit MainActivity component + ACTION_VIEW + FLAG_IMMUTABLE
     (built only in AndroidNotificationService; BillReminderWorker builds no content intent)

@@ -7,9 +7,11 @@ package com.yourname.expensetracker.ui.navigation
  *  - the Features menu entry is withheld ([FeatureConfig.availableFeatures]);
  *  - the installment destinations are never rendered (MainActivity redirects Home);
  *  - the `installments` and `installment_plan` deep-link tokens are rejected
- *    (DeepLinkPolicy rejects these hosts (UNKNOWN_HOST) until loan S13-a) and no manifest host is registered.
+ *    (`DeepLinkPolicy.evaluate(installmentsEnabled = ENABLED)` returns UNKNOWN_HOST for them).
  *
- * The flag is flipped only by the enablement slice (S13), together with the manifest hosts.
+ * Loan S13-a: the manifest hosts, the policy branches and the post-unlock confirmation dialog now exist, and are
+ * gated only by the policy's `installmentsEnabled` parameter. The flag itself is flipped only by the enablement
+ * slice (S13-b).
  */
 object InstallmentsFeature {
     const val ENABLED: Boolean = false

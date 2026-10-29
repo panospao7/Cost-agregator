@@ -449,7 +449,7 @@ PrivacyGate.check(capability, context)
 - MoneyNormalizationEngine — verify all money conversion/bucket-policy consumers in `domain/core/money/`
 - SubscriptionManagerEngine — verify subscriptions, price history, usage, candidates, negotiation outcome writes
 - NotificationPresentationApplier / NotificationContentPolicy / AndroidNotificationService — verify all six notification kinds (FULL and DISCREET), BillReminderWorker, the re-post sweep, the kind marker and the PERMISSION_DENIED handling of every caller
-- DeepLinkPolicy / DeepLinkApplier — verify MainActivity intake, notification tap intents, the manifest filter and the DL_* diagnostics
+- DeepLinkPolicy / DeepLinkApplier — verify MainActivity intake, notification tap intents, the manifest filter and the DL_* diagnostics; loan S13-a adds the `installments` / `installment_plan` hosts (policy-flag gated, confirmation dialog via MainViewModel before any navigation, shown only after unlock) and BillReminderWorker N2 (installment-reminder release under NonCancellable, never replacing a CancellationException)
 
 ### VERY DANGEROUS to change (foundational):
 - MoneyAggregate model — verify every consumer of financial totals

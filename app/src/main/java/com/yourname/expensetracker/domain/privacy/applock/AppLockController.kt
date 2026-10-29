@@ -3,8 +3,8 @@ package com.yourname.expensetracker.domain.privacy.applock
 import com.yourname.expensetracker.di.AppLockMainDispatcher
 import com.yourname.expensetracker.di.ApplicationScope
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticThrowableSummary
-import com.yourname.expensetracker.domain.privacy.deeplink.DeepLinkHost
-import com.yourname.expensetracker.domain.privacy.deeplink.DeepLinkRequest
+import com.yourname.expensetracker.domain.navigation.deeplink.DeepLinkHost
+import com.yourname.expensetracker.domain.navigation.deeplink.DeepLinkRequest
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope

@@ -1,9 +1,9 @@
 package com.yourname.expensetracker.ui.navigation
 
 import android.content.Intent
-import com.yourname.expensetracker.domain.privacy.deeplink.DeepLinkHost
-import com.yourname.expensetracker.domain.privacy.deeplink.DeepLinkParameter
-import com.yourname.expensetracker.domain.privacy.deeplink.DeepLinkRequest
+import com.yourname.expensetracker.domain.navigation.deeplink.DeepLinkHost
+import com.yourname.expensetracker.domain.navigation.deeplink.DeepLinkParameter
+import com.yourname.expensetracker.domain.navigation.deeplink.DeepLinkRequest
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith

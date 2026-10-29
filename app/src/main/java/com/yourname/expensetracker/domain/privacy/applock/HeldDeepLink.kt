@@ -1,7 +1,7 @@
 package com.yourname.expensetracker.domain.privacy.applock
 
-import com.yourname.expensetracker.domain.privacy.deeplink.DeepLinkHost
-import com.yourname.expensetracker.domain.privacy.deeplink.DeepLinkRequest
+import com.yourname.expensetracker.domain.navigation.deeplink.DeepLinkHost
+import com.yourname.expensetracker.domain.navigation.deeplink.DeepLinkRequest
 
 /**
  * The bounded answer of the controller's link LOCK_QUERY for a link that just arrived (T20, T21, INV-31).

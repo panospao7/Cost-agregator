@@ -36,6 +36,10 @@
     <string name="action_got_it">Entendido</string>
     <string name="action_ok">Aceptar</string>
     <string name="action_confirm">Confirmar</string>
+    <!-- S13-a: DRAFT: owner native sign-off pending -->
+    <string name="deeplink_confirm_installments_title">¿Abrir cuotas?</string>
+    <!-- S13-a: DRAFT: owner native sign-off pending -->
+    <string name="deeplink_confirm_installments_body">Un enlace quiere abrir tus planes de cuotas. Continúa solo si lo esperabas.</string>
     <string name="action_dismiss">Descartar</string>
     <string name="action_search">Buscar</string>
     <string name="action_filter">Filtrar</string>

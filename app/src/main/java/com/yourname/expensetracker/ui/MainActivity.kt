@@ -523,6 +523,28 @@ fun MainScreen(
         }
     }
 
+    // Loan S13-a (C1): an installments deep link never navigates by itself. MainScreen is composed inside the
+    // app-lock shell and the request is posted only after the release, so this is never visible while locked.
+    // The body names no plan, amount or link content: the link is untrusted.
+    val pendingDeepLink by mainViewModel.pendingDeepLinkConfirmation.collectAsState()
+    if (pendingDeepLink != null) {
+        AlertDialog(
+            onDismissRequest = { mainViewModel.dismissPendingDeepLink() },
+            title = { Text(stringResource(R.string.deeplink_confirm_installments_title)) },
+            text = { Text(stringResource(R.string.deeplink_confirm_installments_body)) },
+            confirmButton = {
+                TextButton(onClick = { mainViewModel.confirmPendingDeepLink() }) {
+                    Text(stringResource(R.string.action_confirm))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { mainViewModel.dismissPendingDeepLink() }) {
+                    Text(stringResource(R.string.action_cancel))
+                }
+            }
+        )
+    }
+
     NotificationPermissionDialog(
         showDialog = showNotificationPermissionDialog,
         onDismiss = { showNotificationPermissionDialog = false },
@@ -626,6 +648,8 @@ fun MainScreen(
                         onOpenVisualSplit = { expense ->
                             navigation.navigateTo(NavigationDestination.VisualSplitEditor.forExpense(expense))
                         },
+                        // Internal tap: no deep-link confirmation.
+                        onOpenInstallmentPlan = { navigation.navigateTo(NavigationDestination.InstallmentPlanDetail(it)) },
                         highlightedExpenseId = (currentDestination as? NavigationDestination.Transactions)?.initialExpenseId,
                         initialFilter = activeTransactionFilter
                     )

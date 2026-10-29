@@ -17,6 +17,9 @@
     <string name="action_got_it">Got it</string>
     <string name="action_ok">OK</string>
     <string name="action_confirm">Confirm</string>
+    <!-- Loan S13-a: confirmation shown after unlock before an installments deep link navigates. No plan name or amount: the link is untrusted. -->
+    <string name="deeplink_confirm_installments_title">Open installments?</string>
+    <string name="deeplink_confirm_installments_body">A link wants to open your installment plans. Only continue if you expected this.</string>
     <string name="action_dismiss">Dismiss</string>
     <string name="action_copy">Copy</string>
     <string name="action_share">Share</string>

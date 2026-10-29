@@ -56,6 +56,32 @@ class MainViewModel @Inject constructor(
         restoreMaintenanceMode.operationalStateFlow
             .stateIn(viewModelScope, SharingStarted.Eagerly, restoreMaintenanceMode.operationalStateFlow.value)
 
+    private val _pendingDeepLinkConfirmation = kotlinx.coroutines.flow.MutableStateFlow<NavigationDestination?>(null)
+
+    /**
+     * Loan S13-a (C1): a deep-link destination waiting for the user's confirmation. Set only by the deep-link
+     * applier after the app is unlocked (a held link is applied only on release); shown as a dialog inside the
+     * app-lock shell. Holds the destination only, never the URI.
+     */
+    val pendingDeepLinkConfirmation: StateFlow<NavigationDestination?> = _pendingDeepLinkConfirmation
+
+    /** Posts [destination] for confirmation; a newer request replaces an older pending one. No navigation. */
+    fun requestDeepLinkConfirmation(destination: NavigationDestination) {
+        _pendingDeepLinkConfirmation.value = destination
+    }
+
+    /** The user confirmed: navigates to the pending destination (if any), then clears it. */
+    fun confirmPendingDeepLink() {
+        val destination = _pendingDeepLinkConfirmation.value ?: return
+        _pendingDeepLinkConfirmation.value = null
+        navigateTo(destination)
+    }
+
+    /** The user cancelled or dismissed: clears the pending destination without navigating. */
+    fun dismissPendingDeepLink() {
+        _pendingDeepLinkConfirmation.value = null
+    }
+
     /**
      * Navigate to a specific tab by index (0-5).
      */

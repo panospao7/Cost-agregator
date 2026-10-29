@@ -250,7 +250,14 @@ class BillReminderWorker @AssistedInject constructor(
             val claimed = try {
                 billReminderManager.claimInstallmentReminder(candidate)
             } catch (e: CancellationException) {
-                withContext(NonCancellable) { billReminderManager.releaseInstallmentReminder(candidate) }
+                // A failing release must not replace the cancellation (same pattern as the post path below).
+                try {
+                    withContext(NonCancellable) { billReminderManager.releaseInstallmentReminder(candidate) }
+                } catch (r: CancellationException) {
+                    e.addSuppressed(r)
+                } catch (r: Exception) {
+                    e.addSuppressed(r)
+                }
                 throw e
             }
             if (claimed == null) {
@@ -288,7 +295,9 @@ class BillReminderWorker @AssistedInject constructor(
                     }
                 }
                 is NotificationSendResult.Failed -> {
-                    billReminderManager.releaseInstallmentReminder(claimed)
+                    // The claim is given back even if the worker is being cancelled right now. There is no
+                    // original failure here to suppress onto, so a throwing release propagates as before.
+                    withContext(NonCancellable) { billReminderManager.releaseInstallmentReminder(claimed) }
                     Log.w(TAG, "INSTALLMENT_REMINDER_NOT_SENT reason=${result.reason}")
                     ctx.addRowsSkipped()
                 }

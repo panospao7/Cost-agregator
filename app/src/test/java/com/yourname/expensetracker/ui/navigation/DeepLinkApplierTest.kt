@@ -11,8 +11,8 @@ import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticCode
 import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticKey
 import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticMetadata
 import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticsEmitter
-import com.yourname.expensetracker.domain.privacy.deeplink.DeepLinkHost
-import com.yourname.expensetracker.domain.privacy.deeplink.DeepLinkParameter
+import com.yourname.expensetracker.domain.navigation.deeplink.DeepLinkHost
+import com.yourname.expensetracker.domain.navigation.deeplink.DeepLinkParameter
 import com.yourname.expensetracker.ui.MainViewModel
 import com.yourname.expensetracker.ui.screens.transactions.TransactionFilter
 import io.mockk.coEvery
@@ -354,6 +354,48 @@ class DeepLinkApplierTest {
 
         verifyNoNavigation()
         assertTrue(emitted.isEmpty())
+    }
+
+    // ---------------------------------------------------------------- S13-a confirmation (C1)
+
+    private suspend fun DeepLinkApplier.openInstallments(uri: String) =
+        apply(DeepLinkPolicy.evaluate(Intent.ACTION_VIEW, uri, installmentsEnabled = true), mainViewModel)
+
+    @Test
+    fun `S13-a C1 an accepted installments link requests confirmation and never navigates`() = runTest {
+        applier().openInstallments("expensetracker://installments")
+
+        verify(exactly = 1) { mainViewModel.requestDeepLinkConfirmation(NavigationDestination.Installments) }
+        verifyNoNavigation()
+        assertEquals(listOf(PrivacyDiagnosticCode.DL_APPLIED), codes())
+    }
+
+    @Test
+    fun `S13-a C1 an accepted installment plan link requests confirmation for that plan and never navigates`() = runTest {
+        applier().openInstallments("expensetracker://installment_plan?id=42")
+
+        verify(exactly = 1) {
+            mainViewModel.requestDeepLinkConfirmation(NavigationDestination.InstallmentPlanDetail(42L))
+        }
+        verifyNoNavigation()
+    }
+
+    @Test
+    fun `S13-a C1 a non-installment link still navigates directly and never requests confirmation`() = runTest {
+        applier().openInstallments("expensetracker://home")
+        applier().openInstallments("expensetracker://review")
+
+        verify(exactly = 1) { mainViewModel.navigateTo(NavigationDestination.Home) }
+        verify(exactly = 1) { mainViewModel.navigateTo(NavigationDestination.Review) }
+        verify(exactly = 0) { mainViewModel.requestDeepLinkConfirmation(any()) }
+    }
+
+    @Test
+    fun `S13-a C1 a rejected installment plan link requests no confirmation`() = runTest {
+        applier().openInstallments("expensetracker://installment_plan?id=abc")
+
+        verify(exactly = 0) { mainViewModel.requestDeepLinkConfirmation(any()) }
+        assertEquals(listOf(PrivacyDiagnosticCode.DL_REJECTED_MALFORMED), codes())
     }
 
     // ---------------------------------------------------------------- TECH-8

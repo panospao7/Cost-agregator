@@ -2,10 +2,10 @@ package com.yourname.expensetracker.ui.navigation
 
 import android.content.Intent
 import com.yourname.expensetracker.domain.bank.BankFeatureAvailability
-import com.yourname.expensetracker.domain.privacy.deeplink.DeepLinkHost
-import com.yourname.expensetracker.domain.privacy.deeplink.DeepLinkLimits
-import com.yourname.expensetracker.domain.privacy.deeplink.DeepLinkParameter
-import com.yourname.expensetracker.domain.privacy.deeplink.DeepLinkRequest
+import com.yourname.expensetracker.domain.navigation.deeplink.DeepLinkHost
+import com.yourname.expensetracker.domain.navigation.deeplink.DeepLinkLimits
+import com.yourname.expensetracker.domain.navigation.deeplink.DeepLinkParameter
+import com.yourname.expensetracker.domain.navigation.deeplink.DeepLinkRequest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -79,8 +79,24 @@ class DeepLinkPolicyTest {
     @Test
     fun `INV-15 host set is closed and each host maps to its destination`() {
         assertEquals(
-            setOf("home", "dashboard", "activity", "review", "plan", "add", "analytics", "map"),
+            setOf(
+                "home", "dashboard", "activity", "review", "plan", "add", "analytics", "map",
+                "installments", "installment_plan"
+            ),
             DeepLinkHost.entries.map { it.token }.toSet()
+        )
+        val installments = DeepLinkPolicy.evaluate(
+            Intent.ACTION_VIEW, "expensetracker://installments", installmentsEnabled = true
+        ) as DeepLinkPolicyResult.Accepted
+        assertEquals(DeepLinkHost.INSTALLMENTS, installments.request.host)
+        assertEquals(NavigationDestination.Installments, installments.request.toNavigationDestination())
+        val planDetail = DeepLinkPolicy.evaluate(
+            Intent.ACTION_VIEW, "expensetracker://installment_plan?id=42", installmentsEnabled = true
+        ) as DeepLinkPolicyResult.Accepted
+        assertEquals(DeepLinkHost.INSTALLMENT_PLAN, planDetail.request.host)
+        assertEquals(
+            NavigationDestination.InstallmentPlanDetail(42L),
+            planDetail.request.toNavigationDestination()
         )
         val expected = mapOf(
             "home" to NavigationDestination.Home,
@@ -98,6 +114,92 @@ class DeepLinkPolicyTest {
             assertEquals(host, destination, result.request.toNavigationDestination())
             assertEquals(host, DeepLinkDrops.NONE, result.drops)
         }
+    }
+
+    // ---------------------------------------------------------------- loan S13-a installments hosts
+
+    private fun evalFlag(uri: String, enabled: Boolean): DeepLinkPolicyResult =
+        DeepLinkPolicy.evaluate(Intent.ACTION_VIEW, uri, installmentsEnabled = enabled)
+
+    @Test
+    fun `S13-a requiresConfirmation is true exactly for INSTALLMENTS and INSTALLMENT_PLAN`() {
+        assertEquals(
+            setOf(DeepLinkHost.INSTALLMENTS, DeepLinkHost.INSTALLMENT_PLAN),
+            DeepLinkHost.entries.filter { it.requiresConfirmation }.toSet()
+        )
+    }
+
+    @Test
+    fun `S13-a flag on accepts installments and a valid installment_plan id`() {
+        assertEquals(
+            DeepLinkPolicyResult.Accepted(DeepLinkRequest(host = DeepLinkHost.INSTALLMENTS), DeepLinkDrops.NONE),
+            evalFlag("expensetracker://installments", true)
+        )
+        assertEquals(
+            DeepLinkPolicyResult.Accepted(
+                DeepLinkRequest(host = DeepLinkHost.INSTALLMENT_PLAN, planId = 42L),
+                DeepLinkDrops.NONE
+            ),
+            evalFlag("expensetracker://installment_plan?id=42", true)
+        )
+    }
+
+    @Test
+    fun `S13-a flag on rejects an installment_plan without a valid id as MALFORMED`() {
+        listOf(
+            "expensetracker://installment_plan",
+            "expensetracker://installment_plan?id=",
+            "expensetracker://installment_plan?id=abc",
+            "expensetracker://installment_plan?id=1.5",
+            "expensetracker://installment_plan?id=0",
+            "expensetracker://installment_plan?id=-7",
+            "expensetracker://installment_plan?plan=42",
+            "expensetracker://installment_plan?id=99999999999999999999"
+        ).forEach { uri ->
+            assertEquals(uri, DeepLinkPolicyResult.Rejected(DeepLinkRejection.MALFORMED), evalFlag(uri, true))
+        }
+    }
+
+    @Test
+    fun `S13-a flag on leaves other hosts and schemes unchanged`() {
+        val home = evalFlag("expensetracker://home", true) as DeepLinkPolicyResult.Accepted
+        assertEquals(DeepLinkHost.HOME, home.request.host)
+        assertEquals(
+            DeepLinkPolicyResult.Rejected(DeepLinkRejection.UNKNOWN_HOST),
+            evalFlag("expensetracker://unknown", true)
+        )
+        assertEquals(
+            DeepLinkPolicyResult.NotADeepLink,
+            evalFlag("https://expensetracker.app/installments", true)
+        )
+    }
+
+    @Test
+    fun `S13-a flag off rejects both installments hosts as UNKNOWN_HOST`() {
+        listOf(
+            "expensetracker://installments",
+            "expensetracker://installment_plan?id=42",
+            "expensetracker://installment_plan"
+        ).forEach { uri ->
+            assertEquals(uri, DeepLinkPolicyResult.Rejected(DeepLinkRejection.UNKNOWN_HOST), evalFlag(uri, false))
+        }
+    }
+
+    @Test
+    fun `S13-a the id parameter never yields a planId on other hosts`() {
+        listOf(true, false).forEach { enabled ->
+            val result = evalFlag("expensetracker://activity?id=5", enabled) as DeepLinkPolicyResult.Accepted
+            assertNull(result.request.planId)
+            assertNull(result.request.expenseId)
+            assertEquals(DeepLinkDrops(unknownCount = 1), result.drops)
+        }
+    }
+
+    @Test
+    fun `S13-a INV-18 request string form never includes the plan id`() {
+        val text = DeepLinkRequest(host = DeepLinkHost.INSTALLMENT_PLAN, planId = 424242L).toString()
+        assertTrue(text, text.contains("INSTALLMENT_PLAN"))
+        assertFalse("plan id leaked in $text", text.contains("424242"))
     }
 
     @Test
@@ -478,6 +580,6 @@ class DeepLinkPolicyTest {
             .filterNot { it.isSynthetic || java.lang.reflect.Modifier.isStatic(it.modifiers) }
             .map { it.name }
             .toSet()
-        assertEquals(setOf("host", "briefingKey", "expenseId", "period", "location"), fields)
+        assertEquals(setOf("host", "briefingKey", "expenseId", "period", "location", "planId"), fields)
     }
 }

@@ -10,8 +10,8 @@ import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticCode
 import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticKey
 import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticMetadata
 import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticsEmitter
-import com.yourname.expensetracker.domain.privacy.deeplink.DeepLinkHost
-import com.yourname.expensetracker.domain.privacy.deeplink.DeepLinkRequest
+import com.yourname.expensetracker.domain.navigation.deeplink.DeepLinkHost
+import com.yourname.expensetracker.domain.navigation.deeplink.DeepLinkRequest
 import com.yourname.expensetracker.ui.MainViewModel
 import com.yourname.expensetracker.ui.screens.transactions.TransactionFilter
 import kotlinx.coroutines.CancellationException
@@ -133,7 +133,10 @@ class DeepLinkApplier @Inject constructor(
         val request = result.request
         if (reportDrops) reportDroppedParameters(request.host, result.drops)
 
-        when (request.host) {
+        // Loan S13-a (C1): `requiresConfirmation` is the single source of truth for confirm-vs-navigate.
+        if (request.host.requiresConfirmation) {
+            mainViewModel.requestDeepLinkConfirmation(request.toNavigationDestination())
+        } else when (request.host) {
             DeepLinkHost.HOME, DeepLinkHost.DASHBOARD -> {
                 mainViewModel.navigateTo(request.toNavigationDestination())
                 request.briefingKey?.let { markBriefingOpened(it) }
@@ -149,8 +152,15 @@ class DeepLinkApplier @Inject constructor(
             DeepLinkHost.PLAN,
             DeepLinkHost.ANALYTICS,
             DeepLinkHost.MAP -> mainViewModel.navigateTo(request.toNavigationDestination())
+            // Unreachable by design (handled by the requiresConfirmation branch above); kept exhaustive and
+            // behaviour-identical. The destination waits for the user's confirmation, which MainScreen shows
+            // inside the app-lock shell; a held link reaches this point only after the release.
+            DeepLinkHost.INSTALLMENTS,
+            DeepLinkHost.INSTALLMENT_PLAN ->
+                mainViewModel.requestDeepLinkConfirmation(request.toNavigationDestination())
         }
 
+        // DL_APPLIED for confirm hosts records acceptance of the request, not the user's confirmation (guardian S13-a F2, accepted).
         report(PrivacyDiagnosticCode.DL_APPLIED, PrivacyDiagnosticMetadata.builder().apply {
             put(PrivacyDiagnosticKey.HOST, request.host)
             put(PrivacyDiagnosticKey.AFTER_UNLOCK, afterUnlock)
