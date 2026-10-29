@@ -2990,3 +2990,10 @@ Validation to request: unchanged, targeted `*AppLockController*` (covers both te
 - Docs updated: LEGAL_PATHS.md (re-post sweep: G1b carry-forward converted to the implemented path plus residuals), ENGINE_INTERACTION_MAP.md (settings row and write-chain tree).
 - Owed: tests for verifySweepOnce / token stamping; targeted validation; then G1b device checks on the 6 AVDs.
 - G1b-0 VALIDATED and COMMITTED (2026-10-29). All PASS: targeted vr-20261028-223516-38c96fa4, data, domain-n-z, cancellation, known_good_state, guard_docs_truth, lint vr-20261028-230348-2fbb0e8d, static-guards vr-20261028-232054-1cf634f0. Combined guardian ACCEPT-WITH-CONDITIONS (tests and docs done; the 750 ms settle latency is documented). Next: the new androidTest classes (AppLockLifecycleDeviceTest, AppLockPromptHostDeviceTest), then the device runs api35, api26, api30, api31, api33, api34.
+- G1b API 35 (wave5-api35, emulator-5554), B-tests all PASS:
+  - AppLockLifecycleDeviceTest vr-20261029-012131-fe1dc5ed (9/9);
+  - AppLockPromptHostDeviceTest vr-20261029-010827-77d48421 (5/5, including AE-118 double recreation then PIN unlock end-to-end);
+  - NotificationPresentationDeviceTest vr-20261029-012803-b9df63d7 (including the G1b-0 verify rows).
+  - Test-harness findings fixed: the IME eats the first Back on the API 35 credential prompt; Compose a11y lookups use the merged semantics tree; the first post-boot run hit an ANR during collection (environment).
+  - FINDING (minor, owner FYI): CF-4. The spec says a user cancel is silent, but in some paths production shows TRY_AGAIN (AppLockShell.kt:92-93). It is documented as a simplification and not changed.
+  - Next: API 35 C-steps (adb evidence), then api26, api30, api31, api33, api34.
