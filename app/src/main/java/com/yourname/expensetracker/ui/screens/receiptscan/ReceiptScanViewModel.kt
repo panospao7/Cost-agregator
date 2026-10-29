@@ -3,6 +3,7 @@ package com.yourname.expensetracker.ui.screens.receiptscan
 import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.data.repository.CategoryRepository
@@ -50,11 +51,13 @@ import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.ui.components.currency.CurrencyAmountInvalidKind
 import com.yourname.expensetracker.ui.components.currency.CurrencyBlockOrigin
 import com.yourname.expensetracker.ui.components.currency.CurrencyBlockVariant
+import com.yourname.expensetracker.ui.components.currency.CurrencyOpenSettingRequest
 import com.yourname.expensetracker.ui.components.currency.CurrencyRatesSetting
 import com.yourname.expensetracker.ui.components.currency.CurrencyRefreshStatus
 import com.yourname.expensetracker.ui.components.currency.CurrencyRegionUi
 import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
 import com.yourname.expensetracker.domain.model.Result
+import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.parser.ParsedTransaction
 import com.yourname.expensetracker.domain.parser.ParsedTransactionType
 import com.yourname.expensetracker.domain.receipt.ReceiptParser
@@ -168,6 +171,10 @@ data class ReceiptScanState(
     // currencyRegion == Unset means "no currency chosen yet" (Save disabled).
     /** MEC INV-10: options from [CurrencySelectionPolicy] (STANDARD): home first, the others by code. */
     val currencyOptions: List<String> = emptyList(),
+    /** MEC: the resolved home currency code; null while home is unresolved. Never inferred from option order. */
+    val homeCurrency: String? = null,
+    /** MEC: why the amount is invalid (supporting text); non-null only while the region is AmountInvalid. */
+    val amountError: UiText? = null,
     /** MEC INV-15/INV-6: the preview or blocked-card state under the amount. */
     val currencyRegion: CurrencyRegionUi = CurrencyRegionUi.Loading,
     /** MEC R23: the exchange-rate download setting; UNKNOWN is treated as OFF. The VM never enables it. */
@@ -175,7 +182,9 @@ data class ReceiptScanState(
     /** MEC INV-20: progress and bounded outcome of a user-started refresh. */
     val rateRefresh: CurrencyRefreshStatus = CurrencyRefreshStatus.IDLE,
     /** The device-local calendar date of "today" (injected clock, review zone) for rate-date wording. */
-    val ratesToday: LocalDate? = null
+    val ratesToday: LocalDate? = null,
+    /** MEC D-11/D-C-3: the "Open exchange-rate setting" request; the screen shows the confirm and hands over to the host. */
+    val openSettingRequest: CurrencyOpenSettingRequest = CurrencyOpenSettingRequest.NONE
 ) {
     /**
      * MEC ux section 4: Save is disabled for a blocked rate (except a retryable home-unresolved refusal),
@@ -310,6 +319,12 @@ class ReceiptScanViewModel @Inject constructor(
     // cancelActiveWork. Save falls back to the device zone when it is null.
     private var reviewZone: ZoneId? = null
 
+    // MEC review F2: an OCR currency proposal held while the home currency is unresolved. Only a parsed
+    // CurrencyCode (or null = none proposed) is ever held, never the raw token; never in state or logs.
+    // Cleared at scan start, reset, retry and cancelActiveWork; consumed by applyPendingProposal().
+    private var pendingProposal: CurrencyCode? = null
+    private var proposalAwaitingHome: Boolean = false
+
     // MEC INV-3: latest-wins evaluation, and the single user-started refresh.
     private var evaluationJob: Job? = null
     private var refreshJob: Job? = null
@@ -319,14 +334,25 @@ class ReceiptScanViewModel @Inject constructor(
         viewModelScope.launch {
             currencySettingsRepository.homeCurrency().collect { homeCurrency ->
                 homeCurrencyCode = homeCurrency
+                // Review F2: a proposal held while home was unresolved is resolved below, not defaulted to home.
+                val holdForProposal = proposalAwaitingHome &&
+                    homeCurrency?.let { CurrencyCode.parse(it) } != null
+                if (proposalAwaitingHome && !holdForProposal) {
+                    proposalAwaitingHome = false
+                    pendingProposal = null
+                }
                 _state.update { current ->
                     current.copy(
                         // An Unset region keeps editCurrency null on purpose (no silent swap to home).
                         editCurrency = current.editCurrency
-                            ?: homeCurrency.takeUnless { current.currencyRegion is CurrencyRegionUi.Unset },
-                        currencyOptions = optionsFor(homeCurrency)
+                            ?: homeCurrency.takeUnless {
+                                holdForProposal || current.currencyRegion is CurrencyRegionUi.Unset
+                            },
+                        currencyOptions = optionsFor(homeCurrency),
+                        homeCurrency = homeCurrency
                     )
                 }
+                applyPendingProposal()
                 reevaluateRegion(invalidate = true)
             }
         }
@@ -397,6 +423,8 @@ class ReceiptScanViewModel @Inject constructor(
         // MEC constraint 1/7: a new scan returns to home and drops the previous review zone, so no
         // currency selection or zone carries over across receipts.
         reviewZone = null
+        pendingProposal = null
+        proposalAwaitingHome = false
 
         _state.update {
             it.copy(
@@ -405,7 +433,8 @@ class ReceiptScanViewModel @Inject constructor(
                 errorMessage = null,
                 hasPartialOcr = false,
                 hasUnverifiedOcrCoverage = false,
-                editCurrency = homeCurrencyCode ?: it.editCurrency,
+                // Review F2: no carry-over across scans; null while home is unresolved (like the amount reset).
+                editCurrency = homeCurrencyCode,
                 currencyUnverified = false,
                 saveResult = it.saveResult.takeUnless { r -> r is SaveReceiptResult.RateNotEligible },
                 reopenedExistingReceipt = false,
@@ -563,7 +592,7 @@ class ReceiptScanViewModel @Inject constructor(
                         parsedTransactions = listOfNotNull(
                             // MEC privacy: with an unselectable raw OCR currency token no debug transaction is built,
                             // so the token is not kept in debug data (ParsedTransaction requires a valid ISO code).
-                            parsed.total?.amount?.takeIf { proposal.unsetRegion == null }?.let { total ->
+                            parsed.total?.amount?.takeIf { proposal.unsetRegion == null && !proposal.awaitingHome }?.let { total ->
                                 ParsedTransaction(
                                     amount = total,
                                     currency = parsed.currency,
@@ -602,9 +631,11 @@ class ReceiptScanViewModel @Inject constructor(
                             // S7-009 / MEC INV-11: a selectable OCR currency is used; a blank one means home is
                             // only assumed (R24c); an unsupported one leaves the currency unset.
                             editCurrency = proposal.editCurrency
-                                ?: if (proposal.unsetRegion == null) it.editCurrency else null,
+                                ?: if (proposal.unsetRegion == null && !proposal.awaitingHome) it.editCurrency else null,
                             currencyUnverified = proposal.currencyUnverified,
-                            currencyRegion = proposal.unsetRegion ?: it.currencyRegion,
+                            currencyRegion = proposal.unsetRegion
+                                ?: if (proposal.awaitingHome) CurrencyRegionUi.Loading else it.currencyRegion,
+                            amountError = if (proposal.unsetRegion != null) null else it.amountError,
                             editDate = parsed.date ?: timeProvider.now(),
                             ocrConfidence = parsed.confidence,
                             selectedCategoryId = null,
@@ -757,6 +788,38 @@ class ReceiptScanViewModel @Inject constructor(
         }
     }
 
+    /**
+     * MEC D-11/D-C-3: the user tapped "Open exchange-rate setting". If an amount was entered the host must
+     * confirm first ([CurrencyOpenSettingRequest.CONFIRM_NEEDED]); otherwise navigate now. The VM never
+     * enables the setting.
+     */
+    fun requestOpenExchangeRateSetting() {
+        _state.update {
+            it.copy(
+                openSettingRequest = if (it.editAmount.isNotBlank()) {
+                    CurrencyOpenSettingRequest.CONFIRM_NEEDED
+                } else {
+                    CurrencyOpenSettingRequest.NAVIGATE
+                }
+            )
+        }
+    }
+
+    /**
+     * The user confirmed leaving the review to open the setting. The confirmation copy promises the entry
+     * is discarded, so reset first, then raise NAVIGATE exactly like the blank-amount path.
+     */
+    fun confirmOpenExchangeRateSetting() {
+        if (_state.value.openSettingRequest != CurrencyOpenSettingRequest.CONFIRM_NEEDED) return
+        reset()
+        _state.update { it.copy(openSettingRequest = CurrencyOpenSettingRequest.NAVIGATE) }
+    }
+
+    /** The user declined the confirmation or the host finished navigating: clears the request. */
+    fun consumeOpenSettingRequest() {
+        _state.update { it.copy(openSettingRequest = CurrencyOpenSettingRequest.NONE) }
+    }
+
     /** MEC R-4: true for a Blocked region whose variant carries no amount-dependent data. */
     private fun CurrencyRegionUi.isAmountIndependentBlock(): Boolean =
         this is CurrencyRegionUi.Blocked && when (variant) {
@@ -779,25 +842,38 @@ class ReceiptScanViewModel @Inject constructor(
         val editCurrency: String?,
         val currencyUnverified: Boolean,
         /** Non-null when the proposal is not selectable: no currency, Save blocked, no OCR token kept. */
-        val unsetRegion: CurrencyRegionUi.Unset?
+        val unsetRegion: CurrencyRegionUi.Unset?,
+        /** True while the home currency is unresolved: no currency yet, region Loading, proposal held privately. */
+        val awaitingHome: Boolean = false
     )
 
     /**
      * MEC INV-11: resolves the OCR currency [token] through [CurrencySelectionPolicy.resolveProposal].
      * Selected -> that currency; NONE_PROPOSED (blank) -> home, flagged unverified (R24c);
-     * PROPOSAL_NOT_SELECTABLE -> unset, and the token is not kept. Without a parsable home currency the
-     * pre-MEC behaviour applies (the token if present, else the current value).
+     * PROPOSAL_NOT_SELECTABLE -> unset, and the token is not kept. While the home currency is unresolved
+     * (review F2) the proposal stays pending: only a parsed [CurrencyCode] (or none) is held in a private
+     * field, the raw token never, and [applyPendingProposal] resolves it when home loads.
      */
     private fun resolveReviewProposal(token: String): ProposalOutcome {
         val home = homeCurrencyCode
         val homeCode = home?.let { CurrencyCode.parse(it) }
-        if (homeCode == null) {
-            return ProposalOutcome(token.takeIf { it.isNotBlank() }, token.isBlank(), null)
-        }
         val proposed = if (token.isBlank()) null else CurrencyCode.parse(token)
         if (token.isNotBlank() && proposed == null) {
+            pendingProposal = null
+            proposalAwaitingHome = false
             return ProposalOutcome(null, false, CurrencyRegionUi.Unset(CurrencyUnsetReason.PROPOSAL_NOT_SELECTABLE))
         }
+        if (home == null || homeCode == null) {
+            pendingProposal = proposed
+            proposalAwaitingHome = true
+            return ProposalOutcome(null, false, null, awaitingHome = true)
+        }
+        pendingProposal = null
+        proposalAwaitingHome = false
+        return resolveProposalWithHome(proposed, home, homeCode)
+    }
+
+    private fun resolveProposalWithHome(proposed: CurrencyCode?, home: String, homeCode: CurrencyCode): ProposalOutcome {
         val resolution = CurrencySelectionPolicy.resolveProposal(proposed, homeCode, CurrencyEntryMode.STANDARD)
         return if (resolution is CurrencySelection.Selected) {
             ProposalOutcome(resolution.code.code, false, null)
@@ -805,6 +881,33 @@ class ReceiptScanViewModel @Inject constructor(
             ProposalOutcome(home, true, null)
         } else {
             ProposalOutcome(null, false, CurrencyRegionUi.Unset(CurrencyUnsetReason.PROPOSAL_NOT_SELECTABLE))
+        }
+    }
+
+    /**
+     * Review F2: called by the home collector once [homeCurrencyCode] is set. Resolves a proposal held
+     * while home was unresolved (Selected / Unset / NONE_PROPOSED -> home). An explicit user pick made in the
+     * meantime wins. No-op when nothing is pending.
+     */
+    private fun applyPendingProposal() {
+        if (!proposalAwaitingHome) return
+        val home = homeCurrencyCode ?: return
+        val homeCode = CurrencyCode.parse(home) ?: return
+        val proposed = pendingProposal
+        proposalAwaitingHome = false
+        pendingProposal = null
+        val outcome = resolveProposalWithHome(proposed, home, homeCode)
+        _state.update {
+            if (it.step != ScanStep.REVIEW || it.editCurrency != null) {
+                it
+            } else {
+                it.copy(
+                    editCurrency = outcome.editCurrency,
+                    currencyUnverified = outcome.currencyUnverified,
+                    currencyRegion = outcome.unsetRegion ?: it.currencyRegion,
+                    amountError = if (outcome.unsetRegion != null) null else it.amountError
+                )
+            }
         }
     }
 
@@ -1324,6 +1427,7 @@ class ReceiptScanViewModel @Inject constructor(
         editCurrency = homeCurrencyCode,
         receiptQuickSaveEnabled = previous.receiptQuickSaveEnabled,
         currencyOptions = optionsFor(homeCurrencyCode),
+        homeCurrency = homeCurrencyCode,
         currencyRegion = if (homeCurrencyCode == null) CurrencyRegionUi.Loading else CurrencyRegionUi.Home,
         ratesSetting = previous.ratesSetting,
         ratesToday = todayFor(ZoneId.systemDefault())
@@ -1343,6 +1447,8 @@ class ReceiptScanViewModel @Inject constructor(
         refreshJob?.cancel()
         refreshJob = null
         reviewZone = null
+        pendingProposal = null
+        proposalAwaitingHome = false
     }
 
     override fun onCleared() {
@@ -1364,6 +1470,31 @@ class ReceiptScanViewModel @Inject constructor(
             AmountCheck.DigitsUnavailable -> CurrencyAmountInvalidKind.NOT_POSITIVE
             is AmountCheck.PrecisionExceeded -> CurrencyAmountInvalidKind.PRECISION_EXCEEDED
             is AmountCheck.AboveCap -> CurrencyAmountInvalidKind.ABOVE_CAP
+        }
+    }
+
+    /**
+     * The supporting text for an invalid amount, from the same [CurrencyAmountPolicy.check] result as
+     * [amountInvalidKind] (same keys and cap formatting as the add-expense sheet). A null or unparseable
+     * amount, and unavailable digits (OD-6), use the generic invalid-amount string.
+     */
+    private fun amountErrorText(amount: Double?, currency: CurrencyCode): UiText {
+        val generic = UiText.StringResource(R.string.add_expense_error_amount_invalid)
+        if (amount == null) return generic
+        return when (val check = CurrencyAmountPolicy.check(amount, currency)) {
+            is AmountCheck.PrecisionExceeded ->
+                if (check.allowedDigits == 0) {
+                    UiText.StringResource(R.string.mec_amount_no_decimals, listOf(currency.code))
+                } else {
+                    UiText.StringResource(R.string.mec_amount_max_decimals, listOf(currency.code, check.allowedDigits))
+                }
+            is AmountCheck.AboveCap ->
+                UiText.StringResource(
+                    R.string.mec_amount_too_large,
+                    listOf(java.text.NumberFormat.getIntegerInstance().format(check.cap.toLong()))
+                )
+            // Exhaustive over the sealed AmountCheck (no else): a new variant must be mapped here.
+            AmountCheck.Ok, AmountCheck.NotPositive, AmountCheck.DigitsUnavailable -> generic
         }
     }
 
@@ -1395,14 +1526,36 @@ class ReceiptScanViewModel @Inject constructor(
             _state.update {
                 it.copy(
                     currencyRegion = if (it.currencyRegion is CurrencyRegionUi.Unset) it.currencyRegion else CurrencyRegionUi.Loading,
+                    amountError = null,
                     ratesToday = today
                 )
             }
             return
         }
         if (selected == home) {
+            val homeOnlyCode = CurrencyCode.parse(home)
+            val homeAmountText = s.editAmount
+            val homeParsed = if (homeAmountText.isBlank()) null
+            else com.yourname.expensetracker.ui.util.AmountInputSanitizer.parseOrNull(homeAmountText)
+            val homeInvalidKind = when {
+                homeOnlyCode == null || homeAmountText.isBlank() -> null
+                homeParsed == null -> CurrencyAmountInvalidKind.NOT_POSITIVE
+                else -> amountInvalidKind(homeParsed, homeOnlyCode)
+            }
+            if (homeInvalidKind != null && homeOnlyCode != null) {
+                val homeAmountError = amountErrorText(homeParsed, homeOnlyCode)
+                _state.update {
+                    it.copy(
+                        currencyRegion = CurrencyRegionUi.AmountInvalid(homeInvalidKind),
+                        amountError = homeAmountError,
+                        ratesToday = today,
+                        rateRefresh = settledRefresh(it, false)
+                    )
+                }
+                return
+            }
             _state.update {
-                it.copy(currencyRegion = CurrencyRegionUi.Home, ratesToday = today, rateRefresh = settledRefresh(it, false))
+                it.copy(currencyRegion = CurrencyRegionUi.Home, amountError = null, ratesToday = today, rateRefresh = settledRefresh(it, false))
             }
             return
         }
@@ -1413,6 +1566,7 @@ class ReceiptScanViewModel @Inject constructor(
             _state.update {
                 it.copy(
                     currencyRegion = CurrencyRegionUi.Blocked(variant, null, CurrencyBlockOrigin.PREVIEW),
+                    amountError = null,
                     ratesToday = today,
                     rateRefresh = settledRefresh(it, refreshCompleted)
                 )
@@ -1428,15 +1582,21 @@ class ReceiptScanViewModel @Inject constructor(
             parsedAmount == null -> CurrencyAmountInvalidKind.NOT_POSITIVE
             else -> amountInvalidKind(parsedAmount, selectedCode)
         }
+        val amountError = if (invalidKind != null) amountErrorText(parsedAmount, selectedCode) else null
         if (invalidKind != null) {
             _state.update {
-                it.copy(currencyRegion = CurrencyRegionUi.AmountInvalid(invalidKind), ratesToday = today, rateRefresh = settledRefresh(it, refreshCompleted))
+                it.copy(
+                    currencyRegion = CurrencyRegionUi.AmountInvalid(invalidKind),
+                    amountError = amountError,
+                    ratesToday = today,
+                    rateRefresh = settledRefresh(it, refreshCompleted)
+                )
             }
             return
         }
 
         if (invalidate) {
-            _state.update { it.copy(currencyRegion = CurrencyRegionUi.Pending, ratesToday = today) }
+            _state.update { it.copy(currencyRegion = CurrencyRegionUi.Pending, amountError = null, ratesToday = today) }
         }
 
         val atMillis = s.editDate
@@ -1444,7 +1604,7 @@ class ReceiptScanViewModel @Inject constructor(
             val marker = if (showEvaluating) {
                 launch {
                     delay(EVALUATING_DELAY_MS)
-                    _state.update { it.copy(currencyRegion = CurrencyRegionUi.Evaluating) }
+                    _state.update { it.copy(currencyRegion = CurrencyRegionUi.Evaluating, amountError = null) }
                 }
             } else {
                 null
@@ -1470,6 +1630,7 @@ class ReceiptScanViewModel @Inject constructor(
             _state.update {
                 it.copy(
                     currencyRegion = region,
+                    amountError = null,
                     ratesToday = today,
                     rateRefresh = settledRefresh(it, refreshCompleted && region is CurrencyRegionUi.Blocked)
                 )
@@ -1863,6 +2024,7 @@ class ReceiptScanViewModel @Inject constructor(
                                     isSaving = false,
                                     quickSavePreview = null,
                                     saveResult = SaveReceiptResult.RateNotEligible,
+                                    amountError = null,
                                     currencyRegion = CurrencyRegionUi.Blocked(
                                         variant = blockVariantFor(e.reason),
                                         latestRateDate = if (e.reason == RateRefusalReason.STALE_RATE) e.latestRateDate else null,

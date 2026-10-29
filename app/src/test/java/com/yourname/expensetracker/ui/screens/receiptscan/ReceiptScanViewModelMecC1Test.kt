@@ -43,6 +43,7 @@ import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.ui.components.currency.CurrencyAmountInvalidKind
 import com.yourname.expensetracker.ui.components.currency.CurrencyBlockOrigin
 import com.yourname.expensetracker.ui.components.currency.CurrencyBlockVariant
+import com.yourname.expensetracker.ui.components.currency.CurrencyOpenSettingRequest
 import com.yourname.expensetracker.ui.components.currency.CurrencyRatesSetting
 import com.yourname.expensetracker.ui.components.currency.CurrencyRefreshStatus
 import com.yourname.expensetracker.ui.components.currency.CurrencyRegionUi
@@ -58,6 +59,8 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
 import org.junit.After
@@ -133,6 +136,9 @@ internal class ReceiptScanMecDeps(dispatcher: CoroutineDispatcher, nowMs: Long) 
     val ratesRepo = ReceiptScanRatesRepositoryFake()
     val privacyFlow = MutableStateFlow<PrivacySettingsLoadState>(PrivacySettingsLoadState.Loaded(PrivacySettings()))
     val homeFlow = MutableStateFlow("EUR")
+
+    /** Review F2 seam: when set, [createViewModel] uses this flow as the home currency source (e.g. one that emits nothing at first). */
+    var homeSource: Flow<String>? = null
     val aiFlow = MutableStateFlow(AiSettings(aiEnabled = true, receiptQuickSaveEnabled = true))
     val clock = mockk<TimeProvider>(relaxed = true).also { every { it.now() } returns nowMs }
     val diagnostics = spyk(AiRuntimeDiagnostics(clock))
@@ -156,7 +162,7 @@ internal class ReceiptScanMecDeps(dispatcher: CoroutineDispatcher, nowMs: Long) 
         val categories = mockk<CategoryRepository>(relaxed = true)
         every { categories.allCategories } returns flowOf(emptyList())
         val currency = mockk<CurrencySettingsRepository>(relaxed = true)
-        every { currency.homeCurrency() } returns homeFlow
+        every { currency.homeCurrency() } returns (homeSource ?: homeFlow)
         val aiSettings = mockk<AiSettingsRepository>(relaxed = true)
         every { aiSettings.settings() } returns aiFlow
         return ReceiptScanViewModel(
@@ -1121,5 +1127,378 @@ class ReceiptScanViewModelMecC1Test : ViewModelTestUtils() {
         settle()
         assertTrue(deps.store.asOfCalls.isEmpty())
         coVerify(exactly = 1) { deps.coordinator.createExpenseAndLinkReceipt(any()) }
+    }
+
+    // ---- MEC C2 seams: amountError, homeCurrency, open-setting request ----
+
+    private fun amountText(resId: Int, vararg args: Any) =
+        com.yourname.expensetracker.domain.model.UiText.StringResource(resId, args.toList())
+
+    @Test
+    fun `C2 amountError for a currency without decimals names the code`() {
+        scan(mecReceipt(currency = "USD"))
+        assertNull(st.amountError)
+
+        model.updateCurrency("JPY")
+        model.updateAmount("1500.5")
+
+        assertEquals(CurrencyRegionUi.AmountInvalid(CurrencyAmountInvalidKind.PRECISION_EXCEEDED), region)
+        assertEquals(amountText(com.yourname.expensetracker.R.string.mec_amount_no_decimals, "JPY"), st.amountError)
+    }
+
+    @Test
+    fun `C2 amountError for a too large amount carries the formatted cap`() {
+        scan(mecReceipt(currency = "USD"))
+
+        model.updateAmount("99999999")
+
+        assertEquals(CurrencyRegionUi.AmountInvalid(CurrencyAmountInvalidKind.ABOVE_CAP), region)
+        assertEquals(amountText(com.yourname.expensetracker.R.string.mec_amount_too_large, "1,000,000"), st.amountError)
+    }
+
+    @Test
+    fun `C2 amountError for a not positive amount is the generic invalid text`() {
+        scan(mecReceipt(currency = "USD"))
+
+        model.updateAmount("0")
+
+        assertEquals(CurrencyRegionUi.AmountInvalid(CurrencyAmountInvalidKind.NOT_POSITIVE), region)
+        assertEquals(amountText(com.yourname.expensetracker.R.string.add_expense_error_amount_invalid), st.amountError)
+    }
+
+    @Test
+    fun `C2 amountError when the digits are unavailable is the generic text and never a precision claim`() {
+        // XXX has no defined minor-unit digits (OD-6): fail closed, no guess of 2 decimals.
+        setState(reviewState(currency = "XXX", amount = ""))
+        model.updateAmount("5")
+
+        assertEquals(CurrencyRegionUi.AmountInvalid(CurrencyAmountInvalidKind.NOT_POSITIVE), region)
+        assertEquals(amountText(com.yourname.expensetracker.R.string.add_expense_error_amount_invalid), st.amountError)
+        assertTrue(st.isCurrencySaveBlocked)
+    }
+
+    @Test
+    fun `C2 amountError is cleared whenever the region leaves AmountInvalid`() {
+        scan(mecReceipt(currency = "USD"))
+        model.updateCurrency("JPY")
+        model.updateAmount("10.5")
+        assertNotNull(st.amountError)
+
+        // A valid amount drops to Pending at once: no stale message.
+        model.updateAmount("10")
+        assertFalse(region is CurrencyRegionUi.AmountInvalid)
+        assertNull(st.amountError)
+        settle()
+        assertNull(st.amountError)
+
+        // Back to home.
+        model.updateAmount("10.5")
+        assertNotNull(st.amountError)
+        model.updateCurrency("EUR")
+        assertEquals(CurrencyRegionUi.Home, region)
+        assertNull(st.amountError)
+
+        // Reset and a new scan.
+        model.updateCurrency("JPY")
+        model.updateAmount("10.5")
+        assertNotNull(st.amountError)
+        model.reset()
+        assertNull(st.amountError)
+        scan(mecReceipt(id = 18L, currency = "BGN"))
+        assertTrue(region is CurrencyRegionUi.Unset)
+        assertNull(st.amountError)
+    }
+
+    @Test
+    fun `C2 homeCurrency follows the resolved home and survives scan reset and an Unset proposal`() {
+        assertEquals("EUR", st.homeCurrency)
+
+        scan(mecReceipt(currency = "BGN"))
+        assertTrue(region is CurrencyRegionUi.Unset)
+        assertEquals("EUR", st.homeCurrency)
+
+        deps.homeFlow.value = "GBP"
+        settle()
+        assertEquals("GBP", st.homeCurrency)
+        assertEquals("GBP", st.currencyOptions.first())
+
+        model.reset()
+        assertEquals("GBP", st.homeCurrency)
+        scan(mecReceipt(id = 19L, currency = "USD"))
+        assertEquals("GBP", st.homeCurrency)
+    }
+
+    private fun scanHomeJpy() {
+        deps.homeFlow.value = "JPY"
+        settle()
+        assertEquals("JPY", st.homeCurrency)
+        scan(mecReceipt(currency = "JPY", total = 1500.0))
+    }
+
+    @Test
+    fun `C2 home JPY with a fractional amount is AmountInvalid and blocks save`() {
+        scanHomeJpy()
+
+        model.updateAmount("1500.5")
+        settle()
+
+        assertEquals(CurrencyRegionUi.AmountInvalid(CurrencyAmountInvalidKind.PRECISION_EXCEEDED), region)
+        assertEquals(amountText(com.yourname.expensetracker.R.string.mec_amount_no_decimals, "JPY"), st.amountError)
+        assertTrue(st.isCurrencySaveBlocked)
+
+        model.saveExpense()
+        settle()
+        assertTrue(deps.requests.isEmpty())
+        coVerify(exactly = 0) { deps.coordinator.createExpenseAndLinkReceipt(any()) }
+    }
+
+    @Test
+    fun `C2 home JPY with a whole amount is Home with no error and save unblocked`() {
+        scanHomeJpy()
+        model.updateAmount("1500.5")
+        settle()
+        assertTrue(region is CurrencyRegionUi.AmountInvalid)
+
+        model.updateAmount("1500")
+        settle()
+
+        assertEquals(CurrencyRegionUi.Home, region)
+        assertNull(st.amountError)
+        assertFalse(st.isCurrencySaveBlocked)
+    }
+
+    @Test
+    fun `C2 home EUR with a two decimal amount stays Home with no error`() {
+        scan(mecReceipt(currency = "EUR"))
+
+        model.updateAmount("12.50")
+        settle()
+
+        assertEquals(CurrencyRegionUi.Home, region)
+        assertNull(st.amountError)
+        assertFalse(st.isCurrencySaveBlocked)
+    }
+
+    @Test
+    fun `C2 confirmOpenExchangeRateSetting resets the draft then raises NAVIGATE and consume clears it`() {
+        scan(mecReceipt(currency = "USD", total = 10.0, merchant = "Merchant"))
+        model.requestOpenExchangeRateSetting()
+        assertEquals(CurrencyOpenSettingRequest.CONFIRM_NEEDED, st.openSettingRequest)
+        assertEquals("the draft is intact until the user confirms", "Merchant", st.editMerchant)
+
+        model.confirmOpenExchangeRateSetting()
+        settle()
+
+        assertEquals(CurrencyOpenSettingRequest.NAVIGATE, st.openSettingRequest)
+        assertEquals(ScanStep.CAPTURE, st.step)
+        assertNull(st.receiptId)
+        assertEquals("", st.editMerchant)
+        assertEquals("", st.editAmount)
+        assertEquals("EUR", st.editCurrency)
+        assertEquals(CurrencyRegionUi.Home, region)
+        assertNull(st.amountError)
+
+        model.consumeOpenSettingRequest()
+        assertEquals(CurrencyOpenSettingRequest.NONE, st.openSettingRequest)
+    }
+
+    @Test
+    fun `C2 confirmOpenExchangeRateSetting is a no-op unless a confirmation is pending`() {
+        scan(mecReceipt(currency = "USD", total = 10.0, merchant = "Merchant"))
+
+        // NONE: nothing to confirm.
+        model.confirmOpenExchangeRateSetting()
+        settle()
+        assertEquals(CurrencyOpenSettingRequest.NONE, st.openSettingRequest)
+        assertEquals(ScanStep.REVIEW, st.step)
+        assertEquals("Merchant", st.editMerchant)
+        assertEquals("10.00", st.editAmount)
+
+        // NAVIGATE (a blank amount needs no confirm): a stray confirm must not reset the draft.
+        model.updateAmount("")
+        model.requestOpenExchangeRateSetting()
+        assertEquals(CurrencyOpenSettingRequest.NAVIGATE, st.openSettingRequest)
+        model.confirmOpenExchangeRateSetting()
+        settle()
+        assertEquals(CurrencyOpenSettingRequest.NAVIGATE, st.openSettingRequest)
+        assertEquals(ScanStep.REVIEW, st.step)
+        assertEquals("Merchant", st.editMerchant)
+        assertEquals(17L, st.receiptId)
+    }
+
+    // ---- Review F2: a proposal stays pending while home is unresolved; no carry-over across scans ----
+
+    /** Builds a view model whose home currency source emits nothing until the returned flow emits. */
+    private fun modelWithUnresolvedHome(): MutableSharedFlow<String> {
+        val source = MutableSharedFlow<String>(extraBufferCapacity = 8)
+        deps.homeSource = source
+        model = deps.createViewModel()
+        settle()
+        assertNull("home is unresolved before the first emission", st.homeCurrency)
+        return source
+    }
+
+    private fun assertPendingProposal() {
+        assertEquals(ScanStep.REVIEW, st.step)
+        assertNull(st.editCurrency)
+        assertEquals(CurrencyRegionUi.Loading, region)
+        assertTrue(st.debugData!!.parsedTransactions.isEmpty())
+    }
+
+    @Test
+    fun `F2 a USD proposal stays pending while home is unresolved then resolves to Selected USD`() {
+        deps.store.putRate("USD", 0.9, mecDay(14))
+        val home = modelWithUnresolvedHome()
+
+        scan(mecReceipt(currency = "USD"))
+        assertPendingProposal()
+        assertFalse(st.currencyUnverified)
+
+        home.tryEmit("EUR")
+        settle()
+
+        assertEquals("USD", st.editCurrency)
+        assertFalse(st.currencyUnverified)
+        assertEquals("EUR", st.homeCurrency)
+        assertTrue(region is CurrencyRegionUi.Eligible)
+        assertFalse(st.isCurrencySaveBlocked)
+    }
+
+    @Test
+    fun `F2 a BGN proposal stays pending while home is unresolved then resolves to Unset with no token in state`() {
+        val home = modelWithUnresolvedHome()
+
+        scan(mecReceipt(currency = "BGN"))
+        // An unselectable token is never kept as the edit currency, not even while home is unresolved.
+        assertNull(st.editCurrency)
+        assertTrue(st.debugData!!.parsedTransactions.isEmpty())
+
+        home.tryEmit("EUR")
+        settle()
+
+        assertEquals(CurrencyRegionUi.Unset(CurrencyUnsetReason.PROPOSAL_NOT_SELECTABLE), region)
+        assertNull(st.editCurrency)
+        assertFalse(st.currencyUnverified)
+        assertTrue(st.isCurrencySaveBlocked)
+        assertFalse("BGN" in st.currencyOptions)
+        assertFalse(region.toString().contains("BGN"))
+        assertFalse(st.currencyOptions.toString().contains("BGN"))
+        assertTrue(st.debugData!!.parsedTransactions.isEmpty())
+        assertTrue(lines.none { it.message.contains("BGN") })
+
+        model.saveExpense()
+        settle()
+        assertTrue(deps.requests.isEmpty())
+    }
+
+    @Test
+    fun `F2 a blank proposal stays pending while home is unresolved then resolves to home flagged unverified`() {
+        val home = modelWithUnresolvedHome()
+
+        scan(mecReceipt(currency = ""))
+        assertPendingProposal()
+
+        home.tryEmit("EUR")
+        settle()
+
+        assertEquals("EUR", st.editCurrency)
+        assertTrue(st.currencyUnverified)
+        assertEquals(CurrencyRegionUi.Home, region)
+        assertFalse(st.isCurrencySaveBlocked)
+    }
+
+    @Test
+    fun `F2 a second scan does not carry over the previous selection`() {
+        deps.store.putRate("USD", 0.9, mecDay(14))
+        scan(mecReceipt(currency = "USD"))
+        model.updateCurrency("GBP")
+        settle()
+        assertEquals("GBP", st.editCurrency)
+
+        // Unselectable proposal: nothing from the previous scan survives.
+        scan(mecReceipt(id = 18L, currency = "BGN"))
+        assertNull(st.editCurrency)
+        assertTrue(region is CurrencyRegionUi.Unset)
+
+        // Blank proposal: back to home, flagged, never the earlier GBP.
+        model.updateCurrency("GBP")
+        settle()
+        scan(mecReceipt(id = 19L, currency = ""))
+        assertEquals("EUR", st.editCurrency)
+        assertTrue(st.currencyUnverified)
+        assertEquals(CurrencyRegionUi.Home, region)
+    }
+
+    @Test
+    fun `F2 a second scan before home loads drops the first pending proposal`() {
+        deps.store.putRate("USD", 0.9, mecDay(14))
+        val home = modelWithUnresolvedHome()
+
+        scan(mecReceipt(currency = "USD"))
+        assertPendingProposal()
+        scan(mecReceipt(id = 18L, currency = "BGN"))
+        assertNull(st.editCurrency)
+
+        home.tryEmit("EUR")
+        settle()
+
+        // The second scan's unselectable proposal wins; the first scan's USD is not resurrected.
+        assertNull(st.editCurrency)
+        assertEquals(CurrencyRegionUi.Unset(CurrencyUnsetReason.PROPOSAL_NOT_SELECTABLE), region)
+        assertEquals(18L, st.receiptId)
+    }
+
+    @Test
+    fun `F2 a user pick made before home loads wins over the pending proposal`() {
+        deps.store.putRate("USD", 0.9, mecDay(14))
+        deps.store.putRate("GBP", 1.1, mecDay(14))
+        val home = modelWithUnresolvedHome()
+
+        scan(mecReceipt(currency = "USD"))
+        assertPendingProposal()
+        model.updateCurrency("GBP")
+        runNow()
+        assertEquals("GBP", st.editCurrency)
+
+        home.tryEmit("EUR")
+        settle()
+
+        assertEquals("GBP", st.editCurrency)
+        assertFalse(st.currencyUnverified)
+        assertTrue(region is CurrencyRegionUi.Eligible)
+    }
+
+    @Test
+    fun `F2 a user pick made before home loads wins over an unselectable pending proposal`() {
+        deps.store.putRate("USD", 0.9, mecDay(14))
+        val home = modelWithUnresolvedHome()
+
+        scan(mecReceipt(currency = "BGN"))
+        model.updateCurrency("USD")
+        runNow()
+        assertEquals("USD", st.editCurrency)
+
+        home.tryEmit("EUR")
+        settle()
+
+        assertEquals("USD", st.editCurrency)
+        assertFalse(region is CurrencyRegionUi.Unset)
+        assertTrue(region is CurrencyRegionUi.Eligible)
+    }
+
+    @Test
+    fun `C2 declining the open-setting confirmation keeps the draft`() {
+        scan(mecReceipt(currency = "USD", total = 10.0, merchant = "Merchant"))
+        model.requestOpenExchangeRateSetting()
+        assertEquals(CurrencyOpenSettingRequest.CONFIRM_NEEDED, st.openSettingRequest)
+
+        model.consumeOpenSettingRequest()
+
+        assertEquals(CurrencyOpenSettingRequest.NONE, st.openSettingRequest)
+        assertEquals(ScanStep.REVIEW, st.step)
+        assertEquals("Merchant", st.editMerchant)
+        assertEquals("10.00", st.editAmount)
+        assertEquals("USD", st.editCurrency)
+        assertTrue(deps.requests.isEmpty())
     }
 }

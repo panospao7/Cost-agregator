@@ -234,3 +234,25 @@ Next: loan-installments S1 in this lane (after the S0 D-10/D-12/D-13/D-20 discov
   - known_good_state PASS vr-20261029-095350-b0a4e5fe;
   - db_access PASS vr-20261029-095709-86267dd8.
 - Next: C2 (ReceiptScanScreen UI; the MainActivity callback-only hunk). Then the MEC C candidate: lint, architecture-contracts, static-guards, app-check, and reviewer-strict at the candidate.
+
+## 2026-10-29: MEC C ACCEPTED and C2 COMMITTED (receipt review UI + review fixes)
+- C2: CurrencySelectionControl replaces the private picker; rate region under the amount; the kept line under the card (not live); Save, quick-save and the dialog confirm blocked with reasons; open-setting confirm = reset then navigate; MainActivity callback-only.
+- Writer-time fixes:
+  - the real home code (not first-option);
+  - an amountError text for AmountInvalid;
+  - inline home-currency precision.
+- Guardian (combined) ACCEPT-WITH-CONDITIONS: dialog reason, exhaustive AmountCheck mapping.
+- reviewer-strict at the C candidate: ACCEPT-WITH-CONDITIONS.
+  - F1 kept-line placement and F2 no carry-over / pending proposal while home is unresolved: fixed.
+  - Also fixed: no raw OCR token in the item breakdown currency.
+  - F3 (tax-inclusive override, pre-existing) is ROUTED to the receipt owner as F-C-TAX-OVERRIDE, with RF-6 (D-C-4) and RF-7.
+- Validation (final tree):
+  - targeted vr-20261029-113240-fd6780a6;
+  - known_good_state vr-20261029-113829-ed83f0c1;
+  - lint vr-20261029-114145-c90e1e96;
+  - architecture-contracts vr-20261029-114717-ddf7d128;
+  - static-guards vr-20261029-114805-ea98c171;
+  - app-check vr-20261029-120509-b6aaf271.
+  - All PASS.
+- Follow-ups: F-C-REGION-DEDUP, F-C-HOME-PRECISION-PARITY, F-C-TAX-OVERRIDE (receipt owner), RF-6/RF-7 (receipt owner), F-B2-A11Y-1 (a HARD GATE for 1b). Note: `parsedReceipt.currency` still holds the raw token in state (pre-existing; not displayed).
+- Next (MEC lane): loan S11, then Z closeout.

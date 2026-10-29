@@ -671,7 +671,8 @@ fun MainScreen(
                 }
                 is NavigationDestination.ScanReceipt -> {
                     com.yourname.expensetracker.ui.screens.receiptscan.ReceiptScanRoute(
-                        onDismiss = { navigation.navigateBack() }
+                        onDismiss = { navigation.navigateBack() },
+                        onOpenExchangeRateSetting = { navigation.navigateTo(NavigationDestination.PrivacySettings) }
                     )
                 }
                 is NavigationDestination.RecurringExpenses -> {
