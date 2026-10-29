@@ -78,7 +78,8 @@ USER-PRESENT RATE REQUIREMENT (manual-entry-currency A2; INV-5..9, 19):
     → AMOUNT_PRECISION_EXCEEDED (TransactionValidator) is enforced only for flagged requests
   Setters (fixed allow-list, never grows): ManualExpenseRepository, ReceiptScanViewModel, and the
   installment plan coordinator's declare-with-new-expense request; enforced by
-  ManualEntryCurrencySetterAllowListGuardTest. Setter #1 is active (manual-entry-currency B1):
+  ManualEntryCurrencySetterAllowListGuardTest. Setter #2 (ReceiptScanViewModel) is active since MEC C1
+  (see "CREATE expense FROM receipt"). Setter #1 is active (manual-entry-currency B1):
   ManualExpenseRepository.addManualExpense(..., entryZone) always sets
   UserPresentRateRequirement(entryZone); entryZone is captured once by
   AddExpenseViewModel.onSheetOpened() (plain VM field, never state/persisted/logged).
@@ -236,6 +237,13 @@ CREATE expense FROM receipt:
   → database.withTransaction { createExpenseDbOnlyV2() + linkService.link() }
   → Collects post-commit actions and dispatches them after commit
   → Throws on link failure → rollback
+  → Receipt review (ReceiptScanViewModel.saveExpenseInternal, setter #2, MEC C1) sets
+    UserPresentRateRequirement(entryZone) on the CreateExpenseRequest; entryZone is the review zone captured
+    when the step becomes REVIEW (plain VM field, falls back to the device zone at request build).
+    A flagged ValidationFailed carrying a rateRefusal returns Result.failure(RateNotEligibleException(reason,
+    latestRateDate)) (message = RateRefusalCodes constant, no cause, no payload) with an empty post-commit
+    batch: no link, no receipt event, no side effects. Other validation failures keep IllegalArgumentException.
+    The email/batch receipt path (processEmailReceipt) is unflagged and unchanged.
 
 LINK/UNLINK receipt:
   → ReceiptLinkService.linkReceiptToExpense() / unlinkReceiptFromExpense()

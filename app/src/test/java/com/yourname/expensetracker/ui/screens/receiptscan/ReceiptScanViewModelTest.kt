@@ -86,7 +86,10 @@ class ReceiptScanViewModelTest : ViewModelTestUtils() {
             mockk<AiArtifactRepository>(relaxed = true), mockk<AiRuntimeDiagnostics>(relaxed = true),
             coordinator, parser,
             mockk<TransactionLifecycleCoordinator>(relaxed = true), links,
-            mockk<MerchantNormalizer>(relaxed = true), mockk<HybridExpenseClassifier>(relaxed = true)
+            mockk<MerchantNormalizer>(relaxed = true), mockk<HybridExpenseClassifier>(relaxed = true),
+            mockk<com.yourname.expensetracker.domain.currency.UserPresentRatePreview>(relaxed = true),
+            mockk<com.yourname.expensetracker.domain.currency.CurrencyRatesRepository>(relaxed = true),
+            mockk<com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository>(relaxed = true)
         )
     }
 

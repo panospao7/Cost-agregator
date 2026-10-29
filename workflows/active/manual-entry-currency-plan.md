@@ -473,3 +473,121 @@ reviewer-strict: ACCEPT-WITH-CONDITIONS. Both MAJOR findings are closed; the two
 - **C-2 (R-6 condition): F-B2-A11Y-1 is a HARD GATE for the MEC 1b release (H-1).** It covers the polite preview announcement on currency or date changes and the §4 "Fix the amount" Save state description (new key, so es/el sign-off). It ships with the es/el sign-off of the MEC strings.
 - **Follow-up F-B2-HOME-CHANGE:** a home draft is re-denominated if the home currency changes between sessions. This predates B2; decide in MEC 1b.
 - **Accepted residuals:** on a slow store, a kept Blocked card becomes Evaluating after 250 ms; the zone fallback after a reset on confirm is unreachable.
+
+
+## Amendment (2026-10-29): C re-anchor and split (feature-planner, Sonnet; orchestrator-persisted; BINDING)
+Base: 6d62ec45. T3 money/receipt-lifecycle. Item 87 applies: a Sonnet writer plus a separate test-author, one combined guardian, and reviewer-strict at the MEC candidate. No schema, no new legal path. H-1 stands (unreleased until MEC 1b).
+
+### Anchors
+**ReceiptScanViewModel (ui/screens/receiptscan/):**
+- Review entry: OCR_FAILED `:370` (editCurrency = home, currencyUnverified :383-385); normal OCR `:459`.
+- Proposal `:473-475`, with no CurrencySelectionPolicy yet. `updateCurrency` `:575-578`.
+- SaveReceiptResult `:169-176`.
+- Save path: `buildManualSaveRequest` `:1073-1116`; quick-save `confirmReceiptQuickSave` `:949-1004`. Both go to `saveExpenseInternal` `:1230-1366`.
+  - CreateExpenseRequest at `:1283-1296` is the ONLY setter #2 site.
+  - onFailure `:1329-1349`. ReceiptSaveRequest `:156-167` (private).
+- Quick-save dialog: ReceiptScanScreen `:548-604`; `requestReceiptQuickSaveConfirmation` `:913`. Review is behind the dialog, so N19 does not fire.
+- RF-6 `:416` [V]. The instant is built in `ReceiptParser.kt:838` with `atStartOfDay(ZoneId.systemDefault())`.
+- Ctor `:183-202` (no Dispatchers); homeCurrencyCode `:226`; reset `:1047`; retry `:1036`.
+
+**ReceiptScanScreen:**
+- Private CurrencyPicker def `:1426`, call `:914-917` (amount `:896-909`); DateSelector `:922` is shared (B0′).
+- The card goes after `:909`.
+- `when (saveResult)` `:1249-1308` ends in `else -> {}`.
+- R24c `ReceiptCurrencyUnverifiedWarning` `:508-537`.
+- Host: ReceiptScanRoute `:80`; only caller MainActivity `:672-676`.
+
+**ReceiptLifecycleCoordinator (domain/receipt/lifecycle/):**
+- `createExpenseAndLinkReceipt` `:1620-1706`; ValidationFailed `:1669-1670` (IllegalArgumentException).
+- Model: DuplicateTransactionException `:1709`.
+- The email/batch path ~`:1170-1270` is untouched.
+
+### Reuse
+- As-is, no edit: CurrencySelectionControl, CurrencyRateRegionContent, CurrencyRegionUi, UserPresentRatePreview, CurrencySelectionPolicy, CurrencyAmountPolicy, RateRefusalCodes, and the existing mec_ keys (all locales).
+- New strings: 0 expected; at most 2 contingency, only for D-C-3.
+
+### Binding constraints (B2 lessons)
+1. Session-only selection (`editCurrency`): never persisted, no SavedStateHandle or rememberSaveable. reset, retry and a new scan return to home. A new scan overwrites the amount and currency together; no carry-over across receipts.
+2. A refusal cancels the in-flight evaluation and sets a SAVE-origin Blocked; a late preview never wins.
+3. Amount-independent Blocked survives amount edits; amount-dependent states go to Pending.
+4. No `when (val ...)` in accessors or derived flags (known_good_state scanner trap).
+5. Robolectric tests leave no process-static state. TimeZone and Locale are restored in try/finally; the harness.close() pattern applies.
+6. No Dispatchers.* in the VM path; inject if one is ever needed. Tests use setMain and a virtual clock.
+7. Zone: `reviewZone` is a plain VM field, captured when step becomes REVIEW (:370 and :459) and by `onReviewOpened()`. It is cleared in reset, retry, cancelActiveWork and at scan start. `ReceiptSaveRequest.entryZone` is captured at request build, with fallback `reviewZone ?: ZoneId.systemDefault()` (B1 precedent).
+8. Setter #2 is only in `saveExpenseInternal` (`UserPresentRateRequirement(entryZone)`). The allow-list guard is not edited.
+9. onFailure rethrows CancellationException first. The refusal is not logged as an error and nothing amount-, merchant-, currency- or zone-related is logged (AE-30).
+
+### Split
+**C1 (logic):**
+- Coordinator: ValidationFailed with `rateRefusal != null` → `Result.failure(RateNotEligibleException(reason, latestRateDate))` + `PostCommitActionBatch.empty("receipt_link_rate_refused")`. The new nested exception sits next to DuplicateTransactionException; message = `RateRefusalCodes.codeFor(reason)`, no cause. A non-rate failure keeps its mapping.
+- VM:
+  - deps UserPresentRatePreview, CurrencyRatesRepository, PrivacySettingsRepository; reviewZone.
+  - Proposal via `resolveProposal(...)`:
+    - Selected → editCurrency;
+    - Unset(PROPOSAL_NOT_SELECTABLE) → region Unset, editCurrency = null, no OCR token kept;
+    - NONE_PROPOSED → home plus currencyUnverified.
+  - Lean region: 250 ms Evaluating, latest-wins; re-evaluate on currency, date, home, zone or refresh; inline CurrencyAmountPolicy.check.
+  - ratesSetting On/Off/Unknown (Unknown = Off); refresh(home) only when On.
+  - Setter at `:1283`.
+  - `SaveReceiptResult.RateNotEligible` (payload-free). onFailure mapping: isSaving = false, form kept, quickSavePreview = null, evaluation cancelled.
+  - A defence-in-depth Save/quick-save guard (the coordinator enforces).
+- Docs: ENGINE_INTERACTION_MAP (setter #2 active), LEGAL_PATHS (receipt line).
+- Mechanical ctor edits: ReceiptScanViewModelTest :80, ReceiptScanViewModelStressTest :129.
+
+**C2 (UI):**
+- ReceiptScanScreen: CurrencyPicker → CurrencySelectionControl (the private picker is deleted); CurrencyRateRegionContent under the amount; mec_receipt_kept with the SAVE card, scrolled to and assertive; Save disabled with a state description; the onReviewOpened hook; the quick-save dialog closes on refusal.
+- MainActivity `:672-676`: a callback-only `onOpenExchangeRateSetting` via ReceiptScanRoute.
+- Open-setting: confirm, then reset, then navigate (D-C-3).
+
+### Tests
+**C1, VM (ReceiptScanViewModelTest):**
+- AE-23: USD preview, then save Success.
+- AE-24: NO_RATE gives RateNotEligible, REVIEW with fields kept; switching to EUR saves.
+- AE-25: BGN gives Unset, Save blocked, no OCR token; a forced flagged BGN gives UNSUPPORTED.
+- AE-22: a rate cleared between preview and save gives the SAVE card, and a late preview loses.
+- AE-30: capturing Timber.
+- AE-33: dismiss while saving rethrows CancellationException.
+- AE-37: tomorrow is age 1; +30 days is Stale.
+- G2-14: the flag carries the zone on manual and quick-save.
+- UX-Q-5: a quick-save refusal leaves the dialog closed and the card in review.
+- Amount edit keeps Blocked; the zone is stable; a new scan goes to home; RF-6 normal case.
+
+**C1, other:**
+- StressTest: rapid switching.
+- ReceiptLifecycleCoordinatorTest (AE-24/INV-17):
+  - on refusal, no link, no planner, no post-commit, no receipt DAO updates, no ReceiptEvent, asset store untouched;
+  - the exception is payload-free (bounded message, no cause, toString clean);
+  - a non-rate failure is still IllegalArgumentException;
+  - the email/batch path is unflagged.
+
+**C2:**
+- A Robolectric Compose test (harness.close): Unset with Save disabled, the SAVE card, the change-currency request, the open-setting confirm clearing the draft.
+
+### Validation
+- C1:
+  1. targeted `*ReceiptScanViewModel*,*ReceiptLifecycleCoordinator*,*ReceiptLinkServiceNestedFailure*,*ManualEntryCurrencySetterAllowListGuardTest*,*CancellationSafetyArchitectureGuardTest*,*QuickAddPrivacyArchitectureGuardTest*`
+  2. runtime-ui, domain-n-z
+  3. db_access
+- C2:
+  1. targeted `*ReceiptScan*,*CurrencySelectionControlTest*,*CurrencyRateRegionContentTest*,*AddExpense*`
+  2. runtime-ui
+  3. lint
+- Then architecture-contracts, known_good_state, static-guards, and app-check at the MEC candidate.
+
+### STOP
+- Any guard or baseline edit (setter allow-list, CancellationSafety, QuickAddPrivacy, known_good_state); a lint baseline refresh.
+- rememberSaveable or SavedStateHandle for zone or selection.
+- A refresh while Off; any network or permission path.
+- The diff touching the email/batch path or ReceiptParser.
+- A non-rewrite pin edit.
+- static-guards rejecting systemDefault.
+- Loan S11/S13 in flight on MainActivity or strings.
+- More than 2 new strings.
+
+### Decisions (orchestrator, item 62; owner FYI)
+- **D-C-1:** the receipt VM gets its own lean region orchestration. The rules stay in the policy, evaluator and preview, so no business rule is duplicated. The B2 code is not refactored. Follow-up F-C-REGION-DEDUP.
+- **D-C-2:** the R24c `receipt_currency_unverified_warning` is the NONE_PROPOSED caption. `mec_receipt_not_detected` stays unused.
+- **D-C-3:** open-setting from review mirrors B2 C-1, reusing the B2b confirm strings if they are generic.
+- **D-C-4:** RF-6/H-5 HOLDS but is NOT confined to the VM. The instant is built in ReceiptParser.kt:838, shared with the email and batch paths. So it is not fixed in C: the finding is recorded, the RF-6 normal-case test pins the behaviour, and the residual (a reopened receipt parsed under an earlier zone) goes to the receipt owner with RF-7.
+- The C1/C2 split is under item 62.
+- Writer greps first: other `when(SaveReceiptResult)` sites; other VM ctors in tests; whether the B2b confirm strings are generic; whether ReceiptScanViewModel is in CancellationSafety KNOWN_VIOLATIONS; the ValidationFailed.rateRefusal field name.

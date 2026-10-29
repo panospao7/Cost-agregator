@@ -222,3 +222,15 @@ Next: loan-installments S1 in this lane (after the S0 D-10/D-12/D-13/D-20 discov
   - Earlier on this candidate: static-guards PASS vr-20261029-075030-bfb289f9; lint PASS vr-20261029-015550-c539bec0; architecture-contracts, domain-a-m and cancellation PASS.
 - Follow-ups: F-B2-A11Y-1 (HARD GATE for 1b); F-B2-TYPED-REFRESH; F-B2-HOME-CHANGE; es/el sign-off for the mec_ strings, including mec_open_setting_confirm_title/body.
 - Next: MEC C (receipt review; a money slice, so a writer plus a separate test-author), then loan S11, then Z.
+
+## 2026-10-29: MEC C1 (receipt review logic) COMMITTED
+- The plan's "C re-anchor and split" amendment is persisted (D-C-1..4 under item 62).
+- Writer and separate test-author; combined guardian ACCEPT. Its LOW items are applied: no unselectable OCR token in debug data; a guard-scope comment.
+- Test-found defects fixed: INV-10 (an unparseable pick is ignored) and INV-3 (an AI-applied date or total re-evaluates the region, so quick-save is blocked on AmountInvalid). The debug ParsedTransaction is skipped for an unselectable token (its init requires [A-Z]{3}).
+- Validation:
+  - targeted PASS vr-20261029-100141-ec91ab50;
+  - runtime-ui PASS vr-20261029-100543-2c95119c;
+  - domain-n-z PASS vr-20261029-100845-62a4f638;
+  - known_good_state PASS vr-20261029-095350-b0a4e5fe;
+  - db_access PASS vr-20261029-095709-86267dd8.
+- Next: C2 (ReceiptScanScreen UI; the MainActivity callback-only hunk). Then the MEC C candidate: lint, architecture-contracts, static-guards, app-check, and reviewer-strict at the candidate.

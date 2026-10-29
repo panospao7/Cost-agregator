@@ -91,7 +91,10 @@ CurrencyConverter.convert() / convertAsOf()
         flagged branch, taken only for CreateExpenseRequest.userPresentRate != null — ONE evaluate()
         read supplies eligibility and rate, snapshot = roundSnapshot(amount x Eligible.rate, home);
         refusal = ValidationFailed(rateRefusal) + CREATE_VALIDATION_FAILED + MANUAL_SAVE_BLOCKED_NO_RATE,
-        never the sentinel; unflagged callers unchanged; setter #1 (ManualExpenseRepository) is active since B1)
+        never the sentinel; unflagged callers unchanged; setter #1 (ManualExpenseRepository) is active since B1;
+        setter #2 (ReceiptScanViewModel.saveExpenseInternal, the only receipt-review site) is active since MEC C1:
+        ReceiptLifecycleCoordinator.createExpenseAndLinkReceipt maps a flagged ValidationFailed with a rateRefusal to
+        the payload-free RateNotEligibleException; the email/batch receipt path stays unflagged)
         └── UserPresentRatePreview (advisory preview; same roundSnapshot as the stored snapshot)
 ```
 

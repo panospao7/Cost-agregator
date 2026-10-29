@@ -145,6 +145,9 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
             receiptLinkService = receiptLinkService,
             merchantNormalizer = merchantNormalizer,
             hybridClassifier = hybridClassifier,
+            userPresentRatePreview = mockk(relaxed = true),
+            currencyRatesRepository = mockk(relaxed = true),
+            privacySettingsRepository = mockk(relaxed = true),
         )
         // Exercise the production WhileSubscribed category stream on the same scheduler.
         fixtureScope = CoroutineScope(SupervisorJob() + testDispatcher)
