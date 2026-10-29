@@ -31,7 +31,6 @@ import com.yourname.expensetracker.ui.MainActivity
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
-import io.mockk.slot
 import io.mockk.verify
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -265,35 +264,48 @@ class AndroidNotificationServiceRepostTest {
         assertEquals(1, event.metadata.entries[PrivacyDiagnosticKey.COUNT])
     }
 
+    // G1b-0: the sweep is now followed by one settle + one re-read + at most one re-post of every sweep-kind
+    // notification still not carrying token "D". A notification whose re-post threw stays FULL, so it is
+    // attempted a second time (and only a second time) by the verification pass. The scripted manager below
+    // passes every notify through to the real Robolectric manager, so what the verification re-reads is the
+    // post-sweep state.
+
     @Test
-    fun `AE-102 a SecurityException skips that notification, re-posts the other, records the class only and never retries`() {
+    fun `AE-102 a SecurityException skips that notification, re-posts the other, records the class only and retries only in the single verification pass`() {
         postOriginal(7, BUDGET, marker = null)
         postOriginal(8, BUDGET, marker = null)
-        val activeNow = realManager().activeNotifications
+        val timeline = mutableListOf<String>()
+        val base = scriptedManager(timeline)
         val manager = mockk<NotificationManager>(relaxed = true)
-        every { manager.activeNotifications } returns activeNow
+        every { manager.activeNotifications } answers { base.activeNotifications }
         every { manager.notify(any<String>(), eq(7), any()) } throws SecurityException("secret detail Lidl 4242")
-        val reposted = slot<Notification>()
-        every { manager.notify(any<String>(), eq(8), capture(reposted)) } returns Unit
+        every { manager.notify(any<String>(), eq(8), any()) } answers {
+            base.notify(firstArg<String?>(), 8, thirdArg<Notification>())
+        }
 
         val result = sweep(serviceWith(manager))
 
         assertEquals(NotificationService.RepostResult(reposted = 1, failed = 1), result)
-        verify(exactly = 1) { manager.activeNotifications }
-        verify(exactly = 1) { manager.notify(any<String>(), eq(7), any()) }
-        verify(exactly = 1) { manager.notify(any<String>(), eq(8), any()) }
-        assertEquals(texts.discreet(NotificationKind.BUDGET).title, reposted.captured.titleText())
+        verify(exactly = 2) { manager.activeNotifications }
+        verify(exactly = 2) { manager.notify(any<String>(), eq(7), any()) } // sweep + the one verification pass
+        verify(exactly = 1) { manager.notify(any<String>(), eq(8), any()) } // 8 is "D" by the verification read
+        assertEquals(texts.discreet(NotificationKind.BUDGET).title, active(8).notification.titleText())
+        assertEquals("D", NotificationPresentationApplier.readModeToken(active(8).notification))
 
-        val failed = emitted.single { it.code == PrivacyDiagnosticCode.NOTIF_REPOST_FAILED }
-        assertEquals("SecurityException", failed.metadata.entries[PrivacyDiagnosticKey.EXCEPTION_CLASS])
-        assertEquals(setOf(PrivacyDiagnosticKey.EXCEPTION_CLASS), failed.metadata.entries.keys)
+        val failures = emitted.filter { it.code == PrivacyDiagnosticCode.NOTIF_REPOST_FAILED }
+        assertTrue(failures.isNotEmpty())
+        failures.forEach {
+            assertEquals("SecurityException", it.metadata.entries[PrivacyDiagnosticKey.EXCEPTION_CLASS])
+            assertEquals(setOf(PrivacyDiagnosticKey.EXCEPTION_CLASS), it.metadata.entries.keys)
+        }
         val done = emitted.single { it.code == PrivacyDiagnosticCode.NOTIF_REPOSTED_DISCREET }
         assertEquals(1, done.metadata.entries[PrivacyDiagnosticKey.COUNT])
+        assertTrue("a re-post that threw is not counted as unconfirmed", emitted.none { it.code == PrivacyDiagnosticCode.NOTIF_REPOST_UNCONFIRMED })
         emitted.forEach { e -> e.metadata.entries.values.forEach { assertFalse(it.toString().contains("secret")) } }
     }
 
     @Test
-    fun `AE-102 a SecurityException from every notify records one failure each and no completed count`() {
+    fun `AE-102 a SecurityException from every notify returns zero reposted, records no completed count and attempts each id at most twice`() {
         postOriginal(7, BUDGET, marker = null)
         val manager = mockk<NotificationManager>(relaxed = true)
         every { manager.activeNotifications } returns realManager().activeNotifications
@@ -302,7 +314,9 @@ class AndroidNotificationServiceRepostTest {
         val result = sweep(serviceWith(manager))
 
         assertEquals(NotificationService.RepostResult(reposted = 0, failed = 1), result)
-        assertEquals(listOf(PrivacyDiagnosticCode.NOTIF_REPOST_FAILED), emitted.map { it.code })
+        verify(exactly = 2) { manager.notify(any<String>(), eq(7), any()) } // sweep + one verification pass, never a loop
+        assertTrue(emitted.isNotEmpty())
+        assertTrue("only failure records, no completed or unconfirmed count", emitted.all { it.code == PrivacyDiagnosticCode.NOTIF_REPOST_FAILED })
     }
 
     @Test
@@ -323,21 +337,26 @@ class AndroidNotificationServiceRepostTest {
     fun `an IllegalStateException on one id counts that one as failed and the next id is still re-posted`() {
         postOriginal(7, BUDGET, marker = null)
         postOriginal(8, BUDGET, marker = null)
+        val base = scriptedManager()
         val manager = mockk<NotificationManager>(relaxed = true)
-        every { manager.activeNotifications } returns realManager().activeNotifications
+        every { manager.activeNotifications } answers { base.activeNotifications }
         every { manager.notify(any<String>(), eq(7), any()) } throws IllegalStateException("secret detail Lidl 4242")
-        val reposted = slot<Notification>()
-        every { manager.notify(any<String>(), eq(8), capture(reposted)) } returns Unit
+        every { manager.notify(any<String>(), eq(8), any()) } answers {
+            base.notify(firstArg<String?>(), 8, thirdArg<Notification>())
+        }
 
         val result = sweep(serviceWith(manager))
 
         assertEquals(NotificationService.RepostResult(reposted = 1, failed = 1), result)
-        verify(exactly = 1) { manager.notify(any<String>(), eq(7), any()) }
+        verify(exactly = 2) { manager.notify(any<String>(), eq(7), any()) } // sweep + the one verification pass
         verify(exactly = 1) { manager.notify(any<String>(), eq(8), any()) }
-        assertEquals(texts.discreet(NotificationKind.BUDGET).title, reposted.captured.titleText())
-        val failed = emitted.single { it.code == PrivacyDiagnosticCode.NOTIF_REPOST_FAILED }
-        assertEquals("IllegalStateException", failed.metadata.entries[PrivacyDiagnosticKey.EXCEPTION_CLASS])
-        assertEquals(setOf(PrivacyDiagnosticKey.EXCEPTION_CLASS), failed.metadata.entries.keys)
+        assertEquals(texts.discreet(NotificationKind.BUDGET).title, active(8).notification.titleText())
+        val failures = emitted.filter { it.code == PrivacyDiagnosticCode.NOTIF_REPOST_FAILED }
+        assertTrue(failures.isNotEmpty())
+        failures.forEach {
+            assertEquals("IllegalStateException", it.metadata.entries[PrivacyDiagnosticKey.EXCEPTION_CLASS])
+            assertEquals(setOf(PrivacyDiagnosticKey.EXCEPTION_CLASS), it.metadata.entries.keys)
+        }
         emitted.forEach { e -> e.metadata.entries.values.forEach { assertFalse(it.toString().contains("secret")) } }
         assertEquals(1, emitted.single { it.code == PrivacyDiagnosticCode.NOTIF_REPOSTED_DISCREET }.metadata.entries[PrivacyDiagnosticKey.COUNT])
     }
@@ -361,15 +380,24 @@ class AndroidNotificationServiceRepostTest {
         val ids = listOf(7, 8, 9, 10, 11, 12, 13)
         ids.forEach { postOriginal(it, BUDGET, marker = null) }
         val pauses = mutableListOf<Long>()
+        val base = scriptedManager()
         val manager = mockk<NotificationManager>(relaxed = true)
-        every { manager.activeNotifications } returns realManager().activeNotifications
+        every { manager.activeNotifications } answers { base.activeNotifications }
         val notifiedAtPauseCount = mutableListOf<Int>()
-        every { manager.notify(any<String>(), any(), any()) } answers { notifiedAtPauseCount += pauses.size }
+        every { manager.notify(any<String>(), any(), any()) } answers {
+            notifiedAtPauseCount += pauses.size
+            base.notify(firstArg<String?>(), secondArg<Int>(), thirdArg<Notification>())
+        }
 
         val result = sweep(serviceWith(manager, SweepPacer { pauses += it }))
 
         assertEquals(NotificationService.RepostResult(reposted = 7, failed = 0), result)
-        assertEquals(List(7) { AndroidNotificationService.SWEEP_REPOST_SPACING_MS }, pauses)
+        // Seven 300 ms re-post pauses, then the single 750 ms verification settle. Every re-post is "D" by the
+        // verification read, so the verification adds no re-post and no pause beyond the settle.
+        assertEquals(
+            List(7) { AndroidNotificationService.SWEEP_REPOST_SPACING_MS } + AndroidNotificationService.SWEEP_VERIFY_SETTLE_MS,
+            pauses
+        )
         assertEquals(300L, AndroidNotificationService.SWEEP_REPOST_SPACING_MS)
         // Every re-post, the first included, is preceded by exactly one more pause.
         assertEquals(listOf(1, 2, 3, 4, 5, 6, 7), notifiedAtPauseCount)
@@ -384,11 +412,15 @@ class AndroidNotificationServiceRepostTest {
         val result = sweep(serviceWith(realManager(), SweepPacer { pauses += it }))
 
         assertEquals(NotificationService.RepostResult(reposted = 1, failed = 0), result)
-        assertEquals("one pause for the one re-post, none for the skipped notification", listOf(300L), pauses)
+        assertEquals(
+            "one pause for the one re-post, none for the skipped notification, then the verification settle",
+            listOf(300L, 750L),
+            pauses
+        )
     }
 
     @Test
-    fun `a sweep with only skipped notifications pauses never`() {
+    fun `a sweep with only skipped notifications pauses only for the verification settle`() {
         postOriginal(99, FGS, marker = null) // not a sweep kind: classified null, skipped
         postOriginal(9, BUDGET, marker = null) { builder -> builder.setGroup("ranker_group").setGroupSummary(true) }
         val pauses = mutableListOf<Long>()
@@ -396,7 +428,8 @@ class AndroidNotificationServiceRepostTest {
         val result = sweep(serviceWith(realManager(), SweepPacer { pauses += it }))
 
         assertEquals(NotificationService.RepostResult.NONE, result)
-        assertTrue(pauses.isEmpty())
+        assertEquals("no re-post pause; the settle runs once and finds nothing to re-post", listOf(750L), pauses)
+        assertTrue(emitted.isEmpty())
     }
 
     @Test
@@ -639,15 +672,319 @@ class AndroidNotificationServiceRepostTest {
     }
 
     @Test
-    fun `the sweep queries the active notifications exactly once`() {
+    fun `the sweep queries the active notifications exactly twice, the sweep read and the single verification re-read`() {
         postOriginal(7, BUDGET, marker = null)
         postOriginal(8, ANOMALY, marker = null)
-        val manager = mockk<NotificationManager>(relaxed = true)
-        every { manager.activeNotifications } returns realManager().activeNotifications
+        val timeline = mutableListOf<String>()
+        val manager = scriptedManager(timeline)
 
         sweep(serviceWith(manager))
 
-        verify(exactly = 1) { manager.activeNotifications }
+        verify(exactly = 2) { manager.activeNotifications }
+        assertEquals(2, timeline.count { it == "read" })
+    }
+
+    // --- G1b-0 post-sweep verification ------------------------------------------------------------------
+
+    private fun withToken(token: String): (NotificationCompat.Builder) -> Unit = { builder ->
+        builder.addExtras(Bundle().apply { putString(NotificationPresentationApplier.MODE_EXTRA_KEY, token) })
+    }
+
+    private fun Notification.modeToken(): String? = NotificationPresentationApplier.readModeToken(this)
+
+    /**
+     * A manager that reads and posts through the real Robolectric manager but records a [timeline] of "read" and
+     * "notify<id>" events and lets a test drop or fail a given post. [applies] answers whether the n-th notify of
+     * an id lands (false simulates the platform silently dropping the update); it may also throw.
+     */
+    private fun scriptedManager(
+        timeline: MutableList<String> = mutableListOf(),
+        onRead: (readNumber: Int) -> Unit = {},
+        applies: (id: Int, callNumber: Int) -> Boolean = { _, _ -> true }
+    ): NotificationManager {
+        val real = realManager()
+        val scripted = mockk<NotificationManager>(relaxed = true)
+        every { scripted.activeNotifications } answers {
+            timeline += "read"
+            onRead(timeline.count { it == "read" })
+            real.activeNotifications
+        }
+        every { scripted.notify(any<String>(), any(), any()) } answers {
+            val id = secondArg<Int>()
+            timeline += "notify$id"
+            if (applies(id, timeline.count { it == "notify$id" })) {
+                real.notify(firstArg<String?>(), id, thirdArg<Notification>())
+            }
+        }
+        return scripted
+    }
+
+    private fun pacerInto(timeline: MutableList<String>) = SweepPacer { timeline += "pause$it" }
+
+    @Test
+    fun `G1b-0 after the sweep every active sweep-kind notification carries token D and the public version carries none`() {
+        postOriginal(7, BUDGET, marker = null)
+        postOriginal(8, ANOMALY, marker = NotificationKind.ANOMALY.stableToken, customize = withToken("F"))
+        postOriginal(30011, BILL, marker = null, withActions = true, contentIntent = false)
+
+        val result = sweep()
+
+        assertEquals(NotificationService.RepostResult(reposted = 3, failed = 0), result)
+        realManager().activeNotifications.forEach {
+            assertEquals("id ${it.id}", "D", it.notification.modeToken())
+            assertNotNull("id ${it.id} has a public version", it.notification.publicVersion)
+            assertNull("id ${it.id} public version", NotificationPresentationApplier.readModeToken(it.notification.publicVersion))
+        }
+        assertEquals(3, realManager().activeNotifications.size)
+        assertTrue("every re-post landed, so nothing is unconfirmed", emitted.none { it.code == PrivacyDiagnosticCode.NOTIF_REPOST_UNCONFIRMED })
+    }
+
+    @Test
+    fun `G1b-0 control a FULL original with the F token carries F before the sweep`() {
+        postOriginal(7, BUDGET, marker = null, customize = withToken("F"))
+
+        assertEquals("F", active(7).notification.modeToken())
+    }
+
+    private fun runDroppedFirstUpdate(originalToken: String?) {
+        val customize: (NotificationCompat.Builder) -> Unit = if (originalToken == null) ({ }) else withToken(originalToken)
+        postOriginal(7, BUDGET, marker = null, customize = customize)
+        postOriginal(8, BUDGET, marker = null)
+        val timeline = mutableListOf<String>()
+        // The platform drops the sweep's first update to id 7; every other post lands.
+        val manager = scriptedManager(timeline, applies = { id, call -> !(id == 7 && call == 1) })
+
+        val result = sweep(serviceWith(manager, pacerInto(timeline)))
+
+        assertEquals("the sweep result counts what it posted, not what the verification repaired", NotificationService.RepostResult(reposted = 2, failed = 0), result)
+        assertEquals("7 posted by the sweep and once more by the verification", 2, timeline.count { it == "notify7" })
+        assertEquals("8 landed in the sweep, token D, not re-posted", 1, timeline.count { it == "notify8" })
+        assertEquals(texts.discreet(NotificationKind.BUDGET).title, active(7).notification.titleText())
+        assertEquals("D", active(7).notification.modeToken())
+        assertEquals("D", active(8).notification.modeToken())
+
+        assertEquals(
+            listOf(PrivacyDiagnosticCode.NOTIF_REPOSTED_DISCREET, PrivacyDiagnosticCode.NOTIF_REPOST_UNCONFIRMED),
+            emitted.map { it.code }
+        )
+        assertEquals(2, emitted[0].metadata.entries[PrivacyDiagnosticKey.COUNT])
+        val unconfirmed = emitted[1].metadata
+        assertEquals(1, unconfirmed.entries[PrivacyDiagnosticKey.COUNT])
+        assertEquals("COUNT only, no other key", setOf(PrivacyDiagnosticKey.COUNT), unconfirmed.entries.keys)
+    }
+
+    @Test
+    fun `G1b-0 an original with token F whose sweep update was dropped is re-posted once by the verification`() =
+        runDroppedFirstUpdate("F")
+
+    @Test
+    fun `G1b-0 an original with no token whose sweep update was dropped is re-posted once by the verification`() =
+        runDroppedFirstUpdate(null)
+
+    @Test
+    fun `G1b-0 a notification already carrying token D is not re-posted by the verification`() {
+        postOriginal(9, BUDGET, marker = null, customize = withToken("D"))
+        val timeline = mutableListOf<String>()
+        val manager = scriptedManager(timeline, applies = { _, _ -> false }) // every update dropped, 9 stays "D"
+
+        val result = sweep(serviceWith(manager, pacerInto(timeline)))
+
+        assertEquals(NotificationService.RepostResult(reposted = 1, failed = 0), result)
+        assertEquals("only the sweep posted it", 1, timeline.count { it == "notify9" })
+        assertTrue(emitted.none { it.code == PrivacyDiagnosticCode.NOTIF_REPOST_UNCONFIRMED })
+    }
+
+    @Test
+    fun `G1b-0 a non-string or junk token counts as not confirmed discreet and is re-posted`() {
+        postOriginal(7, BUDGET, marker = null, customize = withToken("d")) // wrong case is not "D"
+        postOriginal(8, BUDGET, marker = null) { it.addExtras(Bundle().apply { putInt(NotificationPresentationApplier.MODE_EXTRA_KEY, 1) }) }
+        val timeline = mutableListOf<String>()
+        val manager = scriptedManager(timeline, applies = { _, call -> call > 1 }) // sweep updates dropped
+
+        sweep(serviceWith(manager, pacerInto(timeline)))
+
+        assertEquals(2, timeline.count { it == "notify7" })
+        assertEquals(2, timeline.count { it == "notify8" })
+        assertEquals(2, emitted.single { it.code == PrivacyDiagnosticCode.NOTIF_REPOST_UNCONFIRMED }.metadata.entries[PrivacyDiagnosticKey.COUNT])
+    }
+
+    @Test
+    fun `G1b-0 the verification is a single pass, never a loop, however many updates stay dropped`() {
+        postOriginal(7, BUDGET, marker = null, customize = withToken("F"))
+        postOriginal(8, ANOMALY, marker = null)
+        val timeline = mutableListOf<String>()
+        val manager = scriptedManager(timeline, applies = { _, _ -> false }) // the platform drops everything
+
+        val result = sweep(serviceWith(manager, pacerInto(timeline)))
+
+        assertEquals(NotificationService.RepostResult(reposted = 2, failed = 0), result)
+        assertEquals("exactly two active reads: the sweep and one verification", 2, timeline.count { it == "read" })
+        assertEquals(2, timeline.count { it == "notify7" })
+        assertEquals(2, timeline.count { it == "notify8" })
+        val unconfirmed = emitted.single { it.code == PrivacyDiagnosticCode.NOTIF_REPOST_UNCONFIRMED }
+        assertEquals(2, unconfirmed.metadata.entries[PrivacyDiagnosticKey.COUNT])
+        assertEquals(setOf(PrivacyDiagnosticKey.COUNT), unconfirmed.metadata.entries.keys)
+        assertEquals("one diagnostic only", 1, emitted.count { it.code == PrivacyDiagnosticCode.NOTIF_REPOST_UNCONFIRMED })
+    }
+
+    @Test
+    fun `G1b-0 the verification skips group summaries and unclassifiable notifications even without a token`() {
+        postOriginal(7, BUDGET, marker = null, customize = withToken("F"))
+        postOriginal(9, BUDGET, marker = null) { builder -> builder.setGroup("ranker_group").setGroupSummary(true) }
+        postOriginal(99, FGS, marker = null)
+        val timeline = mutableListOf<String>()
+        val manager = scriptedManager(timeline, applies = { _, _ -> false })
+
+        sweep(serviceWith(manager, pacerInto(timeline)))
+
+        assertEquals(2, timeline.count { it == "notify7" })
+        assertEquals("summary never posted", 0, timeline.count { it == "notify9" })
+        assertEquals("unclassifiable never posted", 0, timeline.count { it == "notify99" })
+        assertEquals(1, emitted.single { it.code == PrivacyDiagnosticCode.NOTIF_REPOST_UNCONFIRMED }.metadata.entries[PrivacyDiagnosticKey.COUNT])
+    }
+
+    @Test
+    fun `G1b-0 the verification order is sweep, settle 750, one re-read, then a paced 300 re-post`() {
+        postOriginal(7, BUDGET, marker = null, customize = withToken("F"))
+        val timeline = mutableListOf<String>()
+        val manager = scriptedManager(timeline, applies = { _, call -> call > 1 })
+
+        sweep(serviceWith(manager, pacerInto(timeline)))
+
+        assertEquals(
+            listOf("read", "pause300", "notify7", "pause750", "read", "pause300", "notify7"),
+            timeline
+        )
+    }
+
+    @Test
+    fun `G1b-0 nothing to verify records no unconfirmed diagnostic and re-posts nothing`() {
+        postOriginal(7, BUDGET, marker = null)
+        val timeline = mutableListOf<String>()
+        val manager = scriptedManager(timeline)
+
+        sweep(serviceWith(manager, pacerInto(timeline)))
+
+        assertEquals(1, timeline.count { it == "notify7" })
+        assertEquals(listOf(PrivacyDiagnosticCode.NOTIF_REPOSTED_DISCREET), emitted.map { it.code })
+    }
+
+    @Test
+    fun `G1b-0 a sweep with nothing active still settles once and records nothing`() {
+        val timeline = mutableListOf<String>()
+        val manager = scriptedManager(timeline)
+
+        val result = sweep(serviceWith(manager, pacerInto(timeline)))
+
+        assertEquals(NotificationService.RepostResult.NONE, result)
+        assertEquals(listOf("read", "pause750", "read"), timeline)
+        assertTrue(emitted.isEmpty())
+    }
+
+    @Test
+    fun `G1b-0 a CancellationException from the settle pause propagates and records no unconfirmed`() {
+        postOriginal(7, BUDGET, marker = null, customize = withToken("F"))
+        val manager = scriptedManager()
+        val pacer = SweepPacer { millis -> if (millis == AndroidNotificationService.SWEEP_VERIFY_SETTLE_MS) throw CancellationException("cancelled in settle") }
+        val service = serviceWith(manager, pacer)
+
+        assertThrows(CancellationException::class.java) { runBlocking { service.repostActiveAsDiscreet() } }
+
+        assertTrue(emitted.none { it.code == PrivacyDiagnosticCode.NOTIF_REPOST_UNCONFIRMED })
+        verify(exactly = 1) { manager.activeNotifications } // only the sweep read happened
+    }
+
+    @Test
+    fun `G1b-0 a CancellationException from the verification re-read propagates`() {
+        postOriginal(7, BUDGET, marker = null, customize = withToken("F"))
+        val manager = scriptedManager(onRead = { n -> if (n == 2) throw CancellationException("cancelled in re-read") })
+        val service = serviceWith(manager, SweepPacer { })
+
+        assertThrows(CancellationException::class.java) { runBlocking { service.repostActiveAsDiscreet() } }
+
+        assertTrue(emitted.none { it.code == PrivacyDiagnosticCode.NOTIF_REPOST_UNCONFIRMED })
+    }
+
+    @Test
+    fun `G1b-0 a CancellationException from a verification re-post propagates and is not swallowed`() {
+        postOriginal(7, BUDGET, marker = null, customize = withToken("F"))
+        val timeline = mutableListOf<String>()
+        val manager = scriptedManager(timeline, applies = { _, call ->
+            when (call) {
+                1 -> false // the sweep update is dropped, so the verification has something to re-post
+                else -> throw CancellationException("cancelled in verification re-post")
+            }
+        })
+        val service = serviceWith(manager, SweepPacer { })
+
+        assertThrows(CancellationException::class.java) { runBlocking { service.repostActiveAsDiscreet() } }
+
+        assertEquals(2, timeline.count { it == "notify7" })
+        assertTrue(emitted.none { it.code == PrivacyDiagnosticCode.NOTIF_REPOST_UNCONFIRMED })
+    }
+
+    @Test
+    fun `G1b-0 a CancellationException from a verification pacing pause propagates`() {
+        postOriginal(7, BUDGET, marker = null, customize = withToken("F"))
+        val timeline = mutableListOf<String>()
+        val manager = scriptedManager(timeline, applies = { _, call -> call > 1 })
+        var spacingPauses = 0
+        val pacer = SweepPacer { millis ->
+            if (millis == AndroidNotificationService.SWEEP_REPOST_SPACING_MS && ++spacingPauses == 2) {
+                throw CancellationException("cancelled in verification spacing")
+            }
+        }
+        val service = serviceWith(manager, pacer)
+
+        assertThrows(CancellationException::class.java) { runBlocking { service.repostActiveAsDiscreet() } }
+
+        assertEquals("the verification re-post never ran", 1, timeline.count { it == "notify7" })
+    }
+
+    @Test
+    fun `G1b-0 a SecurityException from the verification re-read is swallowed and the repost result is unchanged`() {
+        postOriginal(7, BUDGET, marker = null)
+        val manager = scriptedManager(onRead = { n -> if (n == 2) throw SecurityException("secret detail Lidl 4242") })
+
+        val result = sweep(serviceWith(manager))
+
+        assertEquals(NotificationService.RepostResult(reposted = 1, failed = 0), result)
+        assertTrue(emitted.none { it.code == PrivacyDiagnosticCode.NOTIF_REPOST_UNCONFIRMED })
+        assertEquals(1, emitted.single { it.code == PrivacyDiagnosticCode.NOTIF_REPOSTED_DISCREET }.metadata.entries[PrivacyDiagnosticKey.COUNT])
+        emitted.forEach { e -> e.metadata.entries.values.forEach { assertFalse(it.toString().contains("secret")) } }
+    }
+
+    @Test
+    fun `G1b-0 an unexpected exception from the verification re-read is swallowed and never reaches the caller`() {
+        postOriginal(7, BUDGET, marker = null)
+        val manager = scriptedManager(onRead = { n -> if (n == 2) throw IllegalStateException("secret detail Lidl 4242") })
+
+        val result = sweep(serviceWith(manager))
+
+        assertEquals(NotificationService.RepostResult(reposted = 1, failed = 0), result)
+        assertTrue(emitted.none { it.code == PrivacyDiagnosticCode.NOTIF_REPOST_UNCONFIRMED })
+        emitted.forEach { e -> e.metadata.entries.values.forEach { assertFalse(it.toString().contains("secret")) } }
+    }
+
+    @Test
+    fun `G1b-0 a SecurityException from a verification re-post is swallowed, the sweep result is unchanged and it is not counted unconfirmed`() {
+        postOriginal(7, BUDGET, marker = null, customize = withToken("F"))
+        val manager = scriptedManager(applies = { _, call ->
+            if (call == 1) false else throw SecurityException("secret detail Lidl 4242")
+        })
+
+        val result = sweep(serviceWith(manager))
+
+        assertEquals(NotificationService.RepostResult(reposted = 1, failed = 0), result)
+        assertTrue(emitted.none { it.code == PrivacyDiagnosticCode.NOTIF_REPOST_UNCONFIRMED })
+        emitted.forEach { e -> e.metadata.entries.values.forEach { assertFalse(it.toString().contains("secret")) } }
+    }
+
+    @Test
+    fun `G1b-0 the verification settle is 750 ms inside the 500 to 1000 ms window and distinct from the spacing`() {
+        assertEquals(750L, AndroidNotificationService.SWEEP_VERIFY_SETTLE_MS)
+        assertTrue(AndroidNotificationService.SWEEP_VERIFY_SETTLE_MS in 500L..1000L)
+        assertEquals(300L, AndroidNotificationService.SWEEP_REPOST_SPACING_MS)
     }
 
     private companion object {

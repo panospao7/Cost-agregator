@@ -6,4 +6,6 @@
     <string name="applock_prompt_title_disable">Turn off app lock</string>
     <string name="applock_prompt_title_change">Change app lock settings</string>
     <string name="applock_prompt_title_unlock">Unlock</string>
+    <!-- S22-b (D-S22-6): the device authentication that gates the unsupported-database export. -->
+    <string name="applock_prompt_title_export">Export backup</string>
 </resources>

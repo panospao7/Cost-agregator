@@ -61,6 +61,40 @@ enum class OpenOriginPrompt(val purpose: AuthPurpose, val copy: AuthPromptCopy) 
 }
 
 /**
+ * How an open-origin attempt ended, as told by `AppLockController.openOriginEnd` (S22-a.0, D-S22-1). Bounded: it
+ * carries no setting value, link data, text or platform detail, and it is not a lock state.
+ *
+ * - [APPLIED]: the durable write of the change committed (after the apply's state move, if the state was still at the origin).
+ * - [NOT_COMMITTED]: the change was confirmed but its durable write did not commit; nothing changed.
+ * - [CANCELLED]: the person dismissed the prompt.
+ * - [LOCKED_OUT]: the platform locked authentication out.
+ * - [NOT_AVAILABLE]: the prompt reported no credential or hardware and the capability re-check agreed (an ENABLE
+ *   refusal).
+ * - [ERROR]: a bounded prompt error, a prompt that never launched, or a close that found its state out of step.
+ * - [HOST_LOST]: the hosting Activity was lost (T35) or the prompt was left unanswered past the watchdog.
+ * - [BACKGROUNDED]: reserved. No controller path closes an attempt because the app went to the background (T32
+ *   only records it), so nothing publishes this kind today.
+ */
+enum class OpenOriginEndKind {
+    APPLIED,
+    NOT_COMMITTED,
+    CANCELLED,
+    LOCKED_OUT,
+    NOT_AVAILABLE,
+    ERROR,
+    HOST_LOST,
+    BACKGROUNDED
+}
+
+/**
+ * The end of one open-origin attempt (S22-a.0, D-S22-1): the state alone cannot say how an ENABLE or CONFIRM_CHANGE
+ * attempt ended (ENABLE success goes `DISABLED` to `UNLOCKED`, a failure returns to `DISABLED`). [attemptId] is the
+ * attempt's id, or the negated token id of an `INERT` disable (T19), which has no attempt and so can never equal
+ * an attempt id. [prompt] is the closed selector the attempt started with. It carries no settings or link data.
+ */
+data class OpenOriginEnd(val attemptId: Long, val prompt: OpenOriginPrompt, val kind: OpenOriginEndKind)
+
+/**
  * The process-level app-lock state (domain-spec 2.4, INV-24). Process memory only: nothing here is
  * persisted, and every process starts in [Resolving]. Written only by `AppLockController`.
  */

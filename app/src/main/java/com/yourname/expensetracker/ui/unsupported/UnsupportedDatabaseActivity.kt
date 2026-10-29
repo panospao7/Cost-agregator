@@ -32,6 +32,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.database.DatabaseOpenGate
@@ -50,7 +51,10 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -79,6 +83,15 @@ class UnsupportedDatabaseActivity : FragmentActivity() {
     /** Per Activity instance, created in [onCreate] (prompt library guidance). Null only when the gate does not block. */
     private var exportAuthenticator: DeviceAuthenticator? = null
     private var exportAuthAttemptId: Long = 0L
+
+    /** The in-flight gate read of one tap (F6-i); cancelled by [onStop]. */
+    private var exportGateJob: Job? = null
+
+    /** Generation token of the gate read (like [exportAuthAttemptId]): a stale gate job is a no-op (F6-i). */
+    private var exportGateGeneration = 0L
+
+    /** The prompt watchdog of the open attempt (F6-ii); null when none is armed. */
+    private var exportAuthWatchdog: Job? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -177,7 +190,8 @@ class UnsupportedDatabaseActivity : FragmentActivity() {
     private fun onExportRequested(launchPicker: () -> Unit) {
         if (!canStartExport()) return
         exportState = ExportState.CHECKING
-        lifecycleScope.launch {
+        val gen = ++exportGateGeneration
+        exportGateJob = lifecycleScope.launch {
             try {
                 val testGate = exportAuthRequiredForTest
                 val authRequired = if (testGate != null) {
@@ -185,7 +199,14 @@ class UnsupportedDatabaseActivity : FragmentActivity() {
                 } else {
                     UnsupportedDatabaseExportAuth.isAuthRequired(applicationContext)
                 }
-                if (authRequired) {
+                // F6-i: the read is bounded but suspends; the screen may have been stopped or be finishing
+                // meanwhile. Then neither a prompt nor the picker may start; the state falls back to IDLE below.
+                ensureActive()
+                // A newer tap or an onStop superseded this read: it is a no-op and must not touch the state.
+                if (gen != exportGateGeneration) return@launch
+                if (!lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED) || isFinishing) {
+                    exportState = ExportState.IDLE
+                } else if (authRequired) {
                     beginExportAuthentication(launchPicker)
                 } else {
                     exportState = ExportState.IDLE
@@ -193,13 +214,24 @@ class UnsupportedDatabaseActivity : FragmentActivity() {
                 }
             } finally {
                 // A cancelled (or failed) gate read must not leave the button disabled. This only resets the
-                // state; it never opens the picker.
-                if (exportState == ExportState.CHECKING) exportState = ExportState.IDLE
+                // state; it never opens the picker. A superseded (stale) job leaves the newer tap's state alone.
+                if (gen == exportGateGeneration && exportState == ExportState.CHECKING) {
+                    exportState = ExportState.IDLE
+                    exportGateJob = null
+                }
             }
         }
     }
 
     override fun onStop() {
+        // F6-i: a gate read still in flight is abandoned. Its finally block also resets CHECKING; the reset
+        // here makes that immediate, and it never opens the picker.
+        exportGateGeneration++
+        exportGateJob?.cancel()
+        exportGateJob = null
+        if (exportState == ExportState.CHECKING) exportState = ExportState.IDLE
+        // F6-ii: the stop ends the attempt itself, so the watchdog has nothing left to do.
+        disarmExportAuthWatchdog()
         // The port contract: the caller closes an attempt it no longer waits for. cancel() delivers the
         // outcome synchronously, which ends the attempt as AUTH_DENIED with no picker.
         if (exportState == ExportState.AUTHENTICATING) {
@@ -216,18 +248,52 @@ class UnsupportedDatabaseActivity : FragmentActivity() {
         exportState = ExportState.AUTHENTICATING
         val launch = exportAuthenticator?.authenticate(
             attemptId,
-            AuthPromptCopy.UNLOCK,
+            AuthPromptCopy.EXPORT,
             DeviceAuthCallback { id, outcome -> onExportAuthOutcome(id, outcome, launchPicker) }
         ) ?: AuthLaunch.PROMPT_UNAVAILABLE
         if (launch != AuthLaunch.LAUNCHED && exportState == ExportState.AUTHENTICATING) {
             // Nothing was launched (below API 30, host unavailable, prompt could not be built): fail closed.
             exportState = ExportState.AUTH_DENIED
+        } else if (exportState == ExportState.AUTHENTICATING) {
+            // The prompt is open and no outcome has come yet: bound how long it may stay open (F6-ii).
+            armExportAuthWatchdog(attemptId)
         }
+    }
+
+    /**
+     * F6-ii: after [EXPORT_AUTH_PROMPT_TIMEOUT_MILLIS] without an outcome the screen closes the prompt itself
+     * and ends the attempt as denied. It never opens the picker and keeps no diagnostic.
+     */
+    private fun armExportAuthWatchdog(attemptId: Long) {
+        disarmExportAuthWatchdog()
+        val delayMillis = exportAuthPromptTimeoutMillisForTest ?: EXPORT_AUTH_PROMPT_TIMEOUT_MILLIS
+        exportAuthWatchdog = lifecycleScope.launch {
+            delay(delayMillis)
+            onExportAuthWatchdogFired(attemptId)
+        }
+    }
+
+    private fun disarmExportAuthWatchdog() {
+        exportAuthWatchdog?.cancel()
+        exportAuthWatchdog = null
+    }
+
+    private fun onExportAuthWatchdogFired(attemptId: Long) {
+        // The watchdog job is finishing; drop the reference first so the outcome below does not cancel it.
+        exportAuthWatchdog = null
+        // Only the attempt it was armed for, and only while that attempt is still open.
+        if (attemptId != exportAuthAttemptId || exportState != ExportState.AUTHENTICATING) return
+        // cancel() delivers SYSTEM_CANCELED synchronously, which ends the attempt as AUTH_DENIED with no picker.
+        exportAuthenticator?.cancel(attemptId)
+        // Fail closed if no outcome was delivered (a stale id or an adapter that already closed it).
+        if (exportState == ExportState.AUTHENTICATING) exportState = ExportState.AUTH_DENIED
     }
 
     private fun onExportAuthOutcome(attemptId: Long, outcome: DeviceAuthOutcome, launchPicker: () -> Unit) {
         // A late or repeated callback of an earlier attempt can never start an export.
         if (attemptId != exportAuthAttemptId || exportState != ExportState.AUTHENTICATING) return
+        // Any outcome of the open attempt ends it, so the watchdog is disarmed.
+        disarmExportAuthWatchdog()
         if (outcome == DeviceAuthOutcome.Succeeded && !isFinishing && !isDestroyed) {
             exportState = ExportState.IDLE
             launchPicker()
@@ -308,6 +374,13 @@ class UnsupportedDatabaseActivity : FragmentActivity() {
          */
         @VisibleForTesting
         internal var authenticatorFactoryForTest: ((FragmentActivity) -> DeviceAuthenticator)? = null
+
+        /**
+         * Test seam: replaces [EXPORT_AUTH_PROMPT_TIMEOUT_MILLIS] as the prompt watchdog delay when non-null.
+         * Always null in production; a test sets it and resets it to null afterwards.
+         */
+        @VisibleForTesting
+        internal var exportAuthPromptTimeoutMillisForTest: Long? = null
 
         private const val EXPORT_MIME_TYPE = "application/zip"
         private const val EXPORT_SUGGESTED_NAME = "cost-aggregator-database-backup.zip"

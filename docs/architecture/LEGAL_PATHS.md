@@ -1,6 +1,6 @@
 # Legal Paths — Architecture Law
 
-> **Last updated:** 2026-10-24 (app-lock-privacy-mode 1a: NOTIFICATION PRESENTATION, DEEP LINKS and APP LOCK SETTINGS WRITE PATH sections added; DISPATCH reminder and Anomaly Alerting steps corrected). Earlier: 2026-10-13 (schema/savings delta verified against code: DB v151; prior guarded-worker/CI verification retained)
+> **Last updated:** 2026-10-29 (app-lock-privacy-mode S23 docs: DEEP LINKS 1a/1b with the AE-118 settings-prompt hold; APP LOCK write path status). Earlier: 2026-10-24 (app-lock-privacy-mode 1a: NOTIFICATION PRESENTATION, DEEP LINKS and APP LOCK SETTINGS WRITE PATH sections added; DISPATCH reminder and Anomaly Alerting steps corrected). Earlier: 2026-10-13 (schema/savings delta verified against code: DB v151; prior guarded-worker/CI verification retained)
 >
 > **Purpose:** Define the ONE allowed implementation path for each major operation.  
 > **Rule:** Any code that uses a different path is a bug, regardless of whether it "works."  
@@ -549,9 +549,15 @@ DATABASE OPEN GATE (R25):
     auth is required when (lock ON, or the store is unreadable / the read failed / timed out) AND capability
     is AVAILABLE or CHECK_FAILED, or no answer (provider threw or entry point unresolved). For UNSUPPORTED_API, NO_CREDENTIAL, HW_UNAVAILABLE and UNKNOWN the lock is
     INERT (the main app opens without a prompt in those states), so the export is not gated. The prompt is a
-    per-Activity BiometricPromptDeviceAuthenticator with the constant UNLOCK copy. Cancel, failure or a prompt
-    that cannot launch exports nothing and shows one constant message; onStop cancels an open prompt and
-    denies; no diagnostic code is added and nothing platform-supplied is kept. The activity never binds AppLockController and the lock gate in MainActivity
+    per-Activity BiometricPromptDeviceAuthenticator with the constant EXPORT copy (D-S22-6;
+    AuthPromptCopy.EXPORT, applock_prompt_title_export; the controller never selects it). Cancel, failure or a
+    prompt that cannot launch exports nothing and shows one constant message; onStop cancels an open prompt and
+    denies. F6-i: the prompt or the picker starts only at lifecycle >= STARTED and not finishing; onStop cancels
+    an in-flight gate read and resets CHECKING, and a gate generation token (incremented per tap and per onStop)
+    makes a stale gate job a no-op, so a superseded read never changes the state of a newer tap. F6-ii: a
+    watchdog at EXPORT_AUTH_PROMPT_TIMEOUT_MILLIS (5 min, parity with PROMPT_WATCHDOG_MILLIS) calls
+    cancel(attemptId) and then AUTH_DENIED; any outcome, onStop and a re-arm disarm it; it never opens the
+    picker. No diagnostic code is added and nothing platform-supplied is kept. The activity never binds AppLockController and the lock gate in MainActivity
     is unchanged.
 
 BACKUP SCHEMA FLOOR (R25-C):
@@ -1735,6 +1741,7 @@ RE-POST sweep (turning discreet on, see APP LOCK SETTINGS WRITE PATH):
     is cancellable (CancellationException propagates). Skipped notifications (group summary, null kind,
     failed classify) are not paused. The window is N x 300 ms (about 15 s at 50 notifications).
   → NOTIF_REPOSTED_DISCREET(COUNT) when at least one was re-posted
+  → then verifySweepOnce() (G1b-0, implemented 2026-10-29; see "G1b-0 post-sweep verification" below)
   Accepted residuals (spec 4.6):
     • a notification dismissed between the query and its re-post (up to N x 300 ms) comes back as a
       new post and can alert on a HIGH-importance channel; the content is discreet
@@ -1745,11 +1752,21 @@ RE-POST sweep (turning discreet on, see APP LOCK SETTINGS WRITE PATH):
     • a FULL decision resolved just before the setting commit but posted after the sweep's single query
       stays FULL (millisecond window; postForKind / BillReminderWorker)
     • process death mid-sweep leaves the remaining notifications FULL until they are replaced
-  G1b carry-forward (binding, plan "Orchestrator carry-forwards from the G1a reviews"): post-sweep
-  verification via a content-free presentation-mode token (D / F) next to NotificationKindMarker.EXTRA_KEY,
-  a settle of at least 500 ms, one paced re-post of every sweep-kind notification whose token is NOT "D"
-  (an absent token counts: pre-1a / marker-less originals and the residuals above), one COUNT-only
-  diagnostic (NOTIF_REPOST_UNCONFIRMED); the token stays off the public version; it never blocks cleanup.
+  G1b-0 post-sweep verification (IMPLEMENTED 2026-10-29; closes the G1a carry-forward):
+    • NotificationPresentationApplier stamps a content-free mode token "D" (discreet) / "F" (full) in the
+      PRIVATE extras next to NotificationKindMarker.EXTRA_KEY; never on the public version
+    • AndroidNotificationService.repostActiveAsDiscreet then runs verifySweepOnce(): settle
+      SWEEP_VERIFY_SETTLE_MS = 750 ms (paid on every sweep, accepted latency; it never changes
+      RepostResult or the SWEPT outcome) → re-read activeNotifications ONCE → re-post ONCE (paced 300 ms)
+      every sweep-kind, non-summary notification whose token is NOT "D" (an absent token counts: pre-1a /
+      marker-less originals and the residuals above) via rebuildDiscreet → ONE
+      NOTIF_REPOST_UNCONFIRMED(COUNT) via PrivacyDiagnosticsEmitter (COUNT only, no ids/text)
+    • never loops, never blocks cleanup, CancellationException propagates; verify re-posts and failures are
+      NOT counted in RepostResult (a failure emits NOTIF_REPOST_FAILED(EXCEPTION_CLASS))
+    • residuals: the verify pass does not re-check the effective discreet value, so a legitimate FULL post
+      within about 750 ms + N x 300 ms of turning discreet off can be re-posted discreet (fail-closed); a
+      notification dismissed between the read and its paced notify can be resurrected (same accepted race as
+      the first sweep; setOnlyAlertOnce(true))
   Triggers: per-field discreet write (AppLockSettingsOperations.requestDiscreetChange, WRITE 5) and a committed review-save
   (AppLockPrivacySettingsViewModel, before value "was off"); both go through DiscreetRepostTrigger.
 
@@ -1773,7 +1790,10 @@ FORBIDDEN:
 
 ---
 
-## Deep Links (app-lock-privacy-mode, increment 1a)
+## Deep Links (app-lock-privacy-mode, increments 1a / 1b)
+
+Increment 1a is the policy, applier and manifest below; increment 1b (S21) is the router with the held-link gate. Both
+ship together with the lock (S20 never ships without S22; G1b before release).
 
 ```
 ENTRY (the only one):
@@ -1803,6 +1823,14 @@ caller of AppLockController.onLockQuery / releaseHeldLink / releaseOpportunity):
               lookup and the briefing write happen here)
       Expired → DeepLinkApplier.applyExpired: Home only (the controller recorded DL_HELD_EXPIRED)
       None → nothing (locked, resolving, prompt pending, T33 gate open, or backgrounded: the link stays held)
+  • AE-118 settings-prompt hold (1b): a link that arrives, or is held, while an app-lock settings prompt is open
+      (ENABLE / DISABLE / CHANGE: lock switch, timeout change, review-save) is HELD: releaseHeldLink returns None
+      while the prompt is pending and while the T33 gate is open, so no navigation and no lookup happens under the
+      prompt, and the settings screen stays composed (INV-53). The prompt ending (success, cancel, error or host
+      loss, T35) does not release the link by itself: the controller bumps releaseOpportunity (S21-a, after
+      onOpenOriginApplyCompleted closes the T33 gate with a link held) and the router's collector posts
+      releaseHeldLink() on Main. A link held across PROMPT_HOST_LOST is applied once, whether it arrived before or
+      after the host loss. T_held (5 min) still applies; an expired link goes Home only.
   • Accepted residuals: R-S21-1 a lookup that began while open can finish after a re-lock (the navigation is
     buffered and nothing is composed, and its bounded DL_APPLIED / DL_BRIEFING_* outcome may be recorded
     after the re-lock); R-S21-2 a rotation during a released-link lookup loses that apply.
@@ -1868,7 +1896,14 @@ FORBIDDEN:
 
 ---
 
-## App Lock Settings Write Path (app-lock-privacy-mode, increment 1a)
+## App Lock Settings Write Path (app-lock-privacy-mode, increments 1a / 1b)
+
+S23 status (docs, 2026-10-29): WRITE 3 (lock enable/disable, incl. T19), WRITE 4 (timeout), WRITE 5 (discreet and
+secure screen) and WRITE 2b (the FULL review record, D-S22-7) are all LIVE through the 1a settings ViewModel; nothing
+is dormant. Cancelled, failed, refused and not-launched outcomes of the lock switch, timeout and review-save follow
+ux-flows 4.3: silent outcomes show nothing, and a refusal shows only a bounded, own-string notice (never library
+text). The device-mode disable dialog does not exist (D-S22-2): turning the lock off is one system prompt (or none in
+INERT, T19). Release gate: S20 never ships without S22; G1b before release.
 
 ```
 STORE:
@@ -1880,9 +1915,19 @@ STORE:
 
 READ for a notification: NotificationPresentationResolver (see NOTIFICATION PRESENTATION).
 READ for the UI: AppLockPrivacySettingsViewModel ← AppLockSettingsRepository.observeLoadState().
+  S22-a.1 (owner item 81b, O-1) adds exactly two read-only reads of the controller for the lock row: its `state`
+  StateFlow (the lock row is Waiting ONLY while the state is Authenticating, B-3; the committed appLockEnabled alone
+  decides the switch value, INV-46) and its `openOriginEnd` StateFlow (the inline lock notices; the value at
+  construction is a baseline and never an event, B-2; a notice follows the end's prompt, B-1: LOCK_ON only for an
+  ENABLE end, LOCK_OFF only for a DISABLE end incl. T19's negative attemptId, a CHANGE end never produces a lock
+  notice). The VM also reads DeviceAuthCapabilityProvider.current() as a DISPLAY HINT only (INV-23): it picks the
+  unavailable explanation (OS / NOT_SECURE / NOW); the hint may suppress an enable tap (fail-closed) and never
+  authorizes a request: the Operations' own T26 capability read decides. The ViewModel's controller-member set is pinned to EXACTLY {requestSettingsReread, state, openOriginEnd}.
 READ for the unsupported-database export gate (app-lock S21-c, #10): UnsupportedDatabaseExportAuth calls
   AppLockSettingsRepository.getLoadState() once per export tap, bounded at 2 s (a timeout, a throw or an unreadable
   store all count as unreadable, never as off). Read-only: no write, no controller, no observeLoadState.
+  F6: the in-flight read is abandoned on onStop (cancelled, state reset, generation token invalidates a stale
+  job) and the prompt or picker starts only at lifecycle >= STARTED and not finishing.
 READ + RECOVERY for the app-lock state (S18 ii-c, INV-47, INV-51; requestSettingsReread has ONE production caller since S20-e, the 1a ViewModel retry): AppLockController
   is the only reader that drives lock state. Cold start: resolve() (T1-T6, T6b). While the load state is
   transient-unreadable it re-reads on its own scope at each APP_FOREGROUNDED (never awaited by the foreground
@@ -1913,9 +1958,10 @@ READ + RECOVERY for the app-lock state (S18 ii-c, INV-47, INV-51; requestSetting
 WRITE 1 — per-field discreet toggle (1a; since S20-d (S18-ii-g, D4 option (a)) it is WRITE 5 reached from the
 ViewModel: the unforced UpdateDiscreetNotificationsUseCase and AppLockSettingsRepository.setDiscreetNotifications
 are RETIRED, and the F3 pin counts zero production call sites of `.setDiscreetNotifications(`. WRITE 3 (lock flag)
-and WRITE 4 (auto-lock timeout) remain DORMANT per-field writers that nothing may call yet):
+is wired by S22-a.1 under the S22 plan amendment and owner-approvals 81b (O-1); WRITE 4 (auto-lock timeout) and
+requestSecureScreenChange are wired by S22-b.1 from the same ViewModel):
   → AppLockPrivacySection (UI) → AppLockPrivacySettingsViewModel.setDiscreetNotifications
-     (ignored unless Ready and idle, INV-44)
+     (ignored unless Ready, idle and not forced, INV-44, INV-48)
   → appScope.launch (@ApplicationScope, IO) { withContext(NonCancellable) {
         handlePlain(AppLockSettingsOperations.requestDiscreetChange(enabled)) } }
      (NO outer AppLockSettingsWriteSerializer: the operations take it inside, and the lock is non-reentrant)
@@ -1945,10 +1991,17 @@ WRITE 2 — review-save (1a; replaces a CORRUPTED / INVALID_VALUE store). SINGLE
   → @ApplicationScope + withContext(NonCancellable) { AppLockSettingsOperations.requestReviewSave(record) }
     with NO outer serializer (the operations take the shared AppLockSettingsWriteSerializer inside; the mutex is
     non-reentrant). The VM no longer calls AppLockSettingsRepository.reviewSave and holds no serializer or trigger.
-  → the record is the D2 record, until the S22 UI fields: {lock off, IMMEDIATE, discreet = the user's choice,
-    secure screen ON (the fail-closed value)}. REJECTED_CAPABILITY is unreachable with it (lock off). A lock-off
-    record is a WEAKENING (ReviewSaveAuthorisation): from UNLOCKED it confirms through the CHANGE prompt
-    (WRITE 2b), from INERT under D3 it needs none
+  → the record is the FULL review record since S22-b.1 (owner-approvals item 55, D-S22-7; it replaces the D2 record
+    {lock off, IMMEDIATE, discreet = the choice, secure ON}): {lock = the lock choice, timeout = the timeout choice,
+    discreet = the stored choice, secure = the stored choice}. The card starts at the fail-closed record F: the lock
+    defaults to ON, the timeout to IMMEDIATE, discreet and secure to ON. The lock choice is OFF-ONLY while the
+    controller is INERT (INV-45: never offered On; the effective choice is false whatever was chosen). While the lock
+    choice is On, discreet and secure are forced (read-only, shown On) and the timeout row is shown; while Off, they
+    are editable and the timeout row is hidden. "On" is not an enable flow: no explainer, no prompt of its own. A
+    lock-on record whose fresh capability is not AVAILABLE is REJECTED_CAPABILITY (INV-45), shown as SAVE_FAILED with a
+    re-read, and the card stays so the person can choose Off. Weakening (ReviewSaveAuthorisation: lock off, or a
+    timeout longer than IMMEDIATE) from UNLOCKED confirms through the CHANGE prompt (WRITE 2b); from INERT under D3 it
+    needs none. The NeedsReview state gets its lock choice only through this card (no separate lock row)
   → the rest of the path is WRITE 2b below. Diagnostics (LOCK_SETTINGS_REVIEW_SAVED,
     LOCK_SETTING_PERSIST_FAILED(REVIEW_SAVE)) and the post-commit sweep are owned by the controller and the
     operations (D7), once per (code, field) per process; the ViewModel emits nothing for a review-save
@@ -2004,7 +2057,31 @@ ViewModel above):
   → on Committed → DiscreetRepostTrigger.onCommittedWrite(false, effective after), inside the serializer; the
     completion (onOpenOriginApplyCompleted) runs in a finally
 
-WRITE 3 — lock flag (S18 part (i-a), DORMANT: implemented and tested, no production caller):
+WRITE 3 — lock flag (S18 part (i-a); requestEnable / requestDisable are LIVE since S22-a.1, their ONE production
+caller is the 1a settings ViewModel; requestTimeoutChange and requestSecureScreenChange are LIVE since S22-b.1, from
+the same ViewModel, so the Operations have exactly two production caller files: AppLockSettingsOperations.kt and
+AppLockPrivacySettingsViewModel.kt):
+  CALLERS (S22-a.1): AppLockPrivacySection (UI) → the stored-state switch row
+     - Off → tap opens the AppLockEnableDialog explainer (UI state only, nothing requested); Continue →
+       AppLockPrivacySettingsViewModel.onEnableConfirmed → AppLockSettingsOperations.requestEnable(), called DIRECTLY
+       on Main (not suspend; the controller starts the prompt on its own main dispatcher). Ignored unless the lock
+       row is Off.
+     - On or paused-On (INERT) → tap → AppLockPrivacySettingsViewModel.onTurnOffRequested →
+       AppLockSettingsOperations.requestDisable() directly on Main. NO confirm dialog in device mode (ux 2.2c; the
+       system prompt is the confirmation; INERT takes the T19 no-auth branch).
+     - No outer serializer, no appScope launch, no NonCancellable in the ViewModel for these two calls: both are
+       non-suspend, neither writes on the caller's thread; the apply is launched and serialised inside the
+       Operations.
+     - SettingsRequestResult is mapped exhaustively (no else): STARTED → nothing (the row follows the controller
+       state); REFUSED_UNAVAILABLE → re-read the capability hint, Unavailable variant (a hint that reads AVAILABLE
+       shows the enable-failed notice for an enable and the save-failed notice for a disable); ALREADY_IN_FLIGHT, NOT_IN_ORIGIN, REVIEW_REQUIRED → re-subscribe the
+       observer. An exception (non-cancellation) shows ENABLE_FAILED (enable) or SAVE_FAILED (disable).
+     - The outcome is shown only from the read-only end signal, exhaustively over OpenOriginEndKind and
+       OpenOriginPrompt (no else): APPLIED → LOCK_ON (ENABLE) / LOCK_OFF (DISABLE) / nothing (CHANGE);
+       NOT_COMMITTED → SAVE_FAILED; CANCELLED → LOCK_NOT_TURNED_ON (ENABLE only); LOCKED_OUT → TOO_MANY_ATTEMPTS;
+       ERROR → ENABLE_FAILED (ENABLE only); NOT_AVAILABLE → capability re-read; HOST_LOST, BACKGROUNDED → nothing.
+       The ViewModel never emits LOCK_* or any diagnostic for these (D7, F-5) and adds no diagnostic code.
+     - No optimistic switch: the switch value is the committed appLockEnabled; a tap never moves it.
   OWNER: AppLockSettingsOperations (domain/privacy/applock, @Singleton, @ApplicationScope). The only
   production caller of AppLockController.startOpenOriginAttempt / onOpenOriginApplyCompleted /
   onEnableRefusedAtRequest / onOpenOriginSettingApplied (source-scan pinned).
@@ -2046,9 +2123,13 @@ WRITE 3 — lock flag (S18 part (i-a), DORMANT: implemented and tested, no produ
             (accepted residual, same as D1);
          f. no DiscreetRepostTrigger call (disable never re-posts, INV-13); no T33 gate and no held link are
             involved (no attempt); applyRunning is cleared in the apply's finally.
-         Still DORMANT: the same request entry (requestDisable) and the same source-scan pins; beginInertDisable and
-         onInertDisableApplied have exactly one production caller, AppLockSettingsOperations.kt.
-  DORMANT / NOT LEGAL TO WIRE until ALL of these BLOCKING items are closed:
+         LIVE since S22-a.1 (S22 plan amendment, owner-approvals 81b, O-1): the same request entry (requestDisable,
+         incl. this T19 branch) is called by the 1a ViewModel (onTurnOffRequested) under the same source-scan pins;
+         beginInertDisable and onInertDisableApplied have exactly one production caller, AppLockSettingsOperations.kt.
+  WRITE 3 (requestEnable / requestDisable, incl. the T19 branch) is WIRED by S22-a.1; WRITE 4 (requestTimeoutChange)
+  and requestSecureScreenChange are WIRED by S22-b.1. The former DORMANT / NOT LEGAL TO WIRE list is CLOSED: no
+  Operations request is dormant any more. The BLOCKING items below were the conditions of those wirings and are all
+  met or closed:
     F3: CLOSED by S18-ii-b (adopted resolver form, actionPolicy != UNCHANGED; see the plan amendment
         "S18-ii-b accepted deviation"; the API 26/30 device re-run stays with G1b);
     F4: CLOSED: serializer part (S18-ii-a) and F4(a) review-save in-edit guard (D8) (S18-ii-d: reviewSave is
@@ -2062,29 +2143,47 @@ WRITE 3 — lock flag (S18 part (i-a), DORMANT: implemented and tested, no produ
         default bodies are gone and every fake overrides them, failing closed unless the test needs behaviour);
     INV-45: ViewModel routing (S18-ii-h): CLOSED by S20-e (owner D1). The controller-side review authorisation
         was closed by S18-ii-d (WRITE 2b); the review card now routes through
-        AppLockSettingsOperations.requestReviewSave with the D2 record (lock off, IMMEDIATE, discreet = the
-        choice, secure screen on), so a weakening review-save authenticates once (CHANGE prompt) or, under D3,
-        needs none. ONLY the S22 UI fields remain (a real timeout/secure-screen choice), plus the 61c
-        carry-forwards. Release condition (owner item 55a): no release ships S20 without S22;
+        AppLockSettingsOperations.requestReviewSave, so a weakening review-save authenticates once (CHANGE
+        prompt) or, under D3, needs none. The lock enable/disable UI is wired by S22-a.1 and the real
+        timeout/secure-screen/lock choices by S22-b.1: the D2 record (lock off, IMMEDIATE, discreet = the choice,
+        secure screen on) is REPLACED by the FULL review record (WRITE 2), which is what item 55 required (D-S22-7).
+        Release condition (owner item 55a): no release ships S20 without S22; S20 and S22 land as one atomic
+        candidate;
     WRITE 5 routing (S18 i-b2): CLOSED by S20-d (S18-ii-g). The 1a ViewModel's discreet write is routed through
-        WRITE 5 (requestDiscreetChange), so a forced value can never be written while the lock is on. The
-        secure-screen writer does not exist in 1a (no 1a secure-screen path; F-c), so requestSecureScreenChange
-        stays dormant until S22.
+        WRITE 5 (requestDiscreetChange), so a forced value can never be written while the lock is on.
+        requestSecureScreenChange (the secure-screen row, AE-103) is routed through the same path by S22-b.1.
         EXIT CRITERION (S18 i-b2 final gate ISSUE-4): MET by option (a) (owner item 51a): the use case
         UpdateDiscreetNotificationsUseCase and the unforced setDiscreetNotifications (interface and Impl) are
         retired, with their tests, and the F3 pin counts ZERO production call sites;
-  Source-scan tests allow zero callers of AppLockSettingsOperations, requestEnable, requestDisable,
-  requestTimeoutChange, requestDiscreetChange, requestSecureScreenChange and requestReviewSave outside
-  AppLockSettingsOperations.kt, with ONE per-file exemption (S20-d): AppLockPrivacySettingsViewModel.kt may
-  contain exactly the tokens AppLockSettingsOperations, requestDiscreetChange and requestReviewSave (S20-e). The
-  controller-entry pin allows the ViewModel exactly the token requestSettingsReread (its retry). They also allow
+  Source-scan tests (S22-b.1 rewrite, a strengthening) pin the caller set of AppLockSettingsOperations and its
+  request entries (requestEnable, requestDisable, requestTimeoutChange, requestDiscreetChange,
+  requestSecureScreenChange, requestReviewSave) to EXACTLY two production files: AppLockSettingsOperations.kt and
+  AppLockPrivacySettingsViewModel.kt. The ViewModel's exempt tokens are exactly AppLockSettingsOperations,
+  requestDiscreetChange, requestReviewSave (S20-e), requestEnable and requestDisable (S22-a.1), requestTimeoutChange
+  and requestSecureScreenChange (S22-b.1), i.e. the full token list; each exempt token must be present in that file,
+  and the section and dialog files (AppLockPrivacySection.kt, AppLockEnableDialog.kt, AutoLockTimeoutDialog.kt) may
+  not mention AppLockController, AppLockSettingsOperations, DeviceAuthenticator or the authenticator relay at all.
+  The controller-entry pin allows the ViewModel exactly the tokens requestSettingsReread (its retry) and openOriginEnd
+  (the end signal getter, S22-a.1, O-1), and the controller-member pin on the ViewModel is EXACTLY
+  {requestSettingsReread, state, openOriginEnd}. They also allow
   exactly one call site of setAppLockEnabled, of setAutoLockTimeout, of
   setAutoLockTimeoutIfNotWeakening, of setDiscreetNotificationsIfNotForced and of
   setSecureScreenIfNotForced (that file), ZERO of the retired unforced setDiscreetNotifications, and exactly
   ONE of reviewSave (that file, since S20-e); lifting them needs the items above. S18-ii-e adds beginInertDisable and onInertDisableApplied to the controller-entry
   pins (exactly one production caller each: AppLockSettingsOperations.kt).
 
-WRITE 4 — auto-lock timeout (S18 part (i-b1), DORMANT: implemented and tested, no production caller):
+WRITE 4 — auto-lock timeout (S18 part (i-b1); LIVE since S22-b.1, its ONE production caller is the 1a settings ViewModel):
+  CALLERS (S22-b.1): AppLockPrivacySection (UI) → the timeout row (present only while the COMMITTED lock is on; it
+     shows the committed timeout only, AE-116, no optimistic value) → AutoLockTimeoutDialog (stateless radio picker;
+     no request of its own) → AppLockPrivacySettingsViewModel.onTimeoutSelected (ignored unless Ready, idle, the row
+     present, no prompt in flight and the value differs) → appScope.launch { withContext(NonCancellable) {
+     handleTimeoutResult(AppLockSettingsOperations.requestTimeoutChange(timeout)) } } with NO outer serializer.
+     TECH-13 (UI hint, D-S22-5): while the controller is INERT the picker disables every option longer than the
+     committed timeout and shows applock_timeout_paused_note; the ViewModel also ignores such a choice. The controller
+     enforces it (NOT_IN_ORIGIN, nothing written). TimeoutChangeResult is mapped exhaustively (no else): COMMITTED and
+     STARTED do nothing (the row follows the committed value and the controller state; the end signal gives the
+     notice, a cancelled CHANGE prompt shows none); FAILED, ALREADY_IN_FLIGHT and NOT_IN_ORIGIN show SAVE_FAILED and
+     re-read. An exception (non-cancellation) shows SAVE_FAILED; the ViewModel emits no LOCK_* and no diagnostic.
   OWNER: AppLockSettingsOperations (same class as WRITE 3). Entry: suspend requestTimeoutChange(timeout)
   (no ViewModel, Activity, Compose or Android type).
       1. applyRunning check, then the pre-read of the committed settings; an unreadable store or a
@@ -2106,11 +2205,14 @@ WRITE 4 — auto-lock timeout (S18 part (i-b1), DORMANT: implemented and tested,
          that exact value), then onOpenOriginSettingApplied(attemptId, committed) (applies the token's
          timeout; a failed write records LOCK_SETTING_PERSIST_FAILED(AUTO_LOCK_TIMEOUT)), then
          onOpenOriginApplyCompleted in a finally; the state never moves (UNLOCKED stays)
-  DORMANT / NOT LEGAL TO WIRE until the same BLOCKING list as WRITE 3 is closed (F3, F4, F7, finding 8,
-  INV-45), with the WRITE 4 scope stated there.
+  WIRED by S22-b.1; the BLOCKING list under WRITE 3 (F3, F4, F7, finding 8, INV-45) is closed for it.
 
 WRITE 5 — discreet and secure screen, forced-aware (S18 part (i-b2); requestDiscreetChange has had ONE production
-caller since S20-d, the 1a ViewModel (WRITE 1); requestSecureScreenChange is DORMANT, no production caller):
+caller since S20-d, the 1a ViewModel (WRITE 1); requestSecureScreenChange is LIVE since S22-b.1, ONE production
+caller, the same ViewModel: AppLockPrivacySection secure-screen row → AppLockPrivacySettingsViewModel.setSecureScreen
+(ignored unless Ready, idle and not forced) → appScope.launch { withContext(NonCancellable) {
+handlePlain(requestSecureScreenChange(enabled)) } }; REJECTED_FORCED (AE-103) shows SAVE_FAILED and re-reads; the
+row is read-only while the committed lock is on, and the ViewModel emits no diagnostic for it):
   OWNER: AppLockSettingsOperations (same class as WRITE 3 and 4). Entries: suspend requestDiscreetChange(enabled)
   and suspend requestSecureScreenChange(enabled). Under INV-48 / OD-2 (a) both values are FORCED while the lock
   is on (also in INERT), so there is no weakening that needs a prompt: they are refused, not authenticated.
@@ -2129,9 +2231,9 @@ caller since S20-d, the 1a ViewModel (WRITE 1); requestSecureScreenChange is DOR
          its lock write (a stale "was discreet" would skip the sweep)
   The 1a UpdateDiscreetNotificationsUseCase / setDiscreetNotifications path (no FORCED check) was RETIRED in S20-d
   (S18-ii-g, owner D4 option (a), item 51a), and the ViewModel's discreet toggle is routed here, so no unforced
-  discreet write path remains (F3 pin: zero call sites of `.setDiscreetNotifications(`). The WRITE 3 and WRITE 4
-  paths and requestSecureScreenChange stay DORMANT / NOT LEGAL TO WIRE until the S22 UI fields land (INV-45's
-  ViewModel routing, S18-ii-h, is CLOSED by S20-e).
+  discreet write path remains (F3 pin: zero call sites of `.setDiscreetNotifications(`). WRITE 3 is wired by
+  S22-a.1; WRITE 4 and requestSecureScreenChange are wired by S22-b.1 (INV-45's ViewModel routing, S18-ii-h, is
+  CLOSED by S20-e).
 
 SERIALISATION (domain-owned since S18 ii-a, F4 serializer part CLOSED (S18-ii-a); F4(a) review-save in-edit
 guard (D8) CLOSED (S18-ii-d)): AppLockSettingsWriteSerializer (@Singleton,

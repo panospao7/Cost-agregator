@@ -1993,3 +1993,248 @@ T3. S21 starts after the S20 candidate is committed. One lane, a → b → c. P 
 
 ### Decisions (orchestrator under item 62; owner-approvals 69)
 D-S21-1 releaseOpportunity; D-S21-2 RECOVERED(TIMEOUT); D-S21-3 rejected-while-closed; D-S21-4 drops reported at receipt.
+
+
+## Amendment (2026-10-28): S22 / S23 / G1b plan (feature-planner; orchestrator-persisted; BINDING)
+
+T3, one lane. Order: a.0 → a.1 → b. One atomic S22 candidate.
+P = app/src/main/java/com/yourname/expensetracker; T = app/src/test/java/com/yourname/expensetracker.
+Base: 081af78b.
+
+### Facts
+- **F-1: the entry points are on AppLockSettingsOperations.**
+  - requestEnable() :196 (not suspend; T26 capability read :198-201);
+  - requestDisable() :210 (INERT goes to T19 no-auth, :239);
+  - suspend requestTimeoutChange :314 (TECH-13 NOT_IN_ORIGIN :337);
+  - suspend requestSecureScreenChange :363;
+  - result enums :20-113.
+  - The controller starts prompts on its own main dispatcher (AppLockController.kt:1566-1579).
+- **F-2: the VM today.**
+  - Constructor :105-111. Calls: requestDiscreetChange :192, requestReviewSave :233 (D2 record :222-227) and controller.requestSettingsReread :256.
+  - The section (AppLockPrivacySection.kt:109-157) renders only the discreet row.
+- **F-3: pins (AppLockControllerIllegalTransitionTest).**
+  - Controller-entry pin :716-810; the VM allow-set {requestSettingsReread} :795.
+  - Dormancy pin :812-848, per-file map :828-832.
+  - DORMANT_TOKENS reflection pin :850-862.
+  - VM controller-member pin :864-878, exactly {requestSettingsReread} :877.
+  - DORMANT_TOKENS :966-976.
+- **F-4 GAP:** no public outcome exists for an open-origin attempt. ENABLE success goes DISABLED → apply → UNLOCKED (:664-667), so "DISABLED after AUTHENTICATING" is ambiguous. AE-113 and AE-36 cannot be derived from state alone.
+- **F-5:** LOCK_UNAVAILABLE_* codes are emitted only by the controller (:2071-2078). The VM must not emit them (D7).
+- **F-6:** SecuritySettingsLauncher (AppLockShell.kt:56-72) is internal and reusable.
+- **F-7: strings.**
+  - Present: strings_privacy_section.xml:4-15; strings_applock.xml:8, :19; strings.xml:948 privacy_confirm_cancel; strings_applock_prompt.xml:4-8.
+  - Missing: the other ux 9.1 keys (:1294-1344).
+- **F-8:** ux 2.2c (:390-396) has no disable dialog in device mode; plan v2 :1074 is stale.
+- **F-9:** UnsupportedDatabaseActivity: CHECKING (:177-200) ignores the lifecycle; AUTHENTICATING has no time bound; prompt copy UNLOCK (:219).
+- **F-10:** item 55: the D2 review record stands only while S20 never ships without S22. S22-b replaces it.
+
+### S22-a.0: read-only open-origin end signal (D-S22-1); own commit
+- Files: M AppLockController.kt, M AppLockState.kt.
+- `openOriginEnd: StateFlow<OpenOriginEnd?>`.
+  - OpenOriginEnd(attemptId, prompt: OpenOriginPrompt, kind).
+  - kind ∈ {APPLIED, NOT_COMMITTED, CANCELLED, LOCKED_OUT, NOT_AVAILABLE, ERROR, HOST_LOST, BACKGROUNDED}.
+- Published outside the monitor at every non-success close, and in onOpenOriginSettingApplied / onInertDisableApplied after the state move.
+- Carries no settings or link data, no diagnostic and no new state. UNLOCK never publishes.
+- Tests: N AppLockControllerOpenOriginEndTest (every closing path; APPLIED only after T17/T18; stale ids; T35, T34).
+- Pins:
+  - exact addition to the public-surface and signature pins;
+  - "penOriginEnd" added to the controller-entry forbidden list (a strengthening).
+
+### S22-a.1: settings UI (needs O-1)
+Files:
+- M ui/screens/privacysettings/AppLockPrivacySettingsViewModel.kt
+- M AppLockPrivacySection.kt
+- N AppLockEnableDialog.kt
+- M res/values{,-es,-el}/strings_privacy_section.xml
+
+Behaviour:
+- The VM injects DeviceAuthCapabilityProvider as a display hint only.
+- Lock-row model: Checking | Off/On (committed appLockEnabled only, INV-46) | Waiting(purpose) | InertOn (off only, AE-54, T19) | Unavailable Os/NotSecure/Now | Transient.
+- Turning on opens the explainer (Android 11 bullet at sdk 30). Continue calls operations.requestEnable() directly on Main; turning off calls requestDisable() directly, with no dialog.
+- Exhaustive mapping, no else:
+  - SettingsRequestResult:
+    - REFUSED_UNAVAILABLE → re-read capability, Unavailable variant;
+    - ALREADY_IN_FLIGHT, NOT_IN_ORIGIN, REVIEW_REQUIRED → resubscribe.
+  - End kind:
+    - APPLIED → LOCK_ON / LOCK_OFF;
+    - NOT_COMMITTED → SAVE_FAILED;
+    - CANCELLED on ENABLE → LOCK_NOT_TURNED_ON;
+    - LOCKED_OUT → too-many-attempts;
+    - ERROR on ENABLE → enable_failed;
+    - NOT_AVAILABLE → re-read;
+    - HOST_LOST, BACKGROUNDED, non-ENABLE cancel → nothing.
+- Discreet is forced while the lock is on or INERT (AE-65). Notices are inline (D-S22-3).
+- AEs: 34, 35, 36, 54, 65, 70, 93, 113, 114, 118 (UI).
+
+Tests:
+- M AppLockPrivacySettingsViewModelTest;
+- M AppLockPrivacySectionTest (including P-113 with no dispose);
+- N AppLockEnableDialogTest;
+- N AppLockPrivacySectionStringsTest.
+
+Pins:
+- Dormancy: the VM gains exactly {requestEnable, requestDisable}.
+- O-1 (OWNER):
+  - the VM controller-member pin becomes exactly {requestSettingsReread, state, openOriginEnd};
+  - the controller-entry VM allow-set gains "penOriginEnd".
+- Strengthening:
+  - each exempt token must be present in the VM;
+  - the section and dialog files must not mention AppLockController, AppLockSettingsOperations, DeviceAuthenticator or the relay.
+
+Docs: LEGAL_PATHS "App Lock Settings Write Path" (:1687) callers; SEGMENTS; INVENTORY.
+
+### S22-b: timeout, secure screen, forced rows, Android 11 note, review card, F6, EXPORT copy
+- **b.1 files:** VM, Section, N AutoLockTimeoutDialog.kt, strings_privacy_section.xml ×3.
+  - Timeout row: requestTimeoutChange on appScope under NonCancellable; exhaustive mapping; committed value only (AE-116).
+  - TECH-13: in INERT, options longer than the committed timeout are disabled, with applock_timeout_paused_note (D-S22-5).
+  - Secure-screen row: forced while the lock is on; REJECTED_FORCED → SAVE_FAILED (AE-103).
+  - Android 11 note when the lock is on at sdk 30.
+  - Review card: the full record replaces D2. The lock defaults to On; INERT is Off only; REJECTED_CAPABILITY → SAVE_FAILED.
+- **b.2 files:** UnsupportedDatabaseActivity.kt, UnsupportedDatabaseExportAuth.kt, domain DeviceAuthenticator.kt (AuthPromptCopy.EXPORT), ui/applock/BiometricPromptDeviceAuthenticator.kt (:43-56), strings_applock_prompt.xml ×3.
+  - F6-i: after the gate read, continue only at STARTED or above and when not finishing; otherwise IDLE. onStop cancels the CHECKING job.
+  - F6-ii: a watchdog at EXPORT_AUTH_PROMPT_TIMEOUT_MILLIS, equal to PROMPT_WATCHDOG_MILLIS (5 min) → cancel(id) → AUTH_DENIED. Disarmed by any outcome and by onStop; it never opens the picker.
+  - EXPORT copy: "Export backup" (es/el DRAFT).
+- AEs: 85, 86, 87, 103, 116; TECH-13; OD-20a; UQ-3.
+- Tests:
+  - VM and Section updates; N AutoLockTimeoutDialogTest;
+  - the s22_f6_* seam tests; constant parity;
+  - BiometricPromptCopyTest, AppLockPromptHostTest :510, AppLockAuthenticatorRelayTest :344;
+  - a pin: EXPORT is used only by UnsupportedDatabaseActivity and the adapter.
+- Pins:
+  - the VM gains {requestTimeoutChange, requestSecureScreenChange};
+  - the dormancy test is rewritten as an EXACT two-file caller set {AppLockSettingsOperations.kt, AppLockPrivacySettingsViewModel.kt}, a strengthening;
+  - the AuthPromptCopy value set gains exactly EXPORT.
+
+### Validation
+- **Batch a:**
+  - targeted *AppLockController*,*AppLockPrivacy*,*AppLockEnableDialog*,*PrivacySettings*,*AppLockShell*;
+  - domain-n-z, runtime-ui;
+  - known_good_state, cancellation, ui_dao;
+  - lint.
+- **Batch b:**
+  - targeted *AppLockPrivacy*,*AutoLockTimeoutDialog*,*AppLockControllerIllegalTransition*,*UnsupportedDatabase*,*BiometricPrompt*,*AppLockPromptHost*,*AppLockAuthenticatorRelay*,*AppLockBiometricSourceScan*,*AppLockRelaySourceScan*,*GsonR8KeepRulesContract*;
+  - runtime-ui;
+  - the same guards;
+  - lint.
+- **Candidate:** union targeted, runtime-ui, domain-n-z, static-guards, app-check.
+
+### Gates
+- privacy-security-guardian (lead) and architecture-guardian per slice.
+- reviewer-strict once, on the atomic candidate.
+
+### STOP conditions
+- Any UI write that is not an Operations request, or a controller start*/on* call.
+- Any Operations change.
+- A new diagnostic code, or the VM emitting LOCK_*.
+- Any pin loosened beyond the planned dormancy tokens and O-1.
+- An optimistic switch.
+- Edits to AppLockShell, AppLockGate, MainActivity or SecureWindowController.
+- Any strings.xml edit.
+- A manifest change, permission or new persisted key.
+- PIN-mode UI.
+- More than 2 + 2 iterations.
+
+### S23 (docs, before G1b; architecture-guardian)
+- USE_BIOMETRIC in the release evidence and the INVENTORY permissions list (item 9: a normal install-time permission that came with S20; no other new permission).
+- ux 4.3: ERROR_CANCELED moves to SYSTEM_CANCELED.
+- ux: the TECH-13 INERT timeout row; drop the device-mode disable dialog.
+- release-note-1b.md.
+- LEGAL_PATHS:
+  - DEEP LINKS retitled 1a/1b, with the AE-118 settings-prompt hold and the releaseOpportunity trigger;
+  - APP LOCK items :1093-1095.
+- SEGMENTS, ENGINE, NAVIGATION, UI maps, hilt map.
+
+### G1b device matrix (owner-approvals 76: emulators allowed)
+
+| Device | Status | Checks |
+|---|---|---|
+| API 26 | have it | AE-34; AE-54 INERT off-only; export not gated at UNSUPPORTED_API; G1a post-sweep |
+| API 35 | have it | AE-36, 38-47, 55-63, 65-67, 69, 70, 85-87, 103, 113, 114, 116-118; R3, R14, RP-5, RP-11, CF-6; Back; insets/TalkBack 200%; #10 prompt then picker and cancel; F6 watchdog; EXPORT title |
+| API 30 | needs O-3 | Android 11 note and bullet; AE-64; AE-66 recents/screenshots; AE-35 NO_CREDENTIAL; G1a post-sweep |
+| API 31 | needs O-3 | AE-36 spec level, AE-48/49, AE-117 |
+| API 33 | needs O-3 | AE-39, AE-85..87 |
+| API 34 | needs O-3 | AE-42/117 OEM screens, AE-116/118, R3 partial share |
+
+If O-3 is denied, the minimum is API 30 + 31; without them 1b stays PARTIAL.
+
+### Decisions
+- **OWNER:**
+  - O-1: VM read pin;
+  - O-2: es/el sign-off for the S22 strings;
+  - O-3: API 30/31/33/34 images, a network download.
+- **ORCHESTRATOR (item 62):**
+  - D-S22-1: a.0 openOriginEnd;
+  - D-S22-2: drop AppLockDisableDialog;
+  - D-S22-3: inline notices;
+  - D-S22-4: AE-54/70/93 in S22-a;
+  - D-S22-5: TECH-13 copy;
+  - D-S22-6: EXPORT copy in S22-b;
+  - D-S22-7: the full review record meets item 55.
+
+### Merge note
+S22 lands after the S20/S21 merge 4add2466. It does not touch MainActivity, strings.xml, DeepLink*, MainScreen or the manifest (the loan S13-a / mec surfaces). Docs overlap: LEGAL_PATHS, SEGMENTS, INVENTORY.
+
+### S22-a.1 bindings from the S22-a.0 privacy review (2026-10-28; BINDING)
+Source: privacy-security-guardian, S22-a.0, ACCEPT-WITH-CONDITIONS (privacy PASS). Findings 1-3 bind the S22-a.1 ViewModel; they refine the "End kind" mapping above and do not loosen it.
+- **B-1 (finding 1): the lock notice follows the end's prompt.**
+  - LOCK_ON only when the end's prompt is ENABLE; LOCK_OFF only when it is DISABLE. This includes T19's end, whose attemptId is negative (the prompt is still DISABLE).
+  - CHANGE ends never produce a lock notice, whatever their kind (an APPLIED CHANGE is a timeout or review-save, not a lock change).
+  - Tests: one VM test per prompt (ENABLE, DISABLE, CHANGE), each with an APPLIED end.
+- **B-2 (finding 2): replay baseline.**
+  - `openOriginEnd` is a StateFlow, so a new collector gets the latest end replayed.
+  - The VM snapshots `openOriginEnd.value` at init as its baseline and reacts only to a later, different value. A value equal to the baseline is never an event.
+  - Tests: "a VM created after an end shows no notice" and "a replayed end equal to the baseline shows nothing".
+- **B-3 (finding 3): some success paths publish no end.**
+  - Examples: an apply that never reaches `onOpenOriginSettingApplied`; a T19 refused by the D3 re-check.
+  - The lock row and any progress state must never wait for an end.
+  - Waiting is derived from `state is Authenticating` only, and the row value comes from committed settings only (INV-46).
+- **B-4 (UX note for S23, ux 4.3): ERROR_CANCELED from a background.**
+  - BiometricPrompt ERROR_CANCELED delivered from a background during an ENABLE prompt maps to ERROR, so the VM shows enable_failed.
+  - S23 decides the copy (together with the ux 4.3 move of ERROR_CANCELED to SYSTEM_CANCELED).
+
+### S22-a.1 review dispositions (2026-10-28)
+Source: privacy-security-guardian ACCEPT-WITH-CONDITIONS and architecture-guardian ACCEPT-WITH-CONDITIONS on S22-a.1; orchestrator decisions under standing approval item 62. Applied in one fix pass:
+- **Fix 1 (privacy finding 1, MEDIUM): face-unlock claim.** `privacy_app_lock_enable_point_face` (key kept) said "Face unlock isn't used.", which is false for Class 3 (strong) face, allowed by BIOMETRIC_STRONG or DEVICE_CREDENTIAL. The English value is now "Only your screen lock or a strong biometric, like your fingerprint, can unlock the app. Basic face unlock isn't used."; es and el DRAFT values updated to the same meaning; ux-flows (principle 4, the explainer mock and the copy table) corrected.
+- **Fix 2 (privacy finding 2): hint wording.** The capability hint may suppress an enable tap (fail-closed) and never authorizes a request; Operations' own T26 read decides. Replaces "never gates a request" in the ViewModel KDoc and LEGAL_PATHS.
+- **Fix 3 (privacy finding 3 / arch F5c): defence in depth.** `setDiscreetNotifications` also returns when `discreetForced`.
+- **Fix 4 (test-author finding 2): purpose-aware refusal notice.** `handleLockRequestResult` takes the request purpose; a REFUSED_UNAVAILABLE whose re-read reads AVAILABLE shows ENABLE_FAILED for an enable and SAVE_FAILED for a disable (the `when` stays exhaustive, no else).
+- **Fix 5 (arch F1, MEDIUM): LEGAL_PATHS self-contradiction.** WRITE 3 (requestEnable / requestDisable, incl. the T19 branch) is recorded as wired by S22-a.1 under the S22 plan amendment and owner-approvals 81b (O-1); the DORMANT / BLOCKING list is narrowed to WRITE 4 (timeout) and requestSecureScreenChange (wired by S22-b); INV-45 "only the S22-b UI fields remain"; "neither writes on the caller's thread; the apply is launched and serialised inside the Operations".
+- **Deferred to S23:** `hilt-bindings-map.md` ~:409 stale ViewModel constructor; ENGINE_INTERACTION_MAP; ux 4.3 feedback for the silent turn-off outcomes (DISABLE ERROR / CANCELLED, ALREADY_IN_FLIGHT / NOT_IN_ORIGIN / REVIEW_REQUIRED, and REVIEW_REQUIRED without a controller re-read); the Unavailable(OS) "Open security settings" action "only if useful" (ux :230).
+- **Deferred to S22-b:** the UI-files pin must add `AutoLockTimeoutDialog.kt` (or scan the package minus the ViewModel); the NeedsReview lock row via the full review record, in the same atomic S22 candidate (item 55).
+- **Accepted deviations 1-7** as listed in the S22-a.1 privacy review.
+
+### S22-b review dispositions (2026-10-28)
+
+- **privacy-security-guardian: ACCEPT-WITH-CONDITIONS.** The seam-pin condition is done in the tests. Finding 2 (the gate-read race) is the same defect as architecture F5 and is fixed by the gate generation token in `UnsupportedDatabaseActivity`. Infos 3-6 are accepted; the optional item in info 4 is not taken (the Ready defaults are kept for test compatibility).
+- **architecture-guardian: ACCEPT-WITH-CONDITIONS.** F1-F4 (docs: EXPORT copy and F6-i / F6-ii in LEGAL_PATHS, CODEBASE_SEGMENTS, CODEBASE_INVENTORY; stale DORMANT wording; ViewModel description) fixed. F5 (LOW correctness) fixed: `exportGateGeneration` makes a stale gate job a no-op. NIT 6 goes to a test helper (test-author). NIT 7 fixed: `saveReview` takes `discreetNotifications` from `current.discreetChoice`, behaviour identical.
+- **Follow-ups for S23:** `hilt-bindings-map.md` :409-420 (ViewModel constructor plus the timeout and secure-screen writes); ENGINE_INTERACTION_MAP; a ux doc note that the review record stores the raw discreet / secure choices while they are forced (privacy info 3); the REJECTED_CAPABILITY copy (privacy info 6).
+- **More S23 follow-ups (reviewer-strict, 2026-10-29):** `AppLockSettingsOperations.kt:393` KDoc still says "D2 record"; `ENGINE_INTERACTION_MAP.md:175` still says "requestReviewSave(D2 record)"; ux 4.3 add "CHANGE ERROR / not launched" to the silent outcomes.
+
+## Amendment (2026-10-29): G1b execution plan (feature-planner, Sonnet; orchestrator-persisted; BINDING)
+- **Precondition slice G1b-0 (production; privacy):** implement the BINDING G1a carry-forward, the post-sweep verification (~:1482-1487). It is absent from main.
+  - Content-free presentation-mode token "D"/"F" in the extras, next to NotificationKindMarker.EXTRA_KEY (not on the public version).
+  - After the sweep, settle ≥500 ms to 1 s, then re-read the active notifications. Re-post once (paced) any sweep-kind notification whose token is not "D"; an absent token counts.
+  - One COUNT-only diagnostic, NOTIF_REPOST_UNCONFIRMED, through the registry. Never blocks cleanup, never loops; CancellationException propagates.
+  - Write set: AndroidNotificationService, NotificationPresentationApplier, DiagnosticReasonCode / the registry and golden, unit tests, plus new NotificationPresentationDeviceTest methods.
+  - Process: Sonnet writer plus a separate test-author (privacy), and one combined guardian.
+- **New androidTest classes** (ui/applock/, AndroidJUnit4 + createEmptyComposeRule; no Hilt runner, no new dependency or permission; Instrumentation.uiAutomation for shell, window and a11y):
+  - AppLockLifecycleDeviceTest (~8 tests): cold start lock on (AE-38/66/69), INERT AE-54, SETTINGS_UNREADABLE, lock off (R14/RP-5).
+  - AppLockPromptHostDeviceTest (~5 tests): rotation during the prompt, cancel echo, double tap, "already showing" skip, Home mid-prompt.
+  - NotificationPresentationDeviceTest gains lock-on SDK 30 rows and the post-sweep verification.
+  - Seeding: the internal appLockPrivacyDataStore in the test process, then ActivityScenario.launch(MainActivity).
+- **Classification per AVD:**
+  - A = existing test; B = new test; C = adb-scripted, with screencap, dumpsys window and uiautomator dump as evidence; D = residual. Full table in the planner report.
+  - D items: real OEM screens, Class 3 face, real fingerprint hardware, AE-61/62/63 (restore fixtures; unit coverage), and AE-43 if not rootable.
+  - CF-6 is defined at handoff ~:2083 and ~:2380: no content frame after a re-lock at APP_FOREGROUNDED; no Activity-scoped ViewModel keeps clipboard listeners or permission flows across a re-lock. It is a C check on API 35.
+- **Order:** one emulator at a time: api35, api26, api30, api31, api33, api34.
+  - `locksettings set-pin 1234` where a credential is needed.
+  - The runner's connected-test-class with -DeviceSerial (with -AllowOverlap -OverlapReasonCode REQUIRED_FINAL_GATE when the serial repeats, as at G1a), then the C steps, then emu kill.
+- **Evidence:** build/release-lead-notes/g1b/<api>/ (runs.md, <AE>.png, <AE>-window.txt, <AE>-ui.xml, residuals.md); a matrix table in the handoff.
+- **STOP:**
+  - any production change outside G1b-0;
+  - any new permission, dependency or guard change;
+  - any leak (FULL content or a missing FLAG_SECURE on a locked, forced or RESOLVING surface);
+  - lock loops;
+  - any network step beyond the installed images.
+  Findings are reported, never patched in place.
+- **Estimate:** ~10 runner runs plus C scripting. reviewer-strict at the app-lock merge candidate.

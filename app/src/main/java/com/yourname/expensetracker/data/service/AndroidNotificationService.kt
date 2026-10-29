@@ -69,6 +69,12 @@ class AndroidNotificationService internal constructor(
          */
         internal const val SWEEP_REPOST_SPACING_MS = 300L
 
+        /**
+         * Settle time between the end of the sweep and the single post-sweep verification re-read (G1b-0).
+         * Within the binding 500 ms to 1 s window, so a platform-queued update has landed before the re-read.
+         */
+        internal const val SWEEP_VERIFY_SETTLE_MS = 750L
+
         // The three channel ids are read by NotificationKindClassifier (S9b); one literal each.
         internal const val BUDGET_CHANNEL_ID = "budget_alerts"
         private const val BUDGET_CHANNEL_NAME = "Budget Alerts"
@@ -305,7 +311,66 @@ class AndroidNotificationService internal constructor(
                 PrivacyDiagnosticMetadata.builder().put(PrivacyDiagnosticKey.COUNT, reposted).build()
             )
         }
+
+        verifySweepOnce()
         return NotificationService.RepostResult(reposted = reposted, failed = failed)
+    }
+
+    // Post-sweep verification (G1b-0, BINDING carry-forward): the platform can still drop an update that races
+    // a foreign post, leaving FULL content. After the sweep, settle SWEEP_VERIFY_SETTLE_MS, re-read the active
+    // notifications once and re-post ONCE (paced) every sweep-kind notification whose presentation-mode token is
+    // not "D" (an absent token counts). Single pass: re-posted items are not re-read, so there is no loop. It never
+    // blocks cleanup: any non-cancellation failure is logged (class name only) and swallowed; CancellationException
+    // propagates. The only diagnostic is the COUNT of re-posted items; no content, ids, paths or text.
+    private suspend fun verifySweepOnce() {
+        try {
+            sweepPacer.pause(SWEEP_VERIFY_SETTLE_MS)
+            val active: Array<StatusBarNotification> = try {
+                notificationManager.activeNotifications
+            } catch (e: SecurityException) {
+                emitRepostFailed(e)
+                return
+            }
+
+            var unconfirmed = 0
+            for (original in active) {
+                try {
+                    if ((original.notification.flags and Notification.FLAG_GROUP_SUMMARY) != 0) continue
+
+                    val kind = NotificationKindClassifier.classify(
+                        channelId = original.notification.channelId,
+                        notificationId = original.id,
+                        rawMarker = NotificationKindMarker.read(original.notification)
+                    ) ?: continue
+
+                    if (NotificationPresentationApplier.readModeToken(original.notification) ==
+                        NotificationPresentationApplier.MODE_TOKEN_DISCREET
+                    ) {
+                        continue
+                    }
+
+                    sweepPacer.pause(SWEEP_REPOST_SPACING_MS)
+                    notificationManager.notify(original.tag, original.id, rebuildDiscreet(original, kind))
+                    unconfirmed++
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w(TAG, "NOTIFICATION_REPOST_VERIFY_FAILED class=${e::class.java.simpleName}")
+                    emitRepostFailed(e)
+                }
+            }
+
+            if (unconfirmed > 0) {
+                privacyDiagnostics.emit(
+                    PrivacyDiagnosticCode.NOTIF_REPOST_UNCONFIRMED,
+                    PrivacyDiagnosticMetadata.builder().put(PrivacyDiagnosticKey.COUNT, unconfirmed).build()
+                )
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "NOTIFICATION_REPOST_VERIFY_ABORTED class=${e::class.java.simpleName}")
+        }
     }
 
     /**

@@ -16,6 +16,13 @@ import kotlinx.coroutines.withTimeoutOrNull
 internal const val EXPORT_AUTH_READ_TIMEOUT_MILLIS: Long = 2_000L
 
 /**
+ * Longest time, in milliseconds, the export authentication prompt may stay open (S22-b, F6-ii) before the screen cancels
+ * it and ends the attempt as denied. It equals the lock controller's open-origin prompt watchdog (5 minutes); this
+ * screen has no controller, so the value is repeated here and a parity test pins the two together.
+ */
+internal const val EXPORT_AUTH_PROMPT_TIMEOUT_MILLIS: Long = 5 * 60_000L
+
+/**
  * What the export gate found in the app-lock store. [UNREADABLE] covers an unreadable store, a read that
  * threw, a read that did not finish within [EXPORT_AUTH_READ_TIMEOUT_MILLIS] and an entry point that could not
  * be resolved. It is never read as "off".

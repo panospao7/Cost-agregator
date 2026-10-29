@@ -44,6 +44,7 @@ internal fun promptTitleRes(copy: AuthPromptCopy): Int = when (copy) {
     AuthPromptCopy.ENABLE -> R.string.applock_prompt_title_enable
     AuthPromptCopy.DISABLE -> R.string.applock_prompt_title_disable
     AuthPromptCopy.CHANGE -> R.string.applock_prompt_title_change
+    AuthPromptCopy.EXPORT -> R.string.applock_prompt_title_export
 }
 
 /** Constant subtitle resource for [copy]. Only ENABLE has one (INV-53). */
@@ -53,7 +54,8 @@ internal fun promptSubtitleRes(copy: AuthPromptCopy): Int? = when (copy) {
     AuthPromptCopy.ENABLE -> R.string.applock_prompt_subtitle_enable
     AuthPromptCopy.UNLOCK,
     AuthPromptCopy.DISABLE,
-    AuthPromptCopy.CHANGE -> null
+    AuthPromptCopy.CHANGE,
+    AuthPromptCopy.EXPORT -> null
 }
 
 /**

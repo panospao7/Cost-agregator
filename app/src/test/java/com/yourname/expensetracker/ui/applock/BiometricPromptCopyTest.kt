@@ -39,7 +39,8 @@ class BiometricPromptCopyTest {
         R.string.applock_prompt_subtitle_enable,
         R.string.applock_prompt_title_disable,
         R.string.applock_prompt_title_change,
-        R.string.applock_prompt_title_unlock
+        R.string.applock_prompt_title_unlock,
+        R.string.applock_prompt_title_export
     )
 
     private fun localized(languageTag: String): Context {
@@ -58,6 +59,56 @@ class BiometricPromptCopyTest {
         assertEquals(R.string.applock_prompt_title_enable, promptTitleRes(AuthPromptCopy.ENABLE))
         assertEquals(R.string.applock_prompt_title_disable, promptTitleRes(AuthPromptCopy.DISABLE))
         assertEquals(R.string.applock_prompt_title_change, promptTitleRes(AuthPromptCopy.CHANGE))
+        assertEquals(R.string.applock_prompt_title_export, promptTitleRes(AuthPromptCopy.EXPORT))
+    }
+
+    @Test
+    fun s22_authPromptCopy_isExactlyTheFiveKnownValues() {
+        assertEquals(
+            setOf(
+                AuthPromptCopy.UNLOCK,
+                AuthPromptCopy.ENABLE,
+                AuthPromptCopy.DISABLE,
+                AuthPromptCopy.CHANGE,
+                AuthPromptCopy.EXPORT
+            ),
+            AuthPromptCopy.entries.toSet()
+        )
+        assertEquals(setOf("UNLOCK", "ENABLE", "DISABLE", "CHANGE", "EXPORT"), AuthPromptCopy.entries.map { it.name }.toSet())
+        assertEquals(5, AuthPromptCopy.entries.size)
+    }
+
+    @Test
+    fun s22_exportTitle_isExportBackup_andHasNoSubtitleDescriptionOrNegativeButton() {
+        val info = buildPromptInfo(context, AuthPromptCopy.EXPORT)
+
+        assertEquals("Export backup", text(R.string.applock_prompt_title_export))
+        assertEquals("Export backup", info.title.toString())
+        assertNull(promptSubtitleRes(AuthPromptCopy.EXPORT))
+        assertTrue("subtitle=${info.subtitle}", info.subtitle.isNullOrEmpty())
+        assertTrue("description=${info.description}", info.description.isNullOrEmpty())
+        assertTrue("negative=${info.negativeButtonText}", info.negativeButtonText.isNullOrEmpty())
+        assertEquals(0x800F, info.allowedAuthenticators)
+    }
+
+    @Test
+    fun s22_exportTitle_isPresentNonBlankAndTranslatedInSpanishAndGreek() {
+        val default = text(R.string.applock_prompt_title_export)
+        for (tag in listOf("es", "el")) {
+            val value = text(promptTitleRes(AuthPromptCopy.EXPORT), localized(tag))
+            assertNoPlaceholder(value, "locale $tag export title")
+            assertNotEquals("locale $tag fell back to the default export title", default, value)
+        }
+    }
+
+    @Test
+    fun s22_exportTitle_differsFromEveryOtherCopyTitle_inEveryLocale() {
+        for (ctx in listOf(context, localized("es"), localized("el"))) {
+            val export = text(promptTitleRes(AuthPromptCopy.EXPORT), ctx)
+            for (other in AuthPromptCopy.entries.filter { it != AuthPromptCopy.EXPORT }) {
+                assertNotEquals("export title equals $other", text(promptTitleRes(other), ctx), export)
+            }
+        }
     }
 
     @Test
@@ -93,6 +144,7 @@ class BiometricPromptCopyTest {
         assertNull(promptSubtitleRes(AuthPromptCopy.UNLOCK))
         assertNull(promptSubtitleRes(AuthPromptCopy.DISABLE))
         assertNull(promptSubtitleRes(AuthPromptCopy.CHANGE))
+        assertNull(promptSubtitleRes(AuthPromptCopy.EXPORT))
     }
 
     @Test
@@ -104,7 +156,7 @@ class BiometricPromptCopyTest {
 
     @Test
     fun inv53_otherCopies_haveNoSubtitle() {
-        for (copy in listOf(AuthPromptCopy.UNLOCK, AuthPromptCopy.DISABLE, AuthPromptCopy.CHANGE)) {
+        for (copy in listOf(AuthPromptCopy.UNLOCK, AuthPromptCopy.DISABLE, AuthPromptCopy.CHANGE, AuthPromptCopy.EXPORT)) {
             val subtitle: CharSequence? = buildPromptInfo(context, copy).subtitle
             assertTrue("copy $copy subtitle=$subtitle", subtitle.isNullOrEmpty())
         }
@@ -175,11 +227,11 @@ class BiometricPromptCopyTest {
         assertEquals(0x800F, PROMPT_ALLOWED_AUTHENTICATORS)
     }
 
-    // ---- resources: all five ids in values, values-es, values-el ----------------------------
+    // ---- resources: all six ids in values, values-es, values-el -----------------------------
 
     @Test
-    fun inv53_defaultLocale_allFiveStringsAreNonBlankAndPlaceholderFree() {
-        assertEquals(5, promptStringIds.size)
+    fun inv53_defaultLocale_allSixStringsAreNonBlankAndPlaceholderFree() {
+        assertEquals(6, promptStringIds.size)
         for (id in promptStringIds) {
             assertNoPlaceholder(text(id), "default id=$id")
         }

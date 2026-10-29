@@ -390,8 +390,8 @@ class AppLockSettingsOperations @Inject constructor(
      *
      * Single caller note (S20-e, S18-ii-h, D1): the 1a privacy settings ViewModel is the one production caller, and
      * this class is the only production caller of `AppLockSettingsRepository.reviewSave` (a source-scan pin holds both).
-     * The ViewModel sends the D2 record (lock off, `IMMEDIATE`, discreet = the user's choice, secure screen on) under
-     * `NonCancellable` and takes no outer serializer.
+     * The ViewModel sends the full review record (the user's lock, timeout, discreet and secure-screen choices; D-S22-7,
+     * owner-approvals item 55) under `NonCancellable` and takes no outer serializer.
      */
     suspend fun requestReviewSave(record: AppLockPrivacySettings): ReviewSaveResult {
         if (applyRunning.get()) return ReviewSaveResult.ALREADY_IN_FLIGHT

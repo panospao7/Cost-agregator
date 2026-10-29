@@ -48,7 +48,7 @@ below describe only the decided option. The rejected alternatives survive solely
 3. **Neutral lock screen with one explicit "Unlock" button.** No timed auto-prompt (INV-34: the prompt is launched only by
    explicit user action), no countdown that triggers anything, no content from the app (no counts, badges, names, amounts,
    last-opened screen, or deep-link destination; INV-35).
-4. **Authentication UI is the system prompt** (strong biometric or device credential, no face; INV-23). The app never
+4. **Authentication UI is the system prompt** (strong biometric or device credential; basic/Class 2 face is not accepted, Class 3 face is allowed by BIOMETRIC_STRONG; INV-23) (corrected 2026-10-28: Class 3 face is allowed by BIOMETRIC_STRONG). The app never
    draws its own fingerprint dialog. In app-PIN mode (Inc 2) the app draws a PIN pad.
 5. **Fail-closed in the UI**: while a setting or availability result is unknown, the lock row is disabled with
    "Checking..." and never drawn as Off; an unreadable lock setting shows the lock (if the device can authenticate;
@@ -146,9 +146,12 @@ Wireframe, Inc 1b complete, lock OFF, API 30+, secure device (default state):
 |  Ask for your fingerprint or screen lock when     |
 |  the app opens.                                   |
 |                                                   |
-| Block screenshots and hide in recent apps [ o--]  |
-|  Hides the app in the recent apps list and blocks |
-|  screenshots, screen recording and casting.       |
+| Secure screen                             [ o--]  |
+|  Hides the app's content in recent apps and       |
+|  blocks screenshots, screen recording and         |
+|  casting.                                         |
+|  (corrected 2026-10-29: FLAG_SECURE does not      |
+|  remove the app from recents)                     |
 |                                                   |
 |  Anyone who knows your phone's screen lock can    |
 |  unlock the app. Apps with accessibility access   |
@@ -165,12 +168,13 @@ Wireframe, lock ON (device-credential method, API 31+):
 |  the app opens.                                   |
 |                                                   |
 | Lock after leaving the app            1 minute >  |   <- 48dp row, opens picker (2.2b)
-|  The app always locks when it starts fresh.       |
+|  When App lock is on, the app always locks when   |
+|  it starts fresh.                                 |
 |                                                   |
 | Discreet notifications                    [--o ]  |   <- checked, DISABLED
 |  Always on while app lock is on.                  |
 |                                                   |
-| Block screenshots and hide in recent apps [--o ]  |   <- checked, DISABLED
+| Secure screen                             [--o ]  |   <- checked, DISABLED
 |  Always on while app lock is on. You won't be     |
 |  able to take screenshots of your own reports.    |
 |                                                   |
@@ -227,7 +231,7 @@ On API 26-29 (OD-20a, decided) both Discreet and Secure rows remain functional (
 | App lock                                  [ o--]  |   <- switch DISABLED, off
 |  App lock needs Android 11 or newer. This device  |      (API < 30; LOCK_UNAVAILABLE_API)
 |  runs an older version.                           |
-|  [ Open security settings ]                       |   <- TextButton, only if useful
+|  [ Open security settings ]                       |   <- TextButton (S23: shown as built, see note below)
 ```
 ```
 | App lock                                  [ o--]  |   <- switch DISABLED, off
@@ -241,6 +245,11 @@ On API 26-29 (OD-20a, decided) both Discreet and Secure rows remain functional (
 |  in a moment.                                     |       at enable time; refusal T26, AMD-3, AE-93)
 |  [ Try again ]                                    |
 ```
+
+**As built (S23, S22-a.1):** `Unavailable(OS)` and `Unavailable(NOT_SECURE)` both show the "Open security settings"
+TextButton (the constant `ACTION_SECURITY_SETTINGS` hand-off, `SecuritySettingsLauncher`); `Unavailable(NOW)` shows "Try
+again". The earlier "only if useful" is resolved as: offered on API < 30 too, because the system screen is the one place
+a person can set a screen lock for the phone itself. The copy still never promises that it will enable app lock.
 
 Brief wording check: "feature unavailable on API < 30 with link to system security settings". The link is offered in the
 first two variants. On API < 30 it helps users who want a screen lock for the phone itself; copy does not promise that
@@ -291,7 +300,7 @@ write is one **review-save** of the whole record (INV-44, AMD-1):
 | App lock                                  [--o ]  |   <- ENABLED, shows On (the effective safe state)
 | Lock after leaving the app          Immediately >  |   <- shown while the lock choice is On
 | Discreet notifications                    [--o ]  |   <- checked, DISABLED (forced while the lock choice is On)
-| Block screenshots and hide in recent apps [--o ]  |   <- checked, DISABLED (forced while the lock choice is On)
+| Secure screen                             [--o ]  |   <- checked, DISABLED (forced while the lock choice is On)
 ```
 Review-save rules as the user sees them (INV-44, INV-45, T27, AE-85..AE-90):
 - **"On" is not a separate enable flow.** The lock is already effectively on while settings are unreadable (the
@@ -342,7 +351,10 @@ All use the existing `AlertDialog` + `TextButton` pattern from `privacy_confirm_
 |   apps.                                   |
 | - Reminders and automatic capture keep    |
 |   working while the app is locked.        |
-| - Face unlock isn't used.                 |
+| - Only your screen lock or a strong       |
+|   biometric, like your fingerprint, can   |
+|   unlock the app. Basic face unlock isn't |
+|   used.                                   |
 | - (Android 11 only) Bill reminders won't  |
 |   show Snooze or Dismiss while app lock   |
 |   is on.                                  |
@@ -387,9 +399,18 @@ weakening change and needs a fresh authentication while the lock is enabled (sys
 settings"; PIN entry in PIN mode). Cancel keeps the old value and closes the dialog with no message. Choosing a shorter or
 equal timeout applies without authentication. A failed write keeps the previous value and shows the error line (INV-46).
 
+**TECH-13 INERT row (S22-b, D-S22-5).** While the lock is paused (any `INERT` reason) no authentication is possible, so
+no longer timeout can be confirmed. The picker stays openable, the current and every shorter option stay selectable, and
+every option longer than the committed timeout is disabled, with the line "App lock is paused, so you can only choose a
+shorter time or keep the current one." (`applock_timeout_paused_note`; English plus DRAFT es/el, owner sign-off O-2). The
+ViewModel ignores a longer choice anyway and the controller refuses it (`NOT_IN_ORIGIN`, nothing written). The row shows
+the committed value only; there is never an optimistic value (AE-116).
+
 **2.2c Turn off app lock (device screen-lock mode):** switch tap from On -> fresh authentication (system prompt titled
 "Turn off app lock", 4.3; OD-8a, T18); on success and after the durable write the switch turns Off and a snackbar shows
 "App lock is off". No extra confirm dialog (the prompt is the confirmation; re-enabling costs one more authentication).
+**S23 (D-S22-2): the device-mode turn-off dialog was dropped.** There is no `AppLockDisableDialog`; only the PIN-mode
+turn-off confirmation (2.2c-PIN, Increment 2) keeps a dialog. In `INERT` the turn-off needs no prompt at all (T19).
 Cancel/error leaves the switch On. A failed write leaves it On with the error line (INV-3, INV-46, T18). Side effect: if
 stored discreet/secure preferences are Off, they become editable again and revert to their stored values (2.3 of the
 spec, INV-48). The snackbar does not mention this; the rows show it.
@@ -1069,13 +1090,47 @@ unlock (INV-34).
 | BiometricPrompt result | UI category | Lock screen message | Settings message |
 |---|---|---|---|
 | Success | `SUCCESS` | (unlocks, only for the matching attempt id, T8/T12) | (applies change) |
-| `ERROR_USER_CANCELED`, `ERROR_NEGATIVE_BUTTON`, `ERROR_CANCELED` | `CANCELLED` | none (button re-enabled; no auto re-prompt) | ENABLE only: "App lock was not turned on." |
+| `ERROR_USER_CANCELED`, `ERROR_NEGATIVE_BUTTON` | `CANCELLED` | none (button re-enabled; no auto re-prompt) | ENABLE only: "App lock was not turned on." |
 | `ERROR_LOCKOUT` (temporary) | `LOCKED_OUT` | "Too many attempts. Wait a moment, then try again." | same text |
 | `ERROR_LOCKOUT_PERMANENT` | `LOCKED_OUT_BIOMETRIC` | Device auth: "Fingerprint is locked. Use your screen lock instead." PIN mode: "Fingerprint is locked. Use your PIN." | Device auth text |
 | `ERROR_NO_DEVICE_CREDENTIAL`, `ERROR_NO_BIOMETRICS`, `ERROR_HW_NOT_PRESENT` | `NOT_AVAILABLE` (re-run capability check; if not `AVAILABLE` -> `Inert`, T11) | If not available -> becomes Inert (3.9); else "Unlock isn't available right now. Try again in a moment." | Availability explanation (2.1) |
 | `ERROR_HW_UNAVAILABLE`, `ERROR_UNABLE_TO_PROCESS`, `ERROR_TIMEOUT`, `ERROR_NO_SPACE`, `ERROR_VENDOR` | `TRANSIENT` (stays `Locked`, T10) | "Couldn't unlock. Try again." | "Couldn't turn on app lock. Try again." |
 | `ERROR_SECURITY_UPDATE_REQUIRED`, any unknown code | `UNKNOWN` (stays `Locked`) | "Unlock isn't available right now. Try again in a moment." | "Couldn't turn on app lock. Try again." |
 | Wrong fingerprint/credential attempts | handled inside the system prompt | n/a | n/a |
+
+**S23 amendments (2026-10-29, S22 as built):**
+- **`ERROR_CANCELED` is not a user cancel.** It moves out of `CANCELLED` into the spec bucket `SYSTEM_CANCELED`: the
+  system, not the person, ended the prompt (for example the app went to the background). It carries no "App lock was
+  not turned on." message of its own and never unlocks (INV-34). The authenticator reports it as `Failed(SYSTEM_CANCELED)`; the lock
+  screen treats it like any other transient failure (stays Locked, Unlock re-enabled, no auto re-prompt), and settings
+  follows the B-4 decision below.
+- **B-4 decision (keep for v1): `ERROR_CANCELED` delivered from the background during an ENABLE prompt maps to `ERROR`,
+  so settings shows "Couldn't turn on app lock. Try again." (`privacy_app_lock_enable_failed`).** The wording is accurate
+  (nothing was turned on) and fail-closed, the person can simply tap again, and a dedicated string would need es/el
+  sign-off for a rare case. Revisit only if G1b shows it firing on ordinary Home presses.
+- **Silent outcomes in settings (no message, switch and row follow the committed value only):**
+  - DISABLE `ERROR` and DISABLE `CANCELLED` (the lock simply stays On; cancelling a turn-off needs no message);
+  - CHANGE `ERROR` and CHANGE `CANCELLED` (a timeout change or review-save whose prompt failed or was cancelled: the
+    previous value stays, and a weakening choice shows nothing because nothing changed);
+  - `HOST_LOST` and `BACKGROUNDED` ends (the attempt was abandoned);
+  - `ALREADY_IN_FLIGHT` and `NOT_IN_ORIGIN` for the lock switch (a second tap during a prompt, or a request outside the
+    origin state), and `REVIEW_REQUIRED` for the lock switch, including when the controller re-read shows no review is
+    needed any more (the card appears or the switch settles from the committed state).
+  "Not launched" here refers only to these end-signal outcomes (the prompt ended without running); the refusal outcomes
+  below are not silent.
+  `NOT_COMMITTED` (a prompt succeeded but the write failed) is never silent: "Couldn't save the setting. Try again."
+  (4.1 `SaveFailed`). For the timeout and review-save paths `ALREADY_IN_FLIGHT` / `NOT_IN_ORIGIN` / `NOT_IN_REVIEW` /
+  `REJECTED_CAPABILITY` show that same `SaveFailed` line and re-read (they are refusals of an explicit action, not
+  silent turn-off outcomes).
+- **`REJECTED_CAPABILITY` copy.** A review-save with the lock choice On while the fresh capability is not `AVAILABLE`
+  (INV-45) shows the generic `SaveFailed` line, not a capability explanation. The card stays as it is and the Off choice
+  remains saveable. This is accepted for v1: the paused-state text (`privacy_review_lock_paused`) already explains why On
+  is not offered, and the refusal needs a race (the capability changed between the card being drawn and the save).
+- **The review record stores the raw discreet and secure-screen choices while they are forced.** The full review
+  record is `{lock, timeout, discreet, secure}` (D-S22-7, item 55). While the lock choice is On the Discreet and Secure
+  switches are shown checked and disabled (forced), but the values written in the record are the person's raw choices
+  (default On from the fail-closed record), not a forced `true` rewritten over them. Effective values stay forced by the
+  lock (INV-48); the stored choices re-apply when the lock is turned off. (Privacy info 3, accepted.)
 
 On an unrecognised or stale result the lock screen stays Locked (fail-closed, INV-34, T12) - an unknown error is never an
 unlock.
@@ -1311,7 +1366,7 @@ only. There is no per-decision variant text left in this table: rows that existe
 | `privacy_review_lock_paused` | App lock is paused, so Off is the only choice. | 1b | G2. Review card, `INERT` (INV-45) |
 | `privacy_review_pin_removed_note` | Turning app lock off also removes your app PIN. | 2 | G2. Review card, PIN mode, while Off is chosen |
 | `privacy_app_lock_timeout_label` | Lock after leaving the app | 1b | |
-| `privacy_app_lock_timeout_note` | The app always locks when it starts fresh. | 1b | |
+| `privacy_app_lock_timeout_note` | When App lock is on, the app always locks when it starts fresh. (corrected 2026-10-29: the old text also showed while the lock is paused) | 1b | |
 | `applock_timeout_immediately` | Immediately | 1b | |
 | `applock_timeout_30s` | After 30 seconds | 1b | |
 | `applock_timeout_1m` | After 1 minute | 1b | Default |
@@ -1319,8 +1374,8 @@ only. There is no per-decision variant text left in this table: rows that existe
 | `applock_timeout_15m` | After 15 minutes | 1b | |
 | `applock_timeout_immediately_hint` | Locks as soon as you leave the app, including after the camera or a file picker. Choose a longer time if you attach photos or receipts often. | 1b | Rec. Replaces the exemption wording (no exemption in spec 3.4). No "lost" wording: OD-9a preserves input |
 | `applock_timeout_30s_hint` | Locks if the camera or a file picker takes longer than this. | 1b | Rec |
-| `privacy_toggle_secure_screen` | Block screenshots and hide in recent apps | 1b | |
-| `privacy_secure_screen_support` | Hides the app in the recent apps list and blocks screenshots, screen recording and casting. | 1b | |
+| `privacy_toggle_secure_screen` | Secure screen (corrected 2026-10-29: FLAG_SECURE does not remove the app from recents) | 1b | |
+| `privacy_secure_screen_support` | Hides the app's content in recent apps and blocks screenshots, screen recording and casting. (corrected 2026-10-29: FLAG_SECURE does not remove the app from recents) | 1b | |
 | `privacy_secure_screen_forced` | Always on while app lock is on. You won't be able to take screenshots of your own reports. | 1b | |
 | `privacy_app_lock_footnote` | Anyone who knows your phone's screen lock can unlock the app. Apps with accessibility access can still read the screen. | 1b | |
 | `privacy_app_lock_footnote_pin` | Anyone who knows your phone's screen lock can unlock the app. Set an app PIN to help prevent this. | 2 | Rec. "help": spec admits residual bypasses (OD-19). Replaces footnote when Inc 2 ships. Accessibility sentence moves to the App PIN screen or an info line (implementer decision) |
@@ -1328,9 +1383,9 @@ only. There is no per-decision variant text left in this table: rows that existe
 | `privacy_app_lock_enable_point_unlock` | The app asks for your fingerprint or screen lock when it opens, and after you leave it for the time you choose. | 1b | |
 | `privacy_app_lock_enable_point_notifications` | Notifications show no amounts or details while app lock is on. | 1b | OD-2a |
 | `privacy_app_lock_enable_point_replaced` | Notifications already showing are replaced with the private version. | 1b | G2. OD-6a, silent re-post (AMD-7) |
-| `privacy_app_lock_enable_point_screen` | Screenshots and screen recording are blocked and the app is hidden in recent apps. | 1b | |
+| `privacy_app_lock_enable_point_screen` | Screenshots and screen recording are blocked and the app's content is hidden in recent apps. (corrected 2026-10-29) | 1b | |
 | `privacy_app_lock_enable_point_background` | Reminders and automatic capture keep working while the app is locked. | 1b | |
-| `privacy_app_lock_enable_point_face` | Face unlock isn't used. | 1b | |
+| `privacy_app_lock_enable_point_face` | Only your screen lock or a strong biometric, like your fingerprint, can unlock the app. Basic face unlock isn't used. (corrected 2026-10-28: Class 3 face is allowed by BIOMETRIC_STRONG) | 1b | |
 | `privacy_app_lock_enable_point_api30_actions` | Bill reminders won't show Snooze or Dismiss while app lock is on. | 1b | Rec. Rendered only on `SDK_INT == 30` |
 | `privacy_app_lock_enable_continue` | Continue | 1b | |
 | `privacy_app_lock_snackbar_on` | App lock is on | 1b | |

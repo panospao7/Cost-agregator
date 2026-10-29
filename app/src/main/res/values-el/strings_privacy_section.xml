@@ -13,4 +13,47 @@
     <string name="privacy_review_card_save">Αποθήκευση ρυθμίσεων</string>
     <string name="privacy_review_saved">Οι ρυθμίσεις αποθηκεύτηκαν</string>
     <string name="privacy_setting_save_failed">Δεν ήταν δυνατή η αποθήκευση της ρύθμισης. Δοκιμάστε ξανά.</string>
+
+    <!-- S22-a.1: 1b lock row, enable explainer and inline notices. DRAFT translation, owner sign-off pending (O-2). -->
+    <string name="privacy_toggle_app_lock">Κλείδωμα εφαρμογής</string>
+    <string name="privacy_app_lock_support">Ζητά το δακτυλικό σας αποτύπωμα ή το κλείδωμα οθόνης όταν ανοίγει η εφαρμογή.</string>
+    <string name="privacy_app_lock_waiting">Αναμονή επιβεβαίωσης…</string>
+    <string name="privacy_app_lock_unavailable_os">Το κλείδωμα εφαρμογής απαιτεί Android 11 ή νεότερο. Αυτή η συσκευή έχει παλαιότερη έκδοση.</string>
+    <string name="privacy_app_lock_unavailable_os_paused">Το κλείδωμα εφαρμογής δεν υποστηρίζεται σε αυτήν την έκδοση Android, γι\' αυτό είναι σε παύση. Απενεργοποιήστε το για να αφαιρεθεί αυτή η ειδοποίηση.</string>
+    <string name="privacy_app_lock_unavailable_no_secure">Ορίστε PIN, μοτίβο ή κωδικό ως κλείδωμα οθόνης του τηλεφώνου για να χρησιμοποιήσετε το κλείδωμα εφαρμογής.</string>
+    <string name="privacy_app_lock_unavailable_now">Το κλείδωμα εφαρμογής δεν είναι διαθέσιμο αυτήν τη στιγμή. Δοκιμάστε ξανά σε λίγο.</string>
+    <string name="privacy_app_lock_open_security_settings">Άνοιγμα ρυθμίσεων ασφαλείας</string>
+    <string name="privacy_app_lock_unreadable">Δεν είναι δυνατή η ανάγνωση της ρύθμισης κλειδώματος εφαρμογής. Αν το τηλέφωνό σας έχει κλείδωμα οθόνης, η εφαρμογή θα σας ζητήσει να το ξεκλειδώσετε.</string>
+    <string name="privacy_discreet_notifications_forced">Πάντα ενεργό όσο το κλείδωμα εφαρμογής είναι ενεργό.</string>
+    <string name="privacy_review_lock_paused">Το κλείδωμα εφαρμογής είναι σε παύση, επομένως η μόνη επιλογή είναι η απενεργοποίηση.</string>
+    <string name="privacy_app_lock_enable_title">Ενεργοποίηση κλειδώματος εφαρμογής;</string>
+    <string name="privacy_app_lock_enable_point_unlock">Η εφαρμογή ζητά το δακτυλικό σας αποτύπωμα ή το κλείδωμα οθόνης όταν ανοίγει και αφού την αφήσετε για τον χρόνο που επιλέγετε.</string>
+    <string name="privacy_app_lock_enable_point_notifications">Οι ειδοποιήσεις δεν δείχνουν ποσά ή λεπτομέρειες όσο το κλείδωμα εφαρμογής είναι ενεργό.</string>
+    <string name="privacy_app_lock_enable_point_replaced">Οι ειδοποιήσεις που εμφανίζονται ήδη αντικαθίστανται με την ιδιωτική έκδοση.</string>
+    <string name="privacy_app_lock_enable_point_screen">Αποκλείονται τα στιγμιότυπα και η εγγραφή οθόνης και το περιεχόμενο της εφαρμογής κρύβεται στις πρόσφατες εφαρμογές.</string>
+    <string name="privacy_app_lock_enable_point_background">Οι υπενθυμίσεις και η αυτόματη καταγραφή συνεχίζουν να λειτουργούν όσο η εφαρμογή είναι κλειδωμένη.</string>
+    <string name="privacy_app_lock_enable_point_face">Μόνο το κλείδωμα οθόνης ή ένα ισχυρό βιομετρικό στοιχείο, όπως το δακτυλικό σας αποτύπωμα, μπορεί να ξεκλειδώσει την εφαρμογή. Το βασικό ξεκλείδωμα με το πρόσωπο δεν χρησιμοποιείται.</string>
+    <string name="privacy_app_lock_enable_point_api30_actions">Οι υπενθυμίσεις λογαριασμών δεν θα εμφανίζουν Αναβολή ή Παράβλεψη όσο το κλείδωμα εφαρμογής είναι ενεργό.</string>
+    <string name="privacy_app_lock_enable_continue">Συνέχεια</string>
+    <string name="privacy_app_lock_snackbar_on">Το κλείδωμα εφαρμογής είναι ενεργό</string>
+    <string name="privacy_app_lock_snackbar_off">Το κλείδωμα εφαρμογής είναι ανενεργό</string>
+    <string name="privacy_app_lock_not_enabled">Το κλείδωμα εφαρμογής δεν ενεργοποιήθηκε.</string>
+    <string name="privacy_app_lock_enable_failed">Δεν ήταν δυνατή η ενεργοποίηση του κλειδώματος εφαρμογής. Δοκιμάστε ξανά.</string>
+
+    <!-- S22-b.1: timeout row and picker, secure-screen row, Android 11 note, footnote. DRAFT translation, owner sign-off pending (O-2). -->
+    <string name="privacy_app_lock_api30_actions_note">Στο Android 11, οι υπενθυμίσεις λογαριασμών δεν εμφανίζουν Αναβολή ή Παράβλεψη όσο το κλείδωμα εφαρμογής είναι ενεργό.</string>
+    <string name="privacy_app_lock_timeout_label">Κλείδωμα μετά την έξοδο από την εφαρμογή</string>
+    <string name="privacy_app_lock_timeout_note">Όταν το κλείδωμα εφαρμογής είναι ενεργό, η εφαρμογή κλειδώνει πάντα όταν ξεκινά από την αρχή.</string>
+    <string name="applock_timeout_immediately">Αμέσως</string>
+    <string name="applock_timeout_30s">Μετά από 30 δευτερόλεπτα</string>
+    <string name="applock_timeout_1m">Μετά από 1 λεπτό</string>
+    <string name="applock_timeout_5m">Μετά από 5 λεπτά</string>
+    <string name="applock_timeout_15m">Μετά από 15 λεπτά</string>
+    <string name="applock_timeout_immediately_hint">Κλειδώνει μόλις βγείτε από την εφαρμογή, ακόμη και μετά την κάμερα ή μια επιλογή αρχείου. Επιλέξτε μεγαλύτερο χρόνο αν επισυνάπτετε συχνά φωτογραφίες ή αποδείξεις.</string>
+    <string name="applock_timeout_30s_hint">Κλειδώνει αν η κάμερα ή μια επιλογή αρχείου διαρκέσει περισσότερο από αυτό.</string>
+    <string name="applock_timeout_paused_note">Το κλείδωμα εφαρμογής είναι σε παύση, επομένως μπορείτε να επιλέξετε μόνο μικρότερο χρόνο ή να κρατήσετε τον τρέχοντα.</string>
+    <string name="privacy_toggle_secure_screen">Ασφαλής οθόνη</string>
+    <string name="privacy_secure_screen_support">Κρύβει το περιεχόμενο της εφαρμογής στις πρόσφατες εφαρμογές και αποκλείει τα στιγμιότυπα οθόνης, την εγγραφή οθόνης και τη μετάδοση.</string>
+    <string name="privacy_secure_screen_forced">Πάντα ενεργό όσο το κλείδωμα εφαρμογής είναι ενεργό. Δεν θα μπορείτε να τραβήξετε στιγμιότυπα των δικών σας αναφορών.</string>
+    <string name="privacy_app_lock_footnote">Όποιος γνωρίζει το κλείδωμα οθόνης του τηλεφώνου σας μπορεί να ξεκλειδώσει την εφαρμογή. Εφαρμογές με πρόσβαση προσβασιμότητας μπορούν ακόμη να διαβάζουν την οθόνη.</string>
 </resources>

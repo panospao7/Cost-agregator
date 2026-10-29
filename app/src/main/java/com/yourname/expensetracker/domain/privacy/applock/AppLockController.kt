@@ -442,6 +442,27 @@ class AppLockController @Inject constructor(
      */
     val releaseOpportunity: StateFlow<Long> = mutableReleaseOpportunity.asStateFlow()
 
+    private val mutableOpenOriginEnd = MutableStateFlow<OpenOriginEnd?>(null)
+
+    /**
+     * S22-a.0 (D-S22-1): how the latest open-origin attempt (ENABLE, DISABLE, CHANGE) ended, or null before any did.
+     * The state alone cannot say it (ENABLE success goes `DISABLED` to `UNLOCKED`, a failure returns to `DISABLED`).
+     * Read-only and bounded: an [OpenOriginEnd] carries no settings or link data, and publishing it records no
+     * diagnostic, adds no lock state and changes no transition.
+     *
+     * - Every non-success close of an open-origin attempt publishes it after the controller's monitor is released
+     *   and after the state is published ([CANCELLED][OpenOriginEndKind.CANCELLED], `LOCKED_OUT`, `NOT_AVAILABLE`,
+     *   `ERROR`, `HOST_LOST`). A stale outcome (closed attempt, other id) publishes nothing.
+     * - A success publishes at the apply, not at the close: [onOpenOriginSettingApplied] and [onInertDisableApplied]
+     *   publish [OpenOriginEndKind.APPLIED] (or `NOT_COMMITTED` when the write did not commit) AFTER the T17 / T18 state
+     *   move, and only for the exact id of their one-shot token.
+     * - An UNLOCK attempt never publishes.
+     *
+     * The latest value is replayed to a new collector, so a consumer treats the value it first sees as a baseline,
+     * not as an event. A collector must never call a transition or the authenticator from the collection (R2).
+     */
+    val openOriginEnd: StateFlow<OpenOriginEnd?> = mutableOpenOriginEnd.asStateFlow()
+
     /** The pending background (spec 2.4), for inspection by tests. Null when none is pending. */
     internal val pendingBackgroundAtMillis: Long?
         get() = synchronized(stateLock) { lastBackgroundedAtMillis }
@@ -786,6 +807,7 @@ class AppLockController @Inject constructor(
      * for [onOpenOriginApplyCompleted].
      */
     fun onOpenOriginSettingApplied(attemptId: Long, committed: Boolean) {
+        var endedPrompt: OpenOriginPrompt? = null
         val diagnostic = transition {
             // F3 (fail closed): a committed write is counted even when no token matches, so D6 drops any older
             // re-read or kept snapshot.
@@ -802,7 +824,15 @@ class AppLockController @Inject constructor(
             pendingApplyTimeout = null
             pendingApplyRecord = null
             pendingApplyForegroundSinceClose = false
+            endedPrompt = prompt
             applyOpenOriginSettingLocked(prompt, committed, foregroundSinceClose, tokenTimeout, tokenRecord)
+        }
+        // S22-a.0: the end of the attempt, only for the exact token, after the state move was published (the monitor
+        // is released). A no-op call (no token, a wrong or reused id) publishes nothing.
+        endedPrompt?.let {
+            publishOpenOriginEnd(
+                attemptId, it, if (committed) OpenOriginEndKind.APPLIED else OpenOriginEndKind.NOT_COMMITTED
+            )
         }
         record(diagnostic)
     }
@@ -898,10 +928,12 @@ class AppLockController @Inject constructor(
      *   discarded with the move (`DISABLED` records none).
      */
     fun onInertDisableApplied(id: Long, committed: Boolean) {
+        var matchedToken = false
         val diagnostic = transition {
             if (committed) writeSequence++ // F2, D6: a settings write committed
             if (pendingInertDisableId != id) return@transition null
             pendingInertDisableId = null
+            matchedToken = true
             if (!committed) return@transition claimPersistFailedLocked(AppLockSettingField.APP_LOCK_ENABLED)
             when (val view = loadState) {
                 is AppLockSettingsLoadState.Loaded ->
@@ -915,6 +947,14 @@ class AppLockController @Inject constructor(
                 lastBackgroundedAtMillis = null
             }
             claim(PrivacyDiagnosticCode.LOCK_DISABLED)
+        }
+        // S22-a.0: T19 has no attempt, so the end carries the NEGATED token id (never equal to an attempt id, so a
+        // StateFlow never drops it as equal to an earlier DISABLE end). Only for the exact token, after the state move.
+        if (matchedToken) {
+            publishOpenOriginEnd(
+                -id, OpenOriginPrompt.DISABLE,
+                if (committed) OpenOriginEndKind.APPLIED else OpenOriginEndKind.NOT_COMMITTED
+            )
         }
         record(diagnostic)
     }
@@ -1794,11 +1834,16 @@ class AppLockController @Inject constructor(
         if (!closed) {
             if (staleClose) {
                 attempt.cancelJobs()
+                // S22-a.0: an open-origin attempt that closed out of step is dropped, never silently: the end is ERROR.
+                publishOpenOriginClose(attempt, OpenOriginEndKind.ERROR)
                 record(timerDiagnostic) // only a T34 lock that really happened; the stale outcome claims no code
             }
             return false
         }
         attempt.cancelJobs()
+        // S22-a.0: after the monitor is released and the state is published; an UNLOCK attempt and a success (which
+        // publishes at the apply) map to no kind.
+        publishOpenOriginClose(attempt, openOriginEndKindOf(closing))
         record(diagnostic)
         record(timerDiagnostic)
         if (closing == Closing.Abandoned) postCancel(attempt.attemptId)
@@ -1807,6 +1852,36 @@ class AppLockController @Inject constructor(
         // re-read snapshot is then offered to T28. Still LOCKED or AUTHENTICATING keeps it.
         if (closing == Closing.Success || attempt.purpose.isOpenOrigin) applyKeptRereadAfterClose()
         return true
+    }
+
+    /**
+     * S22-a.0: the end kind of a close, exhaustive over [Closing]. Null for the two successes: the UNLOCK success
+     * (never published) and the open-origin success (published at the apply by [onOpenOriginSettingApplied]).
+     * [Closing.NotLaunched] is [OpenOriginEndKind.ERROR] (the prompt could not be shown; the person is told, not left
+     * waiting), and [Closing.Abandoned] (host loss and the watchdog share it) is [OpenOriginEndKind.HOST_LOST].
+     */
+    private fun openOriginEndKindOf(closing: Closing): OpenOriginEndKind? = when (closing) {
+        Closing.Success -> null
+        Closing.OpenOriginSuccess -> null
+        is Closing.EnableRefused -> OpenOriginEndKind.NOT_AVAILABLE
+        Closing.Cancelled -> OpenOriginEndKind.CANCELLED
+        Closing.LockedOut -> OpenOriginEndKind.LOCKED_OUT
+        is Closing.Error -> OpenOriginEndKind.ERROR
+        is Closing.BecameInert -> OpenOriginEndKind.NOT_AVAILABLE // UNLOCK only today; never published for it
+        Closing.Abandoned -> OpenOriginEndKind.HOST_LOST
+        Closing.NotLaunched -> OpenOriginEndKind.ERROR
+    }
+
+    /** Publishes the end of an open-origin [attempt] (never an UNLOCK one). Called outside [stateLock]. */
+    private fun publishOpenOriginClose(attempt: InFlightAttempt, kind: OpenOriginEndKind?) {
+        val prompt = attempt.prompt
+        if (kind == null || prompt == null || !attempt.purpose.isOpenOrigin) return
+        publishOpenOriginEnd(attempt.attemptId, prompt, kind)
+    }
+
+    /** The one write of [openOriginEnd]. Called outside [stateLock]; carries ids and closed enums only. */
+    private fun publishOpenOriginEnd(attemptId: Long, prompt: OpenOriginPrompt, kind: OpenOriginEndKind) {
+        mutableOpenOriginEnd.value = OpenOriginEnd(attemptId, prompt, kind)
     }
 
     /**

@@ -88,6 +88,7 @@ enum class DiagnosticReasonCode {
     NOTIF_ACTIONS_SUPPRESSED_LOCK,
     NOTIF_REPOSTED_DISCREET,
     NOTIF_REPOST_FAILED,
+    NOTIF_REPOST_UNCONFIRMED,
 
     // Deep-link policy (spec 5.7, closed set).
     DL_APPLIED,

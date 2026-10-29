@@ -92,7 +92,7 @@ Every destination has a `toSaveToken()` / `destinationFromSaveToken()` pair for 
 3. Main tabs are never in `FeatureConfig.allFeatures`.
 4. Tab switch always clears the back stack.
 5. `navigateBack()` from Home always returns `false`.
-6. Every `expensetracker:` intent (notification taps included) is untrusted: it is validated only by `DeepLinkPolicy` and acted on only by `DeepLinkApplier`. In increment 1a there is no lock, so accepted links apply immediately; the held-link gate behind authentication (PRV-16) arrives with increment 1b.
+6. Every `expensetracker:` intent (notification taps included) is untrusted: it is validated only by `DeepLinkPolicy` and acted on only by `DeepLinkApplier`. With the lock off (or inert) accepted links apply immediately; since increment 1b (S21-b) `AppLockDeepLinkRouter` asks the app lock controller first and HOLDS a link (in memory only, 5 minutes, newest wins) while the app is locked or an app-lock settings prompt is open, then releases it after unlock or when the prompt ends (PRV-16, AE-118; LEGAL_PATHS "Deep Links").
 7. Debug destination is gated by `BuildConfig.DEBUG` at render time.
 8. Unused FAB components are deleted (SmartFAB is canonical).
 
@@ -114,7 +114,7 @@ Scheme: `expensetracker://`
 
 Implementation status (read from source 2026-10-24, app-lock-privacy-mode 1a, S3/S10/S11; device evidence is owed at G1a):
 
-- `MainActivity.handleIntent` (from both `onCreate` and `onNewIntent`) calls `DeepLinkPolicy.evaluate(action, dataString)`; `NotADeepLink` returns false, anything else launches `DeepLinkApplier.apply(result, mainViewModel)` and returns true. It never parses or logs the link.
+- `MainActivity.handleIntent` (from both `onCreate` and `onNewIntent`) calls `DeepLinkPolicy.evaluate(action, dataString)`; `NotADeepLink` returns false, anything else goes to `AppLockDeepLinkRouter.route(result, lifecycleScope, mainViewModel)` (S21-b), which applies it through `DeepLinkApplier` now or holds it, and returns true. It never parses or logs the link.
 - Rejections: a non-VIEW action (`ACTION`) is ignored with no navigation; `MALFORMED` (over 2048 chars, fragment, userinfo, port, a path other than empty or "/", non-ASCII authority), `UNKNOWN_HOST` and `BANK_HOST` fall back to Home. Diagnostics are bounded `DL_*` codes launched on the application scope (never awaited, so they cannot delay navigation); no raw URI, host string or parameter value is recorded.
 - Deep links are consumed one-shot: when `handleIntent` returns true, `intent.data` is cleared so a recreated Activity does not re-apply the same link.
 - `home?briefingKey=Y`: the key is written as `lastOpenedDashboardBriefingKey` (via `MarkDashboardBriefingOpenedUseCase`) only when it equals the persisted last delivered key, read at apply time. A link from another app or a web page cannot change which briefing is shown (INV-16).

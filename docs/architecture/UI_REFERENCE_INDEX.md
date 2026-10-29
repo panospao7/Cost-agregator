@@ -74,7 +74,7 @@ BackupRestore             (BackupRestoreScreen)
 Management Screens:
 - AiSettings                 (AiSettingsScreen)
 - CategoryManagement         (CategoryScreen)
-- PrivacySettings           (PrivacySettingsScreen)   ← also reachable from the Features menu via FeatureConfig id "privacy" (24th menu entry; reuses backup-restore strings). Contains the "App lock & privacy" section (`AppLockPrivacySection` + `AppLockPrivacySettingsViewModel`; discreet-notifications row and review card, app-lock 1a)
+- PrivacySettings           (PrivacySettingsScreen)   ← also reachable from the Features menu via FeatureConfig id "privacy" (24th menu entry; reuses backup-restore strings). Contains the "App lock & privacy" section (`AppLockPrivacySection` + `AppLockPrivacySettingsViewModel`; discreet-notifications row and review card, app-lock 1a; S22: app lock switch with the enable explainer `AppLockEnableDialog`, timeout row with `AutoLockTimeoutDialog`, secure-screen row, full review card, inline lock notices)
 
 Debug / Support Screens:
 - DebugScreen                (DebugScreen)

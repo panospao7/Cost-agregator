@@ -9,6 +9,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleRegistry
 import androidx.lifecycle.lifecycleScope
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
@@ -22,8 +23,10 @@ import com.yourname.expensetracker.domain.privacy.applock.DeviceAuthOutcome
 import com.yourname.expensetracker.domain.privacy.applock.DeviceAuthenticator
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -38,6 +41,8 @@ import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowLooper
+import java.util.concurrent.TimeUnit
 
 /**
  * App lock S21-c (#10): the behaviour of the export button of the unsupported-database screen, driven through the two
@@ -69,6 +74,7 @@ class UnsupportedDatabaseActivityExportAuthSeamTest {
         DatabaseOpenGate.overrideForTests(DatabaseOpenGate.REASON_SCHEMA_TOO_NEW)
         UnsupportedDatabaseActivity.exportAuthRequiredForTest = null
         UnsupportedDatabaseActivity.authenticatorFactoryForTest = null
+        UnsupportedDatabaseActivity.exportAuthPromptTimeoutMillisForTest = null
     }
 
     @After
@@ -77,6 +83,7 @@ class UnsupportedDatabaseActivityExportAuthSeamTest {
         scenario = null
         UnsupportedDatabaseActivity.exportAuthRequiredForTest = null
         UnsupportedDatabaseActivity.authenticatorFactoryForTest = null
+        UnsupportedDatabaseActivity.exportAuthPromptTimeoutMillisForTest = null
         DatabaseOpenGate.resetForTests()
     }
 
@@ -201,7 +208,7 @@ class UnsupportedDatabaseActivityExportAuthSeamTest {
         tap()
 
         assertEquals("exactly one prompt", 1, auth.authenticateIds.size)
-        assertEquals(listOf(AuthPromptCopy.UNLOCK), auth.copies)
+        assertEquals(listOf(AuthPromptCopy.EXPORT), auth.copies)
         assertNoPicker(activity) // nothing is opened before the prompt succeeds
         composeRule.onNodeWithText(exportButton).assertIsNotEnabled()
 
@@ -543,6 +550,398 @@ class UnsupportedDatabaseActivityExportAuthSeamTest {
 
         assertTrue("no prompt is open while the gate is read, so nothing is cancelled", auth.cancelIds.isEmpty())
         assertTrue(auth.authenticateIds.isEmpty())
+        assertNoPicker(activity)
+    }
+
+    // ---- S22-b.2 F6-i: the gate read is abandoned when the screen stops / is not usable ------------------------
+
+    /** After a negative case the same screen must still work: the next tap reaches the prompt and/or the picker. */
+    private fun assertControlReachesThePicker(
+        activity: UnsupportedDatabaseActivity,
+        auth: FakeDeviceAuthenticator,
+        authRequired: Boolean
+    ) {
+        val promptsBefore = auth.authenticateIds.size
+        tap()
+        if (authRequired) {
+            assertEquals("the control tap opens one prompt", promptsBefore + 1, auth.authenticateIds.size)
+            assertNoPicker(activity)
+            deliver(auth, DeviceAuthOutcome.Succeeded)
+        } else {
+            assertEquals("no prompt when auth is not required", promptsBefore, auth.authenticateIds.size)
+        }
+        assertPickerOpenedExactlyOnce(activity)
+    }
+
+    private fun assertStopWhileCheckingThenReleased(authRequiredAfterRelease: Boolean) {
+        val held = HeldGate()
+        val auth = FakeDeviceAuthenticator()
+        var taps = 0
+        val activity = startActivity({ ctx -> if (taps++ == 0) held.gate(ctx) else authRequiredAfterRelease }, auth)
+        tap()
+        assertEquals(1, held.calls)
+        composeRule.onNodeWithText(exportButton).assertIsNotEnabled()
+
+        val current = checkNotNull(scenario)
+        current.moveToState(Lifecycle.State.CREATED) // onStop while the gate read is held
+        held.release.complete(authRequiredAfterRelease)
+        ShadowLooper.idleMainLooper()
+
+        assertTrue("no prompt after the stop", auth.authenticateIds.isEmpty())
+        assertTrue("nothing to cancel: no prompt was open", auth.cancelIds.isEmpty())
+        assertNoPicker(activity)
+        current.moveToState(Lifecycle.State.RESUMED)
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText(exportButton).assertIsEnabled()
+        composeRule.onNodeWithText(deniedMessage).assertDoesNotExist()
+        assertTrue(auth.authenticateIds.isEmpty())
+        assertNoPicker(activity)
+
+        assertControlReachesThePicker(activity, auth, authRequiredAfterRelease)
+    }
+
+    @Test
+    fun s22_f6_stopWhileChecking_thenAuthRequiredGateReleased_endsIdleWithNoPromptAndNoPicker() =
+        assertStopWhileCheckingThenReleased(authRequiredAfterRelease = true)
+
+    @Test
+    fun s22_f6_stopWhileChecking_thenAuthNotRequiredGateReleased_endsIdleWithNoPromptAndNoPicker() =
+        assertStopWhileCheckingThenReleased(authRequiredAfterRelease = false)
+
+    private fun assertGateReleasedBelowStarted(authRequired: Boolean) {
+        val auth = FakeDeviceAuthenticator()
+        var host: UnsupportedDatabaseActivity? = null
+        var taps = 0
+        val activity = startActivity({ _ ->
+            if (taps++ == 0) {
+                // The lifecycle drops below STARTED while the read is in flight, without onStop (so the gate job is
+                // not cancelled by onStop): only the lifecycle check after the read can keep the prompt closed.
+                (host!!.lifecycle as LifecycleRegistry).currentState = Lifecycle.State.CREATED
+                authRequired
+            } else {
+                authRequired
+            }
+        }, auth)
+        host = activity
+        val registry = activity.lifecycle as LifecycleRegistry
+
+        tap()
+        assertTrue("the gate ran", taps == 1)
+        assertEquals("the lifecycle was below STARTED", Lifecycle.State.CREATED, registry.currentState)
+        assertTrue("no prompt below STARTED", auth.authenticateIds.isEmpty())
+        assertTrue(auth.cancelIds.isEmpty())
+        assertNoPicker(activity)
+
+        composeRule.runOnUiThread { registry.currentState = Lifecycle.State.RESUMED }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText(exportButton).assertIsEnabled()
+        composeRule.onNodeWithText(deniedMessage).assertDoesNotExist()
+        assertTrue(auth.authenticateIds.isEmpty())
+        assertNoPicker(activity)
+
+        // control: once the screen is started again, the same tap reaches the prompt / the picker
+        assertControlReachesThePicker(activity, auth, authRequired)
+    }
+
+    @Test
+    fun s22_f6_gateReleasedBelowStarted_authRequired_endsIdleWithNoPromptAndNoPicker() =
+        assertGateReleasedBelowStarted(authRequired = true)
+
+    @Test
+    fun s22_f6_gateReleasedBelowStarted_authNotRequired_endsIdleWithNoPromptAndNoPicker() =
+        assertGateReleasedBelowStarted(authRequired = false)
+
+    private fun assertGateReleasedWhileFinishing(authRequired: Boolean, finish: Boolean) {
+        val auth = FakeDeviceAuthenticator()
+        var host: UnsupportedDatabaseActivity? = null
+        val activity = startActivity({ _ ->
+            if (finish) host!!.finish() // the screen is finishing by the time the read returns
+            authRequired
+        }, auth)
+        host = activity
+
+        tap()
+
+        if (finish) {
+            assertTrue("the screen is finishing", activity.isFinishing)
+            assertTrue("no prompt while finishing", auth.authenticateIds.isEmpty())
+            assertTrue(auth.cancelIds.isEmpty())
+            assertNoPicker(activity)
+        } else {
+            // positive control of the same gate without finish(): it reaches the prompt / the picker
+            assertTrue(!activity.isFinishing)
+            if (authRequired) {
+                assertEquals(1, auth.authenticateIds.size)
+                assertNoPicker(activity)
+                deliver(auth, DeviceAuthOutcome.Succeeded)
+            } else {
+                assertTrue(auth.authenticateIds.isEmpty())
+            }
+            assertPickerOpenedExactlyOnce(activity)
+        }
+    }
+
+    @Test
+    fun s22_f6_gateReleasedWhileFinishing_authRequired_endsIdleWithNoPromptAndNoPicker() =
+        assertGateReleasedWhileFinishing(authRequired = true, finish = true)
+
+    @Test
+    fun s22_f6_gateReleasedWhileFinishing_authNotRequired_endsIdleWithNoPromptAndNoPicker() =
+        assertGateReleasedWhileFinishing(authRequired = false, finish = true)
+
+    @Test
+    fun s22_f6_gateNotFinishing_authRequired_reachesThePromptAndThePicker_control() =
+        assertGateReleasedWhileFinishing(authRequired = true, finish = false)
+
+    @Test
+    fun s22_f6_gateNotFinishing_authNotRequired_reachesThePicker_control() =
+        assertGateReleasedWhileFinishing(authRequired = false, finish = false)
+
+    /**
+     * Gate generation token: a gate read of an abandoned tap (A) that IGNORES cancellation and answers only after a
+     * newer tap (B) has started must not reset the newer tap's CHECKING state, open a prompt or open the picker.
+     */
+    @Test
+    fun s22_f6_aStaleGateJobAfterStopAndRestart_neverResetsOrDrivesTheNewerTap() {
+        val gateA = CompletableDeferred<Boolean>()
+        val gateB = CompletableDeferred<Boolean>()
+        val auth = FakeDeviceAuthenticator()
+        var gateCalls = 0
+        val activity = startActivity({ _ ->
+            when (gateCalls++) {
+                // read A ignores cancellation: onStop cancels the job, yet the read still suspends here
+                0 -> withContext(NonCancellable) { gateA.await() }
+                1 -> gateB.await()
+                else -> error("the gate must be read exactly twice")
+            }
+        }, auth)
+
+        tap() // tap A
+        assertEquals(1, gateCalls)
+        composeRule.onNodeWithText(exportButton).assertIsNotEnabled()
+
+        val current = checkNotNull(scenario)
+        current.moveToState(Lifecycle.State.CREATED) // onStop abandons read A (it keeps suspended)
+        current.moveToState(Lifecycle.State.RESUMED)
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText(exportButton).assertIsEnabled() // IDLE after the stop
+        assertEquals("a stop reads no gate", 1, gateCalls)
+        assertTrue(auth.authenticateIds.isEmpty())
+        assertNoPicker(activity)
+
+        tap() // tap B
+        assertEquals(2, gateCalls)
+        composeRule.onNodeWithText(exportButton).assertIsNotEnabled()
+
+        // The stale read A answers "auth required" while B is the live CHECKING attempt.
+        gateA.complete(true)
+        ShadowLooper.idleMainLooper()
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithText(exportButton).assertIsNotEnabled() // B is still CHECKING, not reset by A
+        composeRule.onNodeWithText(deniedMessage).assertDoesNotExist()
+        assertTrue("the stale read opened no prompt", auth.authenticateIds.isEmpty())
+        assertTrue(auth.cancelIds.isEmpty())
+        assertNoPicker(activity)
+
+        tap() // refused: B is still CHECKING
+        assertEquals("a further tap is refused, the gate was read exactly twice", 2, gateCalls)
+        assertTrue(auth.authenticateIds.isEmpty())
+        assertNoPicker(activity)
+
+        // positive control: the live read B continues through the normal path exactly once
+        gateB.complete(true)
+        ShadowLooper.idleMainLooper()
+        composeRule.waitForIdle()
+        assertEquals("exactly one prompt, from read B", 1, auth.authenticateIds.size)
+        assertEquals(listOf(AuthPromptCopy.EXPORT), auth.copies)
+        assertNoPicker(activity)
+        deliver(auth, DeviceAuthOutcome.Succeeded)
+        assertPickerOpenedExactlyOnce(activity)
+        assertEquals(2, gateCalls)
+        composeRule.onNodeWithText(exportButton).assertIsEnabled()
+        composeRule.onNodeWithText(deniedMessage).assertDoesNotExist()
+    }
+
+    // ---- S22-b.2 F6-ii: the prompt watchdog ---------------------------------------------------------------------
+
+    private val watchdogMillis = 60_000L
+
+    private fun advance(millis: Long) {
+        ShadowLooper.idleMainLooper(millis, TimeUnit.MILLISECONDS)
+        composeRule.waitForIdle()
+    }
+
+    private fun assertWatchdogClosesTheOpenPromptAsDenied(auth: FakeDeviceAuthenticator) {
+        UnsupportedDatabaseActivity.exportAuthPromptTimeoutMillisForTest = watchdogMillis
+        val activity = startActivity({ _ -> true }, auth)
+        tap()
+        val openId = auth.authenticateIds.single()
+
+        advance(watchdogMillis - 1_000L)
+        assertTrue("not before the deadline", auth.cancelIds.isEmpty())
+        composeRule.onNodeWithText(exportButton).assertIsNotEnabled()
+        composeRule.onNodeWithText(deniedMessage).assertDoesNotExist()
+
+        advance(2_000L)
+        assertEquals("the watchdog cancels the open attempt once", listOf(openId), auth.cancelIds)
+        assertDeniedAndUsable()
+        assertNoPicker(activity)
+
+        advance(watchdogMillis * 10)
+        assertEquals("the watchdog fires once", listOf(openId), auth.cancelIds)
+        // a Succeeded that still arrives for the closed attempt cannot open the picker
+        composeRule.runOnUiThread { auth.deliver(openId, DeviceAuthOutcome.Succeeded) }
+        composeRule.waitForIdle()
+        assertNoPicker(activity)
+        assertDeniedAndUsable()
+
+        // control: the screen is usable again; a new attempt that succeeds opens the picker
+        tap()
+        assertEquals(2, auth.authenticateIds.size)
+        deliver(auth, DeviceAuthOutcome.Succeeded)
+        assertPickerOpenedExactlyOnce(activity)
+        assertEquals("the second attempt was not cancelled", listOf(openId), auth.cancelIds)
+    }
+
+    @Test
+    fun s22_f6_watchdogFiresWithAnOpenPrompt_cancelsOnce_deniesWithNoPicker_whenCancelEchoes() =
+        assertWatchdogClosesTheOpenPromptAsDenied(
+            FakeDeviceAuthenticator(outcomeOnCancel = DeviceAuthOutcome.Failed(DeviceAuthErrorBucket.SYSTEM_CANCELED))
+        )
+
+    @Test
+    fun s22_f6_watchdogFiresWithAnOpenPrompt_cancelsOnce_deniesWithNoPicker_whenTheAdapterDoesNotEcho() =
+        assertWatchdogClosesTheOpenPromptAsDenied(FakeDeviceAuthenticator()) // cancel delivers nothing
+
+    @Test
+    fun s22_f6_watchdog_usesTheFiveMinuteConstantWhenTheSeamIsNull() {
+        UnsupportedDatabaseActivity.exportAuthPromptTimeoutMillisForTest = null
+        val auth = FakeDeviceAuthenticator()
+        val activity = startActivity({ _ -> true }, auth)
+        tap()
+        val openId = auth.authenticateIds.single()
+
+        advance(299_000L)
+        assertTrue("still open just before five minutes", auth.cancelIds.isEmpty())
+        composeRule.onNodeWithText(exportButton).assertIsNotEnabled()
+
+        advance(2_000L)
+        assertEquals(listOf(openId), auth.cancelIds)
+        assertDeniedAndUsable()
+        assertNoPicker(activity)
+    }
+
+    private fun assertOutcomeDisarmsTheWatchdog(outcome: DeviceAuthOutcome) {
+        UnsupportedDatabaseActivity.exportAuthPromptTimeoutMillisForTest = watchdogMillis
+        val auth = FakeDeviceAuthenticator()
+        val activity = startActivity({ _ -> true }, auth)
+        tap()
+        val succeeded = outcome == DeviceAuthOutcome.Succeeded
+
+        deliver(auth, outcome)
+        if (succeeded) assertPickerOpenedExactlyOnce(activity) else assertNoPicker(activity)
+
+        advance(watchdogMillis * 3)
+
+        assertTrue("a disarmed watchdog never cancels", auth.cancelIds.isEmpty())
+        assertEquals("no second prompt", 1, auth.authenticateIds.size)
+        // the single picker of Succeeded was consumed above; none was opened since
+        assertNull("no further picker", shadowOf(activity).peekNextStartedActivityForResult())
+        composeRule.onNodeWithText(exportButton).assertIsEnabled()
+        if (succeeded) {
+            composeRule.onNodeWithText(deniedMessage).assertDoesNotExist()
+        } else {
+            composeRule.onNodeWithText(deniedMessage).assertExists()
+        }
+    }
+
+    @Test
+    fun s22_f6_watchdogIsDisarmedBySucceeded() = assertOutcomeDisarmsTheWatchdog(DeviceAuthOutcome.Succeeded)
+
+    @Test
+    fun s22_f6_watchdogIsDisarmedByCancelled() = assertOutcomeDisarmsTheWatchdog(DeviceAuthOutcome.Cancelled)
+
+    @Test
+    fun s22_f6_watchdogIsDisarmedByFailed() =
+        assertOutcomeDisarmsTheWatchdog(DeviceAuthOutcome.Failed(DeviceAuthErrorBucket.OTHER))
+
+    @Test
+    fun s22_f6_watchdogIsDisarmedByLockedOut() =
+        assertOutcomeDisarmsTheWatchdog(DeviceAuthOutcome.LockedOut(permanent = false))
+
+    @Test
+    fun s22_f6_watchdogIsDisarmedByOnStop_andTheStopCancelsOnlyOnce() {
+        UnsupportedDatabaseActivity.exportAuthPromptTimeoutMillisForTest = watchdogMillis
+        val auth = FakeDeviceAuthenticator() // cancel delivers nothing
+        val activity = startActivity({ _ -> true }, auth)
+        tap()
+        val openId = auth.authenticateIds.single()
+
+        stopAndRestart()
+        assertEquals("onStop cancelled the open attempt", listOf(openId), auth.cancelIds)
+        assertDeniedAndUsable()
+
+        advance(watchdogMillis * 3)
+
+        assertEquals("the watchdog did not cancel a second time", listOf(openId), auth.cancelIds)
+        assertDeniedAndUsable()
+        assertNoPicker(activity)
+    }
+
+    @Test
+    fun s22_f6_aWatchdogOfAttemptN_doesNotAffectAttemptNPlus1() {
+        UnsupportedDatabaseActivity.exportAuthPromptTimeoutMillisForTest = watchdogMillis
+        val auth = FakeDeviceAuthenticator()
+        val activity = startActivity({ _ -> true }, auth)
+        tap() // attempt 1, its watchdog would fire at 60 s
+        val firstId = auth.authenticateIds.single()
+        advance(40_000L)
+        deliver(auth, DeviceAuthOutcome.Cancelled)
+        tap() // attempt 2 at 40 s, its own watchdog fires at 100 s
+        assertEquals(2, auth.authenticateIds.size)
+        val secondId = auth.authenticateIds.last()
+        assertTrue(secondId > firstId)
+
+        advance(30_000L) // 70 s: past the deadline of attempt 1
+        assertTrue("attempt 1's watchdog must not touch attempt 2", auth.cancelIds.isEmpty())
+        composeRule.onNodeWithText(exportButton).assertIsNotEnabled()
+        composeRule.onNodeWithText(deniedMessage).assertDoesNotExist()
+        assertNoPicker(activity)
+
+        advance(31_000L) // 101 s: attempt 2's own deadline
+        assertEquals("only attempt 2 is cancelled, by its own watchdog", listOf(secondId), auth.cancelIds)
+        assertDeniedAndUsable()
+        assertNoPicker(activity)
+    }
+
+    @Test
+    fun s22_f6_aSynchronousOutcomeInsideAuthenticate_armsNoWatchdog() {
+        UnsupportedDatabaseActivity.exportAuthPromptTimeoutMillisForTest = watchdogMillis
+        val auth = FakeDeviceAuthenticator(synchronousOutcome = DeviceAuthOutcome.Cancelled)
+        val activity = startActivity({ _ -> true }, auth)
+        tap()
+        assertDeniedAndUsable()
+
+        advance(watchdogMillis * 3)
+
+        assertTrue(auth.cancelIds.isEmpty())
+        assertDeniedAndUsable()
+        assertNoPicker(activity)
+    }
+
+    @Test
+    fun s22_f6_aNonLaunchedAnswer_armsNoWatchdog() {
+        UnsupportedDatabaseActivity.exportAuthPromptTimeoutMillisForTest = watchdogMillis
+        val auth = FakeDeviceAuthenticator(launchAnswer = AuthLaunch.HOST_UNAVAILABLE)
+        val activity = startActivity({ _ -> true }, auth)
+        tap()
+        assertDeniedAndUsable()
+
+        advance(watchdogMillis * 3)
+
+        assertTrue("nothing was launched, so nothing is cancelled", auth.cancelIds.isEmpty())
+        assertDeniedAndUsable()
         assertNoPicker(activity)
     }
 

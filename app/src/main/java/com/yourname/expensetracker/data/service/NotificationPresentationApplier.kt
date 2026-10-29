@@ -1,7 +1,9 @@
 package com.yourname.expensetracker.data.service
 
+import android.app.Notification
 import android.app.PendingIntent
 import android.content.Context
+import android.os.Bundle
 import androidx.annotation.DrawableRes
 import androidx.annotation.StringRes
 import androidx.core.app.NotificationCompat
@@ -87,7 +89,40 @@ class NotificationPresentationApplier @Inject constructor(
 
         applyActions(builder, decision.actionPolicy, actions)
 
+        // Presentation-mode token (G1b-0): private builder only, next to the kind marker. The public
+        // version is built separately in buildPublicVersion and never receives it.
+        builder.addExtras(
+            Bundle().apply {
+                putString(
+                    MODE_EXTRA_KEY,
+                    if (decision.mode == NotificationPresentationMode.FULL) MODE_TOKEN_FULL else MODE_TOKEN_DISCREET
+                )
+            }
+        )
+
         return NotificationKindMarker.stamp(builder, decision.kind)
+    }
+
+    companion object {
+        /**
+         * App-namespaced extras key for the content-free presentation-mode token (G1b-0). Never rendered:
+         * not a platform text extra. Pinned by test; changing it orphans tokens in active notifications.
+         */
+        const val MODE_EXTRA_KEY: String = "com.yourname.expensetracker.extra.PRESENTATION_MODE"
+
+        /** Token for a DISCREET notification. A literal, never derived from content. */
+        const val MODE_TOKEN_DISCREET: String = "D"
+
+        /** Token for a FULL notification. A literal, never derived from content. */
+        const val MODE_TOKEN_FULL: String = "F"
+
+        /**
+         * The raw presentation-mode token of [notification], or null when absent, not a string or the
+         * notification is null. Never throws. The caller treats anything other than [MODE_TOKEN_DISCREET]
+         * (null included) as not confirmed discreet.
+         */
+        fun readModeToken(notification: Notification?): String? =
+            notification?.extras?.getString(MODE_EXTRA_KEY) // getString returns null on a type mismatch
     }
 
     /** PRIVATE visibility and the generic public version. */
