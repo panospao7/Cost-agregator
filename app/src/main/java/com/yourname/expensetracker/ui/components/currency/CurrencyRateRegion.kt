@@ -1,13 +1,48 @@
 package com.yourname.expensetracker.ui.components.currency
 
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.dp
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.currency.CurrencyUnsetReason
 import com.yourname.expensetracker.domain.currency.RateSourceLabel
 import java.time.LocalDate
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 /**
  * manual-entry-currency (ux-flows section 10): the state of the currency/rate region under the
- * amount, shared by add-expense and receipt review. Model only: enums, codes and [LocalDate]; no
- * copy strings and no composables (those arrive with the UI slice).
+ * amount, shared by add-expense and receipt review. The model is enums, codes and [LocalDate] with no
+ * copy strings; the composables that render it are at the end of this file.
  *
  * Money rule: no variant other than [Eligible] carries an amount, and an unavailable amount is
  * never represented as zero. Nothing here is persisted, logged or placed in a SavedStateHandle.
@@ -105,4 +140,189 @@ enum class CurrencyOpenSettingRequest {
 
     /** Navigate now; the host calls the consume function afterwards. */
     NAVIGATE
+}
+
+// ---------------------------------------------------------------------------------------------
+// MEC B2b: composables for the region (ux-flows sections 3, 4, 13). Stateless: every value arrives
+// as a parameter and every action leaves as a plain callback; nothing is persisted, logged or announced
+// with the amount.
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * Renders [region] under the amount row: the preview line (Evaluating, Eligible) or the blocked card.
+ * Every other state renders nothing. [suppressHomeUnresolvedCard] must be true while the B1
+ * `SaveResult.Error` card is shown, so a home-unresolved refusal is never rendered twice.
+ *
+ * The preview line carries no live region while it holds the converted figure (the figure changes per
+ * keystroke and is read on focus); "Checking exchange rate" and the blocked card are announced, the card
+ * assertively when it comes from Save ([CurrencyBlockOrigin.SAVE]) and politely otherwise.
+ */
+@Composable
+fun CurrencyRateRegionContent(
+    region: CurrencyRegionUi,
+    ratesSetting: CurrencyRatesSetting,
+    rateRefresh: CurrencyRefreshStatus,
+    ratesToday: LocalDate?,
+    suppressHomeUnresolvedCard: Boolean,
+    onRefresh: () -> Unit,
+    onOpenSetting: () -> Unit,
+    onChangeCurrency: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    when (region) {
+        is CurrencyRegionUi.Evaluating -> Text(
+            text = stringResource(R.string.mec_preview_checking),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = modifier
+                .fillMaxWidth()
+                .semantics { liveRegion = LiveRegionMode.Polite }
+        )
+        is CurrencyRegionUi.Eligible -> RatePreviewLine(region, ratesToday, modifier)
+        is CurrencyRegionUi.Blocked -> {
+            val duplicate = region.variant == CurrencyBlockVariant.HOME_UNRESOLVED && suppressHomeUnresolvedCard
+            if (!duplicate) {
+                BlockedRateCard(
+                    region = region,
+                    ratesSetting = ratesSetting,
+                    rateRefresh = rateRefresh,
+                    ratesToday = ratesToday,
+                    onRefresh = onRefresh,
+                    onOpenSetting = onOpenSetting,
+                    onChangeCurrency = onChangeCurrency,
+                    modifier = modifier
+                )
+            }
+        }
+        else -> Unit
+    }
+}
+
+@Composable
+private fun RatePreviewLine(region: CurrencyRegionUi.Eligible, ratesToday: LocalDate?, modifier: Modifier) {
+    val dateText = formatRateDate(region.rateDate, ratesToday)
+    val amount = region.formattedAmountInHome
+    val isEcb = region.sourceLabel == RateSourceLabel.ECB
+    // Unavailable is never zero: without a figure only the rate date is shown, and only for the ECB wording.
+    val text = when {
+        amount != null && !region.amountUnavailable ->
+            stringResource(if (isEcb) R.string.mec_preview_ecb else R.string.mec_preview_other, amount, dateText)
+        isEcb -> stringResource(R.string.mec_preview_rate_only, dateText)
+        else -> null
+    }
+    if (text != null) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = modifier.fillMaxWidth()
+        )
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun BlockedRateCard(
+    region: CurrencyRegionUi.Blocked,
+    ratesSetting: CurrencyRatesSetting,
+    rateRefresh: CurrencyRefreshStatus,
+    ratesToday: LocalDate?,
+    onRefresh: () -> Unit,
+    onOpenSetting: () -> Unit,
+    onChangeCurrency: () -> Unit,
+    modifier: Modifier
+) {
+    val requester = remember { BringIntoViewRequester() }
+    val assertive = region.origin == CurrencyBlockOrigin.SAVE
+    LaunchedEffect(region) {
+        if (assertive) requester.bringIntoView()
+    }
+
+    val rateVariant = region.variant == CurrencyBlockVariant.NONE || region.variant == CurrencyBlockVariant.STALE
+    val settingOn = ratesSetting == CurrencyRatesSetting.ON // Unknown is treated as Off (fail closed).
+    val latest = region.latestRateDate
+    val message = when (region.variant) {
+        CurrencyBlockVariant.STALE ->
+            if (latest != null) stringResource(R.string.mec_block_stale, formatRateDate(latest, ratesToday))
+            else stringResource(R.string.mec_block_none)
+        CurrencyBlockVariant.UNSUPPORTED -> stringResource(R.string.mec_block_unsupported)
+        CurrencyBlockVariant.HOME_UNRESOLVED -> stringResource(R.string.mec_block_home_unresolved)
+        CurrencyBlockVariant.NONE -> stringResource(R.string.mec_block_none)
+    }
+    val refreshLineRes = if (!rateVariant) null else when (rateRefresh) {
+        CurrencyRefreshStatus.DONE_STILL_BLOCKED -> R.string.mec_refresh_still_blocked
+        CurrencyRefreshStatus.FAILED_OFFLINE -> R.string.mec_refresh_offline
+        CurrencyRefreshStatus.FAILED_HOME_UNAVAILABLE -> R.string.mec_refresh_home_unavailable
+        CurrencyRefreshStatus.FAILED -> R.string.mec_refresh_failed
+        else -> null
+    }
+    val showRefresh = rateVariant && settingOn && rateRefresh != CurrencyRefreshStatus.FAILED_HOME_UNAVAILABLE
+    val showOpenSetting = rateVariant && !settingOn
+    val showChange = region.variant != CurrencyBlockVariant.HOME_UNRESOLVED
+    val onCard = MaterialTheme.colorScheme.onErrorContainer
+    val buttonColors = ButtonDefaults.textButtonColors(contentColor = onCard)
+
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+        modifier = modifier
+            .fillMaxWidth()
+            .bringIntoViewRequester(requester)
+    ) {
+        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            // The live region covers the message and hints only; the action buttons stay separate focus targets.
+            Column(
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.semantics(mergeDescendants = true) {
+                    liveRegion = if (assertive) LiveRegionMode.Assertive else LiveRegionMode.Polite
+                }
+            ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
+                    Icon(Icons.Default.Warning, contentDescription = null, tint = onCard, modifier = Modifier.size(20.dp))
+                    Text(message, color = onCard, style = MaterialTheme.typography.bodyMedium)
+                }
+                if (rateVariant) {
+                    if (!settingOn) {
+                        Text(stringResource(R.string.mec_block_off_hint), color = onCard, style = MaterialTheme.typography.bodySmall)
+                    }
+                    Text(stringResource(R.string.mec_block_alt_hint), color = onCard, style = MaterialTheme.typography.bodySmall)
+                }
+                if (refreshLineRes != null) {
+                    Text(stringResource(refreshLineRes), color = onCard, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+            if (showRefresh) {
+                val running = rateRefresh == CurrencyRefreshStatus.RUNNING
+                TextButton(
+                    onClick = onRefresh,
+                    enabled = !running,
+                    colors = buttonColors,
+                    modifier = Modifier.heightIn(min = 48.dp)
+                ) {
+                    if (running) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = onCard)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(stringResource(R.string.mec_action_refreshing))
+                    } else {
+                        Text(stringResource(R.string.mec_action_refresh))
+                    }
+                }
+            }
+            if (showOpenSetting) {
+                TextButton(onClick = onOpenSetting, colors = buttonColors, modifier = Modifier.heightIn(min = 48.dp)) {
+                    Text(stringResource(R.string.mec_action_open_setting))
+                }
+            }
+            if (showChange) {
+                TextButton(onClick = onChangeCurrency, colors = buttonColors, modifier = Modifier.heightIn(min = 48.dp)) {
+                    Text(stringResource(R.string.mec_action_change_currency))
+                }
+            }
+        }
+    }
+}
+
+/** A public ECB date, rendered without any time zone; the year is added when it differs from today's. */
+private fun formatRateDate(date: LocalDate, today: LocalDate?): String {
+    val pattern = if (today != null && today.year == date.year) "d MMM" else "d MMM yyyy"
+    return DateTimeFormatter.ofPattern(pattern, Locale.getDefault()).format(date)
 }

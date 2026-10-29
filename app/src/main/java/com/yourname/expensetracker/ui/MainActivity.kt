@@ -665,7 +665,8 @@ fun MainScreen(
 
                     com.yourname.expensetracker.ui.screens.addexpense.AddExpenseSheet(
                         onDismiss = { navigation.navigateBack() },
-                        initialAmount = initialAmount
+                        initialAmount = initialAmount,
+                        onOpenExchangeRateSetting = { navigation.navigateTo(NavigationDestination.PrivacySettings) }
                     )
                 }
                 is NavigationDestination.ScanReceipt -> {

@@ -568,6 +568,8 @@
     <string name="mec_receipt_not_detected">Δεν βρέθηκε νόμισμα στην απόδειξη. Ελέγξτε το.</string>
     <string name="mec_receipt_kept">Η απόδειξη διατηρήθηκε. Δεν αποθηκεύτηκε τίποτα.</string>
     <string name="mec_declaration_nothing_saved">Δεν αποθηκεύτηκε τίποτα.</string>
+    <string name="mec_open_setting_confirm_title">Άνοιγμα ρυθμίσεων;</string>
+    <string name="mec_open_setting_confirm_body">Η καταχώρισή σας θα απορριφθεί.</string>
     <!-- nl-quick-add slice F: DRAFT: owner native sign-off pending -->
     <string name="quick_add_label">Γρήγορη προσθήκη</string>
     <string name="quick_add_placeholder">π.χ. καφές 3,50 χθες</string>

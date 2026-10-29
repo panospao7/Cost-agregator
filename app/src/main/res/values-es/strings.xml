@@ -819,6 +819,8 @@
     <string name="mec_receipt_not_detected">No se encontró moneda en el recibo. Revísala.</string>
     <string name="mec_receipt_kept">Se conserva tu recibo. No se guardó nada.</string>
     <string name="mec_declaration_nothing_saved">No se guardó nada.</string>
+    <string name="mec_open_setting_confirm_title">¿Abrir ajustes?</string>
+    <string name="mec_open_setting_confirm_body">Se descartará tu entrada.</string>
     <!-- nl-quick-add slice F: DRAFT: owner native sign-off pending (Spanish shows the English example: the parser knows English, Greek and Greeklish only) -->
     <string name="quick_add_label">Añadir rápido</string>
     <string name="quick_add_placeholder">p. ej. coffee 3.50 yesterday</string>

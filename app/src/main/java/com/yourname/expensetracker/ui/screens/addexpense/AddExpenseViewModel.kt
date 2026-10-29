@@ -145,8 +145,8 @@ data class AddExpenseState(
   * (the coordinator is authoritative, INV-6).
   */
  val isCurrencySaveBlocked: Boolean
-  get() = when (val region = currencyRegion) {
-   is CurrencyRegionUi.Blocked -> region.variant != CurrencyBlockVariant.HOME_UNRESOLVED
+  get() = when (currencyRegion) {
+   is CurrencyRegionUi.Blocked -> currencyRegion.variant != CurrencyBlockVariant.HOME_UNRESOLVED
    is CurrencyRegionUi.AmountInvalid, is CurrencyRegionUi.Unset -> true
    else -> false
   }
@@ -336,9 +336,19 @@ class AddExpenseViewModel @Inject constructor(
             ).withUserEdit(QuickAddField.AMOUNT)
         }
         // MEC INV-3: the figure changed; drop to Pending at once so a converted amount for the
-        // previous figure (or a SAVE-origin card) is never shown for the new one.
-        reevaluateRegion(invalidate = true)
+        // previous figure (or a SAVE-origin card) is never shown for the new one. MEC R-4: a Blocked card
+        // that carries no amount is kept, so the card and Save do not toggle per keystroke.
+        reevaluateRegion(invalidate = !_state.value.currencyRegion.isAmountIndependentBlock())
     }
+
+    /** MEC R-4: true for a Blocked region whose variant carries no amount-dependent data. */
+    private fun CurrencyRegionUi.isAmountIndependentBlock(): Boolean =
+        this is CurrencyRegionUi.Blocked && when (variant) {
+            CurrencyBlockVariant.NONE,
+            CurrencyBlockVariant.STALE,
+            CurrencyBlockVariant.UNSUPPORTED,
+            CurrencyBlockVariant.HOME_UNRESOLVED -> true
+        }
 
     fun selectCategory(categoryId: Long) {
         _state.update {
@@ -615,6 +625,10 @@ class AddExpenseViewModel @Inject constructor(
                         // INV-15: repository message/exception are never displayed.
                         val refusal = blockVariantFor(result.message)
                         if (refusal != null) {
+                            // MEC R-2: cancel any in-flight preview so a late result cannot overwrite the
+                            // SAVE card or re-enable Save (STALE re-reads below).
+                            evaluationJob?.cancel()
+                            evaluationJob = null
                             // MEC INV-6/AE-22: a post-tap rate refusal keeps the form and shows the card.
                             _state.update { it.withSaveRefusal(refusal) }
                             // A stale refusal carries only a bounded code; re-read the latest date locally.
@@ -1055,15 +1069,14 @@ class AddExpenseViewModel @Inject constructor(
         }
     }
 
-    /** The user confirmed leaving the form to open the setting. */
+    /**
+     * The user confirmed leaving the form to open the setting. MEC C-1: the confirmation copy promises the
+     * entry is discarded, so reset first, then raise NAVIGATE exactly like the blank-amount path.
+     */
     fun confirmOpenExchangeRateSetting() {
-        _state.update {
-            if (it.openSettingRequest == CurrencyOpenSettingRequest.CONFIRM_NEEDED) {
-                it.copy(openSettingRequest = CurrencyOpenSettingRequest.NAVIGATE)
-            } else {
-                it
-            }
-        }
+        if (_state.value.openSettingRequest != CurrencyOpenSettingRequest.CONFIRM_NEEDED) return
+        reset()
+        _state.update { it.copy(openSettingRequest = CurrencyOpenSettingRequest.NAVIGATE) }
     }
 
     /** The user declined the confirmation or the host finished navigating: clears the request. */
@@ -1158,7 +1171,8 @@ class AddExpenseViewModel @Inject constructor(
                 logFillOutcome(it.outcome)
                 // MEC INV-3: Fill may have written the amount and/or the date.
                 if (QuickAddField.AMOUNT in it.writtenFields || QuickAddField.DATE in it.writtenFields) {
-                    reevaluateRegion(invalidate = QuickAddField.DATE in it.writtenFields)
+                    // R-3: an AMOUNT write also invalidates, so no stale converted figure stays visible.
+                    reevaluateRegion(invalidate = true)
                 }
             }
         }
@@ -1224,6 +1238,14 @@ class AddExpenseViewModel @Inject constructor(
      */
     fun onSheetOpened() {
         if (sessionZone == null) {
+            // MEC R-1(b): a retained draft with a NON-home selection is discarded whole (existing reset
+            // path), so its amount is never re-denominated into the home currency. A home draft is kept.
+            val retained = _state.value
+            val retainedNonHome = currencyOverride != null ||
+                (retained.selectedCurrency != null && retained.selectedCurrency != retained.homeCurrency)
+            if (retainedNonHome) {
+                reset()
+            }
             sessionZone = java.time.ZoneId.systemDefault()
             // MEC: a new sheet session starts on the home currency (Selected(home) on every open).
             currencyOverride = null

@@ -195,3 +195,30 @@ Next: loan-installments S1 in this lane (after the S0 D-10/D-12/D-13/D-20 discov
 - Combined guardian ACCEPT-WITH-CONDITIONS: F1/F2 fixed; F3/F4 are B2b items.
 - Shards, lint, static-guards and app-check run at the B2 candidate after B2b, when the strings get consumers.
 - Next: B2b UI (sheet, CurrencySelectionControl, region composables, a callback-only MainActivity hunk, the ISSUE-1 sheet test).
+
+## 2026-10-29: B2b status (uncommitted)
+- B2b UI is written: AddExpenseSheet, CurrencySelectionControl (new), CurrencyRateRegion composables, the MainActivity callback, and 2 new strings (es/el DRAFT).
+- Tests are written (AddExpenseSheetZoneSessionTest for ISSUE-1, AddExpenseSheetCurrencyUiTest, CurrencySelectionControlTest, CurrencyRateRegionContentTest).
+- Combined guardian ACCEPT-WITH-CONDITIONS; F-2 (picker reopen on layout flip) is fixed.
+- B2 ladder: targeted PASS vr-20261029-013405-f2492fd6, plus architecture-contracts, domain-a-m, cancellation and lint PASS.
+- FAILS:
+  - runtime-ui vr-20261029-013937-a32e827a: QuickAddSectionTest AppNotIdleException (an infinite animation or recomposition loop).
+  - known_good_state vr-20261029-015504-3e508679: row active_db_gate INFRA, gate_exit=2 (likely a Kotlin parser trap in the B2b code).
+  - static-guards and app-check fail downstream of these.
+- A debugger is diagnosing. Next: fix, re-run the ladder, reviewer-strict at the MEC B2 candidate, commit. Then C (receipt review), loan S11, Z.
+
+## 2026-10-29: MEC B2 candidate ACCEPTED and COMMITTED (B2b + review fixes)
+- Failures fixed before review:
+  - known_good_state active_db_gate exit 2: the scanner trap `get() = when (val region = …)` in AddExpenseViewModel was rewritten without the binding (behaviour identical).
+  - The runtime-ui QuickAddSectionTest AppNotIdle was order-dependent, bisected to AddExpenseSheetZoneSessionTest (a process-static snapshot state). It moved to an activity field and the harness `close()` cancels VM scopes.
+- reviewer-strict (Opus xhigh), two halves:
+  - B2a ACCEPT-WITH-CONDITIONS; B2b REJECT. Both found the same MAJOR: a draft re-denominated across sessions, and confirm not discarding.
+  - Fixes R-1 to R-5 per the plan dispositions; R-6 is a deviation.
+  - Re-review 2/2: ACCEPT-WITH-CONDITIONS. C-1 is applied (confirmOpenExchangeRateSetting = reset then NAVIGATE; tests rewritten in place, none deleted). C-2: F-B2-A11Y-1 is a HARD GATE for the MEC 1b release.
+- Validation (final tree):
+  - targeted PASS vr-20261029-082747-3f0f4a6d;
+  - known_good_state PASS vr-20261029-083322-cf5d66cf;
+  - app-check PASS vr-20261029-083638-7c7a7dcb.
+  - Earlier on this candidate: static-guards PASS vr-20261029-075030-bfb289f9; lint PASS vr-20261029-015550-c539bec0; architecture-contracts, domain-a-m and cancellation PASS.
+- Follow-ups: F-B2-A11Y-1 (HARD GATE for 1b); F-B2-TYPED-REFRESH; F-B2-HOME-CHANGE; es/el sign-off for the mec_ strings, including mec_open_setting_confirm_title/body.
+- Next: MEC C (receipt review; a money slice, so a writer plus a separate test-author), then loan S11, then Z.

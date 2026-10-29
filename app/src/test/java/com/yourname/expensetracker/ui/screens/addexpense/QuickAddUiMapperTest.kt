@@ -260,6 +260,18 @@ class QuickAddUiMapperTest {
     }
 
     @Test
+    fun `MEC F4 the foreign amount flag names whichever currency the sheet passes, not a fixed home currency`() {
+        val note = QuickAddUiMapper.fieldNote(FieldOrigin.FILL, FlagReason.AMOUNT_FOREIGN_CURRENCY, "USD")!!
+        assertEquals(UiText.StringResource(R.string.quick_add_flag_amount_foreign, listOf("USD")), note.text)
+        assertEquals(QuickAddFieldNoteKind.FLAG, note.kind)
+        // A null currency (still loading) names an empty currency rather than a stale one.
+        assertEquals(
+            UiText.StringResource(R.string.quick_add_flag_amount_foreign, listOf("")),
+            QuickAddUiMapper.fieldNote(FieldOrigin.FILL, FlagReason.AMOUNT_FOREIGN_CURRENCY, null)!!.text
+        )
+    }
+
+    @Test
     fun `category chip names why the category is set and which one Remove clears`() {
         assertNull(QuickAddUiMapper.categoryChip(null, "Home"))
         assertNull(QuickAddUiMapper.categoryChip(CategoryFillSource.EXACT_NAME, null))

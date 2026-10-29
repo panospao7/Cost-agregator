@@ -328,6 +328,7 @@ class AddExpenseViewModelStressTest : ViewModelTestUtils() {
             com.yourname.expensetracker.ui.components.currency.CurrencyOpenSettingRequest.NONE,
             st.openSettingRequest
         )
-        assertEquals("5.00", st.amount)
+        // the first confirmed request discards the draft (C-1); later requests navigate at once
+        assertEquals("", st.amount)
     }
 }

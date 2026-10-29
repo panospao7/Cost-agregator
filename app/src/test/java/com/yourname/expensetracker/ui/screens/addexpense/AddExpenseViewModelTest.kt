@@ -3097,8 +3097,11 @@ class AddExpenseViewModelTest : ViewModelTestUtils() {
         assertNull(st.saveResult)
         assertFormKept()
 
+        // R-4 (rewritten in place): the amount-independent SAVE card is kept through the edit (no Pending
+        // flicker, Save stays blocked); the re-read then clears it.
         viewModel.updateAmount("30.00")
-        assertEquals(CurrencyRegionUi.Pending, region)
+        assertEquals(CurrencyRegionUi.Blocked(CurrencyBlockVariant.STALE, null, CurrencyBlockOrigin.SAVE), region)
+        assertTrue(st.isCurrencySaveBlocked)
         settle()
         assertEquals(eligibleUsd(oct(15), CurrencyFormatter.formatMoney(27.0, "EUR")), region)
     }
@@ -3456,13 +3459,59 @@ class AddExpenseViewModelTest : ViewModelTestUtils() {
 
         viewModel.requestOpenExchangeRateSetting()
         assertEquals(CurrencyOpenSettingRequest.CONFIRM_NEEDED, st.openSettingRequest)
+        assertEquals("the draft is intact until the user confirms", "12.50", st.amount)
 
         viewModel.confirmOpenExchangeRateSetting()
         assertEquals(CurrencyOpenSettingRequest.NAVIGATE, st.openSettingRequest)
+        assertEquals("a confirmed navigate discards the amount", "", st.amount)
+        assertEquals("a confirmed navigate discards the merchant", "", st.merchant)
+        assertEquals("EUR", st.selectedCurrency)
 
         viewModel.consumeOpenSettingRequest()
         assertEquals(CurrencyOpenSettingRequest.NONE, st.openSettingRequest)
+        assertEquals("", st.amount)
+        assertEquals("EUR", st.selectedCurrency)
+    }
+
+    @Test
+    fun `C-1 confirmed open-setting from a foreign draft goes back to a blank home draft and navigates`() {
+        openMec()
+        viewModel.selectCurrency("USD")
+        viewModel.updateMerchant("Shop")
+        viewModel.updateAmount("12.50")
+        viewModel.requestOpenExchangeRateSetting()
+        assertEquals(CurrencyOpenSettingRequest.CONFIRM_NEEDED, st.openSettingRequest)
+
+        viewModel.confirmOpenExchangeRateSetting()
+
+        assertEquals(CurrencyOpenSettingRequest.NAVIGATE, st.openSettingRequest)
+        assertEquals("", st.amount)
+        assertEquals("", st.merchant)
+        assertEquals("EUR", st.selectedCurrency)
+    }
+
+    @Test
+    fun `C-1 confirm when the request is not CONFIRM_NEEDED leaves the state unchanged`() {
+        openMec()
+        viewModel.selectCurrency("USD")
+        viewModel.updateMerchant("Shop")
+        viewModel.updateAmount("12.50")
+        val before = st
+
+        // request is NONE
+        viewModel.confirmOpenExchangeRateSetting()
+        assertEquals(before, st)
+        assertEquals(CurrencyOpenSettingRequest.NONE, st.openSettingRequest)
         assertEquals("12.50", st.amount)
+        assertEquals("USD", st.selectedCurrency)
+
+        // request is NAVIGATE (no amount entered path): confirm must not reset or re-request
+        viewModel.reset()
+        viewModel.requestOpenExchangeRateSetting()
+        assertEquals(CurrencyOpenSettingRequest.NAVIGATE, st.openSettingRequest)
+        val navigating = st
+        viewModel.confirmOpenExchangeRateSetting()
+        assertEquals(navigating, st)
     }
 
     @Test
@@ -3586,17 +3635,244 @@ class AddExpenseViewModelTest : ViewModelTestUtils() {
     fun `B2a a new sheet session starts on home but a configuration change keeps the choice`() {
         openMec()
         viewModel.selectCurrency("USD")
+        viewModel.updateAmount("12.50")
         settle()
 
         viewModel.onSheetOpened() // re-composition after a configuration change: zone already captured
         settle()
         assertEquals("USD", st.selectedCurrency)
+        assertEquals("a configuration change keeps the amount with its currency", "12.50", st.amount)
 
         viewModel.onSheetLeft()
         viewModel.onSheetOpened()
         settle()
         assertEquals("EUR", st.selectedCurrency)
         assertEquals(CurrencyRegionUi.Home, region)
+        // R-1(b): the USD amount is never re-denominated as EUR; the whole draft was discarded.
+        assertEquals("", st.amount)
+    }
+
+    @Test
+    fun `R-1b a USD draft then onSheetLeft then onSheetOpened gives a blank draft and home selected`() {
+        openMec()
+        viewModel.updateMerchant("Shop")
+        viewModel.selectCurrency("USD")
+        viewModel.updateAmount("20.00")
+        settle()
+        assertEquals("USD", st.selectedCurrency)
+
+        viewModel.onSheetLeft()
+        viewModel.onSheetOpened()
+        settle()
+
+        assertEquals("EUR", st.selectedCurrency)
+        assertEquals("", st.amount)
+        assertEquals("", st.merchant)
+        assertEquals(CurrencyRegionUi.Home, region)
+        assertFalse(st.isCurrencySaveBlocked)
+    }
+
+    @Test
+    fun `R-1c a home draft survives a new sheet session exactly as before`() {
+        openMec()
+        viewModel.updateMerchant("Shop")
+        viewModel.updateAmount("12.50")
+        settle()
+
+        viewModel.onSheetLeft()
+        viewModel.onSheetOpened()
+        settle()
+
+        assertEquals("EUR", st.selectedCurrency)
+        assertEquals("12.50", st.amount)
+        assertEquals("Shop", st.merchant)
+        assertEquals(CurrencyRegionUi.Home, region)
+    }
+
+    @Test
+    fun `R-1c a draft switched back to home before the session ended is kept`() {
+        openMec()
+        viewModel.updateAmount("12.50")
+        viewModel.selectCurrency("USD")
+        viewModel.selectCurrency("EUR")
+        settle()
+
+        viewModel.onSheetLeft()
+        viewModel.onSheetOpened()
+        settle()
+
+        assertEquals("EUR", st.selectedCurrency)
+        assertEquals("12.50", st.amount)
+    }
+
+    @Test
+    fun `R-1b a new session after a foreign draft applies the incoming prefill on home`() {
+        // Same order as the sheet: onSheetOpened (DisposableEffect) first, then the prefill (LaunchedEffect).
+        openMec()
+        viewModel.selectCurrency("USD")
+        viewModel.updateMerchant("Old")
+        viewModel.updateAmount("20.00")
+        settle()
+
+        viewModel.onSheetLeft()
+        viewModel.onSheetOpened()
+        viewModel.setInitialValuesIfBlank(amount = "7.50", merchant = "Cafe")
+        settle()
+
+        assertEquals("EUR", st.selectedCurrency)
+        assertEquals("7.50", st.amount)
+        assertEquals("Cafe", st.merchant)
+        assertEquals(CurrencyRegionUi.Home, region)
+    }
+
+    // ---- R-2: a refusal cancels the in-flight preview, so a late result cannot overwrite the SAVE card ----
+
+    private fun assertRefusalBeatsSlowPreview(code: String, variant: CurrencyBlockVariant) {
+        openEligibleUsdForm()
+        rateStore.latencyMs = { _, _, _ -> 1_000L }
+        stubAddManualExpenseReturns(Result.Error(message = code))
+
+        viewModel.updateAmount("30.00") // starts a slow evaluation of the new figure
+        viewModel.save()
+        runNow() // the evaluation is now suspended in the store; the refusal arrives
+        val saveCard = CurrencyRegionUi.Blocked(variant, null, CurrencyBlockOrigin.SAVE)
+        assertEquals(saveCard, region)
+        val saveBlockedAtRefusal = st.isCurrencySaveBlocked
+
+        advance(5_000) // the late result would be Eligible(0.9 * 30.00)
+        settle()
+
+        assertEquals("the late preview must not overwrite the SAVE card", saveCard, region)
+        assertEquals("the late preview must not change Save", saveBlockedAtRefusal, st.isCurrencySaveBlocked)
+        assertFalse(st.isSaving)
+        assertEquals("30.00", st.amount)
+    }
+
+    @Test
+    fun `R-2 a NONE refusal cancels a slow in-flight preview and Save stays blocked`() {
+        assertRefusalBeatsSlowPreview(RateRefusalCodes.NOT_ELIGIBLE_NONE, CurrencyBlockVariant.NONE)
+        assertTrue("Save stays disabled; a late Eligible must not re-enable it", st.isCurrencySaveBlocked)
+    }
+
+    @Test
+    fun `R-2 an UNSUPPORTED refusal cancels a slow in-flight preview and Save stays blocked`() {
+        assertRefusalBeatsSlowPreview(RateRefusalCodes.NOT_ELIGIBLE_UNSUPPORTED, CurrencyBlockVariant.UNSUPPORTED)
+        assertTrue("Save stays disabled; a late Eligible must not re-enable it", st.isCurrencySaveBlocked)
+    }
+
+    @Test
+    fun `R-2 a HOME_UNRESOLVED refusal cancels a slow in-flight preview and keeps its retry error`() {
+        assertRefusalBeatsSlowPreview(RateRefusalCodes.NOT_ELIGIBLE_HOME_UNRESOLVED, CurrencyBlockVariant.HOME_UNRESOLVED)
+        assertEquals(
+            SaveResult.Error(UiText.StringResource(R.string.mec_block_home_unresolved)),
+            st.saveResult
+        )
+        assertFalse("Save stays enabled for a retry", st.isCurrencySaveBlocked)
+    }
+
+    @Test
+    fun `R-2 control without a refusal the same slow preview does apply`() {
+        openEligibleUsdForm()
+        rateStore.latencyMs = { _, _, _ -> 1_000L }
+
+        viewModel.updateAmount("30.00")
+        runNow()
+        advance(5_000)
+
+        assertEquals(eligibleUsd(oct(15), CurrencyFormatter.formatMoney(27.0, "EUR")), region)
+    }
+
+    // ---- R-3: a second Fill that writes the amount drops the shown figure to Pending ----
+
+    @Test
+    fun `R-3 a second Fill that writes AMOUNT moves the region through Pending, never the old figure`() {
+        putRate("USD", "EUR", 0.5, oct(16))
+        openMec()
+        viewModel.selectCurrency("USD")
+        viewModel.fill("coffee 12 USD")
+        settle()
+        assertEquals("12.00", st.amount)
+        assertEquals(eligibleUsd(oct(16), CurrencyFormatter.formatMoney(6.0, "EUR")), region)
+
+        rateStore.latencyMs = { _, _, _ -> 1_000L }
+        viewModel.fill("coffee 20 USD")
+        runNow()
+
+        assertEquals("20.00", st.amount)
+        assertEquals("the old converted figure must not stay visible", CurrencyRegionUi.Pending, region)
+        advance(5_000)
+        assertEquals(eligibleUsd(oct(16), CurrencyFormatter.formatMoney(10.0, "EUR")), region)
+    }
+
+    // ---- R-4: an amount-independent Blocked card is kept through amount edits ----
+
+    @Test
+    fun `R-4 an amount edit while Blocked NONE keeps the card and Save blocked, then re-reads`() {
+        openBlockedUsd(PrivacySettingsLoadState.Loaded(PrivacySettings()))
+        assertTrue(st.isCurrencySaveBlocked)
+
+        viewModel.updateAmount("30.00")
+        val blockedNone = CurrencyRegionUi.Blocked(CurrencyBlockVariant.NONE, null, CurrencyBlockOrigin.PREVIEW)
+        assertEquals("no Pending in between", blockedNone, region)
+        assertTrue(st.isCurrencySaveBlocked)
+        runNow()
+        assertEquals(blockedNone, region)
+        assertTrue(st.isCurrencySaveBlocked)
+
+        // The re-read still happens: once a rate exists, the next edit leaves the card.
+        putRate("USD", "EUR", 0.9, oct(15))
+        viewModel.updateAmount("40.00")
+        assertEquals(blockedNone, region)
+        settle()
+        assertEquals(eligibleUsd(oct(15), CurrencyFormatter.formatMoney(36.0, "EUR")), region)
+        assertFalse(st.isCurrencySaveBlocked)
+    }
+
+    @Test
+    fun `R-4 an amount edit while Blocked UNSUPPORTED or HOME_UNRESOLVED from SAVE keeps the card`() {
+        openEligibleUsdForm()
+        stubAddManualExpenseReturns(Result.Error(message = RateRefusalCodes.NOT_ELIGIBLE_UNSUPPORTED))
+        viewModel.save()
+        settle()
+        val unsupported = CurrencyRegionUi.Blocked(CurrencyBlockVariant.UNSUPPORTED, null, CurrencyBlockOrigin.SAVE)
+        assertEquals(unsupported, region)
+
+        viewModel.updateAmount("30.00")
+        assertEquals(unsupported, region)
+        assertTrue(st.isCurrencySaveBlocked)
+
+        stubAddManualExpenseReturns(Result.Error(message = RateRefusalCodes.NOT_ELIGIBLE_HOME_UNRESOLVED))
+        viewModel.updateAmount("31.00")
+        settle()
+        viewModel.save()
+        settle()
+        val homeUnresolved = CurrencyRegionUi.Blocked(CurrencyBlockVariant.HOME_UNRESOLVED, null, CurrencyBlockOrigin.SAVE)
+        assertEquals(homeUnresolved, region)
+
+        viewModel.updateAmount("32.00")
+        assertEquals(homeUnresolved, region)
+        assertFalse("HOME_UNRESOLVED never blocks Save", st.isCurrencySaveBlocked)
+    }
+
+    @Test
+    fun `R-4 control an amount edit while Eligible still drops to Pending`() {
+        openEligibleUsdForm()
+
+        viewModel.updateAmount("40.00")
+
+        assertEquals(CurrencyRegionUi.Pending, region)
+        settle()
+        assertEquals(eligibleUsd(oct(15), CurrencyFormatter.formatMoney(36.0, "EUR")), region)
+    }
+
+    @Test
+    fun `R-4 an edit that makes the amount invalid leaves the kept Blocked card for AmountInvalid`() {
+        openBlockedUsd(PrivacySettingsLoadState.Loaded(PrivacySettings()))
+
+        viewModel.updateAmount("0")
+
+        assertTrue(region is CurrencyRegionUi.AmountInvalid)
+        assertTrue(st.isCurrencySaveBlocked)
     }
 
     // ---- AE-30: nothing about amounts, currencies, rates or dates is ever logged ----

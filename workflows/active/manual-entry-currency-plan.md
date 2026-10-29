@@ -438,3 +438,38 @@ Base: 7d22041f. T3 money slice. Owner-approvals 87 applies: a Sonnet writer plus
 - F4: B2b must pass `selectedCurrency` to `QuickAddUiMapper.fieldNote` / `summaryLines`, and fix the amount content description and the leading symbol (AddExpenseSheet :114, :227, :248, :276). The `%1$s` of `quick_add_hint_foreign` is no longer used; the QuickAddUiMapperTest pin is REWRITTEN in place (flag to reviewer-strict).
 - F5: `isCurrencySaveBlocked` is UI-only by design (the coordinator remains the enforcing owner).
 - Test rewrite note: the "B1 any other repository code..." list was rewritten in place (AMOUNT_DIGITS_UNAVAILABLE and RATE_NOT_ELIGIBLE_STALE are now mapped codes).
+
+### B2b review dispositions (2026-10-29)
+- F-1: two new strings added in B2b are appended to the es/el sign-off list (owner sign-off still required).
+- F-2 (fixed): `changeCurrencyRequests` is now a one-shot. `CurrencySelectionControl` takes `onOpenRequestConsumed: () -> Unit` and calls it right after opening (or dropping the request when disabled/read-only); `AddExpenseSheet` resets the counter to 0. A stacked/row layout flip can no longer reopen the picker. Test added in `CurrencySelectionControlTest` (open once, flip slot, picker stays closed).
+- F-3: proofs (lint/app-check/compile) come from the validation ladder, not from this slice.
+- Notes 5-6 accepted: HOME_UNRESOLVED card is suppressed on any `SaveResult.Error`; the picker title reuses `mec_control_unset`.
+
+## MEC B2 candidate review dispositions (2026-10-29; orchestrator under item 62; BINDING)
+Reviews: reviewer-strict (Opus xhigh) in two halves. B2a: ACCEPT-WITH-CONDITIONS. B2b: REJECT. Both independently raised the same MAJOR finding.
+
+- **R-1 [MAJOR, money]: the draft amount is re-denominated across sessions.**
+  - Defect: `onSheetOpened` resets the currency to home but keeps the draft amount, and the confirmed open-setting NAVIGATE does not discard the entry although the copy says it does. A USD 20.00 draft comes back as EUR 20.00 with Save enabled.
+  - Decision D-B2-R1:
+    - (a) A confirmed NAVIGATE calls `viewModel.reset()` before `onOpenExchangeRateSetting()`, as the copy promises.
+    - (b) A new sheet session (`onSheetOpened` with no session) whose retained draft carries a NON-home selection resets the whole draft, so an amount is never re-denominated.
+    - (c) A draft whose selection was home is kept exactly as before B2 (existing behaviour unchanged). The spec default stays "home on every open, no last-used memory".
+  - Tests:
+    - the amount is cleared after a confirmed navigate (UI test);
+    - after a USD draft and a session end, the new session has a blank amount and home selected (VM);
+    - a home draft survives a new session (VM);
+    - extend "a new sheet session starts on home" with the amount assertion.
+- **R-2 [MINOR]: in-flight evaluation is not cancelled on refusal.** A NONE, UNSUPPORTED or HOME_UNRESOLVED save refusal cancels `evaluationJob`, so a late preview cannot overwrite the SAVE card or re-enable Save. Test: a slow store, then a refusal; the late result must not win.
+- **R-3 [MINOR]: Fill does not invalidate on an AMOUNT write.** A Fill that writes AMOUNT re-evaluates with invalidate = true, so no stale converted figure shows. Test included.
+- **R-4 [MINOR]: blocked-card flicker.** An amount edit keeps an amount-independent Blocked state (NONE, UNSUPPORTED, HOME_UNRESOLVED and other variants that carry no amount) instead of dropping to Pending, so the card and Save do not toggle per keystroke. Amount-dependent states still go to Pending.
+- **R-5 [MINOR, test hygiene]:** AddExpenseSheetCurrencyUiTest @After calls `harness.close()`.
+- **R-6 [MINOR, a11y], DEVIATION recorded:** the preview line has no polite announcement on currency or date changes (ux §13). FOLLOW-UP F-B2-A11Y-1, together with the §4 "Fix the amount" Save state description (needs a new string key, so es/el sign-off). Not in B2.
+- **Notes, follow-up:** the refresh failure mapping compares fixed exception tokens (bounded, never shown); a typed outcome later (F-B2-TYPED-REFRESH).
+- **Process:** a Sonnet writer for R-1(a, b), R-2, R-3 and R-4 (AddExpenseViewModel.kt, AddExpenseSheet.kt), then a separate Sonnet test-author (tests and R-5). Re-review by reviewer-strict on the fix diff only (iteration 2/2). Then targeted, runtime-ui and app-check.
+
+### Re-review (iteration 2/2) dispositions (2026-10-29)
+reviewer-strict: ACCEPT-WITH-CONDITIONS. Both MAJOR findings are closed; the two in-place rewrites are tighter.
+- **C-1 [MINOR]: `confirmOpenExchangeRateSetting()` still confirms without discarding, and a test pins that.** Preferred fix taken: it calls `reset()` and then requests NAVIGATE, the sheet's confirm button calls it (one host callback only), and AddExpenseViewModelTest :3456-3468 is rewritten in place to expect a blank amount. No test is deleted.
+- **C-2 (R-6 condition): F-B2-A11Y-1 is a HARD GATE for the MEC 1b release (H-1).** It covers the polite preview announcement on currency or date changes and the §4 "Fix the amount" Save state description (new key, so es/el sign-off). It ships with the es/el sign-off of the MEC strings.
+- **Follow-up F-B2-HOME-CHANGE:** a home draft is re-denominated if the home currency changes between sessions. This predates B2; decide in MEC 1b.
+- **Accepted residuals:** on a slow store, a kept Blocked card becomes Evaluating after 250 ms; the zone fallback after a reset on confirm is unreachable.

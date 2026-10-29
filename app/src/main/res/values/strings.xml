@@ -1989,6 +1989,8 @@
     <string name="mec_receipt_not_detected">No currency found on the receipt. Check it.</string>
     <string name="mec_receipt_kept">Your receipt is kept. Nothing was saved.</string>
     <string name="mec_declaration_nothing_saved">Nothing was saved.</string>
+    <string name="mec_open_setting_confirm_title">Open settings?</string>
+    <string name="mec_open_setting_confirm_body">Your entry will be discarded.</string>
     <!-- nl-quick-add slice F: quick add line, summary, per-field flags (never echo the typed line) -->
     <string name="quick_add_label">Quick add</string>
     <string name="quick_add_placeholder">e.g. coffee 3.50 yesterday</string>
