@@ -3042,6 +3042,15 @@
     <string name="declare_installments_snackbar_undo_failed">A payment was already recorded. Use End plan to change this plan.</string>
     <!-- loan-installments S11b: Add expense installments section -->
     <string name="add_expense_installments_repeat_exclusive">Repeat and installments can\'t be combined.</string>
+    <!-- loan-installments S11c: live preview card, past-due notice, non-spending reason -->
+    <string name="add_expense_installments_not_spending">Installments are only for purchases.</string>
+    <string name="add_expense_installments_preview_summary">%1$d × %2$s = %3$s</string>
+    <string name="add_expense_installments_preview_total">%1$d payments, %2$s in total</string>
+    <string name="add_expense_installments_preview_residual">First payment %1$s, then %2$s</string>
+    <string name="add_expense_installments_preview_ends">Last payment on %s</string>
+    <string name="add_expense_installments_preview_financing_less">Total of installments is less than the purchase price.</string>
+    <string name="add_expense_installments_preview_needs_amount">Enter the purchase amount first</string>
+    <string name="add_expense_installments_past_due">Past-due installments: %1$d. They won\'t count until you record or link them.</string>
     <!-- loan-installments S10b-2: create, edit, end flows, unlink -->
     <string name="installments_create_add_plan">Add plan</string>
     <string name="installments_plan_actions_menu">Plan actions</string>

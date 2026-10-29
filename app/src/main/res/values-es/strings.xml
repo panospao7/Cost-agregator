@@ -741,6 +741,15 @@
     <string name="declare_installments_snackbar_undo_failed">Ya se registró un pago. Usa Finalizar plan para cambiar este plan.</string>
     <!-- loan-installments S11b: DRAFT translation, pending owner sign-off -->
     <string name="add_expense_installments_repeat_exclusive">La repetición y las cuotas no se pueden combinar.</string>
+    <!-- loan-installments S11c: DRAFT translations, pending owner sign-off -->
+    <string name="add_expense_installments_not_spending">Las cuotas son solo para compras.</string>
+    <string name="add_expense_installments_preview_summary">%1$d × %2$s = %3$s</string>
+    <string name="add_expense_installments_preview_total">%1$d pagos, %2$s en total</string>
+    <string name="add_expense_installments_preview_residual">Primer pago %1$s, luego %2$s</string>
+    <string name="add_expense_installments_preview_ends">Último pago el %s</string>
+    <string name="add_expense_installments_preview_financing_less">El total de las cuotas es menor que el precio de compra.</string>
+    <string name="add_expense_installments_preview_needs_amount">Introduce primero el importe de la compra</string>
+    <string name="add_expense_installments_past_due">Cuotas vencidas: %1$d. No contarán hasta que las registres o las vincules.</string>
     <!-- loan-installments S12b: DRAFT translations, pending owner sign-off -->
     <string name="budget_includes_installments_format">Incluye %1$s en cuotas</string>
     <string name="budget_includes_installments_unavailable">Importe de cuotas no disponible</string>

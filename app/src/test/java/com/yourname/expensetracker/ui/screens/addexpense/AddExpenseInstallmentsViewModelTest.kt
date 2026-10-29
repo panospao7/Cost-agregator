@@ -1736,4 +1736,211 @@ class AddExpenseInstallmentsViewModelTest : ViewModelTestUtils() {
         }
         confirmVerified(installmentCoordinator, installmentDispatcher)
     }
+
+    // ---------------------------------------------------------------------------------------------
+    // S11c: installmentsDerived (entry zone, default first due, before-purchase flag, preview)
+    // ---------------------------------------------------------------------------------------------
+
+    private val newYork = ZoneId.of("America/New_York")
+    private val tokyo = ZoneId.of("Asia/Tokyo")
+
+    /** 15 Oct 21:30 in New York, which is already 16 Oct in Tokyo (10:30). */
+    private val nyEvening: Long get() = at(newYork, 2025, 10, 15, 21, 30)
+
+    private val derived: AddExpenseInstallmentsDerived get() = viewModel.installmentsDerived.value
+
+    @Test
+    fun `S11c a zone captured by onSheetOpened is used by installmentsDerived with no other state change`() {
+        // A VM that has not opened the sheet falls back to the device zone (Tokyo).
+        TimeZone.setDefault(TimeZone.getTimeZone(tokyo))
+        every { timeProvider.now() } returns nyEvening
+        val repo = mockk<CurrencySettingsRepository>(relaxed = true)
+        every { repo.homeCurrency() } returns flowOf("EUR")
+        viewModel = createViewModel(repo)
+        settle()
+        viewModel.updateDate(nyEvening)
+        settle()
+        assertEquals(epochDay(2025, 11, 16), derived.defaultFirstDueEpochDay)
+
+        // The device zone changes, then the sheet opens: the session zone is captured and the derivation follows.
+        TimeZone.setDefault(TimeZone.getTimeZone(newYork))
+        viewModel.onSheetOpened()
+        settle()
+
+        assertEquals(nyEvening, st.date)
+        assertEquals(epochDay(2025, 11, 15), derived.defaultFirstDueEpochDay)
+        assertEquals(epochDay(2025, 11, 15), derived.effectiveFirstDueEpochDay)
+    }
+
+    @Test
+    fun `S11c the pinned session zone beats a later device zone change`() {
+        openSheet(zone = newYork, now = nyEvening)
+        assertEquals(epochDay(2025, 11, 15), derived.defaultFirstDueEpochDay)
+
+        TimeZone.setDefault(TimeZone.getTimeZone(tokyo))
+        viewModel.updateMerchant("Laptop Shop") // forces a recomputation
+        settle()
+
+        assertEquals(nyEvening, st.date)
+        assertEquals(epochDay(2025, 11, 15), derived.defaultFirstDueEpochDay)
+    }
+
+    @Test
+    fun `S11c after onSheetLeft the derivation falls back to the device zone`() {
+        openSheet(zone = newYork, now = nyEvening)
+        assertEquals(epochDay(2025, 11, 15), derived.defaultFirstDueEpochDay)
+
+        TimeZone.setDefault(TimeZone.getTimeZone(tokyo))
+        viewModel.onSheetLeft()
+        settle()
+
+        assertEquals(epochDay(2025, 11, 16), derived.defaultFirstDueEpochDay)
+    }
+
+    @Test
+    fun `S11c after reset the derivation falls back to the device zone`() {
+        openSheet(zone = newYork, now = nyEvening)
+        assertEquals(epochDay(2025, 11, 15), derived.defaultFirstDueEpochDay)
+
+        TimeZone.setDefault(TimeZone.getTimeZone(tokyo))
+        viewModel.reset()
+        viewModel.updateDate(nyEvening)
+        settle()
+
+        assertEquals(epochDay(2025, 11, 16), derived.defaultFirstDueEpochDay)
+    }
+
+    @Test
+    fun `S11c the saved first due equals the default the form shows, with no divergence`() {
+        stubDeclare(InstallmentOpResult.Done(planRef))
+        openSheet(zone = newYork, now = nyEvening)
+        fillOn()
+        val shown = derived.defaultFirstDueEpochDay
+        assertEquals(epochDay(2025, 11, 15), shown)
+        // A later device zone change must not move the saved date away from the displayed one.
+        TimeZone.setDefault(TimeZone.getTimeZone(tokyo))
+
+        viewModel.save()
+        settle()
+
+        val terms = declareTerms.single()
+        assertEquals(shown, terms.firstDueEpochDay)
+        assertEquals(epochDay(2025, 11, 15), terms.firstDueEpochDay)
+    }
+
+    @Test
+    fun `S11c a month-end default shown by the form is the date that is saved`() {
+        stubDeclare(InstallmentOpResult.Done(planRef))
+        openSheet(now = at(athens, 2025, 1, 31, 12, 0))
+        fillOn()
+        val shown = derived.defaultFirstDueEpochDay
+
+        viewModel.save()
+        settle()
+
+        assertEquals(epochDay(2025, 2, 28), shown)
+        assertEquals(shown, declareTerms.single().firstDueEpochDay)
+    }
+
+    @Test
+    fun `S11c an explicit first due is the effective date shown and the date saved`() {
+        stubDeclare(InstallmentOpResult.Done(planRef))
+        openSheet()
+        fillOn()
+        viewModel.setInstallmentFirstDue(epochDay(2025, 12, 1))
+        settle()
+
+        assertEquals(epochDay(2025, 12, 1), derived.effectiveFirstDueEpochDay)
+        assertEquals(epochDay(2025, 11, 16), derived.defaultFirstDueEpochDay)
+
+        viewModel.save()
+        settle()
+
+        assertEquals(derived.effectiveFirstDueEpochDay, declareTerms.single().firstDueEpochDay)
+    }
+
+    @Test
+    fun `S11c the before-purchase flag follows an explicit first due against the purchase civil day`() {
+        openSheet() // purchase Thu 16 Oct 2025 14:30 Athens
+        fillOn()
+        assertFalse(derived.firstDueBeforePurchase)
+
+        viewModel.setInstallmentFirstDue(epochDay(2025, 10, 15))
+        settle()
+        assertTrue(derived.firstDueBeforePurchase)
+
+        viewModel.setInstallmentFirstDue(epochDay(2025, 10, 16))
+        settle()
+        assertFalse(derived.firstDueBeforePurchase)
+    }
+
+    @Test
+    fun `S11c the preview is Hidden while installments are off and for an Unset currency or an invalid count`() {
+        openSheet()
+        viewModel.updateAmount("600")
+        settle()
+        assertEquals(AddExpenseInstallmentPreview.Hidden, derived.preview)
+
+        enable()
+        settle()
+        assertTrue(derived.preview is AddExpenseInstallmentPreview.Ready)
+
+        viewModel.setInstallmentCountText("1")
+        settle()
+        assertEquals(AddExpenseInstallmentPreview.Hidden, derived.preview)
+    }
+
+    @Test
+    fun `S11c the preview is Hidden when the currency is Unset`() {
+        openSheet()
+        viewModel.selectCurrency("JPY")
+        viewModel.updateAmount("600")
+        enable()
+        settle()
+
+        assertNull(st.selectedCurrency)
+        assertEquals(AddExpenseInstallmentPreview.Hidden, derived.preview)
+    }
+
+    @Test
+    fun `S11c the preview needs the amount while it is blank and becomes Ready once it is typed`() {
+        openSheet()
+        enable()
+        settle()
+        assertEquals(AddExpenseInstallmentPreview.NeedsAmount, derived.preview)
+
+        viewModel.updateAmount("600")
+        settle()
+
+        val ready = derived.preview as AddExpenseInstallmentPreview.Ready
+        assertEquals(5_000L, ready.regularPaymentMinor)
+        assertEquals(60_000L, ready.totalMinor)
+        assertEquals(0, ready.pastDueCount)
+        assertNull(ready.financingCostMinor)
+    }
+
+    @Test
+    fun `S11c a fixed payment below the price previews a negative financing cost`() {
+        openSheet()
+        fillOn()
+        viewModel.setInstallmentSplit(InstallmentSplitMethod.FIXED_PAYMENT)
+        viewModel.setInstallmentFixedText("45")
+        settle()
+
+        val ready = derived.preview as AddExpenseInstallmentPreview.Ready
+        assertEquals(-6_000L, ready.financingCostMinor)
+    }
+
+    @Test
+    fun `S11c a purchase dated in the past previews the past-due count against the injected clock`() {
+        // Purchase Fri 1 Aug 2025; today (injected) is Thu 16 Oct 2025. Default first due 1 Sep:
+        // 1 Sep and 1 Oct are before today, 1 Nov is not.
+        openSheet()
+        viewModel.updateDate(at(athens, 2025, 8, 1))
+        fillOn()
+
+        assertEquals(epochDay(2025, 9, 1), derived.defaultFirstDueEpochDay)
+        val ready = derived.preview as AddExpenseInstallmentPreview.Ready
+        assertEquals(2, ready.pastDueCount)
+    }
 }

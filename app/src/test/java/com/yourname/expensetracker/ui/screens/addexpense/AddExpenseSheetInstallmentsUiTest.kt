@@ -14,6 +14,7 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
@@ -273,13 +274,33 @@ class AddExpenseSheetInstallmentsUiTest {
     }
 
     @Test
-    fun nonSpendingType_disablesTheSwitch_withTheNotEligibleReason() {
+    fun nonSpendingType_disablesTheSwitch_withTheNotSpendingReason() {
         showSheet()
         composeRule.runOnIdle { viewModel.selectTransactionType(TransactionType.DEPOSIT) }
         composeRule.waitForIdle()
 
         switchNode.assertIsNotEnabled()
-        composeRule.onNodeWithText(string(R.string.installments_action_refused_expense_not_eligible)).assertExists()
+        // S11c: the dedicated key replaces the "linked" expense-not-eligible string (wrong context here).
+        composeRule.onNodeWithText(string(R.string.add_expense_installments_not_spending)).assertExists()
+        composeRule.onNodeWithText(string(R.string.installments_action_refused_expense_not_eligible)).assertDoesNotExist()
+    }
+
+    @Test
+    fun transferType_disablesTheSwitch_withTheNotSpendingReason() {
+        showSheet()
+        composeRule.runOnIdle { viewModel.selectTransactionType(TransactionType.TRANSFER) }
+        composeRule.waitForIdle()
+
+        switchNode.assertIsNotEnabled()
+        composeRule.onNodeWithText(string(R.string.add_expense_installments_not_spending)).assertExists()
+    }
+
+    @Test
+    fun spendingType_doesNotShowTheNotSpendingReason() {
+        showSheet()
+
+        switchNode.assertIsEnabled()
+        composeRule.onNodeWithText(string(R.string.add_expense_installments_not_spending)).assertDoesNotExist()
     }
 
     @Test
@@ -410,5 +431,165 @@ class AddExpenseSheetInstallmentsUiTest {
         assertEquals(AddExpenseInstallmentsState(), installments)
         composeRule.onNodeWithTag(AddExpenseInstallmentsTags.COUNT).assertDoesNotExist()
         composeRule.onNodeWithText(repeatLabel).assertExists()
+    }
+
+    // ---- S11c: the live preview card (ux-flows 3.1 item 7) and the past-due notice (ux-flows :389) --------------
+    // Clock: the harness pins now to 2023-11-14T22:13:20Z, which is Wed 15 Nov 2023 in the Europe/Athens session
+    // zone, so today and the purchase day are 15 Nov 2023 and the default first payment is 15 Dec 2023.
+
+    private fun epochDay(y: Int, mo: Int, d: Int): Long = java.time.LocalDate.of(y, mo, d).toEpochDay()
+
+    private fun typeAmount(amount: String) {
+        composeRule.runOnIdle { viewModel.updateAmount(amount) }
+        composeRule.waitForIdle()
+    }
+
+    private val needsAmountText: String get() = string(R.string.add_expense_installments_preview_needs_amount)
+    private val financingLessText: String get() = string(R.string.add_expense_installments_preview_financing_less)
+
+    @Test
+    fun previewOff_installmentsOff_showsNoPreviewCard() {
+        showSheet()
+        typeAmount("600")
+
+        composeRule.onNodeWithTag(AddExpenseInstallmentsTags.PREVIEW).assertDoesNotExist()
+        composeRule.onNodeWithTag(AddExpenseInstallmentsTags.PAST_DUE).assertDoesNotExist()
+    }
+
+    @Test
+    fun previewReady_showsTheSummary_theTotal_andTheEndDate() {
+        showSheet()
+        typeAmount("600")
+        enableInstallments()
+
+        composeRule.onNodeWithTag(AddExpenseInstallmentsTags.PREVIEW).assertExists()
+        // "12 x <payment> = <total>": EUR 600 over 12 is 50.00 each, 600.00 in total.
+        composeRule.onNode(
+            hasText("12 × ", substring = true) and hasText("50.00", substring = true) and
+                hasText("600.00", substring = true)
+        ).assertExists()
+        // First payment 15 Dec 2023, twelfth payment 15 Nov 2024.
+        val endsPrefix = string(R.string.add_expense_installments_preview_ends, "").trim()
+        composeRule.onNode(hasText(endsPrefix, substring = true) and hasText("2024", substring = true)).assertExists()
+        composeRule.onNodeWithText(needsAmountText).assertDoesNotExist()
+        composeRule.onNodeWithTag(AddExpenseInstallmentsTags.PAST_DUE).assertDoesNotExist()
+    }
+
+    @Test
+    fun previewNeedsAmount_whenTheAmountIsBlank_andIsReplacedByTheCardOnceTyped() {
+        showSheet()
+        enableInstallments()
+
+        composeRule.onNodeWithTag(AddExpenseInstallmentsTags.PREVIEW).assertExists()
+        composeRule.onNodeWithText(needsAmountText).assertExists()
+        composeRule.onNode(hasText("12 × ", substring = true)).assertDoesNotExist()
+
+        typeAmount("600")
+
+        composeRule.onNodeWithText(needsAmountText).assertDoesNotExist()
+        composeRule.onNode(hasText("12 × ", substring = true)).assertExists()
+    }
+
+    @Test
+    fun previewIsHidden_forAnInvalidCount() {
+        showSheet()
+        typeAmount("600")
+        enableInstallments()
+        composeRule.onNodeWithTag(AddExpenseInstallmentsTags.COUNT).performTextReplacement("1")
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag(AddExpenseInstallmentsTags.PREVIEW).assertDoesNotExist()
+        composeRule.onNodeWithText(needsAmountText).assertDoesNotExist()
+    }
+
+    @Test
+    fun previewIsHidden_whenTheCurrencyIsUnset() {
+        showSheet()
+        typeAmount("600")
+        composeRule.runOnIdle { viewModel.selectCurrency("JPY") }
+        enableInstallments()
+
+        assertNull(viewModel.state.value.selectedCurrency)
+        composeRule.onNodeWithTag(AddExpenseInstallmentsTags.PREVIEW).assertDoesNotExist()
+    }
+
+    @Test
+    fun fixedPaymentBelowThePrice_showsTheLessThanPurchaseNote_andAboveOrEqualDoesNot() {
+        showSheet()
+        typeAmount("600")
+        enableInstallments()
+        composeRule.onNodeWithTag(AddExpenseInstallmentsTags.SPLIT_FIXED).performSemanticsAction(SemanticsActions.OnClick)
+        composeRule.waitForIdle()
+
+        // Below the price: negative financing cost.
+        composeRule.onNodeWithTag(AddExpenseInstallmentsTags.FIXED_AMOUNT).performTextReplacement("45.00")
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText(financingLessText).assertExists()
+
+        // Equal to the share (cost 0) and above the price (cost > 0): no note.
+        composeRule.onNodeWithTag(AddExpenseInstallmentsTags.FIXED_AMOUNT).performTextReplacement("50.00")
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag(AddExpenseInstallmentsTags.PREVIEW).assertExists()
+        composeRule.onNodeWithText(financingLessText).assertDoesNotExist()
+
+        composeRule.onNodeWithTag(AddExpenseInstallmentsTags.FIXED_AMOUNT).performTextReplacement("55.00")
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText(financingLessText).assertDoesNotExist()
+    }
+
+    @Test
+    fun pastDueNotice_isShown_withTheCount_whenSomePaymentsAreBeforeToday() {
+        showSheet()
+        typeAmount("600")
+        enableInstallments()
+        // Payments on the 15th from Aug: Aug 15, Sep 15 and Oct 15 are before 15 Nov 2023; 15 Nov itself is not.
+        composeRule.runOnIdle { viewModel.setInstallmentFirstDue(epochDay(2023, 8, 15)) }
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag(AddExpenseInstallmentsTags.PAST_DUE).assertExists()
+        composeRule.onNodeWithText(string(R.string.add_expense_installments_past_due, 3)).assertExists()
+    }
+
+    @Test
+    fun pastDueNotice_boundary_aFirstPaymentTodayHasNoNotice_andYesterdayHasOne() {
+        showSheet()
+        typeAmount("600")
+        enableInstallments()
+
+        composeRule.runOnIdle { viewModel.setInstallmentFirstDue(epochDay(2023, 11, 15)) }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag(AddExpenseInstallmentsTags.PREVIEW).assertExists()
+        composeRule.onNodeWithTag(AddExpenseInstallmentsTags.PAST_DUE).assertDoesNotExist()
+
+        composeRule.runOnIdle { viewModel.setInstallmentFirstDue(epochDay(2023, 11, 14)) }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag(AddExpenseInstallmentsTags.PAST_DUE).assertExists()
+        composeRule.onNodeWithText(string(R.string.add_expense_installments_past_due, 1)).assertExists()
+    }
+
+    @Test
+    fun pastDueNotice_isAbsent_forTheDefaultFutureFirstPayment() {
+        showSheet()
+        typeAmount("600")
+        enableInstallments()
+
+        composeRule.onNodeWithTag(AddExpenseInstallmentsTags.PREVIEW).assertExists()
+        composeRule.onNodeWithTag(AddExpenseInstallmentsTags.PAST_DUE).assertDoesNotExist()
+    }
+
+    @Test
+    fun resetWhileOn_removesThePreviewAndThePastDueNotice() {
+        showSheet()
+        typeAmount("600")
+        enableInstallments()
+        composeRule.runOnIdle { viewModel.setInstallmentFirstDue(epochDay(2023, 8, 15)) }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag(AddExpenseInstallmentsTags.PAST_DUE).assertExists()
+
+        composeRule.runOnIdle { viewModel.reset() }
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag(AddExpenseInstallmentsTags.PREVIEW).assertDoesNotExist()
+        composeRule.onNodeWithTag(AddExpenseInstallmentsTags.PAST_DUE).assertDoesNotExist()
     }
 }

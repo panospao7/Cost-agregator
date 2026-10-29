@@ -80,6 +80,7 @@ import com.yourname.expensetracker.ui.components.currency.CurrencyRatesSetting
 import com.yourname.expensetracker.ui.components.currency.CurrencyRefreshStatus
 import com.yourname.expensetracker.ui.components.currency.CurrencyRegionUi
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import java.time.LocalDate
@@ -253,6 +254,30 @@ class AddExpenseViewModel @Inject constructor(
  private var evaluationJob: Job? = null
  private var refreshJob: Job? = null
  private var ratesSettingJob: Job? = null
+
+ /**
+  * Loan-installments S11c: the zone-dependent installment values (default first payment, before-purchase
+  * warning, live preview card), derived from [state] with the entry zone (`sessionZone`, else the device
+  * default: the B1 precedent) and the injected clock. Eagerly shared, so `.value` is current for tests.
+  * Pure derivation; nothing is stored, persisted or logged.
+  */
+ // Mirror of [sessionZone] as a flow, so the derivation recomputes when the zone is captured or cleared.
+ // Not a String and never in state (G-1); sessionZone stays the plain field used by save.
+ private val sessionZoneTick = MutableStateFlow<java.time.ZoneId?>(null)
+
+ val installmentsDerived: StateFlow<AddExpenseInstallmentsDerived> = combine(_state, sessionZoneTick) { s, z ->
+   deriveInstallments(s, z ?: java.time.ZoneId.systemDefault())
+  }
+  .distinctUntilChanged()
+  .stateIn(
+   viewModelScope,
+   SharingStarted.Eagerly,
+   deriveInstallments(_state.value, sessionZoneTick.value ?: java.time.ZoneId.systemDefault()),
+  )
+
+ private fun deriveInstallments(s: AddExpenseState, zone: java.time.ZoneId): AddExpenseInstallmentsDerived {
+  return AddExpenseInstallmentsDerivation.derive(s, zone, todayFor(zone).toEpochDay())
+ }
 
  init {
  homeCurrencyJob = viewModelScope.launch {
@@ -773,7 +798,7 @@ class AddExpenseViewModel @Inject constructor(
         val planUuid = plan.planUuid ?: java.util.UUID.randomUUID().toString()
         val equal = plan.split == InstallmentSplitMethod.EQUAL_SPLIT
         val purchaseDay = InstallmentScheduleCalculator.civilEpochDay(s.date, entryZone)
-        val firstDue = plan.firstDueEpochDay ?: LocalDate.ofEpochDay(purchaseDay).plusMonths(1).toEpochDay()
+        val firstDue = plan.firstDueEpochDay ?: AddExpenseInstallmentsDerivation.defaultFirstDueEpochDay(purchaseDay)
         val terms = InstallmentPlanTerms(
             planUuid = planUuid,
             displayName = plan.effectiveName(merchant),
@@ -1632,6 +1657,7 @@ class AddExpenseViewModel @Inject constructor(
                 reset()
             }
             sessionZone = java.time.ZoneId.systemDefault()
+            sessionZoneTick.value = sessionZone
             // MEC: a new sheet session starts on the home currency (Selected(home) on every open).
             currencyOverride = null
             stashedOverride = null
@@ -1647,10 +1673,12 @@ class AddExpenseViewModel @Inject constructor(
      */
     fun onSheetLeft() {
         sessionZone = null
+        sessionZoneTick.value = null
     }
 
     fun reset() {
         sessionZone = null
+        sessionZoneTick.value = null
         searchJob?.cancel()
         searchJob = null
         fillJob?.cancel()

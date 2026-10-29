@@ -490,6 +490,15 @@
     <string name="declare_installments_snackbar_undo_failed">Έχει ήδη καταγραφεί μια πληρωμή. Χρησιμοποιήστε το Τερματισμός πλάνου για να αλλάξετε το πλάνο.</string>
     <!-- loan-installments S11b: DRAFT translation, pending owner sign-off -->
     <string name="add_expense_installments_repeat_exclusive">Η επανάληψη και οι δόσεις δεν μπορούν να συνδυαστούν.</string>
+    <!-- loan-installments S11c: DRAFT translations, pending owner sign-off -->
+    <string name="add_expense_installments_not_spending">Οι δόσεις αφορούν μόνο αγορές.</string>
+    <string name="add_expense_installments_preview_summary">%1$d × %2$s = %3$s</string>
+    <string name="add_expense_installments_preview_total">%1$d πληρωμές, %2$s συνολικά</string>
+    <string name="add_expense_installments_preview_residual">Πρώτη πληρωμή %1$s, μετά %2$s</string>
+    <string name="add_expense_installments_preview_ends">Τελευταία πληρωμή στις %s</string>
+    <string name="add_expense_installments_preview_financing_less">Το σύνολο των δόσεων είναι μικρότερο από την τιμή αγοράς.</string>
+    <string name="add_expense_installments_preview_needs_amount">Εισαγάγετε πρώτα το ποσό της αγοράς</string>
+    <string name="add_expense_installments_past_due">Ληξιπρόθεσμες δόσεις: %1$d. Δεν θα υπολογίζονται μέχρι να τις καταγράψετε ή να τις συνδέσετε.</string>
     <!-- loan-installments S12b: DRAFT translations, pending owner sign-off -->
     <string name="budget_includes_installments_format">Περιλαμβάνει %1$s σε δόσεις</string>
     <string name="budget_includes_installments_unavailable">Το ποσό των δόσεων δεν είναι διαθέσιμο</string>

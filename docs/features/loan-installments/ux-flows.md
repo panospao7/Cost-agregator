@@ -229,6 +229,25 @@ full-amount spend. **Entry:** Add expense overlay (`AddExpenseSheet`).
     combined."
   - The live preview card, the financing-cost lines and the past-due notice are not part of S11b; Save refusals use the
     sheet's existing save-error card with the fixed declare strings.
+- **S11c as built (2026-10-29, plan amendment "S11 candidate review dispositions", items 1-3):**
+  - **Preview card (item 7) and past-due notice (item 8):** rendered at the end of the section while the switch is on.
+    The view model exposes `installmentsDerived` (`AddExpenseInstallmentsDerived`), computed by the pure
+    `AddExpenseInstallmentsDerivation` over the domain `InstallmentScheduleCalculator.generate` (the UI does no money
+    math). Equal split: `N × amount = total`, or with a residual "N payments, total" plus "First payment X, then Y"
+    (residual FIRST, OD-6); "Last payment on <date>"; fixed payment: "Financing cost: total of installments minus
+    purchase" (negative shown with "Total of installments is less than the purchase price."). Empty or invalid amount:
+    "Enter the purchase amount first" (never 0.00 × N). An invalid count or fixed payment hides the card (the field shows
+    its own error); a calculator refusal shows the fixed refusal string. Past-due: "Past-due installments: N. They won't
+    count until you record or link them." with N = payments due strictly before today in the entry zone (never
+    auto-recorded). Amounts use the installment money formatter in the selected currency.
+  - **First-due default and warning:** `defaultFirstDueEpochDay`, `effectiveFirstDueEpochDay` and
+    `firstDueBeforePurchase` come from the view model with `sessionZone ?: ZoneId.systemDefault()`; the composable reads
+    no zone, and the "+1 month" rule lives only in `AddExpenseInstallmentsDerivation.defaultFirstDueEpochDay` (also used by
+    the save path). The preview passes no purchase date to the calculator, so the schedule still shows beside the
+    before-purchase warning.
+  - **Non-spending reason:** Deposit/Transfer shows `add_expense_installments_not_spending` ("Installments are only for
+    purchases.") instead of the "linked" string. The Declare sheet mapping is unchanged.
+  - **Still dormant** behind `InstallmentsFeature.ENABLED`. New keys: 8 (en, es DRAFT, el DRAFT); sign-off list.
 - **SUPERSEDED (2026-10-29, G2-6, plan amendment "S11 re-anchor after MEC B2/C"):** the next bullet is historical.
   Add expense now has the general MEC currency control. With installments ON it runs in INSTALLMENT mode
   (EUR/USD only); plan currency = purchase currency = the selected currency; there is no plan-currency row and

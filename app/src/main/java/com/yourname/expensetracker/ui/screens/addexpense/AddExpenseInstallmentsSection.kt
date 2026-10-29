@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
@@ -11,11 +12,13 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -34,15 +37,13 @@ import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.installment.model.InstallmentFulfilmentMode
 import com.yourname.expensetracker.domain.installment.model.InstallmentRefusalCode
 import com.yourname.expensetracker.domain.installment.model.InstallmentSplitMethod
-import com.yourname.expensetracker.domain.installment.schedule.InstallmentScheduleCalculator
 import com.yourname.expensetracker.ui.navigation.InstallmentsFeature
 import com.yourname.expensetracker.ui.screens.installments.actions.InstallmentActionMessages
 import com.yourname.expensetracker.ui.screens.installments.actions.InstallmentPlanMutationState
 import com.yourname.expensetracker.ui.screens.installments.actions.InstallmentPlanOperation
 import com.yourname.expensetracker.ui.screens.installments.declare.declareMutationMessage
 import com.yourname.expensetracker.ui.screens.installments.formatInstallmentDate
-import java.time.LocalDate
-import java.time.ZoneId
+import com.yourname.expensetracker.ui.screens.installments.installmentMoney
 
 /** Test tags of the section's inputs (the section has no other stable handle). */
 internal object AddExpenseInstallmentsTags {
@@ -55,6 +56,8 @@ internal object AddExpenseInstallmentsTags {
     const val MODE_AUTO = "add_expense_installments_mode_auto"
     const val MODE_CONFIRM = "add_expense_installments_mode_confirm"
     const val NAME = "add_expense_installments_name"
+    const val PREVIEW = "add_expense_installments_preview"
+    const val PAST_DUE = "add_expense_installments_past_due"
 }
 
 /**
@@ -79,10 +82,18 @@ internal fun AddExpenseInstallmentsSection(
     if (!featureEnabled) return
     val plan = state.installments
     val blockReason: InstallmentRefusalCode? = state.installmentsBlockReason
+    // S11c: a non-spending type (Deposit/Transfer) has its own reason; "linked" would be the wrong context.
     val blockText = blockReason
-        ?.let { declareMutationMessage(InstallmentPlanMutationState.Refused(InstallmentPlanOperation.CREATE, it)) }
+        ?.let {
+            if (it == InstallmentRefusalCode.NOT_A_SPENDING_EXPENSE) {
+                R.string.add_expense_installments_not_spending
+            } else {
+                declareMutationMessage(InstallmentPlanMutationState.Refused(InstallmentPlanOperation.CREATE, it))
+            }
+        }
         ?.let { stringResource(it) }
     val editable = !state.isSaving
+    val derived by viewModel.installmentsDerived.collectAsState()
 
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(
@@ -188,7 +199,7 @@ internal fun AddExpenseInstallmentsSection(
             )
         }
 
-        FirstDueRow(state = state, viewModel = viewModel, editable = editable)
+        FirstDueRow(derived = derived, viewModel = viewModel, editable = editable)
 
         Text(stringResource(R.string.declare_installments_mode_title), style = MaterialTheme.typography.labelLarge)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -224,17 +235,129 @@ internal fun AddExpenseInstallmentsSection(
                 .fillMaxWidth()
                 .testTag(AddExpenseInstallmentsTags.NAME)
         )
+
+        // The live preview card (ux-flows 3.1 item 7): always visible while the switch is on.
+        InstallmentPreviewCard(preview = derived.preview)
     }
 }
 
-/** The first payment date: default purchase date + 1 month; the picker stores an explicit epoch day. */
+/**
+ * Loan-installments S11c: the preview card and the past-due notice. Pure display of the view model's
+ * [AddExpenseInstallmentPreview] (computed by the domain schedule calculator); amounts go through the
+ * shared installment money formatter in the selected currency. Unavailable is never rendered as zero.
+ */
+@Composable
+private fun InstallmentPreviewCard(preview: AddExpenseInstallmentPreview) {
+    when (preview) {
+        AddExpenseInstallmentPreview.Hidden -> Unit
+        AddExpenseInstallmentPreview.NeedsAmount -> Text(
+            stringResource(R.string.add_expense_installments_preview_needs_amount),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag(AddExpenseInstallmentsTags.PREVIEW)
+        )
+        is AddExpenseInstallmentPreview.Refused -> {
+            val text = declareMutationMessage(
+                InstallmentPlanMutationState.Refused(InstallmentPlanOperation.CREATE, preview.code)
+            )?.let { stringResource(it) }
+            if (text != null) {
+                Text(
+                    text,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag(AddExpenseInstallmentsTags.PREVIEW)
+                )
+            }
+        }
+        is AddExpenseInstallmentPreview.Ready -> {
+            val currency = preview.currency
+            val total = installmentMoney(preview.totalMinor, currency).formatted
+            Surface(
+                tonalElevation = 2.dp,
+                shape = MaterialTheme.shapes.medium,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag(AddExpenseInstallmentsTags.PREVIEW)
+            ) {
+                Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    if (preview.hasResidual) {
+                        Text(
+                            stringResource(R.string.add_expense_installments_preview_total, preview.count, total),
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Text(
+                            stringResource(
+                                R.string.add_expense_installments_preview_residual,
+                                installmentMoney(preview.firstPaymentMinor, currency).formatted,
+                                installmentMoney(preview.regularPaymentMinor, currency).formatted
+                            ),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    } else {
+                        Text(
+                            stringResource(
+                                R.string.add_expense_installments_preview_summary,
+                                preview.count,
+                                installmentMoney(preview.regularPaymentMinor, currency).formatted,
+                                total
+                            ),
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                    Text(
+                        stringResource(
+                            R.string.add_expense_installments_preview_ends,
+                            formatInstallmentDate(preview.lastDueEpochDay)
+                        ),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    preview.financingCostMinor?.let { cost ->
+                        Text(
+                            stringResource(
+                                R.string.installments_financing_cost,
+                                installmentMoney(cost, currency).formatted
+                            ),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        if (cost < 0L) {
+                            Text(
+                                stringResource(R.string.add_expense_installments_preview_financing_less),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
+            if (preview.pastDueCount > 0) {
+                Text(
+                    stringResource(R.string.add_expense_installments_past_due, preview.pastDueCount),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag(AddExpenseInstallmentsTags.PAST_DUE)
+                        .semantics { liveRegion = LiveRegionMode.Polite }
+                )
+            }
+        }
+    }
+}
+
+/**
+ * The first payment date: the view model's default (purchase date + 1 month in the entry zone) or the
+ * explicit pick; the picker stores an explicit epoch day. The before-purchase warning is view model state.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun FirstDueRow(state: AddExpenseState, viewModel: AddExpenseViewModel, editable: Boolean) {
-    val zone = remember { ZoneId.systemDefault() }
-    val purchaseDay = InstallmentScheduleCalculator.civilEpochDay(state.date, zone)
-    val firstDay = state.installments.firstDueEpochDay
-        ?: LocalDate.ofEpochDay(purchaseDay).plusMonths(1).toEpochDay()
+private fun FirstDueRow(derived: AddExpenseInstallmentsDerived, viewModel: AddExpenseViewModel, editable: Boolean) {
+    val firstDay = derived.effectiveFirstDueEpochDay
     var picking by remember { mutableStateOf(false) }
 
     TextButton(
@@ -244,7 +367,7 @@ private fun FirstDueRow(state: AddExpenseState, viewModel: AddExpenseViewModel, 
     ) {
         Text(stringResource(R.string.declare_installments_first_due, formatInstallmentDate(firstDay)))
     }
-    if (firstDay < purchaseDay) {
+    if (derived.firstDueBeforePurchase) {
         Text(
             stringResource(R.string.declare_installments_refused_first_date),
             style = MaterialTheme.typography.bodySmall,

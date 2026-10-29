@@ -2634,3 +2634,15 @@ Transactions delete-dialog role lines, retry-loop key, marks-loader memoise, plu
   - All PASS.
 - Conditions: S11c is a HARD GATE before S13 (preview card and past-due notice; VM-owned first-due via sessionZone; a non-spending reason key; a switch-click UI test at S13). See the plan's 'S11 candidate review dispositions'.
 - Next (loan lane): S11c, then S13 (enablement and final acceptance).
+
+## 2026-10-29: loan S11c COMMITTED (S13 hard-gate items 1-3 done; item 4 stays with S13)
+- The preview card and past-due notice (domain InstallmentScheduleCalculator; no duplicated money math); a VM-owned first-due default via the session zone (combine with sessionZoneTick; save == UI); the non-spending reason key.
+- 8 new keys (es/el DRAFT, on the sign-off list) plus the owner copy check F3: a negative financing cost prints with a minus sign plus a 'less than the purchase price' line.
+- Combined guardian ACCEPT-WITH-CONDITIONS (LOW: past-due may go stale across midnight while the sheet is open; cosmetic FQ names).
+- Validation:
+  - targeted vr-20261029-165150-99861624;
+  - runtime-ui vr-20261029-165807-357a26ea;
+  - lint vr-20261029-170124-077eb2e5;
+  - known_good_state vr-20261029-170743-e3f42e73.
+  - All PASS.
+- Next (loan lane): S13 (enablement and final acceptance; needs F-B2-A11Y-1, the es/el sign-off, the S11c item 4 switch-click test, the S13-a deep-link items, all guardians, and reviewer-strict).
