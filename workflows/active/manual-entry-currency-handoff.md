@@ -267,3 +267,67 @@ Next: loan-installments S1 in this lane (after the S0 D-10/D-12/D-13/D-20 discov
   - known_good_state vr-20261029-175436-33dcec1f;
   - F1 targeted vr-20261029-180239-1b51e504.
 - Next (MEC lane): Z closeout. MEC 1b release still needs the es/el sign-off of the mec_ strings.
+
+## 2026-10-29: Z closeout (docs, one androidTest, and one fail-closed fix in CurrencyFractionDigits found by H-4)
+Written by the Z writer; NOT validated. The inventory is refreshed (`docs/architecture/CODEBASE_INVENTORY.md`, Drift Sync 2026-10-29). The orchestrator owns the validation run and the final fresh-session reviewer-strict acceptance (no discovery role).
+
+### Slice status (all slices)
+| Slice | Status |
+|---|---|
+| S0 | DONE 2026-10-23 |
+| D | ACCEPTED 2026-10-16 |
+| A1 | DONE 2026-10-23 |
+| A2 | DONE 2026-10-23 |
+| B0 / B0' | B0' DONE 2026-10-28 (RF-2 refuted; no date-picker fix needed) |
+| B1 | DONE 2026-10-28 |
+| B2 (B2a + B2b) | ACCEPTED and COMMITTED 2026-10-29 |
+| C (C1 + C2) | ACCEPTED and COMMITTED 2026-10-29 |
+| F-B2-A11Y-1 | CLOSED and COMMITTED 2026-10-29 (MEC 1b hard gate cleared; F-A11Y-LATCH-PURE remains for the 1b candidate review) |
+| Loan S11a/b/c (AddExpense installment section) | DONE on this lane (loan handoff owns the detail) |
+| Z | COMMITTED 2026-10-29 (validated; H-4 PASS on device; reviewer-strict deferred to the MEC 1b candidate or merge review per item 86) |
+
+### H-1 status
+B2, C and loan S11 are UNRELEASED until MEC 1b (ECB history behind the rate setting, N1/H-1). The release track must not ship them before 1b. MEC 1b still needs the es/el sign-off below.
+
+### H-4 (instrumented ICU digits check)
+Taken as YES: one `connected-test-class` run on AVD `wave5-api35`: `com.yourname.expensetracker.domain.currency.CurrencyFractionDigitsDeviceTest`. It pins the 28 catalog digit values (0 for JPY, KRW, ISK; 2 for the rest, HUF included) through `CurrencyAmountPolicy.fractionDigits`, plus the fail-closed `ZZZ` case (null, `DigitsUnavailable`). No new dependency, no network, no permission. If the run is not made, this becomes a follow-up and the plan's R4 row stays open.
+
+### Consolidated follow-ups (17)
+1. F-B2-TYPED-REFRESH: refresh behaviour after a typed amount/date change in the add-expense region.
+2. F-B2-HOME-CHANGE: reaction of the AddExpense draft/region to a home-currency change while the sheet is open.
+3. F-C-REGION-DEDUP: the add-expense and receipt rate-region logic duplicate each other; merge to one owner.
+4. F-C-HOME-PRECISION-PARITY: receipt inline home-currency precision vs the AddExpense rule.
+5. F-C-TAX-OVERRIDE: tax-inclusive total override (pre-existing, C guardian F3) to the receipt owner.
+6. RF-6 (D-C-4): receipt owner (H-5: fixed in C only if confined to ReceiptScanViewModel.kt:416; otherwise this follow-up).
+7. RF-7: `ReceiptParser.kt:690` to the receipt owner.
+8. F-A11Y-LATCH-PURE: the announce latch writes plain fields in composition; make it pure (review at the 1b candidate).
+9. 3-decimal homes (BHD-style): typing and display for homes with 3 digits.
+10. AE-36 edit precision (D-B1-2): precision check on the edit path.
+11. `myShareAmount` precision (INV-13; A2 deferred; no slice owner yet).
+12. The other "(EUR)" labels that are hard-coded in amount fields outside the MEC screens.
+13. Prefill and suggestion "%.2f" formatting (not currency-digits aware).
+14. The quick-add 1M flag (`FOREIGN`/cap flag still uses the flat 1,000,000; align with `CurrencyAmountPolicy.cap`).
+15. Spanish native review (es DRAFT for all keys below).
+16. Parser and notification amount caps (G2-3) to their owners (`AmountUtils`, `AppParserRegistry`, notification parser, `AppConfig`; RF-4 duplication).
+17. RF-5 + OD-3 alignment to money-correctness (RF-5 itself was resolved in MC 1b; the OD-3 near-midnight analytics vs stored-conversion alignment remains).
+Also still open from earlier notes (not in the requested list): RF-1b (CREATE_ATTEMPTED dedupeKey plaintext), F4 `capFor`, P1 home code for `mec_repeat_home_only`, P2 bounded code instead of `exception.message`, HomeScreen.kt:1531 stale picker (Home owner), the R23 / release-track items above, G2-20 (unsent).
+
+### OWNER es/el sign-off list (51 keys; all DRAFT in both `values-es` and `values-el`)
+`add_expense_installments_*` (9, loan S11b/S11c): `add_expense_installments_repeat_exclusive`, `add_expense_installments_not_spending`, `add_expense_installments_preview_summary`, `add_expense_installments_preview_total`, `add_expense_installments_preview_residual`, `add_expense_installments_preview_ends`, `add_expense_installments_preview_financing_less`, `add_expense_installments_preview_needs_amount`, `add_expense_installments_past_due`.
+
+`mec_*` B1 (5): `mec_block_home_unresolved`, `mec_amount_no_decimals`, `mec_amount_max_decimals`, `mec_amount_too_large`, `mec_repeat_home_only`.
+
+`mec_*` B2a/B2b/C/A11Y (37): `mec_control_label`, `mec_control_cd`, `mec_control_unset`, `mec_control_readonly_cd`, `mec_sheet_search`, `mec_sheet_home`, `mec_sheet_other`, `mec_sheet_no_results`, `mec_sheet_installment_note`, `mec_installment_unset`, `mec_preview_checking`, `mec_preview_ecb`, `mec_preview_other`, `mec_preview_rate_only`, `mec_block_none`, `mec_block_stale`, `mec_block_unsupported`, `mec_block_off_hint`, `mec_block_alt_hint`, `mec_action_refresh`, `mec_action_refreshing`, `mec_action_open_setting`, `mec_action_change_currency`, `mec_refresh_still_blocked`, `mec_refresh_offline`, `mec_refresh_failed`, `mec_refresh_home_unavailable`, `mec_save_disabled_rate`, `mec_save_disabled_currency`, `mec_save_disabled_amount`, `mec_repeat_cleared`, `mec_receipt_unmatched`, `mec_receipt_not_detected`, `mec_receipt_kept`, `mec_declaration_nothing_saved`, `mec_open_setting_confirm_title`, `mec_open_setting_confirm_body`.
+
+Total: 9 + 5 + 37 = 51 (42 `mec_*` + 9 `add_expense_installments_*`); the count equals the keys in `values/strings.xml`. Other DRAFT keys in those files (quick_add_*, loan blocks, app-lock) belong to their own features' sign-off lists.
+
+### Z validation and H-4 result (2026-10-29; orchestrator)
+- H-4 first device run FAILED as designed: Android ICU returned 2 fraction digits for the unknown code `ZZZ` (the JVM throws), so `CurrencyFractionDigits` was not fail-closed on device.
+- Fix: `CurrencyFractionDigits.of(code)` returns null for any code absent from `Currency.getAvailableCurrencies()` (lazy set). `CurrencyFractionDigitsTest` adds KWD -> 3 and QQQ/AAA -> null. This is a fail-closed strengthening, not a behaviour change for any catalog currency.
+- Ladder on the final fingerprint, all PASS:
+  - targeted `*CurrencyFractionDigits*,*CurrencyAmountPolicy*,*Currency*,*Money*`: vr-20261029-192053-b21a24d4;
+  - connected `CurrencyFractionDigitsDeviceTest` on wave5-api35: vr-20261029-192810-7c25ea23 (H-4 closed; plan row R4 closed);
+  - static-guards: vr-20261029-192914-bad99aa2;
+  - app-check: vr-20261029-194632-821acce2.
+- reviewer-strict: per owner items 86/87, it runs at the MEC 1b candidate or merge review, which must include this Z diff.
+- Next (MEC lane): loan S13 (see the loan plan's S13 re-anchor amendment; owner-approvals 91).

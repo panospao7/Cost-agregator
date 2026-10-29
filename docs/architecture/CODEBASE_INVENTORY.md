@@ -1,6 +1,6 @@
 # ExpenseTracker Android Codebase - Ground-Truth Inventory
 
-**Generated/verified:** 2026-10-28 (merge of feature/ai-evolution 4add2466 into feature/manual-entry-currency; nl-quick-add increment 1 refresh; base snapshot 2026-10-02, re-verified against source)
+**Generated/verified:** 2026-10-29 (manual-entry-currency Z closeout on feature/manual-entry-currency; includes the 2026-10-28 merge of feature/ai-evolution 4add2466 and the nl-quick-add increment 1 refresh; base snapshot 2026-10-02, re-verified against source)
 **Database Version:** v152
 **Architecture:** Clean Architecture + MVVM + Jetpack Compose + Room + Hilt DI
 
@@ -9,6 +9,18 @@
 ## EXECUTIVE SUMMARY
 
 Snapshot summary only: this inventory tracks the current UI, domain, data, and DI surfaces without freezing volatile counts.
+
+### Drift Sync (2026-10-29 / manual-entry-currency Z closeout, branch feature/manual-entry-currency)
+
+Hand-maintained (D-10: no generator script exists; none was run). Paths below were checked to exist on this branch. DB **v152** unchanged by MEC (schema NONE). No new Hilt module, DAO, worker or ViewModel. Slices A1, A2, B0', B1, B2a, B2b, C1, C2, F-B2-A11Y-1 and the loan S11a/b/c AddExpense installment section are in this snapshot. B2, C and S11 stay unreleased until MEC 1b (H-1). See `workflows/active/manual-entry-currency-handoff.md`.
+
+- **Domain (`domain/currency/`, pure):** `CurrencyAmountPolicy` (single owner of per-currency cap and `AmountCheck`; digits delegate to `domain/core/money/CurrencyFractionDigits.of`, no second accessor), `CurrencySelectionPolicy` (selectable set and proposal resolution), `RateEligibilityEvaluator` (read-only eligibility over stored rates: calendar date in the entry zone, 7-day bound), `UserPresentRatePreview` (preview = `roundSnapshot(parsed x rate, home)`; unavailable is never 0).
+- **Domain (`domain/transaction/`):** `RateRefusal` and `RateRefusalReason` (typed refusal carried by the flagged create result); `CreateExpenseRequest` carries the user-present flag and entry zone.
+- **Receipt lifecycle:** `ReceiptLifecycleCoordinator.RateNotEligibleException` (nested, payload-free: reason plus latest rate date); maps a flagged refusal, receipt untouched.
+- **UI (`ui/components/currency/`):** `CurrencySelectionControl` (searchable currency sheet, shared by AddExpense and ReceiptScan, replaces the private receipt picker), `CurrencyRateRegion` (region model plus composables: preview line, blocked card, kept line; the preview line is a polite live region only after a key change, F-B2-A11Y-1).
+- **UI (`ui/screens/addexpense/`):** `AddExpenseInstallmentsState` and `AddExpenseInstallmentsSection` (loan S11a/b/c installment mode in the AddExpense sheet; converges with the general currency control, N2). `AddExpenseViewModel` / `AddExpenseSheet` host the control, region and section; `ReceiptScanScreen` / `ReceiptScanViewModel` host the control and region (C2).
+- **Android test:** `androidTest/.../domain/currency/CurrencyFractionDigitsDeviceTest` (H-4: pins the 28 catalog digit values on the device ICU/JDK; pure, no Hilt).
+- **Strings:** 42 `mec_*` keys and 9 `add_expense_installments_*` keys in `res/values{,-el,-es}/strings.xml`; el/es are DRAFT pending owner native sign-off (list in the handoff).
 
 ### Drift Sync (2026-10-28 / merge of feature/ai-evolution 4add2466 into feature/manual-entry-currency; NOT validated)
 
@@ -129,7 +141,7 @@ Assistant is an overlay/entry surface, not a bottom tab.
 - SavingsGoalsScreen + SavingsGoalsViewModel → `SavingsGoals`
 
 #### Expense Management
-- AddExpenseSheet + AddExpenseViewModel → `AddExpense`
+- AddExpenseSheet + AddExpenseViewModel → `AddExpense` (hosts `CurrencySelectionControl`, `CurrencyRateRegion`, `AddExpenseInstallmentsSection`)
 - RecurringExpensesScreen + RecurringExpensesViewModel → `RecurringExpenses`
 - ManualRecurringExpenseScreen + ManualRecurringExpenseViewModel → `ManualRecurringExpense`
 

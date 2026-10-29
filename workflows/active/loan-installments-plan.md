@@ -1481,3 +1481,44 @@ Base: mec accb775a (MEC B2 and C committed). This supersedes the S11 write set a
   - (3) A dedicated disabled-reason key for non-spending types (Deposit/Transfer) in place of `installments_action_refused_expense_not_eligible` ("linked" is the wrong context). New keys are es/el DRAFT and go on the sign-off list.
   - (4) A UI test that clicks the switch once enablement is testable (S13).
 - **Sign-off list:** `add_expense_installments_repeat_exclusive` (S11b) plus the S11c keys.
+
+
+## S13 re-anchor amendment (BINDING; 2026-10-29; feature-planner Sonnet re-anchor at mec faff9eec; orchestrator decisions per standing approval item 62)
+
+Supersedes the S13 row (~:487-492) and its 2026-10-27 amendment. Risk tier T3 (privacy, money, feature enablement). S12a/S12b and PE-A..D are DONE and are not blockers. MEC 1b gate F-B2-A11Y-1 is DONE.
+
+### Pre-enable checklist
+
+| # | Item | Status | Owner sub-slice |
+|---|---|---|---|
+| 1 | INV-1: assistant largest/smallest consider only countsAsSpending rows (`ExecuteFinancialQueryUseCase.kt` executeLargest :295, executeSmallest :307, pick :349) | OPEN, BLOCKING | S13-0 |
+| 2 | S13-a examples a-d (owner 81a) through DeepLinkPolicy/DeepLinkApplier | OPEN | S13-a |
+| 3 | Confirmation contract (C1, hard requirement): navigation only after user confirm; held link confirmed after release, never before | OPEN | S13-a |
+| 4 | Item-14 device check (S12a QA a-d + Compose paging effect) on a flag-on build | OPEN, device | S13-final |
+| 5 | S11c item 4: switch-click UI test | OPEN | S13-b |
+| 8 | Wire `onOpenInstallmentPlan` in the NavHost (`TransactionsScreen.kt:137` no-op default) | OPEN | S13-a |
+| 9 | Re-confirm PE-A (past-due SCHEDULED never auto-records) and PE-B (re-record after Unlink) | proof tests done | S13-b e2e |
+| 10 | INV-12 seventh BILL site re-count; NOTIF_ACTIONS_SUPPRESSED_LOCK noise (N1) | OPEN | S13-a / S13-c |
+| 11 | BillReminderWorker N2: `Failed`-path release not under NonCancellable; a throwing release can replace CancellationException | OPEN | S13-a (DECIDED: include) |
+| 12 | Canary tests asserting `ENABLED == false`: rewrite in place, never skip | OPEN | S13-b |
+| 13 | Stale DUE/OVERDUE labels past midnight (INFO 8) | non-blocking | S13-b: recompute on resume if cheap, else ACCEPTED residual |
+| 14 | es/el sign-off for all DRAFT keys (S11b, S11c, PE, mec_, new confirmation key) | OWNER | before any store release |
+
+### Orchestrator decisions (item 62)
+- D-S13-1: S13-0 includes the COUNT/AVERAGE countsAsSpending fix if it is under about 10 lines; otherwise it becomes a recorded follow-up.
+- D-S13-2: N2 is included in S13-a (cancellation invariant; strengthening only).
+- D-S13-3: the test seam is a defaulted parameter `installmentsEnabled: Boolean = InstallmentsFeature.ENABLED` on DeepLinkPolicy/DeepLinkParser (precedent: `setInstallmentsEnabled(on, enabled = ENABLED)`). Tests never flip the constant.
+- D-S13-4: item 4 gates acceptance of the S13 candidate, not the S13-b commit.
+
+### Sub-slices (serial, one lane: mec)
+- **S13-0 (money tier: Sonnet writer + separate test-author).** Write set: `domain/ai/usecase/ExecuteFinancialQueryUseCase.kt` + its test. Test: a flagged installment purchase (`spendingExclusionReason != null`) is never returned as largest/smallest (and excluded from COUNT/AVERAGE if D-S13-1 applies). Validation: targeted `*ExecuteFinancialQuery*`. STOP on any guard or schema edit.
+- **S13-a (privacy tier: Sonnet writer + separate test-author).** New hosts `INSTALLMENTS("installments")`, `INSTALLMENT_PLAN("installment_plan")`, a `PLAN_ID` parameter (positive Long, `validExpenseId` style), `planId` on DeepLinkRequest (toString names the host only); parser destinations `Installments` / `InstallmentPlanDetail(id)`; applier branches; confirmation contract (pending-confirmation state, small dialog, one new es/el DRAFT string); NavHost wiring of `onOpenInstallmentPlan`; manifest: two `<data>` lines on the existing non-BROWSABLE filter (OWNER APPROVED: owner-approvals 91(a)); N2; LEGAL_PATHS/ENGINE_INTERACTION_MAP rows. Tests: examples (a), (b), (c) with all 8 rejects, (d); flag-off Rejected(UNKNOWN_HOST) unchanged; hold → release → confirm router test; no raw URI or plan id in logs; BILL composition re-count. Ladder: targeted `*DeepLink*,*AppLockDeepLinkRouter*,*BillReminderWorker*,*NotificationPresentation*`; shards runtime-ui + domain; guard_docs_truth. Gate: combined guardian. STOP: guard/allow-list edit, new permission, BROWSABLE, any network path.
+- **S13-b (enablement tier: Sonnet writer + separate test-author).** `InstallmentsFeature.ENABLED = true` (KDoc updated); canaries rewritten in place; `integration/InstallmentEndToEndScenarioTest.kt` (AE-1..AE-11 lifecycle, AE-6 replay, AE-23 diagnostics/payload, items 9-10); Compose switch-click test (item 5); item 13. Gate: combined guardian. The flip stays on the unreleased branch under MEC H-1 until MEC 1b.
+- **S13-c (docs).** CODEBASE_INVENTORY, CODEBASE_SEGMENTS (Segment 40 + deep-link rows), LEGAL_PATHS, ENGINE_INTERACTION_MAP, loan handoff and plan.
+- **S13-final (candidate).** Serial: static-guards, unit-tests, app-check, connected `DatabaseMigrationTest` (wave5-api35; no schema change expected, Room v152), lint, guard_docs_truth, known_good_state, db_access; merged-manifest dump proving no BROWSABLE on the expensetracker filter (G1a carry-forward); item-14 device check; `am start` deep-link check (valid, malformed, id overflow); AE-16 browser no-op. Gates: all three guardians, then reviewer-strict (Opus xhigh) by a reviewer who reviewed no S11/S12/S13 slice.
+
+### Owner items
+1. es/el sign-off for all DRAFT keys, including the new confirmation-dialog key.
+2. DONE: manifest change approved (owner-approvals 91(a)).
+3. DONE: flag flip on the unreleased branch approved (owner-approvals 91(b)).
+4. Item-14 device check at S13-final, and any guard/allow-list/permission change (none planned).
