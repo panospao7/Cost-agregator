@@ -15,6 +15,7 @@ import com.yourname.expensetracker.domain.privacy.applock.AuthPurpose
 import com.yourname.expensetracker.domain.privacy.applock.AutoLockTimeout
 import com.yourname.expensetracker.domain.privacy.applock.DeviceAuthCapability
 import com.yourname.expensetracker.domain.privacy.applock.DeviceAuthCapabilityProvider
+import com.yourname.expensetracker.domain.privacy.applock.EffectiveLockMode
 import com.yourname.expensetracker.domain.privacy.applock.InertReason
 import com.yourname.expensetracker.domain.privacy.applock.OpenOriginEnd
 import com.yourname.expensetracker.domain.privacy.applock.OpenOriginEndKind
@@ -66,7 +67,19 @@ enum class AppLockPrivacySectionNotice {
     TOO_MANY_ATTEMPTS,
 
     /** The ENABLE prompt ended in a bounded error, or never launched: "Couldn't turn on app lock." (ux 4.3). */
-    ENABLE_FAILED
+    ENABLE_FAILED,
+
+    /**
+     * The lock runs in effective APP_PIN mode: a turn-off, timeout or review-save request got PIN_MODE (fail closed, no
+     * device prompt). The person is pointed to App PIN (Turn off app lock); timeout and review changes wait for S27b.
+     */
+    PIN_MODE,
+
+    /**
+     * A review-save (settings unreadable) got PIN_MODE: the App PIN screen cannot help until the settings are readable.
+     * The person is told to save with app lock on and Immediately first.
+     */
+    PIN_MODE_REVIEW
 }
 
 /** Why the lock row cannot be switched on (the explanation variant of the unavailable row, ux 2.1). */
@@ -146,7 +159,12 @@ sealed interface AppLockPrivacySectionState {
         val lock: AppLockRowState,
         val timeoutRow: AutoLockTimeoutRowState? = null,
         val secureOn: Boolean = true,
-        val secureForced: Boolean = false
+        val secureForced: Boolean = false,
+        /**
+         * True while the committed lock is on and the effective mode is APP_PIN (S27b). The Off switch then opens App PIN
+         * and the timeout row is disabled with a note; DEVICE_AUTH rendering is unchanged. Default false.
+         */
+        val pinMode: Boolean = false
     ) : AppLockPrivacySectionState
 
     /**
@@ -293,7 +311,8 @@ class AppLockPrivacySettingsViewModel @Inject constructor(
     private data class LockInputs(
         val state: AppLockState,
         val capability: DeviceAuthCapability,
-        val refusedNow: Boolean
+        val refusedNow: Boolean,
+        val pinMode: Boolean
     )
 
     private val reviewInputs: Flow<ReviewInputs> = combine(
@@ -307,8 +326,8 @@ class AppLockPrivacySettingsViewModel @Inject constructor(
     }
 
     private val lockInputs: Flow<LockInputs> =
-        combine(controller.state, capabilityHint, refusedNow) { controllerState, capability, refused ->
-            LockInputs(controllerState, capability, refused)
+        combine(controller.state, capabilityHint, refusedNow, controller.pin) { controllerState, capability, refused, pin ->
+            LockInputs(controllerState, capability, refused, pin.effectiveLockMode == EffectiveLockMode.APP_PIN)
         }
 
     val uiState: StateFlow<AppLockPrivacySectionState> = combine(
@@ -648,6 +667,8 @@ class AppLockPrivacySettingsViewModel @Inject constructor(
                 notice.value = AppLockPrivacySectionNotice.SAVE_FAILED
                 resubscribeOnMain()
             }
+            // Effective APP_PIN mode (fail closed, no device prompt, nothing written). The pending flag was cleared above.
+            ReviewSaveResult.PIN_MODE -> notice.value = AppLockPrivacySectionNotice.PIN_MODE_REVIEW
         }
     }
 
@@ -687,6 +708,8 @@ class AppLockPrivacySettingsViewModel @Inject constructor(
                 notice.value = AppLockPrivacySectionNotice.SAVE_FAILED
                 resubscribeOnMain()
             }
+            // Effective APP_PIN mode (fail closed, no device prompt, nothing written): point to the App PIN screen.
+            TimeoutChangeResult.PIN_MODE -> notice.value = AppLockPrivacySectionNotice.PIN_MODE
         }
     }
 
@@ -718,6 +741,8 @@ class AppLockPrivacySettingsViewModel @Inject constructor(
             SettingsRequestResult.ALREADY_IN_FLIGHT,
             SettingsRequestResult.NOT_IN_ORIGIN,
             SettingsRequestResult.REVIEW_REQUIRED -> resubscribeOnMain()
+            // Effective APP_PIN mode: no device prompt, nothing written. Point to App PIN > Turn off app lock.
+            SettingsRequestResult.PIN_MODE -> notice.value = AppLockPrivacySectionNotice.PIN_MODE
         }
     }
 
@@ -827,7 +852,8 @@ class AppLockPrivacySettingsViewModel @Inject constructor(
                 null
             },
             secureOn = settings.secureScreen || forced,
-            secureForced = forced
+            secureForced = forced,
+            pinMode = forced && lock.pinMode
         )
     }
 

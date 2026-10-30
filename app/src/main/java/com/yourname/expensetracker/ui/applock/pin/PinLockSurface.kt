@@ -40,6 +40,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
@@ -304,7 +305,19 @@ fun PinLockSurface(
             Spacer(Modifier.size(16.dp))
             if (recovery == null) PinDotRow(count = buffer.length)
             Spacer(Modifier.size(8.dp))
-            val live = if (message != null && !ui.delayActive) Modifier.semantics { liveRegion = LiveRegionMode.Polite } else Modifier
+            // B5: the delay start is announced once. During the delay the spoken text stays the one captured when the
+            // delay began, so the countdown ticks are not re-announced; the visible text still counts down.
+            val delayAnnouncement = remember(ui.token) { arrayOfNulls<String>(1) }
+            if (ui.delayActive && message != null && delayAnnouncement[0] == null) delayAnnouncement[0] = message
+            val frozenText = if (ui.delayActive) delayAnnouncement[0] else null
+            val live = if (message != null) {
+                Modifier.semantics {
+                    liveRegion = LiveRegionMode.Polite
+                    if (frozenText != null) contentDescription = frozenText
+                }
+            } else {
+                Modifier
+            }
             Text(
                 text = message.orEmpty(),
                 style = MaterialTheme.typography.bodyMedium,
@@ -321,12 +334,28 @@ fun PinLockSurface(
                     enabled = padEnabled,
                     onConfirm = { digits -> submitPin(digits, ui, actions, scope) },
                     showFingerprintKey = pin.canOfferFingerprint,
-                    onFingerprint = { scope.launch { actions.requestFingerprintUnlock() } },
+                    onFingerprint = {
+                        scope.launch {
+                            try {
+                                actions.requestFingerprintUnlock()
+                            } catch (e: Exception) {
+                                if (e is CancellationException) throw e
+                            }
+                        }
+                    },
                     fingerprintEnabled = fingerprintEnabled // allowed during a PIN delay (INV-39)
                 )
             } else if (recovery.retryOffered) {
                 Button(
-                    onClick = { scope.launch { actions.retryPinRecovery() } },
+                    onClick = {
+                        scope.launch {
+                            try {
+                                actions.retryPinRecovery()
+                            } catch (e: Exception) {
+                                if (e is CancellationException) throw e
+                            }
+                        }
+                    },
                     modifier = Modifier.heightIn(min = 48.dp).testTag(PinLockTags.RETRY)
                 ) { Text(stringResource(R.string.applock_pin_retry)) }
             }

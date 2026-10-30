@@ -541,7 +541,9 @@ class AppLockControllerIllegalTransitionTest {
             "onReviewSavedWithoutPrompt",
             // S18 (ii-e), exact addition, scoped to this ONE method (no global Boolean allowance): the id-bound T19
             // apply report of an INERT disable. Its other parameter is the attempt-style Long id.
-            "onInertDisableApplied"
+            "onInertDisableApplied",
+            // T30 exact addition: turnLockOff, this one method only.
+            "disablePin"
         )
         // S25, exact addition, allowed for these four methods only (like the committed flag above, no global CharArray
         // allowance): the entered PIN, which the controller zeroes after use.
@@ -895,8 +897,8 @@ class AppLockControllerIllegalTransitionTest {
     @Test
     fun `S22-b dormancy - the Operations request surface has EXACTLY three production caller files, AppLockSettingsOperations kt and the two settings ViewModels (owner-approvals 81b, S27 PIN settings, owner-approvals 92 and 96)`() {
         // Caller-set pin (arch review F2; S22-b rewrite, a strengthening). The Operations' request entries now have
-        // exactly two production files that name any of them: AppLockSettingsOperations.kt itself and the 1a settings
-        // ViewModel (the lock switch, the timeout row, the secure-screen row, the discreet row and the review card).
+        // exactly three production files that name any of them: AppLockSettingsOperations.kt itself, the 1a settings
+        // ViewModel and the PIN settings ViewModel (the lock switch, the timeout row, the secure-screen row, the discreet row and the review card).
         // Every other ViewModel, Activity, module or screen must not call them, and the section and dialog files get no
         // token at all (see the UI-files pin below). There is no DI module for the class (it is
         // `@Singleton @Inject constructor`). History: S20-d/S20-e gave the ViewModel {AppLockSettingsOperations,
@@ -1020,11 +1022,12 @@ class AppLockControllerIllegalTransitionTest {
     }
 
     @Test
-    fun `S20 F6 and S22-a_1 O-1 - the settings ViewModel's only uses of the controller are requestSettingsReread, state and openOriginEnd`() {
+    fun `S20 F6 and S22-a_1 O-1 - the settings ViewModel's only uses of the controller are requestSettingsReread, state, openOriginEnd and pin`() {
         // Per-file pin (strengthening): the per-file token exemption above allows `requestSettingsReread` and the end
         // signal in the settings ViewModel; this keeps every OTHER member access on its `controller` property out.
-        // S22-a.1 (owner item 81b, O-1): the member set is EXACTLY {requestSettingsReread, state, openOriginEnd}, the
-        // retry's re-read request plus the two read-only StateFlows (the lock row's Waiting and the lock notices).
+        // S22-a.1 (owner item 81b, O-1) plus W2: the member set is EXACTLY {requestSettingsReread, state, openOriginEnd,
+        // pin}, the retry's re-read request plus the read-only StateFlows (the lock row's Waiting, the lock notices and
+        // the read-only pinMode).
         // Comments and string literals are stripped so KDoc and messages are not calls.
         val roots = locateProductionSourceRoots()
         val viewModelFile = roots.map { File(it, SETTINGS_VIEW_MODEL_PATH) }.firstOrNull { it.isFile }
@@ -1034,7 +1037,7 @@ class AppLockControllerIllegalTransitionTest {
             .replace(Regex("//[^\\n]*"), " ")
             .replace(Regex("\"(?:\\\\.|[^\"\\\\])*\""), "\"\"")
         val members = Regex("\\bcontroller\\s*\\??\\.\\s*(\\w+)").findAll(code).map { it.groupValues[1] }.toSet()
-        assertEquals(setOf("requestSettingsReread", "state", "openOriginEnd"), members)
+        assertEquals(setOf("requestSettingsReread", "state", "openOriginEnd", "pin"), members)
     }
 
     @Test

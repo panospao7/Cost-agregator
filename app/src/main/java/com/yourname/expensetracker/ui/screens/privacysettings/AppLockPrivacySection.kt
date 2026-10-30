@@ -75,6 +75,7 @@ object AppLockPrivacySectionTags {
 
     // S27 b2: App PIN row.
     const val PIN_ROW = "app_lock_privacy_pin_row"
+    const val PIN_MODE_NOTE = "app_lock_privacy_pin_mode_note"
 }
 
 /**
@@ -164,8 +165,9 @@ internal fun AppLockPrivacySectionContent(
         if (!lockIsOff) explainerVisible = false
     }
     val timeoutRow = (state as? AppLockPrivacySectionState.Ready)?.timeoutRow
+    // S27b: in effective APP_PIN mode the timeout change is not available (it needs the app PIN, coming soon).
     val timeoutPickable = state is AppLockPrivacySectionState.Ready && timeoutRow != null &&
-        !state.isWriting && state.lock !is AppLockRowState.Waiting
+        !state.isWriting && state.lock !is AppLockRowState.Waiting && !state.pinMode
     var timeoutDialogVisible by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(timeoutPickable) {
         if (!timeoutPickable) timeoutDialogVisible = false
@@ -217,7 +219,8 @@ internal fun AppLockPrivacySectionContent(
                     lock = state.lock,
                     showApi30Note = showApi30ActionsPoint && lockOn,
                     onSwitchOn = { explainerVisible = true },
-                    onTurnOff = onTurnOff,
+                    // S27b: in effective APP_PIN mode the Off switch opens App PIN (Turn off app lock); no device prompt.
+                    onTurnOff = if (state.pinMode) onOpenAppPin else onTurnOff,
                     onTryAgain = onLockTryAgain,
                     onOpenSecuritySettings = onOpenSecuritySettings
                 )
@@ -228,6 +231,15 @@ internal fun AppLockPrivacySectionContent(
                         onClick = { timeoutDialogVisible = true },
                         tag = AppLockPrivacySectionTags.TIMEOUT_ROW
                     )
+                    // The notice shows the same text after a request; do not draw it twice.
+                    if (state.pinMode && state.notice != AppLockPrivacySectionNotice.PIN_MODE) {
+                        Text(
+                            text = stringResource(R.string.applock_pin_mode_note),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = SemanticColors.TextSecondary,
+                            modifier = Modifier.testTag(AppLockPrivacySectionTags.PIN_MODE_NOTE)
+                        )
+                    }
                 }
                 SwitchRow(
                     title = stringResource(R.string.privacy_toggle_discreet_notifications),
@@ -749,6 +761,8 @@ private fun NoticeText(notice: AppLockPrivacySectionNotice?) {
         AppLockPrivacySectionNotice.LOCK_NOT_TURNED_ON -> R.string.privacy_app_lock_not_enabled
         AppLockPrivacySectionNotice.TOO_MANY_ATTEMPTS -> R.string.applock_msg_too_many_attempts
         AppLockPrivacySectionNotice.ENABLE_FAILED -> R.string.privacy_app_lock_enable_failed
+        AppLockPrivacySectionNotice.PIN_MODE -> R.string.applock_pin_mode_note
+        AppLockPrivacySectionNotice.PIN_MODE_REVIEW -> R.string.applock_pin_mode_review_note
     }
     val isError = notice == AppLockPrivacySectionNotice.SAVE_FAILED ||
         notice == AppLockPrivacySectionNotice.ENABLE_FAILED

@@ -52,7 +52,7 @@
     <string name="privacy_app_lock_snackbar_off_pin_removed">Το κλείδωμα εφαρμογής είναι ανενεργό. Το PIN της εφαρμογής αφαιρέθηκε.</string>
     <string name="applock_pin_remove_title">Αφαίρεση PIN εφαρμογής;</string>
     <string name="applock_pin_remove_body">Η εφαρμογή θα ξεκλειδώνει με το κλείδωμα οθόνης του τηλεφώνου σας.</string>
-    <string name="applock_pin_remove_body_no_secure">Η εφαρμογή θα ξεκλειδώνει με το κλείδωμα οθόνης του τηλεφώνου σας. Το τηλέφωνό σας δεν έχει κλείδωμα οθόνης, οπότε το κλείδωμα εφαρμογής θα απενεργοποιηθεί.</string>
+    <string name="applock_pin_remove_body_no_secure">Το τηλέφωνό σας δεν έχει κλείδωμα οθόνης, οπότε το κλείδωμα εφαρμογής θα απενεργοποιηθεί.</string>
     <string name="applock_pin_remove_confirm">Αφαίρεση</string>
     <!-- S27 b2 (el DRAFT, pending native sign-off). -->
     <string name="applock_pin_row_title">PIN εφαρμογής</string>
@@ -65,4 +65,14 @@
     <string name="applock_pin_action_remove">Αφαίρεση PIN εφαρμογής</string>
     <string name="applock_pin_action_setup">Ορισμός PIN εφαρμογής</string>
     <string name="applock_pin_settings_forgot_note">Ξεχάσατε το PIN; Ο μόνος τρόπος επαναφοράς της πρόσβασης είναι η διαγραφή των δεδομένων της εφαρμογής από τις ρυθμίσεις του Android. Μόνο ένα αρχείο αντιγράφου ασφαλείας που έχετε εξαγάγει (.costbackup) και ο κωδικός του μπορούν να επαναφέρουν τα δεδομένα σας. Κρατήστε ένα εκτός της εφαρμογής. Το αντίγραφο ασφαλείας δεν περιέχει το PIN σας ούτε τις ρυθμίσεις κλειδώματος εφαρμογής.</string>
+    <!-- S27b (el DRAFT, pending native sign-off). -->
+    <string name="applock_pin_action_turn_off">Απενεργοποίηση κλειδώματος εφαρμογής</string>
+    <string name="applock_pin_turn_off_enter_title">Εισαγάγετε το PIN εφαρμογής για να απενεργοποιήσετε το κλείδωμα εφαρμογής</string>
+    <string name="applock_pin_turn_off_title">Απενεργοποίηση κλειδώματος εφαρμογής;</string>
+    <string name="applock_pin_turn_off_body">Το PIN εφαρμογής θα αφαιρεθεί και η εφαρμογή δεν θα κλειδώνει πια.</string>
+    <string name="applock_pin_turn_off_confirm">Απενεργοποίηση</string>
+    <string name="applock_pin_mode_note">Το κλείδωμα εφαρμογής χρησιμοποιεί το PIN εφαρμογής. Για να το απενεργοποιήσετε, ανοίξτε το PIN εφαρμογής και επιλέξτε Απενεργοποίηση κλειδώματος εφαρμογής. Οι αλλαγές χρονικού ορίου και ελέγχου απαιτούν το PIN εφαρμογής (σύντομα). Αφαιρέστε το PIN για να τις αλλάξετε.</string>
+    <!-- DRAFT el: pending native review -->
+    <string name="applock_pin_mode_review_note">Αποθηκεύστε πρώτα με ενεργό το κλείδωμα εφαρμογής και Άμεσα. Μετά μπορείτε να το απενεργοποιήσετε στο PIN εφαρμογής.</string>
+    <string name="applock_pin_turn_off_incomplete">Το PIN της εφαρμογής αφαιρέθηκε, αλλά το κλείδωμα εφαρμογής παραμένει ενεργό. Απενεργοποιήστε το στις ρυθμίσεις απορρήτου.</string>
 </resources>

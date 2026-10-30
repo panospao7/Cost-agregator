@@ -3,8 +3,10 @@ package com.yourname.expensetracker.ui.screens.privacysettings.applockpin
 import com.yourname.expensetracker.domain.privacy.applock.AppLockController
 import com.yourname.expensetracker.domain.privacy.applock.AppLockControllerHarness
 import com.yourname.expensetracker.domain.privacy.applock.AppLockPrivacySettings
+import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingField
 import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsLoadState
 import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsWriteResult
+import com.yourname.expensetracker.domain.privacy.applock.AppLockWriteRejection
 import com.yourname.expensetracker.domain.privacy.applock.AppLockState
 import com.yourname.expensetracker.domain.privacy.applock.AutoLockTimeout
 import com.yourname.expensetracker.domain.privacy.applock.DeviceAuthCapability
@@ -105,8 +107,9 @@ class AppPinSettingsViewModelTest {
         store.verifyScript += PinVerifyResult.Correct
         val h = AppLockControllerHarness(AppLockSettingsLoadState.Loaded(settings), pinStore = store)
         val c = h.resolvedController()
-        assertEquals(PinUnlockResult.Unlocked, runBlocking { c.submitUnlockPin(pin("482916")) })
+        // LOW-2: a PIN unlock while backgrounded stamps a background time, so foreground first.
         c.onAppForegrounded()
+        assertEquals(PinUnlockResult.Unlocked, runBlocking { c.submitUnlockPin(pin("482916")) })
         assertEquals(AppLockState.Unlocked, c.state.value)
         return Rig(h, c)
     }
@@ -335,6 +338,123 @@ class AppPinSettingsViewModelTest {
         assertEquals(PinFlowStep.REMOVE_ENTER, vm.uiState.value.step)
         assertEquals(PinFlowMessage.WRONG, vm.uiState.value.message)
         assertEquals(0, rig.store.count("deleteAll"))
+        assertTrue(events.isEmpty())
+    }
+
+    // --- S27b turn off app lock (T30 disable variant) -----------------------------------------------------------
+
+    @Test
+    fun `S27b turn off with the correct PIN removes the verifier, turns the lock off and emits PIN_REMOVED_LOCK_OFF`() {
+        val rig = pinModeRig()
+        rig.store.verifyScript += PinVerifyResult.Correct
+        val vm = rig.vm()
+        vm.collectEvents()
+        vm.startTurnOff()
+        assertEquals(PinFlowStep.TURN_OFF_ENTER, vm.uiState.value.step)
+        val current = pin("482916")
+        vm.submitEntry(current)
+        assertEquals(PinFlowStep.TURN_OFF_CONFIRM, vm.uiState.value.step)
+        assertSame("held until the operation", current, held(vm, "heldCurrent"))
+        assertEquals("nothing is deleted before the confirm", 0, rig.store.count("deleteAll"))
+        assertEquals(AppLockState.Unlocked, rig.c.state.value)
+
+        vm.confirmTurnOff()
+
+        assertEquals(listOf(PinFlowEvent.PIN_REMOVED_LOCK_OFF), events)
+        assertEquals(1, rig.store.count("deleteAll"))
+        assertEquals(AppLockState.Disabled, rig.c.state.value)
+        assertEquals(PinFlowStep.NONE, vm.uiState.value.step)
+        assertTrue("held current PIN zero-filled", zeroed(current))
+        assertNull(held(vm, "heldCurrent"))
+    }
+
+    @Test
+    fun `INV-49 turn off whose lock-off write fails emits TURN_OFF_INCOMPLETE and never claims PIN_REMOVED or PIN_REMOVED_LOCK_OFF`() {
+        val failures = mapOf<String, () -> AppLockSettingsWriteResult>(
+            "failed" to { AppLockSettingsWriteResult.Failed(AppLockSettingField.APP_LOCK_ENABLED) },
+            "rejected" to { AppLockSettingsWriteResult.Rejected(AppLockWriteRejection.UNREADABLE) }
+        )
+        for ((label, failure) in failures) {
+            events.clear()
+            val rig = pinModeRig()
+            rig.store.verifyScript += PinVerifyResult.Correct
+            rig.h.repository.lockWriteResult = { failure() }
+            val vm = rig.vm()
+            vm.collectEvents()
+            vm.startTurnOff()
+            vm.submitEntry(pin("482916"))
+            assertEquals(label, PinFlowStep.TURN_OFF_CONFIRM, vm.uiState.value.step)
+            vm.confirmTurnOff()
+
+            assertEquals(label, listOf(PinFlowEvent.TURN_OFF_INCOMPLETE), events)
+            assertFalse(label, events.contains(PinFlowEvent.PIN_REMOVED))
+            assertFalse(label, events.contains(PinFlowEvent.PIN_REMOVED_LOCK_OFF))
+            assertEquals(label, listOf(false), rig.h.repository.lockWrites) // the lock-off write was attempted once
+            assertEquals(label, PinFlowStep.NONE, vm.uiState.value.step)
+            assertNull(label, held(vm, "heldCurrent"))
+            assertTrue(label, rig.c.state.value !is AppLockState.Disabled)
+            eventJob?.cancel()
+        }
+    }
+
+    @Test
+    fun `S27b turn off with a wrong PIN deletes nothing, keeps the lock on and returns to the entry step`() {
+        val rig = pinModeRig()
+        rig.store.verifyScript += PinVerifyResult.Wrong(PinDelayTier.NONE)
+        val vm = rig.vm()
+        vm.collectEvents()
+        vm.startTurnOff()
+        val wrong = pin("111112")
+        vm.submitEntry(wrong)
+        vm.confirmTurnOff()
+
+        assertEquals(PinFlowStep.TURN_OFF_ENTER, vm.uiState.value.step)
+        assertEquals(PinFlowMessage.WRONG, vm.uiState.value.message)
+        assertEquals(0, rig.store.count("deleteAll"))
+        assertEquals(AppLockState.Unlocked, rig.c.state.value)
+        assertTrue(events.isEmpty())
+        assertTrue("the rejected entry is zero-filled", zeroed(wrong))
+        assertNull(held(vm, "heldCurrent"))
+    }
+
+    @Test
+    fun `S27b turn off cannot start without a PIN (device-auth mode) and confirm before an entry opens nothing`() {
+        val deviceAuth = deviceAuthRig().vm()
+        deviceAuth.startTurnOff()
+        assertEquals(PinFlowStep.NONE, deviceAuth.uiState.value.step)
+
+        val rig = pinModeRig()
+        val vm = rig.vm()
+        vm.collectEvents()
+        vm.startTurnOff()
+        vm.confirmTurnOff() // still on the entry step: ignored
+        assertEquals(PinFlowStep.TURN_OFF_ENTER, vm.uiState.value.step)
+        assertEquals(0, rig.store.count("deleteAll"))
+        assertTrue(events.isEmpty())
+    }
+
+    @Test
+    fun `S27b reviewer B2 startSetup cancels a stale controller PIN step so a fresh device-auth edge reaches SETUP_ENTER`() {
+        val rig = deviceAuthRig()
+        val vm = rig.vm() // constructed first: its init sees no open step (the rotation-during-prompt case)
+        vm.collectEvents()
+        // A prompt that finished for a previous screen instance leaves a step open in the controller.
+        rig.c.requestPinSetup()
+        rig.h.settle()
+        rig.h.authenticator.deliver(DeviceAuthOutcome.Succeeded)
+        assertEquals("control: the stale step is open", PinStep.SETUP_ENTRY, rig.c.pin.value.step)
+        assertEquals(PinFlowStep.NONE, vm.uiState.value.step)
+
+        vm.startSetup()
+        assertEquals("the stale step was closed first", PinStep.NONE, rig.c.pin.value.step)
+        assertEquals(PinFlowStep.SETUP_ACK, vm.uiState.value.step)
+        vm.acknowledge(true)
+        vm.continueSetup()
+        rig.h.settle()
+        rig.h.authenticator.deliver(DeviceAuthOutcome.Succeeded)
+
+        assertEquals(PinStep.SETUP_ENTRY, rig.c.pin.value.step)
+        assertEquals(PinFlowStep.SETUP_ENTER, vm.uiState.value.step)
         assertTrue(events.isEmpty())
     }
 

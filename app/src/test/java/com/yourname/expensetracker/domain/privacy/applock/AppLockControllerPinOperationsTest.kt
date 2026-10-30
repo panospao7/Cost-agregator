@@ -96,6 +96,9 @@ class AppLockControllerPinOperationsTest {
         store.verifyScript += PinVerifyResult.Correct
         val h = AppLockControllerHarness(AppLockSettingsLoadState.Loaded(settings), pinStore = store)
         val controller = h.resolvedController()
+        // LOW-2: a PIN unlock that completes while the app is not in the foreground leaves a pending background, so the
+        // app is reported in the foreground first (as the host does) and the unlock keeps the state open.
+        controller.onAppForegrounded()
         assertEquals(PinUnlockResult.Unlocked, runBlocking { controller.submitUnlockPin(pin("482916")) })
         controller.onAppForegrounded()
         assertEquals(AppLockState.Unlocked, controller.state.value)

@@ -33,21 +33,26 @@ class AppLockPrivacySectionPinRowTest : AppLockComposeTestBase() {
 
     private fun ready(
         lock: AppLockRowState,
-        isWriting: Boolean = false
+        isWriting: Boolean = false,
+        pinMode: Boolean = false,
+        notice: AppLockPrivacySectionNotice? = null
     ): AppLockPrivacySectionState {
         val lockOn = lock is AppLockRowState.On || lock is AppLockRowState.InertOn ||
             (lock is AppLockRowState.Waiting && lock.committedOn)
         return AppLockPrivacySectionState.Ready(
             discreetOn = lockOn,
             isWriting = isWriting,
-            notice = null,
+            notice = notice,
             discreetForced = lockOn,
             lock = lock,
             timeoutRow = if (lockOn) AutoLockTimeoutRowState(AutoLockTimeout.M1, paused = lock is AppLockRowState.InertOn) else null,
             secureOn = true,
-            secureForced = lockOn
+            secureForced = lockOn,
+            pinMode = pinMode
         )
     }
+
+    private var turnOffs = 0
 
     private fun show(state: AppLockPrivacySectionState): MutableState<AppLockPrivacySectionState> {
         val holder = mutableStateOf(state)
@@ -59,7 +64,7 @@ class AppLockPrivacySectionPinRowTest : AppLockComposeTestBase() {
                 onReviewDiscreetChange = {},
                 onReviewSave = {},
                 onEnableConfirmed = {},
-                onTurnOff = {},
+                onTurnOff = { turnOffs++ },
                 onLockTryAgain = {},
                 onOpenSecuritySettings = {},
                 showApi30ActionsPoint = false,
@@ -156,5 +161,50 @@ class AppLockPrivacySectionPinRowTest : AppLockComposeTestBase() {
         composeRule.onNodeWithTag(AppLockPrivacySectionTags.PIN_ROW).assertIsNotEnabled().performClick()
 
         assertEquals(0, pinOpens)
+    }
+
+    private fun pinModeNoteCount(): Int =
+        composeRule.onAllNodes(hasText(text(R.string.applock_pin_mode_note))).fetchSemanticsNodes().size
+
+    @Test
+    fun `S27b pinMode - the Off switch opens App PIN once and never calls onTurnOff`() {
+        show(ready(AppLockRowState.On, pinMode = true))
+
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.LOCK_ROW).assertIsEnabled().performClick()
+
+        assertEquals("opens App PIN once", 1, pinOpens)
+        assertEquals("no device prompt request", 0, turnOffs)
+    }
+
+    @Test
+    fun `S27b pinMode - the timeout row is disabled and shows the PIN mode note exactly once`() {
+        show(ready(AppLockRowState.On, pinMode = true))
+
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.TIMEOUT_ROW).assertIsNotEnabled()
+        assertEquals(1, composeRule.onAllNodesWithTag(AppLockPrivacySectionTags.PIN_MODE_NOTE).fetchSemanticsNodes().size)
+        assertEquals("the note text is drawn once", 1, pinModeNoteCount())
+    }
+
+    @Test
+    fun `S27b pinMode - the PIN_MODE notice replaces the note instead of duplicating it`() {
+        show(ready(AppLockRowState.On, pinMode = true, notice = AppLockPrivacySectionNotice.PIN_MODE))
+
+        assertEquals(0, composeRule.onAllNodesWithTag(AppLockPrivacySectionTags.PIN_MODE_NOTE).fetchSemanticsNodes().size)
+        assertEquals("the same text is drawn once, by the notice", 1, pinModeNoteCount())
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.TIMEOUT_ROW).assertIsNotEnabled()
+    }
+
+    @Test
+    fun `S27b DEVICE_AUTH control - the Off switch calls onTurnOff once, the timeout row is enabled and there is no note`() {
+        show(ready(AppLockRowState.On, pinMode = false))
+
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.TIMEOUT_ROW).assertIsEnabled()
+        assertEquals(0, composeRule.onAllNodesWithTag(AppLockPrivacySectionTags.PIN_MODE_NOTE).fetchSemanticsNodes().size)
+        assertEquals(0, pinModeNoteCount())
+
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.LOCK_ROW).performClick()
+
+        assertEquals(1, turnOffs)
+        assertEquals("the switch does not open App PIN", 0, pinOpens)
     }
 }
