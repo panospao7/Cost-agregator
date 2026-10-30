@@ -495,3 +495,23 @@ Total: 9 + 5 + 37 = 51 (42 `mec_*` + 9 `add_expense_installments_*`); the count 
   - targeted, including CancellationSafetyArchitectureGuardTest, vr-20261030-163916-1b10a883
   - architecture-contracts vr-20261030-164503-63dc0c0c
   - device (gated, explicit run) vr-20261030-164549-ab4196cb
+
+## 2026-10-30: MEC 1b MERGED into feature/ai-evolution (e2bd896c)
+- Merge-commit gate PASS:
+  - unit-tests vr-20261030-170143-92b0c596
+  - app-check vr-20261030-172018-eb5151eb
+  - static-guards vr-20261030-174826-ab5167ad
+- Owner-approvals 97. This lifts H-1: B2, C and loan S11/S13 are now on feature/ai-evolution.
+- Release 1.0.3 (owner item 95) shipped the daily-refresh XML fix on bug-fixes (eefdaa6f), merged back as 747d4828.
+- Live device tests are opt-in via `adb shell setprop debug.costagg.live_ecb 1`; reset to 0 afterwards. The Test Orchestrator passes `-e class` for every test, so a class-based gate cannot work.
+- Remaining (not blocking the merge):
+  - owner es/el sign-off for the mec_history_*, mec_home_changed_cleared and deeplink keys;
+  - the loan item-14 device check.
+- Follow-ups:
+  - F-A11Y-LATCH-PURE (LOW; a pure-latch fix recorded in the candidate review);
+  - F-1b-CURMGMT;
+  - F-B2-TYPED-REFRESH;
+  - validDate retention;
+  - deep XML nesting (stack) hardening;
+  - CurrencyConverter pair logs (LOW).
+- The lane is DONE unless a follow-up is scheduled.
