@@ -13,6 +13,7 @@ import com.yourname.expensetracker.domain.ai.model.ClarificationSlot
 import com.yourname.expensetracker.domain.ai.model.PeriodChoice
 import com.yourname.expensetracker.domain.ai.model.ExpenseQueryFilters
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryIntent
+import com.yourname.expensetracker.domain.ai.model.FinancialQueryDataQuality
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryResult
 import com.yourname.expensetracker.domain.ai.model.PeriodGranularity
 import com.yourname.expensetracker.domain.ai.model.QueryComparison
@@ -1276,6 +1277,96 @@ class ExecuteFinancialQueryUseCaseTest {
         assertTrue("expected TransactionList but was $result", result is FinancialQueryResult.TransactionList)
         result as FinancialQueryResult.TransactionList
         assertEquals(2, result.previewCount)
+    }
+
+    // ---- RS-3: a spending-neutralised foreign row without a rate is not a missing-rate exclusion ------
+
+    // A minAmount filter forces the currency-aware amount-filter path, where each foreign row is converted.
+    private fun amountFilteredIntent(metric: QueryMetric) = FinancialQueryIntent(
+        rawQuery = "query with a minimum amount",
+        normalizedQuery = "query with a minimum amount",
+        filters = ExpenseQueryFilters(period = PeriodRange(100L, 200L), minAmount = 1.0),
+        metric = metric
+    )
+
+    private fun stubNoRateForUsd(amount: Double) {
+        coEvery { currencyConverterMock.convertAsOf(amount, "USD", "EUR", any()) } returns null
+    }
+
+    private fun assertNoMissingRateExclusion(dataQuality: FinancialQueryDataQuality, flaggedMerchant: String) {
+        assertFalse(dataQuality.isPartial)
+        assertEquals(0, dataQuality.excludedCount)
+        assertEquals(0, dataQuality.missingRateCount)
+        assertTrue(
+            "no warning may mention the flagged row but was ${dataQuality.warnings}",
+            dataQuality.warnings.none { it.contains(flaggedMerchant) }
+        )
+    }
+
+    @Test
+    fun `RS-3 a flagged foreign row without a rate does not mark LARGEST partial`() = runTest(timeout = 30.seconds) {
+        stubNoRateForUsd(9.0)
+        stubRange(
+            100L,
+            200L,
+            listOf(
+                expenseWithCategory(id = 1L, amount = 12.0, currency = "EUR", merchant = "Lidl"),
+                expenseWithCategory(id = 2L, amount = 9.0, currency = "USD", merchant = "Furniture Store", spendingExclusionReason = INSTALLMENT_EXCLUSION)
+            )
+        )
+
+        val result = useCase(amountFilteredIntent(QueryMetric.MAX))
+
+        assertTrue("expected Summary but was $result", result is FinancialQueryResult.Summary)
+        result as FinancialQueryResult.Summary
+        assertEquals("Lidl: 12.00 EUR", result.primaryText)
+        assertNoMissingRateExclusion(result.dataQuality, "Furniture Store")
+    }
+
+    @Test
+    fun `RS-3 a flagged foreign row without a rate does not mark TOTAL partial`() = runTest(timeout = 30.seconds) {
+        stubNoRateForUsd(9.0)
+        stubRange(
+            100L,
+            200L,
+            listOf(
+                expenseWithCategory(id = 1L, amount = 12.0, currency = "EUR", merchant = "Lidl"),
+                expenseWithCategory(id = 2L, amount = 9.0, currency = "USD", merchant = "Furniture Store", spendingExclusionReason = INSTALLMENT_EXCLUSION)
+            )
+        )
+
+        val result = useCase(amountFilteredIntent(QueryMetric.TOTAL))
+
+        assertTrue("expected Summary but was $result", result is FinancialQueryResult.Summary)
+        result as FinancialQueryResult.Summary
+        assertNoMissingRateExclusion(result.dataQuality, "Furniture Store")
+    }
+
+    @Test
+    fun `RS-3 control an unflagged foreign row without a rate still marks the result partial`() = runTest(timeout = 30.seconds) {
+        stubNoRateForUsd(9.0)
+        stubRange(
+            100L,
+            200L,
+            listOf(
+                expenseWithCategory(id = 1L, amount = 12.0, currency = "EUR", merchant = "Lidl"),
+                expenseWithCategory(id = 2L, amount = 9.0, currency = "USD", merchant = "Gadget Shop")
+            )
+        )
+
+        listOf(QueryMetric.MAX, QueryMetric.TOTAL).forEach { metric ->
+            val result = useCase(amountFilteredIntent(metric))
+
+            assertTrue("expected Summary for $metric but was $result", result is FinancialQueryResult.Summary)
+            result as FinancialQueryResult.Summary
+            assertTrue("$metric must be partial", result.dataQuality.isPartial)
+            assertEquals("$metric excludedCount", 1, result.dataQuality.excludedCount)
+            assertEquals("$metric missingRateCount", 1, result.dataQuality.missingRateCount)
+            assertTrue(
+                "$metric must warn about the unflagged row but was ${result.dataQuality.warnings}",
+                result.dataQuality.warnings.any { it.contains("Gadget Shop") }
+            )
+        }
     }
 
     private fun expenseWithCategory(

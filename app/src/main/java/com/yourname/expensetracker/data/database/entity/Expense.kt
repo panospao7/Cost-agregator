@@ -208,6 +208,10 @@ data class Expense(
     val countsAsSpending: Boolean
         get() = !isNotMine && spendingExclusionReason == null
 
+    /** INV-1: true when a spending exclusion (e.g. a flagged installment purchase) neutralises this row; ownership is NOT considered (see countsAsSpending). */
+    val isSpendingNeutralised: Boolean
+        get() = spendingExclusionReason != null
+
     val hasConflictingOwnershipFlags: Boolean
         get() = isNotMine && isSharedExpense
 

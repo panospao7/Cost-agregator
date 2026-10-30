@@ -17,7 +17,7 @@ Hand-maintained; paths checked to exist. DB **v152** unchanged (schema NONE). `I
 - **Deep links:** `domain/navigation/deeplink/DeepLinkRequest.kt` (moved from `privacy/`, owner-approvals 92(c)) now carries the `installments` and `installment_plan` hosts and the `PLAN_ID` parameter (positive Long); both require in-app confirmation. This supersedes the 2026-10-28 note below that installment hosts are rejected as `UNKNOWN_HOST` (still true only with the flag off).
 - **Main (`ui/MainViewModel.kt`):** holds the pending deep-link confirmation; the confirmation dialog is in `MainScreen` inside `AppLockShell`. Test: `ui/MainViewModelDeepLinkConfirmationTest`.
 - **Integration test:** `integration/InstallmentEndToEndScenarioTest` (AE lifecycle, AE-6 replay, AE-23).
-- **Assistant:** `ExecuteFinancialQueryUseCase` aggregates ignore flagged installment purchases (INV-1, S13-0). `BillReminderWorker` S13-a N2 keeps cancellation unswallowed.
+- **Assistant:** `ExecuteFinancialQueryUseCase` LARGEST, SMALLEST, COUNT and AVERAGE ignore flagged installment purchases (INV-1, S13-0); LIST and breakdown entry counts still include flagged rows (F-S13-0-COUNT-LIST). `BillReminderWorker` S13-a N2 keeps cancellation unswallowed.
 
 ### Drift Sync (2026-10-29 / manual-entry-currency Z closeout, branch feature/manual-entry-currency)
 

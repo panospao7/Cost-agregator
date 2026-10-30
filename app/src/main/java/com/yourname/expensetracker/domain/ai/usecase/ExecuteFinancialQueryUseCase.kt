@@ -336,7 +336,7 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
         // installment purchase is not a purchase to rank). Only spendingExclusionReason is applied here:
         // ownership (MINE/NOT_MINE/SHARED/TRANSFER) is already decided by the query filter, so
         // countsAsSpending (which also drops not-mine rows) would empty NOT_MINE/TRANSFER queries.
-        val expenses = fetchedExpenses.filter { it.expense.spendingExclusionReason == null }
+        val expenses = fetchedExpenses.filter { !it.expense.isSpendingNeutralised }
         if (expenses.isEmpty()) {
             return FinancialQueryResult.Unsupported(AssistantUnsupportedReason.NO_MATCHING_TRANSACTIONS)
         }
@@ -433,7 +433,7 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
         period: PeriodRange
     ): FinancialQueryResult {
         val (fetched, dataQuality) = assistantFilteredExpensesCurrencyAware(intent, period)
-        val filtered = fetched.filter { it.expense.spendingExclusionReason == null } // INV-1 (exclusion only; ownership scope stays with the query filter)
+        val filtered = fetched.filter { !it.expense.isSpendingNeutralised } // INV-1 (exclusion only; ownership scope stays with the query filter)
         return FinancialQueryResult.TransactionList(
             title = UiText.fromKey("domain_ai_transaction_count"),
             previewCount = filtered.size,
@@ -447,7 +447,7 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
         period: PeriodRange
     ): FinancialQueryResult {
         val (fetched, dataQuality) = assistantFilteredExpensesCurrencyAware(intent, period)
-        val expenses = fetched.filter { it.expense.spendingExclusionReason == null } // INV-1 (exclusion only; ownership scope stays with the query filter)
+        val expenses = fetched.filter { !it.expense.isSpendingNeutralised } // INV-1 (exclusion only; ownership scope stays with the query filter)
         return FinancialQueryResult.Summary(
             title = UiText.fromKey("domain_ai_average_spending"),
             primaryText = formatCurrencyAverages(expenses.toCurrencyTotals()),
@@ -501,7 +501,9 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
         } else {
             expenses.mapNotNull { ewc ->
                 val expense = ewc.expense
-                val normalizedAmount = if (expense.currency.equals(homeCurrency, true)) {
+                // RS-3: a spending-neutralised row contributes 0.0 in any currency, so it needs no
+                // rate and never counts toward excludedCount/isPartial or a missing-rate warning.
+                val normalizedAmount = if (expense.isSpendingNeutralised || expense.currency.equals(homeCurrency, true)) {
                     expense.effectiveAmount
                 } else {
                     currencyConverter.convertAsOf(

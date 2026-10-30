@@ -2214,8 +2214,13 @@ BUILDER OWNERS (exactly two; both call the applier, neither sets title/text/styl
      claim and revalidation, then applies it in sendNotification (still no content intent)
      and `sendInstallmentNotification` (S7b, D-M1 A; no actions, no content intent; resolved
      inside the claim→post try)
-  NOTE: int's INV-12 "six composition sites" now has a seventh BILL site (installment reminders,
-  `sendInstallmentNotification`), so loan S13-a must re-count the composition sites.
+  RE-COUNT (loan S13-fix, 2026-10-30): INV-12 defines a composition site as a place that composes a
+  notification and declares exactly one kind (domain-spec INV-12 / AMD-17 / 4.1). There are now SEVEN
+  sites over the unchanged SIX-kind registry: the six spec sites plus the installment reminder
+  (`BillReminderWorker.sendInstallmentNotification`, :277/:308). Both BillReminderWorker sites (bill
+  reminders :158 and installment reminders :277) declare BILL; the installment site uses the BILL
+  presentation with no actions and no content intent. The posting paths (`AndroidNotificationService`
+  postForKind :205/:218 and the action-policy check :326-327) are builder owners, not extra sites.
 
 RE-POST sweep (turning discreet on, see APP LOCK SETTINGS WRITE PATH):
   → NotificationService.repostActiveAsDiscreet() → AndroidNotificationService
@@ -2235,7 +2240,8 @@ RE-POST sweep (turning discreet on, see APP LOCK SETTINGS WRITE PATH):
           3. any other channel (including the capture channel) → null → skipped
       • BILL: NotificationPresentationResolver.resolve(BILL, sdkInt) (bounded T_read; actionsSuppressed =
         actionPolicy != UNCHANGED; D5 NOTIF_ACTIONS_SUPPRESSED_LOCK(SDK_INT); NOTIF_POLICY_SETTINGS_UNREADABLE
-        when the store is unreadable) → NotificationContentPolicy.decideDiscreet(kind, sdkInt, actionsSuppressed);
+        when the store is unreadable; N1: D5 is also emitted for action-less installment posts on API <= 30,
+        ACCEPTED as bounded diagnostic noise, reason code only) → NotificationContentPolicy.decideDiscreet(kind, sdkInt, actionsSuppressed);
         other kinds: actionsSuppressed = false, no read (S18-ii-b)
       • fresh builder → NotificationPresentationApplier.apply (stamps the kind marker again);
         from the original it reuses only id, tag, channel, content intent, action PendingIntents

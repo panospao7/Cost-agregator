@@ -2,7 +2,7 @@
 
 Canonical guide for segment ownership and AI analysis.
 
-**Last updated:** 2026-10-28 (manual-entry-currency / loan-installments merge into ai-evolution: schema v152; added Segment 4 `domain/receipt/statement/*`, Segment 9 `QuickAddSection` / `QuickAddUiMapper`, Segment 40 `InstallmentsFeature`); earlier 2026-10-24 (app-lock-privacy-mode 1a: Segment 11 and Segment 28 file lists), 2026-10-13 (schema/savings delta verified against source). Database schema version: v152 (`data/database/AppDatabase.kt`).
+**Last updated:** 2026-10-30 (loan-installments S13: assistant INV-1 `Expense.isSpendingNeutralised`, installment reminder as a seventh INV-12 BILL composition site, deep-link boundary note; no schema change); earlier 2026-10-28 (manual-entry-currency / loan-installments merge into ai-evolution: schema v152; added Segment 4 `domain/receipt/statement/*`, Segment 9 `QuickAddSection` / `QuickAddUiMapper`, Segment 40 `InstallmentsFeature`); earlier 2026-10-24 (app-lock-privacy-mode 1a: Segment 11 and Segment 28 file lists), 2026-10-13 (schema/savings delta verified against source). Database schema version: v152 (`data/database/AppDatabase.kt`).
 
 ## Rules
 - One segment list, one ascending order, one owning section per segment.
@@ -640,7 +640,7 @@ Owns encrypted key storage and security/network bindings.
 - `domain/privacy/applock/PrivacyDiagnosticsEmitter.kt` — typed, bounded `PrivacyDiagnosticCode` emitter (per-code limiter)
 - `domain/privacy/applock/DiscreetRepostTrigger.kt` — post-commit false → true edge detector; calls `NotificationService.repostActiveAsDiscreet()` (reused by S18)
 - (S20-d: `domain/privacy/applock/UpdateDiscreetNotificationsUseCase.kt` and the unforced `AppLockSettingsRepository.setDiscreetNotifications` are RETIRED; the per-field discreet write → trigger is `AppLockSettingsOperations.requestDiscreetChange`, WRITE 5)
-- `domain/navigation/deeplink/DeepLinkRequest.kt` — validated deep-link value types (`DeepLinkHost`, `DeepLinkParameter`, `DeepLinkLimits`)
+- `domain/navigation/deeplink/DeepLinkRequest.kt` — validated deep-link value types (`DeepLinkHost`, `DeepLinkParameter`, `DeepLinkLimits`). Deliberately outside `domain/privacy` (owner-approvals 92(c)): it is a navigation value type, not a privacy policy.
 - `ui/navigation/DeepLinkParser.kt` — hosts `DeepLinkPolicy` (pure validation, the only `expensetracker://` parser); `ui/navigation/DeepLinkApplier.kt` — the only code that acts on a link; `domain/ai/usecase/MarkDashboardBriefingOpenedUseCase.kt` — the single link-reachable write (INV-16); `domain/analytics/TimePeriodTokens.kt` — shared period allowlist. (No segment owned `ui/navigation` before; the deep-link validation boundary is recorded here because it is a privacy boundary.)
 - `ui/screens/privacysettings/AppLockPrivacySettingsViewModel.kt` + `AppLockPrivacySection.kt` — "App lock & privacy" section (discreet row, review card); inserted once into `PrivacySettingsScreen.kt`; `PrivacySettingsViewModel` untouched
 - `domain/privacy/applock/AppLockSettingsWriteSerializer.kt` — domain-owned `@Singleton` write serialiser shared by the settings ViewModel (WRITE 1, 2) and `AppLockSettingsOperations` (WRITE 3, 4, 5); moved from `ui/screens/privacysettings/` by S18 ii-a (F4)
@@ -848,7 +848,7 @@ Owns the repo-level static architecture guard suite, boundary verification scrip
 
 Owns installment plans (loan and pay-in-installments tracking): plan and entry state, schedule generation and date arithmetic, the plan coordinator (the single writer of the plan tables), the read-only read model and projection port, due-installment recording, and plan presentation. Feature (loan-installments) is enabled on the unreleased branch (S13-b; S13-final pending): the cloud reachability guard exists, and (S2) the `installment_plans` / `installment_entries` tables, their entities and `InstallmentPlanDao` exist, with `InstallmentPlanLifecycleCoordinator` (S6a) as their single writer; the remaining plan code lands in later slices of `workflows/active/loan-installments-plan.md`.
 
-**Owner:** `InstallmentPlanLifecycleCoordinator` (planned) for every plan/entry write; `InstallmentScheduleCalculator` (planned, pure) for schedules; `InstallmentPlanReadModel` / `InstallmentProjectionPort` (planned, read-only) for reads. Legal path: `docs/architecture/LEGAL_PATHS.md` "Installment Plan Mutations".
+**Owner:** `InstallmentPlanLifecycleCoordinator` for every plan/entry write; `InstallmentScheduleCalculator` (pure) for schedules; `InstallmentPlanReadModel` / `InstallmentProjectionPort` (read-only) for reads. Legal path: `docs/architecture/LEGAL_PATHS.md` "Installment Plan Mutations".
 
 **Planned files (proposed locations)**
 - `domain/installment/` — pure domain: `schedule/` (schedule calculator), `model/` (state transitions), `readmodel/` (`InstallmentPlanReadModel`, plan math), `projection/` (`InstallmentProjectionPort`, `InstallmentUpcomingProjection`), `InstallmentPlanReadRepository`, money/date/category policies
@@ -927,7 +927,7 @@ File-to-segment mapping for all 40 segments:
 | 37 | Spending Challenges | `domain/challenge/`, `SpendingChallengeManager` |
 | 38 | Receipt Matching | `domain/receiptmatching/`, `ReceiptTransactionMatcher`, `ReceiptMatchLifecycleService` |
 | 39 | Static Guardrails & CI Verification | `scripts/ci/`, `scripts/guardrails/`, `scripts/allowlists/`, `scripts/verify_*_boundaries.py`, `scripts/verify_installment_cloud_reachability.py`, `scripts/verify_spending_predicate_usage.py`, `tools/`, `.github/workflows/ci.yml` |
-| 40 | Installment Plans | `installment_plans`, `installment_entries`, `InstallmentPlan`, `InstallmentEntry`, `InstallmentPlanDao` (exist, S2; sole writer `InstallmentPlanLifecycleCoordinator`, S6a); `domain/installment/`; (planned) `service/installment/`, `ui/screens/installments/`, `InstallmentScheduleCalculator`, `InstallmentProjectionPort` |
+| 40 | Installment Plans | `installment_plans`, `installment_entries`, `InstallmentPlan`, `InstallmentEntry`, `InstallmentPlanDao` (exist, S2; sole writer `InstallmentPlanLifecycleCoordinator`, S6a); `domain/installment/`; (exist, enabled on this branch at S13) `service/installment/`, `ui/screens/installments/`, `InstallmentScheduleCalculator`, `InstallmentProjectionPort` |
 
 ### Quick checks
 - Forecast issues → Segment 1

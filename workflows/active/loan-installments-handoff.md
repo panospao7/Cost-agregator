@@ -2690,3 +2690,27 @@ Transactions delete-dialog role lines, retry-loop key, marks-loader memoise, plu
 ## 2026-10-30: S13-b COMMITTED 055b9de1; S13-c docs COMMITTED; S13-final RUNNING
 - S13-c: ENGINE_INTERACTION_MAP, LEGAL_PATHS stale lines fixed; CODEBASE_SEGMENTS Segment 40 S13 block; CODEBASE_INVENTORY Drift Sync 2026-10-30; plan status block. guard_docs_truth vr-20261030-002859-190db89a PASS.
 - S13-final ladder (serial, on the S13-c commit): static-guards, unit-tests, lint, app-check, registered guards known_good_state and db_access, connected DatabaseMigrationTest (wave5-api35). Then the manifest dump (no BROWSABLE), `am start` deep-link checks, and three guardians plus a fresh reviewer-strict. The item-14 device check is the owner's.
+
+## 2026-10-30: S13 candidate reviews, fixes, S13-final
+
+### S13 candidate review dispositions (2026-10-30; orchestrator under owner-approvals 92)
+Reviews on bf7bd580..119d09e2: privacy-security-guardian ACCEPT; architecture-guardian ACCEPT-WITH-CONDITIONS (2 doc nits); room-migration-guardian ACCEPT (follow-up F-S13-ROLLBACK-NEW-EXPENSE); reviewer-strict (Opus xhigh, fresh) ACCEPT-WITH-CONDITIONS, no blockers.
+- RS-1 (MINOR, condition): checklist item 10 (INV-12 BILL re-count, N1 noise) had no disposition and LEGAL_PATHS still said "S13-a must re-count". FIX: the re-count is recorded and LEGAL_PATHS corrected (S13-fix).
+- RS-2 (MINOR): the INV-1 predicate was inlined three times. FIX: a named `Expense` property next to `countsAsSpending` is used at all three sites (no behaviour change).
+- RS-3 (MINOR): a flagged foreign-currency row without a rate still raised excludedCount/isPartial and a merchant-naming warning. FIX: flagged rows are neutral before normalisation (S13-fix).
+- RS-4 (INFO): NOT_MINE largest/smallest compares 0.0 effective amounts (pre-existing). Follow-up F-ASSIST-NOTMINE-EXTREMES to the assistant owner.
+- RS-5 (INFO): no MainScreen dialog wiring test; router-level hold -> release -> confirm is covered only in pieces. ACCEPTED; covered by the S13-final device / am-start checks.
+- RS-6 (INFO): F-S13-a-STALE-PENDING could be fixed in-lane with onDispose -> dismiss, but that would also drop a pending confirmation on rotation. Remains a residual (fail-safe: never navigates).
+- RS-7 (INFO, docs): the CODEBASE_INVENTORY "aggregates ignore flagged" wording overstated. FIX: it now names LARGEST/SMALLEST/COUNT/AVERAGE only.
+- AG-1/AG-2 (docs): the CODEBASE_SEGMENTS header date and the Segment 40 "(planned)" owners. FIX.
+- The S13-final ladder on 119d09e2 before the fixes: static-guards vr-20261030-003002-258c39c5, unit-tests vr-20261030-004720-eb8fa573, lint vr-20261030-005908-70648a18, known_good_state vr-20261030-010457-39a1b35f, db_access vr-20261030-010816-6b916324, all PASS; app-check on 119d09e2 was running. The connected migration test was withdrawn and is re-queued on the fix commit.
+- Fix pass ladder (all PASS, final fingerprint): guard_docs_truth vr-20261030-015614-d093abaa; static-guards vr-20261030-015632-688a2832; app-check vr-20261030-021351-b6113173; connected DatabaseMigrationTest (wave5-api35) vr-20261030-025213-43611bf1; targeted `*ExecuteFinancialQuery*,*Expense*Test*,*Assistant*` vr-20261030-025715-dd424af0. The first targeted attempt, vr-20261030-014209-ff42d0e3, hit TIMEOUT E_NO_OUTPUT_TIMEOUT: the compile stalled under memory pressure and no test ran. It was re-run.
+- Merged-manifest dump of the fix-pass APK (aapt2): 0 BROWSABLE in the whole manifest; the expensetracker VIEW/DEFAULT filter has 10 hosts, including installments and installment_plan.
+- Device checks (wave5-api35, fix-pass APK):
+  - AE-16: a BROWSABLE intent cannot resolve ("unable to resolve Intent").
+  - `installments` shows the content-free confirm dialog; Cancel stays on Home.
+  - `installment_plan?id=42` shows the dialog; Confirm opens Plan details with "This plan no longer exists." (no crash).
+  - `id=abc` and `id=99999999999999999999` go to Home with no dialog.
+  - App logcat (5239 lines): no raw URI, plan id or malformed value.
+- S13 CANDIDATE: ACCEPTED (orchestrator, owner-approvals 92) on reviewer-strict's conditions (a) ladder, (b) manifest + am-start checks, (c) RS-1 resolved. The item-14 device check (S12a QA a-d and the Compose paging effect on a real flag-on build) remains the OWNER's, before any release; the branch stays unreleased under MEC H-1.
+- Follow-ups: item 13 stale labels (optional one-file fix: a midnight emission in InstallmentPlanReadRepositoryImpl.changes()); R-S13-b-1; F-S13-0-COUNT-LIST; F-S13-a-STALE-PENDING; F-ASSIST-NOTMINE-EXTREMES; F-S13-ROLLBACK-NEW-EXPENSE; a "Something Went Wrong" title on the plan-not-found state (copy, low); the es/el sign-off of the new keys (deeplink_confirm_installments_title/body, el action_confirm/action_cancel).
