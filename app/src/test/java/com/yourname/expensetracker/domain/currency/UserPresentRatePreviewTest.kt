@@ -39,7 +39,7 @@ class UserPresentRatePreviewTest {
     fun setUp() {
         store = PreviewRateStoreFake()
         val converter = CurrencyConverter(store, FakeTimeProvider(0L))
-        preview = UserPresentRatePreview(RateEligibilityEvaluator(converter))
+        preview = UserPresentRatePreview(RateEligibilityEvaluator(converter), store)
     }
 
     private fun oct(day: Int): LocalDate = LocalDate.of(2025, 10, day)
@@ -131,7 +131,53 @@ class UserPresentRatePreviewTest {
     fun `a stale rate is Blocked with no amount`() = runTest {
         put("USD", "EUR", 1.0 / 1.08, oct(7))
         val result = preview.preview(20.0, usd, eur, noon(oct(15)), athens)
-        assertEquals(UserPresentRatePreviewResult.Blocked(RateEligibility.Stale(oct(7), 8)), result)
+        assertEquals(
+            UserPresentRatePreviewResult.Blocked(RateEligibility.Stale(oct(7), 8), latestStoredPairDate = oct(7)),
+            result
+        )
+    }
+
+    // ---- INV-1b-5 input: latestStoredPairDate ----
+
+    @Test
+    fun `INV-1b-5 Stale carries the UTC date of the newest stored pair even when newer than the entry`() = runTest {
+        put("USD", "EUR", 1.0 / 1.08, oct(7))
+        put("USD", "EUR", 1.0 / 1.09, oct(20))
+        val result = preview.preview(20.0, usd, eur, noon(oct(15)), athens)
+        assertEquals(
+            UserPresentRatePreviewResult.Blocked(RateEligibility.Stale(oct(7), 8), latestStoredPairDate = oct(20)),
+            result
+        )
+        assertEquals(listOf("USD" to "EUR"), store.latestPairCalls)
+    }
+
+    @Test
+    fun `INV-1b-5 None with a newer stored pair carries that date`() = runTest {
+        put("USD", "EUR", 1.0 / 1.08, oct(20))
+        val result = preview.preview(20.0, usd, eur, noon(oct(15)), athens)
+        assertEquals(
+            UserPresentRatePreviewResult.Blocked(RateEligibility.None, latestStoredPairDate = oct(20)),
+            result
+        )
+    }
+
+    @Test
+    fun `INV-1b-5 a pair without a valid date yields a null latestStoredPairDate`() = runTest {
+        store.rows += DomainExchangeRate("USD", "EUR", 0.9, 0L, "ecb", validDate = null)
+        val result = preview.preview(20.0, usd, eur, noon(oct(15)), athens)
+        assertEquals(UserPresentRatePreviewResult.Blocked(RateEligibility.None, latestStoredPairDate = null), result)
+        assertEquals(listOf("USD" to "EUR"), store.latestPairCalls)
+    }
+
+    @Test
+    fun `INV-1b-5 Home Eligible Unsupported and AmountUnavailable never fetch the latest pair`() = runTest {
+        put("USD", "EUR", 1.0 / 1.08, oct(15))
+        put("BGN", "EUR", 0.51, oct(15))
+        preview.preview(12.5, eur, eur, noon(oct(15)), athens)
+        preview.preview(20.0, usd, eur, noon(oct(15)), athens)
+        preview.preview(0.0, usd, eur, noon(oct(15)), athens)
+        preview.preview(20.0, bgn, eur, noon(oct(15)), athens)
+        assertTrue(store.latestPairCalls.isEmpty())
     }
 
     @Test
@@ -210,9 +256,14 @@ class UserPresentRatePreviewTest {
             return null
         }
 
+        val latestPairCalls = mutableListOf<Pair<String, String>>()
+
         override suspend fun getLatestRateForPair(fromCurrency: String, toCurrency: String): DomainExchangeRate? {
             reads++
-            return null
+            latestPairCalls += fromCurrency to toCurrency
+            return rows
+                .filter { it.fromCurrency == fromCurrency && it.toCurrency == toCurrency }
+                .maxByOrNull { it.validDate ?: Long.MIN_VALUE }
         }
 
         override suspend fun getRateAsOf(fromCurrency: String, toCurrency: String, atMillis: Long): DomainExchangeRate? {

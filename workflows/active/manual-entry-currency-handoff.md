@@ -347,3 +347,23 @@ Total: 9 + 5 + 37 = 51 (42 `mec_*` + 9 `add_expense_installments_*`); the count 
   - Row count: 29 + EUR = 30 currencies, so cross pairs = 30 x 29 = 870 per day, x 64 = ~55,700 rows. The spec estimated ~39k on 25 currencies. S1 must size the batch write and the test for ~56k rows (one transaction; performance budget).
 - 2026-10-30: 1b S0 docs reconciliation DONE: domain-spec 1b (21 INV, 25 AE; Cancelled outcome; D-1b-5 mapping) and ux-flows 1b (RateRemedy names, refresh-first, one "amount cleared" note, the Currency-management row DEFERRED); no `[ALIGN]` markers remain. Derived calls accepted: AlreadyInProgress is presented as FAILED (the button is disabled while running); the home-change note shows in both cases; a cancel during the commit leaves all rows or none. COMMITTED with impact-map-1b.md.
 - Next: the 1b slice plan (feature-planner) and the privacy-security-guardian design review (payload size, fetch timing, the ~56k-row bulk write) in parallel; then S1.
+- 2026-10-30: 1b S1 (data layer) DONE.
+  - Writer, plus a follow-up that populates Blocked.latestStoredPairDate via the ExchangeRateStore port (INV-1b-5); two test-authors.
+  - Combined guardian ACCEPT-WITH-CONDITIONS. Fixed:
+    - F1: parity test against the daily path;
+    - F3: home-currency precheck before any connection;
+    - F4: KDoc;
+    - F5: `historyConnectionOpener` test seam, because mocking URL hung a run (vr-20261030-043455-197fcd9c TIMEOUT).
+  - Ladder fixes:
+    - the atomicity test seeded validDate 0, rejected by CURR-70F-04 (test fix);
+    - G-CANCEL-01 on the gate catch: `ensureActive()` added;
+    - db_access / known_good_state INFRA came from DB_DAO_SCOPE_UNRESOLVED at `connection.disconnect()` (it collides with BankConnectionDao.disconnect): fixed by typing `val connection: HttpURLConnection`. No guard, allowlist or policy edit.
+  - Final ladder, all PASS:
+    - targeted vr-20261030-055300-9a81d944;
+    - db_access vr-20261030-061755-881c3206;
+    - known_good_state vr-20261030-062058-5e213491;
+    - data vr-20261030-062500-514c8874;
+    - domain-a-m vr-20261030-063202-e15db9d3;
+    - cancellation vr-20261030-063336-662b4a52;
+    - static-guards vr-20261030-063354-84e54589.
+  - COMMITTED. Dormant (no caller). Next: S2 (add-expense VM + UI).

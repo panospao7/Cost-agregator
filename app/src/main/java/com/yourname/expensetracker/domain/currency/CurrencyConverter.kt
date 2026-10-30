@@ -11,9 +11,20 @@ import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import timber.log.Timber
+import java.time.LocalDate
+import java.time.ZoneOffset
 import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
+
+/**
+ * One ECB publication day of a history download: [eurToCurrency] is units of currency per 1 EUR
+ * (EUR itself = 1.0), as parsed. Consumed by [CurrencyConverter.storeRateHistory].
+ */
+data class RateHistoryDay(
+    val date: LocalDate,
+    val eurToCurrency: Map<String, Double>
+)
 
 /**
  * Supported currencies in the app.
@@ -663,6 +674,53 @@ class CurrencyConverter @Inject constructor(
             )
         }
         exchangeRateStore.insertOrUpdateAll(exchangeRates)
+    }
+
+    /**
+     * Stores an ECB history download all-or-nothing (MEC 1b, INV-1b-10, INV-1b-11, INV-1b-12).
+     *
+     * Builds ONE pre-sized list of catalog-only cross pairs (`toEur / fromEur`, finite and > 0,
+     * both currencies listed that day), `validDate` = that day at UTC midnight, one `lastUpdated`
+     * for the whole download, then makes ONE [ExchangeRateStore.insertOrUpdateAll] call (barrier
+     * check plus one DAO list insert). Rows outside the given days are never touched; no delete or
+     * cleanup is called. No logging: codes, dates and counts are never written to a log.
+     *
+     * @return the number of rows handed to the store; 0 means the store was not called.
+     */
+    suspend fun storeRateHistory(days: List<RateHistoryDay>, source: String = "ecb"): Int {
+        val now = timeProvider.now()
+        val catalogCodes = SupportedCurrency.catalog.map { it.code }
+        var capacity = 0
+        for (day in days) {
+            val listed = catalogCodes.count { isValidRate(day.eurToCurrency[it] ?: Double.NaN) }
+            capacity += listed * (listed - 1)
+        }
+        val rows = ArrayList<DomainExchangeRate>(capacity)
+        for (day in days) {
+            val validDate = day.date.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
+            val listedCodes = catalogCodes.filter { isValidRate(day.eurToCurrency[it] ?: Double.NaN) }
+            for (from in listedCodes) {
+                val fromEur = day.eurToCurrency.getValue(from)
+                for (to in listedCodes) {
+                    if (from == to) continue
+                    val rate = day.eurToCurrency.getValue(to) / fromEur
+                    if (!isValidRate(rate)) continue
+                    rows.add(
+                        DomainExchangeRate(
+                            fromCurrency = from,
+                            toCurrency = to,
+                            rate = rate,
+                            lastUpdated = now,
+                            source = source,
+                            validDate = validDate
+                        )
+                    )
+                }
+            }
+        }
+        if (rows.isEmpty()) return 0
+        exchangeRateStore.insertOrUpdateAll(rows)
+        return rows.size
     }
 
     private fun isValidRate(rate: Double): Boolean = rate.isFinite() && rate > 0.0

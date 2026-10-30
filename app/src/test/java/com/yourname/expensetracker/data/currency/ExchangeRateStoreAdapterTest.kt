@@ -214,6 +214,68 @@ class ExchangeRateStoreAdapterTest {
         coVerify(exactly = 1) { exchangeRateDao.deleteOldRates(cutoff) }
     }
 
+    // ── MEC 1b S1: bulk history write (INV-1b-11, INV-1b-12, C12) ──────────
+
+    private fun domainRows(count: Int) = List(count) { index ->
+        DomainExchangeRate(
+            fromCurrency = "C${index % 7}",
+            toCurrency = "D${index / 7}",
+            rate = 1.0 + index,
+            lastUpdated = 1_700_000_000_000L,
+            source = "ecb",
+            validDate = 1_699_000_000_000L + index
+        )
+    }
+
+    @Test
+    fun `INV-1b-11 insertOrUpdateAll hands every row to the dao in one call without chunking`() = runTest {
+        val rows = domainRows(52_920)
+        val captured = slot<List<ExchangeRate>>()
+        coEvery { exchangeRateDao.insertOrUpdateAll(capture(captured)) } returns Unit
+
+        adapter.insertOrUpdateAll(rows)
+
+        coVerify(exactly = 1) { exchangeRateDao.insertOrUpdateAll(any()) }
+        assertEquals(52_920, captured.captured.size)
+        assertEquals(rows.map { it.fromCurrency }, captured.captured.map { it.fromCurrency })
+        assertEquals(rows.map { it.toCurrency }, captured.captured.map { it.toCurrency })
+        assertEquals(rows.map { it.validDate }, captured.captured.map { it.validDate })
+        assertEquals(rows.map { it.rate }, captured.captured.map { it.rate })
+        assertEquals(setOf("ecb"), captured.captured.map { it.source }.toSet())
+        assertEquals(setOf(0L), captured.captured.map { it.id }.toSet())
+    }
+
+    @Test
+    fun `INV-1b-12 insertOrUpdateAll never deletes other rows`() = runTest {
+        adapter.insertOrUpdateAll(domainRows(10))
+
+        coVerify(exactly = 0) { exchangeRateDao.deleteOldRates(any()) }
+        coVerify(exactly = 0) { exchangeRateDao.deleteAllRates() }
+    }
+
+    @Test
+    fun `C12 bulk write is blocked during restore and touches no dao row`() = runTest {
+        val maintenanceMode = mockk<RestoreMaintenanceMode>()
+        every { maintenanceMode.currentMode() } returns RestoreMaintenanceMode.Mode.RESTORE_PREPARING
+        every { maintenanceMode.isWritesAllowed() } returns false
+        val blockingAdapter = ExchangeRateStoreAdapter(exchangeRateDao, DatabaseWriteBarrier(maintenanceMode))
+
+        val exception = runCatching { blockingAdapter.insertOrUpdateAll(domainRows(5)) }.exceptionOrNull()
+
+        assertNotNull("bulk write must throw during restore mode", exception)
+        assertEquals(DatabaseAccessBlockedException::class, exception!!::class)
+        coVerify(exactly = 0) { exchangeRateDao.insertOrUpdateAll(any()) }
+    }
+
+    @Test
+    fun `INV-1b-11 a dao failure propagates so the repository can report STORE_FAILED`() = runTest {
+        coEvery { exchangeRateDao.insertOrUpdateAll(any()) } throws IllegalStateException("insert failed")
+
+        val exception = runCatching { adapter.insertOrUpdateAll(domainRows(3)) }.exceptionOrNull()
+
+        assertEquals(IllegalStateException::class, exception!!::class)
+    }
+
     @Test
     fun `write mutations blocked during restore mode`() = runTest {
         val maintenanceMode = mockk<RestoreMaintenanceMode>()

@@ -102,7 +102,8 @@ class AddExpenseViewModelStressTest : ViewModelTestUtils() {
             quickAddParser = QuickAddParser(),
             quickAddLearnedCategoryLookup = mockk<QuickAddLearnedCategoryLookup>(relaxed = true),
             userPresentRatePreview = UserPresentRatePreview(
-                RateEligibilityEvaluator(CurrencyConverter(rateStore, timeProvider, testDispatcher))
+                RateEligibilityEvaluator(CurrencyConverter(rateStore, timeProvider, testDispatcher)),
+                rateStore
             ),
             currencyRatesRepository = ratesRepo,
             privacySettingsRepository = privacyRepo,

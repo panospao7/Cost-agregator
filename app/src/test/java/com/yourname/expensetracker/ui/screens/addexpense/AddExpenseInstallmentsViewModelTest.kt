@@ -173,7 +173,8 @@ class AddExpenseInstallmentsViewModelTest : ViewModelTestUtils() {
         quickAddParser = QuickAddParser(),
         quickAddLearnedCategoryLookup = quickAddLearnedCategoryLookup,
         userPresentRatePreview = UserPresentRatePreview(
-            RateEligibilityEvaluator(CurrencyConverter(rateStore, timeProvider, testDispatcher))
+            RateEligibilityEvaluator(CurrencyConverter(rateStore, timeProvider, testDispatcher)),
+            rateStore
         ),
         currencyRatesRepository = ratesRepo,
         privacySettingsRepository = privacyRepo,

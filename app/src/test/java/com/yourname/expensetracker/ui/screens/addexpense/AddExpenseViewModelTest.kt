@@ -163,7 +163,8 @@ class AddExpenseViewModelTest : ViewModelTestUtils() {
         quickAddParser = quickAddParser,
         quickAddLearnedCategoryLookup = quickAddLearnedCategoryLookup,
         userPresentRatePreview = UserPresentRatePreview(
-            RateEligibilityEvaluator(CurrencyConverter(rateStore, timeProvider, testDispatcher))
+            RateEligibilityEvaluator(CurrencyConverter(rateStore, timeProvider, testDispatcher)),
+            rateStore
         ),
         currencyRatesRepository = ratesRepo,
         privacySettingsRepository = privacy,
@@ -4054,5 +4055,16 @@ internal class AddExpenseRatesRepositoryFake : CurrencyRatesRepository {
     override suspend fun refresh(homeCurrency: String): CurrencyRateRefreshOutcome {
         calls += homeCurrency
         return outcome(homeCurrency)
+    }
+
+    val historyCalls = mutableListOf<String>()
+    var historyOutcome: com.yourname.expensetracker.domain.currency.CurrencyRateHistoryOutcome =
+        com.yourname.expensetracker.domain.currency.CurrencyRateHistoryOutcome.DisabledByPrivacy
+
+    override suspend fun downloadRecentHistory(
+        homeCurrency: String
+    ): com.yourname.expensetracker.domain.currency.CurrencyRateHistoryOutcome {
+        historyCalls += homeCurrency
+        return historyOutcome
     }
 }

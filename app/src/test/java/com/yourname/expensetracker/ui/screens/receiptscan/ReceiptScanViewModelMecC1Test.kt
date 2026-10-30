@@ -17,6 +17,7 @@ import com.yourname.expensetracker.domain.ai.usecase.CategorizeReceiptItemsUseCa
 import com.yourname.expensetracker.domain.ai.usecase.SuggestCategoryFallbackUseCase
 import com.yourname.expensetracker.domain.ai.usecase.SuggestReceiptExtractionUseCase
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
+import com.yourname.expensetracker.domain.currency.CurrencyRateHistoryOutcome
 import com.yourname.expensetracker.domain.currency.CurrencyRateRefreshOutcome
 import com.yourname.expensetracker.domain.currency.CurrencyRatesRepository
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
@@ -127,6 +128,14 @@ internal class ReceiptScanRatesRepositoryFake : CurrencyRatesRepository {
         calls += homeCurrency
         return outcome(homeCurrency)
     }
+
+    val historyCalls = mutableListOf<String>()
+    var historyOutcome: CurrencyRateHistoryOutcome = CurrencyRateHistoryOutcome.DisabledByPrivacy
+
+    override suspend fun downloadRecentHistory(homeCurrency: String): CurrencyRateHistoryOutcome {
+        historyCalls += homeCurrency
+        return historyOutcome
+    }
 }
 
 internal class ReceiptScanMecDeps(dispatcher: CoroutineDispatcher, nowMs: Long) {
@@ -178,7 +187,7 @@ internal class ReceiptScanMecDeps(dispatcher: CoroutineDispatcher, nowMs: Long) 
             receiptLinkService = links,
             merchantNormalizer = mockk<MerchantNormalizer>(relaxed = true),
             hybridClassifier = mockk<HybridExpenseClassifier>(relaxed = true),
-            userPresentRatePreview = UserPresentRatePreview(RateEligibilityEvaluator(converter)),
+            userPresentRatePreview = UserPresentRatePreview(RateEligibilityEvaluator(converter), store),
             currencyRatesRepository = ratesRepo,
             privacySettingsRepository = privacyRepo
         )

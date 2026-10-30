@@ -119,7 +119,8 @@ internal class AddExpenseSheetHarness(home: String = "EUR") {
         quickAddParser = QuickAddParser(),
         quickAddLearnedCategoryLookup = quickAddLearnedCategoryLookup,
         userPresentRatePreview = UserPresentRatePreview(
-            RateEligibilityEvaluator(CurrencyConverter(rateStore, timeProvider, Dispatchers.Unconfined))
+            RateEligibilityEvaluator(CurrencyConverter(rateStore, timeProvider, Dispatchers.Unconfined)),
+            rateStore
         ),
         currencyRatesRepository = ratesRepository,
         privacySettingsRepository = privacyRepository,
