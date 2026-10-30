@@ -331,3 +331,19 @@ Total: 9 + 5 + 37 = 51 (42 `mec_*` + 9 `add_expense_installments_*`); the count 
   - app-check: vr-20261029-194632-821acce2.
 - reviewer-strict: per owner items 86/87, it runs at the MEC 1b candidate or merge review, which must include this Z diff.
 - Next (MEC lane): loan S13 (see the loan plan's S13 re-anchor amendment; owner-approvals 91).
+
+## 2026-10-30: MEC 1b design started (loan S13 done on this lane, aa397b95)
+- Explorer finding: 1b is framed only. The frame is in brief :38-39, critique :37/:54/:60 and domain-spec §10 :301-310. The fetch is on the same host (www.ecb.europa.eu) behind the R23 setting, with no new permission and no schema change expected. Open items: the endpoint, retention keyed on validDate, the trigger UX, outcomes and codes, parser caps, F-B2-HOME-CHANGE.
+- Running in parallel, with disjoint write sets: domain-modeler (Opus) appends "1b - ECB 90-day history (domain rules)" to domain-spec.md, and ux-flow-designer (Opus) appends "1b - Rate history download" to ux-flows.md.
+- Next: impact-mapper (tier), then the orchestrator gate under owner-approvals 92 (same host; payload and fetch-timing privacy review by privacy-security-guardian), then a feature-planner slice plan.
+- 2026-10-30: the 1b impact map is persisted (docs/features/manual-entry-currency/impact-map-1b.md): T3; schema NONE; no permission; same host; no URL allowlist. Gate decisions D-1b-1..6 are in owner-approvals 94. The S0 docs reconciliation is running.
+- **VG-1b-1 CONFIRMED (2026-10-30, ECB pages fetched):**
+  - The official page links "XML (last 90 days only)" at https://www.ecb.europa.eu/stats/eurofxref/eurofxref-hist-90d.xml. Same host, HTTPS, 200, text/xml. Plain http returns a 301 to the same https path, so the app calls https directly.
+  - Size 69,509 B (~68 KB), as a single line with no whitespace. The daily file is tab-indented with single quotes, so the parser must not depend on formatting.
+  - Root `gesmes:Envelope` with the gesmes and eurofxref namespaces; structure Cube > Cube@time > Cube@currency/@rate.
+  - 64 publication days (not 90), newest first, 2026-08-03..2026-10-29, 29 currencies per day.
+  - The latest day equals the daily file's date (2026-10-29).
+  - Caps check against INV-1b-9 (512 KiB, 70 days, 100-day span): size OK (~7.5x headroom); 64 days <= 70 (only ~6 days of headroom, so S1 must confirm the day cap against the maximum weekdays in 90 calendar days, ~66); span 87 days <= 100.
+  - Row count: 29 + EUR = 30 currencies, so cross pairs = 30 x 29 = 870 per day, x 64 = ~55,700 rows. The spec estimated ~39k on 25 currencies. S1 must size the batch write and the test for ~56k rows (one transaction; performance budget).
+- 2026-10-30: 1b S0 docs reconciliation DONE: domain-spec 1b (21 INV, 25 AE; Cancelled outcome; D-1b-5 mapping) and ux-flows 1b (RateRemedy names, refresh-first, one "amount cleared" note, the Currency-management row DEFERRED); no `[ALIGN]` markers remain. Derived calls accepted: AlreadyInProgress is presented as FAILED (the button is disabled while running); the home-change note shows in both cases; a cancel during the commit leaves all rows or none. COMMITTED with impact-map-1b.md.
+- Next: the 1b slice plan (feature-planner) and the privacy-security-guardian design review (payload size, fetch timing, the ~56k-row bulk write) in parallel; then S1.

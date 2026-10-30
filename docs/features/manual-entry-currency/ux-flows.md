@@ -197,3 +197,193 @@ Copy rules: errors name the problem and the action, never echo OCR/notification 
 - **UX-Q-5 Quick-save confirm surface.** Rec: a refused quick-save opens full review with the card. Confirm the surface exists as described (F12) in the receipt slice.
 - **UX-Q-6 Installments with an unsupported selection.** Rec: spec behaviour (`Unset`, restore on switch-off) rather than disabling the switch (which would lock out non-EUR/USD homes). Loan plan/UX docs need follow-up for the removed plan-currency row and OD-14 note.
 - **UX-Q-7 R23 setting copy.** Names and wording of the setting are R23 part 1's; `mec_action_open_setting`/`mec_block_off_hint` must match it. Greek/Spanish copy needs native review.
+
+---
+
+## 1b — Rate history download
+
+Author: ux-flow-designer (MEC 1b design). Date 2026-10-30. Docs only. Frame: `brief.md:18, 38-39, 84`; `critique.md:37, 54, 60`; `domain-spec.md` §10 (`:301-310`) and "1b - ECB 90-day history (domain rules)", which is authoritative where the two differ.
+Reconciled 2026-10-30 per owner-approvals 94 (D-1b-1..6). Every earlier `[ALIGN]` mark is resolved below and cites the INV that settles it. Domain rules win for the Refresh/Download choice (D-1b-1, INV-1b-5), the home change (D-1b-2, INV-1b-20) and the reason-to-state mapping (D-1b-5); the UX wins for Cancel (D-1b-3, INV-1b-21). The Currency-management "Rate history" row is DEFERRED (D-1b-4, F-1b-CURMGMT): every Currency-management mention in this section is parked design, not 1b scope, and INV-1b-3 holds (the download starts only from add-expense and receipt review). Existing surfaces only: the shared blocked card (`ui/components/currency/CurrencyRateRegion.kt`, `BlockedRateCard`), used by add-expense (`AddExpenseSheet.kt`, VM `refreshRates()` `AddExpenseViewModel.kt:1424`) and receipt review (`ReceiptScanScreen.kt:1046`, VM `ReceiptScanViewModel.kt:1704`), plus an optional row on Currency management (`CurrencyManagementScreen.kt`, VM `refreshRates()` `CurrencyManagementViewModel.kt:471`). No new screen, route, deep link, permission, setting, worker or background job. Network: only the same ECB host, only while the R23 setting is On, only on a user tap (INV-20). Sections 1–15 above stay authoritative for everything this section does not change.
+
+### 1b.1 Entry points and navigation
+- **Primary entry: the blocked card** (Wireframe B family), variants `NONE` and `STALE` only. `UNSUPPORTED` and `HOME_UNRESOLVED` never offer a download.
+- **Secondary entry: none in 1b.** The Currency-management "Rate history" row is DEFERRED (D-1b-4, follow-up F-1b-CURMGMT); see 1b.3. INV-1b-3 holds.
+- Never offered (the download): edit mode (no region), home currency selected, `Unset`, `AmountInvalid` (the card is suppressed while the amount is invalid, section 5), setting Off/Unknown.
+- **Action rule.** The VM supplies one bounded `rateFixAction` (the composable never compares dates). The VM does not decide the remedy: it copies the domain `RateRemedy` computed by `RateRemedyPolicy` (INV-1b-5) from the entry's calendar date in the session's `entryZone`, `today` in the same zone (`ratesToday`, already in state), the latest stored pair date (supplied on `Blocked`) and the session flag. The 90-day reach is the policy's `today - 90 days` bound (INV-1b-5); the UI never hard-codes it (the copy says "90 days", and the copy changes if the bound does). Domain rule (D-1b-1): **Refresh comes first.** `REFRESH_LATEST` when the stored table is empty or the latest stored date is on or before the entry date; `DOWNLOAD_HISTORY` only when the latest stored date is after the entry date (and the entry date is inside the window and no history download succeeded this session). Download never replaces Refresh. Naming: `NONE`, `REFRESH_LATEST` and `DOWNLOAD_HISTORY` are the domain `RateRemedy` values; `OPEN_SETTING` and `TOO_OLD` are UX-only presentation states (table below).
+
+| Setting | Domain input (`RateRemedyPolicy`, INV-1b-5) | `rateFixAction` | Origin | Card shows |
+|---|---|---|---|---|
+| On | Blocked (`None`/`Stale`); stored table empty, or latest stored date <= entry date | `REFRESH_LATEST` | domain `RateRemedy` | "Refresh rates" (unchanged, section 4) |
+| On | Blocked; latest stored date > entry date; entry date >= today - 90 days; no successful history download this session | `DOWNLOAD_HISTORY` | domain `RateRemedy` | "Download rate history" + disclosure line. Refresh is not shown with it: the latest stored date is already after the entry date, so the daily file can't help |
+| On | `NONE` with `OUTSIDE_HISTORY_WINDOW` (entry date < today - 90 days), no download attempted yet | `TOO_OLD` | UX-only presentation of `NONE` | `mec_history_too_old`, no network action |
+| On | `NONE` with `HISTORY_ALREADY_DOWNLOADED` | `NONE` | domain `RateRemedy` | the status line chosen by the mapping in 1b.2 (`DONE_TOO_OLD` or `DONE_NO_RATE`), no network action |
+| On | `NONE` after `FAILED_HOME_UNAVAILABLE` (BGN/RUB home; the policy doesn't know the home can't be quoted) | `NONE` | UX override | `mec_refresh_home_unavailable`, no network action |
+| On | `Home`, `Eligible` or `Unsupported` | `NONE` | domain `RateRemedy` | no network action; the existing card variants only |
+| Off / Unknown | not consulted (INV-1b-3: the policy is used only when the setting is On) | `OPEN_SETTING` | UX-only | unchanged: "Open exchange-rate setting" + the existing confirm dialog (`mec_open_setting_confirm_title/body`, D-11, C-1) |
+
+  "Change currency" stays on every row. This resolves UX-Q-4 by the domain rule: Refresh is offered only while the daily file can still add a helpful date (latest stored date on or before the entry date); a backdated date whose latest stored date is later gets the history download instead (AE-4). `mec_refresh_still_blocked` remains only for `REFRESH_LATEST`.
+
+  **First-use two-step (AE-1b-5d).** Empty table, entry dated 5 Oct, setting On:
+  1. The table is empty, so the remedy is `REFRESH_LATEST`. The card shows [Refresh rates] only (no history button, no 90-day disclosure).
+  2. The user taps Refresh. The daily file stores the latest publication (16 Oct). The region is still blocked, and the latest stored date 16 Oct is after the entry date 5 Oct, so the remedy becomes `DOWNLOAD_HISTORY`. The card now shows [Download rate history] with the disclosure.
+  3. The user taps Download. On `Stored` the region re-evaluates to `Eligible` and the preview line appears (1b.2).
+  Two taps is deliberate (domain-spec 1b.2 note): the small daily file first, and the larger history file only when the daily file can't help.
+- **Navigation.** The download happens in place; the sheet or review screen stays open and keeps every input. Back/close while downloading cancels the download (1b.4). The open-setting path, its confirm and its discard behaviour are unchanged; after the user turns the setting on and comes back, the form starts fresh (C-1) and the card offers the download on the next blocked evaluation.
+
+### Wireframe D: blocked, backdated date, setting On
+```
+ ┌──────────┐ ┌─────────────────────────────────────┐
+ │ $ USD  ▾ │ │ Amount       $ 20.00                 │
+ └──────────┘ └─────────────────────────────────────┘
+ ┌────────────────────────────────────────────────────┐
+ │ ⚠ No exchange rate for this date. The latest rate │  <- live region (polite; assertive if from Save)
+ │   is from 7 Oct, more than 7 days earlier.        │
+ │ You can also change the currency or the date.     │
+ │ Downloads the last 90 days of public ECB exchange │  <- disclosure, outside the live region
+ │ rates. No personal data is sent.                  │
+ │ [ Download rate history ]  [ Change currency ]    │  <- TextButtons, 48dp, wrap
+ └────────────────────────────────────────────────────┘
+```
+### Wireframe E: downloading
+```
+ ┌────────────────────────────────────────────────────┐
+ │ ⚠ No exchange rate for this date. …               │
+ │ You can also change the currency or the date.     │
+ │ Downloads the last 90 days of public ECB …        │
+ │ [ ◌ Downloading rate history… ] (disabled)        │
+ │ [ Cancel ]  [ Change currency ]                   │
+ └────────────────────────────────────────────────────┘
+```
+### 1b.2 Download states and behaviour (add-expense and receipt review, one composable)
+- **Idle** (`historyStatus = IDLE`, `rateFixAction = DOWNLOAD_HISTORY`): Wireframe D. Save disabled ("Needs an exchange rate", section 4).
+- **Downloading** (`RUNNING`): Wireframe E. Indeterminate `CircularProgressIndicator` in the button (same pattern as Refresh; no percentage, the payload size is not known up front). The button is disabled and reads "Downloading rate history…". A **Cancel** TextButton appears (yes, cancellable: the file is larger than the daily one and slow networks are the travel case). All form inputs stay editable; Save stays disabled while the region is blocked. No toast, no snackbar, no sheet-level spinner.
+- **Cancelled** (`CANCELLED`; domain outcome `Cancelled`, INV-1b-21): the user's Cancel cancels the download job (the VM rethrows `CancellationException`, never swallowed); the card returns to Idle with the line "Download stopped." The button is enabled again (retry = another tap) and the session flag stays unset. The store is all-or-nothing (INV-1b-11): a cancel before the commit stores nothing, and a cancel during it leaves zero rows or all rows, never a subset. Which of those happened is invisible to the user and harmless (public rates, idempotent REPLACE). Leaving the screen cancels the same way but shows no status.
+- **Success, now eligible:** the VM re-evaluates the region with the **latest** inputs (`refreshCompleted = true` path, the same as Refresh). The card disappears and the existing preview line appears ("≈ €18.52 · ECB rate of 15 Oct"). The completion **bumps the announce key once**, so the preview line is announced politely, exactly as for a date change (F-B2-A11Y-1 latch; no extra "downloaded" announcement, so no rate or amount is spoken beyond the existing preview). Save becomes enabled. `historyStatus` returns to `IDLE`.
+- **Success, still blocked** (the download stored rows but the date still has no eligible rate). Two bounded sub-states, chosen by the mapping table below (D-1b-5), from the re-evaluation's `NoRemedyReason` (INV-1b-5) and the session's `Stored.earliestDate` (domain-spec 1b.7):
+  - `DONE_TOO_OLD`: "Rate history covers only the last 90 days. Choose a later date or another currency." The download button is hidden (it can't help).
+  - `DONE_NO_RATE`: "The rate history has no rate for this currency within 7 days of this date. Choose another currency or date." (the ECB stopped or paused quoting it inside the window). Button hidden for this date/currency; it returns if either input changes and the new evaluation is again `DOWNLOAD_HISTORY`.
+  The card message itself (none/stale + latest date) re-renders from the new evaluation, so a newer "latest rate" date can appear; that date is a public ECB date shown on screen only.
+- **Offline** (`FAILED_OFFLINE`, an `IOException` class): "Couldn't download rate history. Check your connection and try again." Button enabled again (retry = tap it). Preview/save never need network, so nothing else changes.
+- **Failed** (`FAILED`: timeout, HTTP error, malformed or oversized file, no rows stored, any other bounded code): "Couldn't download rate history. Try again later." Button enabled. No exception text, URL, HTTP code or file content is shown or logged (INV-19).
+- **Home rates not downloadable** (`FAILED_HOME_UNAVAILABLE`, BGN/RUB home): reuse `mec_refresh_home_unavailable`; button hidden for the rest of the session (`rateFixAction = NONE`).
+- **Setting turned off meanwhile** (`DisabledByPrivacy`) or **privacy check failed** (`PrivacyCheckFailed`): no failure line; `ratesSetting` becomes Off/Unknown and the card switches to the Off variant (open-setting path), the same as Refresh today.
+- **Setting Off from the start:** unchanged section 4 Off variant. Nothing enables the setting; the download action is never shown.
+
+**Outcome-to-state mapping (D-1b-5).** This is the only definition of the mapping; domain-spec 1b.7 refers here. The domain values are the `CurrencyRateHistoryOutcome` variants, the `Failed` reasons (INV-1b-17) and `NoRemedyReason` (INV-1b-5).
+
+| Domain value | UX state (`historyStatus`) | Rendering |
+|---|---|---|
+| `Stored`, then re-evaluation `Eligible` | none (`IDLE`; the region becomes `Eligible`) | preview line (above) |
+| Still blocked with `NoRemedyReason = OUTSIDE_HISTORY_WINDOW`, or `HISTORY_ALREADY_DOWNLOADED` with entry date < the session's `Stored.earliestDate` | `DONE_TOO_OLD` (before any download in the session it is the `TOO_OLD` action, same copy) | `mec_history_too_old`, no button |
+| Still blocked, any other case (including `HISTORY_ALREADY_DOWNLOADED` with entry date on or after the earliest stored date) | `DONE_NO_RATE` | `mec_history_no_rate`, no button |
+| `Failed(OFFLINE)` | `FAILED_OFFLINE` | `mec_history_offline`, button enabled |
+| `Failed(INVALID_HOME_CURRENCY)`, `Failed(HOME_QUOTE_UNAVAILABLE)` | `FAILED_HOME_UNAVAILABLE` | `mec_refresh_home_unavailable`, no button |
+| Every other `Failed` reason (`TIMEOUT`, `HTTP_ERROR`, `PAYLOAD_*`, `STORE_FAILED`), and `AlreadyInProgress` (a backstop D-1b-5 doesn't list) | `FAILED` | `mec_history_failed`, button enabled |
+| `Cancelled` (user Cancel, INV-1b-21) | `CANCELLED` | `mec_history_cancelled`, button enabled |
+| `DisabledByPrivacy`, `PrivacyCheckFailed` | Off variant (`OPEN_SETTING`) | no failure line (above) |
+
+**Receipt review parity (MEC C).** Same card, same `rateFixAction`, same states, same copy, driven by `ReceiptScanViewModel` with the receipt's entry date. Differences: (1) a post-Save refusal card still adds "Your receipt is kept. Nothing was saved." and is assertive; the download that follows uses the polite rules above; (2) a refused quick-save opens full review with the card (UX-Q-5), where the download is offered; (3) leaving the review screen cancels a running download, and the receipt state is unchanged either way (section 8 of the spec: no `ReceiptEvent`, no file change). Batch review and email receipts: no control, no download (OD-5).
+
+### 1b.3 Currency management "Rate history" row: DEFERRED (D-1b-4, follow-up F-1b-CURMGMT)
+**Not in 1b scope.** The row is not built in 1b. INV-1b-3 allows the download only from add-expense and receipt review, and domain-spec 1b.11 has no Currency-management owner. The rest of this subsection is parked design for the follow-up, kept so the work isn't redone; it is not a requirement and nothing in it is built, tested or reviewed in 1b.
+- Placement: a card directly under the "Exchange rates" header row (`CurrencyManagementScreen.kt:285-307`), above the rates list. Shown only when the setting is On and the home currency is resolved (`homeCurrency != null`) and downloadable; hidden (not disabled) when `rateDownloadDisabled`, where today's disabled message already explains why.
+- Content: title "Rate history", the disclosure line, one `OutlinedButton` "Download rate history" (48dp, full width at fontScale >= 1.3), then a status line.
+- States: Idle; Downloading (button progress + Cancel, as Wireframe E; the toolbar Refresh icon is disabled while it runs, so the two downloads never overlap); Done "Rate history downloaded." or, with the range from `Stored.earliestDate` and `Stored.latestDate` (INV-1b-17), "Rate history downloaded. Rates from 2 Aug to 30 Oct are available."; Offline/Failed/Home-unavailable with the same keys and mapping as 1b.2; setting turned off meanwhile → the row hides and today's disabled message shows. After Done the screen reloads its data (`loadCurrencyData()`, as after Refresh).
+- No preview, no amounts, no per-currency list of what was stored.
+
+```
+ Exchange rates                          Updated Oct 30, 17:05
+ ┌────────────────────────────────────────────────────┐
+ │ Rate history                                       │
+ │ Downloads the last 90 days of public ECB exchange │
+ │ rates. No personal data is sent.                  │
+ │ [        Download rate history         ]          │
+ │ Rate history downloaded.                          │  <- polite live region (status line only)
+ └────────────────────────────────────────────────────┘
+```
+
+### 1b.4 Edge cases
+- **Double taps.** The button is disabled from the first tap; the VM also ignores a start while `historyStatus == RUNNING` or `rateRefresh == RUNNING` (same guard as `refreshRates()`), and Refresh and Download are never shown together. One job per screen; the repository is single-flight (INV-1b-6), so a second entry screen (for example in multi-window) that gets `AlreadyInProgress` shows `FAILED` (mapping in 1b.2) and the user may tap again. Cancel (D-1b-3) is offered only while `RUNNING`.
+- **Inputs change while downloading.** Allowed. The download continues; on completion the region re-evaluates with the latest currency/date/amount (latest inputs win, spec 7.4). If the user switched to home currency or an eligible date meanwhile, the card is already gone: the download finishes silently, no announcement (the announce key is bumped only if the region is foreign after completion).
+- **Rotation / configuration change.** The VM survives; `RUNNING` is shown again after recreation and the result lands normally. Nothing new goes into a `SavedStateHandle`.
+- **Process death during download.** The form resets (F13, AE-32) and the job dies. No resume, no retry on next launch, no background continuation. The store is all-or-nothing (INV-1b-11), so the table holds zero rows or all rows of the download; they are public and harmless. Next open evaluates fresh.
+- **Sheet/screen closed during download.** Cancelled (`onSheetLeft` for add-expense, screen exit for receipt review), so no network happens after the user leaves. No status is shown (the screen is gone).
+- **Home currency changed during an entry (F-B2-HOME-CHANGE; D-1b-2, INV-1b-20).** The home currency can change while a sheet session or a retained draft exists (Currency management, multi-window, a restore). The domain rule wins: a home change never re-denominates an amount, and a draft whose denomination would change is discarded, never re-denominated or pinned. For H1 to H2, the same whether the sheet is open or between sessions (`onSheetOpened`):
+  - Blank amount: the selection follows the new home silently (nothing to re-denominate). INV-1b-20(a).
+  - A **foreign** selection X: kept. The region re-evaluates against the new home (announce key bump, polite). If X equals the new home, the selection becomes `Selected(H2, home)` (same code, amount kept) and the region becomes `Home`. INV-1b-20(b).
+  - Home selected and an amount typed: the whole draft is discarded through the existing `reset()` path (as in R-1(b)): blank amount, the new home selected. One polite note is shown under the control, `mec_home_changed_cleared` ("Your home currency changed, so the amount was cleared."), dismissed by the first edit or currency change. H1 is never pinned as a foreign override. INV-1b-20(c). This is the only place 1b discards typed input. Installment mode follows the same rule.
+  - While SAVING the rule waits: the request already carries the explicit code H1 and the coordinator's home is authoritative (spec §12). After `Created` the sheet closes; after a refusal or error the discard rule applies.
+  - Receipt review keeps its explicit (proposed or picked) code. If its selection could follow home implicitly it becomes `Unset` with the existing Unset treatment (Save disabled) and the receipt's fields are kept; there is no home-change note key for it.
+  - A download running across the change completes; the stored data covers all cross pairs (spec §10), so the result is valid for the new home.
+- **Future-dated entries.** `REFRESH_LATEST` (unchanged); history can't produce a rate dated after today.
+- **Date older than history reach before any download.** `TOO_OLD` is shown up front (no wasted download), with the same copy as `DONE_TOO_OLD`.
+- **Installment mode / loan declare.** Same card and download (section 8); no other change.
+
+### 1b.5 UI state model (additions only)
+`CurrencyRegionUi` is unchanged (no new sealed variant; a download never makes an amount appear outside `Eligible`). Two bounded inputs are added next to `ratesSetting` / `rateRefresh` on the add-expense and receipt states, and passed to `CurrencyRateRegionContent`:
+- `rateFixAction: CurrencyRateFixAction { NONE, REFRESH_LATEST, DOWNLOAD_HISTORY, OPEN_SETTING, TOO_OLD }` (1b.1 table). `NONE`, `REFRESH_LATEST` and `DOWNLOAD_HISTORY` are the domain `RateRemedy` values from `RateRemedyPolicy` (INV-1b-5), copied through; `OPEN_SETTING` (setting Off/Unknown) and `TOO_OLD` (`NONE` with `OUTSIDE_HISTORY_WINDOW`, before any download) are UX-only presentation states. The VM computes no date bound itself.
+- `historyStatus: CurrencyHistoryStatus { IDLE, RUNNING, CANCELLED, DONE_TOO_OLD, DONE_NO_RATE, FAILED_OFFLINE, FAILED_HOME_UNAVAILABLE, FAILED }`. Each non-`IDLE`, non-`RUNNING` value is produced from a domain outcome by the mapping table in 1b.2 (D-1b-5). Success-and-eligible has no status of its own: the region becomes `Eligible` and the status goes back to `IDLE`.
+- Add-expense home-change note: one one-shot flag `homeChangeClearedNote: Boolean`, set when INV-1b-20(c) discards a draft and cleared by the first edit or currency change. The former `homeChangeNote { NONE, KEPT, UNSET }` enum is removed (D-1b-2).
+
+| UI state | Produced by (domain / data cause) | Rendering | Save |
+|---|---|---|---|
+| `Blocked` + `DOWNLOAD_HISTORY` + `IDLE` | `RateEligibility.None/Stale`, setting On, `RateRemedy = DOWNLOAD_HISTORY` (INV-1b-5) | Wireframe D | disabled |
+| `+ RUNNING` | user tap, INV-1b-3 | Wireframe E | disabled |
+| `+ CANCELLED` | `Cancelled` outcome: user Cancel (INV-1b-21); leaving the screen shows nothing | Idle + "Download stopped." | disabled |
+| `Eligible` (after download) | re-evaluation finds a rate ≤ 7 days, INV-1 | preview line, one polite announcement | enabled |
+| `+ DONE_TOO_OLD` / `TOO_OLD` | mapping table (D-1b-5): `OUTSIDE_HISTORY_WINDOW`, or `HISTORY_ALREADY_DOWNLOADED` with entry date before the earliest stored date | card + `mec_history_too_old`, no button | disabled |
+| `+ DONE_NO_RATE` | mapping table (D-1b-5): still blocked, any other case | card + `mec_history_no_rate`, no button | disabled |
+| `+ FAILED_OFFLINE` | `Failed(OFFLINE)` | card + offline line, button enabled | disabled |
+| `+ FAILED` | every other `Failed` reason, and `AlreadyInProgress` (mapping table) | card + generic line, button enabled | disabled |
+| `+ FAILED_HOME_UNAVAILABLE` | `Failed(INVALID_HOME_CURRENCY)` / `Failed(HOME_QUOTE_UNAVAILABLE)` | card + home line, no button | disabled |
+| Off variant | `DisabledByPrivacy` / `PrivacyCheckFailed` / setting Off (consent-denied analogue) | open-setting path | disabled |
+| Add-expense home change | INV-1b-20(c): home selected with an amount, home changed (`homeChangeClearedNote`) | blank form, new home selected, `mec_home_changed_cleared` note | disabled (blank amount) |
+| `Unset` after home change (receipt review) | INV-1b-20: selection followed home implicitly; receipt fields kept | existing Unset treatment, no home-change note | disabled |
+
+Mapping checks. **Spec states with no UI:** the stored row count and date range (not shown in 1b; the Currency-management range line is parked, 1b.3); single-flight inside the repository (it surfaces only as the `AlreadyInProgress` backstop, shown as `FAILED`); atomicity of the store. **UI states with no spec cause:** none left. `TOO_OLD`, `DONE_TOO_OLD` and `DONE_NO_RATE` come from `NoRemedyReason` and `Stored.earliestDate` (D-1b-5); `CANCELLED` comes from the `Cancelled` outcome (INV-1b-21); the home-change note comes from INV-1b-20 (D-1b-2). **Permission:** none new. **Offline:** only the download (and Refresh) can be offline; preview and save stay local. **Unavailable is never zero:** no state except `Eligible` renders an amount.
+
+### 1b.6 Money display, destructive actions
+- Money display is unchanged (section 11). The download never shows a rate value, a count of rates, or an amount; the only figure is the existing preview after success. Rate dates in copy are public ECB `LocalDate`s formatted by `formatRateDate` (year when not the current year).
+- Nothing is destructive. The download only adds or replaces public rate rows; it never touches expenses or receipts and needs no undo. Cancel is always available while it runs. The open-setting confirm (which discards the form) is unchanged. The between-sessions home-change discard (1b.4) reuses the existing reset path and is the same accepted behaviour as R-1(b).
+
+### 1b.7 Accessibility
+- **TalkBack order inside the card:** message (icon decorative) → alt hint → status line (cancelled / still blocked / failure) → disclosure → [Download rate history] or [Downloading rate history…] → [Cancel] → [Change currency]. The disclosure comes **before** the button so the user hears what the tap does first.
+- **Live regions:** the existing merged message group stays the only live region on the card (polite, or assertive when the card came from Save). The status line sits **inside** that group so outcomes are announced politely once. The disclosure sits **outside** it, so it isn't re-announced on every status change. Success is announced only through the preview line (announce-key bump, 1b.2). Never assertive for a download outcome. The home-change note is polite. Currency management: only the status line is a polite live region.
+- **Button semantics:** while running, the button is disabled with `stateDescription` "Downloading rate history" so focus that stays on it hears the change. Cancel has the content description "Cancel rate history download" (the visible label "Cancel" alone is ambiguous next to other buttons).
+- **Focus on success:** the focused button disappears when the card is replaced. Move accessibility focus to the preview line if the download button or Cancel had focus. If that isn't feasible in Compose, the polite announcement is enough, and focus must not jump to the top of the sheet.
+- Touch targets ≥ 48dp. Card buttons wrap (FlowRow or Column), no `maxLines`, nothing truncated at 200% font. Contrast: `onErrorContainer` on `errorContainer` as today. The progress indicator uses `onCard` and is decorative (the label carries the state).
+- The F-A11Y-LATCH-PURE follow-up applies: the extra key bump on download completion must go through the same latch. Review it at the 1b candidate.
+
+### 1b.8 Privacy disclosure and diagnostics
+- One line, shown wherever the download action is shown (card and Currency management): **"Downloads the last 90 days of public ECB exchange rates. No personal data is sent."** It is accurate only if the request carries no app-specific query, header or identifier beyond a plain GET to the ECB host (INV-1b-1 and INV-1b-19: one constant URL, no query, body, cookie or app-specific header, no redirect followed). If the review finds otherwise, the copy must change, not the request.
+- The fetch timing reveals a backdated-entry attempt (brief `:39`). This is accepted as residual and not disclosed in the UI. It goes to the privacy review (UX-1b-Q-4).
+- Diagnostics: bounded codes only (for example a history outcome enum). Never the entry date, the currency, the amount, the URL, the HTTP body or the exception message. Nothing from OCR or receipt text appears in any history copy or log. The receipt card shows no OCR token (section 6).
+
+### 1b.9 Copy (new keys; EN final for review, **el / es DRAFT** pending the owner's es/el sign-off)
+| Key | EN | el (DRAFT) | es (DRAFT) |
+|---|---|---|---|
+| `mec_history_action` | Download rate history | Λήψη ιστορικού ισοτιμιών | Descargar historial de tipos |
+| `mec_history_action_running` | Downloading rate history… | Λήψη ιστορικού ισοτιμιών… | Descargando historial de tipos… |
+| `mec_history_running_state` | Downloading rate history | Λήψη ιστορικού ισοτιμιών σε εξέλιξη | Descargando historial de tipos |
+| `mec_history_cancel` | Cancel | Ακύρωση | Cancelar |
+| `mec_history_cancel_cd` | Cancel rate history download | Ακύρωση λήψης ιστορικού ισοτιμιών | Cancelar la descarga del historial de tipos |
+| `mec_history_disclosure` | Downloads the last 90 days of public ECB exchange rates. No personal data is sent. | Κατεβάζει τις δημόσιες ισοτιμίες της ΕΚΤ των τελευταίων 90 ημερών. Δεν αποστέλλονται προσωπικά δεδομένα. | Descarga los tipos de cambio públicos del BCE de los últimos 90 días. No se envían datos personales. |
+| `mec_history_cancelled` | Download stopped. | Η λήψη διακόπηκε. | Descarga detenida. |
+| `mec_history_too_old` | Rate history covers only the last 90 days. Choose a later date or another currency. | Το ιστορικό ισοτιμιών καλύπτει μόνο τις τελευταίες 90 ημέρες. Επιλέξτε μεταγενέστερη ημερομηνία ή άλλο νόμισμα. | El historial de tipos solo cubre los últimos 90 días. Elige una fecha posterior u otra moneda. |
+| `mec_history_no_rate` | The rate history has no rate for this currency within 7 days of this date. Choose another currency or date. | Το ιστορικό δεν έχει ισοτιμία για αυτό το νόμισμα έως 7 ημέρες πριν από αυτή την ημερομηνία. Επιλέξτε άλλο νόμισμα ή ημερομηνία. | El historial no tiene un tipo para esta moneda a menos de 7 días de esta fecha. Elige otra moneda u otra fecha. |
+| `mec_history_offline` | Couldn't download rate history. Check your connection and try again. | Η λήψη ιστορικού ισοτιμιών απέτυχε. Ελέγξτε τη σύνδεση και δοκιμάστε ξανά. | No se pudo descargar el historial de tipos. Revisa la conexión e inténtalo de nuevo. |
+| `mec_history_failed` | Couldn't download rate history. Try again later. | Η λήψη ιστορικού ισοτιμιών απέτυχε. Δοκιμάστε αργότερα. | No se pudo descargar el historial de tipos. Inténtalo más tarde. |
+| `mec_history_section_title` | Rate history | Ιστορικό ισοτιμιών | Historial de tipos |
+| `mec_history_done` | Rate history downloaded. | Το ιστορικό ισοτιμιών λήφθηκε. | Historial de tipos descargado. |
+| `mec_history_done_range` | Rate history downloaded. Rates from %1$s to %2$s are available. | Το ιστορικό ισοτιμιών λήφθηκε. Διαθέσιμες ισοτιμίες από %1$s έως %2$s. | Historial de tipos descargado. Hay tipos disponibles del %1$s al %2$s. |
+| `mec_home_changed_cleared` | Your home currency changed, so the amount was cleared. | Το βασικό σας νόμισμα άλλαξε, οπότε το ποσό διαγράφηκε. | Tu moneda principal cambió, por lo que se borró el importe. |
+
+Reused unchanged: `mec_refresh_home_unavailable`, `mec_action_open_setting`, `mec_open_setting_confirm_title/body`, `mec_block_*`, `mec_action_change_currency`, `mec_save_disabled_rate`, `mec_receipt_kept`, `mec_repeat_cleared`. `mec_history_cancel` may be replaced by the app's existing generic Cancel string if one exists (implementer to check; no duplicate key). "90 days" and "7 days" are literal in copy. If the domain's reach differs, change the copy to match (use a `%d` plural if it becomes variable). Greek and Spanish copy needs native review. Use ΕΚΤ/BCE as in the existing `mec_preview_*` keys. Placeholders take only currency codes or public ECB dates, never amounts.
+
+### 1b.10 Open questions
+- **UX-1b-Q-1 Currency management row.** RESOLVED (D-1b-4): DEFERRED as follow-up F-1b-CURMGMT. The parked design is in 1b.3, and INV-1b-3 is unchanged (the download starts only from add-expense and receipt review).
+- **UX-1b-Q-2 Download replaces Refresh for backdated dates.** RESOLVED (D-1b-1): no. The domain rule wins (INV-1b-5): `REFRESH_LATEST` when the table is empty or the latest stored date is on or before the entry date; `DOWNLOAD_HISTORY` only when the latest stored date is after the entry date. This holds whatever the file's latest day is. The first-use two-step is in 1b.1.
+- **UX-1b-Q-3 F-B2-HOME-CHANGE.** RESOLVED (D-1b-2): neither pin nor keep. The domain rule wins (INV-1b-20): a draft whose denomination would change is discarded, with one note, `mec_home_changed_cleared` (1b.4, 1b.9).
+- **UX-1b-Q-4 Privacy review items.** These are disclosure accuracy (1b.8), whether fetch timing needs any mention, and payload size on mobile data. Rec: no size or confirm dialog, because the R23 setting is the consent and the tap is user-started. Add a size hint only if the review finds the file large (for example over ~1 MB).
+- **UX-1b-Q-5 Cancel on leave.** Rec: cancel the download when the sheet or review screen closes, so no network happens after the user leaves. Alternative: let it finish in the VM scope. That is useful for a quick reopen, but it is hidden network activity.
+- **UX-1b-Q-6 es/el.** All new keys are DRAFT. They join the pending MEC es/el sign-off, which is a release gate for 1b together with the existing `mec_` strings.

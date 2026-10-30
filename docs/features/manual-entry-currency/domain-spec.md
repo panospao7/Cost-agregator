@@ -445,3 +445,260 @@ FORBIDDEN:
   ❌ Rounding/truncating a user-entered amount before TLC (reject excess precision instead)
 ```
 `LEGAL_PATHS.md` → Money / Currency, add: `ELIGIBLE RATE for user-present save → RateEligibilityEvaluator (calendar date in entry zone, ≤ 7 days, older leg)`; `AMOUNT digits/cap → CurrencyAmountPolicy`.
+
+---
+
+## 1b — ECB 90-day history (domain rules)
+
+Author: domain-modeler (Opus), 2026-10-30. Docs only. Branch `feature/manual-entry-currency` at aa397b95. Money and network privacy, **T3**.
+Inputs: brief :18, :38-39, :84, :95; critique :37, :54, :60; this spec §10 and §13 (:349); plan H-1 (:140), :174, D-B1-1 (:290), :382, F-B2-HOME-CHANGE (:474).
+This section replaces the §10 "Inc 1b frame" bullets where they differ; §10 stays as the dated frame. Sections 0-18 still hold. INV-20 and INV-22 are extended here, not changed.
+Reconciled 2026-10-30 per owner-approvals 94 (D-1b-1..6). Changes: explicit user Cancel with INV-1b-21 and a `Cancelled` outcome (D-1b-3, 1b.7, 1b.10); the outcome-to-UX-state mapping is referenced at 1b.7 and defined in `ux-flows.md` 1b.2 (D-1b-5); the Currency-management "Rate history" row is deferred as F-1b-CURMGMT (D-1b-4); INV-1b-5 (refresh first, D-1b-1) and INV-1b-20 (discard, D-1b-2) stand as written and the UX follows them; VG-1b-1 is a STOP condition before S1 code (D-1b-6).
+IDs: facts F1b-n, invariants INV-1b-n, examples AE-1b-n. Tags as in the header: [V] checked in this pass, [C] carried, [U] unverified.
+
+### 1b.0 Facts this section depends on
+
+| # | Fact | Tag |
+|---|---|---|
+| F1b-1 | Daily refresh: the privacy gate runs before any HTTP (`:48-63`); then a GET on the constant `ECB_DAILY_RATES_URL` (`:41`) with 10 s connect/read timeouts and redirects left at the platform default (followed). Non-2xx and parse failures are thrown as exceptions; success returns `Refreshed(storedPairs)` (`:65-83`). | [V] `CurrencyRatesRepositoryImpl.kt` |
+| F1b-2 | The daily parser requires exactly one dated `Cube` (`:137-142`, `MISSING`/`CONFLICTING`) and parses `time` as an ISO date (`:149-153`). It skips a rate child that is blank, non-numeric, non-finite or ≤ 0 (`:157-165`). It reads with one XXE-hardened factory (`:173-188`): secure processing on, DOCTYPE disallowed, external entities and DTD off, no XInclude, no entity expansion. | [V] same file |
+| F1b-3 | Cross pairs: every catalog currency that ECB lists (EUR included as 1.0), every ordered pair as `toEur / fromEur`, finite and > 0 only. The home must be listed, else `HOME_CURRENCY_QUOTE_UNAVAILABLE` (BGN/RUB home); an unknown home throws `INVALID_HOME_CURRENCY`. `setLastRateUpdate(now)` runs only if ≥ 1 pair was stored (`:86-121`). | [V] same file |
+| F1b-4 | `CurrencyConverter.storeRates` takes **one** `validDate` per call, stamps `lastUpdated = now`, skips invalid rates and makes one `insertOrUpdateAll` call (`CurrencyConverter.kt:644-666`). The adapter checks `DatabaseWriteBarrier`, then makes one bulk DAO insert (`ExchangeRateStoreAdapter.kt:36-39`). The DAO uses REPLACE on the unique (from, to, validDate) index (`ExchangeRateDao.kt:19-26`; `ExchangeRate.kt:23-27`). A suspend `@Insert` of a list runs in one Room transaction ([C] Room codegen; confirm in the generated `ExchangeRateDao_Impl`). | [V]/[C] |
+| F1b-5 | R23: only `NetworkPrivacyGate` decides `EXCHANGE_RATE_DOWNLOAD`. It allows the download only when `exchangeRateDownloadEnabled` is true, returns `FailClosed(PRIVACY_GATE_FAILURE)` on corrupted settings, and otherwise `Denied(EXCHANGE_RATE_DOWNLOAD_DISABLED)` (`NetworkPrivacyGate.kt:29-48`). The setting key `exchange_rate_download_enabled` defaults to false (`PrivacySettingsRepositoryImpl.kt:73, :223`). | [V]/[C] |
+| F1b-6 | There is no periodic refresh (plan :382), so H-1 holds B2, C and loan S11 until 1b. The add-expense VM calls `refresh` only when the setting is On, a foreign currency is selected and no refresh is running. It maps failures by exception token (`AddExpenseViewModel.kt:1424-1467`; follow-up F-B2-TYPED-REFRESH). | [V] |
+| F1b-7 | The evaluator reads one row per leg with the bound `localDate` at UTC midnight, direct pair first. It applies `MAX_ELIGIBLE_AGE_DAYS = 7`, inclusive (`RateEligibilityEvaluator.kt:117-153`). The preview's `Blocked` carries only the eligibility (`UserPresentRatePreview.kt:45`). | [V] |
+| F1b-8 | `getLatestRateForPair` orders by `validDate DESC, lastUpdated DESC` (`ExchangeRateDao.kt:33`). `getRateAsOf` returns the latest row with `validDate ≤ bound` (`:62`). `deleteOldRates` keys on `lastUpdated` (`:59-60`) and has no production caller (F7). | [V] |
+| F1b-9 | A full-row TLC update re-snapshots the base fields against the current home (`LEGAL_PATHS.md:109-111`). Analytics re-converts at read time with the instant bound and any age (F3). | [V] |
+| F1b-10 | Home handling in the add-expense VM: the home flow re-applies the selection (`:289-291`). With no override, the selection follows the new home (`:1045-1061`). A new session discards a retained non-home draft and keeps a home draft (`:1654-1676`, R-1(b)/(c)). That kept home draft is F-B2-HOME-CHANGE. | [V] `AddExpenseViewModel.kt` |
+
+### 1b.1 Endpoint (decides item 1)
+
+| ID | Invariant | Owner |
+|---|---|---|
+| INV-1b-1 | History is fetched from exactly one constant, `ECB_HISTORY_90D_URL = "https://www.ecb.europa.eu/stats/eurofxref/eurofxref-hist-90d.xml"`. Same scheme and host as the daily file. HTTPS `GET`, no query, no body, no cookies, no app-specific header (the platform default user agent, as for the daily file). Redirects are **not** followed (`instanceFollowRedirects = false`; any 3xx = `HTTP_ERROR`). Connect and read timeouts stay 10 s. The whole attempt (connect, read, parse, store) has a 30 s deadline. | `CurrencyRatesRepositoryImpl` |
+| INV-1b-2 | If the endpoint can't be used (offline, timeout, non-2xx, wrong format), the outcome is exactly one bounded `Failed(reason)` (1b.7) and the table is unchanged. There is no fallback: no other host, no full-history file (`eurofxref-hist.xml`, several MB), no daily file in its place, no partial store. | `CurrencyRatesRepositoryImpl` |
+
+**Verification gate VG-1b-1 (at implementation; not an owner decision).** The URL comes from third-party docs (brief :39, :63). Before any code, 1b S0 must confirm on ECB's own page that the file exists at this path on this host. It must also confirm the body format that F1b-2 assumes: the `eurofxref` namespace, an outer `Cube` with one `Cube time=` per publication day (newest first), and rate children `Cube currency= rate=`. Record the actual size and day count (they size INV-1b-9). If the path, host or format differs: STOP and return to this section. Don't pick another host or file.
+
+### 1b.2 Trigger and remedy (decides item 2)
+
+| ID | Invariant | Owner |
+|---|---|---|
+| INV-1b-3 | The history download is **user-started only**: one tap on the history action of the blocked card in add-expense (B2) or receipt review (C). It never runs at preview, at save, after a refusal, at app start, from a worker or as an automatic retry, and it never enables the setting (extends INV-20). The action is offered only when the R23 setting state is On and `RateRemedyPolicy` returns `DOWNLOAD_HISTORY` (INV-1b-5). When the setting is Off or Unknown, the card keeps the existing open-setting action (B2a). | entry VMs (offer and tap); repository (gate) |
+| INV-1b-4 | Before opening any connection, the repository checks the composite `PrivacyGate` for the **existing** `PrivacyCapability.EXCHANGE_RATE_DOWNLOAD`. `Denied` → `DisabledByPrivacy`. Any other blocking decision → `PrivacyCheckFailed(code)` with a bounded `PrivacyGateReasonCodes` value, mapped as `refresh` does (`:50-62`). No new capability, setting or permission. | `CurrencyRatesRepositoryImpl` + `NetworkPrivacyGate` |
+| INV-1b-5 | `RateRemedyPolicy.remedy(eligibility, localDate, latestStoredPairDate, today, historyDownloadedThisSession)` is pure. It is the only place that picks the remedy for a blocked user-present entry when the setting is On: (1) `Home`, `Eligible` or `Unsupported` → `NONE`. (2) `Stale`/`None` and (`latestStoredPairDate == null` or `latestStoredPairDate ≤ localDate`) → `REFRESH_LATEST`, because the daily file can still add a date that helps. (3) `Stale`/`None`, `latestStoredPairDate > localDate`, `localDate ≥ today − 90 days`, and no successful history download in this entry session → `DOWNLOAD_HISTORY`. (4) Otherwise `NONE` with `NoRemedyReason` = `OUTSIDE_HISTORY_WINDOW` (localDate < today − 90) or `HISTORY_ALREADY_DOWNLOADED`. Inputs: `latestStoredPairDate` is the UTC calendar date of `getLatestRateForPair(currency, home).validDate` (direct pair, any date); the preview use case supplies it on `Blocked`. `today` is the VM's clock in `entryZone`. The evaluator stays clock-free (INV-3). | `RateRemedyPolicy` (new, `A/domain/currency`); the preview use case supplies the date |
+| INV-1b-6 | Idempotent and single-flight. At most one history download runs per process (`Mutex.tryLock`). A second call while one runs returns `AlreadyInProgress` and opens no connection. Downloading the same file again writes the same keys with the same rate values (REPLACE); only `lastUpdated` changes. A concurrent daily refresh is harmless (same keys, same values). The VM disables the action while the download runs. After `Stored` it sets `historyDownloadedThisSession`, which is cleared with the session zone (`onSheetLeft`, `reset`). After a failure the user may retry with another tap. | repository (single-flight); VM (session flag) |
+
+Notes:
+- First use (empty table) offers `REFRESH_LATEST` first, so the user may need two steps. That's deliberate. The daily file is about 1.5 KB and covers entries dated on or after its publication. History is fetched only when the stored latest date proves the daily file can't help. This keeps the larger fetch, and its backdated-entry hint (1b.8), to the cases that need it.
+- `HISTORY_WINDOW_DAYS = 90` (calendar days) only gates the offer; the stored rows decide eligibility. If the real file starts later than `today − 90`, the entry stays blocked after one download and the session flag stops further offers (AE-1b-6).
+- A Save-origin blocked card (coordinator refusal) uses the same policy on the VM's local re-read (B2a F2), so the preview card and the Save card offer the same remedy.
+
+### 1b.3 Parser contract (decides item 4)
+
+| ID | Invariant | Owner |
+|---|---|---|
+| INV-1b-7 | `parseEcbHistoryRates(stream)` returns either `EcbHistoryRates(days: List<EcbRateDay(date: LocalDate, eurToCurrency: Map<String, Double>)>)`, newest first, or one bounded failure. Input structure: dated `Cube` elements in the ECB namespace, each with an ISO `time`. Rate children are read exactly as the daily parser reads them (F1b-2: an invalid child is skipped; EUR = 1.0 is added). Whole-payload failures, with nothing returned: no dated node → `PAYLOAD_EMPTY`. Any of the following → `PAYLOAD_MALFORMED`: XML that isn't well formed, a DOCTYPE, a blank or malformed `time`, the same date twice, a dated `Cube` inside another dated `Cube`, or a day with no valid rate child. | `CurrencyRatesRepositoryImpl` |
+| INV-1b-8 | The history parser uses the **same** private `secureDocumentBuilderFactory()` as the daily parser: one hardened factory (F1b-2). No second factory, no relaxed feature, no entity resolver, no schema or network lookup during parsing. | `CurrencyRatesRepositoryImpl` |
+| INV-1b-9 | Bounds. All fail closed, with nothing stored. (a) The decompressed body is read through a counting stream capped at `MAX_HISTORY_BYTES = 512 KiB`. A `Content-Length` above the cap fails before reading. Both → `PAYLOAD_TOO_LARGE`. (b) More than `MAX_HISTORY_DAYS = 70` dated nodes, a span (newest − oldest) over `MAX_HISTORY_SPAN_DAYS = 100` calendar days, or any date after the device's UTC date + 1 → `PAYLOAD_OUT_OF_BOUNDS`. (c) The row total is checked against `MAX_HISTORY_DAYS × c × (c − 1)`, where c = catalog size (28 today → 52,920); a larger total → `PAYLOAD_OUT_OF_BOUNDS`. The caps are constants pinned by tests and sized from VG-1b-1 (expected file: about 64 days and about 100 KB [U]). | `CurrencyRatesRepositoryImpl` |
+
+Dates outside the file are not the parser's concern. It never invents, extends or deletes days (INV-1b-12).
+
+### 1b.4 Storage (decides item 3)
+
+| ID | Invariant | Owner |
+|---|---|---|
+| INV-1b-10 | Cross pairs are built per day by the same rule as the daily file. One shared private function, extracted from `refreshFromStream :96-110` and used by both paths, turns a day's `eurToCurrency` into every ordered pair among the catalog currencies listed **that day** (full `SupportedCurrency.catalog`, as today), with rate = `toEur / fromEur`, finite and > 0. **They are stored as cross pairs, not EUR legs only.** The §10 reason still applies: lookups are direct-first everywhere, so EUR-only rows next to older direct daily pairs would give false `Stale` results. The home check works as for the daily file, applied to the **newest** day of the payload: unknown home → `INVALID_HOME_CURRENCY`; home not listed that day → `HOME_QUOTE_UNAVAILABLE`; nothing is stored in either case. Older days that don't list the home are stored without home pairs (the evaluator then finds an older home row, or none). Zero rows in total → `PAYLOAD_EMPTY`. | `CurrencyRatesRepositoryImpl` |
+| INV-1b-11 | All or nothing. All rows of one download go to the store in **one** call that runs in **one** transaction. A new `CurrencyConverter.storeRateHistory(days, source = "ecb")` builds every row: `validDate` = that day's `date.atStartOfDay(UTC)`, `lastUpdated` = one `now` for the whole download, `source = "ecb"`. It skips invalid rates as `storeRates` does and calls `ExchangeRateStore.insertOrUpdateAll` once. REPLACE on (from, to, validDate) overwrites an existing row with the same key (normally an identical daily ECB row) and nothing else. A write-barrier refusal (backup restore) or any store exception → `Failed(STORE_FAILED)`, with zero rows changed. This extends the existing rate-write path (same owner chain: converter → store → DAO); it isn't a new legal path. | `CurrencyConverter` (rows) + `ExchangeRateStore` (transaction) |
+| INV-1b-12 | Rows whose `validDate` isn't a day in the payload are never touched: no delete, no update, no `lastUpdated` change. | `CurrencyConverter` / store |
+| INV-1b-13 | After the transaction commits, `setLastRateUpdate(now)` is called once, because the 90-day file includes the latest publication ([U] confirm at VG-1b-1). The call is best effort: if it fails (other than by cancellation), the outcome stays `Stored`, because the rows are committed. It is never called when nothing was stored. | `CurrencyRatesRepositoryImpl` |
+
+Storage size: about 25 listed catalog currencies give 600 rows per day. Over about 64 days that's **38-39k rows**, roughly 4-5 MB including the three indexes ([U] estimate). Later downloads only add new days (about 600 rows per business day), the same growth bound as daily refreshes.
+
+### 1b.5 Retention and analytics (decides item 5)
+
+| ID | Invariant | Owner |
+|---|---|---|
+| INV-1b-14 | INV-22 holds for 1b: no deletion or cleanup of `exchange_rates`. `deleteOldRates` and `cleanupOldRates` stay without a production caller, and 1b must not wire them. They key on `lastUpdated`, and a history download stamps old-dated rows with a new `lastUpdated`, so deleting by download time would keep old dates and drop newer ones. Any future retention must key on `validDate`, keep every row analytics may still need, and needs its own analytics decision. That is routed elsewhere, not part of 1b. | exchange-rate store (unchanged) |
+| INV-1b-15 | 1b never writes an `expenses` row. Stored `baseAmount`, `baseCurrency` and `exchangeRateUsed` keep their values. Sentinel rows (`baseCurrency=""`) stay sentinel: no backfill (recovery is inc 5). Read-time conversions that use the rate table (analytics F3, the eligibility preview) pick up the new rows on the next read. That is intended (brief :39: consistent with analytics' as-of conversion) and needs no analytics code change. A user-started full-row edit of an old row re-snapshots through the existing TLC update (F1b-9) and may then use a history rate; that is existing behaviour. | TLC (unchanged); analytics (unchanged) |
+
+### 1b.6 Eligibility after a download (decides item 6)
+
+| ID | Invariant | Owner |
+|---|---|---|
+| INV-1b-16 | The evaluator and its rule don't change (INV-1..3; F1b-7). History only adds rows. Consequences: (a) a weekday with a publication → `Eligible(age 0)`; (b) a weekend or TARGET holiday → the latest publication **on or before** the local date (age 1-5, AE-9); (c) `Stale` only when the pair has a gap of more than 7 days (a currency missing from ECB for a while); (d) a local date before the oldest stored row → `None`, or `Stale`/`Eligible` from an older daily row by the normal rule. Direct pairs exist for every stored day, so via-EUR stays exceptional, and via-EUR still uses the older leg. Rows written by 1b have `source = "ecb"`, so the label stays "ECB rate of …". | `RateEligibilityEvaluator` (unchanged) |
+
+### 1b.7 Outcomes and diagnostics (decides item 7)
+
+| ID | Invariant | Owner |
+|---|---|---|
+| INV-1b-17 | `CurrencyRatesRepository.downloadRecentHistory(homeCurrency): CurrencyRateHistoryOutcome` returns a closed sealed type with six variants: `Stored(days: Int, rows: Int, earliestDate: LocalDate, latestDate: LocalDate)`, `DisabledByPrivacy`, `PrivacyCheckFailed(reasonCode)`, `AlreadyInProgress`, `Failed(reason: RateHistoryFailureReason)` and `Cancelled` (the outcome of an explicit user Cancel, INV-1b-21; the repository never returns it, because its caller's `CancellationException` must propagate). The reasons are `OFFLINE`, `TIMEOUT`, `HTTP_ERROR`, `PAYLOAD_TOO_LARGE`, `PAYLOAD_EMPTY`, `PAYLOAD_MALFORMED`, `PAYLOAD_OUT_OF_BOUNDS`, `INVALID_HOME_CURRENCY`, `HOME_QUOTE_UNAVAILABLE` and `STORE_FAILED`. Every non-cancellation failure maps to exactly one reason, and the method never throws one (unlike `refresh`, F1b-6). The caller's `CancellationException` propagates. The 30 s deadline uses `withTimeoutOrNull`, so only that inner deadline becomes `TIMEOUT`. | `CurrencyRatesRepositoryImpl` |
+| INV-1b-18 | Each attempt emits one bounded diagnostic: event `RATE_HISTORY_DOWNLOAD`, outcome code = the variant or reason enum name. It goes through the existing controlled-diagnostic sink, or a constant-format `Timber` line as `refresh` uses at `:61`. Never logged, emitted as a diagnostic or written to events: the URL or host, HTTP status, headers, payload bytes, dates, rates, currency codes, row or day counts, the home currency, the entry's date or amount, exception messages. The dates in `Stored` are public ECB dates for the UI only and are never logged. | repository; VMs (never log the outcome's fields) |
+| INV-1b-21 | **User Cancel** (D-1b-3). The entry VM offers Cancel only in `DOWNLOADING`. Cancel cancels the VM's download job; the `CancellationException` is what stops the attempt, and it propagates (INV-1b-17), never mapped to `Failed`. The store is all-or-nothing (INV-1b-11), so a cancel before the commit stores nothing, and a cancel during the commit leaves zero rows or all rows of that download, never a subset (a committed set is public and idempotent). `setLastRateUpdate` isn't called after a cancellation. When the job has ended by cancellation the VM sets `historyStatus = CANCELLED` (the `Cancelled` outcome), does not set `historyDownloadedThisSession`, and offers the history action again (retry = another tap). The repository emits the single INV-1b-18 diagnostic for the attempt with outcome code `CANCELLED`, then rethrows. Leaving the screen (sheet dismissed, VM cleared) cancels the same way but shows no status (1b.10). | entry VMs (Cancel action, `CANCELLED` status); repository (propagation and diagnostic only) |
+
+**UX mapping (D-1b-5).** The outcome, the `Failed` reason and the `NoRemedyReason` map to the UI states `historyStatus` and `rateFixAction` by the table in `ux-flows.md` 1b.2 ("Outcome-to-state mapping"). That table is the only place the mapping is defined; this section doesn't repeat it. The domain supplies its inputs: the `Failed` reason, `Cancelled`, the `NoRemedyReason` (INV-1b-5) and `Stored.earliestDate`. For the rule "`HISTORY_ALREADY_DOWNLOADED` with the entry date before the earliest stored date", the entry VM keeps the `earliestDate` of this session's `Stored` outcome in memory beside `historyDownloadedThisSession` (extends INV-1b-6; cleared with it in `onSheetLeft` and `reset`; never persisted or logged). `AlreadyInProgress` has no D-1b-5 row; it is a backstop and is presented as `FAILED` (1b.15).
+
+### 1b.8 Privacy (decides item 8)
+
+| ID | Invariant | Owner |
+|---|---|---|
+| INV-1b-19 | The request carries no user data and doesn't depend on the entry. The URL is a constant. Nothing about the entry's date, currency or amount, the home currency or the device is sent. The file always covers the whole window, whatever the entry date. Two downloads for different entries make byte-identical requests. | `CurrencyRatesRepositoryImpl` |
+
+- **Payload.** About 100 KB of public data, roughly 60× the daily file ([U] until VG-1b-1). It's stored in the existing table, and no export is added. If `exchange_rates` is backed up, the backup grows by the same rows [U].
+- **Timing inference.** The ECB, or an on-path observer who sees only the host through TLS, can tell that this client asked for the 90-day file right after a tap. That hints that someone is entering a past-dated foreign expense. Decided mitigations: the constant whole-window request (INV-1b-19); user-started only (INV-1b-3); the daily file first, history only when the daily file can't help (INV-1b-5); one download per entry session (INV-1b-6); no retry, background fetch or prefetch. Accepted residual: low (public data, a host the app already contacts, no identifier). Rejected alternative: always fetching the 90-day file for every refresh. That's about 60× the traffic on every refresh to hide a low-value signal.
+- Same R23 setting and default (Off). No new permission, capability, host or cloud AI.
+
+### 1b.9 Home currency change during an entry (decides item 9, F-B2-HOME-CHANGE)
+
+| ID | Invariant | Owner |
+|---|---|---|
+| INV-1b-20 | A home change never re-denominates an amount. The draft's **denomination** is the code its amount is in: the selected code, or for a home selection, the home at that time. Rules when the resolved home changes H1 → H2 (both known, H1 ≠ H2), whether the sheet is open or between sessions:<br>(a) Blank amount → the selection follows H2, as today.<br>(b) A foreign override X stays X, and the preview re-evaluates against H2. If X == H2, it becomes `Selected(H2, home)`: same code, amount kept.<br>(c) A home selection with a non-blank amount → the **whole draft is discarded** through the existing `reset()` path (as in R-1(b)), and one bounded note is shown. H1 is never pinned as a foreign override: that would be last-used memory, and H1 may not be selectable.<br>While SAVING, the rule waits. The request already carries the explicit code H1, and TLC's resolved home decides (§12). After `Created` the sheet closes; after a refusal or error, rule (c) applies. Installment mode follows (c) too. Receipt review keeps its explicit (proposed or picked) code. If its selection can follow home implicitly [U], it becomes `Unset` instead and the receipt's fields are kept (in the spirit of INV-17). | AddExpense VM; receipt-review VM for its screen |
+
+### 1b.10 State machine: history download (entry VM)
+
+`IDLE → DOWNLOADING → { IDLE + Stored (re-evaluate the region; set the session flag) | IDLE + failure status(reason) | IDLE + CANCELLED (user Cancel, INV-1b-21) | IDLE + setting Off (DisabledByPrivacy) | IDLE + setting Unknown (PrivacyCheckFailed) }`
+- **Offered:** only in `IDLE` and only with remedy `DOWNLOAD_HISTORY` (INV-1b-5).
+- **Illegal:** `DOWNLOADING → DOWNLOADING` (the action is disabled; the repository's `AlreadyInProgress` is the backstop); starting a download while the daily refresh is running or while SAVING (one rate action at a time); any automatic retry.
+- **Retry:** another tap after a failure. Idempotent (INV-1b-6).
+- **User Cancel** (D-1b-3, INV-1b-21): offered only in `DOWNLOADING`; `DOWNLOADING → IDLE + CANCELLED`. The VM cancels the download job; `CancellationException` propagates and is not mapped to a failure. A cancel before the commit stores nothing; a cancel during it leaves zero rows or all rows (INV-1b-11), never a subset. `historyDownloadedThisSession` stays unset and the action is offered again (retry = another tap). Cancel in any other state is illegal.
+- **Cancellation by leaving** (sheet dismissed, VM cleared, no Cancel tap; no status is shown): the job is cancelled. `CancellationException` propagates and is never mapped to a status. If cancelled before the store call, nothing is stored. The store transaction commits whole or not at all (INV-1b-11), so cancellation can't leave a partial set of days.
+- **Process death:** same as cancellation. A committed download stays. The outcome and the session flag are lost, and the next session re-evaluates from the table.
+- **Scope:** the VM scope. No WorkManager, no app scope; by design the download never outlives the user's request.
+
+### 1b.11 Owners (decides item 10)
+
+| Rule | Owner |
+|---|---|
+| Endpoint, gate, single-flight, bounds, parser, cross pairs, outcomes, `lastRateUpdate` | `CurrencyRatesRepository.downloadRecentHistory` in `CurrencyRatesRepositoryImpl` (extends the existing rate repository) |
+| Privacy decision | `NetworkPrivacyGate` (existing capability) |
+| Row building and the atomic write | `CurrencyConverter.storeRateHistory` → `ExchangeRateStore.insertOrUpdateAll` (existing chain) |
+| Remedy choice | `RateRemedyPolicy` (new, pure). `UserPresentRatePreview` supplies `latestStoredPairDate` on `Blocked` (additive field). |
+| Eligibility | `RateEligibilityEvaluator` (unchanged) |
+| Offer, tap, session flag, home-change rule | AddExpense VM; ReceiptScan VM (C) |
+| Retention | none (INV-22, INV-1b-14) |
+
+**No new legal path.** The history download is a second method on the same repository, behind the same gate, writing through the same converter → store chain. No expense write path changes.
+
+### 1b.12 Persistence impact. Schema verdict: **NONE**
+
+- Same table, columns and unique index. No version bump, migration, backfill or destructive change. No new DataStore key: the session flag lives in memory.
+- Growth: about 38-39k rows on the first download, then about 600 per new business day (1b.4). No row is deleted.
+
+### 1b.13 Proposed architecture-doc change (proposal only; not edited)
+
+`LEGAL_PATHS.md` → EXCHANGE-RATE download (`:586-593`), add:
+```
+  → AddExpenseViewModel / ReceiptScanViewModel history action (user tap, setting On,
+    RateRemedyPolicy = DOWNLOAD_HISTORY)
+    → CurrencyRatesRepositoryImpl.downloadRecentHistory (same PrivacyGate check BEFORE any HTTP;
+      constant ECB 90-day URL on www.ecb.europa.eu; no redirects; bounded, XXE-safe parse)
+    → CurrencyConverter.storeRateHistory → ExchangeRateStore.insertOrUpdateAll (ONE transaction)
+  → Returns CurrencyRateHistoryOutcome (Stored / DisabledByPrivacy / PrivacyCheckFailed /
+    AlreadyInProgress / Failed(reason) / Cancelled; the VM sets Cancelled on a user Cancel,
+    the repository rethrows CancellationException and never returns it)
+FORBIDDEN:
+  ❌ Fetching rate history at preview, save, refusal, start-up or from a worker
+  ❌ Any rate host or file other than the two ECB constants
+  ❌ Storing part of a history payload
+  ❌ lastUpdated-keyed deletion of exchange_rates (deleteOldRates/cleanupOldRates) from production code
+```
+
+### 1b.14 Acceptance examples (synthetic)
+
+Defaults as in §15: home EUR, zone `Europe/Athens`, year 2025, ECB fixtures. The setting is On unless stated. "Today" = Thu 16 Oct 2025 17:30 Athens (after the 16:00 CET publication), so `today − 90` = Fri 18 Jul.
+**Fixture H90:** a synthetic `eurofxref-hist-90d.xml` with 65 dated days, Fri 18 Jul to Thu 16 Oct 2025, newest first. Each day lists 25 catalog currencies, so each day yields 600 pairs and the file yields 39,000 rows. USD = 1.1000 on Fri 3 Oct, 1.0800 on Wed 15 Oct and 1.0850 on Thu 16 Oct; GBP = 0.8700 every day; the other values are arbitrary.
+
+- **AE-1b-1 Happy path (INV-1b-1, 5, 10, 11, 16).** Given the table holds only the 16 Oct daily rows. When a manual USD 20.00 entry is dated Sun 5 Oct 12:00. Then the preview is `Blocked(None)` and the latest stored USD→EUR date is 16 Oct > 5 Oct, so the remedy is `DOWNLOAD_HISTORY`. When the user taps it. Then the outcome is `Stored(days=65, rows=39000, earliestDate=18 Jul, latestDate=16 Oct)` and the region re-evaluates to `Eligible(rateDate=Fri 3 Oct, age 2, DIRECT, ECB)`, with preview "≈ €18.18 · ECB rate of 3 Oct". When the entry is saved. Then `exchangeRateUsed = 1/1.10` (unrounded) and `baseAmount = roundSnapshot(20 × (1/1.10), EUR) = 18.18`.
+- **AE-1b-2 Endpoint unusable (INV-1b-2).** HTTP 404 → `Failed(HTTP_ERROR)`. A 301 to any location → `Failed(HTTP_ERROR)`, with no second connection. `IOException` at connect → `Failed(OFFLINE)`. In every case the row count and every row are unchanged, `setLastRateUpdate` isn't called, the session flag isn't set (the remedy is still `DOWNLOAD_HISTORY`), and a Save is `Refused(NO_RATE)`.
+- **AE-1b-3 Setting gate (INV-1b-3, 4).** Setting Off → the card shows the open-setting action, never the history action. A direct `downloadRecentHistory` call → `DisabledByPrivacy` with zero connections. Corrupted settings → `PrivacyCheckFailed("PRIVACY_GATE_FAILURE")` with zero connections. Nothing turns the setting on.
+- **AE-1b-4 Never automatic (INV-1b-3).** For the blocked AE-1b-1 entry: typing, changing the currency or date, re-opening the sheet and tapping Save (`Refused(NO_RATE)`) open zero connections. Only the history tap opens one, and exactly one.
+- **AE-1b-5 Remedy choice (INV-1b-5).**
+  - (a) Table {7 Oct}, USD entry Wed 15 Oct → `Stale(7 Oct, 8)`. The latest stored date 7 Oct ≤ 15 Oct, so the remedy is `REFRESH_LATEST`.
+  - (b) After a daily refresh stores 16 Oct → still `Stale(7 Oct, 8)`; now 16 Oct > 15 Oct, so the remedy is `DOWNLOAD_HISTORY`.
+  - (c) After H90 → `Eligible(15 Oct, age 0)` with rate 1/1.08.
+  - (d) Empty table, entry 5 Oct → `None`, remedy `REFRESH_LATEST` (first use takes two steps).
+  - (e) A forced BGN selection → `Unsupported`, remedy `NONE`.
+- **AE-1b-6 Window and once per session (INV-1b-5, 6).**
+  - (a) Table {16 Oct}, entry Tue 1 Jul → `None`. 1 Jul < 18 Jul, so `NONE(OUTSIDE_HISTORY_WINDOW)` and no offer.
+  - (b) A synthetic shorter file starting Tue 22 Jul, entry Mon 21 Jul → offered (21 Jul ≥ 18 Jul). The outcome is `Stored(earliestDate=22 Jul, …)` and the entry is still `None`. The session flag is set, so `NONE(HISTORY_ALREADY_DOWNLOADED)` and there is no second offer in that session.
+- **AE-1b-7 Idempotent, single-flight (INV-1b-6).**
+  - (a) H90 downloaded in two sessions → the row count after the second equals the count after the first, every `rate` is equal, and only `lastUpdated` is newer.
+  - (b) A second call while the first runs → `AlreadyInProgress`, with exactly one connection in total.
+  - (c) The pre-existing 16 Oct daily rows are replaced by rows with equal rates (same keys, count unchanged).
+- **AE-1b-8 Parser (INV-1b-7, 8).**
+  - (a) A payload with `<!DOCTYPE … SYSTEM "http://…">` → `PAYLOAD_MALFORMED`, no external fetch attempted, nothing stored.
+  - (b) Two `Cube time="2025-10-15"` → `PAYLOAD_MALFORMED`.
+  - (c) `time="2025-13-01"` or `time=""` → `PAYLOAD_MALFORMED`.
+  - (d) No dated node → `PAYLOAD_EMPTY`.
+  - (e) The 3 Oct day with no valid rate child → `PAYLOAD_MALFORMED`, and the whole payload is rejected.
+  - (f) One child `currency="USD" rate="abc"` on 3 Oct → only that child is skipped; the other 64 days and 3 Oct's other currencies are stored. A USD entry dated 3 Oct is then `Eligible(Thu 2 Oct, age 1)`.
+- **AE-1b-9 Bounds (INV-1b-9).**
+  - (a) A decompressed body of 524,289 bytes → `PAYLOAD_TOO_LARGE`, nothing stored.
+  - (b) `Content-Length: 600000` → `PAYLOAD_TOO_LARGE` before any read.
+  - (c) 71 dated nodes → `PAYLOAD_OUT_OF_BOUNDS`.
+  - (d) Oldest Sun 1 Jun with newest 16 Oct (137 days) → `PAYLOAD_OUT_OF_BOUNDS`.
+  - (e) A day dated Sat 18 Oct when the device's UTC date is 16 Oct → `PAYLOAD_OUT_OF_BOUNDS`.
+- **AE-1b-10 All or nothing (INV-1b-11, 13).**
+  - (a) A store fake that throws on row 30,000 → `Failed(STORE_FAILED)`. The table is identical to before (rows and `lastUpdated`) and `setLastRateUpdate` isn't called.
+  - (b) An active write barrier → `Failed(STORE_FAILED)`, zero rows written.
+  - (c) `setLastRateUpdate` throws after the commit → the outcome is still `Stored`, and all 39,000 rows are present.
+- **AE-1b-11 Rows outside the payload untouched (INV-1b-12).** Given rows for Mon 2 Jun 2025 (an old daily refresh) and 16 Oct. After H90 the 2 Jun rows are byte-identical (same `lastUpdated`), the 16 Oct rows have the same rates and the new `lastUpdated`, and the total is 600 + 39,000.
+- **AE-1b-12 No retention (INV-1b-14).** Across all AE-1b examples there are zero calls to `deleteOldRates`, `cleanupOldRates` or `deleteAllRates`. A static check finds no production caller of `deleteOldRates` or `cleanupOldRates`.
+
+- **AE-1b-13 Stored conversions unchanged (INV-1b-15).** Before the download there are two rows. Row 1: a notification row USD 20.00 dated Fri 3 Oct 12:00 Athens, converted (unflagged, any age) with the 25 Sep rate 1.0950: `exchangeRateUsed = 1/1.095`, `baseAmount = 18.26`. Row 2: a sentinel row GBP 30.00 dated Wed 1 Oct with `baseCurrency=""`. After H90 both rows' stored fields are byte-equal. Analytics' read-time conversion of row 1 now uses the 3 Oct rate (≈ €18.18) and converts row 2 from the 1 Oct rate; that's expected read-time behaviour. Row 2 stays a sentinel row in storage.
+- **AE-1b-14 Weekends and holidays (INV-1b-16).**
+  - (a) With H90, an entry dated Sun 12 Oct → `Eligible(Fri 10 Oct, age 2)`.
+  - (b) With today = Tue 20 May 2025 and a file covering 20 Feb to 20 May: Sat 10 May → `Eligible(Fri 9 May, age 1)`; Thu 1 May (TARGET closed) → `Eligible(Wed 30 Apr, age 1)`; Easter Monday 21 Apr → `Eligible(Thu 17 Apr, age 4)` (Good Friday 18 Apr is closed too).
+- **AE-1b-15 Gap of more than 7 days inside the window (INV-1b-16).** An H90 variant where ISK is missing from 1 to 14 Oct but listed on Tue 30 Sep and Wed 15 Oct. An ISK entry dated Fri 10 Oct → `Stale(30 Sep, 10)`. The session flag is set, so the remedy is `NONE(HISTORY_ALREADY_DOWNLOADED)`. Save → `Refused(STALE_RATE, latestRateDate 30 Sep)`.
+- **AE-1b-16 Non-EUR home (INV-1b-10, 16).** Home USD. H90 stores the direct GBP→USD pair for 3 Oct = 1.1000 / 0.8700 ≈ 1.264368. A GBP 30.00 entry dated 3 Oct → `Eligible(DIRECT, 3 Oct, age 0)` with `baseAmount = roundSnapshot(30 × 1.264368…, USD) = 37.93`. No via-EUR lookup happens.
+- **AE-1b-17 Home quote (INV-1b-10).** Home BGN, today Thu 15 Jan 2026. A synthetic file covers 17 Oct 2025 to 15 Jan 2026; its days up to 31 Dec 2025 list BGN, its later days don't. Result: `Failed(HOME_QUOTE_UNAVAILABLE)` (judged on the newest day), and nothing is stored, including the days that list BGN. Home "XXX" (not in the catalog) → `Failed(INVALID_HOME_CURRENCY)`.
+- **AE-1b-18 Logs (INV-1b-18).** Across AE-1b-1..17, captured `Timber` output and diagnostics contain only `RATE_HISTORY_DOWNLOAD` and an outcome code (for example `STORED`, `HTTP_ERROR`, `PAYLOAD_TOO_LARGE`). They contain no URL, host, status, header, payload fragment, date, rate, currency code, count, home currency, amount or exception message.
+- **AE-1b-19 Request content (INV-1b-19).** The request for the 5 Oct entry (AE-1b-1) and the request for an entry dated Wed 20 Aug are identical: the same constant URL, `GET`, no query, no body, no cookie, no app-specific header, and no redirect followed.
+- **AE-1b-20 Cancellation and timeout (INV-1b-17; 1b.10).**
+  - (a) The sheet is dismissed while the body is being read → `CancellationException` propagates, no status is recorded, nothing is stored.
+  - (b) It's dismissed after the store call started → the transaction commits whole or not at all; never a subset of days.
+  - (c) A server that drips bytes for more than 30 s → `Failed(TIMEOUT)`, nothing stored, and the VM scope stays active.
+- **AE-1b-21 Home change while the sheet is open (INV-1b-20).**
+  - (a) Home EUR, amount "20.00", home selected; the home becomes USD (for example by a restore) → the draft is discarded (blank amount, USD selected) and one note is shown. No USD 20.00 can be saved from that draft.
+  - (b) USD override, "20.00", home EUR → GBP → USD and "20.00" are kept, and the preview is against GBP.
+  - (c) USD override, home → USD → `Selected(USD, home)`, "20.00" kept, no preview.
+  - (d) Blank amount, home EUR → USD → USD is selected; nothing else changes.
+- **AE-1b-22 Home change between sessions (INV-1b-20).** A home draft "12.50" (EUR) is retained, the user changes home to GBP in settings, and then reopens the sheet → blank amount, GBP selected. With the home unchanged, "12.50" EUR is kept (R-1(c), unchanged).
+- **AE-1b-23 Home change during SAVING (INV-1b-20).** A home-selected EUR "20.00" save is in flight when the home becomes USD. The request still carries `currency=EUR`, and TLC resolves home USD, so this is a flagged foreign evaluation of EUR. If `Eligible` → the row is EUR 20.00 with `baseCurrency=USD` and the sheet closes. If refused → the refusal is mapped, then rule (c) discards the draft.
+- **AE-1b-24 User Cancel (INV-1b-21; D-1b-3).** Setting On, the AE-1b-1 entry, a download in `DOWNLOADING`.
+  - (a) Cancel is tapped while the body is being read → `CancellationException` propagates out of `downloadRecentHistory` (no `Failed`, no `Stored`). The table is unchanged (rows and `lastUpdated`), `setLastRateUpdate` isn't called, `historyStatus = CANCELLED`, `historyDownloadedThisSession` is false, and the remedy is still `DOWNLOAD_HISTORY`. One diagnostic with outcome code `CANCELLED` is emitted, with no URL, date or count.
+  - (b) A store fake that suspends inside the transaction; Cancel is tapped → the table holds either zero rows or all 39,000 rows of H90, never a subset; `historyStatus = CANCELLED` either way.
+  - (c) After (a), another tap on the history action starts a normal download → `Stored`, status back to `IDLE`, session flag set.
+  - (d) In `IDLE` there is no Cancel action; no state changes.
+  - (e) The sheet is dismissed instead (no Cancel tap) → the job is cancelled and no status is recorded (AE-1b-20(a)).
+- **AE-1b-25 Outcome to UX state (D-1b-5; table in `ux-flows.md` 1b.2).**
+  - (a) Table {16 Oct}, entry Tue 1 Jul → `NONE(OUTSIDE_HISTORY_WINDOW)` → `TOO_OLD` (`DONE_TOO_OLD` if reached after a download), no button.
+  - (b) AE-1b-6(b): session `Stored.earliestDate` = 22 Jul, entry Mon 21 Jul, `HISTORY_ALREADY_DOWNLOADED` → 21 Jul is before 22 Jul → `DONE_TOO_OLD`.
+  - (c) AE-1b-15: ISK entry Fri 10 Oct, `HISTORY_ALREADY_DOWNLOADED`, session earliest 18 Jul → 10 Oct is not before 18 Jul → `DONE_NO_RATE`.
+  - (d) `Failed(OFFLINE)` → `FAILED_OFFLINE`. `Failed(INVALID_HOME_CURRENCY)` and `Failed(HOME_QUOTE_UNAVAILABLE)` → `FAILED_HOME_UNAVAILABLE`. Each of `TIMEOUT`, `HTTP_ERROR`, `PAYLOAD_TOO_LARGE`, `PAYLOAD_EMPTY`, `PAYLOAD_MALFORMED`, `PAYLOAD_OUT_OF_BOUNDS`, `STORE_FAILED` and `AlreadyInProgress` → `FAILED`. `Cancelled` → `CANCELLED`.
+
+### 1b.15 Open decisions
+
+**None for the owner.** Every item in the 1b brief was decided from the frame:
+- endpoint: same host, constant, no fallback;
+- trigger: user tap, setting On, remedy policy, daily first;
+- storage: cross pairs, one transaction, bounded;
+- parser bounds;
+- retention: none, INV-22 kept;
+- eligibility: unchanged rule;
+- closed outcomes;
+- privacy mitigations;
+- F-B2-HOME-CHANGE: discard a home draft whose denomination would change;
+- owners, with no new legal path and schema NONE.
+
+Not decisions, but tracked:
+- **VG-1b-1** (implementation STOP condition): confirm the URL, format, size and day count on ECB's own page.
+- **[U]:** whether a Room list `@Insert` runs as one transaction (generated code); whether `exchange_rates` is in backups; whether the receipt-review selection can follow home implicitly; actual file size.
+- **Routed, not 1b:** a `validDate`-keyed retention policy (needs an analytics decision); F-B2-TYPED-REFRESH (typed outcomes for the daily `refresh`); D-B1-1 three-decimal homes (unaffected: all 28 catalog currencies have 0 or 2 digits, §1.5).
+- **Release:** H-1 stays the release gate for B2, C and loan S11. 1b also needs the es/el sign-off of its strings (ux-flows 1b) and the F-A11Y-LATCH-PURE review at the 1b candidate.
+
+Reconciliation notes (owner-approvals 94):
+- **Routed, not 1b (D-1b-4):** F-1b-CURMGMT, a Currency-management "Rate history" row. INV-1b-3 stays as written; the follow-up needs its own owner entry and an INV-1b-3 extension.
+- **Derived, flagged for the combined guardian:** (1) `AlreadyInProgress` has no D-1b-5 row; ux-flows 1b.2 presents it as `FAILED`. (2) INV-1b-20(c) says "one bounded note" for both the open-sheet and the between-sessions discard, so the UX shows the note `mec_home_changed_cleared` in both cases (ux-flows 1b.4, 1b.9).
+
+Count: **21** invariants (INV-1b-1..21; INV-1b-21 is the user Cancel row in 1b.7), **25** examples (AE-1b-1..25), 10 facts. Schema impact: **none**.
