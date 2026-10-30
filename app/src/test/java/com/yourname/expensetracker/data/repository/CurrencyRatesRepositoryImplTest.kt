@@ -28,7 +28,6 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
-import org.xml.sax.SAXParseException
 import java.io.ByteArrayInputStream
 import java.time.Instant
 import java.util.Locale
@@ -282,10 +281,132 @@ class CurrencyRatesRepositoryImplTest {
             fixture.repository.refreshFromStream("USD", stream(xml))
             fail("DOCTYPE payload must be rejected")
         } catch (error: Exception) {
-            assertTrue(error is SAXParseException)
+            assertTrue(error is IllegalStateException)
+            assertEquals("RATE_PAYLOAD_MALFORMED", error.message)
         }
         assertTrue(fixture.store.rates.isEmpty())
         assertTrue(fixture.settings.lastRateUpdates.isEmpty())
+    }
+
+    @Test
+    fun `containsDtdDeclaration detects DOCTYPE and ENTITY case-insensitively`() {
+        val repository = fixture().repository
+
+        assertTrue(repository.containsDtdDeclaration("<!DOCTYPE foo>"))
+        assertTrue(repository.containsDtdDeclaration("<?xml version='1.0'?><!doctype foo>"))
+        assertTrue(repository.containsDtdDeclaration("<!DocType foo>"))
+        assertTrue(repository.containsDtdDeclaration("<a/><!ENTITY x 'y'>"))
+        assertTrue(repository.containsDtdDeclaration("<a/><!eNtItY x 'y'>"))
+        assertFalse(repository.containsDtdDeclaration(ecbXml()))
+        assertFalse(repository.containsDtdDeclaration("<a>DOCTYPE and ENTITY words without bang</a>"))
+        assertFalse(repository.containsDtdDeclaration(""))
+    }
+
+    @Test
+    fun `containsDtdDeclaration byte overload rejects undecodable bytes`() {
+        val repository = fixture().repository
+
+        assertFalse(repository.containsDtdDeclaration(ecbXml().toByteArray(Charsets.UTF_8)))
+        assertTrue(repository.containsDtdDeclaration("<!DOCTYPE a>".toByteArray(Charsets.UTF_8)))
+        assertTrue(repository.containsDtdDeclaration(byteArrayOf(0xC3.toByte(), 0x28)))
+    }
+
+    @Test
+    fun `DOCTYPE payload in any case is rejected and nothing is stored`() = runTest {
+        val body = "<gesmes:Envelope xmlns:gesmes='http://www.gesmes.org/xml/2002-08-01'/>"
+        val payloads = listOf(
+            "<!DOCTYPE x>" + ecbXml(),
+            "<!doctype x>" + ecbXml(),
+            ecbXml().replace("<gesmes:Envelope", "<!DocType x><gesmes:Envelope"),
+            "<!DOCTYPE x [<!ENTITY a 'b'>]>$body"
+        )
+        payloads.forEach { assertRejected(it.toByteArray(Charsets.UTF_8), "RATE_PAYLOAD_MALFORMED") }
+    }
+
+    @Test
+    fun `ENTITY declaration payload is rejected and nothing is stored`() = runTest {
+        val xml = ecbXml().replace("<gesmes:Envelope", "<!entity a 'b'><gesmes:Envelope")
+        assertRejected(xml.toByteArray(Charsets.UTF_8), "RATE_PAYLOAD_MALFORMED")
+    }
+
+    @Test
+    fun `UTF-16LE with BOM payload is rejected and nothing is stored`() = runTest {
+        val bytes = byteArrayOf(0xFF.toByte(), 0xFE.toByte()) + ecbXml().toByteArray(Charsets.UTF_16LE)
+        assertRejected(bytes, "RATE_PAYLOAD_MALFORMED")
+    }
+
+    @Test
+    fun `NUL-interleaved UTF-16BE payload hiding a DOCTYPE is rejected and nothing is stored`() = runTest {
+        val xml = "<!DOCTYPE x>" + ecbXml()
+        assertRejected(xml.toByteArray(Charsets.UTF_16BE), "RATE_PAYLOAD_MALFORMED")
+        assertRejected(ecbXml().toByteArray(Charsets.UTF_16BE), "RATE_PAYLOAD_MALFORMED")
+    }
+
+    @Test
+    fun `UTF-8 BOM payload is rejected and nothing is stored`() = runTest {
+        val bytes = byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte()) + ecbXml().toByteArray(Charsets.UTF_8)
+        assertRejected(bytes, "RATE_PAYLOAD_MALFORMED")
+    }
+
+    @Test
+    fun `invalid UTF-8 byte sequence is rejected and nothing is stored`() = runTest {
+        val head = ecbXml().replace("<Cube>", "<!-- ").substringBefore("<!-- ")
+        val bytes = head.toByteArray(Charsets.UTF_8) + byteArrayOf(0xC3.toByte(), 0x28) +
+            ecbXml().substringAfter("<Cube>").let { "<Cube>$it" }.toByteArray(Charsets.UTF_8)
+        assertRejected(bytes, "RATE_PAYLOAD_MALFORMED")
+    }
+
+    @Test
+    fun `payload over 256 KiB is rejected as too large and nothing is stored`() = runTest {
+        val bytes = paddedPayload(256 * 1024 + 1)
+        assertEquals(256 * 1024 + 1, bytes.size)
+        assertRejected(bytes, "RATE_PAYLOAD_TOO_LARGE")
+    }
+
+    @Test
+    fun `payload of exactly 256 KiB is still accepted`() = runTest {
+        val fixture = fixture()
+        val bytes = paddedPayload(256 * 1024)
+        assertEquals(256 * 1024, bytes.size)
+
+        val stored = fixture.repository.refreshFromStream("USD", ByteArrayInputStream(bytes))
+
+        assertTrue(stored > 0)
+        assertTrue(fixture.store.rates.isNotEmpty())
+    }
+
+    @Test
+    fun `valid UTF-8 payload with non-ASCII comment still parses and stores`() = runTest {
+        val fixture = fixture()
+        val xml = ecbXml().replace("<Cube>", "<!-- café € --><Cube>")
+
+        val stored = fixture.repository.refreshFromStream("USD", stream(xml))
+
+        assertTrue(stored > 0)
+        assertTrue(fixture.store.rates.values.all { it.validDate == publicationMillis })
+        assertEquals(listOf(fetchedNextDayMillis), fixture.settings.lastRateUpdates)
+    }
+
+    private suspend fun assertRejected(bytes: ByteArray, expectedMessage: String) {
+        val fixture = fixture()
+        try {
+            fixture.repository.refreshFromStream("USD", ByteArrayInputStream(bytes))
+            fail("Payload must be rejected with $expectedMessage")
+        } catch (error: IllegalStateException) {
+            assertEquals(expectedMessage, error.message)
+        }
+        assertTrue(fixture.store.rates.isEmpty())
+        assertTrue(fixture.settings.lastRateUpdates.isEmpty())
+    }
+
+    /** Valid ECB XML padded with an ASCII comment so the UTF-8 body is exactly [totalBytes] long. */
+    private fun paddedPayload(totalBytes: Int): ByteArray {
+        val base = ecbXml()
+        val overhead = "<!---->".length
+        val fill = totalBytes - base.toByteArray(Charsets.UTF_8).size - overhead
+        require(fill >= 0)
+        val xml = base + "<!--" + "a".repeat(fill) + "-->"
+        return xml.toByteArray(Charsets.UTF_8)
     }
 
     private fun fixture(
