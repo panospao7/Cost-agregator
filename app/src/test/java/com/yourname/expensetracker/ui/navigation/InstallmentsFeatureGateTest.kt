@@ -29,12 +29,12 @@ class InstallmentsFeatureGateTest {
     // ---- FeatureConfig menu gate ----
 
     @Test
-    fun `installments is absent from availableFeatures by default while the gate is false`() {
-        // Canary: S13 flips InstallmentsFeature.ENABLED and must update this test.
-        assertFalse(InstallmentsFeature.ENABLED)
+    fun `installments is present in availableFeatures by default while the gate is true`() {
+        // Canary: S13-b (owner-approvals 91(b)): enabled on this branch; flip back = revert S13-b.
+        assertTrue(InstallmentsFeature.ENABLED)
         listOf(true, false).forEach { bankSync ->
             val ids = FeatureConfig.availableFeatures(bankSyncAvailable = bankSync).map { it.id }
-            assertFalse("bankSync=$bankSync", InstallmentsFeature.FEATURE_ID in ids)
+            assertTrue("bankSync=$bankSync", InstallmentsFeature.FEATURE_ID in ids)
         }
     }
 
@@ -129,9 +129,14 @@ class InstallmentsFeatureGateTest {
                 InstallmentsFeature.shouldRedirectHome(destination)
             )
         }
-        // Canary: while dormant, the default must redirect an installment destination.
-        assertFalse(InstallmentsFeature.ENABLED)
-        assertTrue(InstallmentsFeature.shouldRedirectHome(NavigationDestination.Installments))
+        // Canary: S13-b (owner-approvals 91(b)): enabled on this branch; flip back = revert S13-b.
+        assertTrue(InstallmentsFeature.ENABLED)
+        // Enabled by default: no installment destination redirects Home.
+        installmentDestinations.forEach {
+            assertFalse("$it", InstallmentsFeature.shouldRedirectHome(it))
+        }
+        // The explicit disabled seam still redirects.
+        assertTrue(InstallmentsFeature.shouldRedirectHome(NavigationDestination.Installments, enabled = false))
     }
 
     @Test

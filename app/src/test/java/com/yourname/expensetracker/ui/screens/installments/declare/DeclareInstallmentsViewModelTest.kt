@@ -61,9 +61,10 @@ class DeclareInstallmentsViewModelTest : ViewModelTestUtils() {
     private fun ref(id: Long = 9L) = InstallmentPlanRef(id, InstallmentPlanStatus.ACTIVE)
 
     @Test
-    fun `dormant - open does nothing while the feature flag is off`() = runTest(testDispatcher) {
+    fun `flag off - open does nothing while the feature seam is disabled`() = runTest(testDispatcher) {
         val vm = viewModel()
-        vm.open(target)
+        // S13-b (owner-approvals 91(b)): the flag-off path is now covered via the explicit seam.
+        vm.open(target, enabled = false)
         assertNull(vm.state.value.target)
         assertNull(vm.state.value.form)
         coVerify(exactly = 0) { coordinator.declareOnExpense(any(), any(), any()) }

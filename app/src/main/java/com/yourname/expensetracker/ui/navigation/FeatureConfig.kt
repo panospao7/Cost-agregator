@@ -214,8 +214,8 @@ data class FeatureConfig(
                 descriptionRes = R.string.feature_manual_recurring_desc,
                 isNew = true
             ),
-            // loan-installments S10a: withheld from the menu while InstallmentsFeature.ENABLED is false
-            // (see availableFeatures); listed here so the id/destination contract tests cover it.
+            // loan-installments S10a: shown in the menu while InstallmentsFeature.ENABLED is true and
+            // withheld otherwise (see availableFeatures); listed here so the id/destination contract tests cover it.
             FeatureConfig(
                 id = InstallmentsFeature.FEATURE_ID,
                 titleRes = R.string.installments_title,

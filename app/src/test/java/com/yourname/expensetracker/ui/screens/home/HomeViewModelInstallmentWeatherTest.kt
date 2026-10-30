@@ -389,7 +389,7 @@ class HomeViewModelInstallmentWeatherTest {
     }
 
     @Test
-    fun `the production default of the seam is the dormant compile-time flag`() {
+    fun `the production default of the seam is the compile-time flag, now on`() {
         // createViewModel overrides the seam, so build the VM directly to read the untouched default.
         val untouched = HomeViewModel(
             mockk<Application>(relaxed = true),
@@ -417,7 +417,8 @@ class HomeViewModelInstallmentWeatherTest {
         createdViewModels += untouched
 
         assertEquals(com.yourname.expensetracker.ui.navigation.InstallmentsFeature.ENABLED, untouched.installmentsEnabled)
-        assertFalse(untouched.installmentsEnabled)
+        // S13-b (owner-approvals 91(b)): the compile-time default is now true.
+        assertTrue(untouched.installmentsEnabled)
     }
 
     /**

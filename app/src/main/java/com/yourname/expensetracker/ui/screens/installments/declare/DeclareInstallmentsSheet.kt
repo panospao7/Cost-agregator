@@ -201,8 +201,8 @@ fun declareMutationMessage(state: InstallmentPlanMutationState): Int? = when (st
  * [InstallmentPlanLifecycleCoordinator.delete] (AE-14); it fails with PLAN_HAS_PAYMENTS once a payment
  * exists. This class never touches a DAO, the transaction lifecycle coordinator or an expense
  * repository, and never deletes an expense (INV-23). Post-commit batches go through the shared
- * [InstallmentPostCommitDispatcher]. Dormant while [InstallmentsFeature.ENABLED] is false: [open] is a
- * no-op. Operation labels reuse the shared enum: CREATE = declare, DELETE = undo.
+ * [InstallmentPostCommitDispatcher]. Gated by [InstallmentsFeature.ENABLED]: [open] is a
+ * no-op when the flag is false. Operation labels reuse the shared enum: CREATE = declare, DELETE = undo.
  */
 @HiltViewModel
 class DeclareInstallmentsViewModel @Inject constructor(

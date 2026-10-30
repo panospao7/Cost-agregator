@@ -277,7 +277,7 @@ object TransactionsLoadMorePolicy {
 
 /**
  * Separate from [TransactionsViewModel] on purpose (overlap file): holds the installment row marks and
- * the installments filter. Dormant while [InstallmentsFeature.ENABLED] is false: [refresh] then reads
+ * the installments filter. Gated by [InstallmentsFeature.ENABLED]: when it is false [refresh] reads
  * nothing and the filter cannot turn on. Reads only; every write is in the declare sheet.
  */
 @HiltViewModel

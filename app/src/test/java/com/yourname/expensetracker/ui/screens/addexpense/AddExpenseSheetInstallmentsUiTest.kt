@@ -12,6 +12,7 @@ import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsOff
+import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasText
@@ -102,7 +103,7 @@ class AddExpenseSheetInstallmentsUiTest {
         ApplicationProvider.getApplicationContext<Application>().getString(resId, *args)
 
     /**
-     * [featureEnabled] null = the sheet's DEFAULT (the real flag, false); true/false = the composable parameter.
+     * [featureEnabled] null = the sheet's DEFAULT (the real flag, true since S13-b); true/false = the composable parameter.
      */
     private fun showSheet(featureEnabled: Boolean? = true) {
         viewModel = harness.createViewModel()
@@ -149,27 +150,62 @@ class AddExpenseSheetInstallmentsUiTest {
     }
 
     @Test
-    fun defaultFlag_theSheetRendersNoInstallmentsSection_andTheDefaultViewModelGateKeepsItOff() {
+    fun defaultFlag_theSheetRendersTheInstallmentsSection_andTheDefaultViewModelGateAllowsIt() {
+        // S13-b (owner-approvals 91(b)): enabled on this branch; flip back = revert S13-b.
+        assertTrue(com.yourname.expensetracker.ui.navigation.InstallmentsFeature.ENABLED)
         showSheet(featureEnabled = null)
 
-        switchNode.assertDoesNotExist()
+        switchNode.assertExists().assertIsOff()
         composeRule.runOnIdle { viewModel.setInstallmentsEnabled(true) } // the production call: default flag only
         composeRule.waitForIdle()
 
-        assertFalse(installments.on)
-        composeRule.onNodeWithText(repeatLabel).assertExists()
+        assertTrue(installments.on)
+        composeRule.onNodeWithText(repeatLabel).assertDoesNotExist()
     }
 
     @Test
-    fun productionSwitchCall_usesTheDefaultFlag_soAClickDoesNotTurnInstallmentsOn() {
+    fun productionSwitchCall_usesTheDefaultFlag_soAClickTurnsInstallmentsOn() {
         showSheet(featureEnabled = true)
 
         switchNode.assertExists().assertIsOff().assertIsEnabled()
         switchNode.performSemanticsAction(SemanticsActions.OnClick)
         composeRule.waitForIdle()
 
-        assertFalse("the sheet calls setInstallmentsEnabled(on) with the default flag only", installments.on)
+        assertTrue("the sheet calls setInstallmentsEnabled(on) with the default (enabled) flag", installments.on)
+        composeRule.onNodeWithTag(AddExpenseInstallmentsTags.COUNT).assertExists()
+    }
+
+    // ---- S11c item 4: the switch click drives the on-change callback with true, then false ------------------------
+
+    @Test
+    fun switchClick_togglesOnThenOff_throughTheOnCheckedChangeCallback() {
+        showSheet(featureEnabled = null) // the default flag, now enabled
+        switchNode.assertExists().assertIsOff().assertIsEnabled()
+        assertFalse(installments.on)
+
+        switchNode.performSemanticsAction(SemanticsActions.OnClick) // onCheckedChange(true)
+        composeRule.waitForIdle()
+        assertTrue(installments.on)
+        switchNode.assertIsOn()
+
+        switchNode.performSemanticsAction(SemanticsActions.OnClick) // onCheckedChange(false)
+        composeRule.waitForIdle()
+        assertFalse(installments.on)
+        switchNode.assertIsOff()
         composeRule.onNodeWithTag(AddExpenseInstallmentsTags.COUNT).assertDoesNotExist()
+    }
+
+    @Test
+    fun switchClick_whenTheSwitchIsDisabled_doesNotTurnInstallmentsOn() {
+        showSheet(featureEnabled = true)
+        composeRule.runOnIdle { viewModel.setIsNotMine(true) }
+        composeRule.waitForIdle()
+        switchNode.assertIsNotEnabled()
+
+        switchNode.performSemanticsAction(SemanticsActions.OnClick)
+        composeRule.waitForIdle()
+
+        assertFalse(installments.on)
     }
 
     @Test

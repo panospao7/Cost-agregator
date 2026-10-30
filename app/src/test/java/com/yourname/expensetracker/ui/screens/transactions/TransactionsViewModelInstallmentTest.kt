@@ -223,16 +223,17 @@ class TransactionsViewModelInstallmentTest : ViewModelTestUtils() {
     }
 
     @Test
-    fun `dormant - no row hooks while the flag is off`() {
-        // Default flag = false: no row UI at all, so no chip, badge or menu entry can render.
-        assertNull(InstallmentRowUi.of(expense(10L), marks))
+    fun `flag off - no row hooks while the seam is disabled`() {
+        // S13-b (owner-approvals 91(b)): explicit enabled = false: no row UI at all, so no chip, badge or menu entry can render.
+        assertNull(InstallmentRowUi.of(expense(10L), marks, enabled = false))
     }
 
     @Test
-    fun `dormant - the loader reads nothing and the view model keeps the filter off`() = runTest(testDispatcher) {
+    fun `flag off - the loader reads nothing and the view model keeps the filter off`() = runTest(testDispatcher) {
+        // S13-b (owner-approvals 91(b)): the flag-off path is covered via the explicit enabled = false seam.
         val repository = mockk<InstallmentPlanReadRepository>() // strict: any call fails the test
         val loader = InstallmentRowMarksLoader(repository)
-        assertEquals(InstallmentRowMarks.EMPTY, loader.load())
+        assertEquals(InstallmentRowMarks.EMPTY, loader.load(enabled = false))
         coVerify(exactly = 0) { repository.loadBudgetInputs() }
         coVerify(exactly = 0) { repository.loadOverview() }
         coVerify(exactly = 0) { repository.loadHistory() }
@@ -240,8 +241,8 @@ class TransactionsViewModelInstallmentTest : ViewModelTestUtils() {
         coVerify(exactly = 0) { repository.loadSuggestions() }
 
         val vm = TransactionsInstallmentViewModel(loader)
-        vm.refresh()
-        vm.toggleFilter()
+        vm.refresh(enabled = false)
+        vm.toggleFilter(enabled = false)
         testDispatcher.scheduler.advanceUntilIdle()
         assertEquals(InstallmentRowMarks.EMPTY, vm.marks.value)
         assertFalse(vm.filterOn.value)

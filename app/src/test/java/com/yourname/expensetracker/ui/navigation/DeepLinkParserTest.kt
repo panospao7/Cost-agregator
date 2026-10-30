@@ -124,7 +124,8 @@ class DeepLinkParserTest {
             "expensetracker://installments",
             "expensetracker://installment_plan?id=42"
         ).forEach { uri ->
-            val result = DeepLinkPolicy.evaluate(Intent.ACTION_VIEW, uri)
+            // S13-b: explicit seam, so flag-off behaviour stays covered now that the default is enabled.
+            val result = DeepLinkPolicy.evaluate(Intent.ACTION_VIEW, uri, installmentsEnabled = false)
             assertEquals(
                 "Flag false must reject $uri",
                 DeepLinkPolicyResult.Rejected(DeepLinkRejection.UNKNOWN_HOST),
@@ -135,16 +136,28 @@ class DeepLinkParserTest {
     }
 
     @Test
-    fun `installments links are rejected by default while the compile-time gate is false`() {
-        // Canary: the enablement slice (S13) flips InstallmentsFeature.ENABLED and must update this test.
-        assertFalse(InstallmentsFeature.ENABLED)
+    fun `installments links are accepted by default while the compile-time gate is true`() {
+        // Canary: S13-b (owner-approvals 91(b)): enabled on this branch; flip back = revert S13-b.
+        assertTrue(InstallmentsFeature.ENABLED)
+        assertEquals(
+            DeepLinkPolicyResult.Accepted(DeepLinkRequest(DeepLinkHost.INSTALLMENTS)),
+            DeepLinkPolicy.evaluate(Intent.ACTION_VIEW, "expensetracker://installments")
+        )
+        assertEquals(
+            DeepLinkPolicyResult.Accepted(DeepLinkRequest(DeepLinkHost.INSTALLMENT_PLAN, planId = 42L)),
+            DeepLinkPolicy.evaluate(Intent.ACTION_VIEW, "expensetracker://installment_plan?id=42")
+        )
+    }
+
+    @Test
+    fun `installments links stay rejected when the explicit seam is false regardless of the default`() {
         listOf(
             "expensetracker://installments",
             "expensetracker://installment_plan?id=42"
         ).forEach { uri ->
             assertEquals(
                 DeepLinkPolicyResult.Rejected(DeepLinkRejection.UNKNOWN_HOST),
-                DeepLinkPolicy.evaluate(Intent.ACTION_VIEW, uri)
+                DeepLinkPolicy.evaluate(Intent.ACTION_VIEW, uri, installmentsEnabled = false)
             )
         }
     }

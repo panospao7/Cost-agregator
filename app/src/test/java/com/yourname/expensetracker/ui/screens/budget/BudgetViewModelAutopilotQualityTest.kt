@@ -85,7 +85,12 @@ class BudgetViewModelAutopilotQualityTest : ViewModelTestUtils() {
             timeProvider = timeProvider,
             currencySettingsRepository = currencySettingsRepository,
             database = mockk(),
-            installmentReadRepository = mockk(relaxed = true)
+            installmentReadRepository = io.mockk.mockk<com.yourname.expensetracker.domain.installment.InstallmentPlanReadRepository>().also {
+                // S13-b: flag is on; a relaxed Flow never emits, so stub the enabled path benignly.
+                io.mockk.every { it.observeChanges() } returns kotlinx.coroutines.flow.flowOf(Unit)
+                io.mockk.coEvery { it.loadBudgetInputs() } returns
+                    com.yourname.expensetracker.domain.installment.readmodel.InstallmentBudgetInputs(emptyList(), 0)
+            }
         )
     }
 
@@ -282,7 +287,12 @@ class BudgetViewModelAutopilotQualityTest : ViewModelTestUtils() {
                 timeProvider = timeProvider,
                 currencySettingsRepository = currencySettingsRepository,
                 database = database,
-                installmentReadRepository = io.mockk.mockk(relaxed = true)
+                installmentReadRepository = io.mockk.mockk<com.yourname.expensetracker.domain.installment.InstallmentPlanReadRepository>().also {
+                    // S13-b: flag is on; a relaxed Flow never emits, so stub the enabled path benignly.
+                    io.mockk.every { it.observeChanges() } returns kotlinx.coroutines.flow.flowOf(Unit)
+                    io.mockk.coEvery { it.loadBudgetInputs() } returns
+                        com.yourname.expensetracker.domain.installment.readmodel.InstallmentBudgetInputs(emptyList(), 0)
+                }
             )
 
             val actionableRec = recommendation(

@@ -214,7 +214,7 @@ internal fun destinationFromSaveToken(
         baseToken == "recurring_expenses" -> NavigationDestination.RecurringExpenses
         baseToken == "manual_recurring_expense" -> NavigationDestination.ManualRecurringExpense
         // Installments (S10a): restorable as plain destinations; rendering is gated by
-        // InstallmentsFeature.ENABLED in MainActivity (redirects Home while dormant).
+        // InstallmentsFeature.ENABLED in MainActivity (redirects Home when the flag is false).
         baseToken == "installments" -> NavigationDestination.Installments
         baseToken == "installment_plan" -> params["id"]?.toLongOrNull()
             ?.takeIf { it > 0L }
@@ -499,7 +499,7 @@ fun ProvideNavigationController(
     // when the bank-sync surface is unavailable in this build.
     val bankSyncAvailable = remember { com.yourname.expensetracker.domain.bank.BankFeatureAvailability().isBankSyncAvailable }
     // loan-installments S10a: the token layer stays ungated (round-trip contract); the restore into
-    // the UI drops installment destinations while InstallmentsFeature.ENABLED is false (fall back
+    // the UI drops installment destinations if InstallmentsFeature.ENABLED is false (fall back
     // to Home / drop from the back stack).
     val restoredDestination = destinationFromSaveToken(
         token = persistedState.destinationToken,

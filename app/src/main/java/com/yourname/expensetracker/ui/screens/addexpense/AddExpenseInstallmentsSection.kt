@@ -65,7 +65,7 @@ internal object AddExpenseInstallmentsTags {
  * plan amendment "S11 re-anchor after MEC B2/C" sections 3 and 4). Placed under the Repeat row.
  *
  * Renders NOTHING unless [featureEnabled] ([InstallmentsFeature.ENABLED] by default): the section is
- * dormant, and the view model's `setInstallmentsEnabled` is gated by the same flag, so `installments.on`
+ * hidden when the flag is false, and the view model's `setInstallmentsEnabled` is gated by the same flag, so `installments.on`
  * can never become true while the feature is off. The currency is the form's one MEC currency control
  * (INSTALLMENT mode, EUR/USD); there is no plan-currency row here. All state lives in
  * [AddExpenseInstallmentsState] on the view model (no rememberSaveable); only the date-picker open flag

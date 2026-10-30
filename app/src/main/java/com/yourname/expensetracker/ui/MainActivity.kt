@@ -713,8 +713,8 @@ fun MainScreen(
                         onNavigateBack = { navigation.navigateBack() }
                     )
                 }
-                // loan-installments S10a: dormant. While InstallmentsFeature.ENABLED is false none of
-                // the installment destinations is rendered; they redirect Home like deferred features.
+                // loan-installments S10a/S13-b: gated by InstallmentsFeature.ENABLED (the single switch).
+                // If it is false none of the installment destinations is rendered; they redirect Home.
                 is NavigationDestination.Installments -> {
                     if (InstallmentsFeature.shouldRedirectHome(currentDestination)) {
                         androidx.compose.runtime.LaunchedEffect(Unit) { navigation.navigateHome() }
@@ -729,7 +729,7 @@ fun MainScreen(
                     }
                 }
                 // Plan detail and history (S10a-2): same gate helper as the overview, so all three
-                // stay dormant while InstallmentsFeature.ENABLED is false.
+                // redirect Home if InstallmentsFeature.ENABLED is false.
                 is NavigationDestination.InstallmentPlanDetail -> {
                     if (InstallmentsFeature.shouldRedirectHome(currentDestination)) {
                         androidx.compose.runtime.LaunchedEffect(Unit) { navigation.navigateHome() }

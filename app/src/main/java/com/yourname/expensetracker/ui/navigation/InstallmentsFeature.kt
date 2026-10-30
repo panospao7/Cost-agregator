@@ -3,18 +3,18 @@ package com.yourname.expensetracker.ui.navigation
 /**
  * Compile-time gate of the installments and loans feature (loan-installments S10a).
  *
- * While [ENABLED] is false the feature stays dormant:
+ * Loan S13-b (owner-approvals 91(b)): the feature is enabled on this branch. It stays unreleased under MEC H-1
+ * until MEC 1b. This flag remains the single switch; when false:
  *  - the Features menu entry is withheld ([FeatureConfig.availableFeatures]);
  *  - the installment destinations are never rendered (MainActivity redirects Home);
  *  - the `installments` and `installment_plan` deep-link tokens are rejected
  *    (`DeepLinkPolicy.evaluate(installmentsEnabled = ENABLED)` returns UNKNOWN_HOST for them).
  *
- * Loan S13-a: the manifest hosts, the policy branches and the post-unlock confirmation dialog now exist, and are
- * gated only by the policy's `installmentsEnabled` parameter. The flag itself is flipped only by the enablement
- * slice (S13-b).
+ * Loan S13-a: the manifest hosts, the policy branches and the post-unlock confirmation dialog exist, and the
+ * deep links are confirmation-gated; they are gated by the policy's `installmentsEnabled` parameter.
  */
 object InstallmentsFeature {
-    const val ENABLED: Boolean = false
+    const val ENABLED: Boolean = true
 
     /** Stable id of the Features menu entry. */
     const val FEATURE_ID: String = "installments"
