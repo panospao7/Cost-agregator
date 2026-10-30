@@ -25,13 +25,18 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.w3c.dom.Element
+import org.xml.sax.InputSource
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.io.InputStream
+import java.io.StringReader
 import java.net.HttpURLConnection
 import java.net.SocketTimeoutException
 import java.net.URL
+import java.nio.ByteBuffer
+import java.nio.charset.CharacterCodingException
+import java.nio.charset.CodingErrorAction
 import java.time.LocalDate
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
@@ -42,6 +47,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import javax.xml.XMLConstants
 import javax.xml.parsers.DocumentBuilderFactory
+import javax.xml.parsers.ParserConfigurationException
 import timber.log.Timber
 
 @Singleton
@@ -67,6 +73,7 @@ class CurrencyRatesRepositoryImpl @Inject constructor(
         internal const val MAX_HISTORY_SPAN_DAYS = 100L
         internal const val HISTORY_DEADLINE_MS = 30_000L
         private const val READ_BUFFER_BYTES = 8 * 1024
+        private const val MAX_DAILY_BYTES = 256 * 1024
         private const val HISTORY_CODE_CANCELLED = "CANCELLED"
 
         /** Row cap = MAX_HISTORY_DAYS x c x (c - 1), c = catalog size (28 -> 52,920). */
@@ -190,12 +197,20 @@ class CurrencyRatesRepositoryImpl @Inject constructor(
      * 30 s deadline), which also unblocks a stuck socket read (C5).
      */
     private suspend fun runHistoryAttempt(homeCurrency: String): CurrencyRateHistoryOutcome = coroutineScope {
-        val connection: HttpURLConnection = historyConnectionOpener().apply {
-            requestMethod = "GET"
-            connectTimeout = TIMEOUT_MS
-            readTimeout = TIMEOUT_MS
-            instanceFollowRedirects = false // C1: a 3xx is HTTP_ERROR; Location is never read.
-            useCaches = false // C2: no cache; no request properties or conditional headers are set.
+        // F4: an opener/setup failure maps to OFFLINE (closed, never thrown); the caller logs the one
+        // constant line for the outcome. Cancellation is rethrown first.
+        val connection: HttpURLConnection = try {
+            historyConnectionOpener().apply {
+                requestMethod = "GET"
+                connectTimeout = TIMEOUT_MS
+                readTimeout = TIMEOUT_MS
+                instanceFollowRedirects = false // C1: a 3xx is HTTP_ERROR; Location is never read.
+                useCaches = false // C2: no cache; no request properties or conditional headers are set.
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            return@coroutineScope CurrencyRateHistoryOutcome.Failed(RateHistoryFailureReason.OFFLINE)
         }
         val worker = async { fetchParseAndStoreHistory(connection, homeCurrency) }
         try {
@@ -332,7 +347,13 @@ class CurrencyRatesRepositoryImpl @Inject constructor(
      * caller's PAYLOAD_MALFORMED.
      */
     internal fun parseEcbHistoryRates(stream: InputStream, nowMillis: Long): List<RateHistoryDay> {
-        val document = secureDocumentBuilderFactory().newDocumentBuilder().parse(stream)
+        val bytes = stream.readBytes()
+        val payloadText = strictUtf8TextOrNull(bytes)
+        if (payloadText == null || containsDtdDeclaration(payloadText)) {
+            throw EcbHistoryPayloadException(RateHistoryFailureReason.PAYLOAD_MALFORMED)
+        }
+        val document = secureDocumentBuilderFactory().newDocumentBuilder()
+            .parse(InputSource(StringReader(payloadText)))
         val root = document.documentElement
             ?: throw EcbHistoryPayloadException(RateHistoryFailureReason.PAYLOAD_EMPTY)
 
@@ -416,6 +437,41 @@ class CurrencyRatesRepositoryImpl @Inject constructor(
         return result
     }
 
+    /**
+     * Strictly decodes the capped payload as UTF-8. Returns null (treated as malformed by callers) for
+     * malformed/unmappable sequences, any NUL char (UTF-16/UTF-32 interleaving) or a leading U+FEFF
+     * (BOM). Decoding once here and handing the parser a character stream means the parser can never
+     * re-sniff a different encoding that would bypass the DTD pre-scan.
+     */
+    private fun strictUtf8TextOrNull(bytes: ByteArray): String? {
+        val text = try {
+            Charsets.UTF_8.newDecoder()
+                .onMalformedInput(CodingErrorAction.REPORT)
+                .onUnmappableCharacter(CodingErrorAction.REPORT)
+                .decode(ByteBuffer.wrap(bytes))
+                .toString()
+        } catch (_: CharacterCodingException) {
+            return null
+        }
+        if (text.indexOf('\u0000') >= 0 || text.startsWith('\uFEFF')) return null
+        return text
+    }
+
+    /**
+     * True when the decoded payload text contains a DOCTYPE or ENTITY declaration (case-insensitive).
+     * Parser independent, so DTD/entity payloads are rejected on Android where parser features are
+     * unsupported.
+     */
+    internal fun containsDtdDeclaration(text: String): Boolean {
+        return text.contains("<!DOCTYPE", ignoreCase = true) || text.contains("<!ENTITY", ignoreCase = true)
+    }
+
+    /** Byte overload: strict UTF-8 decode first; an undecodable payload is rejected (true). */
+    internal fun containsDtdDeclaration(bytes: ByteArray): Boolean {
+        val text = strictUtf8TextOrNull(bytes) ?: return true
+        return containsDtdDeclaration(text)
+    }
+
     internal suspend fun refreshFromStream(homeCurrency: String, stream: InputStream): Int {
         val parsedRates = parseEcbDailyRates(stream)
         val eurToCurrency = parsedRates.eurToCurrency
@@ -454,9 +510,14 @@ class CurrencyRatesRepositoryImpl @Inject constructor(
     }
 
     internal fun parseEcbDailyRates(stream: InputStream): EcbDailyRates {
+        val bytes = readDailyCapped(stream)
+        val payloadText = strictUtf8TextOrNull(bytes)
+        if (payloadText == null || containsDtdDeclaration(payloadText)) {
+            throw IllegalStateException("RATE_PAYLOAD_MALFORMED")
+        }
         val document = secureDocumentBuilderFactory()
             .newDocumentBuilder()
-            .parse(stream)
+            .parse(InputSource(StringReader(payloadText)))
         val cubeNodes = document.getElementsByTagNameNS(ECB_NAMESPACE, "Cube")
         val datedNodes = buildList {
             for (index in 0 until cubeNodes.length) {
@@ -503,21 +564,72 @@ class CurrencyRatesRepositoryImpl @Inject constructor(
         )
     }
 
+    /**
+     * Builds a namespace-aware factory with every hardening setting applied best-effort. Android's
+     * Harmony/KXml-based factory rejects most of these features and attributes (for example
+     * secure-processing throws ParserConfigurationException), so each setting is applied on its own and
+     * an unsupported one is skipped silently (the exception is never logged). The JVM keeps full
+     * hardening. DTD/entity rejection does not depend on the parser: the payload is strictly decoded as
+     * UTF-8 (NUL/BOM rejected) and [containsDtdDeclaration] is enforced on that text before any
+     * DocumentBuilder is created; the parser then receives the text as an [InputSource] character
+     * stream so it cannot re-detect UTF-16/UTF-32.
+     */
     private fun secureDocumentBuilderFactory(): DocumentBuilderFactory {
         return DocumentBuilderFactory.newInstance().apply {
             isNamespaceAware = true
-            setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true)
-            setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
-            setFeature("http://xml.org/sax/features/external-general-entities", false)
-            setFeature("http://xml.org/sax/features/external-parameter-entities", false)
-            setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false)
+            bestEffortFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true)
+            bestEffortFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
+            bestEffortFeature("http://xml.org/sax/features/external-general-entities", false)
+            bestEffortFeature("http://xml.org/sax/features/external-parameter-entities", false)
+            bestEffortFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false)
 
-            setAttribute(ACCESS_EXTERNAL_DTD_PROPERTY, "")
-            setAttribute(ACCESS_EXTERNAL_SCHEMA_PROPERTY, "")
-
-            isXIncludeAware = false
-            isExpandEntityReferences = false
+            try {
+                setAttribute(ACCESS_EXTERNAL_DTD_PROPERTY, "")
+            } catch (_: IllegalArgumentException) {
+                // Unsupported on this platform; DTDs are rejected by the byte pre-scan.
+            }
+            try {
+                setAttribute(ACCESS_EXTERNAL_SCHEMA_PROPERTY, "")
+            } catch (_: IllegalArgumentException) {
+                // Unsupported on this platform.
+            }
+            try {
+                isXIncludeAware = false
+            } catch (_: UnsupportedOperationException) {
+                // Unsupported on this platform.
+            }
+            try {
+                isExpandEntityReferences = false
+            } catch (_: UnsupportedOperationException) {
+                // Unsupported on this platform.
+            }
         }
+    }
+
+    private fun DocumentBuilderFactory.bestEffortFeature(name: String, value: Boolean) {
+        try {
+            setFeature(name, value)
+        } catch (_: ParserConfigurationException) {
+            // Unsupported on this platform (Android); DTDs are rejected by the byte pre-scan.
+        }
+    }
+
+    /**
+     * Reads the daily ECB response with a hard cap of [MAX_DAILY_BYTES]. Overflow fails the refresh like a
+     * parse failure (bounded message, no payload content).
+     */
+    private fun readDailyCapped(stream: InputStream): ByteArray {
+        val out = ByteArrayOutputStream()
+        val buffer = ByteArray(READ_BUFFER_BYTES)
+        var total = 0
+        while (true) {
+            val n = stream.read(buffer)
+            if (n < 0) break
+            total += n
+            if (total > MAX_DAILY_BYTES) throw IllegalStateException("RATE_PAYLOAD_TOO_LARGE")
+            out.write(buffer, 0, n)
+        }
+        return out.toByteArray()
     }
 }
 
