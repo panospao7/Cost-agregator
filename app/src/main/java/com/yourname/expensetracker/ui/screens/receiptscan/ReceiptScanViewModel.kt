@@ -34,7 +34,13 @@ import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.currency.AmountCheck
 import com.yourname.expensetracker.domain.currency.CurrencyAmountPolicy
 import com.yourname.expensetracker.domain.currency.CurrencyEntryMode
+import com.yourname.expensetracker.domain.currency.CurrencyRateHistoryOutcome
 import com.yourname.expensetracker.domain.currency.CurrencyRateRefreshOutcome
+import com.yourname.expensetracker.domain.currency.NoRemedyReason
+import com.yourname.expensetracker.domain.currency.RateHistoryFailureReason
+import com.yourname.expensetracker.domain.currency.RateRemedy
+import com.yourname.expensetracker.domain.currency.RateRemedyDecision
+import com.yourname.expensetracker.domain.currency.RateRemedyPolicy
 import com.yourname.expensetracker.domain.currency.CurrencyRatesRepository
 import com.yourname.expensetracker.domain.currency.CurrencySelection
 import com.yourname.expensetracker.domain.currency.CurrencySelectionPolicy
@@ -51,7 +57,9 @@ import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.ui.components.currency.CurrencyAmountInvalidKind
 import com.yourname.expensetracker.ui.components.currency.CurrencyBlockOrigin
 import com.yourname.expensetracker.ui.components.currency.CurrencyBlockVariant
+import com.yourname.expensetracker.ui.components.currency.CurrencyHistoryStatus
 import com.yourname.expensetracker.ui.components.currency.CurrencyOpenSettingRequest
+import com.yourname.expensetracker.ui.components.currency.CurrencyRateFixAction
 import com.yourname.expensetracker.ui.components.currency.CurrencyRatesSetting
 import com.yourname.expensetracker.ui.components.currency.CurrencyRefreshStatus
 import com.yourname.expensetracker.ui.components.currency.CurrencyRegionUi
@@ -189,8 +197,42 @@ data class ReceiptScanState(
      */
     val previewAnnounceKey: Int = 0,
     /** MEC D-11/D-C-3: the "Open exchange-rate setting" request; the screen shows the confirm and hands over to the host. */
-    val openSettingRequest: CurrencyOpenSettingRequest = CurrencyOpenSettingRequest.NONE
+    val openSettingRequest: CurrencyOpenSettingRequest = CurrencyOpenSettingRequest.NONE,
+    /** MEC 1b INV-1b-3: progress and bounded outcome of a user-started rate-history download. */
+    val historyStatus: CurrencyHistoryStatus = CurrencyHistoryStatus.IDLE,
+    /** MEC 1b (ux 1b.2, C13): home rates not downloadable; the history action stays hidden for this review. */
+    val historyHomeUnavailable: Boolean = false,
+    /** MEC 1b INV-1b-5: the domain remedy chosen by [RateRemedyPolicy] at the last evaluation (enums only). */
+    val rateRemedy: RateRemedyDecision = RateRemedyDecision(RateRemedy.REFRESH_LATEST)
 ) {
+    /**
+     * MEC 1b (ux 1b.5): the one fix action of the blocked card. Setting Off/Unknown is always
+     * OPEN_SETTING (R23, fail closed); otherwise the domain remedy is copied through.
+     */
+    val rateFixAction: CurrencyRateFixAction
+        get() {
+            val region = currencyRegion
+            if (region !is CurrencyRegionUi.Blocked) return CurrencyRateFixAction.NONE
+            if (region.variant != CurrencyBlockVariant.STALE && region.variant != CurrencyBlockVariant.NONE) {
+                return CurrencyRateFixAction.NONE
+            }
+            if (ratesSetting != CurrencyRatesSetting.ON) return CurrencyRateFixAction.OPEN_SETTING
+            if (rateRefresh == CurrencyRefreshStatus.FAILED_HOME_UNAVAILABLE) return CurrencyRateFixAction.NONE
+            if (historyHomeUnavailable || historyStatus == CurrencyHistoryStatus.FAILED_HOME_UNAVAILABLE) {
+                return CurrencyRateFixAction.NONE
+            }
+            return when (rateRemedy.remedy) {
+                RateRemedy.REFRESH_LATEST -> CurrencyRateFixAction.REFRESH_LATEST
+                RateRemedy.DOWNLOAD_HISTORY -> CurrencyRateFixAction.DOWNLOAD_HISTORY
+                RateRemedy.NONE ->
+                    if (rateRemedy.noRemedyReason == NoRemedyReason.OUTSIDE_HISTORY_WINDOW) {
+                        CurrencyRateFixAction.TOO_OLD
+                    } else {
+                        CurrencyRateFixAction.NONE
+                    }
+            }
+        }
+
     /**
      * MEC ux section 4: Save is disabled for a blocked rate (except a retryable home-unresolved refusal),
      * an invalid amount, or an unset currency. While [CurrencyRegionUi.Evaluating] Save stays enabled
@@ -286,6 +328,7 @@ class ReceiptScanViewModel @Inject constructor(
         const val LOG_RATE_PREVIEW_FAILED = "RATE_PREVIEW_FAILED"
         const val LOG_RATE_REFRESH_FAILED = "RATE_REFRESH_FAILED"
         const val LOG_RATES_SETTING_READ_FAILED = "RATES_SETTING_READ_FAILED"
+        const val LOG_RATE_HISTORY_FAILED = "RATE_HISTORY_FAILED"
 
         // MEC ux section 3: "Checking exchange rate" shows only if an evaluation exceeds this delay.
         const val EVALUATING_DELAY_MS = 250L
@@ -334,6 +377,13 @@ class ReceiptScanViewModel @Inject constructor(
     private var evaluationJob: Job? = null
     private var refreshJob: Job? = null
 
+    // MEC 1b INV-1b-3/6: the single user-started history download and its session-only data. Plain fields,
+    // never in state beyond the status enum, never persisted or logged; cleared with the review.
+    private var historyJob: Job? = null
+    private var historyDownloadedThisSession: Boolean = false
+    private var historyEarliestDate: LocalDate? = null
+    private var historyAnnouncePending: Boolean = false
+
     init {
         // S7-009: Load home currency on init so editCurrency is never a hardcoded "EUR"
         viewModelScope.launch {
@@ -347,12 +397,29 @@ class ReceiptScanViewModel @Inject constructor(
                     pendingProposal = null
                 }
                 _state.update { current ->
+                    // MEC 1b INV-1b-20 (receipt): an in-review selection that was only the assumed home and
+                    // cannot follow a changed home becomes Unset (fields kept, Save blocked); never
+                    // re-denominated. An explicit (proposed or picked) code is kept as is.
+                    val priorHome = current.homeCurrency
+                    val assumedHomeLost = current.step == ScanStep.REVIEW && priorHome != null &&
+                        homeCurrency != null && priorHome != homeCurrency &&
+                        current.editCurrency == priorHome && current.currencyUnverified
                     current.copy(
                         // An Unset region keeps editCurrency null on purpose (no silent swap to home).
-                        editCurrency = current.editCurrency
-                            ?: homeCurrency.takeUnless {
-                                holdForProposal || current.currencyRegion is CurrencyRegionUi.Unset
-                            },
+                        editCurrency = if (assumedHomeLost) {
+                            null
+                        } else {
+                            current.editCurrency
+                                ?: homeCurrency.takeUnless {
+                                    holdForProposal || current.currencyRegion is CurrencyRegionUi.Unset
+                                }
+                        },
+                        currencyUnverified = current.currencyUnverified && !assumedHomeLost,
+                        currencyRegion = if (assumedHomeLost) {
+                            CurrencyRegionUi.Unset(CurrencyUnsetReason.NONE_PROPOSED)
+                        } else {
+                            current.currencyRegion
+                        },
                         currencyOptions = optionsFor(homeCurrency),
                         homeCurrency = homeCurrency,
                         previewAnnounceKey = current.previewAnnounceKey + 1
@@ -431,9 +498,13 @@ class ReceiptScanViewModel @Inject constructor(
         reviewZone = null
         pendingProposal = null
         proposalAwaitingHome = false
+        // MEC 1b: a new receipt starts a new review; the history session data and status do not carry over.
+        clearHistorySession()
 
         _state.update {
             it.copy(
+                historyStatus = CurrencyHistoryStatus.IDLE,
+                historyHomeUnavailable = false,
                 step = ScanStep.PROCESSING,
                 imageUri = uri,
                 errorMessage = null,
@@ -1456,6 +1527,7 @@ class ReceiptScanViewModel @Inject constructor(
         evaluationJob = null
         refreshJob?.cancel()
         refreshJob = null
+        clearHistorySession()
         reviewZone = null
         pendingProposal = null
         proposalAwaitingHome = false
@@ -1619,6 +1691,8 @@ class ReceiptScanViewModel @Inject constructor(
             } else {
                 null
             }
+            // INV-1b-5: the remedy is copied from RateRemedyPolicy; the VM supplies only today and the flag.
+            var decision = RateRemedyDecision(RateRemedy.REFRESH_LATEST)
             val region: CurrencyRegionUi = try {
                 val result = userPresentRatePreview.preview(
                     parsedAmount = parsedAmount ?: 1.0,
@@ -1627,6 +1701,17 @@ class ReceiptScanViewModel @Inject constructor(
                     expenseAtMillis = atMillis,
                     entryZone = zone
                 )
+                decision = if (result is UserPresentRatePreviewResult.Blocked) {
+                    RateRemedyPolicy.remedy(
+                        eligibility = result.eligibility,
+                        localDate = java.time.Instant.ofEpochMilli(atMillis).atZone(zone).toLocalDate(),
+                        latestStoredPairDate = result.latestStoredPairDate,
+                        today = today,
+                        historyDownloadedThisSession = historyDownloadedThisSession
+                    )
+                } else {
+                    RateRemedyDecision(RateRemedy.NONE)
+                }
                 regionFor(result, hasAmount = parsedAmount != null)
             } catch (e: CancellationException) {
                 throw e
@@ -1637,12 +1722,23 @@ class ReceiptScanViewModel @Inject constructor(
             }
             marker?.cancel()
             ensureActive()
+            // F-B2-A11Y-1: after a history success the preview line is announced once (latest inputs win).
+            val announce = historyAnnouncePending && region is CurrencyRegionUi.Eligible
+            historyAnnouncePending = false
+            val doneStatus = doneStatusFor(region, decision, atMillis, zone)
             _state.update {
                 it.copy(
                     currencyRegion = region,
                     amountError = null,
                     ratesToday = today,
-                    rateRefresh = settledRefresh(it, refreshCompleted && region is CurrencyRegionUi.Blocked)
+                    rateRefresh = settledRefresh(it, refreshCompleted && region is CurrencyRegionUi.Blocked),
+                    rateRemedy = decision,
+                    historyStatus = when {
+                        it.historyStatus == CurrencyHistoryStatus.RUNNING -> CurrencyHistoryStatus.RUNNING
+                        it.historyHomeUnavailable -> CurrencyHistoryStatus.FAILED_HOME_UNAVAILABLE
+                        else -> doneStatus
+                    },
+                    previewAnnounceKey = if (announce) it.previewAnnounceKey + 1 else it.previewAnnounceKey
                 )
             }
         }
@@ -1750,6 +1846,124 @@ class ReceiptScanViewModel @Inject constructor(
                 reevaluateRegion(invalidate = false, showEvaluating = false, refreshCompleted = true)
             }
         }
+    }
+
+    /**
+     * MEC 1b INV-1b-3: user-started "Download rate history". The only caller of
+     * [CurrencyRatesRepository.downloadRecentHistory] here; never reached from preview, save, scan or any
+     * automatic path. Single job: ignored while RUNNING (or a refresh runs). The VM never enables the
+     * setting; the repository is privacy-gated. Outcomes map per ux D-1b-5. No receipt, event or file
+     * changes: only the rate table is written (by the repository).
+     */
+    fun onDownloadRateHistory() {
+        val snapshot = _state.value
+        val home = homeCurrencyCode ?: return
+        if (snapshot.step != ScanStep.REVIEW) return
+        if (snapshot.ratesSetting != CurrencyRatesSetting.ON) return
+        val selected = snapshot.editCurrency ?: return
+        if (selected == home) return
+        if (snapshot.rateFixAction != CurrencyRateFixAction.DOWNLOAD_HISTORY) return
+        if (snapshot.historyStatus == CurrencyHistoryStatus.RUNNING || historyJob?.isActive == true) return
+        if (snapshot.rateRefresh == CurrencyRefreshStatus.RUNNING) return
+        // Spec 1b.10: a history download is illegal while saving.
+        if (snapshot.isSaving) return
+
+        _state.update { it.copy(historyStatus = CurrencyHistoryStatus.RUNNING) }
+        historyJob = viewModelScope.launch {
+            var status = CurrencyHistoryStatus.IDLE
+            var setting: CurrencyRatesSetting? = null
+            var stored = false
+            try {
+                val outcome = currencyRatesRepository.downloadRecentHistory(home)
+                // A repository that ignored Cancel must not overwrite CANCELLED (rethrown below).
+                ensureActive()
+                when (outcome) {
+                    is CurrencyRateHistoryOutcome.Stored -> {
+                        stored = true
+                        historyDownloadedThisSession = true
+                        historyEarliestDate = outcome.earliestDate
+                    }
+                    // The setting was turned off meanwhile: show the Off variant, no failure line.
+                    CurrencyRateHistoryOutcome.DisabledByPrivacy -> setting = CurrencyRatesSetting.OFF
+                    is CurrencyRateHistoryOutcome.PrivacyCheckFailed -> setting = CurrencyRatesSetting.UNKNOWN
+                    CurrencyRateHistoryOutcome.AlreadyInProgress -> status = CurrencyHistoryStatus.FAILED
+                    is CurrencyRateHistoryOutcome.Failed -> status = historyFailureStatus(outcome.reason)
+                    CurrencyRateHistoryOutcome.Cancelled -> status = CurrencyHistoryStatus.CANCELLED
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // INV-19: bounded code only; the exception is never attached.
+                Timber.w(LOG_RATE_HISTORY_FAILED)
+                status = CurrencyHistoryStatus.FAILED
+            }
+            if (stored) historyAnnouncePending = true
+            _state.update {
+                it.copy(
+                    historyStatus = status,
+                    historyHomeUnavailable = it.historyHomeUnavailable ||
+                        status == CurrencyHistoryStatus.FAILED_HOME_UNAVAILABLE,
+                    ratesSetting = setting ?: it.ratesSetting
+                )
+            }
+            if (stored) {
+                // Latest inputs win; the region becomes Eligible, or Blocked with a DONE_* status.
+                reevaluateRegion(invalidate = false, showEvaluating = false)
+            }
+        }
+    }
+
+    /** INV-1b-21: user Cancel, offered only while RUNNING. The job's CancellationException is rethrown. */
+    fun onCancelRateHistory() {
+        if (_state.value.historyStatus != CurrencyHistoryStatus.RUNNING) return
+        historyJob?.cancel()
+        historyJob = null
+        _state.update { it.copy(historyStatus = CurrencyHistoryStatus.CANCELLED) }
+    }
+
+    /** D-1b-5: bounded failure reason to UX status. */
+    private fun historyFailureStatus(reason: RateHistoryFailureReason): CurrencyHistoryStatus = when (reason) {
+        RateHistoryFailureReason.OFFLINE -> CurrencyHistoryStatus.FAILED_OFFLINE
+        RateHistoryFailureReason.INVALID_HOME_CURRENCY,
+        RateHistoryFailureReason.HOME_QUOTE_UNAVAILABLE -> CurrencyHistoryStatus.FAILED_HOME_UNAVAILABLE
+        RateHistoryFailureReason.TIMEOUT,
+        RateHistoryFailureReason.HTTP_ERROR,
+        RateHistoryFailureReason.PAYLOAD_TOO_LARGE,
+        RateHistoryFailureReason.PAYLOAD_EMPTY,
+        RateHistoryFailureReason.PAYLOAD_MALFORMED,
+        RateHistoryFailureReason.PAYLOAD_OUT_OF_BOUNDS,
+        RateHistoryFailureReason.STORE_FAILED -> CurrencyHistoryStatus.FAILED
+    }
+
+    /**
+     * D-1b-5: still blocked after a history download in this review. An entry date before the earliest
+     * stored ECB date is DONE_TOO_OLD; any other case is DONE_NO_RATE. Anything else settles to IDLE.
+     */
+    private fun doneStatusFor(
+        region: CurrencyRegionUi,
+        decision: RateRemedyDecision,
+        atMillis: Long,
+        zone: ZoneId
+    ): CurrencyHistoryStatus {
+        if (region !is CurrencyRegionUi.Blocked || decision.noRemedyReason != NoRemedyReason.HISTORY_ALREADY_DOWNLOADED) {
+            return CurrencyHistoryStatus.IDLE
+        }
+        val earliest = historyEarliestDate
+        val entryDate = java.time.Instant.ofEpochMilli(atMillis).atZone(zone).toLocalDate()
+        return if (earliest != null && entryDate.isBefore(earliest)) {
+            CurrencyHistoryStatus.DONE_TOO_OLD
+        } else {
+            CurrencyHistoryStatus.DONE_NO_RATE
+        }
+    }
+
+    /** Leaving the review (reset, retry, dismissal) stops a running download and drops the session data. */
+    private fun clearHistorySession() {
+        historyJob?.cancel()
+        historyJob = null
+        historyDownloadedThisSession = false
+        historyEarliestDate = null
+        historyAnnouncePending = false
     }
 
     /** MEC INV-6: maps a typed coordinator refusal reason to the card variant. */

@@ -44,6 +44,7 @@ import com.yourname.expensetracker.domain.transaction.RateRefusalReason
 import com.yourname.expensetracker.ui.components.currency.CurrencyBlockOrigin
 import com.yourname.expensetracker.ui.components.currency.CurrencyBlockVariant
 import com.yourname.expensetracker.ui.components.currency.CurrencyOpenSettingRequest
+import com.yourname.expensetracker.ui.components.currency.CurrencyRateFixAction
 import com.yourname.expensetracker.ui.components.currency.CurrencyRegionUi
 import java.util.Locale
 import java.util.TimeZone
@@ -529,6 +530,58 @@ class ReceiptScanCurrencyUiTest {
         composeRule.onNodeWithText(string(R.string.mec_open_setting_confirm_title)).assertDoesNotExist()
         assertEquals(CurrencyOpenSettingRequest.NONE, model.state.value.openSettingRequest)
         assertEquals("Merchant", model.state.value.editMerchant)
+    }
+
+    // ---- 6b. MEC 1b S3: the rate-history download action in the receipt rate region ----
+
+    private fun enableRateDownload() {
+        deps.privacyFlow.value = com.yourname.expensetracker.domain.privacy.PrivacySettingsLoadState.Loaded(
+            com.yourname.expensetracker.domain.privacy.PrivacySettings(exchangeRateDownloadEnabled = true)
+        )
+        idle()
+    }
+
+    /** USD receipt dated 2023-11-09; the only stored rate is dated 2023-11-14, so the remedy is a history download. */
+    private fun showDownloadableReview() {
+        deps.store.putRate("USD", 0.9, mecDay(14))
+        showReview(mecReceipt(currency = "USD", total = 10.0, date = MEC_DATE - 5 * MEC_DAY_MS))
+    }
+
+    @Test
+    fun mec1b_downloadableReview_showsTheDisclosureAndTheDownloadButton_andTheTapCallsTheViewModelOnce() {
+        enableRateDownload()
+        showDownloadableReview()
+        assertEquals(CurrencyRateFixAction.DOWNLOAD_HISTORY, model.state.value.rateFixAction)
+        deps.ratesRepo.historyOutcome =
+            com.yourname.expensetracker.domain.currency.CurrencyRateHistoryOutcome.Failed(
+                com.yourname.expensetracker.domain.currency.RateHistoryFailureReason.OFFLINE
+            )
+
+        composeRule.onNodeWithText(string(R.string.mec_history_disclosure)).assertExists()
+        composeRule.onNodeWithText(string(R.string.mec_history_action)).assertExists()
+        composeRule.onNodeWithText(openSettingText).assertDoesNotExist()
+        assertTrue("nothing downloads before the tap", deps.ratesRepo.historyCalls.isEmpty())
+
+        composeRule.onNodeWithText(string(R.string.mec_history_action)).performScrollTo().performClick()
+        idle()
+
+        assertEquals(listOf("EUR"), deps.ratesRepo.historyCalls)
+        assertEquals(
+            com.yourname.expensetracker.ui.components.currency.CurrencyHistoryStatus.FAILED_OFFLINE,
+            model.state.value.historyStatus
+        )
+        composeRule.onNodeWithText(string(R.string.mec_history_offline)).assertExists()
+        assertTrue(deps.requests.isEmpty())
+    }
+
+    @Test
+    fun mec1b_settingOff_showsOpenSettingAndNoDownloadButtonOrDisclosure() {
+        showDownloadableReview()
+
+        composeRule.onNodeWithText(openSettingText).assertExists()
+        composeRule.onNodeWithText(string(R.string.mec_history_action)).assertDoesNotExist()
+        composeRule.onNodeWithText(string(R.string.mec_history_disclosure)).assertDoesNotExist()
+        assertTrue(deps.ratesRepo.historyCalls.isEmpty())
     }
 
     // ---- 7. Quick-save refusal closes the dialog and leaves the card in review ----

@@ -404,3 +404,43 @@ Total: 9 + 5 + 37 = 51 (42 `mec_*` + 9 `add_expense_installments_*`); the count 
     - lint vr-20261030-093007-130b2c07.
   - Process note: one earlier targeted run went STALE (an edit landed during the run) and was re-run.
   - COMMITTED. Next: S3 (receipt-review parity), then S4 docs, then the 1b candidate gate.
+
+## 2026-10-30: PAUSED by the owner ("after these tasks are done stop for now") — RESUME HERE
+- Committed on this lane (pushed): S1 97264a04, S2 66a1f7fb, S2b 631f69a5.
+- 1b S3 (receipt-review parity): IMPLEMENTED and TESTED but UNCOMMITTED and NOT VALIDATED.
+  - Main: ReceiptScanViewModel.kt, ReceiptScanScreen.kt.
+  - Tests: new ReceiptScanViewModelRateHistoryTest (20 tests); ReceiptScanCurrencyUiTest (+2).
+  - ReceiptScanViewModelMecC1Test fakes changed: getLatestRateForPair returns the newest row; an onHistory hook was added.
+- EXACT NEXT ACTION:
+  1. Combined guardian on the S3 diff (money/receipt; check the STOP list: no ReceiptEvent or file change from a download; INV-1b-20 receipt Unset).
+  2. In parallel, queue targeted `*ReceiptScan*,*CurrencyRateRegion*,*AddExpense*`, runtime-ui, cancellation, known_good_state, lint.
+  3. Apply fixes and commit.
+- Then S4 docs:
+  - ux-flows 1b C13 disclosure copy (lines ~243/299/358/370);
+  - mark unbuilt keys (mec_history_section_title/_done/_done_range);
+  - LEGAL_PATHS 1b.13 block + ENGINE_INTERACTION_MAP + CODEBASE_SEGMENTS + CODEBASE_INVENTORY;
+  - LOG_RATE_HISTORY_FAILED note.
+- Then the 1b candidate gate per the plan:
+  1. unit-tests, static-guards, app-check;
+  2. F-A11Y-LATCH-PURE review (incl. the S2 historyAnnouncePending flag);
+  3. privacy guardian;
+  4. device check on wave5-api35 against the live ECB file;
+  5. reviewer-strict on the full 1b diff incl. Z;
+  6. then the self-approved merge into feature/ai-evolution (owner-approvals 92), which also releases B2, C and loan S11/S13 from H-1.
+- Owner items: es/el sign-off for mec_history_* (11), mec_home_changed_cleared, deeplink_confirm_installments_*, the el action_confirm/cancel, and the earlier mec_ list; the loan item-14 device check.
+
+## 2026-10-30: resumed; 1b S3 ACCEPTED and COMMITTED
+- Combined guardian: ACCEPT with two Low findings, both applied to BOTH view models for parity:
+  - spec 1b.10: `if (snapshot.isSaving) return` in onDownloadRateHistory;
+  - `ensureActive()` after downloadRecentHistory returns, so a repository that ignores Cancel cannot overwrite CANCELLED.
+- Informational, not adopted: a home change H1 to H2 with an explicit foreign code keeps the history session (conservative; same as AddExpense).
+- Test fix: the INV-1b-20 receipt test wrongly asserted an amount of "10.00" for a blank-currency receipt. That amount is not prefilled, by design (sourceMoneyOrNull). The test now sets the amount explicitly and asserts the fields are kept. The test was not weakened.
+- New tests: saving-guard and ignore-cancel cases in ReceiptScanViewModelRateHistoryTest and AddExpenseViewModelRateHistoryTest.
+- First ladder: the targeted run vr-20261030-113656-48635b4e and runtime-ui vr-20261030-114413-c71c37d7 both FAILED on the one INV-1b-20 test above; cancellation passed (vr-20261030-114747-b6f50a09).
+- Final ladder, all PASS:
+  - targeted vr-20261030-115751-3d3f9972
+  - runtime-ui vr-20261030-120439-51cd7a51
+  - cancellation vr-20261030-120828-2a7952b2
+  - known_good_state vr-20261030-120846-f384647b
+  - lint vr-20261030-121202-bb842d19
+- NEXT: S4 docs (see the RESUME block above), then the 1b candidate gate.

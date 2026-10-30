@@ -36,6 +36,7 @@ import java.time.ZoneOffset
 import java.time.ZonedDateTime
 import java.util.Locale
 import java.util.TimeZone
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -394,6 +395,58 @@ class AddExpenseViewModelRateHistoryTest : ViewModelTestUtils() {
         tapDownload()
 
         assertEquals(2, ratesRepo.historyCalls.size)
+    }
+
+    @Test
+    fun `AE-1b-10 a download tap while saving is ignored and leaves the history status unchanged`() {
+        ratesRepo.historyOutcome = stored(earliest = oct(5))
+        openBlockedUsd()
+        val saveGate = CompletableDeferred<Result<Long>>()
+        coEvery {
+            manualExpenseRepository.addManualExpense(
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()
+            )
+        } coAnswers { saveGate.await() }
+
+        viewModel.updateMerchant("Shop")
+        settle()
+        viewModel.save()
+        runNow()
+        assertTrue(st.isSaving)
+        // The download would otherwise be offered, so the ignored tap is not vacuous.
+        assertEquals(CurrencyRateFixAction.DOWNLOAD_HISTORY, st.rateFixAction)
+
+        viewModel.onDownloadRateHistory()
+        runNow()
+
+        assertTrue(ratesRepo.historyCalls.isEmpty())
+        assertEquals(CurrencyHistoryStatus.IDLE, st.historyStatus)
+
+        saveGate.complete(Result.Success(1L))
+        settle()
+        assertTrue(ratesRepo.historyCalls.isEmpty())
+    }
+
+    @Test
+    fun `AE-1b-15 a repository that ignores cancellation leaves CANCELLED without announcing or marking downloaded`() {
+        // The fake ignores the user's Cancel: it is triggered inside the call, then returns Stored normally.
+        ratesRepo.historyAction = {
+            putRate("USD", "EUR", 0.9, oct(9))
+            viewModel.onCancelRateHistory()
+        }
+        ratesRepo.historyOutcome = stored(earliest = oct(1))
+        openBlockedUsd()
+        val keyBefore = st.previewAnnounceKey
+
+        tapDownload()
+
+        assertEquals(1, ratesRepo.historyCalls.size)
+        assertEquals(CurrencyHistoryStatus.CANCELLED, st.historyStatus)
+        assertEquals("a cancelled download is not announced", keyBefore, st.previewAnnounceKey)
+        // Not marked downloaded: the action is still offered (a marked session would offer none).
+        assertEquals(CurrencyRateFixAction.DOWNLOAD_HISTORY, st.rateFixAction)
+        assertTrue(st.currencyRegion is CurrencyRegionUi.Blocked)
     }
 
     // ---- AE-1b-5 / D-1b-5: failure reason mapping ----

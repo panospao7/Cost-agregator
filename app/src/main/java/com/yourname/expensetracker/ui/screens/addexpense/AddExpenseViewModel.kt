@@ -1642,6 +1642,8 @@ class AddExpenseViewModel @Inject constructor(
         if (snapshot.rateFixAction != CurrencyRateFixAction.DOWNLOAD_HISTORY) return
         if (snapshot.historyStatus == CurrencyHistoryStatus.RUNNING || historyJob?.isActive == true) return
         if (snapshot.rateRefresh == CurrencyRefreshStatus.RUNNING) return
+        // Spec 1b.10: a history download is illegal while saving.
+        if (snapshot.isSaving) return
 
         _state.update { it.copy(historyStatus = CurrencyHistoryStatus.RUNNING) }
         historyJob = viewModelScope.launch {
@@ -1649,7 +1651,10 @@ class AddExpenseViewModel @Inject constructor(
             var setting: CurrencyRatesSetting? = null
             var stored = false
             try {
-                when (val outcome = currencyRatesRepository.downloadRecentHistory(home)) {
+                val outcome = currencyRatesRepository.downloadRecentHistory(home)
+                // A repository that ignored Cancel must not overwrite CANCELLED (rethrown below).
+                ensureActive()
+                when (outcome) {
                     is CurrencyRateHistoryOutcome.Stored -> {
                         stored = true
                         historyDownloadedThisSession = true

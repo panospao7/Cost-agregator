@@ -99,7 +99,11 @@ internal class ReceiptScanRateStoreFake : ExchangeRateStore {
     var failure: Throwable? = null
 
     override suspend fun getRate(fromCurrency: String, toCurrency: String): DomainExchangeRate? = null
-    override suspend fun getLatestRateForPair(fromCurrency: String, toCurrency: String): DomainExchangeRate? = null
+    // MEC 1b: the newest stored direct pair (any date), the RateRemedyPolicy input; null when none is stored.
+    override suspend fun getLatestRateForPair(fromCurrency: String, toCurrency: String): DomainExchangeRate? =
+        rows
+            .filter { it.fromCurrency == fromCurrency && it.toCurrency == toCurrency && it.validDate != null }
+            .maxByOrNull { it.validDate ?: Long.MIN_VALUE }
 
     override suspend fun getRateAsOf(fromCurrency: String, toCurrency: String, atMillis: Long): DomainExchangeRate? {
         asOfCalls += Triple(fromCurrency, toCurrency, atMillis)
@@ -132,8 +136,12 @@ internal class ReceiptScanRatesRepositoryFake : CurrencyRatesRepository {
     val historyCalls = mutableListOf<String>()
     var historyOutcome: CurrencyRateHistoryOutcome = CurrencyRateHistoryOutcome.DisabledByPrivacy
 
+    /** MEC 1b seam: runs inside the download before the outcome is returned (a gate, or storing a rate). */
+    var onHistory: suspend () -> Unit = {}
+
     override suspend fun downloadRecentHistory(homeCurrency: String): CurrencyRateHistoryOutcome {
         historyCalls += homeCurrency
+        onHistory()
         return historyOutcome
     }
 }
