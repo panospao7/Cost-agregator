@@ -827,6 +827,18 @@
     <string name="mec_refresh_offline">No se pudieron actualizar los tipos. Revisa la conexión e inténtalo de nuevo.</string>
     <string name="mec_refresh_failed">No se pudieron actualizar los tipos. Inténtalo más tarde.</string>
     <string name="mec_refresh_home_unavailable">No se pueden descargar tipos para tu moneda principal.</string>
+    <!-- MEC 1b: DRAFT: owner native sign-off pending -->
+    <string name="mec_history_action">Descargar historial de tipos</string>
+    <string name="mec_history_action_running">Descargando historial de tipos…</string>
+    <string name="mec_history_running_state">Descargando historial de tipos</string>
+    <string name="mec_history_cancel">Cancelar</string>
+    <string name="mec_history_cancel_cd">Cancelar la descarga del historial de tipos</string>
+    <string name="mec_history_disclosure">Descarga los tipos de cambio públicos del BCE de los últimos 90 días. No se envía ningún dato de tus gastos.</string>
+    <string name="mec_history_cancelled">Descarga detenida.</string>
+    <string name="mec_history_too_old">El historial de tipos solo cubre los últimos 90 días. Elige una fecha posterior u otra moneda.</string>
+    <string name="mec_history_no_rate">El historial no tiene un tipo para esta moneda a menos de 7 días de esta fecha. Elige otra moneda u otra fecha.</string>
+    <string name="mec_history_offline">No se pudo descargar el historial de tipos. Revisa la conexión e inténtalo de nuevo.</string>
+    <string name="mec_history_failed">No se pudo descargar el historial de tipos. Inténtalo más tarde.</string>
     <string name="mec_save_disabled_rate">Necesita un tipo de cambio</string>
     <string name="mec_save_disabled_currency">Elige una moneda</string>
     <string name="mec_save_disabled_amount">Corrige el importe</string>

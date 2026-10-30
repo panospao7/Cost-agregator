@@ -4019,7 +4019,11 @@ internal class AddExpenseRateStoreFake : ExchangeRateStore {
 
     override suspend fun getRate(fromCurrency: String, toCurrency: String): DomainExchangeRate? = null
 
-    override suspend fun getLatestRateForPair(fromCurrency: String, toCurrency: String): DomainExchangeRate? = null
+    // MEC 1b: the newest stored row of the pair (any date) feeds RateRemedyPolicy through the preview.
+    override suspend fun getLatestRateForPair(fromCurrency: String, toCurrency: String): DomainExchangeRate? =
+        rows
+            .filter { it.fromCurrency == fromCurrency && it.toCurrency == toCurrency && it.validDate != null }
+            .maxByOrNull { it.validDate ?: Long.MIN_VALUE }
 
     override suspend fun getRateAsOf(fromCurrency: String, toCurrency: String, atMillis: Long): DomainExchangeRate? {
         asOfCalls += Triple(fromCurrency, toCurrency, atMillis)
@@ -4061,10 +4065,14 @@ internal class AddExpenseRatesRepositoryFake : CurrencyRatesRepository {
     var historyOutcome: com.yourname.expensetracker.domain.currency.CurrencyRateHistoryOutcome =
         com.yourname.expensetracker.domain.currency.CurrencyRateHistoryOutcome.DisabledByPrivacy
 
+    /** MEC 1b: runs inside the download before the outcome returns (virtual delay, storing rows). */
+    var historyAction: suspend () -> Unit = {}
+
     override suspend fun downloadRecentHistory(
         homeCurrency: String
     ): com.yourname.expensetracker.domain.currency.CurrencyRateHistoryOutcome {
         historyCalls += homeCurrency
+        historyAction()
         return historyOutcome
     }
 }

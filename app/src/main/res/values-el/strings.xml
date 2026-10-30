@@ -580,6 +580,18 @@
     <string name="mec_refresh_offline">Η ανανέωση ισοτιμιών απέτυχε. Ελέγξτε τη σύνδεση και δοκιμάστε ξανά.</string>
     <string name="mec_refresh_failed">Η ανανέωση ισοτιμιών απέτυχε. Δοκιμάστε αργότερα.</string>
     <string name="mec_refresh_home_unavailable">Δεν είναι δυνατή η λήψη ισοτιμιών για το βασικό σας νόμισμα.</string>
+    <!-- MEC 1b: DRAFT: owner native sign-off pending -->
+    <string name="mec_history_action">Λήψη ιστορικού ισοτιμιών</string>
+    <string name="mec_history_action_running">Λήψη ιστορικού ισοτιμιών…</string>
+    <string name="mec_history_running_state">Λήψη ιστορικού ισοτιμιών σε εξέλιξη</string>
+    <string name="mec_history_cancel">Ακύρωση</string>
+    <string name="mec_history_cancel_cd">Ακύρωση λήψης ιστορικού ισοτιμιών</string>
+    <string name="mec_history_disclosure">Κατεβάζει τις δημόσιες ισοτιμίες της ΕΚΤ των τελευταίων 90 ημερών. Δεν αποστέλλονται δεδομένα των εξόδων σας.</string>
+    <string name="mec_history_cancelled">Η λήψη διακόπηκε.</string>
+    <string name="mec_history_too_old">Το ιστορικό ισοτιμιών καλύπτει μόνο τις τελευταίες 90 ημέρες. Επιλέξτε μεταγενέστερη ημερομηνία ή άλλο νόμισμα.</string>
+    <string name="mec_history_no_rate">Το ιστορικό δεν έχει ισοτιμία για αυτό το νόμισμα έως 7 ημέρες πριν από αυτή την ημερομηνία. Επιλέξτε άλλο νόμισμα ή ημερομηνία.</string>
+    <string name="mec_history_offline">Η λήψη ιστορικού ισοτιμιών απέτυχε. Ελέγξτε τη σύνδεση και δοκιμάστε ξανά.</string>
+    <string name="mec_history_failed">Η λήψη ιστορικού ισοτιμιών απέτυχε. Δοκιμάστε αργότερα.</string>
     <string name="mec_save_disabled_rate">Χρειάζεται ισοτιμία</string>
     <string name="mec_save_disabled_currency">Επιλέξτε νόμισμα</string>
     <string name="mec_save_disabled_amount">Διορθώστε το ποσό</string>

@@ -1985,6 +1985,18 @@
     <string name="mec_refresh_offline">Couldn\'t refresh rates. Check your connection and try again.</string>
     <string name="mec_refresh_failed">Couldn\'t refresh rates. Try again later.</string>
     <string name="mec_refresh_home_unavailable">Rates can\'t be downloaded for your home currency.</string>
+    <!-- MEC 1b: rate history download (ux-flows 1b.9). No amounts or rates in any string. -->
+    <string name="mec_history_action">Download rate history</string>
+    <string name="mec_history_action_running">Downloading rate history…</string>
+    <string name="mec_history_running_state">Downloading rate history</string>
+    <string name="mec_history_cancel">Cancel</string>
+    <string name="mec_history_cancel_cd">Cancel rate history download</string>
+    <string name="mec_history_disclosure">Downloads the last 90 days of public ECB exchange rates. None of your expense data is sent.</string>
+    <string name="mec_history_cancelled">Download stopped.</string>
+    <string name="mec_history_too_old">Rate history covers only the last 90 days. Choose a later date or another currency.</string>
+    <string name="mec_history_no_rate">The rate history has no rate for this currency within 7 days of this date. Choose another currency or date.</string>
+    <string name="mec_history_offline">Couldn\'t download rate history. Check your connection and try again.</string>
+    <string name="mec_history_failed">Couldn\'t download rate history. Try again later.</string>
     <string name="mec_save_disabled_rate">Needs an exchange rate</string>
     <string name="mec_save_disabled_currency">Choose a currency</string>
     <string name="mec_save_disabled_amount">Fix the amount</string>

@@ -12,6 +12,7 @@ import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.core.app.ApplicationProvider
@@ -67,6 +68,8 @@ class CurrencyRateRegionContentTest {
     private var refreshCalls = 0
     private var openSettingCalls = 0
     private var changeCurrencyCalls = 0
+    private var downloadCalls = 0
+    private var cancelCalls = 0
 
     private val today = LocalDate.of(2026, 10, 29)
     private val rateDate = LocalDate.of(2026, 10, 27)
@@ -89,7 +92,9 @@ class CurrencyRateRegionContentTest {
         ratesSetting: CurrencyRatesSetting = CurrencyRatesSetting.OFF,
         rateRefresh: CurrencyRefreshStatus = CurrencyRefreshStatus.IDLE,
         ratesToday: LocalDate? = today,
-        suppressHomeUnresolvedCard: Boolean = false
+        suppressHomeUnresolvedCard: Boolean = false,
+        rateFixAction: CurrencyRateFixAction? = null,
+        historyStatus: CurrencyHistoryStatus = CurrencyHistoryStatus.IDLE
     ) {
         composeRule.setContent {
             MaterialTheme {
@@ -101,7 +106,11 @@ class CurrencyRateRegionContentTest {
                     suppressHomeUnresolvedCard = suppressHomeUnresolvedCard,
                     onRefresh = { refreshCalls++ },
                     onOpenSetting = { openSettingCalls++ },
-                    onChangeCurrency = { changeCurrencyCalls++ }
+                    onChangeCurrency = { changeCurrencyCalls++ },
+                    rateFixAction = rateFixAction,
+                    historyStatus = historyStatus,
+                    onDownloadRateHistory = { downloadCalls++ },
+                    onCancelRateHistory = { cancelCalls++ }
                 )
             }
         }
@@ -591,5 +600,239 @@ class CurrencyRateRegionContentTest {
         composeRule.onNodeWithText(string(R.string.mec_action_change_currency)).performClick()
 
         assertEquals(listOf(0, 0, 1), listOf(refreshCalls, openSettingCalls, changeCurrencyCalls))
+    }
+
+    // ---- MEC 1b: the history download action (ux-flows 1b.5, AE-1b-1, 3, 15) -------------------------------------------
+
+    private fun liveRegionText(): String =
+        composeRule.onAllNodes(SemanticsMatcher.keyIsDefined(SemanticsProperties.LiveRegion))
+            .fetchSemanticsNodes()
+            .flatMap { node ->
+                if (SemanticsProperties.Text in node.config) node.config[SemanticsProperties.Text] else emptyList()
+            }
+            .joinToString(" ") { it.text }
+
+    private fun showDownloadCard(
+        historyStatus: CurrencyHistoryStatus = CurrencyHistoryStatus.IDLE,
+        rateFixAction: CurrencyRateFixAction? = CurrencyRateFixAction.DOWNLOAD_HISTORY,
+        variant: CurrencyBlockVariant = CurrencyBlockVariant.NONE
+    ) = show(
+        blocked(variant),
+        ratesSetting = CurrencyRatesSetting.ON,
+        rateFixAction = rateFixAction,
+        historyStatus = historyStatus
+    )
+
+    @Test
+    fun downloadHistory_showsTheButtonAndTheDisclosureAndNoOtherFixAction() {
+        showDownloadCard()
+
+        composeRule.onNodeWithText(string(R.string.mec_history_action)).assertExists().assertIsEnabled()
+        composeRule.onNodeWithText(string(R.string.mec_history_disclosure)).assertExists()
+        composeRule.onNodeWithText(string(R.string.mec_action_refresh)).assertDoesNotExist()
+        composeRule.onNodeWithText(string(R.string.mec_action_open_setting)).assertDoesNotExist()
+        composeRule.onNodeWithText(string(R.string.mec_action_change_currency)).assertExists()
+    }
+
+    @Test
+    fun downloadHistory_staleVariantAlsoShowsTheButton() {
+        show(
+            blocked(CurrencyBlockVariant.STALE, latest = rateDate),
+            ratesSetting = CurrencyRatesSetting.ON,
+            rateFixAction = CurrencyRateFixAction.DOWNLOAD_HISTORY
+        )
+
+        composeRule.onNodeWithText(string(R.string.mec_history_action)).assertExists()
+    }
+
+    @Test
+    fun downloadHistory_idleHasNoCancelAndNoProgressLine() {
+        showDownloadCard()
+
+        composeRule.onNodeWithContentDescription(string(R.string.mec_history_cancel_cd)).assertDoesNotExist()
+        composeRule.onNodeWithText(string(R.string.mec_history_action_running)).assertDoesNotExist()
+    }
+
+    @Test
+    fun downloadHistory_disclosureAndButtonAreOutsideTheLiveRegion() {
+        showDownloadCard()
+
+        val live = liveRegionText()
+        assertEquals(false, live.contains(string(R.string.mec_history_disclosure)))
+        assertEquals(false, live.contains(string(R.string.mec_history_action)))
+    }
+
+    @Test
+    fun clickingDownloadHistory_callsOnDownloadRateHistoryOnceAndNothingElse() {
+        showDownloadCard()
+
+        composeRule.onNodeWithText(string(R.string.mec_history_action)).performClick()
+
+        assertEquals(1, downloadCalls)
+        assertEquals(listOf(0, 0, 0, 0), listOf(refreshCalls, openSettingCalls, changeCurrencyCalls, cancelCalls))
+    }
+
+    @Test
+    fun downloadHistory_running_showsCancelWithItsContentDescriptionAndADisabledAction() {
+        showDownloadCard(historyStatus = CurrencyHistoryStatus.RUNNING)
+
+        composeRule.onNodeWithContentDescription(string(R.string.mec_history_cancel_cd)).assertExists().assertIsEnabled()
+        composeRule.onNodeWithText(string(R.string.mec_history_action_running)).assertExists().assertIsNotEnabled()
+        composeRule.onNodeWithText(string(R.string.mec_history_action)).assertDoesNotExist()
+        composeRule.onNode(
+            SemanticsMatcher.expectValue(
+                SemanticsProperties.StateDescription,
+                string(R.string.mec_history_running_state)
+            )
+        ).assertExists()
+    }
+
+    @Test
+    fun downloadHistory_running_clickingTheDisabledActionDoesNothing() {
+        showDownloadCard(historyStatus = CurrencyHistoryStatus.RUNNING)
+
+        composeRule.onNodeWithText(string(R.string.mec_history_action_running)).performClick()
+
+        assertEquals(0, downloadCalls)
+    }
+
+    @Test
+    fun clickingCancel_callsOnCancelRateHistoryOnce() {
+        showDownloadCard(historyStatus = CurrencyHistoryStatus.RUNNING)
+
+        composeRule.onNodeWithContentDescription(string(R.string.mec_history_cancel_cd)).performClick()
+
+        assertEquals(1, cancelCalls)
+        assertEquals(0, downloadCalls)
+    }
+
+    private fun assertHistoryLine(
+        status: CurrencyHistoryStatus,
+        messageRes: Int,
+        rateFixAction: CurrencyRateFixAction? = CurrencyRateFixAction.DOWNLOAD_HISTORY
+    ) {
+        showDownloadCard(historyStatus = status, rateFixAction = rateFixAction)
+
+        val message = string(messageRes)
+        composeRule.onNodeWithText(message).assertExists()
+        assertEquals(true, liveRegionText().contains(message))
+    }
+
+    @Test
+    fun historyCancelled_showsItsMessageInTheLiveRegion() =
+        assertHistoryLine(CurrencyHistoryStatus.CANCELLED, R.string.mec_history_cancelled)
+
+    @Test
+    fun historyDoneTooOld_showsItsMessageInTheLiveRegion() =
+        assertHistoryLine(
+            CurrencyHistoryStatus.DONE_TOO_OLD,
+            R.string.mec_history_too_old,
+            CurrencyRateFixAction.NONE
+        )
+
+    @Test
+    fun historyDoneNoRate_showsItsMessageInTheLiveRegion() =
+        assertHistoryLine(
+            CurrencyHistoryStatus.DONE_NO_RATE,
+            R.string.mec_history_no_rate,
+            CurrencyRateFixAction.NONE
+        )
+
+    @Test
+    fun historyFailedOffline_showsItsMessageInTheLiveRegion() =
+        assertHistoryLine(CurrencyHistoryStatus.FAILED_OFFLINE, R.string.mec_history_offline)
+
+    @Test
+    fun historyFailedHomeUnavailable_showsTheHomeMessageAndNoDownloadButton() {
+        assertHistoryLine(
+            CurrencyHistoryStatus.FAILED_HOME_UNAVAILABLE,
+            R.string.mec_refresh_home_unavailable,
+            CurrencyRateFixAction.NONE
+        )
+
+        composeRule.onNodeWithText(string(R.string.mec_history_action)).assertDoesNotExist()
+    }
+
+    @Test
+    fun historyFailed_showsItsMessageInTheLiveRegionAndKeepsTheButtonForARetry() {
+        assertHistoryLine(CurrencyHistoryStatus.FAILED, R.string.mec_history_failed)
+
+        composeRule.onNodeWithText(string(R.string.mec_history_action)).assertExists().assertIsEnabled()
+    }
+
+    @Test
+    fun tooOldFixAction_showsTheWindowMessageWithoutAnyDownloadOrRefreshButton() {
+        showDownloadCard(rateFixAction = CurrencyRateFixAction.TOO_OLD)
+
+        composeRule.onNodeWithText(string(R.string.mec_history_too_old)).assertExists()
+        composeRule.onNodeWithText(string(R.string.mec_history_action)).assertDoesNotExist()
+        composeRule.onNodeWithText(string(R.string.mec_history_disclosure)).assertDoesNotExist()
+        composeRule.onNodeWithText(string(R.string.mec_action_refresh)).assertDoesNotExist()
+        composeRule.onNodeWithText(string(R.string.mec_action_change_currency)).assertExists()
+    }
+
+    @Test
+    fun noneFixAction_showsNoFixButtonButKeepsChangeCurrency() {
+        showDownloadCard(rateFixAction = CurrencyRateFixAction.NONE)
+
+        composeRule.onNodeWithText(string(R.string.mec_history_action)).assertDoesNotExist()
+        composeRule.onNodeWithText(string(R.string.mec_action_refresh)).assertDoesNotExist()
+        composeRule.onNodeWithText(string(R.string.mec_action_open_setting)).assertDoesNotExist()
+        composeRule.onNodeWithText(string(R.string.mec_action_change_currency)).assertExists()
+    }
+
+    @Test
+    fun nonRateVariant_neverOffersTheDownloadEvenIfAskedTo() {
+        showDownloadCard(variant = CurrencyBlockVariant.UNSUPPORTED)
+
+        composeRule.onNodeWithText(string(R.string.mec_history_action)).assertDoesNotExist()
+        composeRule.onNodeWithText(string(R.string.mec_history_disclosure)).assertDoesNotExist()
+    }
+
+    @Test
+    fun explicitFixAction_winsOverTheSettingBasedDefault() {
+        show(
+            blocked(CurrencyBlockVariant.NONE),
+            ratesSetting = CurrencyRatesSetting.ON,
+            rateFixAction = CurrencyRateFixAction.OPEN_SETTING
+        )
+
+        composeRule.onNodeWithText(string(R.string.mec_action_open_setting)).assertExists()
+        composeRule.onNodeWithText(string(R.string.mec_action_refresh)).assertDoesNotExist()
+    }
+
+    @Test
+    fun refreshLatestFixAction_showsTheRefreshButtonNotTheDownload() {
+        show(
+            blocked(CurrencyBlockVariant.NONE),
+            ratesSetting = CurrencyRatesSetting.ON,
+            rateFixAction = CurrencyRateFixAction.REFRESH_LATEST
+        )
+
+        composeRule.onNodeWithText(string(R.string.mec_action_refresh)).assertExists()
+        composeRule.onNodeWithText(string(R.string.mec_history_action)).assertDoesNotExist()
+    }
+
+    @Test
+    fun nullFixAction_keepsTheOldRefreshRenderingWhenTheSettingIsOn() {
+        show(
+            blocked(CurrencyBlockVariant.NONE),
+            ratesSetting = CurrencyRatesSetting.ON,
+            historyStatus = CurrencyHistoryStatus.FAILED
+        )
+
+        composeRule.onNodeWithText(string(R.string.mec_action_refresh)).assertExists()
+        composeRule.onNodeWithText(string(R.string.mec_action_open_setting)).assertDoesNotExist()
+        composeRule.onNodeWithText(string(R.string.mec_history_action)).assertDoesNotExist()
+        composeRule.onNodeWithText(string(R.string.mec_history_failed)).assertDoesNotExist()
+    }
+
+    @Test
+    fun nullFixAction_keepsTheOldOpenSettingRenderingWhenTheSettingIsOffOrUnknown() {
+        show(blocked(CurrencyBlockVariant.NONE), ratesSetting = CurrencyRatesSetting.UNKNOWN)
+
+        composeRule.onNodeWithText(string(R.string.mec_action_open_setting)).assertExists()
+        composeRule.onNodeWithText(string(R.string.mec_action_refresh)).assertDoesNotExist()
+        composeRule.onNodeWithText(string(R.string.mec_history_action)).assertDoesNotExist()
     }
 }

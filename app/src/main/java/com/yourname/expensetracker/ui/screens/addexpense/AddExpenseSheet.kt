@@ -429,6 +429,10 @@ fun AddExpenseSheet(
                     ratesToday = state.ratesToday,
                     suppressHomeUnresolvedCard = state.saveResult is SaveResult.Error,
                     onRefresh = { viewModel.refreshRates() },
+                    rateFixAction = state.rateFixAction,
+                    historyStatus = state.historyStatus,
+                    onDownloadRateHistory = { viewModel.onDownloadRateHistory() },
+                    onCancelRateHistory = { viewModel.onCancelRateHistory() },
                     onOpenSetting = { viewModel.requestOpenExchangeRateSetting() },
                     onChangeCurrency = { changeCurrencyRequests = 1 },
                     announceKey = state.previewAnnounceKey

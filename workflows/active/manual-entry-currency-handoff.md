@@ -367,3 +367,24 @@ Total: 9 + 5 + 37 = 51 (42 `mec_*` + 9 `add_expense_installments_*`); the count 
     - cancellation vr-20261030-063336-662b4a52;
     - static-guards vr-20261030-063354-84e54589.
   - COMMITTED. Dormant (no caller). Next: S2 (add-expense VM + UI).
+- 2026-10-30: 1b S2 (add-expense VM + UI) DONE.
+  - Written in two writer steps (VM, then UI + strings); 11 mec_history_* keys, es/el DRAFT.
+  - Combined guardian ACCEPT-WITH-CONDITIONS. Fixed:
+    - S2-G1 MEDIUM regression: Refresh shown again after a daily FAILED_HOME_UNAVAILABLE;
+    - S2-G2: keep the home-unavailable explanation for the session;
+    - S2-G3: one-shot announce flag cleared on the first evaluation, bump only when Eligible is applied. Recorded for the F-A11Y-LATCH-PURE review at the 1b candidate.
+  - S4 docs to do:
+    - ux-flows 1b.9 / 1b.8 / wireframes D-E still show the old "No personal data" disclosure; update to C13 (en/el/es as in the guardian report);
+    - mark mec_history_section_title / _done / _done_range as not built;
+    - mec_home_changed_cleared lands in S2b;
+    - LOG_RATE_HISTORY_FAILED is a constant log line;
+    - the single download call site goes into LEGAL_PATHS / ENGINE_INTERACTION_MAP;
+    - focus-on-success is not implemented (allowed by spec).
+  - Ladder, all PASS:
+    - targeted `*AddExpense*,*CurrencyRateRegion*,*ReceiptScan*` vr-20261030-073111-e965bedd;
+    - runtime-ui vr-20261030-073743-59195c90;
+    - cancellation vr-20261030-074117-211d3ec1;
+    - known_good_state vr-20261030-074135-a582e9c4;
+    - lint vr-20261030-074507-b24644c1.
+  - The first targeted run vr-20261030-071533-b58674e7 failed on a stray brace in the new UI test (fixed).
+  - COMMITTED. Next: S2b (home-change rule) and S3 (receipt parity), which may run in parallel; then S4 docs and the 1b candidate gate.

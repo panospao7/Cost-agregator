@@ -47,7 +47,13 @@ import com.yourname.expensetracker.domain.currency.CurrencyEntryMode
 import com.yourname.expensetracker.domain.currency.CurrencyRateRefreshOutcome
 import com.yourname.expensetracker.domain.currency.CurrencyRatesRepository
 import com.yourname.expensetracker.domain.currency.CurrencySelectionPolicy
+import com.yourname.expensetracker.domain.currency.CurrencyRateHistoryOutcome
+import com.yourname.expensetracker.domain.currency.NoRemedyReason
 import com.yourname.expensetracker.domain.currency.RateEligibility
+import com.yourname.expensetracker.domain.currency.RateHistoryFailureReason
+import com.yourname.expensetracker.domain.currency.RateRemedy
+import com.yourname.expensetracker.domain.currency.RateRemedyDecision
+import com.yourname.expensetracker.domain.currency.RateRemedyPolicy
 import com.yourname.expensetracker.domain.currency.UserPresentRatePreview
 import com.yourname.expensetracker.domain.currency.UserPresentRatePreviewResult
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsLoadState
@@ -75,7 +81,9 @@ import com.yourname.expensetracker.ui.screens.installments.declare.declareMutati
 import com.yourname.expensetracker.ui.components.currency.CurrencyAmountInvalidKind
 import com.yourname.expensetracker.ui.components.currency.CurrencyBlockOrigin
 import com.yourname.expensetracker.ui.components.currency.CurrencyBlockVariant
+import com.yourname.expensetracker.ui.components.currency.CurrencyHistoryStatus
 import com.yourname.expensetracker.ui.components.currency.CurrencyOpenSettingRequest
+import com.yourname.expensetracker.ui.components.currency.CurrencyRateFixAction
 import com.yourname.expensetracker.ui.components.currency.CurrencyRatesSetting
 import com.yourname.expensetracker.ui.components.currency.CurrencyRefreshStatus
 import com.yourname.expensetracker.ui.components.currency.CurrencyRegionUi
@@ -147,6 +155,18 @@ data class AddExpenseState(
  val ratesSetting: CurrencyRatesSetting = CurrencyRatesSetting.UNKNOWN,
  /** MEC INV-20: progress and bounded outcome of a user-started refresh. */
  val rateRefresh: CurrencyRefreshStatus = CurrencyRefreshStatus.IDLE,
+ /** MEC 1b: progress and bounded outcome of a user-started rate-history download (INV-1b-3). */
+ val historyStatus: CurrencyHistoryStatus = CurrencyHistoryStatus.IDLE,
+ /**
+  * MEC 1b (ux 1b.2, C13): the home currency's rates could not be downloaded; the history action stays
+  * hidden for the rest of the sheet session. Session-only; cleared by onSheetLeft() and reset().
+  */
+ val historyHomeUnavailable: Boolean = false,
+ /**
+  * MEC 1b INV-1b-5: the domain remedy chosen by [RateRemedyPolicy] at the last evaluation (enums only).
+  * The default keeps the pre-1b behaviour (refresh offered) until an evaluation has run.
+  */
+ val rateRemedy: RateRemedyDecision = RateRemedyDecision(RateRemedy.REFRESH_LATEST),
  /** MEC INV-16: true when Repeat was switched off (and cleared) because a foreign currency was chosen. */
  val repeatClearedByCurrency: Boolean = false,
  /** MEC D-11: what the "Open exchange-rate setting" action needs from the host. */
@@ -165,6 +185,35 @@ data class AddExpenseState(
  /** True when the selected currency is known and differs from home. */
  val isForeignSelected: Boolean
   get() = selectedCurrency != null && homeCurrency != null && selectedCurrency != homeCurrency
+
+ /**
+  * MEC 1b (ux 1b.5): the one fix action of the blocked card. Setting Off/Unknown is always
+  * [CurrencyRateFixAction.OPEN_SETTING] (R23, fail closed); otherwise the domain remedy is copied
+  * through. Home rates not downloadable hides the action; no other date logic lives here.
+  */
+ val rateFixAction: CurrencyRateFixAction
+  get() {
+   val region = currencyRegion
+   if (region !is CurrencyRegionUi.Blocked) return CurrencyRateFixAction.NONE
+   if (region.variant != CurrencyBlockVariant.STALE && region.variant != CurrencyBlockVariant.NONE) {
+    return CurrencyRateFixAction.NONE
+   }
+   if (ratesSetting != CurrencyRatesSetting.ON) return CurrencyRateFixAction.OPEN_SETTING
+   if (rateRefresh == CurrencyRefreshStatus.FAILED_HOME_UNAVAILABLE) return CurrencyRateFixAction.NONE
+   if (historyHomeUnavailable || historyStatus == CurrencyHistoryStatus.FAILED_HOME_UNAVAILABLE) {
+    return CurrencyRateFixAction.NONE
+   }
+   return when (rateRemedy.remedy) {
+    RateRemedy.REFRESH_LATEST -> CurrencyRateFixAction.REFRESH_LATEST
+    RateRemedy.DOWNLOAD_HISTORY -> CurrencyRateFixAction.DOWNLOAD_HISTORY
+    RateRemedy.NONE ->
+     if (rateRemedy.noRemedyReason == NoRemedyReason.OUTSIDE_HISTORY_WINDOW) {
+      CurrencyRateFixAction.TOO_OLD
+     } else {
+      CurrencyRateFixAction.NONE
+     }
+   }
+  }
 
  /**
   * MEC ux section 4: Save is disabled for a blocked rate (except a retryable home-unresolved refusal),
@@ -217,6 +266,7 @@ class AddExpenseViewModel @Inject constructor(
         const val LOG_RATE_PREVIEW_FAILED = "RATE_PREVIEW_FAILED"
         const val LOG_RATE_REFRESH_FAILED = "RATE_REFRESH_FAILED"
         const val LOG_RATES_SETTING_READ_FAILED = "RATES_SETTING_READ_FAILED"
+        const val LOG_RATE_HISTORY_FAILED = "RATE_HISTORY_FAILED"
 
         // MEC ux section 3: "Checking exchange rate" shows only if an evaluation exceeds this delay.
         const val EVALUATING_DELAY_MS = 250L
@@ -260,6 +310,15 @@ class AddExpenseViewModel @Inject constructor(
  private var evaluationJob: Job? = null
  private var refreshJob: Job? = null
  private var ratesSettingJob: Job? = null
+
+ // MEC 1b: the single user-started history download (INV-1b-3, Q-5). Session-only plain fields, never
+ // persisted or logged: the success flag feeds RateRemedyPolicy (INV-1b-5), the earliest stored ECB date
+ // feeds the DONE_TOO_OLD mapping (D-1b-5), the announce flag bumps the preview key once after success.
+ // Cleared by onSheetLeft() and reset().
+ private var historyJob: Job? = null
+ private var historyDownloadedThisSession: Boolean = false
+ private var historyEarliestDate: LocalDate? = null
+ private var historyAnnouncePending: Boolean = false
 
  /**
   * Loan-installments S11c: the zone-dependent installment values (default first payment, before-purchase
@@ -1339,6 +1398,8 @@ class AddExpenseViewModel @Inject constructor(
             } else {
                 null
             }
+            // INV-1b-5: the remedy is copied from RateRemedyPolicy; the VM supplies only today and the flag.
+            var decision = RateRemedyDecision(RateRemedy.REFRESH_LATEST)
             val region: CurrencyRegionUi = try {
                 val result = userPresentRatePreview.preview(
                     parsedAmount = parsedAmount ?: 1.0,
@@ -1347,6 +1408,7 @@ class AddExpenseViewModel @Inject constructor(
                     expenseAtMillis = atMillis,
                     entryZone = zone
                 )
+                decision = remedyFor(result, atMillis, zone, today)
                 regionFor(result, hasAmount = parsedAmount != null, origin = origin)
             } catch (e: CancellationException) {
                 throw e
@@ -1357,14 +1419,29 @@ class AddExpenseViewModel @Inject constructor(
             }
             marker?.cancel()
             ensureActive()
+            // F-B2-A11Y-1: after a history success the preview line is announced once (latest inputs win).
+            // F-A11Y-LATCH-PURE: VM-side one-shot flag; reviewed at the 1b candidate.
+            // Cleared on the first evaluation after a Stored outcome, whatever the region; the key is bumped
+            // only when the Eligible region is actually applied (not when `keep` is true).
+            val announcePending = historyAnnouncePending
+            historyAnnouncePending = false
+            val doneStatus = doneStatusFor(region, decision, atMillis, zone)
             _state.update {
                 val current = it.currencyRegion
                 val keep = keepSaveBlock && region !is CurrencyRegionUi.Blocked &&
                     current is CurrencyRegionUi.Blocked && current.origin == CurrencyBlockOrigin.SAVE
+                val announce = announcePending && !keep && region is CurrencyRegionUi.Eligible
                 it.copy(
                     currencyRegion = if (keep) current else region,
                     ratesToday = today,
-                    rateRefresh = settledRefresh(it, refreshCompleted && region is CurrencyRegionUi.Blocked)
+                    rateRefresh = settledRefresh(it, refreshCompleted && region is CurrencyRegionUi.Blocked),
+                    rateRemedy = decision,
+                    historyStatus = when {
+                        it.historyStatus == CurrencyHistoryStatus.RUNNING -> CurrencyHistoryStatus.RUNNING
+                        it.historyHomeUnavailable -> CurrencyHistoryStatus.FAILED_HOME_UNAVAILABLE
+                        else -> doneStatus
+                    },
+                    previewAnnounceKey = if (announce) it.previewAnnounceKey + 1 else it.previewAnnounceKey
                 )
             }
         }
@@ -1378,6 +1455,45 @@ class AddExpenseViewModel @Inject constructor(
         current.rateRefresh == CurrencyRefreshStatus.RUNNING -> CurrencyRefreshStatus.RUNNING
         doneStillBlocked -> CurrencyRefreshStatus.DONE_STILL_BLOCKED
         else -> CurrencyRefreshStatus.IDLE
+    }
+
+    /** INV-1b-5: the remedy for a blocked result; every other result needs none. Pure; no logging. */
+    private fun remedyFor(
+        result: UserPresentRatePreviewResult,
+        atMillis: Long,
+        zone: java.time.ZoneId,
+        today: LocalDate
+    ): RateRemedyDecision = when (result) {
+        is UserPresentRatePreviewResult.Blocked -> RateRemedyPolicy.remedy(
+            eligibility = result.eligibility,
+            localDate = java.time.Instant.ofEpochMilli(atMillis).atZone(zone).toLocalDate(),
+            latestStoredPairDate = result.latestStoredPairDate,
+            today = today,
+            historyDownloadedThisSession = historyDownloadedThisSession
+        )
+        else -> RateRemedyDecision(RateRemedy.NONE)
+    }
+
+    /**
+     * D-1b-5: still blocked after a history download in this session. The entry date before the earliest
+     * stored ECB date is DONE_TOO_OLD; any other case is DONE_NO_RATE. Anything else settles to IDLE.
+     */
+    private fun doneStatusFor(
+        region: CurrencyRegionUi,
+        decision: RateRemedyDecision,
+        atMillis: Long,
+        zone: java.time.ZoneId
+    ): CurrencyHistoryStatus {
+        if (region !is CurrencyRegionUi.Blocked || decision.noRemedyReason != NoRemedyReason.HISTORY_ALREADY_DOWNLOADED) {
+            return CurrencyHistoryStatus.IDLE
+        }
+        val earliest = historyEarliestDate
+        val entryDate = java.time.Instant.ofEpochMilli(atMillis).atZone(zone).toLocalDate()
+        return if (earliest != null && entryDate.isBefore(earliest)) {
+            CurrencyHistoryStatus.DONE_TOO_OLD
+        } else {
+            CurrencyHistoryStatus.DONE_NO_RATE
+        }
     }
 
     private fun todayFor(zone: java.time.ZoneId): LocalDate =
@@ -1427,6 +1543,7 @@ class AddExpenseViewModel @Inject constructor(
         if (snapshot.ratesSetting != CurrencyRatesSetting.ON) return
         if (!snapshot.isForeignSelected) return
         if (snapshot.rateRefresh == CurrencyRefreshStatus.RUNNING) return
+        if (snapshot.historyStatus == CurrencyHistoryStatus.RUNNING) return
 
         _state.update { it.copy(rateRefresh = CurrencyRefreshStatus.RUNNING) }
         refreshJob?.cancel()
@@ -1465,6 +1582,94 @@ class AddExpenseViewModel @Inject constructor(
                 reevaluateRegion(invalidate = false, showEvaluating = false, refreshCompleted = true)
             }
         }
+    }
+
+    /**
+     * MEC 1b INV-1b-3: user-started "Download rate history". The only caller of
+     * [CurrencyRatesRepository.downloadRecentHistory]; never reached from preview, save, init or any
+     * automatic path. Single job: ignored while RUNNING (or a refresh runs). The VM never enables the
+     * setting; the repository is privacy-gated. Outcomes map per ux D-1b-5.
+     */
+    fun onDownloadRateHistory() {
+        val snapshot = _state.value
+        val home = snapshot.homeCurrency ?: return
+        if (snapshot.ratesSetting != CurrencyRatesSetting.ON) return
+        if (!snapshot.isForeignSelected) return
+        if (snapshot.rateFixAction != CurrencyRateFixAction.DOWNLOAD_HISTORY) return
+        if (snapshot.historyStatus == CurrencyHistoryStatus.RUNNING || historyJob?.isActive == true) return
+        if (snapshot.rateRefresh == CurrencyRefreshStatus.RUNNING) return
+
+        _state.update { it.copy(historyStatus = CurrencyHistoryStatus.RUNNING) }
+        historyJob = viewModelScope.launch {
+            var status = CurrencyHistoryStatus.IDLE
+            var setting: CurrencyRatesSetting? = null
+            var stored = false
+            try {
+                when (val outcome = currencyRatesRepository.downloadRecentHistory(home)) {
+                    is CurrencyRateHistoryOutcome.Stored -> {
+                        stored = true
+                        historyDownloadedThisSession = true
+                        historyEarliestDate = outcome.earliestDate
+                    }
+                    // The setting was turned off meanwhile: show the Off variant, no failure line.
+                    CurrencyRateHistoryOutcome.DisabledByPrivacy -> setting = CurrencyRatesSetting.OFF
+                    is CurrencyRateHistoryOutcome.PrivacyCheckFailed -> setting = CurrencyRatesSetting.UNKNOWN
+                    CurrencyRateHistoryOutcome.AlreadyInProgress -> status = CurrencyHistoryStatus.FAILED
+                    is CurrencyRateHistoryOutcome.Failed -> status = historyFailureStatus(outcome.reason)
+                    CurrencyRateHistoryOutcome.Cancelled -> status = CurrencyHistoryStatus.CANCELLED
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // INV-19: bounded code only; the exception is never attached.
+                Timber.w(LOG_RATE_HISTORY_FAILED)
+                status = CurrencyHistoryStatus.FAILED
+            }
+            if (stored) historyAnnouncePending = true
+            _state.update {
+                it.copy(
+                    historyStatus = status,
+                    historyHomeUnavailable = it.historyHomeUnavailable ||
+                        status == CurrencyHistoryStatus.FAILED_HOME_UNAVAILABLE,
+                    ratesSetting = setting ?: it.ratesSetting
+                )
+            }
+            if (stored) {
+                // Latest inputs win; the region becomes Eligible, or Blocked with a DONE_* status.
+                reevaluateRegion(invalidate = false, showEvaluating = false)
+            }
+        }
+    }
+
+    /** INV-1b-21: user Cancel, offered only while RUNNING. The job's CancellationException is rethrown. */
+    fun onCancelRateHistory() {
+        if (_state.value.historyStatus != CurrencyHistoryStatus.RUNNING) return
+        historyJob?.cancel()
+        historyJob = null
+        _state.update { it.copy(historyStatus = CurrencyHistoryStatus.CANCELLED) }
+    }
+
+    /** D-1b-5: bounded failure reason to UX status. */
+    private fun historyFailureStatus(reason: RateHistoryFailureReason): CurrencyHistoryStatus = when (reason) {
+        RateHistoryFailureReason.OFFLINE -> CurrencyHistoryStatus.FAILED_OFFLINE
+        RateHistoryFailureReason.INVALID_HOME_CURRENCY,
+        RateHistoryFailureReason.HOME_QUOTE_UNAVAILABLE -> CurrencyHistoryStatus.FAILED_HOME_UNAVAILABLE
+        RateHistoryFailureReason.TIMEOUT,
+        RateHistoryFailureReason.HTTP_ERROR,
+        RateHistoryFailureReason.PAYLOAD_TOO_LARGE,
+        RateHistoryFailureReason.PAYLOAD_EMPTY,
+        RateHistoryFailureReason.PAYLOAD_MALFORMED,
+        RateHistoryFailureReason.PAYLOAD_OUT_OF_BOUNDS,
+        RateHistoryFailureReason.STORE_FAILED -> CurrencyHistoryStatus.FAILED
+    }
+
+    /** Q-5: leaving the sheet or a reset stops a running download and drops the session-only history data. */
+    private fun clearHistorySession() {
+        historyJob?.cancel()
+        historyJob = null
+        historyDownloadedThisSession = false
+        historyEarliestDate = null
+        historyAnnouncePending = false
     }
 
     /**
@@ -1683,6 +1888,18 @@ class AddExpenseViewModel @Inject constructor(
     fun onSheetLeft() {
         sessionZone = null
         sessionZoneTick.value = null
+        // MEC 1b Q-5: a running download is cancelled with no status; the session flag and date are dropped.
+        clearHistorySession()
+        _state.update {
+            it.copy(
+                historyStatus = if (it.historyStatus == CurrencyHistoryStatus.RUNNING) {
+                    CurrencyHistoryStatus.IDLE
+                } else {
+                    it.historyStatus
+                },
+                historyHomeUnavailable = false
+            )
+        }
     }
 
     fun reset() {
@@ -1696,6 +1913,8 @@ class AddExpenseViewModel @Inject constructor(
         evaluationJob = null
         refreshJob?.cancel()
         refreshJob = null
+        // MEC 1b: the fresh state below drops historyStatus; the job, session flag and date go here.
+        clearHistorySession()
         currencyOverride = null
         // Loan-installments S11a: the installment sub-state is session-only; the fresh AddExpenseState
         // below drops it (and the plan uuid), so every dismiss path and a confirmed NAVIGATE discard it.

@@ -29,8 +29,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.currency.CurrencyUnsetReason
@@ -131,6 +133,31 @@ enum class CurrencyRefreshStatus {
     FAILED
 }
 
+/**
+ * MEC 1b (ux 1b.5): the one fix action the blocked card offers. [REFRESH_LATEST], [DOWNLOAD_HISTORY]
+ * and [NONE] are copied from the domain `RateRemedy`; [OPEN_SETTING] (setting Off/Unknown) and
+ * [TOO_OLD] (outside the history window) are UX-only presentation states. Bounded.
+ */
+enum class CurrencyRateFixAction {
+    NONE,
+    REFRESH_LATEST,
+    DOWNLOAD_HISTORY,
+    OPEN_SETTING,
+    TOO_OLD
+}
+
+/** MEC 1b (ux 1b.5, D-1b-5): progress and bounded outcome of a user-started history download. */
+enum class CurrencyHistoryStatus {
+    IDLE,
+    RUNNING,
+    CANCELLED,
+    DONE_TOO_OLD,
+    DONE_NO_RATE,
+    FAILED_OFFLINE,
+    FAILED_HOME_UNAVAILABLE,
+    FAILED
+}
+
 /** What the open-exchange-rate-setting action needs from the host (decision D-11). */
 enum class CurrencyOpenSettingRequest {
     NONE,
@@ -161,6 +188,11 @@ enum class CurrencyOpenSettingRequest {
  *
  * [announceKey] is the host's monotonically increasing counter, bumped only by currency, date and home
  * changes. Its initial value is never announced (opening the screen is not a change).
+ *
+ * MEC 1b: [rateFixAction] is the one fix action of the blocked card (ux 1b.5). Null keeps the pre-1b
+ * behaviour (refresh when the setting is On, open-setting otherwise), so hosts that do not pass it are
+ * unchanged. [historyStatus] drives the download progress and one-line outcomes; success is announced
+ * only through the preview line, never by this card.
  */
 @Composable
 fun CurrencyRateRegionContent(
@@ -173,7 +205,11 @@ fun CurrencyRateRegionContent(
     onOpenSetting: () -> Unit,
     onChangeCurrency: () -> Unit,
     modifier: Modifier = Modifier,
-    announceKey: Int = 0
+    announceKey: Int = 0,
+    rateFixAction: CurrencyRateFixAction? = null,
+    historyStatus: CurrencyHistoryStatus = CurrencyHistoryStatus.IDLE,
+    onDownloadRateHistory: () -> Unit = {},
+    onCancelRateHistory: () -> Unit = {}
 ) {
     val latch = remember { PreviewAnnounceLatch(announceKey) }
     val previewText = if (region is CurrencyRegionUi.Eligible) previewLineText(region, ratesToday) else null
@@ -199,6 +235,10 @@ fun CurrencyRateRegionContent(
                     onRefresh = onRefresh,
                     onOpenSetting = onOpenSetting,
                     onChangeCurrency = onChangeCurrency,
+                    rateFixAction = rateFixAction,
+                    historyStatus = historyStatus,
+                    onDownloadRateHistory = onDownloadRateHistory,
+                    onCancelRateHistory = onCancelRateHistory,
                     modifier = modifier
                 )
             }
@@ -291,6 +331,10 @@ private fun BlockedRateCard(
     onRefresh: () -> Unit,
     onOpenSetting: () -> Unit,
     onChangeCurrency: () -> Unit,
+    rateFixAction: CurrencyRateFixAction?,
+    historyStatus: CurrencyHistoryStatus,
+    onDownloadRateHistory: () -> Unit,
+    onCancelRateHistory: () -> Unit,
     modifier: Modifier
 ) {
     val requester = remember { BringIntoViewRequester() }
@@ -317,8 +361,30 @@ private fun BlockedRateCard(
         CurrencyRefreshStatus.FAILED -> R.string.mec_refresh_failed
         else -> null
     }
-    val showRefresh = rateVariant && settingOn && rateRefresh != CurrencyRefreshStatus.FAILED_HOME_UNAVAILABLE
-    val showOpenSetting = rateVariant && !settingOn
+    // MEC 1b: a non-null rateFixAction picks the one action; null keeps the pre-1b rules (other hosts).
+    val showRefresh = if (rateFixAction != null) {
+        rateVariant && rateFixAction == CurrencyRateFixAction.REFRESH_LATEST
+    } else {
+        rateVariant && settingOn && rateRefresh != CurrencyRefreshStatus.FAILED_HOME_UNAVAILABLE
+    }
+    val showOpenSetting = if (rateFixAction != null) {
+        rateVariant && rateFixAction == CurrencyRateFixAction.OPEN_SETTING
+    } else {
+        rateVariant && !settingOn
+    }
+    val showDownload = rateVariant && rateFixAction == CurrencyRateFixAction.DOWNLOAD_HISTORY
+    val historyRunning = showDownload && historyStatus == CurrencyHistoryStatus.RUNNING
+    // One bounded status line, no amounts or rates. TOO_OLD before any download uses the same copy.
+    val historyLineRes = if (!rateVariant || rateFixAction == null) null else when {
+        historyStatus == CurrencyHistoryStatus.CANCELLED -> R.string.mec_history_cancelled
+        historyStatus == CurrencyHistoryStatus.DONE_TOO_OLD -> R.string.mec_history_too_old
+        historyStatus == CurrencyHistoryStatus.DONE_NO_RATE -> R.string.mec_history_no_rate
+        historyStatus == CurrencyHistoryStatus.FAILED_OFFLINE -> R.string.mec_history_offline
+        historyStatus == CurrencyHistoryStatus.FAILED_HOME_UNAVAILABLE -> R.string.mec_refresh_home_unavailable
+        historyStatus == CurrencyHistoryStatus.FAILED -> R.string.mec_history_failed
+        rateFixAction == CurrencyRateFixAction.TOO_OLD -> R.string.mec_history_too_old
+        else -> null
+    }
     val showChange = region.variant != CurrencyBlockVariant.HOME_UNRESOLVED
     val onCard = MaterialTheme.colorScheme.onErrorContainer
     val buttonColors = ButtonDefaults.textButtonColors(contentColor = onCard)
@@ -349,6 +415,47 @@ private fun BlockedRateCard(
                 }
                 if (refreshLineRes != null) {
                     Text(stringResource(refreshLineRes), color = onCard, style = MaterialTheme.typography.bodySmall)
+                }
+                if (historyLineRes != null) {
+                    Text(stringResource(historyLineRes), color = onCard, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+            if (showDownload) {
+                // Outside the live region so it is not re-announced on every status change; it comes
+                // before the button so the user hears what the tap does first.
+                Text(
+                    stringResource(R.string.mec_history_disclosure),
+                    color = onCard,
+                    style = MaterialTheme.typography.bodySmall
+                )
+                val runningState = stringResource(R.string.mec_history_running_state)
+                TextButton(
+                    onClick = onDownloadRateHistory,
+                    enabled = !historyRunning,
+                    colors = buttonColors,
+                    modifier = Modifier
+                        .heightIn(min = 48.dp)
+                        .semantics { if (historyRunning) stateDescription = runningState }
+                ) {
+                    if (historyRunning) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = onCard)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(stringResource(R.string.mec_history_action_running))
+                    } else {
+                        Text(stringResource(R.string.mec_history_action))
+                    }
+                }
+                if (historyRunning) {
+                    val cancelCd = stringResource(R.string.mec_history_cancel_cd)
+                    TextButton(
+                        onClick = onCancelRateHistory,
+                        colors = buttonColors,
+                        modifier = Modifier
+                            .heightIn(min = 48.dp)
+                            .semantics { contentDescription = cancelCd }
+                    ) {
+                        Text(stringResource(R.string.mec_history_cancel))
+                    }
                 }
             }
             if (showRefresh) {
