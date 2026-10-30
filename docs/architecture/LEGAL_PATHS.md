@@ -593,6 +593,27 @@ EXCHANGE-RATE download (non-AI network call, default OFF):
     UI maps codes via CurrencyErrorMessages (no raw codes shown)
   → User switch: Privacy settings > Network
 
+EXCHANGE-RATE history download (MEC 1b; same legal path as above, a second method on the same chain;
+no new path, no expense write; the setting is On, user-started):
+  → AddExpenseViewModel.onDownloadRateHistory / ReceiptScanViewModel.onDownloadRateHistory
+    (user tap only; offered when RateRemedyPolicy = DOWNLOAD_HISTORY; ONE successful download per
+    entry session; REFRESH_LATEST is offered first, D-1b-1)
+    → CurrencyRatesRepository.downloadRecentHistory (CurrencyRatesRepositoryImpl)
+    → NetworkPrivacyGate check (EXCHANGE_RATE_DOWNLOAD) BEFORE any HTTP call;
+      constant ECB 90-day URL on www.ecb.europa.eu; no redirects; bounded, XXE-safe parse
+    → CurrencyConverter.storeRateHistory
+    → ExchangeRateStoreAdapter.insertOrUpdateAll (ALL-OR-NOTHING, one transaction)
+    → ExchangeRateDao
+  → Returns CurrencyRateHistoryOutcome (Stored / DisabledByPrivacy / PrivacyCheckFailed /
+    AlreadyInProgress / Failed(RateHistoryFailureReason)); Cancelled is set by the VM on a user Cancel,
+    the repository rethrows CancellationException and never returns it
+  FORBIDDEN:
+    ❌ Fetching rate history at preview, save, refusal, start-up or from a worker
+    ❌ Any rate host or file other than the two ECB constants
+    ❌ Storing part of a history payload
+    ❌ lastUpdated-keyed deletion of exchange_rates (deleteOldRates/cleanupOldRates) from production code
+    ❌ Logging URL, dates, rates, currency codes, counts, home currency or exception messages
+
 PRIVACY BLOCKED states:
   → PrivacyBlocked sealed interface with typed subclasses:
     CloudAiDisabled, ReceiptImageUploadDisabled, ExternalGeocodingDisabled,

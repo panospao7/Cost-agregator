@@ -98,6 +98,22 @@ CurrencyConverter.convert() / convertAsOf()
         └── UserPresentRatePreview (advisory preview; same roundSnapshot as the stored snapshot)
 ```
 
+### CurrencyRatesRepository.downloadRecentHistory / CurrencyConverter.storeRateHistory changes affect (MEC 1b):
+```
+CurrencyRatesRepository.downloadRecentHistory(home) -> CurrencyRateHistoryOutcome
+  (Stored / DisabledByPrivacy / PrivacyCheckFailed / AlreadyInProgress / Failed(RateHistoryFailureReason);
+   Cancelled is VM-produced only; NetworkPrivacyGate checked before any HTTP; single-flight)
+  ├── CurrencyConverter.storeRateHistory(days) -> ExchangeRateStoreAdapter.insertOrUpdateAll
+  │     (ONE all-or-nothing write into exchange_rates; adds rows only, no delete/cleanup; no schema change)
+  │     └── RateEligibilityEvaluator / UserPresentRatePreview (unchanged; see the new rows on re-evaluation)
+  ├── RateRemedyPolicy.remedy() (pure; REFRESH_LATEST first, DOWNLOAD_HISTORY only when the latest stored
+  │     pair date is after the entry date; NoRemedyReason OUTSIDE_HISTORY_WINDOW / HISTORY_ALREADY_DOWNLOADED;
+  │     reads UserPresentRatePreview Blocked.latestStoredPairDate)
+  ├── AddExpenseViewModel.onDownloadRateHistory / onCancelRateHistory (user tap only; VM scope job)
+  └── ReceiptScanViewModel.onDownloadRateHistory / onCancelRateHistory (same contract)
+No expense write path, worker or Room schema is touched.
+```
+
 ### MerchantNormalizer changes affect:
 ```
 MerchantNormalizer.normalize()

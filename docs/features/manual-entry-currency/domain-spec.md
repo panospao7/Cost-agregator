@@ -538,6 +538,8 @@ Storage size: about 25 listed catalog currencies give 600 rows per day. Over abo
 
 **UX mapping (D-1b-5).** The outcome, the `Failed` reason and the `NoRemedyReason` map to the UI states `historyStatus` and `rateFixAction` by the table in `ux-flows.md` 1b.2 ("Outcome-to-state mapping"). That table is the only place the mapping is defined; this section doesn't repeat it. The domain supplies its inputs: the `Failed` reason, `Cancelled`, the `NoRemedyReason` (INV-1b-5) and `Stored.earliestDate`. For the rule "`HISTORY_ALREADY_DOWNLOADED` with the entry date before the earliest stored date", the entry VM keeps the `earliestDate` of this session's `Stored` outcome in memory beside `historyDownloadedThisSession` (extends INV-1b-6; cleared with it in `onSheetLeft` and `reset`; never persisted or logged). `AlreadyInProgress` has no D-1b-5 row; it is a backstop and is presented as `FAILED` (1b.15).
 
+**Built diagnostics (C9/C11, S4 note).** The repository emits the INV-1b-18 line as a constant-format `Timber.i("RATE_HISTORY_DOWNLOAD %s", outcomeCode)` with the bounded enum name only. The two entry VMs (`AddExpenseViewModel`, `ReceiptScanViewModel`) each log an unexpected non-cancellation exception from the download with `LOG_RATE_HISTORY_FAILED` (`"RATE_HISTORY_FAILED"`): a constant-tag `Timber.w(tag)` line with no `Throwable`, no format arguments, and no pairs, dates, amounts or home currency. The exception is never attached or stringified; `CancellationException` is rethrown before that catch.
+
 ### 1b.8 Privacy (decides item 8)
 
 | ID | Invariant | Owner |
@@ -584,7 +586,7 @@ Storage size: about 25 listed catalog currencies give 600 rows per day. Over abo
 - Same table, columns and unique index. No version bump, migration, backfill or destructive change. No new DataStore key: the session flag lives in memory.
 - Growth: about 38-39k rows on the first download, then about 600 per new business day (1b.4). No row is deleted.
 
-### 1b.13 Proposed architecture-doc change (proposal only; not edited)
+### 1b.13 Architecture-doc change (applied in S4 to `docs/architecture/LEGAL_PATHS.md`, EXCHANGE-RATE history download block)
 
 `LEGAL_PATHS.md` → EXCHANGE-RATE download (`:586-593`), add:
 ```

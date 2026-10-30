@@ -444,3 +444,10 @@ Total: 9 + 5 + 37 = 51 (42 `mec_*` + 9 `add_expense_installments_*`); the count 
   - known_good_state vr-20261030-120846-f384647b
   - lint vr-20261030-121202-bb842d19
 - NEXT: S4 docs (see the RESUME block above), then the 1b candidate gate.
+- 1b S4 docs COMMITTED:
+  - ux-flows C13 copy; unbuilt keys marked (D-1b-4);
+  - LEGAL_PATHS "EXCHANGE-RATE history download (MEC 1b)" block;
+  - ENGINE_INTERACTION_MAP, CODEBASE_SEGMENTS (seg 16), CODEBASE_INVENTORY;
+  - domain-spec 1b.7 built-diagnostics note.
+  - guard_docs_truth PASS vr-20261030-122639-3f1d5dc0.
+- NEXT: the 1b candidate gate (unit-tests, static-guards, app-check; F-A11Y-LATCH-PURE review; privacy guardian; reviewer-strict; device check against the live ECB file).

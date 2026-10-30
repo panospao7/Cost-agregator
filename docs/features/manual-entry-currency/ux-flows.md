@@ -240,7 +240,7 @@ Reconciled 2026-10-30 per owner-approvals 94 (D-1b-1..6). Every earlier `[ALIGN]
  │   is from 7 Oct, more than 7 days earlier.        │
  │ You can also change the currency or the date.     │
  │ Downloads the last 90 days of public ECB exchange │  <- disclosure, outside the live region
- │ rates. No personal data is sent.                  │
+ │ rates. None of your expense data is sent.         │
  │ [ Download rate history ]  [ Change currency ]    │  <- TextButtons, 48dp, wrap
  └────────────────────────────────────────────────────┘
 ```
@@ -296,7 +296,7 @@ Reconciled 2026-10-30 per owner-approvals 94 (D-1b-1..6). Every earlier `[ALIGN]
  ┌────────────────────────────────────────────────────┐
  │ Rate history                                       │
  │ Downloads the last 90 days of public ECB exchange │
- │ rates. No personal data is sent.                  │
+ │ rates. None of your expense data is sent.         │
  │ [        Download rate history         ]          │
  │ Rate history downloaded.                          │  <- polite live region (status line only)
  └────────────────────────────────────────────────────┘
@@ -355,7 +355,7 @@ Mapping checks. **Spec states with no UI:** the stored row count and date range 
 - The F-A11Y-LATCH-PURE follow-up applies: the extra key bump on download completion must go through the same latch. Review it at the 1b candidate.
 
 ### 1b.8 Privacy disclosure and diagnostics
-- One line, shown wherever the download action is shown (card and Currency management): **"Downloads the last 90 days of public ECB exchange rates. No personal data is sent."** It is accurate only if the request carries no app-specific query, header or identifier beyond a plain GET to the ECB host (INV-1b-1 and INV-1b-19: one constant URL, no query, body, cookie or app-specific header, no redirect followed). If the review finds otherwise, the copy must change, not the request.
+- One line, shown wherever the download action is shown (card and Currency management): **"Downloads the last 90 days of public ECB exchange rates. None of your expense data is sent."** (C13 wording; the earlier "No personal data is sent" copy is withdrawn. Built as `mec_history_disclosure`, EN `strings.xml`.) It is accurate only if the request carries no app-specific query, header or identifier beyond a plain GET to the ECB host (INV-1b-1 and INV-1b-19: one constant URL, no query, body, cookie or app-specific header, no redirect followed). If the review finds otherwise, the copy must change, not the request.
 - The fetch timing reveals a backdated-entry attempt (brief `:39`). This is accepted as residual and not disclosed in the UI. It goes to the privacy review (UX-1b-Q-4).
 - Diagnostics: bounded codes only (for example a history outcome enum). Never the entry date, the currency, the amount, the URL, the HTTP body or the exception message. Nothing from OCR or receipt text appears in any history copy or log. The receipt card shows no OCR token (section 6).
 
@@ -367,15 +367,15 @@ Mapping checks. **Spec states with no UI:** the stored row count and date range 
 | `mec_history_running_state` | Downloading rate history | Λήψη ιστορικού ισοτιμιών σε εξέλιξη | Descargando historial de tipos |
 | `mec_history_cancel` | Cancel | Ακύρωση | Cancelar |
 | `mec_history_cancel_cd` | Cancel rate history download | Ακύρωση λήψης ιστορικού ισοτιμιών | Cancelar la descarga del historial de tipos |
-| `mec_history_disclosure` | Downloads the last 90 days of public ECB exchange rates. No personal data is sent. | Κατεβάζει τις δημόσιες ισοτιμίες της ΕΚΤ των τελευταίων 90 ημερών. Δεν αποστέλλονται προσωπικά δεδομένα. | Descarga los tipos de cambio públicos del BCE de los últimos 90 días. No se envían datos personales. |
+| `mec_history_disclosure` | Downloads the last 90 days of public ECB exchange rates. None of your expense data is sent. (C13) | Κατεβάζει τις δημόσιες ισοτιμίες της ΕΚΤ των τελευταίων 90 ημερών. Δεν αποστέλλονται δεδομένα των εξόδων σας. | Descarga los tipos de cambio públicos del BCE de los últimos 90 días. No se envía ningún dato de tus gastos. |
 | `mec_history_cancelled` | Download stopped. | Η λήψη διακόπηκε. | Descarga detenida. |
 | `mec_history_too_old` | Rate history covers only the last 90 days. Choose a later date or another currency. | Το ιστορικό ισοτιμιών καλύπτει μόνο τις τελευταίες 90 ημέρες. Επιλέξτε μεταγενέστερη ημερομηνία ή άλλο νόμισμα. | El historial de tipos solo cubre los últimos 90 días. Elige una fecha posterior u otra moneda. |
 | `mec_history_no_rate` | The rate history has no rate for this currency within 7 days of this date. Choose another currency or date. | Το ιστορικό δεν έχει ισοτιμία για αυτό το νόμισμα έως 7 ημέρες πριν από αυτή την ημερομηνία. Επιλέξτε άλλο νόμισμα ή ημερομηνία. | El historial no tiene un tipo para esta moneda a menos de 7 días de esta fecha. Elige otra moneda u otra fecha. |
 | `mec_history_offline` | Couldn't download rate history. Check your connection and try again. | Η λήψη ιστορικού ισοτιμιών απέτυχε. Ελέγξτε τη σύνδεση και δοκιμάστε ξανά. | No se pudo descargar el historial de tipos. Revisa la conexión e inténtalo de nuevo. |
 | `mec_history_failed` | Couldn't download rate history. Try again later. | Η λήψη ιστορικού ισοτιμιών απέτυχε. Δοκιμάστε αργότερα. | No se pudo descargar el historial de tipos. Inténtalo más tarde. |
-| `mec_history_section_title` | Rate history | Ιστορικό ισοτιμιών | Historial de tipos |
-| `mec_history_done` | Rate history downloaded. | Το ιστορικό ισοτιμιών λήφθηκε. | Historial de tipos descargado. |
-| `mec_history_done_range` | Rate history downloaded. Rates from %1$s to %2$s are available. | Το ιστορικό ισοτιμιών λήφθηκε. Διαθέσιμες ισοτιμίες από %1$s έως %2$s. | Historial de tipos descargado. Hay tipos disponibles del %1$s al %2$s. |
+| `mec_history_section_title` (not built in 1b; currency-management row deferred, D-1b-4) | Rate history | Ιστορικό ισοτιμιών | Historial de tipos |
+| `mec_history_done` (not built in 1b; currency-management row deferred, D-1b-4) | Rate history downloaded. | Το ιστορικό ισοτιμιών λήφθηκε. | Historial de tipos descargado. |
+| `mec_history_done_range` (not built in 1b; currency-management row deferred, D-1b-4) | Rate history downloaded. Rates from %1$s to %2$s are available. | Το ιστορικό ισοτιμιών λήφθηκε. Διαθέσιμες ισοτιμίες από %1$s έως %2$s. | Historial de tipos descargado. Hay tipos disponibles del %1$s al %2$s. |
 | `mec_home_changed_cleared` | Your home currency changed, so the amount was cleared. | Το βασικό σας νόμισμα άλλαξε, οπότε το ποσό διαγράφηκε. | Tu moneda principal cambió, por lo que se borró el importe. |
 
 Reused unchanged: `mec_refresh_home_unavailable`, `mec_action_open_setting`, `mec_open_setting_confirm_title/body`, `mec_block_*`, `mec_action_change_currency`, `mec_save_disabled_rate`, `mec_receipt_kept`, `mec_repeat_cleared`. `mec_history_cancel` may be replaced by the app's existing generic Cancel string if one exists (implementer to check; no duplicate key). "90 days" and "7 days" are literal in copy. If the domain's reach differs, change the copy to match (use a `%d` plural if it becomes variable). Greek and Spanish copy needs native review. Use ΕΚΤ/BCE as in the existing `mec_preview_*` keys. Placeholders take only currency codes or public ECB dates, never amounts.
