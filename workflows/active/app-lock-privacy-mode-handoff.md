@@ -3075,3 +3075,7 @@ Validation to request: unchanged, targeted `*AppLockController*` (covers both te
   - NOW: API 35 device classes for G1c.
   - API 35: AppLockPromptHostDeviceTest PASS vr-20261029-191103-c329656a; AppLockLifecycleDeviceTest PASS vr-20261029-191234-a9276ccc.
 - G1c COMMITTED (owner-approvals 90 items AE-118, CF-4 and R3 closed; CF-4b deferred; AE-42/117 OEM screens remain the release-candidate real-phone residual). reviewer-strict at the next app-lock merge candidate. Next app-lock: S24-S27, G2.
+
+## 2026-10-30: increment 2 (S24-S27, G2) re-anchored; S24 design review next
+- The plan's "Increment 2 re-anchor amendment" (BINDING) records drift fixes D-I2-1..7, the order S24 -> S25 -> {S26 || S27} -> G2, per-slice validation, the PIN storage decisions, the open items for the S24 privacy design review (D-I2-8), and OD-19 as a pre-S27 gate (D-I2-9). Orchestrator decisions are under owner-approvals 92.
+- Next: the S24 privacy-guardian DESIGN review (resolve D-I2-8), then the S24 Sonnet writer plus a separate test-author.

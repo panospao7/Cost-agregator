@@ -2326,3 +2326,56 @@ Basis: owner-approvals 90 (owner delegated the open pre-release items to the orc
 - AE-42/117 OEM screens stay the release-candidate real-phone residual.
 
 ### G1c guardian dispositions (2026-10-29): combined guardian ACCEPT-WITH-CONDITIONS. LOW-2 (ux TRANSIENT row pointer) fixed. LOW-1 (destroy path re-posts awaitingTimeout, keeping the adapter referenced for AWAITING_TERMINAL_TIMEOUT_MS) DECLINED by the orchestrator: the leak is bounded and transient, it preserves the echo-drop guarantee after destroy, and it is pinned by a test-author test. Process condition: the tests are written; validation follows.
+
+
+## Increment 2 re-anchor amendment (BINDING; 2026-10-30; feature-planner Sonnet re-anchor at 7026fef7; orchestrator decisions per owner-approvals 92)
+
+Baseline: no PIN code exists (only the `TODO(S25)` at AppLockController.kt:636). Every existing seam named by S24-S27 is present. There is no `lockMode`, `PinStep`, PIN reason code or `strings_applock_pin*.xml`. `allowBackup=false`; no `dataExtractionRules`. Keystore precedents: SecureKeyStorage, BankTokenCipher, KeystoreInstallationSecretHasher.
+
+### Write-set amendments (drift fixed; decided)
+- D-I2-1: S24 also owns `AppLockPrivacySettings.kt`, `AppLockSettingsRepository.kt` and `AppLockSettingsRepositoryImpl.kt` (`lockMode`, absent-key default; INV-50 "write lockMode=APP_PIN first, then the verifier"), plus `AppLockSettingsRepositoryImplTest` / `...CorruptionTest`.
+- D-I2-2: S25 also owns `AppLockState.kt` (PinStep, AuthPurpose) and `EffectivePrivacyValues.kt`.
+- D-I2-3: S24 owns the PIN `DiagnosticReasonCode` entries (PIN_ATTEMPT_STATE_UNREADABLE, PIN_VERIFIER_UNREADABLE, PIN_BIOMETRIC_INVALIDATED), the `PrivacyDiagnosticsEmitter` changes and their test; S26 consumes them.
+- D-I2-4: S24 owns all PIN bindings in `di/AppLockModule.kt` (including BiometricPinKeyManager), so S26 and S27 stay off it.
+- D-I2-5: S26 extends `AppLockBiometricSourceScanTest` (plus BiometricPromptCopyTest, ...OutcomeMappingTest, ...AdapterStateMachineTest) for the second STRONG-only constant (INV-40) WITHOUT weakening: the BIOMETRIC_WEAK ban stays, and the privacy guardian must approve the edit. Any allowlist growth is a stop-and-ask.
+- D-I2-6: S27's filters add AppLockGateSourceScanTest, AppLockGateTest, MainScreenCallSiteTest and AppLockSurfaceTest.
+- D-I2-7: S25 freezes the controller API for the "use fingerprint" affordance, so S27 does not depend on S26; S27 can ship with fingerprint hidden. After S25, S26 is the only writer of AppLockController (S25 and S26 are serialized on the controller).
+
+### Order
+S24 -> S25 -> {S26 || S27} -> G2 (the plan's dormancy rule: S27, the user-visible switch, ships last; S26 is releasable alone).
+
+### Tiers and gates
+S24-S27 are all privacy tier: a Sonnet writer plus a separate Sonnet test-author, and the combined guardian per slice. S24 additionally gets a privacy-guardian DESIGN review before code (D-I2-8 below). reviewer-strict (Opus xhigh) runs at the increment-2 merge candidate after G2.
+
+### Validation (per slice; ladder rules apply)
+- S24: targeted `*AppPinStore*,*PinAttemptPolicy*,*PinFormatPolicy*,*PinVerifierKdf*,*AppLockSettingsRepositoryImpl*,*PrivacyDiagnosticsEmitter*`; shards data, domain-n-z; guards pii_logging, cancellation (plus known_good_state if its registry covers the new files).
+- S25: targeted `*AppLockControllerPin*,*AppLockController*,*LockNoticeDerivation*,*AppLockSettingsOperations*`; shard domain-n-z; cancellation.
+- S26: targeted `*BiometricPinKeyManager*,*AppLockControllerPinBiometric*,*BiometricPrompt*,*AppLockBiometricSourceScan*`; shards data, domain-n-z, runtime-ui; lint; pii_logging; device AE-76 via `adb emu finger` (API 30+).
+- S27: targeted `*PinPad*,*PinLockSurface*,*AppPinSettings*,*PinSetupFlow*,*AppLockGate*,*AppLockPrivacy*,*MainScreenCallSite*,*AppLockSurface*`; shard runtime-ui; lint; ui_dao, pii_logging.
+- G2: as G1b plus the permission-drift evidence run; device AE-73 (reboot delay), AE-76, AE-80, AE-119, AE-120 (if applicable).
+
+### PIN storage decisions (spec 6.1/6.2)
+DECIDED in the spec:
+- PBKDF2-HMAC-SHA256: salt >= 16 B, output >= 32 B, cost 200 ms-1 s on the slowest API-30 class; algorithm and parameters stored with the hash; rehash on the next verify.
+- Keystore: a non-exportable HMAC key with no user-auth requirement.
+- PIN format: 6-12 digits; all-same and simple sequences rejected.
+- Attempt delays: 30 s / 1 min / 5 min / 15 min, then 60 min (cap) from failure 5. The delay is durable before the result is shown; it is measured on elapsedRealtime plus the boot count; unreadable state = 4 failures + 30 s and REPAIRED_UNREADABLE; never a wipe; one shared counter.
+- Biometric: BIOMETRIC_STRONG only, with a user-auth key invalidated on enrolment.
+- Storage: an app-private store, allowBackup=false.
+- Disable: wipe the PIN data first, then the settings (INV-49).
+- No `security-crypto` dependency.
+
+D-I2-8 (OPEN -> resolved at the S24 privacy design review, before code):
+- KDF cost calibration (static vs on-device benchmark);
+- StrongBox/TEE fallback;
+- AndroidBootCountSource fallback (assume a restart; fail closed);
+- the exact CryptoObject key spec (S26);
+- deletion atomicity across the two stores (INV-49; a failure between the steps resolves to DEVICE_AUTH).
+
+D-I2-9: OD-19 (an app-wide `dataExtractionRules` for device-to-device transfer) is a PRE-S27 gate. It is decided before the user can create a PIN; it is not needed for the dormant S24-S26. Until then, protection relies on the Keystore binding plus the hard lock (OD-15a).
+
+### Owner items
+- es/el sign-off for `strings_applock_pin.xml` and `strings_applock_pin_prompt.xml`.
+- The OEM AE-42/117 real-phone residual at the release candidate.
+- No new permission: S26 reuses USE_BIOMETRIC. Re-adding USE_FINGERPRINT is a stop-and-ask.
+- No guard change.
