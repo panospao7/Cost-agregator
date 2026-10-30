@@ -250,7 +250,7 @@ class CurrencyRatesRepositoryImpl @Inject constructor(
         } catch (_: CharacterCodingException) {
             return null
         }
-        if (text.indexOf('\u0000') >= 0 || text.startsWith('﻿')) return null
+        if (text.indexOf('\u0000') >= 0 || text.startsWith('\uFEFF')) return null
         return text
     }
 

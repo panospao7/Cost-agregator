@@ -2,6 +2,7 @@ package com.yourname.expensetracker.data.repository
 
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.currency.ExchangeRateStoreAdapter
@@ -20,6 +21,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.runBlocking
 import org.junit.After
+import org.junit.Assume
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
@@ -32,8 +34,10 @@ import java.io.ByteArrayInputStream
  * Device proof that the daily ECB parse works on Android's own XML parser (which rejects several
  * hardening features that the JVM accepts) and still rejects DTD payloads.
  *
- * NEEDS NETWORK for [liveRefreshAgainstRealEcbFileStoresRates]. Not part of the default suite; run
- * explicitly by class filter for the 1.0.3 hotfix gate:
+ * NEEDS NETWORK for [liveRefreshAgainstRealEcbFileStoresRates]. That live test skips (assumption)
+ * unless this class is targeted explicitly by the instrumentation "class" argument, so it never
+ * fails the default connected suite when the network is unavailable. Run explicitly by class
+ * filter for the 1.0.3 hotfix gate:
  * `com.yourname.expensetracker.data.repository.EcbDailyRefreshDeviceTest`.
  *
  * Uses a real in-memory Room [AppDatabase], real [CurrencyConverter], real [ExchangeRateStoreAdapter]
@@ -90,11 +94,20 @@ class EcbDailyRefreshDeviceTest {
 
     @Test
     fun liveRefreshAgainstRealEcbFileStoresRates() = runBlocking {
+        requireExplicitLiveRun()
         val outcome = repository.refresh("EUR")
 
         assertTrue("Expected Refreshed but was $outcome", outcome is CurrencyRateRefreshOutcome.Refreshed)
         assertTrue((outcome as CurrencyRateRefreshOutcome.Refreshed).storedPairs > 0)
         assertTrue(database.exchangeRateDao().getRateCount() > 0)
+    }
+
+    private fun requireExplicitLiveRun() {
+        Assume.assumeTrue(
+            "live ECB test runs only by explicit class filter",
+            InstrumentationRegistry.getArguments().getString("class")
+                ?.contains(EcbDailyRefreshDeviceTest::class.java.name) == true
+        )
     }
 
     private fun ecbXml(): String = """
