@@ -921,15 +921,32 @@ class AppLockSettingsRepositoryImplTest {
     }
 
     @Test
-    fun reviewSave_persists_the_lock_mode_of_the_record() = runBlocking {
+    fun reviewSave_ignores_the_lock_mode_of_the_record_and_writes_DEVICE_AUTH_when_no_valid_token_is_stored() = runBlocking {
         real.edit { it[markerKey] = "CORRUPTED" }
         val record = AppLockPrivacySettings(lockMode = LockMode.APP_PIN)
 
         val result = repository.reviewSave(record)
 
-        assertEquals(AppLockSettingsWriteResult.Committed(record), result)
+        val expected = record.copy(lockMode = LockMode.DEFAULT)
+        assertEquals(AppLockSettingsWriteResult.Committed(expected), result)
+        assertEquals("DEVICE_AUTH", real.data.first()[lockModeKey])
+        assertEquals(AppLockSettingsLoadState.Loaded(expected), repository.getLoadState())
+    }
+
+    @Test
+    fun `INV-45 reviewSave carries a stored APP_PIN token through unchanged`() = runBlocking {
+        real.edit {
+            it[markerKey] = "CORRUPTED"
+            it[lockModeKey] = "APP_PIN"
+        }
+        val record = AppLockPrivacySettings(lockMode = LockMode.DEVICE_AUTH)
+
+        val result = repository.reviewSave(record)
+
+        val expected = record.copy(lockMode = LockMode.APP_PIN)
+        assertEquals(AppLockSettingsWriteResult.Committed(expected), result)
         assertEquals("APP_PIN", real.data.first()[lockModeKey])
-        assertEquals(AppLockSettingsLoadState.Loaded(record), repository.getLoadState())
+        assertEquals(AppLockSettingsLoadState.Loaded(expected), repository.getLoadState())
     }
 
     @Test

@@ -3105,3 +3105,36 @@ Validation to request: unchanged, targeted `*AppLockController*` (covers both te
   - lint vr-20261030-051039-332d0155
 - Orchestrator process note: one test edit landed while a data-shard run was active. That run was discarded and re-run (vr-20261030-040851-d4e58edd).
 - S24 COMMITTED (see git log). Dormant: nothing calls setup. Next: S25 (controller PIN substates; resolves TODO(S25) at AppLockController.kt:636; S25 notes G24-5/G24-6; freezes the "use fingerprint" API per D-I2-7).
+- S25 implemented in three small writer steps (two full-slice writers died on API timeouts): state types/effective mode/G24-6; the unlock-by-PIN path; enable/change/disable plus the inert fingerprint API. Part A tests (FakeAppPinStore, unlock path) are being written.
+- S25 combined guardian: ACCEPT-WITH-CONDITIONS. Dispositions (orchestrator, owner-approvals 92); all FIX unless noted:
+  - G25-1 HIGH: the T31/step machinery is missing. Add requestPinSetup (the T31 CONFIRM_CHANGE device prompt) and enter/exit step APIs; enable/change/disable require the matching open PinStep (INV-50, AMD-12, AE-119).
+  - G25-2 MEDIUM: a resolve timeout leaves pinState null with no observer (AMD-4 downgrade with FAIL_CLOSED settings). On timeout set pinState=UNREADABLE (retry offered); start the observation outside the timeout.
+  - G25-3 MEDIUM: an in-flight UNLOCK device-auth success while the effective mode is APP_PIN is stale: back to LOCKED, no unlock.
+  - G25-4 MEDIUM: T28 apply uses the mode-aware deviceAuthInertReasonLocked.
+  - G25-5 MEDIUM: unlockByPin also runs applyKeptRereadAfterClose (T29).
+  - G25-6 MEDIUM: re-check the UNLOCKED/step precondition inside withExclusiveWrite before the first write (TOCTOU). changePin is atomic in the store (documented).
+  - G25-7 MEDIUM: AMD-4/T30 when capability != AVAILABLE: removing the PIN turns the lock off (appLockEnabled=false, DISABLED). Implemented, not deferred.
+  - G25-8 LOW: PinRejection.Wrong toString must not print the tier.
+  - G25-9 LOW: skip the cancel-revert when readState shows PRESENT.
+  - G25-10 LOW: map non-cancellation store exceptions to Unavailable/Failed.
+  - G25-11 LOW: reviewSave falls back to LockMode.DEFAULT, not the record's value.
+  - Docs: LEGAL_PATHS Segment 28 controller paths, ENGINE_INTERACTION_MAP AppPinStore callers, CODEBASE_SEGMENTS Segment 28 files.
+- S25 targeted vr-20261030-072137-03d0882e FAIL (30 of 1619). Debugger: no regression for DEVICE_AUTH users without a PIN. Causes:
+  - test harness: the long-lived PIN observer counted as an active job;
+  - FakeAppPinStore emit shadowing;
+  - a stale Publication reflection pin;
+  - rig counter offsets;
+  - exact-set pins needing extension (9 ports, the PIN public API, a method-scoped CharArray allowance);
+  - the obsolete reviewSave expectation (G25-11).
+- REAL issue G25-7b: writeLockOff added a second production `.setAppLockEnabled(` call site, bypassing AppLockSettingsOperations and its F7 settle re-read. Decision (owner-approvals 92): the pin is NOT loosened. The controller returns a lock-off-required result; AppLockSettingsOperations.removePin performs the lock-off through its existing write path. Production fix and test fixes are running in parallel.
+- S25 final fixes: removePin writes lockMode=DEVICE_AUTH before the lock-off (INV-49; the G25-7b test caught it); setupInOrder's CE handling merged into one recognised catch (G-CANCEL-01). Residual LOW F-S25-DIAG-FIELD: a failed lockMode write during removal is recorded under the APP_LOCK_ENABLED persist code. Process note: one MEC targeted run was made STALE by a concurrent edit and is re-run.
+- S25 final ladder, all PASS:
+  - targeted vr-20261030-082814-8dac2c86
+  - domain-n-z vr-20261030-083446-3d897c4e
+  - runtime-ui vr-20261030-083632-75b9a2a6
+  - cancellation vr-20261030-083951-697228b4
+  - known_good_state vr-20261030-084009-da9a92b7
+  - guard_docs_truth vr-20261030-084313-b6fc0859
+  - static-guards vr-20261030-084331-1838d99c
+  - lint vr-20261030-085950-35a49a6d
+- S25 COMMITTED. Dormant: no UI caller until S27. Next: S26 (fingerprint in PIN mode) || S27 (PIN UI, the switch; INV-38 CharArray pad, D-I2-9 OD-19 gate), then G2 and the increment-2 merge candidate (reviewer-strict).

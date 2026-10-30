@@ -413,8 +413,12 @@ internal class FakeDeviceAuthenticator(private val isOnMain: () -> Boolean = { t
 internal class AppLockControllerHarness(
     loadState: AppLockSettingsLoadState = AppLockTestSettings.DISABLED,
     capability: DeviceAuthCapability = DeviceAuthCapability.AVAILABLE,
-    val scheduler: TestCoroutineScheduler = TestCoroutineScheduler()
+    val scheduler: TestCoroutineScheduler = TestCoroutineScheduler(),
+    /** S25: the PIN store. The default reports no verifier (effective DEVICE_AUTH, AMD-4), so DEVICE_AUTH tests are unchanged. */
+    val pinStore: FakeAppPinStore = FakeAppPinStore()
 ) {
+    /** S25: the settings-write serialiser handed to the controller (the PIN writes are ordered settings writes). */
+    val writeSerializer = AppLockSettingsWriteSerializer()
     val clock = FakeMonotonicClock()
     val capabilityProvider = FakeCapabilityProvider(capability)
     val repository = FakeAppLockSettingsRepository(loadState)
@@ -452,14 +456,14 @@ internal class AppLockControllerHarness(
     )
 
     /** Coroutines of the controller's scope that are still running (watchdog, launch, stuck emits). */
-    val activeJobs: Int get() = scopeJob.children.count { it.isActive }
+    val activeJobs: Int get() = scopeJob.children.count { it.isActive && it !in pinStore.observerJobs }
 
     /**
      * A snapshot of the children of the controller's scope that are running right now (right after a tap:
      * the prompt orchestrator and the watchdog). Keep the jobs and inspect them after [settle] to see how
      * each one ended; [activeJobs] only counts the ones still running.
      */
-    fun activeControllerJobs(): List<Job> = scopeJob.children.filter { it.isActive }.toList()
+    fun activeControllerJobs(): List<Job> = scopeJob.children.filter { it.isActive && it !in pinStore.observerJobs }.toList()
 
     /**
      * Cancels every running child of the controller's scope (launch coroutine, watchdog, ...) without
@@ -471,7 +475,9 @@ internal class AppLockControllerHarness(
 
     /** A new controller over the same fakes: a new process start (state `RESOLVING`). */
     fun newController(): AppLockController =
-        AppLockController(repository, capabilityProvider, clock, emitter, scope, authenticator, main)
+        AppLockController(
+            repository, capabilityProvider, clock, emitter, scope, authenticator, main, pinStore, writeSerializer
+        )
 
     /** A new controller already resolved from the harness store through the real [AppLockController.resolve]. */
     fun resolvedController(): AppLockController =

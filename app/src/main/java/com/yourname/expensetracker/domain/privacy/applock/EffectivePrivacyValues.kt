@@ -1,5 +1,7 @@
 package com.yourname.expensetracker.domain.privacy.applock
 
+import com.yourname.expensetracker.domain.privacy.applock.pin.PinVerifierState
+
 /**
  * Derived effective values (domain-spec 2.3). Computed, never persisted, and the only place that
  * turns an unreadable or missing read into fail-closed values (INV-2).
@@ -37,6 +39,23 @@ object EffectivePrivacyValues {
      */
     fun effectiveLockEnabled(loadState: AppLockSettingsLoadState?): Boolean =
         effectiveSettings(loadState).appLockEnabled
+
+    /**
+     * `effectiveLockMode` (spec 2.3, AMD-4, INV-41): `APP_PIN` if a PIN verifier record exists, readable or not
+     * ([PinVerifierState.PRESENT] or [PinVerifierState.UNREADABLE]); `DEVICE_AUTH` if none exists. The stored
+     * [storedMode] never overrides a known verifier state.
+     *
+     * A null [verifier] means the PIN store has not been read yet (or the read timed out). Only then the advisory
+     * stored mode decides, so a stored `APP_PIN` (or the fail-closed `APP_PIN` of an invalid token) stays PIN mode
+     * until the real verifier state arrives. This is fail-closed for INV-40, and with nothing stored it is the
+     * device-auth behaviour.
+     */
+    fun effectiveLockMode(verifier: PinVerifierState?, storedMode: LockMode): EffectiveLockMode =
+        when (verifier) {
+            PinVerifierState.PRESENT, PinVerifierState.UNREADABLE -> EffectiveLockMode.APP_PIN
+            PinVerifierState.ABSENT -> EffectiveLockMode.DEVICE_AUTH
+            null -> if (storedMode == LockMode.APP_PIN) EffectiveLockMode.APP_PIN else EffectiveLockMode.DEVICE_AUTH
+        }
 
     /**
      * The settings part of `effectiveSecureScreen` (spec 2.3, INV-29):

@@ -612,6 +612,7 @@ Owns encrypted key storage and security/network bindings.
 - `data/privacy/applock/pin/PinVerifierCrypto.kt` (PBKDF2 + Keystore-HMAC tag, record parse), `KeystorePinKeyBinder.kt` (`PinKeyBinder`, alias `applock_pin_hmac_v1`), `AndroidBootCountSource.kt`
 - `domain/privacy/applock/AppLockSettingsRepository.kt` / `data/privacy/applock/AppLockSettingsRepositoryImpl.kt` — `LockMode` and the per-field `setLockMode`
 - `di/AppLockModule.kt` — three PIN bindings and the `@AppPinDataStore` provider (own `app_lock_pin_store` DataStore in noBackupFilesDir)
+- S25 (controller PIN API, dormant until S27: no UI caller): `domain/privacy/applock/AppLockPinResults.kt` (PinRejection, PinUnlockResult, PinSetupRequestResult, PinOperationResult, FingerprintUnlockResult); `AppLockState.kt` (PinStep, PinRecovery, PinPresentation, EffectiveLockMode); `EffectivePrivacyValues.effectiveLockMode` (verifier based, AMD-4); `AppLockController` PIN API (`pin` flow, `submitUnlockPin`, `requestPinSetup`, `enablePin`, `beginPinChange`, `changePin`, `beginPinRemoval`, `disablePin`, `cancelPinStep`, `retryPinRecovery`, inert `onFingerprintUnlockSucceeded` until S26)
 
 **App lock & privacy mode, increment 1b, S20-a (wired by S20-c; legal path: LEGAL_PATHS "App Lock Prompt Path and Lifecycle Signals")**
 - `ui/applock/BiometricPromptDeviceAuthenticator.kt` — the Activity-bound prompt adapter (the only `BiometricPrompt` entry point); S20-a adds the internal `adopt(attemptId, callback)` rotation seam

@@ -247,12 +247,17 @@ class AppLockSettingsRepositoryImpl @VisibleForTesting internal constructor(
                     notUnderReview = true
                     return@edit
                 }
+                // G24-6 (INV-45): the review cannot choose lockMode; mode follows the verifier. A valid STORED token is
+                // carried through the full replace unchanged, whatever the record says. An absent or invalid stored
+                // token falls back to LockMode.DEFAULT (G25-11), never the record's value (the effective mode is
+                // verifier based either way, AMD-4).
+                val storedMode = (prefs.asMap()[Keys.LOCK_MODE] as? String)?.let { LockMode.fromToken(it) }
                 prefs.clear()
                 prefs[Keys.DISCREET_NOTIFICATIONS] = record.discreetNotifications
                 prefs[Keys.APP_LOCK_ENABLED] = record.appLockEnabled
                 prefs[Keys.AUTO_LOCK_TIMEOUT] = record.autoLockTimeout.token
                 prefs[Keys.SECURE_SCREEN] = record.secureScreen
-                prefs[Keys.LOCK_MODE] = record.lockMode.token
+                prefs[Keys.LOCK_MODE] = (storedMode ?: LockMode.DEFAULT).token
                 prefs[LOAD_STATE_KEY] = LOAD_STATE_NORMAL
             }
             if (notUnderReview) {

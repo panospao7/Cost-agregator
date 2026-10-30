@@ -2162,11 +2162,11 @@ HOST LOSS (T35, PROMPT_HOST_LOST) and ROTATION:
 
 ---
 
-## App PIN Store (app-lock-privacy-mode, Segment 28, S24, DORMANT)
+## App PIN Store (app-lock-privacy-mode, Segment 28, S24 store, S25 controller paths)
 
 ```
-S24 is DORMANT: AppPinStore has no production caller until S25 (the PIN controller path). Nothing here is reachable
-from a user action yet.
+S25: the store's only production caller is AppLockController (below). The WHOLE feature stays dormant until S27: no UI
+caller exists, so nothing here is reachable from a user action yet.
 
 OWNER: AppPinStore (domain/privacy/applock/pin; impl data/privacy/applock/pin/AppPinStoreImpl, @Singleton) is the
 SOLE owner of the PIN verifier record, the shared attempt state and the PIN flags (biometricEnabled, the biometric
@@ -2187,6 +2187,22 @@ DELETE (INV-49): AppPinStore.deleteAll in order: 1. one awaited clear() of the P
   biometric key, best effort. Idempotent.
 SETTING: setLockMode(LockMode) is an AppLockSettingsRepositoryImpl PER-FIELD write (no whole-record rewrite);
   authorisation is the caller's concern.
+
+CONTROLLER PATHS (S25, AppLockController, the ONLY caller; PIN steps are in-app steps inside UNLOCKED, NOT prompts):
+  UNLOCK: submitUnlockPin → AppPinStore.verify → Correct → unlockByPin (T23, same effects as a device-auth success);
+    Wrong/Delayed/Unavailable/VerifierUnreadable stay LOCKED; a store exception maps to Unavailable.
+  SETUP: requestPinSetup (T31 CONFIRM_CHANGE device prompt) → its matching success opens the SETUP step → enablePin:
+    re-checks the step inside the settings-write serialiser, writes lockMode=APP_PIN FIRST, then AppPinStore.setup;
+    a failure reverts lockMode=DEVICE_AUTH (also on cancellation, unless the verifier is already PRESENT).
+  CHANGE: beginPinChange → changePin → AppPinStore.changePin (store-atomic verify and replace; no settings write).
+  REMOVE: beginPinRemoval → disablePin: verify the current PIN, then in the serialiser (step re-checked) deleteAll
+    FIRST, then lockMode=DEVICE_AUTH (capability AVAILABLE) or RemovedLockOffRequired (capability not AVAILABLE,
+    AMD-4/T30; capability read outside the monitor and the serialiser). The controller never writes the lock flag:
+    PIN removal with lock-off goes AppLockSettingsOperations.removePin → controller.disablePin → Operations lock-off
+    write (setAppLockEnabled(false), serialiser, F7 settle) → controller.onPinRemovalLockOffApplied → DISABLED.
+  RECOVERY: retryPinRecovery re-reads the store (and restarts the observation) only while the recovery view offers it.
+  FINGERPRINT: onFingerprintUnlockSucceeded is an INERT hook (NOT_AVAILABLE) until S26.
+  reviewSave keeps the STORED lockMode (an absent or invalid stored token falls back to LockMode.DEFAULT).
 
 ❌ No other code reads or writes the PIN verifier, the attempt state or the PIN flags (no other DataStore).
 ❌ No other code uses the `applock_pin_hmac_v1` Keystore alias or PBKDF2 for a PIN.

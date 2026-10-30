@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.privacy.applock
 
+import com.yourname.expensetracker.domain.privacy.applock.pin.AppPinStore
 import com.yourname.expensetracker.domain.privacy.deeplink.DeepLinkRequest
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -483,7 +484,7 @@ class AppLockControllerIllegalTransitionTest {
     // --- Ports: no operational, Room or barrier input exists (spec 3.3, INV-28, INV-36) -------------------------
 
     @Test
-    fun `the controller is constructed from exactly the seven ports, none of them operational, Room or worker`() {
+    fun `the controller is constructed from exactly the nine ports, none of them operational, Room or worker`() {
         val constructor = AppLockController::class.java.declaredConstructors.single()
 
         assertEquals(
@@ -494,7 +495,10 @@ class AppLockControllerIllegalTransitionTest {
                 PrivacyDiagnosticsEmitter::class.java,
                 CoroutineScope::class.java,
                 DeviceAuthenticator::class.java,
-                CoroutineDispatcher::class.java
+                CoroutineDispatcher::class.java,
+                // S25, exact additions: the PIN verifier / attempt-state owner and the shared settings-write serialiser.
+                AppPinStore::class.java,
+                AppLockSettingsWriteSerializer::class.java
             ),
             constructor.parameterTypes.toList()
         )
@@ -537,6 +541,12 @@ class AppLockControllerIllegalTransitionTest {
             // apply report of an INERT disable. Its other parameter is the attempt-style Long id.
             "onInertDisableApplied"
         )
+        // S25, exact addition, allowed for these four methods only (like the committed flag above, no global CharArray
+        // allowance): the entered PIN, which the controller zeroes after use.
+        val pinArrayMethods = setOf("enablePin", "changePin", "disablePin", "submitUnlockPin")
+        // internal (Operations-only) entry, G25-7b: the write result of the lock-off in AppLockSettingsOperations.removePin.
+        // Allowed for this ONE method only (its JVM name carries the internal module suffix after a dollar sign).
+        val writeResultMethodPrefix = "onPinRemovalLockOffApplied\$"
         // Only compiler-generated accessors (`access$...`, first parameter = the controller) are not API.
         // Any other synthetic method on the controller is unexpected and fails the test below.
         val declared = AppLockController::class.java.declaredMethods
@@ -549,7 +559,9 @@ class AppLockControllerIllegalTransitionTest {
                 method.parameterTypes.any {
                     it !in allowedParameterTypes && !it.name.startsWith("kotlin.coroutines") &&
                         !(it == Boolean::class.javaPrimitiveType && method.name in committedFlagMethods) &&
-                        !(it == AppLockPrivacySettings::class.java && method.name in reviewSaveRecordMethods)
+                        !(it == AppLockPrivacySettings::class.java && method.name in reviewSaveRecordMethods) &&
+                        !(it == CharArray::class.java && method.name in pinArrayMethods) &&
+                        !(it == AppLockSettingsWriteResult::class.java && method.name.startsWith(writeResultMethodPrefix))
                 }
             }
             .map { it.name }
@@ -610,7 +622,21 @@ class AppLockControllerIllegalTransitionTest {
                 "getReleaseOpportunity",
                 // S22-a.0 (D-S22-1), exact addition: the read-only open-origin end signal (a StateFlow of a bounded
                 // value, no settings or link data). It has no production reader yet (pinned below).
-                "getOpenOriginEnd"
+                "getOpenOriginEnd",
+                // S25, exact additions: the PIN unlock and recovery entries, the PIN setup / change / removal operations
+                // and their step control, the PIN presentation flow and the fingerprint hook (INV-42, INV-49, INV-50).
+                "submitUnlockPin",
+                "retryPinRecovery",
+                "enablePin",
+                "changePin",
+                "disablePin",
+                "requestPinSetup",
+                "beginPinChange",
+                "beginPinRemoval",
+                "cancelPinStep",
+                "getPin",
+                "getCanOfferFingerprintUnlock",
+                "onFingerprintUnlockSucceeded"
             ),
             production
         )

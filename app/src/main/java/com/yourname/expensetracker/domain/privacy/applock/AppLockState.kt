@@ -95,6 +95,75 @@ enum class OpenOriginEndKind {
 data class OpenOriginEnd(val attemptId: Long, val prompt: OpenOriginPrompt, val kind: OpenOriginEndKind)
 
 /**
+ * The effective lock mode (domain-spec 2.3, AMD-4): `APP_PIN` if a PIN verifier record exists (readable or not),
+ * otherwise `DEVICE_AUTH`. The stored `LockMode` is advisory and never overrides a known verifier state.
+ */
+enum class EffectiveLockMode {
+    DEVICE_AUTH,
+    APP_PIN
+}
+
+/**
+ * The in-app PIN step that is open inside `UNLOCKED` (S25, INV-54 [2]). A PIN step is NOT a prompt: there is no
+ * `AUTHENTICATING` state and no `promptBackgroundAt`. Leaving `UNLOCKED` (a background that re-locks, T14) resets it
+ * to [NONE] and the step's change is not applied. Process memory only; it carries no PIN.
+ *
+ * - [SETUP_ENTRY]: T31, after the device prompt succeeded; the PIN is entered twice.
+ * - [CHANGE_ENTRY]: change PIN (current PIN, new PIN twice).
+ * - [REMOVE_CONFIRM]: remove the PIN (T30); the current PIN is entered.
+ * - [DISABLE_CONFIRM]: disable the lock in effective `APP_PIN` mode (T30 as T18); the current PIN is entered.
+ */
+enum class PinStep {
+    NONE,
+    SETUP_ENTRY,
+    CHANGE_ENTRY,
+    REMOVE_CONFIRM,
+    DISABLE_CONFIRM
+}
+
+/**
+ * Why the PIN lock surface shows the recovery state instead of a normal pad (INV-41, OD-15, INV-42). There is NO
+ * device-credential fallback and NO in-app reset in any of them; the surface only retries or explains (clear data /
+ * restore a `.costbackup`). Bounded; it carries no platform text.
+ *
+ * [retryOffered] is true when re-reading the PIN store may help (a Keystore error, or a record that could not be read
+ * because of a transient store failure, G24-5).
+ */
+enum class PinRecovery(val retryOffered: Boolean) {
+    /** A Keystore failure; retry is allowed. */
+    KEYSTORE_ERROR(true),
+
+    /** The Keystore key is missing. Retry does not help; the surface explains. */
+    KEY_MISSING(false),
+
+    /** The verifier record or store cannot be read. A re-read may recover a transient failure. */
+    RECORD_UNREADABLE(true)
+}
+
+/**
+ * What the PIN surfaces need besides [AppLockState] (S25). Derived under the controller's monitor and published with
+ * the state under one version stamp. Bounded: no counts, timings or PIN data.
+ *
+ * [canOfferFingerprint] is the frozen API flag for the "use fingerprint" affordance (D-I2-7). It is always false until
+ * S26 wires fingerprint unlock; S27 may render the affordance from it without depending on S26.
+ */
+data class PinPresentation(
+    val effectiveLockMode: EffectiveLockMode,
+    val step: PinStep,
+    val recovery: PinRecovery?,
+    val canOfferFingerprint: Boolean,
+    /** Remaining time of an active PIN delay at publish time (INV-38, T25), or null when no delay applies. Never printed. */
+    val delayRemainingMillis: Long? = null
+) {
+    override fun toString(): String =
+        "PinPresentation(mode=$effectiveLockMode, step=$step, recovery=$recovery, delayed=${delayRemainingMillis != null})"
+
+    companion object {
+        val INITIAL: PinPresentation = PinPresentation(EffectiveLockMode.DEVICE_AUTH, PinStep.NONE, null, false)
+    }
+}
+
+/**
  * The process-level app-lock state (domain-spec 2.4, INV-24). Process memory only: nothing here is
  * persisted, and every process starts in [Resolving]. Written only by `AppLockController`.
  */
