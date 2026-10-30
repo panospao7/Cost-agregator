@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- DRAFT: es/el pending owner sign-off -->
+<resources>
+    <string name="applock_pin_enter_title">Εισαγάγετε το PIN της εφαρμογής</string>
+    <string name="applock_pin_key_delete_cd">Διαγραφή τελευταίου ψηφίου</string>
+    <string name="applock_pin_key_fingerprint_cd">Χρήση δακτυλικού αποτυπώματος</string>
+    <string name="applock_pin_wrong">Λάθος PIN.</string>
+    <string name="applock_pin_wait">Πάρα πολλές προσπάθειες. Δοκιμάστε ξανά σε %1$s.</string>
+    <string name="applock_pin_wait_neutral">Περιμένετε λίγο. Δοκιμάστε ξανά σε %1$s.</string>
+    <string name="applock_pin_wait_over">Μπορείτε να δοκιμάσετε ξανά.</string>
+    <string name="applock_pin_unreadable">Το PIN της εφαρμογής δεν ήταν δυνατό να διαβαστεί, οπότε η εφαρμογή δεν μπορεί να ξεκλειδωθεί.</string>
+    <string name="applock_pin_forgot">Ξεχάσατε το PIN;</string>
+    <string name="applock_pin_forgot_title">Ξεχάσατε το PIN της εφαρμογής;</string>
+    <string name="applock_pin_forgot_body">Για την ιδιωτικότητά σας, το PIN της εφαρμογής δεν μπορεί να επαναφερθεί. Για να μπείτε ξανά, διαγράψτε τα δεδομένα της εφαρμογής από τις ρυθμίσεις του Android. Αυτό διαγράφει όλα όσα είναι αποθηκευμένα στην εφαρμογή σε αυτό το τηλέφωνο. Μόνο ένα αρχείο αντιγράφου ασφαλείας που έχετε εξαγάγει (.costbackup), μαζί με τον κωδικό του, μπορεί να επαναφέρει τα δεδομένα σας. Χωρίς αυτό, δεν μπορούν να ανακτηθούν.</string>
+    <string name="applock_pin_forgot_open_settings">Άνοιγμα ρυθμίσεων εφαρμογής</string>
+    <plurals name="applock_pin_digits_state">
+        <item quantity="one">%1$d ψηφίο εισήχθη</item>
+        <item quantity="other">%1$d ψηφία εισήχθησαν</item>
+    </plurals>
+    <string name="applock_pin_retry">Δοκιμάστε ξανά</string>
+    <string name="applock_pin_forgot_close">Κλείσιμο</string>
+    <plurals name="applock_pin_duration_hours">
+        <item quantity="one">%1$d ώρα</item>
+        <item quantity="other">%1$d ώρες</item>
+    </plurals>
+    <plurals name="applock_pin_duration_minutes">
+        <item quantity="one">%1$d λεπτό</item>
+        <item quantity="other">%1$d λεπτά</item>
+    </plurals>
+    <plurals name="applock_pin_duration_seconds">
+        <item quantity="one">%1$d δευτερόλεπτο</item>
+        <item quantity="other">%1$d δευτερόλεπτα</item>
+    </plurals>
+    <!-- DRAFT: el pending owner sign-off (S27 b1: App PIN setup, change and remove steps) -->
+    <string name="applock_pin_setup_title">Ορισμός PIN εφαρμογής</string>
+    <string name="applock_pin_setup_intro">Επιλέξτε ένα PIN 6 έως 12 ψηφίων. Ζητείται αντί για το κλείδωμα οθόνης του τηλεφώνου όταν ανοίγετε αυτή την εφαρμογή, κάτι που βοηθά να μένουν έξω όσοι γνωρίζουν το κλείδωμα οθόνης του τηλεφώνου σας.</string>
+    <string name="applock_pin_setup_warning">Αν ξεχάσετε αυτό το PIN, ο μόνος τρόπος επιστροφής είναι η διαγραφή των δεδομένων της εφαρμογής. Τα δεδομένα σας μπορούν τότε να επαναφερθούν μόνο από ένα αρχείο αντιγράφου ασφαλείας που έχετε εξαγάγει (.costbackup), με τον κωδικό του. Τα αντίγραφα που φυλάσσονται μόνο μέσα στην εφαρμογή διαγράφονται επίσης.</string>
+    <string name="applock_pin_setup_backup_now">Δημιουργία αντιγράφου τώρα</string>
+    <string name="applock_pin_setup_ack">Καταλαβαίνω ότι μπορεί να χάσω τα δεδομένα μου αν ξεχάσω το PIN μου και δεν έχω εξαγόμενο αντίγραφο ασφαλείας</string>
+    <string name="applock_pin_setup_continue">Συνέχεια</string>
+    <string name="applock_pin_new_title">Εισαγάγετε νέο PIN</string>
+    <string name="applock_pin_confirm_title">Επιβεβαιώστε το PIN σας</string>
+    <string name="applock_pin_current_title">Εισαγάγετε το τρέχον PIN σας</string>
+    <string name="applock_pin_next">Επόμενο</string>
+    <string name="applock_pin_set_button">Ορισμός PIN</string>
+    <string name="applock_pin_mismatch">Τα PIN δεν ταιριάζουν. Δοκιμάστε ξανά.</string>
+    <string name="applock_pin_too_weak">Επιλέξτε ένα PIN που να είναι δυσκολότερο να μαντευτεί.</string>
+    <string name="applock_pin_failed">Κάτι πήγε στραβά. Δεν άλλαξε τίποτα.</string>
+    <string name="applock_pin_snackbar_set">Το PIN της εφαρμογής ορίστηκε</string>
+    <string name="applock_pin_snackbar_changed">Το PIN της εφαρμογής άλλαξε</string>
+    <string name="applock_pin_snackbar_removed">Το PIN της εφαρμογής αφαιρέθηκε</string>
+    <string name="privacy_app_lock_snackbar_off_pin_removed">Το κλείδωμα εφαρμογής είναι ανενεργό. Το PIN της εφαρμογής αφαιρέθηκε.</string>
+    <string name="applock_pin_remove_title">Αφαίρεση PIN εφαρμογής;</string>
+    <string name="applock_pin_remove_body">Η εφαρμογή θα ξεκλειδώνει με το κλείδωμα οθόνης του τηλεφώνου σας.</string>
+    <string name="applock_pin_remove_body_no_secure">Η εφαρμογή θα ξεκλειδώνει με το κλείδωμα οθόνης του τηλεφώνου σας. Το τηλέφωνό σας δεν έχει κλείδωμα οθόνης, οπότε το κλείδωμα εφαρμογής θα απενεργοποιηθεί.</string>
+    <string name="applock_pin_remove_confirm">Αφαίρεση</string>
+    <!-- S27 b2 (el DRAFT, pending native sign-off). -->
+    <string name="applock_pin_row_title">PIN εφαρμογής</string>
+    <string name="applock_pin_row_support">Χρησιμοποιήστε ένα PIN που γνωρίζετε μόνο εσείς αντί για το κλείδωμα οθόνης του τηλεφώνου.</string>
+    <string name="applock_pin_row_unavailable_paused">Το PIN εφαρμογής δεν είναι διαθέσιμο όσο το κλείδωμα εφαρμογής είναι σε παύση.</string>
+    <string name="applock_pin_settings_title">PIN εφαρμογής</string>
+    <string name="applock_pin_status_on">Το PIN εφαρμογής είναι ενεργό.</string>
+    <string name="applock_pin_status_off">Το PIN εφαρμογής είναι ανενεργό.</string>
+    <string name="applock_pin_action_change">Αλλαγή PIN εφαρμογής</string>
+    <string name="applock_pin_action_remove">Αφαίρεση PIN εφαρμογής</string>
+    <string name="applock_pin_action_setup">Ορισμός PIN εφαρμογής</string>
+    <string name="applock_pin_settings_forgot_note">Ξεχάσατε το PIN; Ο μόνος τρόπος επαναφοράς της πρόσβασης είναι η διαγραφή των δεδομένων της εφαρμογής από τις ρυθμίσεις του Android. Μόνο ένα αρχείο αντιγράφου ασφαλείας που έχετε εξαγάγει (.costbackup) και ο κωδικός του μπορούν να επαναφέρουν τα δεδομένα σας. Κρατήστε ένα εκτός της εφαρμογής. Το αντίγραφο ασφαλείας δεν περιέχει το PIN σας ούτε τις ρυθμίσεις κλειδώματος εφαρμογής.</string>
+</resources>

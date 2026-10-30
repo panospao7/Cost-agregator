@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- S27 a1: app PIN pad and lock surface (ux-flows 9.3). -->
+    <string name="applock_pin_enter_title">Enter your app PIN</string>
+    <string name="applock_pin_key_delete_cd">Delete last digit</string>
+    <string name="applock_pin_key_fingerprint_cd">Use fingerprint</string>
+    <string name="applock_pin_wrong">Wrong PIN.</string>
+    <string name="applock_pin_wait">Too many attempts. Try again in %1$s.</string>
+    <string name="applock_pin_wait_neutral">Please wait. Try again in %1$s.</string>
+    <string name="applock_pin_wait_over">You can try again.</string>
+    <string name="applock_pin_unreadable">The app PIN couldn\'t be read, so the app can\'t be unlocked.</string>
+    <string name="applock_pin_forgot">Forgot PIN?</string>
+    <string name="applock_pin_forgot_title">Forgot your app PIN?</string>
+    <string name="applock_pin_forgot_body">For your privacy, the app PIN can\'t be reset. To get back in, clear the app\'s data in Android settings. This erases everything stored in the app on this phone. Only a backup file you exported (.costbackup), with its password, can bring your data back. Without one, it can\'t be recovered.</string>
+    <string name="applock_pin_forgot_open_settings">Open app settings</string>
+    <plurals name="applock_pin_digits_state">
+        <item quantity="one">%1$d digit entered</item>
+        <item quantity="other">%1$d digits entered</item>
+    </plurals>
+    <!-- S27 a2: PIN lock surface additions. -->
+    <string name="applock_pin_retry">Try again</string>
+    <string name="applock_pin_forgot_close">Close</string>
+    <plurals name="applock_pin_duration_hours">
+        <item quantity="one">%1$d hour</item>
+        <item quantity="other">%1$d hours</item>
+    </plurals>
+    <plurals name="applock_pin_duration_minutes">
+        <item quantity="one">%1$d minute</item>
+        <item quantity="other">%1$d minutes</item>
+    </plurals>
+    <plurals name="applock_pin_duration_seconds">
+        <item quantity="one">%1$d second</item>
+        <item quantity="other">%1$d seconds</item>
+    </plurals>
+    <!-- S27 b1: App PIN setup, change and remove steps (ux-flows 9.3). -->
+    <string name="applock_pin_setup_title">Set an app PIN</string>
+    <string name="applock_pin_setup_intro">Choose a PIN of 6 to 12 digits. It\'s asked for instead of your phone\'s screen lock when you open this app, which helps keep out people who know your phone\'s screen lock.</string>
+    <string name="applock_pin_setup_warning">If you forget this PIN, the only way back in is to erase the app\'s data. Your data can then only be restored from a backup file you exported (.costbackup), with its password. Backups kept only inside the app are erased too.</string>
+    <string name="applock_pin_setup_backup_now">Back up now</string>
+    <string name="applock_pin_setup_ack">I understand I may lose my data if I forget my PIN and have no exported backup</string>
+    <string name="applock_pin_setup_continue">Continue</string>
+    <string name="applock_pin_new_title">Enter a new PIN</string>
+    <string name="applock_pin_confirm_title">Confirm your PIN</string>
+    <string name="applock_pin_current_title">Enter your current PIN</string>
+    <string name="applock_pin_next">Next</string>
+    <string name="applock_pin_set_button">Set PIN</string>
+    <string name="applock_pin_mismatch">PINs don\'t match. Try again.</string>
+    <string name="applock_pin_too_weak">Choose a PIN that\'s harder to guess.</string>
+    <string name="applock_pin_failed">Something went wrong. Nothing was changed.</string>
+    <string name="applock_pin_snackbar_set">App PIN is set</string>
+    <string name="applock_pin_snackbar_changed">App PIN changed</string>
+    <string name="applock_pin_snackbar_removed">App PIN removed</string>
+    <string name="privacy_app_lock_snackbar_off_pin_removed">App lock is off. Your app PIN was removed.</string>
+    <string name="applock_pin_remove_title">Remove app PIN?</string>
+    <string name="applock_pin_remove_body">The app will unlock with your phone\'s screen lock instead.</string>
+    <string name="applock_pin_remove_body_no_secure">The app will unlock with your phone\'s screen lock instead. Your phone has no screen lock, so app lock will turn off.</string>
+    <string name="applock_pin_remove_confirm">Remove</string>
+    <!-- S27 b2: App PIN row and settings screen (ux-flows 2.5a, 4.2). -->
+    <string name="applock_pin_row_title">App PIN</string>
+    <string name="applock_pin_row_support">Use a PIN only you know instead of your phone\'s screen lock.</string>
+    <string name="applock_pin_row_unavailable_paused">App PIN isn\'t available while app lock is paused.</string>
+    <string name="applock_pin_settings_title">App PIN</string>
+    <string name="applock_pin_status_on">App PIN is on.</string>
+    <string name="applock_pin_status_off">App PIN is off.</string>
+    <string name="applock_pin_action_change">Change app PIN</string>
+    <string name="applock_pin_action_remove">Remove app PIN</string>
+    <string name="applock_pin_action_setup">Set up app PIN</string>
+    <string name="applock_pin_settings_forgot_note">Forgot your PIN? The only way back in is to erase the app\'s data in Android settings. Only a backup file you exported (.costbackup) and its password can bring your data back. Keep one outside this app. A backup doesn\'t contain your PIN or app lock settings.</string>
+</resources>

@@ -137,6 +137,7 @@ class NavigationRouteContractTest {
             NavigationDestination.BudgetCreate,
             NavigationDestination.AiSettings,
             NavigationDestination.PrivacySettings,
+            NavigationDestination.AppPinSettings,
             NavigationDestination.CategoryManagement,
             NavigationDestination.Debug
         )
@@ -384,6 +385,21 @@ class NavigationRouteContractTest {
         assertEquals("budget_create", NavigationDestination.BudgetCreate.toSaveToken())
         assertEquals("privacy_settings", NavigationDestination.PrivacySettings.toSaveToken())
         assertEquals("debug", NavigationDestination.Debug.toSaveToken())
+        assertEquals("app_pin_settings", NavigationDestination.AppPinSettings.toSaveToken())
+    }
+
+    @Test
+    fun `S27 b2 the app_pin_settings token restores AppPinSettings and the screen is not a features-menu entry`() {
+        assertEquals(NavigationDestination.AppPinSettings, destinationFromSaveToken("app_pin_settings"))
+        assertEquals(
+            NavigationDestination.AppPinSettings,
+            destinationFromSaveToken(NavigationDestination.AppPinSettings.toSaveToken())
+        )
+        // Control: the sibling privacy token still resolves to its own screen, not to the PIN screen.
+        assertEquals(NavigationDestination.PrivacySettings, destinationFromSaveToken("privacy_settings"))
+        assertFalse(NavigationDestination.featureDestinations.contains(NavigationDestination.AppPinSettings))
+        // Control: the parent screen stays a features-menu entry.
+        assertTrue(NavigationDestination.featureDestinations.contains(NavigationDestination.PrivacySettings))
     }
 
     @Test

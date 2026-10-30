@@ -72,6 +72,9 @@ object AppLockPrivacySectionTags {
     const val REVIEW_LOCK_ROW = "app_lock_privacy_review_lock_row"
     const val REVIEW_TIMEOUT_ROW = "app_lock_privacy_review_timeout_row"
     const val REVIEW_SECURE_ROW = "app_lock_privacy_review_secure_row"
+
+    // S27 b2: App PIN row.
+    const val PIN_ROW = "app_lock_privacy_pin_row"
 }
 
 /**
@@ -85,6 +88,7 @@ object AppLockPrivacySectionTags {
 @Composable
 fun AppLockPrivacySection(
     modifier: Modifier = Modifier,
+    onOpenAppPinSettings: () -> Unit = {},
     viewModel: AppLockPrivacySettingsViewModel = hiltViewModel()
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -115,6 +119,7 @@ fun AppLockPrivacySection(
         onReviewLockChange = viewModel::setReviewLockChoice,
         onReviewTimeoutChange = viewModel::setReviewTimeoutChoice,
         onReviewSecureChange = viewModel::setReviewSecureChoice,
+        onOpenAppPin = onOpenAppPinSettings,
         modifier = modifier
     )
 }
@@ -150,7 +155,8 @@ internal fun AppLockPrivacySectionContent(
     onSecureChange: (Boolean) -> Unit = {},
     onReviewLockChange: (Boolean) -> Unit = {},
     onReviewTimeoutChange: (AutoLockTimeout) -> Unit = {},
-    onReviewSecureChange: (Boolean) -> Unit = {}
+    onReviewSecureChange: (Boolean) -> Unit = {},
+    onOpenAppPin: () -> Unit = {}
 ) {
     val lockIsOff = state is AppLockPrivacySectionState.Ready && state.lock == AppLockRowState.Off
     var explainerVisible by rememberSaveable { mutableStateOf(false) }
@@ -253,6 +259,14 @@ internal fun AppLockPrivacySectionContent(
                     onCheckedChange = onSecureChange,
                     tag = AppLockPrivacySectionTags.SECURE_ROW
                 )
+                // S27 b2 (ux 4.2): rendered only while the committed lock is on; unavailable while paused (INV-50).
+                if (lockOn) {
+                    AppPinRow(
+                        available = state.lock == AppLockRowState.On && !state.isWriting,
+                        paused = state.lock is AppLockRowState.InertOn,
+                        onClick = onOpenAppPin
+                    )
+                }
                 if (lockOn) Footnote()
                 NoticeText(state.notice)
             }
@@ -634,6 +648,35 @@ private fun TimeoutRow(
             style = MaterialTheme.typography.bodyMedium,
             color = if (enabled) SemanticColors.PrimaryIndigo else SemanticColors.TextSecondary,
             modifier = Modifier.padding(start = 8.dp)
+        )
+    }
+}
+
+/**
+ * The "App PIN" row (ux 4.2): opens the App PIN screen. While [available] is false it is one disabled node; the paused
+ * variant (INERT) shows the "isn't available while app lock is paused" text and no navigation (INV-50).
+ */
+@Composable
+private fun AppPinRow(available: Boolean, paused: Boolean, onClick: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 48.dp)
+            .padding(vertical = 6.dp)
+            .testTag(AppLockPrivacySectionTags.PIN_ROW)
+            .clickable(enabled = available, role = Role.Button, onClick = onClick)
+    ) {
+        Text(
+            text = stringResource(R.string.applock_pin_row_title),
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (available) SemanticColors.TextPrimary else SemanticColors.TextSecondary
+        )
+        Text(
+            text = stringResource(
+                if (paused) R.string.applock_pin_row_unavailable_paused else R.string.applock_pin_row_support
+            ),
+            style = MaterialTheme.typography.bodySmall,
+            color = SemanticColors.TextSecondary
         )
     }
 }

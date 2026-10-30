@@ -44,6 +44,7 @@ import com.yourname.expensetracker.domain.privacy.applock.AuthPurpose
 import com.yourname.expensetracker.domain.privacy.applock.InertReason
 import com.yourname.expensetracker.domain.privacy.applock.LockCause
 import com.yourname.expensetracker.domain.privacy.applock.LockNotice
+import com.yourname.expensetracker.domain.privacy.applock.PinPresentation
 import com.yourname.expensetracker.domain.privacy.applock.UnlockTapResult
 import com.yourname.expensetracker.ui.navigation.NavigationDestination
 import io.mockk.every
@@ -144,14 +145,17 @@ class AppLockShellTest : AppLockComposeTestBase() {
     fun cf1_controllerGateSource_exposesTheControllersOwnFlowInstances() {
         val state = MutableStateFlow<AppLockState>(AppLockState.Resolving)
         val notice = MutableStateFlow<LockNotice?>(null)
+        val pin = MutableStateFlow(PinPresentation.INITIAL)
         val controller = mockk<AppLockController>()
         every { controller.state } returns state
         every { controller.notice } returns notice
+        every { controller.pin } returns pin
 
         val source = ControllerGateSource(controller)
 
         assertSame("state must be the controller's own StateFlow", state, source.state)
         assertSame("notice must be the controller's own StateFlow", notice, source.notice)
+        assertSame("pin must be the controller's own StateFlow", pin, source.pin)
     }
 
     @Test
@@ -161,6 +165,7 @@ class AppLockShellTest : AppLockComposeTestBase() {
         val controller = mockk<AppLockController>()
         every { controller.state } returns state
         every { controller.notice } returns notice
+        every { controller.pin } returns MutableStateFlow(PinPresentation.INITIAL)
 
         show(ControllerGateSource(controller))
         composeRule.onAllNodesWithTag(AppLockUiTags.GATE_NEUTRAL).assertCountEquals(1)
@@ -188,6 +193,7 @@ class AppLockShellTest : AppLockComposeTestBase() {
         val controller = mockk<AppLockController>()
         every { controller.state } returns state
         every { controller.notice } returns notice
+        every { controller.pin } returns MutableStateFlow(PinPresentation.INITIAL)
         every { controller.onUnlockTapped() } returns UnlockTapResult.NotLocked
         val destinations = mutableListOf<NavigationDestination>()
 

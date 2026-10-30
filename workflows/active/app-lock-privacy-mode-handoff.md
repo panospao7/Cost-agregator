@@ -3206,3 +3206,46 @@ Validation to request: unchanged, targeted `*AppLockController*` (covers both te
   1. S27: PIN UI, the user-visible switch, the CharArray pad (INV-38), the OD-19 dataExtractionRules gate (D-I2-9), the fingerprint enable (AE-120), strings.
   2. G2 device checks: PBKDF2 timing, KeyInfo security level, the real Keystore behaviour of AndroidBiometricPinKeyManager.
   3. reviewer-strict at the increment-2 candidate, then the merge.
+
+## 2026-10-30: pre-S27 gates decided (orchestrator under owner-approvals 92; recorded as item 96)
+- D-I2-9 / OD-19: Option A, no manifest change. D2D moves the settings but not the verifier or Keystore keys, so the new device resolves to DEVICE_AUTH or INERT (AMD-4): fail closed, no stranding. S27 tests pin it. App-wide Option C is an OWNER release-track item.
+- UQ-1: the in-app pad (binding condition D / INV-38: CharArray, no String TextField).
+- UQ-4: the single "I understand..." acknowledgement checkbox only; no export-first requirement.
+- S27 is executed in small steps, following the plan's split seam:
+  - a1: PinPad plus strings;
+  - a2: PinLockSurface plus AppLockGate;
+  - b1: the AppPinSettingsViewModel plus the PinSetupFlow state;
+  - b2: AppPinSettingsScreen, the AppLockPrivacySection row and the fingerprint toggle (AE-120).
+  - A separate test-author per step.
+
+## 2026-10-30: S27 (PIN UI, the increment-2 user switch) ACCEPTED and COMMITTED
+- Steps:
+  - a1: PinPad, PinEntryBuffer (CharArray, not saveable, zeroed; cleared on ON_STOP) and strings.
+  - a2: PinLockSurface (delay, unreadable, forgotten-PIN help, fingerprint key gated) plus the AppLockGate APP_PIN branch (no auto prompt) plus the ControllerGateSource pin/pinActions.
+  - b1: AppPinSettingsViewModel (setup with ack, UQ-4; change; remove through AppLockSettingsOperations.removePin; INV-50 availability; onScreenLeft clears held entries) plus PinSetupFlow.
+  - b2: AppPinSettingsScreen, the App PIN row in AppLockPrivacySection (hidden when Off, disabled when paused), the AppPinSettings route and save token, and the MainActivity branch.
+- Combined guardian (split A/B): ACCEPT-WITH-FIXES. All applied:
+  - B1 MEDIUM: activity-scoped VM, so onScreenLeft is called on dispose.
+  - B2 and B3.
+  - A1: ON_STOP clear. A3: the fingerprint key has its own enabled flag. A4: broad catch in submit. A5: the unused tries-left plural removed.
+- Fix-pass lessons:
+  - Restoring the same-package `AppLockContent` import was REQUIRED; it was removed by mistake. The db_access parser resolves the typealias only via an import (S20). The known_good_state count went 21 to 23 without it.
+  - Robolectric pad tests need `qualifiers = "w411dp-h891dp"`.
+  - The INV-42 scan regex was made stricter.
+  - The S22-b dormancy pin was updated to EXACTLY three callers, adding AppPinSettingsViewModel through removePin (owner-approvals 81b plus 92/96).
+- DEFERRED as S26b, a new follow-up slice:
+  - Fingerprint ENABLE in PIN mode: a controller path plus a settings toggle plus the AE-120 prompt. Today no path sets biometricEnabled, so fingerprint unlock stays dormant and hidden (D-I2-7 allows S27 without it).
+  - The tries-left copy was dropped, because PinRejection carries no count.
+- Validation, all PASS:
+  - targeted vr-20261030-202901-5e4b337e
+  - runtime-ui vr-20261030-203202-6cee4a32
+  - domain-n-z vr-20261030-203534-044f08ae
+  - architecture-contracts vr-20261030-200536-a3e39ffa
+  - static-guards vr-20261030-200624-1282004e (21x DB_SIGNATURE_UNRESOLVED again)
+  - lint vr-20261030-192923-32ba08ab (before the import-only restore)
+- NEXT:
+  1. S28 docs (LEGAL_PATHS APP LOCK PIN ordering, CODEBASE_SEGMENTS seg 28, UI maps, CODEBASE_INVENTORY, the release note "a forgotten PIN means clear data or restore a backup").
+  2. Decide S26b now or after the merge (recommendation: after; the increment can merge with fingerprint dormant).
+  3. G2 device checks on emulator-5554: PBKDF2 timing, KeyInfo security level, reboot delay AE-73, Keystore loss AE-80, PIN step plus background AE-119, the PIN UI smoke.
+  4. reviewer-strict at the increment-2 candidate.
+  5. Merge into feature/ai-evolution.

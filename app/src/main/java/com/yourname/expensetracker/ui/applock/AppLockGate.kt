@@ -1,5 +1,10 @@
 package com.yourname.expensetracker.ui.applock
 
+import android.content.ActivityNotFoundException
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
@@ -11,12 +16,20 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import com.yourname.expensetracker.domain.privacy.applock.AppLockState
 import com.yourname.expensetracker.domain.privacy.applock.LockCause
+import com.yourname.expensetracker.domain.privacy.applock.EffectiveLockMode
 import com.yourname.expensetracker.domain.privacy.applock.LockNotice
+import com.yourname.expensetracker.domain.privacy.applock.PinPresentation
+// Explicit same-package import kept on purpose: the db_access guard parser resolves the AppLockContent typealias only via an import (S20).
 import com.yourname.expensetracker.ui.applock.AppLockContent
+import com.yourname.expensetracker.ui.applock.pin.PinLockActions
+import com.yourname.expensetracker.ui.applock.pin.PinLockSurface
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
 /**
@@ -59,7 +72,15 @@ fun AppLockState.toGateRender(): AppLockGateRender = when (this) {
 interface AppLockGateSource {
     val state: StateFlow<AppLockState>
     val notice: StateFlow<LockNotice?>
+
+    /** The PIN presentation (S27). Defaults to the device-auth presentation, so a plain source keeps today's surface. */
+    val pin: StateFlow<PinPresentation> get() = DEVICE_AUTH_PIN_PRESENTATION
+
+    /** The PIN lock surface's controller calls, or null when the source has none (no PIN surface is then drawn). */
+    val pinActions: PinLockActions? get() = null
 }
+
+private val DEVICE_AUTH_PIN_PRESENTATION: StateFlow<PinPresentation> = MutableStateFlow(PinPresentation.INITIAL)
 
 /**
  * The app-lock gate (domain-spec INV-26, INV-27, INV-34, INV-35, INV-51, INV-52, INV-53; ux-flows section 5).
@@ -98,8 +119,13 @@ fun AppLockGate(
     onReviewSettings: () -> Unit,
     modifier: Modifier = Modifier,
     unlockMessage: LockSurfaceMessage? = null,
+    pin: PinPresentation = PinPresentation.INITIAL,
+    pinActions: PinLockActions? = null,
     content: AppLockContent
 ) {
+    // The gate's own scope: PIN calls started by the PIN surface outlive that surface when an unlock removes it.
+    val gateScope = rememberCoroutineScope()
+    val context = LocalContext.current
     when (state.toGateRender()) {
         AppLockGateRender.NEUTRAL ->
             AppLockSurface(
@@ -110,8 +136,18 @@ fun AppLockGate(
                 modifier = modifier
             )
 
+        // Effective APP_PIN: the in-app PIN surface replaces the device-auth surface. Nothing here launches a prompt (INV-34).
         AppLockGateRender.LOCK_SURFACE ->
-            AppLockSurface(
+            if (pin.effectiveLockMode == EffectiveLockMode.APP_PIN && pinActions != null) {
+                PinLockSurface(
+                    pin = pin,
+                    promptInFlight = state is AppLockState.Authenticating,
+                    actions = pinActions,
+                    scope = gateScope,
+                    onOpenAppSettings = { openAppDetailsSettings(context) },
+                    modifier = modifier
+                )
+            } else AppLockSurface(
                 mode = LockSurfaceMode.LOCK,
                 unlockEnabled = state is AppLockState.Locked,
                 message = lockSurfaceMessage(state, unlockMessage),
@@ -170,9 +206,12 @@ fun AppLockGate(
 ) {
     val state = source.state.collectAsState().value
     val notice = source.notice.collectAsState().value
+    val pin = source.pin.collectAsState().value
     AppLockGate(
         state = state,
         notice = notice,
+        pin = pin,
+        pinActions = source.pinActions,
         inAppActionsAllowed = inAppActionsAllowed,
         onUnlock = onUnlock,
         onOpenSecuritySettings = onOpenSecuritySettings,
@@ -182,6 +221,20 @@ fun AppLockGate(
         unlockMessage = unlockMessage,
         content = content
     )
+}
+
+/**
+ * Opens this app's system details screen (the "clear data" route of the forgotten-PIN help, ux-flows 3.11), from a tap.
+ * A device without the screen is ignored; no intent content or exception text is logged.
+ */
+internal fun openAppDetailsSettings(context: Context) {
+    val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null))
+        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    try {
+        context.startActivity(intent)
+    } catch (notFound: ActivityNotFoundException) {
+        // No such screen on this device: nothing to open.
+    }
 }
 
 /** The status line for the lock surface: none while the prompt is in flight; otherwise the caller's, else T5's. */

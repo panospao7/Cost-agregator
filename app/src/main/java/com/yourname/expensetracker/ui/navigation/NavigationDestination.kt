@@ -102,6 +102,8 @@ sealed class NavigationDestination {
     // Settings / Management Screens (previously orphaned)
     data object AiSettings : NavigationDestination()
     data object PrivacySettings : NavigationDestination()
+    /** App PIN settings (S27 b2). Reached only from the App PIN row; not a features-menu entry. */
+    data object AppPinSettings : NavigationDestination()
     data object CategoryManagement : NavigationDestination()
 
     // Debug (gated by BuildConfig.DEBUG at render time)

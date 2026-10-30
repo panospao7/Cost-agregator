@@ -18,7 +18,10 @@ import com.yourname.expensetracker.domain.privacy.applock.AppLockController
 import com.yourname.expensetracker.domain.privacy.applock.AppLockState
 import com.yourname.expensetracker.domain.privacy.applock.AuthPurpose
 import com.yourname.expensetracker.domain.privacy.applock.LockNotice
+import com.yourname.expensetracker.domain.privacy.applock.PinPresentation
+// Explicit same-package import kept on purpose: the db_access guard parser resolves the AppLockContent typealias only via an import (S20).
 import com.yourname.expensetracker.ui.applock.AppLockContent
+import com.yourname.expensetracker.ui.applock.pin.PinLockActions
 import com.yourname.expensetracker.ui.navigation.NavigationDestination
 import kotlinx.coroutines.flow.StateFlow
 import timber.log.Timber
@@ -31,6 +34,12 @@ import timber.log.Timber
 internal class ControllerGateSource(controller: AppLockController) : AppLockGateSource {
     override val state: StateFlow<AppLockState> = controller.state
     override val notice: StateFlow<LockNotice?> = controller.notice
+    override val pin: StateFlow<PinPresentation> = controller.pin
+    override val pinActions: PinLockActions = object : PinLockActions {
+        override suspend fun submitUnlockPin(pin: CharArray) = controller.submitUnlockPin(pin)
+        override suspend fun retryPinRecovery() = controller.retryPinRecovery()
+        override suspend fun requestFingerprintUnlock() = controller.requestFingerprintUnlock()
+    }
 }
 
 /**

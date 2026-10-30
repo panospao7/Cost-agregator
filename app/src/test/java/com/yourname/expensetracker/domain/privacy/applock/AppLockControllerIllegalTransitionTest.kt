@@ -893,7 +893,7 @@ class AppLockControllerIllegalTransitionTest {
     }
 
     @Test
-    fun `S22-b dormancy - the Operations request surface has EXACTLY two production caller files, AppLockSettingsOperations kt and the settings ViewModel (owner-approvals 81b, S22-b)`() {
+    fun `S22-b dormancy - the Operations request surface has EXACTLY three production caller files, AppLockSettingsOperations kt and the two settings ViewModels (owner-approvals 81b, S27 PIN settings, owner-approvals 92 and 96)`() {
         // Caller-set pin (arch review F2; S22-b rewrite, a strengthening). The Operations' request entries now have
         // exactly two production files that name any of them: AppLockSettingsOperations.kt itself and the 1a settings
         // ViewModel (the lock switch, the timeout row, the secure-screen row, the discreet row and the review card).
@@ -919,7 +919,10 @@ class AppLockControllerIllegalTransitionTest {
                     "requestDisable",
                     "requestTimeoutChange",
                     "requestSecureScreenChange"
-                )
+                ),
+            // S27 (PIN settings, owner-approvals 92/96): the third legitimate caller. It names only the type and calls
+            // removePin, the single legal PIN-removal write path (INV-49); no request* entry.
+            PIN_SETTINGS_VIEW_MODEL_PATH to setOf("AppLockSettingsOperations")
         )
         // One shared comment filter: the scan and the self-check below both go through it.
         fun codeLines(lines: List<String>): List<String> = lines
@@ -941,7 +944,8 @@ class AppLockControllerIllegalTransitionTest {
                 .map { relativeToRoot(it, root) }
                 .toList()
         }.toSet()
-        assertEquals(setOf(operationsPath, SETTINGS_VIEW_MODEL_PATH), callerFiles)
+        // Still EXACT: S27 added the PIN settings ViewModel (removePin, INV-49); any further caller fails here.
+        assertEquals(setOf(operationsPath, SETTINGS_VIEW_MODEL_PATH, PIN_SETTINGS_VIEW_MODEL_PATH), callerFiles)
 
         // The ViewModel's exemption is the full token list: nothing the Operations exposes is left out, nothing extra.
         assertEquals(dormant.toSet(), exemptTokensByFile.getValue(SETTINGS_VIEW_MODEL_PATH))
@@ -1117,6 +1121,8 @@ class AppLockControllerIllegalTransitionTest {
         const val APPLOCK_PACKAGE_PATH = "com/yourname/expensetracker/domain/privacy/applock"
         const val SETTINGS_VIEW_MODEL_PATH =
             "com/yourname/expensetracker/ui/screens/privacysettings/AppLockPrivacySettingsViewModel.kt"
+        const val PIN_SETTINGS_VIEW_MODEL_PATH =
+            "com/yourname/expensetracker/ui/screens/privacysettings/applockpin/AppPinSettingsViewModel.kt"
 
         /** The dormancy scan's tokens (S18 i-a); the type name plus every public `request*` entry of the Operations. */
         val DORMANT_TOKENS = listOf(

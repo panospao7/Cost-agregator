@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- DRAFT: es/el pending owner sign-off -->
+<resources>
+    <string name="applock_pin_enter_title">Introduce tu PIN de la app</string>
+    <string name="applock_pin_key_delete_cd">Borrar el último dígito</string>
+    <string name="applock_pin_key_fingerprint_cd">Usar huella digital</string>
+    <string name="applock_pin_wrong">PIN incorrecto.</string>
+    <string name="applock_pin_wait">Demasiados intentos. Vuelve a intentarlo en %1$s.</string>
+    <string name="applock_pin_wait_neutral">Espera un momento. Vuelve a intentarlo en %1$s.</string>
+    <string name="applock_pin_wait_over">Ya puedes volver a intentarlo.</string>
+    <string name="applock_pin_unreadable">No se pudo leer el PIN de la app, por lo que no se puede desbloquear.</string>
+    <string name="applock_pin_forgot">¿Olvidaste el PIN?</string>
+    <string name="applock_pin_forgot_title">¿Olvidaste el PIN de la app?</string>
+    <string name="applock_pin_forgot_body">Por tu privacidad, el PIN de la app no se puede restablecer. Para volver a entrar, borra los datos de la app en los ajustes de Android. Esto borra todo lo guardado en la app en este teléfono. Solo un archivo de copia de seguridad que hayas exportado (.costbackup), con su contraseña, puede recuperar tus datos. Sin él, no se pueden recuperar.</string>
+    <string name="applock_pin_forgot_open_settings">Abrir ajustes de la app</string>
+    <plurals name="applock_pin_digits_state">
+        <item quantity="one">%1$d dígito introducido</item>
+        <item quantity="many">%1$d dígitos introducidos</item>
+        <item quantity="other">%1$d dígitos introducidos</item>
+    </plurals>
+    <string name="applock_pin_retry">Intentar de nuevo</string>
+    <string name="applock_pin_forgot_close">Cerrar</string>
+    <plurals name="applock_pin_duration_hours">
+        <item quantity="one">%1$d hora</item>
+        <item quantity="many">%1$d horas</item>
+        <item quantity="other">%1$d horas</item>
+    </plurals>
+    <plurals name="applock_pin_duration_minutes">
+        <item quantity="one">%1$d minuto</item>
+        <item quantity="many">%1$d minutos</item>
+        <item quantity="other">%1$d minutos</item>
+    </plurals>
+    <plurals name="applock_pin_duration_seconds">
+        <item quantity="one">%1$d segundo</item>
+        <item quantity="many">%1$d segundos</item>
+        <item quantity="other">%1$d segundos</item>
+    </plurals>
+    <!-- DRAFT: es pending owner sign-off (S27 b1: App PIN setup, change and remove steps) -->
+    <string name="applock_pin_setup_title">Establecer un PIN de la app</string>
+    <string name="applock_pin_setup_intro">Elige un PIN de 6 a 12 dígitos. Se pedirá en lugar del bloqueo de pantalla del teléfono al abrir esta app, lo que ayuda a mantener fuera a quienes conocen el bloqueo de pantalla de tu teléfono.</string>
+    <string name="applock_pin_setup_warning">Si olvidas este PIN, la única forma de volver a entrar es borrar los datos de la app. Tus datos solo se podrán restaurar desde un archivo de copia de seguridad que hayas exportado (.costbackup), con su contraseña. Las copias guardadas solo dentro de la app también se borran.</string>
+    <string name="applock_pin_setup_backup_now">Hacer copia ahora</string>
+    <string name="applock_pin_setup_ack">Entiendo que puedo perder mis datos si olvido mi PIN y no tengo una copia de seguridad exportada</string>
+    <string name="applock_pin_setup_continue">Continuar</string>
+    <string name="applock_pin_new_title">Introduce un PIN nuevo</string>
+    <string name="applock_pin_confirm_title">Confirma tu PIN</string>
+    <string name="applock_pin_current_title">Introduce tu PIN actual</string>
+    <string name="applock_pin_next">Siguiente</string>
+    <string name="applock_pin_set_button">Establecer PIN</string>
+    <string name="applock_pin_mismatch">Los PIN no coinciden. Inténtalo de nuevo.</string>
+    <string name="applock_pin_too_weak">Elige un PIN más difícil de adivinar.</string>
+    <string name="applock_pin_failed">Algo salió mal. No se cambió nada.</string>
+    <string name="applock_pin_snackbar_set">El PIN de la app está establecido</string>
+    <string name="applock_pin_snackbar_changed">PIN de la app cambiado</string>
+    <string name="applock_pin_snackbar_removed">PIN de la app eliminado</string>
+    <string name="privacy_app_lock_snackbar_off_pin_removed">El bloqueo de la app está desactivado. Se eliminó tu PIN de la app.</string>
+    <string name="applock_pin_remove_title">¿Eliminar el PIN de la app?</string>
+    <string name="applock_pin_remove_body">La app se desbloqueará con el bloqueo de pantalla de tu teléfono.</string>
+    <string name="applock_pin_remove_body_no_secure">La app se desbloqueará con el bloqueo de pantalla de tu teléfono. Tu teléfono no tiene bloqueo de pantalla, así que el bloqueo de la app se desactivará.</string>
+    <string name="applock_pin_remove_confirm">Eliminar</string>
+    <!-- S27 b2 (es DRAFT, pending native sign-off). -->
+    <string name="applock_pin_row_title">PIN de la app</string>
+    <string name="applock_pin_row_support">Usa un PIN que solo tú conozcas en lugar del bloqueo de pantalla de tu teléfono.</string>
+    <string name="applock_pin_row_unavailable_paused">El PIN de la app no está disponible mientras el bloqueo de la app está en pausa.</string>
+    <string name="applock_pin_settings_title">PIN de la app</string>
+    <string name="applock_pin_status_on">El PIN de la app está activado.</string>
+    <string name="applock_pin_status_off">El PIN de la app está desactivado.</string>
+    <string name="applock_pin_action_change">Cambiar el PIN de la app</string>
+    <string name="applock_pin_action_remove">Eliminar el PIN de la app</string>
+    <string name="applock_pin_action_setup">Configurar el PIN de la app</string>
+    <string name="applock_pin_settings_forgot_note">¿Olvidaste tu PIN? La única forma de volver a entrar es borrar los datos de la app en los ajustes de Android. Solo una copia de seguridad que hayas exportado (.costbackup) y su contraseña pueden recuperar tus datos. Guarda una fuera de esta app. Una copia de seguridad no contiene tu PIN ni los ajustes del bloqueo de la app.</string>
+</resources>

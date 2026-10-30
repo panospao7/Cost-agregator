@@ -714,7 +714,14 @@ fun MainScreen(
                 }
                 is NavigationDestination.PrivacySettings -> {
                     com.yourname.expensetracker.ui.screens.privacysettings.PrivacySettingsScreen(
-                        onDismiss = { navigation.navigateBack() }
+                        onDismiss = { navigation.navigateBack() },
+                        onOpenAppPinSettings = { navigation.navigateTo(NavigationDestination.AppPinSettings) }
+                    )
+                }
+                is NavigationDestination.AppPinSettings -> {
+                    com.yourname.expensetracker.ui.screens.privacysettings.applockpin.AppPinSettingsScreen(
+                        onNavigateBack = { navigation.navigateBack() },
+                        onOpenBackupRestore = { navigation.navigateTo(NavigationDestination.BackupRestore) }
                     )
                 }
                 is NavigationDestination.CategoryManagement -> {
