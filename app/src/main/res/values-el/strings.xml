@@ -596,6 +596,8 @@
     <string name="mec_save_disabled_currency">Επιλέξτε νόμισμα</string>
     <string name="mec_save_disabled_amount">Διορθώστε το ποσό</string>
     <string name="mec_repeat_cleared">Η επανάληψη απενεργοποιήθηκε επειδή το έξοδο είναι σε άλλο νόμισμα.</string>
+    <!-- MEC 1b S2b: DRAFT: owner native sign-off pending -->
+    <string name="mec_home_changed_cleared">Το κύριο νόμισμά σας άλλαξε, οπότε το ποσό διαγράφηκε.</string>
     <string name="mec_receipt_unmatched">Δεν αναγνωρίστηκε το νόμισμα της απόδειξης. Επιλέξτε ένα.</string>
     <string name="mec_receipt_not_detected">Δεν βρέθηκε νόμισμα στην απόδειξη. Ελέγξτε το.</string>
     <string name="mec_receipt_kept">Η απόδειξη διατηρήθηκε. Δεν αποθηκεύτηκε τίποτα.</string>

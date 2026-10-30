@@ -388,3 +388,19 @@ Total: 9 + 5 + 37 = 51 (42 `mec_*` + 9 `add_expense_installments_*`); the count 
     - lint vr-20261030-074507-b24644c1.
   - The first targeted run vr-20261030-071533-b58674e7 failed on a stray brace in the new UI test (fixed).
   - COMMITTED. Next: S2b (home-change rule) and S3 (receipt parity), which may run in parallel; then S4 docs and the 1b candidate gate.
+- 2026-10-30: 1b S2b (home-change rule) DONE.
+  - Writer, plus a separate test-author (12 + 7 regression tests).
+  - Combined guardian ACCEPT-WITH-CONDITIONS. Fixed:
+    - MEDIUM: installment fixedText and myShareAmount count as draft money;
+    - LOW: a single pendingHomeDiscardJob;
+    - LOW: no discard on an already-blank draft or a successful save.
+    - Accepted: the note clears on an amount edit or a currency change.
+    - Noted: during SAVING the selector shows the new home beside the old-home amount. Taps are blocked and the request carries the original code (spec gap, no money effect).
+  - AE-50 type pin (owner item 63; no String-typed VM field): `lastObservedHome: String` failed it, and so did a `CurrencyCode?` retype (a nullable value class over String is still a String field). Fixed by reading the previous home from state, with a Boolean `homeObserved`. The pin is unchanged.
+  - Ladder (final fingerprint), all PASS:
+    - targeted `*AddExpense*` vr-20261030-091800-61bd5608;
+    - runtime-ui vr-20261030-092317-6b54dc5d;
+    - known_good_state vr-20261030-092651-117c4724;
+    - lint vr-20261030-093007-130b2c07.
+  - Process note: one earlier targeted run went STALE (an edit landed during the run) and was re-run.
+  - COMMITTED. Next: S3 (receipt-review parity), then S4 docs, then the 1b candidate gate.

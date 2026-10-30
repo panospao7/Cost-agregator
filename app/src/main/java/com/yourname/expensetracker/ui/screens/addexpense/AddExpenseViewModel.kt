@@ -22,6 +22,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -169,6 +170,8 @@ data class AddExpenseState(
  val rateRemedy: RateRemedyDecision = RateRemedyDecision(RateRemedy.REFRESH_LATEST),
  /** MEC INV-16: true when Repeat was switched off (and cleared) because a foreign currency was chosen. */
  val repeatClearedByCurrency: Boolean = false,
+ /** MEC 1b INV-1b-20(c): one-shot; a home change discarded a home-denominated draft. Cleared by the next edit. */
+ val homeChangeClearedNote: Boolean = false,
  /** MEC D-11: what the "Open exchange-rate setting" action needs from the host. */
  val openSettingRequest: CurrencyOpenSettingRequest = CurrencyOpenSettingRequest.NONE,
  /** The device-local calendar date of "today" (injected clock, entry zone) for rate-date wording; set on evaluation. */
@@ -289,6 +292,26 @@ class AddExpenseViewModel @Inject constructor(
  private var initialValuesApplied: Boolean = false
 
  private var homeCurrencyJob: Job? = null
+ /** MEC 1b INV-1b-20: the previously observed home, to detect a change (null until first emission). */
+ private var homeObserved = false // AE-50 (owner item 63): no String-typed VM field; the previous home is read from state
+ /** The single SAVING-wait for a deferred home-change discard (INV-1b-20(c)); replaced on each new home change. */
+ private var pendingHomeDiscardJob: Job? = null
+
+ /** True when the draft holds home-denominated money: amount, installment fixed amount, or a share amount. */
+ private fun hasDraftMoney(s: AddExpenseState): Boolean =
+  s.amount.isNotBlank() || (s.installments.on && s.installments.fixedText.isNotBlank()) ||
+   s.myShareAmount.isNotBlank()
+
+ /** INV-1b-20(c): discards the whole draft via reset() (keeps the open sheet's zone) and raises the one-shot note. */
+ private fun discardDraftForHomeChange() {
+  val zone = sessionZone
+  reset()
+  if (zone != null) {
+   sessionZone = zone
+   sessionZoneTick.value = zone
+  }
+  _state.update { it.copy(homeChangeClearedNote = true) }
+ }
 
  // MEC AE-34: the entry zone captured when the sheet opened. A plain field: never in state, never
  // persisted or logged (QuickAddPrivacy G-1). Cleared by reset().
@@ -347,8 +370,27 @@ class AddExpenseViewModel @Inject constructor(
  init {
  homeCurrencyJob = viewModelScope.launch {
  currencySettingsRepository.homeCurrency().collect { hc ->
+ // MEC 1b INV-1b-20(c): a home-denominated draft is discarded on a home change (open sheet or retained).
+ val before = _state.value
+ val oldHome = if (homeObserved) before.homeCurrency else null
+ homeObserved = true
+ val homeDraftAtRisk = oldHome != null && hc != oldHome && hasDraftMoney(before) &&
+  currencyOverride == null && before.selectedCurrency == oldHome
  _state.update { applyHomeAndSelection(it.copy(homeCurrency = hc, previewAnnounceKey = it.previewAnnounceKey + 1)) }
  reevaluateRegion(invalidate = true)
+ if (homeDraftAtRisk) {
+  if (before.isSaving) {
+   // INV-1b-20(c) SAVING: never discard mid-save; wait for the outcome. A saved row closes the sheet.
+   // One waiter at a time: a newer home change replaces the pending one, so the discard runs at most once.
+   pendingHomeDiscardJob?.cancel()
+   pendingHomeDiscardJob = viewModelScope.launch {
+    val settled = _state.first { !it.isSaving }
+    if (settled.saveResult != SaveResult.Success && hasDraftMoney(settled)) discardDraftForHomeChange()
+   }
+  } else {
+   discardDraftForHomeChange()
+  }
+ }
  }
  }
  ratesSettingJob = viewModelScope.launch {
@@ -449,7 +491,8 @@ class AddExpenseViewModel @Inject constructor(
             it.copy(
                 amount = sanitized,
                 amountError = null,
-                saveResult = null
+                saveResult = null,
+                homeChangeClearedNote = false
             ).withUserEdit(QuickAddField.AMOUNT)
         }
         // MEC INV-3: the figure changed; drop to Pending at once so a converted amount for the
@@ -1280,6 +1323,7 @@ class AddExpenseViewModel @Inject constructor(
             withSelection.copy(
                 previewAnnounceKey = current.previewAnnounceKey + 1,
                 saveResult = null,
+                homeChangeClearedNote = false,
                 amountError = if (selected == null) null else revalidatedAmountError(current.amount, selected),
                 isRecurring = if (foreign) false else withSelection.isRecurring,
                 recurrenceFrequency = if (foreign) RecurrenceFrequency.MONTHLY else withSelection.recurrenceFrequency,

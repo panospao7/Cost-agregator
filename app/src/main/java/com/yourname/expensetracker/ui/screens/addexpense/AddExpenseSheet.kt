@@ -604,6 +604,18 @@ fun AddExpenseSheet(
                     )
                 }
 
+                // MEC 1b INV-1b-20(c): one-shot note after a home change discarded the draft.
+                if (state.homeChangeClearedNote) {
+                    Text(
+                        stringResource(R.string.mec_home_changed_cleared),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .semantics { liveRegion = LiveRegionMode.Polite }
+                    )
+                }
+
                 // === Recurring Options ===
                 // MEC INV-16: Repeat is hidden (not disabled) for a foreign currency; a note takes its place.
                 if (state.installments.on) {
