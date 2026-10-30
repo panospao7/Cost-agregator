@@ -403,12 +403,15 @@ class AppLockControllerPinUnlockTest {
     }
 
     @Test
-    fun `D-I2-7 the fingerprint hook is inert until S26 and never resets the counter or unlocks`() {
-        val (h, controller) = pinLocked()
+    fun `D-I2-7 amended the fingerprint request is a no-op while the flag is off and never resets the counter or unlocks`() {
+        val (h, controller) = pinLocked() // biometricEnabled is false in this store
         assertFalse(controller.canOfferFingerprintUnlock.value)
         assertFalse(controller.pin.value.canOfferFingerprint)
-        assertEquals(FingerprintUnlockResult.NOT_AVAILABLE, runBlocking { controller.onFingerprintUnlockSucceeded() })
+        runBlocking { controller.requestFingerprintUnlock() }
+        h.settle()
         assertEquals(AppLockState.Locked(LockCause.COLD_START), controller.state.value)
+        assertNull(controller.inFlightAttemptId)
+        assertEquals(0, h.authenticator.calls.size)
         assertEquals(0, h.pinStore.count("resetAttempts"))
     }
 }

@@ -21,6 +21,8 @@ import com.yourname.expensetracker.domain.privacy.applock.DeviceAuthCallback
 import com.yourname.expensetracker.domain.privacy.applock.DeviceAuthErrorBucket
 import com.yourname.expensetracker.domain.privacy.applock.DeviceAuthOutcome
 import com.yourname.expensetracker.domain.privacy.applock.DeviceAuthenticator
+import com.yourname.expensetracker.domain.privacy.applock.pin.BiometricKeyResult
+import com.yourname.expensetracker.domain.privacy.applock.pin.BiometricPinKeyManager
 import kotlin.coroutines.cancellation.CancellationException
 
 /**
@@ -28,6 +30,12 @@ import kotlin.coroutines.cancellation.CancellationException
  * requested. The capability provider in `data/privacy/applock` repeats this value and a test pins both.
  */
 internal const val PROMPT_ALLOWED_AUTHENTICATORS: Int = BIOMETRIC_STRONG or DEVICE_CREDENTIAL
+
+/**
+ * The only authenticator of the PIN-mode fingerprint prompt (INV-40, AE-72): `BIOMETRIC_STRONG` alone. Never
+ * `BIOMETRIC_WEAK`, never `DEVICE_CREDENTIAL`; the CryptoObject needs a strong authentication.
+ */
+internal const val PIN_MODE_FINGERPRINT_AUTHENTICATORS: Int = BIOMETRIC_STRONG
 
 /**
  * Longest time, in milliseconds, the adapter waits for the library terminal callback that follows a
@@ -45,6 +53,7 @@ internal fun promptTitleRes(copy: AuthPromptCopy): Int = when (copy) {
     AuthPromptCopy.DISABLE -> R.string.applock_prompt_title_disable
     AuthPromptCopy.CHANGE -> R.string.applock_prompt_title_change
     AuthPromptCopy.EXPORT -> R.string.applock_prompt_title_export
+    AuthPromptCopy.PIN_FINGERPRINT -> R.string.applock_pin_prompt_title
 }
 
 /** Constant subtitle resource for [copy]. Only ENABLE has one (INV-53). */
@@ -55,7 +64,8 @@ internal fun promptSubtitleRes(copy: AuthPromptCopy): Int? = when (copy) {
     AuthPromptCopy.UNLOCK,
     AuthPromptCopy.DISABLE,
     AuthPromptCopy.CHANGE,
-    AuthPromptCopy.EXPORT -> null
+    AuthPromptCopy.EXPORT,
+    AuthPromptCopy.PIN_FINGERPRINT -> null
 }
 
 /**
@@ -66,6 +76,14 @@ internal fun promptSubtitleRes(copy: AuthPromptCopy): Int? = when (copy) {
  */
 @VisibleForTesting
 internal fun buildPromptInfo(context: Context, copy: AuthPromptCopy): BiometricPrompt.PromptInfo {
+    if (copy == AuthPromptCopy.PIN_FINGERPRINT) {
+        // INV-40: strong biometric only, so the library requires (and we set) the "Use PIN" negative button.
+        return BiometricPrompt.PromptInfo.Builder()
+            .setTitle(context.getString(promptTitleRes(copy)))
+            .setAllowedAuthenticators(PIN_MODE_FINGERPRINT_AUTHENTICATORS)
+            .setNegativeButtonText(context.getString(R.string.applock_pin_prompt_negative))
+            .build()
+    }
     val builder = BiometricPrompt.PromptInfo.Builder()
         .setTitle(context.getString(promptTitleRes(copy)))
         .setAllowedAuthenticators(PROMPT_ALLOWED_AUTHENTICATORS)
@@ -118,11 +136,19 @@ internal fun canLaunchPrompt(sdkInt: Int, stateSaved: Boolean, finishing: Boolea
 @VisibleForTesting
 internal interface PromptHandle {
     fun authenticate(info: BiometricPrompt.PromptInfo)
+
+    /** S26: the PIN-mode fingerprint prompt with its CryptoObject. A handle without support throws, which maps to PROMPT_UNAVAILABLE. */
+    fun authenticate(info: BiometricPrompt.PromptInfo, crypto: BiometricPrompt.CryptoObject) {
+        throw UnsupportedOperationException("crypto prompt not supported")
+    }
+
     fun cancelAuthentication()
 }
 
 private class LibraryPromptHandle(private val prompt: BiometricPrompt) : PromptHandle {
     override fun authenticate(info: BiometricPrompt.PromptInfo) = prompt.authenticate(info)
+    override fun authenticate(info: BiometricPrompt.PromptInfo, crypto: BiometricPrompt.CryptoObject) =
+        prompt.authenticate(info, crypto)
     override fun cancelAuthentication() = prompt.cancelAuthentication()
 }
 
@@ -169,12 +195,18 @@ private fun createLibraryHandle(activity: FragmentActivity, callback: BiometricP
  */
 class BiometricPromptDeviceAuthenticator @VisibleForTesting internal constructor(
     private val activity: FragmentActivity,
+    // S26 (G26-4): the PIN-mode fingerprint key port, injected by the prompt host. Null (hosts that never show the
+    // PIN fingerprint prompt, for example the export gate) makes a PIN_FINGERPRINT request PROMPT_UNAVAILABLE.
+    private val keyManager: BiometricPinKeyManager? = null,
     promptFactory: (BiometricPrompt.AuthenticationCallback) -> PromptHandle?
 ) : DeviceAuthenticator {
 
-    constructor(activity: FragmentActivity) : this(activity, { callback -> createLibraryHandle(activity, callback) })
+    constructor(activity: FragmentActivity) : this(activity, null)
 
-    private class InFlight(val attemptId: Long, val callback: DeviceAuthCallback)
+    constructor(activity: FragmentActivity, keyManager: BiometricPinKeyManager?) :
+        this(activity, keyManager, { callback -> createLibraryHandle(activity, callback) })
+
+    private class InFlight(val attemptId: Long, val callback: DeviceAuthCallback, val pinFingerprint: Boolean)
 
     private var inFlight: InFlight? = null
 
@@ -184,6 +216,20 @@ class BiometricPromptDeviceAuthenticator @VisibleForTesting internal constructor
 
     private val libraryCallback = object : BiometricPrompt.AuthenticationCallback() {
         override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+            // INV-40: a PIN-mode fingerprint success counts only when the key-bound crypto verifies (fail closed).
+            if (inFlight?.pinFingerprint == true) {
+                val verified = try {
+                    keyManager?.verifyAuthenticatedCrypto(result.cryptoObject?.cipher) == true
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (ignored: RuntimeException) {
+                    false
+                }
+                onLibraryTerminal(
+                    if (verified) DeviceAuthOutcome.Succeeded else DeviceAuthOutcome.Failed(DeviceAuthErrorBucket.OTHER)
+                )
+                return
+            }
             onLibraryTerminal(DeviceAuthOutcome.Succeeded)
         }
 
@@ -253,8 +299,16 @@ class BiometricPromptDeviceAuthenticator @VisibleForTesting internal constructor
             )
             if (!launchable) return AuthLaunch.HOST_UNAVAILABLE
             val info = buildPromptInfo(activity, copy)
-            inFlight = InFlight(attemptId, callback)
-            current.authenticate(info)
+            if (copy == AuthPromptCopy.PIN_FINGERPRINT) {
+                // A key that is not ready never reaches the library: no credential fallback exists in this mode.
+                val ready = keyManager?.cipherForAuthentication() as? BiometricKeyResult.Ready
+                    ?: return AuthLaunch.PROMPT_UNAVAILABLE
+                inFlight = InFlight(attemptId, callback, pinFingerprint = true)
+                current.authenticate(info, BiometricPrompt.CryptoObject(ready.cipher))
+            } else {
+                inFlight = InFlight(attemptId, callback, pinFingerprint = false)
+                current.authenticate(info)
+            }
             AuthLaunch.LAUNCHED
         } catch (e: CancellationException) {
             inFlight = null
@@ -281,11 +335,12 @@ class BiometricPromptDeviceAuthenticator @VisibleForTesting internal constructor
      * through [callback], exactly like an attempt launched by [authenticate]: the terminal is still
      * checked against the in-flight instance by reference, so a repeated or late terminal is dropped.
      */
-    internal fun adopt(attemptId: Long, callback: DeviceAuthCallback): Boolean {
+    internal fun adopt(attemptId: Long, copy: AuthPromptCopy, callback: DeviceAuthCallback): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return false
         if (prompt == null) return false
         if (inFlight != null || awaitingLibraryTerminal) return false
-        inFlight = InFlight(attemptId, callback)
+        // G26-3: the crypto-verified path is derived from the attempt's copy, so a rotation cannot bypass it.
+        inFlight = InFlight(attemptId, callback, pinFingerprint = copy == AuthPromptCopy.PIN_FINGERPRINT)
         return true
     }
 

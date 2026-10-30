@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- S26: constant text of the PIN-mode fingerprint prompt (INV-40, INV-53). -->
+    <string name="applock_pin_prompt_title">Unlock with fingerprint</string>
+    <string name="applock_pin_prompt_negative">Use PIN</string>
+</resources>

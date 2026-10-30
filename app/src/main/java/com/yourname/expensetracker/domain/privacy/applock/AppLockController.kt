@@ -6,10 +6,12 @@ import com.yourname.expensetracker.domain.diagnostics.DiagnosticThrowableSummary
 import com.yourname.expensetracker.domain.privacy.applock.pin.AppPinStore
 import com.yourname.expensetracker.domain.privacy.applock.pin.AppPinStoreState
 import com.yourname.expensetracker.domain.privacy.applock.pin.PinChangeResult
+import com.yourname.expensetracker.domain.privacy.applock.pin.PinDelayReason
 import com.yourname.expensetracker.domain.privacy.applock.pin.PinDeleteResult
 import com.yourname.expensetracker.domain.privacy.applock.pin.PinFormatPolicy
 import com.yourname.expensetracker.domain.privacy.applock.pin.PinFormatResult
 import com.yourname.expensetracker.domain.privacy.applock.pin.PinSetupResult
+import com.yourname.expensetracker.domain.privacy.applock.pin.PinStoreWriteResult
 import com.yourname.expensetracker.domain.privacy.applock.pin.PinVerifierState
 import com.yourname.expensetracker.domain.privacy.applock.pin.PinVerifyResult
 import com.yourname.expensetracker.domain.privacy.applock.pin.VerifierUnreadableCause
@@ -20,6 +22,7 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
@@ -221,7 +224,9 @@ class AppLockController @Inject constructor(
     // S25: the PIN verifier / attempt-state owner (INV-42) and the shared settings-write serialiser (the ordered
     // PIN writes of INV-49 / INV-50 are settings writes and must exclude the S18 operations' writes).
     private val pinStore: AppPinStore,
-    private val writeSerializer: AppLockSettingsWriteSerializer
+    private val writeSerializer: AppLockSettingsWriteSerializer,
+    // S26: domain view of the PIN-mode fingerprint key (READY / INVALIDATED / UNAVAILABLE).
+    private val fingerprintKey: PinFingerprintKeyGate
 ) {
 
     private enum class ForegroundTrigger { APP_FOREGROUNDED, LOCK_QUERY }
@@ -430,6 +435,12 @@ class AppLockController @Inject constructor(
     private var pinStep: PinStep = PinStep.NONE
     private var pinRecoveryCause: VerifierUnreadableCause? = null
     private var pinDelayRemainingMillis: Long? = null
+
+    // S26 (G26 advisory): the reason of the last delayed verify; fingerprint is hidden for ATTEMPT_STATE_UNREADABLE.
+    private var pinDelayReason: PinDelayReason? = null
+
+    // S26: true only after the last committed PIN-store view had biometricEnabled and the key read READY. Fail closed: false.
+    private var fingerprintKeyReady: Boolean = false
     private var currentPinPresentation: PinPresentation = PinPresentation.INITIAL
     private val mutablePin = MutableStateFlow(PinPresentation.INITIAL)
     private val pinOperationRunning = AtomicBoolean(false)
@@ -728,7 +739,13 @@ class AppLockController @Inject constructor(
             pinObservationJob?.cancel()
             pinObservationJob = scope.launch {
                 try {
-                    pinStore.observeState().collect { observed -> transition { pinState = observed } }
+                    pinStore.observeState().collect { observed ->
+                        val ready = fingerprintReadyFor(observed)
+                        transition {
+                            pinState = observed
+                            fingerprintKeyReady = ready
+                        }
+                    }
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
@@ -800,6 +817,7 @@ class AppLockController @Inject constructor(
         transition {
             pinRecoveryCause = cause
             pinDelayRemainingMillis = delayMillis
+            pinDelayReason = (reason as? PinRejection.Delayed)?.reason
         }
         return PinUnlockResult.Rejected(reason)
     }
@@ -907,6 +925,28 @@ class AppLockController @Inject constructor(
             false
         }
         if (!committed) applyLockModeWrite(writeLockMode(LockMode.DEVICE_AUTH))
+    }
+
+    /**
+     * S26: whether fingerprint unlock may be offered for the committed view [observed]. Only a view with a readable
+     * verifier and `biometricEnabled` reads the key (off the main thread). An INVALIDATED key turns the flag off and
+     * raises the notice in ONE store write (INV-51, `PIN_BIOMETRIC_INVALIDATED` is emitted by the store); the store then
+     * re-emits the new view. Any failure is fail-closed (not offered, flag untouched).
+     */
+    private suspend fun fingerprintReadyFor(observed: AppPinStoreState): Boolean {
+        if (observed.verifier != PinVerifierState.PRESENT || !observed.biometricEnabled) return false
+        val keyState = try {
+            withContext(Dispatchers.Default) { fingerprintKey.state() }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Timber.w("App-lock fingerprint key check failed: class=%s", DiagnosticThrowableSummary.className(e))
+            PinFingerprintKeyState.UNAVAILABLE
+        }
+        if (keyState == PinFingerprintKeyState.INVALIDATED) {
+            storeCall(PinStoreWriteResult.FAILED) { pinStore.recordBiometricInvalidated() }
+        }
+        return keyState == PinFingerprintKeyState.READY
     }
 
     /**
@@ -1167,22 +1207,51 @@ class AppLockController @Inject constructor(
         PinVerifyResult.Correct, PinVerifyResult.Absent -> PinOperationResult.Failed
     }
 
-    // --- Fingerprint hook (D-I2-7: frozen API, inert until S26) -------------------------------------------
+    // --- Fingerprint hook (D-I2-7: frozen API, wired by S26) ----------------------------------------------
 
     private val mutableCanOfferFingerprintUnlock = MutableStateFlow(false)
 
     /**
-     * Whether the lock surface may offer "use fingerprint". Always false until S26 wires it, so S27 can ship with the
-     * affordance hidden. Read-only; a collector must never call a transition (R2).
+     * Whether the lock surface may offer "use fingerprint" (S26: effective `APP_PIN`, `LOCKED`, flag on, key READY).
+     * Same value as [PinPresentation.canOfferFingerprint]. Read-only; a collector must never call a transition (R2).
      */
     val canOfferFingerprintUnlock: StateFlow<Boolean> = mutableCanOfferFingerprintUnlock.asStateFlow()
 
     /**
-     * Frozen hook for S26 (D-I2-7). S26 implements it: on a matching fingerprint success it will call
-     * [AppPinStore.resetAttempts] (INV-39) and unlock from `LOCKED` in effective `APP_PIN` mode. Today it changes
-     * nothing, unlocks nothing and returns [FingerprintUnlockResult.NOT_AVAILABLE].
+     * D-I2-7 amended (owner-approvals 92, G26-1/G26-2): the user tapped "use fingerprint" on the PIN pad. There is no
+     * proof-less unlock entry. Only when the affordance is offerable ([canOfferFingerprintLocked]), no attempt is in
+     * flight and no PIN operation runs, an UNLOCK attempt with [AuthPromptCopy.PIN_FINGERPRINT] opens through the same
+     * attempt, launch and watchdog machinery as the device-auth unlock. Otherwise nothing changes. Only a matching
+     * prompt success unlocks, and [closeWith] re-reads the mode, verifier and flag at close time.
      */
-    suspend fun onFingerprintUnlockSucceeded(): FingerprintUnlockResult = FingerprintUnlockResult.NOT_AVAILABLE
+    suspend fun requestFingerprintUnlock() {
+        val opened: InFlightAttempt? = transition {
+            val cur = current
+            if (cur !is AppLockState.Locked || inFlight != null || pinOperationRunning.get() || !canOfferFingerprintLocked()) {
+                return@transition null
+            }
+            val attemptId = ++lastIssuedAttemptId
+            val attempt = InFlightAttempt(attemptId, AuthPurpose.UNLOCK, cur.cause, AuthPromptCopy.PIN_FINGERPRINT, null)
+            inFlight = attempt // open BEFORE any authenticate call (S15 binding)
+            setState(AppLockState.Authenticating(attemptId, AuthPurpose.UNLOCK))
+            attempt
+        }
+        opened?.let { startAttemptJobs(it) }
+    }
+
+    /** INV-39: resets the shared attempt counter after a fingerprint unlock closed, not cancellable (G26-2). */
+    private fun launchFingerprintAttemptReset() {
+        scope.launch(start = CoroutineStart.ATOMIC) {
+            withContext(NonCancellable) {
+                try {
+                    storeCall(PinStoreWriteResult.FAILED) { pinStore.resetAttempts() }
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                    Timber.w("App-lock fingerprint attempt reset failed: class=%s", DiagnosticThrowableSummary.className(e))
+                }
+            }
+        }
+    }
 
     /**
      * `PROMPT_HOST_LOST(attemptId)` (T35, P4): the Activity hosting the prompt was destroyed while not
@@ -2203,6 +2272,12 @@ class AppLockController @Inject constructor(
      */
     private fun routeNotAvailable(attempt: InFlightAttempt) {
         if (!isOpen(attempt)) return
+        // G26-2: a PIN fingerprint prompt that is not available returns to the PIN pad (LOCKED). Never INERT, no
+        // capability re-check and no device-credential fallback.
+        if (attempt.copy == AuthPromptCopy.PIN_FINGERPRINT) {
+            closeAttempt(attempt, Closing.Error(DeviceAuthErrorBucket.HW_UNAVAILABLE))
+            return
+        }
         // Finding 4: a failing re-check must never leave the attempt open. Whatever it throws (CancellationException
         // included) the attempt closes as a bounded error back on its origin and the throwable is rethrown unchanged.
         val capability = try {
@@ -2288,7 +2363,15 @@ class AppLockController @Inject constructor(
                 else -> false
             }
             // G25-3: an UNLOCK device-auth success while the effective mode is APP_PIN is stale; it unlocks nothing.
-            val stalePinMode = closing == Closing.Success && effectiveModeLocked() == EffectiveLockMode.APP_PIN
+            val fingerprintAttempt = attempt.copy == AuthPromptCopy.PIN_FINGERPRINT
+            // G26-1: a PIN_FINGERPRINT success unlocks only if, re-read now, the mode is APP_PIN, the verifier PRESENT
+            // and the flag on; otherwise it is stale (LOCKED below). A device-auth UNLOCK success stays stale in APP_PIN.
+            val stalePinMode = closing == Closing.Success && if (fingerprintAttempt) {
+                effectiveModeLocked() != EffectiveLockMode.APP_PIN ||
+                    pinState?.verifier != PinVerifierState.PRESENT || pinState?.biometricEnabled != true
+            } else {
+                effectiveModeLocked() == EffectiveLockMode.APP_PIN
+            }
             if (purposeMismatch || stalePinMode || current != AppLockState.Authenticating(attempt.attemptId, attempt.purpose)) {
                 inFlight = null
                 val stranded = current
@@ -2352,7 +2435,12 @@ class AppLockController @Inject constructor(
                     setState(originState(attempt))
                     claimAuthError(closing.bucket)
                 }
-                is Closing.BecameInert -> enterInert(closing.reason)
+                is Closing.BecameInert -> if (fingerprintAttempt) {
+                    setState(originState(attempt)) // defense in depth: a PIN fingerprint attempt is never INERT
+                    null
+                } else {
+                    enterInert(closing.reason)
+                }
                 Closing.NotLaunched -> {
                     setState(originState(attempt))
                     null
@@ -2383,6 +2471,8 @@ class AppLockController @Inject constructor(
         // T29 (S18-ii-c): an UNLOCK success, or any end of an open-origin prompt, may leave an open state; a kept
         // re-read snapshot is then offered to T28. Still LOCKED or AUTHENTICATING keeps it.
         if (closing == Closing.Success || attempt.purpose.isOpenOrigin) applyKeptRereadAfterClose()
+        // INV-39 (G26-2): the shared counter resets only after the state is closed to UNLOCKED, not cancellable.
+        if (closing == Closing.Success && attempt.copy == AuthPromptCopy.PIN_FINGERPRINT) launchFingerprintAttemptReset()
         return true
     }
 
@@ -2535,6 +2625,7 @@ class AppLockController @Inject constructor(
         if (next !is AppLockState.Locked) {
             pinRecoveryCause = null
             pinDelayRemainingMillis = null
+            pinDelayReason = null
         }
     }
 
@@ -2557,9 +2648,18 @@ class AppLockController @Inject constructor(
                 null -> if (pinState?.verifier == PinVerifierState.UNREADABLE) PinRecovery.RECORD_UNREADABLE else null
             }
         }
-        // S26 wires the fingerprint affordance; until then it is always false (D-I2-7).
-        return PinPresentation(mode, pinStep, recovery, false, if (locked) pinDelayRemainingMillis else null)
+        return PinPresentation(mode, pinStep, recovery, canOfferFingerprintLocked(), if (locked) pinDelayRemainingMillis else null)
     }
+
+    /**
+     * Must be called with [stateLock] held. S26 (OD-16a, INV-40): fingerprint is offered only on the `LOCKED` surface of
+     * effective `APP_PIN` mode, with a readable verifier, the store flag on and the key READY. An active PIN delay does
+     * not hide it: the spec lets a fingerprint success reset the shared counter (INV-39) and does not exclude it.
+     */
+    private fun canOfferFingerprintLocked(): Boolean =
+        current is AppLockState.Locked && effectiveModeLocked() == EffectiveLockMode.APP_PIN &&
+            pinState?.verifier == PinVerifierState.PRESENT && pinState?.biometricEnabled == true && fingerprintKeyReady &&
+            pinDelayReason != PinDelayReason.ATTEMPT_STATE_UNREADABLE
 
     /** Publishes [view] unless a newer version is already out (a stale value is never published). */
     private fun publish(view: Publication) {
@@ -2570,6 +2670,7 @@ class AppLockController @Inject constructor(
             // F1: a closed state is never observable with a non-null notice. A null notice is written first (so a
             // state that closes never shows with the old notice); a non-null notice is written after the state.
             mutablePin.value = view.pin // S25: the PIN view is never older than the state a collector sees
+            mutableCanOfferFingerprintUnlock.value = view.pin.canOfferFingerprint // S26: same publication
             if (view.notice == null) {
                 mutableNotice.value = null
                 mutableState.value = view.state

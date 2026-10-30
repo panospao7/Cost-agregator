@@ -3138,3 +3138,71 @@ Validation to request: unchanged, targeted `*AppLockController*` (covers both te
   - static-guards vr-20261030-084331-1838d99c
   - lint vr-20261030-085950-35a49a6d
 - S25 COMMITTED. Dormant: no UI caller until S27. Next: S26 (fingerprint in PIN mode) || S27 (PIN UI, the switch; INV-38 CharArray pad, D-I2-9 OD-19 gate), then G2 and the increment-2 merge candidate (reviewer-strict).
+- S26 written in two steps (BiometricPinKeyManager; authenticator + controller hook + deleteAll step 3 + strings).
+- S26 combined guardian: REJECT as submitted (ACCEPT-WITH-CONDITIONS once the fixes land). Dispositions (orchestrator, owner-approvals 92):
+  - G26-1/G26-2 (bypass): `onFingerprintUnlockSucceeded()` is public and takes no proof. REMOVED. New `suspend fun requestFingerprintUnlock()`:
+    - user tap only;
+    - requires canOffer, no in-flight attempt, and no PIN operation running;
+    - opens an UNLOCK attempt with PIN_FINGERPRINT copy through the existing authenticate/watchdog machinery;
+    - closeWith accepts a PIN_FINGERPRINT success only when the mode is APP_PIN, the verifier is PRESENT and biometricEnabled is true;
+    - routeNotAvailable/LockedOut/Cancelled for PIN_FINGERPRINT return to LOCKED (never INERT, no device credential);
+    - resetAttempts runs after the close, NonCancellable.
+    - PLAN AMENDMENT: this changes D-I2-7's frozen fingerprint API; S27 had not consumed it.
+  - G26-3 (rotation bypass): carry `copy` through relay adoption (OpenAttempt + AttemptAdopter.adopt(attemptId, copy, callback); pinFingerprint derived from copy; no default) so an adopted PIN attempt still requires verifyAuthenticatedCrypto.
+  - G26-4: move BiometricPinKeyManager + BiometricKeyResult to domain/privacy/applock/pin; AndroidBiometricPinKeyManager stays in data; AppLockPromptHost injects the port; no default data instance in ui.
+  - G26-5: UnrecoverableKeyException from getKey maps to KeyInvalidated.
+  - G26-6: stale AppLockModule comment.
+  - D-I2-5: extend AppLockBiometricSourceScanTest (PIN_MODE_FINGERPRINT_AUTHENTICATORS and setNegativeButtonText allowed only in the prompt file on the PIN_FINGERPRINT branch; constant == BIOMETRIC_STRONG; BIOMETRIC_WEAK ban kept; planted-violation self-check; no allowlist growth). Approved by the privacy guardian's ruling.
+  - Fingerprint during an active PIN delay: ALLOWED (INV-39, ux 4.4). Advisory adopted: hidden when the delay reason is ATTEMPT_STATE_UNREADABLE.
+
+## 2026-10-30: PAUSED by the owner — RESUME HERE
+- Committed on this lane (pushed): S24 271513f7, S25 3890e731 (increment-2 amendment 24928ea1).
+- S26 (fingerprint in PIN mode): steps 1-2 IMPLEMENTED but UNCOMMITTED. The guardian's verdict is REJECT as submitted (rulings above).
+  - DO NOT COMMIT S26 as it stands: it contains the public `onFingerprintUnlockSucceeded()` (a proof-less unlock; dormant, no caller) and the rotation-adoption gap.
+  - Fix pass A (controller) was attempted and died on an API timeout with NO changes.
+- EXACT NEXT ACTION (small writers, edits under ~40 lines each; S26 is the only controller writer):
+  1. Fix A, controller: remove onFingerprintUnlockSucceeded; add requestFingerprintUnlock (user tap, preconditions); closeWith accepts only a verified PIN_FINGERPRINT success in APP_PIN with the verifier PRESENT and biometricEnabled; NotAvailable/LockedOut/Cancelled go to LOCKED (never INERT); NonCancellable resetAttempts after the close; plan amendment "D-I2-7 amended".
+  2. Fix B: carry `copy` through AppLockAuthenticatorRelay adoption (no default; AppLockPromptHost lambdas); move BiometricPinKeyManager + BiometricKeyResult to domain/privacy/applock/pin, with AppLockPromptHost injecting the port and no default data instance in ui; UnrecoverableKeyException maps to KeyInvalidated; fix the stale AppLockModule comment.
+  3. Tests (separate test-author): extend the D-I2-5 scan test without weakening it; BiometricPromptCopyTest asserts the constant == BIOMETRIC_STRONG; key manager tests; AppLockControllerPinBiometric (no unlock without a verified attempt; rotation adopt; NotAvailable in PIN mode never INERT; fingerprint allowed during a delay but not for ATTEMPT_STATE_UNREADABLE); update callers that used onFingerprintUnlockSucceeded (PinUnlockTest:410, PinOperationsTest:780/784, IllegalTransitionTest:639 and its exact method set); BiometricPromptAdapterStateMachineTest adopt calls.
+  4. Re-review with the guardian, then the S26 ladder (targeted *AppLock*,*BiometricPrompt*,*BiometricPinKeyManager*,*AppPinStore*; data, domain-n-z, runtime-ui; cancellation, pii_logging; lint; static-guards).
+  5. Then S27 (PIN UI, the user-visible switch: CharArray pad (INV-38), the OD-19 dataExtractionRules pre-S27 gate D-I2-9, fingerprint enable AE-120, strings), then G2 device checks (incl. PBKDF2 timing and KeyInfo security level), then reviewer-strict at the increment-2 merge candidate and the self-approved merge into feature/ai-evolution.
+- Residuals: F-S25-DIAG-FIELD (LOW); AE-42/117 OEM real-phone check (owner, release candidate); es/el sign-off for strings_applock_pin_prompt.xml.
+
+## 2026-10-30: resumed; S26 ACCEPTED and COMMITTED
+- Fix A (controller):
+  - onFingerprintUnlockSucceeded removed;
+  - `requestFingerprintUnlock()` opens a PIN_FINGERPRINT UNLOCK attempt;
+  - closeWith re-checks APP_PIN, verifier PRESENT and biometricEnabled;
+  - PIN_FINGERPRINT NotAvailable, LockedOut, Cancelled and BecameInert all go to Locked (never INERT, no device-credential fallback);
+  - NonCancellable resetAttempts with ATOMIC start;
+  - the pinDelayReason field hides the fingerprint for ATTEMPT_STATE_UNREADABLE.
+  - Plan amendment "D-I2-7 amended" recorded.
+- Fix B:
+  - copy carried through relay adoption with no default (G26-3);
+  - the BiometricPinKeyManager port moved to domain, the impl stays in data, injected into AppLockPromptHost (G26-4);
+  - UnrecoverableKeyException maps to KeyInvalidated (G26-5);
+  - the module comment is fixed (G26-6).
+  - Accepted deviation: the authenticator's nullable keyManager means PIN_FINGERPRINT fails closed (UnsupportedDatabaseActivity export gate).
+- Tests:
+  - AppLockControllerPinBiometricTest (new);
+  - updated callers;
+  - relay rotation-copy tests;
+  - BiometricPromptPinFingerprintAdoptTest (new);
+  - AppLockBiometricSourceScanTest D-I2-5 extension (branch rule, planted self-check, constant == BIOMETRIC_STRONG, no allowlist growth);
+  - AndroidBiometricPinKeyManagerTest, a source-scan pin; the behaviour is deferred to G2;
+  - AppPinStoreImplTest deleteAll step 3;
+  - pin tests updated to the approved design (six copies, ten ports, PIN_FINGERPRINT = BIOMETRIC_STRONG with "Use PIN").
+- Guardian re-review, split after two API timeouts:
+  - part A (controller) ACCEPT-WITH-FIXES: LOWs applied (KDoc, ATOMIC, docs); the hard-coded Dispatchers.Default in fingerprintReadyFor is noted and not changed;
+  - part B (relay, key, scan) ACCEPT.
+- Ladder, all PASS:
+  - targeted vr-20261030-134418-72b499dd
+  - data vr-20261030-135020-85a509ad
+  - domain-n-z vr-20261030-135437-a266aebb
+  - runtime-ui vr-20261030-135639-c5cbab9d
+  - static-guards vr-20261030-135958-1b0f36a0
+  - lint vr-20261030-141632-26dc5cda
+- NEXT:
+  1. S27: PIN UI, the user-visible switch, the CharArray pad (INV-38), the OD-19 dataExtractionRules gate (D-I2-9), the fingerprint enable (AE-120), strings.
+  2. G2 device checks: PBKDF2 timing, KeyInfo security level, the real Keystore behaviour of AndroidBiometricPinKeyManager.
+  3. reviewer-strict at the increment-2 candidate, then the merge.

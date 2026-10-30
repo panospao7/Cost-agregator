@@ -99,6 +99,13 @@ class BiometricPromptAdapterStateMachineTest {
 
     private fun advance(millis: Long) = ShadowLooper.idleMainLooper(millis, TimeUnit.MILLISECONDS)
 
+    /**
+     * S26 fix B: adopt now requires the copy of the original attempt. Every adoption scenario in this class
+     * launches with the UNLOCK device-auth copy (see Rig.launch), so the legacy two-argument calls pass it here.
+     */
+    private fun BiometricPromptDeviceAuthenticator.adopt(attemptId: Long, callback: DeviceAuthCallback): Boolean =
+        adopt(attemptId, AuthPromptCopy.UNLOCK, callback)
+
     @Test
     fun inv34_secondAuthenticateWhileInFlight_returnsAlreadyInFlight_andFirstStillCompletes() {
         val rig = Rig()

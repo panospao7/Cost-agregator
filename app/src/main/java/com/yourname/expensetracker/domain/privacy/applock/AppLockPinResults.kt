@@ -101,7 +101,10 @@ sealed interface PinOperationResult {
     data object RemovedLockOffRequired : PinOperationResult
 }
 
-/** Bounded result of the frozen fingerprint hook [AppLockController.onFingerprintUnlockSucceeded] (D-I2-7). */
+/**
+ * Bounded fingerprint result enum, retained but currently unused: since D-I2-7 was amended, fingerprint unlock is
+ * the attempt-based [AppLockController.requestFingerprintUnlock] and no result enum is returned.
+ */
 enum class FingerprintUnlockResult {
     /** Fingerprint unlock is not wired (S26) or the state does not allow it. Nothing changed. */
     NOT_AVAILABLE,

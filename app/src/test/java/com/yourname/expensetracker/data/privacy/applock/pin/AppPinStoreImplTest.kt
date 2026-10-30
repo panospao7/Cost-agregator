@@ -11,6 +11,8 @@ import com.yourname.expensetracker.domain.privacy.applock.MonotonicClock
 import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticCode
 import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticsEmitter
 import com.yourname.expensetracker.domain.privacy.applock.pin.AppPinStoreState
+import com.yourname.expensetracker.domain.privacy.applock.pin.BiometricKeyResult
+import com.yourname.expensetracker.domain.privacy.applock.pin.BiometricPinKeyManager
 import com.yourname.expensetracker.domain.privacy.applock.pin.BootCountSource
 import com.yourname.expensetracker.domain.privacy.applock.pin.PinChangeResult
 import com.yourname.expensetracker.domain.privacy.applock.pin.PinDelayReason
@@ -26,6 +28,7 @@ import io.mockk.mockk
 import java.io.File
 import java.io.IOException
 import java.util.concurrent.atomic.AtomicInteger
+import javax.crypto.Cipher
 import javax.crypto.SecretKey
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -66,6 +69,7 @@ class AppPinStoreImplTest {
     private lateinit var faulty: FaultyStore
     private lateinit var file: File
     private val binder = FakePinKeyBinder()
+    private val biometricKeys = FakeBiometricKeyManager()
     private val clock = FakeClock(10_000L)
     private val boot = FakeBootCount(5)
     private val emitted = mutableListOf<PrivacyDiagnosticCode>()
@@ -100,7 +104,7 @@ class AppPinStoreImplTest {
     }
 
     /** A new process over the same persisted store (the in-memory first-evaluation flag starts true again). */
-    private fun newStore() = AppPinStoreImpl(faulty, binder, boot, clock, emitter, Dispatchers.IO)
+    private fun newStore() = AppPinStoreImpl(faulty, binder, biometricKeys, boot, clock, emitter, Dispatchers.IO)
 
     private fun pin(text: String = GOOD) = text.toCharArray()
 
@@ -750,6 +754,50 @@ class AppPinStoreImplTest {
         assertEquals(PinVerifyResult.Correct, store.verify(pin()))
     }
 
+    // ---- INV-49 step 3 (S26): the fingerprint key, best effort after the decisive store clear ----
+
+    @Test
+    fun inv49_delete_all_deletes_the_biometric_key_once_after_the_store_clear_and_the_alias() = runBlocking {
+        setUpPin()
+        val order = mutableListOf<String>()
+        var storeWasEmptyAtKeyDeletion: Boolean? = null
+        binder.onDelete = { order += "alias" }
+        biometricKeys.onDelete = {
+            order += "biometric"
+            storeWasEmptyAtKeyDeletion = runBlocking { real.data.first().asMap().isEmpty() }
+        }
+
+        assertEquals(PinDeleteResult.DONE, store.deleteAll())
+
+        assertEquals(1, biometricKeys.deleteCount)
+        assertEquals(true, storeWasEmptyAtKeyDeletion)
+        assertEquals(listOf("alias", "biometric"), order)
+    }
+
+    @Test
+    fun inv49_a_failed_store_clear_does_not_delete_the_biometric_key() = runBlocking {
+        setUpPin()
+        faulty.failWrite = IOException("injected")
+
+        assertEquals(PinDeleteResult.FAILED, store.deleteAll())
+
+        faulty.failWrite = null
+        assertEquals(0, biometricKeys.deleteCount)
+        assertEquals(0, binder.deleteCount)
+    }
+
+    @Test
+    fun inv49_a_cancellation_from_the_biometric_key_delete_propagates() = runBlocking {
+        setUpPin()
+        biometricKeys.deleteFailure = CancellationException("injected")
+
+        val thrown = cancellationOf { store.deleteAll() }
+
+        assertNotNull(thrown)
+        assertEquals(1, biometricKeys.deleteCount)
+        assertEquals(AppPinStoreState.ABSENT, store.readState())
+    }
+
     // ---- setup failures: rollback of the key ----
 
     @Test
@@ -906,6 +954,28 @@ class AppPinStoreImplTest {
         override fun getFormat(): String = "RAW"
 
         override fun getEncoded(): ByteArray = throw IllegalStateException("injected key use failure")
+    }
+
+    /** Counts [deleteKey] calls; scriptable to throw. The other port methods are not used by the store. */
+    private class FakeBiometricKeyManager : BiometricPinKeyManager {
+        var deleteCount = 0
+
+        /** Invoked at the start of every [deleteKey] (used to record call order). */
+        var onDelete: () -> Unit = {}
+
+        var deleteFailure: Throwable? = null
+
+        override fun createKey(): Boolean = true
+
+        override fun cipherForAuthentication(): BiometricKeyResult = BiometricKeyResult.KeyMissing
+
+        override fun verifyAuthenticatedCrypto(cipher: Cipher?): Boolean = false
+
+        override fun deleteKey() {
+            deleteCount++
+            onDelete()
+            deleteFailure?.let { throw it }
+        }
     }
 
     private class FakeClock(var now: Long) : MonotonicClock {

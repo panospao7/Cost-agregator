@@ -484,7 +484,7 @@ class AppLockControllerIllegalTransitionTest {
     // --- Ports: no operational, Room or barrier input exists (spec 3.3, INV-28, INV-36) -------------------------
 
     @Test
-    fun `the controller is constructed from exactly the nine ports, none of them operational, Room or worker`() {
+    fun `the controller is constructed from exactly the ten ports, none of them operational, Room or worker`() {
         val constructor = AppLockController::class.java.declaredConstructors.single()
 
         assertEquals(
@@ -498,7 +498,9 @@ class AppLockControllerIllegalTransitionTest {
                 CoroutineDispatcher::class.java,
                 // S25, exact additions: the PIN verifier / attempt-state owner and the shared settings-write serialiser.
                 AppPinStore::class.java,
-                AppLockSettingsWriteSerializer::class.java
+                AppLockSettingsWriteSerializer::class.java,
+                // S26, exact addition: the PIN-mode fingerprint key-ready gate (a domain port; no Room, no worker).
+                PinFingerprintKeyGate::class.java
             ),
             constructor.parameterTypes.toList()
         )
@@ -636,7 +638,9 @@ class AppLockControllerIllegalTransitionTest {
                 "cancelPinStep",
                 "getPin",
                 "getCanOfferFingerprintUnlock",
-                "onFingerprintUnlockSucceeded"
+                // S26 (D-I2-7 amended), exact replacement of the removed proof-less onFingerprintUnlockSucceeded: the
+                // request opens a PIN_FINGERPRINT UNLOCK attempt; only a verified prompt success can unlock.
+                "requestFingerprintUnlock"
             ),
             production
         )

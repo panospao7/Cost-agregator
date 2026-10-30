@@ -2418,3 +2418,7 @@ Conditions:
 - C. The iteration timing is measured at G2.
 - D. S27 must not use a String-backed TextField for PIN entry (INV-38): a CharArray pad. This is an S27 gate.
 - E. S24 exposes `resetAttempts()`, callable only by the controller (biometric success).
+
+### D-I2-7 amended (2026-10-30, owner-approvals 92)
+- The frozen fingerprint API is now `suspend fun requestFingerprintUnlock()` (user tap; opens an UNLOCK attempt with PIN_FINGERPRINT copy through the existing attempt/watchdog machinery). `onFingerprintUnlockSucceeded()` is REMOVED (proof-less unlock, G26-1/G26-2). S27 had not consumed it.
+- `closeWith` unlocks a PIN_FINGERPRINT success only in effective APP_PIN with the verifier PRESENT and `biometricEnabled`; NotAvailable/LockedOut/Cancelled return to LOCKED (never INERT, no device credential); `resetAttempts()` runs after the close inside NonCancellable.

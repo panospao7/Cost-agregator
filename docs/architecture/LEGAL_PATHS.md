@@ -2201,7 +2201,7 @@ CONTROLLER PATHS (S25, AppLockController, the ONLY caller; PIN steps are in-app 
     PIN removal with lock-off goes AppLockSettingsOperations.removePin → controller.disablePin → Operations lock-off
     write (setAppLockEnabled(false), serialiser, F7 settle) → controller.onPinRemovalLockOffApplied → DISABLED.
   RECOVERY: retryPinRecovery re-reads the store (and restarts the observation) only while the recovery view offers it.
-  FINGERPRINT: onFingerprintUnlockSucceeded is an INERT hook (NOT_AVAILABLE) until S26.
+  FINGERPRINT: requestFingerprintUnlock() (user tap) opens a PIN_FINGERPRINT UNLOCK attempt; only a crypto-verified BIOMETRIC_STRONG success unlocks (S26, D-I2-7 amended).
   reviewSave keeps the STORED lockMode (an absent or invalid stored token falls back to LockMode.DEFAULT).
 
 ❌ No other code reads or writes the PIN verifier, the attempt state or the PIN flags (no other DataStore).

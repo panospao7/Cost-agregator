@@ -12,6 +12,8 @@ import com.yourname.expensetracker.domain.privacy.applock.AuthPromptCopy
 import com.yourname.expensetracker.domain.privacy.applock.DeviceAuthCallback
 import com.yourname.expensetracker.domain.privacy.applock.DeviceAuthErrorBucket
 import com.yourname.expensetracker.domain.privacy.applock.DeviceAuthOutcome
+import com.yourname.expensetracker.domain.privacy.applock.pin.BiometricKeyResult
+import com.yourname.expensetracker.domain.privacy.applock.pin.BiometricPinKeyManager
 import io.mockk.mockk
 import io.mockk.verify
 import org.junit.Assert.assertEquals
@@ -26,6 +28,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.android.controller.ActivityController
 import org.robolectric.annotation.Config
+import javax.crypto.Cipher
 
 /**
  * A FragmentActivity whose [isChangingConfigurations] is driven by the test, so a rotation and a real finish
@@ -56,8 +59,15 @@ class AppLockPromptHostTest {
     private class FakeHandle : PromptHandle {
         val infos = mutableListOf<BiometricPrompt.PromptInfo>()
         var cancelCalls = 0
+        var cryptoLaunches = 0
         override fun authenticate(info: BiometricPrompt.PromptInfo) {
             infos += info
+        }
+
+        // S26: the PIN-mode fingerprint prompt is launched with a CryptoObject.
+        override fun authenticate(info: BiometricPrompt.PromptInfo, crypto: BiometricPrompt.CryptoObject) {
+            infos += info
+            cryptoLaunches++
         }
 
         override fun cancelAuthentication() {
@@ -537,15 +547,25 @@ class AppLockPromptHostTest {
             AuthPromptCopy.ENABLE to R.string.applock_prompt_title_enable,
             AuthPromptCopy.DISABLE to R.string.applock_prompt_title_disable,
             AuthPromptCopy.CHANGE to R.string.applock_prompt_title_change,
-            AuthPromptCopy.EXPORT to R.string.applock_prompt_title_export
+            AuthPromptCopy.EXPORT to R.string.applock_prompt_title_export,
+            // S26: the PIN-mode fingerprint prompt (strings_applock_pin_prompt.xml).
+            AuthPromptCopy.PIN_FINGERPRINT to R.string.applock_pin_prompt_title
         )
         assertEquals("every copy value must have an expectation", AuthPromptCopy.entries.toSet(), expectedTitles.keys)
         for ((copy, titleRes) in expectedTitles) {
             val localRelay = AppLockAuthenticatorRelay { true }
             val ctrl = newController()
             val handle = FakeHandle()
+            // A fake domain key manager that returns a ready cipher, so PIN_FINGERPRINT can reach the prompt.
+            val keyManager = object : BiometricPinKeyManager {
+                override fun createKey(): Boolean = true
+                override fun cipherForAuthentication(): BiometricKeyResult =
+                    BiometricKeyResult.Ready(Cipher.getInstance("AES/CBC/PKCS5Padding"))
+                override fun verifyAuthenticatedCrypto(cipher: Cipher?): Boolean = false
+                override fun deleteKey() = Unit
+            }
             val host = AppLockPromptHost(localRelay, controller) { activity ->
-                BiometricPromptDeviceAuthenticator(activity) { handle }
+                BiometricPromptDeviceAuthenticator(activity, keyManager) { handle }
             }
             host.attach(ctrl.get())
 
@@ -559,6 +579,15 @@ class AppLockPromptHostTest {
                 assertNull("subtitle for $copy", info.subtitle)
             }
             assertNull("description for $copy", info.description)
+            if (copy == AuthPromptCopy.PIN_FINGERPRINT) {
+                assertEquals("crypto launch for $copy", 1, handle.cryptoLaunches)
+                assertEquals(ctrl.get().getString(R.string.applock_pin_prompt_negative), info.negativeButtonText.toString())
+                assertEquals("authenticators for $copy", 15, info.allowedAuthenticators)
+            } else {
+                assertEquals("no crypto launch for $copy", 0, handle.cryptoLaunches)
+                assertTrue("negative button for $copy", info.negativeButtonText.isNullOrEmpty())
+                assertEquals("authenticators for $copy", 32783, info.allowedAuthenticators)
+            }
         }
     }
 }

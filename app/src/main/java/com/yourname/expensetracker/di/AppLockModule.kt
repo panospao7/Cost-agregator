@@ -8,6 +8,7 @@ import com.yourname.expensetracker.data.privacy.applock.AndroidDeviceAuthCapabil
 import com.yourname.expensetracker.data.privacy.applock.AppLockSettingsRepositoryImpl
 import com.yourname.expensetracker.data.privacy.applock.SystemMonotonicClock
 import com.yourname.expensetracker.data.privacy.applock.pin.AndroidBootCountSource
+import com.yourname.expensetracker.data.privacy.applock.pin.AndroidBiometricPinKeyManager
 import com.yourname.expensetracker.data.privacy.applock.pin.AppPinStoreImpl
 import com.yourname.expensetracker.data.privacy.applock.pin.KeystorePinKeyBinder
 import com.yourname.expensetracker.data.privacy.applock.pin.PinKeyBinder
@@ -15,7 +16,11 @@ import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsReposit
 import com.yourname.expensetracker.domain.privacy.applock.DeviceAuthCapabilityProvider
 import com.yourname.expensetracker.domain.privacy.applock.DeviceAuthenticator
 import com.yourname.expensetracker.domain.privacy.applock.MonotonicClock
+import com.yourname.expensetracker.domain.privacy.applock.PinFingerprintKeyGate
+import com.yourname.expensetracker.domain.privacy.applock.PinFingerprintKeyState
 import com.yourname.expensetracker.domain.privacy.applock.pin.AppPinStore
+import com.yourname.expensetracker.domain.privacy.applock.pin.BiometricKeyResult
+import com.yourname.expensetracker.domain.privacy.applock.pin.BiometricPinKeyManager
 import com.yourname.expensetracker.domain.privacy.applock.pin.BootCountSource
 import com.yourname.expensetracker.ui.applock.AppLockAuthenticatorRelay
 import dagger.Binds
@@ -90,13 +95,30 @@ abstract class AppLockModule {
     @Singleton
     abstract fun bindPinKeyBinder(impl: KeystorePinKeyBinder): PinKeyBinder
 
-    // S26 (D-I2-4): bind BiometricPinKeyManager here, and add its best-effort key deletion as step 3 of
-    // AppPinStoreImpl.deleteAll(). Not implemented in S24.
+    // Fingerprint key of PIN mode (S26, D-I2-4, G26-4). Binds the domain port (domain/privacy/applock/pin) to the
+    // Android implementation in data; the prompt host, the key gate below and AppPinStoreImpl consume the port.
+    // Its best-effort deletion is step 3 of AppPinStoreImpl.deleteAll().
+    @Binds
+    @Singleton
+    abstract fun bindBiometricPinKeyManager(impl: AndroidBiometricPinKeyManager): BiometricPinKeyManager
 
     companion object {
         @Provides
         @AppLockMainDispatcher
         fun provideAppLockMainDispatcher(): CoroutineDispatcher = Dispatchers.Main
+
+        /** Domain view of the PIN-mode fingerprint key (S26). Maps the port result to three bounded states. */
+        @Provides
+        @Singleton
+        fun providePinFingerprintKeyGate(manager: BiometricPinKeyManager): PinFingerprintKeyGate =
+            PinFingerprintKeyGate {
+                when (manager.cipherForAuthentication()) {
+                    is BiometricKeyResult.Ready -> PinFingerprintKeyState.READY
+                    BiometricKeyResult.KeyInvalidated -> PinFingerprintKeyState.INVALIDATED
+                    BiometricKeyResult.KeyMissing,
+                    BiometricKeyResult.KeystoreError -> PinFingerprintKeyState.UNAVAILABLE
+                }
+            }
 
         /**
          * The dedicated PIN store (S24 design decision 5): app-private, excluded from backup, no corruption

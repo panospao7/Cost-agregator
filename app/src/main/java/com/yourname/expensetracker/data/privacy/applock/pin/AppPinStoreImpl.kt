@@ -15,6 +15,7 @@ import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticCode
 import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticsEmitter
 import com.yourname.expensetracker.domain.privacy.applock.pin.AppPinStore
 import com.yourname.expensetracker.domain.privacy.applock.pin.AppPinStoreState
+import com.yourname.expensetracker.domain.privacy.applock.pin.BiometricPinKeyManager
 import com.yourname.expensetracker.domain.privacy.applock.pin.BootCountSource
 import com.yourname.expensetracker.domain.privacy.applock.pin.PinAttemptPolicy
 import com.yourname.expensetracker.domain.privacy.applock.pin.PinAttemptState
@@ -60,6 +61,7 @@ import kotlin.coroutines.cancellation.CancellationException
 class AppPinStoreImpl @Inject constructor(
     @AppPinDataStore private val store: DataStore<Preferences>,
     private val keyBinder: PinKeyBinder,
+    private val biometricKeyManager: BiometricPinKeyManager,
     private val bootCountSource: BootCountSource,
     private val clock: MonotonicClock,
     private val diagnostics: PrivacyDiagnosticsEmitter,
@@ -315,8 +317,10 @@ class AppPinStoreImpl @Inject constructor(
             } catch (e: Exception) {
                 return@withLock PinDeleteResult.FAILED
             }
-            // Step 2: best effort (S26 adds the biometric key as step 3, see AppLockModule).
+            // Step 2: best effort.
             keyBinder.delete()
+            // Step 3 (S26): the fingerprint key, best effort. deleteKey() never throws except cancellation.
+            biometricKeyManager.deleteKey()
             PinDeleteResult.DONE
         }
     }

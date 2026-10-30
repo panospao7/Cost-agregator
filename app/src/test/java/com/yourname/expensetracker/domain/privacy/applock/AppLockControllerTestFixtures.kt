@@ -404,6 +404,18 @@ internal class FakeDeviceAuthenticator(private val isOnMain: () -> Boolean = { t
     }
 }
 
+/** S26: scriptable [PinFingerprintKeyGate]; [reads] counts the state() calls. */
+internal class FakePinFingerprintKeyGate(@Volatile var keyState: PinFingerprintKeyState = PinFingerprintKeyState.READY) :
+    PinFingerprintKeyGate {
+    @Volatile
+    var reads = 0
+
+    override fun state(): PinFingerprintKeyState {
+        reads++
+        return keyState
+    }
+}
+
 /**
  * Wires one [AppLockController] to fakes. The scope runs on an unconfined test dispatcher so
  * fire-and-forget diagnostics are recorded in [emitted] as they are launched. The "main" dispatcher is
@@ -425,6 +437,9 @@ internal class AppLockControllerHarness(
     val emitted = mutableListOf<PrivacyDiagnosticCode>()
     val main = MarkingMainDispatcher(scheduler)
     val authenticator = FakeDeviceAuthenticator { main.isOnMain }
+
+    /** S26: the PIN-mode fingerprint key gate stand-in. READY by default; only read when the verifier is PRESENT and the flag on. */
+    val fingerprintKeyGate = FakePinFingerprintKeyGate()
 
     /**
      * The metadata argument of each emit, in step with [emitted]. Only the codes with a `CAUSE` key carry one (the
@@ -476,7 +491,8 @@ internal class AppLockControllerHarness(
     /** A new controller over the same fakes: a new process start (state `RESOLVING`). */
     fun newController(): AppLockController =
         AppLockController(
-            repository, capabilityProvider, clock, emitter, scope, authenticator, main, pinStore, writeSerializer
+            repository, capabilityProvider, clock, emitter, scope, authenticator, main, pinStore, writeSerializer,
+            fingerprintKeyGate
         )
 
     /** A new controller already resolved from the harness store through the real [AppLockController.resolve]. */

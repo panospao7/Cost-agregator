@@ -63,19 +63,24 @@ class BiometricPromptCopyTest {
     }
 
     @Test
-    fun s22_authPromptCopy_isExactlyTheFiveKnownValues() {
+    fun s22_authPromptCopy_isExactlyTheSixKnownValues() {
+        // S26 (owner-approvals 92, D-I2-5): PIN_FINGERPRINT is the one approved addition to the five S22 values.
         assertEquals(
             setOf(
                 AuthPromptCopy.UNLOCK,
                 AuthPromptCopy.ENABLE,
                 AuthPromptCopy.DISABLE,
                 AuthPromptCopy.CHANGE,
-                AuthPromptCopy.EXPORT
+                AuthPromptCopy.EXPORT,
+                AuthPromptCopy.PIN_FINGERPRINT
             ),
             AuthPromptCopy.entries.toSet()
         )
-        assertEquals(setOf("UNLOCK", "ENABLE", "DISABLE", "CHANGE", "EXPORT"), AuthPromptCopy.entries.map { it.name }.toSet())
-        assertEquals(5, AuthPromptCopy.entries.size)
+        assertEquals(
+            setOf("UNLOCK", "ENABLE", "DISABLE", "CHANGE", "EXPORT", "PIN_FINGERPRINT"),
+            AuthPromptCopy.entries.map { it.name }.toSet()
+        )
+        assertEquals(6, AuthPromptCopy.entries.size)
     }
 
     @Test
@@ -174,21 +179,30 @@ class BiometricPromptCopyTest {
 
     @Test
     fun inv53_noCopy_hasANegativeButton() {
-        for (copy in AuthPromptCopy.values()) {
+        // S26: only PIN_FINGERPRINT (strong biometric only, so the library requires one) has "Use PIN".
+        for (copy in AuthPromptCopy.values().filter { it != AuthPromptCopy.PIN_FINGERPRINT }) {
             val negative: CharSequence? = buildPromptInfo(context, copy).negativeButtonText
             assertTrue("copy $copy negative=$negative", negative.isNullOrEmpty())
         }
+        val pinNegative = buildPromptInfo(context, AuthPromptCopy.PIN_FINGERPRINT).negativeButtonText
+        assertEquals("Use PIN", text(R.string.applock_pin_prompt_negative))
+        assertEquals(text(R.string.applock_pin_prompt_negative), pinNegative.toString())
     }
 
     // ---- authenticators --------------------------------------------------------------------
 
     @Test
     fun inv23_promptInfo_allowsStrongOrDeviceCredentialForEveryCopy() {
-        for (copy in AuthPromptCopy.values()) {
+        for (copy in AuthPromptCopy.values().filter { it != AuthPromptCopy.PIN_FINGERPRINT }) {
             val info = buildPromptInfo(context, copy)
             assertEquals("copy $copy", BIOMETRIC_STRONG or DEVICE_CREDENTIAL, info.allowedAuthenticators)
             assertEquals("copy $copy", 0x800F, info.allowedAuthenticators)
+            assertEquals("copy $copy", 32783, info.allowedAuthenticators)
         }
+        // S26 (D-I2-5): the PIN-mode fingerprint prompt allows exactly BIOMETRIC_STRONG, nothing else.
+        val pin = buildPromptInfo(context, AuthPromptCopy.PIN_FINGERPRINT).allowedAuthenticators
+        assertEquals(BIOMETRIC_STRONG, pin)
+        assertEquals(15, pin)
     }
 
     @Test
@@ -200,16 +214,20 @@ class BiometricPromptCopyTest {
             assertEquals("copy $copy", 0, allowed and weakOnlyBits)
             // BIOMETRIC_STRONG is a subset of BIOMETRIC_WEAK: masking with WEAK leaves exactly STRONG.
             assertEquals("copy $copy", BIOMETRIC_STRONG, allowed and BIOMETRIC_WEAK)
-            assertEquals("copy $copy", 0x800F, allowed)
+            val expected = if (copy == AuthPromptCopy.PIN_FINGERPRINT) 15 else 0x800F
+            assertEquals("copy $copy", expected, allowed)
         }
     }
 
     @Test
     fun inv23_promptInfo_includesDeviceCredentialBit() {
-        for (copy in AuthPromptCopy.values()) {
+        for (copy in AuthPromptCopy.values().filter { it != AuthPromptCopy.PIN_FINGERPRINT }) {
             val allowed = buildPromptInfo(context, copy).allowedAuthenticators
             assertEquals("copy $copy", DEVICE_CREDENTIAL, allowed and DEVICE_CREDENTIAL)
         }
+        // S26: PIN_FINGERPRINT never carries the device-credential bit.
+        val pin = buildPromptInfo(context, AuthPromptCopy.PIN_FINGERPRINT).allowedAuthenticators
+        assertEquals(0, pin and DEVICE_CREDENTIAL)
     }
 
     @Test

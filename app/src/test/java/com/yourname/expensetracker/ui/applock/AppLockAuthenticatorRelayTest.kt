@@ -68,8 +68,8 @@ class AppLockAuthenticatorRelayTest {
             }
         }
 
-        val adopter = AttemptAdopter { id, callback ->
-            val adoption = Launch(id, null, callback)
+        val adopter = AttemptAdopter { id, copy, callback ->
+            val adoption = Launch(id, copy, callback)
             adoptions += adoption
             duringAdopt?.invoke(adoption)
             adoptResult
@@ -622,6 +622,38 @@ class AppLockAuthenticatorRelayTest {
         fresh.latestCallback.onOutcome(7L, DeviceAuthOutcome.Succeeded)
         assertEquals(listOf(7L to DeviceAuthOutcome.Succeeded), callback.received)
         assertNull(relay.openAttemptId)
+    }
+
+    @Test
+    fun inv40_adoptionAfterRotation_passesTheCopyTheAttemptWasRegisteredWith_pinFingerprint() {
+        val old = FakeAdapter()
+        val oldRegistration = register(old)
+        launch(7L, RecordingCallback(), AuthPromptCopy.PIN_FINGERPRINT)
+        assertEquals(AuthPromptCopy.PIN_FINGERPRINT, old.launches.single().copy)
+        assertNull(relay.unregister(oldRegistration, isChangingConfigurations = true))
+        val fresh = FakeAdapter()
+
+        register(fresh)
+
+        assertEquals(listOf(7L), fresh.adoptions.map { it.id })
+        assertEquals(
+            "the adopting adapter must learn the attempt is a PIN fingerprint attempt",
+            AuthPromptCopy.PIN_FINGERPRINT,
+            fresh.adoptions.single().copy
+        )
+    }
+
+    @Test
+    fun inv40_adoptionAfterRotation_controlKeepsTheUnlockCopy_notPinFingerprint() {
+        val old = FakeAdapter()
+        val oldRegistration = register(old)
+        launch(8L, RecordingCallback(), AuthPromptCopy.UNLOCK)
+        relay.unregister(oldRegistration, isChangingConfigurations = true)
+        val fresh = FakeAdapter()
+
+        register(fresh)
+
+        assertEquals(AuthPromptCopy.UNLOCK, fresh.adoptions.single().copy)
     }
 
     @Test

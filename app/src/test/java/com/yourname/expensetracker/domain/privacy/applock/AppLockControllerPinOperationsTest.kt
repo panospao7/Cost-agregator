@@ -774,14 +774,16 @@ class AppLockControllerPinOperationsTest {
     // --- D-I2-7: the frozen fingerprint hook ---------------------------------------------------------
 
     @Test
-    fun `D-I2-7 the fingerprint hook stays inert after a PIN setup, change and removal`() {
+    fun `D-I2-7 amended the fingerprint request stays a no-op while unlocked after a PIN setup, change and removal`() {
         val rig = pinModeRig()
         assertFalse(rig.c.canOfferFingerprintUnlock.value)
-        assertEquals(FingerprintUnlockResult.NOT_AVAILABLE, runBlocking { rig.c.onFingerprintUnlockSucceeded() })
+        runBlocking { rig.c.requestFingerprintUnlock() }
+        assertEquals(AppLockState.Unlocked, rig.c.state.value)
         assertTrue(rig.c.beginPinChange())
         assertEquals(PinOperationResult.Done, runBlocking { rig.c.changePin(pin("482916"), pin()) })
         assertFalse(rig.c.canOfferFingerprintUnlock.value)
-        assertEquals(FingerprintUnlockResult.NOT_AVAILABLE, runBlocking { rig.c.onFingerprintUnlockSucceeded() })
+        runBlocking { rig.c.requestFingerprintUnlock() }
+        assertEquals(AppLockState.Unlocked, rig.c.state.value)
         assertEquals(0, rig.store.count("resetAttempts"))
         assertEquals(AppLockState.Unlocked, rig.c.state.value)
     }
