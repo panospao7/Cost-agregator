@@ -209,7 +209,8 @@ class CurrencyRatesRepositoryImpl @Inject constructor(
             }
         } catch (e: CancellationException) {
             throw e
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
             return@coroutineScope CurrencyRateHistoryOutcome.Failed(RateHistoryFailureReason.OFFLINE)
         }
         val worker = async { fetchParseAndStoreHistory(connection, homeCurrency) }
@@ -245,7 +246,8 @@ class CurrencyRatesRepositoryImpl @Inject constructor(
             return CurrencyRateHistoryOutcome.Failed(RateHistoryFailureReason.TIMEOUT)
         } catch (_: IOException) {
             return CurrencyRateHistoryOutcome.Failed(RateHistoryFailureReason.OFFLINE)
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
             // Closed mapping (C10): any other network-phase failure is reported as OFFLINE.
             return CurrencyRateHistoryOutcome.Failed(RateHistoryFailureReason.OFFLINE)
         }
@@ -258,7 +260,8 @@ class CurrencyRatesRepositoryImpl @Inject constructor(
             throw e
         } catch (e: EcbHistoryPayloadException) {
             return CurrencyRateHistoryOutcome.Failed(e.reason)
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
             return CurrencyRateHistoryOutcome.Failed(RateHistoryFailureReason.PAYLOAD_MALFORMED)
         }
 
@@ -286,7 +289,8 @@ class CurrencyRatesRepositoryImpl @Inject constructor(
             currencyConverter.storeRateHistory(days, source = "ecb")
         } catch (e: CancellationException) {
             throw e
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
             return CurrencyRateHistoryOutcome.Failed(RateHistoryFailureReason.STORE_FAILED)
         }
         if (rows == 0) {
@@ -299,7 +303,8 @@ class CurrencyRatesRepositoryImpl @Inject constructor(
             currencySettingsRepository.setLastRateUpdate(timeProvider.now())
         } catch (e: CancellationException) {
             throw e
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
             // The rows are committed; the outcome stays Stored.
         }
         return CurrencyRateHistoryOutcome.Stored(
@@ -586,7 +591,7 @@ class CurrencyRatesRepositoryImpl @Inject constructor(
             try {
                 setAttribute(ACCESS_EXTERNAL_DTD_PROPERTY, "")
             } catch (_: IllegalArgumentException) {
-                // Unsupported on this platform; DTDs are rejected by the byte pre-scan.
+                // Unsupported on this platform; DTDs are rejected by the text pre-scan.
             }
             try {
                 setAttribute(ACCESS_EXTERNAL_SCHEMA_PROPERTY, "")
@@ -610,7 +615,7 @@ class CurrencyRatesRepositoryImpl @Inject constructor(
         try {
             setFeature(name, value)
         } catch (_: ParserConfigurationException) {
-            // Unsupported on this platform (Android); DTDs are rejected by the byte pre-scan.
+            // Unsupported on this platform (Android); DTDs are rejected by the text pre-scan.
         }
     }
 

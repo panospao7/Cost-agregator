@@ -484,3 +484,14 @@ Total: 9 + 5 + 37 = 51 (42 `mec_*` + 9 `add_expense_installments_*`); the count 
 - Earlier on the fix-pass tree: cancellation, known_good_state and lint PASS. Static-guards and app-check will run on the integration merge commit.
 - Owner item 95: a 1.0.3 hotfix of the XML defect on hotfix/1.0.3-ecb-xml (worktree Cost-agregator-hf).
 - NEXT: re-merge into integration/ai-evolution-1b; unit-tests, static-guards and app-check on the merge commit; a reviewer-strict delta review of the fix pass; then a fast-forward of feature/ai-evolution.
+- reviewer-strict delta review of 009b3996: ACCEPT-WITH-FIXES, all MINOR.
+  - Live device tests gated to explicit class runs (the instrumentation "class" argument).
+  - A ReceiptScan keepSaveBlock pin: four tests.
+  - Daily 256 KiB cap tests.
+  - "byte pre-scan" comments corrected.
+- Integration unit-tests vr-20261030-150452-7d7108a3 FAILED: CancellationSafetyArchitectureGuardTest requires a CE reference inside each broad-catch body (a sibling CE catch does not count). Five catches in CurrencyRatesRepositoryImpl now rethrow CE in the body.
+  - Lesson: include the architecture-contracts shard in the MEC ladder.
+- Delta runs, all PASS:
+  - targeted, including CancellationSafetyArchitectureGuardTest, vr-20261030-163916-1b10a883
+  - architecture-contracts vr-20261030-164503-63dc0c0c
+  - device (gated, explicit run) vr-20261030-164549-ab4196cb

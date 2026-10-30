@@ -341,6 +341,52 @@ class CurrencyRatesRepositoryImplTest {
         assertTrue(malformed.store.rates.isEmpty())
     }
 
+    private val dailyCapBytes = 256 * 1024
+
+    private fun paddedToBytes(xml: String, totalBytes: Int): ByteArray {
+        val base = xml.toByteArray(Charsets.UTF_8)
+        require(base.size <= totalBytes)
+        return base + ByteArray(totalBytes - base.size) { ' '.code.toByte() }
+    }
+
+    @Test
+    fun `daily payload one byte over the 256 KiB cap fails RATE_PAYLOAD_TOO_LARGE and stores nothing`() = runTest {
+        val oversized = paddedToBytes(ecbXml(), dailyCapBytes + 1)
+        assertEquals(dailyCapBytes + 1, oversized.size)
+
+        try {
+            fixture().repository.parseEcbDailyRates(ByteArrayInputStream(oversized))
+            fail("Expected RATE_PAYLOAD_TOO_LARGE")
+        } catch (error: IllegalStateException) {
+            assertEquals("RATE_PAYLOAD_TOO_LARGE", error.message)
+        }
+
+        val f = fixture(now = fetchedNextDayMillis)
+        try {
+            f.repository.refreshFromStream("USD", ByteArrayInputStream(oversized))
+            fail("Expected RATE_PAYLOAD_TOO_LARGE")
+        } catch (error: IllegalStateException) {
+            assertEquals("RATE_PAYLOAD_TOO_LARGE", error.message)
+        }
+        assertTrue(f.store.rates.isEmpty())
+        assertTrue(f.settings.lastRateUpdates.isEmpty())
+    }
+
+    @Test
+    fun `daily payload of exactly 256 KiB still parses and stores rates`() = runTest {
+        val atCap = paddedToBytes(ecbXml(), dailyCapBytes)
+        assertEquals(dailyCapBytes, atCap.size)
+
+        val parsed = fixture().repository.parseEcbDailyRates(ByteArrayInputStream(atCap))
+        assertEquals(1.1403, parsed.eurToCurrency.getValue("USD"), 0.0)
+
+        val f = fixture(now = fetchedNextDayMillis)
+        val storedCount = f.repository.refreshFromStream("USD", ByteArrayInputStream(atCap))
+        assertTrue(storedCount > 0)
+        assertTrue(f.store.rates.isNotEmpty())
+        assertEquals(listOf(fetchedNextDayMillis), f.settings.lastRateUpdates)
+    }
+
     @Test
     fun `containsDtdDeclaration is true for DOCTYPE or ENTITY in any case and false for a normal payload`() {
         val repo = fixture().repository
