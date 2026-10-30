@@ -34,10 +34,11 @@ import java.io.ByteArrayInputStream
  * Device proof that the daily ECB parse works on Android's own XML parser (which rejects several
  * hardening features that the JVM accepts) and still rejects DTD payloads.
  *
- * NEEDS NETWORK for [liveRefreshAgainstRealEcbFileStoresRates]. That live test skips (assumption)
- * unless this class is targeted explicitly by the instrumentation "class" argument, so it never
- * fails the default connected suite when the network is unavailable. Run explicitly by class
- * filter for the 1.0.3 hotfix gate:
+ * NEEDS NETWORK for [liveRefreshAgainstRealEcbFileStoresRates]. That live test is opt-in: it skips
+ * (assumption) unless the device property `debug.costagg.live_ecb` is 1
+ * (`adb shell setprop debug.costagg.live_ecb 1`), so it never fails the default connected suite.
+ * Class-based gating is impossible because the Android Test Orchestrator runs every test with
+ * `-e class <Class>#<method>`. For the 1.0.3 hotfix gate set the property, then run
  * `com.yourname.expensetracker.data.repository.EcbDailyRefreshDeviceTest`.
  *
  * Uses a real in-memory Room [AppDatabase], real [CurrencyConverter], real [ExchangeRateStoreAdapter]
@@ -103,11 +104,13 @@ class EcbDailyRefreshDeviceTest {
     }
 
     private fun requireExplicitLiveRun() {
-        Assume.assumeTrue(
-            "live ECB test runs only by explicit class filter",
-            InstrumentationRegistry.getArguments().getString("class")
-                ?.contains(EcbDailyRefreshDeviceTest::class.java.name) == true
-        )
+        val value = InstrumentationRegistry.getInstrumentation().uiAutomation
+            .executeShellCommand("getprop debug.costagg.live_ecb")
+            .let { pfd ->
+                android.os.ParcelFileDescriptor.AutoCloseInputStream(pfd).bufferedReader()
+                    .use { it.readText().trim() }
+            }
+        Assume.assumeTrue("live ECB test runs only when debug.costagg.live_ecb=1", value == "1")
     }
 
     private fun ecbXml(): String = """
