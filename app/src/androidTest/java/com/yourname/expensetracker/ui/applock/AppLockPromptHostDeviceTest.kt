@@ -2,6 +2,7 @@ package com.yourname.expensetracker.ui.applock
 
 import android.app.UiAutomation
 import android.accessibilityservice.AccessibilityService
+import android.content.Intent
 import android.os.Build
 import android.os.SystemClock
 import androidx.compose.ui.test.assertIsEnabled
@@ -13,9 +14,14 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
+import androidx.test.runner.lifecycle.Stage
 import com.yourname.expensetracker.R
+import com.yourname.expensetracker.domain.privacy.applock.AppLockController
 import com.yourname.expensetracker.domain.privacy.applock.AppLockState
 import com.yourname.expensetracker.domain.privacy.applock.AuthPurpose
+import com.yourname.expensetracker.domain.privacy.applock.AutoLockTimeout
+import com.yourname.expensetracker.domain.privacy.applock.OpenOriginStartResult
 import com.yourname.expensetracker.domain.privacy.applock.UnlockTapResult
 import com.yourname.expensetracker.ui.MainActivity
 import org.junit.After
@@ -28,6 +34,7 @@ import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Increment 1b gate G1b, the UNLOCK prompt host on a real device (spec AE-44, AE-46, AE-41, AE-118; S15/S16 carry-forwards:
@@ -96,14 +103,14 @@ class AppLockPromptHostDeviceTest {
 
     private fun state(): AppLockState = harness.controllerState(scenario!!)
 
-    private fun coldLocked(): ActivityScenario<MainActivity> {
+    private fun coldLocked(timeoutToken: String = "IMMEDIATE"): ActivityScenario<MainActivity> {
         assumeTrue(
             "needs API ${AppLockDeviceHarness.SDK_LOCK_CAPABLE}+ for a credential prompt",
             Build.VERSION.SDK_INT >= AppLockDeviceHarness.SDK_LOCK_CAPABLE
         )
         assumeTrue("device could not be given a PIN for the lock", harness.ensureCredential(true))
         G1bProcessLedger.claimOrSkip(G1bColdScenario.LOCK_ON)
-        harness.seedLock(enabled = true)
+        harness.seedLock(enabled = true, timeoutToken = timeoutToken)
         val s = ActivityScenario.launch(MainActivity::class.java)
         scenario = s
         assertTrue("lock surface never shown", waitFor(15_000) { present(AppLockUiTags.GATE_SURFACE) })
@@ -187,9 +194,9 @@ class AppLockPromptHostDeviceTest {
     }
 
     /**
-     * AE-44. Spec (ux-flows 4.4 / 4.3 CANCELLED): a user cancel returns to Locked with NO message. Production may show
-     * the bounded TRY_AGAIN line in some paths (documented CF-4 simplification), so the test allows exactly that text
-     * and no other status message; Locked, enabled Unlock and no auto-reprompt (INV-34) remain strict.
+     * AE-44, strict (G1c). Spec (ux-flows 4.4 / 4.3 CANCELLED): a user cancel returns to Locked with NO message. Every
+     * UNLOCK-prompt end now returns silently to the lock surface, so none of the status texts may appear, the former
+     * TRY_AGAIN line included; Locked, enabled Unlock and no auto-reprompt (INV-34) stay strict.
      */
     @Test
     fun g1b_AE44_cancelEchoReturnsToLockSurfaceWithEnabledUnlockAndNoAutoReprompt() {
@@ -204,8 +211,7 @@ class AppLockPromptHostDeviceTest {
         )
         assertLockSurfaceOnly()
         composeRule.onNodeWithTag(AppLockUiTags.UNLOCK_BUTTON).assertIsEnabled()
-        // Spec (ux-flows 4.4 / 4.3 CANCELLED): no message. Production may show TRY_AGAIN (documented CF-4
-        // simplification); if any status line is shown it must be that bounded text, never another one.
+        // Spec (ux-flows 4.4 / 4.3 CANCELLED): no message at all.
         SystemClock.sleep(1_000)
         val disallowed = listOf(
             R.string.applock_msg_too_many_attempts,
@@ -215,14 +221,15 @@ class AppLockPromptHostDeviceTest {
         ).map { harness.ctx.getString(it) }
         disallowed.forEach { other ->
             assertTrue(
-                "unexpected status text after cancel (only TRY_AGAIN is allowed): $other",
+                "unexpected status text after cancel: $other",
                 composeRule.onAllNodes(hasText(other)).fetchSemanticsNodes().isEmpty()
             )
         }
         val tryAgain = harness.ctx.getString(R.string.applock_msg_try_again)
-        assertTrue(
-            "try-again text, when shown, must appear at most once",
-            composeRule.onAllNodes(hasText(tryAgain)).fetchSemanticsNodes().size <= 1
+        assertEquals(
+            "a user cancel must return silently: the try-again line must not be shown",
+            0,
+            composeRule.onAllNodes(hasText(tryAgain)).fetchSemanticsNodes().size
         )
         // INV-34: no automatic re-prompt.
         SystemClock.sleep(3_000)
@@ -320,5 +327,77 @@ class AppLockPromptHostDeviceTest {
         assertTrue("lock surface not shown after recovery", waitFor(15_000) { present(AppLockUiTags.GATE_SURFACE) })
         assertLockSurfaceOnly()
         composeRule.onNodeWithTag(AppLockUiTags.UNLOCK_BUTTON).assertIsEnabled()
+    }
+
+    /**
+     * G1c AE-118: a host that finishes with a settings (CONFIRM_CHANGE) prompt showing must not leave the system prompt
+     * window orphaned. The person unlocks with the harness PIN, a longer auto-lock timeout is requested (the CONFIRM_CHANGE
+     * prompt opens), then the task is restarted with CLEAR_TASK | NEW_TASK, which finishes the old MainActivity. The system
+     * prompt window must be gone WITHOUT pressing Back, the controller must be Unlocked again (a lost host is an abandoned
+     * attempt, never a failure or a lock), and the pending change must not be applied.
+     *
+     * Needs the PIN the harness set itself (to reach UNLOCKED through the real prompt), so it skips on a device that
+     * already carried a credential. The current timeout is M1 (not IMMEDIATE) so a restart cannot lock the app by
+     * timeout and "Unlocked" can only mean the attempt was closed without a lock. One process per test (orchestrator).
+     */
+    @Test
+    fun g1c_AE118_finishingHostCancelsOrphanPrompt() {
+        val s = coldLocked(timeoutToken = "M1")
+        assumeTrue("needs the harness-owned PIN to unlock through the real prompt", harness.harnessOwnsPin)
+        assertEquals("seed: the committed timeout", "M1", harness.storedTimeoutToken())
+
+        // Reach UNLOCKED through the real UNLOCK prompt.
+        tapUnlock()
+        awaitUnlockPrompt()
+        harness.enterPinAndConfirm()
+        assertTrue("PIN entry did not unlock", waitFor(20_000) { state() == AppLockState.Unlocked })
+        assertTrue("app content not visible after unlock", waitFor(10_000) { present(AppLockUiTags.GATE_CONTENT_SLOT) })
+
+        // The process-wide controller outlives the Activity: keep it to read the state after the restart.
+        lateinit var controller: AppLockController
+        s.onActivity { controller = it.appLockController }
+        val applied = AtomicBoolean(false)
+        var started: OpenOriginStartResult? = null
+        s.onActivity {
+            started = it.appLockController.startTimeoutChangeAttempt(AutoLockTimeout.M15) { _, _ -> applied.set(true) }
+        }
+        assertTrue("CONFIRM_CHANGE attempt did not start: $started", started is OpenOriginStartResult.Started)
+        assertTrue(
+            "CONFIRM_CHANGE prompt never opened",
+            waitFor(10_000) { (controller.state.value as? AppLockState.Authenticating)?.purpose == AuthPurpose.CONFIRM_CHANGE }
+        )
+        SystemClock.sleep(1_500) // let the system sheet draw
+        // Positive control: the detector sees the prompt that is up, so "gone" below cannot be a blind detector.
+        assertTrue("control: the system prompt window is not detected while the prompt is up", harness.isSystemPromptWindowPresent())
+
+        try {
+            // Restart the task: the old MainActivity is finished (not a configuration change). No Back is pressed.
+            val restart = Intent(harness.ctx, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+            harness.ctx.startActivity(restart)
+
+            assertTrue(
+                "the system prompt window was orphaned after the host finished (AE-118)",
+                waitFor(15_000) { !harness.isSystemPromptWindowPresent() }
+            )
+            assertTrue(
+                "the abandoned CONFIRM_CHANGE attempt did not return to UNLOCKED",
+                waitFor(10_000) { controller.state.value == AppLockState.Unlocked }
+            )
+            SystemClock.sleep(2_000)
+            assertEquals("state drifted after the abandon", AppLockState.Unlocked, controller.state.value)
+            assertFalse("the pending change was applied after the host was lost", applied.get())
+            assertEquals("the pending timeout change was written", "M1", harness.storedTimeoutToken())
+        } finally {
+            // The restarted Activity is not owned by the scenario: finish it so no window outlives the test.
+            harness.instrumentation.runOnMainSync {
+                Stage.values().forEach { stage ->
+                    ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(stage)
+                        .filterIsInstance<MainActivity>()
+                        .filterNot { it.isFinishing }
+                        .forEach { it.finish() }
+                }
+            }
+        }
     }
 }

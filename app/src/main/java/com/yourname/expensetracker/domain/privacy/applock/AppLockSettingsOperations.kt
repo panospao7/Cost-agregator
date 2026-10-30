@@ -293,6 +293,42 @@ class AppLockSettingsOperations @Inject constructor(
     }
 
     /**
+     * G25-7 (INV-49, AMD-4, T30): removes the app PIN. [AppLockController.disablePin] verifies, deletes the PIN data and
+     * sets `lockMode = DEVICE_AUTH`; when the device cannot authenticate it returns
+     * [PinOperationResult.RemovedLockOffRequired] instead, and the lock-off write (`appLockEnabled = false`) happens here,
+     * the only production call site of the lock flag write: inside the [writeSerializer] under `NonCancellable`, with the
+     * F7 settle/re-read, then the controller moves the view and `UNLOCKED` to `DISABLED`. A failed write is
+     * [PinOperationResult.ModeWriteFailed] (the PIN is already deleted). Any other result is the controller's.
+     */
+    suspend fun removePin(current: CharArray): PinOperationResult {
+        val result = controller.disablePin(current)
+        if (result != PinOperationResult.RemovedLockOffRequired) return result
+        return withContext(NonCancellable) {
+            writeSerializer.withExclusiveWrite {
+                // INV-49: the PIN was deleted, so the lock mode must leave APP_PIN before the lock flag is written.
+                val mode = try {
+                    settingsRepository.setLockMode(LockMode.DEVICE_AUTH)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Timber.w("App-lock lockMode write failed: class=%s", DiagnosticThrowableSummary.className(e))
+                    AppLockSettingsWriteResult.Failed(AppLockSettingField.LOCK_MODE)
+                }
+                if (mode !is AppLockSettingsWriteResult.Committed) {
+                    controller.onPinRemovalLockOffApplied(mode)
+                    return@withExclusiveWrite PinOperationResult.ModeWriteFailed
+                }
+                val outcome = settleCancelledWrite(AppLockSettingField.APP_LOCK_ENABLED, { !it.appLockEnabled }) {
+                    write(false)
+                }
+                outcome.applyThenRethrow { written ->
+                    if (controller.onPinRemovalLockOffApplied(written)) PinOperationResult.Done else PinOperationResult.ModeWriteFailed
+                }
+            }
+        }
+    }
+
+    /**
      * S18 part (i-b1): the auto-lock timeout change (INV-3, OD-8a). The committed timeout is read first (one fresh
      * read; an unreadable or failed read is a failure with nothing written, no prompt, fail closed).
      *

@@ -29,6 +29,35 @@ enum class AutoLockTimeout(val millis: Long) {
 }
 
 /**
+ * The persisted lock-mode choice (domain-spec 2.1, Inc 2). The stored value is a token ([token]) and is part
+ * of the store format: never rename an entry.
+ *
+ * The stored mode is advisory. The effective mode is derived from whether a PIN verifier exists (AMD-4), and the
+ * stored mode never overrides it. INV-50 writes `APP_PIN` first, then the verifier.
+ */
+enum class LockMode {
+    DEVICE_AUTH,
+    APP_PIN;
+
+    val token: String get() = name
+
+    companion object {
+        /** Default for an absent key (spec 2.1). */
+        val DEFAULT: LockMode = DEVICE_AUTH
+
+        /**
+         * The value an invalid persisted token maps to. The spec says "APP_PIN if a PIN verifier exists, else
+         * DEVICE_AUTH"; the store cannot see the verifier, so it reports the restrictive value and the effective
+         * mode (verifier based) decides.
+         */
+        val FAIL_CLOSED: LockMode = APP_PIN
+
+        /** The entry for a persisted [token], or null when the token is not a known one. */
+        fun fromToken(token: String): LockMode? = entries.firstOrNull { it.token == token }
+    }
+}
+
+/**
  * Device-local app-lock / privacy-mode settings (domain-spec 2.1).
  *
  * Increment 1b adds lock enabled, auto-lock timeout and secure screen. The Inc 2 fields (lock mode,
@@ -48,7 +77,13 @@ data class AppLockPrivacySettings(
     /** Default [AutoLockTimeout.M1]. An invalid persisted token maps to [AutoLockTimeout.IMMEDIATE]. */
     val autoLockTimeout: AutoLockTimeout = AutoLockTimeout.DEFAULT,
     /** Default false. An invalid persisted value maps to true (most restrictive, spec 2.1). */
-    val secureScreen: Boolean = DEFAULT_SECURE_SCREEN
+    val secureScreen: Boolean = DEFAULT_SECURE_SCREEN,
+    /**
+     * Default [LockMode.DEVICE_AUTH] for an absent key. An invalid persisted token maps to [LockMode.FAIL_CLOSED].
+     * Advisory: the effective mode is derived from the PIN verifier (AMD-4). The fail-closed record `F` does not
+     * set it.
+     */
+    val lockMode: LockMode = LockMode.DEFAULT
 ) {
     companion object {
         const val DEFAULT_DISCREET_NOTIFICATIONS: Boolean = false

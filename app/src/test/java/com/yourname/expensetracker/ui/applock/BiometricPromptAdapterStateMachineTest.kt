@@ -24,6 +24,7 @@ import org.robolectric.Shadows.shadowOf
 import org.robolectric.android.controller.ActivityController
 import org.robolectric.annotation.Config
 import org.robolectric.shadows.ShadowLooper
+import org.robolectric.util.ReflectionHelpers
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.cancellation.CancellationException
 
@@ -97,6 +98,13 @@ class BiometricPromptAdapterStateMachineTest {
     }
 
     private fun advance(millis: Long) = ShadowLooper.idleMainLooper(millis, TimeUnit.MILLISECONDS)
+
+    /**
+     * S26 fix B: adopt now requires the copy of the original attempt. Every adoption scenario in this class
+     * launches with the UNLOCK device-auth copy (see Rig.launch), so the legacy two-argument calls pass it here.
+     */
+    private fun BiometricPromptDeviceAuthenticator.adopt(attemptId: Long, callback: DeviceAuthCallback): Boolean =
+        adopt(attemptId, AuthPromptCopy.UNLOCK, callback)
 
     @Test
     fun inv34_secondAuthenticateWhileInFlight_returnsAlreadyInFlight_andFirstStillCompletes() {
@@ -417,6 +425,240 @@ class BiometricPromptAdapterStateMachineTest {
         rig.launch(1L, callback)
         rig.succeed()
         assertEquals(DeviceAuthOutcome.Succeeded, callback.outcomes.single().second)
+    }
+
+    // ---- G1c / AE-118: a finishing host cancels the library prompt silently ---------------------------
+
+    /** Brings the host to RESUMED so that pause and stop dispatch their lifecycle events. */
+    private fun Rig.resumed(): Rig {
+        controller.start().resume()
+        return this
+    }
+
+    /** Makes `isChangingConfigurations` true on the framework activity, the way a rotation relaunch does. */
+    private fun markConfigurationChange(activity: FragmentActivity) {
+        ReflectionHelpers.setField(activity, "mChangingConfigurations", true)
+    }
+
+    @Test
+    fun g1c_finishingOnPause_cancelsTheLibraryPromptOnce_withNoCallback_clearsTheFlight_andSetsAwaiting() {
+        val rig = Rig().resumed()
+        val callback = RecordingCallback()
+        rig.launch(1L, callback)
+        events.clear()
+
+        rig.controller.get().finish()
+        rig.controller.pause()
+
+        assertEquals("only the library cancel, never an outcome", listOf("handle.cancel"), events)
+        assertEquals(1, rig.handle.cancelCalls)
+        assertTrue("a lost host ends silently (Abandoned)", callback.outcomes.isEmpty())
+        assertTrue(rig.adapter.isAwaitingLibraryTerminal)
+        assertEquals(
+            "the flight is cleared: the wait, not an attempt in flight, refuses the launch",
+            AuthLaunch.AWAITING_PRIOR_TERMINAL,
+            rig.launch(2L, RecordingCallback())
+        )
+        rig.adapter.cancel(1L)
+        assertEquals("a client cancel of the abandoned attempt is a no-op", 1, rig.handle.cancelCalls)
+        assertTrue(callback.outcomes.isEmpty())
+    }
+
+    @Test
+    fun g1c_aSecondSignalAfterTheAbandon_doesNotCancelAgain() {
+        val rig = Rig().resumed()
+        val callback = RecordingCallback()
+        rig.launch(1L, callback)
+        rig.controller.get().finish()
+        rig.controller.pause()
+        assertEquals(1, rig.handle.cancelCalls)
+
+        rig.controller.stop() // finishing ON_STOP
+        rig.controller.destroy() // ON_DESTROY, not a configuration change
+        rig.adapter.abandonForHostLoss()
+
+        assertEquals("pause, stop, destroy and a direct call together cancel once", 1, rig.handle.cancelCalls)
+        assertTrue(callback.outcomes.isEmpty())
+    }
+
+    @Test
+    fun g1c_finishingOnStop_cancelsOnce_whenThePauseWasNotYetFinishing() {
+        val rig = Rig().resumed()
+        val callback = RecordingCallback()
+        rig.launch(1L, callback)
+        rig.controller.pause()
+        assertEquals("control: a pause that is not finishing never cancels", 0, rig.handle.cancelCalls)
+
+        rig.controller.get().finish()
+        rig.controller.stop()
+
+        assertEquals(1, rig.handle.cancelCalls)
+        assertTrue(callback.outcomes.isEmpty())
+        assertTrue(rig.adapter.isAwaitingLibraryTerminal)
+    }
+
+    @Test
+    fun g1c_finishingOnDestroyOnly_cancelsOnce_andTheWaitSurvivesTheDestroyHandler() {
+        val rig = Rig()
+        val callback = RecordingCallback()
+        rig.launch(1L, callback)
+
+        rig.controller.get().finish()
+        rig.controller.destroy()
+
+        assertEquals(1, rig.handle.cancelCalls)
+        assertTrue(callback.outcomes.isEmpty())
+        assertTrue("the echo of the silent cancel is still owed", rig.adapter.isAwaitingLibraryTerminal)
+        rig.succeed()
+        assertTrue("the echo is dropped, never delivered as a success", callback.outcomes.isEmpty())
+        assertFalse(rig.adapter.isAwaitingLibraryTerminal)
+    }
+
+    @Test
+    fun g1c_destroyWithoutFinishAndNotAConfigurationChange_alsoAbandons() {
+        val rig = Rig()
+        val callback = RecordingCallback()
+        rig.launch(1L, callback)
+
+        rig.controller.destroy()
+
+        assertEquals(1, rig.handle.cancelCalls)
+        assertTrue(callback.outcomes.isEmpty())
+    }
+
+    @Test
+    fun g1c_configurationChange_neverCancels_andTheSuccessStillCommits() {
+        val rig = Rig().resumed()
+        val callback = RecordingCallback()
+        rig.launch(1L, callback)
+        markConfigurationChange(rig.controller.get())
+
+        rig.controller.pause().stop().destroy()
+
+        assertEquals("a rotation must not cancel the prompt", 0, rig.handle.cancelCalls)
+        assertFalse(rig.adapter.isAwaitingLibraryTerminal)
+        assertTrue(callback.outcomes.isEmpty())
+        rig.succeed()
+        assertEquals(listOf(1L to DeviceAuthOutcome.Succeeded), callback.outcomes)
+    }
+
+    @Test
+    fun g1c_configurationChange_neverCancels_forAnAdoptedAttempt() {
+        val rig = Rig().resumed()
+        val callback = RecordingCallback()
+        assertTrue(rig.adapter.adopt(5L, callback))
+        markConfigurationChange(rig.controller.get())
+
+        rig.controller.pause().stop().destroy()
+
+        assertEquals(0, rig.handle.cancelCalls)
+        rig.succeed()
+        assertEquals(listOf(5L to DeviceAuthOutcome.Succeeded), callback.outcomes)
+    }
+
+    @Test
+    fun g1c_finishingTogetherWithAConfigurationChange_neverCancels_theGuardIsBoth() {
+        val rig = Rig().resumed()
+        val callback = RecordingCallback()
+        rig.launch(1L, callback)
+        rig.controller.get().finish()
+        markConfigurationChange(rig.controller.get())
+
+        rig.controller.pause().stop().destroy()
+
+        assertEquals("isFinishing alone is not enough: the configuration-change guard wins", 0, rig.handle.cancelCalls)
+        assertTrue(callback.outcomes.isEmpty())
+        rig.succeed()
+        assertEquals(listOf(1L to DeviceAuthOutcome.Succeeded), callback.outcomes)
+    }
+
+    @Test
+    fun g1c_stoppedButNotFinishing_neverCancels_andTheAttemptStaysOpen() {
+        val rig = Rig().resumed()
+        val callback = RecordingCallback()
+        rig.launch(1L, callback)
+
+        rig.controller.pause().stop() // OEM credential screen or Home: not finishing
+
+        assertEquals(0, rig.handle.cancelCalls)
+        assertFalse(rig.adapter.isAwaitingLibraryTerminal)
+        assertEquals(AuthLaunch.ALREADY_IN_FLIGHT, rig.launch(2L, RecordingCallback()))
+        rig.succeed()
+        assertEquals(listOf(1L to DeviceAuthOutcome.Succeeded), callback.outcomes)
+    }
+
+    @Test
+    fun g1c_aLibraryRuntimeExceptionOnTheAbandonCancel_isSwallowed_andTheAttemptIsStillClosedSilently() {
+        val rig = Rig().resumed()
+        val callback = RecordingCallback()
+        rig.launch(1L, callback)
+        rig.handle.cancelFailure = IllegalStateException("synthetic")
+
+        rig.controller.get().finish()
+        rig.controller.pause()
+
+        assertEquals(1, rig.handle.cancelCalls)
+        assertTrue(callback.outcomes.isEmpty())
+        assertTrue(rig.adapter.isAwaitingLibraryTerminal)
+    }
+
+    @Test
+    fun g1c_aLibraryEchoAfterTheAbandon_isDropped_andNeverCreditedToTheNextAdoptedAttempt() {
+        val rig = Rig().resumed()
+        val abandoned = RecordingCallback()
+        rig.launch(1L, abandoned)
+        rig.controller.get().finish()
+        rig.controller.pause()
+
+        rig.error(BiometricPrompt.ERROR_CANCELED) // the echo of the silent cancel
+
+        assertTrue("no callback for the abandoned attempt", abandoned.outcomes.isEmpty())
+        assertFalse(rig.adapter.isAwaitingLibraryTerminal)
+        val next = RecordingCallback()
+        assertTrue("control: the adapter is idle again", rig.adapter.adopt(2L, next))
+        assertTrue("the echo must not complete the next attempt", next.outcomes.isEmpty())
+        rig.succeed()
+        assertEquals(listOf(2L to DeviceAuthOutcome.Succeeded), next.outcomes)
+        assertTrue(abandoned.outcomes.isEmpty())
+    }
+
+    @Test
+    fun g1c_aSuccessAfterTheAbandon_isDropped_itCanNeverUnlock() {
+        val rig = Rig().resumed()
+        val callback = RecordingCallback()
+        rig.launch(1L, callback)
+        rig.controller.get().finish()
+        rig.controller.pause()
+
+        rig.succeed()
+
+        assertTrue(callback.outcomes.isEmpty())
+    }
+
+    @Test
+    fun g1c_aSynchronousEchoInsideTheAbandonCancel_isDropped() {
+        val rig = Rig().resumed()
+        val callback = RecordingCallback()
+        rig.launch(1L, callback)
+        rig.handle.onCancel = { rig.error(BiometricPrompt.ERROR_CANCELED) }
+
+        rig.controller.get().finish()
+        rig.controller.pause()
+
+        assertTrue("the wait is set before the library cancel, so a synchronous echo is dropped", callback.outcomes.isEmpty())
+        assertFalse(rig.adapter.isAwaitingLibraryTerminal)
+    }
+
+    @Test
+    fun g1c_abandonWithNothingInFlight_isANoOp() {
+        val rig = Rig().resumed()
+
+        rig.adapter.abandonForHostLoss()
+        rig.controller.get().finish()
+        rig.controller.pause().stop().destroy()
+
+        assertEquals(0, rig.handle.cancelCalls)
+        assertFalse(rig.adapter.isAwaitingLibraryTerminal)
     }
 
     // ---- S20-a: adopt (rotation hand-over of the open attempt) ---------------------------------------

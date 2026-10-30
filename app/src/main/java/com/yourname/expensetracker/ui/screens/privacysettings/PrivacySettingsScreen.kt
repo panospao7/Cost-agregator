@@ -59,6 +59,7 @@ import com.yourname.expensetracker.ui.theme.SemanticColors
 @Composable
 fun PrivacySettingsScreen(
     onDismiss: () -> Unit,
+    onOpenAppPinSettings: () -> Unit = {},
     viewModel: PrivacySettingsViewModel = hiltViewModel(),
     notificationStatusViewModel: NotificationCaptureStatusViewModel = hiltViewModel()
 ) {
@@ -141,7 +142,7 @@ fun PrivacySettingsScreen(
             }
 
             // -- App lock & privacy section (S12, 1a: discreet row only; owns its own divider) --
-            item { AppLockPrivacySection() }
+            item { AppLockPrivacySection(onOpenAppPinSettings = onOpenAppPinSettings) }
 
             // -- Notification section --
             item {

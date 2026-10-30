@@ -2238,3 +2238,187 @@ Source: privacy-security-guardian ACCEPT-WITH-CONDITIONS and architecture-guardi
   - any network step beyond the installed images.
   Findings are reported, never patched in place.
 - **Estimate:** ~10 runner runs plus C scripting. reviewer-strict at the app-lock merge candidate.
+
+
+## Amendment (2026-10-29): G1c — AE-118 orphan prompt + CF-4 silent cancel + R3 emulator pass (feature-planner, Sonnet; orchestrator-persisted; BINDING)
+Basis: owner-approvals 90 (owner delegated the open pre-release items to the orchestrator's recommendations). T3 privacy/lifecycle. Process: a Sonnet writer for production, a SEPARATE Sonnet test-author (privacy slice, item 87), one combined guardian, and reviewer-strict at the next app-lock merge candidate.
+
+### Root causes
+- **AE-118:**
+  - AppLockPromptHost.kt:83-88 `onHostDestroyed` clears the relay registration and then calls `controller.onPromptHostLost` (AppLockController.kt:664-667). The controller's `authenticator.cancel` then finds no registration, so `BiometricPrompt.cancelAuthentication()` is never called.
+  - The adapter's ON_DESTROY observer (BiometricPromptDeviceAuthenticator.kt:211-214) only calls `clearAwaiting()`.
+  - So the AOSP prompt window is orphaned.
+  - The adapter `cancel()` (:282-299) delivers `Failed(SYSTEM_CANCELED)` and must NOT be reused for host loss: HOST_LOST ends are silent, Abandoned (ux 4.3, S23).
+- **CF-4:** `nextUnlockMessage` (AppLockShell.kt:91-93) yields TRY_AGAIN for any `Authenticating(UNLOCK) -> Locked` transition. The controller publishes no end-kind (`routeOutcome` AppLockController.kt:1645-1658), so the shell cannot tell a user cancel from a lockout or error.
+
+### Decision (orchestrator under owner-approvals 90)
+- CF-4: remove the TRY_AGAIN derivation. Every UNLOCK-prompt end returns silently to the lock surface.
+  - Fail-closed is unchanged: Locked, Unlock enabled, no auto-reprompt.
+  - The `LockSurfaceMessage.TRY_AGAIN` enum entry and its string are KEPT (not deleted; es/el).
+- **CF-4b (DEFERRED residual):** non-cancel UNLOCK failures (lockout, transient, SYSTEM_CANCELED) also show no line until the controller publishes a bounded `UnlockEnd`. Previously only the generic TRY_AGAIN showed (not the spec text either). The system prompt shows its own lockout UI. This is a later increment.
+
+### Exact behaviour
+1. Host finishing (not a config change) with a prompt in flight (any purpose):
+   - The earliest of ON_PAUSE/ON_STOP with `isFinishing && !isChangingConfigurations`, or ON_DESTROY with `!isChangingConfigurations`, triggers a silent abandon in the adapter:
+     - `inFlight = null`;
+     - `prompt?.cancelAuthentication()` in try/catch (rethrow CancellationException; bounded RuntimeException swallow);
+     - NO callback;
+     - `beginAwaiting()`, so the echo is dropped.
+   - ON_DESTROY still reports `onPromptHostLost(id)` exactly once via the relay record (unchanged).
+   - It is idempotent.
+2. Rotation (`isChangingConfigurations`): no cancel. The prompt survives and a matching success commits (the AE-118 rotation case is unchanged).
+3. Host stopped but NOT finishing (OEM credential screen, Home): no cancel (AE-36/117/120 unchanged).
+4. A late success from an orphan is not applied (stale id, T12, unchanged).
+5. Lock surface after any UNLOCK-prompt end: Locked, no status line (only T5 SETTINGS_UNREADABLE keeps its text), Unlock enabled, no auto-reprompt.
+6. `ERROR_CANCELED` stays `Failed(SYSTEM_CANCELED)` in `mapAuthenticationError` (:100). No remap. The settings B-4 text is untouched.
+
+### Write set
+**Production (writer):**
+- `ui/applock/BiometricPromptDeviceAuthenticator.kt`: `internal fun abandonForHostLoss()`, plus the init observer (:205-220) ON_PAUSE/ON_STOP/ON_DESTROY with the finishing/not-config guard.
+- `ui/applock/AppLockShell.kt`: `nextUnlockMessage` (:84-97) returns null for the UNLOCK transition; update the KDoc (:74-82).
+- AppLockPromptHost.kt only if the adapter observer proves insufficient.
+- No controller, domain, DAO, manifest or permission change.
+
+**Docs (writer):**
+- domain-spec AE-118 (a finishing host cancels the library prompt silently);
+- ux-flows 4.3/4.4 (the CF-4 alignment and the CF-4b residual);
+- LEGAL_PATHS "AE-118 settings-prompt hold" (:1642-1649).
+
+**Tests (test-author):**
+- BiometricPromptAdapterStateMachineTest:
+  - finishing ON_PAUSE cancels once, with no callback; inFlight is cleared and awaiting is set;
+  - a second signal is a no-op;
+  - config change: no cancel, and adopt works;
+  - not finishing: no cancel;
+  - a library RuntimeException is swallowed;
+  - an echo after abandon is dropped.
+- AppLockPromptHostTest: a finishing destroy reports `onPromptHostLost` once; a config-change destroy gives no loss and no cancel.
+- AppLockShellTest: the cf4_* tests (:384-449) are rewritten IN PLACE to null / no TRY_AGAIN.
+- AppLockSurfaceTest:137 stays.
+- BiometricPromptOutcomeMappingTest pins USER_CANCELED / NEGATIVE_BUTTON → Cancelled and CANCELED → Failed(SYSTEM_CANCELED).
+- Re-run AppLockBiometricSourceScanTest and AppLockRelaySourceScanTest.
+- Instrumented:
+  - AppLockPromptHostDeviceTest g1b_AE44 (:189-230) is TIGHTENED to strict silent (an applock_msg_try_again text count of 0; keep the disallowed list and the no-reprompt check).
+  - NEW AE-118 orphan case: a CONFIRM_CHANGE prompt showing, then a CLEAR_TASK restart. The prompt window must be gone without Back, the state Unlocked, and the change not applied.
+  - AppLockLifecycleDeviceTest: re-run only.
+
+### Validation
+1. targeted `*BiometricPromptAdapterStateMachineTest*,*AppLockPromptHostTest*,*AppLockShellTest*,*AppLockSurfaceTest*,*BiometricPromptOutcomeMappingTest*,*BiometricPromptHostGatingTest*,*AppLockBiometricSourceScanTest*,*AppLockRelaySourceScanTest*`
+2. runtime-ui
+3. cancellation, known_good_state
+4. static-guards
+5. connected AppLockPromptHostDeviceTest + AppLockLifecycleDeviceTest on API 34 and API 35
+6. app-check at the candidate
+
+### STOP
+- A new permission; a guard edit or baseline growth; any controller, state-machine or domain change (that is CF-4b).
+- An ERROR_CANCELED remap; deleting the TRY_AGAIN string.
+- Any change to rotation or OEM-stop/AE-117 behaviour.
+- Logging library text or codes.
+- The `isFinishing && !isChangingConfigurations` guard is mandatory and must be test-pinned.
+
+### R3 emulator pass (API 34 or 35, with G1c installed; lock on, timeout "Immediately", secure screen on)
+1. **Share:** with the sheet open while backgrounded, no content in the preview; a blank recents card; on return from the target, the lock surface with no content flash.
+2. **SAF** (backup export/import picker; choose or cancel): on return, re-locked per the timeout rule; no loop; no stranded Authenticating; a held flow is not silently lost (or is dropped per spec).
+3. **Camera** (receipt capture; take or cancel): re-lock on return; record whether a taken photo survives; no content in the return frame.
+4. **For each case:** FLAG_SECURE; no TRY_AGAIN after a prompt cancel; an AE-118 notification tap with a settings prompt up leaves the prompt gone with no Back and nothing applied.
+- Evidence: build/release-lead-notes/g1c/. Failures are findings, not inline fixes.
+- AE-42/117 OEM screens stay the release-candidate real-phone residual.
+
+### G1c guardian dispositions (2026-10-29): combined guardian ACCEPT-WITH-CONDITIONS. LOW-2 (ux TRANSIENT row pointer) fixed. LOW-1 (destroy path re-posts awaitingTimeout, keeping the adapter referenced for AWAITING_TERMINAL_TIMEOUT_MS) DECLINED by the orchestrator: the leak is bounded and transient, it preserves the echo-drop guarantee after destroy, and it is pinned by a test-author test. Process condition: the tests are written; validation follows.
+
+
+## Increment 2 re-anchor amendment (BINDING; 2026-10-30; feature-planner Sonnet re-anchor at 7026fef7; orchestrator decisions per owner-approvals 92)
+
+Baseline: no PIN code exists (only the `TODO(S25)` at AppLockController.kt:636). Every existing seam named by S24-S27 is present. There is no `lockMode`, `PinStep`, PIN reason code or `strings_applock_pin*.xml`. `allowBackup=false`; no `dataExtractionRules`. Keystore precedents: SecureKeyStorage, BankTokenCipher, KeystoreInstallationSecretHasher.
+
+### Write-set amendments (drift fixed; decided)
+- D-I2-1: S24 also owns `AppLockPrivacySettings.kt`, `AppLockSettingsRepository.kt` and `AppLockSettingsRepositoryImpl.kt` (`lockMode`, absent-key default; INV-50 "write lockMode=APP_PIN first, then the verifier"), plus `AppLockSettingsRepositoryImplTest` / `...CorruptionTest`.
+- D-I2-2: S25 also owns `AppLockState.kt` (PinStep, AuthPurpose) and `EffectivePrivacyValues.kt`.
+- D-I2-3: S24 owns the PIN `DiagnosticReasonCode` entries (PIN_ATTEMPT_STATE_UNREADABLE, PIN_VERIFIER_UNREADABLE, PIN_BIOMETRIC_INVALIDATED), the `PrivacyDiagnosticsEmitter` changes and their test; S26 consumes them.
+- D-I2-4: S24 owns all PIN bindings in `di/AppLockModule.kt` (including BiometricPinKeyManager), so S26 and S27 stay off it.
+- D-I2-5: S26 extends `AppLockBiometricSourceScanTest` (plus BiometricPromptCopyTest, ...OutcomeMappingTest, ...AdapterStateMachineTest) for the second STRONG-only constant (INV-40) WITHOUT weakening: the BIOMETRIC_WEAK ban stays, and the privacy guardian must approve the edit. Any allowlist growth is a stop-and-ask.
+- D-I2-6: S27's filters add AppLockGateSourceScanTest, AppLockGateTest, MainScreenCallSiteTest and AppLockSurfaceTest.
+- D-I2-7: S25 freezes the controller API for the "use fingerprint" affordance, so S27 does not depend on S26; S27 can ship with fingerprint hidden. After S25, S26 is the only writer of AppLockController (S25 and S26 are serialized on the controller).
+
+### Order
+S24 -> S25 -> {S26 || S27} -> G2 (the plan's dormancy rule: S27, the user-visible switch, ships last; S26 is releasable alone).
+
+### Tiers and gates
+S24-S27 are all privacy tier: a Sonnet writer plus a separate Sonnet test-author, and the combined guardian per slice. S24 additionally gets a privacy-guardian DESIGN review before code (D-I2-8 below). reviewer-strict (Opus xhigh) runs at the increment-2 merge candidate after G2.
+
+### Validation (per slice; ladder rules apply)
+- S24: targeted `*AppPinStore*,*PinAttemptPolicy*,*PinFormatPolicy*,*PinVerifierKdf*,*AppLockSettingsRepositoryImpl*,*PrivacyDiagnosticsEmitter*`; shards data, domain-n-z; guards pii_logging, cancellation (plus known_good_state if its registry covers the new files).
+- S25: targeted `*AppLockControllerPin*,*AppLockController*,*LockNoticeDerivation*,*AppLockSettingsOperations*`; shard domain-n-z; cancellation.
+- S26: targeted `*BiometricPinKeyManager*,*AppLockControllerPinBiometric*,*BiometricPrompt*,*AppLockBiometricSourceScan*`; shards data, domain-n-z, runtime-ui; lint; pii_logging; device AE-76 via `adb emu finger` (API 30+).
+- S27: targeted `*PinPad*,*PinLockSurface*,*AppPinSettings*,*PinSetupFlow*,*AppLockGate*,*AppLockPrivacy*,*MainScreenCallSite*,*AppLockSurface*`; shard runtime-ui; lint; ui_dao, pii_logging.
+- G2: as G1b plus the permission-drift evidence run; device AE-73 (reboot delay), AE-76, AE-80, AE-119, AE-120 (if applicable).
+
+### PIN storage decisions (spec 6.1/6.2)
+DECIDED in the spec:
+- PBKDF2-HMAC-SHA256: salt >= 16 B, output >= 32 B, cost 200 ms-1 s on the slowest API-30 class; algorithm and parameters stored with the hash; rehash on the next verify.
+- Keystore: a non-exportable HMAC key with no user-auth requirement.
+- PIN format: 6-12 digits; all-same and simple sequences rejected.
+- Attempt delays: 30 s / 1 min / 5 min / 15 min, then 60 min (cap) from failure 5. The delay is durable before the result is shown; it is measured on elapsedRealtime plus the boot count; unreadable state = 4 failures + 30 s and REPAIRED_UNREADABLE; never a wipe; one shared counter.
+- Biometric: BIOMETRIC_STRONG only, with a user-auth key invalidated on enrolment.
+- Storage: an app-private store, allowBackup=false.
+- Disable: wipe the PIN data first, then the settings (INV-49).
+- No `security-crypto` dependency.
+
+D-I2-8 (OPEN -> resolved at the S24 privacy design review, before code):
+- KDF cost calibration (static vs on-device benchmark);
+- StrongBox/TEE fallback;
+- AndroidBootCountSource fallback (assume a restart; fail closed);
+- the exact CryptoObject key spec (S26);
+- deletion atomicity across the two stores (INV-49; a failure between the steps resolves to DEVICE_AUTH).
+
+D-I2-9: OD-19 (an app-wide `dataExtractionRules` for device-to-device transfer) is a PRE-S27 gate. It is decided before the user can create a PIN; it is not needed for the dormant S24-S26. Until then, protection relies on the Keystore binding plus the hard lock (OD-15a).
+
+### Owner items
+- es/el sign-off for `strings_applock_pin.xml` and `strings_applock_pin_prompt.xml`.
+- The OEM AE-42/117 real-phone residual at the release candidate.
+- No new permission: S26 reuses USE_BIOMETRIC. Re-adding USE_FINGERPRINT is a stop-and-ask.
+- No guard change.
+
+
+### S24 design decisions (BINDING; 2026-10-30; privacy-security-guardian design review READY-WITH-CONDITIONS; orchestrator accepts all, owner-approvals 92)
+1. KDF:
+   - `PBKDF2WithHmacSHA256` (API 26+), a STATIC 150_000 iterations, a 16 B SecureRandom salt, 32 B output.
+   - One string-preference record `{recordVersion, algId, iterations, salt, keyAliasVersion, tag}`, where tag = Keystore-HMAC(domainTag || iterations || salt || pbkdf2Out).
+   - Strict parse: an unknown algId, iterations outside [50_000, 2_000_000], or a wrong salt/tag length = PRESENT-BUT-UNREADABLE (never absent).
+   - Rehash only after a successful verify, when iterations < CURRENT or algId != CURRENT; a failed rehash write never blocks unlock.
+   - G2 must measure 200 ms-1 s on a low-end API-30 device (condition C); if it misses, bump the constant in a new recordVersion.
+2. Keystore:
+   - A non-exportable HMAC-SHA256 256-bit key, PURPOSE_SIGN, no user-auth requirement, TEE only (no StrongBox), alias `applock_pin_hmac_v1`.
+   - The key is created only in setup (an existing alias is deleted first); change-PIN reuses it; verify is get-only and never creates a key.
+   - A missing key or any Keystore exception gives `VerifierUnreadable(KEY_MISSING | KEYSTORE_ERROR)` + PIN_VERIFIER_UNREADABLE: the attempt counter is untouched, the state stays LOCKED (retry only for KEYSTORE_ERROR), and nothing is wiped or auto-deleted.
+   - A setup write failure after key generation deletes the alias, best effort.
+3. Boot count and durability:
+   - `BootCountSource: Int?` (Settings.Global.BOOT_COUNT; any exception or a value < 0 gives null).
+   - A reboot is detected when the boot count differs OR elapsedRealtime < delayStartedElapsed.
+   - If the count is null or the stored count is -1: on the FIRST evaluation per process with an active delay, re-anchor durably (a full tier restart, bounded at 60 min); later evaluations in the process use elapsed time.
+   - Verify is write-ahead under a Mutex: increment the shared counter with updateData (setting delayStartedElapsed and bootCount), then evaluate; a correct PIN resets the counter in a second write.
+   - A failed increment write gives `Unavailable` (no evaluation, no unlock, no wipe); a failed reset write after a correct PIN still unlocks.
+   - The counter saturates at 1000; an active delay rejects without evaluating.
+4. Deletion (INV-49), `deleteAll()` in order:
+   1. one awaited clear() of the PIN store (verifier, attempts, notice flag, biometricEnabled) — the only decisive step;
+   2. delete the HMAC alias, best effort;
+   3. (S26) delete the biometric key, best effort.
+
+   A step-1 failure gives `Failed`, with the settings untouched. The controller then writes the settings. A crash after step 1 leaves lockMode=APP_PIN with no verifier, which resolves to DEVICE_AUTH or INERT. deleteAll is idempotent.
+5. Store and memory:
+   - A dedicated singleton DataStore `app_lock_pin_store` via PreferenceDataStoreFactory.create(produceFile = noBackupFilesDir/...). No manifest edit in S24.
+   - NO ReplaceFileCorruptionHandler: CorruptionException/IOException = present-but-unreadable.
+   - Setup writes the verifier + attempt{0} + the flag in ONE edit; a verifier without an attempt key = unreadable attempt state, repaired (AMD-11).
+   - APIs take a CharArray, zeroed in `finally` (including on cancellation; CancellationException rethrown). PBEKeySpec.clearPassword(); derived key, tag and salt copies zero-filled; compare with MessageDigest.isEqual.
+   - No Strings, logs or SavedStateHandle for the PIN. Diagnostics carry only the three PIN codes: no counts, tiers or timings.
+Conditions:
+- A. "Simple sequences" = all-same; whole-string +1 or -1 runs; a repeated block of period <= 3. The test-author pins this.
+- B. `biometricEnabled` lives in the PIN store.
+- C. The iteration timing is measured at G2.
+- D. S27 must not use a String-backed TextField for PIN entry (INV-38): a CharArray pad. This is an S27 gate.
+- E. S24 exposes `resetAttempts()`, callable only by the controller (biometric success).
+
+### D-I2-7 amended (2026-10-30, owner-approvals 92)
+- The frozen fingerprint API is now `suspend fun requestFingerprintUnlock()` (user tap; opens an UNLOCK attempt with PIN_FINGERPRINT copy through the existing attempt/watchdog machinery). `onFingerprintUnlockSucceeded()` is REMOVED (proof-less unlock, G26-1/G26-2). S27 had not consumed it.
+- `closeWith` unlocks a PIN_FINGERPRINT success only in effective APP_PIN with the verifier PRESENT and `biometricEnabled`; NotAvailable/LockedOut/Cancelled return to LOCKED (never INERT, no device credential); `resetAttempts()` runs after the close inside NonCancellable.

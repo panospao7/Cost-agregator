@@ -12,6 +12,7 @@ import com.yourname.expensetracker.domain.privacy.applock.AutoLockTimeout
 import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsLoadState
 import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsWriteResult
 import com.yourname.expensetracker.domain.privacy.applock.AppLockWriteRejection
+import com.yourname.expensetracker.domain.privacy.applock.LockMode
 import com.yourname.expensetracker.domain.privacy.applock.SettingsUnreadableCause
 import java.io.File
 import java.io.IOException
@@ -247,7 +248,8 @@ class AppLockSettingsRepositoryImplTest {
                 "discreet_notifications" to false,
                 "app_lock_enabled" to false,
                 "auto_lock_timeout" to "M1",
-                "secure_screen" to false
+                "secure_screen" to false,
+                "lock_mode" to "DEVICE_AUTH"
             ),
             stored
         )
@@ -516,7 +518,8 @@ class AppLockSettingsRepositoryImplTest {
                 "discreet_notifications" to true,
                 "app_lock_enabled" to true,
                 "auto_lock_timeout" to "IMMEDIATE",
-                "secure_screen" to true
+                "secure_screen" to true,
+                "lock_mode" to "DEVICE_AUTH"
             ),
             real.data.first().asMap().mapKeys { it.key.name }
         )
@@ -639,7 +642,8 @@ class AppLockSettingsRepositoryImplTest {
             "discreet_notifications" to true,
             "app_lock_enabled" to true,
             "auto_lock_timeout" to "M5",
-            "secure_screen" to true
+            "secure_screen" to true,
+            "lock_mode" to "DEVICE_AUTH"
         )
         val names = listOf("CORRUPTED", "INVALID_VALUE unknown marker", "INVALID_VALUE bare invalid lock flag")
         for (name in names) {
@@ -812,10 +816,137 @@ class AppLockSettingsRepositoryImplTest {
                 "discreet_notifications" to true,
                 "app_lock_enabled" to true,
                 "auto_lock_timeout" to "M15",
-                "secure_screen" to true
+                "secure_screen" to true,
+                "lock_mode" to "DEVICE_AUTH"
             ),
             real.data.first().asMap().mapKeys { it.key.name }
         )
+    }
+
+    // ---------------------------------------------------------------------------------
+    // S24: lock_mode (spec 2.1; INV-49 / INV-50 store part)
+    // ---------------------------------------------------------------------------------
+
+    private val lockModeKey = stringPreferencesKey("lock_mode")
+
+    @Test
+    fun absent_lock_mode_with_normal_marker_reads_device_auth() = runBlocking {
+        real.edit { it[markerKey] = "NORMAL" }
+
+        val state = repository.getLoadState() as AppLockSettingsLoadState.Loaded
+        assertEquals(LockMode.DEVICE_AUTH, state.settings.lockMode)
+    }
+
+    @Test
+    fun invalid_lock_mode_token_reads_fail_closed_app_pin_and_is_loaded() = runBlocking {
+        real.edit {
+            it[markerKey] = "NORMAL"
+            it[lockModeKey] = "NOT_A_MODE"
+        }
+
+        val state = repository.getLoadState() as AppLockSettingsLoadState.Loaded
+        assertEquals(LockMode.APP_PIN, state.settings.lockMode)
+    }
+
+    @Test
+    fun non_string_lock_mode_value_reads_fail_closed_app_pin() = runBlocking {
+        real.edit {
+            it[markerKey] = "NORMAL"
+            it[booleanPreferencesKey("lock_mode")] = true
+        }
+
+        val state = repository.getLoadState() as AppLockSettingsLoadState.Loaded
+        assertEquals(LockMode.APP_PIN, state.settings.lockMode)
+    }
+
+    @Test
+    fun a_lone_lock_mode_key_without_a_marker_is_loaded_never_first_run() = runBlocking {
+        real.edit { it[lockModeKey] = "APP_PIN" }
+
+        val state = repository.getLoadState()
+        assertTrue(state is AppLockSettingsLoadState.Loaded)
+        assertEquals(LockMode.APP_PIN, (state as AppLockSettingsLoadState.Loaded).settings.lockMode)
+    }
+
+    @Test
+    fun setLockMode_round_trips_both_modes_and_writes_the_normal_marker() = runBlocking {
+        val toPin = repository.setLockMode(LockMode.APP_PIN)
+
+        assertEquals(
+            AppLockSettingsWriteResult.Committed(AppLockPrivacySettings(lockMode = LockMode.APP_PIN)),
+            toPin
+        )
+        assertEquals(
+            mapOf("_app_lock_load_state" to "NORMAL", "lock_mode" to "APP_PIN"),
+            real.data.first().asMap().mapKeys { it.key.name }
+        )
+
+        val back = repository.setLockMode(LockMode.DEVICE_AUTH)
+
+        assertEquals(
+            AppLockSettingsWriteResult.Committed(AppLockPrivacySettings(lockMode = LockMode.DEVICE_AUTH)),
+            back
+        )
+        assertEquals("DEVICE_AUTH", real.data.first()[lockModeKey])
+        assertEquals(
+            LockMode.DEVICE_AUTH,
+            (repository.getLoadState() as AppLockSettingsLoadState.Loaded).settings.lockMode
+        )
+    }
+
+    @Test
+    fun setLockMode_leaves_the_other_fields_untouched() = runBlocking {
+        val record = AppLockPrivacySettings(
+            discreetNotifications = true,
+            appLockEnabled = true,
+            autoLockTimeout = AutoLockTimeout.M15,
+            secureScreen = true
+        )
+        commitViaReview(record)
+
+        val result = repository.setLockMode(LockMode.APP_PIN)
+
+        assertEquals(AppLockSettingsWriteResult.Committed(record.copy(lockMode = LockMode.APP_PIN)), result)
+    }
+
+    @Test
+    fun setLockMode_is_rejected_over_an_unreadable_store_and_writes_nothing() = runBlocking {
+        real.edit { it[markerKey] = "CORRUPTED" }
+        val before = real.data.first().asMap()
+
+        val result = repository.setLockMode(LockMode.DEVICE_AUTH)
+
+        assertEquals(AppLockSettingsWriteResult.Rejected(AppLockWriteRejection.UNREADABLE), result)
+        assertEquals(before, real.data.first().asMap())
+    }
+
+    @Test
+    fun reviewSave_ignores_the_lock_mode_of_the_record_and_writes_DEVICE_AUTH_when_no_valid_token_is_stored() = runBlocking {
+        real.edit { it[markerKey] = "CORRUPTED" }
+        val record = AppLockPrivacySettings(lockMode = LockMode.APP_PIN)
+
+        val result = repository.reviewSave(record)
+
+        val expected = record.copy(lockMode = LockMode.DEFAULT)
+        assertEquals(AppLockSettingsWriteResult.Committed(expected), result)
+        assertEquals("DEVICE_AUTH", real.data.first()[lockModeKey])
+        assertEquals(AppLockSettingsLoadState.Loaded(expected), repository.getLoadState())
+    }
+
+    @Test
+    fun `INV-45 reviewSave carries a stored APP_PIN token through unchanged`() = runBlocking {
+        real.edit {
+            it[markerKey] = "CORRUPTED"
+            it[lockModeKey] = "APP_PIN"
+        }
+        val record = AppLockPrivacySettings(lockMode = LockMode.DEVICE_AUTH)
+
+        val result = repository.reviewSave(record)
+
+        val expected = record.copy(lockMode = LockMode.APP_PIN)
+        assertEquals(AppLockSettingsWriteResult.Committed(expected), result)
+        assertEquals("APP_PIN", real.data.first()[lockModeKey])
+        assertEquals(AppLockSettingsLoadState.Loaded(expected), repository.getLoadState())
     }
 
     @Test

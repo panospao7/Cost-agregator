@@ -3062,3 +3062,217 @@ Validation to request: unchanged, targeted `*AppLockController*` (covers both te
 - API 35 PromptHost regression after the AE41 harness fix: PASS vr-20261029-100010-15ff58ea. G1b COMPLETE.
 - Next: the app-lock merge candidate (reviewer-strict, Opus xhigh) on 4add2466..HEAD, then ASK the owner to merge into feature/ai-evolution.
 - Merge-candidate review (reviewer-strict, 2026-10-29): ACCEPT-WITH-CONDITIONS, no blocker. Fixed: the ENGINE_INTERACTION_MAP lock-on/off sweep sentence; domain-spec AE-102 plus the §10 NOTIF_REPOST_UNCONFIRMED row; the duplicate weSetPin. Pre-release conditions (OWNER): AE-118 discarded-success UX (finding 3), CF-4 sign-off, an OEM device pass for AE-42/117, and an R3 share/SAF/camera pass with the 'Immediately' timeout.
+- MERGE CANDIDATE 5048db7a (integration/ai-evolution-1b, local, NOT pushed) VALIDATED: guard_docs_truth vr-20261029-101048-a1fa2963, static-guards vr-20261029-101106-50c570f9, app-check vr-20261029-102739-9b90ef18, all PASS. AWAITING OWNER approval to push to feature/ai-evolution.
+- 2026-10-29: OWNER approved (owner-approvals 89). Merge 5048db7a pushed to feature/ai-evolution (fast-forward from 4add2466). Next for app-lock: S24-S27 and G2; the pre-release owner items (AE-118, CF-4, OEM pass, R3 pass).
+- G1c (2026-10-29), uncommitted, in progress:
+  - JVM ladder all PASS: targeted vr-20261029-162550-bcfc27eb, runtime-ui vr-20261029-163022-22700b42, cancellation vr-20261029-163310-1535c46c, known_good_state vr-20261029-163328-324f7902, static-guards vr-20261029-163632-8561fac7.
+  - API 34: AppLockLifecycleDeviceTest PASS vr-20261029-171302-d1d668d2; AppLockPromptHostDeviceTest PASS 6/6 vr-20261029-181528-90b01fc1 (after the harness fix: the API 34 prompt window is titled 'BiometricPrompt'). Manual AE-118 PASS (evidence g1c/34).
+  - R3 (API 34): SAF, FLAG_SECURE, screencap and CF-4 PASS; share and camera follow-up running.
+  - Guardian ACCEPT-WITH-CONDITIONS (LOW-2 fixed; LOW-1 declined).
+  - The runner rejects Class#method filters (E_INVALID_TEST_FILTER); use whole classes.
+  - Next: R3 follow-up, API 35 device classes, commit G1c.
+  - R3 (API 34) COMPLETE: share (the chooser shows only the file name, re-lock on return), SAF, camera (re-lock on return; the photo survives unlock into receipt review), FLAG_SECURE, screencap refused, CF-4 silent. No leak. Evidence g1c/34 runs.md Parts A-E. Residual: the credential prompt sometimes needs the PIN re-entered (emulator input timing).
+  - NOW: API 35 device classes for G1c.
+  - API 35: AppLockPromptHostDeviceTest PASS vr-20261029-191103-c329656a; AppLockLifecycleDeviceTest PASS vr-20261029-191234-a9276ccc.
+- G1c COMMITTED (owner-approvals 90 items AE-118, CF-4 and R3 closed; CF-4b deferred; AE-42/117 OEM screens remain the release-candidate real-phone residual). reviewer-strict at the next app-lock merge candidate. Next app-lock: S24-S27, G2.
+
+## 2026-10-30: increment 2 (S24-S27, G2) re-anchored; S24 design review next
+- The plan's "Increment 2 re-anchor amendment" (BINDING) records drift fixes D-I2-1..7, the order S24 -> S25 -> {S26 || S27} -> G2, per-slice validation, the PIN storage decisions, the open items for the S24 privacy design review (D-I2-8), and OD-19 as a pre-S27 gate (D-I2-9). Orchestrator decisions are under owner-approvals 92.
+- Next: the S24 privacy-guardian DESIGN review (resolve D-I2-8), then the S24 Sonnet writer plus a separate test-author.
+- S24 implemented (writers A+B) and tested (three test-authors; one attempt timed out and was split). Targeted vr-20261030-033610-06f65b18 PASS. The remaining ladder was withdrawn for the guardian fixes.
+- S24 combined guardian (privacy-security): ACCEPT-WITH-CONDITIONS. Dispositions (orchestrator, owner-approvals 92):
+  - G24-1 (MEDIUM): the cancellation/exception catch in setup deleted the key even if DataStore had committed (verifier with no key = permanent lockout). FIX: re-read under NonCancellable and delete the key only if no verifier is present.
+  - G24-2 (MEDIUM): setup deleted an existing key before checking for an existing verifier. FIX: setup returns FAILED when a verifier exists, before createForSetup().
+  - G24-3 (LOW): a matches() failure after the write-ahead leaves the counter incremented. FIX: best-effort restore of the previous attempt state.
+  - G24-4 (LOW): the RECORD_UNREADABLE KDoc is inaccurate. FIX: the guardian's wording.
+  - G24-5 (LOW): the observeState `.catch` ends the flow and a transient IOException reads as RECORD_UNREADABLE. S25 NOTE: retry via readState() and re-collect; the UI gets a retry action.
+  - G24-6 (LOW): reviewSave writes record.lockMode. S25 NOTE: pass the stored mode through (INV-45).
+  - G24-7 (LOW): import order in AppLockModule. FIX.
+  - deleteAll on a corrupt store: CONFIRMED as spec intent (§6.4/6.5, INV-41/42; no device-credential fallback, OD-15). S25 recovery copy explains clearing data and restoring a .costbackup.
+  - "TEE only" can't be forced: G2 checks KeyInfo security level.
+  - Docs: LEGAL_PATHS (Segment 28 PIN-store ownership and verify path), ENGINE_INTERACTION_MAP (PIN-store row), CODEBASE_SEGMENTS Segment 28 files, CODEBASE_INVENTORY and hilt-bindings-map (bindings, @AppPinDataStore, 3 codes). FIX in the same pass.
+- S24 validation, all PASS:
+  - targeted (pre-cancel-fix fingerprint) vr-20261030-040550-9136a0b6
+  - data vr-20261030-040851-d4e58edd
+  - domain-n-z vr-20261030-041308-0fa03eb3
+  - known_good_state vr-20261030-041530-1e95f38a
+  - guard_docs_truth vr-20261030-041833-282377c1
+- Cancellation guard G-CANCEL-01 (vr-20261030-041512-bc808b9f, static-guards vr-20261030-041851-3dfb7f9a): setup's CE catch did cleanup before `throw e`, which the guard's sibling rule does not recognise. Debugger root cause; fixed by merging the two catches into one `catch (e: Exception)` that runs the cleanup and then `if (e is CancellationException) throw e`. No behaviour change; no allowlist or baseline edit.
+- Post-fix runs, all PASS:
+  - AppPinStore/PinVerifierKdf vr-20261030-045128-d84008f4
+  - cancellation vr-20261030-045432-240cd2db
+  - static-guards vr-20261030-045450-02e5467e
+  - lint vr-20261030-051039-332d0155
+- Orchestrator process note: one test edit landed while a data-shard run was active. That run was discarded and re-run (vr-20261030-040851-d4e58edd).
+- S24 COMMITTED (see git log). Dormant: nothing calls setup. Next: S25 (controller PIN substates; resolves TODO(S25) at AppLockController.kt:636; S25 notes G24-5/G24-6; freezes the "use fingerprint" API per D-I2-7).
+- S25 implemented in three small writer steps (two full-slice writers died on API timeouts): state types/effective mode/G24-6; the unlock-by-PIN path; enable/change/disable plus the inert fingerprint API. Part A tests (FakeAppPinStore, unlock path) are being written.
+- S25 combined guardian: ACCEPT-WITH-CONDITIONS. Dispositions (orchestrator, owner-approvals 92); all FIX unless noted:
+  - G25-1 HIGH: the T31/step machinery is missing. Add requestPinSetup (the T31 CONFIRM_CHANGE device prompt) and enter/exit step APIs; enable/change/disable require the matching open PinStep (INV-50, AMD-12, AE-119).
+  - G25-2 MEDIUM: a resolve timeout leaves pinState null with no observer (AMD-4 downgrade with FAIL_CLOSED settings). On timeout set pinState=UNREADABLE (retry offered); start the observation outside the timeout.
+  - G25-3 MEDIUM: an in-flight UNLOCK device-auth success while the effective mode is APP_PIN is stale: back to LOCKED, no unlock.
+  - G25-4 MEDIUM: T28 apply uses the mode-aware deviceAuthInertReasonLocked.
+  - G25-5 MEDIUM: unlockByPin also runs applyKeptRereadAfterClose (T29).
+  - G25-6 MEDIUM: re-check the UNLOCKED/step precondition inside withExclusiveWrite before the first write (TOCTOU). changePin is atomic in the store (documented).
+  - G25-7 MEDIUM: AMD-4/T30 when capability != AVAILABLE: removing the PIN turns the lock off (appLockEnabled=false, DISABLED). Implemented, not deferred.
+  - G25-8 LOW: PinRejection.Wrong toString must not print the tier.
+  - G25-9 LOW: skip the cancel-revert when readState shows PRESENT.
+  - G25-10 LOW: map non-cancellation store exceptions to Unavailable/Failed.
+  - G25-11 LOW: reviewSave falls back to LockMode.DEFAULT, not the record's value.
+  - Docs: LEGAL_PATHS Segment 28 controller paths, ENGINE_INTERACTION_MAP AppPinStore callers, CODEBASE_SEGMENTS Segment 28 files.
+- S25 targeted vr-20261030-072137-03d0882e FAIL (30 of 1619). Debugger: no regression for DEVICE_AUTH users without a PIN. Causes:
+  - test harness: the long-lived PIN observer counted as an active job;
+  - FakeAppPinStore emit shadowing;
+  - a stale Publication reflection pin;
+  - rig counter offsets;
+  - exact-set pins needing extension (9 ports, the PIN public API, a method-scoped CharArray allowance);
+  - the obsolete reviewSave expectation (G25-11).
+- REAL issue G25-7b: writeLockOff added a second production `.setAppLockEnabled(` call site, bypassing AppLockSettingsOperations and its F7 settle re-read. Decision (owner-approvals 92): the pin is NOT loosened. The controller returns a lock-off-required result; AppLockSettingsOperations.removePin performs the lock-off through its existing write path. Production fix and test fixes are running in parallel.
+- S25 final fixes: removePin writes lockMode=DEVICE_AUTH before the lock-off (INV-49; the G25-7b test caught it); setupInOrder's CE handling merged into one recognised catch (G-CANCEL-01). Residual LOW F-S25-DIAG-FIELD: a failed lockMode write during removal is recorded under the APP_LOCK_ENABLED persist code. Process note: one MEC targeted run was made STALE by a concurrent edit and is re-run.
+- S25 final ladder, all PASS:
+  - targeted vr-20261030-082814-8dac2c86
+  - domain-n-z vr-20261030-083446-3d897c4e
+  - runtime-ui vr-20261030-083632-75b9a2a6
+  - cancellation vr-20261030-083951-697228b4
+  - known_good_state vr-20261030-084009-da9a92b7
+  - guard_docs_truth vr-20261030-084313-b6fc0859
+  - static-guards vr-20261030-084331-1838d99c
+  - lint vr-20261030-085950-35a49a6d
+- S25 COMMITTED. Dormant: no UI caller until S27. Next: S26 (fingerprint in PIN mode) || S27 (PIN UI, the switch; INV-38 CharArray pad, D-I2-9 OD-19 gate), then G2 and the increment-2 merge candidate (reviewer-strict).
+- S26 written in two steps (BiometricPinKeyManager; authenticator + controller hook + deleteAll step 3 + strings).
+- S26 combined guardian: REJECT as submitted (ACCEPT-WITH-CONDITIONS once the fixes land). Dispositions (orchestrator, owner-approvals 92):
+  - G26-1/G26-2 (bypass): `onFingerprintUnlockSucceeded()` is public and takes no proof. REMOVED. New `suspend fun requestFingerprintUnlock()`:
+    - user tap only;
+    - requires canOffer, no in-flight attempt, and no PIN operation running;
+    - opens an UNLOCK attempt with PIN_FINGERPRINT copy through the existing authenticate/watchdog machinery;
+    - closeWith accepts a PIN_FINGERPRINT success only when the mode is APP_PIN, the verifier is PRESENT and biometricEnabled is true;
+    - routeNotAvailable/LockedOut/Cancelled for PIN_FINGERPRINT return to LOCKED (never INERT, no device credential);
+    - resetAttempts runs after the close, NonCancellable.
+    - PLAN AMENDMENT: this changes D-I2-7's frozen fingerprint API; S27 had not consumed it.
+  - G26-3 (rotation bypass): carry `copy` through relay adoption (OpenAttempt + AttemptAdopter.adopt(attemptId, copy, callback); pinFingerprint derived from copy; no default) so an adopted PIN attempt still requires verifyAuthenticatedCrypto.
+  - G26-4: move BiometricPinKeyManager + BiometricKeyResult to domain/privacy/applock/pin; AndroidBiometricPinKeyManager stays in data; AppLockPromptHost injects the port; no default data instance in ui.
+  - G26-5: UnrecoverableKeyException from getKey maps to KeyInvalidated.
+  - G26-6: stale AppLockModule comment.
+  - D-I2-5: extend AppLockBiometricSourceScanTest (PIN_MODE_FINGERPRINT_AUTHENTICATORS and setNegativeButtonText allowed only in the prompt file on the PIN_FINGERPRINT branch; constant == BIOMETRIC_STRONG; BIOMETRIC_WEAK ban kept; planted-violation self-check; no allowlist growth). Approved by the privacy guardian's ruling.
+  - Fingerprint during an active PIN delay: ALLOWED (INV-39, ux 4.4). Advisory adopted: hidden when the delay reason is ATTEMPT_STATE_UNREADABLE.
+
+## 2026-10-30: PAUSED by the owner — RESUME HERE
+- Committed on this lane (pushed): S24 271513f7, S25 3890e731 (increment-2 amendment 24928ea1).
+- S26 (fingerprint in PIN mode): steps 1-2 IMPLEMENTED but UNCOMMITTED. The guardian's verdict is REJECT as submitted (rulings above).
+  - DO NOT COMMIT S26 as it stands: it contains the public `onFingerprintUnlockSucceeded()` (a proof-less unlock; dormant, no caller) and the rotation-adoption gap.
+  - Fix pass A (controller) was attempted and died on an API timeout with NO changes.
+- EXACT NEXT ACTION (small writers, edits under ~40 lines each; S26 is the only controller writer):
+  1. Fix A, controller: remove onFingerprintUnlockSucceeded; add requestFingerprintUnlock (user tap, preconditions); closeWith accepts only a verified PIN_FINGERPRINT success in APP_PIN with the verifier PRESENT and biometricEnabled; NotAvailable/LockedOut/Cancelled go to LOCKED (never INERT); NonCancellable resetAttempts after the close; plan amendment "D-I2-7 amended".
+  2. Fix B: carry `copy` through AppLockAuthenticatorRelay adoption (no default; AppLockPromptHost lambdas); move BiometricPinKeyManager + BiometricKeyResult to domain/privacy/applock/pin, with AppLockPromptHost injecting the port and no default data instance in ui; UnrecoverableKeyException maps to KeyInvalidated; fix the stale AppLockModule comment.
+  3. Tests (separate test-author): extend the D-I2-5 scan test without weakening it; BiometricPromptCopyTest asserts the constant == BIOMETRIC_STRONG; key manager tests; AppLockControllerPinBiometric (no unlock without a verified attempt; rotation adopt; NotAvailable in PIN mode never INERT; fingerprint allowed during a delay but not for ATTEMPT_STATE_UNREADABLE); update callers that used onFingerprintUnlockSucceeded (PinUnlockTest:410, PinOperationsTest:780/784, IllegalTransitionTest:639 and its exact method set); BiometricPromptAdapterStateMachineTest adopt calls.
+  4. Re-review with the guardian, then the S26 ladder (targeted *AppLock*,*BiometricPrompt*,*BiometricPinKeyManager*,*AppPinStore*; data, domain-n-z, runtime-ui; cancellation, pii_logging; lint; static-guards).
+  5. Then S27 (PIN UI, the user-visible switch: CharArray pad (INV-38), the OD-19 dataExtractionRules pre-S27 gate D-I2-9, fingerprint enable AE-120, strings), then G2 device checks (incl. PBKDF2 timing and KeyInfo security level), then reviewer-strict at the increment-2 merge candidate and the self-approved merge into feature/ai-evolution.
+- Residuals: F-S25-DIAG-FIELD (LOW); AE-42/117 OEM real-phone check (owner, release candidate); es/el sign-off for strings_applock_pin_prompt.xml.
+
+## 2026-10-30: resumed; S26 ACCEPTED and COMMITTED
+- Fix A (controller):
+  - onFingerprintUnlockSucceeded removed;
+  - `requestFingerprintUnlock()` opens a PIN_FINGERPRINT UNLOCK attempt;
+  - closeWith re-checks APP_PIN, verifier PRESENT and biometricEnabled;
+  - PIN_FINGERPRINT NotAvailable, LockedOut, Cancelled and BecameInert all go to Locked (never INERT, no device-credential fallback);
+  - NonCancellable resetAttempts with ATOMIC start;
+  - the pinDelayReason field hides the fingerprint for ATTEMPT_STATE_UNREADABLE.
+  - Plan amendment "D-I2-7 amended" recorded.
+- Fix B:
+  - copy carried through relay adoption with no default (G26-3);
+  - the BiometricPinKeyManager port moved to domain, the impl stays in data, injected into AppLockPromptHost (G26-4);
+  - UnrecoverableKeyException maps to KeyInvalidated (G26-5);
+  - the module comment is fixed (G26-6).
+  - Accepted deviation: the authenticator's nullable keyManager means PIN_FINGERPRINT fails closed (UnsupportedDatabaseActivity export gate).
+- Tests:
+  - AppLockControllerPinBiometricTest (new);
+  - updated callers;
+  - relay rotation-copy tests;
+  - BiometricPromptPinFingerprintAdoptTest (new);
+  - AppLockBiometricSourceScanTest D-I2-5 extension (branch rule, planted self-check, constant == BIOMETRIC_STRONG, no allowlist growth);
+  - AndroidBiometricPinKeyManagerTest, a source-scan pin; the behaviour is deferred to G2;
+  - AppPinStoreImplTest deleteAll step 3;
+  - pin tests updated to the approved design (six copies, ten ports, PIN_FINGERPRINT = BIOMETRIC_STRONG with "Use PIN").
+- Guardian re-review, split after two API timeouts:
+  - part A (controller) ACCEPT-WITH-FIXES: LOWs applied (KDoc, ATOMIC, docs); the hard-coded Dispatchers.Default in fingerprintReadyFor is noted and not changed;
+  - part B (relay, key, scan) ACCEPT.
+- Ladder, all PASS:
+  - targeted vr-20261030-134418-72b499dd
+  - data vr-20261030-135020-85a509ad
+  - domain-n-z vr-20261030-135437-a266aebb
+  - runtime-ui vr-20261030-135639-c5cbab9d
+  - static-guards vr-20261030-135958-1b0f36a0
+  - lint vr-20261030-141632-26dc5cda
+- NEXT:
+  1. S27: PIN UI, the user-visible switch, the CharArray pad (INV-38), the OD-19 dataExtractionRules gate (D-I2-9), the fingerprint enable (AE-120), strings.
+  2. G2 device checks: PBKDF2 timing, KeyInfo security level, the real Keystore behaviour of AndroidBiometricPinKeyManager.
+  3. reviewer-strict at the increment-2 candidate, then the merge.
+
+## 2026-10-30: pre-S27 gates decided (orchestrator under owner-approvals 92; recorded as item 96)
+- D-I2-9 / OD-19: Option A, no manifest change. D2D moves the settings but not the verifier or Keystore keys, so the new device resolves to DEVICE_AUTH or INERT (AMD-4): fail closed, no stranding. S27 tests pin it. App-wide Option C is an OWNER release-track item.
+- UQ-1: the in-app pad (binding condition D / INV-38: CharArray, no String TextField).
+- UQ-4: the single "I understand..." acknowledgement checkbox only; no export-first requirement.
+- S27 is executed in small steps, following the plan's split seam:
+  - a1: PinPad plus strings;
+  - a2: PinLockSurface plus AppLockGate;
+  - b1: the AppPinSettingsViewModel plus the PinSetupFlow state;
+  - b2: AppPinSettingsScreen, the AppLockPrivacySection row and the fingerprint toggle (AE-120).
+  - A separate test-author per step.
+
+## 2026-10-30: S27 (PIN UI, the increment-2 user switch) ACCEPTED and COMMITTED
+- Steps:
+  - a1: PinPad, PinEntryBuffer (CharArray, not saveable, zeroed; cleared on ON_STOP) and strings.
+  - a2: PinLockSurface (delay, unreadable, forgotten-PIN help, fingerprint key gated) plus the AppLockGate APP_PIN branch (no auto prompt) plus the ControllerGateSource pin/pinActions.
+  - b1: AppPinSettingsViewModel (setup with ack, UQ-4; change; remove through AppLockSettingsOperations.removePin; INV-50 availability; onScreenLeft clears held entries) plus PinSetupFlow.
+  - b2: AppPinSettingsScreen, the App PIN row in AppLockPrivacySection (hidden when Off, disabled when paused), the AppPinSettings route and save token, and the MainActivity branch.
+- Combined guardian (split A/B): ACCEPT-WITH-FIXES. All applied:
+  - B1 MEDIUM: activity-scoped VM, so onScreenLeft is called on dispose.
+  - B2 and B3.
+  - A1: ON_STOP clear. A3: the fingerprint key has its own enabled flag. A4: broad catch in submit. A5: the unused tries-left plural removed.
+- Fix-pass lessons:
+  - Restoring the same-package `AppLockContent` import was REQUIRED; it was removed by mistake. The db_access parser resolves the typealias only via an import (S20). The known_good_state count went 21 to 23 without it.
+  - Robolectric pad tests need `qualifiers = "w411dp-h891dp"`.
+  - The INV-42 scan regex was made stricter.
+  - The S22-b dormancy pin was updated to EXACTLY three callers, adding AppPinSettingsViewModel through removePin (owner-approvals 81b plus 92/96).
+- DEFERRED as S26b, a new follow-up slice:
+  - Fingerprint ENABLE in PIN mode: a controller path plus a settings toggle plus the AE-120 prompt. Today no path sets biometricEnabled, so fingerprint unlock stays dormant and hidden (D-I2-7 allows S27 without it).
+  - The tries-left copy was dropped, because PinRejection carries no count.
+- Validation, all PASS:
+  - targeted vr-20261030-202901-5e4b337e
+  - runtime-ui vr-20261030-203202-6cee4a32
+  - domain-n-z vr-20261030-203534-044f08ae
+  - architecture-contracts vr-20261030-200536-a3e39ffa
+  - static-guards vr-20261030-200624-1282004e (21x DB_SIGNATURE_UNRESOLVED again)
+  - lint vr-20261030-192923-32ba08ab (before the import-only restore)
+- NEXT:
+  1. S28 docs (LEGAL_PATHS APP LOCK PIN ordering, CODEBASE_SEGMENTS seg 28, UI maps, CODEBASE_INVENTORY, the release note "a forgotten PIN means clear data or restore a backup").
+  2. Decide S26b now or after the merge (recommendation: after; the increment can merge with fingerprint dormant).
+  3. G2 device checks on emulator-5554: PBKDF2 timing, KeyInfo security level, reboot delay AE-73, Keystore loss AE-80, PIN step plus background AE-119, the PIN UI smoke.
+  4. reviewer-strict at the increment-2 candidate.
+  5. Merge into feature/ai-evolution.
+
+## 2026-10-30: S28 docs and G2 (automatable part) DONE
+- S28 docs:
+  - LEGAL_PATHS App PIN Store, with the S27 UI callers;
+  - CODEBASE_SEGMENTS seg 28;
+  - COMPREHENSIVE_UI_MAP;
+  - NAVIGATION_ARCHITECTURE;
+  - CODEBASE_INVENTORY;
+  - docs/features/app-lock-privacy-mode/release-note-2.md.
+  - guard_docs_truth PASS vr-20261030-205342-4b47b174.
+- G2 device: AppLockPinG2DeviceTest 5/5 PASS on wave5-api35 (vr-20261030-205358-ecf494f0).
+  - PBKDF2 at 150k: 349 ms on the emulator.
+  - The HMAC key KeyInfo: SIGN purpose, no user auth; securityLevel=0 (SOFTWARE on the emulator).
+  - The real store setup/verify/wrong/deleteAll round trip works.
+  - The boot count is available.
+  - BIOMETRIC_STRONG is not enrolled (status 11), so the key manager fails closed.
+- G2 items left for the OWNER's real phone (release candidate):
+  - condition C timing on a low-end API-30 device;
+  - the TEE/StrongBox security level;
+  - AE-73 reboot delay;
+  - AE-76 enrolment invalidation (S26b scope once fingerprint enabling exists);
+  - AE-42/117 OEM screens.
+  - AE-80 (Keystore loss) and AE-119 (background) are pinned by unit and Robolectric tests.
+- NEXT:
+  1. Increment-2 integration merge into feature/ai-evolution, with the full suites.
+  2. reviewer-strict on S24..S28, split in two (domain/data, UI).
+  3. Merge. S26b (fingerprint enable) is a follow-up.

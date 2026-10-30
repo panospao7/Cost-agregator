@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.ui.applock
 
 import com.yourname.expensetracker.architecture.SourceTextSanitizer
+import androidx.biometric.BiometricManager
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -41,12 +42,41 @@ class AppLockBiometricSourceScanTest {
     private val zeroArgCanAuthenticate = Regex("""(?<!fun )\bcanAuthenticate\(\s*\)""")
     private val biometricApiImport = Regex("""import\s+(androidx\.biometric|android\.hardware\.biometrics)\b""")
 
+    private fun tokenIndexes(text: String, token: String): List<Int> =
+        Regex(Regex.escape(token)).findAll(text).map { it.range.first }.toList()
+
+    /** Index range of the brace-matched `if (copy == AuthPromptCopy.PIN_FINGERPRINT) { ... }` body, or null. */
+    private fun pinFingerprintBranch(sanitized: String): IntRange? {
+        val header = Regex("""if\s*\(\s*copy\s*==\s*AuthPromptCopy\.PIN_FINGERPRINT\s*\)\s*\{""").find(sanitized)
+            ?: return null
+        var depth = 0
+        for (i in (header.range.last) until sanitized.length) {
+            when (sanitized[i]) {
+                '{' -> depth++
+                '}' -> {
+                    depth--
+                    if (depth == 0) return header.range.last..i
+                }
+            }
+        }
+        return null
+    }
+
     /** Violations of the rules above in one sanitized file, as short bounded descriptions. */
     private fun violations(relative: String, sanitized: String): List<String> {
         val found = mutableListOf<String>()
         if (sanitized.contains("BIOMETRIC_WEAK")) found += "$relative: BIOMETRIC_WEAK in code"
-        for (token in listOf("setNegativeButtonText", "setDeviceCredentialAllowed")) {
-            if (sanitized.contains("$token(")) found += "$relative: $token"
+        if (sanitized.contains("setDeviceCredentialAllowed(")) found += "$relative: setDeviceCredentialAllowed"
+        // D-I2-5: the negative button and the strong-only constant exist ONLY on the PIN_FINGERPRINT branch of the prompt file.
+        val branch = if (relative == promptFile) pinFingerprintBranch(sanitized) else null
+        for (index in tokenIndexes(sanitized, "setNegativeButtonText(")) {
+            if (branch == null || index !in branch) found += "$relative: setNegativeButtonText"
+        }
+        for (index in tokenIndexes(sanitized, "PIN_MODE_FINGERPRINT_AUTHENTICATORS")) {
+            val isDeclaration = relative == promptFile && sanitized.substring(0, index).trimEnd().endsWith("const val")
+            if (!isDeclaration && (branch == null || index !in branch)) {
+                found += "$relative: PIN_MODE_FINGERPRINT_AUTHENTICATORS"
+            }
         }
         if (biometricApiImport.containsMatchIn(sanitized) && sanitized.contains("setDescription(")) {
             found += "$relative: setDescription with a biometric API"
@@ -92,7 +122,64 @@ class AppLockBiometricSourceScanTest {
 
     @Test
     fun inv23_setAllowedAuthenticators_usesTheNamedConstant() {
-        assertCallsUseConstant(promptFile, "setAllowedAuthenticators", "PROMPT_ALLOWED_AUTHENTICATORS")
+        // Exactly two named-constant calls: the general prompt, and the PIN_FINGERPRINT branch (D-I2-5).
+        val text = sanitized(promptFile)
+        val args = callPattern.findAll(text).filter { it.groupValues[1] == "setAllowedAuthenticators" }
+            .map { it.groupValues[2] }.toList()
+        assertEquals(listOf("PIN_MODE_FINGERPRINT_AUTHENTICATORS", "PROMPT_ALLOWED_AUTHENTICATORS"), args.sorted())
+        val branch = pinFingerprintBranch(text) ?: error("PIN_FINGERPRINT branch not found")
+        val pinCall = Regex("""setAllowedAuthenticators\(\s*PIN_MODE_FINGERPRINT_AUTHENTICATORS\s*\)""").find(text)
+        assertTrue("strong-only constant used outside the PIN_FINGERPRINT branch", pinCall != null && pinCall.range.first in branch)
+    }
+
+    @Test
+    fun d_i2_5_pinModeFingerprintConstant_isBiometricStrongAlone() {
+        assertEquals(BiometricManager.Authenticators.BIOMETRIC_STRONG, PIN_MODE_FINGERPRINT_AUTHENTICATORS)
+        assertEquals(0, PIN_MODE_FINGERPRINT_AUTHENTICATORS and BiometricManager.Authenticators.DEVICE_CREDENTIAL)
+        assertTrue(
+            PIN_MODE_FINGERPRINT_AUTHENTICATORS != BiometricManager.Authenticators.BIOMETRIC_WEAK
+        )
+    }
+
+    @Test
+    fun d_i2_5_selfCheck_strongOnlyTokensOutsideThePromptBranch_areFlagged() {
+        val planted = """
+            package planted
+            fun f(b: Any) {
+                b.setAllowedAuthenticators(PIN_MODE_FINGERPRINT_AUTHENTICATORS).setNegativeButtonText("n")
+            }
+        """.trimIndent()
+        val clean = SourceTextSanitizer.stripCommentsAndStringBodies(planted)
+        val outside = violations("planted/Planted.kt", clean)
+        assertTrue("constant missed: $outside", outside.any { it.endsWith("PIN_MODE_FINGERPRINT_AUTHENTICATORS") })
+        assertTrue("button missed: $outside", outside.any { it.endsWith("setNegativeButtonText") })
+
+        // In the allowed file but NOT on the PIN_FINGERPRINT branch is still a violation.
+        val inPromptFile = violations(promptFile, clean)
+        assertTrue("constant missed in prompt file: $inPromptFile", inPromptFile.any { it.endsWith("PIN_MODE_FINGERPRINT_AUTHENTICATORS") })
+        assertTrue("button missed in prompt file: $inPromptFile", inPromptFile.any { it.endsWith("setNegativeButtonText") })
+
+        // On the branch of the allowed file both are accepted.
+        val onBranch = SourceTextSanitizer.stripCommentsAndStringBodies(
+            """
+            internal const val PIN_MODE_FINGERPRINT_AUTHENTICATORS: Int = 15
+            fun g(copy: AuthPromptCopy, b: Any) {
+                if (copy == AuthPromptCopy.PIN_FINGERPRINT) {
+                    b.setAllowedAuthenticators(PIN_MODE_FINGERPRINT_AUTHENTICATORS).setNegativeButtonText("n")
+                }
+            }
+            """.trimIndent()
+        )
+        assertEquals(emptyList<String>(), violations(promptFile, onBranch).filter { it.contains("PIN_MODE") || it.endsWith("setNegativeButtonText") })
+    }
+
+    @Test
+    fun d_i2_5_productionTokens_appearOnlyInThePromptFileBranch() {
+        val files = productionFiles()
+        val users = files.filter {
+            it.second.contains("PIN_MODE_FINGERPRINT_AUTHENTICATORS") || it.second.contains("setNegativeButtonText(")
+        }.map { it.first }
+        assertEquals(listOf(promptFile), users)
     }
 
     @Test

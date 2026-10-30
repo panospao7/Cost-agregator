@@ -14,7 +14,31 @@ enum class AuthPromptCopy {
     ENABLE,
     DISABLE,
     CHANGE,
-    EXPORT
+    EXPORT,
+
+    /**
+     * S26 (INV-40): the fingerprint prompt of PIN mode. BIOMETRIC_STRONG only, never the device credential, with a
+     * "Use PIN" negative button and a key-bound CryptoObject. Not selected by the existing controller attempts.
+     */
+    PIN_FINGERPRINT
+}
+
+/** Bounded readiness of the PIN-mode fingerprint key (S26). Never carries Keystore text. */
+enum class PinFingerprintKeyState {
+    /** The key exists and is usable for a prompt. */
+    READY,
+
+    /** The key was invalidated (new enrolment, OD-16a). The fingerprint flag must be turned off (INV-51). */
+    INVALIDATED,
+
+    /** No key, or a Keystore failure. Fingerprint is not offered; the flag is left untouched. */
+    UNAVAILABLE
+}
+
+/** Domain view of the PIN-mode fingerprint key, so the controller never touches the data layer (S26). */
+fun interface PinFingerprintKeyGate {
+    /** May block on the Keystore: call off the main thread. */
+    fun state(): PinFingerprintKeyState
 }
 
 /** Bounded bucket for a prompt error that is neither a cancel, a lockout nor an availability loss (INV-37). */

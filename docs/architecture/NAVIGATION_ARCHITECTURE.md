@@ -74,6 +74,8 @@ Every destination has a `toSaveToken()` / `destinationFromSaveToken()` pair for 
 
 > **Note**: `PrivacySettings` **does** have a standalone `NavigationDestination.PrivacySettings` and a `FeatureConfig` entry (`id = "privacy"`); it renders in the standard feature-screen `when` block in `MainActivity`. Two other config entries do not open feature screens: `recurring` targets the `ManualRecurringExpense` overlay and `privacy` targets the `PrivacySettings` management screen. `NavigationDestination.featureDestinations` (27 entries) is the broader list used by the FeaturesMenu wiring and adds `RecurringExpenses`, `AiSettings`, and `CategoryManagement` beyond the `allFeatures` targets (the remaining difference is only naming: config `recurring` targets `ManualRecurringExpense`, config `privacy` targets `PrivacySettings`).
 
+> **App PIN route (app-lock S27)**: `NavigationDestination.AppPinSettings` (save token `"app_pin_settings"`, mapped in `NavigationController`) opens `AppPinSettingsScreen` from the "App PIN" row of the privacy section (the row is hidden while app lock is off and disabled while it is paused). It is rendered in `MainActivity` inside the app-lock shell, so it is never reachable while the lock gate is closed. The PIN lock surface is not a destination: `AppLockGate` composes `PinLockSurface` for the APP_PIN lock state.
+
 ## Test Coverage
 
 | Test | What it validates |

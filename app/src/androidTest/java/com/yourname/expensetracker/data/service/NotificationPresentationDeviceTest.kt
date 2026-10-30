@@ -26,6 +26,7 @@ import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsLoadSta
 import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsRepository
 import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsWriteResult
 import com.yourname.expensetracker.domain.privacy.applock.AutoLockTimeout
+import com.yourname.expensetracker.domain.privacy.applock.LockMode
 import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticsEmitter
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
@@ -112,6 +113,9 @@ class NotificationPresentationDeviceTest {
 
         override suspend fun setSecureScreenIfNotForced(enabled: Boolean): AppLockSettingsWriteResult =
             AppLockSettingsWriteResult.Failed(AppLockSettingField.SECURE_SCREEN)
+
+        override suspend fun setLockMode(mode: LockMode): AppLockSettingsWriteResult =
+            AppLockSettingsWriteResult.Failed(AppLockSettingField.LOCK_MODE)
     }
 
     private class NoopDiagnosticWriter : DiagnosticEventWriter {

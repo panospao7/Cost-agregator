@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- S26: DRAFT: owner native sign-off pending -->
+    <string name="applock_pin_prompt_title">Desbloquear con huella digital</string>
+    <string name="applock_pin_prompt_negative">Usar PIN</string>
+</resources>

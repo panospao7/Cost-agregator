@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.privacy.applock
 
 import com.yourname.expensetracker.domain.navigation.deeplink.DeepLinkRequest
+import com.yourname.expensetracker.domain.privacy.applock.pin.AppPinStore
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -483,7 +484,7 @@ class AppLockControllerIllegalTransitionTest {
     // --- Ports: no operational, Room or barrier input exists (spec 3.3, INV-28, INV-36) -------------------------
 
     @Test
-    fun `the controller is constructed from exactly the seven ports, none of them operational, Room or worker`() {
+    fun `the controller is constructed from exactly the ten ports, none of them operational, Room or worker`() {
         val constructor = AppLockController::class.java.declaredConstructors.single()
 
         assertEquals(
@@ -494,7 +495,12 @@ class AppLockControllerIllegalTransitionTest {
                 PrivacyDiagnosticsEmitter::class.java,
                 CoroutineScope::class.java,
                 DeviceAuthenticator::class.java,
-                CoroutineDispatcher::class.java
+                CoroutineDispatcher::class.java,
+                // S25, exact additions: the PIN verifier / attempt-state owner and the shared settings-write serialiser.
+                AppPinStore::class.java,
+                AppLockSettingsWriteSerializer::class.java,
+                // S26, exact addition: the PIN-mode fingerprint key-ready gate (a domain port; no Room, no worker).
+                PinFingerprintKeyGate::class.java
             ),
             constructor.parameterTypes.toList()
         )
@@ -537,6 +543,12 @@ class AppLockControllerIllegalTransitionTest {
             // apply report of an INERT disable. Its other parameter is the attempt-style Long id.
             "onInertDisableApplied"
         )
+        // S25, exact addition, allowed for these four methods only (like the committed flag above, no global CharArray
+        // allowance): the entered PIN, which the controller zeroes after use.
+        val pinArrayMethods = setOf("enablePin", "changePin", "disablePin", "submitUnlockPin")
+        // internal (Operations-only) entry, G25-7b: the write result of the lock-off in AppLockSettingsOperations.removePin.
+        // Allowed for this ONE method only (its JVM name carries the internal module suffix after a dollar sign).
+        val writeResultMethodPrefix = "onPinRemovalLockOffApplied\$"
         // Only compiler-generated accessors (`access$...`, first parameter = the controller) are not API.
         // Any other synthetic method on the controller is unexpected and fails the test below.
         val declared = AppLockController::class.java.declaredMethods
@@ -549,7 +561,9 @@ class AppLockControllerIllegalTransitionTest {
                 method.parameterTypes.any {
                     it !in allowedParameterTypes && !it.name.startsWith("kotlin.coroutines") &&
                         !(it == Boolean::class.javaPrimitiveType && method.name in committedFlagMethods) &&
-                        !(it == AppLockPrivacySettings::class.java && method.name in reviewSaveRecordMethods)
+                        !(it == AppLockPrivacySettings::class.java && method.name in reviewSaveRecordMethods) &&
+                        !(it == CharArray::class.java && method.name in pinArrayMethods) &&
+                        !(it == AppLockSettingsWriteResult::class.java && method.name.startsWith(writeResultMethodPrefix))
                 }
             }
             .map { it.name }
@@ -610,7 +624,23 @@ class AppLockControllerIllegalTransitionTest {
                 "getReleaseOpportunity",
                 // S22-a.0 (D-S22-1), exact addition: the read-only open-origin end signal (a StateFlow of a bounded
                 // value, no settings or link data). It has no production reader yet (pinned below).
-                "getOpenOriginEnd"
+                "getOpenOriginEnd",
+                // S25, exact additions: the PIN unlock and recovery entries, the PIN setup / change / removal operations
+                // and their step control, the PIN presentation flow and the fingerprint hook (INV-42, INV-49, INV-50).
+                "submitUnlockPin",
+                "retryPinRecovery",
+                "enablePin",
+                "changePin",
+                "disablePin",
+                "requestPinSetup",
+                "beginPinChange",
+                "beginPinRemoval",
+                "cancelPinStep",
+                "getPin",
+                "getCanOfferFingerprintUnlock",
+                // S26 (D-I2-7 amended), exact replacement of the removed proof-less onFingerprintUnlockSucceeded: the
+                // request opens a PIN_FINGERPRINT UNLOCK attempt; only a verified prompt success can unlock.
+                "requestFingerprintUnlock"
             ),
             production
         )
@@ -863,7 +893,7 @@ class AppLockControllerIllegalTransitionTest {
     }
 
     @Test
-    fun `S22-b dormancy - the Operations request surface has EXACTLY two production caller files, AppLockSettingsOperations kt and the settings ViewModel (owner-approvals 81b, S22-b)`() {
+    fun `S22-b dormancy - the Operations request surface has EXACTLY three production caller files, AppLockSettingsOperations kt and the two settings ViewModels (owner-approvals 81b, S27 PIN settings, owner-approvals 92 and 96)`() {
         // Caller-set pin (arch review F2; S22-b rewrite, a strengthening). The Operations' request entries now have
         // exactly two production files that name any of them: AppLockSettingsOperations.kt itself and the 1a settings
         // ViewModel (the lock switch, the timeout row, the secure-screen row, the discreet row and the review card).
@@ -889,7 +919,10 @@ class AppLockControllerIllegalTransitionTest {
                     "requestDisable",
                     "requestTimeoutChange",
                     "requestSecureScreenChange"
-                )
+                ),
+            // S27 (PIN settings, owner-approvals 92/96): the third legitimate caller. It names only the type and calls
+            // removePin, the single legal PIN-removal write path (INV-49); no request* entry.
+            PIN_SETTINGS_VIEW_MODEL_PATH to setOf("AppLockSettingsOperations")
         )
         // One shared comment filter: the scan and the self-check below both go through it.
         fun codeLines(lines: List<String>): List<String> = lines
@@ -911,7 +944,8 @@ class AppLockControllerIllegalTransitionTest {
                 .map { relativeToRoot(it, root) }
                 .toList()
         }.toSet()
-        assertEquals(setOf(operationsPath, SETTINGS_VIEW_MODEL_PATH), callerFiles)
+        // Still EXACT: S27 added the PIN settings ViewModel (removePin, INV-49); any further caller fails here.
+        assertEquals(setOf(operationsPath, SETTINGS_VIEW_MODEL_PATH, PIN_SETTINGS_VIEW_MODEL_PATH), callerFiles)
 
         // The ViewModel's exemption is the full token list: nothing the Operations exposes is left out, nothing extra.
         assertEquals(dormant.toSet(), exemptTokensByFile.getValue(SETTINGS_VIEW_MODEL_PATH))
@@ -1087,6 +1121,8 @@ class AppLockControllerIllegalTransitionTest {
         const val APPLOCK_PACKAGE_PATH = "com/yourname/expensetracker/domain/privacy/applock"
         const val SETTINGS_VIEW_MODEL_PATH =
             "com/yourname/expensetracker/ui/screens/privacysettings/AppLockPrivacySettingsViewModel.kt"
+        const val PIN_SETTINGS_VIEW_MODEL_PATH =
+            "com/yourname/expensetracker/ui/screens/privacysettings/applockpin/AppPinSettingsViewModel.kt"
 
         /** The dormancy scan's tokens (S18 i-a); the type name plus every public `request*` entry of the Operations. */
         val DORMANT_TOKENS = listOf(

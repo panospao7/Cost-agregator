@@ -296,6 +296,35 @@ class MainScreenCallSiteTest {
     }
 
     @Test
+    fun s27b2_theAppPinSettingsBranchOnlyNavigatesBackAndToBackupRestore_andOnlyThePrivacyScreenOpensIt() {
+        val text = sanitized(mainActivityFile)
+        val branch = Regex("""is\s+NavigationDestination\.AppPinSettings\s*->\s*\{""").find(text)
+        assertNotNull("MainActivity must render AppPinSettings", branch)
+        val open = branch!!.range.last
+        val body = text.substring(open + 1, matching(text, open, '{', '}'))
+        assertEquals(1, Regex("""\bAppPinSettingsScreen\s*\(""").findAll(body).count())
+        assertTrue(Regex("""onNavigateBack\s*=\s*\{\s*navigation\.navigateBack\(\)\s*\}""").containsMatchIn(body))
+        assertTrue(
+            Regex("""onOpenBackupRestore\s*=\s*\{\s*navigation\.navigateTo\(NavigationDestination\.BackupRestore\)\s*\}""")
+                .containsMatchIn(body)
+        )
+        // Navigation only (AE-104): the branch never touches a backup service or the lock.
+        listOf("Backup", "appLockController", "restart").forEach { name ->
+            assertEquals(
+                "AppPinSettings branch must not reference $name beyond the BackupRestore destination",
+                0,
+                Regex("""\b\w*$name\w*""", RegexOption.IGNORE_CASE).findAll(body)
+                    .count { it.value != "onOpenBackupRestore" && it.value != "BackupRestore" }
+            )
+        }
+        // Exactly one place opens the PIN screen: the privacy settings callback.
+        assertEquals(
+            1,
+            Regex("""navigateTo\(\s*NavigationDestination\.AppPinSettings\s*\)""").findAll(text).count()
+        )
+    }
+
+    @Test
     fun tech1_mainActivityExtendsFragmentActivity() {
         val text = sanitized(mainActivityFile)
         assertTrue(Regex("""class\s+MainActivity\s*:\s*FragmentActivity\s*\(\s*\)""").containsMatchIn(text))

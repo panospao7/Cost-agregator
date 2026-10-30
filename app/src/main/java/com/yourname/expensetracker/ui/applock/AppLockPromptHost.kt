@@ -6,6 +6,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
 import com.yourname.expensetracker.domain.privacy.applock.AppLockController
+import com.yourname.expensetracker.domain.privacy.applock.pin.BiometricPinKeyManager
 import javax.inject.Inject
 
 /**
@@ -42,8 +43,9 @@ class AppLockPromptHost @VisibleForTesting internal constructor(
     @Inject
     constructor(
         relay: AppLockAuthenticatorRelay,
-        controller: AppLockController
-    ) : this(relay, controller, { activity -> BiometricPromptDeviceAuthenticator(activity) })
+        controller: AppLockController,
+        keyManager: BiometricPinKeyManager
+    ) : this(relay, controller, { activity -> BiometricPromptDeviceAuthenticator(activity, keyManager) })
 
     private var registration: RelayRegistration? = null
 
@@ -61,7 +63,7 @@ class AppLockPromptHost @VisibleForTesting internal constructor(
         check(registration == null) { "AppLockPromptHost is already attached" }
         if (activity.lifecycle.currentState == Lifecycle.State.DESTROYED) return
         val adapter = adapterFactory(activity)
-        val attached = relay.register(adapter) { attemptId, callback -> adapter.adopt(attemptId, callback) }
+        val attached = relay.register(adapter) { attemptId, copy, callback -> adapter.adopt(attemptId, copy, callback) }
         registration = attached
         activity.lifecycle.addObserver(
             object : LifecycleEventObserver {

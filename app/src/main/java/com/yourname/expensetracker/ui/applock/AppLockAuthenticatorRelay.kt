@@ -19,7 +19,7 @@ import javax.inject.Singleton
  * `BiometricPromptDeviceAuthenticator.adopt`.
  */
 internal fun interface AttemptAdopter {
-    fun adopt(attemptId: Long, callback: DeviceAuthCallback): Boolean
+    fun adopt(attemptId: Long, copy: AuthPromptCopy, callback: DeviceAuthCallback): Boolean
 }
 
 /**
@@ -112,6 +112,7 @@ class AppLockAuthenticatorRelay @VisibleForTesting internal constructor(
      */
     private class OpenAttempt(
         val attemptId: Long,
+        val copy: AuthPromptCopy, // G26-3: carried so an adopted attempt keeps its PIN-fingerprint crypto path
         val callback: DeviceAuthCallback,
         var holder: WeakReference<RelayRegistration>?
     ) {
@@ -140,7 +141,7 @@ class AppLockAuthenticatorRelay @VisibleForTesting internal constructor(
         requireMainThread()
         val registration = current?.get() ?: return AuthLaunch.HOST_UNAVAILABLE
         if (open != null) return AuthLaunch.ALREADY_IN_FLIGHT
-        val record = OpenAttempt(attemptId, callback, WeakReference(registration))
+        val record = OpenAttempt(attemptId, copy, callback, WeakReference(registration))
         open = record // open BEFORE the adapter call: an outcome may arrive re-entrantly
         var result: AuthLaunch? = null
         try {
@@ -184,7 +185,7 @@ class AppLockAuthenticatorRelay @VisibleForTesting internal constructor(
         if (record != null && record.holder?.get() == null) {
             // Holder first: an outcome delivered re-entrantly by the adoption must pass the holder check.
             record.holder = WeakReference(registration)
-            val adopted = adopter.adopt(record.attemptId, RelayCallback(record, registration))
+            val adopted = adopter.adopt(record.attemptId, record.copy, RelayCallback(record, registration))
             if (!adopted && open === record) closeByRelay(record)
         }
         return registration

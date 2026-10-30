@@ -698,6 +698,19 @@ Group expense/member mutations flow through the domain group use cases injected 
 - Risky action confirmation dialogs
 - "App lock & privacy" section (app-lock 1a; `AppLockPrivacySection.kt` + `AppLockPrivacySettingsViewModel.kt`, inserted once before the Notification Capture section): a "Discreet notifications" switch driven by committed store state only (Loading shows no switch; transient-unreadable shows On, disabled, with a retry; corrupted/invalid shows a review card with one Save), and inline notices for SAVE_FAILED / REVIEW_SAVED. S22 (1b) adds: the "App lock" switch (committed value only; `AppLockEnableDialog` explainer, then one system prompt; turning off is one prompt, no disable dialog, D-S22-2), the "Lock after leaving the app" timeout row (`AutoLockTimeoutDialog`; TECH-13: longer options disabled while the lock is paused), the forced-aware "Secure screen" row, the Android 11 note, an Unavailable(OS) state with "Open security settings" where useful, and a review card that saves the full record `{lock, timeout, discreet, secure}`. `PrivacySettingsViewModel` is untouched.
 
+### App PIN Settings Screen (app-lock increment 2, S27)
+**File**: `ui/screens/privacysettings/applockpin/AppPinSettingsScreen.kt` + `AppPinSettingsViewModel.kt` + `PinSetupFlow.kt`
+**Navigation**: `NavigationDestination.AppPinSettings` (save token `app_pin_settings`), opened from the "App PIN" row in `AppLockPrivacySection` (hidden when app lock is off, disabled when paused).
+
+#### Features:
+- Set up: recovery warning with one "I understand..." checkbox (UQ-4), one device authentication, then PIN entry and confirmation on the in-app pad (`ui/applock/pin/PinPad`, CharArray only, INV-38).
+- Change PIN (current PIN, then new) and Remove PIN (current PIN, then a confirm dialog; a variant explains that app lock turns off when the phone has no screen lock).
+- "Back up now" only navigates to Backup & Restore. There is no in-app PIN reset: a forgotten PIN means clearing app data or restoring an exported backup.
+- Fingerprint toggle: not shown yet (fingerprint enable is deferred to S26b).
+
+### PIN Lock Surface (app-lock increment 2, S27)
+**File**: `ui/applock/pin/PinLockSurface.kt`, composed by `AppLockGate` in the APP_PIN lock state (no automatic system prompt). Shows the PIN pad, the wrong-PIN delay, an unreadable-store recovery view, and forgotten-PIN help (clear app data or restore a backup). The fingerprint button appears only when the biometric key is enabled (dormant until S26b).
+
 ---
 
 ## 6. DEBUG SCREENS (Internal Only)

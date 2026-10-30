@@ -611,7 +611,7 @@ class AppLockControllerPromptOutcomeTest {
         // outcome is "nothing changes" and then "the newer one is published".
         val publicationClass = Class.forName("${AppLockController::class.java.name}\$Publication")
         val publicationConstructor = publicationClass.declaredConstructors
-            .single { it.parameterCount == 3 }
+            .single { it.parameterCount == 4 }
             .apply { isAccessible = true }
         val publish = AppLockController::class.java
             .getDeclaredMethod("publish", publicationClass)
@@ -620,7 +620,7 @@ class AppLockControllerPromptOutcomeTest {
             .getDeclaredField("publishedVersion")
             .apply { isAccessible = true }
         fun publication(stamp: Long, state: AppLockState, notice: LockNotice?): Any =
-            publicationConstructor.newInstance(stamp, state, notice)
+            publicationConstructor.newInstance(stamp, state, notice, PinPresentation.INITIAL)
         val lastVersion = publishedVersionField.getLong(controller)
         assertTrue("a normal transition published at least one version", lastVersion > 0L)
         val noticeBefore = controller.notice.value

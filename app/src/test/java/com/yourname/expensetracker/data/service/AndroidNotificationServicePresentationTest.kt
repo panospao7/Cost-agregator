@@ -21,6 +21,7 @@ import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsLoadSta
 import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsRepository
 import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsWriteResult
 import com.yourname.expensetracker.domain.privacy.applock.AutoLockTimeout
+import com.yourname.expensetracker.domain.privacy.applock.LockMode
 import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticCode
 import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticKey
 import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticMetadata
@@ -124,6 +125,9 @@ object PresentationFixtures {
 
         override suspend fun setSecureScreenIfNotForced(enabled: Boolean): AppLockSettingsWriteResult =
             AppLockSettingsWriteResult.Failed(AppLockSettingField.SECURE_SCREEN)
+
+        override suspend fun setLockMode(mode: LockMode): AppLockSettingsWriteResult =
+            AppLockSettingsWriteResult.Failed(AppLockSettingField.LOCK_MODE)
     }
 
     /** One service kind and the kind-aware method that posts it, with the tap target it must produce. */

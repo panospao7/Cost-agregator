@@ -234,6 +234,27 @@ internal class FakeAppLockSettingsRepository(var loadState: AppLockSettingsLoadS
     override suspend fun setSecureScreenIfNotForced(enabled: Boolean): AppLockSettingsWriteResult =
         plainWrite(AppLockSettingField.SECURE_SCREEN, enabled)
 
+    // --- S24: the lock-mode write. Counted apart from [writeAttempts] like the other per-field writes.
+
+    /** Every `setLockMode` call, in order. */
+    val lockModeWrites = mutableListOf<LockMode>()
+
+    /** When set, decides the result of a lock-mode write; the default commits and updates [loadState]. */
+    var lockModeWriteResult: ((LockMode) -> AppLockSettingsWriteResult)? = null
+
+    override suspend fun setLockMode(mode: LockMode): AppLockSettingsWriteResult {
+        lockModeWrites += mode
+        lockModeWriteResult?.let { return it(mode) }
+        val base = when (val state = loadState) {
+            is AppLockSettingsLoadState.Loaded -> state.settings
+            is AppLockSettingsLoadState.FirstRunDefault -> state.settings
+            is AppLockSettingsLoadState.Unreadable -> return AppLockSettingsWriteResult.Rejected(AppLockWriteRejection.UNREADABLE)
+        }
+        val next = base.copy(lockMode = mode)
+        loadState = AppLockSettingsLoadState.Loaded(next)
+        return AppLockSettingsWriteResult.Committed(next)
+    }
+
     private suspend fun plainWrite(field: AppLockSettingField, enabled: Boolean): AppLockSettingsWriteResult {
         plainWrites += field to enabled
         plainWriteGate?.await()
@@ -383,6 +404,18 @@ internal class FakeDeviceAuthenticator(private val isOnMain: () -> Boolean = { t
     }
 }
 
+/** S26: scriptable [PinFingerprintKeyGate]; [reads] counts the state() calls. */
+internal class FakePinFingerprintKeyGate(@Volatile var keyState: PinFingerprintKeyState = PinFingerprintKeyState.READY) :
+    PinFingerprintKeyGate {
+    @Volatile
+    var reads = 0
+
+    override fun state(): PinFingerprintKeyState {
+        reads++
+        return keyState
+    }
+}
+
 /**
  * Wires one [AppLockController] to fakes. The scope runs on an unconfined test dispatcher so
  * fire-and-forget diagnostics are recorded in [emitted] as they are launched. The "main" dispatcher is
@@ -392,14 +425,21 @@ internal class FakeDeviceAuthenticator(private val isOnMain: () -> Boolean = { t
 internal class AppLockControllerHarness(
     loadState: AppLockSettingsLoadState = AppLockTestSettings.DISABLED,
     capability: DeviceAuthCapability = DeviceAuthCapability.AVAILABLE,
-    val scheduler: TestCoroutineScheduler = TestCoroutineScheduler()
+    val scheduler: TestCoroutineScheduler = TestCoroutineScheduler(),
+    /** S25: the PIN store. The default reports no verifier (effective DEVICE_AUTH, AMD-4), so DEVICE_AUTH tests are unchanged. */
+    val pinStore: FakeAppPinStore = FakeAppPinStore()
 ) {
+    /** S25: the settings-write serialiser handed to the controller (the PIN writes are ordered settings writes). */
+    val writeSerializer = AppLockSettingsWriteSerializer()
     val clock = FakeMonotonicClock()
     val capabilityProvider = FakeCapabilityProvider(capability)
     val repository = FakeAppLockSettingsRepository(loadState)
     val emitted = mutableListOf<PrivacyDiagnosticCode>()
     val main = MarkingMainDispatcher(scheduler)
     val authenticator = FakeDeviceAuthenticator { main.isOnMain }
+
+    /** S26: the PIN-mode fingerprint key gate stand-in. READY by default; only read when the verifier is PRESENT and the flag on. */
+    val fingerprintKeyGate = FakePinFingerprintKeyGate()
 
     /**
      * The metadata argument of each emit, in step with [emitted]. Only the codes with a `CAUSE` key carry one (the
@@ -431,14 +471,14 @@ internal class AppLockControllerHarness(
     )
 
     /** Coroutines of the controller's scope that are still running (watchdog, launch, stuck emits). */
-    val activeJobs: Int get() = scopeJob.children.count { it.isActive }
+    val activeJobs: Int get() = scopeJob.children.count { it.isActive && it !in pinStore.observerJobs }
 
     /**
      * A snapshot of the children of the controller's scope that are running right now (right after a tap:
      * the prompt orchestrator and the watchdog). Keep the jobs and inspect them after [settle] to see how
      * each one ended; [activeJobs] only counts the ones still running.
      */
-    fun activeControllerJobs(): List<Job> = scopeJob.children.filter { it.isActive }.toList()
+    fun activeControllerJobs(): List<Job> = scopeJob.children.filter { it.isActive && it !in pinStore.observerJobs }.toList()
 
     /**
      * Cancels every running child of the controller's scope (launch coroutine, watchdog, ...) without
@@ -450,7 +490,10 @@ internal class AppLockControllerHarness(
 
     /** A new controller over the same fakes: a new process start (state `RESOLVING`). */
     fun newController(): AppLockController =
-        AppLockController(repository, capabilityProvider, clock, emitter, scope, authenticator, main)
+        AppLockController(
+            repository, capabilityProvider, clock, emitter, scope, authenticator, main, pinStore, writeSerializer,
+            fingerprintKeyGate
+        )
 
     /** A new controller already resolved from the harness store through the real [AppLockController.resolve]. */
     fun resolvedController(): AppLockController =

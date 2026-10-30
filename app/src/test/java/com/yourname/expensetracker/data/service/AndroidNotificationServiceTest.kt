@@ -15,6 +15,7 @@ import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsLoadSta
 import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsRepository
 import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsWriteResult
 import com.yourname.expensetracker.domain.privacy.applock.AutoLockTimeout
+import com.yourname.expensetracker.domain.privacy.applock.LockMode
 import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticsEmitter
 import com.yourname.expensetracker.domain.service.NotificationService
 import io.mockk.every
@@ -145,6 +146,9 @@ class AndroidNotificationServiceTest {
 
         override suspend fun setSecureScreenIfNotForced(enabled: Boolean): AppLockSettingsWriteResult =
             AppLockSettingsWriteResult.Failed(AppLockSettingField.SECURE_SCREEN)
+
+        override suspend fun setLockMode(mode: LockMode): AppLockSettingsWriteResult =
+            AppLockSettingsWriteResult.Failed(AppLockSettingField.LOCK_MODE)
     }
 
     private fun newService(context: Context): AndroidNotificationService {

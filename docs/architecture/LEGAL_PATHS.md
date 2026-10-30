@@ -1,6 +1,7 @@
 # Legal Paths — Architecture Law
 
-> **Last updated:** 2026-10-30 (merge of feature/manual-entry-currency (MEC 1b + loan S13) into feature/ai-evolution: unions the app-lock S22/S23 DEEP LINKS and the EXCHANGE-RATE history download (MEC 1b) sections).
+> **Last updated:** 2026-10-31 (merge of feature/app-lock-privacy-mode increment 2 (S24-S28: App PIN Store, S27 UI callers and PIN ordering) into feature/ai-evolution).
+> Earlier: 2026-10-30 (merge of feature/manual-entry-currency (MEC 1b + loan S13) into feature/ai-evolution: unions the app-lock S22/S23 DEEP LINKS and the EXCHANGE-RATE history download (MEC 1b) sections).
 > Earlier: 2026-10-29 (app-lock-privacy-mode S23 docs: DEEP LINKS 1a/1b with the AE-118 settings-prompt hold; APP LOCK write path status). Earlier: 2026-10-24 (app-lock-privacy-mode 1a: NOTIFICATION PRESENTATION, DEEP LINKS and APP LOCK SETTINGS WRITE PATH sections added; DISPATCH reminder and Anomaly Alerting steps corrected). Earlier: 2026-10-13 (schema/savings delta verified against code: DB v151; prior guarded-worker/CI verification retained)
 > Earlier: 2026-10-28 (merge of feature/ai-evolution 4add2466 into feature/manual-entry-currency, NOT validated: unions the loan-installments and app-lock-privacy-mode / ai-fixes sections; DB v152). Earlier: 2026-10-24 (app-lock-privacy-mode 1a: NOTIFICATION PRESENTATION, DEEP LINKS and APP LOCK SETTINGS WRITE PATH sections added; DISPATCH reminder and Anomaly Alerting steps corrected). 2026-10-23 loan-installments S2: DB v152 (installment tables exist, no writer) (installment-plan paths added as planned contracts: loan-installments S1; earlier 2026-10-13 schema/savings delta verified against code: DB v151; prior guarded-worker/CI verification retained)
 >
@@ -2370,7 +2371,9 @@ caller of AppLockController.onLockQuery / releaseHeldLink / releaseOpportunity):
       loss, T35) does not release the link by itself: the controller bumps releaseOpportunity (S21-a, after
       onOpenOriginApplyCompleted closes the T33 gate with a link held) and the router's collector posts
       releaseHeldLink() on Main. A link held across PROMPT_HOST_LOST is applied once, whether it arrived before or
-      after the host loss. T_held (5 min) still applies; an expired link goes Home only.
+      after the host loss. T_held (5 min) still applies; an expired link goes Home only. A finishing host (not a
+      configuration change) cancels the system prompt silently (no outcome): the adapter drops its in-flight sink,
+      cancels the library prompt and delivers no callback; the loss itself is reported once by the prompt host.
   • Accepted residuals: R-S21-1 a lookup that began while open can finish after a re-lock (the navigation is
     buffered and nothing is composed, and its bounded DL_APPLIED / DL_BRIEFING_* outcome may be recorded
     after the re-lock); R-S21-2 a rotation during a released-link lookup loses that apply.
@@ -2894,6 +2897,75 @@ HOST LOSS (T35, PROMPT_HOST_LOST) and ROTATION:
   Activity ON_START → AppLockPromptHost → relay.activate(registration): the started host re-asserts itself as the
     relay's CURRENT registration (a second instance, for example the exported MainActivity VIEW launch, must not
     strand the visible host's prompt). activate never adopts and never touches the open record.
+
+---
+
+## App PIN Store (app-lock-privacy-mode, Segment 28, S24 store, S25 controller paths)
+
+```
+S25: the store's only production caller is AppLockController (below). S27 made it user-reachable (App PIN settings
+screen and the PIN lock surface, "S27 UI callers" below). Fingerprint ENABLE is deferred to S26b: no path sets
+biometricEnabled yet, so fingerprint unlock is dormant and hidden.
+
+OWNER: AppPinStore (domain/privacy/applock/pin; impl data/privacy/applock/pin/AppPinStoreImpl, @Singleton) is the
+SOLE owner of the PIN verifier record, the shared attempt state and the PIN flags (biometricEnabled, the biometric
+invalidated notice). Own DataStore `app_lock_pin_store` (@AppPinDataStore, noBackupFilesDir, no corruption handler:
+unreadable = present-but-unreadable, never absent, never auto-wiped; never in .costbackup, never touched by restore).
+Every entry point is serialised by one Mutex.
+
+VERIFY (the ONLY verify path): AppPinStore.verify(CharArray)
+  → verifyLocked: read the record → attempt state (unreadable → repaired, AMD-11) → delay evaluation
+  → get-only Keystore HMAC key → WRITE-AHEAD increment of the shared counter (INV-39) → PBKDF2 + HMAC compare
+  → correct: reset the counter (a failed reset still unlocks), best-effort rehash.
+  A matches()/HMAC failure after the write-ahead best-effort restores the previous attempt state, then returns
+  VerifierUnreadable(KEYSTORE_ERROR). A failed write-ahead increment returns Unavailable (no evaluation, no unlock).
+SETUP / CHANGE: setup refuses (FAILED) while a verifier exists or the store is unreadable, before touching the key;
+  a failure after key creation deletes the alias only if a re-read (NonCancellable) finds no verifier (G24-1).
+DELETE (INV-49): AppPinStore.deleteAll in order: 1. one awaited clear() of the PIN store (the only decisive step;
+  a failure returns FAILED with the settings untouched); 2. delete the HMAC alias, best effort; 3. the
+  biometric key (S26), best effort. Idempotent.
+SETTING: setLockMode(LockMode) is an AppLockSettingsRepositoryImpl PER-FIELD write (no whole-record rewrite);
+  authorisation is the caller's concern.
+
+CONTROLLER PATHS (S25, AppLockController, the ONLY caller; PIN steps are in-app steps inside UNLOCKED, NOT prompts):
+  UNLOCK: submitUnlockPin → AppPinStore.verify → Correct → unlockByPin (T23, same effects as a device-auth success);
+    Wrong/Delayed/Unavailable/VerifierUnreadable stay LOCKED; a store exception maps to Unavailable.
+  SETUP: requestPinSetup (T31 CONFIRM_CHANGE device prompt) → its matching success opens the SETUP step → enablePin:
+    re-checks the step inside the settings-write serialiser, writes lockMode=APP_PIN FIRST, then AppPinStore.setup;
+    a failure reverts lockMode=DEVICE_AUTH (also on cancellation, unless the verifier is already PRESENT).
+  CHANGE: beginPinChange → changePin → AppPinStore.changePin (store-atomic verify and replace; no settings write).
+  REMOVE: beginPinRemoval → disablePin: verify the current PIN, then in the serialiser (step re-checked) deleteAll
+    FIRST, then lockMode=DEVICE_AUTH (capability AVAILABLE) or RemovedLockOffRequired (capability not AVAILABLE,
+    AMD-4/T30; capability read outside the monitor and the serialiser). The controller never writes the lock flag:
+    PIN removal with lock-off goes AppLockSettingsOperations.removePin → controller.disablePin → Operations lock-off
+    write (setAppLockEnabled(false), serialiser, F7 settle) → controller.onPinRemovalLockOffApplied → DISABLED.
+  RECOVERY: retryPinRecovery re-reads the store (and restarts the observation) only while the recovery view offers it.
+  FINGERPRINT: requestFingerprintUnlock() (user tap) opens a PIN_FINGERPRINT UNLOCK attempt; only a crypto-verified BIOMETRIC_STRONG success unlocks (S26, D-I2-7 amended).
+  reviewSave keeps the STORED lockMode (an absent or invalid stored token falls back to LockMode.DEFAULT).
+
+S27 UI CALLERS (the only ones; PIN steps are in-app steps, never BiometricPrompt attempts):
+  ORDERING: setup = CONFIRM_CHANGE device auth (the one fresh authentication) → single "I understand..." acknowledgement
+    (UQ-4; no export-first requirement) → PIN entry/confirm → enablePin (lockMode=APP_PIN written BEFORE the verifier,
+    revert on failure). Change = beginPinChange → changePin (no prompt, no settings write). Removal = beginPinRemoval →
+    AppLockSettingsOperations.removePin (verify; deleteAll in INV-49 order; lockMode=DEVICE_AUTH BEFORE any lock-off
+    write; lock-off only when the device cannot authenticate; the removal dialog has a no-screen-lock variant).
+  SETTINGS: ui/screens/privacysettings/applockpin/AppPinSettingsViewModel (activity-scoped; onScreenLeft clears held
+    entries) → controller + AppLockSettingsOperations.removePin. Route NavigationDestination.AppPinSettings, save
+    token "app_pin_settings". The App PIN row sits in AppLockPrivacySection (hidden when the lock is off, disabled when
+    paused/INERT). "Back up now" only navigates to Backup & Restore (AE-104).
+  UNLOCK: AppLockGate APP_PIN branch → ui/applock/pin/PinLockSurface (no auto prompt) → submitUnlockPin. The fingerprint
+    button calls requestFingerprintUnlock only when the biometric key is enabled (dormant until S26b). The forgotten-PIN
+    help offers no in-app reset: clear app data or restore an exported backup (INV-42).
+  PIN MATERIAL (INV-38): ui/applock/pin/PinPad + PinEntryBuffer hold a CharArray (not saveable, zeroed, cleared on
+    ON_STOP); no String TextField; nothing PIN-related is logged.
+  D2D / BACKUP (OD-19 Option A, no manifest change): device-to-device transfer moves the settings but never the
+    verifier or the Keystore keys; the new device resolves to DEVICE_AUTH or INERT (AMD-4), fail closed, no stranding.
+
+❌ No other code reads or writes the PIN verifier, the attempt state or the PIN flags (no other DataStore).
+❌ No other code uses the `applock_pin_hmac_v1` Keystore alias or PBKDF2 for a PIN.
+❌ No second verify path: no evaluation without the write-ahead increment, no PIN as String, never logged.
+❌ No setLockMode via a whole-record write (reviewSave carries the stored mode through, INV-45).
+```
 
 FOREGROUND / BACKGROUND SIGNALS (INV-25) — AppLockLifecycleBinder is the SOLE source:
   Application.registerActivityLifecycleCallbacks (installed once per process, idempotent; S20-c calls it from

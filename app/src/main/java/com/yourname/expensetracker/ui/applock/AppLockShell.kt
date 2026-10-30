@@ -17,9 +17,11 @@ import com.yourname.expensetracker.data.backup.AppOperationalState
 import com.yourname.expensetracker.domain.privacy.applock.AppLockController
 import com.yourname.expensetracker.domain.privacy.applock.AppLockState
 import com.yourname.expensetracker.domain.privacy.applock.AuthPurpose
-import com.yourname.expensetracker.domain.privacy.applock.LockCause
 import com.yourname.expensetracker.domain.privacy.applock.LockNotice
+import com.yourname.expensetracker.domain.privacy.applock.PinPresentation
+// Explicit same-package import kept on purpose: the db_access guard parser resolves the AppLockContent typealias only via an import (S20).
 import com.yourname.expensetracker.ui.applock.AppLockContent
+import com.yourname.expensetracker.ui.applock.pin.PinLockActions
 import com.yourname.expensetracker.ui.navigation.NavigationDestination
 import kotlinx.coroutines.flow.StateFlow
 import timber.log.Timber
@@ -32,6 +34,12 @@ import timber.log.Timber
 internal class ControllerGateSource(controller: AppLockController) : AppLockGateSource {
     override val state: StateFlow<AppLockState> = controller.state
     override val notice: StateFlow<LockNotice?> = controller.notice
+    override val pin: StateFlow<PinPresentation> = controller.pin
+    override val pinActions: PinLockActions = object : PinLockActions {
+        override suspend fun submitUnlockPin(pin: CharArray) = controller.submitUnlockPin(pin)
+        override suspend fun retryPinRecovery() = controller.retryPinRecovery()
+        override suspend fun requestFingerprintUnlock() = controller.requestFingerprintUnlock()
+    }
 }
 
 /**
@@ -72,14 +80,15 @@ internal object SecuritySettingsLauncher {
 }
 
 /**
- * The status line of one lock episode (S19 CF-4), derived only from the bounded published [AppLockState] values. The
- * controller publishes no outcome message, so the one thing the shell can honestly say is: the UNLOCK prompt ended
- * and the app is back at `LOCKED`, so the person may try again. Which kind of end it was (cancel, lockout, error) is
- * not published, so no more specific line is ever shown.
+ * The status line of one lock episode (S19 CF-4, aligned by G1c), derived only from the bounded published
+ * [AppLockState] values. The controller publishes no end-kind (cancel, lockout, error), so the shell cannot say
+ * anything honest about an ended UNLOCK prompt: every UNLOCK-prompt end returns silently to the lock surface
+ * (`LOCKED`, Unlock enabled, no auto-reprompt) and this function yields no line for that transition. The
+ * `LockSurfaceMessage.TRY_AGAIN` entry and its string are kept, unused here. A specific line for non-cancel
+ * failures (lockout, transient) waits for a bounded published end-kind (CF-4b, deferred).
  *
- * The line is cleared whenever the state is not `LOCKED` (so a new prompt, an unlock, a re-lock or an inert state
- * drops it) and when `LOCKED` is entered from anywhere but an UNLOCK prompt, or with another cause (a new episode).
- * A `SETTINGS_UNREADABLE` lock keeps the surface's own T5 line instead.
+ * The line is cleared whenever the state is not `LOCKED` and when `LOCKED` is entered from anywhere but the same
+ * `LOCKED` cause (a new episode). A `SETTINGS_UNREADABLE` lock keeps the surface's own T5 line instead.
  */
 internal fun nextUnlockMessage(
     previous: AppLockState?,
@@ -89,8 +98,7 @@ internal fun nextUnlockMessage(
     if (current !is AppLockState.Locked) return null
     if (previous == current) return held
     return when {
-        previous is AppLockState.Authenticating && previous.purpose == AuthPurpose.UNLOCK ->
-            if (current.cause == LockCause.SETTINGS_UNREADABLE) null else LockSurfaceMessage.TRY_AGAIN
+        previous is AppLockState.Authenticating && previous.purpose == AuthPurpose.UNLOCK -> null
         previous is AppLockState.Locked && previous.cause == current.cause -> held
         else -> null
     }
