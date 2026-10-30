@@ -19,8 +19,11 @@ import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
 import com.yourname.expensetracker.domain.quickadd.LearnedCategoryLookupResult
 import com.yourname.expensetracker.domain.quickadd.QuickAddLearnedCategoryLookup
 import com.yourname.expensetracker.domain.quickadd.QuickAddParser
+import com.yourname.expensetracker.domain.transaction.RateRefusalCodes
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.ui.components.currency.CurrencyBlockOrigin
+import com.yourname.expensetracker.ui.components.currency.CurrencyBlockVariant
 import com.yourname.expensetracker.ui.components.currency.CurrencyHistoryStatus
 import com.yourname.expensetracker.ui.components.currency.CurrencyRateFixAction
 import com.yourname.expensetracker.ui.components.currency.CurrencyRefreshStatus
@@ -39,6 +42,8 @@ import java.util.TimeZone
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
 import org.junit.After
@@ -148,7 +153,8 @@ class AddExpenseViewModelRateHistoryTest : ViewModelTestUtils() {
     private fun openBlockedUsd(
         privacy: PrivacySettingsLoadState = ratesOn,
         entryDate: Long = at(2025, 10, 10),
-        newerRow: Boolean = true
+        newerRow: Boolean = true,
+        homeFlow: Flow<String> = flowOf("EUR")
     ) {
         TimeZone.setDefault(TimeZone.getTimeZone(athens))
         Locale.setDefault(Locale.US)
@@ -158,7 +164,7 @@ class AddExpenseViewModelRateHistoryTest : ViewModelTestUtils() {
         if (newerRow) putRate("USD", "EUR", 0.8, oct(14))
         privacyFlow.value = privacy
         val repo = mockk<CurrencySettingsRepository>(relaxed = true)
-        every { repo.homeCurrency() } returns flowOf("EUR")
+        every { repo.homeCurrency() } returns homeFlow
         viewModel = AddExpenseViewModel(
             manualExpenseRepository = manualExpenseRepository,
             expenseRepository = expenseRepository,
@@ -812,5 +818,107 @@ class AddExpenseViewModelRateHistoryTest : ViewModelTestUtils() {
 
         assertTrue(ratesRepo.historyCalls.isEmpty())
         assertEquals(CurrencyHistoryStatus.IDLE, st.historyStatus)
+    }
+
+    // ---- spec 1b.2: a Save refusal for a missing rate offers the same remedy as the preview card ----
+
+    private fun stubSaveRefusal(code: String) {
+        coEvery {
+            manualExpenseRepository.addManualExpense(
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()
+            )
+        } returns Result.Error(message = code)
+    }
+
+    /**
+     * Reaches an Eligible USD preview (rate dated 9 Oct for the 10 Oct entry), then makes the pair
+     * unusable before Save: the 9 Oct row vanishes; the 14 Oct row stays only when [keepNewerRow].
+     */
+    private fun eligibleThenRateVanishes(keepNewerRow: Boolean) {
+        openBlockedUsd()
+        putRate("USD", "EUR", 0.9, oct(9))
+        viewModel.updateMerchant("Shop")
+        viewModel.updateAmount("21.00")
+        settle()
+        assertTrue(st.currencyRegion is CurrencyRegionUi.Eligible)
+        rateStore.rows.clear()
+        if (keepNewerRow) putRate("USD", "EUR", 0.8, oct(14))
+    }
+
+    @Test
+    fun `AE-1b-2 a NO_RATE Save refusal after an Eligible preview shows the SAVE card with REFRESH_LATEST`() {
+        eligibleThenRateVanishes(keepNewerRow = false)
+        stubSaveRefusal(RateRefusalCodes.NOT_ELIGIBLE_NONE)
+
+        viewModel.save()
+        settle()
+
+        assertEquals(
+            CurrencyRegionUi.Blocked(CurrencyBlockVariant.NONE, null, CurrencyBlockOrigin.SAVE),
+            st.currencyRegion
+        )
+        assertEquals(CurrencyRatesSetting.ON, st.ratesSetting)
+        assertEquals(CurrencyRateFixAction.REFRESH_LATEST, st.rateFixAction)
+        assertTrue(ratesRepo.historyCalls.isEmpty())
+    }
+
+    @Test
+    fun `AE-1b-2 a NO_RATE Save refusal with a newer stored row inside the window offers DOWNLOAD_HISTORY on the SAVE card`() {
+        eligibleThenRateVanishes(keepNewerRow = true)
+        stubSaveRefusal(RateRefusalCodes.NOT_ELIGIBLE_NONE)
+
+        viewModel.save()
+        settle()
+
+        assertEquals(
+            CurrencyRegionUi.Blocked(CurrencyBlockVariant.NONE, null, CurrencyBlockOrigin.SAVE),
+            st.currencyRegion
+        )
+        assertEquals(CurrencyRateFixAction.DOWNLOAD_HISTORY, st.rateFixAction)
+        assertTrue("the offer is not a download", ratesRepo.historyCalls.isEmpty())
+    }
+
+    @Test
+    fun `AE-1b-2 a Save refusal with the setting Off still shows OPEN_SETTING on the SAVE card`() {
+        openBlockedUsd(privacy = PrivacySettingsLoadState.Loaded(PrivacySettings()))
+        putRate("USD", "EUR", 0.9, oct(9))
+        viewModel.updateMerchant("Shop")
+        viewModel.updateAmount("21.00")
+        settle()
+        rateStore.rows.clear()
+        stubSaveRefusal(RateRefusalCodes.NOT_ELIGIBLE_NONE)
+
+        viewModel.save()
+        settle()
+
+        assertEquals(CurrencyRateFixAction.OPEN_SETTING, st.rateFixAction)
+    }
+
+    // ---- F6: the home currency collector ignores a repeated value ----
+
+    @Test
+    fun `AE-1b-20 re-emitting the same home currency does not bump the announce key or re-invalidate`() {
+        val home = MutableSharedFlow<String>(replay = 1, extraBufferCapacity = 8)
+        home.tryEmit("EUR")
+        openBlockedUsd(homeFlow = home)
+        val keyBefore = st.previewAnnounceKey
+        val regionBefore = st.currencyRegion
+        assertTrue(regionBefore is CurrencyRegionUi.Blocked)
+
+        home.tryEmit("EUR")
+        runNow()
+        assertEquals(regionBefore, st.currencyRegion)
+        settle()
+
+        assertEquals(keyBefore, st.previewAnnounceKey)
+        assertEquals(regionBefore, st.currencyRegion)
+        assertEquals("EUR", st.homeCurrency)
+
+        // Control: a different home value is a real change and does announce.
+        home.tryEmit("GBP")
+        settle()
+        assertEquals("GBP", st.homeCurrency)
+        assertTrue(st.previewAnnounceKey > keyBefore)
     }
 }

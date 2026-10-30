@@ -22,6 +22,7 @@ import io.mockk.coVerify
 import io.mockk.confirmVerified
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableSharedFlow
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -687,5 +688,94 @@ class ReceiptScanViewModelRateHistoryTest : ViewModelTestUtils() {
         assertEquals(ScanStep.REVIEW, st.step)
         assertEquals(17L, st.receiptId)
         assertEquals("Merchant", st.editMerchant)
+    }
+
+    // ---- spec 1b.2: a Save refusal for a missing rate offers the same remedy as the preview card ----
+
+    private fun refuseSave(reason: RateRefusalReason) {
+        deps.saveOutcome = {
+            kotlin.Result.failure(ReceiptLifecycleCoordinator.RateNotEligibleException(reason, null))
+        }
+    }
+
+    /** Eligible USD preview (rate dated 8 Nov for the 9 Nov receipt); then the 8 Nov row vanishes. */
+    private fun eligibleThenRateVanishes(keepNewerRow: Boolean) {
+        enableDownload()
+        deps.store.putRate("USD", 0.85, mecDay(8))
+        scan(mecReceipt(currency = "USD", date = daysBefore(5)))
+        assertTrue(region is CurrencyRegionUi.Eligible)
+        deps.store.rows.clear()
+        if (keepNewerRow) deps.store.putRate("USD", 0.9, mecDay(14))
+    }
+
+    @Test
+    fun `INV-1b-18 a NO_RATE Save refusal after an Eligible preview shows the SAVE card with REFRESH_LATEST`() {
+        eligibleThenRateVanishes(keepNewerRow = false)
+        refuseSave(RateRefusalReason.NO_RATE)
+
+        model.saveExpense()
+        settle()
+
+        assertEquals(CurrencyRegionUi.Blocked(CurrencyBlockVariant.NONE, null, CurrencyBlockOrigin.SAVE), region)
+        assertEquals(SaveReceiptResult.RateNotEligible, st.saveResult)
+        assertEquals(CurrencyRatesSetting.ON, st.ratesSetting)
+        assertEquals(CurrencyRateFixAction.REFRESH_LATEST, st.rateFixAction)
+        assertTrue(deps.ratesRepo.historyCalls.isEmpty())
+    }
+
+    @Test
+    fun `INV-1b-18 a NO_RATE Save refusal with a newer stored rate inside the window offers DOWNLOAD_HISTORY on the SAVE card`() {
+        eligibleThenRateVanishes(keepNewerRow = true)
+        refuseSave(RateRefusalReason.NO_RATE)
+
+        model.saveExpense()
+        settle()
+
+        assertEquals(CurrencyRegionUi.Blocked(CurrencyBlockVariant.NONE, null, CurrencyBlockOrigin.SAVE), region)
+        assertEquals(CurrencyRateFixAction.DOWNLOAD_HISTORY, st.rateFixAction)
+        assertTrue("the offer is not a download", deps.ratesRepo.historyCalls.isEmpty())
+    }
+
+    @Test
+    fun `INV-1b-18 a Save refusal with the setting Off still shows OPEN_SETTING on the SAVE card`() {
+        eligibleThenRateVanishes(keepNewerRow = true)
+        setRatesSetting(PrivacySettingsLoadState.Loaded(PrivacySettings()))
+        refuseSave(RateRefusalReason.NO_RATE)
+
+        model.saveExpense()
+        settle()
+
+        assertEquals(CurrencyRateFixAction.OPEN_SETTING, st.rateFixAction)
+    }
+
+    // ---- F6: the home currency collector ignores a repeated value ----
+
+    @Test
+    fun `INV-1b-20 re-emitting the same home currency does not bump the announce key or re-invalidate`() {
+        val home = MutableSharedFlow<String>(replay = 1, extraBufferCapacity = 8)
+        home.tryEmit("EUR")
+        deps.homeSource = home
+        model = deps.createViewModel()
+        settle()
+        enableDownload()
+        scanDownloadScenario()
+        assertDownloadable()
+        val keyBefore = st.previewAnnounceKey
+        val regionBefore = region
+
+        home.tryEmit("EUR")
+        runNow()
+        assertEquals(regionBefore, region)
+        settle()
+
+        assertEquals(keyBefore, st.previewAnnounceKey)
+        assertEquals(regionBefore, region)
+        assertEquals(CurrencyRateFixAction.DOWNLOAD_HISTORY, st.rateFixAction)
+
+        // Control: a different home value is a real change and announces once.
+        home.tryEmit("GBP")
+        settle()
+        assertEquals("GBP", st.homeCurrency)
+        assertEquals(keyBefore + 1, st.previewAnnounceKey)
     }
 }

@@ -451,3 +451,36 @@ Total: 9 + 5 + 37 = 51 (42 `mec_*` + 9 `add_expense_installments_*`); the count 
   - domain-spec 1b.7 built-diagnostics note.
   - guard_docs_truth PASS vr-20261030-122639-3f1d5dc0.
 - NEXT: the 1b candidate gate (unit-tests, static-guards, app-check; F-A11Y-LATCH-PURE review; privacy guardian; reviewer-strict; device check against the live ECB file).
+
+## 2026-10-30: 1b candidate gate in progress
+- Combined candidate guardian (privacy plus F-A11Y-LATCH-PURE): ACCEPT. C1-C13 hold. F-A11Y-LATCH-PURE is a LOW post-release follow-up; the pure-latch fix is recorded in the review. Pre-existing CurrencyConverter pair logs are LOW and optional.
+- reviewer-strict (Opus xhigh): ACCEPT-WITH-FIXES.
+  - F1 MEDIUM, the Save card's stale remedy: fixed in both VMs (REFRESH_LATEST floor plus a keepSaveBlock re-read).
+  - F2 MEDIUM, the currency-management list flooded after a download: fixed with latestPerSource.
+  - F3 LOW: tests added.
+  - F4 LOW, the opener exception: mapped to OFFLINE.
+  - F5 LOW: KDoc and INV-1b-2 wording.
+  - F6 LOW: distinctUntilChanged on the home flow.
+  - F7 LOW: spec deviation note.
+- Fix-pass run vr-20261030-132048-995d972d: 4 failures.
+  - ReceiptScan keepSaveBlock overwrote the refusal's STALE card (production bug; fix: keep the SAVE card, the re-read upgrades only the remedy).
+  - CurrencyManagementViewModelTest fixtures used an unrealistic from=EUR orientation (test fix).
+- Passed on the fix-pass tree:
+  - cancellation vr-20261030-133225-6f530c48
+  - known_good_state vr-20261030-133243-badbb4bb
+  - lint vr-20261030-133559-77038aef
+- **DEVICE FINDING (run vr-20261030-134202-13496e37, wave5-api35).** `secureDocumentBuilderFactory()` throws ParserConfigurationException (FEATURE_SECURE_PROCESSING) on Android's Harmony DocumentBuilderFactory.
+  - Effect: every live history download ends Failed.
+  - The SAME factory backs the DAILY ECB refresh. It has been in origin/bug-fixes since fc11cf9d (2026-04-04), so the daily refresh in released 1.0.x very likely fails on all devices.
+  - Fix on this branch: best-effort feature setting, plus an explicit `<!DOCTYPE`/`<!ENTITY` byte pre-scan (PAYLOAD_MALFORMED), plus a capped daily body read.
+  - The release-branch hotfix and store release are an OWNER decision (surfaced 2026-10-30).
+  - The airplane-mode device test PASSED.
+- Android XML follow-up (privacy guardian ACCEPT-WITH-FIXES): a UTF-16 payload could bypass an ASCII pre-scan. Fixed with a strict UTF-8 decode (malformed bytes, NUL or a leading BOM are rejected), then the DTD scan, then a parse from a StringReader. Tests added. The literal BOM char in the source was replaced with '﻿'.
+- Re-validation, all PASS:
+  - targeted vr-20261030-142219-849d7086
+  - DEVICE CurrencyRateHistoryDeviceTest (5/5: live 90-day download under 20 s, REPLACE idempotence, cancel, airplane, DOCTYPE on the Android parser, live daily refresh) vr-20261030-142851-1d559e0d
+  - runtime-ui vr-20261030-143038-370ca30f
+  - data vr-20261030-143409-a6549c05
+- Earlier on the fix-pass tree: cancellation, known_good_state and lint PASS. Static-guards and app-check will run on the integration merge commit.
+- Owner item 95: a 1.0.3 hotfix of the XML defect on hotfix/1.0.3-ecb-xml (worktree Cost-agregator-hf).
+- NEXT: re-merge into integration/ai-evolution-1b; unit-tests, static-guards and app-check on the merge commit; a reviewer-strict delta review of the fix pass; then a fast-forward of feature/ai-evolution.

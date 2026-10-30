@@ -22,8 +22,18 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Delay
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.InternalCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestDispatcher
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import kotlin.coroutines.CoroutineContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -45,7 +55,6 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
-import org.xml.sax.SAXParseException
 import java.io.ByteArrayInputStream
 import java.time.Instant
 import java.util.Locale
@@ -298,11 +307,146 @@ class CurrencyRatesRepositoryImplTest {
         try {
             fixture.repository.refreshFromStream("USD", stream(xml))
             fail("DOCTYPE payload must be rejected")
-        } catch (error: Exception) {
-            assertTrue(error is SAXParseException)
+        } catch (error: IllegalStateException) {
+            // Rejected by the explicit parser-independent DTD pre-scan, not by a parser feature.
+            assertEquals("RATE_PAYLOAD_MALFORMED", error.message)
         }
         assertTrue(fixture.store.rates.isEmpty())
         assertTrue(fixture.settings.lastRateUpdates.isEmpty())
+    }
+
+    @Test
+    fun `daily payload with DOCTYPE fails like a malformed payload and stores nothing`() = runTest {
+        val malformed = fixture(now = fetchedNextDayMillis)
+        val malformedFailure = try {
+            malformed.repository.refreshFromStream("USD", stream("<not-closed"))
+            null
+        } catch (error: Exception) {
+            error
+        }
+        assertNotNull("a malformed daily payload must fail", malformedFailure)
+
+        val fixture = fixture(now = fetchedNextDayMillis)
+        val doctypeXml = ecbXml().replaceFirst("?>", "?>\n<!DOCTYPE gesmes:Envelope [<!ENTITY synthetic 'x'>]>")
+        val doctypeFailure = try {
+            fixture.repository.refreshFromStream("USD", stream(doctypeXml))
+            null
+        } catch (error: Exception) {
+            error
+        }
+
+        assertNotNull("a DOCTYPE daily payload must fail", doctypeFailure)
+        assertTrue(fixture.store.rates.isEmpty())
+        assertTrue(fixture.settings.lastRateUpdates.isEmpty())
+        assertTrue(malformed.store.rates.isEmpty())
+    }
+
+    @Test
+    fun `containsDtdDeclaration is true for DOCTYPE or ENTITY in any case and false for a normal payload`() {
+        val repo = fixture().repository
+        fun detects(text: String) = repo.containsDtdDeclaration(text.toByteArray(Charsets.UTF_8))
+
+        assertTrue(detects("<?xml version=\"1.0\"?><!DOCTYPE x><a/>"))
+        assertTrue(detects("<?xml version=\"1.0\"?><!doctype x><a/>"))
+        assertTrue(detects("<?xml version=\"1.0\"?><!DocType x><a/>"))
+        assertTrue(detects("<a><!ENTITY e \"v\"></a>"))
+        assertTrue(detects("<a><!entity e \"v\"></a>"))
+
+        assertFalse(detects(ecbXml()))
+        assertFalse(detects(historyXml(datesBack(3))))
+        assertFalse(detects(""))
+        // Boundary: near-miss spellings are not a DTD declaration.
+        assertFalse(detects("<a>DOCTYPE and ENTITY words without the markup opener</a>"))
+        assertFalse(detects("<a><!-- DOCTYPE --></a>"))
+    }
+
+    @Test
+    fun `lowercase doctype history payload is PAYLOAD_MALFORMED with zero rows stored`() = runTest {
+        val xml = historyXml(datesBack(2)).replaceFirst("?>", "?><!doctype gesmes:envelope [<!entity e 'x'>]>")
+        val fixture = fixture(now = histNow)
+        fixture.repository.serve(fakeConnection(body = stream(xml)))
+
+        val outcome = fixture.repository.downloadRecentHistory("EUR")
+
+        assertEquals(CurrencyRateHistoryOutcome.Failed(RateHistoryFailureReason.PAYLOAD_MALFORMED), outcome)
+        assertEquals(1, connectionsOpened)
+        assertTrue(fixture.store.rates.isEmpty())
+        assertEquals(0, fixture.store.insertAllCalls)
+        assertTrue(fixture.settings.lastRateUpdates.isEmpty())
+    }
+
+    // ── Strict UTF-8 payload decoding (both parse paths) ────────────────────
+
+    private val bom8 = byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte())
+    private val bomLe = byteArrayOf(0xFF.toByte(), 0xFE.toByte())
+
+    private fun utf16LeWithBom(text: String) = bomLe + text.toByteArray(Charsets.UTF_16LE)
+
+    private fun withInvalidUtf8Inside(xml: String): ByteArray {
+        val head = xml.substringBefore("?>") + "?><!--"
+        val tail = "-->" + xml.substringAfter("?>")
+        return head.toByteArray(Charsets.UTF_8) + byteArrayOf(0xC3.toByte(), 0x28) + tail.toByteArray(Charsets.UTF_8)
+    }
+
+    private fun assertHistoryBytesMalformed(bytes: ByteArray) {
+        try {
+            fixture().repository.parseEcbHistoryRates(ByteArrayInputStream(bytes), histNow)
+            fail("Expected PAYLOAD_MALFORMED")
+        } catch (error: EcbHistoryPayloadException) {
+            assertEquals(RateHistoryFailureReason.PAYLOAD_MALFORMED, error.reason)
+        }
+    }
+
+    private fun assertDailyBytesMalformedAndNothingStored(bytes: ByteArray) = runTest {
+        try {
+            fixture().repository.parseEcbDailyRates(ByteArrayInputStream(bytes))
+            fail("Expected RATE_PAYLOAD_MALFORMED")
+        } catch (error: IllegalStateException) {
+            assertEquals("RATE_PAYLOAD_MALFORMED", error.message)
+        }
+        val f = fixture(now = fetchedNextDayMillis)
+        val failure = try {
+            f.repository.refreshFromStream("USD", ByteArrayInputStream(bytes))
+            null
+        } catch (error: Exception) {
+            error
+        }
+        assertNotNull("a non strict UTF-8 daily payload must fail", failure)
+        assertTrue(f.store.rates.isEmpty())
+        assertTrue(f.settings.lastRateUpdates.isEmpty())
+    }
+
+    @Test
+    fun `UTF-16LE payload with BOM and DOCTYPE is malformed on history and daily paths`() {
+        val doctype = "?>\n<!DOCTYPE gesmes:Envelope [<!ENTITY synthetic 'x'>]>"
+        assertHistoryBytesMalformed(utf16LeWithBom(historyXml(datesBack(2)).replaceFirst("?>", doctype)))
+        assertDailyBytesMalformedAndNothingStored(utf16LeWithBom(ecbXml().replaceFirst("?>", doctype)))
+    }
+
+    @Test
+    fun `UTF-16BE payload without BOM is malformed on history and daily paths`() {
+        assertHistoryBytesMalformed(historyXml(datesBack(2)).toByteArray(Charsets.UTF_16BE))
+        assertDailyBytesMalformedAndNothingStored(ecbXml().toByteArray(Charsets.UTF_16BE))
+    }
+
+    @Test
+    fun `UTF-8 payload with leading BOM is malformed on history and daily paths`() {
+        assertHistoryBytesMalformed(bom8 + historyXml(datesBack(2)).toByteArray(Charsets.UTF_8))
+        assertDailyBytesMalformedAndNothingStored(bom8 + ecbXml().toByteArray(Charsets.UTF_8))
+    }
+
+    @Test
+    fun `invalid UTF-8 byte sequence is malformed on history and daily paths`() {
+        assertHistoryBytesMalformed(withInvalidUtf8Inside(historyXml(datesBack(2))))
+        assertDailyBytesMalformedAndNothingStored(withInvalidUtf8Inside(ecbXml()))
+    }
+
+    @Test
+    fun `control plain UTF-8 payload still parses on history and daily paths`() {
+        val days = fixture().repository.parseEcbHistoryRates(stream(historyXml(datesBack(2))), histNow)
+        assertEquals(2, days.size)
+        val daily = fixture().repository.parseEcbDailyRates(stream(ecbXml()))
+        assertNotNull(daily)
     }
 
     // ── MEC 1b: history parser (INV-1b-7, INV-1b-9, C6-C8) ─────────────────
@@ -389,12 +533,7 @@ class CurrencyRatesRepositoryImplTest {
     fun `C8 DOCTYPE payload is rejected by the hardened parser on the JVM`() {
         val xml = "<?xml version=\"1.0\"?><!DOCTYPE x [<!ENTITY e SYSTEM \"file:///nope\">]>" +
             historyXml(datesBack(2)).substringAfter("?>")
-        try {
-            fixture().repository.parseEcbHistoryRates(stream(xml), histNow)
-            fail("DOCTYPE payload must be rejected")
-        } catch (error: Exception) {
-            assertTrue(error is SAXParseException)
-        }
+        assertHistoryReason(RateHistoryFailureReason.PAYLOAD_MALFORMED, xml)
     }
 
     @Test
@@ -876,6 +1015,183 @@ class CurrencyRatesRepositoryImplTest {
         }
 
         assertSingleConstantLine("CANCELLED", lines)
+    }
+
+    @Test
+    fun `F3b INV-1b-11 a store exception is STORE_FAILED and never updates the last rate timestamp`() = runTest {
+        val settings = RecordingCurrencySettingsRepository()
+        val repository = repositoryOf(
+            FailingBulkStore(PairDateRateStore()) { IllegalStateException("disk full") },
+            settings
+        )
+        repository.serve(okHistoryConnection(3))
+
+        val lines = captureTimber {
+            assertEquals(
+                CurrencyRateHistoryOutcome.Failed(RateHistoryFailureReason.STORE_FAILED),
+                repository.downloadRecentHistory("EUR")
+            )
+        }
+
+        assertTrue(settings.lastRateUpdates.isEmpty())
+        assertSingleConstantLine("STORE_FAILED", lines)
+    }
+
+    @Test
+    fun `F3c INV-1b-13 setLastRateUpdate failure after a committed store still returns Stored`() = runTest {
+        val store = PairDateRateStore()
+        val settings = ThrowingLastUpdateSettings(RecordingCurrencySettingsRepository())
+        val repository = repositoryOf(store, settings)
+        repository.serve(okHistoryConnection(3))
+
+        val outcome = repository.downloadRecentHistory("EUR")
+
+        assertEquals(
+            CurrencyRateHistoryOutcome.Stored(
+                days = 3,
+                rows = 3 * pairsPerFixtureDay,
+                earliestDate = histNewest.minusDays(2),
+                latestDate = histNewest
+            ),
+            outcome
+        )
+        assertEquals(1, settings.setCalls)
+        assertEquals(3 * pairsPerFixtureDay, store.rates.size)
+        assertEquals(1, store.insertAllCalls)
+    }
+
+    @Test
+    fun `F4 opener IOException is OFFLINE with one constant line and never throws`() = runTest {
+        val fixture = fixture(now = histNow)
+        fixture.repository.historyConnectionOpener = {
+            connectionsOpened += 1
+            throw IOException("https://www.ecb.europa.eu/stats unreachable")
+        }
+        connectionsOpened = 0
+
+        val lines = captureTimber {
+            assertEquals(
+                CurrencyRateHistoryOutcome.Failed(RateHistoryFailureReason.OFFLINE),
+                fixture.repository.downloadRecentHistory("EUR")
+            )
+        }
+
+        assertEquals(1, connectionsOpened)
+        assertSingleConstantLine("OFFLINE", lines)
+        assertTrue(fixture.store.rates.isEmpty())
+        assertTrue(fixture.settings.lastRateUpdates.isEmpty())
+        // The single-flight lock was released: a later call runs normally.
+        fixture.repository.serve(okHistoryConnection(3))
+        assertTrue(fixture.repository.downloadRecentHistory("EUR") is CurrencyRateHistoryOutcome.Stored)
+    }
+
+    @Test
+    fun `F4 opener CancellationException propagates and is never mapped to OFFLINE`() = runTest {
+        val repository = fixture(now = histNow).repository
+        repository.historyConnectionOpener = { throw CancellationException("cancelled while opening") }
+        var thrown: Throwable? = null
+        var returned: CurrencyRateHistoryOutcome? = null
+
+        captureTimber {
+            try {
+                returned = repository.downloadRecentHistory("EUR")
+            } catch (e: CancellationException) {
+                thrown = e
+            }
+        }
+
+        assertTrue("CancellationException must propagate", thrown is CancellationException)
+        assertNull(returned)
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun `F3a 30 second deadline returns TIMEOUT and disconnects the stuck connection`() = runTest {
+        val readStarted = CountDownLatch(1)
+        val released = CountDownLatch(1)
+        var unblockedByDisconnect = false
+        val stuckBody = object : InputStream() {
+            override fun read(): Int = -1
+            override fun read(b: ByteArray, off: Int, len: Int): Int {
+                readStarted.countDown()
+                unblockedByDisconnect = released.await(20, TimeUnit.SECONDS)
+                throw IOException("socket closed")
+            }
+        }
+        val connection = fakeConnection(body = stuckBody)
+        every { connection.disconnect() } answers { released.countDown() }
+        val store = PairDateRateStore()
+        val settings = RecordingCurrencySettingsRepository()
+        val repository = repositoryOf(
+            store,
+            settings,
+            VirtualDelayDispatcher(Dispatchers.IO, StandardTestDispatcher(testScheduler))
+        )
+        repository.serve(connection)
+
+        val result = async(Dispatchers.Default) { repository.downloadRecentHistory("EUR") }
+        assertTrue("read never started", readStarted.await(10, TimeUnit.SECONDS))
+
+        testScheduler.advanceTimeBy(29_999L)
+        testScheduler.runCurrent()
+        assertFalse("deadline fired early", result.isCompleted)
+        verify(exactly = 0) { connection.disconnect() }
+
+        testScheduler.advanceTimeBy(2L)
+        testScheduler.runCurrent()
+        assertEquals(CurrencyRateHistoryOutcome.Failed(RateHistoryFailureReason.TIMEOUT), result.await())
+        verify(atLeast = 1) { connection.disconnect() }
+        assertTrue("stuck read was not unblocked by disconnect()", unblockedByDisconnect)
+        assertTrue(store.rates.isEmpty())
+        assertTrue(settings.lastRateUpdates.isEmpty())
+    }
+
+    // ── MEC 1b: reviewer findings F3 / F4 (deadline, store failure, best-effort settings, opener) ──
+
+    /** Store whose bulk write always fails with [failure]; everything else delegates to a real fake. */
+    private class FailingBulkStore(
+        private val delegate: ExchangeRateStore,
+        private val failure: () -> Throwable
+    ) : ExchangeRateStore by delegate {
+        override suspend fun insertOrUpdateAll(rates: List<DomainExchangeRate>) {
+            throw failure()
+        }
+    }
+
+    /** Settings whose lastRateUpdate write always throws; counts the attempts. */
+    private class ThrowingLastUpdateSettings(
+        delegate: CurrencySettingsRepository
+    ) : CurrencySettingsRepository by delegate {
+        var setCalls = 0
+
+        override suspend fun setLastRateUpdate(timestamp: Long) {
+            setCalls += 1
+            throw IOException("settings write failed")
+        }
+    }
+
+    /** Dispatches on a real pool but takes timeouts from the virtual [virtual] scheduler. */
+    @OptIn(InternalCoroutinesApi::class, ExperimentalCoroutinesApi::class)
+    private class VirtualDelayDispatcher(
+        private val real: CoroutineDispatcher,
+        private val virtual: TestDispatcher
+    ) : CoroutineDispatcher(), Delay by virtual {
+        override fun dispatch(context: CoroutineContext, block: Runnable) = real.dispatch(context, block)
+    }
+
+    private fun repositoryOf(
+        store: ExchangeRateStore,
+        settings: CurrencySettingsRepository,
+        dispatcher: CoroutineDispatcher = Dispatchers.Unconfined
+    ): CurrencyRatesRepositoryImpl {
+        val time = MutableTimeProvider(histNow)
+        return CurrencyRatesRepositoryImpl(
+            currencyConverter = CurrencyConverter(store, time),
+            currencySettingsRepository = settings,
+            timeProvider = time,
+            ioDispatcher = dispatcher,
+            privacyGate = FixedPrivacyGate(PrivacyDecision.Allowed)
+        )
     }
 
     private fun fixture(

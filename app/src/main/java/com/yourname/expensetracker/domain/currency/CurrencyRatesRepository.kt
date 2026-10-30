@@ -53,7 +53,11 @@ sealed interface CurrencyRateHistoryOutcome {
     /** Another history download is running in this process; no connection was opened. */
     data object AlreadyInProgress : CurrencyRateHistoryOutcome
 
-    /** The attempt failed for exactly one bounded [reason]; the table is unchanged. */
+    /**
+     * The attempt failed for exactly one bounded [reason]. A partial set is never stored. A
+     * `Failed(TIMEOUT)` may follow a completed commit (the deadline can fire after the Room
+     * transaction), in which case the complete set is stored; otherwise the table is unchanged.
+     */
     data class Failed(val reason: RateHistoryFailureReason) : CurrencyRateHistoryOutcome
 
     /**

@@ -387,7 +387,7 @@ class ReceiptScanViewModel @Inject constructor(
     init {
         // S7-009: Load home currency on init so editCurrency is never a hardcoded "EUR"
         viewModelScope.launch {
-            currencySettingsRepository.homeCurrency().collect { homeCurrency ->
+            currencySettingsRepository.homeCurrency().distinctUntilChanged().collect { homeCurrency ->
                 homeCurrencyCode = homeCurrency
                 // Review F2: a proposal held while home was unresolved is resolved below, not defaulted to home.
                 val holdForProposal = proposalAwaitingHome &&
@@ -1594,7 +1594,8 @@ class ReceiptScanViewModel @Inject constructor(
     private fun reevaluateRegion(
         invalidate: Boolean,
         showEvaluating: Boolean = true,
-        refreshCompleted: Boolean = false
+        refreshCompleted: Boolean = false,
+        keepSaveBlock: Boolean = false
     ) {
         evaluationJob?.cancel()
         evaluationJob = null
@@ -1723,16 +1724,25 @@ class ReceiptScanViewModel @Inject constructor(
             marker?.cancel()
             ensureActive()
             // F-B2-A11Y-1: after a history success the preview line is announced once (latest inputs win).
-            val announce = historyAnnouncePending && region is CurrencyRegionUi.Eligible
+            val announcePending = historyAnnouncePending
             historyAnnouncePending = false
             val doneStatus = doneStatusFor(region, decision, atMillis, zone)
             _state.update {
+                val current = it.currencyRegion
+                // After a post-tap refusal the SAVE-origin Blocked card stays: its variant/date are the
+                // coordinator's authoritative refusal. A Blocked re-read only upgrades the remedy.
+                val keepCard = keepSaveBlock && current is CurrencyRegionUi.Blocked &&
+                    current.origin == CurrencyBlockOrigin.SAVE
+                val keep = keepCard && region !is CurrencyRegionUi.Blocked
+                val shown = if (keepCard) current else region
+                val announce = announcePending && !keep && region is CurrencyRegionUi.Eligible
                 it.copy(
-                    currencyRegion = region,
+                    currencyRegion = shown,
                     amountError = null,
                     ratesToday = today,
                     rateRefresh = settledRefresh(it, refreshCompleted && region is CurrencyRegionUi.Blocked),
-                    rateRemedy = decision,
+                    // A kept SAVE card keeps its REFRESH_LATEST floor; an Eligible re-read yields NONE.
+                    rateRemedy = if (keep) it.rateRemedy else decision,
                     historyStatus = when {
                         it.historyStatus == CurrencyHistoryStatus.RUNNING -> CurrencyHistoryStatus.RUNNING
                         it.historyHomeUnavailable -> CurrencyHistoryStatus.FAILED_HOME_UNAVAILABLE
@@ -2243,6 +2253,8 @@ class ReceiptScanViewModel @Inject constructor(
                             // overwrite the SAVE card, and show the SAVE-origin card. Not logged as an error.
                             evaluationJob?.cancel()
                             evaluationJob = null
+                            val refusedMissingRate = e.reason == RateRefusalReason.NO_RATE ||
+                                e.reason == RateRefusalReason.STALE_RATE
                             _state.update {
                                 it.copy(
                                     isSaving = false,
@@ -2253,8 +2265,19 @@ class ReceiptScanViewModel @Inject constructor(
                                         variant = blockVariantFor(e.reason),
                                         latestRateDate = if (e.reason == RateRefusalReason.STALE_RATE) e.latestRateDate else null,
                                         origin = CurrencyBlockOrigin.SAVE
-                                    )
+                                    ),
+                                    // Spec 1b.2: same remedy policy as the preview card; floor at REFRESH_LATEST
+                                    // because an earlier Eligible/Evaluating preview left NONE.
+                                    rateRemedy = if (refusedMissingRate) {
+                                        RateRemedyDecision(RateRemedy.REFRESH_LATEST)
+                                    } else {
+                                        it.rateRemedy
+                                    }
                                 )
+                            }
+                            if (refusedMissingRate) {
+                                // Local re-read so RateRemedyPolicy can upgrade the floor to DOWNLOAD_HISTORY.
+                                reevaluateRegion(invalidate = false, showEvaluating = false, keepSaveBlock = true)
                             }
                             return@fold
                         }

@@ -369,7 +369,7 @@ class AddExpenseViewModel @Inject constructor(
 
  init {
  homeCurrencyJob = viewModelScope.launch {
- currencySettingsRepository.homeCurrency().collect { hc ->
+ currencySettingsRepository.homeCurrency().distinctUntilChanged().collect { hc ->
  // MEC 1b INV-1b-20(c): a home-denominated draft is discarded on a home change (open sheet or retained).
  val before = _state.value
  val oldHome = if (homeObserved) before.homeCurrency else null
@@ -871,8 +871,9 @@ class AddExpenseViewModel @Inject constructor(
         evaluationJob?.cancel()
         evaluationJob = null
         _state.update { it.withSaveRefusal(variant) }
-        // A stale refusal carries only a bounded code; re-read the latest date locally.
-        if (variant == CurrencyBlockVariant.STALE) {
+        // A stale or no-rate refusal carries only a bounded code; re-read locally so RateRemedyPolicy can
+        // upgrade the REFRESH_LATEST floor (set in withSaveRefusal) to DOWNLOAD_HISTORY (spec 1b.2).
+        if (variant == CurrencyBlockVariant.STALE || variant == CurrencyBlockVariant.NONE) {
             reevaluateRegion(
                 invalidate = false,
                 showEvaluating = false,
@@ -1126,7 +1127,14 @@ class AddExpenseViewModel @Inject constructor(
             isSaving = false,
             saveResult = null,
             mutation = com.yourname.expensetracker.ui.model.MutationState.idle(),
-            currencyRegion = CurrencyRegionUi.Blocked(variant, latestRateDate = null, origin = CurrencyBlockOrigin.SAVE)
+            currencyRegion = CurrencyRegionUi.Blocked(variant, latestRateDate = null, origin = CurrencyBlockOrigin.SAVE),
+            // Spec 1b.2: the SAVE card uses the same remedy policy as the preview card. A previous
+            // Eligible/Evaluating preview left NONE, which would offer no action; floor at REFRESH_LATEST.
+            rateRemedy = if (variant == CurrencyBlockVariant.STALE || variant == CurrencyBlockVariant.NONE) {
+                RateRemedyDecision(RateRemedy.REFRESH_LATEST)
+            } else {
+                rateRemedy
+            }
         )
         return if (variant == CurrencyBlockVariant.HOME_UNRESOLVED) {
             withCard.withSaveError(UiText.StringResource(R.string.mec_block_home_unresolved))
@@ -1479,7 +1487,8 @@ class AddExpenseViewModel @Inject constructor(
                     currencyRegion = if (keep) current else region,
                     ratesToday = today,
                     rateRefresh = settledRefresh(it, refreshCompleted && region is CurrencyRegionUi.Blocked),
-                    rateRemedy = decision,
+                    // A kept SAVE card keeps its REFRESH_LATEST floor; an Eligible re-read yields NONE.
+                    rateRemedy = if (keep) it.rateRemedy else decision,
                     historyStatus = when {
                         it.historyStatus == CurrencyHistoryStatus.RUNNING -> CurrencyHistoryStatus.RUNNING
                         it.historyHomeUnavailable -> CurrencyHistoryStatus.FAILED_HOME_UNAVAILABLE

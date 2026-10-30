@@ -2,6 +2,7 @@ package com.yourname.expensetracker.ui.screens.currency
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.yourname.expensetracker.data.database.entity.ExchangeRate
 import com.yourname.expensetracker.data.repository.CurrencyDataRepository
 import com.yourname.expensetracker.data.repository.ExpenseCountFilter
 import com.yourname.expensetracker.data.repository.ExpenseRepository
@@ -103,6 +104,23 @@ data class ExchangeRateInfo(
     val rate: Double,
     val lastUpdated: Long
 )
+
+/**
+ * F2: keeps one row per [ExchangeRate.fromCurrency], the one with the newest
+ * [ExchangeRate.validDate] (ties: larger [ExchangeRate.lastUpdated]). Currencies keep the order of
+ * their first appearance in [rows]. A multi-day history would otherwise list one card per day.
+ */
+internal fun latestPerSource(rows: List<ExchangeRate>): List<ExchangeRate> {
+    val newest = LinkedHashMap<String, ExchangeRate>()
+    for (row in rows) {
+        val current = newest[row.fromCurrency]
+        val isNewer = current == null ||
+            row.validDate > current.validDate ||
+            (row.validDate == current.validDate && row.lastUpdated > current.lastUpdated)
+        if (isNewer) newest[row.fromCurrency] = row
+    }
+    return newest.values.toList()
+}
 
 @HiltViewModel
 class CurrencyManagementViewModel @Inject constructor(
@@ -207,7 +225,7 @@ class CurrencyManagementViewModel @Inject constructor(
             
             try {
                 // Load exchange rates (the currency catalog is static and already in the state)
-                val rates = currencyDataRepository.getRatesToCurrency(homeCurrency).first()
+                val rates = latestPerSource(currencyDataRepository.getRatesToCurrency(homeCurrency).first())
                     .map { rate ->
                         ExchangeRateInfo(
                             fromCurrency = rate.fromCurrency,
