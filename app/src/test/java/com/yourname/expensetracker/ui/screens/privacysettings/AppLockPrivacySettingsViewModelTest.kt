@@ -15,7 +15,10 @@ import com.yourname.expensetracker.domain.privacy.applock.AutoLockTimeout
 import com.yourname.expensetracker.domain.privacy.applock.LockMode
 import com.yourname.expensetracker.domain.privacy.applock.DeviceAuthCapability
 import com.yourname.expensetracker.domain.privacy.applock.DeviceAuthCapabilityProvider
+import com.yourname.expensetracker.domain.privacy.applock.EffectiveLockMode
 import com.yourname.expensetracker.domain.privacy.applock.InertReason
+import com.yourname.expensetracker.domain.privacy.applock.PinPresentation
+import com.yourname.expensetracker.domain.privacy.applock.PinStep
 import com.yourname.expensetracker.domain.privacy.applock.OpenOriginEnd
 import com.yourname.expensetracker.domain.privacy.applock.OpenOriginEndKind
 import com.yourname.expensetracker.domain.privacy.applock.OpenOriginPrompt
@@ -172,6 +175,9 @@ class AppLockPrivacySettingsViewModelTest : ViewModelTestUtils() {
     private val controllerState = MutableStateFlow<AppLockState>(AppLockState.Disabled)
     private val endSignal = MutableStateFlow<OpenOriginEnd?>(null)
 
+    /** The controller's PIN presentation (S27b): a real StateFlow, device-auth mode by default. */
+    private val pinState = MutableStateFlow(PinPresentation.INITIAL)
+
     /** What the capability provider reports on the next read, and an optional failure to throw instead. */
     private var capability = DeviceAuthCapability.AVAILABLE
     private var capabilityFailure: Throwable? = null
@@ -179,6 +185,7 @@ class AppLockPrivacySettingsViewModelTest : ViewModelTestUtils() {
     init {
         every { controller.state } returns controllerState
         every { controller.openOriginEnd } returns endSignal
+        every { controller.pin } returns pinState
         every { capabilityProvider.current() } answers {
             val failure = capabilityFailure
             if (failure != null) throw failure
@@ -596,6 +603,10 @@ class AppLockPrivacySettingsViewModelTest : ViewModelTestUtils() {
                     ReviewSaveResult.NOT_IN_ORIGIN,
                     ReviewSaveResult.ALREADY_IN_FLIGHT ->
                         AppLockPrivacySectionState.NeedsReview(true, false, AppLockPrivacySectionNotice.SAVE_FAILED) to 2
+                    // PIN_MODE (S27b): fail closed, nothing written, no re-read; the review-specific notice (the App PIN
+                    // screen cannot help until the settings are readable), not the generic PIN_MODE notice.
+                    ReviewSaveResult.PIN_MODE ->
+                        AppLockPrivacySectionState.NeedsReview(true, false, AppLockPrivacySectionNotice.PIN_MODE_REVIEW) to 1
                 }
                 assertEquals("$result", expected, viewModel.uiState.value)
                 assertEquals("$result observer subscriptions", expectedObserveCalls, repository.observeCalls)
@@ -1633,6 +1644,7 @@ class AppLockPrivacySettingsViewModelTest : ViewModelTestUtils() {
                 // REFUSED_UNAVAILABLE re-reads the capability, not the repository.
                 val expectedObserveCalls = when (result) {
                     SettingsRequestResult.STARTED,
+                    SettingsRequestResult.PIN_MODE,
                     SettingsRequestResult.REFUSED_UNAVAILABLE -> 1
                     SettingsRequestResult.ALREADY_IN_FLIGHT,
                     SettingsRequestResult.NOT_IN_ORIGIN,
@@ -1641,6 +1653,7 @@ class AppLockPrivacySettingsViewModelTest : ViewModelTestUtils() {
                 // The capability re-reads AVAILABLE here, so a refused disable is never silent: SAVE_FAILED.
                 val expectedNotice = when (result) {
                     SettingsRequestResult.REFUSED_UNAVAILABLE -> AppLockPrivacySectionNotice.SAVE_FAILED
+                    SettingsRequestResult.PIN_MODE -> AppLockPrivacySectionNotice.PIN_MODE
                     SettingsRequestResult.STARTED,
                     SettingsRequestResult.ALREADY_IN_FLIGHT,
                     SettingsRequestResult.NOT_IN_ORIGIN,
@@ -2076,6 +2089,7 @@ class AppLockPrivacySettingsViewModelTest : ViewModelTestUtils() {
                     SettingsRequestResult.NOT_IN_ORIGIN,
                     SettingsRequestResult.REVIEW_REQUIRED -> 2 to null
                     SettingsRequestResult.REFUSED_UNAVAILABLE -> 1 to AppLockPrivacySectionNotice.ENABLE_FAILED
+                    SettingsRequestResult.PIN_MODE -> 1 to AppLockPrivacySectionNotice.PIN_MODE
                 }
                 assertEquals("$result observer subscriptions", expected.first, repository.observeCalls)
                 assertEquals("$result notice", expected.second, readyOf(viewModel).notice)
@@ -3131,6 +3145,8 @@ class AppLockPrivacySettingsViewModelTest : ViewModelTestUtils() {
                     TimeoutChangeResult.FAILED,
                     TimeoutChangeResult.ALREADY_IN_FLIGHT,
                     TimeoutChangeResult.NOT_IN_ORIGIN -> AppLockPrivacySectionNotice.SAVE_FAILED to 2
+                    // PIN_MODE (S27b): nothing written, no re-read; the person is pointed to App PIN.
+                    TimeoutChangeResult.PIN_MODE -> AppLockPrivacySectionNotice.PIN_MODE to 1
                 }
                 val ready = readyOf(viewModel)
                 assertEquals("$result notice", expected.first, ready.notice)
@@ -3960,4 +3976,101 @@ class AppLockPrivacySettingsViewModelTest : ViewModelTestUtils() {
         coVerify(exactly = 0) { emitter.emit(any(), any()) }
         confirmVerified(emitter)
     }
+
+    // ---------------------------------------------------------------------------------------------------------
+    // S27b: effective APP_PIN mode (fail closed, no device prompt, point to App PIN)
+    // ---------------------------------------------------------------------------------------------------------
+
+    private fun appPinMode() = PinPresentation(EffectiveLockMode.APP_PIN, PinStep.NONE, null, false)
+
+    @Test
+    fun `S27b pinMode is true only while the committed lock is on and the effective mode is APP_PIN`() =
+        runTest(testDispatcher) {
+            controllerState.value = AppLockState.Unlocked
+
+            pinState.value = appPinMode()
+            assertTrue("lock on + APP_PIN", readyOf(openSection(FakeRepository(AppLockSettingsLoadState.Loaded(lockOn)))).pinMode)
+            // Boundaries: lock off with a PIN record, and lock on in device-auth mode, are NOT pin mode.
+            assertFalse("lock off + APP_PIN", readyOf(openSection(FakeRepository(AppLockSettingsLoadState.Loaded(off)))).pinMode)
+            pinState.value = PinPresentation.INITIAL
+            assertFalse("lock on + DEVICE_AUTH", readyOf(openSection(FakeRepository(AppLockSettingsLoadState.Loaded(lockOn)))).pinMode)
+
+            // The flag follows the controller: removing the PIN leaves pin mode without a new store read.
+            pinState.value = appPinMode()
+            val viewModel = openSection(FakeRepository(AppLockSettingsLoadState.Loaded(lockOn)))
+            assertTrue(readyOf(viewModel).pinMode)
+            pinState.value = PinPresentation.INITIAL
+            advanceUntilIdle()
+            assertFalse(readyOf(viewModel).pinMode)
+        }
+
+    @Test
+    fun `S27b a PIN_MODE disable maps to the PIN_MODE notice with no re-read, no capability re-read and the row stays On`() =
+        runTest(testDispatcher) {
+            controllerState.value = AppLockState.Unlocked
+            pinState.value = appPinMode()
+            every { operations.requestDisable() } returns SettingsRequestResult.PIN_MODE
+            val repository = FakeRepository(AppLockSettingsLoadState.Loaded(lockOn))
+            val viewModel = openSection(repository)
+
+            viewModel.onTurnOffRequested()
+            advanceUntilIdle()
+
+            val ready = readyOf(viewModel)
+            assertEquals(AppLockPrivacySectionNotice.PIN_MODE, ready.notice)
+            assertEquals(AppLockRowState.On, ready.lock)
+            assertTrue(ready.pinMode)
+            assertEquals("no resubscribe", 1, repository.observeCalls)
+            // The only capability read is the construction-time hint: PIN_MODE never touches the device authenticator.
+            verify(exactly = 1) { capabilityProvider.current() }
+            verify(exactly = 1) { operations.requestDisable() }
+            confirmVerified(emitter)
+        }
+
+    @Test
+    fun `S27b a PIN_MODE timeout change maps to the PIN_MODE notice and keeps the committed timeout`() =
+        runTest(testDispatcher) {
+            controllerState.value = AppLockState.Unlocked
+            pinState.value = appPinMode()
+            coEvery { operations.requestTimeoutChange(AutoLockTimeout.M5) } returns TimeoutChangeResult.PIN_MODE
+            val repository = FakeRepository(
+                AppLockSettingsLoadState.Loaded(settingsOf(lock = true, timeout = AutoLockTimeout.M1))
+            )
+            val viewModel = openSection(repository)
+
+            viewModel.onTimeoutSelected(AutoLockTimeout.M5)
+            advanceUntilIdle()
+
+            val ready = readyOf(viewModel)
+            assertEquals(AppLockPrivacySectionNotice.PIN_MODE, ready.notice)
+            assertEquals(AutoLockTimeoutRowState(AutoLockTimeout.M1, paused = false), ready.timeoutRow)
+            assertFalse(ready.isWriting)
+            assertEquals(1, repository.observeCalls)
+            verify(exactly = 1) { capabilityProvider.current() }
+            confirmVerified(emitter)
+        }
+
+    @Test
+    fun `S27b a PIN_MODE review save maps to the PIN_MODE_REVIEW notice, arms no REVIEW_SAVED and frees the card`() =
+        runTest(testDispatcher) {
+            pinState.value = appPinMode()
+            val repository = FakeRepository(AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.CORRUPTED))
+            coEvery { operations.requestReviewSave(any()) } returns ReviewSaveResult.PIN_MODE
+            val viewModel = openSection(repository)
+
+            viewModel.saveReview()
+            advanceUntilIdle()
+
+            assertEquals(
+                AppLockPrivacySectionState.NeedsReview(true, false, AppLockPrivacySectionNotice.PIN_MODE_REVIEW),
+                viewModel.uiState.value
+            )
+            // A later commit from elsewhere is not announced as a saved review (no pending flag).
+            repository.state.value = AppLockSettingsLoadState.Loaded(committedOff(true))
+            advanceUntilIdle()
+            assertEquals(readyLockOff(true, false, null), viewModel.uiState.value)
+            verify(exactly = 1) { capabilityProvider.current() }
+            assertTrue(repository.reviewSaves.isEmpty())
+            confirmVerified(emitter)
+        }
 }

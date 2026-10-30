@@ -56,7 +56,7 @@
     <string name="privacy_app_lock_snackbar_off_pin_removed">El bloqueo de la app está desactivado. Se eliminó tu PIN de la app.</string>
     <string name="applock_pin_remove_title">¿Eliminar el PIN de la app?</string>
     <string name="applock_pin_remove_body">La app se desbloqueará con el bloqueo de pantalla de tu teléfono.</string>
-    <string name="applock_pin_remove_body_no_secure">La app se desbloqueará con el bloqueo de pantalla de tu teléfono. Tu teléfono no tiene bloqueo de pantalla, así que el bloqueo de la app se desactivará.</string>
+    <string name="applock_pin_remove_body_no_secure">Tu teléfono no tiene bloqueo de pantalla, así que el bloqueo de la app se desactivará.</string>
     <string name="applock_pin_remove_confirm">Eliminar</string>
     <!-- S27 b2 (es DRAFT, pending native sign-off). -->
     <string name="applock_pin_row_title">PIN de la app</string>
@@ -69,4 +69,14 @@
     <string name="applock_pin_action_remove">Eliminar el PIN de la app</string>
     <string name="applock_pin_action_setup">Configurar el PIN de la app</string>
     <string name="applock_pin_settings_forgot_note">¿Olvidaste tu PIN? La única forma de volver a entrar es borrar los datos de la app en los ajustes de Android. Solo una copia de seguridad que hayas exportado (.costbackup) y su contraseña pueden recuperar tus datos. Guarda una fuera de esta app. Una copia de seguridad no contiene tu PIN ni los ajustes del bloqueo de la app.</string>
+    <!-- S27b (es DRAFT, pending native sign-off). -->
+    <string name="applock_pin_action_turn_off">Desactivar el bloqueo de la app</string>
+    <string name="applock_pin_turn_off_enter_title">Introduce el PIN de la app para desactivar el bloqueo de la app</string>
+    <string name="applock_pin_turn_off_title">¿Desactivar el bloqueo de la app?</string>
+    <string name="applock_pin_turn_off_body">Se eliminará tu PIN de la app y la app ya no se bloqueará.</string>
+    <string name="applock_pin_turn_off_confirm">Desactivar</string>
+    <string name="applock_pin_mode_note">El bloqueo de la app usa tu PIN de la app. Para desactivarlo, abre PIN de la app y elige Desactivar el bloqueo de la app. Los cambios del tiempo de espera y de la revisión requieren el PIN de la app (próximamente). Elimina el PIN para cambiarlos.</string>
+    <!-- DRAFT es: pending native review -->
+    <string name="applock_pin_mode_review_note">Guarda primero con el bloqueo de la app activado e Inmediatamente. Después podrás desactivarlo en PIN de la app.</string>
+    <string name="applock_pin_turn_off_incomplete">Se eliminó el PIN de la app, pero el bloqueo de la app sigue activado. Desactívalo en los ajustes de privacidad.</string>
 </resources>

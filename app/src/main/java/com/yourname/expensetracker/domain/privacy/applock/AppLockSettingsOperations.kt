@@ -35,7 +35,13 @@ enum class SettingsRequestResult {
      * or an unreadable load state). Nothing written, no prompt; the review-save is the way for a persistent unreadable
      * store, or the settings are temporarily unreadable (retry or re-read).
      */
-    REVIEW_REQUIRED
+    REVIEW_REQUIRED,
+
+    /**
+     * T30, AMD-2, INV-40: the effective lock mode is `APP_PIN`, so a disable needs the correct current PIN
+     * ([AppLockSettingsOperations.removePin] with `turnLockOff`), never the device credential. No prompt, nothing written.
+     */
+    PIN_MODE
 }
 
 /**
@@ -61,7 +67,10 @@ enum class TimeoutChangeResult {
      * Also the answer of a direct write whose conditional store edit found a stale pre-read (the lock is on and the
      * stored timeout is shorter than requested): nothing was written, a retry takes the prompt path.
      */
-    NOT_IN_ORIGIN
+    NOT_IN_ORIGIN,
+
+    /** T30, AMD-2, INV-40: a longer timeout in effective `APP_PIN` mode is refused without a prompt (no device credential). */
+    PIN_MODE
 }
 
 /**
@@ -109,7 +118,10 @@ enum class ReviewSaveResult {
     NOT_IN_ORIGIN,
 
     /** A prompt or an apply is already in flight (INV-34, INV-54). Nothing changed. */
-    ALREADY_IN_FLIGHT
+    ALREADY_IN_FLIGHT,
+
+    /** T30, AMD-2, INV-40: a weakening record in effective `APP_PIN` mode is refused without a prompt (no device credential). */
+    PIN_MODE
 }
 
 /**
@@ -211,6 +223,8 @@ class AppLockSettingsOperations @Inject constructor(
         when {
             applyRunning.get() -> SettingsRequestResult.ALREADY_IN_FLIGHT
             controller.state.value is AppLockState.Inert -> requestInertDisable()
+            // T30, AMD-2, INV-40: in effective APP_PIN mode a disable needs the current PIN ([removePin]), no device prompt.
+            controller.isEffectiveAppPinMode() -> SettingsRequestResult.PIN_MODE
             else -> start(OpenOriginPrompt.DISABLE)
         }
 
@@ -300,8 +314,10 @@ class AppLockSettingsOperations @Inject constructor(
      * F7 settle/re-read, then the controller moves the view and `UNLOCKED` to `DISABLED`. A failed write is
      * [PinOperationResult.ModeWriteFailed] (the PIN is already deleted). Any other result is the controller's.
      */
-    suspend fun removePin(current: CharArray): PinOperationResult {
-        val result = controller.disablePin(current)
+    suspend fun removePin(current: CharArray, turnLockOff: Boolean = false): PinOperationResult {
+        // T30 DISABLE_REQUESTED in effective APP_PIN: [turnLockOff] makes the controller return RemovedLockOffRequired
+        // (after the verify and the delete, INV-49 order unchanged) even when the capability is AVAILABLE.
+        val result = controller.disablePin(current, turnLockOff)
         if (result != PinOperationResult.RemovedLockOffRequired) return result
         return withContext(NonCancellable) {
             writeSerializer.withExclusiveWrite {
@@ -315,7 +331,7 @@ class AppLockSettingsOperations @Inject constructor(
                     AppLockSettingsWriteResult.Failed(AppLockSettingField.LOCK_MODE)
                 }
                 if (mode !is AppLockSettingsWriteResult.Committed) {
-                    controller.onPinRemovalLockOffApplied(mode)
+                    controller.onPinRemovalLockOffApplied(mode, AppLockSettingField.LOCK_MODE) // T30: the failed write's field
                     return@withExclusiveWrite PinOperationResult.ModeWriteFailed
                 }
                 val outcome = settleCancelledWrite(AppLockSettingField.APP_LOCK_ENABLED, { !it.appLockEnabled }) {
@@ -371,6 +387,8 @@ class AppLockSettingsOperations @Inject constructor(
         }
         if (direct != null) return direct
         if (controller.state.value is AppLockState.Inert) return TimeoutChangeResult.NOT_IN_ORIGIN // TECH-13
+        // T30, AMD-2, INV-40: a longer timeout never takes the device prompt in effective APP_PIN mode (fail closed).
+        if (controller.isEffectiveAppPinMode()) return TimeoutChangeResult.PIN_MODE
         return when (
             controller.startTimeoutChangeAttempt(
                 newTimeout,
@@ -433,10 +451,17 @@ class AppLockSettingsOperations @Inject constructor(
         if (applyRunning.get()) return ReviewSaveResult.ALREADY_IN_FLIGHT
         if (!isReviewOpen()) return ReviewSaveResult.NOT_IN_REVIEW
         val capability = readCapability()
-        if (record.appLockEnabled && capability != DeviceAuthCapability.AVAILABLE) return ReviewSaveResult.REJECTED_CAPABILITY
+        // A lock-on + IMMEDIATE record in effective APP_PIN only strengthens (PIN-protected); it needs no device capability.
+        val pinProtectedLockOn = controller.isEffectiveAppPinMode() && !ReviewSaveAuthorisation.isWeakening(record)
+        if (record.appLockEnabled && capability != DeviceAuthCapability.AVAILABLE && !pinProtectedLockOn) {
+            return ReviewSaveResult.REJECTED_CAPABILITY
+        }
         var noAuthUnderD3 = false
         if (ReviewSaveAuthorisation.isWeakening(record)) {
-            if (controller.state.value !is AppLockState.Inert) return startReviewSavePrompt(record)
+            if (controller.state.value !is AppLockState.Inert) {
+                // T30, AMD-2, INV-40: no device prompt in effective APP_PIN mode (fail closed).
+                return if (controller.isEffectiveAppPinMode()) ReviewSaveResult.PIN_MODE else startReviewSavePrompt(record)
+            }
             // D3: with nothing that can authenticate (neither AVAILABLE nor CHECK_FAILED) no authentication is possible.
             if (capability == DeviceAuthCapability.AVAILABLE || capability == DeviceAuthCapability.CHECK_FAILED) {
                 return ReviewSaveResult.NOT_IN_ORIGIN
@@ -489,7 +514,8 @@ class AppLockSettingsOperations @Inject constructor(
                 ) {
                     return@withExclusiveWrite ReviewSaveResult.NOT_IN_ORIGIN
                 }
-                if (record.appLockEnabled && fresh != DeviceAuthCapability.AVAILABLE) {
+                val pinLockOn = controller.isEffectiveAppPinMode() && !ReviewSaveAuthorisation.isWeakening(record)
+                if (record.appLockEnabled && fresh != DeviceAuthCapability.AVAILABLE && !pinLockOn) {
                     return@withExclusiveWrite ReviewSaveResult.REJECTED_CAPABILITY
                 }
             }

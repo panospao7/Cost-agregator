@@ -3276,3 +3276,26 @@ Validation to request: unchanged, targeted `*AppLockController*` (covers both te
   1. Increment-2 integration merge into feature/ai-evolution, with the full suites.
   2. reviewer-strict on S24..S28, split in two (domain/data, UI).
   3. Merge. S26b (fingerprint enable) is a follow-up.
+
+## 2026-10-31: increment-2 candidate review and fix pass (IN PROGRESS, UNCOMMITTED)
+- Integration merge 98549381 (unpushed; it will be redone after the fixes): static-guards, unit-tests and app-check PASS (vr-20261030-210102-dca79951, vr-20261030-211906-b4e3e801, vr-20261030-213726-f4c368a6).
+- reviewer-strict part A (S24-S26): REJECT.
+  - HIGH-1: in effective APP_PIN, the device credential could disable the lock, lengthen the timeout or review-save.
+  - LOW-2, LOW-3, LOW-4.
+- reviewer-strict part B (S27-S28): ACCEPT-WITH-FIXES.
+  - B1: setup scroll. B2: stale step on setup. B3: LEGAL_PATHS order.
+  - B4-B9 LOWs.
+- Fix pass (orchestrator decision under item 92: fail closed):
+  - In APP_PIN, startOpenOriginAttemptWith refuses, and requestDisable, requestTimeoutChange and requestReviewSave return PIN_MODE with no prompt.
+  - removePin(current, turnLockOff) is the T30 disable variant, behind a new "Turn off app lock" flow in App PIN settings.
+  - The privacy section routes Off to App PIN; the timeout row is disabled with a note.
+  - LOW-2/3/4 and B1/B2/B3/B5/B6/B7/B9 applied.
+  - Timeout change and review-save with PIN entry are DEFERRED to S27b (plan).
+- reviewer-strict delta on the fix pass: ACCEPT-WITH-FIXES. HIGH-1 is CLOSED. Two MINORs applied:
+  - the PIN-mode review dead end: PIN_MODE_REVIEW notice, a disablePin guard while unreadable, lock-on IMMEDIATE review-save allowed without capability;
+  - TURN_OFF_INCOMPLETE.
+- Fix-pass targeted run vr-20261030-224428-17d45321: 21 failures, under diagnosis by the debugger.
+- NEXT: apply the diagnosis, run the full ladder, commit; redo the integration merge; run the full suites; fast-forward feature/ai-evolution.
+- Fix pass diagnosed by the debugger and fixed: one production bug (a second capability re-check inside writeReviewSaveDirect) plus test-harness issues. Kotlin default arguments were replaced with explicit overloads, so the reflection API pin stays strict.
+- Fix-pass ladder, all PASS (in order): targeted, runtime-ui, domain-n-z, architecture-contracts, static-guards, lint = vr-20261030-230636-075b96b9 vr-20261030-231253-722919bd vr-20261030-231610-ef45cd3d vr-20261030-231811-206e644b vr-20261030-231900-9278933b vr-20261030-233503-6bfea5f9 
+- COMMITTED. NEXT: merge onto the integration branch (on top of 98549381), run the full suites, fast-forward feature/ai-evolution.

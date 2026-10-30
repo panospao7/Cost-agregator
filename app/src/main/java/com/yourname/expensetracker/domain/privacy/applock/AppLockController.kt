@@ -800,7 +800,9 @@ class AppLockController @Inject constructor(
         var diagnostic: PendingDiagnostic? = null
         val result: PinUnlockResult = transition {
             if (current !is AppLockState.Locked || inFlight != null) return@transition PinUnlockResult.NotInPinMode
-            lastBackgroundedAtMillis = null // an auth success that ends in an open state clears it (AE-42)
+            // An auth success that ends in an open state clears it (AE-42), unless the app went to the background during
+            // the PIN check: then the timer restarts from now so the open state is not left without a pending timer.
+            lastBackgroundedAtMillis = if (appInForeground) null else clock.elapsedRealtimeMillis()
             unlockCount++
             setState(AppLockState.Unlocked)
             diagnostic = claim(PrivacyDiagnosticCode.LOCK_UNLOCKED)
@@ -1042,16 +1044,27 @@ class AppLockController @Inject constructor(
      * (state `DISABLED`, `LOCK_DISABLED`). The step is re-checked inside the serialiser before the first write. A
      * `deleteAll` failure returns [PinOperationResult.Failed] with the settings untouched; a mode-write failure after a
      * successful delete returns [PinOperationResult.ModeWriteFailed] (the effective mode is already `DEVICE_AUTH`, AMD-4).
+     * With [turnLockOff] (T30 DISABLE_REQUESTED in effective `APP_PIN`) the lock-off path is taken whatever the capability.
      * Only from `UNLOCKED` in effective `APP_PIN` mode. [current] is zeroed in `finally`.
      */
-    suspend fun disablePin(current: CharArray): PinOperationResult {
+    suspend fun disablePin(current: CharArray): PinOperationResult = disablePin(current, false)
+
+    suspend fun disablePin(current: CharArray, turnLockOff: Boolean): PinOperationResult {
         try {
             if (!pinOperationRunning.compareAndSet(false, true)) return PinOperationResult.AlreadyInFlight
             try {
                 if (!inPinStep(PinStep.REMOVE_CONFIRM)) return PinOperationResult.NotInStep
+                // Fail closed: with the settings view not readable (review/unreadable) the following settings write is
+                // refused, so the verifier must not be deleted. Nothing is verified or written.
+                val settingsWritable = synchronized(stateLock) {
+                    val view = loadState
+                    view is AppLockSettingsLoadState.Loaded || view is AppLockSettingsLoadState.FirstRunDefault
+                }
+                if (!settingsWritable) return PinOperationResult.NotInStep
                 // G25-7 (AMD-4, T30): read outside the monitor and the serialiser. Only a genuine non-available
                 // capability turns the lock off; a failed check (CHECK_FAILED) is transient (R3) and keeps it on.
-                val lockOff = capabilityProvider.current().toInertReason() != null
+                // T30 disable variant: [turnLockOff] forces the lock-off path even when the capability is AVAILABLE.
+                val lockOff = turnLockOff || capabilityProvider.current().toInertReason() != null
                 val verified = storeCall<PinVerifyResult>(PinVerifyResult.Unavailable) { pinStore.verify(current) }
                 if (verified != PinVerifyResult.Correct) return notVerified(verified) // step stays open
                 val result = writeSerializer.withExclusiveWrite {
@@ -1091,10 +1104,17 @@ class AppLockController @Inject constructor(
      * [PinOperationResult.RemovedLockOffRequired]) into the view and moves `UNLOCKED` to `DISABLED` (as T18 does); a
      * failed one records the bounded code. Internal: the settings operation is its only caller. True when committed.
      */
-    internal fun onPinRemovalLockOffApplied(result: AppLockSettingsWriteResult): Boolean {
+    internal fun onPinRemovalLockOffApplied(result: AppLockSettingsWriteResult): Boolean =
+        onPinRemovalLockOffApplied(result, AppLockSettingField.APP_LOCK_ENABLED)
+
+    internal fun onPinRemovalLockOffApplied(
+        result: AppLockSettingsWriteResult,
+        failedField: AppLockSettingField
+    ): Boolean {
         val diagnostic = transition {
             if (result !is AppLockSettingsWriteResult.Committed) {
-                return@transition claimPersistFailedLocked(AppLockSettingField.APP_LOCK_ENABLED)
+                // T30: the field of the write that failed (LOCK_MODE for the mode write, APP_LOCK_ENABLED for the flag).
+                return@transition claimPersistFailedLocked(failedField)
             }
             writeSequence++ // D6: a settings write committed
             val view = loadState
@@ -1145,8 +1165,8 @@ class AppLockController @Inject constructor(
             current == AppLockState.Unlocked && settings?.appLockEnabled == true &&
                 effectiveModeLocked() != EffectiveLockMode.APP_PIN
         }
-        // CHECK_FAILED is transient (R3): the platform prompt stays the authority, as for an Unlock tap.
-        val capable = capability == DeviceAuthCapability.AVAILABLE || capability == DeviceAuthCapability.CHECK_FAILED
+        // AMD-12, INV-50: PIN setup needs a device credential that can really authenticate; a failed check refuses (fail closed).
+        val capable = capability == DeviceAuthCapability.AVAILABLE
         if (!allowed || !capable) return PinSetupRequestResult.NotAllowed
         return when (val started = startOpenOriginAttempt(OpenOriginPrompt.CHANGE) { id, _ -> onPinSetupConfirmed(id) }) {
             is OpenOriginStartResult.Started -> PinSetupRequestResult.Started(started.attemptId)
@@ -1311,6 +1331,12 @@ class AppLockController @Inject constructor(
     fun startReviewSaveAttempt(record: AppLockPrivacySettings, onSuccess: OpenOriginSuccessHandler): OpenOriginStartResult =
         startOpenOriginAttemptWith(OpenOriginPrompt.CHANGE, onSuccess, null, record)
 
+    /**
+     * Whether the effective lock mode is `APP_PIN` right now (AMD-4: a present or unreadable verifier, or the stored mode
+     * while the PIN view is unknown). [AppLockSettingsOperations] uses it to refuse device-credential prompts (T30).
+     */
+    internal fun isEffectiveAppPinMode(): Boolean = synchronized(stateLock) { effectiveModeLocked() == EffectiveLockMode.APP_PIN }
+
     private fun startOpenOriginAttemptWith(
         prompt: OpenOriginPrompt,
         onSuccess: OpenOriginSuccessHandler,
@@ -1329,6 +1355,11 @@ class AppLockController @Inject constructor(
             }
             // The Unlock tap is the only way to start AUTHENTICATING(UNLOCK); this API never does.
             if (!purpose.isOpenOrigin || !inOrigin) return@transition OpenOriginStartResult.NotInOrigin
+            // T30, AMD-2, INV-40: in effective APP_PIN mode the device credential must not weaken the lock (disable,
+            // longer timeout, weakening review-save). Fail closed: no device prompt; the PIN surfaces are the way.
+            if (purpose.origin == AppLockOrigin.UNLOCKED && effectiveModeLocked() == EffectiveLockMode.APP_PIN) {
+                return@transition OpenOriginStartResult.NotInOrigin
+            }
             // F5: no new attempt while the previous open-origin success is still being applied (the T33 gate).
             // A lapsed gate is not cleared here, so a link still held is dropped as expired by the next release (F2).
             if (applyGateWithinBoundLocked(clock.elapsedRealtimeMillis())) return@transition OpenOriginStartResult.NotInOrigin

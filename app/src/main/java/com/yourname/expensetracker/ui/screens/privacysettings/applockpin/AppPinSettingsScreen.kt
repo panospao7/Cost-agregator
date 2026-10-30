@@ -57,6 +57,7 @@ fun AppPinSettingsScreen(
         changed = stringResource(R.string.applock_pin_snackbar_changed),
         removed = stringResource(R.string.applock_pin_snackbar_removed),
         removedLockOff = stringResource(R.string.privacy_app_lock_snackbar_off_pin_removed),
+        turnOffIncomplete = stringResource(R.string.applock_pin_turn_off_incomplete),
         failed = stringResource(R.string.applock_pin_failed)
     )
     val currentMessages by rememberUpdatedState(messages)
@@ -100,6 +101,7 @@ private class AppPinSnackbarTexts(
     val changed: String,
     val removed: String,
     val removedLockOff: String,
+    val turnOffIncomplete: String,
     val failed: String
 ) {
     fun textOf(event: PinFlowEvent): String? = when (event) {
@@ -107,6 +109,7 @@ private class AppPinSnackbarTexts(
         PinFlowEvent.PIN_CHANGED -> changed
         PinFlowEvent.PIN_REMOVED -> removed
         PinFlowEvent.PIN_REMOVED_LOCK_OFF -> removedLockOff
+        PinFlowEvent.TURN_OFF_INCOMPLETE -> turnOffIncomplete
         PinFlowEvent.OPERATION_FAILED -> failed
         PinFlowEvent.OPEN_BACKUP_RESTORE -> null
     }
@@ -121,11 +124,15 @@ private fun AppPinSettingsBody(state: AppPinSettingsUiState, viewModel: AppPinSe
             onBackUpNow = viewModel::onBackUpNow,
             onSubmitEntry = viewModel::submitEntry,
             onConfirmRemove = viewModel::confirmRemove,
-            onCancel = viewModel::cancel
+            onCancel = viewModel::cancel,
+            onConfirmTurnOff = viewModel::confirmTurnOff
         )
     }
-    // The remove dialog (REMOVE_CONFIRM) is drawn over the list; every other step replaces it.
-    if (state.step != PinFlowStep.NONE && state.step != PinFlowStep.REMOVE_CONFIRM) {
+    // The remove and turn-off dialogs are drawn over the list; every other step replaces it.
+    if (state.step != PinFlowStep.NONE &&
+        state.step != PinFlowStep.REMOVE_CONFIRM &&
+        state.step != PinFlowStep.TURN_OFF_CONFIRM
+    ) {
         PinSetupFlow(state, actions, Modifier.padding(padding))
         return
     }
@@ -146,6 +153,7 @@ private fun AppPinSettingsBody(state: AppPinSettingsUiState, viewModel: AppPinSe
         if (state.pinSet) {
             ActionRow(stringResource(R.string.applock_pin_action_change), usable, viewModel::startChange)
             ActionRow(stringResource(R.string.applock_pin_action_remove), usable, viewModel::startRemove)
+            ActionRow(stringResource(R.string.applock_pin_action_turn_off), usable, viewModel::startTurnOff)
         } else {
             ActionRow(stringResource(R.string.applock_pin_action_setup), usable, viewModel::startSetup)
         }

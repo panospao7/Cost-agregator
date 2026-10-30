@@ -1259,6 +1259,13 @@ Context: budget alerts post with the raw `budget.id.toInt()` (`BudgetMonitor.kt:
 - **Split seam:** (i) lock surface and gate; (ii) settings, setup, change, remove, PIN steps.
 - **Rollback:** after release, forward fix only. Reverting would silently drop PIN users back to device-auth protection.
 
+### S27b — follow-ups (2026-10-31)
+- **S27b:**
+  - PIN-entry flows for timeout change and review-save in APP_PIN mode (AMD-2/T30). Until then both are unavailable in PIN mode (the operations refuse; remove the PIN first).
+  - Hardware-keyboard PIN entry, and keys that grow with text (ux-flows §8).
+  - Neutral delay copy for ATTEMPT_STATE_UNREADABLE on cold start.
+- **S26b:** fingerprint enable in PIN mode: controller path, settings toggle, AE-120 prompt, and the enrolment-invalidation device check (AE-76).
+
 ### S28 — Docs (2)
 - `LEGAL_PATHS.md` (APP LOCK: PIN ordering; PIN steps are not prompts)
 - `CODEBASE_SEGMENTS.md` (Segment 28)

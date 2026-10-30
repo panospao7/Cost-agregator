@@ -7,7 +7,9 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
@@ -30,7 +32,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.yourname.expensetracker.R
@@ -50,6 +55,8 @@ object PinSetupFlowTags {
     const val MESSAGE = "applock_pin_flow_message"
     const val REMOVE_DIALOG = "applock_pin_remove_dialog"
     const val REMOVE_CONFIRM = "applock_pin_remove_confirm"
+    const val TURN_OFF_DIALOG = "applock_pin_turn_off_dialog"
+    const val TURN_OFF_CONFIRM = "applock_pin_turn_off_confirm"
 }
 
 /** What the PIN steps can ask of their host. The host wires them to [AppPinSettingsViewModel]. */
@@ -59,7 +66,8 @@ class PinSetupFlowActions(
     val onBackUpNow: () -> Unit,
     val onSubmitEntry: (CharArray) -> Unit,
     val onConfirmRemove: () -> Unit,
-    val onCancel: () -> Unit
+    val onCancel: () -> Unit,
+    val onConfirmTurnOff: () -> Unit = {}
 )
 
 /**
@@ -74,13 +82,17 @@ fun PinSetupFlow(state: AppPinSettingsUiState, actions: PinSetupFlowActions, mod
         PinFlowStep.NONE -> Unit
         PinFlowStep.SETUP_ACK -> SetupAckStep(state, actions, modifier)
         PinFlowStep.REMOVE_CONFIRM -> RemoveDialog(state, actions)
+        PinFlowStep.TURN_OFF_CONFIRM -> TurnOffDialog(state, actions)
         else -> EntryStep(state, actions, modifier)
     }
 }
 
 @Composable
 private fun SetupAckStep(state: AppPinSettingsUiState, actions: PinSetupFlowActions, modifier: Modifier) {
-    Column(modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+    Column(
+        modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
         Text(stringResource(R.string.applock_pin_setup_intro), style = MaterialTheme.typography.bodyLarge)
         Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)) {
             Row(Modifier.padding(16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -133,7 +145,7 @@ private fun EntryStep(state: AppPinSettingsUiState, actions: PinSetupFlowActions
         val buffer = rememberPinEntryBuffer()
         val remaining = rememberDelayRemaining(state)
         Column(
-            modifier.fillMaxWidth().padding(16.dp),
+            modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
@@ -149,6 +161,7 @@ private fun EntryStep(state: AppPinSettingsUiState, actions: PinSetupFlowActions
                     color = MaterialTheme.colorScheme.error,
                     textAlign = TextAlign.Center,
                     modifier = Modifier.testTag(PinSetupFlowTags.MESSAGE)
+                        .semantics { liveRegion = LiveRegionMode.Polite }
                 )
             }
             PinPad(
@@ -168,6 +181,7 @@ private fun EntryStep(state: AppPinSettingsUiState, actions: PinSetupFlowActions
 
 private fun entryTitle(step: PinFlowStep): Int = when (step) {
     PinFlowStep.CHANGE_CURRENT, PinFlowStep.REMOVE_ENTER -> R.string.applock_pin_current_title
+    PinFlowStep.TURN_OFF_ENTER -> R.string.applock_pin_turn_off_enter_title
     PinFlowStep.SETUP_CONFIRM, PinFlowStep.CHANGE_CONFIRM -> R.string.applock_pin_confirm_title
     else -> R.string.applock_pin_new_title
 }
@@ -214,6 +228,27 @@ private fun flowMessage(state: AppPinSettingsUiState, remaining: Long): String? 
         } else {
             stringResource(R.string.applock_pin_wait_over)
         }
+}
+
+/** "Turn off app lock?" (T30 disable variant), shown after the current PIN was entered. The action is in the error colour. */
+@Composable
+private fun TurnOffDialog(state: AppPinSettingsUiState, actions: PinSetupFlowActions) {
+    AlertDialog(
+        onDismissRequest = { if (!state.busy) actions.onCancel() },
+        modifier = Modifier.testTag(PinSetupFlowTags.TURN_OFF_DIALOG),
+        title = { Text(stringResource(R.string.applock_pin_turn_off_title)) },
+        text = { Text(stringResource(R.string.applock_pin_turn_off_body)) },
+        confirmButton = {
+            TextButton(
+                onClick = actions.onConfirmTurnOff,
+                enabled = !state.busy,
+                modifier = Modifier.testTag(PinSetupFlowTags.TURN_OFF_CONFIRM)
+            ) { Text(stringResource(R.string.applock_pin_turn_off_confirm), color = MaterialTheme.colorScheme.error) }
+        },
+        dismissButton = {
+            TextButton(onClick = actions.onCancel, enabled = !state.busy) { Text(stringResource(R.string.action_cancel)) }
+        }
+    )
 }
 
 /** "Remove app PIN?" (ux-flows 2.5d), shown after the current PIN was entered. Remove is in the error colour. */

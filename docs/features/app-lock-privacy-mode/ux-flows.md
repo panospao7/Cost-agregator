@@ -991,7 +991,7 @@ flowchart TD
     R[Settings: App PIN row, lock on] --> Q{Lock paused: any INERT reason?}
     Q -- yes --> UN[Row disabled: App PIN isn't available while app lock is paused]
     Q -- no --> S[App PIN screen]
-    S -- Set up --> DA[Device auth prompt once] --> W[Warning card with exported-backup rule + I understand] --> N[Enter new PIN] --> C[Confirm PIN]
+    S -- Set up --> W[Warning card with exported-backup rule + I understand] --> DA[Device auth prompt once] --> N[Enter new PIN] --> C[Confirm PIN]
     C -- match and strong enough --> OK[Method = PIN, then verifier stored; snackbar]
     C -- mismatch --> N
     C -- too weak --> N

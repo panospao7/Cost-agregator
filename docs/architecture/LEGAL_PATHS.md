@@ -2206,11 +2206,17 @@ CONTROLLER PATHS (S25, AppLockController, the ONLY caller; PIN steps are in-app 
   reviewSave keeps the STORED lockMode (an absent or invalid stored token falls back to LockMode.DEFAULT).
 
 S27 UI CALLERS (the only ones; PIN steps are in-app steps, never BiometricPrompt attempts):
-  ORDERING: setup = CONFIRM_CHANGE device auth (the one fresh authentication) → single "I understand..." acknowledgement
-    (UQ-4; no export-first requirement) → PIN entry/confirm → enablePin (lockMode=APP_PIN written BEFORE the verifier,
-    revert on failure). Change = beginPinChange → changePin (no prompt, no settings write). Removal = beginPinRemoval →
+  ORDERING: setup (AppPinSettingsViewModel.continueSetup) = single "I understand..." acknowledgement (UQ-4; no
+    export-first requirement) → CONFIRM_CHANGE device auth via requestPinSetup (the one fresh authentication) → PIN
+    entry → confirm → enablePin (lockMode=APP_PIN written BEFORE the verifier, revert on failure).
+    Change = beginPinChange → changePin (no prompt, no settings write). Removal = beginPinRemoval →
     AppLockSettingsOperations.removePin (verify; deleteAll in INV-49 order; lockMode=DEVICE_AUTH BEFORE any lock-off
     write; lock-off only when the device cannot authenticate; the removal dialog has a no-screen-lock variant).
+  PIN-MODE SETTINGS OPERATIONS (fail closed): in effective APP_PIN mode, turning the lock off, changing the timeout
+    and the review-save do NOT use the device credential; the operations refuse with a PIN-mode result. Turning the
+    lock off in PIN mode = AppLockSettingsOperations.removePin(current, turnLockOff = true) (T30 disable variant,
+    INV-49 order). Timeout change and review-save with PIN entry are deferred to follow-up slice S27b (until then they
+    are unavailable in PIN mode; remove the PIN first).
   SETTINGS: ui/screens/privacysettings/applockpin/AppPinSettingsViewModel (activity-scoped; onScreenLeft clears held
     entries) → controller + AppLockSettingsOperations.removePin. Route NavigationDestination.AppPinSettings, save
     token "app_pin_settings". The App PIN row sits in AppLockPrivacySection (hidden when the lock is off, disabled when

@@ -37,14 +37,17 @@ enum class AppPinAvailability { AVAILABLE, PAUSED, LOCK_OFF, NOT_READY }
 
 /** The in-app PIN step on screen (ux-flows 2.5b-2.5d). A step is never a system prompt. */
 enum class PinFlowStep {
-    NONE, SETUP_ACK, SETUP_ENTER, SETUP_CONFIRM, CHANGE_CURRENT, CHANGE_NEW, CHANGE_CONFIRM, REMOVE_ENTER, REMOVE_CONFIRM
+    NONE, SETUP_ACK, SETUP_ENTER, SETUP_CONFIRM, CHANGE_CURRENT, CHANGE_NEW, CHANGE_CONFIRM, REMOVE_ENTER, REMOVE_CONFIRM,
+
+    /** "Turn off app lock" (T30 disable variant): the current PIN entry, then the confirm dialog. */
+    TURN_OFF_ENTER, TURN_OFF_CONFIRM
 }
 
 /** Bounded, content-free message under the pad (no PIN, no failure count). */
 enum class PinFlowMessage { NONE, MISMATCH, TOO_WEAK, WRONG, DELAYED, DELAYED_NEUTRAL, UNREADABLE, FAILED }
 
 /** One-shot results. [OPEN_BACKUP_RESTORE] is navigation only: no backup is started (AE-104). */
-enum class PinFlowEvent { PIN_SET, PIN_CHANGED, PIN_REMOVED, PIN_REMOVED_LOCK_OFF, OPERATION_FAILED, OPEN_BACKUP_RESTORE }
+enum class PinFlowEvent { PIN_SET, PIN_CHANGED, PIN_REMOVED, PIN_REMOVED_LOCK_OFF, TURN_OFF_INCOMPLETE, OPERATION_FAILED, OPEN_BACKUP_RESTORE }
 
 /** Bounded UI state. It carries no PIN, no digit and no failure count (INV-38). */
 data class AppPinSettingsUiState(
@@ -135,6 +138,8 @@ class AppPinSettingsViewModel @Inject constructor(
     fun startSetup() {
         val s = uiState.value
         if (s.availability != AppPinAvailability.AVAILABLE || s.pinSet || s.step != PinFlowStep.NONE) return
+        // Reviewer B2: a step left open in the controller is closed first, so the setup request starts from a clean step.
+        if (controller.pin.value.step != PinStep.NONE) controller.cancelPinStep()
         local.value = AppPinSettingsUiState(step = PinFlowStep.SETUP_ACK)
     }
 
@@ -184,6 +189,17 @@ class AppPinSettingsViewModel @Inject constructor(
         local.value = AppPinSettingsUiState(step = PinFlowStep.REMOVE_ENTER, removeNoSecure = noSecure)
     }
 
+    /**
+     * "Turn off app lock" (T30 disable variant): opens the controller step (no prompt) and asks for the current PIN, then
+     * the dialog. The verifier is deleted first and the lock turned off by [AppLockSettingsOperations.removePin].
+     */
+    fun startTurnOff() {
+        val s = uiState.value
+        if (s.availability != AppPinAvailability.AVAILABLE || !s.pinSet || s.step != PinFlowStep.NONE) return
+        if (!controller.beginPinRemoval()) return
+        local.value = AppPinSettingsUiState(step = PinFlowStep.TURN_OFF_ENTER)
+    }
+
     /** "Back up now" (AE-104): navigation to Backup & Restore only. No backup call exists in this class. */
     fun onBackUpNow() {
         events.trySend(PinFlowEvent.OPEN_BACKUP_RESTORE)
@@ -216,6 +232,7 @@ class AppPinSettingsViewModel @Inject constructor(
             PinFlowStep.CHANGE_NEW -> holdNew(entry, PinFlowStep.CHANGE_NEW, PinFlowStep.CHANGE_CONFIRM)
             PinFlowStep.CHANGE_CURRENT -> holdCurrent(entry, PinFlowStep.CHANGE_NEW)
             PinFlowStep.REMOVE_ENTER -> holdCurrent(entry, PinFlowStep.REMOVE_CONFIRM)
+            PinFlowStep.TURN_OFF_ENTER -> holdCurrent(entry, PinFlowStep.TURN_OFF_CONFIRM)
             PinFlowStep.SETUP_CONFIRM -> confirmNew(entry, PinFlowStep.SETUP_ENTER, ::runSetup)
             PinFlowStep.CHANGE_CONFIRM -> confirmNew(entry, PinFlowStep.CHANGE_NEW, ::runChange)
             else -> entry.zero()
@@ -336,26 +353,34 @@ class AppPinSettingsViewModel @Inject constructor(
     }
 
     /** The "Remove" button of the dialog (after the current PIN was entered). Verification and removal are one operation. */
-    fun confirmRemove() {
+    fun confirmRemove() = runRemoval(PinFlowStep.REMOVE_CONFIRM, PinFlowStep.REMOVE_ENTER, turnLockOff = false)
+
+    /** The "Turn off" button of its dialog: verification, verifier deletion and lock-off are one operation (T30). */
+    fun confirmTurnOff() = runRemoval(PinFlowStep.TURN_OFF_CONFIRM, PinFlowStep.TURN_OFF_ENTER, turnLockOff = true)
+
+    private fun runRemoval(confirmStep: PinFlowStep, entryStep: PinFlowStep, turnLockOff: Boolean) {
         val s = uiState.value
-        if (s.step != PinFlowStep.REMOVE_CONFIRM || s.busy) return
+        if (s.step != confirmStep || s.busy) return
         val current = heldCurrent
         heldCurrent = null
-        if (current == null) return enterStep(PinFlowStep.REMOVE_ENTER)
+        if (current == null) return enterStep(entryStep)
         launchOp(current) {
-            when (val result = operations.removePin(current)) {
+            when (val result = operations.removePin(current, turnLockOff)) {
                 PinOperationResult.Done, PinOperationResult.ModeWriteFailed, PinOperationResult.RemovedLockOffRequired ->
                     finish(
                         if (controller.state.value is AppLockState.Disabled) {
                             PinFlowEvent.PIN_REMOVED_LOCK_OFF
+                        } else if (turnLockOff) {
+                            // Turn-off was requested but the lock is still on (e.g. ModeWriteFailed): never claim success.
+                            PinFlowEvent.TURN_OFF_INCOMPLETE
                         } else {
                             PinFlowEvent.PIN_REMOVED
                         }
                     )
-                is PinOperationResult.NotVerified -> applyRejection(result.reason, PinFlowStep.REMOVE_ENTER)
+                is PinOperationResult.NotVerified -> applyRejection(result.reason, entryStep)
                 PinOperationResult.NotInStep -> reset()
                 PinOperationResult.Failed -> finish(PinFlowEvent.OPERATION_FAILED)
-                else -> enterStep(PinFlowStep.REMOVE_ENTER, PinFlowMessage.FAILED)
+                else -> enterStep(entryStep, PinFlowMessage.FAILED)
             }
         }
     }

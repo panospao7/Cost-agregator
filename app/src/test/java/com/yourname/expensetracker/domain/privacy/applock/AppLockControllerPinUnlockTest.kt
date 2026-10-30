@@ -124,6 +124,7 @@ class AppLockControllerPinUnlockTest {
     @Test
     fun `T23 a Correct PIN unlocks through the normal unlock transition and clears the pending background`() {
         val (h, controller) = pinLocked(script = listOf(PinVerifyResult.Correct))
+        controller.onAppForegrounded() // LOW-2: the pending background is cleared only while the app is in the foreground
         val entered = pin()
         val result = runBlocking { controller.submitUnlockPin(entered) }
         assertEquals(PinUnlockResult.Unlocked, result)
