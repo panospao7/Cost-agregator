@@ -597,3 +597,134 @@ Base: 6d62ec45. T3 money/receipt-lifecycle. Item 87 applies: a Sonnet writer plu
 - **F2 [MINOR, binding constraint 1]:** while home is unresolved, resolveReviewProposal keeps the raw OCR token (even an unselectable one) as editCurrency, and processImageUri carries the previous selection over. FIX: no carry-over across scans (a new scan clears editCurrency before resolution). While home is unresolved, keep the proposal pending (editCurrency null, region Loading) and resolve it once home loads; never keep an unselectable token. Tests included.
 - **F3 [pre-existing, route]:** the tax-inclusive override saves the OCR total when isAmountEditedByUser is false; AI-applied totals and quick-save writes never set that flag, so the stored amount can differ from the preview; a finer-than-currency total goes to a TLC generic error and wipes the raw OCR text. ROUTED to the receipt owner as follow-up F-C-TAX-OVERRIDE, together with RF-6 (D-C-4) and RF-7.
 - **Judgements:** inline home precision is accepted (record the AddExpense difference as a UX follow-up, F-C-HOME-PRECISION-PARITY). D-C-4 is accepted.
+
+## MEC increment 1b slice plan (BINDING; 2026-10-30; feature-planner Sonnet; orchestrator under owner-approvals 92/94)
+- Base: 3794978a. Tier: T3 (money + network privacy). Schema NONE; no new legal path. VG-1b-1 CONFIRMED; S0 DONE.
+- Item 86/87 pipeline: Sonnet writer + separate Sonnet test-author for money and privacy slices; one combined guardian per slice; reviewer-strict at the 1b candidate.
+
+### Caps (S1 constants, boundary-pinned at N and N+1)
+- MAX_HISTORY_BYTES = 512 KiB. Observed 69,509 B.
+- MAX_HISTORY_DAYS = 70. Observed 64; 91 calendar days hold at most 65 weekdays. Add a 65-day fixture test.
+- MAX_HISTORY_SPAN_DAYS = 100. Observed 87.
+- Row cap = MAX_DAYS x c x (c-1) from the catalog: 70 x 28 x 27 = 52,920.
+- Stored pairs are catalog-only (INV-1b-10; catalog 28, BGN/RUB unlisted): at most 756 per day, so a real file gives about 41.6k rows. The handoff's 56k counted every ECB code.
+- Tests use a 64-day fixture and a 52,920-row cap stress.
+
+### Bulk write
+- One pre-sized list in `CurrencyConverter.storeRateHistory`.
+- One `insertOrUpdateAll` call through converter -> ExchangeRateStoreAdapter (barrier) -> ExchangeRateDao REPLACE. No chunking. No Timber on codes; do not copy storeRates' invalid-rate warning.
+- Atomicity is proven by a Robolectric in-memory Room test: a trigger RAISE(ABORT) leaves 0 rows, and the cap stress commits.
+- If that proof fails, STOP. The only allowed fix is a `@Transaction` DAO method, with no schema change.
+
+### S1 Data layer (money + privacy)
+- INV-1b-1, 2, 4-14, 16-19, 21 (repository); AE-1b-1 (repository), 2, 3, 5-20, 24a/b.
+- Write set (main):
+  - domain/currency/CurrencyRatesRepository.kt (method, outcome, reasons)
+  - domain/currency/RateRemedyPolicy.kt (new)
+  - domain/currency/UserPresentRatePreview.kt (`Blocked.latestStoredPairDate`, default null)
+  - domain/currency/CurrencyConverter.kt
+  - data/repository/CurrencyRatesRepositoryImpl.kt
+- Write set (tests):
+  - CurrencyRatesRepositoryImplTest
+  - RateRemedyPolicyTest (new)
+  - CurrencyConverterTest
+  - UserPresentRatePreviewTest
+  - ExchangeRateStoreAdapterTest
+  - ExchangeRateHistoryAtomicityTest (new)
+  - compile stubs in the four breaking fakes: AddExpenseViewModelTest, ReceiptScanViewModelTest, ReceiptScanViewModelMecC1Test, CurrencyManagementViewModelTest
+- Releasable: dormant (no caller).
+- Validation:
+  1. targeted `*CurrencyRatesRepositoryImpl*,*RateRemedyPolicy*,*CurrencyConverter*,*UserPresentRatePreview*,*ExchangeRateStoreAdapter*,*ExchangeRateHistory*,*AddExpenseViewModel*,*ReceiptScanViewModel*,*CurrencyManagementViewModel*`;
+  2. shards data, domain-a-m;
+  3. guards cancellation, db_access, known_good_state;
+  4. static-guards once.
+- STOP on:
+  - any guard or baseline edit;
+  - a catalog size other than 28 without re-deriving the cap;
+  - a non-atomic store;
+  - a second host, redirect, retry or fallback;
+  - logging a URL, date, count or code;
+  - any deleteOldRates/cleanupOldRates call.
+
+### S2 Add-expense VM + UI (money/privacy; depends on S1)
+- INV-1b-3, 5, 6, 18, 21 (VM); AE-1b-1, 3, 4, 5, 6b, 15, 24, 25.
+- Write set (main): AddExpenseViewModel.kt, AddExpenseSheet.kt, ui/components/currency/CurrencyRateRegion.kt, strings in en/el/es (mec_history_* keys, at most 12; C13 disclosure copy).
+- Write set (tests): AddExpenseViewModelTest, CurrencyRateRegionContentTest, a new AddExpenseSheet compose test.
+- Rules:
+  - The VM copies RateRemedyPolicy and does not compute dates.
+  - Cancel only in RUNNING; CancellationException is rethrown.
+  - The session flag and earliestDate are cleared in onSheetLeft and on reset.
+  - The announce-key bump goes through the existing latch.
+- Validation: targeted `*AddExpense*,*CurrencyRateRegion*`; runtime-ui; cancellation, known_good_state; lint.
+- STOP on: a history call outside a user tap; anything that turns the setting on; a pin rewrite.
+
+### S2b Home-change rule (money; depends on S2)
+- INV-1b-20 (a-c); AE-1b-21, 22, 23.
+- Write set (main): AddExpenseViewModel.kt, AddExpenseSheet.kt (one note), strings (mec_home_changed_cleared).
+- Write set (tests): a new AddExpenseViewModelHomeChangeTest.
+- Validation: targeted `*AddExpense*`; runtime-ui; known_good_state.
+- STOP on: any re-denomination or pinning; the SAVING rule not waiting.
+
+### S3 Receipt-review parity (money/receipt; depends on S2; may run in parallel with S2b)
+- INV-1b-3, 6, 18, 20 (receipt Unset), 21; AE-1b-1, 4, 24, 25 (receipt).
+- Write set (main): ReceiptScanViewModel.kt, ReceiptScanScreen.kt.
+- Write set (tests): ReceiptScanViewModelTest, ReceiptScanViewModelMecC1Test, one compose test.
+- Validation: targeted `*ReceiptScan*,*CurrencyRateRegion*`; runtime-ui; cancellation, known_good_state.
+- STOP on: any change to the email/batch path or ReceiptParser; any ReceiptEvent or file change caused by a download.
+
+### S4 Docs
+LEGAL_PATHS (the 1b.13 block), ENGINE_INTERACTION_MAP, CODEBASE_SEGMENTS, CODEBASE_INVENTORY, handoff, plan. Validation: guard_docs_truth.
+
+### 1b candidate gate
+1. Full unit-tests, static-guards and app-check on the final fingerprint.
+2. Reviews and checks:
+   - F-A11Y-LATCH-PURE review;
+   - privacy-security-guardian (payload, timing, the ~53k-row write, the AE-1b-18 log scan);
+   - device check on wave5-api35 against the live ECB file: Stored count, REPLACE idempotence on a second run, Cancel, airplane mode, commit time (STOP if over ~20 s);
+   - reviewer-strict on the full 1b diff, including Z.
+3. es/el sign-off of the mec_history_* and mec_home_changed_cleared keys. This is the OWNER's and a release gate.
+
+### Release and merge
+- 1b lifts H-1: B2, C and loan S11/S13 are then mergeable.
+- After the candidate is ACCEPTED: merge in a separate integration worktree from the remote tip into feature/ai-evolution, validate the merge commit, then fast-forward push (self-approved under owner-approvals 92).
+- A store release still needs the owner, plus the es/el sign-off and the item-14 device check.
+- Deferred: F-1b-CURMGMT, F-B2-TYPED-REFRESH, a validDate retention policy.
+
+### 1b privacy design review: binding S1 conditions (2026-10-30)
+Review: privacy-security-guardian, READY-WITH-CONDITIONS. The orchestrator accepts C1-C13 (owner-approvals 92/94).
+
+**Network**
+- C1: `instanceFollowRedirects = false`. Any status outside 200..299 is HTTP_ERROR, and `Location` is never read.
+- C2: use the constant https URL only. No setRequestProperty, no conditional headers (ETag/If-Modified-Since), no cache.
+- C3: check the gate before `URL.openConnection()`, using the same PrivacyGateReasonCodes.ALL mapping as `refresh`.
+- C4: reject a Content-Length above 512 KiB before reading.
+- C5: the 30 s deadline and user Cancel call `connection.disconnect()`. The read loop checks the deadline and `ensureActive()`; `disconnect()` runs in `finally`.
+
+**Parser**
+- C6: read the body into a byte array with a hard 512 KiB cap, counted on the decompressed stream, then parse from a ByteArrayInputStream. PAYLOAD_TOO_LARGE comes from an explicit flag.
+- C7: reuse `secureDocumentBuilderFactory()` (DOCTYPE disallowed).
+  - Walk the fixed depth Cube > Cube@time > Cube.
+  - Check the day, span, future-date and duplicate-date caps, and the home currency, before building any rows.
+  - Rethrow CancellationException first; a parse error maps to PAYLOAD_MALFORMED, never the message.
+- C8: pin one test, or an on-device check, that a DOCTYPE payload gives PAYLOAD_MALFORMED on the Android parser (KXml) without `setFeature` throwing.
+
+**Inference**
+- The fetch timing reveals that a fetch happened. This is an ACCEPTED low residual, because the trigger is a user tap only, the daily file is fetched first, there is one download per session and no prefetch.
+- Never add an automatic, prefetch or "always 90d" path.
+
+**Logs and diagnostics**
+- C9: one constant-format line per attempt (`RATE_HISTORY_DOWNLOAD` plus the enum name). Never pass a Throwable to Timber.
+- C10: a closed exception mapping:
+  - SocketTimeoutException -> TIMEOUT;
+  - other IOException -> OFFLINE;
+  - parse errors -> PAYLOAD_*;
+  - store errors -> STORE_FAILED.
+- C11: never log the Stored fields, the home currency or pairs. `earliestDate` stays in memory only.
+
+**Data at rest**
+- C12: never block cleanup or restore on exchange_rates; the write barrier maps to STORE_FAILED.
+- exchange_rates is public data and part of the app's own backup (Tier-3 optional). There is no Auto Backup (allowBackup=false). There is no retention, which is accepted (INV-22; a validDate retention is routed elsewhere).
+- Size: with 28 catalog currencies the maximum is 756 rows per day (~48k rows); with 30 currencies it is ~56k. S1 sizes the bulk write for 56k.
+
+**Copy**
+- C13: `mec_history_disclosure` = "Downloads the last 90 days of public ECB exchange rates. None of your expense data is sent." (EN; es/el DRAFT). "No personal data is sent" overclaimed: ECB sees the IP address and the default user agent.
