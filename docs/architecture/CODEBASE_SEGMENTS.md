@@ -846,7 +846,7 @@ Owns the repo-level static architecture guard suite, boundary verification scrip
 
 ## SEGMENT 40: Installment Plans
 
-Owns installment plans (loan and pay-in-installments tracking): plan and entry state, schedule generation and date arithmetic, the plan coordinator (the single writer of the plan tables), the read-only read model and projection port, due-installment recording, and plan presentation. Planned feature (loan-installments): the cloud reachability guard exists, and (S2) the `installment_plans` / `installment_entries` tables, their entities and `InstallmentPlanDao` exist, with `InstallmentPlanLifecycleCoordinator` (S6a) as their single writer; the remaining plan code lands in later slices of `workflows/active/loan-installments-plan.md`.
+Owns installment plans (loan and pay-in-installments tracking): plan and entry state, schedule generation and date arithmetic, the plan coordinator (the single writer of the plan tables), the read-only read model and projection port, due-installment recording, and plan presentation. Feature (loan-installments) is enabled on the unreleased branch (S13-b; S13-final pending): the cloud reachability guard exists, and (S2) the `installment_plans` / `installment_entries` tables, their entities and `InstallmentPlanDao` exist, with `InstallmentPlanLifecycleCoordinator` (S6a) as their single writer; the remaining plan code lands in later slices of `workflows/active/loan-installments-plan.md`.
 
 **Owner:** `InstallmentPlanLifecycleCoordinator` (planned) for every plan/entry write; `InstallmentScheduleCalculator` (planned, pure) for schedules; `InstallmentPlanReadModel` / `InstallmentProjectionPort` (planned, read-only) for reads. Legal path: `docs/architecture/LEGAL_PATHS.md` "Installment Plan Mutations".
 
@@ -865,8 +865,13 @@ Owns installment plans (loan and pay-in-installments tracking): plan and entry s
 - `data/database/model/SpendingExclusionFlagRow.kt` — read-only projection (id + flag name) of `ExpenseDao.getSpendingExclusionFlagRows` for the orphan-flag scan (S6a)
 - `service/installment/` — `InstallmentDueRecordingWorker` only (S7a); no coordinator, read model or port lives here
 - `data/database/` — `installment_plans` / `installment_entries` entities (`InstallmentPlan`, `InstallmentEntry`) and `InstallmentPlanDao` exist (schema 152, S2); the only writer is `InstallmentPlanLifecycleCoordinator` (S6a)
-- `ui/screens/installments/` — overview, detail, history, create/edit screens (hidden entry until final enablement)
-- `ui/navigation/InstallmentsFeature.kt` — compile-time `ENABLED` gate (false until the S13 enablement slice): withholds the Features menu entry, redirects installment destinations Home, and keeps the `installments` / `installment_plan` deep-link hosts rejected (S10a)
+- `ui/screens/installments/` — overview, detail, history, create/edit screens (entry visible while `InstallmentsFeature.ENABLED = true`, S13-b)
+- `ui/navigation/InstallmentsFeature.kt` — compile-time `ENABLED` gate (S10a). `ENABLED = true` on this unreleased branch since S13-b (owner-approvals 91(b); unreleased under MEC H-1 until MEC 1b). With it false the gate withholds the Features menu entry, redirects installment destinations Home, and rejects the installment deep-link hosts as `UNKNOWN_HOST`
+- **S13 (enablement; status: enabled on the branch, S13-final pending)**
+  - Deep-link rows: `installments` (to the overview) and `installment_plan?id=<positive Long>` (to plan detail) are `DeepLinkHost` entries (S13-a) with the `PLAN_ID` parameter; both require in-app confirmation. Value types live in `domain/navigation/deeplink/DeepLinkRequest.kt` (moved out of the cloud-fenced `privacy/` tree, owner-approvals 92(c)). Rules: LEGAL_PATHS deep-link path. Classifier: `DeepLinkPolicy`; navigation: `DeepLinkApplier`; the manifest filter stays non-BROWSABLE
+  - Confirmation: `ui/MainViewModel` holds the pending confirmation (navigation only after the user confirms, after app-lock release); the dialog is in `MainScreen` inside `AppLockShell`; test `MainViewModelDeepLinkConfirmationTest`
+  - `integration/InstallmentEndToEndScenarioTest` (test tree): AE lifecycle, AE-6 replay, AE-23 diagnostics/payload
+  - Related S13 edits outside this segment: `domain/ai/usecase/ExecuteFinancialQueryUseCase` (S13-0, assistant INV-1 aggregates ignore flagged installment purchases); `BillReminderWorker` (S13-a N2, cancellation not swallowed)
 
 **Boundary notes**
 - Expense rows stay in Segment 9: plan code never touches `ExpenseDao`; expenses are created and flagged only through `TransactionLifecycleCoordinator` DbOnly ops (`createExpenseDbOnlyV2`, `setSpendingExclusionDbOnly`).

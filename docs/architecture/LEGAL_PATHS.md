@@ -56,7 +56,7 @@ PREFILL AIDS (not a write path):
     AddExpenseViewModel.save() → ManualExpenseRepository.addManualExpense() →
     TransactionLifecycleCoordinator.createExpenseDbOnlyV2() → ExpenseDao.insertAtomic(),
     source = MANUAL_ENTRY.
-  • With installments ON (dormant behind InstallmentsFeature.ENABLED until S13) AddExpenseViewModel routes the
+  • With installments ON (InstallmentsFeature.ENABLED = true on this unreleased branch, owner-approvals 91(b); S13) AddExpenseViewModel routes the
     save to ManualExpenseRepository.buildInstallmentPurchaseRequest →
     InstallmentPlanLifecycleCoordinator.declareWithNewExpense (INV-27 atomic: purchase, plan and entries) and
     never to addManualExpense. The coordinator sets userPresentRate; the builder passes null.
@@ -1097,7 +1097,7 @@ HOME INSTALLMENT-AWARE WEATHER read path (implemented — loan-installments S8b-
     InstallmentPlanArchitectureGuardTest HOME_INSTALLMENT_WEATHER_OUTSIDE_HOME over all of app/src/main, owner-approvals
     59b: only ui/screens/home/HomeViewModel.kt and the source's own file may reference it) runs
     ComputeDashboardWidgetsUseCase.compute() on getProcessedDataFlow output, then, ONLY when the seam
-    HomeViewModel.installmentsEnabled (default InstallmentsFeature.ENABLED = false) is on and the source emits
+    HomeViewModel.installmentsEnabled (default InstallmentsFeature.ENABLED = true on this unreleased branch, owner-approvals 91(b)) is on and the source emits
     non-null, HomeWeatherMerge.replaceWeather REPLACES the single FinancialWeatherWidget (never a second widget;
     upcomingItems of the baseline widget are kept). Nothing is merged in ProcessedDashboardData,
     DashboardDataProvider, DashboardData or FinancialWeather, and no FinancialWeather field is added
@@ -1964,7 +1964,7 @@ OPERATIONS (all on InstallmentPlanLifecycleCoordinator):
   declareWithNewExpense       → [txn: TLC createExpenseDbOnlyV2 (standard dedupe) + the declare steps]
                                  → post-commit batches
                                  (caller: AddExpenseViewModel, loan S11a, via
-                                 ManualExpenseRepository.buildInstallmentPurchaseRequest; DORMANT until S13)
+                                 ManualExpenseRepository.buildInstallmentPurchaseRequest; enabled by S13 on this unreleased branch)
   createStandalone            → [txn: validate category, insert plan + entries]
   OD-14 currency rule (PE-A)  → InstallmentSplitCurrencyRule.equalSplitAllowed is the single definition: an
                                  EQUAL_SPLIT purchase plan must be in the purchase currency. declareOnExpense and
@@ -2006,7 +2006,7 @@ OPERATIONS (all on InstallmentPlanLifecycleCoordinator):
                                  link references; one writeTxn per orphan, references and flag re-checked inside
                                  it, then TLC setSpendingExclusionDbOnly(id, null); counted in the report
 
-UI CALLER (S10b-1, dormant behind InstallmentsFeature.ENABLED):
+UI CALLER (S10b-1, behind InstallmentsFeature.ENABLED = true on this unreleased branch, owner-approvals 91(b)):
   InstallmentEntryActionsViewModel (ui/screens/installments/actions)
                               → calls exactly one coordinator op per user action: confirmEntry (Record),
                                  linkExpense (Link), skip, unskip, adjustEntry (Adjust), and for the row Undo

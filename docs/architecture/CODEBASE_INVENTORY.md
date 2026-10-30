@@ -10,6 +10,15 @@
 
 Snapshot summary only: this inventory tracks the current UI, domain, data, and DI surfaces without freezing volatile counts.
 
+### Drift Sync (2026-10-30 / loan-installments S13-0..S13-c, branch feature/manual-entry-currency)
+
+Hand-maintained; paths checked to exist. DB **v152** unchanged (schema NONE). `InstallmentsFeature.ENABLED = true` on this unreleased branch (owner-approvals 91(b); unreleased under MEC H-1 until MEC 1b); S13-final pending. Counts are not restated here.
+
+- **Deep links:** `domain/navigation/deeplink/DeepLinkRequest.kt` (moved from `privacy/`, owner-approvals 92(c)) now carries the `installments` and `installment_plan` hosts and the `PLAN_ID` parameter (positive Long); both require in-app confirmation. This supersedes the 2026-10-28 note below that installment hosts are rejected as `UNKNOWN_HOST` (still true only with the flag off).
+- **Main (`ui/MainViewModel.kt`):** holds the pending deep-link confirmation; the confirmation dialog is in `MainScreen` inside `AppLockShell`. Test: `ui/MainViewModelDeepLinkConfirmationTest`.
+- **Integration test:** `integration/InstallmentEndToEndScenarioTest` (AE lifecycle, AE-6 replay, AE-23).
+- **Assistant:** `ExecuteFinancialQueryUseCase` aggregates ignore flagged installment purchases (INV-1, S13-0). `BillReminderWorker` S13-a N2 keeps cancellation unswallowed.
+
 ### Drift Sync (2026-10-29 / manual-entry-currency Z closeout, branch feature/manual-entry-currency)
 
 Hand-maintained (D-10: no generator script exists; none was run). Paths below were checked to exist on this branch. DB **v152** unchanged by MEC (schema NONE). No new Hilt module, DAO, worker or ViewModel. Slices A1, A2, B0', B1, B2a, B2b, C1, C2, F-B2-A11Y-1 and the loan S11a/b/c AddExpense installment section are in this snapshot. B2, C and S11 stay unreleased until MEC 1b (H-1). See `workflows/active/manual-entry-currency-handoff.md`.

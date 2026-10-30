@@ -1522,3 +1522,11 @@ Supersedes the S13 row (~:487-492) and its 2026-10-27 amendment. Risk tier T3 (p
 2. DONE: manifest change approved (owner-approvals 91(a)).
 3. DONE: flag flip on the unreleased branch approved (owner-approvals 91(b)).
 4. Item-14 device check at S13-final, and any guard/allow-list/permission change (none planned).
+
+### Status (2026-10-30, orchestrator; append-only)
+- S13-0 DONE: 4eb4f9af (assistant INV-1 aggregates).
+- S13-a DONE: 5370e80b (deep links `installments` / `installment_plan?id=`, in-app confirmation, DeepLinkRequest moved to `domain/navigation/deeplink`, N2).
+- S13-b DONE: 055b9de1 (`InstallmentsFeature.ENABLED = true` on this unreleased branch, owner-approvals 91(b); canaries rewritten; `integration/InstallmentEndToEndScenarioTest`).
+- S13-c DONE: docs (INVENTORY, SEGMENTS Segment 40, LEGAL_PATHS, ENGINE_INTERACTION_MAP stale-dormant lines).
+- S13-final PENDING: candidate ladder (full unit-tests, app-check, static-guards, guard_docs_truth, connected migration test), item-14 device check, three guardians, fresh reviewer-strict. Owner items 1 (es/el sign-off) and 4 remain.
+- Residual follow-ups (accepted, none blocks S13-final): item 13 (stale labels after midnight; optional one-file midnight emission merged into `InstallmentPlanReadRepositoryImpl.changes()`); R-S13-b-1 (LOW: a stalled installment read delays the first budget emission because `combine` waits; `onStart` hardening not applied, null means "feature off"); F-S13-0-COUNT-LIST (COUNT previewCount excludes flagged rows while the drilldown list, LIST and breakdown entry counts include them; no amount affected; assistant owner); F-S13-a-STALE-PENDING (LOW: a stale pending deep-link confirmation survives a relock and re-shows after the next unlock; fix lives in app-lock-owned `AppLockDeepLinkRouter`, deferred to the app-lock owner).

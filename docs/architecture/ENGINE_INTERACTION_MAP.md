@@ -246,7 +246,7 @@ InstallmentProjectionPort (read-only; implemented over InstallmentPlanReadModel)
   ├── FinancialStressForecastEngine (known bounded outflows) — implemented by S8b-2, Home-only (sole caller ComputeDashboardWidgetsUseCase);
   │     HZ01-B conversion; while at least one entry is projected, installment-linked history leaves the Monte Carlo baseline via
   │     RecurringInstallmentEligibility (INV-29 "global while projected"); SynthesisEngine is not edited
-  ├── Home weather merge point — implemented by S8b-3 (behind HomeViewModel.installmentsEnabled, default InstallmentsFeature.ENABLED = false):
+  ├── Home weather merge point — implemented by S8b-3 (behind HomeViewModel.installmentsEnabled, default InstallmentsFeature.ENABLED = true on this unreleased branch, owner-approvals 91(b)):
   │     HomeViewModel REPLACES the single FinancialWeatherWidget (HomeWeatherMerge) with HomeInstallmentWeatherSource's aware weather and
   │     exposes InstallmentUpcomingProjection rows (31 days, plan currency, sibling of RecurringPlanProjectionService, whose contract is
   │     unchanged) as a separate Home-only state; projections are never an UpcomingItem variant; invalidation = InstallmentPlanReadRepository.observeOverview
@@ -276,7 +276,7 @@ TransactionSideEffectPlanner.planUpdated() / planDeleted()
         Lost in-memory batches are backstopped by the next budget trigger
 ```
 
-### AddExpenseViewModel installment save → InstallmentPlanLifecycleCoordinator.declareWithNewExpense (loan-installments S11a; DORMANT until S13, behind InstallmentsFeature.ENABLED):
+### AddExpenseViewModel installment save → InstallmentPlanLifecycleCoordinator.declareWithNewExpense (loan-installments S11a; enabled by S13 on this unreleased branch, behind InstallmentsFeature.ENABLED = true, owner-approvals 91(b)):
 ```
 AddExpenseViewModel.save() [installments ON]
   → ManualExpenseRepository.buildInstallmentPurchaseRequest (builder passes userPresentRate = null)
