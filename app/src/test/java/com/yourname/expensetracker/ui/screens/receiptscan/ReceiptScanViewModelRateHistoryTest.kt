@@ -5,6 +5,8 @@ import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.domain.currency.CurrencyRateHistoryOutcome
 import com.yourname.expensetracker.domain.currency.CurrencyUnsetReason
 import com.yourname.expensetracker.domain.currency.RateHistoryFailureReason
+import com.yourname.expensetracker.domain.currency.RateRemedy
+import com.yourname.expensetracker.domain.currency.RateRemedyDecision
 import com.yourname.expensetracker.domain.privacy.PrivacySettings
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsLoadState
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator
@@ -151,6 +153,86 @@ class ReceiptScanViewModelRateHistoryTest : ViewModelTestUtils() {
         scan(mecReceipt(id = 18L, currency = "USD", date = daysBefore(5)))
         assertEquals(CurrencyBlockVariant.STALE, (region as CurrencyRegionUi.Blocked).variant)
         assertEquals(CurrencyRateFixAction.DOWNLOAD_HISTORY, st.rateFixAction)
+    }
+
+    // ---- Save-refusal card is authoritative; a Blocked re-read only upgrades the remedy ----
+
+    private fun refuseStale(latest: LocalDate) {
+        deps.saveOutcome = {
+            kotlin.Result.failure(ReceiptLifecycleCoordinator.RateNotEligibleException(RateRefusalReason.STALE_RATE, latest))
+        }
+    }
+
+    private fun assertKeptStaleSaveCard(date: LocalDate) {
+        assertEquals(CurrencyRegionUi.Blocked(CurrencyBlockVariant.STALE, date, CurrencyBlockOrigin.SAVE), region)
+        assertEquals(SaveReceiptResult.RateNotEligible, st.saveResult)
+        assertEquals(ScanStep.REVIEW, st.step)
+    }
+
+    @Test
+    fun `keepSaveBlock STALE refusal card survives a NONE re-read and the remedy comes from the policy`() {
+        enableDownload()
+        scanDownloadScenario()
+        assertEquals(CurrencyRegionUi.Blocked(CurrencyBlockVariant.NONE, null, CurrencyBlockOrigin.PREVIEW), region)
+        refuseStale(mecDay(7))
+
+        model.saveExpense()
+        settle()
+
+        assertKeptStaleSaveCard(mecDay(7))
+        // Re-read: newest stored pair (Nov 14) is after the entry (Nov 9), inside the window.
+        assertEquals(RateRemedyDecision(RateRemedy.DOWNLOAD_HISTORY), st.rateRemedy)
+        assertEquals(CurrencyRateFixAction.DOWNLOAD_HISTORY, st.rateFixAction)
+    }
+
+    @Test
+    fun `keepSaveBlock STALE refusal date survives a STALE re-read carrying another date`() {
+        enableDownload()
+        deps.store.putRate("USD", 0.8, LocalDate.of(2023, 10, 20))
+        deps.store.putRate("USD", 0.9, mecDay(14))
+        scan(mecReceipt(currency = "USD", date = daysBefore(5)))
+        val previewDate = (region as CurrencyRegionUi.Blocked).latestRateDate
+        assertEquals(CurrencyBlockVariant.STALE, (region as CurrencyRegionUi.Blocked).variant)
+        assertNotEquals(mecDay(7), previewDate)
+        refuseStale(mecDay(7))
+
+        model.saveExpense()
+        settle()
+
+        assertKeptStaleSaveCard(mecDay(7))
+        assertEquals(RateRemedyDecision(RateRemedy.DOWNLOAD_HISTORY), st.rateRemedy)
+        assertEquals(CurrencyRateFixAction.DOWNLOAD_HISTORY, st.rateFixAction)
+    }
+
+    @Test
+    fun `keepSaveBlock STALE refusal card survives a NONE re-read with no stored pair and offers REFRESH_LATEST`() {
+        enableDownload()
+        scan(mecReceipt(currency = "USD", date = daysBefore(5)))
+        assertEquals(CurrencyRegionUi.Blocked(CurrencyBlockVariant.NONE, null, CurrencyBlockOrigin.PREVIEW), region)
+        refuseStale(mecDay(7))
+
+        model.saveExpense()
+        settle()
+
+        assertKeptStaleSaveCard(mecDay(7))
+        assertEquals(RateRemedyDecision(RateRemedy.REFRESH_LATEST), st.rateRemedy)
+        assertEquals(CurrencyRateFixAction.REFRESH_LATEST, st.rateFixAction)
+    }
+
+    @Test
+    fun `keepSaveBlock control an Eligible re-read keeps the STALE card and the REFRESH_LATEST floor`() {
+        enableDownload()
+        deps.store.putRate("USD", 0.9, mecDay(14))
+        scan(mecReceipt(currency = "USD"))
+        assertTrue(region is CurrencyRegionUi.Eligible)
+        refuseStale(mecDay(7))
+
+        model.saveExpense()
+        settle()
+
+        assertKeptStaleSaveCard(mecDay(7))
+        assertEquals(RateRemedyDecision(RateRemedy.REFRESH_LATEST), st.rateRemedy)
+        assertEquals(CurrencyRateFixAction.REFRESH_LATEST, st.rateFixAction)
     }
 
     @Test

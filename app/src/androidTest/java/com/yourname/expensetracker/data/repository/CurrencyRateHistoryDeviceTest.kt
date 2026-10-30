@@ -31,6 +31,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.After
+import org.junit.Assume
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -44,9 +45,11 @@ import java.net.URL
 /**
  * MEC 1b candidate device check (privacy condition C8 and the live ECB history download).
  *
- * This class needs network access (tests 2 and 3 reach the real ECB host; test 4 toggles airplane
- * mode through the shell). It is not part of any default suite: the validation runner runs it
- * explicitly by class filter (connected-test-class) at the 1b candidate gate, on an API 35 emulator.
+ * This class needs network access (the live tests reach the real ECB host; the airplane-mode test
+ * toggles airplane mode through the shell). The live tests skip (assumption) unless this class is
+ * targeted explicitly by the instrumentation "class" argument, so they never fail the default
+ * connected suite. The validation runner runs it explicitly by class filter (connected-test-class)
+ * at the 1b candidate gate, on an API 35 emulator. The c8 DOCTYPE test is offline and always runs.
  *
  * Real in-memory Room [AppDatabase], real [CurrencyConverter], real [ExchangeRateStoreAdapter] and
  * real [ExchangeRateDao]. Only the privacy gate, the clock and the settings store are fakes. No
@@ -119,6 +122,7 @@ class CurrencyRateHistoryDeviceTest {
 
     @Test
     fun live_dailyRefresh_storesRows() = runBlocking {
+        requireExplicitLiveRun()
         val outcome = repository.refresh("EUR")
         assertTrue(
             "daily outcome must be Refreshed: ${outcome::class.simpleName}",
@@ -131,6 +135,7 @@ class CurrencyRateHistoryDeviceTest {
 
     @Test
     fun live_download_storesRows_andIsIdempotent() = runBlocking {
+        requireExplicitLiveRun()
         val startedAt = System.nanoTime()
         val first = repository.downloadRecentHistory("EUR")
         val elapsedMs = (System.nanoTime() - startedAt) / 1_000_000
@@ -149,6 +154,7 @@ class CurrencyRateHistoryDeviceTest {
 
     @Test
     fun live_cancel_endsCancelledOrNoPartialWrite() = runBlocking {
+        requireExplicitLiveRun()
         val job = launch(Dispatchers.Default, start = CoroutineStart.DEFAULT) {
             repository.downloadRecentHistory("EUR")
         }
@@ -168,6 +174,7 @@ class CurrencyRateHistoryDeviceTest {
 
     @Test
     fun airplaneMode_mapsToOfflineOrTimeout() = runBlocking {
+        requireExplicitLiveRun()
         try {
             shell("cmd connectivity airplane-mode enable")
             delay(3_000)
@@ -182,6 +189,14 @@ class CurrencyRateHistoryDeviceTest {
             shell("cmd connectivity airplane-mode disable")
             awaitConnectivity()
         }
+    }
+
+    private fun requireExplicitLiveRun() {
+        Assume.assumeTrue(
+            "live ECB test runs only by explicit class filter",
+            InstrumentationRegistry.getArguments().getString("class")
+                ?.contains(CurrencyRateHistoryDeviceTest::class.java.name) == true
+        )
     }
 
     private fun shell(command: String) {
