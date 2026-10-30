@@ -18,6 +18,7 @@ import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsReposit
 import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsWriteResult
 import com.yourname.expensetracker.domain.privacy.applock.AppLockWriteRejection
 import com.yourname.expensetracker.domain.privacy.applock.AutoLockTimeout
+import com.yourname.expensetracker.domain.privacy.applock.LockMode
 import com.yourname.expensetracker.domain.privacy.applock.SettingsUnreadableCause
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.IOException
@@ -73,6 +74,7 @@ class AppLockSettingsRepositoryImpl @VisibleForTesting internal constructor(
         val APP_LOCK_ENABLED = booleanPreferencesKey("app_lock_enabled")
         val AUTO_LOCK_TIMEOUT = stringPreferencesKey("auto_lock_timeout")
         val SECURE_SCREEN = booleanPreferencesKey("secure_screen")
+        val LOCK_MODE = stringPreferencesKey("lock_mode")
     }
 
     override fun observeLoadState(): Flow<AppLockSettingsLoadState> =
@@ -111,6 +113,24 @@ class AppLockSettingsRepositoryImpl @VisibleForTesting internal constructor(
             }
         } catch (e: IOException) {
             writeFailure(e, AppLockSettingField.APP_LOCK_ENABLED, rejectOnPersistentUnreadable = true)
+        }
+
+    override suspend fun setLockMode(mode: LockMode): AppLockSettingsWriteResult =
+        try {
+            val after = store.edit { prefs ->
+                // INV-44: nothing is written while unreadable (same read-check-write as the lock flag write).
+                if (prefs.toLoadState() is AppLockSettingsLoadState.Unreadable) return@edit
+                prefs[Keys.LOCK_MODE] = mode.token
+                prefs[LOAD_STATE_KEY] = LOAD_STATE_NORMAL
+            }
+            when (val state = after.toLoadState()) {
+                is AppLockSettingsLoadState.Loaded -> AppLockSettingsWriteResult.Committed(state.settings)
+                is AppLockSettingsLoadState.FirstRunDefault -> AppLockSettingsWriteResult.Committed(state.settings)
+                is AppLockSettingsLoadState.Unreadable ->
+                    AppLockSettingsWriteResult.Rejected(AppLockWriteRejection.UNREADABLE)
+            }
+        } catch (e: IOException) {
+            writeFailure(e, AppLockSettingField.LOCK_MODE, rejectOnPersistentUnreadable = true)
         }
 
     override suspend fun setAutoLockTimeout(timeout: AutoLockTimeout): AppLockSettingsWriteResult =
@@ -232,6 +252,7 @@ class AppLockSettingsRepositoryImpl @VisibleForTesting internal constructor(
                 prefs[Keys.APP_LOCK_ENABLED] = record.appLockEnabled
                 prefs[Keys.AUTO_LOCK_TIMEOUT] = record.autoLockTimeout.token
                 prefs[Keys.SECURE_SCREEN] = record.secureScreen
+                prefs[Keys.LOCK_MODE] = record.lockMode.token
                 prefs[LOAD_STATE_KEY] = LOAD_STATE_NORMAL
             }
             if (notUnderReview) {
@@ -295,13 +316,14 @@ class AppLockSettingsRepositoryImpl @VisibleForTesting internal constructor(
         val lockEnabledRaw = raw[Keys.APP_LOCK_ENABLED]
         val timeoutRaw = raw[Keys.AUTO_LOCK_TIMEOUT]
         val secureScreenRaw = raw[Keys.SECURE_SCREEN]
+        val lockModeRaw = raw[Keys.LOCK_MODE]
         // An invalid lock flag cannot be mapped to a safe value: the whole state is unreadable (spec 2.1).
         // This precedes the first-run check, so a bare invalid lock key is never read as a first run.
         if (lockEnabledRaw != null && lockEnabledRaw !is Boolean) {
             return AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.INVALID_VALUE)
         }
         if (marker == null && discreetRaw == null && lockEnabledRaw == null &&
-            timeoutRaw == null && secureScreenRaw == null
+            timeoutRaw == null && secureScreenRaw == null && lockModeRaw == null
         ) {
             return AppLockSettingsLoadState.FirstRunDefault(AppLockPrivacySettings.DEFAULTS)
         }
@@ -324,12 +346,20 @@ class AppLockSettingsRepositoryImpl @VisibleForTesting internal constructor(
             // Invalid persisted value: most restrictive (spec 2.1).
             else -> true
         }
+        val lockMode = when (lockModeRaw) {
+            null -> LockMode.DEFAULT
+            // An unknown token or a non-string value maps to the fail-closed mode (spec 2.1). The effective mode
+            // is derived from the PIN verifier, so this value never overrides it.
+            is String -> LockMode.fromToken(lockModeRaw) ?: LockMode.FAIL_CLOSED
+            else -> LockMode.FAIL_CLOSED
+        }
         return AppLockSettingsLoadState.Loaded(
             AppLockPrivacySettings(
                 discreetNotifications = discreet,
                 appLockEnabled = lockEnabled,
                 autoLockTimeout = timeout,
-                secureScreen = secureScreen
+                secureScreen = secureScreen,
+                lockMode = lockMode
             )
         )
     }

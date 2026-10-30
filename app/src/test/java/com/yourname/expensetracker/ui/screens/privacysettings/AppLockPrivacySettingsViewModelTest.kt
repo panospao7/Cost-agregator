@@ -12,6 +12,7 @@ import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsWriteSe
 import com.yourname.expensetracker.domain.privacy.applock.AppLockState
 import com.yourname.expensetracker.domain.privacy.applock.AuthPurpose
 import com.yourname.expensetracker.domain.privacy.applock.AutoLockTimeout
+import com.yourname.expensetracker.domain.privacy.applock.LockMode
 import com.yourname.expensetracker.domain.privacy.applock.DeviceAuthCapability
 import com.yourname.expensetracker.domain.privacy.applock.DeviceAuthCapabilityProvider
 import com.yourname.expensetracker.domain.privacy.applock.InertReason
@@ -154,6 +155,9 @@ class AppLockPrivacySettingsViewModelTest : ViewModelTestUtils() {
 
         override suspend fun setSecureScreenIfNotForced(enabled: Boolean): AppLockSettingsWriteResult =
             AppLockSettingsWriteResult.Failed(AppLockSettingField.SECURE_SCREEN)
+
+        override suspend fun setLockMode(mode: LockMode): AppLockSettingsWriteResult =
+            AppLockSettingsWriteResult.Failed(AppLockSettingField.LOCK_MODE)
     }
 
     private val operations = mockk<AppLockSettingsOperations>()

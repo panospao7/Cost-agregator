@@ -371,6 +371,17 @@ Binds (@Singleton):
   AppLockSettingsRepository                   → AppLockSettingsRepositoryImpl
                                                 (own DataStore, device-local, never Room or .costbackup;
                                                 public ctor takes @ApplicationContext Context)
+  AppPinStore                                 → AppPinStoreImpl                (S24, DORMANT until S25; sole owner of the
+                                                PIN verifier, attempt state and PIN flags; ctor: @AppPinDataStore
+                                                DataStore<Preferences>, PinKeyBinder, BootCountSource, MonotonicClock,
+                                                PrivacyDiagnosticsEmitter, @IoDispatcher CoroutineDispatcher)
+  PinKeyBinder                                → KeystorePinKeyBinder           (S24; Keystore HMAC alias applock_pin_hmac_v1)
+  BootCountSource                             → AndroidBootCountSource         (S24; Settings.Global.BOOT_COUNT, Int?)
+Provides (@Singleton, S24):
+  @AppPinDataStore DataStore<Preferences>     (own `app_lock_pin_store` in noBackupFilesDir, NO corruption handler;
+                                                never shared with another store; qualifier declared in AppLockModule.kt)
+Diagnostics (S24): PrivacyDiagnosticCode PIN_ATTEMPT_STATE_UNREADABLE, PIN_VERIFIER_UNREADABLE, PIN_BIOMETRIC_INVALIDATED
+                                                (no metadata)
   DeviceAuthenticator                         → AppLockAuthenticatorRelay      (S20-a; the controller's prompt port.
                                                 process-level relay in ui/applock; holds the Activity-bound
                                                 BiometricPromptDeviceAuthenticator weakly. The adapter itself is NOT

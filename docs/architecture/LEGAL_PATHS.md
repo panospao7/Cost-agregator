@@ -2160,6 +2160,40 @@ HOST LOSS (T35, PROMPT_HOST_LOST) and ROTATION:
     relay's CURRENT registration (a second instance, for example the exported MainActivity VIEW launch, must not
     strand the visible host's prompt). activate never adopts and never touches the open record.
 
+---
+
+## App PIN Store (app-lock-privacy-mode, Segment 28, S24, DORMANT)
+
+```
+S24 is DORMANT: AppPinStore has no production caller until S25 (the PIN controller path). Nothing here is reachable
+from a user action yet.
+
+OWNER: AppPinStore (domain/privacy/applock/pin; impl data/privacy/applock/pin/AppPinStoreImpl, @Singleton) is the
+SOLE owner of the PIN verifier record, the shared attempt state and the PIN flags (biometricEnabled, the biometric
+invalidated notice). Own DataStore `app_lock_pin_store` (@AppPinDataStore, noBackupFilesDir, no corruption handler:
+unreadable = present-but-unreadable, never absent, never auto-wiped; never in .costbackup, never touched by restore).
+Every entry point is serialised by one Mutex.
+
+VERIFY (the ONLY verify path): AppPinStore.verify(CharArray)
+  → verifyLocked: read the record → attempt state (unreadable → repaired, AMD-11) → delay evaluation
+  → get-only Keystore HMAC key → WRITE-AHEAD increment of the shared counter (INV-39) → PBKDF2 + HMAC compare
+  → correct: reset the counter (a failed reset still unlocks), best-effort rehash.
+  A matches()/HMAC failure after the write-ahead best-effort restores the previous attempt state, then returns
+  VerifierUnreadable(KEYSTORE_ERROR). A failed write-ahead increment returns Unavailable (no evaluation, no unlock).
+SETUP / CHANGE: setup refuses (FAILED) while a verifier exists or the store is unreadable, before touching the key;
+  a failure after key creation deletes the alias only if a re-read (NonCancellable) finds no verifier (G24-1).
+DELETE (INV-49): AppPinStore.deleteAll in order: 1. one awaited clear() of the PIN store (the only decisive step;
+  a failure returns FAILED with the settings untouched); 2. delete the HMAC alias, best effort; 3. (S26) the
+  biometric key, best effort. Idempotent.
+SETTING: setLockMode(LockMode) is an AppLockSettingsRepositoryImpl PER-FIELD write (no whole-record rewrite);
+  authorisation is the caller's concern.
+
+❌ No other code reads or writes the PIN verifier, the attempt state or the PIN flags (no other DataStore).
+❌ No other code uses the `applock_pin_hmac_v1` Keystore alias or PBKDF2 for a PIN.
+❌ No second verify path: no evaluation without the write-ahead increment, no PIN as String, never logged.
+❌ No setLockMode via a whole-record write (reviewSave carries the stored mode through, INV-45).
+```
+
 FOREGROUND / BACKGROUND SIGNALS (INV-25) — AppLockLifecycleBinder is the SOLE source:
   Application.registerActivityLifecycleCallbacks (installed once per process, idempotent; S20-c calls it from
   MainActivity.onCreate, MainApplication is not edited) keeps an exact started-activity count:

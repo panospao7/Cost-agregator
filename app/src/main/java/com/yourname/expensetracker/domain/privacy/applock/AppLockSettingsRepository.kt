@@ -11,7 +11,8 @@ enum class AppLockSettingField {
     REVIEW_SAVE,
     APP_LOCK_ENABLED,
     AUTO_LOCK_TIMEOUT,
-    SECURE_SCREEN
+    SECURE_SCREEN,
+    LOCK_MODE
 }
 
 /** Why a settings write was refused before touching the store. */
@@ -144,4 +145,14 @@ interface AppLockSettingsRepository {
      * `Failed(SECURE_SCREEN)` (fail-closed).
      */
     suspend fun setSecureScreenIfNotForced(enabled: Boolean): AppLockSettingsWriteResult
+
+    /**
+     * Per-field write of `lockMode` (S24 D-I2-1; INV-50: `APP_PIN` is written BEFORE the verifier; INV-49: `DEVICE_AUTH`
+     * after the PIN data is deleted). Same contract as [setAppLockEnabled]: `Rejected(UNREADABLE)` and nothing written for
+     * any `Unreadable` state; `Failed(LOCK_MODE)` if the commit fails; `Committed` only after the durable commit.
+     * Authorisation (device auth or PIN) is the caller's concern.
+     *
+     * Abstract: no default body. A fake that does not support the write returns `Failed(LOCK_MODE)` (fail-closed).
+     */
+    suspend fun setLockMode(mode: LockMode): AppLockSettingsWriteResult
 }

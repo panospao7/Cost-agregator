@@ -280,6 +280,24 @@ class PrivacyDiagnosticsEmitterTest {
     }
 
     @Test
+    fun `the three S24 PIN codes are exactly the PIN group, map to their same-named reason codes and allow no keys`() {
+        // The PIN_ group is pinned on purpose: a new PIN_ code must be a conscious, reviewed addition.
+        assertEquals(
+            setOf("PIN_ATTEMPT_STATE_UNREADABLE", "PIN_VERIFIER_UNREADABLE", "PIN_BIOMETRIC_INVALIDATED"),
+            PrivacyDiagnosticCode.entries.map { it.name }.filter { it.startsWith("PIN_") }.toSet()
+        )
+        val pinCodes = listOf(
+            PrivacyDiagnosticCode.PIN_ATTEMPT_STATE_UNREADABLE to DiagnosticReasonCode.PIN_ATTEMPT_STATE_UNREADABLE,
+            PrivacyDiagnosticCode.PIN_VERIFIER_UNREADABLE to DiagnosticReasonCode.PIN_VERIFIER_UNREADABLE,
+            PrivacyDiagnosticCode.PIN_BIOMETRIC_INVALIDATED to DiagnosticReasonCode.PIN_BIOMETRIC_INVALIDATED
+        )
+        for ((code, reason) in pinCodes) {
+            assertEquals("${code.name} reasonCode", reason, code.reasonCode)
+            assertTrue("${code.name} must allow no metadata key", code.allowedKeys.isEmpty())
+        }
+    }
+
+    @Test
     fun `D9 LOCK_SETTINGS_RECOVERED allows exactly the CAUSE key`() {
         assertEquals(setOf(PrivacyDiagnosticKey.CAUSE), PrivacyDiagnosticCode.LOCK_SETTINGS_RECOVERED.allowedKeys)
         assertEquals(

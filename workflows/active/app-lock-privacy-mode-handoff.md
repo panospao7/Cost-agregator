@@ -3079,3 +3079,29 @@ Validation to request: unchanged, targeted `*AppLockController*` (covers both te
 ## 2026-10-30: increment 2 (S24-S27, G2) re-anchored; S24 design review next
 - The plan's "Increment 2 re-anchor amendment" (BINDING) records drift fixes D-I2-1..7, the order S24 -> S25 -> {S26 || S27} -> G2, per-slice validation, the PIN storage decisions, the open items for the S24 privacy design review (D-I2-8), and OD-19 as a pre-S27 gate (D-I2-9). Orchestrator decisions are under owner-approvals 92.
 - Next: the S24 privacy-guardian DESIGN review (resolve D-I2-8), then the S24 Sonnet writer plus a separate test-author.
+- S24 implemented (writers A+B) and tested (three test-authors; one attempt timed out and was split). Targeted vr-20261030-033610-06f65b18 PASS. The remaining ladder was withdrawn for the guardian fixes.
+- S24 combined guardian (privacy-security): ACCEPT-WITH-CONDITIONS. Dispositions (orchestrator, owner-approvals 92):
+  - G24-1 (MEDIUM): the cancellation/exception catch in setup deleted the key even if DataStore had committed (verifier with no key = permanent lockout). FIX: re-read under NonCancellable and delete the key only if no verifier is present.
+  - G24-2 (MEDIUM): setup deleted an existing key before checking for an existing verifier. FIX: setup returns FAILED when a verifier exists, before createForSetup().
+  - G24-3 (LOW): a matches() failure after the write-ahead leaves the counter incremented. FIX: best-effort restore of the previous attempt state.
+  - G24-4 (LOW): the RECORD_UNREADABLE KDoc is inaccurate. FIX: the guardian's wording.
+  - G24-5 (LOW): the observeState `.catch` ends the flow and a transient IOException reads as RECORD_UNREADABLE. S25 NOTE: retry via readState() and re-collect; the UI gets a retry action.
+  - G24-6 (LOW): reviewSave writes record.lockMode. S25 NOTE: pass the stored mode through (INV-45).
+  - G24-7 (LOW): import order in AppLockModule. FIX.
+  - deleteAll on a corrupt store: CONFIRMED as spec intent (§6.4/6.5, INV-41/42; no device-credential fallback, OD-15). S25 recovery copy explains clearing data and restoring a .costbackup.
+  - "TEE only" can't be forced: G2 checks KeyInfo security level.
+  - Docs: LEGAL_PATHS (Segment 28 PIN-store ownership and verify path), ENGINE_INTERACTION_MAP (PIN-store row), CODEBASE_SEGMENTS Segment 28 files, CODEBASE_INVENTORY and hilt-bindings-map (bindings, @AppPinDataStore, 3 codes). FIX in the same pass.
+- S24 validation, all PASS:
+  - targeted (pre-cancel-fix fingerprint) vr-20261030-040550-9136a0b6
+  - data vr-20261030-040851-d4e58edd
+  - domain-n-z vr-20261030-041308-0fa03eb3
+  - known_good_state vr-20261030-041530-1e95f38a
+  - guard_docs_truth vr-20261030-041833-282377c1
+- Cancellation guard G-CANCEL-01 (vr-20261030-041512-bc808b9f, static-guards vr-20261030-041851-3dfb7f9a): setup's CE catch did cleanup before `throw e`, which the guard's sibling rule does not recognise. Debugger root cause; fixed by merging the two catches into one `catch (e: Exception)` that runs the cleanup and then `if (e is CancellationException) throw e`. No behaviour change; no allowlist or baseline edit.
+- Post-fix runs, all PASS:
+  - AppPinStore/PinVerifierKdf vr-20261030-045128-d84008f4
+  - cancellation vr-20261030-045432-240cd2db
+  - static-guards vr-20261030-045450-02e5467e
+  - lint vr-20261030-051039-332d0155
+- Orchestrator process note: one test edit landed while a data-shard run was active. That run was discarded and re-run (vr-20261030-040851-d4e58edd).
+- S24 COMMITTED (see git log). Dormant: nothing calls setup. Next: S25 (controller PIN substates; resolves TODO(S25) at AppLockController.kt:636; S25 notes G24-5/G24-6; freezes the "use fingerprint" API per D-I2-7).

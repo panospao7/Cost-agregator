@@ -579,7 +579,7 @@ One DAO per entity (mostly 1-to-1 mapping)
 - **BackupRepositoryModule** - Backup/restore
 - **SecurityModule** - Encryption & security
 - **PrivacyModule** - Privacy settings bindings
-- **AppLockModule** - Binds `AppLockSettingsRepository` → `AppLockSettingsRepositoryImpl` (app-lock 1a)
+- **AppLockModule** - Binds `AppLockSettingsRepository` → `AppLockSettingsRepositoryImpl` (app-lock 1a); S24 (dormant): `AppPinStore` → `AppPinStoreImpl`, `PinKeyBinder` → `KeystorePinKeyBinder`, `BootCountSource` → `AndroidBootCountSource`, plus the `@AppPinDataStore` `DataStore<Preferences>` provider (`app_lock_pin_store`); `PrivacyDiagnosticCode` gains `PIN_ATTEMPT_STATE_UNREADABLE`, `PIN_VERIFIER_UNREADABLE`, `PIN_BIOMETRIC_INVALIDATED`
 - **LocationResolverPortsModule** - Location abstractions
 - **EmptyStateModule** - Empty-state wiring
 - **EmptyStatePresentationModule** - Empty-state presentation wiring (lives in `ui/components/emptystate/`)

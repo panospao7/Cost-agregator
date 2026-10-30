@@ -237,6 +237,21 @@ enum class PrivacyDiagnosticCode(
     LOCK_DISABLED(
         DiagnosticReasonCode.LOCK_DISABLED, EventOutcome.COMPLETED, EventSeverity.INFO,
         emptySet()
+    ),
+
+    // App PIN (S24, D-I2-3, S24 design decision 5): the code is the whole message. No metadata key is allowed:
+    // no counts, tiers, timings, causes or text (INV-38). S26 consumes PIN_BIOMETRIC_INVALIDATED.
+    PIN_ATTEMPT_STATE_UNREADABLE(
+        DiagnosticReasonCode.PIN_ATTEMPT_STATE_UNREADABLE, EventOutcome.SKIPPED, EventSeverity.WARNING,
+        emptySet()
+    ),
+    PIN_VERIFIER_UNREADABLE(
+        DiagnosticReasonCode.PIN_VERIFIER_UNREADABLE, EventOutcome.BLOCKED, EventSeverity.WARNING,
+        emptySet()
+    ),
+    PIN_BIOMETRIC_INVALIDATED(
+        DiagnosticReasonCode.PIN_BIOMETRIC_INVALIDATED, EventOutcome.COMPLETED, EventSeverity.WARNING,
+        emptySet()
     )
 }
 

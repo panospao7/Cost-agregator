@@ -234,6 +234,27 @@ internal class FakeAppLockSettingsRepository(var loadState: AppLockSettingsLoadS
     override suspend fun setSecureScreenIfNotForced(enabled: Boolean): AppLockSettingsWriteResult =
         plainWrite(AppLockSettingField.SECURE_SCREEN, enabled)
 
+    // --- S24: the lock-mode write. Counted apart from [writeAttempts] like the other per-field writes.
+
+    /** Every `setLockMode` call, in order. */
+    val lockModeWrites = mutableListOf<LockMode>()
+
+    /** When set, decides the result of a lock-mode write; the default commits and updates [loadState]. */
+    var lockModeWriteResult: ((LockMode) -> AppLockSettingsWriteResult)? = null
+
+    override suspend fun setLockMode(mode: LockMode): AppLockSettingsWriteResult {
+        lockModeWrites += mode
+        lockModeWriteResult?.let { return it(mode) }
+        val base = when (val state = loadState) {
+            is AppLockSettingsLoadState.Loaded -> state.settings
+            is AppLockSettingsLoadState.FirstRunDefault -> state.settings
+            is AppLockSettingsLoadState.Unreadable -> return AppLockSettingsWriteResult.Rejected(AppLockWriteRejection.UNREADABLE)
+        }
+        val next = base.copy(lockMode = mode)
+        loadState = AppLockSettingsLoadState.Loaded(next)
+        return AppLockSettingsWriteResult.Committed(next)
+    }
+
     private suspend fun plainWrite(field: AppLockSettingField, enabled: Boolean): AppLockSettingsWriteResult {
         plainWrites += field to enabled
         plainWriteGate?.await()

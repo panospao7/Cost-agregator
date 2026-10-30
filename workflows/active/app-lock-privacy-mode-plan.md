@@ -2379,3 +2379,42 @@ D-I2-9: OD-19 (an app-wide `dataExtractionRules` for device-to-device transfer) 
 - The OEM AE-42/117 real-phone residual at the release candidate.
 - No new permission: S26 reuses USE_BIOMETRIC. Re-adding USE_FINGERPRINT is a stop-and-ask.
 - No guard change.
+
+
+### S24 design decisions (BINDING; 2026-10-30; privacy-security-guardian design review READY-WITH-CONDITIONS; orchestrator accepts all, owner-approvals 92)
+1. KDF:
+   - `PBKDF2WithHmacSHA256` (API 26+), a STATIC 150_000 iterations, a 16 B SecureRandom salt, 32 B output.
+   - One string-preference record `{recordVersion, algId, iterations, salt, keyAliasVersion, tag}`, where tag = Keystore-HMAC(domainTag || iterations || salt || pbkdf2Out).
+   - Strict parse: an unknown algId, iterations outside [50_000, 2_000_000], or a wrong salt/tag length = PRESENT-BUT-UNREADABLE (never absent).
+   - Rehash only after a successful verify, when iterations < CURRENT or algId != CURRENT; a failed rehash write never blocks unlock.
+   - G2 must measure 200 ms-1 s on a low-end API-30 device (condition C); if it misses, bump the constant in a new recordVersion.
+2. Keystore:
+   - A non-exportable HMAC-SHA256 256-bit key, PURPOSE_SIGN, no user-auth requirement, TEE only (no StrongBox), alias `applock_pin_hmac_v1`.
+   - The key is created only in setup (an existing alias is deleted first); change-PIN reuses it; verify is get-only and never creates a key.
+   - A missing key or any Keystore exception gives `VerifierUnreadable(KEY_MISSING | KEYSTORE_ERROR)` + PIN_VERIFIER_UNREADABLE: the attempt counter is untouched, the state stays LOCKED (retry only for KEYSTORE_ERROR), and nothing is wiped or auto-deleted.
+   - A setup write failure after key generation deletes the alias, best effort.
+3. Boot count and durability:
+   - `BootCountSource: Int?` (Settings.Global.BOOT_COUNT; any exception or a value < 0 gives null).
+   - A reboot is detected when the boot count differs OR elapsedRealtime < delayStartedElapsed.
+   - If the count is null or the stored count is -1: on the FIRST evaluation per process with an active delay, re-anchor durably (a full tier restart, bounded at 60 min); later evaluations in the process use elapsed time.
+   - Verify is write-ahead under a Mutex: increment the shared counter with updateData (setting delayStartedElapsed and bootCount), then evaluate; a correct PIN resets the counter in a second write.
+   - A failed increment write gives `Unavailable` (no evaluation, no unlock, no wipe); a failed reset write after a correct PIN still unlocks.
+   - The counter saturates at 1000; an active delay rejects without evaluating.
+4. Deletion (INV-49), `deleteAll()` in order:
+   1. one awaited clear() of the PIN store (verifier, attempts, notice flag, biometricEnabled) — the only decisive step;
+   2. delete the HMAC alias, best effort;
+   3. (S26) delete the biometric key, best effort.
+
+   A step-1 failure gives `Failed`, with the settings untouched. The controller then writes the settings. A crash after step 1 leaves lockMode=APP_PIN with no verifier, which resolves to DEVICE_AUTH or INERT. deleteAll is idempotent.
+5. Store and memory:
+   - A dedicated singleton DataStore `app_lock_pin_store` via PreferenceDataStoreFactory.create(produceFile = noBackupFilesDir/...). No manifest edit in S24.
+   - NO ReplaceFileCorruptionHandler: CorruptionException/IOException = present-but-unreadable.
+   - Setup writes the verifier + attempt{0} + the flag in ONE edit; a verifier without an attempt key = unreadable attempt state, repaired (AMD-11).
+   - APIs take a CharArray, zeroed in `finally` (including on cancellation; CancellationException rethrown). PBEKeySpec.clearPassword(); derived key, tag and salt copies zero-filled; compare with MessageDigest.isEqual.
+   - No Strings, logs or SavedStateHandle for the PIN. Diagnostics carry only the three PIN codes: no counts, tiers or timings.
+Conditions:
+- A. "Simple sequences" = all-same; whole-string +1 or -1 runs; a repeated block of period <= 3. The test-author pins this.
+- B. `biometricEnabled` lives in the PIN store.
+- C. The iteration timing is measured at G2.
+- D. S27 must not use a String-backed TextField for PIN entry (INV-38): a CharArray pad. This is an S27 gate.
+- E. S24 exposes `resetAttempts()`, callable only by the controller (biometric success).

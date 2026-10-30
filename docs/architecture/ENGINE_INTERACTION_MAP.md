@@ -296,6 +296,7 @@ PrivacyGate.check(capability, context)
 - TaxEstimator — isolated tax reports
 - LocationBackfill — isolated enrichment
 - ReceiptMatchLifecycleService — isolated receipt matching domain
+- AppPinStore (S24, DORMANT until S25) — PIN store: sole owner of the PIN verifier, shared attempt state and PIN flags; one Mutex, BootCountSource, MonotonicClock, the 3 PIN diagnostic codes (PIN_ATTEMPT_STATE_UNREADABLE, PIN_VERIFIER_UNREADABLE, PIN_BIOMETRIC_INVALIDATED); backup/restore never touch the PIN store (own DataStore in noBackupFilesDir); no engine, worker or Room interaction
 - BillReminderWorker — reminder dispatch (no longer fully isolated since app-lock 1a: shares the notification presentation applier and its CHANNEL_ID/shape with the sweep)
 - DailyBucketEngine — isolated daily bucket computation
 - BudgetVsActualEngine — isolated budget comparison
