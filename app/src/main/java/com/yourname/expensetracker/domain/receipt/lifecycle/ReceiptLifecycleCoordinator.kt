@@ -1666,8 +1666,19 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
                     }
                     is com.yourname.expensetracker.domain.transaction.CreateExpenseResult.DuplicateSkipped ->
                         Pair(Result.failure(DuplicateTransactionException()), PostCommitActionBatch.empty("receipt_link_dup"))
-                    is com.yourname.expensetracker.domain.transaction.CreateExpenseResult.ValidationFailed ->
-                        Pair(Result.failure(IllegalArgumentException("Validation failed: ${result.errors.joinToString()}")), PostCommitActionBatch.empty("receipt_link_vf"))
+                    is com.yourname.expensetracker.domain.transaction.CreateExpenseResult.ValidationFailed -> {
+                        // MEC INV-6/INV-17: a typed rate refusal is surfaced as a payload-free exception;
+                        // nothing was written (the transaction coordinator refused before insert).
+                        val refusal = result.rateRefusal
+                        if (refusal != null) {
+                            Pair(
+                                Result.failure(RateNotEligibleException(refusal.reason, refusal.latestRateDate)),
+                                PostCommitActionBatch.empty("receipt_link_rate_refused")
+                            )
+                        } else {
+                            Pair(Result.failure(IllegalArgumentException("Validation failed: ${result.errors.joinToString()}")), PostCommitActionBatch.empty("receipt_link_vf"))
+                        }
+                    }
                     else ->
                         Pair(Result.failure(IllegalStateException("Expense creation failed")), PostCommitActionBatch.empty("receipt_link_err"))
                 }
@@ -1707,6 +1718,17 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
 
     /** Typed duplicate outcome for atomic receipt saving; contains no source payload. */
     class DuplicateTransactionException : IllegalStateException("DUPLICATE_TRANSACTION")
+
+    /**
+     * MEC: typed rate refusal for atomic receipt saving. The message is the bounded
+     * [com.yourname.expensetracker.domain.transaction.RateRefusalCodes] constant for [reason]; there is
+     * no cause and no amount, currency, merchant, zone or receipt data. [latestRateDate] is a public
+     * ECB date set only for a stale-rate refusal.
+     */
+    class RateNotEligibleException(
+        val reason: com.yourname.expensetracker.domain.transaction.RateRefusalReason,
+        val latestRateDate: java.time.LocalDate?
+    ) : IllegalStateException(com.yourname.expensetracker.domain.transaction.RateRefusalCodes.codeFor(reason))
 
     /**
      * P3-REG-02: Thrown inside [processEmailReceipt]'s transaction to force

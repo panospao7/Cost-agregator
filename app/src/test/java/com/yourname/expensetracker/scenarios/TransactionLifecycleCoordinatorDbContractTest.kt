@@ -479,4 +479,101 @@ class TransactionLifecycleCoordinatorDbContractTest {
             db.expenseDao().findIdByRawNotificationId(rawNotificationId + 10_000L)
         )
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // MEC A2 (AE-20, INV-6, INV-19, INV-21): a refused flagged create writes
+    // nothing but two bounded events and one bounded diagnostic.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @Suppress("DEPRECATION_ERROR")
+    @Test
+    fun `AE-20 refused flagged create writes no expense and exactly two bounded events`() = runTest {
+        val writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true)
+        coEvery {
+            writeBarrier.runWrite(any<DatabaseAccessOperation>(), any<suspend () -> Any?>())
+        } coAnswers { secondArg<suspend () -> Any?>().invoke() }
+        val currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true)
+        coEvery { currencySettingsRepository.resolveHomeCurrency() } returns
+            HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
+        val evaluator = mockk<com.yourname.expensetracker.domain.currency.RateEligibilityEvaluator>()
+        val zone = java.time.ZoneId.of("Europe/Athens")
+        val expenseDate = timeProvider.now()
+        coEvery {
+            evaluator.evaluate(CurrencyCode("USD"), CurrencyCode("EUR"), expenseDate, zone)
+        } returns com.yourname.expensetracker.domain.currency.RateEligibility.None
+        val diagnostics = mutableListOf<com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent>()
+        val diagnosticWriter = mockk<com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter>()
+        coEvery { diagnosticWriter.emit(capture(diagnostics)) } returns Unit
+        val postCommitRunner = mockk<com.yourname.expensetracker.domain.sideeffect.PostCommitActionRunner>(relaxed = true)
+
+        val refusingCoordinator = TransactionLifecycleCoordinator(
+            database = db,
+            expenseDao = db.expenseDao(),
+            transactionEventDao = db.transactionEventDao(),
+            timeProvider = timeProvider,
+            currencyConverter = mockk(relaxed = true),
+            sideEffectDispatcher = mockk(relaxed = true),
+            planner = mockk(relaxed = true),
+            runner = postCommitRunner,
+            recurringLifecycleCoordinator = mockk(relaxed = true),
+            writeBarrier = writeBarrier,
+            currencySettingsRepository = currencySettingsRepository,
+            sourceLinkWriter = mockk(relaxed = true),
+            transactionValidator = mockk(relaxed = true),
+            diagnosticEventWriter = diagnosticWriter,
+            rateEligibilityEvaluator = evaluator
+        )
+        val request = CreateExpenseRequest(
+            merchant = "SKLAVENITIS",
+            amount = 20.0,
+            currency = "USD",
+            date = expenseDate,
+            transactionType = TransactionType.PURCHASE,
+            source = ExpenseSource.MANUAL_ENTRY,
+            categoryId = foodCategoryId,
+            isManualEntry = true,
+            userPresentRate = com.yourname.expensetracker.domain.transaction.UserPresentRateRequirement(zone)
+        )
+        val eventsBefore = db.transactionEventDao().getRecentEvents(100).size
+
+        val result = refusingCoordinator.createExpense(request)
+
+        // Refused with the typed refusal; never DuplicateSkipped (INV-21).
+        val failed = result as CreateExpenseResult.ValidationFailed
+        assertEquals(listOf("RATE_NOT_ELIGIBLE_NONE"), failed.errors)
+        assertEquals(
+            com.yourname.expensetracker.domain.transaction.RateRefusalReason.NO_RATE,
+            failed.rateRefusal?.reason
+        )
+        // No expense row.
+        assertEquals("No expense row must exist", 0, db.expenseDao().getTotalCount())
+        // Exactly two new bounded events.
+        val newEvents = db.transactionEventDao().getRecentEvents(100)
+        assertEquals(2, newEvents.size - eventsBefore)
+        assertEquals(
+            setOf(
+                LifecycleEventType.CREATE_ATTEMPTED.name,
+                LifecycleEventType.CREATE_VALIDATION_FAILED.name
+            ),
+            newEvents.map { it.eventType }.toSet()
+        )
+        for (event in newEvents) {
+            val text = "${event.reason} ${event.metadata}"
+            assertTrue(
+                "event text leaked payload: $text",
+                listOf("SKLAVENITIS", "USD", "EUR", "20").none { text.contains(it) }
+            )
+            assertNull("no expense id on attempt-only events", event.expenseId)
+        }
+        // The refusal event carries no dedupe key (it would embed amount and merchant).
+        assertNull(newEvents.single { it.eventType == LifecycleEventType.CREATE_VALIDATION_FAILED.name }.dedupeKey)
+        // Zero post-commit actions; exactly one bounded diagnostic.
+        io.mockk.coVerify(exactly = 0) { postCommitRunner.run(any()) }
+        assertEquals(1, diagnostics.size)
+        assertEquals(
+            com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.MANUAL_SAVE_BLOCKED_NO_RATE,
+            diagnostics.single().reasonCode
+        )
+        assertEquals("MANUAL_ENTRY", diagnostics.single().sourceType)
+    }
 }

@@ -253,6 +253,9 @@ class NotificationParserDashboardTotalSeamTest : AnalyticsEngineTestBase() {
         coEvery { recurringExpenseDao.getAll() } returns emptyList()
         every { recurringExpenseDao.getAllFlow() } returns flowOf(emptyList())
 
+        val noPlansReader = mockk<com.yourname.expensetracker.domain.installment.lifecycle.InstallmentEntryLinkReader>()
+        coEvery { noPlansReader.linkedExpenseIds() } returns emptySet()
+        coEvery { noPlansReader.planPurchaseExpenseIds() } returns emptySet()
         val recurringExpenseEngine = RecurringExpenseEngine(
             expenseRepository = expenseRepository,
             recurringExpenseRepository = RecurringExpenseRepository(
@@ -262,7 +265,10 @@ class NotificationParserDashboardTotalSeamTest : AnalyticsEngineTestBase() {
                 timeProvider = timeProvider,
                 ruleLifecycleCoordinator = mockk(relaxed = true)
             ),
-            timeProvider = timeProvider
+            timeProvider = timeProvider,
+            installmentEligibility = com.yourname.expensetracker.domain.recurring.RecurringInstallmentEligibility(
+                dagger.Lazy { noPlansReader }
+            )
         )
 
         insightsEngine = InsightsEngine(
@@ -274,7 +280,8 @@ class NotificationParserDashboardTotalSeamTest : AnalyticsEngineTestBase() {
             monthlyComparisonCalculator = MonthlyComparisonCalculator(),
             categoryInsightEngine = CategoryInsightEngine(),
             merchantInsightEngine = MerchantInsightEngine(),
-            dayOfWeekAnalyzer = DayOfWeekAnalyzer()
+            dayOfWeekAnalyzer = DayOfWeekAnalyzer(),
+            installmentEligibility = com.yourname.expensetracker.domain.analytics.noPlansInstallmentEligibility()
         )
 
         val budgetDao = mockk<BudgetDao>(relaxed = true)
@@ -456,7 +463,9 @@ class NotificationParserDashboardTotalSeamTest : AnalyticsEngineTestBase() {
             recurringOccurrenceDao = mockk(),
             currencyConverter = currencyConverter,
             accountBalanceProvider = mockk(relaxed = true),
-            databaseReadBarrier = mockk(relaxed = true)
+            databaseReadBarrier = mockk(relaxed = true),
+            installmentProjectionPort = com.yourname.expensetracker.domain.installment.projection.emptyInstallmentProjectionPort(),
+            recurringInstallmentEligibility = com.yourname.expensetracker.domain.analytics.noPlansInstallmentEligibility()
         )
 
         val healthScoreV2 = FinancialHealthScoreV2(

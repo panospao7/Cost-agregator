@@ -12,7 +12,10 @@
       ]
     },
     "data": {
-      "filters": ["com.yourname.expensetracker.data.*"]
+      "filters": [
+        "com.yourname.expensetracker.data.*",
+        "com.yourname.expensetracker.di.RetentionModuleBatchedPurgeTest"
+      ]
     },
     "domain-a-m": {
       "filters": [
@@ -32,6 +35,7 @@
         "com.yourname.expensetracker.domain.currency.*",
         "com.yourname.expensetracker.domain.dashboard.*",
         "com.yourname.expensetracker.domain.debug.*",
+        "com.yourname.expensetracker.domain.diagnostics.*",
         "com.yourname.expensetracker.domain.dto.*",
         "com.yourname.expensetracker.domain.engine.*",
         "com.yourname.expensetracker.domain.export.*",
@@ -39,8 +43,10 @@
         "com.yourname.expensetracker.domain.groups.*",
         "com.yourname.expensetracker.domain.health.*",
         "com.yourname.expensetracker.domain.income.*",
+        "com.yourname.expensetracker.domain.installment.*",
         "com.yourname.expensetracker.domain.intelligence.*",
         "com.yourname.expensetracker.domain.investment.*",
+        "com.yourname.expensetracker.domain.LifecycleWritersWriteBarrierTest",
         "com.yourname.expensetracker.domain.location.*",
         "com.yourname.expensetracker.domain.logic.*",
         "com.yourname.expensetracker.domain.model.*"
@@ -61,6 +67,7 @@
         "com.yourname.expensetracker.domain.recurring.*",
         "com.yourname.expensetracker.domain.reminder.*",
         "com.yourname.expensetracker.domain.savings.*",
+        "com.yourname.expensetracker.domain.schedule.*",
         "com.yourname.expensetracker.domain.sideeffect.*",
         "com.yourname.expensetracker.domain.split.*",
         "com.yourname.expensetracker.domain.subscription.*",

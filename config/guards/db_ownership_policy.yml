@@ -4157,6 +4157,374 @@ entries:
     writer'
   owner: '@panospao7'
   linkedIssue: MIT-DB-08O
+- path: app/src/main/java/com/yourname/expensetracker/domain/installment/lifecycle/InstallmentPlanLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.installment.lifecycle.InstallmentPlanLifecycleCoordinator
+  kind: function
+  method: adjustEntry
+  receiver: null
+  parameterTypes:
+  - Long
+  - Double?
+  - Long?
+  daoAccessor: planDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.InstallmentPlanDao
+  operation: updateEntryScheduleIfScheduled
+  barrierMode: helper
+  reason: 'Loan-installments A10 EXACT_POLICY: sole plan lifecycle coordinator, manual
+    adjust of one unlinked SCHEDULED entry (compare-and-set); barrier via checkWritesAllowed
+    plus runWrite in the writeTxn scaffold'
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/installment/lifecycle/InstallmentPlanLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.installment.lifecycle.InstallmentPlanLifecycleCoordinator
+  kind: function
+  method: applyExpenseRemoved
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.InstallmentPlan
+  - com.yourname.expensetracker.data.database.entity.InstallmentEntry
+  - Long
+  daoAccessor: planDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.InstallmentPlanDao
+  operation: releaseEntryLink
+  barrierMode: helper
+  reason: 'Loan-installments A10 EXACT_POLICY: reconcile R2/R4 release of a PAID entry
+    whose expense is gone or no longer qualifies (compare-and-set); barrier via checkWritesAllowed
+    plus runWrite in the writeTxn scaffold'
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/installment/lifecycle/InstallmentPlanLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.installment.lifecycle.InstallmentPlanLifecycleCoordinator
+  kind: function
+  method: applyExpenseRemoved
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.InstallmentPlan
+  - com.yourname.expensetracker.data.database.entity.InstallmentEntry
+  - Long
+  daoAccessor: planDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.InstallmentPlanDao
+  operation: updateEntryStatusIfCurrent
+  barrierMode: helper
+  reason: 'Loan-installments A10 EXACT_POLICY: reconcile R2/R4 SCHEDULED to CANCELLED
+    step after the link release (compare-and-set); barrier via checkWritesAllowed
+    plus runWrite in the writeTxn scaffold'
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/installment/lifecycle/InstallmentPlanLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.installment.lifecycle.InstallmentPlanLifecycleCoordinator
+  kind: function
+  method: applyReversedExpenseRemoved
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.InstallmentPlan
+  - com.yourname.expensetracker.data.database.entity.InstallmentEntry
+  - Long
+  daoAccessor: planDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.InstallmentPlanDao
+  operation: updateReversedEntryToCancelledIfLinkedTo
+  barrierMode: helper
+  reason: 'Loan-installments A10 EXACT_POLICY: reconcile R2 for a REVERSED entry whose
+    refunded expense is gone (compare-and-set, link cleared); barrier via checkWritesAllowed
+    plus runWrite in the writeTxn scaffold'
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/installment/lifecycle/InstallmentPlanLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.installment.lifecycle.InstallmentPlanLifecycleCoordinator
+  kind: function
+  method: claimEntry
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.InstallmentEntry
+  - Long
+  - com.yourname.expensetracker.domain.installment.model.InstallmentLinkOrigin
+  - Long
+  daoAccessor: planDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.InstallmentPlanDao
+  operation: claimEntryForExpense
+  barrierMode: helper
+  reason: 'Loan-installments A10 EXACT_POLICY: SCHEDULED to PAID claim with the expense
+    link (compare-and-set), shared by confirm and link; barrier via checkWritesAllowed
+    plus runWrite in the writeTxn scaffold'
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/installment/lifecycle/InstallmentPlanLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.installment.lifecycle.InstallmentPlanLifecycleCoordinator
+  kind: function
+  method: delete
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: planDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.InstallmentPlanDao
+  operation: deletePlanById
+  barrierMode: helper
+  reason: 'Loan-installments A10 EXACT_POLICY: undo declaration, removes the plan and
+    (by cascade) its entries; never deletes an expense; barrier via checkWritesAllowed
+    plus runWrite in the writeTxn scaffold'
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/installment/lifecycle/InstallmentPlanLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.installment.lifecycle.InstallmentPlanLifecycleCoordinator
+  kind: function
+  method: insertPlanWithEntries
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.domain.installment.lifecycle.InstallmentPlanTerms
+  - com.yourname.expensetracker.domain.installment.model.InstallmentPlanKind
+  - Long?
+  - Long?
+  - com.yourname.expensetracker.data.database.entity.PaymentMethod
+  - com.yourname.expensetracker.domain.installment.schedule.GeneratedSchedule
+  - Long
+  daoAccessor: planDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.InstallmentPlanDao
+  operation: insertEntries
+  barrierMode: helper
+  reason: 'Loan-installments A10 EXACT_POLICY: declare and create insert the REGULAR
+    schedule entries; barrier via checkWritesAllowed plus runWrite in the writeTxn
+    scaffold'
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/installment/lifecycle/InstallmentPlanLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.installment.lifecycle.InstallmentPlanLifecycleCoordinator
+  kind: function
+  method: insertPlanWithEntries
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.domain.installment.lifecycle.InstallmentPlanTerms
+  - com.yourname.expensetracker.domain.installment.model.InstallmentPlanKind
+  - Long?
+  - Long?
+  - com.yourname.expensetracker.data.database.entity.PaymentMethod
+  - com.yourname.expensetracker.domain.installment.schedule.GeneratedSchedule
+  - Long
+  daoAccessor: planDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.InstallmentPlanDao
+  operation: insertPlan
+  barrierMode: helper
+  reason: 'Loan-installments A10 EXACT_POLICY: declare and create insert the plan row;
+    barrier via checkWritesAllowed plus runWrite in the writeTxn scaffold'
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/installment/lifecycle/InstallmentPlanLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.installment.lifecycle.InstallmentPlanLifecycleCoordinator
+  kind: function
+  method: markPaidBeforeTracking
+  receiver: null
+  parameterTypes:
+  - Long
+  - List<Long>
+  daoAccessor: planDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.InstallmentPlanDao
+  operation: updateEntryStatusIfCurrent
+  barrierMode: helper
+  reason: 'Loan-installments A10 EXACT_POLICY: bulk SCHEDULED to PAID_BEFORE_TRACKING
+    (compare-and-set, all or nothing); barrier via checkWritesAllowed plus runWrite
+    in the writeTxn scaffold'
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/installment/lifecycle/InstallmentPlanLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.installment.lifecycle.InstallmentPlanLifecycleCoordinator
+  kind: function
+  method: plainEntryMove
+  receiver: null
+  parameterTypes:
+  - Long
+  - com.yourname.expensetracker.domain.installment.model.EntryTrigger
+  - com.yourname.expensetracker.domain.installment.model.InstallmentStatusReason?
+  daoAccessor: planDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.InstallmentPlanDao
+  operation: updateEntryStatusIfCurrent
+  barrierMode: helper
+  reason: 'Loan-installments A10 EXACT_POLICY: skip, unskip and revert paid-before-tracking
+    status move without an expense link (compare-and-set); barrier via checkWritesAllowed
+    plus runWrite in the writeTxn scaffold'
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/installment/lifecycle/InstallmentPlanLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.installment.lifecycle.InstallmentPlanLifecycleCoordinator
+  kind: function
+  method: reconcilePlan
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: planDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.InstallmentPlanDao
+  operation: updatePlanDetachedFromPurchaseIfLinkedTo
+  barrierMode: helper
+  reason: 'Loan-installments A10 EXACT_POLICY: reconcile R5 detaches a plan whose purchase
+    expense is gone (compare-and-set); barrier via checkWritesAllowed plus runWrite
+    in the writeTxn scaffold'
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/installment/lifecycle/InstallmentPlanLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.installment.lifecycle.InstallmentPlanLifecycleCoordinator
+  kind: function
+  method: settlePlanStatus
+  receiver: null
+  parameterTypes:
+  - Long
+  - Long
+  daoAccessor: planDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.InstallmentPlanDao
+  operation: updatePlanStatusIfCurrent
+  barrierMode: helper
+  reason: 'Loan-installments A10 EXACT_POLICY: auto-complete and reopen of the plan
+    status after an entry change (compare-and-set); barrier via checkWritesAllowed
+    plus runWrite in the writeTxn scaffold'
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/installment/lifecycle/InstallmentPlanLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.installment.lifecycle.InstallmentPlanLifecycleCoordinator
+  kind: function
+  method: unlinkExpense
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: planDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.InstallmentPlanDao
+  operation: releaseEntryLink
+  barrierMode: helper
+  reason: 'Loan-installments A10 EXACT_POLICY: unlink the expense of a PAID entry
+    (compare-and-set, recordGeneration + 1); barrier via checkWritesAllowed plus runWrite
+    in the writeTxn scaffold'
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/installment/lifecycle/InstallmentPlanLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.installment.lifecycle.InstallmentPlanLifecycleCoordinator
+  kind: function
+  method: cancelScheduledEntry
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.InstallmentEntry
+  - com.yourname.expensetracker.domain.installment.model.InstallmentStatusReason
+  - Long
+  daoAccessor: planDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.InstallmentPlanDao
+  operation: updateEntryStatusIfCurrent
+  barrierMode: helper
+  reason: 'Loan-installments S6b EXACT_POLICY: stop, refund, payoff and shorten cancel a
+    SCHEDULED entry with a plan-operation reason (compare-and-set); barrier via checkWritesAllowed
+    plus runWrite in the writeTxn scaffold'
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/installment/lifecycle/InstallmentPlanLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.installment.lifecycle.InstallmentPlanLifecycleCoordinator
+  kind: function
+  method: editDetails
+  receiver: null
+  parameterTypes:
+  - Long
+  - String
+  - String?
+  - Long?
+  - com.yourname.expensetracker.domain.installment.model.InstallmentFulfilmentMode
+  - String
+  - Long
+  daoAccessor: planDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.InstallmentPlanDao
+  operation: updatePlanDetailsIfEditable
+  barrierMode: helper
+  reason: 'Loan-installments S6b EXACT_POLICY: edit of display name, lender label, category,
+    fulfilment mode and (before any payment) currency of an ACTIVE plan, or of the display
+    name, lender label and category of a COMPLETED plan (compare-and-set); barrier via
+    checkWritesAllowed plus runWrite in the writeTxn scaffold'
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/installment/lifecycle/InstallmentPlanLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.installment.lifecycle.InstallmentPlanLifecycleCoordinator
+  kind: function
+  method: insertEntryRow
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.InstallmentEntry
+  daoAccessor: planDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.InstallmentPlanDao
+  operation: insertEntries
+  barrierMode: helper
+  reason: 'Loan-installments S6b EXACT_POLICY: insert of the PAYOFF entry (payoff) and of
+    the appended REGULAR entries (extend), one row per call; barrier via checkWritesAllowed
+    plus runWrite in the writeTxn scaffold'
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/installment/lifecycle/InstallmentPlanLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.installment.lifecycle.InstallmentPlanLifecycleCoordinator
+  kind: function
+  method: moveEndedPlan
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.InstallmentPlan
+  - com.yourname.expensetracker.domain.installment.model.InstallmentPlanStatus
+  - com.yourname.expensetracker.domain.installment.model.InstallmentStatusReason?
+  - Long
+  daoAccessor: planDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.InstallmentPlanDao
+  operation: updatePlanStatusIfCurrent
+  barrierMode: helper
+  reason: 'Loan-installments S6b EXACT_POLICY: stop, refund and payoff move the plan to
+    CANCELLED, REFUNDED or PAID_OFF (compare-and-set on the status read in the transaction);
+    barrier via checkWritesAllowed plus runWrite in the writeTxn scaffold'
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/installment/lifecycle/InstallmentPlanLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.installment.lifecycle.InstallmentPlanLifecycleCoordinator
+  kind: function
+  method: rescheduleEntry
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.InstallmentEntry
+  - Long
+  - Long
+  - com.yourname.expensetracker.domain.installment.model.InstallmentAdjustReason
+  - Long
+  daoAccessor: planDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.InstallmentPlanDao
+  operation: updateEntryScheduleIfScheduled
+  barrierMode: helper
+  reason: 'Loan-installments S6b EXACT_POLICY: re-spread (extend, shorten) and due-day change
+    rewrite the amount or date of one unlinked SCHEDULED entry (compare-and-set); barrier
+    via checkWritesAllowed plus runWrite in the writeTxn scaffold'
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/installment/lifecycle/InstallmentPlanLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.installment.lifecycle.InstallmentPlanLifecycleCoordinator
+  kind: function
+  method: reverseSettledEntry
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.InstallmentEntry
+  - Long
+  - Long
+  daoAccessor: planDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.InstallmentPlanDao
+  operation: updatePaidEntryToReversedIfLinkedTo
+  barrierMode: helper
+  reason: 'Loan-installments S6b EXACT_POLICY: refund moves a PAID entry to REVERSED keeping
+    its link (compare-and-set on the linked expense); the expense flag is set through TLC
+    in the same transaction; barrier via checkWritesAllowed plus runWrite in the writeTxn
+    scaffold'
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/installment/lifecycle/InstallmentPlanLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.installment.lifecycle.InstallmentPlanLifecycleCoordinator
+  kind: function
+  method: updatePlanShape
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.InstallmentPlan
+  - Int
+  - Int
+  - Long
+  daoAccessor: planDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.InstallmentPlanDao
+  operation: updatePlanShapeIfActive
+  barrierMode: helper
+  reason: 'Loan-installments S6b EXACT_POLICY: extend and due-day change update the count
+    and anchor day of an ACTIVE plan (compare-and-set); barrier via checkWritesAllowed
+    plus runWrite in the writeTxn scaffold'
+  owner: '@panospao7'
+  linkedIssue: MIT-003
 - path: app/src/main/java/com/yourname/expensetracker/domain/investment/InvestmentTracker.kt
   ownerFqcn: com.yourname.expensetracker.domain.investment.InvestmentTracker
   kind: function
@@ -6658,6 +7026,42 @@ entries:
     differs'
   owner: '@panospao7'
   linkedIssue: MIT-DB-08L
+- path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+  kind: function
+  method: setSpendingExclusionDbOnly
+  receiver: null
+  parameterTypes:
+  - Long
+  - com.yourname.expensetracker.domain.transaction.SpendingExclusionReason?
+  - String
+  - String?
+  daoAccessor: expenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
+  operation: updateSpendingExclusionReason
+  barrierMode: helper
+  reason: "Loan-installments INV-2 sole writer of expenses.spendingExclusionReason;\
+    \ barrier via checkWritesAllowed helper plus re-entrant runWrite"
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+  kind: function
+  method: setSpendingExclusionDbOnly
+  receiver: null
+  parameterTypes:
+  - Long
+  - com.yourname.expensetracker.domain.transaction.SpendingExclusionReason?
+  - String
+  - String?
+  daoAccessor: transactionEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.TransactionEventDao
+  operation: insert
+  barrierMode: helper
+  reason: "Spending-inclusion change — UPDATED lifecycle event insert; barrier\
+    \ via checkWritesAllowed helper"
+  owner: '@panospao7'
+  linkedIssue: MIT-003
 - path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
   ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
   kind: function

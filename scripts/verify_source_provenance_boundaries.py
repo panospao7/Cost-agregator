@@ -208,6 +208,7 @@ EXPECTED_EXPENSE_SOURCES: Set[str] = {
     "DEBUG_TOOL",
     "MIGRATION",
     "UNKNOWN",
+    "INSTALLMENT_PLAN",  # loan-installments S3; owner-approved guard strengthening 2026-10-23
 }
 
 # Regex to extract ExpenseSource values from a when block

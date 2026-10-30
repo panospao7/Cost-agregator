@@ -146,10 +146,24 @@ data class Expense(
     // Historical conversion snapshot fields (D.19) — Populated at creation and update time by TransactionLifecycleCoordinator when expense currency differs from home currency. Identity values (amount, currency, 1.0) are set when expense currency matches home currency.
     @ColumnInfo(defaultValue = "0.0") val baseAmount: Double = 0.0,
     @ColumnInfo(defaultValue = "'EUR'") val baseCurrency: String = "EUR",
-    @ColumnInfo(defaultValue = "0.0") val exchangeRateUsed: Double = 0.0
+    @ColumnInfo(defaultValue = "0.0") val exchangeRateUsed: Double = 0.0,
+
+    /**
+     * Bounded [com.yourname.expensetracker.domain.transaction.SpendingExclusionReason]
+     * name (schema 152), stored as TEXT like [source]. Null counts as spending today.
+     * Denormalised flag: installment plan rows are the source of truth (loan-installments
+     * INV-2). Intentionally NOT indexed: the column is mostly NULL and low-selectivity, so
+     * an index adds write cost for no read gain (and adding one later costs a schema bump).
+     * Written only by TransactionLifecycleCoordinator.setSpendingExclusionDbOnly; a non-null
+     * value makes [effectiveAmount] and [normalizedEffectiveAmount] return 0.0 and
+     * [countsAsSpending] false (the SQL projection is SpendingInclusionSql).
+     */
+    @ColumnInfo(defaultValue = "NULL") val spendingExclusionReason: String? = null
 ) {
     /**
      * The amount that should be counted toward the user's own spending.
+     * - If [spendingExclusionReason] is set: 0.0 (installment purchase record / reversed
+     *   installment expense; the SQL mirror is SpendingInclusionSql.EFFECTIVE_AMOUNT)
      * - If isNotMine: 0.0 (excluded entirely — someone else's charge)
      * - If isSharedExpense + myShareAmount set: the explicit per-person amount
      * - If isSharedExpense + mySharePercentage set: proportional share of the full amount
@@ -163,6 +177,7 @@ data class Expense(
 
     val effectiveAmount: Double
         get() = when {
+            spendingExclusionReason != null -> 0.0
             isNotMine -> 0.0
             isSharedExpense && myShareAmount != null -> myShareAmount
             isSharedExpense && mySharePercentage != null -> amount * mySharePercentage / 100.0
@@ -178,9 +193,24 @@ data class Expense(
      * Only for the mixed-currency date-header total, which has already checked that the group
      * shares one [baseCurrency]. Sorting, min/max filters and counts must use
      * [ComparableHomeValue.comparableValue] against the read-time home currency instead.
+     *
+     * A row with a [spendingExclusionReason] returns 0.0 whether or not it has a snapshot
+     * (it adds nothing to spending), like the not-mine branch of the delegate.
      */
     val normalizedEffectiveAmount: Double?
-        get() = ComparableHomeValue.snapshotValue(this)
+        get() = if (spendingExclusionReason != null) 0.0 else ComparableHomeValue.snapshotValue(this)
+
+    /**
+     * Kotlin projection of the SQL spending predicate `isNotMine = 0 AND
+     * spendingExclusionReason IS NULL` (SpendingInclusionSql.SPENDING_PREDICATE). Use it for
+     * Kotlin COUNT and AVG so they match the SQL WHERE semantics; sums use [effectiveAmount].
+     */
+    val countsAsSpending: Boolean
+        get() = !isNotMine && spendingExclusionReason == null
+
+    /** INV-1: true when a spending exclusion (e.g. a flagged installment purchase) neutralises this row; ownership is NOT considered (see countsAsSpending). */
+    val isSpendingNeutralised: Boolean
+        get() = spendingExclusionReason != null
 
     val hasConflictingOwnershipFlags: Boolean
         get() = isNotMine && isSharedExpense

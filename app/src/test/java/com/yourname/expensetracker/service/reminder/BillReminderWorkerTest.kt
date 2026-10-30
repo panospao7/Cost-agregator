@@ -19,6 +19,7 @@ import com.yourname.expensetracker.domain.notification.presentation.Notification
 import com.yourname.expensetracker.domain.notification.presentation.NotificationPresentationResolver
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
+import com.yourname.expensetracker.domain.reminder.BillReminderManager
 import com.yourname.expensetracker.domain.reminder.BillReminderSettings
 import com.yourname.expensetracker.domain.reminder.BillReminderSettingsRepository
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
@@ -65,11 +66,13 @@ class BillReminderWorkerTest {
     private lateinit var diagnosticEventWriter: DiagnosticEventWriter
     private lateinit var reminderSettingsRepository: BillReminderSettingsRepository
     private lateinit var timeProvider: FakeTimeProvider
+    private lateinit var billReminderManager: BillReminderManager
     private lateinit var presentationResolver: NotificationPresentationResolver
 
     @Before
     fun setup() {
         context = ApplicationProvider.getApplicationContext()
+        billReminderManager = mockk(relaxed = true)
         coordinator = mockk(relaxed = true)
         executionGuard = mockk(relaxed = true)
         diagnosticEventWriter = mockk(relaxed = true)
@@ -128,7 +131,8 @@ class BillReminderWorkerTest {
                         reminderSettingsRepository,
                         timeProvider,
                         presentationResolver,
-                        NotificationPresentationApplier(context, NotificationPresentationTexts(context))
+                        NotificationPresentationApplier(context, NotificationPresentationTexts(context)),
+                        billReminderManager
                     )
                 }
             })

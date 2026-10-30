@@ -85,7 +85,13 @@ class BudgetViewModelCurrencyProvenanceTest : ViewModelTestUtils() {
             autopilotEngine = autopilotEngine,
             timeProvider = timeProvider,
             currencySettingsRepository = currencySettingsRepository,
-            database = mockk()
+            database = mockk(),
+            installmentReadRepository = io.mockk.mockk<com.yourname.expensetracker.domain.installment.InstallmentPlanReadRepository>().also {
+                // S13-b: flag is on; a relaxed Flow never emits, so stub the enabled path benignly.
+                io.mockk.every { it.observeChanges() } returns kotlinx.coroutines.flow.flowOf(Unit)
+                io.mockk.coEvery { it.loadBudgetInputs() } returns
+                    com.yourname.expensetracker.domain.installment.readmodel.InstallmentBudgetInputs(emptyList(), 0)
+            }
         )
     }
 
@@ -353,7 +359,13 @@ class BudgetViewModelCurrencyProvenanceTest : ViewModelTestUtils() {
             autopilotEngine = autopilotEngine,
             timeProvider = timeProvider,
             currencySettingsRepository = currencySettingsRepository,
-            database = mockk()
+            database = mockk(),
+            installmentReadRepository = io.mockk.mockk<com.yourname.expensetracker.domain.installment.InstallmentPlanReadRepository>().also {
+                // S13-b: flag is on; a relaxed Flow never emits, so stub the enabled path benignly.
+                io.mockk.every { it.observeChanges() } returns kotlinx.coroutines.flow.flowOf(Unit)
+                io.mockk.coEvery { it.loadBudgetInputs() } returns
+                    com.yourname.expensetracker.domain.installment.readmodel.InstallmentBudgetInputs(emptyList(), 0)
+            }
         )
     }
 

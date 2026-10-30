@@ -31,6 +31,34 @@ The owner approved the slice plan (`workflows/active/loan-installments-plan.md`:
   - (d) The payoff-date lower bound also takes `PAID_BEFORE_TRACKING` due dates into account.
 - Everything else is unchanged: INV-1…INV-31 except those listed above, the schema impact (additive) and AE-1…AE-25.
 
+## Amendment log (2026-10-23, S5 review)
+
+[amended S5-R, 2026-10-23] These edits align the spec with decisions made in the S5 review
+(`workflows/active/loan-installments-handoff.md`, "S5 review fixes"). Changed: sections 3.1, 3.2, 5.4 R4, 7.0, 7.5 and
+11.1, and INV-14, INV-20, INV-33. There are no new invariants and no schema impact. The Delete source set is
+OWNER CONFIRMED 2026-10-23 (section 7.5). Each change carries the tag `[amended S5-R, 2026-10-23]`.
+
+## Amendment log (2026-10-26, pre-S7a reconciliation)
+
+[Amended 2026-10-26 (A2)] These edits align the spec with plan amendment A2 (S7a) in
+`workflows/active/loan-installments-plan.md` (G2-6 convergence, MEC AE-29) and with the binding S7a notes in
+`workflows/active/loan-installments-s7a-discovery.md` sections 4 to 6. Each change carries the tag
+`[Amended 2026-10-26 (A2)]`. Changed: sections 5.2 and 6 Q9. New INV-34 and AE-31. Schema impact: none.
+- **FX deferral removed.** `AUTO_RECORD_DEFERRED_FX` no longer exists. Plan-created expenses never set the
+  user-present rate flag (`userPresentRate = null`; only `declareWithNewExpense` sets it, plan A1), so TLC never
+  refuses them for a missing rate. A USD expense recorded without a rate is a sentinel row, excluded from
+  comparable-home-value totals; its display is plan risk R17 / slice S8b (section 6 Q9).
+  `AUTO_RECORD_DEFERRED_CANDIDATE` (INV-13) is unchanged.
+- **Blank plan name (INV-34, AE-31).** A plan whose `displayName` is blank (in practice a plan restored from a
+  redacted backup, IM-9) records no expense until the user renames it. Auto-record, confirm and payoff use the
+  bounded reason `PLAN_NAME_REQUIRED`. There is no fallback merchant.
+- **Foreground trigger (D-19).** The foreground catch-up trigger is overview-open only. There is no startup hook and
+  no persisted marker. Until the overview exists (S10), only the worker runs catch-up (section 5.2).
+- **Proposed follow-up (orchestrator; not decided here):** declare, create-standalone and the E3 edit currently accept
+  a blank `displayName` (S6a open question 7, S6b decision 1). Refusing a blank name there with `INVALID_VALUE`
+  would make INV-34 reachable only through a redacted restore. Recommended, but it changes implemented S6a/S6b
+  behaviour, so it needs an explicit decision.
+
 Source facts re-checked for this spec (beyond those cited in the brief/critique):
 - `Expense.effectiveAmount` / `normalizedEffectiveAmount` (`data/database/entity/Expense.kt:163-185`) zero
   `isNotMine`; there is no other "does not count" dimension today.
@@ -177,16 +205,23 @@ and declaration is atomic.
 | ACTIVE | CANCELLED | Stop | user | SCHEDULED → CANCELLED(`PLAN_STOPPED`). PAID entries stay counted. Purchase stays at 0 |
 | ACTIVE, COMPLETED | REFUNDED | Refund/return ("reverse everything") | user | SCHEDULED → CANCELLED(`PLAN_REFUNDED`). PAID → REVERSED and their expenses flagged `INSTALLMENT_REVERSED`. Purchase stays at 0 |
 | ACTIVE | PAID_OFF | Pay off early (amount, date) | user | SCHEDULED → CANCELLED(`PAID_OFF_EARLY`). One PAYOFF entry created PAID, linked to an expense |
-| ACTIVE, CANCELLED (no PAID/REVERSED entries; PAID_BEFORE_TRACKING entries don't block) | deleted | Delete (undo declaration) | user | entries (PAID_BEFORE_TRACKING included) and plan removed. Purchase flag cleared, so the purchase counts in full again on its own date |
+| ACTIVE, CANCELLED (no PAID/REVERSED entries; PAID_BEFORE_TRACKING entries don't block) | deleted | Delete (undo declaration) | user | entries (PAID_BEFORE_TRACKING included) and plan removed. Purchase flag cleared, so the purchase counts in full again on its own date. Only these two source states (section 7.5, OWNER CONFIRMED 2026-10-23) [amended S5-R, 2026-10-23] |
 
 Illegal: any transition out of CANCELLED, REFUNDED or PAID_OFF other than the delete row above. Deleting a plan that
 has PAID/REVERSED entries (`PLAN_HAS_PAYMENTS`). PAID_OFF from COMPLETED (nothing left). Any transition on a plan
 whose purchase has been deleted while kind is still PURCHASE_ATTACHED (reconcile detaches it first).
+[amended S5-R, 2026-10-23] Delete checks payments first: a plan with any PAID or REVERSED entry is refused
+`PLAN_HAS_PAYMENTS` from every status. Without payments, Delete from COMPLETED, REFUNDED or PAID_OFF is refused
+`ILLEGAL_TRANSITION` (section 7.5).
 
 Retry, cancellation and process death (applies to every row):
 - Each transition is one DB transaction inside the write barrier, with compare-and-set on the current status.
   Repeating a transition when the plan is already in the target state returns `AlreadyInState`, which counts as
   success. A different current state returns `IllegalTransition(code)`.
+- [amended S5-R, 2026-10-23] Entry-level retries depend on the plan status too (section 3.2): a retried "mark paid
+  before tracking" on an entry that is already PAID_BEFORE_TRACKING is `AlreadyInState` in an ACTIVE or COMPLETED
+  plan (so a retry after the mark completed the plan succeeds), and `ILLEGAL_TRANSITION` in a CANCELLED, REFUNDED
+  or PAID_OFF plan.
 - A coroutine cancellation rolls back the transaction. `CancellationException` is always rethrown.
 - If the process dies inside the transaction, nothing is persisted. If it dies after commit but before post-commit
   side effects (budget recheck, reminder suppression), the integrity reconcile (section 5.4) and read-time
@@ -201,11 +236,11 @@ Derived display for SCHEDULED: `UPCOMING` (due > today), `DUE` (due = today), `O
 | From | To | Trigger | Who | Precondition |
 |---|---|---|---|---|
 | SCHEDULED | PAID | auto-record (catch-up) | worker/foreground → plan coordinator | plan ACTIVE, mode AUTO_RECORD, `declaredOnDate` ≤ due ≤ today, `autoRecordConsumed = false`, no candidate charge (INV-13) |
-| SCHEDULED | PAID | confirm ("mark paid", creates expense) | user | plan ACTIVE |
-| SCHEDULED | PAID | link an existing expense | user | plan ACTIVE. Link policy passes (INV-5, INV-16) |
+| SCHEDULED | PAID | confirm ("mark paid", creates expense) | user | plan ACTIVE. `dueDate` ≤ today (local civil date, section 10). If today is unknown, the confirm is refused `ILLEGAL_TRANSITION` (fail closed; INV-14) [amended S5-R, 2026-10-23] |
+| SCHEDULED | PAID | link an existing expense | user | plan ACTIVE. Link policy passes (INV-5, INV-16). No due-date gate: linking an existing expense to a not-yet-due entry stays allowed [amended S5-R, 2026-10-23] |
 | PAID | SCHEDULED | unlink, or linked expense deleted / currency changed / type changed to non-expense | user, or reconcile (side effect of a TLC update/delete) | plan ACTIVE or COMPLETED (a COMPLETED plan reopens) |
-| PAID | CANCELLED(`EXPENSE_REMOVED`) | same triggers as above | reconcile | plan CANCELLED or PAID_OFF (stays terminal) |
-| SCHEDULED | SKIPPED | skip (bounded reason) | user | unlinked. A skip on an auto-recorded entry means deleting that expense through the normal expense delete first |
+| PAID | CANCELLED(`EXPENSE_REMOVED`) | linked expense deleted, currency changed or type changed to non-expense. `EXPENSE_REMOVED` is the one reason for all three causes; there are no separate currency or type codes. A user unlink is not offered here (it needs plan ACTIVE or COMPLETED) [amended S5-R, 2026-10-23] | reconcile | plan CANCELLED or PAID_OFF (stays terminal) |
+| SCHEDULED | SKIPPED | skip (bounded reason: exactly one of `USER_SKIP_LENDER_HOLIDAY`, `USER_SKIP_WAIVED`, `USER_SKIP_OTHER`; OQ-20, owner-approved) [amended S5-R, 2026-10-23] | user | plan ACTIVE, unlinked. A skip on an auto-recorded entry means deleting that expense through the normal expense delete first. A missing reason or any other reason is refused `ILLEGAL_TRANSITION`. A retry on an already SKIPPED entry is `AlreadyInState` whatever reason it carries [amended S5-R, 2026-10-23] |
 | SKIPPED | SCHEDULED | unskip | user | plan ACTIVE or COMPLETED |
 | SCHEDULED | SCHEDULED (amount/date changed) | adjust | user | audit fields set (INV-19) |
 | SCHEDULED | CANCELLED | stop / refund / payoff / shorten | user via plan op | |
@@ -244,6 +279,16 @@ does a compare-and-set `WHERE status='PAID_BEFORE_TRACKING'`. Selected entries t
 count as `AlreadyInState`. If the claimed row count is lower than the number of remaining selected entries, the
 transaction rolls back. INV-21 completion and the COMPLETED → ACTIVE reopen happen in the same transaction. A
 cancellation or process death rolls back everything.
+
+[amended S5-R, 2026-10-23] Retry over plan status, for mark and revert:
+- A CANCELLED, REFUNDED or PAID_OFF plan is refused `ILLEGAL_TRANSITION` first, even when the entry is already in
+  the target state.
+- Mark: an entry already PAID_BEFORE_TRACKING is `AlreadyInState` in an ACTIVE or COMPLETED plan. This covers a
+  retry after the mark itself completed the plan (INV-21). An actual move SCHEDULED → PAID_BEFORE_TRACKING still
+  requires plan ACTIVE.
+- Bulk mark: in a COMPLETED plan, if every selected entry is already PAID_BEFORE_TRACKING the request succeeds with
+  nothing to write. If any selected entry still needs a move, the whole request is refused `ILLEGAL_TRANSITION`.
+- Revert: an entry already SCHEDULED is `AlreadyInState` in an ACTIVE or COMPLETED plan.
 
 ## 4. Invariants
 
@@ -317,15 +362,19 @@ name, OD-1). "TLC" means `TransactionLifecycleCoordinator`. AE-n refers to secti
   suggested link. Owner: plan coordinator. (AE-17)
 - **INV-14 Future entries never count.** No expense is ever created for an entry with `dueDate` > today. Future
   entries are commitments shown only in projections. Owner: plan coordinator. (AE-10)
+  [amended S5-R, 2026-10-23] This covers CONFIRM: it requires `dueDate` ≤ today (local civil date). If today is
+  unknown, CONFIRM is refused `ILLEGAL_TRANSITION` (fail closed). LINK creates no expense, so linking an existing
+  expense to a not-yet-due entry stays allowed.
 - **INV-15 Projection bounds.** Projections (cash flow, forecast, stress forecast, recurring plan projection,
   reminders) include only SCHEDULED entries of ACTIVE plans with `dueDate` ≥ today. Terminal plans and entries
   after the last SCHEDULED one project nothing. PAID_BEFORE_TRACKING entries are never projected or reminded.
   Owner: plan read model / projection port. (AE-11, AE-26) [amended AMD-1]
 - **INV-19 Paid entries are immutable from the plan side.** Plan edits touch only SCHEDULED entries. A PAID entry's
   amount comes from its linked expense. Owner: plan coordinator. (AE-21)
-- **INV-20 Terminal plans.** CANCELLED, REFUNDED and PAID_OFF plans accept no transitions except delete when they
-  have no PAID/REVERSED entries. PAID_BEFORE_TRACKING entries are not payments for this rule. Only COMPLETED may
-  reopen (to ACTIVE). Owner: plan coordinator. (AE-7, AE-11, AE-27, AE-28) [amended AMD-1]
+- **INV-20 Terminal plans.** CANCELLED, REFUNDED and PAID_OFF plans accept no transitions, except that a CANCELLED
+  plan with no PAID/REVERSED entries may be deleted. REFUNDED and PAID_OFF plans can't be deleted (section 7.5,
+  OWNER CONFIRMED 2026-10-23) [amended S5-R, 2026-10-23]. PAID_BEFORE_TRACKING entries are not payments for this
+  rule. Only COMPLETED may reopen (to ACTIVE). Owner: plan coordinator. (AE-7, AE-11, AE-27, AE-28) [amended AMD-1]
 - **INV-21 Automatic completion.** An ACTIVE plan with zero SCHEDULED entries becomes COMPLETED in the same
   transaction as the change that removed the last one. PAID_BEFORE_TRACKING counts as non-SCHEDULED, and this
   includes a declaration whose k leaves no SCHEDULED entry. Owner: plan coordinator. (AE-11, AE-27) [amended
@@ -344,6 +393,21 @@ name, OD-1). "TLC" means `TransactionLifecycleCoordinator`. AE-n refers to secti
   detection (DETECTED_PATTERN) and from forecast history baselines when the plan's future entries are projected
   explicitly. Owner: `ForecastInputAssembler` for forecast inputs; the recurring pattern detector for detection
   (two distinct rules, one owner each). (AE-11)
+  - **Amendment (S6c-F.2, 2026-10-27; owner-approvals 37(a)/(c), 46(b)).** `InsightsEngine.findAnomalies` and
+    `NotificationSubscriptionDetector.detectSubscriptions` also exclude installment-linked and plan-purchase
+    expenses, through the single owner `RecurringInstallmentEligibility` (anomalies: by expense id on both
+    anomaly paths, baselines unchanged; subscriptions: filtered before MIN_TRANSACTIONS is re-checked).
+  - **Amendment (S8a final gate, 2026-10-27; plan A15).** The forecast-baseline exclusion and the projected entries
+    live ONLY on a separate, installment-aware entry point (a separate file) feeding the UI flow. They are never
+    added to `assemble()` as called by `FinancialWeatherRepository`, because that path fills the shared
+    `FinancialWeather` scalars that `DashboardBriefingInputBuilder` copies into the cloud briefing (INV-31).
+    Home keeps INV-29 without double counting: the UI-side installment-aware weather REPLACES the baseline view
+    for Home only (downstream of `getProcessedDataFlow`, in the HomeViewModel/UI layer); the cloud path keeps the
+    installment-free one. The two views are never summed.
+    Verification (S8b differential): expense rows, link state and spending-predicate state are held constant;
+    only the projection-port output varies (empty vs non-empty). Spending aggregates follow ordinary aggregate
+    semantics (a PURCHASE_ATTACHED flag and the S6c-3 recurring exclusion legitimately change them), so they are
+    not part of the differential.
 - **INV-32 Paid before tracking (AMD-1, OQ-18).** An entry may be `PAID_BEFORE_TRACKING` only if kind = REGULAR
   and `dueDate < declaredOnDate` (strict, evaluated on the entry's current `dueDate` at the transition). It is set
   in one of two ways:
@@ -365,7 +429,8 @@ name, OD-1). "TLC" means `TransactionLifecycleCoordinator`. AE-n refers to secti
   (AE-26, AE-27, AE-28, AE-29)
 - **INV-33 Plan category source (AMD-3).**
   - PURCHASE_ATTACHED: `categoryId` = the purchase's `categoryId`, copied exactly at declaration. Null stays null,
-    and there is no fallback or default.
+    and there is no fallback or default. [amended S5-R, 2026-10-23] The category may be null, and an E3 edit may set
+    it to null. A non-null pick must exist (`CATEGORY_NOT_FOUND`).
   - STANDALONE: `categoryId` is required. It must reference an existing spending category the user picked. It is
     checked inside the create transaction (`CATEGORY_REQUIRED` when none is given, `CATEGORY_NOT_FOUND` when it no
     longer exists). An E3 edit may change it to another existing spending category, never to null.
@@ -397,8 +462,31 @@ name, OD-1). "TLC" means `TransactionLifecycleCoordinator`. AE-n refers to secti
   diagnostics, logs, reason-code payloads or cloud payloads. Diagnostics carry bounded codes and integer counts
   only. Owner: plan coordinator (diagnostics it emits); cloud payload assemblers (exclusion, guard test). (AE-23)
 
-(Invariants are listed by group, not in numeric order. All of INV-1…INV-33 are present: 33 invariants. INV-32 and
-INV-33 were added by the 2026-10-16 amendment.)
+**Recording preconditions** [Amended 2026-10-26 (A2)]
+
+- **INV-34 A plan needs a name to record.** The plan coordinator creates no installment expense (auto-record,
+  confirm or payoff) for a plan whose `displayName` is blank (empty or whitespace only). In practice this is a plan
+  restored from a redacted backup (IM-9 blanks `displayName` and `lenderLabel`). The check runs before any TLC
+  call, so TLC is not called and writes nothing (no expense, no `transaction_events` row).
+  - Auto-record skips every due entry of that plan in this run with reason `PLAN_NAME_REQUIRED`. Each entry stays
+    SCHEDULED, and `autoRecordConsumed` and `recordGeneration` are unchanged. The run reports an integer count per
+    reason. Every later run checks again.
+  - Confirm and payoff are refused with `PLAN_NAME_REQUIRED` and write nothing (this replaces today's
+    `RECORD_FAILED` for this case).
+  - There is no fallback merchant: not `lenderLabel` (also blanked by IM-9), not the purchase merchant, not a fixed
+    text. The restored data deliberately lost the name, and the app neither rebuilds nor replaces it.
+  - Operations that create no expense stay allowed: link, skip, adjust, stop, refund, delete and the E3 rename.
+    After a rename to a non-blank name (E3, ACTIVE plans only), the next run records every still-eligible entry,
+    each dated on its own due date. INV-12, INV-13 and INV-14 apply unchanged at that time.
+  - TLC's merchant validation (`MERCHANT_BLANK`, `MERCHANT_PLACEHOLDER`) is unchanged and stays the single owner of
+    expense merchant validity. INV-34 is a plan precondition ("a plan with no name is not recordable") that
+    short-circuits only the blank case before TLC. Every other TLC refusal, including a placeholder name such as
+    "Unknown", stays `RECORD_FAILED`.
+  - Diagnostics carry the code and integer counts only, never a name, amount or date (INV-31).
+  - Owner: plan coordinator. One predicate is used by `recordDueEntries`, confirm and payoff. (AE-31)
+
+(Invariants are listed by group, not in numeric order. All of INV-1…INV-34 are present: 34 invariants. INV-32 and
+INV-33 were added by the 2026-10-16 amendment. INV-34 was added 2026-10-26 [Amended 2026-10-26 (A2)].)
 
 ## 5. Ownership & legal paths
 
@@ -432,7 +520,7 @@ All plan coordinator writes check `writeBarrier.checkWritesAllowed(...)` on entr
 | Unlink | plan coordinator `unlinkExpense` → [txn: entry → SCHEDULED, `recordGeneration`+1]. The expense is untouched |
 | Skip / unskip / adjust / edit / extend / shorten | plan coordinator ops (section 7.4) |
 | Stop / refund / pay off / delete | plan coordinator ops (section 7). Refund also calls TLC `setSpendingExclusionDbOnly(…, INSTALLMENT_REVERSED)` per paid expense in the same txn. Delete calls TLC `setSpendingExclusionDbOnly(purchase, null)` |
-| Record due installments | worker/foreground trigger → plan coordinator `recordDueEntries(today)` (per-entry txn, INV-12/13) |
+| Record due installments | worker/foreground trigger → plan coordinator `recordDueEntries(today)` (per-entry txn, INV-12/13/34). [Amended 2026-10-26 (A2)] Every run calls `reconcile()` first and dispatches its batches (D-18). The foreground trigger is overview-open only (D-19): no startup hook and no persisted marker (either one is stop-and-ask). Until the overview exists (S10), only the daily worker runs catch-up; S7a exposes the coordinator entry point that the overview calls later |
 | React to expense update/delete | TLC post-commit side effects (`TransactionSideEffectPlanner.planUpdated/planDeleted`) → plan coordinator `onExpenseChanged/onExpenseDeleted` (unlink/reopen/detach). Reconcile R2/R4 backs this up |
 | Integrity reconcile | plan coordinator `reconcile()` at the start of each `recordDueEntries` run and after restore |
 
@@ -470,7 +558,8 @@ From brief Q1(b). Each reader consumes the read-only projection port. None reads
 - R3: a REVERSED entry whose expense is not flagged `INSTALLMENT_REVERSED` → re-flag. An expense flagged
   `INSTALLMENT_REVERSED` with no REVERSED entry → clear.
 - R4: a PAID entry whose linked expense currency ≠ plan currency, or whose type is no longer an expense → unlink
-  (same as R2, reason `LINKED_EXPENSE_CURRENCY_CHANGED` / `LINKED_EXPENSE_TYPE_CHANGED`).
+  (same as R2, reason `EXPENSE_REMOVED` for the CANCELLED target; there are no separate currency or type codes)
+  [amended S5-R, 2026-10-23].
 - R5: a PURCHASE_ATTACHED plan whose purchase expense no longer exists → detach (kind → STANDALONE,
   `purchaseExpenseId` → null). Financing cost becomes unavailable.
 - R6: an ACTIVE plan with zero SCHEDULED entries → COMPLETED (INV-21 repair).
@@ -573,8 +662,13 @@ trail lives on entry rows (`statusReason`, `originalScheduledAmount`, `adjustRea
 INV-17). A purchase-attached plan may have a plan currency different from the purchase currency (for example a USD
 purchase turned into EUR card installments). Financing cost is then unavailable (OD-14). Installment expenses in
 USD get their home-currency `baseAmount` through TLC's existing conversion at creation (existing expense
-behaviour). If TLC refuses creation because the home-currency rate is unavailable, the entry stays SCHEDULED with
-reason `AUTO_RECORD_DEFERRED_FX` and is retried on the next run.
+behaviour). [Amended 2026-10-26 (A2)] Plan-created expenses (auto-record, confirm, payoff) never set the
+user-present rate flag (`userPresentRate = null`; only `declareWithNewExpense` sets it, plan A1). TLC therefore never
+refuses them for a missing rate, and there is no `AUTO_RECORD_DEFERRED_FX` deferral. A USD installment recorded
+with an empty rate table is Created with the sentinel triple (0.0 / "" / 0.0) and exactly one MISSING_RATE
+diagnostic. There is no RateRefusal and no MANUAL_SAVE_BLOCKED_NO_RATE (MEC AE-29), and the entry becomes PAID as
+usual. The row is excluded from comparable-home-value totals; how it is displayed is plan risk R17 / slice S8b. Any
+future loan-local FX deferral must call `RateEligibilityEvaluator` (never re-implement the rule) and needs the owner.
 
 ### Q10 Schema and backup
 
@@ -616,18 +710,25 @@ installment expenses are recategorised individually like any expense.
 
 ### 7.0 Declaration preconditions (refusals use bounded codes)
 
-The purchase must exist (checked inside the transaction) and must meet all of the following:
-- transactionType is a spending type (not income, transfer or refund) → otherwise `NOT_A_SPENDING_EXPENSE`;
+The purchase must exist (checked inside the transaction by the plan coordinator → otherwise `PURCHASE_NOT_FOUND`
+[amended S5-R, 2026-10-23]) and must meet all of the following:
+- transactionType is a spending type, meaning `PURCHASE` only (the canonical `ExpenseDao.SPENDING_TYPE`; income,
+  transfer, refund and every other type are refused) → otherwise `NOT_A_SPENDING_EXPENSE`;
 - `isNotMine = false` → otherwise `NOT_MINE`;
 - `isSharedExpense = false` → otherwise `SHARED_NOT_SUPPORTED` (OD-9);
 - no split template or visualisation → otherwise `SPLIT_NOT_SUPPORTED` (OD-9);
 - `spendingExclusionReason = null` and not already a plan purchase → otherwise `ALREADY_DECLARED`;
 - not linked to a recurring occurrence or an installment entry → otherwise `LINKED_ELSEWHERE` (INV-5).
 
-Plan inputs must satisfy all of the following:
+Plan inputs must satisfy all of the following. They are checked in this order and the first failing rule wins
+[amended S5-R, 2026-10-23]:
 - N ∈ [2, 480] → otherwise `INVALID_COUNT`;
-- amounts > 0 → otherwise `INVALID_AMOUNT`;
+- amounts > 0 → otherwise `INVALID_AMOUNT`. An amount that is not finite, rounds to 0 minor units, or has
+  |amount| ≥ 10^9 major units is also `INVALID_AMOUNT` [amended S5-R, 2026-10-23];
 - currency ∈ {EUR, USD} → otherwise `UNSUPPORTED_CURRENCY`;
+- every date in 1970-01-01..2200-12-31 → otherwise `INVALID_DATE`. This covers the input dates (`firstDueDate`,
+  `declaredOnDate`, the purchase civil date when there is one) and every generated due date, including the last
+  one [amended S5-R, 2026-10-23];
 - `firstDueDate` ≥ purchase civil date → otherwise `FIRST_DUE_BEFORE_PURCHASE`;
 - for EQUAL_SPLIT, `totalMinor ≥ N`, so each entry is ≥ 0.01 → otherwise `AMOUNT_TOO_SMALL_FOR_COUNT`;
 - payments already made k ∈ [0, P], where P = the number of REGULAR entries with `dueDate < declaredOnDate` (= today)
@@ -685,13 +786,21 @@ edits the plan, or deletes it (7.5, only without payments) and declares again.
 
 ### 7.5 Delete (undo declaration)
 
-- Allowed only when the plan has no PAID or REVERSED entries (ACTIVE, or CANCELLED without payments). Effect:
+- Allowed only when the plan has no PAID or REVERSED entries and is ACTIVE or CANCELLED. Payments are checked first
+  (`PLAN_HAS_PAYMENTS` from every status). Without payments, COMPLETED, REFUNDED and PAID_OFF are refused
+  `ILLEGAL_TRANSITION` [amended S5-R, 2026-10-23]. Effect:
   entries and plan are removed and the purchase flag is cleared, so the purchase counts in full again on its
   original date. A standalone plan just disappears. PAID_BEFORE_TRACKING entries don't block Delete and are removed
   with the plan (INV-32).
 - With payments: refused (`PLAN_HAS_PAYMENTS`). The user picks Stop, Refund or Pay off. Alternatively, the user
   first deletes or unlinks the installment expenses on standard paths, which reopens the entries, and then deletes.
 - Never deletes expenses (INV-23).
+- **OWNER CONFIRMED 2026-10-23** [amended S5-R, 2026-10-23]. The S5 code follows the fail-closed reading of this
+  section (ACTIVE or CANCELLED only). The earlier INV-20 wording allowed REFUNDED and PAID_OFF without payments too.
+  - REFUNDED is excluded because Delete clears the purchase flag. A refunded purchase (the money came back) would
+    then count in full again on its original date.
+  - COMPLETED is excluded too. It is not in the list above, and the fail-closed reading doesn't add it.
+  - If the owner wants a wider set, the plan delete row in INV-20, section 3.1 and this section change together.
 
 ### 7.6 Changes to linked expenses made outside the plan
 
@@ -817,11 +926,13 @@ Virtual counting is rejected (Q3), so the question becomes **which fulfilment mo
 ### 11.1 History (B-3)
 
 - History lists plans in COMPLETED, CANCELLED, REFUNDED and PAID_OFF, showing: displayName, currency, start
-  (= first entry due date, PAID_BEFORE_TRACKING entries included), end (= terminal date, or for COMPLETED the
-  latest due date among PAID and PAID_BEFORE_TRACKING entries), final status, total counted (Σ PAID linked expense
-  amounts + payoff; 0 for REFUNDED; PAID_BEFORE_TRACKING adds 0), counts of paid/skipped/cancelled/reversed, the
-  count of PAID_BEFORE_TRACKING entries shown as "k paid before tracking" (only when k > 0), and financing cost
-  (section 9) or "unavailable" (INV-17). [amended AMD-1, AMD-2]
+  (= first REGULAR entry due date, PAID_BEFORE_TRACKING entries included; a PAYOFF entry never sets the start
+  [amended S5-R, 2026-10-23]), end (= terminal date, or for COMPLETED the latest due date among PAID and
+  PAID_BEFORE_TRACKING entries; a COMPLETED plan with no PAID or PAID_BEFORE_TRACKING entry ends at the date it
+  reached COMPLETED, or null if that date is unknown [amended S5-R, 2026-10-23]), final status, total counted
+  (Σ PAID linked expense amounts + payoff; 0 for REFUNDED; PAID_BEFORE_TRACKING adds 0), counts of
+  paid/skipped/cancelled/reversed, the count of PAID_BEFORE_TRACKING entries shown as "k paid before tracking"
+  (only when k > 0), and financing cost (section 9) or "unavailable" (INV-17). [amended AMD-1, AMD-2]
 - The active overview and plan detail show PAID_BEFORE_TRACKING the same way ("n paid · k paid before tracking ·
   m left"). It is separate from paid-so-far (which excludes it) and from remaining scheduled payments (SCHEDULED
   only).
@@ -863,6 +974,11 @@ Virtual counting is rejected (Q3), so the question becomes **which fulfilment mo
 - Expense exports: installment expenses are ordinary rows. Purchase rows flagged `INSTALLMENT_PURCHASE` /
   `INSTALLMENT_REVERSED` are proposed to be **included and marked "not counted (installment plan)"** where the
   format has a type/notes field. Any totals the export computes must apply INV-1 (OD-11).
+- **Amended by owner-approvals 41/42 (supersedes the proposal above for the accounting formats):** the three
+  accounting formats (Xero CSV, FreshBooks CSV, QuickBooks IIF) EXCLUDE flagged rows; their empty check, policy
+  validation sample and record count use only unflagged rows. Generic CSV/JSON, the accountant PDF and the business
+  report still include flagged rows and mark them. Importers SKIP rows whose notes begin with an export marker
+  (counted as skipped), so re-importing an export never creates a flagged or double-counted expense.
 
 ### 11.5 Privacy
 
@@ -1220,6 +1336,24 @@ The following examples were added by the 2026-10-16 amendment (AMD-1…AMD-3).
   installment expenses have a null category. No category is assigned or created.
 - Given a standalone plan, when an E3 edit sets the category to null, then it is refused with `CATEGORY_REQUIRED`.
 
+**AE-31 Blank plan name after a redacted restore (INV-34, INV-12, INV-31; A2)** [Amended 2026-10-26 (A2)]
+- Given an ACTIVE AUTO_RECORD EUR plan restored from a redacted backup (`displayName = ""`, `lenderLabel = null`),
+  with `declaredOnDate` = 2027-03-01, entries 3 (due 2027-05-10) and 4 (due 2027-06-10) SCHEDULED at 50.00 with
+  `autoRecordConsumed = false`, no candidate charge, and today = 2027-06-12.
+- When `recordDueEntries` runs, then:
+  - TLC is not called: no expense is created and no `transaction_events` row is written;
+  - entries 3 and 4 stay SCHEDULED, with `autoRecordConsumed = false` and `recordGeneration` unchanged;
+  - the run reports `PLAN_NAME_REQUIRED` = 2, and no diagnostic contains a name, amount, date or ID.
+- When the user confirms entry 3, or pays off the plan, then it is refused with `PLAN_NAME_REQUIRED` and nothing is
+  written.
+- When the user links captured expense C = 50.00 EUR dated 2027-05-10 to entry 3, then entry 3 is PAID (USER_LINKED).
+- When the user then renames the plan to "Laptop" (E3) and the next run happens on 2027-06-12, then exactly one
+  expense is created, for entry 4: merchant "Laptop", 50.00 EUR, dated 2027-06-10 at noon local, key
+  `installment:<uuid>:REGULAR:4:0`. Entry 4 is PAID and plan spending(2027-06) = 50.00.
+- Given instead `displayName = "   "` (whitespace only), then the same outcomes apply.
+- Given instead a CONFIRM-mode plan with the blank name, then `recordDueEntries` does nothing for it (INV-12), and
+  confirming any entry is refused with `PLAN_NAME_REQUIRED`.
+
 ## 14. Owner decisions (DECIDED 2026-10-16)
 
 **Decision status (owner, 2026-10-16, after approving the slice plan):**
@@ -1259,10 +1393,180 @@ The table is kept for traceability. "Recommended" is now the decided option.
 
 ## Summary for orchestrator
 
-- **Invariants:** 33 (INV-1…INV-33). INV-32 and INV-33 are new (2026-10-16). INV-6, 15, 17, 20, 21 and 26 were
-  amended.
+- **Invariants:** 34 (INV-1…INV-34). INV-32 and INV-33 are new (2026-10-16). INV-34 is new [Amended 2026-10-26
+  (A2)]. INV-6, 15, 17, 20, 21 and 26 were amended.
+- [Amended 2026-10-26 (A2)] `AUTO_RECORD_DEFERRED_FX` is removed (section 6 Q9). The foreground trigger is
+  overview-open only (D-19, section 5.2). Proposed follow-up for the orchestrator: refuse a blank `displayName` at
+  declare/create/E3 (2026-10-26 amendment log).
 - **Schema impact:** additive. 2 new tables, 1 nullable expense column, a version bump, migration, snapshot,
   migration tests, and verifier tiers + 5 orphan checks. `PAID_BEFORE_TRACKING` is a TEXT status value with no DDL.
   Nothing destructive.
 - **Open decisions:** none. OD-1…OD-15 are DECIDED. OD-15 is conditional on D-10.
-- **Acceptance examples:** AE-1…AE-30 (AE-26…AE-30 are new).
+- **Acceptance examples:** AE-1…AE-31 (AE-26…AE-30 are new; AE-31 is new [Amended 2026-10-26 (A2)]).
+
+
+### Amendment 2026-10-27 (S8a privacy review; owner-approvals item 40(b))
+- INV-31 scope: INV-31 covers PLAN-ENTITY fields (displayName, lenderLabel, n/N, schedule, remaining, status, planUuid) and projected installments. A RECORDED installment expense is an ordinary expense. Its merchant (copied from the plan displayName at record time) follows the ordinary merchant / redactBeforeCloud cloud policy of §11.5. No plan-only field is stored on the expense (INV-28).
+- S8b binding: the FinancialWeather path that feeds the cloud briefing stays installment-free by construction. Projections reach Home through a separate flow and are merged only at the UI. Plan projections are never expressed as an existing UpcomingItem variant.
+
+### Amendment 2026-10-27 (S6c-F.3; owner item 37(b), decision 46(a))
+- Recurring layer-1 rule (append-only clarification; INV-5 unchanged): the recurring lifecycle's own type/ownership rule has ONE owner, `RecurringLinkTypeEligibility` (pure, `domain/recurring`). A NEW link of an expense to a recurring occurrence (auto-link, manual link, generation-time matching, relink after a no-longer-matches unlink) is refused for a not-mine expense and for TRANSFER, DEPOSIT and UNKNOWN. UNKNOWN is added by this amendment: an unclassified row is not a confirmed bill payment. The generation-time resolver already refused UNKNOWN; the coordinator link paths now agree with it.
+- EXISTING links are kept (decision 46(a), R2): re-validating an existing link (reconcile "still matches", including the bulk-update reconcile) excludes only not-mine, TRANSFER and DEPOSIT, so an existing link on an UNKNOWN expense stays and its occurrence stays PAID. A bulk edit never reverts a PAID occurrence to PLANNED. The installment layer (INV-5) is unchanged and applies to both forms.
+
+## Clarification 2026-10-27 — owner decisions (owner-approvals item 51c)
+
+Append-only. Nothing above this heading is rewritten. For the entries named below, this section wins over the text
+above.
+
+**Source.** The owner replied "I approve" to the orchestrator's recommendations on 2026-10-27 (owner-approvals item
+51c; also item 49c (OQ-21); OD-14, F4 and F5 were raised in the S12a reviews (handoff :2171-2198);
+`build/release-lead-notes/owner-approvals-20261022.md` in the main checkout). Recorded
+in `workflows/active/loan-installments-handoff.md`, "2026-10-27 OWNER DECISIONS" (:2229-2237). Four of the six 51c(c)
+decisions are spec/UX decisions. Only OD-14 touches this file. OQ-21, F4 and F5 are UX decisions and are recorded in `ux-flows.md` under the
+same heading.
+
+**Impact.** Schema: none. New invariants: none. New refusal codes: none. Coordinator code: unchanged. AE-1…AE-31
+stay valid (AE-5 is consistent with the narrowing, see below).
+
+### C-1. OD-14 narrowed: a plan whose currency differs from its purchase allows FIXED_PAYMENT only
+
+**Decision.** OD-14 stays "allow a plan currency different from the purchase currency", with one narrowing. Such a
+plan can only be `FIXED_PAYMENT`. `EQUAL_SPLIT` is not available across currencies, because no conversion rule exists
+and none is invented.
+
+**Entries superseded or narrowed**
+
+| Entry | Where | Original | Now |
+|---|---|---|---|
+| OD-14 row | section 14, :1385 | "Allow. Financing cost 'unavailable'" | "Allow, `FIXED_PAYMENT` only. Financing cost 'unavailable'". The status line at :1360 ("recommended option accepted") is read as "accepted with this narrowing". |
+| Q9 Currency | section 6, :661-663 | "A purchase-attached plan may have a plan currency different from the purchase currency (for example a USD purchase turned into EUR card installments)." | The same, but only as a `FIXED_PAYMENT` plan. The financing-cost sentence is unchanged. |
+| `splitMethod` | section 2.1, :127 | `EQUAL_SPLIT` \| `FIXED_PAYMENT`; "STANDALONE is always FIXED_PAYMENT" | Add: a PURCHASE_ATTACHED plan can be `EQUAL_SPLIT` only when the plan currency equals the purchase currency. |
+| `declaredTotal` | section 2.1, :128 | "EQUAL_SPLIT: the amount split (defaults to the purchase amount when currencies match)" | An `EQUAL_SPLIT` plan always has matching currencies, so `declaredTotal` is always the purchase amount. There is no "user types the total when currencies differ" branch. |
+| Add-expense currency note | `ux-flows.md` :224-227 (cross-file) | "The amount to split must then be entered (spec 2.1 `declaredTotal` only defaults when currencies match)." | Superseded by this rule. The Add-expense plan-currency row is also removed by G2-6 (`loan-installments-plan.md` :671), so the declare sheet on an existing expense is the only place a differing currency can be chosen. |
+| `gate2-decisions.md` :24 | outside this write set | "Allow; financing cost shows 'unavailable'" | Not edited. This section governs. |
+
+**Not changed:** INV-16, INV-17 (financing cost stays "unavailable" with reason `CURRENCY_DIFFERS`, never 0;
+`InstallmentPlanMath.kt:181-183`), section 9 (no conversion), the `CURRENCY_MISMATCH` link refusal, AE-5. AE-5 Plan C
+(purchase 240.00 USD, plan currency EUR, 4 × 56.00 = 224.00 ≠ 240.00) is a `FIXED_PAYMENT` plan by construction, so it
+already complies.
+
+**Rule (precise).** Let P be the purchase expense's currency code and C the plan currency, C ∈ {EUR, USD}. For a
+PURCHASE_ATTACHED declaration on an existing expense:
+1. C == P: `EQUAL_SPLIT` or `FIXED_PAYMENT`, as before.
+2. C ≠ P: the split method is `FIXED_PAYMENT`. The user types the fixed payment in C (2 dp, > 0). The terms carry
+   `fixedPaymentAmount` = that amount and `declaredTotal = null`. The total is `fixedPaymentAmount × N` (INV-10) and may
+   differ from the purchase amount. The purchase amount is never converted, scaled or reinterpreted in C. A stored
+   `EQUAL_SPLIT` selection is overridden to `FIXED_PAYMENT` when the currencies differ.
+3. P outside {EUR, USD} (for example CHF): no plan currency is preselected and saving is blocked until the user picks
+   EUR or USD. After the pick C ≠ P, so rule 2 applies.
+4. Financing cost stays "unavailable" (INV-17). It is never 0.
+5. The Add-expense path (`declareWithNewExpense`, S11) never has C ≠ P (G2-6), and STANDALONE plans are always
+   `FIXED_PAYMENT`. Rules 2 and 3 therefore only occur in the existing-expense declare sheet.
+6. After declaration the currency and split method are locked once a payment exists (section 7.4, `CURRENCY_LOCKED`),
+   and the Edit screen does not change the currency, so the UI cannot move a plan into a cross-currency
+   `EQUAL_SPLIT` state later.
+
+**Implemented behaviour (evidence, as of this date).**
+- The rule has ONE owner today, the declare-sheet state (superseded by PE-A below). `DeclareInstallmentsUiState.effectiveSplit` returns
+  `f.split` only when `f.currency?.code == t.currency`, otherwise `FIXED_PAYMENT`
+  (`DeclareInstallmentsSheet.kt:141-147`). `currencyDiffers` is at :151. `canSave` is at :159-167: a null plan
+  currency blocks saving, and `FIXED_PAYMENT` needs a parsed fixed amount.
+- `save()` builds the terms from `effectiveSplit` (:293-302): `declaredTotal = if (equal) target.amount else null` and
+  `fixedPaymentAmount = if (equal) null else fixed`. It then calls only `coordinator.declareOnExpense` (:318).
+- UI (:500-528): the currency chips are always shown. When the currencies differ, the "Equal split of total" chip is
+  disabled (:519), "Fixed payment × N" is selected, and the note `declare_installments_currency_differs` is shown
+  (:512-514; text at `values/strings.xml:2853`: "This plan is in a different currency than the purchase. Enter each
+  payment; financing cost will be unavailable."). The KDoc at :100-105 documents the narrowing.
+- Tests: `DeclareInstallmentsViewModelTest.kt:126-149` (`OD-14 a plan currency different from the purchase forces a
+  fixed payment`: `currencyDiffers`, `effectiveSplit == FIXED_PAYMENT`, `canSave` false until a fixed payment is
+  typed, then terms `FIXED_PAYMENT` / `USD` / 50.0 / `declaredTotal == null`) and :151-160 (a CHF purchase needs a plan
+  currency pick before saving).
+- The coordinator does NOT enforce it (superseded by PE-A below). `declareOnExpense` (`InstallmentPlanLifecycleCoordinator.kt:133-179`) reads
+  the purchase facts (:149) and checks the declaration policy (:156-168), but it never compares `terms.currency` or
+  `terms.splitMethod` with the purchase currency. `editDetails` accepts a currency change on an ACTIVE plan with no
+  PAID or REVERSED entries whatever the split method and purchase currency are (:690-708). Its only UI caller sends
+  the unchanged currency (`InstallmentEditScreen.kt:103-105`, :167, :238).
+- **Enforced in the coordinator since PE-A (2026-10-28, pre-enable batch).** The pure rule is
+  `InstallmentSplitCurrencyRule.equalSplitAllowed(planCurrency, purchaseCurrency)` (true only when both are known and
+  equal; null fails closed). It refuses with the existing `CURRENCY_MISMATCH` code (already mapped in the UI; no new
+  code or string):
+  - `declareOnExpense`: `EQUAL_SPLIT` with `terms.currency` ≠ the stored purchase currency, after the schedule checks
+    (so UNSUPPORTED_CURRENCY, INVALID_COUNT and the other earlier refusals keep their precedence) and before any write;
+  - `declareWithNewExpense`: the same comparison against the request currency, in the pure-check block before the TLC
+    create, so nothing is created and no TLC audit event is written;
+  - `editDetails`: a currency change of a PURCHASE_ATTACHED `EQUAL_SPLIT` plan to a currency other than the purchase
+    currency, AFTER `CURRENCY_LOCKED`. Name, lender, category and mode edits of a legacy mismatched plan stay allowed,
+    and so does a change back to the purchase currency. `FIXED_PAYMENT` plans and STANDALONE plans are unaffected.
+  The restore path is not enforced (a restored legacy plan is left as stored). The declare sheet enables the
+  equal-split chip only through the same function (`DeclareInstallmentsUiState.equalSplitAllowed`), so a null plan
+  currency no longer leaves the chip enabled (F-2).
+- **Past-due catch-up (PE-A proof, item 3).** A plan declared with `paidBeforeTrackingCount = 0` on an old purchase
+  leaves its already-due entries SCHEDULED. Auto-record applies only when `declaredOn <= due <= today`
+  (`InstallmentPlanTransitions.isAutoRecordApplicable`), so neither the worker catch-up nor the pre-backup reconcile
+  records an entry due before `declaredOn`; the user confirms or skips those (S13 re-confirms).
+
+**Example (clarifies AE-5; no new AE number; synthetic data).**
+- Given a purchase of 240.00 USD dated 2027-01-05 and N = 4:
+  - plan currency USD: both split methods are offered, and `EQUAL_SPLIT` gives 4 × 60.00 USD with
+    `declaredTotal = 240.00`;
+  - plan currency EUR: `EQUAL_SPLIT` is not offered and `FIXED_PAYMENT` is the effective method. Save is blocked
+    until a payment is typed. After 56.00 is typed, the plan is 4 × 56.00 EUR, `declaredTotal = null`, and financing
+    cost is "unavailable" (currency differs).
+- Given a purchase of 300.00 CHF: no plan currency is preselected and Save is blocked. After EUR is picked, only
+  `FIXED_PAYMENT` is possible.
+
+**Follow-ups raised, not decided (need an explicit decision; they are not part of 51c).**
+- F-1 Single owner. The narrowing lives in the UI layer only. If it must hold for every caller, make it an invariant
+  (it would be INV-35) owned by the plan coordinator, which refuses a PURCHASE_ATTACHED `EQUAL_SPLIT` whose plan
+  currency ≠ the purchase currency. The UI check would then only mirror it. This changes implemented S6a behaviour and
+  needs a refusal code choice: the existing `CURRENCY_MISMATCH` means "linked expense in another currency". It also
+  covers the `editDetails` currency change. Recommendation: pre-enable hardening, not before.
+- F-2 UI nit. For a purchase in an unsupported currency (CHF) before a plan currency is picked, `currencyDiffers`
+  is false (:151), so the "Equal split" chip is enabled (:519) although `effectiveSplit` already returns
+  `FIXED_PAYMENT` (:146). A tap changes nothing visible. It cannot violate the rule, because saving needs a picked
+  currency.
+
+## Clarification 2026-10-28 — INV-29 owner (S8b-3)
+
+Append-only. Nothing above this heading is rewritten. This section clarifies who owns INV-29 on the Home weather path
+and in which scope it applies. Schema: none. New invariants: none. New refusal codes: none.
+
+- **Owner of the Home weather path.** `HomeInstallmentWeatherSource` (`data/repository`, off the cloud surface) is the
+  Home-only installment-aware weather source. It is consumed only by `HomeViewModel`, which REPLACES the single
+  `FinancialWeatherWidget` after `ComputeDashboardWidgetsUseCase.compute()` (`HomeWeatherMerge`). The exclusion itself
+  stays single-owned by `RecurringInstallmentEligibility.excludedSnapshotIds`; the source only calls it.
+- **Projected entries are planned inputs.** Each projected entry (31-day window, SCHEDULED entries of ACTIVE plans) is a
+  MUST planned input in plan currency fed to the unmodified `ForecastInputAssembler.assemble`. Its existing planned-expense
+  normalisation converts it (INV-16) or omits it and marks the forecast partial; it is never 0 and never summed raw.
+  Projections are never an `UpcomingItem`, and `upcomingItems` equal the baseline list.
+- **Scope is GLOBAL while any entry is projected (owner-approvals 53a), not per plan, and applies to history BEFORE the
+  current month only (owner-approvals 60b).** While at least one entry is projected, ALL installment-linked and
+  plan-purchase history dated before the start of the current month (home time zone) is removed from the aware view's
+  snapshots, whichever plan the projected entry belongs to. Those are the baselines (average month, previous month,
+  typical daily discretionary). Current-month actual installment payments stay in month-to-date, so a paid installment
+  is counted once (as an actual) and never zero times; the projection adds only the entries still SCHEDULED, so an
+  installment is counted exactly once for the month. The aware view replaces the baseline view and the two are never
+  summed. Accepted trade-off: the pace ratio compares a current month that includes installments against a baseline
+  that excludes them.
+- **Expected step change.** When the last projection ends (the final entry is paid, the plan is stopped or completed, or
+  the window holds no entry), the source emits null and Home shows the baseline again. The linked history then
+  re-enters the baseline patterns, so the baseline can change by a step on that day. This is expected behaviour, not a
+  defect (AE-7, AE-11).
+- **Cloud path unchanged (A15).** The `FinancialWeatherRepository` chain (`ForecastInputAssembler`, `SynthesisEngine`,
+  `NarrativeGenerator`, `DashboardDataProvider`, `DashboardBriefingInputBuilder`) stays installment-free; the registered
+  guard `installment_cloud_reachability` fences it (INV-31). No `FinancialWeather` field carries installment data.
+  Other Home widgets (Monte Carlo is handled in S8b-2; runway and health score) are not changed by S8b-3.
+
+## Clarification 2026-10-28 — early bank charge over-count accepted for v1 (owner-approvals 65a)
+
+Append-only. Nothing above this heading is rewritten. Schema: none. New invariants: none. New refusal codes: none.
+
+- **Accepted conservative over-count.** An early bank charge that the INV-13 deferral holds unlinked can be counted twice
+  in the Home installment-aware weather and the other projection readers: once as an actual expense (current-month
+  month-to-date) and once as the still-SCHEDULED projected entry, until the user links it. The over-count is on the
+  cautious side (committed outflow is overstated, never understated). Owner-approvals 65a accepts it for v1; it is not a
+  defect and needs no code. It ends as soon as the charge is linked (the entry is PAID and no longer projected).
+- **Pre-enable item 8 closed as a decision, not a fix.** Dispositions of the other pre-enable items are unchanged: the
+  invalidation trigger of the Home weather source and the Budget installment line is now
+  `InstallmentPlanReadRepository.observeChanges()` (PE-C), and the Home narrative fallback label is the localized
+  string `installment_plan_fallback_label`.

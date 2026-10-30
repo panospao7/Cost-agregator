@@ -15,12 +15,12 @@ Segments: 16 Currency & Exchange (new policies, evaluator, preview use case); 9 
 ### (a) Core — T3 (new files in shard-covered packages; no `test-shards.json` change)
 | File | Change |
 |---|---|
-| `A/domain/currency/CurrencyAmountPolicy.kt` (new) | digits accessor (INV-12) + per-currency cap table (OD-1); shard `domain-a-m` |
+| `A/domain/currency/CurrencyAmountPolicy.kt` (new) | `fractionDigits` delegating to money-correctness `CurrencyFractionDigits.of` (INV-12; no second accessor; null behaviour = spec OD-6, OPEN; RF-10 2026-10-23) + per-currency cap table (OD-1); shard `domain-a-m` |
 | `A/domain/currency/CurrencySelectionPolicy.kt` (new) | `selectable(home, mode)`, `NO_RATE_SOURCE = {BGN, RUB}` (OD-2), proposal → `Unset`; uses `SupportedCurrency` (`CurrencyConverter.kt:21`; HRK inactive `:48`; `activeCatalog` `:53`); `isActive` untouched |
 | `A/domain/currency/RateEligibilityEvaluator.kt` (new) | wraps `CurrencyConverter.convertOutcome(…, TRANSACTION_DATE, atMillis, StaleRatePolicy.None)`; no converter change |
 | `A/domain/transaction/CreateExpenseRequest.kt` (`:74`) | `userPresentRate: UserPresentRateRequirement? = null` (12 construction sites stay source-compatible) |
 | `A/domain/transaction/CreateExpenseResult.kt` (`:10`) | `rateRefusal: RateRefusal? = null` on `ValidationFailed` |
-| `A/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt` | flagged branch in conversion block `:529-585`, before dedup (`:587+`); `:554-578` unchanged for unflagged; never `convertAsOf` when flagged (INV-7); refusal reuses `CREATE_VALIDATION_FAILED` event shape (`:406-427`), bounded codes |
+| `A/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt` | flagged branch in conversion block `:529-585`, before dedup (`:587+`); `:554-578` unchanged for unflagged; never `convertAsOf` when flagged (INV-7); flagged snapshot via `roundSnapshot` (INV-7); refusal reuses `CREATE_VALIDATION_FAILED` event shape (`:406-427`), bounded codes. RF-10 (2026-10-23, after money-correctness 1b): conversion block now `:605-674`; unflagged converted/no-rate branch `:630-667` (sentinel triple + one `MISSING_RATE`) is the "unchanged for unflagged" part; dedup `:676+` |
 | `A/domain/transaction/validation/TransactionValidator.kt` (`:87-93`) | raw `> 1_000_000` → `CurrencyAmountPolicy.cap`; add `AMOUNT_PRECISION_EXCEEDED` (flagged signal through `validate`/`validateFields`) |
 | `A/data/repository/ManualExpenseRepository.kt` (`:114`) | remove raw cap → policy; reject foreign + recurrence (INV-16); entry zone + flag setter (setter in slice b per C-3) |
 
@@ -107,7 +107,7 @@ Shard coverage: `domain.currency.*` → `domain-a-m`; `domain.transaction.*`, `d
 - nl-quick-add: A, D, C, F edit AddExpense VM/Sheet; its S0 requires manual-entry-currency not in flight on VM/Sheet (N5) and loan S11 not started; also edits strings ×3, LEGAL_PATHS, ENGINE map, SEGMENTS, `test-shards.json` (B only).
 - ai-fixes: no AddExpense/ReceiptScan/TLC/`CreateExpenseRequest`; shares only strings, LEGAL_PATHS, SEGMENTS, ENGINE map.
 - loan-installments: **S3** (`:178-205`) edits TLC + `ExpenseDao` (`setSpendingExclusionDbOnly`, amount/currency edit lock on flagged rows); **S6a** adds `ExpenseSource.INSTALLMENT_PLAN` create → TLC exhaustive `when (request.source)` `:508-526` must change; **S11** edits VM/Sheet; Room v152 slice.
-- money-correctness-1.0.x (not specced): owns TLC no-rate branch `:554-578` + snapshot rounding; MEC flagged branch in same block `:529-585`.
+- money-correctness-1.0.x (not specced at mapping time; 1b landed on this branch, RF-10 2026-10-23): owns the TLC unflagged no-rate branch (was `:554-578`; now `:630-667`, sentinel triple `0.0/""/0.0` + one bounded `MISSING_RATE`) + snapshot rounding (`roundSnapshot`) + digits accessor (`CurrencyFractionDigits.of`); MEC flagged branch in the same block (was `:529-585`; now `:605-674`).
 
 **Recommended global post-1.0 order:**
 1. Release 1.0 batches incl. R16, R23 part 1.
@@ -127,7 +127,7 @@ Shared-file owners by phase: AddExpense VM/Sheet: nl-quick-add A/D/C/F → MEC (
 - **OD-1 cap scope** (merge C-2): A (validator, manual repo, VM) / **A + `ReviewQueueRepository.kt:157` (rec; currency known there)** / flagged-only. Route `AppParserRegistry.kt:69`, `NotificationProcessingPipeline.kt:962/997/1135`, `AppConfig.MAX_TRANSACTION_AMOUNT` to parser/notification owners. Leave `AmountUtils.isValidAmount`.
 - OD-2 BGN/RUB feature-local list (rec). OD-3 snapshot vs analytics divergence accepted, aligned in money-correctness. OD-4 core before loan S11 (rec; loan-plan edit). OD-5 batch receipt review unflagged.
 - **S-1** setter allow-list architecture test (guard addition). **S-2** removing VM HALF_UP rounding: home-currency "12.345" now rejected, not rounded. **S-3** core slice ships setter-less. **S-4** editing approved loan plan (S11, S6a, D-8, `AUTO_RECORD_DEFERRED_FX`). **S-5** RF-1 (merchant/amount/currency in `CREATE_ATTEMPTED` reason, TLC `:397`; refused attempts add rows) — privacy guardian: fix in (a) or route to money-correctness. **S-6** refusal event commits while expense doesn't — "audit event commits, no row" vs rollback.
-- Routed: RF-2 date-picker zone (`AddExpenseSheet.kt:841-855`) → debugger before (b); RF-3 loan planner; RF-4 done (§1); RF-5 money-correctness; RF-6 `receipt.parsedDate` zone (`ReceiptScanViewModel.kt:416`) → slice (c) check; **RF-7** `ReceiptParser.kt:690` 50,000 OCR cap → receipt owner.
+- Routed: RF-2 date-picker zone (`AddExpenseSheet.kt:841-855`) → debugger before (b); RF-3 loan planner; RF-4 done (§1); RF-5 money-correctness (resolved in 1b: `Timber.w` replaced by one bounded `MISSING_RATE`; RF-10); RF-6 `receipt.parsedDate` zone (`ReceiptScanViewModel.kt:416`) → slice (c) check; **RF-7** `ReceiptParser.kt:690` 50,000 OCR cap → receipt owner.
 
 ## 11. Unverified
 Controlled-diagnostic sink API for `MANUAL_SAVE_BLOCKED_NO_RATE` (`TLC:549` emitter seen, signature unread); `myShareAmount` currency semantics; add-expense edit-mode currency (INV-23); receipt review state after process death; list converted-amount formatting call site (AE-38); `receipt.parsedDate` zone; on-device ICU vs JVM `java.util.Currency` digits; backup-restored non-ECB rate rows; whether `transaction_events` is exported/backed up (RF-1); `ux-flows.md` content.

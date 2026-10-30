@@ -211,6 +211,30 @@ class DeepLinkDiagnosticsSentinelTest {
     }
 
     @Test
+    fun `S13-a an installment plan link never writes its plan id to any diagnostic or log sink`() = runTest {
+        val applier = applier()
+
+        suspend fun open(uri: String) {
+            monotonic.advanceNanos(61_000_000_000L)
+            applier.apply(DeepLinkPolicy.evaluate(Intent.ACTION_VIEW, uri, installmentsEnabled = true), mainViewModel)
+        }
+
+        open("expensetracker://installment_plan?id=987654321")
+        open("expensetracker://installment_plan?id=987654321&secretkey=secretvalue")
+        open("expensetracker://installments?secretkey=secretvalue")
+        open("expensetracker://installment_plan?id=abc987654321")
+
+        val recorded = everythingRecorded()
+        assertTrue("Expected diagnostics to have been recorded", durableRows.isNotEmpty())
+        listOf("987654321", "secretkey", "secretvalue", "expensetracker:").forEach { sentinel ->
+            assertFalse("Sink contains '$sentinel':\n$recorded", recorded.contains(sentinel))
+        }
+        // Valid plan links only request confirmation; the malformed-id link is the single Home fallback.
+        io.mockk.verify(exactly = 1) { mainViewModel.navigateTo(any()) }
+        io.mockk.verify(exactly = 1) { mainViewModel.navigateTo(NavigationDestination.Home) }
+    }
+
+    @Test
     fun `S21-b a held then released link and a held then expired link record only bounded DL_HELD and DL_APPLIED metadata`() = runTest {
         val applier = applier()
         val expense = mockk<Expense> { every { date } returns 1_700_000_000_000L }

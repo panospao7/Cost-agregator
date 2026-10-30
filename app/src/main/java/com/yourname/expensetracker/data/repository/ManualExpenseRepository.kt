@@ -13,6 +13,10 @@ import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.usecase.GenerateTransactionInsightUseCase
 import com.yourname.expensetracker.domain.categorization.CategorizationEngine
 import com.yourname.expensetracker.domain.config.AppConfig
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.currency.CurrencyAmountPolicy
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
 import com.yourname.expensetracker.domain.engine.DashboardFollowThroughEngine
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
@@ -24,6 +28,8 @@ import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
 import com.yourname.expensetracker.domain.sideeffect.PostCommitActionBatch
 import com.yourname.expensetracker.domain.sideeffect.PostCommitActionRunner
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
+import com.yourname.expensetracker.domain.transaction.RateRefusalCodes
+import com.yourname.expensetracker.domain.transaction.UserPresentRateRequirement
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -57,7 +63,8 @@ class ManualExpenseRepository @Inject constructor(
     private val transactionLifecycleCoordinator: TransactionLifecycleCoordinator,
     private val postCommitActionRunner: PostCommitActionRunner,
     private val recurringExpenseRepository: RecurringExpenseRepository,
-    @ApplicationScope private val applicationScope: CoroutineScope
+    @ApplicationScope private val applicationScope: CoroutineScope,
+    private val currencySettingsRepository: CurrencySettingsRepository
 ) {
     /**
      * Recommendation generation is intentionally app-scoped.
@@ -72,6 +79,19 @@ class ManualExpenseRepository @Inject constructor(
         // TODO: Replace with actual UserSessionProvider
         private const val DEFAULT_RECOMMENDATION_USER_ID = "default_user"
         private const val MAX_CONCURRENT_RECOMMENDATION_JOBS = 2
+
+        /** MEC INV-16: bounded `Result.Error.message` constant; never payload-derived. */
+        const val RECURRING_FOREIGN_CURRENCY_ERROR_CODE = "RECURRING_FOREIGN_CURRENCY_NOT_SUPPORTED"
+    }
+
+    /** True only when home resolved and [currency] differs from it. */
+    private suspend fun isForeignToResolvedHome(currency: String): Boolean {
+        val home = when (val resolution = currencySettingsRepository.resolveHomeCurrency()) {
+            is HomeCurrencyResolution.Resolved -> resolution.currency.code
+            is HomeCurrencyResolution.FirstRunDefault -> resolution.currency.code
+            is HomeCurrencyResolution.Failed -> return false
+        }
+        return currency != home
     }
 
     /**
@@ -105,40 +125,39 @@ class ManualExpenseRepository @Inject constructor(
         longitude: Double? = null,
         locationSource: String? = null,
         recurrenceFrequency: RecurrenceFrequency? = null,
-        recurringNote: String? = null
+        recurringNote: String? = null,
+        entryZone: java.time.ZoneId
     ): Result<Long> {
         writeBarrier.checkWritesAllowed("ManualExpenseRepository.addManualExpense")
         // ── Guard validation (kept for early return with localized messages) ──
         if (amount <= 0) {
             return Result.Error(message = context.getString(R.string.debug_error_amount_greater_than_zero))
         }
-        if (amount > 1000000.0) {
+        // MEC INV-14 (G2-3): per-currency cap owned by CurrencyAmountPolicy (non-catalog and
+        // unparsable codes keep 1,000,000); independent of rate availability.
+        val amountCap = CurrencyCode.parse(currency)
+            ?.let { CurrencyAmountPolicy.cap(it) }
+            ?: CurrencyAmountPolicy.DEFAULT_CAP
+        if (amount > amountCap.toDouble()) {
             return Result.Error(message = context.getString(R.string.debug_error_amount_exceeds_limit))
         }
+        // MEC INV-16: no recurring rule from a save whose currency differs from the resolved
+        // home currency. Bounded error before the coordinator; no expense, no rule. An
+        // unresolved home is not rejected here (the coordinator's flagged branch fails closed).
+        if (recurrenceFrequency != null && isForeignToResolvedHome(currency)) {
+            return Result.Error(message = RECURRING_FOREIGN_CURRENCY_ERROR_CODE)
+        }
 
-        // ── Pre-processing (business logic that stays here for now) ──────────
-        // 1. Normalize merchant name
-        val lookupResult = merchantNormalizer.normalize(merchant, autoCreate = true)
-        val normalizedMerchant = lookupResult.canonical.normalizedName
-
-        // 2. Auto-categorize if no category provided
-        val finalCategoryId = categoryId ?: hybridClassifier.classify(
-            merchantName = normalizedMerchant,
-            amount = amount
-        ).categoryId.takeIf { it > 0 }
-
-        // ── Build request for the coordinator ────────────────────────────────
-        val request = CreateExpenseRequest(
-            merchant = normalizedMerchant,
+        // ── Pre-processing + request build (shared builder; see buildRequest) ─
+        val request = buildRequest(
+            merchant = merchant,
             amount = amount,
             currency = currency,
-            date = date,
+            categoryId = categoryId,
             transactionType = transactionType,
-            source = ExpenseSource.MANUAL_ENTRY,
-            categoryId = finalCategoryId,
-            notes = notes,
             paymentMethod = paymentMethod,
-            isManualEntry = true,
+            date = date,
+            notes = notes,
             transferDirection = transferDirection,
             transferAccountName = transferAccountName,
             isNotMine = isNotMine,
@@ -149,7 +168,10 @@ class ManualExpenseRepository @Inject constructor(
             myShareAmount = myShareAmount,
             latitude = latitude,
             longitude = longitude,
-            locationSource = locationSource
+            locationSource = locationSource,
+            // MEC setter #1: every manual save is a user-present (flagged) create. The entry zone
+            // is the zone captured when the sheet opened; it is never persisted or logged.
+            userPresentRate = UserPresentRateRequirement(entryZone)
         )
 
         // ── Delegate to coordinator (DEFER side effects until outer tx commits) ─
@@ -202,10 +224,20 @@ class ManualExpenseRepository @Inject constructor(
                 }
 
                 is CreateExpenseResult.ValidationFailed -> {
+                    // MEC: a flagged refusal surfaces only as a bounded code constant (never the
+                    // joined, possibly payload-bearing message). Precedence: typed rate refusal,
+                    // then amount-precision codes, then the existing joined message.
+                    val refusal = coordinatorResult.rateRefusal
+                    val errorMessage = when {
+                        refusal != null -> RateRefusalCodes.codeFor(refusal.reason)
+                        RateRefusalCodes.AMOUNT_PRECISION_EXCEEDED in coordinatorResult.errors ->
+                            RateRefusalCodes.AMOUNT_PRECISION_EXCEEDED
+                        RateRefusalCodes.AMOUNT_DIGITS_UNAVAILABLE in coordinatorResult.errors ->
+                            RateRefusalCodes.AMOUNT_DIGITS_UNAVAILABLE
+                        else -> coordinatorResult.errors.joinToString("; ")
+                    }
                     return@withTransaction ManualExpenseTxOutcome(
-                        Result.Error(
-                            message = coordinatorResult.errors.joinToString("; ")
-                        ),
+                        Result.Error(message = errorMessage),
                         PostCommitActionBatch.empty("manual_vf")
                     )
                 }
@@ -261,6 +293,108 @@ class ManualExpenseRepository @Inject constructor(
         }
 
         return result
+    }
+
+    /**
+     * Loan-installments S11a: builds the purchase request of an installment save from the same
+     * merchant normalisation and classification as [addManualExpense]. The request carries NO
+     * user-present rate flag: `InstallmentPlanLifecycleCoordinator.declareWithNewExpense` sets it
+     * itself (MEC INV-18). Nothing is written here besides the normaliser's own merchant lookup that
+     * [addManualExpense] performs identically. A plan purchase is never shared, not-mine or located.
+     */
+    suspend fun buildInstallmentPurchaseRequest(
+        merchant: String,
+        amount: Double,
+        currency: String,
+        categoryId: Long?,
+        transactionType: TransactionType,
+        paymentMethod: PaymentMethod,
+        date: Long,
+        notes: String?
+    ): CreateExpenseRequest = buildRequest(
+        merchant = merchant,
+        amount = amount,
+        currency = currency,
+        categoryId = categoryId,
+        transactionType = transactionType,
+        paymentMethod = paymentMethod,
+        date = date,
+        notes = notes,
+        transferDirection = null,
+        transferAccountName = null,
+        isNotMine = false,
+        ownerName = null,
+        isSharedExpense = false,
+        sharedWithName = null,
+        mySharePercentage = null,
+        myShareAmount = null,
+        latitude = null,
+        longitude = null,
+        locationSource = null,
+        userPresentRate = null
+    )
+
+    /**
+     * The one builder of a manual-entry [CreateExpenseRequest]: normalises the merchant, classifies
+     * when no category is given, then assembles the request. [userPresentRate] is supplied by the
+     * caller; the flag is set only at the [addManualExpense] call site (MEC setter #1).
+     */
+    private suspend fun buildRequest(
+        merchant: String,
+        amount: Double,
+        currency: String,
+        categoryId: Long?,
+        transactionType: TransactionType,
+        paymentMethod: PaymentMethod,
+        date: Long,
+        notes: String?,
+        transferDirection: TransferDirection?,
+        transferAccountName: String?,
+        isNotMine: Boolean,
+        ownerName: String?,
+        isSharedExpense: Boolean,
+        sharedWithName: String?,
+        mySharePercentage: Int?,
+        myShareAmount: Double?,
+        latitude: Double?,
+        longitude: Double?,
+        locationSource: String?,
+        userPresentRate: UserPresentRateRequirement?
+    ): CreateExpenseRequest {
+        // 1. Normalize merchant name
+        val lookupResult = merchantNormalizer.normalize(merchant, autoCreate = true)
+        val normalizedMerchant = lookupResult.canonical.normalizedName
+
+        // 2. Auto-categorize if no category provided
+        val finalCategoryId = categoryId ?: hybridClassifier.classify(
+            merchantName = normalizedMerchant,
+            amount = amount
+        ).categoryId.takeIf { it > 0 }
+
+        return CreateExpenseRequest(
+            merchant = normalizedMerchant,
+            amount = amount,
+            currency = currency,
+            date = date,
+            transactionType = transactionType,
+            source = ExpenseSource.MANUAL_ENTRY,
+            categoryId = finalCategoryId,
+            notes = notes,
+            paymentMethod = paymentMethod,
+            isManualEntry = true,
+            transferDirection = transferDirection,
+            transferAccountName = transferAccountName,
+            isNotMine = isNotMine,
+            ownerName = ownerName,
+            isSharedExpense = isSharedExpense,
+            sharedWithName = sharedWithName,
+            mySharePercentage = mySharePercentage,
+            myShareAmount = myShareAmount,
+            latitude = latitude,
+            longitude = longitude,
+            locationSource = locationSource,
+            userPresentRate = userPresentRate
+        )
     }
 
     /**

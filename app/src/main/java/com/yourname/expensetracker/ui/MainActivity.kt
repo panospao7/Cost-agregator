@@ -84,6 +84,10 @@ import com.yourname.expensetracker.ui.screens.export.ExportOptionsScreen
 import com.yourname.expensetracker.ui.screens.groups.SharedExpenseGroupsScreen
 import com.yourname.expensetracker.ui.screens.recurring.RecurringExpensesScreen
 import com.yourname.expensetracker.ui.screens.recurringmanual.ManualRecurringExpenseScreen
+import com.yourname.expensetracker.ui.screens.installments.detail.InstallmentPlanDetailScreen
+import com.yourname.expensetracker.ui.screens.installments.history.InstallmentHistoryScreen
+import com.yourname.expensetracker.ui.screens.installments.overview.InstallmentOverviewScreen
+import com.yourname.expensetracker.ui.navigation.InstallmentsFeature
 import com.yourname.expensetracker.ui.screens.subscription.SubscriptionManagementScreen
 import com.yourname.expensetracker.ui.screens.tax.TaxConfigurationScreen
 import com.yourname.expensetracker.ui.theme.ExpenseTrackerTheme
@@ -519,6 +523,28 @@ fun MainScreen(
         }
     }
 
+    // Loan S13-a (C1): an installments deep link never navigates by itself. MainScreen is composed inside the
+    // app-lock shell and the request is posted only after the release, so this is never visible while locked.
+    // The body names no plan, amount or link content: the link is untrusted.
+    val pendingDeepLink by mainViewModel.pendingDeepLinkConfirmation.collectAsState()
+    if (pendingDeepLink != null) {
+        AlertDialog(
+            onDismissRequest = { mainViewModel.dismissPendingDeepLink() },
+            title = { Text(stringResource(R.string.deeplink_confirm_installments_title)) },
+            text = { Text(stringResource(R.string.deeplink_confirm_installments_body)) },
+            confirmButton = {
+                TextButton(onClick = { mainViewModel.confirmPendingDeepLink() }) {
+                    Text(stringResource(R.string.action_confirm))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { mainViewModel.dismissPendingDeepLink() }) {
+                    Text(stringResource(R.string.action_cancel))
+                }
+            }
+        )
+    }
+
     NotificationPermissionDialog(
         showDialog = showNotificationPermissionDialog,
         onDismiss = { showNotificationPermissionDialog = false },
@@ -622,6 +648,8 @@ fun MainScreen(
                         onOpenVisualSplit = { expense ->
                             navigation.navigateTo(NavigationDestination.VisualSplitEditor.forExpense(expense))
                         },
+                        // Internal tap: no deep-link confirmation.
+                        onOpenInstallmentPlan = { navigation.navigateTo(NavigationDestination.InstallmentPlanDetail(it)) },
                         highlightedExpenseId = (currentDestination as? NavigationDestination.Transactions)?.initialExpenseId,
                         initialFilter = activeTransactionFilter
                     )
@@ -661,12 +689,14 @@ fun MainScreen(
 
                     com.yourname.expensetracker.ui.screens.addexpense.AddExpenseSheet(
                         onDismiss = { navigation.navigateBack() },
-                        initialAmount = initialAmount
+                        initialAmount = initialAmount,
+                        onOpenExchangeRateSetting = { navigation.navigateTo(NavigationDestination.PrivacySettings) }
                     )
                 }
                 is NavigationDestination.ScanReceipt -> {
                     com.yourname.expensetracker.ui.screens.receiptscan.ReceiptScanRoute(
-                        onDismiss = { navigation.navigateBack() }
+                        onDismiss = { navigation.navigateBack() },
+                        onOpenExchangeRateSetting = { navigation.navigateTo(NavigationDestination.PrivacySettings) }
                     )
                 }
                 is NavigationDestination.RecurringExpenses -> {
@@ -682,6 +712,45 @@ fun MainScreen(
                     ManualRecurringExpenseScreen(
                         onNavigateBack = { navigation.navigateBack() }
                     )
+                }
+                // loan-installments S10a/S13-b: gated by InstallmentsFeature.ENABLED (the single switch).
+                // If it is false none of the installment destinations is rendered; they redirect Home.
+                is NavigationDestination.Installments -> {
+                    if (InstallmentsFeature.shouldRedirectHome(currentDestination)) {
+                        androidx.compose.runtime.LaunchedEffect(Unit) { navigation.navigateHome() }
+                    } else {
+                        InstallmentOverviewScreen(
+                            onNavigateBack = { navigation.navigateBack() },
+                            onOpenPlan = { planId ->
+                                navigation.navigateTo(NavigationDestination.InstallmentPlanDetail(planId))
+                            },
+                            onOpenHistory = { navigation.navigateTo(NavigationDestination.InstallmentHistory) }
+                        )
+                    }
+                }
+                // Plan detail and history (S10a-2): same gate helper as the overview, so all three
+                // redirect Home if InstallmentsFeature.ENABLED is false.
+                is NavigationDestination.InstallmentPlanDetail -> {
+                    if (InstallmentsFeature.shouldRedirectHome(currentDestination)) {
+                        androidx.compose.runtime.LaunchedEffect(Unit) { navigation.navigateHome() }
+                    } else {
+                        InstallmentPlanDetailScreen(
+                            planId = currentDestination.planId,
+                            onNavigateBack = { navigation.navigateBack() }
+                        )
+                    }
+                }
+                is NavigationDestination.InstallmentHistory -> {
+                    if (InstallmentsFeature.shouldRedirectHome(currentDestination)) {
+                        androidx.compose.runtime.LaunchedEffect(Unit) { navigation.navigateHome() }
+                    } else {
+                        InstallmentHistoryScreen(
+                            onNavigateBack = { navigation.navigateBack() },
+                            onOpenPlan = { planId ->
+                                navigation.navigateTo(NavigationDestination.InstallmentPlanDetail(planId))
+                            }
+                        )
+                    }
                 }
                 is NavigationDestination.Assistant -> {
                     AssistantSheet(

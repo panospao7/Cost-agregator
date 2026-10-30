@@ -95,6 +95,8 @@
                 <data android:scheme="expensetracker" android:host="add" />
                 <data android:scheme="expensetracker" android:host="analytics" />
                 <data android:scheme="expensetracker" android:host="map" />
+                <data android:scheme="expensetracker" android:host="installments" />
+                <data android:scheme="expensetracker" android:host="installment_plan" />
             </intent-filter>
         </activity>
 

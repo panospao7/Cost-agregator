@@ -639,6 +639,8 @@ effect without new key material.
 | `add` | none | — | open an **empty** add sheet. Clipboard behaviour is unchanged and runs only in open UI states. | add sheet |
 | `analytics` | `period` | case-insensitive ∈ {today, week, month, quarter, year, all}. One allowlist shared with `AnalyticsScreen` (F13), never duplicated. | navigate | Analytics default period |
 | `map` | `location` | trimmed, 1–100 chars, no Unicode control or format characters; used for local highlight only (F12) | navigate | Map with no highlight |
+| `installments` | none | — (loan S13-a; owner-approvals 91(a); closed set is now 10 hosts) | after unlock, ask the user to confirm, then navigate. Accepted only while the installments feature is enabled; otherwise treated as `any other`. | Home |
+| `installment_plan` | `id` | 1–19 ASCII digits, value 1..`Long.MAX_VALUE`, no sign, single occurrence. A missing or invalid `id` rejects the link (`MALFORMED`) instead of dropping to a default. | as `installments`, to that plan's detail | Home |
 | bank hosts | — | existing RP-17 rejection (`BankFeatureAvailability.isBankDeepLinkHost`) moved into the policy, not duplicated | none | Home |
 | any other | — | — | none | Home |
 

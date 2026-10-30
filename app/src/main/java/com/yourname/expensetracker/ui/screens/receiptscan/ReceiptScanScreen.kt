@@ -39,9 +39,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -58,6 +62,11 @@ import com.yourname.expensetracker.domain.ai.model.AiLoadState
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
 import com.yourname.expensetracker.ui.components.ai.CategoryAssistCard
+import com.yourname.expensetracker.ui.components.asString
+import com.yourname.expensetracker.ui.components.currency.CurrencyOpenSettingRequest
+import com.yourname.expensetracker.ui.components.currency.CurrencyRateRegionContent
+import com.yourname.expensetracker.ui.components.currency.CurrencyRegionUi
+import com.yourname.expensetracker.ui.components.currency.CurrencySelectionControl
 import com.yourname.expensetracker.ui.screens.addexpense.CategoryGrid
 import com.yourname.expensetracker.ui.screens.addexpense.DateSelector
 import com.yourname.expensetracker.ui.screens.addexpense.PaymentMethodChip
@@ -75,22 +84,64 @@ private fun getCurrencySymbol(currencyCode: String?): String {
     return CurrencyFormatter.getCurrencySymbol(currencyCode)
 }
 
+// MEC C2 test seams (stable tags; no user data).
+const val TAG_RECEIPT_SAVE = "receipt_save_button"
+const val TAG_RECEIPT_QUICK_SAVE = "receipt_quick_save_button"
+const val TAG_RECEIPT_QUICK_SAVE_CONFIRM = "receipt_quick_save_confirm"
+const val TAG_RECEIPT_AMOUNT = "receipt_amount_field"
+const val TAG_RECEIPT_RATE_REGION = "receipt_rate_region"
+const val TAG_RECEIPT_KEPT = "receipt_kept_line"
+
 /** S7-027: Route entry point — owns Hilt injection. ReceiptScanScreen keeps ViewModel for now. */
 @Composable
 fun ReceiptScanRoute(
     onDismiss: () -> Unit,
+    onOpenExchangeRateSetting: () -> Unit = {},
     viewModel: ReceiptScanViewModel = hiltViewModel()
 ) {
-    ReceiptScanScreen(onDismiss = onDismiss, viewModel = viewModel)
+    ReceiptScanScreen(
+        onDismiss = onDismiss,
+        onOpenExchangeRateSetting = onOpenExchangeRateSetting,
+        viewModel = viewModel
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ReceiptScanScreen(
     onDismiss: () -> Unit,
+    onOpenExchangeRateSetting: () -> Unit = {},
     viewModel: ReceiptScanViewModel = hiltViewModel()
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+
+    // MEC D-11/D-C-3: "Open exchange-rate setting". The view model decides whether to confirm first; the
+    // screen only shows the dialog and, once the request is NAVIGATE, hands over to the host and consumes
+    // it. Hosted at screen level so it survives the reset (step -> CAPTURE) done by the confirm.
+    LaunchedEffect(state.openSettingRequest) {
+        if (state.openSettingRequest == CurrencyOpenSettingRequest.NAVIGATE) {
+            onOpenExchangeRateSetting()
+            viewModel.consumeOpenSettingRequest()
+        }
+    }
+    if (state.openSettingRequest == CurrencyOpenSettingRequest.CONFIRM_NEEDED) {
+        AlertDialog(
+            onDismissRequest = { viewModel.consumeOpenSettingRequest() },
+            title = { Text(stringResource(R.string.mec_open_setting_confirm_title)) },
+            text = { Text(stringResource(R.string.mec_open_setting_confirm_body)) },
+            confirmButton = {
+                TextButton(onClick = { viewModel.confirmOpenExchangeRateSetting() }) {
+                    Text(stringResource(R.string.mec_action_open_setting))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.consumeOpenSettingRequest() }) {
+                    Text(stringResource(R.string.cancel_button))
+                }
+            }
+        )
+    }
+
     val categories by viewModel.categories.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val scrollState = rememberScrollState()
@@ -536,6 +587,19 @@ private fun ReceiptCurrencyUnverifiedWarning(
     }
 }
 
+/** The spoken reason Save and quick-save are disabled by the currency region, or null when not blocked. */
+@Composable
+private fun saveBlockedReason(state: ReceiptScanState): String? {
+    if (!state.isCurrencySaveBlocked) return null
+    return when (state.currencyRegion) {
+        is CurrencyRegionUi.Unset -> stringResource(R.string.mec_save_disabled_currency)
+        is CurrencyRegionUi.Blocked -> stringResource(R.string.mec_save_disabled_rate)
+        // No mec_save_disabled_* key exists for amounts: speak the amount error itself.
+        is CurrencyRegionUi.AmountInvalid -> state.amountError?.asString()
+        else -> null
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ReviewStep(
@@ -545,6 +609,16 @@ private fun ReviewStep(
 ) {
     val parsed = state.parsedReceipt
 
+    // MEC G2-14/AE-34: the review is shown, so the view model captures the entry zone (null-guarded; kept
+    // across configuration changes, cleared by reset/retry/new scan). Held in the view model only.
+    LaunchedEffect(Unit) {
+        viewModel.onReviewOpened()
+    }
+
+    // "Change currency" on the blocked card asks the currency control to open its list.
+    var changeCurrencyRequests by remember { mutableIntStateOf(0) }
+
+    // The dialog visibility follows quickSavePreview: a refusal or dismissal sets it to null (UX-Q-5).
     state.quickSavePreview?.let { preview ->
         AlertDialog(
             onDismissRequest = viewModel::dismissReceiptQuickSaveConfirmation,
@@ -594,7 +668,14 @@ private fun ReviewStep(
                 }
             },
             confirmButton = {
-                TextButton(onClick = viewModel::confirmReceiptQuickSave) {
+                val confirmBlockedReason: String? = saveBlockedReason(state)
+                TextButton(
+                    onClick = viewModel::confirmReceiptQuickSave,
+                    enabled = !state.isCurrencySaveBlocked,
+                    modifier = Modifier
+                        .testTag(TAG_RECEIPT_QUICK_SAVE_CONFIRM)
+                        .semantics { if (confirmBlockedReason != null) stateDescription = confirmBlockedReason }
+                ) {
                     Text(stringResource(R.string.receipt_save_now_button))
                 }
             },
@@ -893,28 +974,105 @@ private fun ReviewStep(
         R.string.receipt_total_amount_incl_tax_label
     else
         R.string.receipt_total_amount_label
-    OutlinedTextField(
-        value = state.editAmount,
-        onValueChange = { viewModel.updateAmount(it) },
-        label = { Text(stringResource(totalLabelRes)) },
-        leadingIcon = {
-            // S7-010: Use editCurrency (user-selected), not parsed OCR currency
-            Text(getCurrencySymbol(state.editCurrency), fontSize = 18.sp, fontWeight = FontWeight.Bold)
-        },
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-        singleLine = true,
-        modifier = Modifier
-            .fillMaxWidth()
-            .semantics { contentDescription = amountInputCd }
+    // Shown only while the region is AmountInvalid; the VM clears amountError whenever it leaves.
+    val amountErrorText: String? =
+        if (state.currencyRegion is CurrencyRegionUi.AmountInvalid) state.amountError?.asString() else null
+    val amountField: @Composable (Modifier) -> Unit = { fieldModifier ->
+        OutlinedTextField(
+            value = state.editAmount,
+            onValueChange = { viewModel.updateAmount(it) },
+            label = { Text(stringResource(totalLabelRes)) },
+            leadingIcon = {
+                // S7-010: Use editCurrency (user-selected), not parsed OCR currency
+                Text(getCurrencySymbol(state.editCurrency), fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            },
+            isError = state.currencyRegion is CurrencyRegionUi.AmountInvalid,
+            supportingText = amountErrorText?.let { message -> { Text(message) } },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+            singleLine = true,
+            modifier = fieldModifier
+                .testTag(TAG_RECEIPT_AMOUNT)
+                .semantics { contentDescription = amountInputCd }
+        )
+    }
+
+    // MEC ux section 2: the currency control sits beside the amount; they stack at fontScale >= 1.3 or
+    // width < 360 dp. The selection is session-only state in the view model (never rememberSaveable).
+    val stackCurrencyRow = LocalDensity.current.fontScale >= 1.3f ||
+        LocalConfiguration.current.screenWidthDp < 360
+    val currencyControlEnabled = state.currencyOptions.isNotEmpty() && state.currencyRegion !is CurrencyRegionUi.Loading
+    val currencyIsUnset = state.currencyRegion is CurrencyRegionUi.Unset
+    if (stackCurrencyRow) {
+        CurrencySelectionControl(
+            selectedCode = state.editCurrency,
+            options = state.currencyOptions,
+            homeCode = state.homeCurrency,
+            enabled = currencyControlEnabled,
+            isUnset = currencyIsUnset,
+            readOnly = false,
+            onSelect = { viewModel.updateCurrency(it) },
+            openRequest = changeCurrencyRequests,
+            onOpenRequestConsumed = { changeCurrencyRequests = 0 },
+            modifier = Modifier.fillMaxWidth()
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        amountField(Modifier.fillMaxWidth())
+    } else {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.Top
+        ) {
+            CurrencySelectionControl(
+                selectedCode = state.editCurrency,
+                options = state.currencyOptions,
+                homeCode = state.homeCurrency,
+                enabled = currencyControlEnabled,
+                isUnset = currencyIsUnset,
+                readOnly = false,
+                onSelect = { viewModel.updateCurrency(it) },
+                openRequest = changeCurrencyRequests,
+                onOpenRequestConsumed = { changeCurrencyRequests = 0 },
+                modifier = Modifier
+                    .width(104.dp)
+                    .padding(top = 8.dp)
+            )
+            amountField(Modifier.weight(1f))
+        }
+    }
+
+    // MEC ux sections 3 and 4: preview line or blocked card directly under the amount. R24c keeps the
+    // NONE_PROPOSED caption (D-C-2) below.
+    CurrencyRateRegionContent(
+        region = state.currencyRegion,
+        ratesSetting = state.ratesSetting,
+        rateRefresh = state.rateRefresh,
+        ratesToday = state.ratesToday,
+        suppressHomeUnresolvedCard = false,
+        onRefresh = viewModel::refreshRates,
+        rateFixAction = state.rateFixAction,
+        historyStatus = state.historyStatus,
+        onDownloadRateHistory = viewModel::onDownloadRateHistory,
+        onCancelRateHistory = viewModel::onCancelRateHistory,
+        onOpenSetting = viewModel::requestOpenExchangeRateSetting,
+        onChangeCurrency = { changeCurrencyRequests = 1 },
+        modifier = Modifier.testTag(TAG_RECEIPT_RATE_REGION),
+        announceKey = state.previewAnnounceKey
     )
 
-    Spacer(modifier = Modifier.height(12.dp))
-
-    // Currency (RCP-10/N2)
-    CurrencyPicker(
-        selectedCurrency = state.editCurrency ?: "",
-        onCurrencySelected = { viewModel.updateCurrency(it) }
-    )
+    if (state.saveResult is SaveReceiptResult.RateNotEligible) {
+        // MEC INV-17 / review F1: the reassurance sits directly under the SAVE-origin card. The card is the
+        // assertive announcement, so this line is a plain (non-live) text. No amount, merchant or reason text.
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = stringResource(R.string.mec_receipt_kept),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag(TAG_RECEIPT_KEPT)
+        )
+    }
 
     Spacer(modifier = Modifier.height(12.dp))
 
@@ -1032,7 +1190,7 @@ private fun ReviewStep(
             items = itemCategorizations,
             categories = categories,
             isLoading = state.isAnalyzingItems,
-            currency = state.editCurrency ?: state.parsedReceipt?.currency ?: "",
+            currency = state.editCurrency ?: "",
             updatingItemIds = state.itemCorrectionUpdatingIds,
             onItemCategoryChanged = { item, category ->
                 viewModel.updateItemCategory(item, category)
@@ -1309,6 +1467,9 @@ private fun ReviewStep(
 
     Spacer(modifier = Modifier.height(16.dp))
 
+    // MEC ux section 4: Save and quick-save are disabled with a spoken reason for a missing rate or currency.
+    val saveBlockedReason: String? = saveBlockedReason(state)
+
     if (viewModel.canOfferReceiptQuickSave()) {
         val quickSaveCd = stringResource(R.string.receipt_quick_save_cd)
         FilledTonalButton(
@@ -1316,8 +1477,12 @@ private fun ReviewStep(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(52.dp)
-                .semantics { contentDescription = quickSaveCd },
-            enabled = !state.isSaving,
+                .testTag(TAG_RECEIPT_QUICK_SAVE)
+                .semantics {
+                    contentDescription = quickSaveCd
+                    if (saveBlockedReason != null) stateDescription = saveBlockedReason
+                },
+            enabled = !state.isSaving && !state.isCurrencySaveBlocked,
             shape = RoundedCornerShape(12.dp)
         ) {
             Text(stringResource(R.string.receipt_quick_save_button))
@@ -1360,8 +1525,12 @@ private fun ReviewStep(
         modifier = Modifier
             .fillMaxWidth()
             .height(52.dp)
-            .semantics { contentDescription = saveCd },
-        enabled = !state.isSaving,
+            .testTag(TAG_RECEIPT_SAVE)
+            .semantics {
+                contentDescription = saveCd
+                if (saveBlockedReason != null) stateDescription = saveBlockedReason
+            },
+        enabled = !state.isSaving && !state.isCurrencySaveBlocked,
         shape = RoundedCornerShape(12.dp)
     ) {
         if (state.isSaving) {
@@ -1413,67 +1582,6 @@ private fun ConfidenceIndicator(confidence: Float) {
             style = MaterialTheme.typography.labelSmall,
             color = color
         )
-    }
-}
-
-/**
- * RCP-10/N2: Currency picker for receipt review.
- * Allows the user to change the currency before saving.
- * Defaults to OCR-detected currency or home currency.
- */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun CurrencyPicker(
-    selectedCurrency: String,
-    onCurrencySelected: (String) -> Unit
-) {
-    val currencies = listOf("EUR", "USD", "GBP", "CHF", "JPY", "CAD", "AUD")
-    var expanded by remember { mutableStateOf(false) }
-
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Text(
-            text = stringResource(R.string.receipt_currency_label),
-            style = MaterialTheme.typography.labelLarge,
-            fontWeight = FontWeight.Medium
-        )
-        Spacer(modifier = Modifier.height(4.dp))
-        ExposedDropdownMenuBox(
-            expanded = expanded,
-            onExpandedChange = { expanded = it }
-        ) {
-            OutlinedTextField(
-                value = CurrencyFormatter.getCurrencySymbol(selectedCurrency).let { symbol ->
-                    "$symbol  $selectedCurrency"
-                },
-                onValueChange = {},
-                readOnly = true,
-                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .menuAnchor(),
-                singleLine = true
-            )
-            ExposedDropdownMenu(
-                expanded = expanded,
-                onDismissRequest = { expanded = false }
-            ) {
-                currencies.forEach { currencyCode ->
-                    DropdownMenuItem(
-                        text = {
-                            Text(
-                                CurrencyFormatter.getCurrencySymbol(currencyCode).let { symbol ->
-                                    "$symbol  $currencyCode"
-                                }
-                            )
-                        },
-                        onClick = {
-                            onCurrencySelected(currencyCode)
-                            expanded = false
-                        }
-                    )
-                }
-            }
-        }
     }
 }
 

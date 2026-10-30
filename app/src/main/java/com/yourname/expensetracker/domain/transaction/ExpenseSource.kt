@@ -17,5 +17,11 @@ enum class ExpenseSource {
     RECURRING_GENERATED,
     DEBUG_TOOL,
     MIGRATION,
-    UNKNOWN
+    UNKNOWN,
+
+    /**
+     * Expense created by the installment plan feature (auto-record, confirm, payoff).
+     * Persisted by [name] (TEXT), never by ordinal, so it is appended after the existing values.
+     */
+    INSTALLMENT_PLAN
 }

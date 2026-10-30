@@ -210,7 +210,8 @@ class SharedExpenseGroupsViewModelTest : ViewModelTestUtils() {
                 myShareAmount = any(),
                 latitude = any(),
                 longitude = any(),
-                locationSource = any()
+                locationSource = any(),
+                entryZone = any()
             )
         }
     }

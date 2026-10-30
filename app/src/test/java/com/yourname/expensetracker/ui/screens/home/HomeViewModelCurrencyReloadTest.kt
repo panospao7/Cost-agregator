@@ -194,7 +194,8 @@ class HomeViewModelCurrencyReloadTest {
             mockk<RecommendationDismissalHandler>(relaxed = true),
             totalsAggregationEngine,
             mockk<AdvancedAnalyticsEngine>(relaxed = true),
-            currencySettingsRepository = currencySettingsRepository
+            currencySettingsRepository = currencySettingsRepository,
+            homeInstallmentWeatherSource = mockk(relaxed = true)
         )
     }
 

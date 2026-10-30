@@ -32,7 +32,13 @@ class BackupVerifierRequiredSemanticQueryTest {
 
     @Test
     fun eachMissingRequiredReferenceColumnFailsVerification() {
-        for (table in listOf("receipt_expense_links", "recurring_occurrences", "budget_forecasts")) {
+        for (table in listOf(
+            "receipt_expense_links",
+            "recurring_occurrences",
+            "budget_forecasts",
+            "installment_entries",
+            "installment_plans"
+        )) {
             val db = completeDatabase(table)
             try {
                 val summary = BackupVerifier.verify(db, expectedCounts)
@@ -110,6 +116,10 @@ class BackupVerifierRequiredSemanticQueryTest {
                 "receipt_expense_links" -> ", expenseId INTEGER"
                 "recurring_occurrences" -> ", sourceId INTEGER"
                 "budget_forecasts" -> ", budgetId INTEGER"
+                // Loan installments (INV-30): columns read by the five installment orphan checks.
+                "installment_entries" -> ", planId INTEGER, linkedExpenseId INTEGER, status TEXT"
+                "installment_plans" -> ", purchaseExpenseId INTEGER"
+                "expenses" -> ", spendingExclusionReason TEXT"
                 else -> ""
             }
             db.execSQL("CREATE TABLE \"$table\" (id INTEGER PRIMARY KEY$reference)")

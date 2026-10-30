@@ -79,6 +79,11 @@ enum class DiagnosticReasonCode {
     // (conditional update affected zero rows).
     CONNECTION_DISCONNECTED,
 
+    // MEC A2 (INV-19): a user-present manual-entry create was refused by the
+    // coordinator because no eligible rate / unresolved home. Sub-reason lives in
+    // metadata `reason` (none|stale|unsupported|home_unresolved); origin in sourceType.
+    MANUAL_SAVE_BLOCKED_NO_RATE,
+
     // app-lock-privacy-mode S2 (OD-12a): controlled privacy-pipeline codes, emitted only through
     // PrivacyDiagnosticsEmitter (typed metadata, never payload-derived). Append-only: persisted by
     // name as TEXT and parsed with runCatching readers, so older builds tolerate unknown names.

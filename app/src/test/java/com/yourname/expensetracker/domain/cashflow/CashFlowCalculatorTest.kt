@@ -20,6 +20,7 @@ import com.yourname.expensetracker.domain.core.money.MoneyAmount
 import com.yourname.expensetracker.domain.core.money.MoneyNormalizationEngine
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
+import com.yourname.expensetracker.domain.installment.projection.emptyInstallmentProjectionPort
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.model.RecurringPattern
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
@@ -114,7 +115,8 @@ class CashFlowCalculatorTest : AnalyticsEngineTestBase() {
             currencySettingsRepository = currencySettingsRepository,
             currencyConverter = mockk(relaxed = true),
             databaseReadBarrier = databaseReadBarrier,
-            normalizationEngine = normalizationEngine
+            normalizationEngine = normalizationEngine,
+            installmentProjectionPort = emptyInstallmentProjectionPort()
         )
     }
 

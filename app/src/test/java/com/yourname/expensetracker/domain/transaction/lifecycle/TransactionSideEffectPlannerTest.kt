@@ -1,8 +1,10 @@
 package com.yourname.expensetracker.domain.transaction.lifecycle
 
 import com.yourname.expensetracker.domain.budget.BudgetMonitor
+import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentPlanLifecycleCoordinator
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
 import com.yourname.expensetracker.domain.sideeffect.PostCommitActionBatch
+import com.yourname.expensetracker.domain.sideeffect.PostCommitActionRunner
 import com.yourname.expensetracker.domain.sideeffect.SideEffectTriggerType
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
 import com.yourname.expensetracker.domain.transaction.SourceLearningPolicy
@@ -39,7 +41,9 @@ class TransactionSideEffectPlannerTest {
             recurringLifecycleCoordinator = Lazy { mockk<RecurringLifecycleCoordinator>(relaxed = true) },
             expenseDao = mockk(relaxed = true),
             categoryDao = mockk(relaxed = true),
-            timeProvider = timeProvider
+            timeProvider = timeProvider,
+            installmentPlanLifecycleCoordinator = Lazy { mockk<InstallmentPlanLifecycleCoordinator>(relaxed = true) },
+            postCommitActionRunner = Lazy { mockk<PostCommitActionRunner>(relaxed = true) }
         )
     }
 
@@ -130,13 +134,15 @@ class TransactionSideEffectPlannerTest {
     private val updatedReconcile = updated("recurring_reconcile", "expense:1:updated:recurring_reconcile")
     private val updatedLearning =
         updated("merchant_category_pattern_learning", "expense:1:expense_updated:merchant_category_learning")
+    // Loan-installments S6c-1: appended last, only for FULL / TYPE / CURRENCY / TRANSFER_DETAILS / PAYMENT_CORE.
+    private val updatedInstallment = updated("installment_expense_changed", "expense:1:updated:installment_changed")
 
     @Test
     fun `planUpdated by kind and source plans exact ordered EXPENSE_UPDATED actions and never merchant stats`() {
         val rows = listOf(
             UpdatedRow(
                 "FULL manual (trusted)", TransactionUpdateKind.FULL, "manual", "corr-2",
-                listOf(updatedBudget, updatedAnomaly, updatedReconcile, updatedLearning)
+                listOf(updatedBudget, updatedAnomaly, updatedReconcile, updatedLearning, updatedInstallment)
             ),
             // B6 nit (46): non-default id with literal keys (mirrors the planCreated id-42 row), so the
             // expense id is proven to be interpolated into every key rather than hard-wired to 1.
@@ -147,21 +153,22 @@ class TransactionSideEffectPlannerTest {
                     updated("budget_check", "expense:42:expense_updated:budget_check"),
                     updated("anomaly_alert_check", "expense:42:expense_updated:anomaly_alert_check"),
                     updated("recurring_reconcile", "expense:42:updated:recurring_reconcile"),
-                    updated("merchant_category_pattern_learning", "expense:42:expense_updated:merchant_category_learning")
+                    updated("merchant_category_pattern_learning", "expense:42:expense_updated:merchant_category_learning"),
+                    updated("installment_expense_changed", "expense:42:updated:installment_changed")
                 ),
                 expenseId = 42L
             ),
             UpdatedRow(
                 "FULL USER_EDIT (trusted production string)", TransactionUpdateKind.FULL, "USER_EDIT", "corr-12",
-                listOf(updatedBudget, updatedAnomaly, updatedReconcile, updatedLearning)
+                listOf(updatedBudget, updatedAnomaly, updatedReconcile, updatedLearning, updatedInstallment)
             ),
             UpdatedRow(
                 "FULL bank_sync (untrusted) skips learning", TransactionUpdateKind.FULL, "bank_sync", "corr-10",
-                listOf(updatedBudget, updatedAnomaly, updatedReconcile)
+                listOf(updatedBudget, updatedAnomaly, updatedReconcile, updatedInstallment)
             ),
             UpdatedRow(
                 "FULL SYSTEM (untrusted) skips learning", TransactionUpdateKind.FULL, "SYSTEM", "corr-14",
-                listOf(updatedBudget, updatedAnomaly, updatedReconcile)
+                listOf(updatedBudget, updatedAnomaly, updatedReconcile, updatedInstallment)
             ),
             UpdatedRow(
                 "MERCHANT manual has no learning", TransactionUpdateKind.MERCHANT, "manual", "corr-3",
@@ -223,7 +230,8 @@ class TransactionSideEffectPlannerTest {
         assertEquals(
             listOf(
                 Planned("budget_check", SideEffectTriggerType.EXPENSE_DELETED, "expense:1:expense_deleted:budget_check"),
-                Planned("recurring_unlink", SideEffectTriggerType.EXPENSE_DELETED, "expense:1:deleted:recurring_unlink")
+                Planned("recurring_unlink", SideEffectTriggerType.EXPENSE_DELETED, "expense:1:deleted:recurring_unlink"),
+                Planned("installment_expense_deleted", SideEffectTriggerType.EXPENSE_DELETED, "expense:1:deleted:installment_deleted")
             ),
             batch.planned()
         )

@@ -37,8 +37,15 @@ class BackupVerifierManifestTest {
     @Test
     fun pre_ledger_counts_gain_an_exact_empty_ledger_expectation_after_migration() {
         val legacyCounts = mapOf("expenses" to 2)
+        // Schema 152: a pre-152 source also gains the two empty installment tables.
         assertEquals(
-            mapOf("expenses" to 2, "savings_contribution_ledger" to 0, "savings_sweep_month_acceptance" to 1),
+            mapOf(
+                "expenses" to 2,
+                "savings_contribution_ledger" to 0,
+                "savings_sweep_month_acceptance" to 1,
+                "installment_plans" to 0,
+                "installment_entries" to 0
+            ),
             BackupVerifier.expectedCountsAfterMigration(legacyCounts, 149)
         )
     }
@@ -46,9 +53,20 @@ class BackupVerifierManifestTest {
     @Test
     fun current_counts_are_not_changed_by_post_migration_normalization() {
         val currentCounts = mapOf("savings_contribution_ledger" to 3)
+        // 152 is the current version; the version-151 source gains the installment tables
+        // (see the dedicated 151 case below).
         assertEquals(
             currentCounts,
-            BackupVerifier.expectedCountsAfterMigration(currentCounts, 151)
+            BackupVerifier.expectedCountsAfterMigration(currentCounts, 152)
+        )
+    }
+
+    @Test
+    fun v151_counts_gain_only_the_two_empty_installment_tables_after_migration() {
+        val v151Counts = mapOf("savings_contribution_ledger" to 3, "savings_sweep_month_acceptance" to 2)
+        assertEquals(
+            v151Counts + ("installment_plans" to 0) + ("installment_entries" to 0),
+            BackupVerifier.expectedCountsAfterMigration(v151Counts, 151)
         )
     }
 
@@ -56,8 +74,11 @@ class BackupVerifierManifestTest {
     fun v150_backup_counts_gain_exact_one_month_marker_and_v151_requires_the_marker_count() {
         val oldCounts = mapOf("savings_contribution_ledger" to 3)
         assertFalse(BackupVerifier.requiredManifestTables(databaseVersion = 150).contains("savings_sweep_month_acceptance"))
-        assertEquals(oldCounts + ("savings_sweep_month_acceptance" to 1),
-            BackupVerifier.expectedCountsAfterMigration(oldCounts, 150))
+        assertEquals(
+            oldCounts + ("savings_sweep_month_acceptance" to 1) +
+                ("installment_plans" to 0) + ("installment_entries" to 0),
+            BackupVerifier.expectedCountsAfterMigration(oldCounts, 150)
+        )
         val incomplete = BackupVerifier.requiredManifestTables(databaseVersion = 151)
             .filter { it != "savings_sweep_month_acceptance" }.associateWith { 0 }
         assertThrows(BackupVerifier.IncompleteManifestException::class.java) {

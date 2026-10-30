@@ -188,6 +188,83 @@ class TransactionsViewModelTest : ViewModelTestUtils() {
         collection.cancel()
     }
 
+    private val installmentLockedLog =
+        "Transactions: TRANSACTION_UPDATE_BLOCKED code=EXPENSE_LOCKED_BY_INSTALLMENT_PLAN"
+
+    @Test fun `INV-22 AE-20 updateExpenseType installment lock shows fixed resource message`() = runTest(testDispatcher) {
+        val expense = Expense(id = 7L, amount = 10.0, currency = "EUR", merchant = "Synthetic Shop", date = 1L, transactionType = TransactionType.PURCHASE)
+        coEvery {
+            expenses.updateExpenseTypeAndTransfer(expense, TransactionType.WITHDRAWAL, null, null)
+        } throws com.yourname.expensetracker.domain.transaction.lifecycle.InstallmentLockedExpenseException()
+        val received = mutableListOf<UiText>()
+        val collection = backgroundScope.launch { model.error.collect { received += it } }
+        runCurrent()
+        model.updateExpenseType(expense, TransactionType.WITHDRAWAL)
+        advanceUntilIdle()
+        val shown = received.single()
+        assertEquals(UiText.from(com.yourname.expensetracker.R.string.transactions_installment_purchase_locked), shown)
+        assertFalse(shown is UiText.DynamicString)
+        // F1: the dedicated catch logs the constant only (no generic UPDATE_FAILED line, no throwable).
+        assertEquals(listOf(null to installmentLockedLog), logs)
+        assertTrue(model.mutatingExpenseIds.value.isEmpty())
+        collection.cancel()
+    }
+
+    @Test fun `INV-22 AE-20 updateOwnership installment lock shows fixed resource message`() = runTest(testDispatcher) {
+        val expense = Expense(id = 8L, amount = 10.0, currency = "EUR", merchant = "Synthetic Shop", date = 1L, transactionType = TransactionType.PURCHASE)
+        coEvery {
+            expenses.updateOwnership(expense, false, null, false, null, null, null)
+        } throws com.yourname.expensetracker.domain.transaction.lifecycle.InstallmentLockedExpenseException()
+        val received = mutableListOf<UiText>()
+        val collection = backgroundScope.launch { model.error.collect { received += it } }
+        runCurrent()
+        model.updateOwnership(expense, false, "", false, "", "", "")
+        advanceUntilIdle()
+        val shown = received.single()
+        assertEquals(UiText.from(com.yourname.expensetracker.R.string.transactions_installment_purchase_locked), shown)
+        assertFalse(shown is UiText.DynamicString)
+        // F1: the dedicated catch logs the constant only (no generic UPDATE_FAILED line, no throwable).
+        assertEquals(listOf(null to installmentLockedLog), logs)
+        assertTrue(model.mutatingExpenseIds.value.isEmpty())
+        collection.cancel()
+    }
+
+    @Test fun `INV-22 AE-20 installment lock with hostile code never shows exception text`() = runTest(testDispatcher) {
+        val expense = Expense(id = 9L, amount = 10.0, currency = "EUR", merchant = "Synthetic Shop", date = 1L, transactionType = TransactionType.PURCHASE)
+        val hostileLock = com.yourname.expensetracker.domain.transaction.lifecycle.InstallmentLockedExpenseException("secret merchant=private sql=/data/918")
+        coEvery { expenses.updateExpenseTypeAndTransfer(expense, TransactionType.WITHDRAWAL, null, null) } throws hostileLock
+        coEvery { expenses.updateOwnership(expense, false, null, false, null, null, null) } throws hostileLock
+        val received = mutableListOf<UiText>()
+        val collection = backgroundScope.launch { model.error.collect { received += it } }
+        runCurrent()
+        model.updateExpenseType(expense, TransactionType.WITHDRAWAL)
+        model.updateOwnership(expense, false, "", false, "", "", "")
+        advanceUntilIdle()
+        val fixed = UiText.from(com.yourname.expensetracker.R.string.transactions_installment_purchase_locked)
+        assertEquals(listOf(fixed, fixed), received)
+        assertTrue(received.none { it is UiText.DynamicString })
+        assertTrue(logs.none { it.second.contains("secret") || it.second.contains("/data/918") })
+        // F1: the hostile constructor code is never logged; each call logs exactly the constant.
+        assertEquals(listOf(null to installmentLockedLog, null to installmentLockedLog), logs)
+        collection.cancel()
+    }
+
+    @Test fun `INV-22 AE-20 cancellation in updateExpenseType and updateOwnership is not mapped to installment lock message`() = runTest(testDispatcher) {
+        val expense = Expense(id = 10L, amount = 10.0, currency = "EUR", merchant = "Synthetic Shop", date = 1L, transactionType = TransactionType.PURCHASE)
+        coEvery { expenses.updateExpenseTypeAndTransfer(expense, TransactionType.WITHDRAWAL, null, null) } throws CancellationException("private SQL /data/918")
+        coEvery { expenses.updateOwnership(expense, false, null, false, null, null, null) } throws CancellationException("private SQL /data/918")
+        val received = mutableListOf<UiText>()
+        val collection = backgroundScope.launch { model.error.collect { received += it } }
+        runCurrent()
+        model.updateExpenseType(expense, TransactionType.WITHDRAWAL)
+        model.updateOwnership(expense, false, "", false, "", "", "")
+        advanceUntilIdle()
+        assertTrue(received.isEmpty())
+        assertTrue(logs.isEmpty())
+        assertTrue(model.mutatingExpenseIds.value.isEmpty())
+        collection.cancel()
+    }
+
     @Test fun `category failure emits bounded error`() = runTest(testDispatcher) {
         val expense = mockk<Expense>(relaxed = true)
         coEvery { expenses.updateExpenseCategory(expense, 2L) } throws hostile

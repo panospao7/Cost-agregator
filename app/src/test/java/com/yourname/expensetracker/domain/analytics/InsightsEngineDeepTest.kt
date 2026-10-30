@@ -62,7 +62,8 @@ class InsightsEngineDeepTest {
             monthlyComparisonCalculator = MonthlyComparisonCalculator(),
             categoryInsightEngine = CategoryInsightEngine(),
             merchantInsightEngine = MerchantInsightEngine(),
-            dayOfWeekAnalyzer = DayOfWeekAnalyzer()
+            dayOfWeekAnalyzer = DayOfWeekAnalyzer(),
+            installmentEligibility = noPlansInstallmentEligibility()
         )
 
         coEvery { recurringEngine.getPatterns(any()) } returns emptyList()

@@ -36,6 +36,10 @@
     <string name="action_got_it">Entendido</string>
     <string name="action_ok">Aceptar</string>
     <string name="action_confirm">Confirmar</string>
+    <!-- S13-a: DRAFT: owner native sign-off pending -->
+    <string name="deeplink_confirm_installments_title">¿Abrir cuotas?</string>
+    <!-- S13-a: DRAFT: owner native sign-off pending -->
+    <string name="deeplink_confirm_installments_body">Un enlace quiere abrir tus planes de cuotas. Continúa solo si lo esperabas.</string>
     <string name="action_dismiss">Descartar</string>
     <string name="action_search">Buscar</string>
     <string name="action_filter">Filtrar</string>
@@ -89,7 +93,7 @@
     <string name="label_none">Ninguno</string>
 
     <!-- Legacy/Common Input Labels -->
-    <string name="amount_label">Cantidad (€)</string>
+    <string name="amount_label">Cantidad</string>
     <string name="amount_placeholder">0.00</string>
     <string name="merchant_label">Comercio / Lugar</string>
     <string name="merchant_placeholder">ej. Sklavenitis, Starbucks...</string>
@@ -432,6 +436,328 @@
     <string name="currency_home_switch_loading">Comprobando tu moneda principal…</string>
     <string name="currency_home_switch_unavailable">Ahora no se puede leer tu moneda principal. Aun así, puedes elegir una nueva; primero se te pedirá confirmación.</string>
     <string name="currency_home_switch_error_write_failed">No se pudo cambiar tu moneda principal. Inténtalo de nuevo.</string>
+    <!-- loan-installments S10a-1: DRAFT translations, pending owner sign-off -->
+    <string name="installments_title">Cuotas y préstamos</string>
+    <string name="feature_installments_desc">Controla los pagos que aún debes y cuándo terminan</string>
+    <string name="installments_back">Atrás</string>
+    <!-- DRAFT: owner native sign-off pending -->
+    <string name="installment_plan_fallback_label">Cuota</string>
+    <!-- DRAFT: owner native sign-off pending -->
+    <string name="cashflow_installments_header">Cuotas a pagar</string>
+    <string name="installments_remaining_label">Pagos programados restantes</string>
+    <string name="installments_remaining_note">Suma de los pagos que faltan. No es el saldo pendiente de tu prestamista.</string>
+    <plurals name="installments_plan_count">
+        <item quantity="one">%d plan</item>
+        <item quantity="other">%d planes</item>
+    </plurals>
+    <string name="installments_next_due">Próximo vencimiento</string>
+    <string name="installments_next_line">Próximo: %1$s · %2$s</string>
+    <string name="installments_needs_attention">Requiere tu atención</string>
+    <plurals name="installments_awaiting_header">
+        <item quantity="one">%1$d pago con vencimiento, pendiente de confirmar: %2$s (no contado)</item>
+        <item quantity="other">%1$d pagos con vencimiento, pendientes de confirmar: %2$s (no contados)</item>
+    </plurals>
+    <string name="installments_active_plans">Planes activos</string>
+    <string name="installments_status_active">Activo</string>
+    <string name="installments_mode_auto_label">Registro automático</string>
+    <string name="installments_mode_confirm_label">Confirmas cada pago</string>
+    <string name="installments_progress">%1$d de %2$d pagados</string>
+    <string name="installments_awaiting_plan">Pendiente de confirmar · aún no contado</string>
+    <string name="installments_ends">Termina el %1$s</string>
+    <plurals name="installments_payments_left">
+        <item quantity="one">Queda %d pago</item>
+        <item quantity="other">Quedan %d pagos</item>
+    </plurals>
+    <string name="installments_paid_so_far">Pagado hasta ahora: %1$s</string>
+    <string name="installments_label_value">%1$s %2$s</string>
+    <string name="installments_two_parts">%1$s · %2$s</string>
+    <string name="installments_unavailable">No disponible</string>
+    <string name="installments_due_today">Vence hoy</string>
+    <string name="installments_overdue_on">Vencido desde el %1$s</string>
+    <string name="installments_empty_title">Aún no hay planes de cuotas</string>
+    <string name="installments_empty_body">Controla compras a plazos, pagos aplazados, planes de impuestos y préstamos. Mira lo que aún debes y cuándo termina cada plan.</string>
+    <string name="installments_empty_finished_title">No hay planes activos</string>
+    <string name="installments_empty_finished_body">Tus planes finalizados están en el historial.</string>
+    <string name="installments_error_load">No se pudieron cargar tus planes.</string>
+    <string name="installments_error_refresh">No se pudo actualizar. Se muestran los últimos planes cargados.</string>
+    <plurals name="installments_unreadable_plans">
+        <item quantity="one">No se pudo leer %d plan y no está incluido en estas cifras.</item>
+        <item quantity="other">No se pudieron leer %d planes y no están incluidos en estas cifras.</item>
+    </plurals>
+    <!-- loan-installments S10a-2: DRAFT translations, pending owner sign-off -->
+    <string name="installments_history_action">Historial</string>
+    <string name="installments_detail_title">Detalles del plan</string>
+    <string name="installments_error_not_found">Este plan ya no existe.</string>
+    <string name="installments_error_load_detail">No se pudo cargar este plan.</string>
+    <string name="installments_error_refresh_detail">No se pudo actualizar. Se muestran los últimos detalles cargados.</string>
+    <string name="installments_status_completed">Completado</string>
+    <string name="installments_status_cancelled">Cancelado</string>
+    <string name="installments_status_refunded">Reembolsado</string>
+    <string name="installments_status_paid_off">Liquidado</string>
+    <string name="installments_banner_completed">Todos los pagos están contabilizados.</string>
+    <string name="installments_banner_ended">Este plan ha finalizado y no se puede modificar.</string>
+    <string name="installments_kind_purchase">Compra a plazos</string>
+    <string name="installments_kind_standalone">Plan independiente</string>
+    <string name="installments_lender">Prestamista: %1$s</string>
+    <string name="installments_end_date_unavailable">Fecha de fin: No disponible</string>
+    <string name="installments_financing_cost">Coste de financiación: %1$s</string>
+    <string name="installments_financing_needs_purchase">Requiere una compra en la misma moneda</string>
+    <string name="installments_financing_not_for_status">No disponible para planes cancelados o reembolsados</string>
+    <string name="installments_financing_payment_unreadable">Ahora no se puede leer el importe de un pago</string>
+    <string name="installments_schedule">Calendario</string>
+    <string name="installments_entry_number">Pago %1$d</string>
+    <string name="installments_entry_upcoming">Próximo</string>
+    <string name="installments_entry_overdue">Vencido · aún no contado</string>
+    <string name="installments_entry_paid">Pagado</string>
+    <string name="installments_entry_skipped">Omitido</string>
+    <string name="installments_entry_cancelled">Cancelado</string>
+    <string name="installments_entry_refunded">Reembolsado · no contado</string>
+    <string name="installments_entry_paid_before_tracking">Pagado antes del seguimiento</string>
+    <string name="installments_entry_payoff">Liquidación anticipada</string>
+    <string name="installments_entry_was">Antes: %1$s</string>
+    <string name="installments_entry_paid_unavailable">Importe pagado: No disponible</string>
+    <string name="installments_entry_differs">Difiere del plan: %1$s</string>
+    <string name="installments_reason_skip_lender_holiday">Pausa del prestamista</string>
+    <string name="installments_reason_skip_waived">Condonado</string>
+    <string name="installments_reason_skip_other">Otro motivo</string>
+    <string name="installments_reason_stopped">Plan detenido</string>
+    <string name="installments_reason_refunded">Plan reembolsado</string>
+    <string name="installments_reason_paid_off_early">Liquidado anticipadamente</string>
+    <string name="installments_reason_shortened">Plan acortado</string>
+    <string name="installments_reason_expense_removed">Se eliminó su gasto</string>
+    <string name="installments_history_title">Historial de planes</string>
+    <string name="installments_history_empty_title">Aún no hay planes finalizados</string>
+    <string name="installments_history_empty_body">Los planes que completes o canceles se guardan aquí para que puedas consultarlos.</string>
+    <string name="installments_history_empty_completed">No hay planes completados</string>
+    <string name="installments_history_empty_cancelled">No hay planes cancelados</string>
+    <string name="installments_history_empty_refunded">No hay planes reembolsados</string>
+    <string name="installments_history_empty_paid_off">No hay planes liquidados</string>
+    <string name="installments_filter_all">Todos</string>
+    <string name="installments_history_range">%1$s – %2$s</string>
+    <plurals name="installments_history_count_paid">
+        <item quantity="one">%d pagado</item>
+        <item quantity="other">%d pagados</item>
+    </plurals>
+    <plurals name="installments_history_count_skipped">
+        <item quantity="one">%d omitido</item>
+        <item quantity="other">%d omitidos</item>
+    </plurals>
+    <plurals name="installments_history_count_cancelled">
+        <item quantity="one">%d cancelado</item>
+        <item quantity="other">%d cancelados</item>
+    </plurals>
+    <plurals name="installments_history_count_refunded">
+        <item quantity="one">%d reembolsado</item>
+        <item quantity="other">%d reembolsados</item>
+    </plurals>
+    <string name="installments_plan_unnamed">Plan de cuotas</string>
+    <plurals name="installments_history_before_tracking">
+        <item quantity="one">%d pago pagado antes del seguimiento</item>
+        <item quantity="other">%d pagos pagados antes del seguimiento</item>
+    </plurals>
+    <string name="installments_history_total">Total contado: %1$s</string>
+    <string name="installments_history_refunded_note">Los pagos reembolsados no se cuentan.</string>
+    <string name="installments_error_load_history">No se pudo cargar el historial de planes.</string>
+    <string name="installments_error_refresh_history">No se pudo actualizar. Se muestra el último historial cargado.</string>
+
+    <!-- loan-installments S10b-1: DRAFT es copy, pending owner sign-off -->
+    <string name="installments_action_record">Registrar pago</string>
+    <string name="installments_action_link">Vincular a un gasto coincidente</string>
+    <string name="installments_action_skip">Omitir esta cuota</string>
+    <string name="installments_action_adjust">Ajustar importe o fecha</string>
+    <string name="installments_action_unskip">Dejar de omitir</string>
+    <string name="installments_action_record_title">Registrar cuota %1$d</string>
+    <string name="installments_action_link_title">Vincular cuota %1$d</string>
+    <string name="installments_action_skip_title">¿Omitir la cuota %1$d?</string>
+    <string name="installments_action_adjust_title">Ajustar cuota %1$d</string>
+    <string name="installments_action_unskip_title">¿Dejar de omitir la cuota %1$d?</string>
+    <string name="installments_action_record_body">Crea un gasto de %1$s con fecha %2$s y marca esta cuota como pagada.</string>
+    <string name="installments_action_record_match_warning">Se encontró un cargo coincidente. Vincúlalo en su lugar para no contar este pago dos veces.</string>
+    <string name="installments_action_link_body">Elige el gasto con el que se pagó esta cuota.</string>
+    <string name="installments_action_link_empty">No se encontraron gastos coincidentes. Aún puedes registrar el pago sin vincular.</string>
+    <string name="installments_action_link_confirm">Vincular</string>
+    <string name="installments_action_skip_body">No se contará y no se añadirá ningún pago al final del plan. Puedes deshacerlo.</string>
+    <string name="installments_action_skip_confirm">Omitir</string>
+    <string name="installments_action_skip_reason_holiday">Pausa de pagos del prestamista</string>
+    <string name="installments_action_skip_reason_waived">Condonada por el prestamista</string>
+    <string name="installments_action_skip_reason_other">Otro</string>
+    <string name="installments_action_unskip_body">La cuota vuelve a estar programada.</string>
+    <string name="installments_action_adjust_was">Antes: %1$s el %2$s</string>
+    <string name="installments_action_adjust_amount">Importe (%1$s)</string>
+    <string name="installments_action_adjust_date">Fecha de vencimiento: %1$s</string>
+    <string name="installments_action_adjust_confirm">Guardar</string>
+    <string name="installments_action_cancel">Cancelar</string>
+    <string name="installments_action_ok">Aceptar</string>
+    <string name="installments_action_working">Procesando…</string>
+    <string name="installments_action_undo">Deshacer</string>
+    <string name="installments_action_discard_title">¿Descartar los cambios?</string>
+    <string name="installments_action_discard_body">Se perderá lo que has introducido.</string>
+    <string name="installments_action_discard">Descartar</string>
+    <string name="installments_action_keep_editing">Seguir editando</string>
+    <string name="installments_action_refused_generic">Este cambio no está permitido. No se cambió nada.</string>
+    <string name="installments_action_refused_illegal">Esta cuota no se puede cambiar en su estado actual. No se cambió nada.</string>
+    <string name="installments_action_refused_already_updated">Esta cuota ya se actualizó. Actualizando.</string>
+    <string name="installments_action_refused_amount">Introduce un importe mayor que cero con un máximo de dos decimales.</string>
+    <string name="installments_action_refused_date">Esa fecha no es compatible. No se cambió nada.</string>
+    <string name="installments_action_refused_currency">Ese gasto está en una moneda distinta a la del plan.</string>
+    <string name="installments_action_refused_linked_elsewhere">Ese gasto ya está vinculado a otra cuota o pago.</string>
+    <string name="installments_action_refused_expense_not_eligible">Ese gasto no se puede vincular a una cuota.</string>
+    <string name="installments_action_refused_name_required">Este plan necesita un nombre antes de registrar un pago.</string>
+    <string name="installments_action_refused_purchase_missing">La compra de este plan ya no está disponible. No se cambió nada.</string>
+    <string name="installments_action_failed_conflict">Algo cambió al guardar. No se cambió nada. Inténtalo de nuevo.</string>
+    <string name="installments_action_failed_not_found">Esta cuota o gasto ya no está disponible. No se cambió nada.</string>
+    <string name="installments_action_failed_record">No se pudo registrar el pago. No se cambió nada.</string>
+    <string name="installments_action_failed_unexpected">Algo salió mal. No se cambió nada.</string>
+    <string name="installments_action_notice_recorded">Pago registrado</string>
+    <string name="installments_action_notice_linked">Gasto vinculado</string>
+    <string name="installments_action_notice_skipped">Cuota omitida</string>
+    <string name="installments_action_notice_skipped_last">Cuota omitida. Era el último pago, así que el plan queda completado.</string>
+    <string name="installments_action_notice_adjusted">Cuota ajustada</string>
+    <string name="installments_action_notice_unskipped">La cuota vuelve a estar programada</string>
+    <string name="installments_action_notice_undone">Deshecho</string>
+    <!-- loan-installments S10b-2 (DRAFT es, needs owner sign-off) -->
+    <string name="installments_create_add_plan">Añadir plan</string>
+    <string name="installments_plan_actions_menu">Acciones del plan</string>
+    <string name="installments_plan_edit">Editar plan</string>
+    <string name="installments_plan_end">Terminar plan…</string>
+    <string name="installments_plan_delete">Eliminar plan</string>
+    <string name="installments_end_title">Terminar este plan</string>
+    <string name="installments_end_stop_title">Detener el plan</string>
+    <string name="installments_end_stop_body">Los pagos ya hechos siguen en tus gastos. Los futuros se eliminan.</string>
+    <string name="installments_end_refund_title">La compra se reembolsó o se devolvió</string>
+    <string name="installments_end_refund_body">Todo se revierte. Esta compra y sus cuotas cuentan como cero.</string>
+    <string name="installments_end_payoff_title">Lo pagué por adelantado</string>
+    <string name="installments_end_payoff_body">El importe restante cuenta en la fecha de liquidación.</string>
+    <string name="installments_end_next">Siguiente</string>
+    <string name="installments_stop_title">¿Detener este plan?</string>
+    <string name="installments_stop_confirm">Detener plan</string>
+    <plurals name="installments_stop_body">
+        <item quantity="one">Se eliminará %1$d pago pendiente (%2$s). Los pagos ya hechos (%3$d) siguen en tus gastos. No se puede deshacer.</item>
+        <item quantity="many">Se eliminarán %1$d pagos pendientes (%2$s). Los pagos ya hechos (%3$d) siguen en tus gastos. No se puede deshacer.</item>
+        <item quantity="other">Se eliminarán %1$d pagos pendientes (%2$s). Los pagos ya hechos (%3$d) siguen en tus gastos. No se puede deshacer.</item>
+    </plurals>
+    <string name="installments_refund_question_title">¿Reembolso ya registrado?</string>
+    <string name="installments_refund_question_body">¿El reembolso ya está registrado como una transacción?</string>
+    <string name="installments_answer_yes">Sí</string>
+    <string name="installments_answer_no">No</string>
+    <string name="installments_refund_recorded_title">Detener el plan en su lugar</string>
+    <string name="installments_refund_recorded_body">Entonces detén el plan. Tus pagos siguen contando y el reembolso que registraste los compensa.</string>
+    <string name="installments_refund_recorded_confirm">Detener el plan</string>
+    <string name="installments_refund_confirm_title">¿Registrar este reembolso?</string>
+    <string name="installments_refund_confirm_body">Todo se revierte: %1$d cuotas pagadas contarán como cero y %2$d pendientes se eliminan. Los gastos se conservan y se marcan como reembolsados. No se puede deshacer. Para un reembolso parcial, ajusta los pagos restantes.</string>
+    <string name="installments_refund_confirm">Registrar reembolso</string>
+    <string name="installments_payoff_title">Pagar por adelantado</string>
+    <string name="installments_payoff_amount">Importe de liquidación</string>
+    <string name="installments_payoff_date">Fecha de liquidación: %1$s</string>
+    <plurals name="installments_payoff_body">
+        <item quantity="one">La liquidación cuenta completa en su fecha. Se elimina %1$d cuota pendiente. No se puede deshacer.</item>
+        <item quantity="many">La liquidación cuenta completa en su fecha. Se eliminan %1$d cuotas pendientes. No se puede deshacer.</item>
+        <item quantity="other">La liquidación cuenta completa en su fecha. Se eliminan %1$d cuotas pendientes. No se puede deshacer.</item>
+    </plurals>
+    <string name="installments_payoff_confirm">Liquidar plan</string>
+    <string name="installments_delete_title">¿Eliminar este plan?</string>
+    <string name="installments_delete_body_standalone">Se eliminarán el plan y su calendario. No se puede deshacer.</string>
+    <string name="installments_delete_body_purchase">Se eliminarán el plan y su calendario. Tu compra volverá a contar completa en su fecha original, así que cambiarán los totales y presupuestos de ese mes. No se puede deshacer.</string>
+    <string name="installments_delete_confirm">Eliminar plan</string>
+    <string name="installments_unlink_title">¿Desvincular la cuota %1$d?</string>
+    <!-- DRAFT: owner native sign-off pending (last sentence added by PE-D, owner-approvals 68) -->
+    <string name="installments_unlink_body">El gasto sigue en tu lista y sigue contando. La cuota queda sin pagar. Si el pago no ocurrió, elimina el gasto en Transacciones. Si más adelante registras esta cuota de nuevo, se crea un gasto nuevo.</string>
+    <string name="installments_unlink_confirm">Desvincular</string>
+    <string name="installments_plan_notice_stopped">Plan detenido</string>
+    <string name="installments_plan_notice_refunded">Reembolso registrado</string>
+    <string name="installments_plan_notice_paid_off">Plan liquidado</string>
+    <string name="installments_plan_notice_unlinked">Cuota desvinculada</string>
+    <string name="installments_plan_notice_nothing_to_change">Nada que cambiar. Un plan completado no se puede detener.</string>
+    <string name="installments_create_title">Añadir plan</string>
+    <string name="installments_create_save">Guardar</string>
+    <string name="installments_create_name">Nombre del plan</string>
+    <string name="installments_create_name_helper">Se muestra como comercio en los pagos registrados.</string>
+    <string name="installments_create_lender">Prestamista (opcional)</string>
+    <string name="installments_create_currency">Moneda</string>
+    <string name="installments_create_amount">Importe del pago</string>
+    <string name="installments_create_count">Número de pagos</string>
+    <string name="installments_create_count_helper">Entre 2 y 480 pagos, contados desde el primero que quieras seguir.</string>
+    <string name="installments_create_paid_before">Ya pagados antes de usar la app (opcional)</string>
+    <string name="installments_create_paid_before_helper">Solo como historial. Estos pagos no cuentan como gasto.</string>
+    <string name="installments_create_mode">¿Cómo se deben registrar los pagos?</string>
+    <string name="installments_create_mode_auto">Registrar automáticamente</string>
+    <string name="installments_create_mode_confirm">Confirmaré yo</string>
+    <string name="installments_create_category">Categoría</string>
+    <string name="installments_create_categories_failed">No se pudieron cargar las categorías. Toca para reintentar.</string>
+    <string name="installments_create_estimate">Las cifras son estimaciones. El extracto de tu prestamista es el válido.</string>
+    <string name="installments_create_privacy">Los datos del plan se quedan en este dispositivo y en tus copias de seguridad cifradas.</string>
+    <string name="installments_edit_title">Editar plan</string>
+    <string name="installments_edit_helper">Los cambios se aplican a los pagos que se registren desde ahora. Los gastos registrados no cambian.</string>
+    <string name="installments_edit_no_category">Sin categoría</string>
+    <string name="installments_action_notice_undo_failed">No se pudo deshacer. Usa las acciones de la fila.</string>
+    <!-- loan-installments S12a: DRAFT translations, pending owner sign-off -->
+    <string name="transactions_installment_menu_pay">Pagar en cuotas…</string>
+    <string name="transactions_installment_menu_view">Ver plan de cuotas</string>
+    <string name="transactions_installment_menu_disabled_not_mine">Las cuotas no están disponibles para gastos que no son tuyos.</string>
+    <string name="transactions_installment_menu_disabled_shared">Las cuotas aún no están disponibles para gastos compartidos o divididos.</string>
+    <!-- DRAFT: owner native sign-off pending -->
+    <string name="transactions_installment_delete_role_installment">Este gasto forma parte de un plan de cuotas. La cuota quedará sin pagar y no se volverá a registrar automáticamente.</string>
+    <!-- DRAFT: owner native sign-off pending -->
+    <string name="transactions_installment_delete_role_purchase">Esta es la compra de un plan de cuotas. El plan se quedará sin registro de compra y el coste de financiación no estará disponible.</string>
+    <!-- DRAFT: owner native sign-off pending -->
+    <string name="transactions_installment_delete_role_reversed">Esta es una cuota reembolsada. Al eliminarla solo se quita de tu lista.</string>
+    <plurals name="transactions_installment_chip_paid_in">
+        <item quantity="one">Pagado en %d cuota</item>
+        <item quantity="other">Pagado en %d cuotas</item>
+    </plurals>
+    <string name="transactions_installment_chip_not_counted">No cuenta como gasto</string>
+    <string name="transactions_installment_chip_not_counted_refunded">No cuenta (reembolsado)</string>
+    <string name="transactions_installment_chip_n_of_m">Cuota %1$d de %2$d</string>
+    <string name="transactions_installment_source_badge">Plan de cuotas</string>
+    <string name="transactions_installment_chip_matches">Coincide con la cuota %d</string>
+    <string name="transactions_installment_chip_duplicate">Posible duplicado de la cuota %d</string>
+    <string name="transactions_installment_filter">Cuotas</string>
+    <!-- DRAFT: owner native sign-off pending -->
+    <string name="transactions_installment_purchase_locked">Esta compra se paga en cuotas, así que esto no se puede cambiar aquí.</string>
+    <string name="declare_installments_title">Pagar en cuotas</string>
+    <string name="declare_installments_name">Nombre del plan</string>
+    <string name="declare_installments_count">Número de pagos</string>
+    <string name="declare_installments_currency">Moneda del plan</string>
+    <string name="declare_installments_currency_differs">Este plan está en una moneda distinta a la de la compra. Introduce cada pago; el coste de financiación no estará disponible.</string>
+    <string name="declare_installments_split_equal">División igual del total</string>
+    <string name="declare_installments_split_fixed">Pago fijo × N</string>
+    <string name="declare_installments_fixed_amount">Cada pago</string>
+    <string name="declare_installments_each_payment">Cada pago %s</string>
+    <string name="declare_installments_first_due">Primer pago el %s</string>
+    <string name="declare_installments_mode_title">¿Cómo se deben registrar los pagos?</string>
+    <string name="declare_installments_mode_auto">Registrar automáticamente en la fecha de vencimiento</string>
+    <string name="declare_installments_mode_confirm">Confirmaré cada uno</string>
+    <string name="declare_installments_impact">Esta compra sigue en tu lista y se conserva el enlace del recibo. Deja de contar como %1$s el %2$s. Cada cuota cuenta en el mes en que se paga. Los totales y presupuestos de esos meses cambiarán.</string>
+    <string name="declare_installments_receipt_note">El recibo sigue adjunto a la compra.</string>
+    <string name="declare_installments_confirm">Configurar cuotas</string>
+    <string name="declare_installments_discard_title">¿Descartar este plan?</string>
+    <string name="declare_installments_keep">Seguir editando</string>
+    <string name="declare_installments_refused_not_mine">Las cuotas no están disponibles para gastos que no son tuyos.</string>
+    <string name="declare_installments_refused_shared">Las cuotas aún no están disponibles para gastos compartidos o divididos.</string>
+    <string name="declare_installments_refused_already_declared">Esta compra ya se paga en cuotas.</string>
+    <string name="declare_installments_refused_first_date">Elige una fecha igual o posterior a la de la compra.</string>
+    <string name="declare_installments_refused_count">Introduce un número de 2 a 480.</string>
+    <string name="declare_installments_refused_too_small">El importe es demasiado pequeño para tantos pagos.</string>
+    <string name="declare_installments_snackbar_declared">Cuotas configuradas para %s</string>
+    <string name="declare_installments_snackbar_undo">Deshacer</string>
+    <string name="declare_installments_snackbar_view_plan">Ver plan</string>
+    <string name="declare_installments_snackbar_undone">Cuotas eliminadas. Esta compra vuelve a contar completa.</string>
+    <string name="declare_installments_snackbar_undo_failed">Ya se registró un pago. Usa Finalizar plan para cambiar este plan.</string>
+    <!-- loan-installments S11b: DRAFT translation, pending owner sign-off -->
+    <string name="add_expense_installments_repeat_exclusive">La repetición y las cuotas no se pueden combinar.</string>
+    <!-- loan-installments S11c: DRAFT translations, pending owner sign-off -->
+    <string name="add_expense_installments_not_spending">Las cuotas son solo para compras.</string>
+    <string name="add_expense_installments_preview_summary">%1$d × %2$s = %3$s</string>
+    <string name="add_expense_installments_preview_total">%1$d pagos, %2$s en total</string>
+    <string name="add_expense_installments_preview_residual">Primer pago %1$s, luego %2$s</string>
+    <string name="add_expense_installments_preview_ends">Último pago el %s</string>
+    <string name="add_expense_installments_preview_financing_less">El total de las cuotas es menor que el precio de compra.</string>
+    <string name="add_expense_installments_preview_needs_amount">Introduce primero el importe de la compra</string>
+    <string name="add_expense_installments_past_due">Cuotas vencidas: %1$d. No contarán hasta que las registres o las vincules.</string>
+    <!-- loan-installments S12b: DRAFT translations, pending owner sign-off -->
+    <string name="budget_includes_installments_format">Incluye %1$s en cuotas</string>
+    <string name="budget_includes_installments_unavailable">Importe de cuotas no disponible</string>
+
     <!-- ai-fixes B3b. Best-effort translation, pending native review. -->
     <string name="ai_toggle_proactive">Avisarme cuando mi resumen diario esté listo</string>
     <string name="ai_cloud_briefing_disclosure">Mientras Enable AI, Dashboard briefing y Allow cloud AI estén activados, el resumen diario se genera en segundo plano con IA en la nube.</string>
@@ -466,8 +792,65 @@
     <string name="add_expense_error_currency_loading">Cargando la configuración de moneda…</string>
     <string name="add_expense_error_merchant_required">El nombre del comercio es obligatorio</string>
     <string name="add_expense_error_amount_invalid">Introduce un importe válido</string>
-    <string name="add_expense_error_amount_too_large">El importe es demasiado grande</string>
     <string name="add_expense_error_date_future">La fecha no puede ser futura</string>
+    <!-- manual-entry-currency B1: DRAFT Spanish, owner native sign-off pending (ux-flows section 14) -->
+    <string name="mec_block_home_unresolved">No se pudo leer tu moneda principal. No se guardó nada. Inténtalo de nuevo.</string>
+    <string name="mec_amount_no_decimals">Los importes en %1$s no tienen decimales. Introduce un número entero.</string>
+    <string name="mec_amount_max_decimals">Los importes en %1$s admiten hasta %2$d decimales.</string>
+    <string name="mec_amount_too_large">El importe es demasiado grande. El máximo es %1$s.</string>
+    <string name="mec_repeat_home_only">La repetición solo está disponible en tu moneda principal (%1$s).</string>
+    <!-- manual-entry-currency B2a: DRAFT Spanish, owner native sign-off pending (ux-flows section 14) -->
+    <string name="mec_control_label">Moneda</string>
+    <string name="mec_control_cd">Moneda: %1$s. Toca dos veces para cambiar.</string>
+    <string name="mec_control_unset">Elige una moneda</string>
+    <string name="mec_control_readonly_cd">Moneda %1$s. No se puede cambiar al editar.</string>
+    <string name="mec_sheet_search">Buscar moneda</string>
+    <string name="mec_sheet_home">Tu moneda principal</string>
+    <string name="mec_sheet_other">Otras monedas</string>
+    <string name="mec_sheet_no_results">Ninguna moneda coincide con la búsqueda.</string>
+    <string name="mec_sheet_installment_note">Los pagos a plazos solo están disponibles en EUR y USD.</string>
+    <string name="mec_installment_unset">Elige EUR o USD para pagos a plazos.</string>
+    <string name="mec_preview_checking">Comprobando el tipo de cambio…</string>
+    <string name="mec_preview_ecb">≈ %1$s · tipo del BCE del %2$s</string>
+    <string name="mec_preview_other">≈ %1$s · tipo del %2$s</string>
+    <string name="mec_preview_rate_only">Tipo del BCE del %1$s</string>
+    <string name="mec_block_none">No hay tipo de cambio para esta fecha.</string>
+    <string name="mec_block_stale">No hay tipo de cambio para esta fecha. El más reciente es del %1$s, de hace más de 7 días.</string>
+    <string name="mec_block_unsupported">Esta moneda no se puede usar en gastos nuevos. Elige otra.</string>
+    <string name="mec_block_off_hint">Las actualizaciones de tipos de cambio están desactivadas. Actívalas en ajustes para descargar tipos.</string>
+    <string name="mec_block_alt_hint">También puedes cambiar la moneda o la fecha.</string>
+    <string name="mec_action_refresh">Actualizar tipos</string>
+    <string name="mec_action_refreshing">Actualizando tipos…</string>
+    <string name="mec_action_open_setting">Abrir ajuste de tipos de cambio</string>
+    <string name="mec_action_change_currency">Cambiar moneda</string>
+    <string name="mec_refresh_still_blocked">Tipos actualizados, pero sigue sin haber un tipo a menos de 7 días de esta fecha. Prueba una fecha posterior.</string>
+    <string name="mec_refresh_offline">No se pudieron actualizar los tipos. Revisa la conexión e inténtalo de nuevo.</string>
+    <string name="mec_refresh_failed">No se pudieron actualizar los tipos. Inténtalo más tarde.</string>
+    <string name="mec_refresh_home_unavailable">No se pueden descargar tipos para tu moneda principal.</string>
+    <!-- MEC 1b: DRAFT: owner native sign-off pending -->
+    <string name="mec_history_action">Descargar historial de tipos</string>
+    <string name="mec_history_action_running">Descargando historial de tipos…</string>
+    <string name="mec_history_running_state">Descargando historial de tipos</string>
+    <string name="mec_history_cancel">Cancelar</string>
+    <string name="mec_history_cancel_cd">Cancelar la descarga del historial de tipos</string>
+    <string name="mec_history_disclosure">Descarga los tipos de cambio públicos del BCE de los últimos 90 días. No se envía ningún dato de tus gastos.</string>
+    <string name="mec_history_cancelled">Descarga detenida.</string>
+    <string name="mec_history_too_old">El historial de tipos solo cubre los últimos 90 días. Elige una fecha posterior u otra moneda.</string>
+    <string name="mec_history_no_rate">El historial no tiene un tipo para esta moneda a menos de 7 días de esta fecha. Elige otra moneda u otra fecha.</string>
+    <string name="mec_history_offline">No se pudo descargar el historial de tipos. Revisa la conexión e inténtalo de nuevo.</string>
+    <string name="mec_history_failed">No se pudo descargar el historial de tipos. Inténtalo más tarde.</string>
+    <string name="mec_save_disabled_rate">Necesita un tipo de cambio</string>
+    <string name="mec_save_disabled_currency">Elige una moneda</string>
+    <string name="mec_save_disabled_amount">Corrige el importe</string>
+    <string name="mec_repeat_cleared">Se desactivó la repetición porque este gasto está en otra moneda.</string>
+    <!-- MEC 1b S2b: DRAFT: owner native sign-off pending -->
+    <string name="mec_home_changed_cleared">Tu moneda principal cambió, así que se borró el importe.</string>
+    <string name="mec_receipt_unmatched">No pudimos identificar la moneda del recibo. Elige una.</string>
+    <string name="mec_receipt_not_detected">No se encontró moneda en el recibo. Revísala.</string>
+    <string name="mec_receipt_kept">Se conserva tu recibo. No se guardó nada.</string>
+    <string name="mec_declaration_nothing_saved">No se guardó nada.</string>
+    <string name="mec_open_setting_confirm_title">¿Abrir ajustes?</string>
+    <string name="mec_open_setting_confirm_body">Se descartará tu entrada.</string>
     <!-- nl-quick-add slice F: DRAFT: owner native sign-off pending (Spanish shows the English example: the parser knows English, Greek and Greeklish only) -->
     <string name="quick_add_label">Añadir rápido</string>
     <string name="quick_add_placeholder">p. ej. coffee 3.50 yesterday</string>
@@ -493,7 +876,7 @@
     <string name="quick_add_category_learned_fmt">%1$s · según tu historial</string>
     <string name="quick_add_category_remove">Quitar</string>
     <string name="quick_add_category_remove_cd">Quitar la categoría %1$s</string>
-    <string name="quick_add_hint_foreign">Aún no se admite moneda extranjera aquí. El gasto se guardará en %1$s.</string>
+    <string name="quick_add_hint_foreign">Moneda extranjera detectada. Elígela junto al importe y escribe el importe.</string>
     <string name="quick_add_hint_time_ignored">Se ignoró la hora.</string>
     <string name="quick_add_hint_too_long">La línea es demasiado larga (máx. %1$d caracteres).</string>
     <string name="quick_add_flag_amount_foreign">Introduce el importe en %1$s.</string>

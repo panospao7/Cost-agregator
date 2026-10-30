@@ -1,7 +1,7 @@
 # Slice plan: loan-installments
 
 Author: feature-planner (stage 6, attempt 2, docs-only). Persisted verbatim by feature-orchestrator, 2026-10-16.
-Status: APPROVED by owner 2026-10-16 (all recommendations). Implementation post-1.0 only. S0 discovery answers: `docs/features/loan-installments/discovery-s0.md` (scout).
+Status: APPROVED by owner 2026-10-16 (all recommendations). Guard/worker approvals (S2/S3, S7a) confirmed by owner 2026-10-22 (build/release-lead-notes/owner-approvals-20261022.md). Implementation post-1.0 only. S0 discovery answers: `docs/features/loan-installments/discovery-s0.md` (scout).
 
 ---
 
@@ -45,7 +45,7 @@ D-1..D-8 are being resolved by the parallel scout. D-9..D-20 are extra planner i
 | D-8 | Add-expense currency. Does TLC `createExpenseDbOnlyV2` accept a currency and compute home-currency `baseAmount` for manual USD entries? What happens when FX is unavailable? Where do `AddExpenseUiState` and the save path live? | Currency decision, S11 |
 | D-9 | FG-ID mapping of `check_raw_money_aggregates` / `verify_raw_money_aggregates`, and how its allowlist keys entries (file+line, query hash, count). Does adopting the predicate re-key entries or grow them? | S4a–S4d |
 | D-10 | TLC DbOnly composition. Can the plan coordinator open `writeBarrier.runWrite { database.withTransaction { … } }` and call `createExpenseDbOnlyV2` plus a new DbOnly op inside it (barrier re-entrancy, post-commit batch return)? This decides OD-15. | S3, S6a |
-| D-11 | Classify all 44 `ExpenseDao` `SUM(`, plus AVG/COUNT-as-spending, into: spending aggregate / dedupe BLOCKING or RESOLVER / non-spending (balance, reconciliation, income, raw). For each, record how it handles isNotMine (WHERE filter vs `CASE … myShareAmount` expression). Do the same per-query check for `GroupExpenseDao`, `BudgetAdjustmentDao`, `SplitItemAssignmentDao` and the 3 `SUM(` in TLC. List Kotlin readers that sum raw `.amount` instead of `effectiveAmount` (savings engines, spec Q13). | S4a–S4d |
+| D-11 | Classify all 44 `ExpenseDao` `SUM(`, plus AVG/COUNT-as-spending, into: spending aggregate / dedupe BLOCKING or RESOLVER / non-spending (balance, reconciliation, income, raw). For each, record how it handles isNotMine (WHERE filter vs `CASE … myShareAmount` expression). Do the same per-query check for `GroupExpenseDao`, `BudgetAdjustmentDao`, `SplitItemAssignmentDao` and the 3 `SUM(` in TLC. (W0 re-run 2026-10-21: TLC has 0 raw `SUM(`, so the stale "3" is corrected here.) List Kotlin readers that sum raw `.amount` instead of `effectiveAmount` (savings engines, spec Q13). | S4a–S4d |
 | D-12 | Does the FG-26 doc-traceability guard require symbols named in `LEGAL_PATHS.md` / `ENGINE_INTERACTION_MAP.md` to exist in source? | S1 (docs placement) |
 | D-13 | After the Release-1.0 merge: Room version (does release bump past 151?), and diffs touching this plan's write sets (`ExpenseDao`, TLC, `BackupVerifier`, `DatabaseMigrations`, `AppDatabase`, `NavigationDestination`, `FeatureConfig`, `MainActivity`, export files, `BillReminderManager`). | All slices |
 | D-14 | How `ExpenseSource` and `TransactionUpdateKind` are persisted (name string vs ordinal), and how unknown values behave in `Converters.kt`, JSON/CSV importers and backup restore. | S3 |
@@ -395,10 +395,10 @@ D-1..D-8 are being resolved by the parallel scout. D-9..D-20 are extra planner i
 - **Stop-and-ask:** if the briefing consumes the same `CashFlowCalculator` / forecast output object as the UI, so it cannot be separated without restructuring. Then those payloads stay out of v1 and the owner must be told.
 
 ### S8b — Projection wiring (cash flow, forecast, stress, recurring sibling projection)
-- **Goal / invariants:** INV-15, INV-29 (forecast side), INV-16 (USD entries use the engine's existing multi-currency handling; if a rate is unavailable the item is marked partial or omitted, never 0 and never summed as EUR).
+- **Goal / invariants:** INV-15, INV-29 (forecast side; SUPERSEDED by A15: the forecast-baseline exclusion lives only on a separate installment-aware entry point, never on `assemble()` as called by FinancialWeatherRepository), INV-16 (USD entries use the engine's existing multi-currency handling; if a rate is unavailable the item is marked partial or omitted, never 0 and never summed as EUR).
 - **Write set (source):**
   - `M:domain/cashflow/CashFlowCalculator.kt`
-  - `M:domain/forecasting/ForecastInputAssembler.kt` (projected entries + exclude installment-linked history from baselines)
+  - `M:domain/forecasting/ForecastInputAssembler.kt` (projected entries + exclude installment-linked history from baselines) - SUPERSEDED by A15: do NOT modify `assemble()`; use a separate installment-aware entry point in a separate file feeding the UI flow only.
   - `M:domain/forecasting/FinancialStressForecastEngine.kt`
   - New `M:domain/installment/projection/InstallmentUpcomingProjection.kt`: sibling of `M:domain/recurring/RecurringPlanProjectionService.kt`, which stays unchanged, per the OQ-25 recommendation.
   - The single Home upcoming merge point (per D-15).
@@ -422,6 +422,7 @@ D-1..D-8 are being resolved by the parallel scout. D-9..D-20 are extra planner i
   - E1 exported with the marker; the total excludes 600.00;
   - a REVERSED installment is marked;
   - re-importing the file creates no flag.
+- **Amended by owner-approvals 41/42:** importers SKIP marked rows (not "ignore the marker"); Xero, FreshBooks and QuickBooks IIF EXCLUDE flagged rows (filtered pre-checks in AccountingExportRepository and ExportOptionsViewModel); generic CSV/JSON, PDF and business report keep the marker.
 - **Depends on:** S3; D-3. Can run in parallel with S5–S8.
 - **Gates:** privacy-security-guardian. reviewer-strict YES (money, export).
 - **Validation profiles:** `targeted-unit-test -Filter "*Export*"`, then `unit-test-shard -ShardName domain-a-m`.
@@ -451,20 +452,21 @@ D-1..D-8 are being resolved by the parallel scout. D-9..D-20 are extra planner i
 
 ### S11 — Add expense: installments switch + currency picker (HARD gate: Release 1.0 merged)
 - **Goal / invariants:** INV-27 via `declareWithNewExpense`; INV-16; Repeat and Installments are mutually exclusive; the existing back behaviour is unchanged.
+- **SUPERSEDED (2026-10-29): see "Amendment (2026-10-29): S11 re-anchor after MEC B2/C" at the end of this file (S11a = VM and wiring, S11b = UI). The write set, tests and stop-and-ask below are historical.**
 - **Write set (source; recommended option A, installment-scoped):**
-  - `M:ui/screens/addexpense/AddExpenseSheet.kt`: installments section + EUR/USD segmented control visible only while the switch is on.
+  - `M:ui/screens/addexpense/AddExpenseSheet.kt`: installments section + EUR/USD segmented control visible only while the switch is on. (SUPERSEDED: the general MEC `CurrencySelectionControl` in INSTALLMENT mode; no loan-specific control.)
   - `M:ui/screens/addexpense/AddExpenseViewModel.kt`: installment sub-state + submit branch → coordinator `declareWithNewExpense`. The plain save path is unchanged.
   - Strings.
 - **Write set (tests):** `T:ui/screens/addexpense/AddExpenseInstallmentsTest.kt`:
   - AE-1 via the new-expense path;
   - AE-22 refusals surface as fixed strings;
-  - USD purchase+plan;
-  - FX-unavailable refusal keeps the form (D-8);
+  - ~~USD purchase+plan;~~ (SUPERSEDED: struck by A3 / amendment section 5)
+  - ~~FX-unavailable refusal keeps the form (D-8);~~ (SUPERSEDED: D-8 closed by G2-6; MEC AE-28 UI cases replace it)
   - non-installment save unchanged (regression).
 - **Depends on:** S10a, S6a, S9, S4d; D-8; currency-scope decision; Release merge.
 - **Gates:** architecture-guardian. reviewer-strict YES (money/currency, overlap file).
 - **Validation profiles:** `targeted-unit-test -Filter "*AddExpense*"`, then `unit-test-shard -ShardName runtime-ui`, then `lint`.
-- **Stop-and-ask:** if D-8 shows TLC cannot create manual USD expenses without changing the general save path. That turns this into option B and needs owner approval.
+- **Stop-and-ask:** ~~if D-8 shows TLC cannot create manual USD expenses without changing the general save path. That turns this into option B and needs owner approval.~~ (SUPERSEDED: option-B stop-and-ask struck by A3; see the amendment section 6 for the current STOP list.)
 
 ### S12a — Transactions: row menu declare sheet, chips, filter, badges, suggestions (HARD gate)
 - **Goal / invariants:** OQ-16 entry; OQ-22 auto-recorded visible marking (source badge "Installment plan" + chip "Installment n of N" as a UI join, never stored text); purchase chips "Paid in N installments" / "Not counted as spending"; "Not counted (refunded)"; AE-17 suggestion and "possible duplicate"; locked-edit messaging (INV-22); declare sheet with plan-currency picker (OD-14).
@@ -483,6 +485,7 @@ D-1..D-8 are being resolved by the parallel scout. D-9..D-20 are extra planner i
 - **Validation profiles:** `targeted-unit-test -Filter "*Budget*Installment*"`, then `unit-test-shard -ShardName runtime-ui`.
 
 ### S13 — Enablement + final acceptance
+- **Amendment (2026-10-27, S10a-1 privacy spot check C1): HARD REQUIREMENT.** Before or together with flipping `InstallmentsFeature.ENABLED`, `MainActivity.handleIntent` routes the `installments` and `installment_plan` hosts through `parseDeepLink` with a user confirmation on RequireConfirmation (or reminder taps use an explicit internal PendingIntent extra, and external links get confirmation). Add the manifest hosts in the same slice. The code gate, not the manifest, is the current boundary.
 - **Goal:** flip `InstallmentsFeature.ENABLED`; update `docs/architecture/CODEBASE_INVENTORY.md`; run end-to-end AE-6 replay and AE-23 diagnostics plus payload; confirm the whole-feature privacy and money posture.
 - **Write set:** `InstallmentsFeature` constant; inventory doc; `T:integration/InstallmentEndToEndScenarioTest.kt` (AE-1 → AE-11 lifecycle, AE-6, AE-23).
 - **Gates:** reviewer-strict (Opus, final acceptance) by a reviewer other than any slice reviewer. All three guardians sign off.
@@ -607,7 +610,7 @@ Recommendation: A. It satisfies "add a currency picker to Add expense, minimal s
 - Cross-currency conversion of plan totals (needs RateBasis).
 
 Out-of-scope observations for the orchestrator, not fixed here:
-- `BackupVerifier.kt:522` ignores `sourceType`.
+- `BackupVerifier.kt:522` ignores `sourceType`. (W0 re-run 2026-10-21: this reference is stale. No `sourceType` appears in BackupVerifier; the orphan checks sit at ~:517-530 and cover receipt_expense_links, recurring_occurrences and budget_forecasts only. S2b must add any plan-table checks.)
 - Whether recurring upcoming-payment event metadata reaches any export is unverified.
 
 Files referenced: `C:\Users\panos\Desktop\Cost-agregator\docs\features\loan-installments\gate2-decisions.md`, `C:\Users\panos\Desktop\Cost-agregator\docs\features\loan-installments\domain-spec.md`, `C:\Users\panos\Desktop\Cost-agregator\docs\features\loan-installments\impact-map.md`, `C:\Users\panos\Desktop\Cost-agregator\docs\features\loan-installments\ux-flows.md`, `C:\Users\panos\Desktop\Cost-agregator\workflows\active\loan-installments-handoff.md`, `C:\Users\panos\Desktop\Cost-agregator\scripts\validation-runner.ps1`, `C:\Users\panos\Desktop\Cost-agregator\config\validation\test-shards.json`.
@@ -629,3 +632,901 @@ Merged after the plan was written; scout (Sonnet, read-only). Unresolved items r
 | D-7 | RESOLVED | 20 defaults in `MerchantCategoryProvider.kt:11-32`; **no Loan/Mortgage/Bills/Debt category**; new defaults not back-filled for existing users | Gate item 5: keyword match step yields nothing → fallback/no preselection |
 | D-8 | PARTIAL | Add expense has no currency choice (home currency only); private `CurrencyPicker` in `ReceiptScanScreen.kt:1379` + inline in `ReviewScreen.kt:1749`; TLC manual-USD/FX-unavailable behaviour untraced | S11: extract picker; TLC FX behaviour first task |
 | D-9..D-20 | OPEN | Planner inputs | First task of the slice that needs them |
+
+---
+
+## S0 amendment — G2-6 convergence + S0 refresh (feature-planner, 2026-10-23; persisted by orchestrator)
+Authority: MEC Gate 2 G2-6 (pre-approved plan edits), loan gate2 IM-3/IM-4, S0 refresh in the handoff. **Where this section and the slice text above differ, this section wins.** "MEC INV-18" = the manual-entry-currency invariant (not loan INV-18).
+
+**A1. S6a**
+- Goal adds MEC INV-18 (AE-28).
+- `declareWithNewExpense` calls `createExpenseDbOnlyV2` with `userPresentRate = UserPresentRateRequirement(entryZone)`. `entryZone` comes from the caller and is never persisted or logged. This is the only place the flag is set; `declareOnExpense`, `recordDueEntries` and every other op leave it null. The file path is pinned by `ManualEntryCurrencySetterAllowListGuardTest`, so a rename needs owner approval (MEC N16).
+- On `CreateExpenseResult.ValidationFailed` with non-null `rateRefusal`, return a typed refusal (reason mapped from `RateRefusalReason`) BEFORE inserting the plan/entries, so the whole declaration aborts. It is a normal return from the `withTransaction` lambda: no throw, no rollback flag, empty post-commit batch.
+- Other non-Created results write nothing further. `DuplicateSkipped`/`InsertConflict` on the purchase map to bounded refusals.
+- Tests (`…DeclareTest.kt`):
+  - AE-28: USD 1,200.00 with an empty rate table is refused `NO_RATE` (no purchase/plan/entries); with the 15 Oct rate, all three commit together.
+  - G2-12 pin test with real in-memory Room + real TLC: after a refusal, expenses/plan/entry tables are unchanged, `transaction_events` gains exactly the AE-20 count (2 rows) with no amount/currency/merchant/date/zone, and there are zero post-commit actions.
+  - Contrast test: the AE-6 injected throw rolls back everything incl. events.
+- **Decision (recommended, adopted):** the outer transaction COMMITS TLC's refusal events. TLC writes them via best-effort (`bestEffortEvent`, TLC.kt ~:810), so only a normal return keeps them, which is what G2-12 ("events commit, no row") requires.
+- STRICT_EXTERNAL_ID replay caveat (also in the S3 re-check):
+  - A replay returns `DuplicateSkipped(existingExpenseId)` or `InsertConflict`, never `Created`, and each is mapped explicitly.
+  - `DuplicateSkipped` is adopted only if the existing row belongs to this entry; `InsertConflict` rolls back with a bounded refusal. The AE-6 retry test pins this.
+- Depends: S3, S4d, S5, S2b; MEC A2 (committed 8195250f); D-10 (answered). The OD-15 stop-and-ask is removed.
+
+**A2. S7a**
+- `recordDueEntries` never sets `userPresentRate` (always null, so the create is unflagged; MEC AE-29). **No `AUTO_RECORD_DEFERRED_FX` branch.** Any future loan-local deferral must call `RateEligibilityEvaluator` (never re-implement the rule) and goes to the owner.
+- `InstallmentRecordDueEntriesTest` adds the AE-29 null-flag test: the request handed to TLC has `userPresentRate == null`. A USD entry with an empty rate table is Created with the sentinel triple (0.0 / "" / 0.0) and exactly one MISSING_RATE diagnostic; there is no RateRefusal and no MANUAL_SAVE_BLOCKED_NO_RATE.
+- Shard `runtime-ui` confirmed (covers `service.*`, `ui.*`).
+- R15 replaced: | R15 | USD auto-record without a rate yields a sentinel row | Low (money display) | No loop is possible: auto-record is unflagged and never refused (MEC AE-29). The row is excluded from comparable-home-value totals; display via R17/S8b. AE-29 test in S7a. |
+- Follow-up (domain-modeler, before S7a): domain-spec.md ~:577 and ux-flows.md ~:484 still describe AUTO_RECORD_DEFERRED_FX ("Waiting for an exchange rate").
+
+**A3. S11** — new title: "Add expense: installments switch on the general currency control (Release 1.0 merge gate satisfied; needs MEC B2 and C)".
+- The currency control is MEC slice B2's general control in `mode = INSTALLMENT`: options ∩ {EUR, USD}; an unsupported selection becomes Unset and is restored when installments are switched off (MEC UX-Q-6). No loan-specific currency control or plan-currency row. The submit branch passes the entry zone to `declareWithNewExpense`.
+- Tests:
+  - Struck: "USD purchase+plan" and "FX-unavailable refusal keeps the form (D-8)".
+  - New: AE-1 via the new-expense path; AE-22 refusals as fixed strings; MEC AE-28 UI (JPY → Unset in installment mode; a NO_RATE refusal keeps the form with the shared `mec_` copy, e.g. `mec_block_stale` / `mec_block_unsupported`); non-installment save unchanged.
+- Depends: S10a, S6a (declares the flag), S9, S4d, MEC B2 and C. D-8 and the currency-scope decision are closed by G2-6.
+- Option-B stop-and-ask struck. New stop-and-ask: installment mode needs the general control changed beyond B2's INSTALLMENT mode.
+- D-8 (addendum table): ANSWERED (G2-6), TLC refuses only flagged creates.
+- Requested topics §1 and Human decisions item 2: SUPERSEDED by G2-6.
+- OD-14 (plan currency ≠ purchase currency) stays for S12a's existing-expense declare sheet; G2-6 removes only the Add-expense plan-currency row.
+
+**A4. S1** — D-12 contingency deleted. D-12 resolved:
+- FG-26 (`verify_guard_docs_truth.py`) checks paths only (config/guards, config/baselines, docs/ci, scripts/ci, scripts/db_guard, scripts/guardrails), in indexed docs only (LEGAL_PATHS is indexed; ENGINE_INTERACTION_MAP and CODEBASE_SEGMENTS are not). All doc edits stay in S1.
+- Trap: any `scripts/ci/...` path named in LEGAL_PATHS must exist in the same commit. Refresh `lastReviewedSha` in `docs/ci/GUARD_DOCUMENT_INDEX.yml` only if the verifier demands it.
+- The "if it moved here per D-12" doc lines in S3/S6a/S7a are dropped. R12: resolved.
+
+**A5. OD-15 not used** (D-10: `DatabaseWriteBarrier.runWrite` re-entrant :54-69; precedent ManualExpenseRepository :191-221).
+- S3 stop-and-ask becomes "if re-checking against committed A2 shows the DbOnly op does not join the outer transaction". S3 depends on S2 and D-14.
+- Human decisions item 10 and the OD-15 bullet in topic 4 are removed. R4: Low; D-10 answered; reconcile R1 remains the backstop.
+
+**A6. S5** — STOP-AND-ASK (owner, at S5 start): `domain/installment/**` and `domain/schedule/**` are in no shard of `config/validation/test-shards.json`.
+- Required config edit, no new shard:
+  - `com.yourname.expensetracker.domain.installment.*` → `domain-a-m` (between income and intelligence);
+  - `com.yourname.expensetracker.domain.schedule.*` → `domain-n-z` (between savings and sideeffect).
+- Until approved, S5/S6a-c/S7a validate with `targeted-unit-test` filters only.
+- `config/validation/test-shards.json` is added to the S5 write set.
+
+**A7. Dependency summary**: `[Release 1.0 merged: satisfied] + S10a,S9,S4d + MEC B2 + MEC C → S11`.
+
+**A8. S6b review amendment (2026-10-26; orchestrator, owner standing approval)**
+- **Spec 7.3 "link a captured charge as the payoff" is NOT implemented in S6b.** It is owned by S10 (the payoff UI) plus a new coordinator op `linkPayoff(planId, expenseId, payoffEpochDay, ...)`, to be added in that slice. The op must follow the same rules as `payOff` (cancel the SCHEDULED entries, insert the PAYOFF entry PAID and linked to the existing expense, plan to PAID_OFF, one transaction) but without creating an expense, and must use the existing exclusivity checks (spending type, same currency, not linked elsewhere).
+- **BINDING before any payoff UI ships:** until `linkPayoff` exists, the payoff UI must not offer a flow that lets the user keep a captured payoff debit AND run `payOff` (which creates the PAYOFF expense): that double counts the payoff. S10 must either ship `linkPayoff` with the payoff UI or leave the payoff entry point hidden.
+- S6b operation semantics changed by the review (details in the handoff section "S6b review fixes"): `refund(true)` on a COMPLETED plan is AlreadyInState (D-a); `editDetails` may edit name/lender/category of a COMPLETED plan, currency and mode stay ACTIVE-only, and gained a `todayEpochDay` parameter (D-b); CONFIRM -> AUTO_RECORD is refused while a SCHEDULED entry is due on or before today, which S7a may rely on (D-c, BINDING S7a note); `extend` / `changeDueDay` place entries by position among non-cancelled REGULAR entries from `firstDueDate`, and `changeDueDay` refuses a date before `declaredOnDate` (D-d).
+
+Owner decisions from this amendment: only the A6 test-shards.json edit (at S5). Everything else falls under G2-6 / IM-3 / IM-4.
+
+**A8. Carry-forwards from the S1 privacy-security-guardian review (2026-10-23; binding on later slices)**
+- **S2b:** IM-9 default = every `redactsRawText` mode (and ANONYMIZED_EXPORT) blanks plan `displayName` and `lenderLabel`. This is an owner confirmation at the S2b stop-and-ask, because today ExportAnonymizer strips expense merchant/notes in NO mode (D-5), so "mirror expense free text" would strip nothing. ExportAnonymizer lives in data/privacy (on the cloud-guard surface), so S2b references plan tables by SQL table/column strings, never plan entity types.
+- **S8a:** any new cloud-bound assembler file must be on the `installment_cloud_reachability` surface (exact file or a matching name pattern), with a negative fixture. Known cloud inputs outside the surface today: WarrantyTrackerRepository → CloudWarrantyExtractionService; AiChatRepositoryImpl history; DashboardDataProvider / FinancialWeatherRepository, which build the briefing input shared with Home. None is an S8b reader; re-check at S8a.
+- **S8a AE-23 strengthened (differential):** the same fixture with and without plans must produce an identical `DashboardBriefingInput` and prompt, AND an identical TransactionInsight input. Cover the DailyBriefingWorker path too. Derived sums (totalCommitted, totalLikely, discretionaryBudget, headline/summary) must not change. A literal-string check alone is insufficient. The shared Home/briefing provider makes the S8a stop-and-ask likely.
+
+**A9. Carry-forwards from the S1 architecture-guardian review (2026-10-23; binding on later slices)**
+- **S2b (Medium):** InstallmentPlanArchitectureGuardTest rule PLAN_TABLE_RAW_SQL_WRITE (~:166-193) exempts only the coordinator and `data/database/dao/`. Infrastructure writers need exact-path exemptions covering the raw-SQL rule only, each with a self-check; no package-wide grants:
+  - `data/privacy/ExportAnonymizer.kt` (A8 IM-9 `UPDATE installment_plans SET displayName…`);
+  - `data/rescue/FinancialRescueCoordinator.kt` (`INSERT OR REPLACE INTO <table>`);
+  - `data/database/AppDatabase.kt` / `DatabaseMigrations.kt` (only for future rebuild/backfill migrations; S2's CREATE TABLE/ALTER is not matched);
+  - `DatabaseBackupRepositoryImpl.kt` only if restore fixups touch plan tables.
+- **S2:** add a self-check that the S2 DDL (`CREATE TABLE/INDEX installment_*`, `ALTER TABLE expenses ADD COLUMN`) is not flagged.
+- **S2/S2b/S6c (Low):** LEGAL_PATHS "ALL plan/entry writes" and "ONLY writer of spendingExclusionReason" must name the infrastructure exceptions (migrations, rescue copy, export anonymizer, wipe) and get db_ownership_policy entries. If plans carry `categoryId`, a CategoryDao-style reassign would be a second writer and must be fenced.
+- **S5 (Low):** `domain/schedule/ExpenseScheduleLinkPolicy.kt` sits outside `domain/installment/`, so add that exact file to `PLAN_CODE_PREFIXES` (~:627-631) in the arch guard test. Segment 40 now lists it.
+- **Info:** `stripCommentsKeepStrings` doesn't handle nested quotes inside string templates (`"${f("a//b")}"`); it affects the raw-SQL rules only. Optional hardening.
+
+**A10. Carry-forwards from the S2 reviews (2026-10-23; binding)**
+- **S2 policy rows moved to S6a:** the S2 write-set item "db_ownership_policy.yml + signatures accounting for InstallmentPlanDao" moves to S6a. db_access skips *Dao.kt and is deny-by-default per caller, so the first caller (the coordinator) must add its rows. Evidence: architecture-guardian + room-migration-guardian.
+- **S3 (Medium, binding):** TransactionLifecycleCoordinator.updateExpense writes the caller's whole row (`expenseDao.update(finalExpense)`, ~:1420-1462). A stale editor save would silently reset spendingExclusionReason. Fix in S3: `finalExpense.copy(spendingExclusionReason = existing.spendingExclusionReason)` (existing is read in-txn ~:1338), plus a stale-save regression test. The other TLC partial updates use existing.copy (safe); create paths correctly start NULL.
+- **S2b:**
+  - FinancialRescueCoordinator (~:385-398) copies a fixed baseCols list that omits spendingExclusionReason and does not copy the plan tables. A rescued purchase would become full spending again (double count). S2b must copy the flag + plan tables together, or deliberately drop both and document it.
+  - The ExportAnonymizer stripping test must cover ANONYMIZED_EXPORT and every redactsRawText mode for displayName/lenderLabel.
+  - ExportAnonymizer is on the cloud-guard surface: use no Kotlin identifier containing "installment" (SQL strings are masked and fine), or ask the owner before any exemption.
+  - Wipe / anonymizer infrastructure exceptions per A9.
+- **S6a:**
+  - insert entries only as SCHEDULED + unlinked (test it);
+  - deletePlanById must clear the purchase expense flag in the same transaction;
+  - re-read the plan status in-txn before claimEntryForExpense;
+  - pass only bounded enum names as statusReason/adjustReason;
+  - map ABORT constraint exceptions to reason codes, never persisting/logging messages.
+
+**A11. (owner 2026-10-24, owner-approvals items 17, 18; binding)**
+- **S6c:** must run plan reconcile R1–R5 under the backup barrier before the snapshot verify (S6a exposes the reconcile entry point), so a backup right after an expense delete/update never fails on a not-yet-reconciled plan; genuine unrepairable orphans still fail closed.
+- **Rescue:** FinancialRescueCoordinator clears orphan INSTALLMENT_PURCHASE flags AND orphan INSTALLMENT_REVERSED flags (not the non-null linkedExpenseId of any REVERSED entry) in the import transaction, also when installmentTables is empty. Accepted cost: in that corrupted-source case the refunded installment counts as spending again.
+
+**A12. S4a–S4d final rollout (feature-planner 2026-10-24; from docs/features/loan-installments/discovery-d11-d9.md + source re-check; binding; A12 wins over the S4a–S4d text above)**
+- A12.1 Edit rule (neutral while flags are NULL):
+  - W+CASE (`WHERE … isNotMine = 0` + `${EFFECTIVE_AMOUNT_SQL}`/COUNT in SELECT): replace only the token `isNotMine = 0` with `${SpendingInclusionSql.SPENDING_PREDICATE}`; SELECT unchanged.
+  - W row-valued (percentile list, ORDER BY effective amount LIMIT 1) and W-only COUNT: same WHERE-only swap.
+  - Alias e: `e.isNotMine = 0` → `${SpendingInclusionSql.SPENDING_PREDICATE_E}`.
+  - CASE-only (S4d business): swap only the SELECT amount expression `${EFFECTIVE_AMOUNT_SQL}` → `${SpendingInclusionSql.EFFECTIVE_AMOUNT}`; the inline CASE copy in getBusinessExpensesBetweenByCurrency → `COALESCE(${SpendingInclusionSql.EFFECTIVE_AMOUNT}, 0)`; never add a WHERE (would change not-mine COUNT, visible).
+  - Always the qualified form `${SpendingInclusionSql.X}` with an exact class import (room_inventory resolves dotted Object.CONST via class imports; member imports fail closed as DB_ROOM_QUERY_UNCLASSIFIABLE).
+  - Never blanket-replace; never edit row-set/list queries, the dedupe BLOCKING/RESOLVER families (~440–1290 incl. getDuplicateCandidatesInRange ~1254; INV-8) or deposit sums. ERROR-deprecated queries ARE included (live @Suppress callers); deleting/un-deprecating them is out of scope.
+- A12.2 Batches (fun lines approx.):
+  - S4a budget + MultiCurrencyRepository hub (15): getTotalSpentBetweenByCurrency 1594, getCategoryTotalsBetweenByCurrency 1645, getMerchantTotalsBetweenByCurrency 1667, getMonthlyTotalsBetweenByCurrency 1686, getAllSpentBetweenByCurrency 1708, getAllCategoryTotalsBetweenByCurrency 1726, getAllMerchantTotalsBetweenByCurrency 1747, getAllMonthlyTotalsBetweenByCurrency 1764, getCategorySpentInPeriod 1321, getCategorySpentInPeriodFlow 1333, getCategorySpentTotalsInPeriod 1350, getEffectiveSpentBetweenForCategory 1568, getMonthlySpendingTotals 1784, getMonthlySpendingTotalsBetween 1805, getMonthlySpendingTotalsByCategoryBetween 1827. The whole *ByCurrency family lives here only.
+  - S4b dashboard (11): getTotalSpentFlow 317, getTotalSpentBetween 1546, getCategoryTotalsBetween 1858, getPurchaseCount 1861, getSpendingDailyTotalsBetween 1884, getTotalForPeriod 1901, getWeeklyTotalsForPeriod 2408, getMonthlyTotalsForPeriod 2426, getDailyTotalsWithDatesForPeriod 2444, getAverageDailySpend 2459 (swap inside the subquery), getCategoryBreakdown 2477 (alias e).
+  - S4c analytics/trends/merchant/location (13): getAmountsForPercentileCalc 1432, getMerchantTotalsBetween 1843, getCategoryTotalsForPeriod 1926, getMerchantStats 1949, getAllMerchantStats 1971, getTopMerchantsForPeriod 1995, getLargestExpenseForPeriod 2007, getLargestExpenseForMerchant 2020, getDailyTotalsForPeriod 2051, getRecurringCandidates 2076, getDayOfWeekPattern 2093, getLocatedMerchantTotals 2262, getLocatedMerchantTotalsByCurrency 2286 (WHERE swap only; inline literal stays). NL RawQuery builder unchanged.
+  - S4d: CASE-only SELECT swap (5): getTotalBusinessExpensesBetween 2508, getBusinessExpensesBetweenByCurrency 2525, getBusinessExpensesByCategory 2542, getBusinessExpensesByProject 2559, getBusinessCategoryCurrencyTotals 2579; exemption markers; guard. GroupExpenseDao/BudgetAdjustmentDao/SplitItemAssignmentDao OUT of the write set; WarrantyDao IN (markers only); Kotlin-reader list EMPTY.
+- A12.3 Decisions: searchMerchants 1403 → marker SUGGESTION; countExpensesBetween 1510 → ROW_COUNT (export count = export row set, OD-11); getCountForPeriod 1910 → ROW_COUNT (Transactions badge must match the visible list; S12a may revisit); percentile/largest adopt the predicate; NL MINE filter unchanged; WarrantyDao 99/115 → ASSET_VALUE; BackupVerifier.kt:652-654 SEMANTIC_AGGREGATE_QUERIES never touched (pre-existing defect: non-existent column + EXPENSE/INCOME types — owner O3, separate ticket); AppDatabase.kt:545 and DatabaseIntegrityScanner untouched. Q13: the location engines already sum effective amounts (LocatedExpense.amount built from e.effectiveAmount, SpendingMapViewModel :666/:689) → no change; MonthlySavingsSweepUseCase:667 private extension is shadowed by the member. Carry to S10a/S12a: single-row displays of effectiveAmount show 0.00 for a flagged purchase (e.g. ReceiptMatchingViewModel:122).
+- A12.4 IM-6 rewrite: raw_money_aggregates has no keys (fixed ALLOWLIST_FILES of 7 files; does not read @Query) → IM-6 is vacuous for SQL. ALLOWLIST_FILES frozen; no Kotlin edit may introduce a G-MONEY-RAW shape. Stop-and-ask: any ALLOWLIST_FILES edit, a new G-MONEY-RAW hit, or any Kotlin reader change.
+- A12.5 Tests: shared fixture T:data/database/dao/ExpenseDaoSpendingPredicateFixture.kt (real in-memory Room + real TLC; flags ONLY via coordinator.setSpendingExclusionDbOnly asserting Updated; tests never contain spendingExclusionReason in Expense(...), updateSpendingExclusionReason, or a raw UPDATE). Per-batch ExpenseDaoSpendingPredicate{Budget,Dashboard,Analytics,Business}Test. Every edited query: (1) neutrality — pre-edit SQL copied verbatim, run via db.query, equals the converted method over a NULL-flag fixture (isNotMine × share × type × currency × buckets); (2) flagged case — INSTALLMENT_PURCHASE/REVERSED set via TLC → result equals the reference without those rows; COUNT drops by exactly those rows. AE coverage: S4a AE-24, AE-1 aggregate, AE-6; S4b AE-1 getTotalForPeriod, AE-6 weekly/monthly/daily, AE-17 control, getPurchaseCount; S4c AE-6 merchant totals/stats, largest never E1, percentile has no 600, recurring candidate 12×50; S4d AE-1 business + guard fixtures.
+- A12.6 S4d guard: scripts/verify_spending_predicate_usage.py + test; id spending_predicate_usage; no baseline/allowlist; exit 2 on an empty surface. Rule 01: any @Query in production data/database/dao/*.kt naming `expenses` in FROM/JOIN with SUM/AVG/TOTAL/COUNT/MIN/MAX must reference a qualified SpendingInclusionSql.{SPENDING_PREDICATE, SPENDING_PREDICATE_E, EFFECTIVE_AMOUNT, EFFECTIVE_AMOUNT_E} or carry a marker `// spending-exempt: <REASON>` (Kotlin line comment above @Query; SQL byte-identical). Rule 02: REASON ∈ {DEDUPE_BLOCKING, DEDUPE_RESOLVER, NON_SPENDING_INCOME, ROW_COUNT, NON_MONEY, SUGGESTION, ASSET_VALUE}; unknown reason / marker without @Query / marker + SpendingInclusionSql reference fail. Rule 03 (INV-8): a DEDUPE-marked query referencing SpendingInclusionSql fails. Markers: NON_SPENDING_INCOME 1616/2107/2119/2125; ROW_COUNT 331/358/1510/1513/1910/2149/2153; NON_MONEY 1864, 2346; SUGGESTION 1403; ASSET_VALUE WarrantyDao 99/115; DEDUPE_* every RP-11 family query. The first report-mode run must list exactly this set; anything unclassified = stop-and-ask. Registration per the S1 precedent (guard_registry, SUITE_GUARD_ORDER, test_run_static_guard_suite, test_gr10b pins +1, GR-10B matrix row, generate_guard_docs, LEGAL_PATHS). Stop-and-ask: convert one CASE-only query first and run db_access; DB_ROOM_QUERY_UNCLASSIFIABLE → STOP (a resolver change needs the owner).
+- A12.7 Validation per batch (serial): (1) targeted "*ExpenseDaoSpendingPredicate*,*SpendingInclusionParity*,*TransactionLifecycleCoordinatorSpendingInclusion*,*ExpenseDaoTest*,*ExpenseRepositoryAssistantSqlGolden*,*ExpenseRepositoryAmountSemanticsSql*,*ComparableHomeValueSqlParity*" (golden/parity tests confirmed present in this worktree); (2) registered-guard db_access; (3) shard data; (4) shard integration-golden. S4d also: spending_predicate_usage, raw_money_aggregates, static-guards, shards domain-a-m, domain-n-z, architecture-contracts. Gates: architecture-guardian + reviewer-strict on every batch; S4d guard review (FG-02/06/07/17/23).
+- A12.8 D-13: the main checkout (feature/ai-evolution) has uncommitted ExpenseDao.kt additions at ~:86-117 and ~:156-195 only (orchestrator diff 2026-10-24) — no A12 query touched; keep diffs token-level.
+- OWNER questions (needed before S4d): O1 close plan-gate item 7 as "no Kotlin raw-.amount changes" (recommend YES); O2 INV-1 applies to business/tax totals (TaxEstimator:292) — a declared business purchase counts 0, installments count when paid; COUNT columns keep including the flagged purchase (recommend YES); O3 the BackupVerifier semantic-aggregate defect → separate post-feature ticket (recommend YES). Optional confirms: WarrantyDao ASSET_VALUE; getCountForPeriod ROW_COUNT.
+
+
+## A13 — S6c sub-slicing (feature-planner 2026-10-26; binding; replaces the S6c write set at ~:327-346)
+Source: workflows/active/loan-installments-s6c-discovery.md (scout, current source). Approved by the orchestrator under the owner's standing instruction (owner-approvals item 28 session; recorded in the handoff).
+
+Common rules:
+- Every new cross-module dependency is `Lazy<...>`.
+- CancellationException is always rethrown.
+- Diagnostics use a class name or a bounded enum only.
+- Every `Done.postCommit` batch is dispatched through the executor TLC uses, never dropped. Confirm that class at the start.
+- No DAO write outside the coordinator.
+- No schema change. The Room schema JSON stays byte-identical.
+- DB policy pins stay at 452. Reads add no rows; prove it with `registered-guard db_access`.
+- No db_raw_query_classification entry (only @Query reads).
+- S6a/S6b fixtures are reused read-only. If a fixture must change, the sub-slices that touch it run serially.
+- Docs belong to S6c-5 only.
+- Tier is T3 unless noted.
+
+### S6c-1 — TLC post-commit reaction (R2/R4/R5, §7.6)
+- Source: `domain/transaction/lifecycle/TransactionSideEffectPlanner.kt`. Possibly `SideEffectCategory`.
+- Tests: new `domain/installment/lifecycle/InstallmentExpenseReactionTest.kt`, plus ctor updates wherever `TransactionSideEffectPlanner(` is built.
+- Closes:
+  - AE-11 delete part: entry SCHEDULED, recordGeneration+1, autoRecordConsumed unchanged, plan ACTIVE.
+  - AE-16 entry fields ("no re-create" stays in S7a).
+  - AE-25.
+  - AE-20: a category edit leaves plan rows and events unchanged.
+  - §7.6: a currency or type change unlinks.
+- Constraints:
+  - `planDeleted` → `onExpenseDeleted`.
+  - `planUpdated` → `onExpenseChanged`, only for FULL / TYPE / CURRENCY / TRANSFER_DETAILS / PAYMENT_CORE. Use an exhaustive `when`; a superset is safe because the reaction is idempotent.
+  - SPENDING_INCLUSION never reacts. This breaks the loop on the coordinator's own flag writes.
+  - planCreated and planBulkUpdated are unchanged; reconcile is the backstop.
+  - The action follows `makeRecurringUnlinkAction`. It returns FailedRetryable on a non-Done result, on plansFailed or orphanFlagsFailed > 0, on an exception, or on a closed barrier.
+  - Loop test with the real planner, coordinator and TLC: at most one further invocation, which changes 0 rows, and no recursion.
+  - An expense with no plan produces no plan writes.
+- SideEffectCategory: (a) add INSTALLMENT_PLAN if no guard, allowlist or persisted column references the enum; otherwise (b) reuse the closest existing value.
+- Gates: architecture-guardian (FG-14), reviewer-strict.
+- Validation: targeted `*InstallmentExpenseReaction*,*TransactionSideEffectPlanner*`; then shards domain-n-z and domain-a-m.
+
+### S6c-2 — Recurring link-policy consultation (INV-4/5)
+- Source:
+  - `domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt`.
+  - New port `domain/installment/lifecycle/InstallmentEntryLinkReader.kt` (`linkedEntryIdFor(expenseId)`).
+  - New `data/repository/InstallmentEntryLinkReaderImpl.kt`, which uses `getEntryByLinkedExpenseId`.
+  - One binding in the DI module that binds InstallmentExpenseFactsReader.
+- Tests: recurring coordinator tests (plus ctor updates); new `InstallmentEntryLinkReaderImplTest.kt`.
+- Closes:
+  - AE-13 first bullet: auto-link skips the installment expense and the occurrence stays PLANNED.
+  - A manual link of an installment-linked expense or a plan purchase record is refused.
+  - An existing link to the same occurrence still passes.
+- Constraints:
+  - The single gate is `isExpenseEligibleForRecurring` (:799), made suspend.
+  - Relations come from `InstallmentLinkRelations.forExistingExpense`, never re-derived from spendingExclusionReason.
+  - The decision is made by `ExpenseScheduleLinkPolicy.mayLinkToRecurringOccurrence`.
+  - The read runs inside `claimLinkSuppressInWrite`'s transaction.
+  - A refusal reuses the existing ineligible outcome.
+- Gates: architecture-guardian, reviewer-strict.
+- Validation: targeted `*RecurringLifecycleCoordinator*,*InstallmentEntryLinkReader*,*ExpenseScheduleLinkPolicy*`; then `registered-guard db_access`; then shards domain-n-z and data.
+
+### S6c-3 — INV-29 detector exclusion (T2; depends on S6c-2, which owns the port and impl)
+- Source:
+  - `domain/logic/RecurringExpenseEngine.kt`.
+  - `domain/forecasting/MergedRecurringPatternsProvider.kt` (:39 calls the pure detector directly).
+  - `data/database/dao/InstallmentPlanDao.kt`: add `getLinkedExpenseIds()` (`SELECT DISTINCT linkedExpenseId FROM installment_entries WHERE linkedExpenseId IS NOT NULL`).
+  - Port and impl: add `linkedExpenseIds(): Set<Long>`.
+- Tests:
+  - New `domain/logic/RecurringExpenseEngineInstallmentExclusionTest.kt`.
+  - `InstallmentPlanDaoTest`.
+  - Ctor updates in the RecurringExpenseEngine tests, MergedRecurringPatternsProviderTest, InsightsEngineValidationTest, e2e/AnalyticsPipelineTest and e2e/NotificationParserDashboardTotalSeamTest.
+- Closes:
+  - INV-29 detection half.
+  - AE-11 last bullet: 12 × 50.00 installment expenses produce no pattern.
+  - Control: the same series unlinked is still detected.
+  - With no plans, the output is identical to today.
+- Constraints:
+  - The engine owns the rule. A new suspend `detectPatterns(...)` reads the id set once, filters by snapshot id, then delegates to the pure `detectPatternsFromSnapshots`.
+  - Route getPatterns(), getPatternsFromSnapshots (which covers AnalyticsViewModel), getPatterns(List<Expense>) and MergedRecurringPatternsProvider through it.
+  - A test asserts that no production file outside the engine calls `detectPatternsFromSnapshots(`.
+  - RecurringPattern is unchanged. No new catch. ForecastInputAssembler baselines stay in S8b.
+- Gates: architecture-guardian; standard review.
+- Validation: targeted `*RecurringExpenseEngine*,*MergedRecurringPatternsProvider*,*InsightsEngineValidation*,*AnalyticsPipeline*,*NotificationParserDashboardTotalSeam*,*InstallmentPlanDaoTest*`; then db_access; then shards domain-a-m and data.
+
+### S6c-4 — Backup pre-reconcile (INV-30, owner item 17, F8)
+- Source:
+  - New `domain/installment/lifecycle/InstallmentPreBackupReconciler.kt`. It runs reconcile(), dispatches the batches, and returns Reconciled or NotReconciled.
+  - `data/repository/DatabaseBackupRepositoryImpl.kt`: Lazy injection, and the secondary test ctor (:112-147).
+- Tests: new `InstallmentPreBackupReconcilerTest.kt` and `data/repository/DatabaseBackupRepositoryPreReconcileTest.kt`; ctor updates in the backup tests.
+- Closes:
+  - AE-12 backup half.
+  - Item 17: a backup right after an unreacted expense delete or update passes verify.
+  - plansFailed or orphanFlagsFailed > 0, or an exception, fails closed before the snapshot.
+- Constraints:
+  - Only in `runCostBackupExport`: after the privacy gate (~:670) and before `enterAndDrain` (:678), while the mode is still NORMAL.
+  - Never inside a runWrite (that throws MAINTENANCE_DRAIN_REENTRANT).
+  - On abort, use an existing failure outcome. On cancellation the mode stays NORMAL.
+  - BackupVerifier is untouched. Test: an orphan injected after the reconcile still fails verify.
+  - exportDatabase (debug) is excluded.
+  - createSafetyBackup gets the call only if it runs in NORMAL mode and runs the orphan verify. Never inside restore maintenance.
+- Gates: room-migration-guardian, reviewer-strict.
+- Validation: targeted `*InstallmentPreBackupReconciler*,*DatabaseBackupRepository*,*BackupVerifier*`; then shards data and domain-a-m.
+
+### S6c-5 — D-18 restore + docs (T2; after S6c-1..4)
+- Docs:
+  - LEGAL_PATHS :899-907, :1667 and :1669: mark as implemented.
+  - Add LEGAL_PATHS rows for the backup pre-reconcile, the recurring consultation and the detector exclusion.
+  - ENGINE_INTERACTION_MAP; CODEBASE_SEGMENTS segment 40.
+- Test: new `data/repository/InstallmentRestoreReconcileTest.kt` (AE-12 restore half): counts equal, reconcile() changes 0 rows, per-month totals equal. If there is no JVM restore fixture, use a snapshot-copy fixture.
+- Validation: targeted `*InstallmentRestoreReconcile*,*Restore*`; then shard data; then static-guards once per S6c candidate (FG-14, FG-26).
+
+### Decisions (orchestrator, under the standing owner instruction; owner FYI)
+- Item 17 = option (a): reconcile immediately before enterAndDrain. Verify is unchanged and fail-closed. A write racing between reconcile and drain fails that backup, and a retry succeeds. The literal "under the barrier" reading would need a barrier contract change (stop-and-ask) and is not taken. This matches handoff F8.
+- D-15: the detector is RecurringExpenseEngine, plus the MergedRecurringPatternsProvider reroute. RecurringPlanProjectionService has one consumer (RecurringRuleLifecycleCoordinator :46).
+- D-18 = option (b). BINDING S7a NOTE: every `recordDueEntries` run (worker and foreground) calls `reconcile()` first and dispatches its batches. No startup trigger and no persisted marker; that would be stop-and-ask, touching D-19 startup and new persisted state.
+- SideEffectCategory and createSafetyBackup coverage are decided at implementation start by the rules above, and recorded in the handoff.
+- Lanes: S6c-1 ‖ S6c-2→S6c-3 ‖ S6c-4→S6c-5. Implementers run one at a time in this worktree: they share ctor-update test files, and the lane has a single writer. Batch validation follows.
+
+### Stop-and-ask triggers
+- S6c-2 needs a new recurring result or reason value.
+- S6c-3 finds a pure-detector production caller that cannot be rerouted, or RecurringPattern must change.
+- db_access needs a policy row, or the pins move off 452.
+- A classification entry or raw query appears.
+- The Room schema JSON changes.
+- Item 17 (b) or D-18 (a) would be needed.
+- New user-visible strings (es/el sign-off).
+
+### A13.1 — S6c-1/S6c-2 review outcome (architecture-guardian, both ACCEPT-WITH-CONDITIONS; orchestrator decisions 2026-10-26)
+- S6c-1 fixes (in the S6c-1 write set):
+  - F1: correct the TRANSFER_DETAILS comment (superset per A13).
+  - F2: TransactionTargetedUpdateSideEffectsTest. The stubs assert `!db.inTransaction()`. Add coVerify of onExpenseChanged: exactly 1 for updateType, 0 for category and merchant.
+  - F4: exact AE-20 events assertion.
+- S6c-2 fixes:
+  - C2: the port gains `suspend fun isPlanPurchase(expenseId): Boolean` (planDao.getPlanByPurchaseExpenseId != null). The gate's relations use "plan row OR flag", same as the plan coordinator's link. Test: a plan row without the flag is refused.
+  - C3: the reader is injected as `dagger.Lazy` (A13 common rule; no exception).
+  - C4:
+    - tests 8a (the read runs inside the transaction, auto + manual);
+    - 8b (reconcile-unlink events: exactly one OCCURRENCE_UNLINKED, no new OCCURRENCE_PAID, planned row not FULFILLED);
+    - 8c (orphan INSTALLMENT_PURCHASE flag);
+    - 8d (golden tests use the real reader over the real DB).
+- NEW S6c-2b — the recurring generation path consults the policy (finding 1, HIGH; INV-5, domain-spec row (d) ~:521):
+  - Write set: domain/recurring/OccurrenceConflictResolver.kt (inject the shared eligibility helper); RecurringLifecycleCoordinator (extract layer 2 into the shared helper; projectOccurrences is covered by the resolver); the port/impl gain batch reads `linkedExpenseIds(): Set<Long>` and `planPurchaseExpenseIds(): Set<Long>`.
+  - InstallmentPlanDao gains `getLinkedExpenseIds()`. That read moves here from S6c-3, and S6c-3 reuses it.
+  - The new `getPlanPurchaseExpenseIds()` (@Query reads only) gets constructor updates for OccurrenceConflictResolver in tests.
+  - Batch read once per resolve, never one read per expense.
+  - Tests: createRule / activateRule / topUpHorizon with a same-day installment-linked or plan-purchase expense leave the occurrence PLANNED, write no PLANNED_FULFILLED event, and keep reminders scheduled. The normal-expense regression still gets PAID.
+  - Gates: architecture-guardian re-check of the single-gate claim; reviewer-strict at the S6c candidate.
+  - Stop-and-ask if the recurring result/reason contract would change.
+- Carried to S6c-5 (docs):
+  - S6c-1 F5: handoff :760 backstop wording; LEGAL_PATHS :899-907 runner/dispatcher wording; ENGINE_INTERACTION_MAP TLC→plan row.
+  - S6c-2 finding 4: the ExpenseScheduleLinkPolicy comment; CODEBASE_SEGMENTS seg 7/40; the LEGAL_PATHS consultation row; INV-5 stays open in docs until S6c-2b passes.
+- Guard strengthening proposals go to the OWNER (guard changes are stop-and-ask even when they strengthen):
+  - S6c-1 F3: an InstallmentPlanArchitectureGuardTest allow-list, so plan code calls only the TLC DbOnly ops (planted self-check).
+  - S6c-2 finding 5: pin the new port/impl in READ_ONLY_IMPL_PATHS / DOMAIN_PORT_PATHS.
+  - Proposed for S6c-5; not done without approval.
+
+
+## A14 — S7a split into S7a-1 / S7a-2 (feature-planner 2026-10-26; binding; replaces the S7a bullets at ~:348-370 and A2 ~:654-656)
+Inputs: workflows/active/loan-installments-s7a-discovery.md; the domain-spec amendment log (2026-10-26), INV-34 and AE-31; owner-approvals items 28–33. Approved by the orchestrator under the owner's standing instruction.
+
+**Scope**
+- Invariants: INV-12, 13, 14, 18, 21, 31, 34; FG-10/11/13.
+- Excluded: schema changes, a startup hook or persisted marker (D-19), and FX deferral (A2).
+- S7a-2 depends on S7a-1. The write sets are disjoint and the two run serially.
+
+**Code facts the plan rests on**
+- `claimEntry` (coordinator ~:1474) hardcodes `markAutoRecordConsumed = false`. Deriving the flag from `origin == AUTO_RECORDED` keeps the signature, so the policy row (~:4203) is unchanged and the pins stay at 452.
+- `InstallmentPlanTransitions.autoRecordDecision(ctx, hasCandidateCharge)` (~:441-457) already exists. `entryTransition(AUTO_RECORD)` passes `false`, so the coordinator must call `autoRecordDecision` directly with the real value.
+- No new DAO methods are needed. The reads exist: getPlansByStatus, getEntriesForPlan, getEntriesByStatusDueOnOrBefore.
+- `InstallmentRefusalCode` lacks PLAN_NAME_REQUIRED and INVALID_VALUE.
+- There is no candidate-charge reader in main. Only the pure window `InstallmentPlanReadModel.mayHaveCandidate` (~:397) exists. Sourcing `hasCandidateCharge` is the open implementation check (see the stop trigger below).
+
+### S7a-1 — coordinator `recordDueEntries(todayEpochDay, zone)`
+1. Call `reconcile()` first and dispatch its batches (D-18).
+2. Load the ACTIVE plans and keep only AUTO_RECORD ones.
+3. Run the INV-34 name check per plan before any TLC call. A blank name counts each applicable entry as PLAN_NAME_REQUIRED and writes nothing.
+4. Use one `writeTxn` per entry:
+   - re-read the plan and the entry;
+   - call `autoRecordDecision(ctx, hasCandidateCharge)`. Its `declaredOn ≤ due ≤ today` and `!autoRecordConsumed` checks are the D-c no-bypass rule.
+   - On Defer, add to the AUTO_RECORD_DEFERRED_CANDIDATE count (INV-13).
+   - On Record, call recordEntryExpense (STRICT_EXTERNAL_ID, userPresentRate = null), then `claimEntry(…, AUTO_RECORDED, …)` (CAS), then settlePlanStatus, then dispatch the batch after commit.
+5. A Failed, Refused or CAS-conflict result rolls back only that entry. Count it by enum and continue. Rethrow CancellationException.
+
+Other source changes:
+- `claimEntry` derives `markAutoRecordConsumed` from the origin.
+- Add one shared pure name check in InstallmentPlanTransitions:
+  - confirm and payoff refuse with PLAN_NAME_REQUIRED before TLC;
+  - declareOnExpense, declareWithNewExpense, createStandalone and editDetails (E3) refuse a blank name with INVALID_VALUE before any write (owner item 33);
+  - restore is untouched.
+- Add PLAN_NAME_REQUIRED and INVALID_VALUE to InstallmentRefusalCode.
+- New domain/installment/model/InstallmentDueRunReport.kt: enum-keyed counts plus the reconcile report.
+- Read the INV-13 candidate fact only through the coordinator's facts-reader port, never through ExpenseDao from plan code.
+
+Tests:
+- New T:domain/installment/lifecycle/InstallmentRecordDueEntriesTest.kt (real Room plus the TLC fixture), covering:
+  - AE-1, AE-10a/c, AE-15a/b/c, AE-16 (the latch: no re-create), AE-17 (candidate deferral only), AE-19 (DST);
+  - AE-29: null rate flag; USD with an empty rate table gives a sentinel row with one MISSING_RATE and no refusal;
+  - AE-31 in full;
+  - reconcile runs first;
+  - entries fail independently;
+  - the report and diagnostics carry no name, amount, date or id.
+- Extend the confirm, payoff, declare, create and edit suites with blank-name refusals that write nothing.
+
+Rules and gates:
+- db_ownership_policy: no change, pins stay at 452. Writes go through the existing claimEntry and settlePlanStatus rows. Prove it with `registered-guard db_access`.
+- Gates: architecture-guardian, privacy-security, reviewer-strict.
+- Validation:
+  1. targeted `*InstallmentRecordDueEntries*` plus the touched coordinator suites;
+  2. `registered-guard db_access`;
+  3. shard domain-a-m.
+
+### S7a-2 — InstallmentDueRecordingWorker
+- Source:
+  - New service/installment/InstallmentDueRecordingWorker.kt (RecurringHorizonWorker template):
+    - WorkerExecutionGuard and barriers;
+    - today and zone from TimeProvider;
+    - calls only recordDueEntries;
+    - bounded Result; never catches CancellationException.
+  - Registrations:
+    - WorkerRegistry;
+    - WorkerSpec.DEFAULTS (daily periodic, no network);
+    - WorkerGuardVerifier (the map plus findWorkerClasses);
+    - WorkerSpecScheduler.listAllWorkerNames;
+    - PrivacyRuntimeWorkerPolicy (existing local-only classification).
+  - A Workers row in LEGAL_PATHS.
+- Tests:
+  - New InstallmentDueRecordingWorkerTest:
+    - guard denied → no call;
+    - success → exactly one call;
+    - CancellationException propagates;
+    - failure → bounded result.
+  - WorkerContractTest 8→9 plus the key set.
+  - WorkerGuardStaticVerificationTest 11→12.
+  - The PrivacyRuntimeWorkerPolicy test, if it enumerates workers.
+- No db_ownership change. No G-WORKER-01 allowlist entry.
+- Gates: architecture-guardian, privacy-security, reviewer-strict.
+- Validation:
+  1. targeted `*InstallmentDueRecordingWorker*,*WorkerContract*,*WorkerGuardStaticVerification*,*PrivacyRuntimeWorkerPolicy*`;
+  2. shards runtime-ui, then architecture-contracts.
+
+### S7a candidate (once, after both): static-guards, then app-check.
+
+### Stop and ask if
+- a db_ownership row is new or changed, or the pins move off 452;
+- a G-WORKER-01 allowlist entry is needed;
+- a startup hook, an AppStartupCoordinator edit or a persisted marker is needed;
+- a new privacy-policy category is needed;
+- FX deferral or a RateEligibilityEvaluator change is needed;
+- a fallback merchant, or relaxed TLC merchant validation, is needed;
+- the INV-13 candidate rule would duplicate S9's matcher, or needs a new expense query outside the facts-reader port;
+- a D-c bypass is needed;
+- a test would be deleted or ignored (updating an assertion to the approved INVALID_VALUE behaviour is in scope);
+- 2 review plus 2 debug iterations are exhausted.
+
+### Superseded
+- S7a at ~:349: INV-34 added.
+- ~:351: the FX bullet is gone.
+- ~:354: no startup hook; the trigger is overview-open, in S10.
+- ~:356: no reuse option.
+- ~:358-360: the test list is replaced by this amendment.
+- ~:362: IM-7, D-1 and D-19 are resolved.
+- ~:365-369: the profiles and the worker-count ratchet stop. The counts are additive test pins, owner-approved on 2026-10-22.
+- A2 ~:654-656: folded into this amendment.
+- D-1: "7 workers" should read 8.
+- The ux-flows FX lines were updated on 2026-10-26.
+- The stale "7" comment at AppStartupCoordinator ~:721 is deliberately left alone, so S7a does not touch the startup file.
+
+### A15 — S8b binding from the S8a privacy review (2026-10-27; owner-approvals item 40)
+- Option A by construction:
+  - FinancialWeatherRepository → ForecastInputAssembler.assemble → SynthesisEngine/NarrativeGenerator stays installment-free, including the INV-29 baseline exclusion on that path.
+  - Projections are a separate flow merged at the UI / D-15 merge point only.
+  - Plan projections are never an existing UpcomingItem variant.
+- The S8b differential must run end to end: a fake projection port → real weather path → briefing use case / worker → CloudDashboardBriefingService text. It must be identical with and without plans.
+- If the split is too large: option B (the briefing stays out of v1), with explicit owner sign-off (stop-and-ask).
+- S8a final gate (reviewer-strict ACCEPT-WITH-CONDITIONS) entry conditions for S8b:
+  - Merge point (ISSUE-2): the merge point must be downstream of `getProcessedDataFlow` (HomeViewModel/UI layer); never in DashboardDataProvider, DashboardData, ProcessedDashboardData or FinancialWeather.
+  - Guard strengthening (ISSUE-2): S8b proposes adding FinancialWeatherRepository.kt, ForecastInputAssembler.kt, SynthesisEngine.kt, NarrativeGenerator.kt and DashboardDataProvider.kt as exact-file entries on the installment_cloud_reachability surface, with a negative fixture. This is a GUARD STRENGTHENING and needs owner approval at S8b start (stop-and-ask).
+  - Home without double counting (ISSUE-1): the UI-side installment-aware weather replaces the baseline view for Home only; the cloud path keeps the installment-free one. Home never sums both views.
+  - Differential definition (ISSUE-3): the differential holds expense rows, link state and spending-predicate state constant; only the projection-port output varies (empty vs non-empty). Spending aggregates follow ordinary aggregate semantics (a PURCHASE_ATTACHED flag and S6c-3 recurring exclusion legitimately change them, so they are not part of the differential).
+  - Test labels (ISSUE-4): tests 1, 2 and 5 of DashboardBriefingInstallmentExclusionTest are PLACEHOLDERS that S8b replaces with the end-to-end differential.
+
+
+## Amendment (2026-10-27) — S6c-F follow-up slice: owner-approvals 36 and 37 (feature-planner; orchestrator-persisted; BINDING)
+
+36(b) is already done at HEAD c9eb53e7:
+- ENTRY_LINK_READER_IMPL_PATH is in READ_ONLY_IMPL_PATHS (:1091);
+- InstallmentEntryLinkReader is in DOMAIN_PORT_PATHS (:1102);
+- both are covered by the self-checks.
+
+Out of scope (not covered by item 36(b)): pinning RecurringInstallmentEligibility or InstallmentPreBackupReconciler, and extending check 8.
+
+### S6c-F.1 (36a): TLC allow-list for plan code (test-only)
+- Write set: test/architecture/InstallmentPlanArchitectureGuardTest.kt.
+- New matcher `planTlcCalls(rel, raw)` over PLAN_CODE_PREFIXES, rule PLAN_TLC_OP_NOT_ALLOWED. It finds receivers in these forms:
+  - typed as TransactionLifecycleCoordinator;
+  - named `transactionLifecycleCoordinator` or `tlc`;
+  - local aliases;
+  - `?.`;
+  - a line break before the dot;
+  - scope functions;
+  - `::` references.
+- PLAN_ALLOWED_TLC_OPS = {createExpenseDbOnlyV2, setSpendingExclusionDbOnly}.
+- Tests:
+  - a live scan;
+  - a planted self-check with flagged and clean cases (non-plan paths are not flagged);
+  - a non-vacuity check: every allowed op matches `DbOnly(V\d+)?$`, is declared in TLC_PATH, and is called at least once in COORDINATOR_PATH.
+- Invariants: INV-24, INV-25. Gate: architecture-guardian.
+
+### S6c-F.2 (37a + 37c): consumer exclusion through the single owner RecurringInstallmentEligibility
+- 37(a) InsightsEngine:
+  - ctor param `installmentEligibility`;
+  - in findAnomalies (~:759), compute `excludedSnapshotIds(safeExpenses)` once, outside any try;
+  - drop those ids from the merged result (~:873-890), covering BOTH anomaly paths, by id (decision 46(b));
+  - baselines are untouched;
+  - a reader failure goes to the existing stage catch (no anomalies, fail-closed);
+  - update the AIML-13 KDoc.
+- 37(c) NotificationSubscriptionDetector:
+  - ctor param `installmentEligibility`;
+  - in detectSubscriptions, after the size check, compute `excludedExpenseIds(transactions.map { it.expense })` once, filter, re-check MIN_TRANSACTIONS;
+  - no pipeline edit.
+- Ctor-only test updates (S6c-3 helper pattern, no assertion changes):
+  - InsightsEngineTest, InsightsEngineValidationTest, InsightsEngineDeepTest, InsightsEngineEdgeCaseTest, InsightsEngineNormalizedDailyMoneyTest;
+  - e2e AnalyticsPipelineTest, NotificationParserDashboardTotalSeamTest, FlowPipelineTestHarness;
+  - CrossEngineParityMatrixTest;
+  - AnalyticsViewModelInsightsTest.
+- New tests: InsightsEngineInstallmentAnomalySuppressionTest (F-AE-2..4) and NotificationSubscriptionDetectorInstallmentExclusionTest (F-AE-5).
+- RecurringInstallmentEligibility.kt: KDoc consumer list only.
+- Invariants: INV-5, INV-29.
+
+### S6c-F.3 (37b): layer-1 UNKNOWN alignment
+- NEW domain/recurring/RecurringLinkTypeEligibility.kt, a pure object and the single layer-1 rule: `!isNotMine && type ∉ {TRANSFER, DEPOSIT, UNKNOWN}` for NEW links.
+- Its users:
+  - OccurrenceConflictResolver (~:88-91);
+  - RecurringLifecycleCoordinator linkExpenseToOccurrence pre-check (~:363-366);
+  - the gate isExpenseEligibleForRecurring (~:824-831).
+- Decision 46(a), R2: EXISTING links on UNKNOWN expenses are KEPT. The reconcile "still matches" branch (~:701) and reconcileAllLinkedExpensesAfterBulkUpdate (~:768) use a keep-variant that excludes only TRANSFER and DEPOSIT. A bulk edit must never revert PAID bills to PLANNED.
+- Update stale KDoc at ~:346, ~:812 and RecurringInstallmentEligibility.kt:41.
+- Tests:
+  - NEW RecurringLinkTypeEligibilityParityTest: an exhaustive table of TransactionType.entries × isNotMine, resolver vs coordinator gate (F-AE-7);
+  - added cases in RecurringLifecycleCoordinatorTest, OccurrenceConflictResolverTest and the MarkRecurringBillPaid test: UNKNOWN is refused for auto-link and manual link, PURCHASE and WITHDRAWAL controls still link (F-AE-6), and an existing UNKNOWN link survives reconcile and bulk-update reconcile (F-AE-8).
+  - If Pipeline4LifecycleGolden or RecurringPaymentMatchE2E flips on a parsed UNKNOWN expense, CHANGE the expectation with a citation of 37(b). Never delete.
+- Gates: architecture-guardian, reviewer-strict (recurring lifecycle; include the 37(c) pipeline seam).
+
+### Docs
+- ENGINE_INTERACTION_MAP.md :24, :198-207, :287.
+- An append-only spec clarification (INV-29 now also covers the subscription detector and anomaly suppression; the layer-1 UNKNOWN rule).
+- A handoff entry.
+
+### Validation (one batch, serial)
+1. targeted `*InstallmentPlanArchitectureGuard*,*CancellationSafetyArchitectureGuard*,*InsightsEngine*,*NotificationSubscriptionDetector*,*AnalyticsPipeline*,*NotificationParserDashboardTotalSeam*,*CrossEngineParityMatrix*,*AnalyticsViewModelInsights*,*NotificationProcessingPipeline*,*RecurringLinkTypeEligibility*,*RecurringLifecycleCoordinator*,*OccurrenceConflictResolver*,*RecurringInstallmentEligibility*,*MarkRecurringBillPaid*,*RecurringPaymentMatchE2E*,*RecurringHorizonAndLinkR21*,*Pipeline4LifecycleGolden*,*RecurringGenerationInstallmentExclusion*,*RecurringExpenseEngine*`, plus the FlowPipelineTestHarness users.
+2. Shards: architecture-contracts, domain-a-m, domain-n-z, runtime-ui, data.
+3. registered-guard db_access (pins stay at 452).
+4. static-guards.
+5. app-check once.
+
+### Stop and ask
+- Any config/guards, db_ownership, raw-query classification, allowlist or baseline change beyond the test-level PLAN_ALLOWED_TLC_OPS.
+- A third TLC op.
+- A pin moving off 452.
+- Deleting or ignoring a test.
+- A new DAO query or @Query.
+- A new ExpenseSnapshot field.
+- A new catch, or growth of the CancellationSafety allowlist.
+- Touching the materializer or the pipeline DAO read.
+
+Deferred:
+- the orphan-flag gap;
+- extra pins and check 8;
+- "only the coordinator holds a TLC";
+- the pre-existing raw-merchant logging at NotificationSubscriptionDetector:99 and NotificationProcessingPipeline:1798/:1807 (separate ticket).
+
+
+## Amendment (2026-10-27) — S8b sub-slice plan (feature-planner; orchestrator-persisted; BINDING)
+Applies S8b (:397-416) as superseded by A15 (:1018-1030) and owner-approvals 51c. Paths are under app/src/main/java/com/yourname/expensetracker/ unless shown in full.
+
+### Facts
+- F1: the installment_cloud_reachability surface lives ONLY in `scripts/verify_installment_cloud_reachability.py`.
+  - Prefixes at :140-145; exact suffixes at :147-150 (`di/AiModule.kt`, `di/PrivacyModule.kt`); name patterns at :170-173.
+  - Suffix match is `(?:^|/)<suffix>$`. An unmatched entry exits 2 (E_INSTALLMENT_CLOUD_SURFACE_ENTRY_UNMATCHED).
+  - The self-tests in `scripts/test_verify_installment_cloud_reachability.py` pin the surface at :74, :104, :179, :547, :891, :910, :927, :980, :986, :1136 and :1152.
+  - The five approved files have 0 "installment" hits today.
+- F2: the Home merge point is HomeViewModel.
+  - processedDataFlow :253-279 → computeDashboardWidgetsUseCase.compute(); the dashboard combine is at :344-417.
+  - ComputeDashboardWidgetsUseCase adds FinancialWeatherWidget at :1255/:1261 and is injected only in HomeViewModel :131.
+  - The cloud consumer DailyBriefingWorker :106-108 uses getProcessedDataFlow and never ComputeDashboardWidgetsUseCase.
+  - LEGAL MERGE: in HomeViewModel after compute(), REPLACE the single FinancialWeatherWidget. Never add one, never merge in ProcessedDashboardData / DashboardDataProvider / DashboardData, and never add a FinancialWeather field.
+- F3: FinancialWeatherRepository.getFinancialWeather (:40-117) runs combine → mapExpenseSnapshots → patterns → assemble (:57-64) → synthesize → generate → map. buildUpcomingItems is at :133-178 (31 days).
+- F4: neither engine is on the cloud path.
+  - CashFlowCalculator.calculateDailyCashFlow has one caller (CashFlowCalendarViewModel :106).
+  - getUpcomingBills (:487) is also called by FinancialHealthScoreV2 :424 (OD-12) and SmartSavingsEngine :484, so it stays byte-identical.
+  - FinancialStressForecastEngine has one caller, ComputeDashboardWidgetsUseCase :285/:1231 (Home-only).
+- F5: InstallmentProjectionPort.upcomingEntries(horizonEndEpochDay) at domain/installment/projection/InstallmentProjectionPort.kt:94-102; the rule is InstallmentProjectionRule.project :56-87; the binding is InstallmentModule :58-60. It has no Flow, so use InstallmentPlanReadRepository.observeOverview() as the invalidation trigger (VERIFY-AT-IMPL).
+- F6, INV-16 mechanisms:
+  - assembler planned-expense conversion with partial/excluded (:537-594);
+  - CashFlowCalculator convertOutcome (:399-421) with DailyCashFlow.isPartial;
+  - stress HZ01-B exclusion (:176-183).
+  - Detected patterns are summed raw (:239-242), so projections NEVER go through the pattern channel.
+- F7: the DashboardBriefingInstallmentExclusionTest placeholders are tests 1 (:144), 2 (:161) and 5 (:219). Tests 3 and 4 stay.
+
+### S8b-1: guard strengthening (script + self-tests + docs; no Kotlin). Approved in 51c.
+- Production: M scripts/verify_installment_cloud_reachability.py.
+  - Append to SURFACE_EXACT_FILE_SUFFIXES: data/repository/FinancialWeatherRepository.kt, domain/forecasting/ForecastInputAssembler.kt, domain/logic/SynthesisEngine.kt, domain/logic/NarrativeGenerator.kt, domain/usecase/dashboard/DashboardDataProvider.kt.
+  - Update the docstring (:25-26) and the scope note (:62-65).
+  - Rules 01-03 are unchanged.
+- Tests: M scripts/test_verify_installment_cloud_reachability.py.
+  - Pins change 6 → 11.
+  - A parametrized negative fixture over the 5 entries (projection-port import plus field) gives exit 1 with G-01/G-03.
+  - Off-surface control: data/repository/HomeInstallmentWeatherSource.kt is not scanned.
+  - Suffix-precision control: XFinancialWeatherRepository.kt.
+  - Each new entry omitted gives exit 2.
+- Docs: LEGAL_PATHS :492-493, SEGMENTS :755, ENGINE map :154-156, docs/ci/GR-10B_SOURCE_SCOPE_MATRIX.md:121 (VERIFY).
+- Gates: architecture-guardian, privacy-security-guardian, reviewer-strict.
+- Validation: the guard self-test profile (VERIFY-AT-IMPL), then registered-guard installment_cloud_reachability (expect 11 matched, 0 hits).
+- Stop if: a hit in the five files; an allowlist or baseline is needed; rule, registry or suite pins change beyond the surface; a sixth entry seems needed.
+
+### S8b-2: engine projections (INV-15, INV-16, INV-29 stress baseline; AE-7, AE-11)
+- M CashFlowCalculator.kt: the port goes in the ctor and only calculateDailyCashFlow uses it; conversion through convertOutcome; a failure omits the item and sets isPartial. getUpcomingBills stays byte-identical.
+- M di/CashFlowModule.kt :34-45.
+- M FinancialStressForecastEngine.kt: port plus RecurringInstallmentEligibility; projected entries become known outflows (HZ01-B conversion); linked history leaves the baseline while entries are projected. SynthesisEngine is NOT edited.
+- New tests:
+  - CashFlowCalculatorInstallmentTest: AE-7, AE-11, INV-15 bounds, USD with and without a rate, getUpcomingBills unchanged.
+  - FinancialStressForecastInstallmentTest: the same, plus no double count.
+- Ctor-only test updates: CashFlowCalculatorTest, P6BudgetCleanupTest :227, FinancialStressForecastEngineTest, e2e/NotificationParserDashboardTotalSeamTest :452.
+- Docs: ENGINE map :146-151.
+- Gates: architecture-guardian.
+- Stop if: the health score, SmartSavingsEngine or SynthesisEngine must be wired; an allowlist or marker grows; there is no dormancy precedent.
+
+### S8b-3: Home installment-aware weather + single merge point (A15 option A)
+- N data/repository/HomeInstallmentWeatherSource.kt (off-surface): observe(): Flow<HomeInstallmentWeather?>, null when the port is empty. It:
+  - drops RecurringInstallmentEligibility.excludedSnapshotIds (INV-29, single owner);
+  - feeds projections as planned inputs into the UNMODIFIED assemble/synthesize/generate;
+  - keeps upcomingItems identical to the baseline;
+  - carries the installment rows separately.
+- N domain/installment/projection/InstallmentUpcomingProjection.kt: a 31-day sibling of RecurringPlanProjectionService, which stays unchanged. Never an UpcomingItem.
+- M ui/screens/home/HomeViewModel.kt:
+  - new ctor dep and an internal var installmentsEnabled seam (BudgetViewModel :87-88 precedent);
+  - replaces the weather widget after compute();
+  - installment rows as a separate Home-only state.
+- Optional: N HomeWeatherMerge.kt. Optional: M FinancialWeatherRepository.kt, only a behaviour-neutral, installment-free extraction of :89-117 within the same guarded file; the signature and output are unchanged.
+- UNTOUCHED: ForecastInputAssembler, SynthesisEngine, NarrativeGenerator, DashboardDataProvider, UpcomingItem, DashboardBriefingInputBuilder.
+- New tests:
+  - HomeInstallmentWeatherSourceTest (replaces ForecastInputAssemblerInstallmentTest): AE-7, AE-11, INV-15, INV-16 with/without a rate, INV-29 swap-never-sum, upcomingItems identical, null when empty;
+  - InstallmentUpcomingProjectionTest;
+  - HomeViewModelInstallmentWeatherTest: replaced not added; with the seam off or the port empty, the state equals pre-S8b.
+- Ctor-only test updates: HomeViewModelWidgetsTest, HomeViewModelCurrencyReloadTest.
+- Docs: ENGINE map :150/:152, a LEGAL_PATHS Home weather read row, SEGMENTS ownership, a spec INV-29 owner clarification.
+- Gates: architecture-guardian, privacy-security-guardian, reviewer-strict.
+- STOP (option B goes to the OWNER) if projections cannot enter the unmodified assemble() via planned inputs (dedupe :543, or SynthesisEngine does not count planned items).
+- Also stop on:
+  - a non-identical FinancialWeatherRepository extraction;
+  - an UpcomingItem or allowlist change;
+  - an InstallmentPlanArchitectureGuardTest importer-allowlist entry;
+  - a RECURRING_RULE contract change.
+
+### S8b-4: end-to-end cloud differential (tests only; A15 ISSUE-3/4; INV-31; AE-23)
+- Replace placeholders 1, 2 and 5 in DashboardBriefingInstallmentExclusionTest. The chain: fake projection port (empty vs non-empty) → real FinancialWeatherRepository (real assembler, synthesis and narrative) → DashboardDataProvider.getProcessedDataFlow → GenerateDashboardBriefingUseCase → CloudDashboardBriefingService text.
+  - Assert identical input, prompts (redact on and off) and payload.
+  - Non-vacuity: HomeInstallmentWeatherSource DOES change in the same fixture.
+  - Test 5: TransactionInsight input and prompt are identical.
+- A DailyBriefingWorker test asserting it passes getProcessedDataFlow output unchanged (VERIFY-AT-IMPL).
+- Gates: privacy-security-guardian (mandatory).
+- STOP on any cloud delta.
+
+### Validation (serial)
+- S8b-1: its own guard runs.
+- S8b-2..4 as one batch:
+  - targeted *CashFlowCalculator*,*P6BudgetCleanup*,*FinancialStressForecast*,*NotificationParserDashboardTotalSeam*,*HomeInstallmentWeatherSource*,*InstallmentUpcomingProjection*,*InstallmentProjection*,*HomeViewModel*,*FinancialWeatherRepository*,*CrossEngineParityMatrix*,*DashboardBriefingInstallmentExclusion*,*DashboardBriefing*,*GenerateTransactionInsight*,*DailyBriefingWorker*,*ProcessedDashboard*,*DashboardDataProvider*;
+  - shards domain-a-m, data, runtime-ui and integration-golden (VERIFY);
+  - registered guards installment_cloud_reachability, cloud_payload and the money-aggregate guard (VERIFY the name);
+  - static-guards and app-check once at the S8b candidate.
+
+### Decisions (orchestrator under standing approval, owner-approvals item 53)
+- Q1 INV-29 scope on Home: GLOBAL-WHILE-PROJECTED. While at least one entry is projected, the aware view excludes all installment-linked and plan-purchase expenses via RecurringInstallmentEligibility. No new read API.
+- Q2: the other Home widgets (Monte Carlo, runway, health score) stay on the installment-free baseline in v1. Mixed, not double-counted. Deferred.
+- Q3: an architecture test pinning HomeInstallmentWeatherSource to HomeViewModel plus DI is a guard strengthening. It goes to the OWNER and is not blocking.
+- Deferred: rendering installment rows in FinancialWeatherCard/HomeScreen (new strings, es/el); installment-aware SmartSavings, health score and Monte Carlo.
+
+### Note (2026-10-28, append-only; privacy-security-guardian F6 on S8b-3/4)
+- Decision Q2's "Monte Carlo stays installment-free" is SUPERSEDED for the Home stress engine by S8b-2: FinancialStressForecastEngine (Home-only; sole caller ComputeDashboardWidgetsUseCase) consumes the InstallmentProjectionPort (known bounded outflows, HZ01-B conversion, INV-29 baseline exclusion). The cloud path is unaffected (the engine is not on the cloud briefing chain). Runway, health score and SmartSavings remain on the installment-free baseline. LEGAL_PATHS and ENGINE_INTERACTION_MAP were corrected accordingly.
+- The merge is a weather-widget REPLACE via HomeInstallmentWeatherSource, never an UpcomingItem variant. The earlier wording "recurring-sibling merge point at the Home upcoming items" (ENGINE_INTERACTION_MAP) was wrong and is corrected.
+- Owner-approvals 59a: data/repository/DashboardContractsAdapter.kt is added as the 8th exact-file entry of the installment_cloud_reachability surface (12 surface entries).
+
+
+## Amendment (2026-10-28) — Loan pre-enable batch (feature-planner; orchestrator-persisted; BINDING)
+
+The batch runs in the mec lane, one writer, slices serial; the feature stays dormant.
+
+Rules:
+- No schema change, no DAO write, no TLC bypass, and no guard, allowlist or baseline change, except the item-17 registry description (owner-approvals 65).
+- Out of scope: MainActivity, AndroidManifest, AddExpenseViewModel/Sheet (S11, MEC B1/B2), ReceiptScan* (MEC C), and TransactionsViewModel.kt (dirty in the main checkout).
+- strings.xml (es/el DRAFT), LEGAL_PATHS and the handoff are edited only in slice order.
+
+### Dispositions
+
+Disposition key: a = do now in a slice; b = S13 or needs S11; c = device-only check; d = decision.
+
+| # | Item | Disp. |
+|---|---|---|
+| 1 | PE-OD14: coordinator FIXED-only for cross-currency plans | a: PE-A, covering declareOnExpense, declareWithNewExpense and editDetails |
+| 2 | F-2 equal-split chip nit | a: PE-A |
+| 3 | Past-due SCHEDULED entries with paidBeforeTrackingCount = 0 never auto-record | a: PE-A proof test; b: S13 re-confirms |
+| 4 | PE-UNLINK part 1 (Unlink entry point, canUnlink) | a: PE-B |
+| 5 | Owner-56 risk: a re-record after Unlink | a: PE-B characterization test; b: S13 re-check |
+| 6 | PE-UNLINK part 2 (delete-dialog role lines and View plan) | a: PE-D |
+| 7 | F4 CashFlowCalendar installment dot and row | a: PE-C |
+| 8 | 60d-1 early bank charge over-count | d: ACCEPTED for v1, conservative over-count (item 65a); docs clarification in PE-C |
+| 9 | 60d-2 English fallback label | a: PE-C |
+| 10 | 60d-3 observeOverview trigger performance | a: PE-C, via observeChanges() |
+| 11 | S12b memoise loadBudgetInputs | a: PE-C |
+| 12 | S12a marks-loader N+1 | a: PE-D |
+| 13 | S12a retry-loop key | a: PE-D |
+| 14 | S12a device QA checklist | c: after PE-D, before S13 |
+| 15 | S10a-1 C1 deep-link confirmation and manifest hosts | b: S13-a, rebased on the app-lock tip after S20 and coordinated with app-lock S21 |
+| 16 | F5 edit-form locked treatment | b: S11 |
+| 17 | guard_registry.py :770-779 description | d: APPROVED as description-only (item 65b), done at the batch candidate |
+| 18-19 | F5 wording; guards 48/53c/56/59a-c | closed |
+| 20 | Create form defaults to EUR / currency picker | b: S11 |
+| 21 | es/el sign-off | d: owner only |
+| 22 | Unescaped LIKE in AmountOpsDisabled search | deferred: separate ticket |
+
+### PE-A — coordinator OD-14 + F-2 chip + past-due proof
+- Refusal code: reuse InstallmentRefusalCode.CURRENCY_MISMATCH (:32), which is already mapped in the UI.
+- N domain/installment/model/InstallmentSplitCurrencyRule.kt: equalSplitAllowed(planCurrency, purchaseCurrency).
+- M InstallmentPlanLifecycleCoordinator:
+  - declareOnExpense: after the facts read (:149-150), before generate (:169);
+  - declareWithNewExpense: in the pure-check block (:200-212), before the TLC create;
+  - editDetails: in the currency-change branch (:702-708), AFTER CURRENCY_LOCKED, for PURCHASE_ATTACHED + EQUAL_SPLIT only. Name/lender/category edits on a legacy mismatched plan stay allowed.
+- M DeclareInstallmentsSheet :141-151 and :519: the chip is enabled only when equalSplitAllowed, and false for a null currency.
+- Docs: a domain-spec line and a LEGAL_PATHS note.
+- Tests:
+  - Declare/EndEdit coordinator tests;
+  - InstallmentSplitCurrencyRuleTest;
+  - DeclareInstallmentsViewModelTest;
+  - past-due proof: declare on a purchase 3 months old, AUTO_RECORD, paidBeforeTrackingCount = 0, then catch-up and pre-backup reconcile record nothing before declaredOn.
+- Gates: reviewer-strict, architecture-guardian.
+- Filter: *InstallmentPlanLifecycleCoordinator*,*InstallmentSplitCurrencyRule*,*DeclareInstallments*,*InstallmentDueRecordingWorker*,*InstallmentPlanArchitectureGuard*.
+- Shards: domain-a-m, runtime-ui, architecture-contracts.
+- STOP if:
+  - an existing coordinator test changes outcome;
+  - the past-due proof fails (a money bug: go to the debugger);
+  - a new refusal code or string is needed;
+  - the restore path needs enforcement.
+
+### PE-B — plan-detail Unlink entry point (unrestricted, owner 56)
+- M InstallmentPlanTransitions: extract a pure isUnlinkable(entryStatus, entryKind, planStatus) from the UNLINK branch (:360-368); behaviour identical.
+- M InstallmentPlanDetailViewModel: InstallmentEntryRowUi.canUnlink.
+- M InstallmentPlanDetailScreen :151: the menu opens when there are actions or canUnlink; Unlink calls openUnlink (InstallmentPlanActions :261-263).
+- M the InstallmentEntryActionMenuSheet file: an Unlink item.
+- M InstallmentPlanActions: KDoc "unrestricted (owner-approvals 56)".
+- Tests:
+  - canUnlink over the full product;
+  - isUnlinkable parity with the UNLINK transition;
+  - openUnlink → confirm → coordinator.unlinkExpense exactly once;
+  - the owner-56 characterization: unlink a PAID AUTO_RECORD entry, then catch-up.
+- Gates: architecture-guardian; reviewer-strict at Batch 1.
+- STOP if:
+  - a table outcome changes;
+  - the characterization contradicts U-1 rule 5;
+  - a link-origin read is needed;
+  - a DAO, TLC or deleteExpense( reference appears in installment UI.
+
+### PE-C — read-path triggers and performance, Home fallback, CashFlow dot and row
+- InstallmentPlanReadRepository.observeChanges(): Flow<Unit>, with a default `observeOverview().map{}`; the Impl uses the cheap private changes() (:102-106).
+- HomeInstallmentWeatherSource:
+  - trigger becomes observeChanges() (:118-121);
+  - localized fallback label (:233, :286), resolved per computation.
+- BudgetViewModel (:144-160): with the flag on, inputs load only on observeChanges (mapLatest; CE rethrown; failure means Unavailable). With the flag off, nothing is read.
+- CashFlowCalendarScreen:
+  - an installment dot (:370-376);
+  - a day-list section (:482-492), take(3), plan currency from amountMinor, never converted;
+  - a pure internal formatter.
+- Strings: the fallback plan label and the CashFlow section header (es/el DRAFT).
+- Docs:
+  - LEGAL_PATHS (Home weather invalidation);
+  - an item-8 clarification in domain-spec.
+- Tests:
+  - ReadRepositoryImpl observeChanges;
+  - HomeInstallmentWeatherSource trigger and fallback;
+  - the DashboardBriefingInstallmentExclusion World ctor (cloud equality unchanged);
+  - BudgetViewModelInstallmentLine reload rules;
+  - N CashFlowCalendarInstallmentRowsTest.
+- Gates: privacy-security-guardian, architecture-guardian, reviewer-strict.
+- Validation: shards data and runtime-ui; installment_cloud_reachability; lint.
+- STOP if:
+  - any cloud-surface file needs an edit;
+  - the reachability scanned set changes;
+  - a budget-line value changes on existing fixtures;
+  - no locale-aware resolver exists;
+  - CashFlow needs conversion or navigation.
+
+### PE-D — Transactions delete-dialog role lines, retry-loop key, marks memoise
+- TransactionsScreen:
+  - :757-768 and :1891-1935: the role line plus View plan (via onOpenInstallmentPlan);
+  - :287: with the filter on, the effect key is (base count, hasReachedEnd, isLoading), with a single loadMore per key; with the filter off, the key stays -1.
+- TransactionsInstallmentViewModel:
+  - TransactionsLoadMorePolicy.effectKey;
+  - InstallmentRowMarksLoader: one snapshot read plus loadSuggestions instead of N×loadDetail; fail-closed and the CE rethrow kept.
+- TransactionsInstallmentUi: InstallmentDeleteRole.of(expense, marks) → PURCHASE/INSTALLMENT/REVERSED/null, with the INSTALLMENT_PURCHASE flag as fallback.
+- Strings: 3 role lines, verbatim from ux-flows :822-826 (es/el DRAFT).
+- Tests:
+  - LoadMorePolicy: filter-off 32-combination table unchanged; filter-on key stable across a failed page;
+  - the marks loader makes 0 loadDetail calls;
+  - N TransactionsInstallmentDeleteRoleTest.
+- Gates: privacy-security-guardian, cheap review; reviewer-strict at the Batch 2 candidate.
+- STOP if:
+  - TransactionsViewModel.kt needs an edit;
+  - the role needs a plan read beyond the marks;
+  - filter-off paging differs;
+  - the delete path changes.
+
+### Batches
+- Batch 1 = PE-A + PE-B. Batch 2 = PE-C + PE-D.
+- Candidate: static-guards, app-check and lint once, plus the item-17 registry description edit validated by guard_docs_truth.
+- Then the device G-check for item 14.
+
+
+## Amendment (2026-10-29): S11 re-anchor after MEC B2/C (feature-planner, Sonnet; orchestrator-persisted; BINDING)
+Base: mec accb775a (MEC B2 and C committed). This supersedes the S11 write set at ~:453-468 and the "EUR/USD segmented control". Plan A3 (~:662-671) and handoff ~:174-177 remain in force. H-1: S11 stays unreleased until MEC 1b. Items marked (unverified) are checked by the writer first.
+
+### 1. Anchors
+- Currency control: the MEC `CurrencySelectionControl` (AddExpenseSheet :59, :361, :389). `CurrencyEntryMode.INSTALLMENT` already exists in CurrencySelectionPolicy (EUR/USD only; home kept only if EUR or USD).
+- AddExpenseViewModel:
+  - `applyHomeAndSelection` :779-794 and `selectCurrency` :801-824 hardcode STANDARD. S11 makes them mode-aware.
+  - `save()` :473-671 always calls `addManualExpense`. The installment branch goes to `InstallmentPlanLifecycleCoordinator.declareWithNewExpense(purchaseRequest, entryZone, terms)` (:194). The coordinator sets `userPresentRate` itself (:230) and returns `RateRefused(reason)` before writing the plan (:238).
+  - Refusals reuse `RateRefusalCodes.codeFor` → `blockVariantFor` (:744) → `withSaveRefusal` (:756). No second mapping.
+  - `reset()` :1266; `onSheetOpened()` :1239 (R-1(b)); `confirmOpenExchangeRateSetting` calls reset. The Sheet's BackHandler :256, close :278 and success :227 call reset().
+  - There is no Add-expense discard dialog. Do NOT add one.
+  - Repeat: `toggleRecurring` :404; the Sheet hides Repeat for foreign currencies at :627-633.
+- Form reuse: the `DeclareForm` constants and `InstallmentAmountInput` (DeclareInstallmentsSheet.kt :107). That file is not edited.
+- Dispatch: `InstallmentPostCommitDispatcher.dispatch(batches)`. No fourth dispatch loop (F3 BINDING).
+
+### 2. Currency scope
+- **One control:** plan currency = purchase currency = selected (G2-6, C == P). declaredTotal = the parsed amount, with no conversion. OD-14 (C != P) stays in the S12a declare sheet only.
+- **Installments ON:** options {EUR, USD} (INSTALLMENT mode, INV-16). With a home outside EUR/USD, nothing is preselected (Unset) until a pick.
+- **A disallowed selection** (e.g. JPY when switching ON):
+  - it becomes Unset; the override is stashed in a session-only VM field and restored on switch-off (UX-Q-6);
+  - Save is blocked via `isCurrencySaveBlocked` (Unset) + `mec_save_disabled_currency`;
+  - the save() pre-check refuses without calling the coordinator;
+  - the coordinator's `UNSUPPORTED_CURRENCY` is the backstop, with a fixed string via `declareMutationMessage` / `InstallmentActionMessages` (INV-31), never e.message.
+- **D-8 CLOSED** (A3, G2-6). The coordinator path is required for INV-27 atomicity. The VM never builds `UserPresentRateRequirement`, so the setter allow-list is untouched.
+
+### 3. Mutual exclusion and session
+- Installments ON:
+  - clears Repeat and shows "Repeat and installments can't be combined";
+  - `toggleRecurring` / `setRecurrenceFrequency` become no-ops;
+  - save sends recurrenceFrequency = null.
+  - A foreign currency keeps Repeat hidden.
+- Not mine, Shared and Split disable the switch with a reason (`declare_installments_refused_*`). Setting Not mine or Shared while ON turns installments off and keeps the values.
+- `AddExpenseInstallmentsState` (new file) holds: on/off, count, split, fixed text, first-due, mode, name, planUuid, and the stashed override.
+  - `reset()` clears it, so every dismiss path and the confirmed NAVIGATE discard it.
+  - planUuid is generated once per session and regenerated in reset(). A retry after a refusal reuses it. A double-submit `AlreadyInState` counts as success (AE-15d).
+- `onSheetOpened`: a retained draft with installments ON and a non-home selection, or a stashed override, is `retainedNonHome` and resets the whole draft (no re-denomination).
+- In-session, a currency change keeps the amount and fixed text, then re-validates and re-previews (MEC AE-16).
+- Everything is gated by `InstallmentsFeature.ENABLED`.
+
+### 4. Split
+**S11a (VM and wiring):**
+- `M:ManualExpenseRepository.kt`: extract the request builder (no duplicated merchant normalisation or classification). The setter site stays pinned; plain-save behaviour is identical (builder parity tests).
+- `M:AddExpenseViewModel.kt`: deps InstallmentPlanLifecycleCoordinator and InstallmentPostCommitDispatcher; mode-aware selection; the installment submit branch; the reset and onSheetOpened changes.
+- `N:AddExpenseInstallmentsState.kt`.
+- Docs: supersede notes in ux-flows :221-227 and on plan :455/:462/:464/:467.
+- A writer plus a SEPARATE test-author.
+
+**S11b (UI):**
+- `M:AddExpenseSheet.kt` (section hook only), `N:AddExpenseInstallmentsSection.kt`, strings ×3 (es/el DRAFT).
+- Depends on S11a; not parallel with it.
+- A writer may also write its UI tests; the money-branch tests stay with S11a's test-author.
+
+**Tests:**
+- AddExpenseInstallmentsViewModelTest;
+- ctor fixtures in AddExpenseViewModelTest / StressTest / others (unverified);
+- AddExpenseSheetInstallmentsUiTest;
+- ManualExpenseRepositoryTest builder parity.
+
+### 5. Tests by AE
+- **AE-1 (INV-27/16):** EUR 600/12 reaches `declareWithNewExpense` with request.currency == terms.currency == selected, declaredTotal == amount and the session zone. `addManualExpense` is never called.
+- **AE-22:** each refusal (NOT_MINE, SHARED, SPLIT, INVALID_COUNT, FIRST_DUE_BEFORE_PURCHASE, AMOUNT_TOO_SMALL, UNSUPPORTED_CURRENCY) gives a fixed string and keeps the form.
+- **MEC AE-28:** JPY gives Unset in installment mode; the override is restored on switch-off. A NO_RATE refusal keeps the form, shows the SAVE card and cancels evaluationJob; a late preview loses.
+- **AE-15d:** a double-submit gives one plan.
+- **Exclusion and session:** the rules in section 3; reset clears the sub-state; a USD installment draft in a new session is blank.
+- **Regressions:**
+  - all B2 tests green (R-1..R-4, C-1);
+  - a plain save calls addManualExpense with identical args and has zero coordinator interactions;
+  - Repeat is still hidden for foreign currencies;
+  - the setter allow-list, CancellationSafety and QuickAddPrivacy guards are green with no edits.
+
+### 6. Validation and STOP
+- **Ladder:**
+  1. S11a targeted `*AddExpense*,*ManualExpenseRepository*,*InstallmentPlanLifecycleCoordinator*Declare*,*ManualEntryCurrencySetterAllowListGuardTest*,*CancellationSafetyArchitectureGuardTest*,*QuickAddPrivacyArchitectureGuardTest*,*InstallmentPlanArchitectureGuardTest*`
+  2. runtime-ui, data
+  3. S11b: `*AddExpense*`, runtime-ui, lint
+  4. static-guards once
+  5. app-check per candidate
+  6. reviewer-strict at the candidate (items 86-87; overrides the old per-slice "YES").
+- **STOP (owner):**
+  - any TLC or ExpenseDao general-save-path change (option B);
+  - a setter allow-list or any guard edit;
+  - a CurrencySelectionPolicy, INSTALLMENT mode or `declareWithNewExpense` signature change;
+  - baseline or allowlist growth;
+  - a new permission or network path.
+
+### 7. Decisions
+- **Owner:** the es/el DRAFT sign-off for about 16-20 new keys (S11b counts them exactly); they join the MEC sign-off list. F-B2-A11Y-1 stays the MEC 1b hard gate; S13 enablement needs it.
+- **Orchestrator (item 62), ACCEPTED:**
+  - exclusion UX: auto-off plus a helper;
+  - no async recommendation hook for plan purchases (the coordinator returns no Expense);
+  - name defaults to the merchant;
+  - first-due defaults to purchase + 1 month;
+  - mode defaults to AUTO_RECORD;
+  - paid-before-tracking hidden, sending 0 (deferral 49(b));
+  - Fill with installments ON follows the mode-aware drop to Unset.
+
+### 8. Constraints (B2/C lessons)
+- No re-denomination.
+- A refusal cancels evaluationJob before withSaveRefusal; the installment refusal path does not clobber the region.
+- No `when (val …)` in accessors; use `is` checks or boolean fields.
+- Robolectric hygiene: harness close() in @After; no static snapshot state.
+- No Dispatchers.* literal; the injected TimeProvider and the project dispatcher qualifier. CancellationException is rethrown in the new branch.
+
+### 9. S11a guardian
+- S11a guardian (combined) ACCEPT-WITH-CONDITIONS: (a) docs chain added; (b) S11b must call setInstallmentsEnabled with the default `enabled` only, and reviewer-strict greps production call sites for `enabled =`.
+- S11a test-author note (orchestrator, item 62): a home-currency installments-ON draft retained across onSheetLeft/onSheetOpened (with no dismiss call) is INTENDED and consistent with D-B2-R1(c): home drafts are kept, with no re-denomination risk. Every explicit dismiss path still calls reset().
+
+
+### S11 candidate review dispositions (2026-10-29; reviewer-strict ACCEPT-WITH-CONDITIONS; orchestrator, item 62)
+- **C1:** the commit waits for the fresh S11 ladder on the final fingerprint (lint, static-guards, app-check; app-check covers `*AddExpense*` and runtime-ui).
+- **NEW SLICE S11c (HARD GATE before S13 enablement; dormant, no user exposure meanwhile):**
+  - (1) The live installment preview card (N × amount, end date, financing cost; ux-flows :305 "always visible") and the past-due notice (:389). They were deferred by the S11b writer without a decision; the deferral is now recorded as an orchestrator decision.
+  - (2) The default first-due date and the before-purchase warning are exposed from VM state using sessionZone (no `ZoneId.systemDefault()` in the composable, no duplicated "+1 month" rule).
+  - (3) A dedicated disabled-reason key for non-spending types (Deposit/Transfer) in place of `installments_action_refused_expense_not_eligible` ("linked" is the wrong context). New keys are es/el DRAFT and go on the sign-off list.
+  - (4) A UI test that clicks the switch once enablement is testable (S13).
+- **Sign-off list:** `add_expense_installments_repeat_exclusive` (S11b) plus the S11c keys.
+
+
+## S13 re-anchor amendment (BINDING; 2026-10-29; feature-planner Sonnet re-anchor at mec faff9eec; orchestrator decisions per standing approval item 62)
+
+Supersedes the S13 row (~:487-492) and its 2026-10-27 amendment. Risk tier T3 (privacy, money, feature enablement). S12a/S12b and PE-A..D are DONE and are not blockers. MEC 1b gate F-B2-A11Y-1 is DONE.
+
+### Pre-enable checklist
+
+| # | Item | Status | Owner sub-slice |
+|---|---|---|---|
+| 1 | INV-1: assistant largest/smallest consider only countsAsSpending rows (`ExecuteFinancialQueryUseCase.kt` executeLargest :295, executeSmallest :307, pick :349) | OPEN, BLOCKING | S13-0 |
+| 2 | S13-a examples a-d (owner 81a) through DeepLinkPolicy/DeepLinkApplier | OPEN | S13-a |
+| 3 | Confirmation contract (C1, hard requirement): navigation only after user confirm; held link confirmed after release, never before | OPEN | S13-a |
+| 4 | Item-14 device check (S12a QA a-d + Compose paging effect) on a flag-on build | OPEN, device | S13-final |
+| 5 | S11c item 4: switch-click UI test | OPEN | S13-b |
+| 8 | Wire `onOpenInstallmentPlan` in the NavHost (`TransactionsScreen.kt:137` no-op default) | OPEN | S13-a |
+| 9 | Re-confirm PE-A (past-due SCHEDULED never auto-records) and PE-B (re-record after Unlink) | proof tests done | S13-b e2e |
+| 10 | INV-12 seventh BILL site re-count; NOTIF_ACTIONS_SUPPRESSED_LOCK noise (N1) | OPEN | S13-a / S13-c |
+| 11 | BillReminderWorker N2: `Failed`-path release not under NonCancellable; a throwing release can replace CancellationException | OPEN | S13-a (DECIDED: include) |
+| 12 | Canary tests asserting `ENABLED == false`: rewrite in place, never skip | OPEN | S13-b |
+| 13 | Stale DUE/OVERDUE labels past midnight (INFO 8) | non-blocking | S13-b: recompute on resume if cheap, else ACCEPTED residual |
+| 14 | es/el sign-off for all DRAFT keys (S11b, S11c, PE, mec_, new confirmation key) | OWNER | before any store release |
+
+### Orchestrator decisions (item 62)
+- D-S13-1: S13-0 includes the COUNT/AVERAGE countsAsSpending fix if it is under about 10 lines; otherwise it becomes a recorded follow-up.
+- D-S13-2: N2 is included in S13-a (cancellation invariant; strengthening only).
+- D-S13-3: the test seam is a defaulted parameter `installmentsEnabled: Boolean = InstallmentsFeature.ENABLED` on DeepLinkPolicy/DeepLinkParser (precedent: `setInstallmentsEnabled(on, enabled = ENABLED)`). Tests never flip the constant.
+- D-S13-4: item 4 gates acceptance of the S13 candidate, not the S13-b commit.
+
+### Sub-slices (serial, one lane: mec)
+- **S13-0 (money tier: Sonnet writer + separate test-author).** Write set: `domain/ai/usecase/ExecuteFinancialQueryUseCase.kt` + its test. Test: a flagged installment purchase (`spendingExclusionReason != null`) is never returned as largest/smallest (and excluded from COUNT/AVERAGE if D-S13-1 applies). Validation: targeted `*ExecuteFinancialQuery*`. STOP on any guard or schema edit.
+- **S13-a (privacy tier: Sonnet writer + separate test-author).** New hosts `INSTALLMENTS("installments")`, `INSTALLMENT_PLAN("installment_plan")`, a `PLAN_ID` parameter (positive Long, `validExpenseId` style), `planId` on DeepLinkRequest (toString names the host only); parser destinations `Installments` / `InstallmentPlanDetail(id)`; applier branches; confirmation contract (pending-confirmation state, small dialog, one new es/el DRAFT string); NavHost wiring of `onOpenInstallmentPlan`; manifest: two `<data>` lines on the existing non-BROWSABLE filter (OWNER APPROVED: owner-approvals 91(a)); N2; LEGAL_PATHS/ENGINE_INTERACTION_MAP rows. Tests: examples (a), (b), (c) with all 8 rejects, (d); flag-off Rejected(UNKNOWN_HOST) unchanged; hold → release → confirm router test; no raw URI or plan id in logs; BILL composition re-count. Ladder: targeted `*DeepLink*,*AppLockDeepLinkRouter*,*BillReminderWorker*,*NotificationPresentation*`; shards runtime-ui + domain; guard_docs_truth. Gate: combined guardian. STOP: guard/allow-list edit, new permission, BROWSABLE, any network path.
+- **S13-b (enablement tier: Sonnet writer + separate test-author).** `InstallmentsFeature.ENABLED = true` (KDoc updated); canaries rewritten in place; `integration/InstallmentEndToEndScenarioTest.kt` (AE-1..AE-11 lifecycle, AE-6 replay, AE-23 diagnostics/payload, items 9-10); Compose switch-click test (item 5); item 13. Gate: combined guardian. The flip stays on the unreleased branch under MEC H-1 until MEC 1b.
+- **S13-c (docs).** CODEBASE_INVENTORY, CODEBASE_SEGMENTS (Segment 40 + deep-link rows), LEGAL_PATHS, ENGINE_INTERACTION_MAP, loan handoff and plan.
+- **S13-final (candidate).** Serial: static-guards, unit-tests, app-check, connected `DatabaseMigrationTest` (wave5-api35; no schema change expected, Room v152), lint, guard_docs_truth, known_good_state, db_access; merged-manifest dump proving no BROWSABLE on the expensetracker filter (G1a carry-forward); item-14 device check; `am start` deep-link check (valid, malformed, id overflow); AE-16 browser no-op. Gates: all three guardians, then reviewer-strict (Opus xhigh) by a reviewer who reviewed no S11/S12/S13 slice.
+
+### Owner items
+1. es/el sign-off for all DRAFT keys, including the new confirmation-dialog key.
+2. DONE: manifest change approved (owner-approvals 91(a)).
+3. DONE: flag flip on the unreleased branch approved (owner-approvals 91(b)).
+4. Item-14 device check at S13-final, and any guard/allow-list/permission change (none planned).
+
+### Status (2026-10-30, orchestrator; append-only)
+- S13-0 DONE: 4eb4f9af (assistant INV-1 aggregates).
+- S13-a DONE: 5370e80b (deep links `installments` / `installment_plan?id=`, in-app confirmation, DeepLinkRequest moved to `domain/navigation/deeplink`, N2).
+- S13-b DONE: 055b9de1 (`InstallmentsFeature.ENABLED = true` on this unreleased branch, owner-approvals 91(b); canaries rewritten; `integration/InstallmentEndToEndScenarioTest`).
+- S13-c DONE: docs (INVENTORY, SEGMENTS Segment 40, LEGAL_PATHS, ENGINE_INTERACTION_MAP stale-dormant lines).
+- S13-final PENDING: candidate ladder (full unit-tests, app-check, static-guards, guard_docs_truth, connected migration test), item-14 device check, three guardians, fresh reviewer-strict. Owner items 1 (es/el sign-off) and 4 remain.
+- Residual follow-ups (accepted, none blocks S13-final): item 13 (stale labels after midnight; optional one-file midnight emission merged into `InstallmentPlanReadRepositoryImpl.changes()`); R-S13-b-1 (LOW: a stalled installment read delays the first budget emission because `combine` waits; `onStart` hardening not applied, null means "feature off"); F-S13-0-COUNT-LIST (COUNT previewCount excludes flagged rows while the drilldown list, LIST and breakdown entry counts include them; no amount affected; assistant owner); F-S13-a-STALE-PENDING (LOW: a stale pending deep-link confirmation survives a relock and re-shows after the next unlock; fix lives in app-lock-owned `AppLockDeepLinkRouter`, deferred to the app-lock owner).

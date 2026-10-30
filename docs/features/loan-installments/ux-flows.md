@@ -218,7 +218,45 @@ full-amount spend. **Entry:** Add expense overlay (`AddExpenseSheet`).
   "Shared expense" on: switch disabled with "Installments aren't available for shared expenses yet."
   (`SHARED_NOT_SUPPORTED`). **OD-9 variant B:** switch enabled and helper "Installments split your share."
 - Split-category purchases: same disabled treatment (`SPLIT_NOT_SUPPORTED`).
-- Currency: the Add-expense form has no currency picker (home currency only). The plan currency defaults to the
+- **S11b as built (2026-10-29, plan amendment "S11 re-anchor after MEC B2/C" sections 3 and 4):**
+  - The section lives in `AddExpenseInstallmentsSection.kt` and renders nothing unless `InstallmentsFeature.ENABLED`.
+  - **Supersedes the "hidden for Deposit/Withdrawal/Transfer" bullet above:** for Not mine, Shared (including a
+    share split) and a non-spending type, the switch is shown DISABLED with the reason text (the fixed
+    `declare_installments_refused_*` / not-eligible string). **Supersedes OD-9 variant B:** Shared disables the switch
+    (no "Installments split your share." helper). Setting Not mine or Shared while ON turns installments off and keeps
+    the values.
+  - Repeat is hidden (not disabled) while installments are ON, with the helper "Repeat and installments can't be
+    combined."
+  - The live preview card, the financing-cost lines and the past-due notice are not part of S11b; Save refusals use the
+    sheet's existing save-error card with the fixed declare strings.
+- **S11c as built (2026-10-29, plan amendment "S11 candidate review dispositions", items 1-3):**
+  - **Preview card (item 7) and past-due notice (item 8):** rendered at the end of the section while the switch is on.
+    The view model exposes `installmentsDerived` (`AddExpenseInstallmentsDerived`), computed by the pure
+    `AddExpenseInstallmentsDerivation` over the domain `InstallmentScheduleCalculator.generate` (the UI does no money
+    math). Equal split: `N × amount = total`, or with a residual "N payments, total" plus "First payment X, then Y"
+    (residual FIRST, OD-6); "Last payment on <date>"; fixed payment: "Financing cost: total of installments minus
+    purchase" (negative shown with "Total of installments is less than the purchase price."). Empty or invalid amount:
+    "Enter the purchase amount first" (never 0.00 × N). An invalid count or fixed payment hides the card (the field shows
+    its own error); a calculator refusal shows the fixed refusal string. Past-due: "Past-due installments: N. They won't
+    count until you record or link them." with N = payments due strictly before today in the entry zone (never
+    auto-recorded). Amounts use the installment money formatter in the selected currency.
+  - **First-due default and warning:** `defaultFirstDueEpochDay`, `effectiveFirstDueEpochDay` and
+    `firstDueBeforePurchase` come from the view model with `sessionZone ?: ZoneId.systemDefault()`; the composable reads
+    no zone, and the "+1 month" rule lives only in `AddExpenseInstallmentsDerivation.defaultFirstDueEpochDay` (also used by
+    the save path). The preview passes no purchase date to the calculator, so the schedule still shows beside the
+    before-purchase warning.
+  - **Non-spending reason:** Deposit/Transfer shows `add_expense_installments_not_spending` ("Installments are only for
+    purchases.") instead of the "linked" string. The Declare sheet mapping is unchanged.
+  - **Still dormant** behind `InstallmentsFeature.ENABLED`. New keys: 8 (en, es DRAFT, el DRAFT); sign-off list.
+- **SUPERSEDED (2026-10-29, G2-6, plan amendment "S11 re-anchor after MEC B2/C"):** the next bullet is historical.
+  Add expense now has the general MEC currency control. With installments ON it runs in INSTALLMENT mode
+  (EUR/USD only); plan currency = purchase currency = the selected currency; there is no plan-currency row and
+  no OD-14 note here (OD-14 stays in the existing-expense declare sheet). A selection that installment mode cannot
+  offer (for example JPY) becomes Unset, is parked for the session and is restored when installments are switched
+  off; Save stays blocked (`mec_save_disabled_currency`) until a pick. With a home outside EUR/USD nothing is
+  preselected until a pick.
+- ~~Currency: the Add-expense form has no currency picker (home currency only). The plan currency defaults to the~~
+  (historical text follows) The plan currency defaults to the
   expense currency and the plan currency row is hidden when expense currency is EUR or USD. **OQ-7 stays open:**
   new USD plans need either a currency field in Add expense (change to an existing screen) or only standalone / existing
   USD expenses. If the home currency is neither EUR nor USD the switch shows a currency row (EUR / USD, **OD-14**
@@ -481,8 +519,12 @@ confirmation if dirty).
      found: Demo Electronics €50.00, 9 May" with **Link** / View expense (INV-13, AE-17).
    - Possible duplicate: "Possible duplicate of installment 3: a €50.00 charge on 11 Jun" with **View expense**. No
      automatic resolution (Q4). Under OD-5 variant B this row type does not exist.
-   - Waiting for an exchange rate (`AUTO_RECORD_DEFERRED_FX`, Q9): "Waiting for an exchange rate. We'll try again
-     automatically." Informational, no action.
+   - [Amended 2026-10-26 (A2)] No exchange-rate row. Auto-record never waits for a rate (`AUTO_RECORD_DEFERRED_FX`
+     removed, spec 6 Q9): a USD installment recorded without a rate is Paid, and its home-currency value follows the
+     shared missing-rate display (plan R17, slice S8b).
+   - [Amended 2026-10-26 (A2)] Plan without a name (`PLAN_NAME_REQUIRED`, spec INV-34; a plan restored from a
+     redacted backup): its due installments are not recorded until the plan is renamed. Row text: "Row: name needed"
+     in section 8 (PROPOSED, needs owner es/el sign-off). The action that opens the rename (E3) is S10's choice.
 4. **Active plans** list — plan cards (ACTIVE only; a COMPLETED plan that reopens returns here).
 5. Top bar: back, title "Installments & loans", actions **History**, Refresh. FAB "Add plan".
 
@@ -606,7 +648,7 @@ currency" (standalone, detached, currency differs) or "Not available for cancell
 |---|---|---|---|
 | SCHEDULED / Upcoming | Upcoming | | Link, Adjust, Skip. **Confirm is not offered** (no expense is created before the due date, INV-14) |
 | SCHEDULED / Due today | Due today | AUTO: "Will be recorded automatically"; CONFIRM: "Waiting for your confirmation" | Confirm, Link, Adjust, Skip |
-| SCHEDULED / Overdue | Overdue · not counted yet | Sub-reason when known: "Before you set up this plan" (past at declaration), "Its expense was removed" (reopened, auto-record already used), "A matching charge was found" (deferred, INV-13), "Waiting for an exchange rate" (Q9) | Record (confirm), Link, Adjust, Skip |
+| SCHEDULED / Overdue | Overdue · not counted yet | Sub-reason when known: "Before you set up this plan" (past at declaration), "Its expense was removed" (reopened, auto-record already used), "A matching charge was found" (deferred, INV-13), "Row: name needed" copy (INV-34, PROPOSED, owner es/el sign-off). [Amended 2026-10-26 (A2): "Waiting for an exchange rate" removed] | Record (confirm), Link, Adjust, Skip |
 | PAID | Paid | Origin: "Recorded automatically" / "Confirmed" / "Linked"; linked expense merchant + date; chip **Differs from plan** when the paid amount != scheduled amount (7.6); chip "Counts €0" if the expense was marked not mine | View expense, Unlink |
 | SKIPPED | Skipped | Bounded reason label | Unskip |
 | CANCELLED | Cancelled | Reason: Stopped / Refunded / Paid off early / Shortened / Expense removed | none |
@@ -681,7 +723,10 @@ chronological log appears only if OD-13's alternative (plan event table) is appr
 (the expense is dated on the due date at noon, spec 10). The action goes through the expense lifecycle, never from
 the UI. No Undo; after success the snackbar offers **View expense**. If a matching unlinked charge exists the sheet
 shows it first ("A matching charge was found") and recommends Link, to prevent counting the payment twice (INV-13 /
-INV-7). Home-currency conversion failure keeps the entry unrecorded with "Waiting for an exchange rate" (Q9).
+INV-7). [Amended 2026-10-26 (A2)] A missing exchange rate never blocks Record payment: the expense is created and
+its home-currency value follows the shared missing-rate display (R17/S8b). If the plan has no name (INV-34), Record
+payment is refused with `PLAN_NAME_REQUIRED` and nothing changes; the message is the "Row: name needed" copy
+(section 8, PROPOSED).
 **Bulk Record all past payments:** confirmation dialog "Creates N expenses totalling €X, each dated on its due date.
 Totals for those months will change. If you already have these charges, link them instead." Buttons **Record N payments**
 / Cancel; per-entry transactions, so partial success is possible: the result states "Recorded 3 of 4. 1 could not be
@@ -994,7 +1039,8 @@ Bounded reasons mapped to fixed strings:
 | PLAN_ENDED | INV-20 | "This plan is finished and can't be changed." |
 | EXPENSE_LOCKED_BY_INSTALLMENT_PLAN | INV-22 | "This purchase is paid in installments, so its amount can't be changed." |
 | INVALID_VALUE | validation | "Check the highlighted fields." |
-| DEFERRED (`AUTO_RECORD_DEFERRED_CANDIDATE` / `_FX`) | INV-13 / Q9 | row sub-reason, not an error |
+| DEFERRED (`AUTO_RECORD_DEFERRED_CANDIDATE`) | INV-13 | row sub-reason, not an error. [Amended 2026-10-26 (A2): `_FX` removed] |
+| PLAN_NAME_REQUIRED | INV-34 | "Row: name needed" copy (section 8, PROPOSED). [Amended 2026-10-26 (A2)] |
 | WRITES_BLOCKED | barrier | "Your data is being restored. Try again in a moment." |
 | WRITE_FAILED | storage failure / rollback | "Couldn't save. Nothing was changed." |
 
@@ -1028,7 +1074,8 @@ before the last paid due date -> "Choose a date that is not in the future and no
 | Entry REVERSED | "Refunded · not counted" row; expense flagged "Not counted (refunded)" |
 | PAYOFF entry | Payoff row |
 | AUTO_RECORD vs CONFIRM (2.1, INV-12, INV-13) | Mode radio, header label, attention items |
-| `AUTO_RECORD_DEFERRED_CANDIDATE` / `_FX` | Suggested-link attention row / "Waiting for an exchange rate" |
+| `AUTO_RECORD_DEFERRED_CANDIDATE` | Suggested-link attention row. [Amended 2026-10-26 (A2): `_FX` and "Waiting for an exchange rate" removed] |
+| Plan without a name (INV-34, `PLAN_NAME_REQUIRED`) | Attention row and Record refusal ("Row: name needed", PROPOSED). [Amended 2026-10-26 (A2)] |
 | Possible duplicate indicator (Q4) | Overview attention row + detail row note |
 | Past-at-declaration entries (8.1, AE-10c) | Inline notice, Overdue rows, bulk Record all past payments |
 | `spendingExclusionReason` INSTALLMENT_PURCHASE / INSTALLMENT_REVERSED (2.3, INV-1/2) | Marked rows in Transactions, locked fields (INV-22) |
@@ -1064,8 +1111,10 @@ of the write-blocked code, ALREADY_LINKED code name, whether reconcile outcomes 
   in the plan currency. Next-due compares by date only. A purchase in a different currency than its plan is allowed
   (OD-14 recommended): both currencies are shown, financing cost is "Unavailable", and a USD installment expense
   gets its home-currency value from the existing expense conversion at creation (not a new UI figure).
-- **Unavailable conversions:** no conversion exists in v1, so no "approx" markers. If recording needs a rate that is
-  missing, the installment stays unrecorded and shows "Waiting for an exchange rate" (never a zero amount).
+- **Unavailable conversions:** no conversion exists in v1, so no "approx" markers. [Amended 2026-10-26 (A2)] A
+  missing rate never keeps an installment unrecorded. The expense is created as a sentinel row without a
+  home-currency value, excluded from home-currency totals, and shown through the shared missing-rate display (plan
+  R17, slice S8b), never as a zero amount. No installment-specific copy.
 - **Unavailable values:** the word "Unavailable" (info icon with explanation); where space-constrained the em dash is
   allowed only with an "Unavailable" content description (existing `formatBillReminderAmount` convention). Never
   "€0.00".
@@ -1255,7 +1304,7 @@ fixed-width chips. Use plurals resources; positional args (`%1$d of %2$d`), neve
 | Skip dialog | Skip installment %d? It won't be counted and no payment is added at the end of the plan. You can undo this. |
 | Record dialog | Creates an expense of %1$s dated %2$s and marks this installment paid. |
 | Record all dialog | Creates %1$d expenses totalling %2$s, each dated on its due date. Totals for those months will change. If you already have these charges, link them instead. |
-| Unlink dialog | Unlink this expense from installment %d? The expense stays in your list and still counts as spending. The installment becomes unpaid. If the payment did not happen, delete the expense in Transactions instead. |
+| Unlink dialog | Unlink this expense from installment %d? The expense stays in your list and still counts as spending. The installment becomes unpaid. If the payment did not happen, delete the expense in Transactions instead. Recording this installment again later creates a new expense. (last sentence: PE-D, owner-approvals 68) |
 | Stop dialog | Stop this plan? %1$d unpaid payments (%2$s) will be removed. Payments already made stay in your spending. This purchase stays at 0. This can't be undone. |
 | Stop (overdue) | %d unrecorded past payments will not count. |
 | Refund question | Is the refund already recorded as a transaction? |
@@ -1271,7 +1320,7 @@ fixed-width chips. Use plurals resources; positional args (`%1$d of %2$d`), neve
 | Row: expense removed | Its expense was removed |
 | Row: before plan | Before you set up this plan |
 | Row: candidate found | A matching charge was found |
-| Row: FX wait | Waiting for an exchange rate. We'll try again automatically. |
+| Row: name needed | Name this plan to record its payments. **PROPOSED [Amended 2026-10-26 (A2)]: new string for INV-34, needs owner es/el sign-off; used by S10 (attention row, row sub-reason, Record refusal).** ("Row: FX wait" removed [Amended 2026-10-26 (A2)].) |
 | Possible duplicate | Possible duplicate of installment %1$d: a %2$s charge on %3$s |
 | Detached banner | The original purchase was deleted. This plan is now standalone. |
 | Snackbar declared | Installments set up for %s (actions: View plan, Undo) |
@@ -1380,3 +1429,170 @@ OD-1 (separate coordinator; Recurring placement flips if rejected), OD-3 (end-pl
 OD-5 (captured-charge linking), OD-6 (residual first/last label), OD-8 (frequencies), OD-9 (shared/split purchases),
 OD-10 (month of a linked charge), OD-11 (export marking), OD-12 (health score/synthesis not wired), OD-13 (event
 table), OD-14 (plan currency vs purchase currency), OD-15 (conditional fallback, no UI difference).
+
+## Clarification 2026-10-27 — owner decisions (owner-approvals item 51c)
+
+Append-only. Nothing above this heading is rewritten. For the entries named below, this section wins over the text
+above.
+
+**Source.** The owner replied "I approve" to the orchestrator's recommendations on 2026-10-27 (owner-approvals item
+51c; also item 49c (OQ-21); OD-14, F4 and F5 were raised in the S12a reviews (handoff :2171-2198);
+`build/release-lead-notes/owner-approvals-20261022.md` in the main checkout). Recorded in
+`workflows/active/loan-installments-handoff.md`, "2026-10-27 OWNER DECISIONS" (:2229-2237). Four of the six 51c(c)
+decisions are spec/UX decisions. This file covers OQ-21, F4 and F5. The fourth of these, OD-14, is a domain rule and is recorded in `domain-spec.md` (same heading); its UX
+consequence is cross-referenced in U-4.
+
+**Impact.** No schema, DAO, guard or allowlist change. No new or removed string. The es/el strings stay DRAFTS and the
+native sign-off is still open.
+
+### U-1. OQ-21 DROPPED: there is no "Delete expense and reopen" action
+
+**Decision.** The action is not built. The app has no expense-delete use case (the only delete is
+`ExpenseRepository.deleteExpense`, :583 and :603, which goes to the transaction lifecycle coordinator), and the INV-23
+guard forbids any `deleteExpense(` call in installment code, UI included
+(`InstallmentPlanArchitectureGuardTest.kt:211`, registered at :353, self-checked at :719-745). Wiring it would have
+needed a guard change or a new wrapper outside the installment packages (handoff :2015).
+
+**Entries superseded or narrowed**
+
+| Entry | Where | Original | Now |
+|---|---|---|---|
+| OQ-21 | section 10, :1373-1376 | PLANNER question: "is user-facing Unlink safe? ... consider limiting Unlink ..., or offering 'Delete expense and reopen' as one action through the standard expense-delete path." | CLOSED. The delete half is dropped. The Unlink half is answered by U-1 rule 4 (record: owner-approvals item 56, orchestrator, standing approval; owner FYI). |
+| Unlink expense (Paid rows) | section 3.6, :726-730 | The dialog paragraph ends "OQ-21 asks whether Unlink should be user-facing at all". | Closed: Unlink is user-facing. The dialog text is NOT unchanged: owner-approvals item 68 (PE-D) appends the sentence "Recording this installment again later creates a new expense." to `installments_unlink_body` (EN; es/el DRAFT), so the "creates a new expense" warning is now in the dialog itself. |
+| OQ-21 resolution and S10b-2 goal | `loan-installments-plan.md` :543 and :446 (cross-file) | "AUTO_RECORDED and USER_CONFIRMED entries get 'Delete expense and reopen' via the standard expense-delete use case." | The "Delete expense and reopen" half is dropped. The "Unlink only for USER_LINKED" half is not carried by the decision (see rule 4). |
+
+No wireframe, copy key or state in this file ever carried "Delete expense and reopen". The action existed only in the
+plan and handoff text, so no string is removed.
+
+**Rule (precise).**
+1. No installment screen deletes an expense (INV-23 is unchanged).
+2. To drop the expense of a recorded installment, the user either (a) unlinks it from the plan detail and then deletes
+   it in Transactions, or (b) deletes it directly in Transactions. The Unlink dialog already says "If the payment did
+   not happen, delete the expense in Transactions instead" (`values/strings.xml:2921`, copy table :1269). The
+   Delete-plan info row (:817-818) already names both routes.
+3. Where the entry reopens:
+   - Unlink: `unlinkExpense` moves a PAID entry to SCHEDULED with `recordGeneration` + 1 and leaves the expense
+     untouched (`InstallmentPlanLifecycleCoordinator.kt:379-399`). Only a REGULAR PAID entry of an ACTIVE or COMPLETED
+     plan can be unlinked (`InstallmentPlanTransitions.kt:199`, :360-368).
+   - Direct delete of a still-linked expense: the transaction lifecycle coordinator deletes the row and then plans the
+     post-commit batch (`TransactionLifecycleCoordinator.kt:3077-3082`, best effort). The batch includes
+     `installment_expense_deleted` (`TransactionSideEffectPlanner.kt:157-169`, :504-515), which calls
+     `InstallmentPlanLifecycleCoordinator.onExpenseDeleted` (:1069) and reconcile R2. The entry reopens (ACTIVE or
+     COMPLETED plan, `recordGeneration` + 1, `autoRecordConsumed` unchanged), or becomes CANCELLED(`EXPENSE_REMOVED`)
+     in a CANCELLED or PAID_OFF plan (`InstallmentPlanTransitions.kt:564-583`; domain-spec section 7.6). If the
+     post-commit reaction fails, the reconcile run repairs it (domain-spec :524).
+   - Unlink first, then delete: the entry is already open after the unlink. The later delete finds no linked entry, so
+     the reaction does nothing (`reconcileForExpense`, :1100-1109).
+   So the owner's sentence "unlink, then delete; that already reopens the entry through the post-commit reaction" is
+   exact for the direct-delete route. In the two-step route the reopen happens at the unlink step.
+4. Unlink scope as implemented (not changed by 51c): it is NOT restricted by link origin. The coordinator allows it
+   for any PAID REGULAR entry of an ACTIVE or COMPLETED plan, whether the entry was auto-recorded, confirmed or linked,
+   and the read model carries no link origin (handoff :2018, :2177). The owner's route "unlink, then delete" only
+   works for an auto-recorded or confirmed entry if Unlink is unrestricted, so this clarification records
+   unrestricted Unlink as the rule. Record: owner-approvals item 56 (orchestrator, standing approval; owner FYI).
+   The plan's earlier "Unlink only for USER_LINKED" would be a new decision.
+5. Known risk, unchanged: unlinking without deleting leaves the expense counting while the entry is open, and a later
+   Record creates a second expense (new generation key). The consequence-first dialog is the only mitigation.
+
+**Pre-enable items (not part of 51c).**
+- The Unlink row entry point: BUILT by PE-B (2026-10-28). `canUnlink` on the detail row and the entry menu item
+  call `openUnlink` (`InstallmentPlanActions.kt`), so route (a) above has a UI trigger. (Before PE-B, `openUnlink`
+  had no caller.)
+- The role-dependent lines in the Transactions delete dialog (:820-826): BUILT by PE-D (2026-10-28, implemented, not
+  yet validated). `DeleteConfirmationDialog` (`TransactionsScreen.kt`) shows one of three role lines from the row
+  marks (the stored flag is the fallback) plus a neutral **View plan** button, only when the installments view
+  model exists (dormant while the flag is false). With OQ-21 dropped, these lines are what tells the user that
+  deleting an installment expense makes the installment unpaid.
+
+### U-2. F4 accepted: the Transactions installments filter is a single toggle
+
+**Decision.** The filter is one toggle, not the three-way choice.
+
+**Entries superseded or narrowed**
+
+| Entry | Where | Original | Now |
+|---|---|---|---|
+| Transactions filter row | section 3.9 table, :889 | "New toggle 'Installments': All / Installment payments / Purchase records." and the note "Purchase records can be hidden with one tap." | One toggle "Installments". The three-way choice and the "hide purchase records" claim are superseded. |
+
+No other section describes the three options, and no copy key existed for them (the section 8 copy table has none), so
+no string is removed.
+
+**Rule (precise).**
+1. Control: one `FilterChip` labelled "Installments" (`transactions_installment_filter`, `values/strings.xml:2847`;
+   es "Cuotas" :656 and el "Δόσεις" :405 are DRAFTS). It sits above the top bar (`TransactionsScreen.kt:298-300`;
+   `TransactionsInstallmentUi.kt:107-117`) and exists only while `InstallmentsFeature.ENABLED`.
+2. OFF (default) is "All": the list is unchanged. ON keeps only installment-related rows in one list: purchase
+   records (chips "Paid in N installments" and "Not counted as spending") together with installment payment expenses
+   (entries that are PAID or REVERSED, REGULAR or PAYOFF). Date groups left empty are dropped
+   (`TransactionsInstallmentViewModel.kt:127-149` builds the marks, :293-299 `filterGrouped`; test
+   `TransactionsViewModelInstallmentTest.kt:194-210`).
+3. Not available: payments only, purchase records only, hiding purchase records. The 3.9 rationale "purchase records
+   can be hidden with one tap" no longer holds. Purchase records stay recognisable by their chips.
+4. Scope and state: session state in `TransactionsInstallmentViewModel` (`_filterOn`, :263-264; `toggleFilter`,
+   :284-287). It is not persisted and is forced off when the feature is disabled (:268-273). The filter is applied to
+   the loaded, grouped list (`TransactionsScreen.kt:150-156`). While it is ON the screen keeps paging to the end
+   (`TransactionsLoadMorePolicy`, :236-248; screen :266-291), so the filtered list is complete only after paging ends.
+5. No filtered-empty copy was specified or added. The pre-enable QA items for paging and the retry window stay open
+   (handoff :2205, :2209-2213).
+
+### U-3. F5 accepted: the locked-expense message has one sentence
+
+**Decision.** The message for a refused edit of a plan purchase is the shortened form now in the strings.
+
+**Entries superseded or narrowed**
+
+| Entry | Where | Original | Now |
+|---|---|---|---|
+| Editing the purchase expense from Transactions | section 3.7, :765-770 | The refused-attempt text adds a second sentence: "To change it, delete the plan (if no payment is recorded) or adjust the plan." | One sentence only. The second sentence is superseded. |
+
+The error-code table (:1002) and the copy table (:1251, "Purchase locked") already show the short form, so :768-770 was
+the only differing text.
+
+**Rule (precise).**
+1. Exact text (en): "This purchase is paid in installments, so its amount can't be changed." Key
+   `transactions_installment_purchase_locked` (`values/strings.xml:2848`). The es (:657) and el (:406) strings are
+   DRAFT translations of the same short form; native sign-off is still open.
+2. It is a fixed resource message. It carries no data, no exception text and no instruction to delete or adjust the
+   plan. It is shown through `_error` from `TransactionsViewModel.updateExpenseType` (:757-760) and `updateOwnership`
+   (:866-869), and the log line is the constant `TRANSACTION_UPDATE_BLOCKED code=EXPENSE_LOCKED_BY_INSTALLMENT_PLAN`.
+   Tests: `TransactionsViewModelTest.kt:205`, :224, :243.
+3. Not part of this decision and not implemented: the disabled controls, the line "Locked while this purchase is
+   paid in installments." and the "View plan" link in the edit form (:765-768). There is no such string, and
+   `InstallmentLockedExpenseException` is mapped only in `TransactionsViewModel` (:757, :866).
+
+### U-4. Cross-reference for OD-14 (the UX side of the domain-spec clarification)
+
+- :224-227 (section 3.1, currency note): superseded. The Add-expense plan-currency row is removed by G2-6, and an
+  amount to split is never typed when currencies differ (`FIXED_PAYMENT` only).
+- :1073-1075 (section 5, mixed currency): "A purchase in a different currency than its plan is allowed" now reads
+  "allowed as a fixed-payment plan". Financing cost stays "Unavailable".
+- Declare sheet as implemented: when the currencies differ, "Equal split of total" is disabled, "Fixed payment × N" is
+  selected, and the note `declare_installments_currency_differs` (`values/strings.xml:2853`) is shown
+  (`DeclareInstallmentsSheet.kt:512-528`).
+
+### Inconsistencies found while recording these decisions
+
+- F5 wording versus where it is shown. The accepted text names only the amount, but INV-22 also locks currency,
+  transaction type and ownership (domain-spec :382-385). The only two places that show the message are the type-change
+  and ownership-change paths, so a user changing the type or ownership reads "its amount can't be changed". The handoff
+  note (:2198) says the message "states the type and ownership lock but not the amount", which does not match the
+  string. The wording is accepted as is. A field-neutral wording would be a new decision.
+- F4 versus its original purpose. The single toggle cannot hide purchase records (U-2 rule 3).
+- OQ-21 rationale versus mechanics. The reopen after "unlink, then delete" comes from the unlink, not from the post-commit
+  reaction (U-1 rule 3).
+
+## Clarification 2026-10-28 — F5 wording (owner-approvals 59d)
+
+Supersedes the short text in U-3 (and the "Inconsistencies" note "F5 wording versus where it is shown"): the owner
+approved a field-neutral wording, because the message is shown only when the user changes the transaction TYPE or the
+OWNERSHIP of a plan purchase (`TransactionsViewModel.updateExpenseType`, `updateOwnership`), never an amount edit.
+
+1. New text (en), key `transactions_installment_purchase_locked` (unchanged): "This purchase is paid in installments,
+   so this can't be changed here."
+2. es: "Esta compra se paga a plazos, así que esto no se puede cambiar aquí." el: "Αυτή η αγορά πληρώνεται σε δόσεις,
+   οπότε αυτό δεν μπορεί να αλλάξει εδώ." Both are DRAFT (`<!-- DRAFT: owner native sign-off pending -->` in the
+   resource files); native sign-off is still open.
+3. Unchanged from U-3: one fixed resource message, no data or exception text, no instruction to delete or adjust the
+   plan, shown through `_error` from the type-change and ownership-change paths. The key, the call sites and the tests
+   (which assert the resource id) are not touched. The older copies of the amount-specific sentence (the error-code
+   table, the copy table "Purchase locked", section 3.7) are superseded by this text.

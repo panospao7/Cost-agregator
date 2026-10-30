@@ -11,8 +11,10 @@ import androidx.room.Update
 import androidx.sqlite.db.SupportSQLiteQuery
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.data.database.query.SpendingInclusionSql
 import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
 import com.yourname.expensetracker.data.database.model.ExpenseWithCategoryName
+import com.yourname.expensetracker.data.database.model.SpendingExclusionFlagRow
 import com.yourname.expensetracker.domain.location.MerchantLocationGrid
 import com.yourname.expensetracker.domain.intelligence.DuplicateDetectionPolicy
 import kotlinx.coroutines.flow.Flow
@@ -313,7 +315,7 @@ interface ExpenseDao {
         ReplaceWith("MultiCurrencyRepository", "com.yourname.expensetracker.data.repository.MultiCurrencyRepository"),
         level = DeprecationLevel.ERROR
     )
-    @Query("SELECT SUM(${EFFECTIVE_AMOUNT_SQL}) FROM expenses WHERE ${SPENDING_TYPE_SQL} AND isNotMine = 0")
+    @Query("SELECT SUM(${EFFECTIVE_AMOUNT_SQL}) FROM expenses WHERE ${SPENDING_TYPE_SQL} AND ${SpendingInclusionSql.SPENDING_PREDICATE}")
     fun getTotalSpentFlow(): Flow<Double?>
 
     /**
@@ -327,6 +329,7 @@ interface ExpenseDao {
      *
      * P2-18: Replaces [getTotalSpentFlow] as the budget-status invalidation trigger.
      */
+    // spending-exempt: ROW_COUNT
     @Query("SELECT COUNT(*) FROM expenses")
     fun observeExpenseMutationClock(): Flow<Int>
 
@@ -354,6 +357,7 @@ interface ExpenseDao {
     @Query("UPDATE expenses SET categoryId = :newCategoryId WHERE categoryId = :oldCategoryId")
     suspend fun updateCategoryForCategory(oldCategoryId: Long, newCategoryId: Long): Int
 
+    // spending-exempt: ROW_COUNT
     @Query("SELECT COUNT(*) FROM expenses")
     suspend fun countAllExpenses(): Int
 
@@ -404,6 +408,23 @@ suspend fun updateDedupeKey(expenseId: Long, dedupeKey: String)
     @Query("UPDATE expenses SET isNotMine = :isNotMine WHERE id = :expenseId")
     suspend fun updateIsNotMine(expenseId: Long, isNotMine: Boolean)
 
+    /**
+     * Sets or clears the denormalised spending-exclusion flag (loan-installments INV-2).
+     * [reason] is a bounded SpendingExclusionReason name, or null to count as spending again.
+     * The only legal caller is TransactionLifecycleCoordinator.setSpendingExclusionDbOnly.
+     */
+    @RestrictedExpenseDaoMutation
+    @Query("UPDATE expenses SET spendingExclusionReason = :reason WHERE id = :expenseId")
+    suspend fun updateSpendingExclusionReason(expenseId: Long, reason: String?)
+
+    /**
+     * Read-only scan of every expense that carries a spending-exclusion flag (id and stored flag
+     * name only). Used by the installment reconcile to find orphan installment flags (R1, R3).
+     * No write, no payload text.
+     */
+    @Query("SELECT id, spendingExclusionReason FROM expenses WHERE spendingExclusionReason IS NOT NULL")
+    suspend fun getSpendingExclusionFlagRows(): List<SpendingExclusionFlagRow>
+
     @RestrictedExpenseDaoMutation
     @Query("UPDATE expenses SET ownerName = :name WHERE id = :expenseId")
     suspend fun updateOwnerName(expenseId: Long, name: String?)
@@ -428,6 +449,7 @@ suspend fun updateDedupeKey(expenseId: Long, dedupeKey: String)
     @Query("UPDATE expenses SET isSharedExpense = 0, myShareAmount = NULL, mySharePercentage = NULL, sharedWithName = NULL WHERE id = :expenseId")
     suspend fun clearSharedExpenseFlags(expenseId: Long)
 
+    // spending-exempt: DEDUPE_BLOCKING
     @Query("""
         SELECT EXISTS(
             SELECT 1 FROM expenses
@@ -437,6 +459,7 @@ suspend fun updateDedupeKey(expenseId: Long, dedupeKey: String)
     """)
     suspend fun existsByDedupeKey(dedupeKey: String): Boolean
 
+    // spending-exempt: DEDUPE_BLOCKING
     @Query("""
         SELECT EXISTS(
             SELECT 1 FROM expenses
@@ -455,6 +478,7 @@ suspend fun updateDedupeKey(expenseId: Long, dedupeKey: String)
         maxAmount: Double
     ): Boolean
 
+    // spending-exempt: DEDUPE_BLOCKING
     @Query("""
         SELECT EXISTS(
             SELECT 1 FROM expenses
@@ -517,6 +541,7 @@ suspend fun updateDedupeKey(expenseId: Long, dedupeKey: String)
         }
     }
 
+    // spending-exempt: DEDUPE_RESOLVER
     @Query("""
         SELECT * FROM expenses
         WHERE merchantKey = :merchantKey
@@ -534,6 +559,7 @@ suspend fun updateDedupeKey(expenseId: Long, dedupeKey: String)
         maxAmount: Double
     ): Expense?
 
+    // spending-exempt: DEDUPE_RESOLVER
     @Query("""
         SELECT * FROM expenses
         WHERE merchant = :merchant
@@ -589,6 +615,7 @@ suspend fun updateDedupeKey(expenseId: Long, dedupeKey: String)
      * ([getDuplicateCandidateByMerchantKeyInRangeCurrencyAware] family,
      * [findDuplicateIdCurrencyAware]) intentionally EXCLUDE not-mine rows instead.
      */
+    // spending-exempt: DEDUPE_BLOCKING
     @Query("""
         SELECT EXISTS(
             SELECT 1 FROM expenses
@@ -633,6 +660,7 @@ suspend fun updateDedupeKey(expenseId: Long, dedupeKey: String)
  * The `8` mirrors [DuplicateDetectionPolicy.MIN_MERCHANT_KEY_PREFIX_LENGTH];
  * keep both in sync — Room SQL cannot reference Kotlin constants.
      */
+    // spending-exempt: DEDUPE_BLOCKING
     @Query("""
         SELECT EXISTS(
             SELECT 1 FROM expenses
@@ -669,6 +697,7 @@ AND LENGTH(:merchantKey) >= 8
      * time/amount range, restricted to the given currency and compatible
      * transaction type.
      */
+    // spending-exempt: DEDUPE_BLOCKING
     @Query("""
         SELECT EXISTS(
             SELECT 1 FROM expenses
@@ -706,6 +735,7 @@ AND LENGTH(:merchantKey) >= 8
      * must never resolve to one. Also feeds the import-suggestion path
      * [getDuplicateCandidateForImportCurrencyAware].
      */
+    // spending-exempt: DEDUPE_RESOLVER
     @Query("""
         SELECT * FROM expenses
         WHERE merchantKey = :merchantKey
@@ -745,6 +775,7 @@ AND LENGTH(:merchantKey) >= 8
      * P2-008 (11c): RESOLUTION/SUGGESTION query — intentionally EXCLUDES
      * `isNotMine` rows (see [getDuplicateCandidateByMerchantKeyInRangeCurrencyAware]).
      */
+    // spending-exempt: DEDUPE_RESOLVER
     @Query("""
         SELECT * FROM expenses
         WHERE (
@@ -784,6 +815,7 @@ AND LENGTH(:merchantKey) >= 8
      * P2-008 (11c): RESOLUTION/SUGGESTION query — intentionally EXCLUDES
      * `isNotMine` rows (see [getDuplicateCandidateByMerchantKeyInRangeCurrencyAware]).
      */
+    // spending-exempt: DEDUPE_RESOLVER
     @Query("""
         SELECT * FROM expenses
         WHERE merchant = :merchant
@@ -1085,6 +1117,7 @@ AND LENGTH(:merchantKey) >= 8
      * [getDuplicateCandidateByMerchantKeyInRangeCurrencyAware] keeps its
      * `isNotMine = 0` exclusion.
      */
+    // spending-exempt: DEDUPE_BLOCKING
     @Query("""
         SELECT * FROM expenses
         WHERE merchantKey = :merchantKey
@@ -1120,6 +1153,7 @@ AND LENGTH(:merchantKey) >= 8
      * [existsByMerchantKeyPrefixInRangeCurrencyAware]. Resolver twin:
      * [getDuplicateCandidateByMerchantKeyPrefixInRangeCurrencyAware].
      */
+    // spending-exempt: DEDUPE_BLOCKING
     @Query("""
         SELECT * FROM expenses
         WHERE (
@@ -1158,6 +1192,7 @@ AND LENGTH(:merchantKey) >= 8
      * (no ownership filter); mirrors [existsByMerchantInRangeCurrencyAware].
      * Resolver twin: [getDuplicateCandidateByMerchantInRangeCurrencyAware].
      */
+    // spending-exempt: DEDUPE_BLOCKING
     @Query("""
         SELECT * FROM expenses
         WHERE merchant = :merchant
@@ -1229,6 +1264,7 @@ AND LENGTH(:merchantKey) >= 8
      * use cases and engines that need a full candidate list (not just
      * an existence check).
      */
+    // spending-exempt: DEDUPE_RESOLVER
     @Query("""
         SELECT * FROM expenses
         WHERE date >= :startDate AND date < :endDate
@@ -1257,6 +1293,7 @@ AND LENGTH(:merchantKey) >= 8
      * Find the ID of an existing expense that matches the given duplicate-criteria fields.
      * Returns the first matching ID or null if none found.
      */
+    // spending-exempt: DEDUPE_RESOLVER
     @Query("""
         SELECT id FROM expenses
         WHERE merchantKey = :merchantKey
@@ -1278,6 +1315,7 @@ AND LENGTH(:merchantKey) >= 8
      * Find the ID of an expense with a matching dedupeKey.
      * Used for STRICT_EXTERNAL_ID deduplication mode.
      */
+    // spending-exempt: DEDUPE_BLOCKING
     @Query("SELECT id FROM expenses WHERE dedupeKey = :dedupeKey LIMIT 1")
     suspend fun findIdByDedupeKey(dedupeKey: String): Long?
 
@@ -1293,6 +1331,7 @@ AND LENGTH(:merchantKey) >= 8
      * Used by [TransactionLifecycleCoordinator.resolveExistingIdAfterInsertConflict]
      * to prove which identity actually rejected an insert.
      */
+    // spending-exempt: DEDUPE_BLOCKING
     @Query("SELECT id FROM expenses WHERE rawNotificationId = :rawNotificationId LIMIT 1")
     suspend fun findIdByRawNotificationId(rawNotificationId: Long): Long?
 
@@ -1307,7 +1346,7 @@ AND LENGTH(:merchantKey) >= 8
         WHERE ${SPENDING_TYPE_SQL}
         AND categoryId = :categoryId
         AND date >= :startMs AND date < :endMs
-        AND isNotMine = 0
+        AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         """)
     suspend fun getCategorySpentInPeriod(categoryId: Long, startMs: Long, endMs: Long): Double
 
@@ -1319,7 +1358,7 @@ AND LENGTH(:merchantKey) >= 8
         WHERE ${SPENDING_TYPE_SQL}
         AND categoryId = :categoryId
         AND date >= :startMs AND date < :endMs
-        AND isNotMine = 0
+        AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         """)
     fun getCategorySpentInPeriodFlow(categoryId: Long, startMs: Long, endMs: Long): Flow<Double>
 
@@ -1335,7 +1374,7 @@ AND LENGTH(:merchantKey) >= 8
         WHERE ${SPENDING_TYPE_SQL}
           AND categoryId IN (:categoryIds)
           AND date >= :startMs AND date < :endMs
-          AND isNotMine = 0
+          AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         GROUP BY categoryId
     """)
     suspend fun getCategorySpentTotalsInPeriod(
@@ -1347,6 +1386,7 @@ AND LENGTH(:merchantKey) >= 8
     // === Merchant Search for Manual Entry ===
     // avgAmount uses the effective (ownership-adjusted) amount via [EFFECTIVE_AMOUNT_SQL] so that
     // the pre-fill suggestion reflects what the user actually paid (not the gross posted amount on shared rows).
+    // spending-exempt: SUGGESTION
     @Query("""
         WITH filtered AS (
             SELECT *
@@ -1417,7 +1457,7 @@ AND LENGTH(:merchantKey) >= 8
         FROM expenses 
         WHERE ${SPENDING_TYPE_SQL} 
         AND date >= :startMs AND date < :endMs
-        AND isNotMine = 0
+        AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         ORDER BY 1 ASC
     """)
     suspend fun getAmountsForPercentileCalc(startMs: Long, endMs: Long): List<Double>
@@ -1497,9 +1537,11 @@ AND LENGTH(:merchantKey) >= 8
         cursorId: Long?
     ): List<Expense>
 
+    // spending-exempt: ROW_COUNT
     @Query("SELECT COUNT(*) FROM expenses WHERE date >= :startDate AND date < :endDate AND isNotMine = 0")
     suspend fun countExpensesBetween(startDate: Long, endDate: Long): Int
 
+    // spending-exempt: ROW_COUNT
     @Query("SELECT COUNT(*) FROM expenses")
     suspend fun getTotalCount(): Int
 
@@ -1532,7 +1574,7 @@ AND LENGTH(:merchantKey) >= 8
         SELECT SUM(${EFFECTIVE_AMOUNT_SQL}) FROM expenses
         WHERE ${SPENDING_TYPE_SQL}
         AND date >= :startDate AND date < :endDate
-        AND isNotMine = 0
+        AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         """)
     suspend fun getTotalSpentBetween(startDate: Long, endDate: Long): Double?
 
@@ -1553,7 +1595,7 @@ AND LENGTH(:merchantKey) >= 8
     @Query("""
         SELECT COALESCE(SUM(${EFFECTIVE_AMOUNT_SQL}), 0.0) FROM expenses
         WHERE date >= :startDate AND date < :endDate
-          AND isNotMine = 0
+          AND ${SpendingInclusionSql.SPENDING_PREDICATE}
           AND ((:categoryId IS NULL AND categoryId IS NULL) OR categoryId = :categoryId)
     """)
     suspend fun getEffectiveSpentBetweenForCategory(
@@ -1578,7 +1620,7 @@ AND LENGTH(:merchantKey) >= 8
         FROM expenses
         WHERE ${SPENDING_TYPE_SQL}
           AND date >= :startDate AND date < :endDate
-          AND isNotMine = 0
+          AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         GROUP BY UPPER(currency)
         ORDER BY total DESC
     """)
@@ -1592,6 +1634,7 @@ AND LENGTH(:merchantKey) >= 8
      * NEW-P5-003: Excludes shared-expense and not-mine deposits so deposit totals
      * reflect only the user's own income, not shared-expense repayments.
      */
+    // spending-exempt: NON_SPENDING_INCOME
     @Query("""
         SELECT UPPER(COALESCE(currency, 'EUR')) AS currency,
                SUM(${EFFECTIVE_AMOUNT_SQL}) AS total,
@@ -1629,7 +1672,7 @@ AND LENGTH(:merchantKey) >= 8
         FROM expenses
         WHERE ${SPENDING_TYPE_SQL}
           AND date >= :startDate AND date < :endDate
-          AND isNotMine = 0
+          AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         GROUP BY categoryId, UPPER(currency)
         ORDER BY total DESC
     """)
@@ -1650,7 +1693,7 @@ AND LENGTH(:merchantKey) >= 8
         FROM expenses
         WHERE ${SPENDING_TYPE_SQL}
           AND date >= :startDate AND date < :endDate
-          AND isNotMine = 0
+          AND ${SpendingInclusionSql.SPENDING_PREDICATE}
           AND merchantKey IS NOT NULL
         GROUP BY merchantKey, UPPER(currency)
         ORDER BY total DESC
@@ -1670,7 +1713,7 @@ AND LENGTH(:merchantKey) >= 8
         FROM expenses
         WHERE ${SPENDING_TYPE_SQL}
           AND date >= :startDate AND date < :endDate
-          AND isNotMine = 0
+          AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         GROUP BY monthKey, UPPER(currency)
         ORDER BY monthKey ASC, total DESC
     """)
@@ -1692,7 +1735,7 @@ AND LENGTH(:merchantKey) >= 8
                COUNT(*) AS txCount
         FROM expenses
         WHERE date >= :startDate AND date < :endDate
-          AND isNotMine = 0
+          AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         GROUP BY UPPER(currency)
         ORDER BY total DESC
     """)
@@ -1710,7 +1753,7 @@ AND LENGTH(:merchantKey) >= 8
                COUNT(*) AS txCount
         FROM expenses
         WHERE date >= :startDate AND date < :endDate
-          AND isNotMine = 0
+          AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         GROUP BY categoryId, UPPER(currency)
         ORDER BY total DESC
     """)
@@ -1731,7 +1774,7 @@ AND LENGTH(:merchantKey) >= 8
                COUNT(*) AS txCount
         FROM expenses
         WHERE date >= :startDate AND date < :endDate
-          AND isNotMine = 0
+          AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         GROUP BY merchant, UPPER(currency)
         ORDER BY total DESC
     """)
@@ -1748,7 +1791,7 @@ AND LENGTH(:merchantKey) >= 8
                COUNT(*) AS txCount
         FROM expenses
         WHERE date >= :startDate AND date < :endDate
-          AND isNotMine = 0
+          AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         GROUP BY monthKey, UPPER(currency)
         ORDER BY monthKey ASC, total DESC
     """)
@@ -1768,7 +1811,7 @@ AND LENGTH(:merchantKey) >= 8
                COUNT(*) AS txCount
         FROM expenses
         WHERE ${SPENDING_TYPE_SQL}
-          AND isNotMine = 0
+          AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         GROUP BY monthKey
         ORDER BY monthKey ASC
     """)
@@ -1789,7 +1832,7 @@ AND LENGTH(:merchantKey) >= 8
         FROM expenses
         WHERE ${SPENDING_TYPE_SQL}
           AND date >= :startDate AND date < :endDate
-          AND isNotMine = 0
+          AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         GROUP BY monthKey
         ORDER BY monthKey ASC
     """)
@@ -1811,7 +1854,7 @@ AND LENGTH(:merchantKey) >= 8
         WHERE ${SPENDING_TYPE_SQL}
           AND categoryId = :categoryId
           AND date >= :startDate AND date < :endDate
-          AND isNotMine = 0
+          AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         GROUP BY monthKey
         ORDER BY monthKey ASC
     """)
@@ -1824,9 +1867,9 @@ AND LENGTH(:merchantKey) >= 8
         SELECT merchantKey as merchantKey, MIN(merchant) as merchant,
                SUM(${EFFECTIVE_AMOUNT_SQL}) as total, COUNT(*) as cnt 
         FROM expenses 
-        WHERE ${SPENDING_TYPE_SQL} 
+        WHERE ${SPENDING_TYPE_SQL}
         AND date >= :startDate AND date < :endDate
-        AND isNotMine = 0
+        AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         AND merchantKey IS NOT NULL
         GROUP BY merchantKey
         ORDER BY total DESC
@@ -1842,15 +1885,16 @@ AND LENGTH(:merchantKey) >= 8
         WHERE ${SPENDING_TYPE_SQL} 
         AND date >= :startDate AND date < :endDate
         AND categoryId IS NOT NULL
-        AND isNotMine = 0
+        AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         GROUP BY categoryId
         ORDER BY total DESC
     """)
     suspend fun getCategoryTotalsBetween(startDate: Long, endDate: Long): List<CategoryTotal>
 
-    @Query("SELECT COUNT(*) FROM expenses WHERE ${SPENDING_TYPE_SQL} AND isNotMine = 0")
+    @Query("SELECT COUNT(*) FROM expenses WHERE ${SPENDING_TYPE_SQL} AND ${SpendingInclusionSql.SPENDING_PREDICATE}")
     suspend fun getPurchaseCount(): Int
 
+    // spending-exempt: NON_MONEY
     @Query("SELECT MIN(date) FROM expenses WHERE isNotMine = 0")
     suspend fun getOldestExpenseDate(): Long?
 
@@ -1867,7 +1911,7 @@ AND LENGTH(:merchantKey) >= 8
         FROM expenses
         WHERE ${SPENDING_TYPE_SQL}
           AND date >= :startMs AND date < :endMs
-          AND isNotMine = 0
+          AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         GROUP BY dayEpoch
         ORDER BY dayEpoch ASC
         """
@@ -1887,11 +1931,12 @@ AND LENGTH(:merchantKey) >= 8
         SELECT COALESCE(SUM(${EFFECTIVE_AMOUNT_SQL}), 0.0) FROM expenses 
         WHERE ${SPENDING_TYPE_SQL} 
         AND date >= :startMs AND date < :endMs
-        AND isNotMine = 0
+        AND ${SpendingInclusionSql.SPENDING_PREDICATE}
     """)
     suspend fun getTotalForPeriod(startMs: Long, endMs: Long): Double
 
     // Count for a period
+    // spending-exempt: ROW_COUNT
     @Query("""
         SELECT COUNT(*) FROM expenses 
         WHERE ${SPENDING_TYPE_SQL} 
@@ -1910,7 +1955,7 @@ AND LENGTH(:merchantKey) >= 8
         WHERE ${SPENDING_TYPE_SQL} 
         AND date >= :startMs AND date < :endMs
         AND categoryId IS NOT NULL
-        AND isNotMine = 0
+        AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         GROUP BY categoryId
         ORDER BY total DESC
     """)
@@ -1931,7 +1976,7 @@ AND LENGTH(:merchantKey) >= 8
                MAX(date) as lastDate
         FROM expenses 
         WHERE ${SPENDING_TYPE_SQL}
-        AND isNotMine = 0
+        AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         AND merchantKey IS NOT NULL
         GROUP BY merchantKey
         HAVING transactionCount >= 2
@@ -1954,7 +1999,7 @@ AND LENGTH(:merchantKey) >= 8
                MAX(date) as lastDate
         FROM expenses 
         WHERE ${SPENDING_TYPE_SQL}
-        AND isNotMine = 0
+        AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         AND merchantKey IS NOT NULL
         GROUP BY merchantKey
         ORDER BY totalAmount DESC
@@ -1977,7 +2022,7 @@ AND LENGTH(:merchantKey) >= 8
         FROM expenses 
         WHERE ${SPENDING_TYPE_SQL} 
         AND date >= :startMs AND date < :endMs
-        AND isNotMine = 0
+        AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         AND merchantKey IS NOT NULL
         GROUP BY merchantKey
         ORDER BY totalAmount DESC
@@ -1991,7 +2036,7 @@ AND LENGTH(:merchantKey) >= 8
         SELECT * FROM expenses 
         WHERE ${SPENDING_TYPE_SQL} 
         AND date >= :startMs AND date < :endMs
-        AND isNotMine = 0
+        AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         ORDER BY ${EFFECTIVE_AMOUNT_SQL} DESC
         LIMIT 1
     """)
@@ -2004,7 +2049,7 @@ AND LENGTH(:merchantKey) >= 8
         WHERE ${SPENDING_TYPE_SQL} 
         AND date >= :startMs AND date < :endMs
         AND merchantKey = :merchantKey
-        AND isNotMine = 0
+        AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         ORDER BY ${EFFECTIVE_AMOUNT_SQL} DESC
         LIMIT 1
     """)
@@ -2035,7 +2080,7 @@ AND LENGTH(:merchantKey) >= 8
         FROM expenses 
         WHERE ${SPENDING_TYPE_SQL} 
         AND date >= :startMs AND date < :endMs
-        AND isNotMine = 0
+        AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         GROUP BY dayEpoch
         ORDER BY dayEpoch ASC
     """)
@@ -2057,10 +2102,10 @@ AND LENGTH(:merchantKey) >= 8
                MAX(date) as lastDate
         FROM expenses 
         WHERE ${SPENDING_TYPE_SQL}
-        AND isNotMine = 0
+        AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         AND merchantKey IS NOT NULL
         GROUP BY merchantKey
-        HAVING transactionCount >= 2 
+        HAVING transactionCount >= 2
         AND (maxAmount - minAmount) < (averageAmount * 0.15)
         ORDER BY transactionCount DESC
     """)
@@ -2077,7 +2122,7 @@ AND LENGTH(:merchantKey) >= 8
         FROM expenses
         WHERE ${SPENDING_TYPE_SQL}
         AND date >= :startMs AND date < :endMs
-        AND isNotMine = 0
+        AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         GROUP BY dayOfWeek
         ORDER BY dayOfWeek ASC
     """)
@@ -2094,9 +2139,11 @@ AND LENGTH(:merchantKey) >= 8
     // TODO (P5-P1-5): Remove after all callers migrate to MultiCurrencyRepository
     @Deprecated("Raw SUM across mixed currencies. Use MultiCurrencyRepository for currency-aware aggregation.",
         level = DeprecationLevel.ERROR)
+    // spending-exempt: NON_SPENDING_INCOME
     @Query("SELECT COALESCE(SUM(${EFFECTIVE_AMOUNT_SQL}), 0.0) FROM expenses WHERE transactionType = 'DEPOSIT' AND date >= :startMs AND date < :endMs AND isNotMine = 0")
     suspend fun getTotalDepositsForPeriod(startMs: Long, endMs: Long): Double
 
+    // spending-exempt: NON_SPENDING_INCOME
     @Query("""
         SELECT strftime('%Y-%m', date/1000, 'unixepoch', 'localtime') as month, 
                SUM(${EFFECTIVE_AMOUNT_SQL}) as total, COUNT(*) as count
@@ -2112,6 +2159,7 @@ AND LENGTH(:merchantKey) >= 8
     // TODO (P5-P1-5): Remove after all callers migrate to MultiCurrencyRepository
     @Deprecated("Raw SUM across mixed currencies. Use MultiCurrencyRepository for currency-aware aggregation.",
         level = DeprecationLevel.ERROR)
+    // spending-exempt: NON_SPENDING_INCOME
     @Query("SELECT COALESCE(SUM(${EFFECTIVE_AMOUNT_SQL}), 0.0) FROM expenses WHERE transactionType = 'DEPOSIT' AND isNotMine = 0")
     suspend fun getTotalDeposits(): Double
 
@@ -2137,10 +2185,12 @@ AND LENGTH(:merchantKey) >= 8
     suspend fun getUnlocatedExpenses(limit: Int): List<Expense>
 
     /** Count of located expenses — used for stats display. */
+    // spending-exempt: ROW_COUNT
     @Query("SELECT COUNT(*) FROM expenses WHERE latitude IS NOT NULL AND longitude IS NOT NULL")
     suspend fun countLocated(): Int
 
     /** Count of unlocated expenses (partial or missing coordinates). */
+    // spending-exempt: ROW_COUNT
     @Query("SELECT COUNT(*) FROM expenses WHERE latitude IS NULL OR longitude IS NULL")
     suspend fun countUnlocated(): Int
 
@@ -2245,7 +2295,7 @@ AND LENGTH(:merchantKey) >= 8
         WHERE latitude IS NOT NULL
           AND longitude IS NOT NULL
           AND ${SPENDING_TYPE_SQL}
-          AND isNotMine = 0
+          AND ${SpendingInclusionSql.SPENDING_PREDICATE}
           AND merchantKey IS NOT NULL
         GROUP BY merchantKey
         ORDER BY total DESC
@@ -2269,7 +2319,7 @@ AND LENGTH(:merchantKey) >= 8
         WHERE latitude IS NOT NULL
           AND longitude IS NOT NULL
           AND ${SPENDING_TYPE_SQL}
-          AND isNotMine = 0
+          AND ${SpendingInclusionSql.SPENDING_PREDICATE}
           AND merchantKey IS NOT NULL
         GROUP BY merchantKey, UPPER(COALESCE(currency, 'EUR'))
         ORDER BY total DESC
@@ -2321,6 +2371,7 @@ AND LENGTH(:merchantKey) >= 8
      * - [LocationInsightsEngine] uses fine-grained clusters to show distinct
      *   map pins for branches of the same chain within a neighbourhood.
      */
+    // spending-exempt: NON_MONEY
     @Query("""
         SELECT
             AVG(latitude)  AS centerLat,
@@ -2392,7 +2443,7 @@ AND LENGTH(:merchantKey) >= 8
         FROM expenses
         WHERE ${SPENDING_TYPE_SQL}
         AND date >= :startMs AND date < :endMs
-        AND isNotMine = 0
+        AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         GROUP BY weekKey
         ORDER BY weekKey ASC
     """)
@@ -2410,7 +2461,7 @@ AND LENGTH(:merchantKey) >= 8
         FROM expenses
         WHERE ${SPENDING_TYPE_SQL}
         AND date >= :startMs AND date < :endMs
-        AND isNotMine = 0
+        AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         GROUP BY monthKey
         ORDER BY monthKey ASC
     """)
@@ -2428,7 +2479,7 @@ AND LENGTH(:merchantKey) >= 8
         FROM expenses
         WHERE ${SPENDING_TYPE_SQL}
         AND date >= :startMs AND date < :endMs
-        AND isNotMine = 0
+        AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         GROUP BY dayEpoch
         ORDER BY dayEpoch ASC
     """)
@@ -2443,7 +2494,7 @@ AND LENGTH(:merchantKey) >= 8
             FROM expenses
             WHERE ${SPENDING_TYPE_SQL}
             AND date >= :startMs AND date < :endMs
-            AND isNotMine = 0
+            AND ${SpendingInclusionSql.SPENDING_PREDICATE}
             GROUP BY strftime('%Y-%m-%d', date/1000, 'unixepoch', 'localtime')
         )
     """)
@@ -2460,7 +2511,7 @@ AND LENGTH(:merchantKey) >= 8
         LEFT JOIN categories c ON e.categoryId = c.id
         WHERE ${SPENDING_TYPE_E_SQL}
         AND e.date >= :startMs AND e.date < :endMs
-        AND e.isNotMine = 0
+        AND ${SpendingInclusionSql.SPENDING_PREDICATE_E}
         GROUP BY c.id
         ORDER BY total DESC
         LIMIT 10
@@ -2491,7 +2542,7 @@ AND LENGTH(:merchantKey) >= 8
     @Deprecated("Use getBusinessExpensesBetweenByCurrency() for multi-currency safety",
         level = DeprecationLevel.ERROR)
     @Query("""
-        SELECT COALESCE(SUM(${EFFECTIVE_AMOUNT_SQL}), 0.0) FROM expenses 
+        SELECT COALESCE(SUM(${SpendingInclusionSql.EFFECTIVE_AMOUNT}), 0.0) FROM expenses 
         WHERE isBusinessExpense = 1 
         AND ${SPENDING_TYPE_SQL}
         AND date >= :startDate AND date < :endDate
@@ -2500,11 +2551,7 @@ AND LENGTH(:merchantKey) >= 8
 
     @Query("""
         SELECT UPPER(COALESCE(currency, 'EUR')) AS currency,
-               SUM(COALESCE(CASE 
-                   WHEN isNotMine = 1 THEN 0.0
-                   WHEN isSharedExpense = 1 AND myShareAmount IS NOT NULL THEN myShareAmount
-                   WHEN isSharedExpense = 1 AND mySharePercentage IS NOT NULL THEN amount * mySharePercentage / 100.0
-                   ELSE amount END, 0)) AS total,
+               SUM(COALESCE(${SpendingInclusionSql.EFFECTIVE_AMOUNT}, 0)) AS total,
                COUNT(*) AS txCount
         FROM expenses
         WHERE isBusinessExpense = 1
@@ -2520,7 +2567,7 @@ AND LENGTH(:merchantKey) >= 8
         level = DeprecationLevel.ERROR)
     @Query("""
         SELECT businessCategory,
-               SUM(${EFFECTIVE_AMOUNT_SQL}) as total,
+               SUM(${SpendingInclusionSql.EFFECTIVE_AMOUNT}) as total,
                COUNT(*) as count 
         FROM expenses 
         WHERE isBusinessExpense = 1 
@@ -2537,7 +2584,7 @@ AND LENGTH(:merchantKey) >= 8
         level = DeprecationLevel.ERROR)
     @Query("""
         SELECT businessProject,
-               SUM(${EFFECTIVE_AMOUNT_SQL}) as total,
+               SUM(${SpendingInclusionSql.EFFECTIVE_AMOUNT}) as total,
                COUNT(*) as count 
         FROM expenses 
         WHERE isBusinessExpense = 1 
@@ -2558,7 +2605,7 @@ AND LENGTH(:merchantKey) >= 8
     @Query("""
         SELECT COALESCE(businessCategory, 'Uncategorized') AS businessCategory,
                currency,
-               SUM(${EFFECTIVE_AMOUNT_SQL}) AS total,
+               SUM(${SpendingInclusionSql.EFFECTIVE_AMOUNT}) AS total,
                COUNT(*) AS txCount
         FROM expenses
         WHERE isBusinessExpense = 1

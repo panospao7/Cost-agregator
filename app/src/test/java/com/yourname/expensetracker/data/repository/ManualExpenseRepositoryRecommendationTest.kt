@@ -13,6 +13,9 @@ import com.yourname.expensetracker.domain.ai.usecase.GenerateTransactionInsightU
 import com.yourname.expensetracker.domain.ai.usecase.TransactionInsightOutcome
 import com.yourname.expensetracker.domain.ai.usecase.TransactionInsightSkipReason
 import com.yourname.expensetracker.domain.config.AppConfig
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
 import com.yourname.expensetracker.domain.dto.AiArtifactRecord
 import com.yourname.expensetracker.domain.engine.DashboardFollowThroughEngine
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
@@ -68,6 +71,7 @@ class ManualExpenseRepositoryRecommendationTest {
     private val coordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true)
     private val postCommitActionRunner = mockk<PostCommitActionRunner>(relaxed = true)
     private val recurringExpenseRepository = mockk<RecurringExpenseRepository>(relaxed = true)
+    private val currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true)
     private val testDispatcher = StandardTestDispatcher()
     private val applicationScope = TestScope(testDispatcher)
 
@@ -109,6 +113,8 @@ class ManualExpenseRepositoryRecommendationTest {
         coEvery { expenseDao.getById(5L) } returns insertedExpense
         every { aiSettingsRepository.settings() } returns flowOf(AiSettings(aiEnabled = true))
         coEvery { engine.generateRecommendations(any(), any(), any()) } returns recommendations
+        coEvery { currencySettingsRepository.resolveHomeCurrency() } returns
+            HomeCurrencyResolution.Resolved(CurrencyCode.EUR)
 
         repository = ManualExpenseRepository(
             writeBarrier = writeBarrier,
@@ -126,7 +132,8 @@ class ManualExpenseRepositoryRecommendationTest {
             transactionLifecycleCoordinator = coordinator,
             postCommitActionRunner = postCommitActionRunner,
             recurringExpenseRepository = recurringExpenseRepository,
-            applicationScope = applicationScope
+            applicationScope = applicationScope,
+            currencySettingsRepository = currencySettingsRepository
         )
     }
 
@@ -141,7 +148,8 @@ class ManualExpenseRepositoryRecommendationTest {
             merchant = "Cafe",
             amount = 4.5,
             currency = "EUR",
-            categoryId = 1L
+            categoryId = 1L,
+            entryZone = java.time.ZoneOffset.UTC
         )
         testDispatcher.scheduler.advanceUntilIdle()
     }

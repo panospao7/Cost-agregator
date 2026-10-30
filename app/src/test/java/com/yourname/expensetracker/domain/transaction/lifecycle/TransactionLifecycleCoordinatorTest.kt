@@ -843,6 +843,337 @@ class TransactionLifecycleCoordinatorTest {
                 logs.all { (throwable, message) -> throwable == null && forbidden.none { message.contains(it) } }
             )
         }
+
+    // ── MEC A2: user-present (flagged) create, refusal, RF-1 (INV-5..9, 19, 21) ──
+
+    private val athens: java.time.ZoneId = java.time.ZoneId.of("Europe/Athens")
+    private val usd = CurrencyCode.USD
+    private val eur = CurrencyCode.EUR
+
+    private fun flaggedRequest(currency: String = "USD", amount: Double = 20.0) =
+        request(currency = currency).copy(
+            amount = amount,
+            userPresentRate = com.yourname.expensetracker.domain.transaction.UserPresentRateRequirement(athens)
+        )
+
+    private fun coordinatorWith(evaluator: com.yourname.expensetracker.domain.currency.RateEligibilityEvaluator) =
+        TransactionLifecycleCoordinator(
+            database = database,
+            expenseDao = expenseDao,
+            transactionEventDao = transactionEventDao,
+            timeProvider = timeProvider,
+            currencyConverter = currencyConverter,
+            sideEffectDispatcher = sideEffectDispatcher,
+            planner = planner,
+            runner = runner,
+            recurringLifecycleCoordinator = recurringLifecycleCoordinator,
+            writeBarrier = writeBarrier,
+            currencySettingsRepository = currencySettingsRepository,
+            sourceLinkWriter = mockk(relaxed = true),
+            transactionValidator = transactionValidator,
+            diagnosticEventWriter = diagnosticEventWriter,
+            rateEligibilityEvaluator = evaluator
+        )
+
+    private fun eligible(rate: Double) = com.yourname.expensetracker.domain.currency.RateEligibility.Eligible(
+        rate = rate,
+        rateDate = java.time.LocalDate.of(2024, 3, 29),
+        ageDays = 3,
+        path = com.yourname.expensetracker.domain.currency.RateEligibilityPath.DIRECT,
+        sourceLabel = com.yourname.expensetracker.domain.currency.RateSourceLabel.ECB
+    )
+
+    private fun capturedEvents(): List<com.yourname.expensetracker.data.database.entity.TransactionEvent> {
+        val events = mutableListOf<com.yourname.expensetracker.data.database.entity.TransactionEvent>()
+        coVerify(atLeast = 0) { transactionEventDao.insert(capture(events)) }
+        return events
+    }
+
+    private suspend fun assertRefusedWithoutWrites(
+        evaluation: com.yourname.expensetracker.domain.currency.RateEligibility,
+        expectedCode: String,
+        expectedReason: com.yourname.expensetracker.domain.transaction.RateRefusalReason,
+        expectedSubReason: String,
+        expectedLatest: java.time.LocalDate? = null
+    ) {
+        val evaluator = mockk<com.yourname.expensetracker.domain.currency.RateEligibilityEvaluator>()
+        coEvery { evaluator.evaluate(usd, eur, now, athens) } returns evaluation
+
+        val result = coordinatorWith(evaluator).createExpense(flaggedRequest())
+
+        val failed = result as CreateExpenseResult.ValidationFailed
+        org.junit.Assert.assertEquals(listOf(expectedCode), failed.errors)
+        org.junit.Assert.assertEquals(
+            com.yourname.expensetracker.domain.transaction.RateRefusal(expectedReason, expectedLatest),
+            failed.rateRefusal
+        )
+        // No dedup, no insert, no scoped write, no post-commit run.
+        coVerify(exactly = 0) { writeBarrier.runWrite(any<DatabaseAccessOperation>(), any<suspend () -> Any?>()) }
+        coVerify(exactly = 0) { expenseDao.insertAtomic(any()) }
+        coVerify(exactly = 0) { runner.run(any()) }
+        // Exactly the two audit events, both payload-free.
+        val events = capturedEvents()
+        org.junit.Assert.assertEquals(
+            listOf("CREATE_ATTEMPTED", "CREATE_VALIDATION_FAILED"),
+            events.map { it.eventType }
+        )
+        val refusalEvent = events.last()
+        org.junit.Assert.assertEquals("Validation failed: $expectedCode", refusalEvent.reason)
+        org.junit.Assert.assertNull(refusalEvent.dedupeKey)
+        // reason and metadata of both events are payload-free (the CREATE_ATTEMPTED dedupeKey
+        // column is a pre-existing, separately routed concern; the refusal event omits it).
+        for (event in events) {
+            val text = "${event.reason} ${event.metadata}"
+            assertTrue("event leaked payload: $text", listOf("Test", "USD", "EUR", "20").none { text.contains(it) })
+        }
+        // Exactly one bounded diagnostic.
+        val emitted = mutableListOf<com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent>()
+        coVerify(exactly = 1) { diagnosticEventWriter.emit(capture(emitted)) }
+        val diagnostic = emitted.single()
+        org.junit.Assert.assertEquals(DiagnosticReasonCode.MANUAL_SAVE_BLOCKED_NO_RATE, diagnostic.reasonCode)
+        org.junit.Assert.assertEquals("MANUAL_ENTRY", diagnostic.sourceType)
+        org.junit.Assert.assertEquals(AppPipeline.TRANSACTION, diagnostic.pipeline)
+        val metadata = org.json.JSONObject(diagnostic.metadata.toJson())
+        org.junit.Assert.assertEquals(setOf("operation", "reason"), metadata.keys().asSequence().toSet())
+        org.junit.Assert.assertEquals("createExpense", metadata.getString("operation"))
+        org.junit.Assert.assertEquals(expectedSubReason, metadata.getString("reason"))
+        assertTrue(
+            "diagnostic leaked payload: ${diagnostic.metadata.toJson()}",
+            listOf("Test", "USD", "EUR", "20").none { diagnostic.metadata.toJson().contains(it) }
+        )
+    }
+
+    @Test
+    fun `AE-3 flagged create with no rate is refused and writes only two bounded events`() =
+        runTest(timeout = 60.seconds) {
+            assertRefusedWithoutWrites(
+                evaluation = com.yourname.expensetracker.domain.currency.RateEligibility.None,
+                expectedCode = "RATE_NOT_ELIGIBLE_NONE",
+                expectedReason = com.yourname.expensetracker.domain.transaction.RateRefusalReason.NO_RATE,
+                expectedSubReason = "none"
+            )
+        }
+
+    @Test
+    fun `AE-4 flagged create with a stale rate is refused with the latest rate date`() =
+        runTest(timeout = 60.seconds) {
+            val latest = java.time.LocalDate.of(2024, 3, 20)
+            assertRefusedWithoutWrites(
+                evaluation = com.yourname.expensetracker.domain.currency.RateEligibility.Stale(latest, 12),
+                expectedCode = "RATE_NOT_ELIGIBLE_STALE",
+                expectedReason = com.yourname.expensetracker.domain.transaction.RateRefusalReason.STALE_RATE,
+                expectedSubReason = "stale",
+                expectedLatest = latest
+            )
+        }
+
+    @Test
+    fun `AE-25 flagged create with an unsupported currency is refused`() =
+        runTest(timeout = 60.seconds) {
+            assertRefusedWithoutWrites(
+                evaluation = com.yourname.expensetracker.domain.currency.RateEligibility.Unsupported(
+                    com.yourname.expensetracker.domain.currency.RateUnsupportedReason.NOT_SELECTABLE
+                ),
+                expectedCode = "RATE_NOT_ELIGIBLE_UNSUPPORTED",
+                expectedReason = com.yourname.expensetracker.domain.transaction.RateRefusalReason.UNSUPPORTED_CURRENCY,
+                expectedSubReason = "unsupported"
+            )
+        }
+
+    @Test
+    fun `AE-14 flagged create with unresolved home is refused and the unflagged request still stores the sentinel`() =
+        runTest(timeout = 60.seconds) {
+            coEvery { currencySettingsRepository.resolveHomeCurrency() } returns HomeCurrencyResolution.Failed("Timeout")
+            val evaluator = mockk<com.yourname.expensetracker.domain.currency.RateEligibilityEvaluator>()
+
+            val result = coordinatorWith(evaluator).createExpense(flaggedRequest())
+
+            val failed = result as CreateExpenseResult.ValidationFailed
+            org.junit.Assert.assertEquals(listOf("RATE_NOT_ELIGIBLE_HOME_UNRESOLVED"), failed.errors)
+            org.junit.Assert.assertEquals(
+                com.yourname.expensetracker.domain.transaction.RateRefusalReason.HOME_CURRENCY_UNRESOLVED,
+                failed.rateRefusal?.reason
+            )
+            io.mockk.confirmVerified(evaluator)
+            coVerify(exactly = 0) { expenseDao.insertAtomic(any()) }
+            coVerify(exactly = 1) {
+                diagnosticEventWriter.emit(
+                    match {
+                        it.reasonCode == DiagnosticReasonCode.MANUAL_SAVE_BLOCKED_NO_RATE &&
+                            org.json.JSONObject(it.metadata.toJson()).getString("reason") == "home_unresolved"
+                    }
+                )
+            }
+            coVerify(exactly = 0) {
+                diagnosticEventWriter.emit(match { it.reasonCode == DiagnosticReasonCode.HOME_CURRENCY_UNAVAILABLE })
+            }
+
+            // Same request, unflagged: today's row with the sentinel triple (unchanged).
+            val insertedSlot = slot<Expense>()
+            coEvery { expenseDao.insertAtomic(capture(insertedSlot)) } returns 42L
+            val unflagged = coordinatorWith(evaluator).createExpense(flaggedRequest().copy(userPresentRate = null))
+            assertTrue("Expected Created, got $unflagged", unflagged is CreateExpenseResult.Created)
+            assertTrue(insertedSlot.captured.baseCurrency.isEmpty())
+            assertTrue(insertedSlot.captured.baseAmount == 0.0)
+            io.mockk.confirmVerified(evaluator)
+        }
+
+    @Test
+    fun `AE-1 AE-22 flagged eligible create stores the single-read rate and the rounded snapshot`() =
+        runTest(timeout = 60.seconds) {
+            val rate = 1.0 / 1.08
+            val evaluator = mockk<com.yourname.expensetracker.domain.currency.RateEligibilityEvaluator>()
+            coEvery { evaluator.evaluate(usd, eur, now, athens) } returns eligible(rate)
+            val insertedSlot = slot<Expense>()
+            coEvery { expenseDao.insertAtomic(capture(insertedSlot)) } returns 42L
+
+            val result = coordinatorWith(evaluator).createExpense(flaggedRequest())
+
+            assertTrue("Expected Created, got $result", result is CreateExpenseResult.Created)
+            val inserted = insertedSlot.captured
+            org.junit.Assert.assertEquals(rate, inserted.exchangeRateUsed, 0.0)
+            org.junit.Assert.assertEquals(18.52, inserted.baseAmount, 0.0)
+            org.junit.Assert.assertEquals("EUR", inserted.baseCurrency)
+            org.junit.Assert.assertEquals(20.0, inserted.amount, 0.0)
+            org.junit.Assert.assertEquals("USD", inserted.currency)
+            // INV-7: exactly one eligibility read; the instant-based convertAsOf is never used.
+            coVerify(exactly = 1) { evaluator.evaluate(usd, eur, now, athens) }
+            io.mockk.confirmVerified(evaluator)
+            coVerify(exactly = 0) {
+                currencyConverter.convertAsOf(any<Double>(), any<String>(), any<String>(), any<Long>())
+            }
+            coVerify(exactly = 0) { diagnosticEventWriter.emit(any()) }
+        }
+
+    @Test
+    fun `AE-13 flagged home-currency create stores the identity snapshot without reading rates`() =
+        runTest(timeout = 60.seconds) {
+            val evaluator = mockk<com.yourname.expensetracker.domain.currency.RateEligibilityEvaluator>()
+            val insertedSlot = slot<Expense>()
+            coEvery { expenseDao.insertAtomic(capture(insertedSlot)) } returns 42L
+
+            val result = coordinatorWith(evaluator).createExpense(flaggedRequest(currency = "EUR", amount = 12.5))
+
+            assertTrue("Expected Created, got $result", result is CreateExpenseResult.Created)
+            org.junit.Assert.assertEquals(12.5, insertedSlot.captured.baseAmount, 0.0)
+            org.junit.Assert.assertEquals("EUR", insertedSlot.captured.baseCurrency)
+            org.junit.Assert.assertEquals(1.0, insertedSlot.captured.exchangeRateUsed, 0.0)
+            io.mockk.confirmVerified(evaluator)
+            coVerify(exactly = 0) {
+                currencyConverter.convertAsOf(any<Double>(), any<String>(), any<String>(), any<Long>())
+            }
+        }
+
+    @Test
+    fun `OD-6 flagged eligible create whose snapshot rounding is unavailable is refused not stored as the sentinel`() =
+        runTest(timeout = 60.seconds) {
+            val evaluator = mockk<com.yourname.expensetracker.domain.currency.RateEligibilityEvaluator>()
+            coEvery { evaluator.evaluate(usd, eur, now, athens) } returns eligible(Double.NaN)
+
+            val result = coordinatorWith(evaluator).createExpense(flaggedRequest())
+
+            val failed = result as CreateExpenseResult.ValidationFailed
+            org.junit.Assert.assertEquals(listOf("RATE_NOT_ELIGIBLE_HOME_UNRESOLVED"), failed.errors)
+            coVerify(exactly = 0) { expenseDao.insertAtomic(any()) }
+            coVerify(exactly = 0) {
+                diagnosticEventWriter.emit(match { it.reasonCode == DiagnosticReasonCode.MISSING_RATE })
+            }
+        }
+
+    @Test
+    fun `flagged create maps an evaluator store failure to a NO_RATE refusal and rethrows cancellation`() =
+        runTest(timeout = 60.seconds) {
+            val evaluator = mockk<com.yourname.expensetracker.domain.currency.RateEligibilityEvaluator>()
+            coEvery { evaluator.evaluate(usd, eur, now, athens) } throws IOException("store down")
+            val failed = coordinatorWith(evaluator).createExpense(flaggedRequest()) as CreateExpenseResult.ValidationFailed
+            org.junit.Assert.assertEquals(listOf("RATE_NOT_ELIGIBLE_NONE"), failed.errors)
+            coVerify(exactly = 0) { expenseDao.insertAtomic(any()) }
+
+            coEvery { evaluator.evaluate(usd, eur, now, athens) } throws CancellationException("Cancelled")
+            assertFailsWith<CancellationException> { coordinatorWith(evaluator).createExpense(flaggedRequest()) }
+            coVerify(exactly = 0) { expenseDao.insertAtomic(any()) }
+        }
+
+    @Test
+    fun `flagged refusal diagnostic sink cancellation propagates and failure is best effort`() =
+        runTest(timeout = 60.seconds) {
+            val evaluator = mockk<com.yourname.expensetracker.domain.currency.RateEligibilityEvaluator>()
+            coEvery { evaluator.evaluate(usd, eur, now, athens) } returns
+                com.yourname.expensetracker.domain.currency.RateEligibility.None
+
+            coEvery { diagnosticEventWriter.emit(any()) } throws IOException("sink down")
+            val result = coordinatorWith(evaluator).createExpense(flaggedRequest())
+            assertTrue("Expected ValidationFailed, got $result", result is CreateExpenseResult.ValidationFailed)
+
+            coEvery { diagnosticEventWriter.emit(any()) } throws CancellationException("Cancelled")
+            assertFailsWith<CancellationException> { coordinatorWith(evaluator).createExpense(flaggedRequest()) }
+            coVerify(exactly = 0) { expenseDao.insertAtomic(any()) }
+        }
+
+    @Test
+    fun `flagged amount precision error from the validator is a plain validation failure with no rate read`() =
+        runTest(timeout = 60.seconds) {
+            val evaluator = mockk<com.yourname.expensetracker.domain.currency.RateEligibilityEvaluator>()
+            every { transactionValidator.validateCreate(any()) } returns listOf(
+                TransactionValidationError(code = "AMOUNT_PRECISION_EXCEEDED", message = "AMOUNT_PRECISION_EXCEEDED", field = "amount")
+            )
+
+            val failed = coordinatorWith(evaluator).createExpense(flaggedRequest(currency = "JPY", amount = 1500.5))
+                as CreateExpenseResult.ValidationFailed
+
+            org.junit.Assert.assertEquals(listOf("AMOUNT_PRECISION_EXCEEDED"), failed.errors)
+            org.junit.Assert.assertNull(failed.rateRefusal)
+            io.mockk.confirmVerified(evaluator)
+            coVerify(exactly = 0) { expenseDao.insertAtomic(any()) }
+            coVerify(exactly = 0) {
+                diagnosticEventWriter.emit(match { it.reasonCode == DiagnosticReasonCode.MANUAL_SAVE_BLOCKED_NO_RATE })
+            }
+        }
+
+    @Test
+    fun `AE-21 AE-29 unflagged USD create never touches the evaluator and keeps any-age conversion`() =
+        runTest(timeout = 60.seconds) {
+            val evaluator = mockk<com.yourname.expensetracker.domain.currency.RateEligibilityEvaluator>()
+            coEvery {
+                currencyConverter.convertAsOf(any<Double>(), "USD", "EUR", any<Long>())
+            } returns com.yourname.expensetracker.domain.currency.ConversionResult(
+                originalAmount = 20.0,
+                originalCurrency = "USD",
+                convertedAmount = 18.5185,
+                targetCurrency = "EUR",
+                rateUsed = 1.0 / 1.08,
+                timestamp = now
+            )
+            val insertedSlot = slot<Expense>()
+            coEvery { expenseDao.insertAtomic(capture(insertedSlot)) } returns 42L
+
+            val result = coordinatorWith(evaluator).createExpense(flaggedRequest().copy(userPresentRate = null))
+
+            assertTrue("Expected Created, got $result", result is CreateExpenseResult.Created)
+            org.junit.Assert.assertEquals(18.52, insertedSlot.captured.baseAmount, 0.0)
+            org.junit.Assert.assertEquals(1.0 / 1.08, insertedSlot.captured.exchangeRateUsed, 0.0)
+            io.mockk.confirmVerified(evaluator)
+            coVerify(exactly = 1) {
+                currencyConverter.convertAsOf(any<Double>(), "USD", "EUR", any<Long>())
+            }
+        }
+
+    @Test
+    fun `RF-1 CREATE_ATTEMPTED reason is bounded for flagged and unflagged creates`() =
+        runTest(timeout = 60.seconds) {
+            val evaluator = mockk<com.yourname.expensetracker.domain.currency.RateEligibilityEvaluator>()
+            coEvery { evaluator.evaluate(usd, eur, now, athens) } returns eligible(0.92)
+
+            coordinatorWith(evaluator).createExpense(flaggedRequest())
+            coordinatorWith(evaluator).createExpense(request(currency = "EUR"))
+
+            val attempts = capturedEvents().filter { it.eventType == "CREATE_ATTEMPTED" }
+            org.junit.Assert.assertEquals(2, attempts.size)
+            for (attempt in attempts) {
+                org.junit.Assert.assertEquals("Create attempted", attempt.reason)
+                assertTrue(listOf("Test", "USD", "EUR", "20", "10").none { attempt.reason.orEmpty().contains(it) })
+            }
+        }
 }
 
 /**

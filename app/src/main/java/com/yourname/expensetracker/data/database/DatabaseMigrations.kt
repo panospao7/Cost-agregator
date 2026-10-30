@@ -172,6 +172,104 @@ object DatabaseMigrations {
         )
     }
 
+    /**
+     * Loan installments (S2): purely additive.
+     *
+     * - `installment_plans` / `installment_entries` are new and empty after migration.
+     *   No foreign key to `expenses` (purchaseExpenseId / linkedExpenseId are plain
+     *   unique nullable columns; SQLite allows many NULLs under a unique index).
+     * - `expenses.spendingExclusionReason` is a nullable TEXT column with DEFAULT NULL,
+     *   so every existing row reads NULL and counts exactly as before.
+     * - Enums are stored as TEXT, money as REAL (2 dp), civil dates as INTEGER epochDay.
+     * - No index on `spendingExclusionReason`: it is mostly NULL and low-selectivity, so an
+     *   index gains nothing for reads and would cost write amplification on every expense
+     *   insert; adding one later would need another schema bump. Decision recorded here.
+     * - DDL mirrors the Room entities (InstallmentPlan / InstallmentEntry / Expense) so
+     *   the Room schema validator passes: same column set, NOT NULL, defaults and
+     *   `index_<table>_<cols>` index names.
+     */
+    val MIGRATION_151_152 = object : Migration(151, 152) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            database.execSQL(
+                "CREATE TABLE IF NOT EXISTS `installment_plans` (" +
+                    "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                    "`planUuid` TEXT NOT NULL, " +
+                    "`kind` TEXT NOT NULL, " +
+                    "`purchaseExpenseId` INTEGER, " +
+                    "`displayName` TEXT NOT NULL, " +
+                    "`lenderLabel` TEXT, " +
+                    "`currency` TEXT NOT NULL, " +
+                    "`splitMethod` TEXT NOT NULL, " +
+                    "`declaredTotal` REAL, " +
+                    "`fixedPaymentAmount` REAL, " +
+                    "`installmentCount` INTEGER NOT NULL, " +
+                    "`frequency` TEXT NOT NULL, " +
+                    "`firstDueDate` INTEGER NOT NULL, " +
+                    "`anchorDayOfMonth` INTEGER NOT NULL, " +
+                    "`residualPlacement` TEXT NOT NULL, " +
+                    "`categoryId` INTEGER, " +
+                    "`paymentMethod` TEXT NOT NULL, " +
+                    "`fulfilmentMode` TEXT NOT NULL, " +
+                    "`declaredOnDate` INTEGER NOT NULL, " +
+                    "`status` TEXT NOT NULL, " +
+                    "`statusReason` TEXT, " +
+                    "`createdAt` INTEGER NOT NULL, " +
+                    "`updatedAt` INTEGER NOT NULL, " +
+                    "`terminalAt` INTEGER)"
+            )
+            database.execSQL(
+                "CREATE UNIQUE INDEX IF NOT EXISTS `index_installment_plans_planUuid` " +
+                    "ON `installment_plans` (`planUuid`)"
+            )
+            database.execSQL(
+                "CREATE UNIQUE INDEX IF NOT EXISTS `index_installment_plans_purchaseExpenseId` " +
+                    "ON `installment_plans` (`purchaseExpenseId`)"
+            )
+            database.execSQL(
+                "CREATE INDEX IF NOT EXISTS `index_installment_plans_status` " +
+                    "ON `installment_plans` (`status`)"
+            )
+            database.execSQL(
+                "CREATE TABLE IF NOT EXISTS `installment_entries` (" +
+                    "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                    "`planId` INTEGER NOT NULL, " +
+                    "`seq` INTEGER NOT NULL, " +
+                    "`kind` TEXT NOT NULL, " +
+                    "`dueDate` INTEGER NOT NULL, " +
+                    "`scheduledAmount` REAL NOT NULL, " +
+                    "`originalScheduledAmount` REAL, " +
+                    "`status` TEXT NOT NULL, " +
+                    "`statusReason` TEXT, " +
+                    "`linkedExpenseId` INTEGER, " +
+                    "`linkOrigin` TEXT, " +
+                    "`autoRecordConsumed` INTEGER NOT NULL, " +
+                    "`recordGeneration` INTEGER NOT NULL, " +
+                    "`adjustReason` TEXT, " +
+                    "`statusChangedAt` INTEGER NOT NULL, " +
+                    "`adjustedAt` INTEGER, " +
+                    "FOREIGN KEY(`planId`) REFERENCES `installment_plans`(`id`) " +
+                    "ON UPDATE NO ACTION ON DELETE CASCADE )"
+            )
+            database.execSQL(
+                "CREATE UNIQUE INDEX IF NOT EXISTS `index_installment_entries_planId_kind_seq` " +
+                    "ON `installment_entries` (`planId`, `kind`, `seq`)"
+            )
+            database.execSQL(
+                "CREATE UNIQUE INDEX IF NOT EXISTS `index_installment_entries_linkedExpenseId` " +
+                    "ON `installment_entries` (`linkedExpenseId`)"
+            )
+            database.execSQL(
+                "CREATE INDEX IF NOT EXISTS `index_installment_entries_dueDate` " +
+                    "ON `installment_entries` (`dueDate`)"
+            )
+            database.execSQL(
+                "CREATE INDEX IF NOT EXISTS `index_installment_entries_status` " +
+                    "ON `installment_entries` (`status`)"
+            )
+            database.execSQL("ALTER TABLE `expenses` ADD COLUMN `spendingExclusionReason` TEXT DEFAULT NULL")
+        }
+    }
+
     /** All registered migrations, starting from v145 baseline. */
     val ALL: Array<Migration> = arrayOf(
         MIGRATION_145_146,
@@ -179,6 +277,7 @@ object DatabaseMigrations {
         MIGRATION_147_148,
         MIGRATION_148_149,
         MIGRATION_149_150,
-        MIGRATION_150_151
+        MIGRATION_150_151,
+        MIGRATION_151_152
     )
 }

@@ -30,6 +30,7 @@ import javax.inject.Singleton
  *   `emailMessageId` → NULL; dedup hashes/fingerprint preserved)
  * - `pending_reviews` notification text (`notificationText`, `notificationTitle` → NULL)
  * - `bank_statement_import_items` merchant names (`merchant` → '[REDACTED]')
+ * - loan plan labels (`displayName` → '', `lenderLabel` → NULL; rows and structure retained)
  * - `pipeline_diagnostic_events` (`message`, `exceptionMessage`), `operation_run_events`
  *   (`exceptionMessage`), `operation_runs` (`errorSummary`), `background_job_runs`
  *   (`errorMessage`) and `receipt_events` (`errorDetails`) → NULL (rows retained)
@@ -86,6 +87,7 @@ class ExportAnonymizer @Inject constructor() {
                 val pendingReviewsPurged = sanitizePendingReviews(db)
                 val bankItemsPurged = sanitizeBankStatementImportItems(db)
                 val diagnosticTextPurged = sanitizeDiagnosticFreeText(db)
+                val planLabelsPurged = sanitizeLoanPlanLabels(db)
                 db.setTransactionSuccessful()
 
                 Timber.d(
@@ -93,7 +95,8 @@ class ExportAnonymizer @Inject constructor() {
                         "notificationIntake=$intakePurged aiArtifacts=$aiArtifactsPurged " +
                         "aiChat=$aiChatPurged merchantLocations=$merchantLocPurged " +
                         "emailSources=$emailPurged pendingReviews=$pendingReviewsPurged " +
-                        "bankImportItems=$bankItemsPurged diagnosticText=$diagnosticTextPurged"
+                        "bankImportItems=$bankItemsPurged diagnosticText=$diagnosticTextPurged " +
+                        "planLabels=$planLabelsPurged"
                 )
             } finally {
                 db.endTransaction()
@@ -398,6 +401,34 @@ class ExportAnonymizer @Inject constructor() {
             "UPDATE bank_statement_import_items SET merchant = '[REDACTED]' WHERE $where"
         )
         Timber.d("$TAG: Redacted bank import item merchants in $count rows")
+        return count
+    }
+
+    /**
+     * Blanks the user-typed plan name and lender label of the loan plan table (IM-9,
+     * owner-approved 2026-10-23). Runs as part of [sanitizeExport], so it covers the redacted
+     * backup modes (those that redact raw text) and the anonymized export, and it is also
+     * invoked unconditionally by the encrypted export path. Rows are retained so exact-count
+     * backup verification still matches; amounts, dates and counts are financial structure,
+     * not free text, and are preserved.
+     *
+     * `displayName` is NOT NULL so it is set to '' (empty); `lenderLabel` is nullable so it is
+     * set to NULL. The table is addressed by name string only, never by entity type, and is
+     * written through the typed update API.
+     *
+     * @return number of rows updated
+     */
+    private fun sanitizeLoanPlanLabels(db: SQLiteDatabase): Int {
+        if (!tableExists(db, "installment_plans")) return 0
+        val where = "displayName <> '' OR lenderLabel IS NOT NULL"
+        val count = countWhere(db, "installment_plans", where)
+        if (count == 0) return 0
+        val values = android.content.ContentValues().apply {
+            put("displayName", "")
+            putNull("lenderLabel")
+        }
+        db.update("installment_plans", values, where, null)
+        Timber.d("$TAG: Blanked plan labels in $count rows")
         return count
     }
 

@@ -25,15 +25,16 @@ import org.robolectric.annotation.Config
 class WorkerContractTest {
 
     @Test
-    fun `all 8 default workers have WorkerSpec entries`() {
+    fun `all 9 default workers have WorkerSpec entries`() {
         val defaults = WorkerSpec.DEFAULTS
-        assertEquals("Expected 8 default workers", 8, defaults.size)
+        assertEquals("Expected 9 default workers", 9, defaults.size)
 
         val expected = setOf(
             "data_retention",
             "location_backfill",
             "bill_reminder_periodic",
             "recurring_horizon",
+            "installment_due_recording",
             "receipt_matching",
             "ai_daily_briefing",
             "warranty_expiration_check",
@@ -70,7 +71,7 @@ class WorkerContractTest {
         // RestoreMaintenanceMode.pauseAllWorkers() iterates WorkerSpec.DEFAULTS.keys
         // and cancels each by name. If a new worker is added without updating
         // the DEFAULTS map (or vice versa), this test catches the mismatch.
-        assertEquals(8, WorkerSpec.DEFAULTS.size)
+        assertEquals(9, WorkerSpec.DEFAULTS.size)
     }
 
     @Test

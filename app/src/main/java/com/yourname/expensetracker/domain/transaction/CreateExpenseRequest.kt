@@ -137,5 +137,20 @@ data class CreateExpenseRequest(
     /** Optional correlation ID propagated from the triggering input (notification/bank/email). */
     val correlationId: String? = null,
     /** Controls whether a legacy source-only fallback is created when no source fields present. */
-    val sourceLinkFallbackPolicy: SourceLinkFallbackPolicy = SourceLinkFallbackPolicy.NONE
+    val sourceLinkFallbackPolicy: SourceLinkFallbackPolicy = SourceLinkFallbackPolicy.NONE,
+    /**
+     * MEC INV-4/5/9: in-memory flag for a user-present save. `null` (the default) keeps the
+     * unflagged any-age conversion path unchanged. Non-null makes the coordinator apply the
+     * eligible-rate rule (rate dated within 7 calendar days of the expense's local date in
+     * [UserPresentRateRequirement.entryZone]), the amount-precision check, and refuse instead of
+     * storing an unconverted row. Only the three allow-listed setters may pass it
+     * (`ManualEntryCurrencySetterAllowListGuardTest`); never persisted.
+     */
+    val userPresentRate: UserPresentRateRequirement? = null
 )
+
+/**
+ * Parameter of a user-present save: the zone captured when the entry session started, used as the
+ * only zone for the expense's local calendar date (INV-4). Never persisted or logged.
+ */
+data class UserPresentRateRequirement(val entryZone: java.time.ZoneId)

@@ -7,6 +7,8 @@ import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.PlannedExpensePriority
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.DashboardRepository
+import com.yourname.expensetracker.data.repository.HomeInstallmentWeather
+import com.yourname.expensetracker.data.repository.HomeInstallmentWeatherSource
 import com.yourname.expensetracker.data.repository.PlannedExpenseRepository
 import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
 import com.yourname.expensetracker.domain.ai.model.AiCapability
@@ -22,6 +24,7 @@ import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.analytics.TotalsAggregationEngine
 import com.yourname.expensetracker.domain.core.money.MoneyAggregate
 import com.yourname.expensetracker.domain.core.money.MoneyAggregateResult
+import com.yourname.expensetracker.domain.installment.projection.InstallmentUpcomingRow
 import com.yourname.expensetracker.domain.model.CategoryBreakdown
 import com.yourname.expensetracker.domain.model.PeriodDrillDownState
 import com.yourname.expensetracker.domain.model.PeriodTotal
@@ -44,6 +47,7 @@ import com.yourname.expensetracker.service.NavigationTargetResolver
 import com.yourname.expensetracker.service.RecommendationDismissalHandler
 import com.yourname.expensetracker.service.RecommendationStateManager
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.ui.navigation.InstallmentsFeature
 import com.yourname.expensetracker.ui.util.guardedWrite
 import com.yourname.expensetracker.domain.widget.model.StyledWidgets
 import com.yourname.expensetracker.domain.widget.model.WidgetStyle
@@ -140,8 +144,13 @@ class HomeViewModel @Inject constructor(
     private val recommendationDismissalHandler: RecommendationDismissalHandler,
     private val totalsAggregationEngine: TotalsAggregationEngine,
     private val advancedAnalyticsEngine: com.yourname.expensetracker.domain.analytics.AdvancedAnalyticsEngine,
-    private val currencySettingsRepository: CurrencySettingsRepository
+    private val currencySettingsRepository: CurrencySettingsRepository,
+    /** S8b-3: Home-only installment-aware weather source (dormant behind the feature flag). */
+    private val homeInstallmentWeatherSource: HomeInstallmentWeatherSource
 ) : ViewModel() {
+
+    /** Test seam for the compile-time gate [InstallmentsFeature.ENABLED]; production never changes it. */
+    internal var installmentsEnabled: Boolean = InstallmentsFeature.ENABLED
 
     private val _totalsDrillDownState = MutableStateFlow(PeriodDrillDownState(
         currentLevel = PeriodType.MONTH,
@@ -250,15 +259,76 @@ class HomeViewModel @Inject constructor(
         }
     }
 
+    /**
+     * S8b-3 (A15 option A): the Home-only installment-aware weather. Emits null while the feature
+     * seam is off, when the projection port has no entry in the 31-day window, or on a failure; Home
+     * then keeps the baseline weather widget. Shared so the widget merge and [installmentRows] read
+     * one computation. Restarted with every dashboard reload (midnight, currency change, retry).
+     */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    private val installmentWeather: SharedFlow<GenerationalInstallmentWeather> =
+        dashboardReloadTrigger
+            .flatMapLatest<Int, GenerationalInstallmentWeather> { generation ->
+                // onStart { emit(null) }: Home shows the baseline until the fresh value. The catch sits
+                // INSIDE the lambda (like processedDataFlow) so one failure ends only this generation's
+                // inner flow and never the outer trigger collection: a later reload resumes the aware
+                // weather. Flow.catch does not intercept cancellation. Bounded reason code only.
+                val inner: Flow<HomeInstallmentWeather?> = if (installmentsEnabled) {
+                    homeInstallmentWeatherSource.observe()
+                        .onStart { emit(null) }
+                        .catch { e ->
+                            Timber.w("Home installment weather unavailable (%s)", e::class.java.simpleName)
+                            emit(null)
+                        }
+                } else {
+                    flowOf(null)
+                }
+                // Every emission carries the reload generation that produced it, so the shared replay
+                // (replay = 1, kept across reloads while subscribed) can never feed an old-generation
+                // aware weather into a new baseline: the consumer filters on the generation.
+                inner.map { GenerationalInstallmentWeather(generation, it) }
+            }
+            .flowOn(Dispatchers.Default)
+            .shareIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), replay = 1)
+
+    /** An aware weather ([value], null = keep the baseline) tagged with the reload [generation] that produced it. */
+    private data class GenerationalInstallmentWeather(
+        val generation: Int,
+        val value: HomeInstallmentWeather?
+    )
+
+    /**
+     * S8b-3: the bounded 31-day installment rows for Home (plan currency, never converted or summed
+     * across currencies). A separate Home-only state: it is NOT a field of [DashboardState] and there
+     * is no `FinancialWeather` field. Empty while the seam is off or nothing is projected.
+     */
+    val installmentRows: StateFlow<List<InstallmentUpcomingRow>> = installmentWeather
+        .map { it.value?.installmentRows.orEmpty() }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
     private val processedDataFlow: StateFlow<ProcessedDashboardUiState> =
         dashboardReloadTrigger
-            .flatMapLatest {
-                dashboardDataProvider.getProcessedDataFlow(analyticsRepository)
-                    .map { processedData ->
-                        ProcessedDashboardUiState.Ready(
-                            computeDashboardWidgetsUseCase.compute(processedData)
-                        )
+            .flatMapLatest { generation ->
+                val compiledFlow = dashboardDataProvider.getProcessedDataFlow(analyticsRepository)
+                    .map { processedData -> computeDashboardWidgetsUseCase.compute(processedData) }
+                // The single merge point: REPLACE the one baseline weather widget after compute().
+                val mergedFlow = if (installmentsEnabled) {
+                    // S8b-3 liveness: a source that has not emitted yet must never delay Home's first
+                    // Ready state. onStart seeds the baseline (null = keep the baseline weather); the
+                    // real value replaces it as soon as it arrives.
+                    // Only THIS reload generation's aware weather is combined: a replayed value computed
+                    // for an older generation (e.g. the old home currency) is dropped here.
+                    val awareThisGeneration = installmentWeather
+                        .filter { it.generation == generation }
+                        .map { it.value }
+                    combine(compiledFlow, awareThisGeneration.onStart { emit(null) }) { compiled, aware ->
+                        HomeWeatherMerge.replaceWeather(compiled, aware?.weather)
                     }
+                } else {
+                    compiledFlow
+                }
+                mergedFlow
+                    .map { compiled -> ProcessedDashboardUiState.Ready(compiled) }
                     .catch<ProcessedDashboardUiState> { e ->
                         Timber.e(e, "Error processing dashboard data")
                         emit(

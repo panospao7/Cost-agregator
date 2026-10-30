@@ -25,7 +25,7 @@ import java.io.File
  *   BOTH sections (a cross-section duplicate fails closed), and no
  *   duplicate/wildcard/raw/write tuples.
      * - **Ownership policy:** The active `db_ownership_policy.yml` is the
-     *   activated v2 document (`schemaVersion: 2`, 432 entries — one entry per
+     *   activated v2 document (`schemaVersion: 2`, 454 entries — one entry per
      *   canonical mutation key, with `ownerFqcn` / `daoAccessor` / `barrierMode`
      *   fields). The fixture parser accepts the v2 document header and entry
      *   schema and maps v2 fields onto the shared [ParsedEntry] model; legacy
@@ -1068,7 +1068,7 @@ class DbGuardPolicyFixtureTest {
     // ══════════════════════════════════════════════════════════════════
 
     @Test
-    fun `manifest — ownership policy has exactly 432 entries`() {
+    fun `manifest — ownership policy has exactly 454 entries`() {
         // Release 1.0 G3 S4 (owner pre-approved shrink): the two direct transactionEventDao.insert
         // identities (NotificationRepository, ReviewQueueRepository) were removed: 429 -> 427.
         // Release 1.0 R21 S1 adds one approved exact identity
@@ -1077,14 +1077,24 @@ class DbGuardPolicyFixtureTest {
         // Release 1.0 R21 review adds two approved exact identities
         // (RecurringLifecycleCoordinator.updateOccurrenceStatus / plannedExpenseDao.updateStatus
         // and reminderDeliveryDao.suppressOpenDeliveriesForOccurrence): 428 -> 430.
+        // Two chains from the 430 base were merged (mec merge of feature/ai-evolution 4add2466; the
+        // union is 430 + 22 loan + 2 ai-fixes = 454). Loan chain: 430 -> 432 -> 445 -> 452. ai-fixes
+        // chain: 430 -> 431 -> 432 (int alone). Loan-installments S3 adds two exact identities
+        // (TransactionLifecycleCoordinator.setSpendingExclusionDbOnly:
+        // expenseDao.updateSpendingExclusionReason + transactionEventDao.insert): 430 -> 432.
+        // Loan-installments S6a adds 13 exact identities (InstallmentPlanLifecycleCoordinator x
+        // InstallmentPlanDao writes, one row per enclosing method and write): 432 -> 445.
+        // Loan-installments S6b adds 7 exact identities (InstallmentPlanLifecycleCoordinator helpers
+        // cancelScheduledEntry, editDetails, insertEntryRow, moveEndedPlan, rescheduleEntry,
+        // reverseSettledEntry, updatePlanShape, one InstallmentPlanDao write each): 445 -> 452.
         // ai-fixes B1a (owner-approved 2026-10-22, G2-5): the dead cloud-path identity
         // (WarrantyTrackerRepository.toWarrantyEntityOrNull / warrantyLifecycleEventDao.insert)
         // is removed and two exact confirmWarranty(Long) identities are added
-        // (warrantyDao.updateWarranty, warrantyLifecycleEventDao.insert): 430 -> 431.
+        // (warrantyDao.updateWarranty, warrantyLifecycleEventDao.insert): -1 +2.
         // ai-fixes Z2 review fix: one exact promoteReviewDraft identity
-        // (warrantyDao.updateWarranty): 431 -> 432.
+        // (warrantyDao.updateWarranty): +1. After the merge: 452 + 2 = 454.
         val entries = parseEntries(ownershipPolicyFile)
-        assertEquals("Ownership policy must have exactly 432 entries", 432, entries.size)
+        assertEquals("Ownership policy must have exactly 454 entries", 454, entries.size)
     }
 
     @Test

@@ -69,6 +69,17 @@ class AccountantReportPdfExporter @Inject constructor(
         }
 
     /**
+     * loan-installments OD-11: the PDF lists no per-row table (only counts, per-currency totals and
+     * large transactions), so installment-flagged rows are marked by a fixed summary line per marker.
+     * Rows are counted, never summed: every total above comes from `Expense.effectiveAmount`
+     * (INV-1), which is 0 for these rows. No plan data is written.
+     */
+    internal fun installmentMarkerSummaryLines(expenses: List<Expense>): List<String> =
+        ExportInstallmentMarker.countByMarker(expenses)
+            .toSortedMap()
+            .map { (marker, count) -> "Transactions marked $marker: $count (excluded from totals)" }
+
+    /**
      * Compute a MoneyAggregate for business-deductible expenses, grouped by
      * original currency and converted to [homeCurrency].
      *
@@ -140,6 +151,7 @@ class AccountantReportPdfExporter @Inject constructor(
 
             writer.writeHeading("Summary")
             writer.writeBody("Transaction Count: ${filteredExpenses.size}")
+            installmentMarkerSummaryLines(filteredExpenses).forEach { writer.writeBody(it) }
             sections.forEach { section ->
                 val currency = section.currency
                 val currencyExpenses = section.expenses

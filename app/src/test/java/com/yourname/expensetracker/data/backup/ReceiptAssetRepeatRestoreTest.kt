@@ -358,7 +358,11 @@ class ReceiptAssetRepeatRestoreTest {
             restoreJournal = journal,
             stagedImportVerifier = { _, _, _, _, summary -> summary },
             liveImportVerifier = { _, _, _, summary -> summary },
-            timeProvider = FakeTimeProvider(fixedTime)
+            timeProvider = FakeTimeProvider(fixedTime),
+            // S6c-4: restore never reconciles; a strict mock fails the test if it is ever called.
+            installmentPreBackupReconciler = dagger.Lazy {
+                mockk<com.yourname.expensetracker.domain.installment.lifecycle.InstallmentPreBackupReconciler>()
+            }
         )
         return repo.restoreReceiptAssets(
             assetsDir = assetsDir,

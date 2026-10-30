@@ -433,6 +433,168 @@ class ReceiptLifecycleCoordinatorTest {
         coVerify(exactly = 0) { receiptRepository.processReceipt(any(), any()) }
     }
 
+    // ─────────────────────────────────────────────────────────────────────────────
+    // MEC C1 (AE-24 / INV-6 / INV-17): a typed rate refusal is a payload-free exception and writes nothing
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    private fun flaggedAtomicRequest() = CreateExpenseRequest(
+        merchant = "Zorblax Cafe", amount = 1234.56, currency = "USD", date = now,
+        transactionType = TransactionType.PURCHASE, source = ExpenseSource.RECEIPT_SCAN,
+        scannedReceiptId = 17L,
+        userPresentRate = com.yourname.expensetracker.domain.transaction.UserPresentRateRequirement(
+            java.time.ZoneId.of("Europe/Athens")
+        )
+    )
+
+    private fun stubRateRefusal(
+        reason: com.yourname.expensetracker.domain.transaction.RateRefusalReason,
+        latest: java.time.LocalDate? = null
+    ) {
+        coEvery { transactionLifecycleCoordinator.createExpenseDbOnlyV2(any()) } returns
+            MutationResult<CreateExpenseResult>(
+                value = CreateExpenseResult.ValidationFailed(
+                    listOf("RATE_NOT_ELIGIBLE"),
+                    com.yourname.expensetracker.domain.transaction.RateRefusal(reason, latest)
+                ),
+                postCommitActions = nonEmptyBatch()
+            )
+    }
+
+    @Test
+    fun `AE-24 INV-17 a rate refusal creates no link planner post-commit receipt write event or asset change`() = runTest {
+        stubRateRefusal(com.yourname.expensetracker.domain.transaction.RateRefusalReason.NO_RATE)
+
+        val failure = coordinator.createExpenseAndLinkReceipt(flaggedAtomicRequest()).exceptionOrNull()
+
+        assertTrue(failure is ReceiptLifecycleCoordinator.RateNotEligibleException)
+        coVerify(exactly = 1) { transactionLifecycleCoordinator.createExpenseDbOnlyV2(flaggedAtomicRequest()) }
+        verify {
+            receiptLinkService wasNot io.mockk.Called
+            receiptSideEffectPlanner wasNot io.mockk.Called
+            postCommitActionRunner wasNot io.mockk.Called
+            sideEffectDispatcher wasNot io.mockk.Called
+            scannedReceiptDao wasNot io.mockk.Called
+            receiptEventDao wasNot io.mockk.Called
+            receiptExpenseLinkDao wasNot io.mockk.Called
+            receiptLifecycleEventWriter wasNot io.mockk.Called
+            assetStore wasNot io.mockk.Called
+            emailReceiptDao wasNot io.mockk.Called
+            pendingReviewDao wasNot io.mockk.Called
+        }
+    }
+
+    @Test
+    fun `AE-24 INV-6 each refusal reason maps to a bounded code and only a stale refusal carries a date`() = runTest {
+        val reasons = com.yourname.expensetracker.domain.transaction.RateRefusalReason.values().toList()
+        val expectedCodes = mapOf(
+            "NO_RATE" to "RATE_NOT_ELIGIBLE_NONE",
+            "STALE_RATE" to "RATE_NOT_ELIGIBLE_STALE",
+            "UNSUPPORTED_CURRENCY" to "RATE_NOT_ELIGIBLE_UNSUPPORTED",
+            "HOME_CURRENCY_UNRESOLVED" to "RATE_NOT_ELIGIBLE_HOME_UNRESOLVED"
+        )
+        assertEquals(expectedCodes.keys, reasons.map { it.name }.toSet())
+        for (reason in reasons) {
+            val latest = if (reason.name == "STALE_RATE") java.time.LocalDate.of(2025, 10, 7) else null
+            stubRateRefusal(reason, latest)
+
+            val failure = coordinator.createExpenseAndLinkReceipt(flaggedAtomicRequest()).exceptionOrNull()
+                as ReceiptLifecycleCoordinator.RateNotEligibleException
+
+            assertEquals(reason, failure.reason)
+            assertEquals(latest, failure.latestRateDate)
+            assertEquals(expectedCodes[reason.name], failure.message)
+        }
+    }
+
+    @Test
+    fun `AE-24 INV-17 the rate refusal exception is payload free`() = runTest {
+        stubRateRefusal(com.yourname.expensetracker.domain.transaction.RateRefusalReason.STALE_RATE, java.time.LocalDate.of(2025, 10, 7))
+
+        val failure = coordinator.createExpenseAndLinkReceipt(flaggedAtomicRequest()).exceptionOrNull()!!
+
+        assertNull(failure.cause)
+        assertEquals("RATE_NOT_ELIGIBLE_STALE", failure.message)
+        assertEquals(0, failure.suppressed.size)
+        val rendered = failure.toString() + failure.message + failure.localizedMessage
+        for (token in listOf("Zorblax", "1234", "USD", "Athens", "17", "2025", "10-07", "1712000000000")) {
+            assertFalse("'$token' leaked into the exception text", rendered.contains(token))
+        }
+        assertEquals(
+            "com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator\$RateNotEligibleException: " +
+                "RATE_NOT_ELIGIBLE_STALE",
+            failure.toString()
+        )
+    }
+
+    @Test
+    fun `AE-24 a non-rate validation failure is still an IllegalArgumentException`() = runTest {
+        coEvery { transactionLifecycleCoordinator.createExpenseDbOnlyV2(any()) } returns
+            MutationResult<CreateExpenseResult>(
+                value = CreateExpenseResult.ValidationFailed(listOf("Invalid amount")),
+                postCommitActions = nonEmptyBatch()
+            )
+
+        val failure = coordinator.createExpenseAndLinkReceipt(flaggedAtomicRequest()).exceptionOrNull()
+
+        assertTrue(failure is IllegalArgumentException)
+        assertFalse(failure is ReceiptLifecycleCoordinator.RateNotEligibleException)
+        assertEquals("Validation failed: Invalid amount", failure!!.message)
+        coVerify(exactly = 0) { receiptLinkService.linkReceiptToExpense(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+        assertNoAtomicSaveSideEffects()
+    }
+
+    @Test
+    fun `AE-24 a precision validation failure without a rate refusal stays a plain validation failure`() = runTest {
+        coEvery { transactionLifecycleCoordinator.createExpenseDbOnlyV2(any()) } returns
+            MutationResult<CreateExpenseResult>(
+                value = CreateExpenseResult.ValidationFailed(listOf("AMOUNT_PRECISION_EXCEEDED")),
+                postCommitActions = PostCommitActionBatch.empty("test")
+            )
+
+        val failure = coordinator.createExpenseAndLinkReceipt(flaggedAtomicRequest()).exceptionOrNull()
+
+        assertTrue(failure is IllegalArgumentException)
+        assertEquals("Validation failed: AMOUNT_PRECISION_EXCEEDED", failure!!.message)
+    }
+
+    @Test
+    fun `AE-24 the email path never sets the user-present flag and a refusal there is not an exception`() = runTest {
+        val captured = slot<CreateExpenseRequest>()
+        coEvery { transactionLifecycleCoordinator.createExpenseDbOnlyV2(capture(captured)) } returns
+            MutationResult<CreateExpenseResult>(
+                value = CreateExpenseResult.ValidationFailed(
+                    listOf("RATE_NOT_ELIGIBLE_NONE"),
+                    com.yourname.expensetracker.domain.transaction.RateRefusal(
+                        com.yourname.expensetracker.domain.transaction.RateRefusalReason.NO_RATE
+                    )
+                ),
+                postCommitActions = PostCommitActionBatch.empty("test")
+            )
+        coEvery { scannedReceiptDao.insert(any()) } returns 2L
+        coEvery { emailReceiptDao.insertOrIgnore(any()) } returns 1L
+        coEvery { scannedReceiptDao.getById(2L) } returns ScannedReceipt(
+            id = 2L, imagePath = null, rawOcrText = "Your order",
+            parsedTotal = 49.99, parsedMerchant = "Amazon", parsedDate = now,
+            parsedItems = null, parsedTaxAmount = null, confidence = 0.95f
+        )
+
+        val result = coordinator.processEmailReceipt(
+            emailData = EmailReceiptData(
+                messageId = "", from = "receipt@amazon.com", subject = "Order",
+                body = "Your order", receivedAt = now,
+                amount = 49.99, merchant = "Amazon", currency = "USD",
+                date = now, items = null, confidence = 0.95
+            ),
+            fingerprint = "", rawEmailBody = "Your order", sender = "receipt@amazon.com",
+            subject = "Order", messageId = "", provider = "amazon"
+        )
+
+        assertTrue("createExpenseDbOnlyV2 was not reached", captured.isCaptured)
+        assertNull(captured.captured.userPresentRate)
+        assertTrue("Expected NeedsReview, got $result", result is EmailReceiptProcessResult.NeedsReview)
+        assertEquals("validation_failed", (result as EmailReceiptProcessResult.NeedsReview).reason)
+    }
+
     private fun nonEmptyBatch(): PostCommitActionBatch {
         val action = PostCommitAction(
             pipeline = AppPipeline.RECEIPT,

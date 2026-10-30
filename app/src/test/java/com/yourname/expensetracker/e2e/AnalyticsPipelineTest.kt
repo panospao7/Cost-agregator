@@ -74,10 +74,16 @@ class AnalyticsPipelineTest : AnalyticsEngineTestBase() {
             timeProvider = timeProvider,
             ruleLifecycleCoordinator = mockk(relaxed = true)
         )
+        val noPlansReader = mockk<com.yourname.expensetracker.domain.installment.lifecycle.InstallmentEntryLinkReader>()
+        coEvery { noPlansReader.linkedExpenseIds() } returns emptySet()
+        coEvery { noPlansReader.planPurchaseExpenseIds() } returns emptySet()
         val recurringExpenseEngine = RecurringExpenseEngine(
             expenseRepository = expenseRepository,
             recurringExpenseRepository = recurringExpenseRepository,
-            timeProvider = timeProvider
+            timeProvider = timeProvider,
+            installmentEligibility = com.yourname.expensetracker.domain.recurring.RecurringInstallmentEligibility(
+                dagger.Lazy { noPlansReader }
+            )
         )
 
         insightsEngine = InsightsEngine(
@@ -89,7 +95,8 @@ class AnalyticsPipelineTest : AnalyticsEngineTestBase() {
             monthlyComparisonCalculator = MonthlyComparisonCalculator(),
             categoryInsightEngine = CategoryInsightEngine(),
             merchantInsightEngine = MerchantInsightEngine(),
-            dayOfWeekAnalyzer = DayOfWeekAnalyzer()
+            dayOfWeekAnalyzer = DayOfWeekAnalyzer(),
+            installmentEligibility = com.yourname.expensetracker.domain.analytics.noPlansInstallmentEligibility()
         )
 
         analyticsCategories = testCategories + Category(

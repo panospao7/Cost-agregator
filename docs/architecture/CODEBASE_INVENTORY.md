@@ -1,7 +1,7 @@
 # ExpenseTracker Android Codebase - Ground-Truth Inventory
 
-**Generated/verified:** 2026-10-28 (nl-quick-add increment 1 refresh; base snapshot 2026-10-02, re-verified against source)
-**Database Version:** v151
+**Generated/verified:** 2026-10-29 (manual-entry-currency Z closeout on feature/manual-entry-currency; includes the 2026-10-28 merge of feature/ai-evolution 4add2466 and the nl-quick-add increment 1 refresh; base snapshot 2026-10-02, re-verified against source)
+**Database Version:** v152
 **Architecture:** Clean Architecture + MVVM + Jetpack Compose + Room + Hilt DI
 
 ---
@@ -9,6 +9,32 @@
 ## EXECUTIVE SUMMARY
 
 Snapshot summary only: this inventory tracks the current UI, domain, data, and DI surfaces without freezing volatile counts.
+
+### Drift Sync (2026-10-30 / loan-installments S13-0..S13-c, branch feature/manual-entry-currency)
+
+Hand-maintained; paths checked to exist. DB **v152** unchanged (schema NONE). `InstallmentsFeature.ENABLED = true` on this unreleased branch (owner-approvals 91(b); unreleased under MEC H-1 until MEC 1b); S13-final pending. Counts are not restated here.
+
+- **Deep links:** `domain/navigation/deeplink/DeepLinkRequest.kt` (moved from `privacy/`, owner-approvals 92(c)) now carries the `installments` and `installment_plan` hosts and the `PLAN_ID` parameter (positive Long); both require in-app confirmation. This supersedes the 2026-10-28 note below that installment hosts are rejected as `UNKNOWN_HOST` (still true only with the flag off).
+- **Main (`ui/MainViewModel.kt`):** holds the pending deep-link confirmation; the confirmation dialog is in `MainScreen` inside `AppLockShell`. Test: `ui/MainViewModelDeepLinkConfirmationTest`.
+- **Integration test:** `integration/InstallmentEndToEndScenarioTest` (AE lifecycle, AE-6 replay, AE-23).
+- **Assistant:** `ExecuteFinancialQueryUseCase` LARGEST, SMALLEST, COUNT and AVERAGE ignore flagged installment purchases (INV-1, S13-0); LIST and breakdown entry counts still include flagged rows (F-S13-0-COUNT-LIST). `BillReminderWorker` S13-a N2 keeps cancellation unswallowed.
+
+### Drift Sync (2026-10-29 / manual-entry-currency Z closeout, branch feature/manual-entry-currency)
+
+Hand-maintained (D-10: no generator script exists; none was run). Paths below were checked to exist on this branch. DB **v152** unchanged by MEC (schema NONE). No new Hilt module, DAO, worker or ViewModel. Slices A1, A2, B0', B1, B2a, B2b, C1, C2, F-B2-A11Y-1 and the loan S11a/b/c AddExpense installment section are in this snapshot. B2, C and S11 stay unreleased until MEC 1b (H-1). See `workflows/active/manual-entry-currency-handoff.md`.
+
+- **Domain (`domain/currency/`, pure):** `CurrencyAmountPolicy` (single owner of per-currency cap and `AmountCheck`; digits delegate to `domain/core/money/CurrencyFractionDigits.of`, no second accessor), `CurrencySelectionPolicy` (selectable set and proposal resolution), `RateEligibilityEvaluator` (read-only eligibility over stored rates: calendar date in the entry zone, 7-day bound), `UserPresentRatePreview` (preview = `roundSnapshot(parsed x rate, home)`; unavailable is never 0).
+- **MEC 1b (rate history download, schema NONE):** `RateRemedyPolicy` (+ `RateRemedy`, `NoRemedyReason`, `RateRemedyDecision`) in `domain/currency/`; `CurrencyRatesRepository.downloadRecentHistory` with `CurrencyRateHistoryOutcome` and `RateHistoryFailureReason` (impl in `CurrencyRatesRepositoryImpl`); `CurrencyConverter.storeRateHistory`; `onDownloadRateHistory` / `onCancelRateHistory` on `AddExpenseViewModel` and `ReceiptScanViewModel`. Inventory counts above are not re-derived here.
+- **Domain (`domain/transaction/`):** `RateRefusal` and `RateRefusalReason` (typed refusal carried by the flagged create result); `CreateExpenseRequest` carries the user-present flag and entry zone.
+- **Receipt lifecycle:** `ReceiptLifecycleCoordinator.RateNotEligibleException` (nested, payload-free: reason plus latest rate date); maps a flagged refusal, receipt untouched.
+- **UI (`ui/components/currency/`):** `CurrencySelectionControl` (searchable currency sheet, shared by AddExpense and ReceiptScan, replaces the private receipt picker), `CurrencyRateRegion` (region model plus composables: preview line, blocked card, kept line; the preview line is a polite live region only after a key change, F-B2-A11Y-1).
+- **UI (`ui/screens/addexpense/`):** `AddExpenseInstallmentsState` and `AddExpenseInstallmentsSection` (loan S11a/b/c installment mode in the AddExpense sheet; converges with the general currency control, N2). `AddExpenseViewModel` / `AddExpenseSheet` host the control, region and section; `ReceiptScanScreen` / `ReceiptScanViewModel` host the control and region (C2).
+- **Android test:** `androidTest/.../domain/currency/CurrencyFractionDigitsDeviceTest` (H-4: pins the 28 catalog digit values on the device ICU/JDK; pure, no Hilt).
+- **Strings:** 42 `mec_*` keys and 9 `add_expense_installments_*` keys in `res/values{,-el,-es}/strings.xml`; el/es are DRAFT pending owner native sign-off (list in the handoff).
+
+### Drift Sync (2026-10-28 / merge of feature/ai-evolution 4add2466 into feature/manual-entry-currency; NOT validated)
+
+DB **v152** (mec/loan S2; int was v151 and did not bump the version, so there is no schema conflict; `152.json` is unchanged). The merge unions the sections below. `BillReminderWorker` now has 10 constructor parameters: `..., timeProvider, presentationResolver, presentationApplier, billReminderManager`; installment reminders (S7b) use the BILL presentation (D-M1 A, owner-approvals 79a). The mec pre-1a `MainActivity.handleIntent` host `when` was dropped for the policy/router path (`DeepLinkPolicy.evaluate`, then `AppLockDeepLinkRouter.route`); installment hosts are not in `DeepLinkHost` until loan S13-a and are rejected as `UNKNOWN_HOST`. Ownership policy: 454 entries (loan 452 plus the ai-fixes net +2).
 
 ### Drift Sync (2026-10-28 / nl-quick-add increment 1, branch feature/nl-quick-add)
 
@@ -41,9 +67,13 @@ New production files (verified against source). No Room change (settings are a d
 - **App lock held deep links, S21-b (`ui/applock/AppLockDeepLinkRouter.kt`, `ui/navigation/DeepLinkApplier.kt`, `ui/MainActivity.kt`):** `AppLockDeepLinkRouter` (unscoped `@Inject`, one per Activity; `route(result, scope, vm)` and `startReleasing(owner, vm)`) is the only production caller of the controller's `onLockQuery` / `releaseHeldLink` / `releaseOpportunity` and the only caller of `DeepLinkApplier`; `handleIntent` now routes only through the router and `onCreate` calls `startReleasing` after the secure-window bind (`onNewIntent` unchanged). `DeepLinkApplier` gains `onHeld`, `onRejectedWhileClosed`, `applyReleased`, `applyExpired`. No Room change, no DI module change.
 - **App lock gate on the unsupported-database export, S21-c (`ui/unsupported/UnsupportedDatabaseExportAuth.kt`, `ui/unsupported/UnsupportedDatabaseActivity.kt`):** `UnsupportedDatabaseExportAuth` (internal object: `isAuthRequired(context)`, `decide`, `readLock`, `readCapability`, `capabilityRequiresAuth`; `ExportLockRead`; `EXPORT_AUTH_READ_TIMEOUT_MILLIS` = 2000) plus the read-only `UnsupportedDatabaseExportAuthEntryPoint` (`@EntryPoint @InstallIn(SingletonComponent)`, exactly `AppLockSettingsRepository` and `DeviceAuthCapabilityProvider`; Room-free). `UnsupportedDatabaseActivity` is now a `FragmentActivity` with a per-Activity `BiometricPromptDeviceAuthenticator`; it gates the SAF picker on the decision and keeps three `@VisibleForTesting` companion seams (`exportAuthRequiredForTest`, `authenticatorFactoryForTest`, `exportAuthPromptTimeoutMillisForTest`). The prompt uses the constant EXPORT copy (`applock_prompt_title_export` in `res/values/strings_applock_prompt.xml`). F6: the prompt or picker starts only at lifecycle >= STARTED and not finishing, onStop cancels an in-flight gate read (gate generation token), and a prompt watchdog (`EXPORT_AUTH_PROMPT_TIMEOUT_MILLIS` = 5 min) ends an unanswered prompt as AUTH_DENIED. New strings `unsupported_db_export_auth_*` in `res/values{,-es,-el}/strings.xml`. No Room change, no DI module change.
 - **Notification presentation:** `domain/notification/presentation/` — `NotificationKind`, `NotificationPresentationDecision`, `NotificationContentPolicy`, `NotificationPresentationResolver`; `data/service/` — `NotificationPresentationApplier`, `NotificationPresentationTexts`, `NotificationKindMarker`, `NotificationKindClassifier`; `res/values{,-es,-el}/strings_notification_presentation.xml`. `NotificationService` is kind-aware only (`*ForKind`) and gains `repostActiveAsDiscreet()`; `AndroidNotificationService` takes 4 constructor params.
-- **Deep links:** `domain/privacy/deeplink/DeepLinkRequest.kt` (`DeepLinkHost`, `DeepLinkParameter`, `DeepLinkLimits`, `DeepLinkRequest`), `ui/navigation/DeepLinkApplier.kt`, `domain/ai/usecase/MarkDashboardBriefingOpenedUseCase.kt`, `domain/analytics/TimePeriodTokens.kt`; `ui/navigation/DeepLinkParser.kt` now hosts `DeepLinkPolicy` (the allow/confirm/reject classifier is gone). Manifest: the `expensetracker` VIEW filter no longer declares `BROWSABLE`.
+- **Deep links:** `domain/navigation/deeplink/DeepLinkRequest.kt` (`DeepLinkHost`, `DeepLinkParameter`, `DeepLinkLimits`, `DeepLinkRequest`), `ui/navigation/DeepLinkApplier.kt`, `domain/ai/usecase/MarkDashboardBriefingOpenedUseCase.kt`, `domain/analytics/TimePeriodTokens.kt`; `ui/navigation/DeepLinkParser.kt` now hosts `DeepLinkPolicy` (the allow/confirm/reject classifier is gone). Manifest: the `expensetracker` VIEW filter no longer declares `BROWSABLE`.
 - **Settings UI (`ui/screens/privacysettings/`):** `AppLockPrivacySettingsViewModel` (S22-a.1: also injects `DeviceAuthCapabilityProvider` as a display hint, calls `requestEnable` / `requestDisable`, and reads the controller's `state` and `openOriginEnd`; S22-b.1: also `requestTimeoutChange` / `requestSecureScreenChange`), `AppLockPrivacySection`, `AppLockEnableDialog` (S22-a.1, new), `AutoLockTimeoutDialog` (S22-b.1, new: the stateless timeout picker; S22-b.1 also adds the timeout row, secure-screen row, Android 11 note, footnote and the full review-card record to the section and ViewModel) (`AppLockSettingsWriteSerializer` is now domain-owned, `domain/privacy/applock/`, shared with `AppLockSettingsOperations`, S18 ii-a); `PrivacySettingsScreen` gains one `item { AppLockPrivacySection() }`. Strings: `res/values{,-es,-el}/strings_privacy_section.xml` (es/el best effort, owner review pending).
 - `BillReminderWorker` takes `NotificationPresentationResolver` + `NotificationPresentationApplier` (appended after `timeProvider`) and exposes `internal const CHANNEL_ID`.
+
+### Drift Sync (2026-10-23 / loan-installments S2)
+
+2026-10-23 loan-installments S2: schema 152 (installment_plans, installment_entries, expenses.spendingExclusionReason); InstallmentPlanDao. Current counts: 71 DAO files (excluding the non-DAO `RestrictedExpenseDaoMutation.kt`, same counting as the entries below), 74 registered entities, DB **v152**. No writer exists yet (the plan coordinator lands in S6a).
 
 ### Drift Sync (2026-10-22 / money-correctness 1a + 1b, branch feature/money-correctness)
 
@@ -121,7 +151,7 @@ Assistant is an overlay/entry surface, not a bottom tab.
 - SavingsGoalsScreen + SavingsGoalsViewModel → `SavingsGoals`
 
 #### Expense Management
-- AddExpenseSheet + AddExpenseViewModel → `AddExpense`
+- AddExpenseSheet + AddExpenseViewModel → `AddExpense` (hosts `CurrencySelectionControl`, `CurrencyRateRegion`, `AddExpenseInstallmentsSection`)
 - RecurringExpensesScreen + RecurringExpensesViewModel → `RecurringExpenses`
 - ManualRecurringExpenseScreen + ManualRecurringExpenseViewModel → `ManualRecurringExpense`
 
@@ -405,7 +435,7 @@ Assistant is an overlay/entry surface, not a bottom tab.
 - ComputeDashboardWidgetsUseCase, DashboardDataProvider
 
 ### Additional Domain Packages
-- **privacy/** - Privacy settings & data portability (includes PrivacyBlocked sealed interface); `privacy/applock/` (app-lock settings contract, diagnostics emitter, discreet write use case + re-post trigger); `privacy/deeplink/` (validated deep-link types)
+- **privacy/** - Privacy settings & data portability (includes PrivacyBlocked sealed interface); `privacy/applock/` (app-lock settings contract, diagnostics emitter, discreet write use case + re-post trigger) (validated deep-link types now live in `navigation/deeplink/`, outside the cloud-fenced `privacy/` tree)
 - **transaction/** - Transaction parsing & validation
 - **core/money/** - Money, currency, amount utilities (incl. MoneyAggregateBuilder)
 - **core/time/** - Time providers & period utilities

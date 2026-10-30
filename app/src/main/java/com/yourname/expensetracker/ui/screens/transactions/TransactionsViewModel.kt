@@ -33,6 +33,7 @@ import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.provenance.SourceLinkQueryService
 import com.yourname.expensetracker.domain.transaction.lifecycle.GroupLinkedExpenseException
+import com.yourname.expensetracker.domain.transaction.lifecycle.InstallmentLockedExpenseException
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.data.database.entity.EntitySourceLink
 import javax.inject.Inject
@@ -753,6 +754,10 @@ class TransactionsViewModel @Inject constructor(
                 // R18: bounded code only; localized guidance, no raw exception text.
                 Timber.w("Transactions: TRANSACTION_UPDATE_BLOCKED code=%s", e.code)
                 _error.emit(com.yourname.expensetracker.domain.model.UiText.from(com.yourname.expensetracker.R.string.expense_edit_blocked_group_linked))
+            } catch (e: InstallmentLockedExpenseException) {
+                // AE-20 / INV-22: fixed text; logs a constant, never the unvalidated exception code.
+                Timber.w("Transactions: TRANSACTION_UPDATE_BLOCKED code=EXPENSE_LOCKED_BY_INSTALLMENT_PLAN")
+                _error.emit(com.yourname.expensetracker.domain.model.UiText.from(com.yourname.expensetracker.R.string.transactions_installment_purchase_locked))
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 Timber.w("Transactions: TRANSACTION_UPDATE_FAILED class=%s", e::class.java.simpleName)
@@ -858,6 +863,10 @@ class TransactionsViewModel @Inject constructor(
                 // R18: bounded code only; localized guidance, no raw exception text.
                 Timber.w("Transactions: TRANSACTION_UPDATE_BLOCKED code=%s", e.code)
                 _error.emit(com.yourname.expensetracker.domain.model.UiText.from(com.yourname.expensetracker.R.string.expense_edit_blocked_group_linked))
+            } catch (e: InstallmentLockedExpenseException) {
+                // AE-20 / INV-22: fixed text; logs a constant, never the unvalidated exception code.
+                Timber.w("Transactions: TRANSACTION_UPDATE_BLOCKED code=EXPENSE_LOCKED_BY_INSTALLMENT_PLAN")
+                _error.emit(com.yourname.expensetracker.domain.model.UiText.from(com.yourname.expensetracker.R.string.transactions_installment_purchase_locked))
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 Timber.w("Transactions: TRANSACTION_UPDATE_FAILED class=%s", e::class.java.simpleName)

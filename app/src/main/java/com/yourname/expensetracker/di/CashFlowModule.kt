@@ -11,6 +11,7 @@ import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.forecasting.AccountBalanceProvider
 import com.yourname.expensetracker.domain.forecasting.MergedRecurringPatternsProvider
 import com.yourname.expensetracker.domain.forecasting.NetCashflowBalanceProvider
+import com.yourname.expensetracker.domain.installment.projection.InstallmentProjectionPort
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
 import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.Module
@@ -41,7 +42,8 @@ object CashFlowModule {
         currencyConverter: CurrencyConverter,
         currencySettingsRepository: CurrencySettingsRepository,
         databaseReadBarrier: DatabaseReadBarrier,
-        normalizationEngine: MoneyNormalizationEngine
+        normalizationEngine: MoneyNormalizationEngine,
+        installmentProjectionPort: InstallmentProjectionPort
     ): CashFlowCalculator = CashFlowCalculator(
         expenseRepository,
         recurringPatternsProvider,
@@ -52,6 +54,7 @@ object CashFlowModule {
         currencySettingsRepository,
         currencyConverter,
         databaseReadBarrier,
-        normalizationEngine
+        normalizationEngine,
+        installmentProjectionPort
     )
 }

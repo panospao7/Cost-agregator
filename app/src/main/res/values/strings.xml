@@ -17,6 +17,9 @@
     <string name="action_got_it">Got it</string>
     <string name="action_ok">OK</string>
     <string name="action_confirm">Confirm</string>
+    <!-- Loan S13-a: confirmation shown after unlock before an installments deep link navigates. No plan name or amount: the link is untrusted. -->
+    <string name="deeplink_confirm_installments_title">Open installments?</string>
+    <string name="deeplink_confirm_installments_body">A link wants to open your installment plans. Only continue if you expected this.</string>
     <string name="action_dismiss">Dismiss</string>
     <string name="action_copy">Copy</string>
     <string name="action_share">Share</string>
@@ -91,7 +94,7 @@
     <string name="day_sunday">Sunday</string>
     
     <!-- Legacy Names for Backward Compatibility -->
-    <string name="amount_label">Amount (€)</string>
+    <string name="amount_label">Amount</string>
     <string name="amount_placeholder">0.00</string>
     <string name="merchant_label">Merchant / Place</string>
     <string name="merchant_placeholder">e.g. Sklavenitis, Starbucks...</string>
@@ -1947,8 +1950,64 @@
     <string name="add_expense_error_currency_loading">Loading currency settings…</string>
     <string name="add_expense_error_merchant_required">Merchant name is required</string>
     <string name="add_expense_error_amount_invalid">Enter a valid amount</string>
-    <string name="add_expense_error_amount_too_large">Amount is too large</string>
     <string name="add_expense_error_date_future">Date cannot be in the future</string>
+    <!-- manual-entry-currency B1 (ux-flows section 14): per-currency amount and save-refusal messages -->
+    <string name="mec_block_home_unresolved">Couldn\'t read your home currency. Nothing was saved. Try again.</string>
+    <string name="mec_amount_no_decimals">%1$s amounts have no decimals. Enter a whole number.</string>
+    <string name="mec_amount_max_decimals">%1$s amounts allow up to %2$d decimals.</string>
+    <string name="mec_amount_too_large">Amount is too large. Maximum is %1$s.</string>
+    <string name="mec_repeat_home_only">Repeat is only available in your home currency (%1$s).</string>
+    <!-- manual-entry-currency B2a (ux-flows section 14): currency control, rate preview, blocked card, repeat note, receipt and installment copy -->
+    <string name="mec_control_label">Currency</string>
+    <string name="mec_control_cd">Currency: %1$s. Double tap to change.</string>
+    <string name="mec_control_unset">Choose currency</string>
+    <string name="mec_control_readonly_cd">Currency %1$s. It can\'t be changed when editing.</string>
+    <string name="mec_sheet_search">Search currency</string>
+    <string name="mec_sheet_home">Your home currency</string>
+    <string name="mec_sheet_other">Other currencies</string>
+    <string name="mec_sheet_no_results">No currency matches your search.</string>
+    <string name="mec_sheet_installment_note">Installments are available in EUR and USD only.</string>
+    <string name="mec_installment_unset">Choose EUR or USD for installments.</string>
+    <string name="mec_preview_checking">Checking exchange rate…</string>
+    <string name="mec_preview_ecb">≈ %1$s · ECB rate of %2$s</string>
+    <string name="mec_preview_other">≈ %1$s · rate of %2$s</string>
+    <string name="mec_preview_rate_only">ECB rate of %1$s</string>
+    <string name="mec_block_none">No exchange rate for this date.</string>
+    <string name="mec_block_stale">No exchange rate for this date. The latest rate is from %1$s, more than 7 days earlier.</string>
+    <string name="mec_block_unsupported">This currency can\'t be used for new expenses. Choose another one.</string>
+    <string name="mec_block_off_hint">Exchange-rate updates are off. Turn them on in settings to download rates.</string>
+    <string name="mec_block_alt_hint">You can also change the currency or the date.</string>
+    <string name="mec_action_refresh">Refresh rates</string>
+    <string name="mec_action_refreshing">Refreshing rates…</string>
+    <string name="mec_action_open_setting">Open exchange-rate setting</string>
+    <string name="mec_action_change_currency">Change currency</string>
+    <string name="mec_refresh_still_blocked">Rates refreshed, but there is still no rate within 7 days of this date. Try a later date.</string>
+    <string name="mec_refresh_offline">Couldn\'t refresh rates. Check your connection and try again.</string>
+    <string name="mec_refresh_failed">Couldn\'t refresh rates. Try again later.</string>
+    <string name="mec_refresh_home_unavailable">Rates can\'t be downloaded for your home currency.</string>
+    <!-- MEC 1b: rate history download (ux-flows 1b.9). No amounts or rates in any string. -->
+    <string name="mec_history_action">Download rate history</string>
+    <string name="mec_history_action_running">Downloading rate history…</string>
+    <string name="mec_history_running_state">Downloading rate history</string>
+    <string name="mec_history_cancel">Cancel</string>
+    <string name="mec_history_cancel_cd">Cancel rate history download</string>
+    <string name="mec_history_disclosure">Downloads the last 90 days of public ECB exchange rates. None of your expense data is sent.</string>
+    <string name="mec_history_cancelled">Download stopped.</string>
+    <string name="mec_history_too_old">Rate history covers only the last 90 days. Choose a later date or another currency.</string>
+    <string name="mec_history_no_rate">The rate history has no rate for this currency within 7 days of this date. Choose another currency or date.</string>
+    <string name="mec_history_offline">Couldn\'t download rate history. Check your connection and try again.</string>
+    <string name="mec_history_failed">Couldn\'t download rate history. Try again later.</string>
+    <string name="mec_save_disabled_rate">Needs an exchange rate</string>
+    <string name="mec_save_disabled_currency">Choose a currency</string>
+    <string name="mec_save_disabled_amount">Fix the amount</string>
+    <string name="mec_repeat_cleared">Repeat was turned off because this expense is in another currency.</string>
+    <string name="mec_home_changed_cleared">Your home currency changed, so the amount was cleared.</string>
+    <string name="mec_receipt_unmatched">We couldn\'t match the receipt\'s currency. Choose one.</string>
+    <string name="mec_receipt_not_detected">No currency found on the receipt. Check it.</string>
+    <string name="mec_receipt_kept">Your receipt is kept. Nothing was saved.</string>
+    <string name="mec_declaration_nothing_saved">Nothing was saved.</string>
+    <string name="mec_open_setting_confirm_title">Open settings?</string>
+    <string name="mec_open_setting_confirm_body">Your entry will be discarded.</string>
     <!-- nl-quick-add slice F: quick add line, summary, per-field flags (never echo the typed line) -->
     <string name="quick_add_label">Quick add</string>
     <string name="quick_add_placeholder">e.g. coffee 3.50 yesterday</string>
@@ -1974,7 +2033,7 @@
     <string name="quick_add_category_learned_fmt">%1$s · from your history</string>
     <string name="quick_add_category_remove">Remove</string>
     <string name="quick_add_category_remove_cd">Remove category %1$s</string>
-    <string name="quick_add_hint_foreign">Foreign currency isn\'t supported here yet. This expense will be saved in %1$s.</string>
+    <string name="quick_add_hint_foreign">Foreign currency detected. Choose it next to the amount, then enter the amount.</string>
     <string name="quick_add_hint_time_ignored">Time of day was ignored.</string>
     <string name="quick_add_hint_too_long">The line is too long (max %1$d characters).</string>
     <string name="quick_add_flag_amount_foreign">Enter the amount in %1$s.</string>
@@ -1991,7 +2050,7 @@
     <string name="quick_add_flag_payment_conflict">Both card and cash found. Choose one.</string>
     <string name="quick_add_flag_category_ambiguous">More than one category matched. Choose one.</string>
     <string name="add_expense_category_auto_hint">No category chosen. One is assigned automatically when you save.</string>
-    <string name="add_expense_amount_cd">Amount field, current value %1$s Euro</string>
+    <string name="add_expense_amount_cd">Amount field, current value %1$s %2$s</string>
     <string name="add_expense_payment_method_cd_format">%1$s payment method, %2$s</string>
     <string name="add_expense_category_cd_format">%1$s category, %2$s</string>
     <string name="add_expense_category_icon_cd">%1$s icon</string>
@@ -2768,5 +2827,321 @@
     <string name="notification_open_settings_button">Open settings</string>
     <!-- R24c: shown when the receipt currency could not be read and the home currency was assumed -->
     <string name="receipt_currency_unverified_warning">We couldn\'t read the currency on this receipt. Check it before saving.</string>
+
+    <!-- loan-installments S10a-1: installments overview (dormant behind InstallmentsFeature.ENABLED) -->
+    <string name="installments_title">Installments &amp; loans</string>
+    <string name="feature_installments_desc">Track payments you still owe and when they end</string>
+    <string name="installments_back">Back</string>
+    <!-- PE-C: shared fallback for a plan without a display name (Home weather, CashFlow row) and the CashFlow day-list header -->
+    <string name="installment_plan_fallback_label">Installment</string>
+    <string name="cashflow_installments_header">Installments due</string>
+    <string name="installments_remaining_label">Remaining scheduled payments</string>
+    <string name="installments_remaining_note">Sum of payments still to be made. Not your lender\'s outstanding balance.</string>
+    <plurals name="installments_plan_count">
+        <item quantity="one">%d plan</item>
+        <item quantity="other">%d plans</item>
+    </plurals>
+    <string name="installments_next_due">Next due</string>
+    <string name="installments_next_line">Next: %1$s · %2$s</string>
+    <string name="installments_needs_attention">Needs your attention</string>
+    <plurals name="installments_awaiting_header">
+        <item quantity="one">%1$d payment due, awaiting confirmation: %2$s (not counted)</item>
+        <item quantity="other">%1$d payments due, awaiting confirmation: %2$s (not counted)</item>
+    </plurals>
+    <string name="installments_active_plans">Active plans</string>
+    <string name="installments_status_active">Active</string>
+    <string name="installments_mode_auto_label">Recorded automatically</string>
+    <string name="installments_mode_confirm_label">You confirm each payment</string>
+    <string name="installments_progress">%1$d of %2$d paid</string>
+    <string name="installments_awaiting_plan">Awaiting confirmation · not counted yet</string>
+    <string name="installments_ends">Ends %1$s</string>
+    <plurals name="installments_payments_left">
+        <item quantity="one">%d payment left</item>
+        <item quantity="other">%d payments left</item>
+    </plurals>
+    <string name="installments_paid_so_far">Paid so far: %1$s</string>
+    <string name="installments_label_value">%1$s %2$s</string>
+    <string name="installments_two_parts">%1$s · %2$s</string>
+    <string name="installments_unavailable">Unavailable</string>
+    <string name="installments_due_today">Due today</string>
+    <string name="installments_overdue_on">Overdue since %1$s</string>
+    <string name="installments_empty_title">No installment plans yet</string>
+    <string name="installments_empty_body">Track card installments, pay-later purchases, tax plans and loans. See what you still owe and when each plan ends.</string>
+    <string name="installments_empty_finished_title">No active plans</string>
+    <string name="installments_empty_finished_body">Your finished plans are in History.</string>
+    <string name="installments_error_load">Couldn\'t load your plans.</string>
+    <string name="installments_error_refresh">Couldn\'t refresh. Showing the last loaded plans.</string>
+    <plurals name="installments_unreadable_plans">
+        <item quantity="one">%d plan couldn\'t be read and is not included in these figures.</item>
+        <item quantity="other">%d plans couldn\'t be read and are not included in these figures.</item>
+    </plurals>
+
+    <!-- loan-installments S10a-2: plan detail and history (dormant behind InstallmentsFeature.ENABLED) -->
+    <string name="installments_history_action">History</string>
+    <string name="installments_detail_title">Plan details</string>
+    <string name="installments_error_not_found">This plan no longer exists.</string>
+    <string name="installments_error_load_detail">Couldn\'t load this plan.</string>
+    <string name="installments_error_refresh_detail">Couldn\'t refresh. Showing the last loaded details.</string>
+    <string name="installments_status_completed">Completed</string>
+    <string name="installments_status_cancelled">Cancelled</string>
+    <string name="installments_status_refunded">Refunded</string>
+    <string name="installments_status_paid_off">Paid off</string>
+    <string name="installments_banner_completed">All payments are accounted for.</string>
+    <string name="installments_banner_ended">This plan is finished and can\'t be changed.</string>
+    <string name="installments_kind_purchase">Purchase installments</string>
+    <string name="installments_kind_standalone">Standalone plan</string>
+    <string name="installments_lender">Lender: %1$s</string>
+    <string name="installments_end_date_unavailable">End date: Unavailable</string>
+    <string name="installments_financing_cost">Financing cost: %1$s</string>
+    <string name="installments_financing_needs_purchase">Needs a purchase in the same currency</string>
+    <string name="installments_financing_not_for_status">Not available for cancelled or refunded plans</string>
+    <string name="installments_financing_payment_unreadable">A payment amount can\'t be read right now</string>
+    <string name="installments_schedule">Schedule</string>
+    <string name="installments_entry_number">Payment %1$d</string>
+    <string name="installments_entry_upcoming">Upcoming</string>
+    <string name="installments_entry_overdue">Overdue · not counted yet</string>
+    <string name="installments_entry_paid">Paid</string>
+    <string name="installments_entry_skipped">Skipped</string>
+    <string name="installments_entry_cancelled">Cancelled</string>
+    <string name="installments_entry_refunded">Refunded · not counted</string>
+    <string name="installments_entry_paid_before_tracking">Paid before tracking</string>
+    <string name="installments_entry_payoff">Payoff</string>
+    <string name="installments_entry_was">Was %1$s</string>
+    <string name="installments_entry_paid_unavailable">Paid amount: Unavailable</string>
+    <string name="installments_entry_differs">Differs from plan: %1$s</string>
+    <string name="installments_reason_skip_lender_holiday">Lender break</string>
+    <string name="installments_reason_skip_waived">Waived</string>
+    <string name="installments_reason_skip_other">Other reason</string>
+    <string name="installments_reason_stopped">Plan stopped</string>
+    <string name="installments_reason_refunded">Plan refunded</string>
+    <string name="installments_reason_paid_off_early">Paid off early</string>
+    <string name="installments_reason_shortened">Plan shortened</string>
+    <string name="installments_reason_expense_removed">Its expense was removed</string>
+    <string name="installments_history_title">Plan history</string>
+    <string name="installments_history_empty_title">No finished plans yet</string>
+    <string name="installments_history_empty_body">Plans you complete or cancel are kept here so you can look back.</string>
+    <string name="installments_history_empty_completed">No completed plans</string>
+    <string name="installments_history_empty_cancelled">No cancelled plans</string>
+    <string name="installments_history_empty_refunded">No refunded plans</string>
+    <string name="installments_history_empty_paid_off">No paid-off plans</string>
+    <string name="installments_filter_all">All</string>
+    <string name="installments_history_range">%1$s – %2$s</string>
+    <plurals name="installments_history_count_paid">
+        <item quantity="one">%d paid</item>
+        <item quantity="other">%d paid</item>
+    </plurals>
+    <plurals name="installments_history_count_skipped">
+        <item quantity="one">%d skipped</item>
+        <item quantity="other">%d skipped</item>
+    </plurals>
+    <plurals name="installments_history_count_cancelled">
+        <item quantity="one">%d cancelled</item>
+        <item quantity="other">%d cancelled</item>
+    </plurals>
+    <plurals name="installments_history_count_refunded">
+        <item quantity="one">%d refunded</item>
+        <item quantity="other">%d refunded</item>
+    </plurals>
+    <string name="installments_plan_unnamed">Installment plan</string>
+    <plurals name="installments_history_before_tracking">
+        <item quantity="one">%d payment paid before tracking</item>
+        <item quantity="other">%d payments paid before tracking</item>
+    </plurals>
+    <string name="installments_history_total">Total counted: %1$s</string>
+    <string name="installments_history_refunded_note">Refunded payments are not counted.</string>
+    <string name="installments_error_load_history">Couldn\'t load your plan history.</string>
+    <string name="installments_error_refresh_history">Couldn\'t refresh. Showing the last loaded history.</string>
+
+    <!-- loan-installments S10b-1: entry row actions (dormant behind InstallmentsFeature.ENABLED) -->
+    <string name="installments_action_record">Record payment</string>
+    <string name="installments_action_link">Link to a matching expense</string>
+    <string name="installments_action_skip">Skip this installment</string>
+    <string name="installments_action_adjust">Adjust amount or date</string>
+    <string name="installments_action_unskip">Unskip</string>
+    <string name="installments_action_record_title">Record installment %1$d</string>
+    <string name="installments_action_link_title">Link installment %1$d</string>
+    <string name="installments_action_skip_title">Skip installment %1$d?</string>
+    <string name="installments_action_adjust_title">Adjust installment %1$d</string>
+    <string name="installments_action_unskip_title">Unskip installment %1$d?</string>
+    <string name="installments_action_record_body">Creates an expense of %1$s dated %2$s and marks this installment paid.</string>
+    <string name="installments_action_record_match_warning">A matching charge was found. Link it instead to avoid counting this payment twice.</string>
+    <string name="installments_action_link_body">Choose the expense that paid this installment.</string>
+    <string name="installments_action_link_empty">No matching expenses found. You can still record the payment without linking.</string>
+    <string name="installments_action_link_confirm">Link</string>
+    <string name="installments_action_skip_body">It won\'t be counted and no payment is added at the end of the plan. You can undo this.</string>
+    <string name="installments_action_skip_confirm">Skip</string>
+    <string name="installments_action_skip_reason_holiday">Lender payment break</string>
+    <string name="installments_action_skip_reason_waived">Waived by the lender</string>
+    <string name="installments_action_skip_reason_other">Other</string>
+    <string name="installments_action_unskip_body">The installment becomes scheduled again.</string>
+    <string name="installments_action_adjust_was">Was %1$s on %2$s</string>
+    <string name="installments_action_adjust_amount">Amount (%1$s)</string>
+    <string name="installments_action_adjust_date">Due date: %1$s</string>
+    <string name="installments_action_adjust_confirm">Save</string>
+    <string name="installments_action_cancel">Cancel</string>
+    <string name="installments_action_ok">OK</string>
+    <string name="installments_action_working">Working…</string>
+    <string name="installments_action_undo">Undo</string>
+    <string name="installments_action_discard_title">Discard changes?</string>
+    <string name="installments_action_discard_body">What you entered will be lost.</string>
+    <string name="installments_action_discard">Discard</string>
+    <string name="installments_action_keep_editing">Keep editing</string>
+    <string name="installments_action_refused_generic">This change isn\'t allowed. Nothing was changed.</string>
+    <string name="installments_action_refused_illegal">This installment can\'t be changed in its current state. Nothing was changed.</string>
+    <string name="installments_action_refused_already_updated">This installment was already updated. Refreshing.</string>
+    <string name="installments_action_refused_amount">Enter an amount greater than zero with at most two decimals.</string>
+    <string name="installments_action_refused_date">That date isn\'t supported. Nothing was changed.</string>
+    <string name="installments_action_refused_currency">That expense is in a different currency than this plan.</string>
+    <string name="installments_action_refused_linked_elsewhere">That expense is already linked to another installment or payment.</string>
+    <string name="installments_action_refused_expense_not_eligible">That expense can\'t be linked to an installment.</string>
+    <string name="installments_action_refused_name_required">This plan needs a name before a payment can be recorded.</string>
+    <string name="installments_action_refused_purchase_missing">The purchase for this plan is no longer available. Nothing was changed.</string>
+    <string name="installments_action_failed_conflict">Something changed while saving. Nothing was changed. Try again.</string>
+    <string name="installments_action_failed_not_found">This installment or expense is no longer available. Nothing was changed.</string>
+    <string name="installments_action_failed_record">The payment couldn\'t be recorded. Nothing was changed.</string>
+    <string name="installments_action_failed_unexpected">Something went wrong. Nothing was changed.</string>
+    <string name="installments_action_notice_recorded">Payment recorded</string>
+    <string name="installments_action_notice_linked">Expense linked</string>
+    <string name="installments_action_notice_skipped">Installment skipped</string>
+    <string name="installments_action_notice_skipped_last">Installment skipped. That was the last payment, so this plan is now completed.</string>
+    <string name="installments_action_notice_adjusted">Installment adjusted</string>
+    <string name="installments_action_notice_unskipped">Installment is scheduled again</string>
+    <string name="installments_action_notice_undone">Undone</string>
+    <!-- loan-installments S12a: Transactions surfaces and the declare sheet -->
+    <string name="transactions_installment_menu_pay">Pay in installments…</string>
+    <string name="transactions_installment_menu_view">View installment plan</string>
+    <string name="transactions_installment_menu_disabled_not_mine">Installments aren\'t available for expenses that aren\'t yours.</string>
+    <string name="transactions_installment_menu_disabled_shared">Installments aren\'t available for shared or split expenses yet.</string>
+    <!-- loan-installments PE-D: role line of the Transactions delete dialog (ux-flows 3.7) -->
+    <string name="transactions_installment_delete_role_installment">This expense is part of an installment plan. The installment will become unpaid and will not be recorded again automatically.</string>
+    <string name="transactions_installment_delete_role_purchase">This is the purchase of an installment plan. The plan will remain without a purchase record, and financing cost won\'t be available.</string>
+    <string name="transactions_installment_delete_role_reversed">This is a refunded installment. Deleting it only removes it from your list.</string>
+    <plurals name="transactions_installment_chip_paid_in">
+        <item quantity="one">Paid in %d installment</item>
+        <item quantity="other">Paid in %d installments</item>
+    </plurals>
+    <string name="transactions_installment_chip_not_counted">Not counted as spending</string>
+    <string name="transactions_installment_chip_not_counted_refunded">Not counted (refunded)</string>
+    <string name="transactions_installment_chip_n_of_m">Installment %1$d of %2$d</string>
+    <string name="transactions_installment_source_badge">Installment plan</string>
+    <string name="transactions_installment_chip_matches">Matches installment %d</string>
+    <string name="transactions_installment_chip_duplicate">Possible duplicate of installment %d</string>
+    <string name="transactions_installment_filter">Installments</string>
+    <string name="transactions_installment_purchase_locked">This purchase is paid in installments, so this can\'t be changed here.</string>
+    <string name="declare_installments_title">Pay in installments</string>
+    <string name="declare_installments_name">Plan name</string>
+    <string name="declare_installments_count">Number of payments</string>
+    <string name="declare_installments_currency">Plan currency</string>
+    <string name="declare_installments_currency_differs">This plan is in a different currency than the purchase. Enter each payment; financing cost will be unavailable.</string>
+    <string name="declare_installments_split_equal">Equal split of total</string>
+    <string name="declare_installments_split_fixed">Fixed payment × N</string>
+    <string name="declare_installments_fixed_amount">Each payment</string>
+    <string name="declare_installments_each_payment">Each payment %s</string>
+    <string name="declare_installments_first_due">First payment on %s</string>
+    <string name="declare_installments_mode_title">How should payments be recorded?</string>
+    <string name="declare_installments_mode_auto">Record automatically on the due date</string>
+    <string name="declare_installments_mode_confirm">I\'ll confirm each one</string>
+    <string name="declare_installments_impact">This purchase stays in your list and its receipt link is kept. It stops counting as %1$s on %2$s. Each installment counts in the month it is paid. Totals and budgets for those months will change.</string>
+    <string name="declare_installments_receipt_note">The receipt stays attached to the purchase.</string>
+    <string name="declare_installments_confirm">Set up installments</string>
+    <string name="declare_installments_discard_title">Discard this plan?</string>
+    <string name="declare_installments_keep">Keep editing</string>
+    <string name="declare_installments_refused_not_mine">Installments aren\'t available for expenses that aren\'t yours.</string>
+    <string name="declare_installments_refused_shared">Installments aren\'t available for shared or split expenses yet.</string>
+    <string name="declare_installments_refused_already_declared">This purchase is already paid in installments.</string>
+    <string name="declare_installments_refused_first_date">Choose a date on or after the purchase date.</string>
+    <string name="declare_installments_refused_count">Enter a number from 2 to 480.</string>
+    <string name="declare_installments_refused_too_small">The amount is too small for this many payments.</string>
+    <string name="declare_installments_snackbar_declared">Installments set up for %s</string>
+    <string name="declare_installments_snackbar_undo">Undo</string>
+    <string name="declare_installments_snackbar_view_plan">View plan</string>
+    <string name="declare_installments_snackbar_undone">Installments removed. This purchase counts in full again.</string>
+    <string name="declare_installments_snackbar_undo_failed">A payment was already recorded. Use End plan to change this plan.</string>
+    <!-- loan-installments S11b: Add expense installments section -->
+    <string name="add_expense_installments_repeat_exclusive">Repeat and installments can\'t be combined.</string>
+    <!-- loan-installments S11c: live preview card, past-due notice, non-spending reason -->
+    <string name="add_expense_installments_not_spending">Installments are only for purchases.</string>
+    <string name="add_expense_installments_preview_summary">%1$d × %2$s = %3$s</string>
+    <string name="add_expense_installments_preview_total">%1$d payments, %2$s in total</string>
+    <string name="add_expense_installments_preview_residual">First payment %1$s, then %2$s</string>
+    <string name="add_expense_installments_preview_ends">Last payment on %s</string>
+    <string name="add_expense_installments_preview_financing_less">Total of installments is less than the purchase price.</string>
+    <string name="add_expense_installments_preview_needs_amount">Enter the purchase amount first</string>
+    <string name="add_expense_installments_past_due">Past-due installments: %1$d. They won\'t count until you record or link them.</string>
+    <!-- loan-installments S10b-2: create, edit, end flows, unlink -->
+    <string name="installments_create_add_plan">Add plan</string>
+    <string name="installments_plan_actions_menu">Plan actions</string>
+    <string name="installments_plan_edit">Edit plan</string>
+    <string name="installments_plan_end">End plan…</string>
+    <string name="installments_plan_delete">Delete plan</string>
+    <string name="installments_end_title">End this plan</string>
+    <string name="installments_end_stop_title">Stop the plan</string>
+    <string name="installments_end_stop_body">Payments already made stay in your spending. Future ones are removed.</string>
+    <string name="installments_end_refund_title">The purchase was refunded or returned</string>
+    <string name="installments_end_refund_body">Everything is reversed. This purchase and its installments count as zero.</string>
+    <string name="installments_end_payoff_title">I paid it off early</string>
+    <string name="installments_end_payoff_body">The remaining amount counts on the payoff date.</string>
+    <string name="installments_end_next">Next</string>
+    <string name="installments_stop_title">Stop this plan?</string>
+    <string name="installments_stop_confirm">Stop plan</string>
+    <plurals name="installments_stop_body">
+        <item quantity="one">%1$d unpaid payment (%2$s) will be removed. Payments already made (%3$d) stay in your spending. This can\'t be undone.</item>
+        <item quantity="other">%1$d unpaid payments (%2$s) will be removed. Payments already made (%3$d) stay in your spending. This can\'t be undone.</item>
+    </plurals>
+    <string name="installments_refund_question_title">Refund already recorded?</string>
+    <string name="installments_refund_question_body">Is the refund already recorded as a transaction?</string>
+    <string name="installments_answer_yes">Yes</string>
+    <string name="installments_answer_no">No</string>
+    <string name="installments_refund_recorded_title">Stop the plan instead</string>
+    <string name="installments_refund_recorded_body">Then stop the plan instead. Your payments stay counted and the refund you recorded offsets them.</string>
+    <string name="installments_refund_recorded_confirm">Stop the plan</string>
+    <string name="installments_refund_confirm_title">Record this refund?</string>
+    <string name="installments_refund_confirm_body">Everything is reversed: %1$d paid installments will count as zero and %2$d unpaid ones are removed. The expenses are kept and marked as refunded. This can\'t be undone. For a partial refund, adjust the remaining payments instead.</string>
+    <string name="installments_refund_confirm">Record refund</string>
+    <string name="installments_payoff_title">Pay off early</string>
+    <string name="installments_payoff_amount">Payoff amount</string>
+    <string name="installments_payoff_date">Payoff date: %1$s</string>
+    <plurals name="installments_payoff_body">
+        <item quantity="one">The payoff counts in full on the payoff date. %1$d unpaid installment is removed. This can\'t be undone.</item>
+        <item quantity="other">The payoff counts in full on the payoff date. %1$d unpaid installments are removed. This can\'t be undone.</item>
+    </plurals>
+    <string name="installments_payoff_confirm">Pay off plan</string>
+    <string name="installments_delete_title">Delete this plan?</string>
+    <string name="installments_delete_body_standalone">The plan and its schedule will be removed. This can\'t be undone.</string>
+    <string name="installments_delete_body_purchase">The plan and its schedule will be removed. Your purchase will count in full again on its original date, so totals and budgets for that month will change. This can\'t be undone.</string>
+    <string name="installments_delete_confirm">Delete plan</string>
+    <string name="installments_unlink_title">Unlink installment %1$d?</string>
+    <string name="installments_unlink_body">The expense stays in your list and still counts as spending. The installment becomes unpaid. If the payment did not happen, delete the expense in Transactions instead. Recording this installment again later creates a new expense.</string>
+    <string name="installments_unlink_confirm">Unlink</string>
+    <string name="installments_plan_notice_stopped">Plan stopped</string>
+    <string name="installments_plan_notice_refunded">Refund recorded</string>
+    <string name="installments_plan_notice_paid_off">Plan paid off</string>
+    <string name="installments_plan_notice_unlinked">Installment unlinked</string>
+    <string name="installments_plan_notice_nothing_to_change">Nothing to change. A completed plan cannot be stopped.</string>
+    <string name="installments_create_title">Add plan</string>
+    <string name="installments_create_save">Save</string>
+    <string name="installments_create_name">Plan name</string>
+    <string name="installments_create_name_helper">Shown as the merchant on recorded payments.</string>
+    <string name="installments_create_lender">Lender (optional)</string>
+    <string name="installments_create_currency">Currency</string>
+    <string name="installments_create_amount">Payment amount</string>
+    <string name="installments_create_count">Number of payments</string>
+    <string name="installments_create_count_helper">Between 2 and 480 payments, counted from the first one you want to track.</string>
+    <string name="installments_create_paid_before">Already paid before using the app (optional)</string>
+    <string name="installments_create_paid_before_helper">Kept as history only. These payments are not counted as spending.</string>
+    <string name="installments_create_mode">How should payments be recorded?</string>
+    <string name="installments_create_mode_auto">Record automatically</string>
+    <string name="installments_create_mode_confirm">I\'ll confirm</string>
+    <string name="installments_create_category">Category</string>
+    <string name="installments_create_categories_failed">Couldn\'t load categories. Tap to retry.</string>
+    <string name="installments_create_estimate">Figures are estimates. Your lender\'s statement is authoritative.</string>
+    <string name="installments_create_privacy">Plan details stay on this device and in your encrypted backups.</string>
+    <string name="installments_edit_title">Edit plan</string>
+    <string name="installments_edit_helper">Changes apply to payments recorded from now on. Recorded expenses are not changed.</string>
+    <string name="installments_edit_no_category">No category</string>
+    <string name="installments_action_notice_undo_failed">Couldn\'t undo. Use the row actions instead.</string>
+    <!-- loan-installments S12b: budget info line (dormant behind InstallmentsFeature.ENABLED); %1$s is a formatted amount with its currency -->
+    <string name="budget_includes_installments_format">Includes %1$s in installments</string>
+    <string name="budget_includes_installments_unavailable">Installment amount unavailable</string>
 
 </resources>

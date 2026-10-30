@@ -1,6 +1,8 @@
 # Legal Paths — Architecture Law
 
-> **Last updated:** 2026-10-29 (app-lock-privacy-mode S23 docs: DEEP LINKS 1a/1b with the AE-118 settings-prompt hold; APP LOCK write path status). Earlier: 2026-10-24 (app-lock-privacy-mode 1a: NOTIFICATION PRESENTATION, DEEP LINKS and APP LOCK SETTINGS WRITE PATH sections added; DISPATCH reminder and Anomaly Alerting steps corrected). Earlier: 2026-10-13 (schema/savings delta verified against code: DB v151; prior guarded-worker/CI verification retained)
+> **Last updated:** 2026-10-30 (merge of feature/manual-entry-currency (MEC 1b + loan S13) into feature/ai-evolution: unions the app-lock S22/S23 DEEP LINKS and the EXCHANGE-RATE history download (MEC 1b) sections).
+> Earlier: 2026-10-29 (app-lock-privacy-mode S23 docs: DEEP LINKS 1a/1b with the AE-118 settings-prompt hold; APP LOCK write path status). Earlier: 2026-10-24 (app-lock-privacy-mode 1a: NOTIFICATION PRESENTATION, DEEP LINKS and APP LOCK SETTINGS WRITE PATH sections added; DISPATCH reminder and Anomaly Alerting steps corrected). Earlier: 2026-10-13 (schema/savings delta verified against code: DB v151; prior guarded-worker/CI verification retained)
+> Earlier: 2026-10-28 (merge of feature/ai-evolution 4add2466 into feature/manual-entry-currency, NOT validated: unions the loan-installments and app-lock-privacy-mode / ai-fixes sections; DB v152). Earlier: 2026-10-24 (app-lock-privacy-mode 1a: NOTIFICATION PRESENTATION, DEEP LINKS and APP LOCK SETTINGS WRITE PATH sections added; DISPATCH reminder and Anomaly Alerting steps corrected). 2026-10-23 loan-installments S2: DB v152 (installment tables exist, no writer) (installment-plan paths added as planned contracts: loan-installments S1; earlier 2026-10-13 schema/savings delta verified against code: DB v151; prior guarded-worker/CI verification retained)
 >
 > **Purpose:** Define the ONE allowed implementation path for each major operation.  
 > **Rule:** Any code that uses a different path is a bug, regardless of whether it "works."  
@@ -56,8 +58,50 @@ PREFILL AIDS (not a write path):
     AddExpenseViewModel.save() → ManualExpenseRepository.addManualExpense() →
     TransactionLifecycleCoordinator.createExpenseDbOnlyV2() → ExpenseDao.insertAtomic(),
     source = MANUAL_ENTRY.
+  • With installments ON (InstallmentsFeature.ENABLED = true on this unreleased branch, owner-approvals 91(b); S13) AddExpenseViewModel routes the
+    save to ManualExpenseRepository.buildInstallmentPurchaseRequest →
+    InstallmentPlanLifecycleCoordinator.declareWithNewExpense (INV-27 atomic: purchase, plan and entries) and
+    never to addManualExpense. The coordinator sets userPresentRate; the builder passes null.
   • Fill must not call categorize*, MerchantNormalizer or any repository write
     (see Categorization / Merchant Learning, read-only learned category lookup).
+```
+
+```
+USER-PRESENT RATE REQUIREMENT (manual-entry-currency A2; INV-5..9, 19):
+  Only a non-null CreateExpenseRequest.userPresentRate (UserPresentRateRequirement(entryZone))
+  makes TransactionLifecycleCoordinator apply the eligible-rate rule at the create snapshot step:
+    → after validation and provenance, BEFORE dedup and any insert
+    → home Failed → refusal HOME_CURRENCY_UNRESOLVED; currency == home → identity snapshot;
+      otherwise ONE RateEligibilityEvaluator.evaluate() read decides and supplies the rate:
+      Eligible → exchangeRateUsed = Eligible.rate (unrounded), baseAmount = roundSnapshot(amount x rate, home);
+      anything else (or rounding/digits unavailable) → CreateExpenseResult.ValidationFailed(errors = [RateRefusalCodes
+      code], rateRefusal = RateRefusal) — no expense, no dedup, no insertAtomic, empty post-commit batch
+    → a refusal writes only CREATE_ATTEMPTED + one CREATE_VALIDATION_FAILED (bounded code, no dedupe key)
+      and one DiagnosticReasonCode.MANUAL_SAVE_BLOCKED_NO_RATE (metadata reason none|stale|unsupported|
+      home_unresolved; origin = request.source name); no new LifecycleEventType
+    → the flagged branch never uses convertAsOf and never falls through to the unflagged
+      sentinel/MISSING_RATE handling; requests with userPresentRate == null are unchanged (any-age conversion)
+    → AMOUNT_PRECISION_EXCEEDED (TransactionValidator) is enforced only for flagged requests
+  Setters (fixed allow-list, never grows): ManualExpenseRepository, ReceiptScanViewModel, and the
+  installment plan coordinator's declare-with-new-expense request; enforced by
+  ManualEntryCurrencySetterAllowListGuardTest. Setter #2 (ReceiptScanViewModel) is active since MEC C1
+  (see "CREATE expense FROM receipt"). Setter #1 is active (manual-entry-currency B1):
+  ManualExpenseRepository.addManualExpense(..., entryZone) always sets
+  UserPresentRateRequirement(entryZone); entryZone is captured once by
+  AddExpenseViewModel.onSheetOpened() (plain VM field, never state/persisted/logged).
+  AddExpenseViewModel validates the unrounded amount with CurrencyAmountPolicy.check (no rounding on save);
+  the repository maps a flagged ValidationFailed to a bounded code (rateRefusal code, else
+  AMOUNT_PRECISION_EXCEEDED / AMOUNT_DIGITS_UNAVAILABLE, else the joined message). The ViewModel maps
+  by equality: RECURRING_FOREIGN_CURRENCY_ERROR_CODE -> mec_repeat_home_only,
+  RATE_NOT_ELIGIBLE_HOME_UNRESOLVED -> mec_block_home_unresolved, AMOUNT_PRECISION_EXCEEDED -> the
+  precision text; every other code (AMOUNT_DIGITS_UNAVAILABLE, RATE_NOT_ELIGIBLE_NONE / _STALE /
+  _UNSUPPORTED, anything else) -> the generic save-failed text.
+
+FORBIDDEN:
+  ❌ Setting CreateExpenseRequest.userPresentRate outside the three allow-listed files
+  ❌ Using isManualEntry or source as the trigger for the eligible-rate rule
+  ❌ Re-evaluating or re-reading rates for a flagged snapshot after the evaluator call (no check/use gap)
+  ❌ Putting merchant, amount or currency in CREATE_ATTEMPTED / refusal event text or the refusal diagnostic
 ```
 
 ```
@@ -72,6 +116,43 @@ FORBIDDEN:
   ❌ ExpenseDao.update() from repositories directly
   ❌ ExpenseDao.updateCategory() outside coordinator
   ❌ Any expense update without TransactionEvent (LifecycleEventType.UPDATED)
+```
+
+```
+SPENDING INCLUSION (implemented — loan-installments S3; the first caller arrives with the plan coordinator, S6a):
+  → TransactionLifecycleCoordinator.setSpendingExclusionDbOnly(expenseId, reason)
+    (any sibling setSpendingExclusion* op follows the same rules)
+    with reason in { INSTALLMENT_PURCHASE, INSTALLMENT_REVERSED, null }
+  → DbOnly op: runs INSIDE the caller's writeBarrier.runWrite { database.withTransaction { … } }
+    (DatabaseWriteBarrier.runWrite is re-entrant; Room joins the open transaction),
+    returns a MutationResult<SpendingInclusionResult> (Updated / NoOp / NotFound, never throws for these)
+    whose post-commit batch the caller dispatches after commit (same contract as createExpenseDbOnlyV2)
+  → Writes expenses.spendingExclusionReason (ExpenseDao.updateSpendingExclusionReason, TLC-only) and one
+    TransactionEvent with LifecycleEventType.UPDATED and the new TransactionUpdateKind.SPENDING_INCLUSION
+    (snapshots, metadata and reason are bounded: row id + reason name only, no amount, merchant or notes;
+    the event row keeps the expense dedupeKey like every UPDATED event)
+  → The ONLY legal caller is InstallmentPlanLifecycleCoordinator (see "Installment Plan Mutations");
+    this op is the ONLY writer of the spendingExclusionReason column
+  → Purchase lock (INV-22): while the column is non-null, TLC updateExpense / updateType /
+    updateTypeAndTransferDetails / updateOwnershipDbOnlyV2 refuse amount, currency, transactionType and
+    money-affecting ownership (isNotMine, shared flag, share percentage, share amount) changes with
+    InstallmentLockedExpenseException
+    (code EXPENSE_LOCKED_BY_INSTALLMENT_PLAN) before any write or event; merchant, date, category and
+    notes and owner/shared-with names stay editable. TLC has no duplicate-merge operation today; any future one must apply the lock
+  → updateExpense always keeps the column value read inside its transaction (a stale editor copy cannot
+    reset the flag)
+  → The spending predicate is never added to the duplicate BLOCKING / RESOLVER families (INV-8)
+  → ExpenseDao.insertAtomic() stays the sole expense insert. Plan-created expenses
+    (declareWithNewExpense, confirmEntry, recordDueEntries) use createExpenseDbOnlyV2 → insertAtomic()
+    with a new bounded ExpenseSource value (never free text) and no notes text
+
+FORBIDDEN:
+  ❌ Writing spendingExclusionReason from anywhere except TLC setSpendingExclusion*
+  ❌ Calling setSpendingExclusion* from anywhere except the plan coordinator (only the plan coordinator
+     calls TLC setSpendingExclusionDbOnly; the TLC's own DAO setter call inside that op is the
+     implementation, not a second caller)
+  ❌ A second expense insert path for plan-created expenses (insertAtomic() only)
+  ❌ Any spending-exclusion change without a TransactionEvent (UPDATED / SPENDING_INCLUSION)
 ```
 
 ```
@@ -139,6 +220,9 @@ FORBIDDEN:
   ❌ Using the resolver family (findDuplicateIdCurrencyAware) for mutation collision
      preflights or post-blocking duplicate audit lookups
   ❌ Adding an isNotMine filter to the blocking family
+  ❌ Adding the spending-inclusion predicate (spendingExclusionReason) to either family
+     (INV-8 of loan-installments: a flagged installment purchase row stays a duplicate
+     target, so a re-captured purchase notification is still blocked)
   ❌ Collision checks outside the coordinator transaction (TOCTOU)
 ```
 
@@ -159,6 +243,13 @@ CREATE expense FROM receipt:
   → database.withTransaction { createExpenseDbOnlyV2() + linkService.link() }
   → Collects post-commit actions and dispatches them after commit
   → Throws on link failure → rollback
+  → Receipt review (ReceiptScanViewModel.saveExpenseInternal, setter #2, MEC C1) sets
+    UserPresentRateRequirement(entryZone) on the CreateExpenseRequest; entryZone is the review zone captured
+    when the step becomes REVIEW (plain VM field, falls back to the device zone at request build).
+    A flagged ValidationFailed carrying a rateRefusal returns Result.failure(RateNotEligibleException(reason,
+    latestRateDate)) (message = RateRefusalCodes constant, no cause, no payload) with an empty post-commit
+    batch: no link, no receipt event, no side effects. Other validation failures keep IllegalArgumentException.
+    The email/batch receipt path (processEmailReceipt) is unflagged and unchanged.
 
 LINK/UNLINK receipt:
   → ReceiptLinkService.linkReceiptToExpense() / unlinkReceiptFromExpense()
@@ -429,6 +520,41 @@ CLOUD AI call:
     reference it, enforced by SourceScanningArchitectureGuardTest)
   → Audit via CompositePrivacyGate final decision
 
+INSTALLMENT PLAN DATA is NOT cloud payload input (loan-installments INV-31; guard registered in S1,
+payload exclusion seam planned for S8a):
+  → Plan fields (displayName, lenderLabel, amounts, counts, dates, status), plan repositories, plan DAOs
+    and the installment projection port (InstallmentProjectionPort) must not be reachable from any cloud
+    payload assembly (CloudPayloadPurpose.*, including DASHBOARD_BRIEFING and the transaction-insight and
+    financial-query/assistant inputs)
+  → Any cash-flow / forecast / upcoming-item output that feeds a cloud payload is computed WITHOUT the
+    installment projection (explicit exclusion at assembly), or that payload stays out of scope
+  → Carve-out: the rule covers values read from the plan tables or the projection port. The purchase
+    expense's merchant (= a copy of the plan displayName, INV-28) is an ordinary expense field and
+    follows the existing cloud/export policy
+  → Installment expenses are ordinary expenses and follow the existing cloud/export policy; plan-created
+    expenses carry no notes text
+  → Enforced by the registered static guard installment_cloud_reachability
+    (scripts/verify_installment_cloud_reachability.py), three rule families over the cloud AI payload
+    surface (data/ai, domain/ai, domain/privacy, data/privacy, the AI and privacy DI modules, the five
+    cloud briefing chain files data/repository/FinancialWeatherRepository.kt,
+    domain/forecasting/ForecastInputAssembler.kt, domain/logic/SynthesisEngine.kt,
+    domain/logic/NarrativeGenerator.kt and domain/usecase/dashboard/DashboardDataProvider.kt, and the
+    production adapter data/repository/DashboardContractsAdapter.kt (owner-approvals 59a) (8 exact-file
+    entries in total; S8b-1 / A15: the cloud briefing chain stays installment-free by construction, and a
+    Home-only installment-aware weather source must live off-surface in its own file), cloud payload and
+    briefing/insight/assistant input-builder files):
+      G-INSTALLMENT-CLOUD-01  import of domain.installment, service.installment or
+                              ui.screens.installments (wildcard and alias imports included)
+      G-INSTALLMENT-CLOUD-02  any other qualified reference to those packages (backticks and
+                              whitespace/newlines around "." are normalised away)
+      G-INSTALLMENT-CLOUD-03  any identifier containing "installment" (case-insensitive) in executable
+                              code, e.g. InstallmentPlan*, installmentPlanDao(), UpcomingItem.Installment
+    A surface directory or exact-file entry that matches no scanned file is an infrastructure failure
+    (E_INSTALLMENT_CLOUD_SURFACE_ENTRY_UNMATCHED). No allowlist and no baseline. Direct references only:
+    transitive reach through a shared upstream model is closed by the S8a exclusion seam and its
+    payload test. Known limit: a simple string template "$identifier" (e.g. "$installmentPlans") is
+    masked with the string literal, so rule 03 does not see it; ${...} expressions are scanned
+
 On-device-only capabilities (NOTIFICATION_PARSE, REVIEW_PRIORITIZATION, SEMANTIC_DEDUPE,
 TRANSACTION_INSIGHT):
   → AiPolicyImpl.canUseCloudFor is false for every settings combination
@@ -469,6 +595,27 @@ EXCHANGE-RATE download (non-AI network call, default OFF):
     UI maps codes via CurrencyErrorMessages (no raw codes shown)
   → User switch: Privacy settings > Network
 
+EXCHANGE-RATE history download (MEC 1b; same legal path as above, a second method on the same chain;
+no new path, no expense write; the setting is On, user-started):
+  → AddExpenseViewModel.onDownloadRateHistory / ReceiptScanViewModel.onDownloadRateHistory
+    (user tap only; offered when RateRemedyPolicy = DOWNLOAD_HISTORY; ONE successful download per
+    entry session; REFRESH_LATEST is offered first, D-1b-1)
+    → CurrencyRatesRepository.downloadRecentHistory (CurrencyRatesRepositoryImpl)
+    → NetworkPrivacyGate check (EXCHANGE_RATE_DOWNLOAD) BEFORE any HTTP call;
+      constant ECB 90-day URL on www.ecb.europa.eu; no redirects; bounded, XXE-safe parse
+    → CurrencyConverter.storeRateHistory
+    → ExchangeRateStoreAdapter.insertOrUpdateAll (ALL-OR-NOTHING, one transaction)
+    → ExchangeRateDao
+  → Returns CurrencyRateHistoryOutcome (Stored / DisabledByPrivacy / PrivacyCheckFailed /
+    AlreadyInProgress / Failed(RateHistoryFailureReason)); Cancelled is set by the VM on a user Cancel,
+    the repository rethrows CancellationException and never returns it
+  FORBIDDEN:
+    ❌ Fetching rate history at preview, save, refusal, start-up or from a worker
+    ❌ Any rate host or file other than the two ECB constants
+    ❌ Storing part of a history payload
+    ❌ lastUpdated-keyed deletion of exchange_rates (deleteOldRates/cleanupOldRates) from production code
+    ❌ Logging URL, dates, rates, currency codes, counts, home currency or exception messages
+
 PRIVACY BLOCKED states:
   → PrivacyBlocked sealed interface with typed subclasses:
     CloudAiDisabled, ReceiptImageUploadDisabled, ExternalGeocodingDisabled,
@@ -490,6 +637,8 @@ FORBIDDEN:
   ❌ Using raw strings instead of typed PrivacyBlocked for UI states
   ❌ Silently proceeding when PrivacyDecision.FailClosed is returned
   ❌ Gating non-AI network calls by CLOUD_AI_* capabilities
+  ❌ Referencing installment plan types, repositories, DAOs or the projection port from cloud payload
+     assembly (INV-31; installment_cloud_reachability)
   ❌ ASSISTANT/SYSTEM turns or app-computed answers in any query-interpretation prompt
      (model history = prior USER queries, shaped only by FinancialQueryInterpretationInputBuilder)
   ❌ Assistant query interpretation reading PrivacySettings.redactBeforeCloud directly or OR-ing
@@ -568,8 +717,27 @@ BACKUP SCHEMA FLOOR (R25-C):
     temp dir deleted), with BackupSchemaUnsupportedException(code):
       BACKUP_SCHEMA_UNSUPPORTED_LEGACY (< v145), BACKUP_SCHEMA_UNSUPPORTED_NEWER (> v151).
 
+INSTALLMENT PLAN TABLES (planned — loan-installments S2/S2b; tables installment_plans and
+installment_entries do not exist yet):
+  → Included in the encrypted backup and verified by BackupVerifier at TIER_1_EXACT (financial records),
+    with semantic orphan checks reported as fixed strings with counts only: entries without a plan;
+    entries whose linkedExpenseId has no expense; plans whose purchaseExpenseId has no expense;
+    expenses flagged INSTALLMENT_PURCHASE that no plan references; expenses flagged
+    INSTALLMENT_REVERSED that no REVERSED entry references
+  → Fail-closed default: every BackupPrivacyMode with redactsRawText = true (REDACT_RAW_TEXT,
+    REDACT_RAW_TEXT_EXCLUDE_IMAGES, ANONYMIZED_EXPORT) blanks plan displayName and lenderLabel. Owner
+    confirms at the S2b stop-and-ask. ExportAnonymizer (data/privacy, on the cloud-guard surface) must
+    reference plan tables by SQL table/column strings, not plan entity types (installment_cloud_reachability)
+  → Plan and entry rows are never retention-worker targets (RetentionPolicyContract registers no target)
+  → Restore: plan writes are blocked by the restore barrier like every write; after restore the plan
+    coordinator runs reconcile() BEFORE the first recordDueEntries. Restore replay of plan rows goes
+    through the existing restore path only (single writer, INV-25)
+  → Erase-all / reset / FinancialRescue allow-list paths must cover the plan tables
+
 FORBIDDEN:
   ❌ Any DB write outside NORMAL mode (DatabaseWriteBarrier blocks all non-NORMAL modes)
+  ❌ Plan/entry table writes during restore other than the existing restore path
+  ❌ Running recordDueEntries after a restore before reconcile() has run
   ❌ Opening the live DB while the open gate blocks it, or during RESTORE_SWAPPING
   ❌ Destructive fallback / auto-reset of an unsupported, newer, or unreadable DB
   ❌ Any raw-file export of a blocked DB other than the user-started SAF export in UnsupportedDatabaseActivity
@@ -614,7 +782,8 @@ FORBIDDEN:
 EVERY worker:
   → WorkerExecutionGuard.runGuarded() / runGuardedWithContext()
        [checks write barrier FIRST, then logs run]
-  → All 10 production CoroutineWorkers route through the guard, including
+  → All 12 production CoroutineWorkers (9 WorkerSpec.DEFAULTS + notification_intake + 2 action workers)
+       route through the guard, including
        NotificationIntakeWorker (previously allowlisted, now gated) and the
        SnoozeReminderActionWorker / DismissReminderActionWorker pair.
   → WorkerRunLogger records RUNNING → SUCCESS/FAILED/SKIPPED/RETRY
@@ -669,6 +838,46 @@ FORBIDDEN:
   ❌ Throwing a plain RuntimeException to mean "retry" (it is PERMANENT)
   ❌ Bypassing WorkerExecutionGuard in any CoroutineWorker
        (enforced by WorkerGuardArchitectureGuardTest; its allowlist is empty)
+```
+
+```
+INSTALLMENT DUE RECORDING (coordinator entry point implemented — loan-installments S7a-1; worker implemented —
+S7a-2; overview S10 caller still planned):
+  → InstallmentDueRecordingWorker (CoroutineWorker, work name "installment_due_recording", daily periodic, no
+    network, local-data only and not privacy-gated) with its own WorkerRegistry entry, routed through
+    WorkerExecutionGuard.runGuardedWithContext() like every worker (the production worker count above is now 12
+    work names: 9 WorkerSpec.DEFAULTS + notification_intake + 2 action workers). It has no startup hook, no
+    AppStartupCoordinator edit and no persisted marker (D-19); it is scheduled only through WorkerRegistry.
+  → worker (S7a-2) or foreground catch-up trigger (overview, S10; pending)
+    → InstallmentPlanLifecycleCoordinator.recordDueEntries(today, zone) (implemented, S7a-1); the worker makes this
+      ONE call, then dispatches Done.postCommit batches through PostCommitActionRunner (each batch in its own
+      try/catch, cancellation rethrown, failure logged by class name only), and maps the report to a bounded Result:
+      stoppedByBarrier → retry; any per-entry failure → retry (INSTALLMENT_DUE_PARTIAL_FAILURE); a
+      DatabaseAccessBlockedException at reconcile start → retry (INSTALLMENT_DUE_BARRIER_CLOSED; a barrier that
+      closes mid-reconcile counts as plansFailed, and the run then becomes stoppedByBarrier at the first entry, or
+      succeeds if nothing is due); a non-Done
+      result → bounded failure; run-level read exceptions are left to the guard; deferred and refused are success
+    → reconcile() first (its batches are returned in Done.postCommit for the CALLER to dispatch after commit),
+      then one transaction per entry (writeBarrier.runWrite + database.withTransaction),
+      expense created via TransactionLifecycleCoordinator.createExpenseDbOnlyV2 (STRICT_EXTERNAL_ID)
+      and the entry compare-and-set to PAID in the same transaction
+    → the candidate-charge deferral (INV-13) reads InstallmentCandidateChargeProbe (read-only boolean port) inside
+      that transaction; a blank plan name refuses before any TLC call (INV-34)
+    → a closed write barrier (DatabaseAccessBlockedException) stops the run without throwing: the report carries
+      stoppedByBarrier = true and the result is still Done(report, all batches so far), so the batches of entries
+      already committed are never dropped; the rest are picked up by the next run (the caller retries; owner 39(a))
+    → every entry claim (auto-record, confirm, link) latches autoRecordConsumed, so a deleted payment is never
+      re-created by auto-record (owner 39(b))
+  → Cancellation propagates (never swallowed); retries use RetryableWorkerException
+  → Reminders for due installments reuse the existing BillReminderManager / BillReminderWorker
+    (existing enabled / quiet-hours settings, delivery dedupe key per entry); no new reminder system
+    and no new reminder worker (planned S7b)
+
+FORBIDDEN:
+  ❌ Any worker, ViewModel or reminder code writing plan/entry tables or creating plan expenses
+     other than through the plan coordinator
+  ❌ A second worker or scheduler path that records due installments
+  ❌ Plan field values (name, lender, amount, date) in worker logs, run logs or reason codes
 ```
 
 ---
@@ -734,6 +943,23 @@ FORBIDDEN (SNAPSHOT rounding):
   ❌ A second snapshot rounding rule (any other code rounding a stored base/home snapshot amount)
   ❌ A second minor-unit digits accessor in domain/core/money
 
+ELIGIBLE RATE for user-present save (manual-entry-currency A1; read-only, no production consumer until A2):
+  → RateEligibilityEvaluator (domain/currency): calendar date in the injected entry zone, age <= 7 days
+    (inclusive), older leg for via-EUR; RateEligibility = Home | Eligible | Stale | None | Unsupported;
+    reads rates only through CurrencyConverter.convertOutcome(TRANSACTION_DATE); no wall clock, no
+    network, no logging
+  → Selectable currencies / proposal resolution: CurrencySelectionPolicy (domain/currency)
+  → Advisory preview: UserPresentRatePreview (domain/currency), converted amount =
+    roundSnapshot(parsed x Eligible.rate, home)
+
+AMOUNT digits/cap for user-entered amounts → CurrencyAmountPolicy (domain/currency):
+  → fractionDigits delegates to CurrencyFractionDigits.of (null = unavailable, fail closed);
+    cap = static per-currency table; check(parsed, code) never rounds
+
+FORBIDDEN (ELIGIBLE RATE / AMOUNT):
+  ❌ Re-implementing rate-age/date eligibility outside RateEligibilityEvaluator
+  ❌ A second digits accessor or amount rounding in CurrencyAmountPolicy or its callers
+
 HOME CURRENCY SWITCH (Currency Management screen):
   → home write = CurrencySettingsRepository.setHomeCurrency only via CurrencyManagementViewModel.confirm()
     after request(code) produced HomeSwitchUi.PendingConfirm (both entry points call request, never write)
@@ -786,10 +1012,19 @@ Exception messages sanitized via EventMetadataSanitizer.sanitizeExceptionMessage
   → Messages truncated to MAX_STRING_LENGTH (256 chars)
   → URLs and email addresses are NOT explicitly matched (may be caught incidentally)
 
+INSTALLMENT PLAN diagnostics (planned — loan-installments, with the plan coordinator in S6a; INV-31):
+  → Plan expense changes are audited by the expense TransactionEvents (CREATED / UPDATED with
+    TransactionUpdateKind.SPENDING_INCLUSION); no separate plan event table exists in v1
+  → Plan coordinator diagnostics, refusals, reconcile results and worker logs carry bounded reason codes
+    (refusal codes, AUTO_RECORD_DEFERRED_*, reconcile rule IDs R1..R6) and integer counts ONLY
+  → Never plan displayName, lenderLabel, amounts, dates, schedule, merchant or IDs in free-text messages,
+    logs, reason-code payloads or cloud payloads
+
 FORBIDDEN:
   ❌ Timber-only logging for pipeline decisions (must also write durable event)
   ❌ Swallowing CancellationException (always rethrow)
   ❌ Logging unsanitized exception messages to durable storage
+  ❌ Plan field values in any diagnostic, log or reason-code payload (INV-31)
 ```
 
 ---
@@ -810,6 +1045,133 @@ DIAGNOSTIC event (informational — REMINDER_SCHEDULE_SKIPPED, etc.):
 FORBIDDEN:
   ❌ Writing lifecycle events directly through DAO insert
   ❌ Swallowing writeCritical() failures (must fail the operation)
+```
+
+```
+EXPENSE LIFECYCLE → INSTALLMENT PLAN reaction (implemented — loan-installments S6c-1, 2026-10-26):
+  → TransactionSideEffectPlanner.planUpdated() / planDeleted() append the post-commit actions
+    `installment_expense_changed` (planUpdated, last) and `installment_expense_deleted` (planDeleted),
+    category SideEffectCategory.INSTALLMENT_PLAN
+  → TLC's PostCommitActionRunner (PostCommitActionRunnerImpl; the same runner TransactionSideEffectDispatcher
+    uses) runs them AFTER commit → InstallmentPlanLifecycleCoordinator.onExpenseChanged / onExpenseDeleted
+    (unlink, reopen or detach, per the plan's link rules). The coordinator decides applicability
+    (a no-plan expense changes 0 rows)
+  → `installment_expense_changed` is planned for the update kinds FULL, TYPE, CURRENCY, TRANSFER_DETAILS and
+    PAYMENT_CORE; `installment_expense_deleted` is planned for every single-expense delete via
+    TLC.deleteExpense / the dispatcher. SPENDING_INCLUSION never reacts
+    (loop breaker for the coordinator's own flag writes); CATEGORY_ONLY, LOCATION_ONLY, BUSINESS_FLAGS_ONLY,
+    MERCHANT, AMOUNT, DATE and OWNERSHIP do not react (reconcile is the backstop; reconcile-at-recordDueEntries:
+    coordinator part implemented in S7a-1 (D-18 option (b)); the worker call site (S7a-2) is still pending)
+  → Bulk updates (planBulkUpdated, incl. TYPE/CURRENCY bulk changes) and deleteAll/wipe paths plan no installment
+    reaction; reconcile is the backstop, which today runs only before a .costbackup export (see the S7a note below)
+  → Each Done.postCommit batch the reaction returns is dispatched through the same runner (re-entrant,
+    stateless); batches are dispatched BEFORE the report is judged
+  → In every reacting update batch recurring_reconcile runs before installment_expense_changed, so an expense
+    unlinked by rule R4 is re-offered to recurring matching only on its next edit
+  → The plan reconcile() (rules R1..R6) backs this up at the start of every recordDueEntries run (coordinator part
+    implemented in S7a-1, D-18 option (b); the worker call site, S7a-2, is still pending; see "after restore" below).
+    Until the S7a-2 worker or the S10 overview calls recordDueEntries, the only production reconcile() caller is
+    InstallmentPreBackupReconciler; restored or orphaned data is not repaired until the next .costbackup export or
+    until that worker runs. A lost in-memory post-commit batch (for example budget re-check actions)
+    is NOT recovered by reconcile; the next budget trigger is the backstop
+  → The reaction never deletes or edits the expense; expense removal is always the standard
+    TransactionLifecycleCoordinator.deleteExpense path chosen by the user
+
+BACKUP pre-reconcile (implemented — loan-installments S6c-4, INV-30):
+  → DatabaseBackupRepositoryImpl.runCostBackupExport calls InstallmentPreBackupReconciler.reconcileBeforeBackup()
+    after the privacy gate and BEFORE maintenanceOperationRunner.enterAndDrain (mode still NORMAL, not inside
+    a runWrite); it runs coordinator.reconcile() and dispatches every Done.postCommit batch
+  → NotReconciled (result not Done, plansFailed / orphanFlagsFailed > 0, or any non-cancellation exception,
+    a closed write barrier included) ABORTS the export before any snapshot: Result.failure with a bounded
+    message (constant message plus the enum name), run event INSTALLMENT_PRE_RECONCILE, run.failedFinal(VALIDATION_FAILED)
+  → Reconciled means only "no failure was reported"; BackupVerifier stays the authority and still fails
+    closed on an orphan introduced after the reconcile (a racing write; a retry succeeds)
+  → Not reconciled: createSafetyBackup, createSafetyBackupInternalAssumingMaintenance (restore callers) and the
+    debug raw export; restore never reconciles
+
+RECURRING LINK-POLICY consultation (implemented — loan-installments S6c-2 / S6c-2b, INV-5, INV-4):
+  → RecurringInstallmentEligibility (domain/recurring, one private decision over
+    InstallmentLinkRelations + ExpenseScheduleLinkPolicy.mayLinkToRecurringOccurrence) is the single gate
+  → Coordinator link paths: RecurringLifecycleCoordinator.isExpenseEligibleForRecurring (layer 1 unchanged,
+    layer 2 delegated) gates the auto-link (claimLinkSuppressInWrite), the manual link
+    (linkExpenseToSpecificOccurrence, refusal = ExpenseNotEligible) and reconcileExpenseLinkAfterUpdate
+  → Generation path: OccurrenceConflictResolver.resolve reads the excluded id set ONCE per call (batch form)
+    and skips excluded expenses; this covers generateOccurrences, projectOccurrences, createRule, activateRule,
+    topUpHorizon and updateRule. An excluded expense leaves the occurrence PLANNED and unlinked
+  → Reads go through the InstallmentEntryLinkReader port (domain/installment/lifecycle), implemented READ-ONLY by
+    InstallmentEntryLinkReaderImpl (data/repository) over InstallmentPlanDao; injected as dagger.Lazy
+  → No recurring result or reason value was added (existing refusal outcomes are reused)
+
+RECURRING RECONCILE INV-5 repair (implemented — S6c-2):
+  → reconcileExpenseLinkAfterUpdate: when an expense linked to a recurring occurrence became installment-linked
+    or a plan purchase, the recurring link is removed with the existing Unlinked outcome (never re-linked); this
+    acts only as a repair on corrupt or restored data
+
+INV-29 PATTERN DETECTOR exclusion (implemented — loan-installments S6c-3):
+  → RecurringExpenseEngine.detectPatterns(snapshots, excludedMerchantKeys) is the SINGLE entry point: it drops
+    installment-linked and plan-purchase expense ids (one batch read per call via
+    RecurringInstallmentEligibility.excludedSnapshotIds) and then calls the pure detectPatternsFromSnapshots.
+    getPatternsFromSnapshots, getPatterns() and MergedRecurringPatternsProvider all route through it
+  → Pinned by RecurringDetectorSingleEntryPointScanTest (no production code outside the engine references
+    detectPatternsFromSnapshots)
+  → Known gap: the snapshot form cannot see the INSTALLMENT_PURCHASE / INSTALLMENT_REVERSED flag (an orphan flag
+    without a plan row is not excluded; harmless because effectiveAmount = 0; reconcile R1 clears it)
+  → The subscription-candidate detector (NotificationSubscriptionDetector) is OUTSIDE INV-29 (follow-up)
+
+HOME INSTALLMENT-AWARE WEATHER read path (implemented — loan-installments S8b-3, A15 option A, INV-15/16/29; read-only):
+  → Cloud / briefing path (UNCHANGED, installment-free by construction): FinancialWeatherRepository →
+    ForecastInputAssembler.assemble → SynthesisEngine.synthesize → NarrativeGenerator.generate →
+    DashboardDataProvider.getProcessedDataFlow. These five files are fenced by installment_cloud_reachability
+  → Home path: HomeViewModel (the ONLY consumer of HomeInstallmentWeatherSource; enforced by
+    InstallmentPlanArchitectureGuardTest HOME_INSTALLMENT_WEATHER_OUTSIDE_HOME over all of app/src/main, owner-approvals
+    59b: only ui/screens/home/HomeViewModel.kt and the source's own file may reference it) runs
+    ComputeDashboardWidgetsUseCase.compute() on getProcessedDataFlow output, then, ONLY when the seam
+    HomeViewModel.installmentsEnabled (default InstallmentsFeature.ENABLED = true on this unreleased branch, owner-approvals 91(b)) is on and the source emits
+    non-null, HomeWeatherMerge.replaceWeather REPLACES the single FinancialWeatherWidget (never a second widget;
+    upcomingItems of the baseline widget are kept). Nothing is merged in ProcessedDashboardData,
+    DashboardDataProvider, DashboardData or FinancialWeather, and no FinancialWeather field is added
+  → HomeInstallmentWeatherSource (data/repository, OFF the cloud surface) is the one merge source. It reads the same
+    inputs as FinancialWeatherRepository plus InstallmentProjectionPort (31-day window via
+    InstallmentUpcomingProjection), RecurringInstallmentEligibility and InstallmentPlanReadRepository.observeChanges
+    (PE-C: the invalidation trigger only; it re-emits on plan and entry row changes without loading an overview, so the
+    pipeline is not re-run through observeOverview). A blank plan name falls back to the localized string
+    installment_plan_fallback_label, resolved per computation. Port empty → null → Home keeps the baseline
+  → INV-29 (single owner RecurringInstallmentEligibility.excludedSnapshotIds): while at least one entry is projected,
+    installment-linked and plan-purchase history dated BEFORE the current month (home time zone) is removed from the
+    aware view's snapshots (global-while-projected, owner-approvals 53a; before-the-month only, 60b). Current-month
+    actual installment payments stay in month-to-date, so an installment is counted once, never zero times. The aware
+    view REPLACES the baseline view; the two are never summed. Trade-off: the pace ratio compares a current month that
+    includes installments against a baseline without them
+  → INV-15/16: each projected entry is a MUST planned input in plan currency fed to the UNMODIFIED assemble
+    (its planned-expense normalisation converts at LATEST_AVAILABLE or omits the entry and marks the forecast partial,
+    never 0). SynthesisEngine counts MUST items of the current month as committed. The installment rows are carried
+    separately (HomeViewModel.installmentRows, plan currency, never summed across currencies)
+  → Plan projections are never an UpcomingItem variant. The Home Monte Carlo (FinancialStressForecastEngine) is
+    installment-aware since S8b-2 (Home-only; supersedes the Q2 "Monte Carlo stays installment-free" wording, see the
+    plan S8b amendment note). Runway and health score stay on the installment-free baseline in v1
+    (owner-approvals 53 Q2)
+
+AFTER RESTORE (decision D-18, option (b); coordinator part implemented in S7a-1, worker call site S7a-2 pending):
+  → There is NO startup hook. recordDueEntries runs reconcile at its start on EVERY run and returns the batches
+    in Done.postCommit; the caller (S7a-2 worker, S10 overview) dispatches them after commit. A restored store
+    is then repaired on the first due-recording run, once a caller exists.
+  → Until a caller exists, the only production reconcile() caller is InstallmentPreBackupReconciler; restored or
+    orphaned data is not repaired until the next .costbackup export or until the S7a-2 worker lands.
+  → InstallmentRestoreReconcileTest pins the restore half of AE-12: a .costbackup round trip with nothing to
+    repair (non-redacted and redacted) keeps table counts, expense and plan rows and month totals equal;
+    reconcile() on the restored DB reports all zero and changes no row. The S7a-2 worker call site is not tested yet.
+
+FORBIDDEN:
+  ❌ Plan code reacting to expense changes by writing expenses or calling deleteExpense
+  ❌ Reconcile (or any plan op) running inside restore maintenance or a startup hook
+     (restore half: enforced at runtime by the write barrier; startup half: policy only, unguarded)
+  ❌ A second recurring/detector eligibility rule next to RecurringInstallmentEligibility, or calling
+     detectPatternsFromSnapshots from anywhere except RecurringExpenseEngine.detectPatterns
+  ❌ Installment projections or exclusions inside FinancialWeatherRepository / ForecastInputAssembler.assemble /
+     SynthesisEngine / NarrativeGenerator / DashboardDataProvider, or any second Home weather merge point
+     (HomeInstallmentWeatherSource is merged only in HomeViewModel after compute())
+  ❌ Reacting to expense update/delete from anywhere except the TransactionSideEffectPlanner /
+     Dispatcher hook
 ```
 
 ---
@@ -1589,6 +1951,174 @@ FORBIDDEN:
      RecurringPlanProjectionService inside a rule-mutation transaction
   ❌ Projecting occurrences without validating rule is active
   ❌ Duplicate planned rows (must check sourceOccurrenceKey first)
+
+SIBLING PROJECTION (planned — loan-installments S8b; OQ-25):
+  → Installment schedule entries are NOT recurring occurrences. They are never written to
+    recurring_occurrences, manual_recurring_expenses or planned_expenses, and the RECURRING_RULE
+    projection contract above is unchanged
+  → Future SCHEDULED installment entries are exposed read-only through InstallmentProjectionPort
+    (InstallmentUpcomingProjection), a sibling of this service, merged at the readers' own
+    upcoming/forecast points (see ENGINE_INTERACTION_MAP.md)
+  → The projection has no write-barrier check (read-only) and is excluded from every cloud payload
+    assembly (see "Privacy / Cloud AI")
+```
+
+---
+
+## Installment Plan Mutations
+
+> **Planned contract (loan-installments).** Plan code lands in slices S2-S10 of
+> `workflows/active/loan-installments-plan.md`; the plan tables, coordinator and TLC op named below do not exist
+> yet. This section is the single legal path those slices implement and the architecture tests and guards enforce.
+> What exists today: the cloud reachability guard `installment_cloud_reachability` (S1).
+
+```
+OWNERS (one each):
+  Plan and entry state, ALL plan/entry writes → InstallmentPlanLifecycleCoordinator (planned, S6a)
+  Schedule generation and date arithmetic     → InstallmentScheduleCalculator (pure, no I/O)
+  Expense rows (create, update, spending flag)→ TransactionLifecycleCoordinator → ExpenseDao.insertAtomic()
+                                                 / TLC update ops
+  Overview, detail, history, projections      → InstallmentPlanReadModel / InstallmentProjectionPort (read-only)
+
+EVERY plan coordinator write:
+  → writeBarrier.checkWritesAllowed(...) on entry
+  → writeBarrier.runWrite { database.withTransaction { … } }
+  → expense creation / flag changes ONLY through TLC DbOnly ops inside that same transaction
+    (createExpenseDbOnlyV2, setSpendingExclusionDbOnly); post-commit batches dispatched after commit
+  → compare-and-set on entry state; bounded refusal codes; no free text
+
+OPERATIONS (all on InstallmentPlanLifecycleCoordinator):
+  declareOnExpense            → [txn: load purchase, validate, insert plan + entries,
+                                 TLC setSpendingExclusionDbOnly(purchase, INSTALLMENT_PURCHASE)] → post-commit batch
+  declareWithNewExpense       → [txn: TLC createExpenseDbOnlyV2 (standard dedupe) + the declare steps]
+                                 → post-commit batches
+                                 (caller: AddExpenseViewModel, loan S11a, via
+                                 ManualExpenseRepository.buildInstallmentPurchaseRequest; enabled by S13 on this unreleased branch)
+  createStandalone            → [txn: validate category, insert plan + entries]
+  OD-14 currency rule (PE-A)  → InstallmentSplitCurrencyRule.equalSplitAllowed is the single definition: an
+                                 EQUAL_SPLIT purchase plan must be in the purchase currency. declareOnExpense and
+                                 declareWithNewExpense (pure-check block, before the TLC create) and the currency
+                                 change of editDetails (after CURRENCY_LOCKED) refuse CURRENCY_MISMATCH; the declare
+                                 sheet enables the equal-split chip through the same function. FIXED_PAYMENT may
+                                 cross currencies. No new owner, no new write path.
+  paid-before-tracking count  → the first k regular entries are inserted as PAID_BEFORE_TRACKING in the
+                                 same transaction (declare / createStandalone)
+  markPaidBeforeTracking / revertPaidBeforeTracking (proposed names)
+                              → [txn: compare-and-set per entry]; no TLC call, no expense touched
+  confirmEntry                → [txn: TLC createExpenseDbOnlyV2 (STRICT_EXTERNAL_ID) + entry → PAID] → post-commit batch
+  linkExpense                 → [txn: policy check, compare-and-set]
+  unlinkExpense               → [txn: entry → SCHEDULED, recordGeneration + 1]; the expense is untouched
+  skip / unskip / adjust / edit / extend / shorten
+                              → coordinator ops (plan-internal; no expense writes)
+  stop / refund / pay off / delete
+                              → coordinator ops; refund also calls TLC setSpendingExclusionDbOnly(…,
+                                 INSTALLMENT_REVERSED) per paid expense in the same txn; delete calls
+                                 setSpendingExclusionDbOnly(purchase, null)
+  recordDueEntries(today, zone)
+                              → implemented in S7a-1 (coordinator); callers are the S7a-2 worker and the S10
+                                 overview, both still pending (see "Workers / Background Jobs"); one txn per entry;
+                                 reconcile runs first and its batches are returned for the caller to dispatch;
+                                 candidate deferral via InstallmentCandidateChargeProbe (read-only);
+                                 an entry due before the plan's declaredOn never auto-records (rule
+                                 declaredOn <= due <= today, isAutoRecordApplicable); reconcile() never creates
+                                 an expense (PE-A proof test)
+  onExpenseChanged / onExpenseDeleted (implemented, S6c-1)
+                              → TLC PostCommitActionRunner actions `installment_expense_changed` /
+                                 `installment_expense_deleted` planned by TransactionSideEffectPlanner
+                                 (see "Lifecycle Events")
+  reconcile()                 → at the start of each recordDueEntries run (coordinator part implemented in S7a-1,
+                                 D-18 option (b); worker call site S7a-2 pending; this is also the "after restore"
+                                 path: no startup hook); also immediately before a .costbackup export
+                                 enters maintenance (InstallmentPreBackupReconciler, S6c-4) (rules R1..R6)
+                                 + orphan-flag clear (second halves of R1/R3): an expense flagged
+                                 INSTALLMENT_PURCHASE / INSTALLMENT_REVERSED that no plan purchase and no entry
+                                 link references; one writeTxn per orphan, references and flag re-checked inside
+                                 it, then TLC setSpendingExclusionDbOnly(id, null); counted in the report
+
+UI CALLER (S10b-1, behind InstallmentsFeature.ENABLED = true on this unreleased branch, owner-approvals 91(b)):
+  InstallmentEntryActionsViewModel (ui/screens/installments/actions)
+                              → calls exactly one coordinator op per user action: confirmEntry (Record),
+                                 linkExpense (Link), skip, unskip, adjustEntry (Adjust), and for the row Undo
+                                 (ux-flows 3.6) unskip / unlinkExpense / adjustEntry with the previous values;
+                                 never a DAO, repository write or TLC call (INV-24, INV-25)
+                              → POST-COMMIT DISPATCH: the ViewModel hands the batches of a `Done` result to
+                                 InstallmentPostCommitDispatcher AFTER the coordinator returns (never inside the
+                                 transaction); see "POST-COMMIT DISPATCH OWNER" below
+                              → residual risk: if the activity finishes between commit and dispatch the batch is
+                                 dropped (same as the worker); the committed state is correct, only the
+                                 side effects (budget / notification refresh) are skipped until the next trigger
+
+POST-COMMIT DISPATCH OWNER (S10b-1 F3; single owner, no per-caller copy):
+  InstallmentPostCommitDispatcher (domain/installment/lifecycle, @Singleton, wraps PostCommitActionRunner)
+                              → dispatch(batches) for the `Done.postCommit` of a coordinator result, called AFTER the
+                                 coordinator returns, by exactly these callers: InstallmentDueRecordingWorker (S7a-2),
+                                 InstallmentPreBackupReconciler (S6c-4, via dagger.Lazy) and
+                                 InstallmentEntryActionsViewModel (S10b-1). S10b-2 / S11 / S12a callers use it too
+                              → semantics: skip a batch without actions; run in order; isolate a non-cancellation
+                                 failure (logged by class simple name only, never changes the committed result);
+                                 CancellationException is rethrown and stops the remaining batches
+                              ❌ a private `dispatchBatches` loop in a worker, reconciler, view model or use case
+                              → Enforced by InstallmentPlanArchitectureGuardTest POST_COMMIT_RUNNER_OUTSIDE_DISPATCHER (domain/installment, service/installment, ui/screens/installments; the dispatcher's exact path is the only exemption). Since owner-approvals 59c the rule also covers the public post-commit wrappers PostCommitSideEffectEvidenceService (runWithEvidence / runBestEffortWithEvidence), TransactionSideEffectDispatcher and ReceiptSideEffectDispatcher: none of them may be referenced from those three prefixes, so the dispatcher stays the single owner (known limit: a typealias declared outside the prefixes; installment code outside the three prefixes such as di/InstallmentModule.kt and data/repository/Installment*Impl.kt)
+
+READS (plan coordinator, S6a):
+  expense / category / recurring-link facts → InstallmentExpenseFactsReader (domain port) → 
+                                 InstallmentExpenseFactsReaderImpl (data/repository, READ-ONLY: ExpenseDao.getById,
+                                 ExpenseDao.getSpendingExclusionFlagRows, RecurringOccurrenceDao.getByLinkedExpenseId,
+                                 CategoryDao.getById), called inside the coordinator transaction.
+                                 Plan code never references the expense or recurring stores directly; the port
+                                 has no write method. Spending type = PURCHASE only.
+
+READS (overview, detail, history, suggestions, projections; S6a part 2b, all read-only):
+  screens / view models      → InstallmentPlanReadRepository (domain) → InstallmentPlanReadRepositoryImpl
+                                 (data/repository): InstallmentPlanDao read methods (incl. observeAllPlans /
+                                 observeAllEntries) + InstallmentExpenseFactsReader (findExpenseMoney,
+                                 findExpenseMoneyBetween, findExpenseFacts; READ-ONLY impl also reads
+                                 ExpenseDao.getExpensesBetweenUncapped for the range) → pure
+                                 InstallmentPlanReadModel / InstallmentPlanMath. Suggestions = INV-13 candidate
+                                 rule with mode-aware windows: AUTO_RECORD [due-3d, due], CONFIRM
+                                 [due-5d, due+10d]. InstallmentCandidateRule.autoRecordWindowStartEpochDay /
+                                 autoRecordWindowEndEpochDay are the single source the S7a auto-record step reuses.
+                                 The relations of a link candidate come from one pure builder
+                                 (InstallmentLinkRelations.forExistingExpense), shared with the coordinator link op.
+  cash flow / forecast / reminders (S7b, S8b) → InstallmentProjectionPort (domain) →
+                                 InstallmentProjectionPortImpl (data/repository): InstallmentPlanDao reads only;
+                                 pure InstallmentProjectionRule = SCHEDULED entries of ACTIVE plans, due >= today
+                                 (INV-15). No ExpenseDao access, no writes.
+
+FORBIDDEN:
+  ❌ Plan/entry DAO insert, update or delete outside InstallmentPlanLifecycleCoordinator
+     (restore replay goes through the existing restore path only)
+  ❌ Any ExpenseDao call from plan-feature code (domain/installment, service/installment,
+     ui/screens/installments) — INV-24
+  ❌ Plan code calling TransactionLifecycleCoordinator.deleteExpense, or any plan operation lowering the
+     expense row count — INV-23 (expenses are unlinked, never deleted, by plan actions)
+  ❌ Writing installment schedules into recurring_occurrences, manual_recurring_expenses or planned_expenses
+  ❌ Setting spendingExclusionReason from anywhere except TLC setSpendingExclusion*, or calling that op from
+     anywhere except the plan coordinator (only the plan coordinator calls TLC
+     setSpendingExclusionDbOnly; the TLC's own DAO setter call inside that op is the implementation,
+     not a second caller)
+  ❌ Adding the spending predicate to the dedupe BLOCKING / RESOLVER query families (INV-8)
+  ❌ Plan repositories, DAOs or the projection port reachable from cloud payload assembly (INV-31)
+  ❌ Plan field values in diagnostics, logs or reason-code payloads (INV-31)
+
+ENFORCEMENT:
+  • Registered static guard installment_cloud_reachability (S1; rules G-INSTALLMENT-CLOUD-01..03) for the
+    cloud reachability rule. It passes vacuously until plan code exists
+  • In-repo architecture guard test InstallmentPlanArchitectureGuardTest (S1; same style as
+    RecurringArchitectureGuardTest): plan DAO writes only in the plan coordinator; no ExpenseDao
+    reference and no deleteExpense call from plan code; no writes to the recurring tables from plan code;
+    only the plan coordinator calls TLC setSpendingExclusionDbOnly; the TLC's own DAO setter call inside
+    that op is the implementation, not a second caller
+  • config/guards/db_ownership_policy.yml entries for the plan DAOs and the new TLC op (S2/S3)
+  • Registered static guard spending_predicate_usage (S4d; scripts/verify_spending_predicate_usage.py,
+    rules G-SPENDING-PREDICATE-01..03; no allowlist, no baseline): every aggregate @Query over the
+    expenses table in a production data/database/dao file references a qualified
+    SpendingInclusionSql.{SPENDING_PREDICATE, SPENDING_PREDICATE_E, EFFECTIVE_AMOUNT, EFFECTIVE_AMOUNT_E}
+    or carries a "// spending-exempt: <REASON>" line comment above the @Query (REASON in
+    DEDUPE_BLOCKING, DEDUPE_RESOLVER, NON_SPENDING_INCOME, ROW_COUNT, NON_MONEY, SUGGESTION,
+    ASSET_VALUE); a marked query must not reference SpendingInclusionSql, and a DEDUPE_* marked query
+    must never reference it (INV-8). An empty DAO surface exits 2. "--report" lists every classified query
+  • Spending-predicate parity tests (S3/S4)
 ```
 
 ---
@@ -1711,6 +2241,15 @@ BUILDER OWNERS (exactly two; both call the applier, neither sets title/text/styl
   1. AndroidNotificationService — postForKind (live posts) and rebuildDiscreet (re-post sweep)
   2. BillReminderWorker — resolves the BILL decision inside the guard lambda per reminder, after
      claim and revalidation, then applies it in sendNotification (still no content intent)
+     and `sendInstallmentNotification` (S7b, D-M1 A; no actions, no content intent; resolved
+     inside the claim→post try)
+  RE-COUNT (loan S13-fix, 2026-10-30): INV-12 defines a composition site as a place that composes a
+  notification and declares exactly one kind (domain-spec INV-12 / AMD-17 / 4.1). There are now SEVEN
+  sites over the unchanged SIX-kind registry: the six spec sites plus the installment reminder
+  (`BillReminderWorker.sendInstallmentNotification`, :277/:308). Both BillReminderWorker sites (bill
+  reminders :158 and installment reminders :277) declare BILL; the installment site uses the BILL
+  presentation with no actions and no content intent. The posting paths (`AndroidNotificationService`
+  postForKind :205/:218 and the action-policy check :326-327) are builder owners, not extra sites.
 
 RE-POST sweep (turning discreet on, see APP LOCK SETTINGS WRITE PATH):
   → NotificationService.repostActiveAsDiscreet() → AndroidNotificationService
@@ -1730,7 +2269,8 @@ RE-POST sweep (turning discreet on, see APP LOCK SETTINGS WRITE PATH):
           3. any other channel (including the capture channel) → null → skipped
       • BILL: NotificationPresentationResolver.resolve(BILL, sdkInt) (bounded T_read; actionsSuppressed =
         actionPolicy != UNCHANGED; D5 NOTIF_ACTIONS_SUPPRESSED_LOCK(SDK_INT); NOTIF_POLICY_SETTINGS_UNREADABLE
-        when the store is unreadable) → NotificationContentPolicy.decideDiscreet(kind, sdkInt, actionsSuppressed);
+        when the store is unreadable; N1: D5 is also emitted for action-less installment posts on API <= 30,
+        ACCEPTED as bounded diagnostic noise, reason code only) → NotificationContentPolicy.decideDiscreet(kind, sdkInt, actionsSuppressed);
         other kinds: actionsSuppressed = false, no read (S18-ii-b)
       • fresh builder → NotificationPresentationApplier.apply (stamps the kind marker again);
         from the original it reuses only id, tag, channel, content intent, action PendingIntents
@@ -1847,14 +2387,20 @@ POLICY (spec 5):
   • not hierarchical, any '#', non-ASCII before the query, userinfo, port, or a path other than
     empty or "/" → Rejected(MALFORMED)
   • host: exact-case closed set DeepLinkHost = home, dashboard, activity, review, plan, add,
-    analytics, map; bank hosts → Rejected(BANK_HOST); any other host → Rejected(UNKNOWN_HOST)
+    analytics, map, installments, installment_plan (10 hosts; owner-approvals 91(a)); bank hosts →
+    Rejected(BANK_HOST); any other host → Rejected(UNKNOWN_HOST). Loan S13-a: `installments` and
+    `installment_plan` are accepted only when evaluate(..., installmentsEnabled = InstallmentsFeature.ENABLED)
+    is true; while false both are Rejected(UNKNOWN_HOST) exactly like any unknown host and land on Home.
   • one allowed parameter per host, everything else dropped and counted:
       home/dashboard: briefingKey = "dashboard_home:" + real yyyy-MM-dd (<= 32 chars)
       activity: expenseId = 1..Long.MAX_VALUE (1..19 ASCII digits)
       analytics: period from TimePeriodTokens (shared allowlist)
       map: location, trimmed, 1..100 chars, no control/format characters
       review/plan/add: none (no link creates or prefills data, INV-17)
-    duplicate or invalid values are dropped to the host default
+      installments: none
+      installment_plan: id = 1..Long.MAX_VALUE (1..19 ASCII digits); a missing, duplicate or invalid id
+        rejects the whole link (Rejected(MALFORMED), no new rejection value)
+    duplicate or invalid values are dropped to the host default (installment_plan excepted, above)
   • result carries DeepLinkRequest (host + validated fields; toString names the host only) — no raw
     URI, host string or parameter value exists after this point
 
@@ -1867,6 +2413,12 @@ APPLIER (ui/navigation/DeepLinkApplier, the only code that acts on a link):
   • activity with a valid expenseId → read-only ExpenseRepository.getExpenseById; not found,
     read failure or no id degrades to Transactions with a bounded code; CancellationException propagates
   • add → opens an empty add sheet (never prefilled)
+  • installments / installment_plan (loan S13-a, C1) → NEVER navigates directly: the applier calls
+    MainViewModel.requestDeepLinkConfirmation(destination); MainScreen (inside AppLockShell) shows a
+    confirm dialog (no plan name or amount: the link is untrusted); Confirm → confirmPendingDeepLink
+    (navigateTo, then clear), Cancel/dismiss → dismissPendingDeepLink (no navigation). A held link reaches
+    applyAccepted only through applyReleased, so the confirmation state is set only after unlock; the router
+    is unchanged. An internal tap (Transactions installment chip) navigates directly, no confirmation.
   • diagnostics: bounded DL_* codes (host / parameter enums, booleans, counts, exception class)
     launched on @ApplicationScope, never awaited; no raw URI, host string, briefingKey or parameter
     value in any log, diagnostic or AiRuntimeDiagnostics message (INV-18)
@@ -1874,8 +2426,9 @@ APPLIER (ui/navigation/DeepLinkApplier, the only code that acts on a link):
     (S21-b: the held-link gate is the router above, no longer "increment 1b")
 
 MANIFEST (INV-20, OD-3a):
-  • MainActivity VIEW filter: action VIEW + category DEFAULT + 8 <data> entries for the scheme
-    expensetracker (hosts above). NO BROWSABLE category: links from web browsers no longer open
+  • MainActivity VIEW filter: action VIEW + category DEFAULT + 10 <data> entries for the scheme
+    expensetracker (hosts above; installments and installment_plan added by loan S13-a, inert while the
+    policy flag is off). NO BROWSABLE category: links from web browsers no longer open
     the app. Other installed apps can still send VIEW; DeepLinkPolicy is the boundary.
   • Notification taps use an explicit MainActivity component + ACTION_VIEW + FLAG_IMMUTABLE
     (built only in AndroidNotificationService; BillReminderWorker builds no content intent)

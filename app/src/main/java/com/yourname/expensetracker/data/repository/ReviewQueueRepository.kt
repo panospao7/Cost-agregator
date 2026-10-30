@@ -7,6 +7,8 @@ import com.yourname.expensetracker.data.database.entity.*
 import com.yourname.expensetracker.data.database.model.PendingReviewWithReceipt
 import com.yourname.expensetracker.domain.budget.BudgetMonitor
 import com.yourname.expensetracker.domain.config.AppConfig
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.currency.CurrencyAmountPolicy
 import com.yourname.expensetracker.domain.intelligence.ConfidenceRouter
 import com.yourname.expensetracker.domain.intelligence.DuplicateDetectionPolicy
 import com.yourname.expensetracker.domain.intelligence.TransactionClassifier
@@ -187,7 +189,12 @@ class ReviewQueueRepository @Inject constructor(
     }
     val categoryId: Long? = finalCategoryId ?: review.suggestedCategoryId
 
-    if (amount > 1000000.0) {
+    // MEC INV-14 (G2-3): per-currency cap owned by CurrencyAmountPolicy; non-catalog and
+    // unparsable codes keep 1,000,000. Approval is unflagged (no precision check).
+    val amountCap = CurrencyCode.parse(resolvedCurrency)
+        ?.let { CurrencyAmountPolicy.cap(it) }
+        ?: CurrencyAmountPolicy.DEFAULT_CAP
+    if (amount > amountCap.toDouble()) {
         return Result.Error(message = ERROR_AMOUNT_EXCEEDS_LIMIT)
     }
 
