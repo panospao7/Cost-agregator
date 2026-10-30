@@ -3249,3 +3249,30 @@ Validation to request: unchanged, targeted `*AppLockController*` (covers both te
   3. G2 device checks on emulator-5554: PBKDF2 timing, KeyInfo security level, reboot delay AE-73, Keystore loss AE-80, PIN step plus background AE-119, the PIN UI smoke.
   4. reviewer-strict at the increment-2 candidate.
   5. Merge into feature/ai-evolution.
+
+## 2026-10-30: S28 docs and G2 (automatable part) DONE
+- S28 docs:
+  - LEGAL_PATHS App PIN Store, with the S27 UI callers;
+  - CODEBASE_SEGMENTS seg 28;
+  - COMPREHENSIVE_UI_MAP;
+  - NAVIGATION_ARCHITECTURE;
+  - CODEBASE_INVENTORY;
+  - docs/features/app-lock-privacy-mode/release-note-2.md.
+  - guard_docs_truth PASS vr-20261030-205342-4b47b174.
+- G2 device: AppLockPinG2DeviceTest 5/5 PASS on wave5-api35 (vr-20261030-205358-ecf494f0).
+  - PBKDF2 at 150k: 349 ms on the emulator.
+  - The HMAC key KeyInfo: SIGN purpose, no user auth; securityLevel=0 (SOFTWARE on the emulator).
+  - The real store setup/verify/wrong/deleteAll round trip works.
+  - The boot count is available.
+  - BIOMETRIC_STRONG is not enrolled (status 11), so the key manager fails closed.
+- G2 items left for the OWNER's real phone (release candidate):
+  - condition C timing on a low-end API-30 device;
+  - the TEE/StrongBox security level;
+  - AE-73 reboot delay;
+  - AE-76 enrolment invalidation (S26b scope once fingerprint enabling exists);
+  - AE-42/117 OEM screens.
+  - AE-80 (Keystore loss) and AE-119 (background) are pinned by unit and Robolectric tests.
+- NEXT:
+  1. Increment-2 integration merge into feature/ai-evolution, with the full suites.
+  2. reviewer-strict on S24..S28, split in two (domain/data, UI).
+  3. Merge. S26b (fingerprint enable) is a follow-up.
