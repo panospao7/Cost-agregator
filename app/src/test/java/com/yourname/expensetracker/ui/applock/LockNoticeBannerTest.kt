@@ -33,6 +33,7 @@ class LockNoticeBannerTest : AppLockComposeTestBase() {
     private var security = 0
     private var settings = 0
     private var review = 0
+    private var dismissed = 0
 
     private fun show(notice: LockNotice, allowed: Boolean = true, fontScale: Float = 1f) {
         composeRule.setContent {
@@ -42,7 +43,8 @@ class LockNoticeBannerTest : AppLockComposeTestBase() {
                     inAppActionsAllowed = allowed,
                     onOpenSecuritySettings = { security++ },
                     onOpenAppLockSettings = { settings++ },
-                    onReviewSettings = { review++ }
+                    onReviewSettings = { review++ },
+                    onDismissNotice = { dismissed++ }
                 )
             }
         }
@@ -64,7 +66,21 @@ class LockNoticeBannerTest : AppLockComposeTestBase() {
         }
         assertEquals(R.string.applock_banner_review_title, LockNotice.ReviewSettings.bannerCopy()!!.titleRes)
         assertEquals(R.string.applock_banner_review_body, LockNotice.ReviewSettings.bannerCopy()!!.bodyRes)
-        assertNull(LockNotice.BiometricInvalidated.bannerCopy())
+        assertEquals(
+            R.string.applock_banner_biometric_invalidated_title,
+            LockNotice.BiometricInvalidated.bannerCopy()!!.titleRes
+        )
+        assertEquals(
+            R.string.applock_banner_biometric_invalidated_body,
+            LockNotice.BiometricInvalidated.bannerCopy()!!.bodyRes
+        )
+    }
+
+    @Test
+    fun `biometric invalidated is the only notice with a dismiss action`() {
+        assertEquals(LockNoticeActions(false, false, false, dismiss = true), LockNotice.BiometricInvalidated.bannerActions())
+        InertReason.values().forEach { assertEquals(false, LockNotice.Inert(it).bannerActions().dismiss) }
+        assertEquals(false, LockNotice.ReviewSettings.bannerActions().dismiss)
     }
 
     @Test
@@ -133,10 +149,31 @@ class LockNoticeBannerTest : AppLockComposeTestBase() {
     }
 
     @Test
-    fun `the Inc 2 notice draws nothing in 1b`() {
+    fun `biometric invalidated banner renders and Dismiss calls onDismissNotice once`() {
         show(LockNotice.BiometricInvalidated)
 
-        count(AppLockUiTags.NOTICE_BANNER, 0)
+        count(AppLockUiTags.NOTICE_BANNER, 1)
+        count(AppLockUiTags.NOTICE_ACTION_SECURITY_SETTINGS, 0)
+        count(AppLockUiTags.NOTICE_ACTION_APP_LOCK_SETTINGS, 0)
+        count(AppLockUiTags.NOTICE_ACTION_REVIEW, 0)
+        composeRule.onNodeWithTag(LOCK_NOTICE_DISMISS_TAG).performClick()
+        assertEquals(1, dismissed)
+        assertEquals(0, security + settings + review)
+    }
+
+    @Test
+    fun `INV-52 Dismiss is not composed during an operational lock`() {
+        show(LockNotice.BiometricInvalidated, allowed = false)
+
+        count(AppLockUiTags.NOTICE_BANNER, 1)
+        count(LOCK_NOTICE_DISMISS_TAG, 0)
+        assertEquals(0, dismissed)
+    }
+
+    @Test
+    fun `other notices never show Dismiss`() {
+        show(LockNotice.Inert(InertReason.NO_CREDENTIAL))
+        count(LOCK_NOTICE_DISMISS_TAG, 0)
     }
 
     @Test

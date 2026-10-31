@@ -1015,21 +1015,25 @@ class AppLockPrivacySettingsViewModel @Inject constructor(
      * end, LOCK_OFF only for a DISABLE end (T19's negative attemptId included); a CHANGE end never produces a lock notice.
      * Exhaustive over [OpenOriginEndKind] and [OpenOriginPrompt] (no else: a new value must be mapped here).
      */
-    private fun noticeForEnd(end: OpenOriginEnd): AppLockPrivacySectionNotice? = when (end.kind) {
+    private fun noticeForEnd(end: OpenOriginEnd): AppLockPrivacySectionNotice? =
+        // S26b: the App PIN settings screen owns the FINGERPRINT_ENABLE flow; never notify here.
+        if (end.prompt == OpenOriginPrompt.FINGERPRINT_ENABLE) null else noticeForEndKind(end)
+
+    private fun noticeForEndKind(end: OpenOriginEnd): AppLockPrivacySectionNotice? = when (end.kind) {
         OpenOriginEndKind.APPLIED -> when (end.prompt) {
             OpenOriginPrompt.ENABLE -> AppLockPrivacySectionNotice.LOCK_ON
             OpenOriginPrompt.DISABLE -> AppLockPrivacySectionNotice.LOCK_OFF
-            OpenOriginPrompt.CHANGE -> null
+            OpenOriginPrompt.CHANGE, OpenOriginPrompt.FINGERPRINT_ENABLE -> null
         }
         OpenOriginEndKind.NOT_COMMITTED -> AppLockPrivacySectionNotice.SAVE_FAILED
         OpenOriginEndKind.CANCELLED -> when (end.prompt) {
             OpenOriginPrompt.ENABLE -> AppLockPrivacySectionNotice.LOCK_NOT_TURNED_ON
-            OpenOriginPrompt.DISABLE, OpenOriginPrompt.CHANGE -> null
+            OpenOriginPrompt.DISABLE, OpenOriginPrompt.CHANGE, OpenOriginPrompt.FINGERPRINT_ENABLE -> null
         }
         OpenOriginEndKind.LOCKED_OUT -> AppLockPrivacySectionNotice.TOO_MANY_ATTEMPTS
         OpenOriginEndKind.ERROR -> when (end.prompt) {
             OpenOriginPrompt.ENABLE -> AppLockPrivacySectionNotice.ENABLE_FAILED
-            OpenOriginPrompt.DISABLE, OpenOriginPrompt.CHANGE -> null
+            OpenOriginPrompt.DISABLE, OpenOriginPrompt.CHANGE, OpenOriginPrompt.FINGERPRINT_ENABLE -> null
         }
         // Handled by the capability re-read above; no message of its own.
         OpenOriginEndKind.NOT_AVAILABLE -> null

@@ -283,8 +283,11 @@ class AppLockControllerIllegalTransitionTest {
 
         for (prompt in OpenOriginPrompt.entries) {
             for ((name, make) in states) {
-                val legal = (name == "DISABLED" && prompt.purpose == AuthPurpose.ENABLE) ||
-                    (name == "UNLOCKED" && prompt.purpose == AuthPurpose.CONFIRM_CHANGE)
+                // FINGERPRINT_ENABLE is never legal through the public start (it starts only inside enableFingerprint).
+                val legal = prompt != OpenOriginPrompt.FINGERPRINT_ENABLE && (
+                    (name == "DISABLED" && prompt.purpose == AuthPurpose.ENABLE) ||
+                        (name == "UNLOCKED" && prompt.purpose == AuthPurpose.CONFIRM_CHANGE)
+                    )
                 if (legal) continue // the legal starts are covered in AppLockControllerPromptOutcomeTest
                 val (h, controller) = make()
                 val handler = RecordingSuccessHandler()
@@ -296,7 +299,7 @@ class AppLockControllerIllegalTransitionTest {
                 val result = controller.startOpenOriginAttempt(prompt, handler)
                 h.settle()
 
-                val expected = if (name == "AUTHENTICATING(UNLOCK)") {
+                val expected = if (name == "AUTHENTICATING(UNLOCK)" && prompt != OpenOriginPrompt.FINGERPRINT_ENABLE) {
                     OpenOriginStartResult.AlreadyInFlight
                 } else {
                     OpenOriginStartResult.NotInOrigin
@@ -317,7 +320,13 @@ class AppLockControllerIllegalTransitionTest {
         val enable = h.startOpenOrigin(controller, OpenOriginPrompt.ENABLE, RecordingSuccessHandler())
 
         for (prompt in OpenOriginPrompt.entries) {
-            assertEquals("$prompt", OpenOriginStartResult.AlreadyInFlight, controller.startOpenOriginAttempt(prompt, RecordingSuccessHandler()))
+            // FINGERPRINT_ENABLE is never startable through the public start, so it is refused as NotInOrigin.
+            val expected = if (prompt == OpenOriginPrompt.FINGERPRINT_ENABLE) {
+                OpenOriginStartResult.NotInOrigin
+            } else {
+                OpenOriginStartResult.AlreadyInFlight
+            }
+            assertEquals("$prompt", expected, controller.startOpenOriginAttempt(prompt, RecordingSuccessHandler()))
         }
         assertEquals(UnlockTapResult.AlreadyInFlight, controller.onUnlockTapped())
         h.settle()
@@ -550,6 +559,10 @@ class AppLockControllerIllegalTransitionTest {
         val pinArrayMethods = setOf("enablePin", "changePin", "disablePin", "submitUnlockPin")
         // S27b, exact addition (this one method, possibly mangled): verifyPinForStep also takes the entered PIN.
         val pinArrayStepMethods = setOf("verifyPinForStep")
+        // S26b, exact addition, scoped to this ONE method (no global CharArray allowance): enableFingerprint takes the
+        // entered PIN (zeroed by the controller). beginFingerprintEnable, disableFingerprint and dismissBiometricNotice
+        // take no parameter beyond the coroutine continuation, so they need no allowance.
+        val fingerprintEnablePinMethods = setOf("enableFingerprint")
         // S27b, exact additions, scoped per method (no global allowance): the PIN-step type is allowed for the PIN
         // confirm entries only; Boolean only for the two onPinConfirmed* reports; the settings record only for the
         // review-saved report (see reviewSaveRecordMethods). Internal methods are mangled `name$app_debug`.
@@ -576,6 +589,7 @@ class AppLockControllerIllegalTransitionTest {
                         !(it == AppLockPrivacySettings::class.java && nameIsOneOf(method.name, setOf("onPinConfirmedReviewSaved"))) &&
                         !(it == CharArray::class.java && method.name in pinArrayMethods) &&
                         !(it == CharArray::class.java && nameIsOneOf(method.name, pinArrayStepMethods)) &&
+                        !(it == CharArray::class.java && method.name in fingerprintEnablePinMethods) &&
                         !(it == PinStep::class.java && nameIsOneOf(method.name, pinStepMethods)) &&
                         !(it == AppLockSettingsWriteResult::class.java && method.name.startsWith(writeResultMethodPrefix))
                 }
@@ -657,7 +671,13 @@ class AppLockControllerIllegalTransitionTest {
                 "requestFingerprintUnlock",
                 // S27b, exact addition: the PIN-confirm step start (the other S27b entries are internal, hence
                 // mangled and absent from this unmangled set).
-                "beginPinConfirm"
+                "beginPinConfirm",
+                // S26b, exact additions: the fingerprint-enable PIN step start and the PIN-verified enable (phase 2),
+                // the direct (no PIN) disable, and the "fingerprint turned off" notice dismissal (INV-51).
+                "beginFingerprintEnable",
+                "enableFingerprint",
+                "disableFingerprint",
+                "dismissBiometricNotice"
             ),
             production
         )
@@ -857,6 +877,9 @@ class AppLockControllerIllegalTransitionTest {
                         // settings re-read request. S22-a.1 (owner item 81b, O-1): it is also the ONE production reader
                         // of the open-origin end signal. It gets exactly those two tokens and nothing else.
                         SETTINGS_VIEW_MODEL_PATH -> setOf("requestSettingsReread", "penOriginEnd")
+                        // The app-PIN settings ViewModel is the ONE other production reader of the open-origin end
+                        // signal. It gets exactly that one token and nothing else.
+                        PIN_SETTINGS_VIEW_MODEL_PATH -> setOf("penOriginEnd")
                         // S21-b (PRV-16): the deep-link router is the ONE production caller of the link decision, the
                         // held-link release and the release signal, and gets exactly those tokens (the signal token
                         // omits its first letter, as in the forbidden list).

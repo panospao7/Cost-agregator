@@ -81,4 +81,13 @@
     <string name="applock_pin_confirm_button">Επιβεβαίωση</string>
     <string name="applock_pin_confirm_cancel">Ακύρωση</string>
     <string name="applock_pin_confirm_unavailable">Το PIN εφαρμογής δεν μπορεί να ελεγχθεί αυτή τη στιγμή. Δοκιμάστε ξανά αργότερα.</string>
+    <!-- S26b C1 (el DRAFT, pending native sign-off): AE-100 notice. -->
+    <!-- S26b C3 (el DRAFT, pending native sign-off): fingerprint row, entry title, snackbars, banner. -->
+    <string name="applock_pin_fingerprint_row">Χρήση δακτυλικού αποτυπώματος για ξεκλείδωμα</string>
+    <string name="applock_pin_fingerprint_enter_title">Εισαγάγετε το PIN εφαρμογής για να ενεργοποιήσετε το ξεκλείδωμα με δακτυλικό αποτύπωμα</string>
+    <string name="applock_pin_snackbar_fingerprint_on">Η ξεκλείδωση με δακτυλικό αποτύπωμα ενεργοποιήθηκε</string>
+    <string name="applock_pin_snackbar_fingerprint_off">Η ξεκλείδωση με δακτυλικό αποτύπωμα απενεργοποιήθηκε</string>
+    <string name="applock_pin_snackbar_fingerprint_unavailable">Η ξεκλείδωση με δακτυλικό αποτύπωμα δεν είναι διαθέσιμη σε αυτό το τηλέφωνο.</string>
+    <string name="applock_banner_biometric_invalidated_title">Η ξεκλείδωση με δακτυλικό αποτύπωμα απενεργοποιήθηκε</string>
+    <string name="applock_banner_biometric_invalidated_body">Προστέθηκε δακτυλικό αποτύπωμα σε αυτό το τηλέφωνο, οπότε η ξεκλείδωση της εφαρμογής με δακτυλικό αποτύπωμα απενεργοποιήθηκε. Μπορείτε να την ενεργοποιήσετε ξανά στο PIN εφαρμογής.</string>
 </resources>

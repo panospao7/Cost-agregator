@@ -120,9 +120,25 @@ internal class FakeAppPinStore(initial: AppPinStoreState = AppPinStoreState.ABSE
         return resetResult
     }
 
+    /** S26b: every `setBiometricEnabled` argument, in order. */
+    val biometricWrites = mutableListOf<Boolean>()
+
+    /** S26b: the result of `setBiometricEnabled` (and of the notice dismissal); the default commits. */
+    var biometricWriteResult: PinStoreWriteResult = PinStoreWriteResult.DONE
+
+    /**
+     * S26b: when true, a DONE flag write updates [stateFlow] like the real store (enable sets the flag, dismiss clears the
+     * pending notice). False by default so earlier tests are unchanged.
+     */
+    var applyFlagWrites = false
+
     override suspend fun setBiometricEnabled(enabled: Boolean): PinStoreWriteResult {
         record("setBiometricEnabled")
-        return PinStoreWriteResult.DONE
+        biometricWrites += enabled
+        if (applyFlagWrites && biometricWriteResult == PinStoreWriteResult.DONE) {
+            stateFlow.value = stateFlow.value.copy(biometricEnabled = enabled)
+        }
+        return biometricWriteResult
     }
 
     override suspend fun recordBiometricInvalidated(): PinStoreWriteResult {
@@ -132,6 +148,7 @@ internal class FakeAppPinStore(initial: AppPinStoreState = AppPinStoreState.ABSE
 
     override suspend fun dismissBiometricInvalidatedNotice(): PinStoreWriteResult {
         record("dismissBiometricInvalidatedNotice")
+        if (applyFlagWrites) stateFlow.value = stateFlow.value.copy(biometricInvalidatedNoticePending = false)
         return PinStoreWriteResult.DONE
     }
 

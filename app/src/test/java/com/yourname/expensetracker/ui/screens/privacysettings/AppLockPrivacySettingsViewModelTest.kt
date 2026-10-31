@@ -2412,7 +2412,16 @@ class AppLockPrivacySettingsViewModelTest : ViewModelTestUtils() {
         Triple(OpenOriginPrompt.CHANGE, OpenOriginEndKind.NOT_AVAILABLE, null),
         Triple(OpenOriginPrompt.CHANGE, OpenOriginEndKind.ERROR, null),
         Triple(OpenOriginPrompt.CHANGE, OpenOriginEndKind.HOST_LOST, null),
-        Triple(OpenOriginPrompt.CHANGE, OpenOriginEndKind.BACKGROUNDED, null)
+        Triple(OpenOriginPrompt.CHANGE, OpenOriginEndKind.BACKGROUNDED, null),
+        // FINGERPRINT_ENABLE ends belong to the app-PIN settings section: the 1a section shows no notice for any kind.
+        Triple(OpenOriginPrompt.FINGERPRINT_ENABLE, OpenOriginEndKind.APPLIED, null),
+        Triple(OpenOriginPrompt.FINGERPRINT_ENABLE, OpenOriginEndKind.NOT_COMMITTED, null),
+        Triple(OpenOriginPrompt.FINGERPRINT_ENABLE, OpenOriginEndKind.CANCELLED, null),
+        Triple(OpenOriginPrompt.FINGERPRINT_ENABLE, OpenOriginEndKind.LOCKED_OUT, null),
+        Triple(OpenOriginPrompt.FINGERPRINT_ENABLE, OpenOriginEndKind.NOT_AVAILABLE, null),
+        Triple(OpenOriginPrompt.FINGERPRINT_ENABLE, OpenOriginEndKind.ERROR, null),
+        Triple(OpenOriginPrompt.FINGERPRINT_ENABLE, OpenOriginEndKind.HOST_LOST, null),
+        Triple(OpenOriginPrompt.FINGERPRINT_ENABLE, OpenOriginEndKind.BACKGROUNDED, null)
     )
 
     @Test

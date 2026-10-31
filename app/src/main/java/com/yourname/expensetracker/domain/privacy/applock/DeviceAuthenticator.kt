@@ -39,6 +39,12 @@ enum class PinFingerprintKeyState {
 fun interface PinFingerprintKeyGate {
     /** May block on the Keystore: call off the main thread. */
     fun state(): PinFingerprintKeyState
+
+    /** S26b: creates the key when fingerprint unlock is turned on. True when a usable key exists afterwards. May block. */
+    fun createKey(): Boolean = false
+
+    /** S26b: deletes the key when fingerprint unlock is turned off. Best effort; never throws to the caller. May block. */
+    fun deleteKey() {}
 }
 
 /** Bounded bucket for a prompt error that is neither a cancel, a lockout nor an availability loss (INV-37). */

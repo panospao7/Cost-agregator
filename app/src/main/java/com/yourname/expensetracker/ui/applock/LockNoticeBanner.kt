@@ -37,10 +37,15 @@ internal data class LockNoticeBannerCopy(@StringRes val titleRes: Int, @StringRe
 internal data class LockNoticeActions(
     val systemSecuritySettings: Boolean,
     val appLockSettings: Boolean,
-    val reviewSettings: Boolean
+    val reviewSettings: Boolean,
+    /** S26b (AE-100): only [LockNotice.BiometricInvalidated] can be dismissed. */
+    val dismiss: Boolean = false
 )
 
-/** Banner text per notice (ux-flows 2.6). `null` for [LockNotice.BiometricInvalidated], which is Inc 2 and has no 1b copy. */
+/** Tag of the dismiss action of the "fingerprint unlock turned off" notice. Carries no user data. */
+const val LOCK_NOTICE_DISMISS_TAG = "applock_notice_action_dismiss"
+
+/** Banner text per notice (ux-flows 2.6; S26b adds the fingerprint-invalidated copy). */
 internal fun LockNotice.bannerCopy(): LockNoticeBannerCopy? = when (this) {
     is LockNotice.Inert -> LockNoticeBannerCopy(
         titleRes = R.string.applock_banner_inactive_title,
@@ -55,7 +60,10 @@ internal fun LockNotice.bannerCopy(): LockNoticeBannerCopy? = when (this) {
         titleRes = R.string.applock_banner_review_title,
         bodyRes = R.string.applock_banner_review_body
     )
-    LockNotice.BiometricInvalidated -> null
+    LockNotice.BiometricInvalidated -> LockNoticeBannerCopy(
+        titleRes = R.string.applock_banner_biometric_invalidated_title,
+        bodyRes = R.string.applock_banner_biometric_invalidated_body
+    )
 }
 
 /** Which actions the notice offers (ux-flows 2.6 table). */
@@ -71,7 +79,7 @@ internal fun LockNotice.bannerActions(): LockNoticeActions = when (this) {
         appLockSettings = false,
         reviewSettings = true
     )
-    LockNotice.BiometricInvalidated -> LockNoticeActions(false, false, false)
+    LockNotice.BiometricInvalidated -> LockNoticeActions(false, false, false, dismiss = true)
 }
 
 /**
@@ -80,13 +88,13 @@ internal fun LockNotice.bannerActions(): LockNoticeActions = when (this) {
  * Rules:
  * - It is never composed on the lock surface; the gate decides that (INV-51).
  * - [LockNotice.Inert] and [LockNotice.ReviewSettings] cannot be dismissed, so there is no dismiss control.
+ *   [LockNotice.BiometricInvalidated] (S26b) offers "Dismiss", which calls [onDismissNotice] (a controller write).
  * - INV-52: with [inAppActionsAllowed] false (the operational state is restore or critical recovery), the in-app
  *   actions are not composed at all, so a tap cannot enqueue a navigation request. The system-intent action
  *   ("Open security settings") stays. The callbacks are invoked only by a tap.
  * - The text is one accessibility stop ("{title}. {body}"); each action is its own button stop. It is not a live
  *   region (it is persistent, not an event). Text and buttons are stacked so that 200% font scale does not clip.
- * - [LockNotice.BiometricInvalidated] is Inc 2 (the PIN) and the controller never derives it in 1b, so nothing is
- *   drawn for it here.
+ *   Dismiss is also an in-app action: it is not composed while [inAppActionsAllowed] is false.
  */
 @Composable
 fun LockNoticeBanner(
@@ -95,7 +103,8 @@ fun LockNoticeBanner(
     onOpenSecuritySettings: () -> Unit,
     onOpenAppLockSettings: () -> Unit,
     onReviewSettings: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onDismissNotice: () -> Unit = {}
 ) {
     val copy = notice.bannerCopy() ?: return
     val actions = notice.bannerActions()
@@ -160,6 +169,13 @@ fun LockNoticeBanner(
                         label = stringResource(R.string.applock_banner_review_action),
                         tag = AppLockUiTags.NOTICE_ACTION_REVIEW,
                         onClick = onReviewSettings
+                    )
+                }
+                if (inAppActionsAllowed && actions.dismiss) {
+                    BannerAction(
+                        label = stringResource(R.string.action_dismiss),
+                        tag = LOCK_NOTICE_DISMISS_TAG,
+                        onClick = onDismissNotice
                     )
                 }
             }

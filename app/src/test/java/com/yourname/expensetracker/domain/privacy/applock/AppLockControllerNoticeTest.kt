@@ -148,12 +148,18 @@ class AppLockControllerNoticeTest {
         h.unlock(coldStart)
         assertEquals(LockNotice.ReviewSettings, coldStart.notice.value)
 
-        // No dismiss entry exists on the controller (the only way out is a review-save, S18 ii-d).
+        // The only dismiss entry on the controller is the biometric-notice one (S26b, INV-51); there is none for the
+        // review notice (its only way out is a review-save, S18 ii-d).
         val dismissLike = AppLockController::class.java.methods
             .filter { it.declaringClass == AppLockController::class.java }
             .map { it.name }
             .filter { it.contains("dismiss", ignoreCase = true) }
-        assertEquals(emptyList<String>(), dismissLike)
+        assertEquals(listOf("dismissBiometricNotice"), dismissLike)
+
+        // Dismissing the biometric notice never clears the review notice.
+        runBlocking { controller.dismissBiometricNotice() }
+        assertEquals(1, h.pinStore.count("dismissBiometricInvalidatedNotice"))
+        assertEquals(LockNotice.ReviewSettings, controller.notice.value)
     }
 
     // --- F1: the state and notice pair is never torn into a closed state with a notice -------------------------

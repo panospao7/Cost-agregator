@@ -2,13 +2,16 @@ package com.yourname.expensetracker.ui.screens.privacysettings.applockpin
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -19,6 +22,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -28,6 +32,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -40,7 +45,7 @@ import com.yourname.expensetracker.ui.theme.SemanticColors
 /**
  * App PIN settings screen (S27 b2, ux-flows 2.5a): status, Set up / Change / Remove entries and the in-app PIN steps.
  * Back during a step cancels the step (nothing applied); Back otherwise leaves the screen. "Back up now" only navigates
- * to Backup & Restore (AE-104). Fingerprint enable is not part of this screen yet.
+ * to Backup & Restore (AE-104). The fingerprint switch (S26b) asks for the PIN to turn on; turning off is direct.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -58,7 +63,10 @@ fun AppPinSettingsScreen(
         removed = stringResource(R.string.applock_pin_snackbar_removed),
         removedLockOff = stringResource(R.string.privacy_app_lock_snackbar_off_pin_removed),
         turnOffIncomplete = stringResource(R.string.applock_pin_turn_off_incomplete),
-        failed = stringResource(R.string.applock_pin_failed)
+        failed = stringResource(R.string.applock_pin_failed),
+        fingerprintOn = stringResource(R.string.applock_pin_snackbar_fingerprint_on),
+        fingerprintOff = stringResource(R.string.applock_pin_snackbar_fingerprint_off),
+        fingerprintUnavailable = stringResource(R.string.applock_pin_snackbar_fingerprint_unavailable)
     )
     val currentMessages by rememberUpdatedState(messages)
     LaunchedEffect(viewModel) {
@@ -102,7 +110,10 @@ private class AppPinSnackbarTexts(
     val removed: String,
     val removedLockOff: String,
     val turnOffIncomplete: String,
-    val failed: String
+    val failed: String,
+    val fingerprintOn: String,
+    val fingerprintOff: String,
+    val fingerprintUnavailable: String
 ) {
     fun textOf(event: PinFlowEvent): String? = when (event) {
         PinFlowEvent.PIN_SET -> set
@@ -111,6 +122,9 @@ private class AppPinSnackbarTexts(
         PinFlowEvent.PIN_REMOVED_LOCK_OFF -> removedLockOff
         PinFlowEvent.TURN_OFF_INCOMPLETE -> turnOffIncomplete
         PinFlowEvent.OPERATION_FAILED -> failed
+        PinFlowEvent.FINGERPRINT_ON -> fingerprintOn
+        PinFlowEvent.FINGERPRINT_OFF -> fingerprintOff
+        PinFlowEvent.FINGERPRINT_UNAVAILABLE -> fingerprintUnavailable
         PinFlowEvent.OPEN_BACKUP_RESTORE -> null
     }
 }
@@ -154,6 +168,9 @@ private fun AppPinSettingsBody(state: AppPinSettingsUiState, viewModel: AppPinSe
             ActionRow(stringResource(R.string.applock_pin_action_change), usable, viewModel::startChange)
             ActionRow(stringResource(R.string.applock_pin_action_remove), usable, viewModel::startRemove)
             ActionRow(stringResource(R.string.applock_pin_action_turn_off), usable, viewModel::startTurnOff)
+            if (state.fingerprintToggleVisible) {
+                FingerprintSwitchRow(state.fingerprintEnabled, usable, viewModel::onFingerprintToggle)
+            }
         } else {
             ActionRow(stringResource(R.string.applock_pin_action_setup), usable, viewModel::startSetup)
         }
@@ -174,6 +191,28 @@ private fun AppPinSettingsBody(state: AppPinSettingsUiState, viewModel: AppPinSe
         }
     }
     PinSetupFlow(state, actions)
+}
+
+/** "Use fingerprint to unlock" (S26b): on asks for the PIN, off is direct. One accessibility stop with switch semantics. */
+@Composable
+private fun FingerprintSwitchRow(checked: Boolean, enabled: Boolean, onToggle: (Boolean) -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 48.dp)
+            .toggleable(value = checked, enabled = enabled, role = Role.Switch, onValueChange = onToggle)
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(
+            text = stringResource(R.string.applock_pin_fingerprint_row),
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (enabled) SemanticColors.TextPrimary else SemanticColors.TextSecondary,
+            modifier = Modifier.weight(1f)
+        )
+        Switch(checked = checked, onCheckedChange = null, enabled = enabled)
+    }
 }
 
 @Composable

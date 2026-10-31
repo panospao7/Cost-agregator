@@ -85,4 +85,13 @@
     <string name="applock_pin_confirm_button">Confirmar</string>
     <string name="applock_pin_confirm_cancel">Cancelar</string>
     <string name="applock_pin_confirm_unavailable">No se puede comprobar el PIN de la app ahora mismo. Inténtalo más tarde.</string>
+    <!-- S26b C1 (es DRAFT, pending native sign-off): AE-100 notice. -->
+    <!-- S26b C3 (es DRAFT, pending native sign-off): fingerprint row, entry title, snackbars, banner. -->
+    <string name="applock_pin_fingerprint_row">Usar la huella para desbloquear</string>
+    <string name="applock_pin_fingerprint_enter_title">Introduce el PIN de la app para activar el desbloqueo con huella</string>
+    <string name="applock_pin_snackbar_fingerprint_on">Desbloqueo con huella activado</string>
+    <string name="applock_pin_snackbar_fingerprint_off">Desbloqueo con huella desactivado</string>
+    <string name="applock_pin_snackbar_fingerprint_unavailable">El desbloqueo con huella no está disponible en este teléfono.</string>
+    <string name="applock_banner_biometric_invalidated_title">Desbloqueo con huella desactivado</string>
+    <string name="applock_banner_biometric_invalidated_body">Se añadió una huella a este teléfono, por lo que se desactivó el desbloqueo con huella de la app. Puedes volver a activarlo en PIN de la app.</string>
 </resources>

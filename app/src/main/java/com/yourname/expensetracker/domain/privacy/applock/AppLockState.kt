@@ -57,7 +57,13 @@ enum class OpenOriginPrompt(val purpose: AuthPurpose, val copy: AuthPromptCopy) 
     DISABLE(AuthPurpose.CONFIRM_CHANGE, AuthPromptCopy.DISABLE),
 
     /** Confirming another change from `UNLOCKED`, such as a weakening write or a review-save (T27, T31). */
-    CHANGE(AuthPurpose.CONFIRM_CHANGE, AuthPromptCopy.CHANGE)
+    CHANGE(AuthPurpose.CONFIRM_CHANGE, AuthPromptCopy.CHANGE),
+
+    /**
+     * S26b (INV-40, AMD-2): turning fingerprint unlock on, from `UNLOCKED`. A confirm-change purpose whose prompt is the
+     * fingerprint prompt (BIOMETRIC_STRONG only, key-bound). It is NOT unlock-equivalent and never moves the lock state.
+     */
+    FINGERPRINT_ENABLE(AuthPurpose.CONFIRM_CHANGE, AuthPromptCopy.PIN_FINGERPRINT)
 }
 
 /**
@@ -116,6 +122,8 @@ enum class EffectiveLockMode {
  *   Reset by any re-lock (INV-54[2]).
  * - [REVIEW_CONFIRM]: in effective `APP_PIN` mode a weakening review-save requires the current PIN (AMD-2, T30).
  *   Reset by any re-lock (INV-54[2]).
+ * - [FINGERPRINT_CONFIRM]: in effective `APP_PIN` mode, enabling fingerprint unlock requires the current PIN first
+ *   (AMD-2, S26b). Reset by any re-lock (INV-54[2]).
  */
 enum class PinStep {
     NONE,
@@ -124,7 +132,8 @@ enum class PinStep {
     REMOVE_CONFIRM,
     DISABLE_CONFIRM,
     TIMEOUT_CONFIRM,
-    REVIEW_CONFIRM
+    REVIEW_CONFIRM,
+    FINGERPRINT_CONFIRM
 }
 
 /**
@@ -164,7 +173,9 @@ data class PinPresentation(
      * True when the active delay's reason is `ATTEMPT_STATE_UNREADABLE`, so the UI shows neutral "please wait" copy
      * instead of "too many attempts". Carries no count (INV-38).
      */
-    val delayNeutral: Boolean = false
+    val delayNeutral: Boolean = false,
+    /** S26b: whether fingerprint unlock is on in the PIN store (`biometricEnabled`). A flag only; no secret. */
+    val fingerprintEnabled: Boolean = false
 ) {
     override fun toString(): String =
         "PinPresentation(mode=$effectiveLockMode, step=$step, recovery=$recovery, delayed=${delayRemainingMillis != null})"

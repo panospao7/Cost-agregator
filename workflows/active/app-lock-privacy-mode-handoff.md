@@ -3338,3 +3338,35 @@ Validation to request: unchanged, targeted `*AppLockController*` (covers both te
 - NEXT:
   1. S26b (fingerprint enable): C1 -> C2 -> C3 -> C4 per the plan, with the orchestrator decisions STOP-1 (no guard change; neutral "not available") and STOP-5 (disable is direct).
   2. Then reviewer-strict on S27b+S26b, then the merge.
+
+## 2026-10-31: S26b ACCEPTED and COMMITTED (fingerprint enable/disable in PIN mode)
+- **Domain:**
+  - OpenOriginPrompt.FINGERPRINT_ENABLE, startable only via enableFingerprint after a correct PIN (verifyPinForStep FINGERPRINT_CONFIRM; the public start returns NotInOrigin);
+  - key createKey, then a BIOMETRIC_STRONG PIN_FINGERPRINT crypto prompt, then a NonCancellable setBiometricEnabled(true) (still APP_PIN);
+  - the key is deleted on every non-success close;
+  - AE-120: the enable prompt hands its background to the timer;
+  - disable is direct (STOP-5);
+  - dismissBiometricNotice through the existing store method; a successful re-enable clears a stale invalidated notice (guardian LOW-2);
+  - the LockNotice BiometricInvalidated banner gets copy and a Dismiss button.
+- **UI:**
+  - App PIN settings "Use fingerprint to unlock" switch (shown with a PIN set and API 30+; no capability check, STOP-1);
+  - PIN entry, then the system prompt; neutral "not available" message;
+  - the privacy-settings noticeForEnd ignores FINGERPRINT_ENABLE ends.
+- Combined guardian: ACCEPT with LOWs. LOW-2 applied.
+  - LOW-1 (an async key delete racing an instant re-enable; fails closed) is a residual.
+  - LOW-3 is covered by a test.
+- Static-guards caught:
+  - G-CANCEL-01: the cleanup-before-rethrow catch shape, fixed;
+  - the db_access DB_DAO_SCOPE_UNRESOLVED in MerchantNormalizer.kt:296, caused by the new generic gate method names create()/delete(). They were renamed to createKey()/deleteKey(). Lesson: avoid generic method names that collide with DAO verbs.
+- Ladder, all PASS:
+  - targeted vr-20261031-123021-b98ffda3
+  - runtime-ui vr-20261031-123708-1d949815
+  - domain-n-z vr-20261031-124125-ce803b39
+  - architecture-contracts vr-20261031-124341-f3c860bc
+  - static-guards vr-20261031-124444-d55794ea
+  - lint vr-20261031-130303-540ffa58
+  - data vr-20261031-115408-f4300d4c (on the prior tree; the later changes do not touch data tests)
+- NEXT:
+  1. reviewer-strict on S27b + S26b.
+  2. The integration merge into feature/ai-evolution with full suites, then fast-forward.
+  3. The emulator device checks at G2: AE-76 enrolment via `adb emu finger`; the AE-120 timing.

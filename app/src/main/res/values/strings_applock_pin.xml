@@ -81,4 +81,13 @@
     <string name="applock_pin_confirm_button">Confirm</string>
     <string name="applock_pin_confirm_cancel">Cancel</string>
     <string name="applock_pin_confirm_unavailable">The app PIN can\'t be checked right now. Try again later.</string>
+    <!-- S26b C1 (AE-100): the dismissible notice when fingerprint unlock was turned off by an enrolment change. -->
+    <!-- S26b C3: fingerprint switch row, PIN entry title, snackbars and the notice banner copy. -->
+    <string name="applock_pin_fingerprint_row">Use fingerprint to unlock</string>
+    <string name="applock_pin_fingerprint_enter_title">Enter your app PIN to turn on fingerprint unlock</string>
+    <string name="applock_pin_snackbar_fingerprint_on">Fingerprint unlock turned on</string>
+    <string name="applock_pin_snackbar_fingerprint_off">Fingerprint unlock turned off</string>
+    <string name="applock_pin_snackbar_fingerprint_unavailable">Fingerprint unlock isn\'t available on this phone.</string>
+    <string name="applock_banner_biometric_invalidated_title">Fingerprint unlock turned off</string>
+    <string name="applock_banner_biometric_invalidated_body">A fingerprint was added to this phone, so fingerprint unlock for the app was turned off. You can turn it on again in App PIN.</string>
 </resources>

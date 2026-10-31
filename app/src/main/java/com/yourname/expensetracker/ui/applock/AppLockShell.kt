@@ -40,6 +40,10 @@ internal class ControllerGateSource(controller: AppLockController) : AppLockGate
         override suspend fun retryPinRecovery() = controller.retryPinRecovery()
         override suspend fun requestFingerprintUnlock() = controller.requestFingerprintUnlock()
     }
+
+    private val noticeController = controller
+
+    override suspend fun dismissBiometricNotice() = noticeController.dismissBiometricNotice()
 }
 
 /**

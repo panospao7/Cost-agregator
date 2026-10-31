@@ -182,6 +182,7 @@ private fun EntryStep(state: AppPinSettingsUiState, actions: PinSetupFlowActions
 private fun entryTitle(step: PinFlowStep): Int = when (step) {
     PinFlowStep.CHANGE_CURRENT, PinFlowStep.REMOVE_ENTER -> R.string.applock_pin_current_title
     PinFlowStep.TURN_OFF_ENTER -> R.string.applock_pin_turn_off_enter_title
+    PinFlowStep.FINGERPRINT_ENTER -> R.string.applock_pin_fingerprint_enter_title
     PinFlowStep.SETUP_CONFIRM, PinFlowStep.CHANGE_CONFIRM -> R.string.applock_pin_confirm_title
     else -> R.string.applock_pin_new_title
 }
