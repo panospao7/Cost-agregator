@@ -1,9 +1,13 @@
 package com.yourname.expensetracker.data.repository
 
+import androidx.annotation.VisibleForTesting
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
+import com.yourname.expensetracker.domain.currency.CurrencyRateHistoryOutcome
 import com.yourname.expensetracker.domain.currency.CurrencyRateRefreshOutcome
 import com.yourname.expensetracker.domain.currency.CurrencyRatesRepository
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.currency.RateHistoryDay
+import com.yourname.expensetracker.domain.currency.RateHistoryFailureReason
 import com.yourname.expensetracker.domain.currency.SupportedCurrency
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDecision
@@ -11,21 +15,39 @@ import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import com.yourname.expensetracker.domain.privacy.PrivacyGateReasonCodes
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.di.IoDispatcher
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import org.w3c.dom.Element
+import org.xml.sax.InputSource
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
+import java.io.IOException
 import java.io.InputStream
+import java.io.StringReader
 import java.net.HttpURLConnection
+import java.net.SocketTimeoutException
 import java.net.URL
+import java.nio.ByteBuffer
+import java.nio.charset.CharacterCodingException
+import java.nio.charset.CodingErrorAction
 import java.time.LocalDate
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.time.format.DateTimeParseException
+import java.time.temporal.ChronoUnit
 import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
 import javax.xml.XMLConstants
 import javax.xml.parsers.DocumentBuilderFactory
+import javax.xml.parsers.ParserConfigurationException
 import timber.log.Timber
 
 @Singleton
@@ -43,7 +65,31 @@ class CurrencyRatesRepositoryImpl @Inject constructor(
         private const val ACCESS_EXTERNAL_DTD_PROPERTY = "http://javax.xml.XMLConstants/property/accessExternalDTD"
         private const val ACCESS_EXTERNAL_SCHEMA_PROPERTY = "http://javax.xml.XMLConstants/property/accessExternalSchema"
         private const val ECB_NAMESPACE = "http://www.ecb.int/vocabulary/2002-08-01/eurofxref"
+
+        // MEC 1b history download (INV-1b-1, INV-1b-9). The only history endpoint; no fallback.
+        private const val ECB_HISTORY_90D_URL = "https://www.ecb.europa.eu/stats/eurofxref/eurofxref-hist-90d.xml"
+        internal const val MAX_HISTORY_BYTES = 512 * 1024
+        internal const val MAX_HISTORY_DAYS = 70
+        internal const val MAX_HISTORY_SPAN_DAYS = 100L
+        internal const val HISTORY_DEADLINE_MS = 30_000L
+        private const val READ_BUFFER_BYTES = 8 * 1024
+        private const val MAX_DAILY_BYTES = 256 * 1024
+        private const val HISTORY_CODE_CANCELLED = "CANCELLED"
+
+        /** Row cap = MAX_HISTORY_DAYS x c x (c - 1), c = catalog size (28 -> 52,920). */
+        internal val MAX_HISTORY_ROWS: Int =
+            SupportedCurrency.catalog.size.let { c -> MAX_HISTORY_DAYS * c * (c - 1) }
     }
+
+    private val historyMutex = Mutex()
+
+    /**
+     * Test seam (F5): the only way the history download opens a connection, invoked solely inside the
+     * attempt after the privacy gate. Production never sets it; the default targets the ECB 90-day file.
+     */
+    @VisibleForTesting
+    internal var historyConnectionOpener: () -> HttpURLConnection =
+        { URL(ECB_HISTORY_90D_URL).openConnection() as HttpURLConnection }
 
     override suspend fun refresh(homeCurrency: String): CurrencyRateRefreshOutcome = withContext(ioDispatcher) {
         // PRIVACY GATE: exchange-rate download has its own capability (default OFF); check before any HTTP call.
@@ -81,6 +127,354 @@ class CurrencyRatesRepositoryImpl @Inject constructor(
         } finally {
             connection.disconnect()
         }
+    }
+
+    override suspend fun downloadRecentHistory(homeCurrency: String): CurrencyRateHistoryOutcome =
+        withContext(ioDispatcher) {
+            // C3: the privacy gate runs before the single-flight lock and before any connection object exists.
+            val gateCheck = try {
+                privacyGate.check(PrivacyCapability.EXCHANGE_RATE_DOWNLOAD)
+            } catch (e: CancellationException) {
+                logHistoryAttempt(HISTORY_CODE_CANCELLED)
+                throw e
+            } catch (_: Exception) {
+                currentCoroutineContext().ensureActive()
+                null
+            }
+            if (gateCheck == null) {
+                // Fail closed: a gate that cannot answer blocks the download.
+                val failed = CurrencyRateHistoryOutcome.PrivacyCheckFailed(PrivacyGateReasonCodes.PRIVACY_BLOCKED)
+                logHistoryAttempt(historyOutcomeCode(failed))
+                return@withContext failed
+            }
+            if (gateCheck.blocksExecution()) {
+                val blocked = when (gateCheck) {
+                    is PrivacyDecision.Denied -> CurrencyRateHistoryOutcome.DisabledByPrivacy
+                    else -> {
+                        val reason = gateCheck.reason()
+                        CurrencyRateHistoryOutcome.PrivacyCheckFailed(
+                            if (reason in PrivacyGateReasonCodes.ALL) reason else PrivacyGateReasonCodes.PRIVACY_BLOCKED
+                        )
+                    }
+                }
+                logHistoryAttempt(historyOutcomeCode(blocked))
+                return@withContext blocked
+            }
+
+            // F3: an unsupported home code fails before any lock or connection (HOME_QUOTE_UNAVAILABLE is
+            // judged later, on the parsed newest day).
+            if (SupportedCurrency.fromCode(homeCurrency) == null) {
+                val invalidHome = CurrencyRateHistoryOutcome.Failed(RateHistoryFailureReason.INVALID_HOME_CURRENCY)
+                logHistoryAttempt(historyOutcomeCode(invalidHome))
+                return@withContext invalidHome
+            }
+
+            // INV-1b-6: single-flight per process; a second caller opens no connection.
+            if (!historyMutex.tryLock()) {
+                logHistoryAttempt(historyOutcomeCode(CurrencyRateHistoryOutcome.AlreadyInProgress))
+                return@withContext CurrencyRateHistoryOutcome.AlreadyInProgress
+            }
+            try {
+                val outcome = try {
+                    withTimeoutOrNull(HISTORY_DEADLINE_MS) { runHistoryAttempt(homeCurrency) }
+                        ?: CurrencyRateHistoryOutcome.Failed(RateHistoryFailureReason.TIMEOUT)
+                } catch (e: CancellationException) {
+                    // INV-1b-21: one constant diagnostic, then the cancellation always propagates.
+                    logHistoryAttempt(HISTORY_CODE_CANCELLED)
+                    throw e
+                }
+                logHistoryAttempt(historyOutcomeCode(outcome))
+                outcome
+            } finally {
+                historyMutex.unlock()
+            }
+        }
+
+    /**
+     * Opens the connection (never before the gate), reads, parses and stores. Returns a closed
+     * outcome for every failure; only [CancellationException] escapes. The connection is
+     * disconnected on completion and when the surrounding scope is cancelled (user Cancel or the
+     * 30 s deadline), which also unblocks a stuck socket read (C5).
+     */
+    private suspend fun runHistoryAttempt(homeCurrency: String): CurrencyRateHistoryOutcome = coroutineScope {
+        // F4: an opener/setup failure maps to OFFLINE (closed, never thrown); the caller logs the one
+        // constant line for the outcome. Cancellation is rethrown first.
+        val connection: HttpURLConnection = try {
+            historyConnectionOpener().apply {
+                requestMethod = "GET"
+                connectTimeout = TIMEOUT_MS
+                readTimeout = TIMEOUT_MS
+                instanceFollowRedirects = false // C1: a 3xx is HTTP_ERROR; Location is never read.
+                useCaches = false // C2: no cache; no request properties or conditional headers are set.
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            return@coroutineScope CurrencyRateHistoryOutcome.Failed(RateHistoryFailureReason.OFFLINE)
+        }
+        val worker = async { fetchParseAndStoreHistory(connection, homeCurrency) }
+        try {
+            worker.await()
+        } finally {
+            // Also runs on user Cancel / the 30 s deadline: disconnect unblocks a stuck read (C5).
+            connection.disconnect()
+        }
+    }
+
+    private suspend fun fetchParseAndStoreHistory(
+        connection: HttpURLConnection,
+        homeCurrency: String
+    ): CurrencyRateHistoryOutcome {
+        val body: ByteArray = try {
+            connection.connect()
+            if (connection.responseCode !in 200..299) {
+                return CurrencyRateHistoryOutcome.Failed(RateHistoryFailureReason.HTTP_ERROR)
+            }
+            // C4: reject a declared length above the cap before reading (-1 = unknown, e.g. gzip).
+            if (connection.contentLengthLong > MAX_HISTORY_BYTES) {
+                return CurrencyRateHistoryOutcome.Failed(RateHistoryFailureReason.PAYLOAD_TOO_LARGE)
+            }
+            val read = connection.inputStream.use { readCapped(it) }
+            if (read.tooLarge) {
+                return CurrencyRateHistoryOutcome.Failed(RateHistoryFailureReason.PAYLOAD_TOO_LARGE)
+            }
+            read.bytes
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: SocketTimeoutException) {
+            return CurrencyRateHistoryOutcome.Failed(RateHistoryFailureReason.TIMEOUT)
+        } catch (_: IOException) {
+            return CurrencyRateHistoryOutcome.Failed(RateHistoryFailureReason.OFFLINE)
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            // Closed mapping (C10): any other network-phase failure is reported as OFFLINE.
+            return CurrencyRateHistoryOutcome.Failed(RateHistoryFailureReason.OFFLINE)
+        }
+
+        currentCoroutineContext().ensureActive()
+        val nowMillis = timeProvider.now()
+        val days: List<RateHistoryDay> = try {
+            parseEcbHistoryRates(ByteArrayInputStream(body), nowMillis)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: EcbHistoryPayloadException) {
+            return CurrencyRateHistoryOutcome.Failed(e.reason)
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            return CurrencyRateHistoryOutcome.Failed(RateHistoryFailureReason.PAYLOAD_MALFORMED)
+        }
+
+        // INV-1b-10: home is judged on the newest day only; nothing is stored on failure.
+        val base = SupportedCurrency.fromCode(homeCurrency)?.code
+            ?: return CurrencyRateHistoryOutcome.Failed(RateHistoryFailureReason.INVALID_HOME_CURRENCY)
+        if (!days.first().eurToCurrency.containsKey(base)) {
+            return CurrencyRateHistoryOutcome.Failed(RateHistoryFailureReason.HOME_QUOTE_UNAVAILABLE)
+        }
+
+        // INV-1b-9(c): row total checked before any row is built.
+        val catalogCodes = SupportedCurrency.catalog.map { it.code }
+        var plannedRows = 0L
+        for (day in days) {
+            val listed = catalogCodes.count { day.eurToCurrency.containsKey(it) }
+            plannedRows += listed.toLong() * (listed - 1)
+        }
+        if (plannedRows > MAX_HISTORY_ROWS) {
+            return CurrencyRateHistoryOutcome.Failed(RateHistoryFailureReason.PAYLOAD_OUT_OF_BOUNDS)
+        }
+
+        currentCoroutineContext().ensureActive()
+        // INV-1b-11: ONE converter call -> ONE insertOrUpdateAll (barrier + one Room transaction).
+        val rows = try {
+            currencyConverter.storeRateHistory(days, source = "ecb")
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            return CurrencyRateHistoryOutcome.Failed(RateHistoryFailureReason.STORE_FAILED)
+        }
+        if (rows == 0) {
+            return CurrencyRateHistoryOutcome.Failed(RateHistoryFailureReason.PAYLOAD_EMPTY)
+        }
+
+        // INV-1b-13: best effort after the commit; never after a cancellation.
+        currentCoroutineContext().ensureActive()
+        try {
+            currencySettingsRepository.setLastRateUpdate(timeProvider.now())
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            // The rows are committed; the outcome stays Stored.
+        }
+        return CurrencyRateHistoryOutcome.Stored(
+            days = days.size,
+            rows = rows,
+            earliestDate = days.last().date,
+            latestDate = days.first().date
+        )
+    }
+
+    /** Reads at most [MAX_HISTORY_BYTES] of the (decompressed) stream; sets [HistoryBody.tooLarge] beyond it (C6). */
+    private suspend fun readCapped(stream: InputStream): HistoryBody {
+        val out = ByteArrayOutputStream()
+        val buffer = ByteArray(READ_BUFFER_BYTES)
+        var total = 0
+        while (true) {
+            currentCoroutineContext().ensureActive()
+            val n = stream.read(buffer)
+            if (n < 0) break
+            total += n
+            if (total > MAX_HISTORY_BYTES) return HistoryBody(ByteArray(0), tooLarge = true)
+            out.write(buffer, 0, n)
+        }
+        return HistoryBody(out.toByteArray(), tooLarge = false)
+    }
+
+    /** One constant-format line per attempt (C9, C11): event name plus enum name only. */
+    private fun logHistoryAttempt(outcomeCode: String) {
+        Timber.i("RATE_HISTORY_DOWNLOAD %s", outcomeCode)
+    }
+
+    private fun historyOutcomeCode(outcome: CurrencyRateHistoryOutcome): String = when (outcome) {
+        is CurrencyRateHistoryOutcome.Stored -> "STORED"
+        CurrencyRateHistoryOutcome.DisabledByPrivacy -> "DISABLED_BY_PRIVACY"
+        is CurrencyRateHistoryOutcome.PrivacyCheckFailed -> "PRIVACY_CHECK_FAILED"
+        CurrencyRateHistoryOutcome.AlreadyInProgress -> "ALREADY_IN_PROGRESS"
+        is CurrencyRateHistoryOutcome.Failed -> outcome.reason.name
+        CurrencyRateHistoryOutcome.Cancelled -> HISTORY_CODE_CANCELLED
+    }
+
+    /**
+     * Parses the ECB 90-day file by a fixed-depth walk Cube > Cube@time > Cube@currency/@rate (C7) with
+     * the shared hardened factory. All caps are checked before any row is built. Returns the days newest
+     * first. Throws [EcbHistoryPayloadException] with a bounded reason; any other parser failure is the
+     * caller's PAYLOAD_MALFORMED.
+     */
+    internal fun parseEcbHistoryRates(stream: InputStream, nowMillis: Long): List<RateHistoryDay> {
+        val bytes = stream.readBytes()
+        val payloadText = strictUtf8TextOrNull(bytes)
+        if (payloadText == null || containsDtdDeclaration(payloadText)) {
+            throw EcbHistoryPayloadException(RateHistoryFailureReason.PAYLOAD_MALFORMED)
+        }
+        val document = secureDocumentBuilderFactory().newDocumentBuilder()
+            .parse(InputSource(StringReader(payloadText)))
+        val root = document.documentElement
+            ?: throw EcbHistoryPayloadException(RateHistoryFailureReason.PAYLOAD_EMPTY)
+
+        val datedNodes = ArrayList<Element>()
+        for (outer in childCubes(root)) {
+            for (dated in childCubes(outer)) {
+                if (!dated.hasAttribute("time")) continue
+                datedNodes.add(dated)
+                if (datedNodes.size > MAX_HISTORY_DAYS) {
+                    throw EcbHistoryPayloadException(RateHistoryFailureReason.PAYLOAD_OUT_OF_BOUNDS)
+                }
+            }
+        }
+        if (datedNodes.isEmpty()) {
+            throw EcbHistoryPayloadException(RateHistoryFailureReason.PAYLOAD_EMPTY)
+        }
+
+        val todayUtc = java.time.Instant.ofEpochMilli(nowMillis).atZone(ZoneOffset.UTC).toLocalDate()
+        val dates = HashSet<LocalDate>()
+        for (node in datedNodes) {
+            val text = node.getAttribute("time")
+            if (text.isBlank()) throw EcbHistoryPayloadException(RateHistoryFailureReason.PAYLOAD_MALFORMED)
+            val date = try {
+                LocalDate.parse(text, DateTimeFormatter.ISO_LOCAL_DATE)
+            } catch (_: DateTimeParseException) {
+                throw EcbHistoryPayloadException(RateHistoryFailureReason.PAYLOAD_MALFORMED)
+            }
+            if (!dates.add(date)) {
+                throw EcbHistoryPayloadException(RateHistoryFailureReason.PAYLOAD_MALFORMED)
+            }
+            if (date.isAfter(todayUtc.plusDays(1))) {
+                throw EcbHistoryPayloadException(RateHistoryFailureReason.PAYLOAD_OUT_OF_BOUNDS)
+            }
+        }
+        val newest = dates.max()
+        val oldest = dates.min()
+        if (ChronoUnit.DAYS.between(oldest, newest) > MAX_HISTORY_SPAN_DAYS) {
+            throw EcbHistoryPayloadException(RateHistoryFailureReason.PAYLOAD_OUT_OF_BOUNDS)
+        }
+
+        val days = ArrayList<RateHistoryDay>(datedNodes.size)
+        for (node in datedNodes) {
+            // A dated Cube nested inside a dated Cube is malformed (INV-1b-7).
+            val rateNodes = childCubes(node)
+            if (rateNodes.any { it.hasAttribute("time") }) {
+                throw EcbHistoryPayloadException(RateHistoryFailureReason.PAYLOAD_MALFORMED)
+            }
+            val eurToCurrency = mutableMapOf("EUR" to 1.0)
+            var validChildren = 0
+            for (element in rateNodes) {
+                val currency = element.getAttribute("currency").uppercase(Locale.ROOT)
+                val rate = element.getAttribute("rate").toDoubleOrNull() ?: continue
+                if (currency.isNotBlank() && rate.isFinite() && rate > 0.0) {
+                    eurToCurrency[currency] = rate
+                    validChildren++
+                }
+            }
+            if (validChildren == 0) {
+                throw EcbHistoryPayloadException(RateHistoryFailureReason.PAYLOAD_MALFORMED)
+            }
+            days.add(
+                RateHistoryDay(
+                    date = LocalDate.parse(node.getAttribute("time"), DateTimeFormatter.ISO_LOCAL_DATE),
+                    eurToCurrency = eurToCurrency
+                )
+            )
+        }
+        days.sortByDescending { it.date }
+        return days
+    }
+
+    private fun childCubes(parent: Element): List<Element> {
+        val children = parent.childNodes
+        val result = ArrayList<Element>()
+        for (index in 0 until children.length) {
+            val element = children.item(index) as? Element ?: continue
+            if (element.namespaceURI == ECB_NAMESPACE && element.localName == "Cube") {
+                result.add(element)
+            }
+        }
+        return result
+    }
+
+    /**
+     * Strictly decodes the capped payload as UTF-8. Returns null (treated as malformed by callers) for
+     * malformed/unmappable sequences, any NUL char (UTF-16/UTF-32 interleaving) or a leading U+FEFF
+     * (BOM). Decoding once here and handing the parser a character stream means the parser can never
+     * re-sniff a different encoding that would bypass the DTD pre-scan.
+     */
+    private fun strictUtf8TextOrNull(bytes: ByteArray): String? {
+        val text = try {
+            Charsets.UTF_8.newDecoder()
+                .onMalformedInput(CodingErrorAction.REPORT)
+                .onUnmappableCharacter(CodingErrorAction.REPORT)
+                .decode(ByteBuffer.wrap(bytes))
+                .toString()
+        } catch (_: CharacterCodingException) {
+            return null
+        }
+        if (text.indexOf('\u0000') >= 0 || text.startsWith('\uFEFF')) return null
+        return text
+    }
+
+    /**
+     * True when the decoded payload text contains a DOCTYPE or ENTITY declaration (case-insensitive).
+     * Parser independent, so DTD/entity payloads are rejected on Android where parser features are
+     * unsupported.
+     */
+    internal fun containsDtdDeclaration(text: String): Boolean {
+        return text.contains("<!DOCTYPE", ignoreCase = true) || text.contains("<!ENTITY", ignoreCase = true)
+    }
+
+    /** Byte overload: strict UTF-8 decode first; an undecodable payload is rejected (true). */
+    internal fun containsDtdDeclaration(bytes: ByteArray): Boolean {
+        val text = strictUtf8TextOrNull(bytes) ?: return true
+        return containsDtdDeclaration(text)
     }
 
     internal suspend fun refreshFromStream(homeCurrency: String, stream: InputStream): Int {
@@ -121,9 +515,14 @@ class CurrencyRatesRepositoryImpl @Inject constructor(
     }
 
     internal fun parseEcbDailyRates(stream: InputStream): EcbDailyRates {
+        val bytes = readDailyCapped(stream)
+        val payloadText = strictUtf8TextOrNull(bytes)
+        if (payloadText == null || containsDtdDeclaration(payloadText)) {
+            throw IllegalStateException("RATE_PAYLOAD_MALFORMED")
+        }
         val document = secureDocumentBuilderFactory()
             .newDocumentBuilder()
-            .parse(stream)
+            .parse(InputSource(StringReader(payloadText)))
         val cubeNodes = document.getElementsByTagNameNS(ECB_NAMESPACE, "Cube")
         val datedNodes = buildList {
             for (index in 0 until cubeNodes.length) {
@@ -170,21 +569,72 @@ class CurrencyRatesRepositoryImpl @Inject constructor(
         )
     }
 
+    /**
+     * Builds a namespace-aware factory with every hardening setting applied best-effort. Android's
+     * Harmony/KXml-based factory rejects most of these features and attributes (for example
+     * secure-processing throws ParserConfigurationException), so each setting is applied on its own and
+     * an unsupported one is skipped silently (the exception is never logged). The JVM keeps full
+     * hardening. DTD/entity rejection does not depend on the parser: the payload is strictly decoded as
+     * UTF-8 (NUL/BOM rejected) and [containsDtdDeclaration] is enforced on that text before any
+     * DocumentBuilder is created; the parser then receives the text as an [InputSource] character
+     * stream so it cannot re-detect UTF-16/UTF-32.
+     */
     private fun secureDocumentBuilderFactory(): DocumentBuilderFactory {
         return DocumentBuilderFactory.newInstance().apply {
             isNamespaceAware = true
-            setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true)
-            setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
-            setFeature("http://xml.org/sax/features/external-general-entities", false)
-            setFeature("http://xml.org/sax/features/external-parameter-entities", false)
-            setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false)
+            bestEffortFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true)
+            bestEffortFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
+            bestEffortFeature("http://xml.org/sax/features/external-general-entities", false)
+            bestEffortFeature("http://xml.org/sax/features/external-parameter-entities", false)
+            bestEffortFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false)
 
-            setAttribute(ACCESS_EXTERNAL_DTD_PROPERTY, "")
-            setAttribute(ACCESS_EXTERNAL_SCHEMA_PROPERTY, "")
-
-            isXIncludeAware = false
-            isExpandEntityReferences = false
+            try {
+                setAttribute(ACCESS_EXTERNAL_DTD_PROPERTY, "")
+            } catch (_: IllegalArgumentException) {
+                // Unsupported on this platform; DTDs are rejected by the text pre-scan.
+            }
+            try {
+                setAttribute(ACCESS_EXTERNAL_SCHEMA_PROPERTY, "")
+            } catch (_: IllegalArgumentException) {
+                // Unsupported on this platform.
+            }
+            try {
+                isXIncludeAware = false
+            } catch (_: UnsupportedOperationException) {
+                // Unsupported on this platform.
+            }
+            try {
+                isExpandEntityReferences = false
+            } catch (_: UnsupportedOperationException) {
+                // Unsupported on this platform.
+            }
         }
+    }
+
+    private fun DocumentBuilderFactory.bestEffortFeature(name: String, value: Boolean) {
+        try {
+            setFeature(name, value)
+        } catch (_: ParserConfigurationException) {
+            // Unsupported on this platform (Android); DTDs are rejected by the text pre-scan.
+        }
+    }
+
+    /**
+     * Reads the daily ECB response with a hard cap of [MAX_DAILY_BYTES]. Overflow fails the refresh like a
+     * parse failure (bounded message, no payload content).
+     */
+    private fun readDailyCapped(stream: InputStream): ByteArray {
+        val out = ByteArrayOutputStream()
+        val buffer = ByteArray(READ_BUFFER_BYTES)
+        var total = 0
+        while (true) {
+            val n = stream.read(buffer)
+            if (n < 0) break
+            total += n
+            if (total > MAX_DAILY_BYTES) throw IllegalStateException("RATE_PAYLOAD_TOO_LARGE")
+            out.write(buffer, 0, n)
+        }
+        return out.toByteArray()
     }
 }
 
@@ -192,6 +642,14 @@ internal data class EcbDailyRates(
     val publicationMillis: Long,
     val eurToCurrency: Map<String, Double>
 )
+
+/** Body of a history response; [tooLarge] is the explicit flag behind PAYLOAD_TOO_LARGE (C6). */
+internal class HistoryBody(val bytes: ByteArray, val tooLarge: Boolean)
+
+/** Bounded parser failure of the history file; the message is the enum name only. */
+internal class EcbHistoryPayloadException(
+    val reason: RateHistoryFailureReason
+) : IllegalStateException(reason.name)
 
 internal enum class EcbPublicationDateFailureReason {
     MISSING,

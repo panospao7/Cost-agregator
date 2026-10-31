@@ -32,6 +32,7 @@ import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticKey
 import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticsEmitter
 import com.yourname.expensetracker.domain.privacy.applock.SettingsUnreadableCause
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
+import com.yourname.expensetracker.domain.reminder.BillReminderManager
 import com.yourname.expensetracker.domain.reminder.BillReminderSettings
 import com.yourname.expensetracker.domain.reminder.BillReminderSettingsRepository
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
@@ -139,6 +140,9 @@ abstract class BillReminderWorkerNotificationPresentationContract {
             diagnosticsScope
         )
         val applier = NotificationPresentationApplier(context, texts)
+        // mec merge: installment reminders ride the same worker; this suite covers the recurring post only.
+        val billReminderManager = mockk<BillReminderManager>(relaxed = true)
+        coEvery { billReminderManager.getDueInstallmentReminders() } returns emptyList()
         return TestListenableWorkerBuilder<BillReminderWorker>(context)
             .setWorkerFactory(object : WorkerFactory() {
                 override fun createWorker(
@@ -154,7 +158,8 @@ abstract class BillReminderWorkerNotificationPresentationContract {
                     reminderSettingsRepository,
                     FakeTimeProvider(0L),
                     resolver,
-                    applier
+                    applier,
+                    billReminderManager
                 )
             })
             .build()

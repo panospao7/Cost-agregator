@@ -15,5 +15,6 @@ enum class SideEffectCategory {
     CACHE_INVALIDATION,
     WORKER_SCHEDULING,
     EXPORT_IMPORT,
-    BANK_SYNC
+    BANK_SYNC,
+    INSTALLMENT_PLAN
 }

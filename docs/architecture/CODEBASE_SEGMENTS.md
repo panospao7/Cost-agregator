@@ -2,7 +2,7 @@
 
 Canonical guide for segment ownership and AI analysis.
 
-**Last updated:** 2026-10-24 (app-lock-privacy-mode 1a: Segment 11 and Segment 28 file lists); earlier 2026-10-13 (schema/savings delta verified against source). Database schema version: v151 (`data/database/AppDatabase.kt`).
+**Last updated:** 2026-10-30 (loan-installments S13: assistant INV-1 `Expense.isSpendingNeutralised`, installment reminder as a seventh INV-12 BILL composition site, deep-link boundary note; no schema change); earlier 2026-10-28 (manual-entry-currency / loan-installments merge into ai-evolution: schema v152; added Segment 4 `domain/receipt/statement/*`, Segment 9 `QuickAddSection` / `QuickAddUiMapper`, Segment 40 `InstallmentsFeature`); earlier 2026-10-24 (app-lock-privacy-mode 1a: Segment 11 and Segment 28 file lists), 2026-10-13 (schema/savings delta verified against source). Database schema version: v152 (`data/database/AppDatabase.kt`).
 
 ## Rules
 - One segment list, one ascending order, one owning section per segment.
@@ -55,6 +55,7 @@ Canonical guide for segment ownership and AI analysis.
 | 37 | Spending Challenges | spending challenge creation, tracking, and challenge UI |
 | 38 | Receipt Matching | receipt-to-transaction matching and reconciliation UI |
 | 39 | Static Guardrails & CI Verification | repo-level static guard suite, boundary verifiers, allowlists, CI workflow wiring |
+| 40 | Installment Plans | installment plan and entry state, schedule generation, plan coordinator (sole writer of plan tables), read model and projection port, due-installment recording, plan UI (planned — loan-installments; code lands in slices S2-S10) |
 
 ---
 
@@ -122,6 +123,13 @@ Owns receipt capture, OCR extraction, receipt parsing, scanned-receipt review fl
 - `domain/receipt/ReceiptDocumentType.kt` — Enum: RETAIL_RECEIPT, EMAIL_RECEIPT, BANK_STATEMENT, etc.
 - `domain/receipt/ReceiptProcessingStatus.kt` — Enum: CAPTURED → DELETED (14 values)
 - `domain/receipt/EmailReceiptData.kt` — Structured email receipt data
+- `domain/receipt/statement/TextStatementParser.kt` — Pure, total text-statement parser: picks the layout its header names, falls back to the generic `BankStatementParser` only when no layout matches
+- `domain/receipt/statement/TextStatementLayout.kt` — `TextStatementLayout` interface, `StatementContext` and internal `StatementText` helpers shared by the layouts
+- `domain/receipt/statement/EurobankTransfersLayout.kt` / `EurobankCardLayout.kt` / `NbgAccountLayout.kt` / `RevolutTextLayout.kt` — per-bank statement layouts
+- `domain/receipt/statement/StatementRow.kt` — `StatementLayoutId`, `CurrencyEvidence`, `StatementSkipReason`, `StatementRow`, `TextStatementParseResult`
+- `domain/receipt/statement/StatementImportGate.kt` — Pure per-row processor gate (amount ceiling, mandatory date, source-currency evidence); no row content in summaries
+- `domain/receipt/statement/StatementAmountParser.kt` / `StatementDates.kt` — Statement amount and date parsing helpers
+- `domain/receipt/statement/CounterpartyLabel.kt` — Merchant/account labels for statement transfers; a counterparty IBAN is never part of a label
 - `domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt` — **Single entry point for ALL receipt processing**
 - `domain/receipt/lifecycle/ReceiptLinkService.kt` — Centralized receipt-expense linking (join table)
 - `domain/receipt/lifecycle/ReceiptAssetStore.kt` — File persistence, hashing, backup manifest
@@ -170,6 +178,8 @@ Owns merchant-name normalization and category prediction for ordinary expenses.
 - `data/repository/CategoryRepository.kt`
 - `data/repository/MerchantCategoryRepository.kt`
 
+**Boundary note:** `domain/quickadd/QuickAddLearnedCategoryLookup.kt` (nl-quick-add C2, registered under Segment 9) is a read-only consumer of this segment: it calls only the pure `CategorizationEngine.normalizedCanonicalNameForMerchant()` and `MerchantCategoryRepository.getCategoryByNormalizedCanonical()`. It must never call `categorize*`, `normalize(`, `getCategoryForMerchant`, `MerchantNormalizer` or any write (`MerchantNormalizer.normalize` can insert/update a `merchant_aliases` row even with `autoCreate = false` on a fuzzy match >= 0.95 via `linkAliasToCanonical`, and logs the raw name; it creates a `merchant_canonicals` row only with `autoCreate = true`).
+
 ## SEGMENT 7: Recurring Expenses
 
 Owns recurring pattern detection, future recurring item planning, and the **recurring occurrence lifecycle** (Phase 5).
@@ -198,6 +208,10 @@ Owns recurring pattern detection, future recurring item planning, and the **recu
 - `data/database/dao/RecurringLifecycleEventDao.kt` — DAO for recurring lifecycle events
 - `data/repository/RecurringExpenseRepository.kt`
 - `data/repository/PlannedExpenseRepository.kt`
+
+- `domain/recurring/RecurringInstallmentEligibility.kt` — single installment link-policy gate (INV-5, INV-29) used by the coordinator link paths, `OccurrenceConflictResolver` and `RecurringExpenseEngine.detectPatterns`; holds `dagger.Lazy<InstallmentEntryLinkReader>` (loan-installments S6c-2/2b/3)
+
+**Dependency note (loan-installments S6c):** `domain/recurring` now depends on the `domain/installment` port `InstallmentEntryLinkReader` (read-only; implemented by `data/repository/InstallmentEntryLinkReaderImpl`), plus the pure `InstallmentLinkRelations` / `InstallmentExpenseFacts` types. `domain/installment` has no `domain/recurring` import; the plan side reads recurring-link facts only through `InstallmentExpenseFactsReader` (its impl reads `RecurringOccurrenceDao`, read-only) and never writes recurring tables (INV-25).
 
 **Boundary note:** The `recurring_occurrences`, `recurring_reminder_deliveries`, and `recurring_lifecycle_events` tables are owned by this segment. The `TransactionLifecycleCoordinator` (Segment 9) auto-links new expenses to PLANNED occurrences via `RecurringLifecycleCoordinator.linkExpenseToOccurrence()` as a best-effort post-creation hook.
 
@@ -238,11 +252,21 @@ Owns the base expense CRUD surface, shared core expense models, and the **transa
 - `domain/transaction/LifecycleEventType.kt` — Enum: CREATED, UPDATED, DELETED, etc.
 - `domain/transaction/DeduplicationMode.kt` — Enum: STANDARD, STRICT_EXTERNAL_ID, BULK_IMPORT, etc.
 - `domain/transaction/CreateExpenseRequest.kt` — Source-neutral creation request (40+ fields)
-- `domain/transaction/CreateExpenseResult.kt` — Sealed result (Created, DuplicateSkipped, etc.)
+- `domain/transaction/CreateExpenseResult.kt` — Sealed result (Created, DuplicateSkipped, etc.); `ValidationFailed.rateRefusal` carries a typed `RateRefusal` for user-present refusals
+- `domain/transaction/RateRefusal.kt` — `RateRefusal`, `RateRefusalReason`, `RateRefusalCodes` (manual-entry-currency A2); `CreateExpenseRequest.userPresentRate` / `UserPresentRateRequirement` is the flag for the eligible-rate rule (setters guarded by `ManualEntryCurrencySetterAllowListGuardTest`)
 - `domain/transaction/ExpenseUpdates.kt` — Patch-style update model
 - `domain/transaction/SideEffectMode.kt` — Enum: IMMEDIATE, DEFER
 - `domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt` — **Single entry point for ALL expense CUD**
 - `domain/transaction/lifecycle/TransactionSideEffectDispatcher.kt` — Post-creation side effects
+- `domain/quickadd/QuickAddParser.kt` — Quick-add line parser (C1): pure `parse(QuickAddInput): QuickAddParseResult`; fill-only, no persistence
+- `domain/quickadd/QuickAddModels.kt` — Parser value objects (`QuickAddInput`, `FieldParse`, `QuickAddParseResult`, `FlagReason`, `LineHint`); no raw line, tokens, currency or foreign amount in the result
+- `domain/quickadd/QuickAddAmountRules.kt` — Amount rules; `QuickAddAmountRules.canonicalize` is the single owner of amount canonicalisation
+- `domain/quickadd/QuickAddDateRules.kt` — Date and time-of-day rules (LocalDate arithmetic in the input zone)
+- `domain/quickadd/QuickAddVocabulary.kt` — Date/payment/currency vocabulary and the embedded non-catalog ISO list
+- `domain/quickadd/QuickAddLearnedCategoryLookup.kt` — Quick-add learned-category lookup (C2): suspend and READ-ONLY (pure key + `getCategoryByNormalizedCanonical`); no writes, no logging, CancellationException rethrown; see Segment 6 boundary note
+- `ui/screens/addexpense/QuickAddFillContract.kt` — Quick-add fill contract (C3): `QuickAddField`/`FieldOrigin`/`OutcomeCode`/`CategoryFillSource` enums, the pure apply table (spec 5.3) and outcome function (5.4); the single owner of fillability. Fill writes in-memory form state only; Save is unchanged (`AddExpenseViewModel.save` → `ManualExpenseRepository.addManualExpense` → TLC)
+- `ui/screens/addexpense/QuickAddUiMapper.kt` — Quick-add presentation mapper: pure outcome → `UiText` lines, field notes, category chips and fill-block codes; no persistence
+- `ui/screens/addexpense/QuickAddSection.kt` — Quick-add Compose section of the add-expense sheet (`QuickAddSection`, `QuickAddNoteText`, `QuickAddCategoryChipRow`); renders `QuickAddUiMapper` output only
 - `docs/development/DAO_ACCESS_GUARDRAILS.md` — DAO access policy
 - `scripts/guardrails/dao-access-check.kts` — Guardrail enforcement
 - `util/ImportCoordinator.kt` — CSV/JSON import orchestration (format detection, delegation, result reporting)
@@ -253,6 +277,8 @@ Owns the base expense CRUD surface, shared core expense models, and the **transa
 **Boundary note:** The `transaction_events` table is owned by this segment. It is an immutable append-only log; no updates or deletes should be performed on it.
 
 **Boundary note:** entity provenance/source-link persistence (`domain/provenance/` writers, `entity_source_links` table via `EntitySourceLinkDao`, bound in `di/ProvenanceModule.kt`) rides along with expense lifecycle creation; CI enforces it via `scripts/verify_source_provenance_boundaries.py` (Segment 39).
+
+**Boundary note:** `domain/quickadd/*` (nl-quick-add, G2-10) is a pure, deterministic parser package owned by this segment. It is not a mutation path: the parser performs no persistence, no logging and no clock or locale reads, and its result never carries the typed line. The parser files import nothing from `android.*`, `timber`, `data.*` or `domain.ai`; `now` and the zone arrive through `QuickAddInput`. Quick-add Fill writes in-memory form state only; every persisted effect stays on the existing Save path (`ManualExpenseRepository` to `TransactionLifecycleCoordinator` to `ExpenseDao.insertAtomic()`).
 
 ## SEGMENT 10: Dashboard Totals & Widgets
 
@@ -301,6 +327,7 @@ Owns startup wiring, service lifecycle recovery, and background runtime jobs.
 - `startup/AppStartupDelegate.kt`
 - `startup/AppStartupCoordinator.kt`
 - `startup/AppBackgroundLifecycleObserver.kt`
+- `startup/ProcessAppForegroundState.kt` — process-lifecycle observer (onStart → true, onStop → false, default false) implementing the `domain/ai/service/AppForegroundState` port (ai-fixes B2c); registered only in `AppStartupCoordinator.registerLifecycleObserver`; bound by `di/AppForegroundModule.kt`; no consumer until B2d
 - `data/ai/worker/DailyBriefingWorker.kt`
 - `data/location/LocationBackfillWorker.kt`
 - `data/location/MerchantKeyBackfillWorker.kt`
@@ -311,7 +338,7 @@ Owns startup wiring, service lifecycle recovery, and background runtime jobs.
 - `domain/workers/WorkerExecutionGuard.kt` — Structured guarded execution with restore check, `RetryableWorkerException` retry contract, and notification-permission gate
 - `domain/workers/WorkerRegistry.kt` — Single-source-of-truth registry for all 7 workers (specName + schedule lambda); replaces hardcoded lists in RestoreMaintenanceMode/AppStartupCoordinator
 - `domain/workers/RetryableWorkerException.kt` — Typed retry signal; guard catch precedence: CancellationException → RetryableWorkerException (Retry) → classifyTransient → otherwise permanent Failed
-- `domain/workers/NotificationPermissionChecker.kt` — Guard-enforced notification-permission gate for WarrantyExpirationWorker
+- `domain/workers/NotificationPermissionChecker.kt` — Notification-permission check: guard-enforced for BillReminderWorker; called directly by the optional-notification workers (ReceiptMatchingWorker, DailyBriefingWorker, WarrantyExpirationWorker — ai-fixes B3a)
 - `domain/workers/PrivacyRuntimeWorkerPolicy.kt` — Maps privacy toggles to gated workers; PrivacySettingsRepositoryImpl.applyPrivacyChange() is policy-driven
 - `domain/workers/WorkerDrainController.kt` — Worker drain lifecycle controller
 - `domain/workers/WorkerLease.kt` / `WorkerLeaseRegistry.kt` / `WorkerLeaseRegistryImpl.kt` — Worker lease acquisition for exclusive execution
@@ -397,6 +424,12 @@ Owns currency normalization, exchange-rate handling, multi-currency calculations
 - `domain/core/money/CurrencyFractionDigits.kt` — Single accessor for a currency's minor-unit digits (null when unknown or negative); delegated to by `SourceCurrencyAllocation` and `roundSnapshot`
 - `domain/core/money/SnapshotRounding.kt` — Sole snapshot rounding rule `roundSnapshot(value, home)` (HALF_EVEN, one-minor-unit floor) with sealed `Rounded` / `Unavailable(reason)`
 - `domain/currency/ReadHomeCurrencyState.kt` — Typed read-time home currency (`Loading` / `Available` / `Unavailable(ReadHomeFailure)`), source of H for the CV rule; bounded failure codes only
+- `domain/currency/CurrencyAmountPolicy.kt` — Per-currency amount rules for user-entered amounts (manual-entry-currency A1, no production consumer yet): `fractionDigits` delegates to `CurrencyFractionDigits.of` (null = unavailable, fail closed), static `cap` table, `check(parsed, code)` -> `AmountCheck` (`Ok` / `NotPositive` / `PrecisionExceeded` / `AboveCap` / `DigitsUnavailable`); never rounds
+- `domain/currency/CurrencySelectionPolicy.kt` — Selectable currencies for a new user-present entry (`activeCatalog` - `NO_RATE_SOURCE{BGN, RUB}` + home; `INSTALLMENT` = EUR/USD only) and `resolveProposal` -> `CurrencySelection` (`Selected` / `Unset`); `SupportedCurrency.isActive` untouched
+- `domain/currency/RateEligibilityEvaluator.kt` — Sole decision point for whether a stored rate qualifies for a user-present save (`RateEligibility`: `Home` / `Eligible` / `Stale` / `None` / `Unsupported`); calendar date in an injected entry zone, age <= 7 days, older leg for via-EUR; read-only over `CurrencyConverter.convertOutcome`, no clock, no network, no logging
+- `domain/currency/UserPresentRatePreview.kt` — Read-only use case for entry view models: eligibility plus `roundSnapshot(parsed x rate, home)` preview (`UserPresentRatePreviewResult`); no formatting, no logging
+- `domain/currency/RateRemedyPolicy.kt` — (MEC 1b) Pure sole owner of the remedy choice for a blocked user-present entry (`RateRemedy`: `NONE` / `REFRESH_LATEST` / `DOWNLOAD_HISTORY`; `NoRemedyReason`: `OUTSIDE_HISTORY_WINDOW` / `HISTORY_ALREADY_DOWNLOADED`); refresh first; no clock, store, network or logging
+- `domain/currency/CurrencyRatesRepository.kt` (MEC 1b additions) — `downloadRecentHistory(home)` returning the sealed `CurrencyRateHistoryOutcome` (`Stored` / `DisabledByPrivacy` / `PrivacyCheckFailed` / `AlreadyInProgress` / `Failed(RateHistoryFailureReason)` / `Cancelled`, the last VM-produced only); implemented in `data/repository/CurrencyRatesRepositoryImpl.kt` behind `NetworkPrivacyGate`, stores through `CurrencyConverter.storeRateHistory` (all-or-nothing); entry VMs expose `onDownloadRateHistory` / `onCancelRateHistory`
 
 **Representative files — legacy + new**
 - `domain/currency/CurrencyConverter.kt` — Currency conversion engine
@@ -473,9 +506,22 @@ Owns the app-wide AI platform surface: policy, assistant sheet, AI settings, pro
 - `domain/ai/policy/AiPolicy.kt`
 - `domain/ai/HybridRouter.kt` — Consolidates routing logic previously duplicated across 6 hybrid AI services (cloud/on-device/fallback routing; AID-4)
 - `ui/screens/assistant/AssistantSheet.kt`
+- `ui/screens/assistant/AssistantViewModel.kt` — snapshots prior chat rows before persisting the current turn; does not shape or redact model history
+- `domain/ai/usecase/FinancialQueryInterpretationInputBuilder.kt` — sole constructor of `FinancialQueryInterpretationInput`; model history = prior USER queries only (last `MAX_QUERY_HISTORY_USER_TURNS_FOR_MODEL` = 4), redaction source = `EffectiveCloudAiPolicyResolver`
+- `domain/ai/usecase/AssistantPeriodResolver.kt` — the only assistant period lexicon: EN phrase precedence, model `periodKeyword` (incl. `LAST_WEEK`/`LAST_QUARTER`/`LAST_YEAR`), clarification period choices, the single comparison cue, and calendar-aware `previousEquivalent`; pure (explicit `nowMs` and zone), returns plain values (callers wrap into their own range type)
+- `domain/ai/usecase/CompleteFinancialQueryClarificationUseCase.kt` — pure completion of a structured clarification (`ClarificationCompletion` on the executor period clarification and the fallback presentation clarification): PERIOD sets period and granularity via `AssistantPeriodResolver.resolveChoice`, BREAKDOWN → TOTAL, TRANSACTION_LIST → LIST + grouping NONE; no interpreter/provider/network
+- `ui/components/ai/AssistantClarificationChoiceText.kt` — single exhaustive `ClarificationChoice` → `@StringRes` label mapping (card, sheet and the VM transcript turn); `AssistantViewModel` holds the in-memory live pending clarification (consume-first, expires on new query/result/error/clear; stale options render disabled; never persisted)
+- `data/ai/provider/OnDeviceQueryInterpretationService.kt` / `CloudQueryInterpretationService.kt` — share `buildPrompt`; history rendered as `- USER:` lines only
+- `domain/ai/model/AssistantUnsupportedReason.kt` — closed 7-code enum; the only value `Unsupported` results carry (optional bounded `DiagnosticReasonCode`, never rendered or persisted; the producing site logs it); the model's own unsupported text is discarded
+- `ui/components/ai/AssistantUnsupportedReasonText.kt` — single exhaustive reason → `@StringRes` mapping, used by `AssistantResultCard` and `AssistantViewModel` (persisted text; payload `{"type":"unsupported","reason":"<CODE_NAME>"}`)
 - `domain/ai/model/AssistantHistoryMode.kt` — Enum (OFF/REDACTED/RAW) for conversation history redaction in AiChatRepositoryImpl
 - `ui/screens/aisettings/AiSettingsScreen.kt`
 - `data/ai/provider/DefaultAiEnvironmentMonitor.kt`
+- `data/repository/AiSettingsRepositoryImpl.kt` — `ai_settings` DataStore; `produceMigrations` registers the sole resolver of `ai_transaction_insight_enabled`
+- `data/repository/AiInsightSettingsMigration.kt` — the one never-throwing `DataMigration` (INV-23): stored briefing value wins, else `InstallProvenance` (NEW_INSTALL → on, UPGRADE/UNKNOWN → off); runs before first read and first edit; never overwrites an existing key
+- `domain/ai/service/InstallProvenance.kt` — port (`InstallOrigin` NEW_INSTALL/UPGRADE/UNKNOWN); `data/repository/PackageInstallProvenance.kt` — own-package install/update times only, any failure → UNKNOWN; not Hilt-bound (built from the application context inside `produceMigrations`)
+- `domain/ai/service/AppForegroundState.kt` — port (`isAppInForeground()`, default false = fail-safe skip) for the INV-17 foreground short-circuit; impl `startup/ProcessAppForegroundState.kt` (Segment 12); consumed by `domain/ai/usecase/GenerateTransactionInsightUseCase.kt` (B2d); its registration is pinned by `SourceScanningArchitectureGuardTest`
+- `domain/ai/usecase/GenerateTransactionInsightUseCase.kt` + `TransactionInsightOutcome.kt` — on-device only, foreground-only, never written to `ai_artifacts`; `summaryText` may become recommendation text persisted via the existing `RecommendationRepository.saveAll` path (7-day `expiresAt`, INV-20); recommendations are generated for every outcome when `aiEnabled` (B2d, INV-15..21); returns `Generated`/`Skipped(reason)`; callers `ManualExpenseRepository` and `NotificationProcessingPipeline` consume `outcome.artifactOrNull`
 - `data/ai/provider/StrictAiJsonParsing.kt`
 - `data/ai/provider/DashboardBriefingPromptFormatter.kt`
 - `data/ai/provider/DashboardBriefingResponseParser.kt`
@@ -596,7 +642,7 @@ Owns encrypted key storage and security/network bindings.
 - `domain/privacy/applock/PrivacyDiagnosticsEmitter.kt` — typed, bounded `PrivacyDiagnosticCode` emitter (per-code limiter)
 - `domain/privacy/applock/DiscreetRepostTrigger.kt` — post-commit false → true edge detector; calls `NotificationService.repostActiveAsDiscreet()` (reused by S18)
 - (S20-d: `domain/privacy/applock/UpdateDiscreetNotificationsUseCase.kt` and the unforced `AppLockSettingsRepository.setDiscreetNotifications` are RETIRED; the per-field discreet write → trigger is `AppLockSettingsOperations.requestDiscreetChange`, WRITE 5)
-- `domain/privacy/deeplink/DeepLinkRequest.kt` — validated deep-link value types (`DeepLinkHost`, `DeepLinkParameter`, `DeepLinkLimits`)
+- `domain/navigation/deeplink/DeepLinkRequest.kt` — validated deep-link value types (`DeepLinkHost`, `DeepLinkParameter`, `DeepLinkLimits`). Deliberately outside `domain/privacy` (owner-approvals 92(c)): it is a navigation value type, not a privacy policy.
 - `ui/navigation/DeepLinkParser.kt` — hosts `DeepLinkPolicy` (pure validation, the only `expensetracker://` parser); `ui/navigation/DeepLinkApplier.kt` — the only code that acts on a link; `domain/ai/usecase/MarkDashboardBriefingOpenedUseCase.kt` — the single link-reachable write (INV-16); `domain/analytics/TimePeriodTokens.kt` — shared period allowlist. (No segment owned `ui/navigation` before; the deep-link validation boundary is recorded here because it is a privacy boundary.)
 - `ui/screens/privacysettings/AppLockPrivacySettingsViewModel.kt` + `AppLockPrivacySection.kt` — "App lock & privacy" section (discreet row, review card; S22-a.1: the app lock row, derived from the committed `appLockEnabled` and the controller `state`, plus inline lock notices from the read-only `openOriginEnd` signal; S22-b.1: the timeout row (committed value only, TECH-13 paused picker), the forced-aware secure-screen row, the Android 11 note, the footnote and the full review-card record `{lock, timeout, discreet, secure}` replacing the D2 record); inserted once into `PrivacySettingsScreen.kt`; `PrivacySettingsViewModel` untouched
 - `ui/screens/privacysettings/AppLockEnableDialog.kt` — S22-a.1 "Turn on app lock?" explainer (stateless; Continue/Cancel callbacks only; Android 11 bullet at SDK 30). It names neither the controller, the settings operations, the authenticator nor the relay (pinned); the lock requests `requestEnable` / `requestDisable` are called only from `AppLockPrivacySettingsViewModel`
@@ -731,7 +777,9 @@ Owns global configuration, hot-path performance helpers, and accessibility polis
 Owns warranty tracking, subscription management, bill negotiation, and price protection surfaces.
 
 **Representative files**
-- `data/repository/WarrantyTrackerRepository.kt`
+- `data/repository/WarrantyTrackerRepository.kt` — sole warranty writer (`confirmWarranty`, `reconcileExpiredItems`); no AI/cloud dependency (ai-fixes B1a)
+- `domain/usecase/warranty/AutoCreateWarrantyFromReceiptUseCase.kt` — local-only extraction, no `PrivacyGate`
+- `domain/usecase/warranty/WarrantyReviewState.kt` — single derived review state (`NOT_IN_REVIEW`/`AWAITING_REVIEW`/`EXPIRED_UNCONFIRMED`); never persisted
 - `ui/screens/warranty/WarrantyTrackerScreen.kt`
 - `data/repository/SubscriptionManagementRepository.kt`
 - `ui/screens/subscription/SubscriptionManagementScreen.kt`
@@ -801,6 +849,8 @@ Owns the repo-level static architecture guard suite, boundary verification scrip
 - Retired advisory Kotlin-script guards (lifecycle bypasses, direct time calls, raw money aggregates; never wired into CI) and their file-existence test `GuardSeededViolationTest`; enforcement lives in the `db_access`, `time_boundaries` (G-TIME-01) and `raw_money_aggregates` registered guards
 - `scripts/guardrails/dao-access-check.kts` + `dao-approved-files.txt` — DAO access guardrail with approved-file allowlist
 - `scripts/verify_*_boundaries.py` — Standalone boundary verifiers (privacy, DB access, money, time, UI→DAO, worker, receipt link, cloud payload, cancellation, import lifecycle, source provenance, event writers, migration matrix, DI release, PII logging)
+- `scripts/verify_installment_cloud_reachability.py` — Registered guard `installment_cloud_reachability` (G-INSTALLMENT-CLOUD-01..03): installment plan code must not be referenced from the cloud AI payload surface, which includes 8 exact-file entries (the AI and privacy DI modules plus the five cloud briefing chain files FinancialWeatherRepository, ForecastInputAssembler, SynthesisEngine, NarrativeGenerator, DashboardDataProvider; S8b-1; plus the production adapter DashboardContractsAdapter, owner-approvals 59a) (no allowlist, no baseline); owning segment of the plan code is Segment 40
+- `scripts/verify_spending_predicate_usage.py` — Registered guard `spending_predicate_usage` (G-SPENDING-PREDICATE-01..03): every aggregate `@Query` over `expenses` in `data/database/dao/*.kt` references a qualified `SpendingInclusionSql` constant or carries a `// spending-exempt: <REASON>` marker; DEDUPE_* queries never reference it (INV-8); no allowlist, no baseline
 - `scripts/allowlists/*.yml` — Per-guard allowlists
 - `tools/lifecycle-bypass-guard.groovy` — Gradle-side lifecycle bypass guard
 - `docs/ci/guard-policy.md`, `docs/ci/guard-framework.md` — Guard policy and framework documentation
@@ -809,11 +859,47 @@ Owns the repo-level static architecture guard suite, boundary verification scrip
 
 **Boundary note:** `AGENTS.md` at the repo root governs agent behavior across all segments; `DatabaseSchemaPolicy.kt` (Segment 9/16-adjacent, in `data/database/`) is the single source of truth for schema version and migration baseline consumed by CI (`scripts/verify_migration_matrix.py`).
 
+## SEGMENT 40: Installment Plans
+
+Owns installment plans (loan and pay-in-installments tracking): plan and entry state, schedule generation and date arithmetic, the plan coordinator (the single writer of the plan tables), the read-only read model and projection port, due-installment recording, and plan presentation. Feature (loan-installments) is enabled on the unreleased branch (S13-b; S13-final pending): the cloud reachability guard exists, and (S2) the `installment_plans` / `installment_entries` tables, their entities and `InstallmentPlanDao` exist, with `InstallmentPlanLifecycleCoordinator` (S6a) as their single writer; the remaining plan code lands in later slices of `workflows/active/loan-installments-plan.md`.
+
+**Owner:** `InstallmentPlanLifecycleCoordinator` for every plan/entry write; `InstallmentScheduleCalculator` (pure) for schedules; `InstallmentPlanReadModel` / `InstallmentProjectionPort` (read-only) for reads. Legal path: `docs/architecture/LEGAL_PATHS.md` "Installment Plan Mutations".
+
+**Planned files (proposed locations)**
+- `domain/installment/` — pure domain: `schedule/` (schedule calculator), `model/` (state transitions), `readmodel/` (`InstallmentPlanReadModel`, plan math), `projection/` (`InstallmentProjectionPort`, `InstallmentUpcomingProjection`), `InstallmentPlanReadRepository`, money/date/category policies
+- `domain/schedule/ExpenseScheduleLinkPolicy.kt` — expense ↔ schedule link policy (S5, INV-5; outside `domain/installment/`, so S5 must add this exact file to the plan-code prefixes of `InstallmentPlanArchitectureGuardTest`)
+- `domain/installment/lifecycle/` — `InstallmentPlanLifecycleCoordinator` (S6a; sole writer of plan tables), `InstallmentPlanOperationResults.kt` (typed results and reconcile report), `InstallmentExpenseFactsReader.kt` (read-only port for expense, category and recurring-link facts and the orphan-flag scan)
+- `domain/installment/readmodel/InstallmentPlanReadModel.kt` — pure overview, detail, history, variance and INV-13 suggestion assembly over loaded snapshots (S6a part 2b, domain spec 8.2); `domain/installment/InstallmentPlanReadRepository.kt` — read-only Flow/suspend port (S6a part 2b); `domain/installment/lifecycle/InstallmentLinkRelations.kt` — the one pure builder of `ExpenseScheduleRelations` for an existing link candidate, shared by the coordinator link op and the read repository eligibility check. The facts reader impl also reads `ExpenseDao.getExpensesBetweenUncapped` (read-only range query for the INV-13 suggestion scan)
+- `domain/installment/lifecycle/InstallmentEntryLinkReader.kt` — read-only port (`linkedEntryIdFor`, `isPlanPurchase`, `linkedExpenseIds`, `planPurchaseExpenseIds`) consumed by Segment 7 (`domain/recurring` → `domain/installment` dependency, S6c-2/2b); impl `data/repository/InstallmentEntryLinkReaderImpl.kt` (`InstallmentPlanDao` reads only; bound in `di/InstallmentModule.kt`). The port methods start with the verb `link` but the receiver is not a `*Dao`, so `verify_db_access_boundaries.py` does not extract them (advisory; no guard change)
+- `domain/installment/lifecycle/InstallmentPreBackupReconciler.kt` — runs plan `reconcile()` and dispatches its batches before a `.costbackup` export enters maintenance (S6c-4, INV-30); called only from `DatabaseBackupRepositoryImpl.runCostBackupExport` (Segment 18)
+- `domain/installment/projection/InstallmentProjectionPort.kt` — port plus the pure `InstallmentProjectionRule` (INV-15) (S6a part 2b)
+- `domain/installment/projection/InstallmentUpcomingProjection.kt` — the 31-day, plan-currency, bounded (100 rows) installment row list read through the port, plus the per-currency grouping; never an `UpcomingItem`, and `RecurringPlanProjectionService` (Segment 7) is unchanged (S8b-3)
+- `data/repository/HomeInstallmentWeatherSource.kt` — the Home-only installment-aware weather (S8b-3, A15 option A): the owner of the INV-29 forecast-side exclusion for Home (via `RecurringInstallmentEligibility.excludedSnapshotIds`) and the projected planned inputs (INV-15/16) fed to the UNMODIFIED `ForecastInputAssembler.assemble` → `SynthesisEngine` → `NarrativeGenerator` of Segment 1; read-only; OFF the `installment_cloud_reachability` surface; its only consumer is `HomeViewModel` (Segment 3 Home), which merges it with `ui/screens/home/HomeWeatherMerge.kt` after `compute()` behind `installmentsEnabled`
+- `domain/installment/lifecycle/InstallmentCandidateChargeProbe.kt` — read-only boolean port (`hasCandidate`) for the INV-13 auto-record deferral; impl `data/repository/InstallmentCandidateChargeProbeImpl.kt` (plan DAO reads plus the facts reader; bound in `di/InstallmentModule.kt`; the candidate scan shared with `InstallmentPlanReadRepositoryImpl`) (S7a-1). `InstallmentPlanLifecycleCoordinator.recordDueEntries(today, zone)` (S7a-1) is the due-entry recording entry point: reconcile first, one transaction per entry; its callers are `InstallmentDueRecordingWorker` (S7a-2; implemented in `service/installment/InstallmentDueRecordingWorker.kt`) and the overview (S10; not built yet). `InstallmentPlanTransitions.isAutoRecordApplicable` is the single pure applicability rule
+- `data/repository/` — `InstallmentPlanReadRepositoryImpl` and `InstallmentProjectionPortImpl` (S6a part 2b; read-only, InstallmentPlanDao reads plus the facts reader); `InstallmentExpenseFactsReaderImpl` (S6a; read-only, the only plan-side reader of ExpenseDao, RecurringOccurrenceDao, CategoryDao); `di/InstallmentModule.kt` wiring (S6a)
+- `data/database/model/SpendingExclusionFlagRow.kt` — read-only projection (id + flag name) of `ExpenseDao.getSpendingExclusionFlagRows` for the orphan-flag scan (S6a)
+- `service/installment/` — `InstallmentDueRecordingWorker` only (S7a); no coordinator, read model or port lives here
+- `data/database/` — `installment_plans` / `installment_entries` entities (`InstallmentPlan`, `InstallmentEntry`) and `InstallmentPlanDao` exist (schema 152, S2); the only writer is `InstallmentPlanLifecycleCoordinator` (S6a)
+- `ui/screens/installments/` — overview, detail, history, create/edit screens (entry visible while `InstallmentsFeature.ENABLED = true`, S13-b)
+- `ui/navigation/InstallmentsFeature.kt` — compile-time `ENABLED` gate (S10a). `ENABLED = true` on this unreleased branch since S13-b (owner-approvals 91(b); unreleased under MEC H-1 until MEC 1b). With it false the gate withholds the Features menu entry, redirects installment destinations Home, and rejects the installment deep-link hosts as `UNKNOWN_HOST`
+- **S13 (enablement; status: enabled on the branch, S13-final pending)**
+  - Deep-link rows: `installments` (to the overview) and `installment_plan?id=<positive Long>` (to plan detail) are `DeepLinkHost` entries (S13-a) with the `PLAN_ID` parameter; both require in-app confirmation. Value types live in `domain/navigation/deeplink/DeepLinkRequest.kt` (moved out of the cloud-fenced `privacy/` tree, owner-approvals 92(c)). Rules: LEGAL_PATHS deep-link path. Classifier: `DeepLinkPolicy`; navigation: `DeepLinkApplier`; the manifest filter stays non-BROWSABLE
+  - Confirmation: `ui/MainViewModel` holds the pending confirmation (navigation only after the user confirms, after app-lock release); the dialog is in `MainScreen` inside `AppLockShell`; test `MainViewModelDeepLinkConfirmationTest`
+  - `integration/InstallmentEndToEndScenarioTest` (test tree): AE lifecycle, AE-6 replay, AE-23 diagnostics/payload
+  - Related S13 edits outside this segment: `domain/ai/usecase/ExecuteFinancialQueryUseCase` (S13-0, assistant INV-1 aggregates ignore flagged installment purchases); `BillReminderWorker` (S13-a N2, cancellation not swallowed)
+
+**Boundary notes**
+- Expense rows stay in Segment 9: plan code never touches `ExpenseDao`; expenses are created and flagged only through `TransactionLifecycleCoordinator` DbOnly ops (`createExpenseDbOnlyV2`, `setSpendingExclusionDbOnly`).
+- Recurring rules and occurrences stay in Segment 7; installment schedules are never written to `recurring_occurrences`, `manual_recurring_expenses` or `planned_expenses`. Reminders reuse Segment 36.
+- Segment 7 depends on this segment through the read-only port `InstallmentEntryLinkReader` (new `domain/recurring` → `domain/installment` edge, S6c); `RecurringInstallmentEligibility` (Segment 7) is the consumer. Segment 18 calls `InstallmentPreBackupReconciler` before the export drain (S6c-4).
+- Cloud payload assembly (Segments 20 and 28) must not reference this segment (INV-31); the guard `installment_cloud_reachability` (Segment 39) enforces it. The cloud briefing chain files of Segment 1 (`FinancialWeatherRepository`, `ForecastInputAssembler`, `SynthesisEngine`, `NarrativeGenerator`, `DashboardDataProvider`) stay installment-free; the Home weather merge (`HomeInstallmentWeatherSource` plus `HomeWeatherMerge`, S8b-3) lives beside them, never inside them.
+- Backup, verify and wipe coverage of the plan tables belongs to Segment 18; worker scheduling to Segment 12.
+
 ---
 
 ## Segment Quick Reference
 
-File-to-segment mapping for all 39 segments:
+File-to-segment mapping for all 40 segments:
 
 | # | Segment | Key pattern / issue |
 |---|---|---|
@@ -855,7 +941,8 @@ File-to-segment mapping for all 39 segments:
 | 36 | Bill Reminders | `domain/reminder/`, `BillReminderManager`, `BillReminderSettings`, `ReminderSettingsModule` |
 | 37 | Spending Challenges | `domain/challenge/`, `SpendingChallengeManager` |
 | 38 | Receipt Matching | `domain/receiptmatching/`, `ReceiptTransactionMatcher`, `ReceiptMatchLifecycleService` |
-| 39 | Static Guardrails & CI Verification | `scripts/ci/`, `scripts/guardrails/`, `scripts/allowlists/`, `scripts/verify_*_boundaries.py`, `tools/`, `.github/workflows/ci.yml` |
+| 39 | Static Guardrails & CI Verification | `scripts/ci/`, `scripts/guardrails/`, `scripts/allowlists/`, `scripts/verify_*_boundaries.py`, `scripts/verify_installment_cloud_reachability.py`, `scripts/verify_spending_predicate_usage.py`, `tools/`, `.github/workflows/ci.yml` |
+| 40 | Installment Plans | `installment_plans`, `installment_entries`, `InstallmentPlan`, `InstallmentEntry`, `InstallmentPlanDao` (exist, S2; sole writer `InstallmentPlanLifecycleCoordinator`, S6a); `domain/installment/`; (exist, enabled on this branch at S13) `service/installment/`, `ui/screens/installments/`, `InstallmentScheduleCalculator`, `InstallmentProjectionPort` |
 
 ### Quick checks
 - Forecast issues → Segment 1
@@ -879,3 +966,4 @@ File-to-segment mapping for all 39 segments:
 - Spending challenge issues → Segment 37
 - Receipt matching issues → Segment 38
 - Architecture guard / CI boundary failures → Segment 39
+- Installment plan issues → Segment 40

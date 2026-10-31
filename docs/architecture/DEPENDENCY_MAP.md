@@ -595,7 +595,7 @@ PrivacyDecision.FailClosed(reason)         [domain/privacy/PrivacyDecision.kt]
   ├──► CloudReceiptAssistService
   ├──► CloudReceiptItemCategorizationService
   ├──► CloudReviewExplanationService
-  ├──► CloudWarrantyExtractionService
+  ├──► CloudWarrantyExtractionService        (retained; no production caller since ai-fixes B1a)
   ├──► SmartReceiptAssistService
   ├──► DailyBriefingWorker                   (via WorkerExecutionGuard)
   ├──► DataRetentionWorker                   (via WorkerExecutionGuard)
@@ -804,7 +804,7 @@ PrivacyAuditContext                        [domain/privacy/PrivacyAuditContext.k
 | `BACKGROUND_LOCATION_BACKFILL` | `LocationBackfillWorker` | `data/location/LocationBackfillWorker.kt` |
 | `RAWBACKUP_EXPORT` | `DatabaseBackupRepositoryImpl` | `data/repository/DatabaseBackupRepositoryImpl.kt` |
 | `ENCRYPTED_BACKUP` | `DatabaseBackupRepositoryImpl` | `data/repository/DatabaseBackupRepositoryImpl.kt` |
-| `CLOUD_AI_WARRANTY_EXTRACTION` | `CloudWarrantyExtractionService` | `data/ai/provider/CloudWarrantyExtractionService.kt` |
+| `CLOUD_AI_WARRANTY_EXTRACTION` | `CloudWarrantyExtractionService` (retained, no production caller since ai-fixes B1a; `WarrantyTrackerRepository` and `AutoCreateWarrantyFromReceiptUseCase` no longer inject it or call `PrivacyGate`) | `data/ai/provider/CloudWarrantyExtractionService.kt` |
 | `CLOUD_AI_RECEIPT_ITEM_CATEGORIZATION` | `HybridReceiptItemCategorizationService` | `data/ai/provider/HybridReceiptItemCategorizationService.kt` |
 | `DEVICE_GPS_LOCATION` | `LocationResolver` | `domain/location/LocationResolver.kt` |
 | `OVERPASS_API` | `OverpassNearbyService` | `data/location/OverpassNearbyService.kt` |
@@ -1269,7 +1269,7 @@ All Hybrid services use:
 | `TransactionsViewModel` | NotificationRepository, ExpenseRepository, CategoryRepository, RecurringExpenseRepository, MerchantLocationRepository, TimeProvider, GeocodingService, CurrencySettingsRepository, SourceLinkQueryService |
 | `ReviewViewModel` | NotificationRepository, ReviewQueueRepository, CategoryRepository, ReceiptRepository, ExpenseRepository, DebugDataStorage, GeocodingService, PrivacyGate, ExplainPendingReviewUseCase, SuggestCategoryFallbackUseCase, SuggestReceiptExtractionUseCase, JudgePendingReviewDuplicateUseCase, AiArtifactRepository, AiSettingsRepository, AiRuntimeDiagnostics, ReceiptLifecycleCoordinator, ReceiptDebugExporter |
 | `BudgetViewModel` | BudgetRepository, CategoryRepository, SharedExpenseBudgetOffsetEngine, BudgetAutopilotEngine, TimeProvider, CurrencySettingsRepository, AppDatabase |
-| `AddExpenseViewModel` | ManualExpenseRepository, ExpenseRepository, CategoryRepository, TimeProvider, CurrencySettingsRepository |
+| `AddExpenseViewModel` | ManualExpenseRepository, ExpenseRepository, CategoryRepository, TimeProvider, CurrencySettingsRepository, QuickAddParser, QuickAddLearnedCategoryLookup (→ CategorizationEngine, MerchantCategoryRepository; read-only) |
 | `ReceiptScanViewModel` | ReceiptRepository, CategoryRepository, CurrencySettingsRepository, AiSettingsRepository, SavedStateHandle, TimeProvider, SuggestReceiptExtractionUseCase, SuggestCategoryFallbackUseCase, CategorizeReceiptItemsUseCase, ReceiptItemCategorizationRepository, AiArtifactRepository, AiRuntimeDiagnostics, ReceiptLifecycleCoordinator, ReceiptParser, TransactionLifecycleCoordinator, ReceiptLinkService, MerchantNormalizer, HybridExpenseClassifier |
 | `AnalyticsViewModel` | ExpenseRepository, CategoryRepository, BudgetRepository, InsightsEngine, RecurringExpenseEngine, AnalyticsRepository, AdvancedAnalyticsEngine, AnalyticsCurrencyNormalizer, LocationInsightsEngine, AreaSpendingEngine, TravelDetectionEngine, SpendingPersonalityClassifier, TimeProvider, AnalyticsInputAssembler, CurrencyConverter, CurrencySettingsRepository, BudgetVsActualEngine, DailyBucketEngine |
 | `AdvancedAnalyticsViewModel` | AdvancedAnalyticsDashboard, CurrencySettingsRepository, TimeProvider |
@@ -1288,7 +1288,7 @@ All Hybrid services use:
 | `BankConnectionsViewModel` | BankConnectionLifecycleCoordinator |
 | `ReceiptMatchingViewModel` | ReceiptRepository, ReceiptTransactionMatcher, ReceiptLinkService, ReceiptMatchLifecycleService |
 | `AiSettingsViewModel` | AiSettingsRepository, GetAiRuntimeStatusUseCase, AiRuntimeDiagnostics, SyncProactiveBriefingWorkUseCase, SecureKeyStorage, PrivacyGate, CloudProviderConnectionTester |
-| `AssistantViewModel` | Application, AiSettingsRepository, AiChatRepository, GetAiRuntimeStatusUseCase, InterpretFinancialQueryUseCase, ExecuteFinancialQueryUseCase, MapFinancialQueryToNavigationUseCase, PrivacySettingsRepository, MonotonicTimeProvider |
+| `AssistantViewModel` | Application, AiSettingsRepository, AiChatRepository, GetAiRuntimeStatusUseCase, InterpretFinancialQueryUseCase, ExecuteFinancialQueryUseCase, CompleteFinancialQueryClarificationUseCase, MapFinancialQueryToNavigationUseCase, MonotonicTimeProvider |
 | `BillRemindersViewModel` | BillReminderManager, CurrencySettingsRepository |
 | `RecurringExpensesViewModel` (inline in RecurringExpensesScreen.kt) | FinancialWeatherRepository, RecurringExpenseRepository, PlannedExpenseRepository, RecurringExpenseEngine, ExpenseRepository, CurrencySettingsRepository, TimeProvider |
 | `ManualRecurringExpenseViewModel` | ManualRecurringExpenseRepository, TimeProvider, CurrencySettingsRepository |

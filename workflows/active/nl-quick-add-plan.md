@@ -1,7 +1,7 @@
 # Feature plan: nl-quick-add (increment 1 — typed, deterministic, fill-only)
 
 Author: feature-planner (stage 6). Persisted by the orchestrator. Date 2026-10-16.
-Status: AWAITING OWNER PLAN APPROVAL (Gate 3). No `app/` edits until S0 passes. Implementation only after Release 1.0 accepted + `release-1.0-wt` merged + ai-fixes B2d landed; must land before loan-installments S11.
+Status: PLAN APPROVED 2026-10-16 (Gate 3; header corrected 2026-10-21 by orchestrator, see handoff). No `app/` edits until S0 passes. Implementation only after Release 1.0 accepted + `release-1.0-wt` merged + ai-fixes B2d landed; must land before loan-installments S11.
 
 - Risk tier: **T2 (upper end)**; slice E T3 by rule (new guards; impact map §5, G2-18).
 - Basis: `docs/features/nl-quick-add/impact-map.md` (trusted), `gate2-decisions.md` (G2-1..G2-18 DECIDED = Recommended), `domain-spec.md` §1–§3, §5, §7, §11–§13, `ux-flows.md` §2–§11, `workflows/active/ai-fixes-plan.md` (format, shard/guard facts).
@@ -193,3 +193,63 @@ Increment 1b currency (needs manual-entry-currency); time-of-day tokens; `skippe
 - D-11 `db_access` treatment of a repository read from `domain/quickadd`.
 - D-12 JVM Compose UI test harness (else F = mapper tests only).
 - D-13 names of existing ManualExpenseRepository/TLC dedup + insertAtomic pin tests (AE-41/42/43).
+
+
+## Amendment (2026-10-27) — S0 reconciliation (feature-planner; orchestrator-persisted; BINDING)
+S0 anchors: see the handoff "S0 discovery (2026-10-27)". No N-item fired. N8 (borderline) is resolved as: D shrinks, A is unchanged.
+
+### Verdicts
+1. N10: PURE.
+   - normalizedCanonicalNameForMerchant (CategorizationEngine :514-517) is `greeklishNormalizer.normalize(canonicalizer.canonicalize(m.lowercase()).canonicalName)`. MerchantCanonicalizer :13 and GreeklishNormalizer :8 are dependency-free @Inject classes with no logging, I/O or shared mutable state.
+   - getCategoryByNormalizedCanonical (MerchantCategoryRepository :49-51) is a pure deterministic DAO read (MerchantCategoryDao :44-50). It has NO production caller today; C is the first consumer, so it needs an explicit test.
+   - G-4's `normalize(` ban does not match `normalizedCanonicalNameForMerchant(`.
+2. D-11: NO allowlist entry is expected.
+   - verify_db_access_boundaries.py detects DAOs by a `*Dao` type or a `database.xxxDao()` local (:1562-1573). A repository-typed constructor parameter is not a finding.
+   - Precedent: CategorizationEngine and TransactionSideEffectPlanner already do this.
+   - Empirical gate: db_access, then db_artifact_sync after C.
+   - On any finding: N1 STOP. No baseline, allowlist or policy edit.
+3. D-9: a JVM Room harness exists (Room.inMemoryDatabaseBuilder in 15+ tests; template NotificationIntakeEnqueueFailureRoomTest :65-66, :90-91).
+   - H-1: write-counting fakes stay primary.
+   - Add one literal Robolectric row-count assertion in QuickAddLearnedCategoryLookupTest (merchant_categories and expenses counts unchanged).
+4. Slice D (OD-1): the headline defect is ABSORBED by R16 (VM setInitialValuesIfBlank uses AmountUtils.parseAmount, which is locale-independent). D is REDUCED to:
+   - (a) canonical parser output via B's canonicaliser: first match only, existing 0.01..100000 range check, currency symbols still ignored;
+   - (b) H-3 fail-closed: "1.500", "3,500", "1,234" and >2 decimals give null (no prefill, no FAB chip);
+   - (c) no MainActivity edit: the FAB chip shows the canonical value.
+   Test changes:
+   - AddExpenseViewModelTest :254/:261/:268 do NOT change (they test the VM directly).
+   - ClipboardAmountParserTest: :14-20 "1,234.56" → "1234.56"; :22-29 "11,234.56" → "11234.56" (rename); :31-38 unchanged.
+   - New parser cases: 12,50 / 12.50 / 1.234,56 / 1.500 / 3,500 / 3-decimals.
+   - One VM case: setInitialValuesIfBlank("12.50") gives "12.50".
+   D stays a separate slice (RS review; ui/util; revertible). Order: A, B, D, C.
+5. Slice A state shape:
+   - merchantError and amountError become `UiText?` (:49-50); `SaveResult.Error(val message: UiText)` (:69).
+   - Reuse ui/components/UiTextExtensions.kt resolvers.
+   - Seam for MEC: `private fun mapSaveError(result: Result.Error): UiText`, a `when` on bounded constants whose default is add_expense_error_save_failed. It is non-suspend and never displays the repo message.
+   - Optional `withSaveError` helper.
+   - Transfer messages (:317, :323) and OwnershipValidator messages (:345; fixed English literals at OwnershipValidator.kt:28-55) are user-safe constants wrapped as UiText.DynamicString. OwnershipValidator is NOT edited: it is shared with TransactionsViewModel :822/:829 (N9).
+   - Raw sites (:420, :431, :444) go through mapSaveError to save_failed.
+   - No suspend fun is added to the VM.
+   - A capturing Timber tree is added to the test.
+   - The Sheet renders UiText at :551-563, plus scrollState (:88) and Card liveRegion = Assertive.
+6. A then B write sets are DISJOINT. One implementer runs A, B, D, C in sequence.
+   - B's canonicaliser is a public, separately callable pure function (D imports it from ui/util).
+   - B must NOT call AmountUtils.parseAmount in production, because it logs bounded codes. Use it in test assertions only (INV-5).
+7. Filters (multi-pattern):
+   - A: `*AddExpense*,*CancellationSafetyArchitectureGuardTest*`, then lint, runtime-ui, architecture-contracts, static-guards.
+   - B: `*QuickAddParser*,*AmountUtilsTest*`, then domain-n-z (the report lists QuickAddParserGoldenTest and QuickAddParserPurityTest), then static-guards.
+   - D: `*ClipboardAmountParserTest*,*AddExpense*,*QuickAddParser*,*AmountUtilsTest*`, then runtime-ui.
+   - C: `*QuickAddLearnedCategoryLookup*,*QuickAddFillContract*,*AddExpense*,*MerchantKeyGeneratorTest*,*CategorizationEngineTest*,*ManualExpenseRepository*,*TransactionLifecycleCoordinator*`, then runtime-ui, domain-n-z, db_access, db_artifact_sync, static-guards. No connected test.
+   - Batched A+B: `*AddExpense*,*CancellationSafetyArchitectureGuardTest*,*QuickAddParser*,*AmountUtilsTest*`.
+
+### VERIFY-AT-IMPL
+- The FAB chip render site below MainActivity :963.
+- The AmountUtils.parseAmount dot-only branch ("1.500").
+- The Sheet component type at :180.
+- UiTextExtensions :42 composability.
+- Whether string assertions on merchantError/amountError exist in the VM test.
+- The duplicate-path resource at Sheet :537-549.
+- The architecture tests for a domain → data.repository rule.
+
+### Decisions (orchestrator, standing approval; owner-approvals item 54)
+- Localising the 2 transfer messages and the 5 OwnershipValidator messages is DEFERRED to a follow-up recorded at Z. They are kept as English constants in UiText.DynamicString.
+- The FAB chip shows the canonical clipboard value; no MainActivity edit.

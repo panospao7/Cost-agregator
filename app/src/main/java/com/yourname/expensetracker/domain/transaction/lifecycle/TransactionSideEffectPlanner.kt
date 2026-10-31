@@ -10,14 +10,24 @@ import com.yourname.expensetracker.domain.budget.BudgetMonitor
 import com.yourname.expensetracker.domain.diagnostics.AppPipeline
 import com.yourname.expensetracker.domain.diagnostics.CorrelationIds
 import com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata
+import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentOpResult
+import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentPlanLifecycleCoordinator
+import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentReconcileReport
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
 import com.yourname.expensetracker.domain.sideeffect.*
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
 import com.yourname.expensetracker.domain.transaction.SourceLearningPolicy
 import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.Lazy
+import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
+
+// Bounded failure reasons of the installment reaction (never a message, id or text).
+private const val INSTALLMENT_REASON_NOT_DONE = "installment_reaction_not_done"
+private const val INSTALLMENT_REASON_RECONCILE_INCOMPLETE = "installment_reaction_reconcile_incomplete"
+private const val INSTALLMENT_REASON_DISPATCH_FAILED = "installment_reaction_dispatch_failed"
+private const val INSTALLMENT_REASON_EXCEPTION = "installment_reaction_exception"
 
 @Singleton
 class TransactionSideEffectPlanner @Inject constructor(
@@ -28,7 +38,13 @@ class TransactionSideEffectPlanner @Inject constructor(
     private val recurringLifecycleCoordinator: Lazy<RecurringLifecycleCoordinator>,
     private val expenseDao: ExpenseDao,
     private val categoryDao: CategoryDao,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    // Loan-installments S6c-1: Lazy because the plan coordinator depends on the transaction
+    // lifecycle coordinator, which depends on this planner.
+    private val installmentPlanLifecycleCoordinator: Lazy<InstallmentPlanLifecycleCoordinator>,
+    // The same executor TLC uses for its own batches; the installment reaction runs the batches
+    // the plan coordinator returns in Done.postCommit through it and never drops them.
+    private val postCommitActionRunner: Lazy<PostCommitActionRunner>
 ) {
 
     fun planCreated(
@@ -63,6 +79,11 @@ class TransactionSideEffectPlanner @Inject constructor(
             TransactionUpdateKind.LOCATION_ONLY -> {
                 return PostCommitActionBatch.empty(corrId)
             }
+            TransactionUpdateKind.SPENDING_INCLUSION -> {
+                // The flag changes what counts toward budgets; the row itself (merchant,
+                // amount, category) is unchanged, so only the budget recheck is needed.
+                actions.add(makeBudgetCheckAction(expenseId, ExpenseSource.UNKNOWN, corrId, SideEffectTriggerType.EXPENSE_UPDATED))
+            }
             TransactionUpdateKind.CATEGORY_ONLY, TransactionUpdateKind.BUSINESS_FLAGS_ONLY -> {
                 actions.add(makeBudgetCheckAction(expenseId, ExpenseSource.UNKNOWN, corrId, SideEffectTriggerType.EXPENSE_UPDATED))
                 actions.add(makeAnomalyAlertAction(expenseId, source, corrId, SideEffectTriggerType.EXPENSE_UPDATED))
@@ -86,7 +107,51 @@ class TransactionSideEffectPlanner @Inject constructor(
             actions.add(makeMerchantCategoryLearningAction(expenseId, source, corrId, SideEffectTriggerType.EXPENSE_UPDATED))
         }
 
+        // Loan-installments S6c-1: re-check the plans the expense belongs to (R1, R3, R4, R6).
+        // Appended last so the relative order of the existing actions is unchanged.
+        if (installmentReactionRequired(kind)) {
+            actions.add(makeInstallmentChangedAction(expenseId, source, corrId))
+        }
+
         return PostCommitActionBatch(corrId, actions)
+    }
+
+    /**
+     * Whether an update kind can change what the installment reconcile rules read (money and type
+     * facts of a linked expense or plan purchase: currency, spending type). Exhaustive on purpose:
+     * a new [TransactionUpdateKind] must be classified here. A superset would be safe because the
+     * reaction is idempotent; a missed kind is only repaired by the next reconcile.
+     */
+    private fun installmentReactionRequired(kind: TransactionUpdateKind): Boolean = when (kind) {
+        // May change any field, including type and currency.
+        TransactionUpdateKind.FULL -> true
+        // R4: a type change away from a spending type unlinks a PAID entry.
+        TransactionUpdateKind.TYPE -> true
+        // R4: a currency change away from the plan currency unlinks a PAID entry.
+        TransactionUpdateKind.CURRENCY -> true
+        // Transfer direction and account name only; it changes neither type nor currency. Kept in
+        // the reacting set as a deliberate superset (A13): the reaction is idempotent.
+        TransactionUpdateKind.TRANSFER_DETAILS -> true
+        // Payment core edits can move amount, currency and type together.
+        TransactionUpdateKind.PAYMENT_CORE -> true
+        // Loop breaker: the plan coordinator's own spending-flag writes plan this kind;
+        // reacting would re-enter the coordinator on its own writes.
+        TransactionUpdateKind.SPENDING_INCLUSION -> false
+        // A category edit leaves plan rows and events untouched (AE-20).
+        TransactionUpdateKind.CATEGORY_ONLY -> false
+        // Location is neither money nor type (and the batch is empty anyway).
+        TransactionUpdateKind.LOCATION_ONLY -> false
+        // Business flags are neither money nor type.
+        TransactionUpdateKind.BUSINESS_FLAGS_ONLY -> false
+        // Merchant text is not read by R1 to R6.
+        TransactionUpdateKind.MERCHANT -> false
+        // Amount-only edits are not part of R1 to R6 (drift is currency and type only); a flagged
+        // purchase's amount is locked by INV-22. Reconcile is the backstop.
+        TransactionUpdateKind.AMOUNT -> false
+        // The date is not read by R1 to R6.
+        TransactionUpdateKind.DATE -> false
+        // Ownership (not mine, share) is not read by R1 to R6.
+        TransactionUpdateKind.OWNERSHIP -> false
     }
 
     fun planDeleted(
@@ -97,7 +162,8 @@ class TransactionSideEffectPlanner @Inject constructor(
         val corrId = correlationId ?: CorrelationIds.newId()
         val actions = listOf(
             makeBudgetCheckAction(expenseId, ExpenseSource.UNKNOWN, corrId, SideEffectTriggerType.EXPENSE_DELETED),
-            makeRecurringUnlinkAction(expenseId, source, corrId)
+            makeRecurringUnlinkAction(expenseId, source, corrId),
+            makeInstallmentDeletedAction(expenseId, source, corrId)
         )
         return PostCommitActionBatch(corrId, actions)
     }
@@ -419,6 +485,118 @@ class TransactionSideEffectPlanner @Inject constructor(
             }
         }
     }
+
+    // --- Installment plan reaction (loan-installments S6c-1) ---
+
+    private fun makeInstallmentChangedAction(
+        expenseId: Long,
+        source: String,
+        correlationId: String
+    ): PostCommitAction = makeInstallmentReactionAction(
+        name = "installment_expense_changed",
+        triggerType = SideEffectTriggerType.EXPENSE_UPDATED,
+        idempotencyKey = "expense:$expenseId:updated:installment_changed",
+        expenseId = expenseId,
+        source = source,
+        correlationId = correlationId
+    ) { coordinator -> coordinator.onExpenseChanged(expenseId) }
+
+    private fun makeInstallmentDeletedAction(
+        expenseId: Long,
+        source: String,
+        correlationId: String
+    ): PostCommitAction = makeInstallmentReactionAction(
+        name = "installment_expense_deleted",
+        triggerType = SideEffectTriggerType.EXPENSE_DELETED,
+        idempotencyKey = "expense:$expenseId:deleted:installment_deleted",
+        expenseId = expenseId,
+        source = source,
+        correlationId = correlationId
+    ) { coordinator -> coordinator.onExpenseDeleted(expenseId) }
+
+    /**
+     * Calls the plan coordinator, dispatches every returned `Done.postCommit` batch through the
+     * runner TLC uses (even when the report counts failures: those batches are already committed),
+     * then maps the result. FailedRetryable on a non-Done result, plansFailed or orphanFlagsFailed
+     * above zero, a batch dispatch failure, or any exception (a closed write barrier included).
+     * CancellationException is rethrown. Diagnostics carry bounded constants and class simple
+     * names only.
+     */
+    private fun makeInstallmentReactionAction(
+        name: String,
+        triggerType: SideEffectTriggerType,
+        idempotencyKey: String,
+        expenseId: Long,
+        source: String,
+        correlationId: String,
+        react: suspend (InstallmentPlanLifecycleCoordinator) -> InstallmentOpResult<InstallmentReconcileReport>
+    ): PostCommitAction {
+        return PostCommitAction(
+            pipeline = AppPipeline.TRANSACTION,
+            name = name,
+            category = SideEffectCategory.INSTALLMENT_PLAN,
+            triggerType = triggerType,
+            targetEntityType = "EXPENSE",
+            targetEntityId = expenseId,
+            source = source,
+            correlationId = correlationId,
+            causationId = null,
+            idempotencyKey = idempotencyKey,
+            metadata = SafeEventMetadata.builder()
+                .put("expenseId", expenseId.toString())
+                .build()
+        ) {
+            try {
+                settleInstallmentResult(react(installmentPlanLifecycleCoordinator.get()))
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                Timber.w("Installment reaction failed: %s", e.javaClass.simpleName)
+                SideEffectOutcome.FailedRetryable(INSTALLMENT_REASON_EXCEPTION, e.javaClass.simpleName)
+            }
+        }
+    }
+
+    private suspend fun settleInstallmentResult(
+        result: InstallmentOpResult<InstallmentReconcileReport>
+    ): SideEffectOutcome {
+        if (result !is InstallmentOpResult.Done) {
+            return SideEffectOutcome.FailedRetryable(INSTALLMENT_REASON_NOT_DONE, result.javaClass.simpleName)
+        }
+        // Dispatch first: the batches belong to transactions that already committed.
+        val dispatchFailureClass = dispatchInstallmentBatches(result.postCommit)
+        val report = result.value
+        return when {
+            report.plansFailed > 0 || report.orphanFlagsFailed > 0 ->
+                SideEffectOutcome.FailedRetryable(INSTALLMENT_REASON_RECONCILE_INCOMPLETE, "InstallmentReconcileReport")
+            dispatchFailureClass != null ->
+                SideEffectOutcome.FailedRetryable(INSTALLMENT_REASON_DISPATCH_FAILED, dispatchFailureClass)
+            report.changedRowCount() > 0 -> SideEffectOutcome.Completed
+            else -> SideEffectOutcome.Skipped(SideEffectSkipReason.NO_WORK)
+        }
+    }
+
+    /**
+     * Runs each batch in order; one failing batch does not stop the rest. Returns the simple class
+     * name of the first non-cancellation failure, or null. Cancellation is rethrown.
+     */
+    private suspend fun dispatchInstallmentBatches(batches: List<PostCommitActionBatch>): String? {
+        if (batches.isEmpty()) return null
+        val runner = postCommitActionRunner.get()
+        var failureClass: String? = null
+        for (batch in batches) {
+            if (batch.actions.isEmpty()) continue
+            try {
+                runner.run(batch)
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                if (failureClass == null) failureClass = e.javaClass.simpleName
+            }
+        }
+        return failureClass
+    }
+
+    private fun InstallmentReconcileReport.changedRowCount(): Int =
+        r1Reflagged + r2Reopened + r3Reflagged + r4Unlinked + r5Detached + r6Completed + orphanFlagsCleared
 
     // --- Bulk action factory methods ---
 

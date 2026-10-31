@@ -61,11 +61,3 @@
   owner: "@panospao7"
   expires: "2027-01-01"
   linked_issue: "MIT-003"
-
-- rule: G-WORKER-01
-  path: app/src/main/java/com/yourname/expensetracker/service/warranty/WarrantyExpirationWorker.kt
-  symbol: WarrantyExpirationWorker.broadCatch
-  reason: "Pre-existing warranty worker — broad catch for structured diagnostics (catch (e: Exception) at outer scope), worker uses WorkerExecutionGuard"
-  owner: "@panospao7"
-  expires: "2027-01-01"
-  linked_issue: "MIT-003"

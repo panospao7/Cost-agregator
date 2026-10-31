@@ -16,9 +16,10 @@ import com.yourname.expensetracker.data.database.entity.RecurringOccurrence
 import com.yourname.expensetracker.data.database.entity.RecurringReminderDelivery
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.recurring.OccurrenceConflictResolver
+import com.yourname.expensetracker.domain.recurring.RecurringInstallmentEligibility
+import com.yourname.expensetracker.domain.recurring.RecurringLinkTypeEligibility
 import com.yourname.expensetracker.domain.recurring.RecurringOccurrenceExpander
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringOccurrenceMaterializer.MaterializationResult
-import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.transaction.DomainTransactionRunner
 import com.yourname.expensetracker.domain.util.CancellationSafe
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
@@ -75,7 +76,10 @@ class RecurringLifecycleCoordinator @Inject constructor(
     private val restoreMaintenanceMode: RestoreMaintenanceMode,
     private val writeBarrier: DatabaseWriteBarrier,
     private val plannedExpenseDao: PlannedExpenseDao,
-    private val transactionRunner: DomainTransactionRunner
+    private val transactionRunner: DomainTransactionRunner,
+    // The installment half of the link gate (INV-5). It holds the plan reader as a Lazy, so
+    // constructing this coordinator never builds the reader (A13 common rule).
+    private val installmentEligibility: RecurringInstallmentEligibility
 ) {
     companion object {
         /** Source type used for manual recurring rules. */
@@ -339,7 +343,10 @@ class RecurringLifecycleCoordinator @Inject constructor(
      * 3. Merchant key matches (case-insensitive, via [MerchantKeyGenerator]).
      * 4. Amount within ±10% tolerance of the expected amount.
      * 5. Same currency (case-insensitive).
-     * 6. Expense is not excluded: isNotMine, TRANSFER, and DEPOSIT are skipped.
+     * 6. Expense is not excluded: isNotMine, TRANSFER, DEPOSIT, and UNKNOWN are skipped, through
+     *    [RecurringLinkTypeEligibility.mayCreateLink] (owner item 37(b)).
+     *    Installment-linked expenses and installment plan purchases are also
+     *    refused, via [RecurringInstallmentEligibility] (INV-5).
      *
      * All database operations (read + write) execute inside a single transaction
      * to ensure atomicity: the occurrence lookup and the claim happen as one
@@ -354,10 +361,7 @@ class RecurringLifecycleCoordinator @Inject constructor(
         val expense = expenseDao.getById(expenseId) ?: return false
 
         // Exclude non-ownership and non-spending types
-        if (expense.isNotMine) return false
-        if (expense.transactionType == TransactionType.TRANSFER ||
-            expense.transactionType == TransactionType.DEPOSIT
-        ) return false
+        if (!RecurringLinkTypeEligibility.mayCreateLink(expense.transactionType, expense.isNotMine)) return false
 
         val expenseDayStart = TimePeriodUtils.getStartOfDay(expense.date)
         val expenseDayEnd = TimePeriodUtils.getEndOfDay(expense.date)
@@ -529,7 +533,7 @@ class RecurringLifecycleCoordinator @Inject constructor(
         ) {
             database.withTransaction {
                 val expense = expenseDao.getById(expenseId)
-                if (expense == null || !isExpenseEligibleForRecurring(expense)) {
+                if (expense == null || !isExpenseEligibleForRecurring(expense, existingLink = false)) {
                     return@withTransaction ClaimLinkResult(ClaimLinkOutcome.EXPENSE_NOT_ELIGIBLE)
                 }
 
@@ -648,8 +652,7 @@ class RecurringLifecycleCoordinator @Inject constructor(
         if (!result) {
             val expense = expenseDao.getById(expenseId)
             if (expense == null) return RecurringExpenseReconcileResult.Skipped(expenseId, "expense_missing")
-            if (expense.isNotMine || expense.transactionType == TransactionType.TRANSFER ||
-                expense.transactionType == TransactionType.DEPOSIT)
+            if (!isExpenseEligibleForRecurring(expense, existingLink = false))
                 return RecurringExpenseReconcileResult.Skipped(expenseId, "expense_not_eligible")
             // Distinct bounded reason when the expense already holds an occurrence (it is
             // never linked twice) so it is not misreported as "no match".
@@ -693,7 +696,8 @@ class RecurringLifecycleCoordinator @Inject constructor(
 
         // If still matches the same occurrence, update payment snapshot
         if (linked != null) {
-            if (isExpenseEligibleForRecurring(expense) && expenseMatchesOccurrence(expense, linked)) {
+            // Keep-check of an EXISTING link (owner item 37(b), R2): an UNKNOWN expense keeps its link.
+            if (isExpenseEligibleForRecurring(expense, existingLink = true) && expenseMatchesOccurrence(expense, linked)) {
                 val now = timeProvider.now()
 
                 // MIT-043: Wrap snapshot update + event in a single transaction
@@ -738,8 +742,8 @@ class RecurringLifecycleCoordinator @Inject constructor(
             unlinkExpenseFromOccurrence(expenseId, "no_longer_matches_after_update")
             val oldOccurrenceId = linked.id
 
-            // Try to re-link if still eligible
-            if (isExpenseEligibleForRecurring(expense)) {
+            // Try to re-link if still eligible. The old link was just removed, so this is a NEW link.
+            if (isExpenseEligibleForRecurring(expense, existingLink = false)) {
                 val relinkResult = linkExpenseToOccurrenceDetailed(expenseId, "expense_update_relink")
                 if (relinkResult is RecurringExpenseReconcileResult.Linked) {
                     return RecurringExpenseReconcileResult.Relinked(expenseId, oldOccurrenceId, relinkResult.occurrenceId)
@@ -748,8 +752,8 @@ class RecurringLifecycleCoordinator @Inject constructor(
             return RecurringExpenseReconcileResult.Unlinked(expenseId, oldOccurrenceId, "no_new_match_after_update")
         }
 
-        // Not linked — try to link if eligible
-        if (!isExpenseEligibleForRecurring(expense)) {
+        // Not linked — try to link if eligible (a NEW link)
+        if (!isExpenseEligibleForRecurring(expense, existingLink = false)) {
             return RecurringExpenseReconcileResult.Skipped(expenseId, "expense_not_eligible")
         }
 
@@ -796,12 +800,43 @@ class RecurringLifecycleCoordinator @Inject constructor(
         val hasFailures: Boolean get() = failed > 0
     }
 
-    private fun isExpenseEligibleForRecurring(expense: com.yourname.expensetracker.data.database.entity.Expense): Boolean {
-        if (expense.isNotMine) return false
-        if (expense.transactionType == TransactionType.TRANSFER ||
-            expense.transactionType == TransactionType.DEPOSIT
-        ) return false
-        return true
+    /**
+     * The eligibility gate for the coordinator's link paths: the auto-link, the manual link and the
+     * post-update reconcile all go through it. The occurrence generation path (create / activate /
+     * top-up / update and [projectOccurrences] through [OccurrenceConflictResolver]) consults the
+     * same installment decision in batch form (S6c-2b); both forms live in
+     * [RecurringInstallmentEligibility], so the decision exists once.
+     *
+     * Two layers, in order:
+     * 1. Recurring's own type/ownership rules, owned by [RecurringLinkTypeEligibility] (owner item
+     *    37(b)): a NEW link ([existingLink] false, [RecurringLinkTypeEligibility.mayCreateLink]) refuses
+     *    a not-mine expense, a TRANSFER, a DEPOSIT and an UNKNOWN expense. Re-validating an EXISTING
+     *    link ([existingLink] true, [RecurringLinkTypeEligibility.mayKeepLink], the reconcile
+     *    "still matches" check that the bulk-update reconcile also runs) refuses only not-mine,
+     *    TRANSFER and DEPOSIT, so an existing link on an UNKNOWN expense is kept and a bulk edit never
+     *    reverts PAID to PLANNED (decision 46(a), R2).
+     * 2. INV-5 schedule exclusivity, delegated to [RecurringInstallmentEligibility]: an expense that
+     *    pays an installment entry, or is a plan purchase record ("plan row OR flag", including an
+     *    orphaned INSTALLMENT_PURCHASE / INSTALLMENT_REVERSED flag), is refused.
+     *
+     * A refusal is reported as "expense not eligible", the existing ineligible outcome. An existing
+     * link of the expense to a recurring occurrence is not a refusal reason here: uniqueness between
+     * occurrences stays with [claimLinkSuppressInWrite], so a link to the same occurrence still passes.
+     *
+     * When called inside [claimLinkSuppressInWrite] the plan reads join that Room transaction.
+     */
+    private suspend fun isExpenseEligibleForRecurring(
+        expense: com.yourname.expensetracker.data.database.entity.Expense,
+        existingLink: Boolean
+    ): Boolean {
+        val layerOneOk = if (existingLink) {
+            RecurringLinkTypeEligibility.mayKeepLink(expense.transactionType, expense.isNotMine)
+        } else {
+            RecurringLinkTypeEligibility.mayCreateLink(expense.transactionType, expense.isNotMine)
+        }
+        if (!layerOneOk) return false
+
+        return installmentEligibility.mayLinkToRecurringOccurrence(expense)
     }
 
     private fun expenseMatchesOccurrence(

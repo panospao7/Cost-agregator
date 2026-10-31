@@ -39,4 +39,15 @@ class CurrencyFractionDigitsTest {
     fun `a well-formed but unknown code is unavailable`() {
         assertNull(CurrencyFractionDigits.of(code("ZZZ")))
     }
+
+    @Test
+    fun `KWD outside the app catalog still resolves to 3 digits`() {
+        assertEquals(3, CurrencyFractionDigits.of(code("KWD")))
+    }
+
+    @Test
+    fun `well-formed non-ISO codes QQQ and AAA are unavailable`() {
+        assertNull(CurrencyFractionDigits.of(code("QQQ")))
+        assertNull(CurrencyFractionDigits.of(code("AAA")))
+    }
 }

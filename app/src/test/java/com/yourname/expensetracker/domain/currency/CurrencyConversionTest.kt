@@ -5,6 +5,11 @@ import com.google.common.truth.Truth.assertWithMessage
 import com.yourname.expensetracker.assertApproxEquals
 import com.yourname.expensetracker.assertMoneyEquals
 import com.yourname.expensetracker.assertMoneyExact
+import com.yourname.expensetracker.domain.core.money.ConversionFailureType
+import com.yourname.expensetracker.domain.core.money.ConversionOutcome
+import com.yourname.expensetracker.domain.core.money.ConversionPath
+import com.yourname.expensetracker.domain.core.money.RateBasis
+import com.yourname.expensetracker.domain.core.money.StaleRatePolicy
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -307,6 +312,112 @@ class CurrencyConversionTest {
         } finally {
             Timber.uproot(tree)
         }
+    }
+
+    // ------------------------------------- convertOutcome: transaction-date basis
+    // Pins the converter behaviour RateEligibilityEvaluator depends on (manual-entry-currency A1).
+
+    private fun datedRate(
+        from: String,
+        to: String,
+        rate: Double,
+        validDate: Long?,
+        source: String
+    ) = DomainExchangeRate(
+        fromCurrency = from,
+        toCurrency = to,
+        rate = rate,
+        lastUpdated = NOW,
+        source = source,
+        validDate = validDate
+    )
+
+    private fun historicalStore(): ExchangeRateStore {
+        val store = mockk<ExchangeRateStore>(relaxed = true)
+        coEvery { store.getRateAsOf(any(), any(), any()) } returns null
+        return store
+    }
+
+    @Test
+    fun `convertOutcome transaction date via EUR reports the older leg valid date and the plus joined sources`() = runTest {
+        val bound = 9_000L
+        // Both leg orders: the older date must win whether it is the first or the second leg.
+        listOf(2_000L to 5_000L, 5_000L to 2_000L).forEach { (toEurDate, eurToDate) ->
+            val store = historicalStore()
+            coEvery { store.getRateAsOf("GBP", "EUR", bound) } returns
+                datedRate("GBP", "EUR", 1.15, toEurDate, "ecb")
+            coEvery { store.getRateAsOf("EUR", "USD", bound) } returns
+                datedRate("EUR", "USD", 1.08, eurToDate, "manual")
+            val historicalConverter = CurrencyConverter(store, timeProvider = fixedClock)
+
+            val outcome = historicalConverter.convertOutcome(
+                1.0, "GBP", "USD", RateBasis.TRANSACTION_DATE, bound, StaleRatePolicy.None
+            )
+
+            assertThat(outcome).isInstanceOf(ConversionOutcome.Converted::class.java)
+            outcome as ConversionOutcome.Converted
+            assertThat(outcome.conversionPath).isEqualTo(ConversionPath.VIA_BASE_CURRENCY)
+            assertThat(outcome.rateValidDate).isEqualTo(2_000L)
+            assertThat(outcome.rateSource).isEqualTo("ecb+manual")
+            assertThat(outcome.rateUsed).isEqualTo(1.15 * 1.08)
+        }
+    }
+
+    @Test
+    fun `convertOutcome transaction date via EUR with both legs ecb joins the sources with plus`() = runTest {
+        val bound = 9_000L
+        val store = historicalStore()
+        coEvery { store.getRateAsOf("GBP", "EUR", bound) } returns datedRate("GBP", "EUR", 1.15, 3_000L, "ecb")
+        coEvery { store.getRateAsOf("EUR", "USD", bound) } returns datedRate("EUR", "USD", 1.08, 3_000L, "ecb")
+        val historicalConverter = CurrencyConverter(store, timeProvider = fixedClock)
+
+        val outcome = historicalConverter.convertOutcome(
+            1.0, "GBP", "USD", RateBasis.TRANSACTION_DATE, bound, StaleRatePolicy.None
+        ) as ConversionOutcome.Converted
+
+        assertThat(outcome.rateSource).isEqualTo("ecb+ecb")
+        assertThat(outcome.rateValidDate).isEqualTo(3_000L)
+    }
+
+    @Test
+    fun `convertOutcome transaction date reads only the as-of lookup and carries a null valid date through`() = runTest {
+        val bound = 9_000L
+        val store = historicalStore()
+        // A row without a valid date can only come from a store that breaks the as-of rule; the converter
+        // does not hide it, it reports rateValidDate = null so the caller can fail closed.
+        coEvery { store.getRateAsOf("USD", "EUR", bound) } returns datedRate("USD", "EUR", 0.9, null, "ecb")
+        val historicalConverter = CurrencyConverter(store, timeProvider = fixedClock)
+
+        val outcome = historicalConverter.convertOutcome(
+            1.0, "USD", "EUR", RateBasis.TRANSACTION_DATE, bound, StaleRatePolicy.None
+        ) as ConversionOutcome.Converted
+
+        assertThat(outcome.rateValidDate).isNull()
+        assertThat(outcome.conversionPath).isEqualTo(ConversionPath.DIRECT)
+        coVerify(exactly = 0) { store.getLatestRateForPair(any(), any()) }
+        coVerify(exactly = 0) { store.getRate(any(), any()) }
+    }
+
+    @Test
+    fun `convertOutcome transaction date without a rate at or before the bound is a typed Failed result`() = runTest {
+        val store = historicalStore()
+        val historicalConverter = CurrencyConverter(store, timeProvider = fixedClock)
+
+        val outcome = historicalConverter.convertOutcome(
+            1.0, "USD", "GBP", RateBasis.TRANSACTION_DATE, 9_000L, StaleRatePolicy.None
+        )
+
+        assertThat(outcome).isInstanceOf(ConversionOutcome.Failed::class.java)
+        outcome as ConversionOutcome.Failed
+        assertThat(outcome.failureType).isEqualTo(ConversionFailureType.MISSING_HISTORICAL_RATE)
+        assertThat(outcome.rateBasis).isEqualTo(RateBasis.TRANSACTION_DATE)
+        assertThat(outcome.originalCurrency).isEqualTo("USD")
+        assertThat(outcome.targetCurrency).isEqualTo("GBP")
+        // Direct lookup, then both legs via EUR, all bounded by the same date; never the latest rate.
+        coVerify(exactly = 1) { store.getRateAsOf("USD", "GBP", 9_000L) }
+        coVerify(exactly = 1) { store.getRateAsOf("USD", "EUR", 9_000L) }
+        coVerify(exactly = 1) { store.getRateAsOf("EUR", "GBP", 9_000L) }
+        coVerify(exactly = 0) { store.getLatestRateForPair(any(), any()) }
     }
 
     // ------------------------------------------------------------ rate storage

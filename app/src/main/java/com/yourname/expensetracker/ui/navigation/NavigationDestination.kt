@@ -39,7 +39,13 @@ sealed class NavigationDestination {
     data object ScanReceipt : NavigationDestination()
     data object RecurringExpenses : NavigationDestination()
     data object ManualRecurringExpense : NavigationDestination()
-    
+
+    // Installments and loans (loan-installments S10a; gated by InstallmentsFeature.ENABLED).
+    // Deliberately NOT in featureDestinations: the menu entry comes from FeatureConfig only.
+    data object Installments : NavigationDestination()
+    data class InstallmentPlanDetail(val planId: Long) : NavigationDestination()
+    data object InstallmentHistory : NavigationDestination()
+
     // Feature Screens
     data object SavingsGoals : NavigationDestination()
     data object CarbonFootprint : NavigationDestination()

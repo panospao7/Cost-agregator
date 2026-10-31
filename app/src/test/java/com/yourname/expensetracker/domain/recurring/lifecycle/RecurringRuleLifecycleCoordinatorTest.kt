@@ -99,10 +99,18 @@ class RecurringRuleLifecycleCoordinatorTest {
         writeBarrier = DatabaseWriteBarrier(maintenanceMode)
         eventWriter = RecordingEventWriter()
 
+        val installmentEligibility = com.yourname.expensetracker.domain.recurring.RecurringInstallmentEligibility(
+            dagger.Lazy {
+                com.yourname.expensetracker.data.repository.InstallmentEntryLinkReaderImpl(
+                    database.installmentPlanDao()
+                )
+            }
+        )
+
         val lifecycleCoordinator = RecurringLifecycleCoordinator(
             database = database,
             expander = RecurringOccurrenceExpander(),
-            resolver = com.yourname.expensetracker.domain.recurring.OccurrenceConflictResolver(),
+            resolver = com.yourname.expensetracker.domain.recurring.OccurrenceConflictResolver(installmentEligibility),
             materializer = RecurringOccurrenceMaterializer(
                 database = database,
                 writeBarrier = writeBarrier,
@@ -122,7 +130,8 @@ class RecurringRuleLifecycleCoordinatorTest {
             writeBarrier = writeBarrier,
             plannedExpenseDao = plannedDao,
             transactionRunner = NoopDomainTransactionRunner,
-            eventWriter = eventWriter
+            eventWriter = eventWriter,
+            installmentEligibility = installmentEligibility
         )
 
         val projectionService = com.yourname.expensetracker.domain.recurring.RecurringPlanProjectionService(
@@ -142,7 +151,7 @@ class RecurringRuleLifecycleCoordinatorTest {
             lifecycleEventDao = eventDao,
             lifecycleCoordinator = daggerLazyOf(lifecycleCoordinator),
             expander = RecurringOccurrenceExpander(),
-            resolver = com.yourname.expensetracker.domain.recurring.OccurrenceConflictResolver(),
+            resolver = com.yourname.expensetracker.domain.recurring.OccurrenceConflictResolver(installmentEligibility),
             materializer = RecurringOccurrenceMaterializer(
                 database = database,
                 writeBarrier = writeBarrier,

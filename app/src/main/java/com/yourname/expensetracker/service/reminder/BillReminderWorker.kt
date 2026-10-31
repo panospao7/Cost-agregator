@@ -18,9 +18,11 @@ import com.yourname.expensetracker.domain.notification.presentation.Notification
 import com.yourname.expensetracker.domain.notification.presentation.NotificationPresentationDecision
 import com.yourname.expensetracker.domain.notification.presentation.NotificationPresentationResolver
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
+import com.yourname.expensetracker.domain.reminder.BillReminderManager
 import com.yourname.expensetracker.domain.util.NotificationId
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.workers.BlockedPolicy
+import com.yourname.expensetracker.domain.workers.WorkerCheckpointBlockedException
 import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
 import com.yourname.expensetracker.domain.workers.WorkerGuardRequest
 import com.yourname.expensetracker.domain.workers.WorkerSpec
@@ -29,6 +31,8 @@ import com.yourname.expensetracker.domain.workers.toWorkerResult
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 
 /**
  * Periodic WorkManager worker that checks for due reminder deliveries
@@ -53,7 +57,8 @@ class BillReminderWorker @AssistedInject constructor(
     private val reminderSettingsRepository: com.yourname.expensetracker.domain.reminder.BillReminderSettingsRepository,
     private val timeProvider: TimeProvider,
     private val presentationResolver: NotificationPresentationResolver,
-    private val presentationApplier: NotificationPresentationApplier
+    private val presentationApplier: NotificationPresentationApplier,
+    private val billReminderManager: BillReminderManager
 ) : CoroutineWorker(appContext, workerParams) {
 
     override suspend fun doWork(): Result {
@@ -94,6 +99,20 @@ class BillReminderWorker @AssistedInject constructor(
                 throw e
             } catch (e: Exception) {
                 Log.w(TAG, "Stale reminder collapse failed (${e::class.simpleName}); dispatching without collapse")
+            }
+
+            // S7b: installment reminders ride the same worker, settings and quiet hours. Isolated in
+            // its own try so an installment failure never blocks the recurring dispatch below.
+            try {
+                dispatchInstallmentReminders(ctx)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: WorkerCheckpointBlockedException) {
+                // The guard must see a blocked checkpoint (RETRY); never swallow it.
+                throw e
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                Log.w(TAG, "Installment reminder dispatch failed (${e::class.simpleName}); continuing")
             }
 
             try {
@@ -210,6 +229,115 @@ class BillReminderWorker @AssistedInject constructor(
         }
 
         return guardResult.toWorkerResult()
+    }
+
+    /**
+     * S7b: delivers installment reminders. Each reminder is claimed in the dedupe ledger
+     * (`planUuid:seq:recordGeneration`) and its entry state is revalidated after the claim; only
+     * then is it posted. A reminder that was not delivered gives its claim back so the next run
+     * can retry. Logs carry no plan data. No Snooze/Dismiss actions are attached because those
+     * receivers act on recurring delivery rows only.
+     */
+    private suspend fun dispatchInstallmentReminders(ctx: com.yourname.expensetracker.domain.workers.WorkerRunContext) {
+        val candidates = billReminderManager.getDueInstallmentReminders()
+        for (candidate in candidates) {
+            if (isStopped) break
+            ctx.addRowsScanned()
+            ctx.checkpoint("installment_reminder")
+
+            // Prompt cancellation can discard a claim that was already stored and revalidated (the
+            // result never reaches us): give it back (release only removes an unsent record).
+            val claimed = try {
+                billReminderManager.claimInstallmentReminder(candidate)
+            } catch (e: CancellationException) {
+                // A failing release must not replace the cancellation (same pattern as the post path below).
+                try {
+                    withContext(NonCancellable) { billReminderManager.releaseInstallmentReminder(candidate) }
+                } catch (r: CancellationException) {
+                    e.addSuppressed(r)
+                } catch (r: Exception) {
+                    e.addSuppressed(r)
+                }
+                throw e
+            }
+            if (claimed == null) {
+                ctx.addRowsSkipped()
+                continue
+            }
+
+            // Any throw between the claim and the post (including cancellation) gives the claim back
+            // under NonCancellable and rethrows, so the reminder is not suppressed. markSent runs
+            // only after the post and outside this try: a post must never be un-claimed.
+            val result = try {
+                val text = billReminderManager.buildInstallmentReminderText(claimed)
+                val notificationId = NotificationId.forBill(claimed.dedupeKey.hashCode().toLong())
+                // D-M1 A (owner-approvals 79a): installment reminders use the BILL presentation, so a
+                // locked or private device shows the DISCREET copy (no plan name or amount). The
+                // resolver read is inside this try: a cancellation releases the claim and rethrows.
+                val decision = presentationResolver.resolve(NotificationKind.BILL, Build.VERSION.SDK_INT)
+                sendInstallmentNotification(notificationId, text.title, text.body, decision)
+            } catch (t: Throwable) {
+                // A failing release must not hide the original failure (or a cancellation).
+                try {
+                    withContext(NonCancellable) { billReminderManager.releaseInstallmentReminder(claimed) }
+                } catch (r: CancellationException) {
+                    t.addSuppressed(r)
+                } catch (r: Exception) {
+                    t.addSuppressed(r)
+                }
+                throw t
+            }
+            when (result) {
+                is NotificationSendResult.Sent -> {
+                    ctx.addNotificationsSent()
+                    if (!billReminderManager.markInstallmentReminderSent(claimed)) {
+                        Log.w(TAG, "INSTALLMENT_REMINDER_MARK_SENT_FAILED")
+                    }
+                }
+                is NotificationSendResult.Failed -> {
+                    // The claim is given back even if the worker is being cancelled right now. There is no
+                    // original failure here to suppress onto, so a throwing release propagates as before.
+                    withContext(NonCancellable) { billReminderManager.releaseInstallmentReminder(claimed) }
+                    Log.w(TAG, "INSTALLMENT_REMINDER_NOT_SENT reason=${result.reason}")
+                    ctx.addRowsSkipped()
+                }
+            }
+        }
+    }
+
+    private fun sendInstallmentNotification(
+        notificationId: NotificationId,
+        title: String,
+        body: String,
+        decision: NotificationPresentationDecision
+    ): NotificationSendResult {
+        return try {
+            ensureChannelExists()
+            val builder = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
+                .setSmallIcon(SMALL_ICON)
+                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+                .setAutoCancel(true)
+            // D-M1 A: [title] and [body] are the detailed (FULL) copy; the applier swaps in the
+            // DISCREET copy and public version when [decision] says so. No actions (see KDoc above).
+            val notification = presentationApplier.apply(
+                builder = builder,
+                decision = decision,
+                channelId = CHANNEL_ID,
+                smallIcon = SMALL_ICON,
+                detailedTitle = title,
+                detailedText = body,
+                actions = emptyList()
+            ).build()
+            NotificationManagerCompat.from(applicationContext).notify(notificationId.value, notification)
+            NotificationSendResult.Sent(notificationId)
+        } catch (e: SecurityException) {
+            Log.w(TAG, "WORKER_NOTIFICATION_PERMISSION_DENIED class=${e::class.java.simpleName}")
+            NotificationSendResult.Failed("permission_denied")
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            Log.w(TAG, "WORKER_UNHANDLED_EXCEPTION class=${e::class.java.simpleName}")
+            NotificationSendResult.Failed("notification_error")
+        }
     }
 
     /**

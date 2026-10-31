@@ -62,5 +62,14 @@ data class ExportTransaction(
     /** PR7: Source link provenance data for this expense. */
     val sourceLinks: List<SourceLinkExportRef> = emptyList(),
     /** PR7: Source link provenance data serialized as JSON (for flat formats). */
-    val sourceLinksJson: String? = null
+    val sourceLinksJson: String? = null,
+
+    // ── Installment spending exclusion (loan-installments OD-11 / owner-approvals 41) ─────
+    /**
+     * Stored `spendingExclusionReason` code of the source expense (null = unflagged). Used only so
+     * the Xero, FreshBooks and QuickBooks IIF exporters can skip flagged rows via
+     * [ExportInstallmentMarker.isInstallmentFlagged] (generic CSV/JSON, PDF and business report mark them instead);
+     * never written to any output column.
+     */
+    val spendingExclusionReason: String? = null
 )

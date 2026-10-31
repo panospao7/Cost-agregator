@@ -35,6 +35,8 @@ import com.yourname.expensetracker.data.backup.BackupVerifier
 import com.yourname.expensetracker.data.backup.CostbackupBundle
 import com.yourname.expensetracker.data.backup.RestoreJournal
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
+import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentPreBackupReconciler
+import com.yourname.expensetracker.domain.installment.lifecycle.PreBackupReconcileResult
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.testfixtures.backup.lowIterationBackupEncryptionService
@@ -107,6 +109,12 @@ class DatabaseBackupRepositoryImplTest {
     private val secureKeyStorage = mockk<SecureKeyStorage>(relaxed = true)
     private val mockRestoreMaintenanceMode = mockk<RestoreMaintenanceMode>(relaxed = true)
     private val mockRestoreJournal = mockk<RestoreJournal>(relaxed = true)
+
+    // S6c-4: these tests exercise the backup pipeline itself; the installment pre-reconcile
+    // is covered by DatabaseBackupRepositoryPreReconcileTest and reports a clean reconcile here.
+    private val mockPreBackupReconciler = mockk<InstallmentPreBackupReconciler> {
+        coEvery { reconcileBeforeBackup() } returns PreBackupReconcileResult.Reconciled
+    }
 
     private val testDispatcher = StandardTestDispatcher()
     private lateinit var repository: DatabaseBackupRepositoryImpl
@@ -733,7 +741,7 @@ class DatabaseBackupRepositoryImplTest {
         )
 
         // createCostBackup will likely fail later due to missing tables in BackupVerifier
-        // (which expects 57 tables), but the write barrier double-check happens early in
+        // (which expects every tracked table), but the write barrier double-check happens early in
         // the flow — right after WAL checkpoint, before snapshot creation.
         runCatching {
             repository.createCostBackup(
@@ -800,7 +808,7 @@ class DatabaseBackupRepositoryImplTest {
             )
         }
 
-        // The backup may fail later at verification (57 tables expected), but it should
+        // The backup may fail later at verification (every tracked table expected), but it should
         // not fail at the write barrier check — i.e. barrier check passes.
         if (result.isFailure) {
             assertTrue(
@@ -2576,6 +2584,7 @@ class DatabaseBackupRepositoryImplTest {
                     operationRunRecorder = mockk(relaxed = true),
                     diagnosticSink = com.yourname.expensetracker.data.backup.TimberMaintenanceSafeDiagnosticSink(),
                     timeProvider = FakeTimeProvider(fixedTime),
+                    installmentPreBackupReconciler = dagger.Lazy { mockPreBackupReconciler },
                     databaseWriteBarrier = barrier
                 )
 
@@ -2951,6 +2960,7 @@ class DatabaseBackupRepositoryImplTest {
             stagedImportVerifier = stagedVerifier,
             liveImportVerifier = liveVerifier,
             timeProvider = timeProvider,
+            installmentPreBackupReconciler = dagger.Lazy { mockPreBackupReconciler },
             operationRunRecorder = operationRunRecorder
         )
     }
@@ -2991,7 +3001,7 @@ class DatabaseBackupRepositoryImplTest {
     }
 
     /**
-     * Creates a database containing every table tracked by [BackupVerifier] (57 tables),
+     * Creates a database containing every table tracked by [BackupVerifier] (61 tables, see TABLE_TIERS),
      * so the strict backup pipeline (`collectTableCountsStrict` + `BackupVerifier.verify`)
      * passes and `createCostBackup` reaches `CostbackupBundle.create`.
      */
@@ -3005,6 +3015,11 @@ class DatabaseBackupRepositoryImplTest {
                     "receipt_expense_links" -> ", expenseId INTEGER"
                     "recurring_occurrences" -> ", sourceId INTEGER"
                     "budget_forecasts" -> ", budgetId INTEGER"
+                    // Columns read by the loan installment orphan checks (BackupVerifier) and the
+                    // plan label sanitizer (ExportAnonymizer).
+                    "expenses" -> ", spendingExclusionReason TEXT"
+                    "installment_plans" -> ", purchaseExpenseId INTEGER, displayName TEXT, lenderLabel TEXT"
+                    "installment_entries" -> ", planId INTEGER, linkedExpenseId INTEGER, status TEXT"
                     else -> ""
                 }
                 db.execSQL("CREATE TABLE IF NOT EXISTS \"$tableName\" (id INTEGER PRIMARY KEY$referenceColumn)")

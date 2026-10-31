@@ -4,6 +4,11 @@ import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
+import com.yourname.expensetracker.domain.ai.model.AssistantUnsupportedReason
+import com.yourname.expensetracker.domain.ai.model.ClarificationChoice
+import com.yourname.expensetracker.domain.ai.model.ClarificationCompletion
+import com.yourname.expensetracker.domain.ai.model.ClarificationSlot
+import com.yourname.expensetracker.domain.ai.model.PeriodChoice
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryIntent
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryResult
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryDataQuality
@@ -45,18 +50,38 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
     suspend operator fun invoke(intent: FinancialQueryIntent): FinancialQueryResult {
         val period = intent.filters.period ?: return FinancialQueryResult.Clarification(
             prompt = "Which time period should I use?",
-            options = listOf("This month", "This week", "Last month")
+            options = listOf("This month", "This week", "Last month"),
+            // C4: typed completion so a tap fills the period slot without re-interpretation.
+            completion = ClarificationCompletion(
+                baseIntent = intent,
+                slot = ClarificationSlot.PERIOD,
+                choices = listOf(
+                    ClarificationChoice.Period(PeriodChoice.THIS_MONTH),
+                    ClarificationChoice.Period(PeriodChoice.THIS_WEEK),
+                    ClarificationChoice.Period(PeriodChoice.LAST_MONTH)
+                )
+            )
         )
 
-        return when {
-            intent.metric == QueryMetric.LIST -> executeList(intent, period)
-            intent.grouping == QueryGrouping.CATEGORY -> executeCategoryBreakdown(intent, period)
-            intent.grouping == QueryGrouping.MERCHANT -> executeMerchantBreakdown(intent, period)
-            intent.metric == QueryMetric.MAX -> executeLargest(intent, period)
-            intent.metric == QueryMetric.TOTAL -> executeTotal(intent, period)
-            intent.metric == QueryMetric.COUNT -> executeCount(intent, period)
-            intent.metric == QueryMetric.AVERAGE -> executeAverage(intent, period)
-            else -> FinancialQueryResult.Unsupported("This query type is not supported yet")
+        // LIST wins over grouping (as before); a grouped non-LIST query is a breakdown.
+        if (intent.metric != QueryMetric.LIST) {
+            when (intent.grouping) {
+                QueryGrouping.CATEGORY -> return executeCategoryBreakdown(intent, period)
+                QueryGrouping.MERCHANT -> return executeMerchantBreakdown(intent, period)
+                else -> Unit
+            }
+        }
+
+        // C5: exhaustive on purpose (no `else`) so a new QueryMetric fails compilation until it
+        // has an executor. Every current metric is answered, so the executor itself never emits
+        // METRIC_NOT_SUPPORTED; that reason stays only as a defensive value in the model/UI mapping.
+        return when (intent.metric) {
+            QueryMetric.LIST -> executeList(intent, period)
+            QueryMetric.MAX -> executeLargest(intent, period)
+            QueryMetric.MIN -> executeSmallest(intent, period)
+            QueryMetric.TOTAL -> executeTotal(intent, period)
+            QueryMetric.COUNT -> executeCount(intent, period)
+            QueryMetric.AVERAGE -> executeAverage(intent, period)
         }
     }
 
@@ -270,13 +295,53 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
     private suspend fun executeLargest(
         intent: FinancialQueryIntent,
         period: PeriodRange
+    ): FinancialQueryResult = executeExtreme(
+        intent = intent,
+        period = period,
+        selection = ExtremeSelection.LARGEST,
+        titleKey = "domain_ai_largest_purchase"
+    )
+
+    // C5 (INV-C17): MIN mirrors MAX through the same helper; only the comparison direction and
+    // the title differ. It carries MAX's convertAsOf-vs-stored-snapshot gap (RF-C3), by design.
+    private suspend fun executeSmallest(
+        intent: FinancialQueryIntent,
+        period: PeriodRange
+    ): FinancialQueryResult = executeExtreme(
+        intent = intent,
+        period = period,
+        selection = ExtremeSelection.SMALLEST,
+        titleKey = "domain_ai_smallest_purchase"
+    )
+
+    /** Direction of the single-purchase extreme selection shared by MAX and MIN. */
+    private enum class ExtremeSelection {
+        LARGEST,
+        SMALLEST
+    }
+
+    private fun <T> ExtremeSelection.pick(items: Iterable<T>, amountOf: (T) -> Double): T? = when (this) {
+        ExtremeSelection.LARGEST -> items.maxByOrNull(amountOf)
+        ExtremeSelection.SMALLEST -> items.minByOrNull(amountOf)
+    }
+
+    private suspend fun executeExtreme(
+        intent: FinancialQueryIntent,
+        period: PeriodRange,
+        selection: ExtremeSelection,
+        titleKey: String
     ): FinancialQueryResult {
-        val (expenses, amountFilterDataQuality) = assistantFilteredExpensesCurrencyAware(intent, period)
+        val (fetchedExpenses, amountFilterDataQuality) = assistantFilteredExpensesCurrencyAware(intent, period)
+        // INV-1: a single-purchase extreme only considers rows that count as spending (a flagged
+        // installment purchase is not a purchase to rank). Only spendingExclusionReason is applied here:
+        // ownership (MINE/NOT_MINE/SHARED/TRANSFER) is already decided by the query filter, so
+        // countsAsSpending (which also drops not-mine rows) would empty NOT_MINE/TRANSFER queries.
+        val expenses = fetchedExpenses.filter { !it.expense.isSpendingNeutralised }
         if (expenses.isEmpty()) {
-            return FinancialQueryResult.Unsupported("No matching transactions found")
+            return FinancialQueryResult.Unsupported(AssistantUnsupportedReason.NO_MATCHING_TRANSACTIONS)
         }
 
-        // W32: Normalize amounts to home currency before maxByOrNull to avoid
+        // W32: Normalize amounts to home currency before the extreme pick to avoid
         // comparing raw mixed-currency amounts (e.g. 100 JPY vs 50 USD).
         val homeCurrency = currencySettingsRepository.homeCurrency().first() // S11-016: no EUR fallback
 
@@ -284,9 +349,9 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
 
         // Determine if we have mixed currencies
         val distinctCurrencies = expenses.map { it.expense.currency }.distinct()
-        val largest = if (distinctCurrencies.size <= 1) {
+        val extreme = if (distinctCurrencies.size <= 1) {
             // Single currency — safe to compare directly
-            expenses.maxByOrNull { it.expense.effectiveAmount }
+            selection.pick(expenses) { it.expense.effectiveAmount }
         } else {
             // Mixed currencies — convert each to home currency for comparison
             val withNormalized = expenses.mapNotNull { expenseWithCategory ->
@@ -305,8 +370,8 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
                 }
                 normalizedAmount?.let { expenseWithCategory to it }
             }
-            withNormalized.maxByOrNull { it.second }?.first
-        } ?: return FinancialQueryResult.Unsupported("No matching transactions found")
+            selection.pick(withNormalized) { it.second }?.first
+        } ?: return FinancialQueryResult.Unsupported(AssistantUnsupportedReason.NO_MATCHING_TRANSACTIONS)
 
         val totalFailed = amountFilterDataQuality.excludedCount + failedConversions
         val dataQuality = FinancialQueryDataQuality(
@@ -321,13 +386,13 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
         )
 
         return FinancialQueryResult.Summary(
-            title = UiText.fromKey("domain_ai_largest_purchase"),
-            primaryText = "${largest.expense.merchant}: ${formatSingleExpenseAmount(largest.expense)}",
+            title = UiText.fromKey(titleKey),
+            primaryText = "${extreme.expense.merchant}: ${formatSingleExpenseAmount(extreme.expense)}",
             supportingText = null,
             drilldownIntent = intent.copy(
                 filters = intent.filters.copy(
-                    merchants = setOf(largest.expense.merchant),
-                    transactionTypes = setOf(largest.expense.transactionType.toDomain())
+                    merchants = setOf(extreme.expense.merchant),
+                    transactionTypes = setOf(extreme.expense.transactionType.toDomain())
                 )
             ),
             dataQuality = dataQuality
@@ -342,7 +407,12 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
         val currentCurrencyTotals = currentExpenses.toCurrencyTotals()
 
         val supporting = if (intent.comparison == QueryComparison.PREVIOUS_EQUIVALENT_PERIOD) {
-            val previous = previousEquivalentPeriod(period)
+            val previousPeriod = AssistantPeriodResolver.previousEquivalent(
+                startMs = period.start,
+                endMs = period.end,
+                granularity = intent.filters.periodGranularity
+            )
+            val previous = PeriodRange(previousPeriod.startMs, previousPeriod.endMs)
             val (prevExpenses, _) = assistantFilteredExpensesCurrencyAware(intent, previous)
             "Previous period: ${formatCurrencyTotals(prevExpenses.toCurrencyTotals())}"
         } else {
@@ -362,7 +432,8 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
         intent: FinancialQueryIntent,
         period: PeriodRange
     ): FinancialQueryResult {
-        val (filtered, dataQuality) = assistantFilteredExpensesCurrencyAware(intent, period)
+        val (fetched, dataQuality) = assistantFilteredExpensesCurrencyAware(intent, period)
+        val filtered = fetched.filter { !it.expense.isSpendingNeutralised } // INV-1 (exclusion only; ownership scope stays with the query filter)
         return FinancialQueryResult.TransactionList(
             title = UiText.fromKey("domain_ai_transaction_count"),
             previewCount = filtered.size,
@@ -375,7 +446,8 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
         intent: FinancialQueryIntent,
         period: PeriodRange
     ): FinancialQueryResult {
-        val (expenses, dataQuality) = assistantFilteredExpensesCurrencyAware(intent, period)
+        val (fetched, dataQuality) = assistantFilteredExpensesCurrencyAware(intent, period)
+        val expenses = fetched.filter { !it.expense.isSpendingNeutralised } // INV-1 (exclusion only; ownership scope stays with the query filter)
         return FinancialQueryResult.Summary(
             title = UiText.fromKey("domain_ai_average_spending"),
             primaryText = formatCurrencyAverages(expenses.toCurrencyTotals()),
@@ -429,7 +501,9 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
         } else {
             expenses.mapNotNull { ewc ->
                 val expense = ewc.expense
-                val normalizedAmount = if (expense.currency.equals(homeCurrency, true)) {
+                // RS-3: a spending-neutralised row contributes 0.0 in any currency, so it needs no
+                // rate and never counts toward excludedCount/isPartial or a missing-rate warning.
+                val normalizedAmount = if (expense.isSpendingNeutralised || expense.currency.equals(homeCurrency, true)) {
                     expense.effectiveAmount
                 } else {
                     currencyConverter.convertAsOf(
@@ -491,11 +565,6 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
         intent.filters.categoryIds.isNotEmpty() -> UiText.from("Matching category transactions")
         intent.filters.merchants.isNotEmpty() -> UiText.from("Matching merchant transactions")
         else -> UiText.from("Matching transactions")
-    }
-
-    private fun previousEquivalentPeriod(period: PeriodRange): PeriodRange {
-        val duration = period.end - period.start
-        return PeriodRange(period.start - duration, period.start)
     }
 
     private fun formatSingleExpenseAmount(expense: Expense): String =

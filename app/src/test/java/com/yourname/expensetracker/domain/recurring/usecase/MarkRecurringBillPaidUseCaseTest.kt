@@ -478,6 +478,21 @@ class MarkRecurringBillPaidUseCaseTest {
         assertEquals(d1, ruleNextDate)
     }
 
+    // Owner item 37(b): the coordinator refuses an UNKNOWN expense with the existing ineligible
+    // outcome (SpecificLinkResult.ExpenseNotEligible). The use case reports it as the existing
+    // LINK_REJECTED code and does not advance the rule. The coordinator side of the UNKNOWN refusal is
+    // pinned with real Room in RecurringLifecycleCoordinatorInstallmentLinkPolicyTest.
+    @Test
+    fun `link refused as not eligible reports link rejected and does not advance`() = runTest {
+        linkResultOverride = SpecificLinkResult.ExpenseNotEligible
+
+        val result = useCase.invoke(RULE_ID, d1)
+
+        assertEquals(MarkPaidResult.Failed(MarkPaidFailureCodes.LINK_REJECTED), result)
+        assertEquals("PLANNED", store.first { it.id == 1L }.status)
+        assertEquals(d1, ruleNextDate)
+    }
+
     @Test
     fun `create failure runs no side effects`() = runTest {
         createResultOverride = CreateExpenseResult.Error(RuntimeException("x"))

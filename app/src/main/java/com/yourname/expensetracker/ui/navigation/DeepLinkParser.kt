@@ -4,10 +4,10 @@ import android.content.Intent
 import android.net.Uri
 import com.yourname.expensetracker.domain.analytics.TimePeriodTokens
 import com.yourname.expensetracker.domain.bank.BankFeatureAvailability
-import com.yourname.expensetracker.domain.privacy.deeplink.DeepLinkHost
-import com.yourname.expensetracker.domain.privacy.deeplink.DeepLinkLimits
-import com.yourname.expensetracker.domain.privacy.deeplink.DeepLinkParameter
-import com.yourname.expensetracker.domain.privacy.deeplink.DeepLinkRequest
+import com.yourname.expensetracker.domain.navigation.deeplink.DeepLinkHost
+import com.yourname.expensetracker.domain.navigation.deeplink.DeepLinkLimits
+import com.yourname.expensetracker.domain.navigation.deeplink.DeepLinkParameter
+import com.yourname.expensetracker.domain.navigation.deeplink.DeepLinkRequest
 import java.time.DateTimeException
 import java.time.LocalDate
 
@@ -81,6 +81,9 @@ sealed interface DeepLinkPolicyResult {
  * - `analytics`: `period` from the shared [TimePeriodTokens] allowlist
  * - `map`: `location` trimmed, 1..100 chars, no control or format characters
  * - `review`, `plan`, `add`: no parameters (no link creates or prefills data, INV-17)
+ * - `installments`: no parameters; `installment_plan`: `id` = 1..19 ASCII digits, value 1..Long.MAX_VALUE, and a
+ *   missing or invalid id rejects the whole link (`MALFORMED`). Both hosts are accepted only while the
+ *   installments feature is enabled (loan S13-a); otherwise they are `UNKNOWN_HOST`.
  * - bank hosts: rejected via [BankFeatureAvailability.isBankDeepLinkHost]
  * - any other host: rejected
  */
@@ -97,8 +100,14 @@ object DeepLinkPolicy {
      *
      * @param action the intent action (`Intent.getAction()`).
      * @param dataString the intent data as a string (`Intent.getDataString()`), unparsed.
+     * @param installmentsEnabled whether the installments feature is on. While false the `installments` and
+     *   `installment_plan` hosts are rejected as unknown hosts, exactly as before loan S13-a.
      */
-    fun evaluate(action: String?, dataString: String?): DeepLinkPolicyResult {
+    fun evaluate(
+        action: String?,
+        dataString: String?,
+        installmentsEnabled: Boolean = InstallmentsFeature.ENABLED
+    ): DeepLinkPolicyResult {
         if (dataString == null) return DeepLinkPolicyResult.NotADeepLink
         // Exact-case scheme, same as the previous `uri.scheme != "expensetracker"` check.
         if (!dataString.startsWith(SCHEME_PREFIX)) return DeepLinkPolicyResult.NotADeepLink
@@ -110,14 +119,14 @@ object DeepLinkPolicy {
             return DeepLinkPolicyResult.Rejected(DeepLinkRejection.MALFORMED)
         }
         return try {
-            evaluateParsed(Uri.parse(dataString))
+            evaluateParsed(Uri.parse(dataString), installmentsEnabled)
         } catch (_: RuntimeException) {
             // Malformed input must never crash navigation (FG-22). Nothing about the input is kept.
             DeepLinkPolicyResult.Rejected(DeepLinkRejection.MALFORMED)
         }
     }
 
-    private fun evaluateParsed(uri: Uri): DeepLinkPolicyResult {
+    private fun evaluateParsed(uri: Uri, installmentsEnabled: Boolean): DeepLinkPolicyResult {
         if (uri.scheme != SCHEME) return DeepLinkPolicyResult.Rejected(DeepLinkRejection.MALFORMED)
         if (!isStructurallyValid(uri)) {
             return DeepLinkPolicyResult.Rejected(DeepLinkRejection.MALFORMED)
@@ -133,6 +142,10 @@ object DeepLinkPolicy {
         }
         val knownHost = DeepLinkHost.fromToken(host)
             ?: return DeepLinkPolicyResult.Rejected(DeepLinkRejection.UNKNOWN_HOST)
+        // Loan S13-a: while the feature is off these hosts behave exactly like any other unknown host.
+        if (!installmentsEnabled && (knownHost == DeepLinkHost.INSTALLMENTS || knownHost == DeepLinkHost.INSTALLMENT_PLAN)) {
+            return DeepLinkPolicyResult.Rejected(DeepLinkRejection.UNKNOWN_HOST)
+        }
 
         return readParameters(uri, knownHost)
     }
@@ -187,10 +200,17 @@ object DeepLinkPolicy {
                         DeepLinkParameter.EXPENSE_ID -> validExpenseId(raw)
                         DeepLinkParameter.PERIOD -> TimePeriodTokens.normalizeOrNull(raw)
                         DeepLinkParameter.LOCATION -> validLocation(raw)
+                        DeepLinkParameter.PLAN_ID -> validPlanId(raw)
                     }
                     if (accepted == null) invalid += allowed
                 }
             }
+        }
+
+        // A plan link without a valid id is meaningless (unlike the optional parameters of other hosts), so it
+        // is rejected instead of dropped to a default. Nothing about the input is kept.
+        if (host == DeepLinkHost.INSTALLMENT_PLAN && accepted == null) {
+            return DeepLinkPolicyResult.Rejected(DeepLinkRejection.MALFORMED)
         }
 
         // Built once from validated values (no copy() per field).
@@ -199,7 +219,8 @@ object DeepLinkPolicy {
             briefingKey = (accepted as? String).takeIf { allowed == DeepLinkParameter.BRIEFING_KEY },
             expenseId = (accepted as? Long).takeIf { allowed == DeepLinkParameter.EXPENSE_ID },
             period = (accepted as? String).takeIf { allowed == DeepLinkParameter.PERIOD },
-            location = (accepted as? String).takeIf { allowed == DeepLinkParameter.LOCATION }
+            location = (accepted as? String).takeIf { allowed == DeepLinkParameter.LOCATION },
+            planId = (accepted as? Long).takeIf { allowed == DeepLinkParameter.PLAN_ID }
         )
 
         return DeepLinkPolicyResult.Accepted(
@@ -213,7 +234,8 @@ object DeepLinkPolicy {
         DeepLinkHost.ACTIVITY -> DeepLinkParameter.EXPENSE_ID
         DeepLinkHost.ANALYTICS -> DeepLinkParameter.PERIOD
         DeepLinkHost.MAP -> DeepLinkParameter.LOCATION
-        DeepLinkHost.REVIEW, DeepLinkHost.PLAN, DeepLinkHost.ADD -> null
+        DeepLinkHost.INSTALLMENT_PLAN -> DeepLinkParameter.PLAN_ID
+        DeepLinkHost.REVIEW, DeepLinkHost.PLAN, DeepLinkHost.ADD, DeepLinkHost.INSTALLMENTS -> null
     }
 
     private fun wireName(parameter: DeepLinkParameter): String = when (parameter) {
@@ -221,6 +243,7 @@ object DeepLinkPolicy {
         DeepLinkParameter.EXPENSE_ID -> "expenseId"
         DeepLinkParameter.PERIOD -> "period"
         DeepLinkParameter.LOCATION -> "location"
+        DeepLinkParameter.PLAN_ID -> "id"
     }
 
     /** `dashboard_home:` + a real calendar date `yyyy-MM-dd`, ASCII only, <= 32 chars. */
@@ -254,6 +277,9 @@ object DeepLinkPolicy {
         return value.toLongOrNull()?.takeIf { it >= 1L }
     }
 
+    /** Same rule as [validExpenseId]: 1..19 ASCII digits, no sign, value 1..Long.MAX_VALUE (overflow is invalid). */
+    private fun validPlanId(value: String): Long? = validExpenseId(value)
+
     /** Trimmed, 1..100 chars, no Unicode control or format characters. */
     private fun validLocation(value: String): String? {
         val trimmed = value.trim()
@@ -281,4 +307,8 @@ fun DeepLinkRequest.toNavigationDestination(): NavigationDestination = when (hos
     DeepLinkHost.ADD -> NavigationDestination.AddExpense
     DeepLinkHost.ANALYTICS -> NavigationDestination.Analytics(initialPeriod = period?.uppercase())
     DeepLinkHost.MAP -> NavigationDestination.SpendingMap(initialLocationQuery = location)
+    DeepLinkHost.INSTALLMENTS -> NavigationDestination.Installments
+    // The policy never builds an INSTALLMENT_PLAN request without a plan id.
+    DeepLinkHost.INSTALLMENT_PLAN -> planId?.let { NavigationDestination.InstallmentPlanDetail(it) }
+        ?: NavigationDestination.Installments
 }

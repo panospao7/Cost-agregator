@@ -47,7 +47,7 @@ Out of scope (routed, §11): unsalted SHA-256 aliases (`cloud-alias-hashing`); `
 | `PROVIDER_UNAVAILABLE` | Cloud service (missing key, privacy gate `PROVIDER_DISABLED`, HTTP failure, `TIMEOUT`, `NETWORK_UNAVAILABLE`, `UNKNOWN_ERROR`); on-device (timeout, `GenAiException`, unexpected); NoOp | no usable provider answer |
 | `PROVIDER_RESPONSE_INVALID` | Cloud `PARSER_FAILED` or empty candidates; on-device `parseResponse == null` | unparseable model output |
 | `MODEL_DECLINED` | on-device `parseResponse` `kind:"unsupported"` (`:119-121`) | model said unsupported. **Its text is discarded.** |
-| `METRIC_NOT_SUPPORTED` | executor `else` (`:59`); fallback `!supported` (`:258-262`) | no executor for the requested shape |
+| `METRIC_NOT_SUPPORTED` | [reconciled Z, 2026-10-24] **Defensive-only; no current producer.** The executor's metric dispatch is an exhaustive `when (intent.metric)` with no `else` (C5), and Interpret's fallback cannot produce it because every `QueryMetric` is now supported (INV-C17). The enum value and its UI text are kept. Was: executor `else` (`:59`); fallback `!supported` (`:258-262`). | no executor for the requested shape (reserved) |
 | `NO_MATCHING_TRANSACTIONS` | executor `:276, :309` (and the new MIN path) | empty result for single-row metrics |
 
 - `FinancialQueryInterpretationResult.Unsupported` and `FinancialQueryResult.Unsupported` change from `reason: String` to `reason: AssistantUnsupportedReason`, plus an optional log-only `diagnostic: DiagnosticReasonCode? = null` that the cloud service fills with its existing codes. `diagnostic` is never rendered or persisted.
@@ -130,7 +130,8 @@ Format: statement → **Owner** (the single component holding the rule) → enfo
   - Every resolved range sets `periodGranularity`. Explicit model `startMs/endMs` leaves it `null`.
   - **Owner:** `AssistantPeriodResolver`. AE-C11..C15.
 - **INV-C9 Phrase precedence (EN, on the lower-cased, trimmed query).**
-  1. **Comparison target removal.** If a comparison cue (INV-C10) is present, any `(last|previous|prior) <unit>` that directly follows a comparison connector (`compare(d)? (it )?(with|to)`, `vs.?`, `versus`, `than`, `against`) is the comparison **target**. It is removed before step 2. `<unit>` ∈ {week, month, quarter, year}; word boundaries apply.
+  1. **Comparison target removal.** If a comparison cue (INV-C10) is present, any `(last|previous|prior) <unit>` that directly follows a comparison connector is the comparison **target**. It is removed before step 2. `<unit>` ∈ {week, month, quarter, year}; word boundaries apply.
+     - [reconciled Z, 2026-10-24] Connectors: `vs.?`, `versus`, `than`, `against`, or a compare-family word followed later in the same sentence by `with` or `to`. The shipped pattern is `compar(e|ed|ing|ison)\b[^.?!]*?\b(with|to)`: other words may come in between, but no `.`, `?` or `!`. The old pattern was `compare(d)? (it )?(with|to)`, which did not match the AE-C12 example "compare food with previous month". This was C3 deviation (1), accepted at review. Only the connector was loosened; the target must still directly follow it.
   2. `today` → DAY, TO_DATE `[startOfDay(now), now)`.
   3. `(last|previous|prior) <unit>` → the previous **full** unit, `get<Unit>Range(now, -1)`.
   4. `(this|current) <unit>` → the current unit in today's shape (P3): week and month FULL, quarter and year TO_DATE `[unitStart, now)`.
@@ -197,7 +198,7 @@ Format: statement → **Owner** (the single component holding the rule) → enfo
     - title key `domain_ai_smallest_purchase`;
     - drilldown narrowed exactly as MAX does.
   - The local fallback maps the cues `smallest|cheapest|lowest|minimum` → MIN. MIN is added to the `supported` set (`:247-256`) and to `containsRichIntentCue` (`:343-375`).
-  - The executor `else` branch returns `METRIC_NOT_SUPPORTED`; after this change no current enum value reaches it.
+  - [reconciled Z, 2026-10-24] The executor has no `else` branch. Metric dispatch is an exhaustive `when (intent.metric)` after the LIST/grouping checks. `METRIC_NOT_SUPPORTED` is defensive-only: it cannot be reached from the executor or from Interpret. The enum value and its UI text are kept. This is pinned by the test "INV-C17 every QueryMetric has an executor and none returns METRIC_NOT_SUPPORTED", retargeted (not deleted) from the C2 MIN test. As shipped, `executeLargest` and `executeSmallest` share one `executeExtreme` helper (MAX behaviour unchanged), and `MapFinancialQueryToNavigationUseCase` accepts MIN so its drilldown matches MAX. Was: "The executor `else` branch returns `METRIC_NOT_SUPPORTED`; after this change no current enum value reaches it."
   - MIN keeps the same money-semantics gap as MAX (F-C: `convertAsOf` vs stored snapshot). money-correctness aligns both.
   - **Owner:** executor (execution) and resolver-adjacent `resolveMetric` (cue). AE-C27, AE-C28.
 

@@ -31,8 +31,8 @@ import com.yourname.expensetracker.domain.privacy.applock.lockedControllerFor
 import com.yourname.expensetracker.domain.privacy.applock.resolveTimedOut
 import com.yourname.expensetracker.domain.privacy.applock.SettingsUnreadableCause
 import com.yourname.expensetracker.domain.privacy.applock.unlockedControllerFor
-import com.yourname.expensetracker.domain.privacy.deeplink.DeepLinkHost
-import com.yourname.expensetracker.domain.privacy.deeplink.DeepLinkRequest
+import com.yourname.expensetracker.domain.navigation.deeplink.DeepLinkHost
+import com.yourname.expensetracker.domain.navigation.deeplink.DeepLinkRequest
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.ui.MainViewModel
 import com.yourname.expensetracker.ui.navigation.DeepLinkApplier

@@ -7,7 +7,7 @@ import timber.log.Timber
 /**
  * Verifies database integrity and table row counts for restore operations.
  *
- * Replaces the old 5-table verification with full 58-table verification.
+ * Replaces the old 5-table verification with full per-table verification (see TABLE_TIERS for the current count).
  *
  * ## Tier definitions
  *
@@ -37,14 +37,19 @@ object BackupVerifier {
     private const val SAVINGS_CONTRIBUTION_LEDGER_SCHEMA_VERSION = 150
     private const val SAVINGS_SWEEP_MONTH_SCHEMA_VERSION = 151
 
-    // ── Verification tier assignment for all 59 tables ──────────
+    /** Loan installments (INV-30): plan and entry tables exist from schema 152. */
+    private const val INSTALLMENT_TABLES_SCHEMA_VERSION = 152
+
+    // ── Verification tier assignment for all 61 tables ──────────
 
     /**
-     * All 59 tracked table names with their verification tier.
+     * All 61 tracked table names with their verification tier.
+     * 61 = 42 exact (35 listed in the Tier 1 block + 7 event/link) + 10 validity
+     * + 9 optional. TABLE_TIERS is a single literal mapOf (no merged maps/sets).
      */
     private val TABLE_TIERS: Map<String, VerificationTier> = mapOf(
-        // ── Tier 1: Exact row count required (39 total) ──
-        // 32 listed here + 7 event/link tables grouped under the Tier 2 comment
+        // ── Tier 1: Exact row count required (42 total) ──
+        // 35 listed here + 7 event/link tables grouped under the Tier 2 comment
         // below (transaction_events, receipt_events, receipt_expense_links,
         // recurring_occurrences, recurring_reminder_deliveries,
         // recurring_lifecycle_events, warranty_reminder_deliveries) which are also
@@ -64,6 +69,10 @@ object BackupVerifier {
         "savings_goals"                  to VerificationTier.TIER_1_EXACT,
         "savings_contribution_ledger"    to VerificationTier.TIER_1_EXACT,
         "savings_sweep_month_acceptance" to VerificationTier.TIER_1_EXACT,
+        // Loan installments (INV-30, schema 152): exact-count verified so plans
+        // and entries survive backup/restore. Gated by databaseVersion below.
+        "installment_plans"              to VerificationTier.TIER_1_EXACT,
+        "installment_entries"            to VerificationTier.TIER_1_EXACT,
         "warranties"                     to VerificationTier.TIER_1_EXACT,
         "return_windows"                 to VerificationTier.TIER_1_EXACT,
         "mileage_tracking"               to VerificationTier.TIER_1_EXACT,
@@ -203,6 +212,8 @@ object BackupVerifier {
                     databaseVersion >= SAVINGS_CONTRIBUTION_LEDGER_SCHEMA_VERSION
                 "savings_sweep_month_acceptance" -> databaseVersion == null ||
                     databaseVersion >= SAVINGS_SWEEP_MONTH_SCHEMA_VERSION
+                "installment_plans", "installment_entries" -> databaseVersion == null ||
+                    databaseVersion >= INSTALLMENT_TABLES_SCHEMA_VERSION
                 else -> true
             }
         }
@@ -250,6 +261,11 @@ object BackupVerifier {
             "savings_sweep_month_acceptance" !in expectedCounts
         ) {
             migrated["savings_sweep_month_acceptance"] = 1
+        }
+        // Pre-152 restores create the installment tables empty (additive migration).
+        if (sourceDatabaseVersion != null && sourceDatabaseVersion < INSTALLMENT_TABLES_SCHEMA_VERSION) {
+            if ("installment_plans" !in expectedCounts) migrated["installment_plans"] = 0
+            if ("installment_entries" !in expectedCounts) migrated["installment_entries"] = 0
         }
         return migrated
     }
@@ -522,7 +538,24 @@ object BackupVerifier {
             "SELECT COUNT(*) FROM recurring_occurrences WHERE sourceId NOT IN (SELECT id FROM manual_recurring_expenses)"
                 to "Orphan recurring_occurrences referencing non-existent recurring expenses",
             "SELECT COUNT(*) FROM budget_forecasts WHERE budgetId NOT IN (SELECT id FROM budgets)"
-                to "Orphan budget_forecasts referencing non-existent budgets"
+                to "Orphan budget_forecasts referencing non-existent budgets",
+            // Loan installments (INV-30, domain-spec 11.3). Fixed count-only messages: no plan
+            // names, amounts or dates ever reach the error text (INV-31).
+            "SELECT COUNT(*) FROM installment_entries WHERE planId NOT IN (SELECT id FROM installment_plans)"
+                to "Orphan installment_entries referencing non-existent plans",
+            "SELECT COUNT(*) FROM installment_entries WHERE linkedExpenseId IS NOT NULL " +
+                "AND linkedExpenseId NOT IN (SELECT id FROM expenses)"
+                to "Orphan installment_entries linked to non-existent expenses",
+            "SELECT COUNT(*) FROM installment_plans WHERE purchaseExpenseId IS NOT NULL " +
+                "AND purchaseExpenseId NOT IN (SELECT id FROM expenses)"
+                to "Orphan installment_plans referencing non-existent purchase expenses",
+            "SELECT COUNT(*) FROM expenses WHERE spendingExclusionReason = 'INSTALLMENT_PURCHASE' " +
+                "AND id NOT IN (SELECT purchaseExpenseId FROM installment_plans WHERE purchaseExpenseId IS NOT NULL)"
+                to "Expenses flagged as installment purchase that no plan references",
+            "SELECT COUNT(*) FROM expenses WHERE spendingExclusionReason = 'INSTALLMENT_REVERSED' " +
+                "AND id NOT IN (SELECT linkedExpenseId FROM installment_entries " +
+                "WHERE status = 'REVERSED' AND linkedExpenseId IS NOT NULL)"
+                to "Expenses flagged as installment reversed that no reversed entry references"
         )
         for ((sql, description) in checks) {
             try {
@@ -597,7 +630,7 @@ object BackupVerifier {
     }
 
     /**
-     * Returns the set of all 57 table names for ArchUnit/grep assertions.
+     * Returns the set of all tracked table names (61, see TABLE_TIERS) for ArchUnit/grep assertions.
      */
     fun allTableNames(): Set<String> = TABLE_TIERS.keys
 

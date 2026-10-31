@@ -8,7 +8,9 @@ import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.every
+import io.mockk.coVerify
 import io.mockk.mockk
+import io.mockk.verify
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -45,7 +47,7 @@ class MergedRecurringPatternsProviderTest {
     fun `getPatternsFromSnapshots dedupes stale manual duplicates and keeps deterministic merchant label`() = runTest {
         val now = ms(2026, Calendar.JANUARY, 15)
         every { timeProvider.now() } returns now
-        every { recurringExpenseEngine.detectPatternsFromSnapshots(any(), any()) } returns emptyList()
+        coEvery { recurringExpenseEngine.detectPatterns(any(), any()) } returns emptyList()
 
         val patterns = provider.getPatternsFromSnapshots(
             expenseSnapshots = emptyList(),
@@ -67,7 +69,7 @@ class MergedRecurringPatternsProviderTest {
     fun `getPatternsFromSnapshots keeps same merchant manual rules with different signatures`() = runTest {
         val now = ms(2026, Calendar.JANUARY, 15)
         every { timeProvider.now() } returns now
-        every { recurringExpenseEngine.detectPatternsFromSnapshots(any(), any()) } returns emptyList()
+        coEvery { recurringExpenseEngine.detectPatterns(any(), any()) } returns emptyList()
 
         val patterns = provider.getPatternsFromSnapshots(
             expenseSnapshots = emptyList(),
@@ -94,7 +96,7 @@ class MergedRecurringPatternsProviderTest {
     fun `getPatternsFromSnapshots keeps same merchant detected rules when signatures differ from manual`() = runTest {
         val now = ms(2026, Calendar.JANUARY, 15)
         every { timeProvider.now() } returns now
-        every { recurringExpenseEngine.detectPatternsFromSnapshots(any(), any()) } returns listOf(
+        coEvery { recurringExpenseEngine.detectPatterns(any(), any()) } returns listOf(
             recurring(merchant = "NETFLIX!!", amount = 30.0, nextDate = ms(2026, Calendar.JANUARY, 20)),
             recurring(
                 merchant = "Netflix",
@@ -125,7 +127,7 @@ class MergedRecurringPatternsProviderTest {
         coEvery { recurringExpenseRepository.getAll() } returns listOf(
             manual(id = 5, merchant = "Coffee Club", amount = 5.0, nextDate = ms(2025, Calendar.DECEMBER, 20))
         )
-        every { recurringExpenseEngine.detectPatternsFromSnapshots(any(), any()) } returns emptyList()
+        coEvery { recurringExpenseEngine.detectPatterns(any(), any()) } returns emptyList()
 
         val patterns = provider.getPatterns()
 
@@ -133,6 +135,18 @@ class MergedRecurringPatternsProviderTest {
         assertEquals(5.0, patterns.single().averageAmount, 0.0001)
         assertTrue(patterns.single().nextExpectedDate > now)
         assertTrue(patterns.single().nextExpectedDate <= ms(2026, Calendar.FEBRUARY, 20))
+    }
+
+    @Test
+    fun `getPatternsFromSnapshots routes detection through the engine detectPatterns entry point`() = runTest {
+        val now = ms(2026, Calendar.JANUARY, 15)
+        every { timeProvider.now() } returns now
+        coEvery { recurringExpenseEngine.detectPatterns(any(), any()) } returns emptyList()
+
+        provider.getPatternsFromSnapshots(expenseSnapshots = emptyList(), manualRecurring = emptyList())
+
+        coVerify(exactly = 1) { recurringExpenseEngine.detectPatterns(emptyList(), emptySet()) }
+        verify(exactly = 0) { recurringExpenseEngine.detectPatternsFromSnapshots(any(), any()) }
     }
 
     @Test

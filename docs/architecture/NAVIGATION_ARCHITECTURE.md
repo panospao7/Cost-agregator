@@ -111,6 +111,8 @@ Scheme: `expensetracker://`
 | `add` | none | Opens an empty Add Expense sheet (never prefilled) |
 | `analytics` | `period` from the shared `TimePeriodTokens` allowlist | Analytics tab |
 | `map` | `location` (trimmed, 1..100 chars, no control characters) | Spending map |
+| `installments` | none | Loan S13-a: accepted only while the installments feature is enabled (else `UNKNOWN_HOST`); asks for confirmation after unlock, then opens Installments |
+| `installment_plan` | `id` = 1..Long.MAX_VALUE (missing or invalid id rejects the link, `MALFORMED`) | As `installments`, then opens that plan's detail |
 | bank hosts | n/a | Rejected (`BANK_HOST`) → Home |
 | any other host | n/a | Rejected (`UNKNOWN_HOST`) → Home |
 

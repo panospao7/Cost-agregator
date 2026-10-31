@@ -1,5 +1,8 @@
 package com.yourname.expensetracker.ui.screens.addexpense
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
@@ -25,9 +28,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -42,13 +51,29 @@ import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.entity.TransferDirection
-import com.yourname.expensetracker.domain.util.CurrencyFormatter
+import com.yourname.expensetracker.domain.model.UiText
+import com.yourname.expensetracker.ui.components.asString
+import com.yourname.expensetracker.ui.components.currency.CurrencyOpenSettingRequest
+import com.yourname.expensetracker.ui.components.currency.CurrencyRateRegionContent
+import com.yourname.expensetracker.ui.components.currency.CurrencyRegionUi
+import com.yourname.expensetracker.ui.components.currency.CurrencySelectionControl
+import com.yourname.expensetracker.ui.components.currency.currencySymbolFor
+import com.yourname.expensetracker.ui.navigation.InstallmentsFeature
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import com.yourname.expensetracker.ui.util.UiTimeUtils
 import java.time.format.DateTimeFormatter
 import java.time.Instant
 import java.time.ZoneId
 import java.util.*
+
+private fun findHostActivity(context: Context): Activity? {
+    var current: Context? = context
+    while (current is ContextWrapper) {
+        if (current is Activity) return current
+        current = current.baseContext
+    }
+    return current as? Activity
+}
 
 @Composable
 private fun getTransactionTypeLabel(type: TransactionType): String {
@@ -74,18 +99,132 @@ private fun getRecurrenceFrequencyLabel(frequency: com.yourname.expensetracker.d
     }
 }
 
+/**
+ * The amount field. Its leading symbol follows the SELECTED currency (MEC F4); it is not tappable (the
+ * currency control next to it is). Per-currency amount errors arrive as [amountError] (supporting text).
+ */
+@Composable
+private fun AmountInputField(
+    amount: String,
+    onAmountChange: (String) -> Unit,
+    amountError: UiText?,
+    amountNote: QuickAddFieldNote?,
+    currencyCode: String?,
+    amountCd: String,
+    onDone: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    OutlinedTextField(
+        value = amount,
+        onValueChange = onAmountChange,
+        label = { Text(stringResource(com.yourname.expensetracker.R.string.amount_label)) },
+        placeholder = { Text(stringResource(com.yourname.expensetracker.R.string.amount_placeholder)) },
+        singleLine = true,
+        keyboardOptions = KeyboardOptions(
+            keyboardType = KeyboardType.Decimal,
+            imeAction = ImeAction.Done
+        ),
+        keyboardActions = KeyboardActions(
+            onDone = { onDone() }
+        ),
+        // A quick-add amount flag blocks Save (empty amount), so it uses the error style.
+        isError = amountError != null || amountNote?.kind == QuickAddFieldNoteKind.FLAG,
+        supportingText = when {
+            amountError != null -> {
+                { Text(amountError.asString()) }
+            }
+            amountNote != null -> {
+                { QuickAddNoteText(amountNote) }
+            }
+            else -> null
+        },
+        leadingIcon = {
+            val currencySymbol = remember(currencyCode) { currencySymbolFor(currencyCode) }
+            Text(
+                text = currencySymbol,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+        },
+        modifier = modifier.semantics { contentDescription = amountCd }
+    )
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AddExpenseSheet(
     onDismiss: () -> Unit,
     initialAmount: String? = null,
     initialMerchant: String? = null,
-    viewModel: AddExpenseViewModel = hiltViewModel()
+    onOpenExchangeRateSetting: () -> Unit = {},
+    viewModel: AddExpenseViewModel = hiltViewModel(),
+    // Loan-installments S11b: the section renders nothing unless the feature flag is on.
+    installmentsFeatureEnabled: Boolean = InstallmentsFeature.ENABLED
 ) {
     val state by viewModel.state.collectAsState()
     val categories by viewModel.categories.collectAsState()
     val focusManager = LocalFocusManager.current
     val scrollState = rememberScrollState()
+
+    // nl-quick-add (C4): the summary describes the last Fill and survives later edits and rotation (G2-13,
+    // item 71a): the snapshot lives in the ViewModel state; only the per-field markers follow the live
+    // origins. No edit mode exists in this sheet (create only), so the quick-add section is always shown (U2).
+    val fieldNotes = QuickAddField.values().associateWith { field ->
+        QuickAddUiMapper.fieldNote(
+            origin = state.fieldOrigins[field] ?: FieldOrigin.DEFAULT,
+            flag = state.fieldFlags[field],
+            // MEC F4: the typed amount is in the SELECTED currency, so the notes name that one.
+            homeCurrency = state.selectedCurrency
+        )
+    }
+    val selectedCategory = categories.firstOrNull { it.id == state.selectedCategoryId }
+    val categoryChip = QuickAddUiMapper.categoryChip(state.categoryFillSource, selectedCategory?.name)
+
+    // MEC AE-34: capture the entry zone once per sheet session (kept in the ViewModel only). The capture is
+    // null-guarded, so a configuration change keeps the zone; leaving the sheet for any reason other than a
+    // configuration change (e.g. host navigation without reset()) clears it so the next session re-captures.
+    val hostActivity = findHostActivity(LocalContext.current)
+    DisposableEffect(Unit) {
+        viewModel.onSheetOpened()
+        onDispose {
+            if (hostActivity?.isChangingConfigurations != true) {
+                viewModel.onSheetLeft()
+            }
+        }
+    }
+
+    // MEC D-11: "Open exchange-rate setting". The view model decides whether to confirm first; the sheet
+    // only shows the dialog and, once the request is NAVIGATE, hands over to the host and consumes it.
+    LaunchedEffect(state.openSettingRequest) {
+        if (state.openSettingRequest == CurrencyOpenSettingRequest.NAVIGATE) {
+            onOpenExchangeRateSetting()
+            viewModel.consumeOpenSettingRequest()
+        }
+    }
+    if (state.openSettingRequest == CurrencyOpenSettingRequest.CONFIRM_NEEDED) {
+        AlertDialog(
+            onDismissRequest = { viewModel.consumeOpenSettingRequest() },
+            title = { Text(stringResource(R.string.mec_open_setting_confirm_title)) },
+            text = { Text(stringResource(R.string.mec_open_setting_confirm_body)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    // MEC C-1: the view model discards the entry and raises NAVIGATE; the effect above
+                    // makes the single host callback.
+                    viewModel.confirmOpenExchangeRateSetting()
+                }) {
+                    Text(stringResource(R.string.mec_action_open_setting))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.consumeOpenSettingRequest() }) {
+                    Text(stringResource(R.string.cancel_button))
+                }
+            }
+        )
+    }
+
+    // "Change currency" on the blocked card asks the currency control to open its list.
+    var changeCurrencyRequests by remember { mutableIntStateOf(0) }
 
     // Handle save result
     LaunchedEffect(state.mutation.isSuccess) {
@@ -104,6 +243,16 @@ fun AddExpenseSheet(
         val hasPrefill = incomingPrefill.first != null || incomingPrefill.second != null
         if (hasPrefill) {
             viewModel.setInitialValuesIfBlank(incomingPrefill.first, incomingPrefill.second)
+        }
+    }
+
+    // ux-flows §9: the Error/Duplicate Card sits at the bottom of the scroll column; bring it into view.
+    LaunchedEffect(state.saveResult) {
+        val result = state.saveResult
+        if (result is SaveResult.Error || result is SaveResult.Duplicate) {
+            // Wait one frame so the newly composed Card is measured and maxValue is current.
+            withFrameNanos { }
+            scrollState.animateScrollTo(scrollState.maxValue)
         }
     }
 
@@ -137,11 +286,22 @@ fun AddExpenseSheet(
                     }
                 },
                 actions = {
+                    // MEC ux section 4: Save is disabled with a spoken reason for a missing rate or currency.
+                    val saveBlockedReason = when (state.currencyRegion) {
+                        is CurrencyRegionUi.Blocked -> if (state.isCurrencySaveBlocked) stringResource(R.string.mec_save_disabled_rate) else null
+                        is CurrencyRegionUi.Unset -> stringResource(R.string.mec_save_disabled_currency)
+                        is CurrencyRegionUi.AmountInvalid -> stringResource(R.string.mec_save_disabled_amount)
+                        else -> null
+                    }
                     Button(
                         onClick = { viewModel.save() },
                         // S5-027: Also disable while currency is loading
-                        enabled = !state.mutation.isRunning && state.homeCurrency != null,
-                        modifier = Modifier.padding(end = 8.dp)
+                        enabled = !state.mutation.isRunning && state.homeCurrency != null && !state.isCurrencySaveBlocked,
+                        modifier = Modifier
+                            .padding(end = 8.dp)
+                            .semantics {
+                                if (saveBlockedReason != null) stateDescription = saveBlockedReason
+                            }
                     ) {
                         if (state.mutation.isRunning || state.homeCurrency == null) {
                             CircularProgressIndicator(
@@ -169,6 +329,14 @@ fun AddExpenseSheet(
             ) {
                 Spacer(modifier = Modifier.height(8.dp))
 
+                // === Quick add (typed line, fill-only) ===
+                QuickAddSection(
+                    summary = QuickAddUiMapper.summaryLines(state.fillSummary, state.selectedCurrency),
+                    homeCurrencyLoaded = state.homeCurrency != null,
+                    isSaving = state.isSaving,
+                    onFill = { viewModel.fill(it) }
+                )
+
                 // === Merchant Field with Autocomplete ===
                 MerchantFieldWithSuggestions(
                     merchant = state.merchant,
@@ -179,42 +347,95 @@ fun AddExpenseSheet(
                     onDismissSuggestions = { viewModel.dismissSuggestions() },
                     error = state.merchantError,
                     categories = categories,
-                    onNextFocus = { focusManager.moveFocus(FocusDirection.Down) }
+                    onNextFocus = { focusManager.moveFocus(FocusDirection.Down) },
+                    fillNote = fieldNotes[QuickAddField.MERCHANT]
                 )
 
                 // === Amount Field ===
-                val amountCd = stringResource(R.string.add_expense_amount_cd, state.amount)
-                OutlinedTextField(
-                    value = state.amount,
-                    onValueChange = { viewModel.updateAmount(it) },
-                    label = { Text(stringResource(com.yourname.expensetracker.R.string.amount_label)) },
-                    placeholder = { Text(stringResource(com.yourname.expensetracker.R.string.amount_placeholder)) },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.Decimal,
-                        imeAction = ImeAction.Done
-                    ),
-                    keyboardActions = KeyboardActions(
-                        onDone = { focusManager.clearFocus() }
-                    ),
-                    isError = state.amountError != null,
-                    supportingText = state.amountError?.let { { Text(it) } },
-                    leadingIcon = {
- val currencySymbol = remember(state.homeCurrency) {
-     val hc = state.homeCurrency ?: ""
- CurrencyFormatter.formatMoney(0.0, hc, showCents = false)
- .replace(Regex("[0-9\\s.,]"), "")
- .ifBlank { CurrencyFormatter.formatMoney(1.0, hc, showCents = false).replace(Regex("[0-9\\s.,]"), "") }
-                        }
-                        Text(
-                            text = currencySymbol,
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
+                // MEC F4: the amount is in the SELECTED currency (null only while home is loading).
+                val amountCurrency = state.selectedCurrency
+                val amountCd = stringResource(R.string.add_expense_amount_cd, state.amount, amountCurrency ?: "")
+                val amountError = state.amountError
+                val amountNote = fieldNotes[QuickAddField.AMOUNT]
+                // ux-flows section 2: the control and the amount stack at fontScale >= 1.3 or width < 360 dp.
+                val stackCurrencyRow = LocalDensity.current.fontScale >= 1.3f ||
+                    LocalConfiguration.current.screenWidthDp < 360
+                // Loan-installments S11b: an Unset selection (null currency) must stay pickable, else the user could
+                // never leave Unset (for example JPY switched to installment mode).
+                val currencyControlEnabled = (amountCurrency != null || state.currencyRegion is CurrencyRegionUi.Unset) &&
+                    state.currencyRegion !is CurrencyRegionUi.Loading
+                if (stackCurrencyRow) {
+                    CurrencySelectionControl(
+                        selectedCode = amountCurrency,
+                        options = state.currencyOptions,
+                        homeCode = state.homeCurrency,
+                        enabled = currencyControlEnabled,
+                        isUnset = state.currencyRegion is CurrencyRegionUi.Unset,
+                        readOnly = state.currencyRegion is CurrencyRegionUi.ReadOnly,
+                        onSelect = { viewModel.selectCurrency(it) },
+                        openRequest = changeCurrencyRequests,
+                        onOpenRequestConsumed = { changeCurrencyRequests = 0 },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    AmountInputField(
+                        amount = state.amount,
+                        onAmountChange = { viewModel.updateAmount(it) },
+                        amountError = amountError,
+                        amountNote = amountNote,
+                        currencyCode = amountCurrency,
+                        amountCd = amountCd,
+                        onDone = { focusManager.clearFocus() },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.Top
+                    ) {
+                        CurrencySelectionControl(
+                            selectedCode = amountCurrency,
+                            options = state.currencyOptions,
+                            homeCode = state.homeCurrency,
+                            enabled = currencyControlEnabled,
+                            isUnset = state.currencyRegion is CurrencyRegionUi.Unset,
+                            readOnly = state.currencyRegion is CurrencyRegionUi.ReadOnly,
+                            onSelect = { viewModel.selectCurrency(it) },
+                            openRequest = changeCurrencyRequests,
+                            onOpenRequestConsumed = { changeCurrencyRequests = 0 },
+                            modifier = Modifier
+                                .width(104.dp)
+                                .padding(top = 8.dp)
                         )
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .semantics { contentDescription = amountCd }
+                        AmountInputField(
+                            amount = state.amount,
+                            onAmountChange = { viewModel.updateAmount(it) },
+                            amountError = amountError,
+                            amountNote = amountNote,
+                            currencyCode = amountCurrency,
+                            amountCd = amountCd,
+                            onDone = { focusManager.clearFocus() },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+
+                // MEC ux sections 3 and 4: preview line or blocked card directly under the amount. The B1
+                // save-error card and a home-unresolved card are never both shown.
+                CurrencyRateRegionContent(
+                    region = state.currencyRegion,
+                    ratesSetting = state.ratesSetting,
+                    rateRefresh = state.rateRefresh,
+                    ratesToday = state.ratesToday,
+                    suppressHomeUnresolvedCard = state.saveResult is SaveResult.Error,
+                    onRefresh = { viewModel.refreshRates() },
+                    rateFixAction = state.rateFixAction,
+                    historyStatus = state.historyStatus,
+                    onDownloadRateHistory = { viewModel.onDownloadRateHistory() },
+                    onCancelRateHistory = { viewModel.onCancelRateHistory() },
+                    onOpenSetting = { viewModel.requestOpenExchangeRateSetting() },
+                    onChangeCurrency = { changeCurrencyRequests = 1 },
+                    announceKey = state.previewAnnounceKey
                 )
 
                 // === Payment Method ===
@@ -259,12 +480,36 @@ fun AddExpenseSheet(
                     )
                 }
 
+                fieldNotes[QuickAddField.PAYMENT]?.let { QuickAddNoteText(it) }
+
                 // === Category Selector ===
                 Text(
                     stringResource(com.yourname.expensetracker.R.string.category_label),
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.Medium
                 )
+                // The Fill chip is the category's "Filled" marker; a flag, or a Fill-set category the chip
+                // cannot show, falls back to the note. G2-14: the auto-assign caption shows in every add flow.
+                val categoryNote = fieldNotes[QuickAddField.CATEGORY]
+                if (categoryNote != null &&
+                    (categoryNote.kind == QuickAddFieldNoteKind.FLAG || categoryChip == null)
+                ) {
+                    QuickAddNoteText(categoryNote)
+                }
+                if (state.selectedCategoryId == null) {
+                    Text(
+                        stringResource(R.string.add_expense_category_auto_hint),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                if (categoryChip != null && selectedCategory != null) {
+                    QuickAddCategoryChipRow(
+                        chip = categoryChip,
+                        category = selectedCategory,
+                        onRemove = { viewModel.clearCategory() }
+                    )
+                }
                 CategoryGrid(
                     categories = categories,
                     selectedId = state.selectedCategoryId,
@@ -276,6 +521,7 @@ fun AddExpenseSheet(
                     dateMs = state.date,
                     onDateSelected = { viewModel.updateDate(it) }
                 )
+                fieldNotes[QuickAddField.DATE]?.let { QuickAddNoteText(it) }
 
                 // === Transaction Type (collapsible) ===
                 val transactionTypeLabel = getTransactionTypeLabel(state.transactionType)
@@ -358,24 +604,67 @@ fun AddExpenseSheet(
                     )
                 }
 
-                // === Recurring Options ===
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
+                // MEC 1b INV-1b-20(c): one-shot note after a home change discarded the draft.
+                if (state.homeChangeClearedNote) {
                     Text(
-                        stringResource(com.yourname.expensetracker.R.string.repeat_transaction_label),
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.Medium
-                    )
-                    Switch(
-                        checked = state.isRecurring,
-                        onCheckedChange = { viewModel.toggleRecurring() }
+                        stringResource(R.string.mec_home_changed_cleared),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .semantics { liveRegion = LiveRegionMode.Polite }
                     )
                 }
-                
-                AnimatedVisibility(visible = state.isRecurring) {
+
+                // === Recurring Options ===
+                // MEC INV-16: Repeat is hidden (not disabled) for a foreign currency; a note takes its place.
+                if (state.installments.on) {
+                    // Loan-installments S11b: Repeat is hidden while installments are ON.
+                    Text(
+                        stringResource(R.string.add_expense_installments_repeat_exclusive),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .semantics { liveRegion = LiveRegionMode.Polite }
+                    )
+                } else if (state.isForeignSelected) {
+                    if (state.repeatClearedByCurrency) {
+                        Text(
+                            stringResource(R.string.mec_repeat_cleared),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .semantics { liveRegion = LiveRegionMode.Polite }
+                        )
+                    } else {
+                        Text(
+                            stringResource(R.string.mec_repeat_home_only, state.homeCurrency.orEmpty()),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            stringResource(com.yourname.expensetracker.R.string.repeat_transaction_label),
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Switch(
+                            checked = state.isRecurring,
+                            onCheckedChange = { viewModel.toggleRecurring() }
+                        )
+                    }
+                }
+
+                AnimatedVisibility(visible = state.isRecurring && !state.isForeignSelected) {
                     Column {
                         Text(
                             stringResource(com.yourname.expensetracker.R.string.frequency_label),
@@ -406,6 +695,13 @@ fun AddExpenseSheet(
                         }
                     }
                 }
+
+                // === Pay in installments (loan-installments S11b; dormant while the feature flag is off) ===
+                AddExpenseInstallmentsSection(
+                    state = state,
+                    viewModel = viewModel,
+                    featureEnabled = installmentsFeatureEnabled
+                )
 
                 // === Not Mine Expense ===
                 Row(
@@ -539,7 +835,9 @@ fun AddExpenseSheet(
                             colors = CardDefaults.cardColors(
                                 containerColor = MaterialTheme.colorScheme.errorContainer
                             ),
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Assertive }
                         ) {
                             Text(
                                 stringResource(com.yourname.expensetracker.R.string.error_duplicate_transaction),
@@ -549,15 +847,22 @@ fun AddExpenseSheet(
                         }
                     }
                     is SaveResult.Error -> {
+                        // ux-flows §9: keep the "❌ %1$s" wrapper, but TalkBack reads the text-only
+                        // content description so the leading glyph is not announced.
+                        val errorText = result.message.asString()
                         Card(
                             colors = CardDefaults.cardColors(
                                 containerColor = MaterialTheme.colorScheme.errorContainer
                             ),
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Assertive }
                         ) {
                             Text(
-                                stringResource(R.string.add_expense_error_format, result.message),
-                                modifier = Modifier.padding(12.dp),
+                                stringResource(R.string.add_expense_error_format, errorText),
+                                modifier = Modifier
+                                    .padding(12.dp)
+                                    .semantics { contentDescription = errorText },
                                 color = MaterialTheme.colorScheme.onErrorContainer
                             )
                         }
@@ -579,9 +884,10 @@ fun MerchantFieldWithSuggestions(
     showSuggestions: Boolean,
     onSuggestionSelected: (MerchantSuggestion) -> Unit,
     onDismissSuggestions: () -> Unit,
-    error: String?,
+    error: UiText?,
     categories: List<Category>,
-    onNextFocus: () -> Unit
+    onNextFocus: () -> Unit,
+    fillNote: QuickAddFieldNote? = null
 ) {
     val categoryMap = remember(categories) { categories.associateBy { it.id } }
 
@@ -593,7 +899,15 @@ fun MerchantFieldWithSuggestions(
             placeholder = { Text(stringResource(com.yourname.expensetracker.R.string.merchant_placeholder)) },
             singleLine = true,
             isError = error != null,
-            supportingText = error?.let { { Text(it) } },
+            supportingText = when {
+                error != null -> {
+                    { Text(error.asString()) }
+                }
+                fillNote != null -> {
+                    { QuickAddNoteText(fillNote) }
+                }
+                else -> null
+            },
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
             keyboardActions = KeyboardActions(onNext = { onNextFocus() }),
             modifier = Modifier.fillMaxWidth()
@@ -799,9 +1113,6 @@ fun DateSelector(
 ) {
     val dateFormat = remember { DateTimeFormatter.ofPattern("EEE, dd MMM yyyy, HH:mm", Locale.getDefault()) }
     var showDatePicker by remember { mutableStateOf(false) }
-    val datePickerState = rememberDatePickerState(
-        initialSelectedDateMillis = UiTimeUtils.instantToPickerMillis(dateMs)
-    )
 
     val formattedDate = dateFormat.format(Instant.ofEpochMilli(dateMs).atZone(ZoneId.systemDefault()))
     val dateSelectorCd = stringResource(R.string.add_expense_date_selector_cd_format, formattedDate)
@@ -834,6 +1145,11 @@ fun DateSelector(
     }
 
     if (showDatePicker) {
+        // RF-2b: state is scoped to the dialog so each opening seeds from the current dateMs;
+        // a seed captured at first composition would go stale after quick-add Fill/reset and OK would revert the date.
+        val datePickerState = rememberDatePickerState(
+            initialSelectedDateMillis = UiTimeUtils.instantToPickerMillis(dateMs)
+        )
         DatePickerDialog(
             onDismissRequest = { showDatePicker = false },
             confirmButton = {

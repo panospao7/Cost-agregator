@@ -9,12 +9,17 @@ import com.yourname.expensetracker.domain.ai.model.OnDeviceModelStatus
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.ai.service.AiEnvironmentMonitor
 import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
+import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.verify
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -26,6 +31,7 @@ class DefaultAiCapabilityRouterTest {
     private lateinit var aiRuntimeDiagnostics: AiRuntimeDiagnostics
     private lateinit var secureKeyStorage: SecureKeyStorage
     private lateinit var timeProvider: TimeProvider
+    private lateinit var privacyGate: PrivacyGate
     private lateinit var router: DefaultAiCapabilityRouter
 
     @Before
@@ -34,6 +40,7 @@ class DefaultAiCapabilityRouterTest {
         environmentMonitor = mockk()
         secureKeyStorage = mockk()
         timeProvider = mockk()
+        privacyGate = mockk(relaxed = true)
         every { timeProvider.now() } returns 1_700_000_000_000L
         aiRuntimeDiagnostics = AiRuntimeDiagnostics(timeProvider)
         // By default, assume API key is present for existing tests
@@ -43,7 +50,7 @@ class DefaultAiCapabilityRouterTest {
             environmentMonitor,
             aiRuntimeDiagnostics,
             secureKeyStorage,
-            mockk(relaxed = true),
+            privacyGate,
         )
     }
 
@@ -186,6 +193,8 @@ class DefaultAiCapabilityRouterTest {
             allowCloudAi = true,
             allowOnDeviceAi = true,
             receiptAssistEnabled = true,
+            // ai-fixes B1c: the default is now false (INV-7); the router table entry is kept.
+            warrantyExtractionEnabled = true,
             preferredMode = AiMode.AUTO
         )
 
@@ -390,5 +399,138 @@ class DefaultAiCapabilityRouterTest {
 
         assertEquals(AiRoute.DETERMINISTIC_FALLBACK, result.route)
         assertTrue(result.reason.contains("API key", ignoreCase = true))
+    }
+
+    // ── TRANSACTION_INSIGHT (ai-fixes B2a, INV-16, AE-27) ─────────────────────
+
+    private fun fullyCloudEnabledSettings(mode: AiMode) = AiSettings(
+        aiEnabled = true,
+        allowCloudAi = true,
+        allowOnDeviceAi = true,
+        wifiOnlyForCloud = false,
+        dashboardBriefingEnabled = true,
+        transactionInsightEnabled = true, // B2b: TRANSACTION_INSIGHT has its own toggle (spec §1.6)
+        preferredMode = mode
+    )
+
+    @Test
+    fun `AE-27 TRANSACTION_INSIGHT is DETERMINISTIC_FALLBACK never CLOUD when on-device NOT_INSTALLED in every mode`() = runTest {
+        every { environmentMonitor.isNetworkAvailable() } returns true
+        every { environmentMonitor.isWifiConnected() } returns true
+        coEvery { environmentMonitor.getOnDeviceModelStatus(AiCapability.TRANSACTION_INSIGHT) } returns OnDeviceModelStatus.NOT_INSTALLED
+
+        val modes = listOf(AiMode.AUTO, AiMode.CLOUD, AiMode.ON_DEVICE)
+        assertEquals("mode table size guard", 3, modes.size)
+
+        modes.forEach { mode ->
+            val result = router.decide(AiCapability.TRANSACTION_INSIGHT, fullyCloudEnabledSettings(mode))
+
+            assertEquals("[$mode] route", AiRoute.DETERMINISTIC_FALLBACK, result.route)
+            assertNull("[$mode] no provider name on fallback", result.providerName)
+        }
+
+        // Cloud was never consulted for TRANSACTION_INSIGHT (checked before the positive control below).
+        coVerify(exactly = 0) { privacyGate.check(any(), any()) }
+        verify(exactly = 0) { secureKeyStorage.hasKey(any()) }
+
+        // Positive control: the same fully cloud-enabled settings do route a cloud-capable capability to CLOUD.
+        coEvery { environmentMonitor.getOnDeviceModelStatus(AiCapability.DASHBOARD_BRIEFING) } returns OnDeviceModelStatus.NOT_INSTALLED
+        val control = router.decide(AiCapability.DASHBOARD_BRIEFING, fullyCloudEnabledSettings(AiMode.CLOUD))
+        assertEquals("positive control route", AiRoute.CLOUD, control.route)
+    }
+
+    @Test
+    fun `TRANSACTION_INSIGHT routes ON_DEVICE and never CLOUD when local model is available in every mode`() = runTest {
+        every { environmentMonitor.isNetworkAvailable() } returns true
+        every { environmentMonitor.isWifiConnected() } returns true
+        coEvery { environmentMonitor.getOnDeviceModelStatus(AiCapability.TRANSACTION_INSIGHT) } returns OnDeviceModelStatus.AVAILABLE
+
+        listOf(AiMode.AUTO, AiMode.CLOUD, AiMode.ON_DEVICE).forEach { mode ->
+            val result = router.decide(AiCapability.TRANSACTION_INSIGHT, fullyCloudEnabledSettings(mode))
+
+            assertEquals("[$mode] route", AiRoute.ON_DEVICE, result.route)
+            assertEquals("[$mode] provider", AppConfig.Ai.ON_DEVICE_PROVIDER_NAME, result.providerName)
+            assertEquals("[$mode] model", AppConfig.Ai.ON_DEVICE_BRIEFING_MODEL, result.modelName)
+        }
+
+        coVerify(exactly = 0) { privacyGate.check(any(), any()) }
+        verify(exactly = 0) { secureKeyStorage.hasKey(any()) }
+    }
+
+    @Test
+    fun `INV-15 TRANSACTION_INSIGHT routes ON_DEVICE independent of dashboardBriefingEnabled`() = runTest {
+        every { environmentMonitor.isNetworkAvailable() } returns true
+        every { environmentMonitor.isWifiConnected() } returns true
+        coEvery { environmentMonitor.getOnDeviceModelStatus(AiCapability.TRANSACTION_INSIGHT) } returns OnDeviceModelStatus.AVAILABLE
+
+        listOf(AiMode.AUTO, AiMode.CLOUD, AiMode.ON_DEVICE).forEach { mode ->
+            val result = router.decide(
+                AiCapability.TRANSACTION_INSIGHT,
+                fullyCloudEnabledSettings(mode).copy(dashboardBriefingEnabled = false)
+            )
+
+            assertEquals("[$mode] route", AiRoute.ON_DEVICE, result.route)
+        }
+
+        coVerify(exactly = 0) { privacyGate.check(any(), any()) }
+        verify(exactly = 0) { secureKeyStorage.hasKey(any()) }
+    }
+
+    @Test
+    fun `TRANSACTION_INSIGHT is never CLOUD when on-device is disallowed even with cloud fully enabled`() = runTest {
+        every { environmentMonitor.isNetworkAvailable() } returns true
+        every { environmentMonitor.isWifiConnected() } returns true
+        coEvery { environmentMonitor.getOnDeviceModelStatus(AiCapability.TRANSACTION_INSIGHT) } returns OnDeviceModelStatus.AVAILABLE
+
+        listOf(AiMode.AUTO, AiMode.CLOUD, AiMode.ON_DEVICE).forEach { mode ->
+            val result = router.decide(
+                AiCapability.TRANSACTION_INSIGHT,
+                fullyCloudEnabledSettings(mode).copy(allowOnDeviceAi = false)
+            )
+
+            assertEquals("[$mode] route", AiRoute.DETERMINISTIC_FALLBACK, result.route)
+        }
+    }
+
+    @Test
+    fun `TRANSACTION_INSIGHT is DISABLED when AI is off`() = runTest {
+        // Insight toggle and on-device are on, so only aiEnabled = false can be the cause.
+        val result = router.decide(
+            AiCapability.TRANSACTION_INSIGHT,
+            AiSettings(aiEnabled = false, allowOnDeviceAi = true, transactionInsightEnabled = true)
+        )
+
+        assertEquals(AiRoute.DISABLED, result.route)
+        assertTrue(result.reason.contains("AI is disabled", ignoreCase = true))
+        assertFalse(
+            "reason must name the global AI switch, not the capability toggle",
+            result.reason.contains("TRANSACTION_INSIGHT")
+        )
+    }
+
+    @Test
+    fun `B2b TRANSACTION_INSIGHT is DISABLED when insight toggle is off even with briefing and AI on`() = runTest {
+        listOf(AiMode.AUTO, AiMode.CLOUD, AiMode.ON_DEVICE).forEach { mode ->
+            val result = router.decide(
+                AiCapability.TRANSACTION_INSIGHT,
+                fullyCloudEnabledSettings(mode).copy(transactionInsightEnabled = false, dashboardBriefingEnabled = true)
+            )
+
+            assertEquals("[$mode] route", AiRoute.DISABLED, result.route)
+        }
+    }
+
+    @Test
+    fun `B2b TRANSACTION_INSIGHT is not DISABLED when briefing is off but insight toggle is on`() = runTest {
+        every { environmentMonitor.isNetworkAvailable() } returns true
+        every { environmentMonitor.isWifiConnected() } returns true
+        coEvery { environmentMonitor.getOnDeviceModelStatus(AiCapability.TRANSACTION_INSIGHT) } returns OnDeviceModelStatus.AVAILABLE
+
+        val result = router.decide(
+            AiCapability.TRANSACTION_INSIGHT,
+            fullyCloudEnabledSettings(AiMode.AUTO).copy(dashboardBriefingEnabled = false, transactionInsightEnabled = true)
+        )
+
+        assertTrue("route must not be DISABLED", result.route != AiRoute.DISABLED)
     }
 }

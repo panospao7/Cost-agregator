@@ -13,11 +13,17 @@ import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
 import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiMode
 import com.yourname.expensetracker.domain.ai.model.AiTargetType
+import com.yourname.expensetracker.domain.ai.usecase.BriefingDeliveryOutcome
 import com.yourname.expensetracker.domain.ai.usecase.DeliverProactiveBriefingNotificationUseCase
 import com.yourname.expensetracker.domain.ai.usecase.GenerateDashboardBriefingUseCase
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
+import com.yourname.expensetracker.domain.diagnostics.AppPipeline
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
+import com.yourname.expensetracker.domain.diagnostics.EventOutcome
+import com.yourname.expensetracker.domain.privacy.PrivacyCapability
+import com.yourname.expensetracker.domain.workers.NotificationPermissionChecker
 import com.yourname.expensetracker.domain.util.NotificationIdGenerator
 import com.yourname.expensetracker.domain.dto.AiArtifactRecord
 import com.yourname.expensetracker.domain.model.dashboard.SpendingSummary
@@ -33,9 +39,11 @@ import com.yourname.expensetracker.domain.workers.WorkerGuardResult
 import com.yourname.expensetracker.domain.workers.WorkerRunContext
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.MockKMatcherScope
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkStatic
+import io.mockk.slot
 import io.mockk.unmockkAll
 import io.mockk.verify
 import kotlinx.coroutines.CancellationException
@@ -45,6 +53,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertSame
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -85,6 +94,7 @@ class DailyBriefingWorkerTest {
     // Relaxed run context so behavioral tests can both run the guarded block AND
     // coVerify the worker's counter calls (e.g. addNotificationsSent on delivery).
     private lateinit var ctx: WorkerRunContext
+    private lateinit var notificationPermissionChecker: NotificationPermissionChecker
 
     @Before
     fun setup() {
@@ -95,6 +105,14 @@ class DailyBriefingWorkerTest {
         deliverProactiveBriefingNotificationUseCase = mockk(relaxed = true)
         executionGuard = mockk(relaxed = true)
         ctx = mockk(relaxed = true)
+        // ai-fixes B3a: notifications are allowed by default; permission-denied tests override it.
+        notificationPermissionChecker = mockk()
+        every { notificationPermissionChecker.areNotificationsEnabled() } returns true
+        // A relaxed enum return is not a real outcome; delivering by default keeps the
+        // pre-B3a counting tests meaningful (addNotificationsSent only on DELIVERED).
+        coEvery {
+            deliverProactiveBriefingNotificationUseCase(dateKey = any(), startedAt = any(), notificationId = any(), notificationsAllowed = any())
+        } returns BriefingDeliveryOutcome.DELIVERED
 
         // PR7: Mock WorkManager so the worker's reschedule call via
         // WorkerSpecScheduler.scheduleAtMidnight doesn't crash in the test
@@ -150,7 +168,8 @@ class DailyBriefingWorkerTest {
                         aiArtifactRepository = aiArtifactRepository,
                         aiWorkScheduler = aiWorkScheduler,
                         executionGuard = executionGuard,
-                        diagnosticEventWriter = diagnosticEventWriter
+                        diagnosticEventWriter = diagnosticEventWriter,
+                        notificationPermissionChecker = notificationPermissionChecker
                     )
                 }
             })
@@ -167,7 +186,7 @@ class DailyBriefingWorkerTest {
         assertEquals(Result.success(), result)
         coVerify(exactly = 1) { generateDashboardBriefingUseCase(processed, 1000L) }
         coVerify(exactly = 1) {
-            deliverProactiveBriefingNotificationUseCase(dateKey = any(), startedAt = any(), notificationId = any())
+            deliverProactiveBriefingNotificationUseCase(dateKey = any(), startedAt = any(), notificationId = any(), notificationsAllowed = any())
         }
         // P9-S4 counts: a delivered briefing must surface a non-zero notificationsSent.
         verify(exactly = 1) { ctx.addNotificationsSent() }
@@ -175,6 +194,29 @@ class DailyBriefingWorkerTest {
         verify(atLeast = 1) {
             workManager.enqueueUniqueWork(any(), any(), any<androidx.work.OneTimeWorkRequest>())
         }
+    }
+
+    // INV-31 / AE-23 / A15 (S8b-4): the worker is a pass-through between the dashboard data provider
+    // and the briefing use case. It must hand over the EXACT getProcessedDataFlow output (same
+    // instance, not a copy and not a rebuilt or merged snapshot), so nothing installment-aware can be
+    // added on the worker path.
+    @Test
+    fun `INV-31 worker passes the getProcessedDataFlow output to the briefing use case unchanged`() = runTest {
+        val processed = sampleProcessedData()
+        val handedOver = slot<ProcessedDashboardData>()
+        coEvery { dashboardDataProvider.getProcessedDataFlow(analyticsRepository) } returns flowOf(processed)
+        coEvery { generateDashboardBriefingUseCase(capture(handedOver), 1000L) } returns Unit
+
+        val result = buildWorker().doWork()
+
+        assertEquals(Result.success(), result)
+        coVerify(exactly = 1) { dashboardDataProvider.getProcessedDataFlow(analyticsRepository) }
+        coVerify(exactly = 1) { generateDashboardBriefingUseCase(any(), 1000L) }
+        assertSame(
+            "the use case must receive the provider's snapshot instance untouched",
+            processed,
+            handedOver.captured
+        )
     }
 
     @Test
@@ -187,7 +229,7 @@ class DailyBriefingWorkerTest {
 
         assertEquals(Result.retry(), result)
         coVerify(exactly = 0) {
-            deliverProactiveBriefingNotificationUseCase(dateKey = any(), startedAt = any(), notificationId = any())
+            deliverProactiveBriefingNotificationUseCase(dateKey = any(), startedAt = any(), notificationId = any(), notificationsAllowed = any())
         }
     }
 
@@ -203,7 +245,7 @@ class DailyBriefingWorkerTest {
 
         assertEquals(Result.retry(), result)
         coVerify(exactly = 0) {
-            deliverProactiveBriefingNotificationUseCase(dateKey = any(), startedAt = any(), notificationId = any())
+            deliverProactiveBriefingNotificationUseCase(dateKey = any(), startedAt = any(), notificationId = any(), notificationsAllowed = any())
         }
     }
 
@@ -485,6 +527,199 @@ class DailyBriefingWorkerTest {
         assertEquals(id1, id2)
     }
 
+    // ══════════════════════════════════════════════════════════════════════
+    // ai-fixes B3a: notification permission gates posting only (INV-24, INV-27)
+    // ══════════════════════════════════════════════════════════════════════
+
+    private fun MockKMatcherScope.permissionDeniedEvent() = match<DiagnosticEvent> {
+        it.reasonCode == DiagnosticReasonCode.NOTIFICATION_PERMISSION_DENIED &&
+            it.pipeline == AppPipeline.WORKER &&
+            it.outcome == EventOutcome.SKIPPED
+    }
+
+    // AE-50 (runtime half) / INV-24: the guard request no longer requires permission and
+    // keeps the cloud daily-briefing capability requirement.
+    @Test
+    fun `guard request does not require notification permission and keeps cloud briefing capability`() = runTest {
+        coEvery { dashboardDataProvider.getProcessedDataFlow(analyticsRepository) } returns flowOf(sampleProcessedData())
+
+        buildWorker().doWork()
+
+        coVerify(exactly = 1) {
+            executionGuard.runGuardedWithContext(
+                match<WorkerGuardRequest> {
+                    it.workerName == "ai_daily_briefing" &&
+                        !it.requiresNotificationPermission &&
+                        it.requiredCapabilities == listOf(PrivacyCapability.CLOUD_AI_DAILY_BRIEFING)
+                },
+                any<suspend (WorkerRunContext) -> Unit>()
+            )
+        }
+    }
+
+    // AE-41
+    @Test
+    fun `notifications_denied_generates_artifact_posts_nothing_counts_zero_and_records_reason`() = runTest {
+        val processed = sampleProcessedData()
+        coEvery { dashboardDataProvider.getProcessedDataFlow(analyticsRepository) } returns flowOf(processed)
+        every { notificationPermissionChecker.areNotificationsEnabled() } returns false
+        // The use case owns the ordering: a fresh artifact + denied permission reports the outcome.
+        coEvery {
+            deliverProactiveBriefingNotificationUseCase(dateKey = any(), startedAt = any(), notificationId = any(), notificationsAllowed = false)
+        } returns BriefingDeliveryOutcome.NOTIFICATION_PERMISSION_DENIED
+
+        val result = buildWorker().doWork()
+
+        assertEquals(Result.success(), result)
+        coVerify(exactly = 1) { generateDashboardBriefingUseCase(processed, 1000L) }
+        coVerify(exactly = 1) {
+            deliverProactiveBriefingNotificationUseCase(dateKey = any(), startedAt = any(), notificationId = any(), notificationsAllowed = false)
+        }
+        verify(exactly = 0) { ctx.addNotificationsSent(any()) }
+        coVerify(exactly = 1) { diagnosticEventWriter.emit(permissionDeniedEvent()) }
+        // The midnight chain stays armed after a permission-denied (successful) run.
+        verify(atLeast = 1) {
+            workManager.enqueueUniqueWork(any(), any(), any<androidx.work.OneTimeWorkRequest>())
+        }
+    }
+
+    @Test
+    fun `permission_denied_diagnostic_carries_only_bounded_fields`() = runTest {
+        coEvery { dashboardDataProvider.getProcessedDataFlow(analyticsRepository) } returns flowOf(sampleProcessedData())
+        every { notificationPermissionChecker.areNotificationsEnabled() } returns false
+        coEvery {
+            deliverProactiveBriefingNotificationUseCase(dateKey = any(), startedAt = any(), notificationId = any(), notificationsAllowed = false)
+        } returns BriefingDeliveryOutcome.NOTIFICATION_PERMISSION_DENIED
+        val captured = mutableListOf<DiagnosticEvent>()
+        coEvery { diagnosticEventWriter.emit(capture(captured)) } returns Unit
+
+        buildWorker().doWork()
+
+        val event = captured.single { it.reasonCode == DiagnosticReasonCode.NOTIFICATION_PERMISSION_DENIED }
+        assertEquals("briefing_delivery", event.stage)
+        assertEquals("DailyBriefingWorker", event.entityType)
+        assertEquals(null, event.exception)
+        assertEquals(null, event.entityId)
+    }
+
+    // AE-41 (fresh-artifact short-circuit): nothing to deliver, so permission is not consulted.
+    @Test
+    fun `fresh_artifact_short_circuit_does_not_consult_notification_permission`() = runTest {
+        every { notificationPermissionChecker.areNotificationsEnabled() } returns false
+        coEvery { aiArtifactRepository.getLatest(any(), any()) } returns freshBriefingArtifact()
+
+        val result = buildWorker().doWork()
+
+        assertEquals(Result.success(), result)
+        verify(exactly = 0) { notificationPermissionChecker.areNotificationsEnabled() }
+        coVerify(exactly = 0) { diagnosticEventWriter.emit(permissionDeniedEvent()) }
+    }
+
+    // AE-42 (worker half): proactive off -> delivery use case skips; nothing counted.
+    @Test
+    fun `settings_off_outcome_counts_zero_and_records_no_permission_reason`() = runTest {
+        coEvery { dashboardDataProvider.getProcessedDataFlow(analyticsRepository) } returns flowOf(sampleProcessedData())
+        coEvery {
+            deliverProactiveBriefingNotificationUseCase(dateKey = any(), startedAt = any(), notificationId = any(), notificationsAllowed = any())
+        } returns BriefingDeliveryOutcome.SKIPPED_SETTINGS_OFF
+
+        val result = buildWorker().doWork()
+
+        assertEquals(Result.success(), result)
+        coVerify(exactly = 1) { generateDashboardBriefingUseCase(any(), any()) }
+        verify(exactly = 0) { ctx.addNotificationsSent(any()) }
+        coVerify(exactly = 0) { diagnosticEventWriter.emit(permissionDeniedEvent()) }
+    }
+
+    // INV-24/INV-27: denied permission never masks a skip with another cause (settings off,
+    // duplicate): the worker records the permission diagnostic only for the denied outcome.
+    @Test
+    fun `denied_permission_with_other_skip_outcomes_records_no_permission_reason`() = runTest {
+        coEvery { dashboardDataProvider.getProcessedDataFlow(analyticsRepository) } returns flowOf(sampleProcessedData())
+        every { notificationPermissionChecker.areNotificationsEnabled() } returns false
+
+        listOf(
+            BriefingDeliveryOutcome.SKIPPED_SETTINGS_OFF,
+            BriefingDeliveryOutcome.SKIPPED_DUPLICATE
+        ).forEach { outcome ->
+            coEvery {
+                deliverProactiveBriefingNotificationUseCase(dateKey = any(), startedAt = any(), notificationId = any(), notificationsAllowed = false)
+            } returns outcome
+
+            assertEquals("outcome $outcome", Result.success(), buildWorker().doWork())
+        }
+
+        verify(exactly = 0) { ctx.addNotificationsSent(any()) }
+        coVerify(exactly = 0) { diagnosticEventWriter.emit(permissionDeniedEvent()) }
+    }
+
+    // AE-43
+    @Test
+    fun `delivered_outcome_counts_exactly_one_notification`() = runTest {
+        coEvery { dashboardDataProvider.getProcessedDataFlow(analyticsRepository) } returns flowOf(sampleProcessedData())
+
+        val result = buildWorker().doWork()
+
+        assertEquals(Result.success(), result)
+        verify(exactly = 1) { notificationPermissionChecker.areNotificationsEnabled() }
+        verify(exactly = 1) { ctx.addNotificationsSent() }
+        coVerify(exactly = 0) { diagnosticEventWriter.emit(permissionDeniedEvent()) }
+    }
+
+    // AE-43 (retry the same day) and INV-27: every non-DELIVERED outcome counts zero.
+    @Test
+    fun `non_delivered_outcomes_count_zero_notifications`() = runTest {
+        coEvery { dashboardDataProvider.getProcessedDataFlow(analyticsRepository) } returns flowOf(sampleProcessedData())
+        val nonDelivered = listOf(
+            BriefingDeliveryOutcome.SKIPPED_DUPLICATE,
+            BriefingDeliveryOutcome.SKIPPED_NO_FRESH_ARTIFACT,
+            BriefingDeliveryOutcome.NOT_DELIVERED
+        )
+
+        nonDelivered.forEach { outcome ->
+            coEvery {
+                deliverProactiveBriefingNotificationUseCase(dateKey = any(), startedAt = any(), notificationId = any(), notificationsAllowed = any())
+            } returns outcome
+
+            assertEquals("outcome $outcome", Result.success(), buildWorker().doWork())
+        }
+
+        verify(exactly = 0) { ctx.addNotificationsSent(any()) }
+        coVerify(exactly = 0) { diagnosticEventWriter.emit(permissionDeniedEvent()) }
+    }
+
+    // INV-27 / merge safety: a use-case level permission-denied outcome is a non-delivery too.
+    @Test
+    fun `use_case_permission_denied_outcome_counts_zero_and_records_reason`() = runTest {
+        coEvery { dashboardDataProvider.getProcessedDataFlow(analyticsRepository) } returns flowOf(sampleProcessedData())
+        coEvery {
+            deliverProactiveBriefingNotificationUseCase(dateKey = any(), startedAt = any(), notificationId = any(), notificationsAllowed = any())
+        } returns BriefingDeliveryOutcome.NOTIFICATION_PERMISSION_DENIED
+
+        val result = buildWorker().doWork()
+
+        assertEquals(Result.success(), result)
+        verify(exactly = 0) { ctx.addNotificationsSent(any()) }
+        coVerify(exactly = 1) { diagnosticEventWriter.emit(permissionDeniedEvent()) }
+    }
+
+    // INV-4: cancellation during delivery propagates and is not turned into a result.
+    @Test
+    fun `cancellation_during_delivery_propagates`() = runTest {
+        coEvery { dashboardDataProvider.getProcessedDataFlow(analyticsRepository) } returns flowOf(sampleProcessedData())
+        coEvery {
+            deliverProactiveBriefingNotificationUseCase(dateKey = any(), startedAt = any(), notificationId = any(), notificationsAllowed = any())
+        } throws CancellationException("cancelled")
+
+        try {
+            buildWorker().doWork()
+            throw AssertionError("Expected CancellationException to propagate")
+        } catch (_: CancellationException) {
+            // expected
+        }
+        verify(exactly = 0) { ctx.addNotificationsSent(any()) }
+    }
+
     @Test
     fun `existing_artifact_prevents_duplicate_delivery`() = runTest {
         coEvery { aiArtifactRepository.getLatest(any(), any()) } returns freshBriefingArtifact()
@@ -493,7 +728,7 @@ class DailyBriefingWorkerTest {
 
         assertEquals(Result.success(), result)
         coVerify(exactly = 0) { generateDashboardBriefingUseCase(any(), any()) }
-        coVerify(exactly = 0) { deliverProactiveBriefingNotificationUseCase(any(), any(), any()) }
+        coVerify(exactly = 0) { deliverProactiveBriefingNotificationUseCase(any(), any(), any(), any()) }
     }
 
     @Test
@@ -504,7 +739,7 @@ class DailyBriefingWorkerTest {
 
         // Capture the notificationId passed to delivery on first attempt
         val capturedIds = mutableListOf<Int>()
-        coEvery { deliverProactiveBriefingNotificationUseCase(dateKey = any(), startedAt = any(), notificationId = capture(capturedIds)) } returns Unit
+        coEvery { deliverProactiveBriefingNotificationUseCase(dateKey = any(), startedAt = any(), notificationId = capture(capturedIds), notificationsAllowed = any()) } returns BriefingDeliveryOutcome.DELIVERED
 
         // First run: timeout after delivery but before worker success
         var callCount = 0
@@ -553,8 +788,8 @@ class DailyBriefingWorkerTest {
         coEvery { dashboardDataProvider.getProcessedDataFlow(analyticsRepository) } returns flowOf(processed)
         coEvery { generateDashboardBriefingUseCase(processed, 1000L) } returns Unit
         coEvery { deliverProactiveBriefingNotificationUseCase(
-            dateKey = any(), startedAt = any(), notificationId = any()
-        ) } returns Unit
+            dateKey = any(), startedAt = any(), notificationId = any(), notificationsAllowed = any()
+        ) } returns BriefingDeliveryOutcome.DELIVERED
 
         // Simulate timeout AFTER delivery by making addNotificationsSent throw.
         // In the worker, addNotificationsSent() is the last line inside withTimeout,
@@ -567,7 +802,7 @@ class DailyBriefingWorkerTest {
         coVerify(exactly = 1) { generateDashboardBriefingUseCase(any(), any()) }
         coVerify(exactly = 1) {
             deliverProactiveBriefingNotificationUseCase(
-                dateKey = any(), startedAt = any(), notificationId = any()
+                dateKey = any(), startedAt = any(), notificationId = any(), notificationsAllowed = any()
             )
         }
     }
@@ -589,9 +824,9 @@ class DailyBriefingWorkerTest {
         val capturedIds = mutableListOf<Int>()
         coEvery {
             deliverProactiveBriefingNotificationUseCase(
-                dateKey = any(), startedAt = any(), notificationId = capture(capturedIds)
+                dateKey = any(), startedAt = any(), notificationId = capture(capturedIds), notificationsAllowed = any()
             )
-        } returns Unit
+        } returns BriefingDeliveryOutcome.DELIVERED
 
         var addNotifCount = 0
         every { ctx.addNotificationsSent() } answers {
@@ -613,7 +848,7 @@ class DailyBriefingWorkerTest {
         // and short-circuits before any delivery call.
         coVerify(exactly = 1) {
             deliverProactiveBriefingNotificationUseCase(
-                dateKey = any(), startedAt = any(), notificationId = any()
+                dateKey = any(), startedAt = any(), notificationId = any(), notificationsAllowed = any()
             )
         }
     }
@@ -634,9 +869,9 @@ class DailyBriefingWorkerTest {
 
         coEvery {
             deliverProactiveBriefingNotificationUseCase(
-                dateKey = any(), startedAt = any(), notificationId = any()
+                dateKey = any(), startedAt = any(), notificationId = any(), notificationsAllowed = any()
             )
-        } returns Unit
+        } returns BriefingDeliveryOutcome.DELIVERED
 
         every { ctx.addNotificationsSent() } throws fakeTimeoutCancellationException()
 
@@ -650,7 +885,7 @@ class DailyBriefingWorkerTest {
         // marking the notification as delivered. The retry does not re-deliver.
         coVerify(exactly = 1) {
             deliverProactiveBriefingNotificationUseCase(
-                dateKey = any(), startedAt = any(), notificationId = any()
+                dateKey = any(), startedAt = any(), notificationId = any(), notificationsAllowed = any()
             )
         }
         // addNotificationsSent was called exactly once during the first attempt
@@ -668,9 +903,9 @@ class DailyBriefingWorkerTest {
         val capturedIds = mutableListOf<Int>()
         coEvery {
             deliverProactiveBriefingNotificationUseCase(
-                dateKey = any(), startedAt = any(), notificationId = capture(capturedIds)
+                dateKey = any(), startedAt = any(), notificationId = capture(capturedIds), notificationsAllowed = any()
             )
-        } returns Unit
+        } returns BriefingDeliveryOutcome.DELIVERED
 
         var addNotifCount = 0
         every { ctx.addNotificationsSent() } answers {
@@ -713,9 +948,9 @@ class DailyBriefingWorkerTest {
 
         coEvery {
             deliverProactiveBriefingNotificationUseCase(
-                dateKey = any(), startedAt = any(), notificationId = any()
+                dateKey = any(), startedAt = any(), notificationId = any(), notificationsAllowed = any()
             )
-        } returns Unit
+        } returns BriefingDeliveryOutcome.DELIVERED
 
         var addNotifCount = 0
         every { ctx.addNotificationsSent() } answers {

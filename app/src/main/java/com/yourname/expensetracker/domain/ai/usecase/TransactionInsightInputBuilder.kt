@@ -34,6 +34,8 @@ class TransactionInsightInputBuilder @Inject constructor() {
             currentMonthSpent = amountProfile.promptAmount,
             topCategories = emptyList(),
             budgetWarnings = emptyList(),
+            // S8a (INV-31): hard-wired empty. This input is built from one Expense only and
+            // never carries upcoming/projected items, whatever plans exist locally. Not a setting.
             upcomingItems = emptyList(),
             transactionInsight = TransactionInsightPromptInput(
                 merchantName = merchantName,

@@ -133,9 +133,10 @@ class CurrencyManagementViewModelTest : ViewModelTestUtils() {
 
     @Test
     fun `initial state shows available currencies`() = runTest(testDispatcher) {
+        // reviewer-strict F2: getRatesToCurrency("EUR") returns rates TO the home currency, so each row is X -> EUR.
         val rates = listOf(
-            ExchangeRate(fromCurrency = "EUR", toCurrency = "USD", rate = 1.1, lastUpdated = 1_700_000_100_000L),
-            ExchangeRate(fromCurrency = "EUR", toCurrency = "GBP", rate = 0.86, lastUpdated = 1_700_000_200_000L)
+            ExchangeRate(fromCurrency = "USD", toCurrency = "EUR", rate = 0.91, lastUpdated = 1_700_000_100_000L),
+            ExchangeRate(fromCurrency = "GBP", toCurrency = "EUR", rate = 1.16, lastUpdated = 1_700_000_200_000L)
         )
         every { currencyDataRepository.getRatesToCurrency("EUR") } returns flowOf(rates)
 
@@ -713,12 +714,13 @@ class CurrencyManagementViewModelTest : ViewModelTestUtils() {
 
     @Test
     fun `rate refresh triggers loading then updates rates`() = runTest(testDispatcher) {
+        // reviewer-strict F2: rows are to-home (X -> EUR) so the newest-per-fromCurrency rule keeps both sources.
         val beforeRates = listOf(
-            ExchangeRate(fromCurrency = "EUR", toCurrency = "USD", rate = 1.0, lastUpdated = 1_700_000_000_000L)
+            ExchangeRate(fromCurrency = "USD", toCurrency = "EUR", rate = 1.0, lastUpdated = 1_700_000_000_000L)
         )
         val afterRates = listOf(
-            ExchangeRate(fromCurrency = "EUR", toCurrency = "USD", rate = 1.2, lastUpdated = 1_700_000_400_000L),
-            ExchangeRate(fromCurrency = "EUR", toCurrency = "GBP", rate = 0.88, lastUpdated = 1_700_000_500_000L)
+            ExchangeRate(fromCurrency = "USD", toCurrency = "EUR", rate = 1.2, lastUpdated = 1_700_000_400_000L),
+            ExchangeRate(fromCurrency = "GBP", toCurrency = "EUR", rate = 0.88, lastUpdated = 1_700_000_500_000L)
         )
 
         // Extra entry for the setup viewModel's pending init coroutine
@@ -743,7 +745,7 @@ class CurrencyManagementViewModelTest : ViewModelTestUtils() {
             val updated = awaitItem()
             assertFalse(updated.isLoading)
             assertEquals(2, updated.exchangeRates.size)
-            assertEquals(1.2, updated.exchangeRates.first { it.toCurrency == "USD" }.rate, 0.0)
+            assertEquals(1.2, updated.exchangeRates.first { it.fromCurrency == "USD" }.rate, 0.0)
 
             cancelAndIgnoreRemainingEvents()
         }

@@ -339,4 +339,9 @@ object DaoModule {
     @Singleton
     fun provideNegotiationOutcomeDao(database: AppDatabase): NegotiationOutcomeDao =
         database.negotiationOutcomeDao()
+
+    @Provides
+    @Singleton
+    fun provideInstallmentPlanDao(database: AppDatabase): InstallmentPlanDao =
+        database.installmentPlanDao()
 }

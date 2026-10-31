@@ -58,7 +58,8 @@ class InsightsEngineEdgeCaseTest {
             monthlyComparisonCalculator = monthlyComparisonCalculator,
             categoryInsightEngine = categoryInsightEngine,
             merchantInsightEngine = merchantInsightEngine,
-            dayOfWeekAnalyzer = dayOfWeekAnalyzer
+            dayOfWeekAnalyzer = dayOfWeekAnalyzer,
+            installmentEligibility = noPlansInstallmentEligibility()
         )
 
         coEvery { expenseRepository.getTotalForPeriod(any(), any()) } returns 0.0

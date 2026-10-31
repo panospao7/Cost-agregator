@@ -26,6 +26,8 @@ import com.yourname.expensetracker.domain.cashflow.CashFlowRiskLevel
 import com.yourname.expensetracker.domain.cashflow.DailyCashFlow
 import com.yourname.expensetracker.domain.core.money.ConversionQuality
 import com.yourname.expensetracker.domain.core.money.MoneyAggregate
+import com.yourname.expensetracker.domain.installment.model.InstallmentMinorUnits
+import com.yourname.expensetracker.domain.installment.projection.InstallmentProjectedEntry
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import com.yourname.expensetracker.ui.util.AmountInputSanitizer
@@ -374,6 +376,14 @@ private fun DayCellView(
                                 .background(SemanticColors.StatusYellow, MaterialTheme.shapes.extraSmall)
                         )
                     }
+                    // PE-C: an installment entry counted into this day's outflow (converted entries only).
+                    if (dayCell.cashFlow.projectedInstallments.isNotEmpty()) {
+                        Box(
+                            modifier = Modifier
+                                .size(4.dp)
+                                .background(MaterialTheme.colorScheme.tertiary, MaterialTheme.shapes.extraSmall)
+                        )
+                    }
                 }
             }
         }
@@ -491,9 +501,42 @@ private fun DailyCashFlowDetails(
             Spacer(modifier = Modifier.height(8.dp))
         }
 
+        // PE-C: informational rows only (not clickable). Each amount is in the PLAN currency, from
+        // the entry's minor units, and is never converted here.
+        if (cashFlow.projectedInstallments.isNotEmpty()) {
+            Text(text = stringResource(R.string.cashflow_installments_header), fontWeight = FontWeight.SemiBold)
+            formatCashFlowInstallmentLines(
+                entries = cashFlow.projectedInstallments,
+                fallbackName = stringResource(R.string.installment_plan_fallback_label)
+            ).forEach { line ->
+                Text(
+                    text = line,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+        }
+
         Spacer(modifier = Modifier.height(16.dp))
     }
 }
+
+/**
+ * PE-C: at most three "• name: -amount" lines for the installment entries counted into a day. The
+ * name is the plan display name, or [fallbackName] when it is blank. The amount is formatted in the
+ * entry's own PLAN currency from its minor units (exact division by 100 before the formatter's
+ * display rounding); it is never converted to the home currency.
+ */
+internal fun formatCashFlowInstallmentLines(
+    entries: List<InstallmentProjectedEntry>,
+    fallbackName: String
+): List<String> =
+    entries.take(3).map { entry ->
+        val name = entry.displayName.ifBlank { fallbackName }
+        val amount = CurrencyFormatter.formatMoney(InstallmentMinorUnits.fromMinor(entry.amountMinor), entry.currency.code)
+        "• $name: -$amount"
+    }
 
 internal fun formatCashFlowAggregate(aggregate: MoneyAggregate?, isPartial: Boolean): String =
     aggregate?.takeIf {

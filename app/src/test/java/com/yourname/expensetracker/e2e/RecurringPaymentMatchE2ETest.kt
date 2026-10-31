@@ -101,10 +101,18 @@ class RecurringPaymentMatchE2ETest : GoldenTestBase() {
             plannedExpenseDao = database.plannedExpenseDao()
         )
 
+        val installmentEligibility = com.yourname.expensetracker.domain.recurring.RecurringInstallmentEligibility(
+            dagger.Lazy {
+                com.yourname.expensetracker.data.repository.InstallmentEntryLinkReaderImpl(
+                    database.installmentPlanDao()
+                )
+            }
+        )
+
         recurringCoordinator = RecurringLifecycleCoordinator(
             database = database,
             expander = RecurringOccurrenceExpander(),
-            resolver = OccurrenceConflictResolver(),
+            resolver = OccurrenceConflictResolver(installmentEligibility),
             materializer = materializer,
             occurrenceDao = database.recurringOccurrenceDao(),
             expenseDao = database.expenseDao(),
@@ -117,7 +125,8 @@ class RecurringPaymentMatchE2ETest : GoldenTestBase() {
             plannedExpenseDao = database.plannedExpenseDao(),
             transactionRunner = RoomDomainTransactionRunner(database, timeProvider),
             // Relaxed mock: link lifecycle events are NOT asserted by this test.
-            eventWriter = mockk(relaxed = true)
+            eventWriter = mockk(relaxed = true),
+            installmentEligibility = installmentEligibility
         )
 
         // Multi-currency repository for dashboard verification

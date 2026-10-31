@@ -5,6 +5,7 @@ import com.yourname.expensetracker.data.database.dao.CategoryDao
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.export.ExportInstallmentMarker
 import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
 import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
@@ -212,7 +213,12 @@ class CsvExpenseImporter @Inject constructor(
                 ?: return RowResult.Failed("Invalid amount")
 
             val categoryName = col("category") ?: "Uncategorized"
+            // Owner-approvals 41(b): rows the exporter marked as installment-flagged are skipped
+            // (counted in the skipped/duplicates counter); re-import never creates a flag.
             val notesFromCol = col("notes") ?: ""
+            if (ExportInstallmentMarker.isMarkedNotes(notesFromCol)) {
+                return RowResult.Duplicate("INSTALLMENT_EXPORT_MARKER")
+            }
 
             // Parse date
             val date = try {

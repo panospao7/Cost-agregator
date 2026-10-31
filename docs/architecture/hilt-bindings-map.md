@@ -1,7 +1,7 @@
 # Hilt Module Bindings Map
 
-> Complete interface → implementation binding map for all 34 Hilt @Module files (+ 1 @EntryPoint).
-> **Last updated:** 2026-10-24 (app-lock-privacy-mode 1a delta added: `AppLockModule` and the auto-provided app-lock/notification-presentation singletons; the rest was verified 2026-10-01 against DB schema v149 and is not re-verified here).
+> Complete interface → implementation binding map for all 35 Hilt @Module files (+ 1 @EntryPoint).
+> **Last updated:** 2026-10-24 (app-lock-privacy-mode 1a delta added: `AppLockModule` and the auto-provided app-lock/notification-presentation singletons; ai-fixes `AppForegroundModule` added; the rest was verified 2026-10-01 against DB schema v149 and is not re-verified here).
 >
 > **Note:** `SubscriptionModule.kt` was deleted in 2026-05-09 refactoring — `SubscriptionManagerEngine`
 > is auto-provided by its `@Singleton @Inject constructor`. Replaced in count by `WorkerModule.kt`.
@@ -110,6 +110,12 @@ Provides:
 `NOTIFICATION_PERMISSION_DENIED` when notifications are disabled).
 Note: `WorkerRunLogger` → `WorkerRunLoggerImpl` is bound by `DiagnosticsModule`, not here.
 
+### `AppForegroundModule` — `di/AppForegroundModule.kt`
+```
+Binds:
+  AppForegroundState                          → ProcessAppForegroundState (@Singleton; same instance is registered as a ProcessLifecycleOwner observer by AppStartupCoordinator)
+```
+
 ### `ServiceModule` — `di/ServiceModule.kt`
 ```
 Provides:
@@ -158,6 +164,10 @@ Binds:
   AiEnvironmentMonitor                        → DefaultAiEnvironmentMonitor
   AiWorkScheduler                             → AiWorkSchedulerImpl
   DashboardBriefingService                    → HybridDashboardBriefingService
+                                                (briefing only; GenerateTransactionInsightUseCase no longer injects it -
+                                                 it takes OnDeviceDashboardBriefingService, AiCapabilityRouter,
+                                                 AppForegroundState, AiSettingsRepository, input builder, TimeProvider
+                                                 and AiRuntimeDiagnostics; ai-fixes B2d)
   ReviewExplanationService                    → HybridReviewExplanationService
   ReceiptAssistService                        → SmartReceiptAssistService
   CategorizationAssistService                 → HybridCategorizationAssistService
@@ -176,6 +186,10 @@ Provides:
   OnDeviceReceiptItemCategorizationService    → new instance
   CloudReceiptItemCategorizationService       → SecureKeyStorage + OkHttpClient + PrivacyGate + CloudPayloadPolicy + PrivacyAuditLogger
   CloudWarrantyExtractionService              → SecureKeyStorage + OkHttpClient + PrivacyGate + CloudPayloadPolicy + PrivacyAuditLogger
+                                                (provider retained; no production consumer since ai-fixes B1a —
+                                                 WarrantyTrackerRepository no longer injects it or the
+                                                 AiSettingsRepository / AiPolicy / AiCapabilityRouter trio;
+                                                 AutoCreateWarrantyFromReceiptUseCase no longer injects PrivacyGate)
 
 Note: Hybrid services route via `AiCapabilityRouter` + `AiSettingsRepository` directly.
 `HybridRouter` (domain/ai/HybridRouter.kt) is a plain generic helper class (no @Inject
@@ -572,4 +586,4 @@ BackupRepositoryModule ──► Backup/Restore
 ```
 
 ---
-**Stats:** 34 Hilt @Module files (33 counted 2026-10-01 + `AppLockModule`; re-counted 2026-10-24: 34) · 65+ repositories · 68 DAOs (64 DaoModule + 3 AiModule + 1 unbound) · 70 entities · DB v149 (DatabaseSchemaPolicy.CURRENT_VERSION)
+**Stats:** 35 Hilt @Module files (33 counted 2026-10-01 + `AppLockModule` + `AppForegroundModule`; re-counted 2026-10-26 after the app-lock merge: 35) · 65+ repositories · 68 DAOs (64 DaoModule + 3 AiModule + 1 unbound) · 70 entities · DB v149 (DatabaseSchemaPolicy.CURRENT_VERSION)

@@ -7,7 +7,14 @@ sealed class CreateExpenseResult {
         val reason: String,
         val eventLogged: Boolean = false
     ) : CreateExpenseResult()
-    data class ValidationFailed(val errors: List<String>) : CreateExpenseResult()
+    /**
+     * [rateRefusal] is non-null only when a user-present (flagged) create was refused for rate
+     * reasons (MEC INV-6); [errors] then holds exactly one [RateRefusalCodes] constant.
+     */
+    data class ValidationFailed(
+        val errors: List<String>,
+        val rateRefusal: RateRefusal? = null
+    ) : CreateExpenseResult()
 
     /**
      * P2-002: typed insert conflict — both unique indexes (nullable

@@ -10,6 +10,9 @@ import com.yourname.expensetracker.data.database.entity.BudgetPeriod
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentOpResult
+import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentPlanLifecycleCoordinator
+import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentReconcileReport
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringExpenseReconcileResult
 import com.yourname.expensetracker.domain.budget.BudgetMonitor
@@ -59,6 +62,8 @@ class TransactionTargetedUpdateSideEffectsTest {
     private lateinit var coordinator: TransactionLifecycleCoordinator
     private lateinit var budgetMonitor: BudgetMonitor
     private lateinit var sideEffectEvents: SideEffectEventWriter
+    private lateinit var installmentCoordinator: InstallmentPlanLifecycleCoordinator
+    private val installmentCallsInTransaction = mutableListOf<Boolean>()
     private var foodCategoryId: Long = 0L
     private var shoppingCategoryId: Long = 0L
 
@@ -87,6 +92,17 @@ class TransactionTargetedUpdateSideEffectsTest {
             assertFalse("Budget checks must run after the Room transaction commits", db.inTransaction())
         }
         sideEffectEvents = mockk(relaxed = true)
+        // Loan-installments S6c-1: a type update also plans the installment reaction. Nothing is
+        // linked here, so the plan coordinator reports an empty reconcile (no batches, no failure).
+        installmentCoordinator = mockk<InstallmentPlanLifecycleCoordinator>()
+        coEvery { installmentCoordinator.onExpenseChanged(any()) } coAnswers {
+            installmentCallsInTransaction.add(db.inTransaction())
+            InstallmentOpResult.Done(InstallmentReconcileReport())
+        }
+        coEvery { installmentCoordinator.onExpenseDeleted(any()) } coAnswers {
+            installmentCallsInTransaction.add(db.inTransaction())
+            InstallmentOpResult.Done(InstallmentReconcileReport())
+        }
         val planner = TransactionSideEffectPlanner(
             budgetMonitor = dagger.Lazy { budgetMonitor },
             anomalyAlertOrchestrator = mockk(relaxed = true),
@@ -95,7 +111,9 @@ class TransactionTargetedUpdateSideEffectsTest {
             recurringLifecycleCoordinator = dagger.Lazy { recurringLifecycleCoordinator },
             expenseDao = db.expenseDao(),
             categoryDao = db.categoryDao(),
-            timeProvider = timeProvider
+            timeProvider = timeProvider,
+            installmentPlanLifecycleCoordinator = dagger.Lazy { installmentCoordinator },
+            postCommitActionRunner = dagger.Lazy { PostCommitActionRunnerImpl(sideEffectEvents) }
         )
         val maintenanceMode = mockk<RestoreMaintenanceMode> {
             every { currentMode() } returns RestoreMaintenanceMode.Mode.NORMAL
@@ -132,6 +150,19 @@ class TransactionTargetedUpdateSideEffectsTest {
             sideEffectEvents.completed(match { it.name == "budget_check" && it.targetEntityId == expenseId })
         }
         coVerify(exactly = 0) { sideEffectEvents.failed(any(), any(), any(), any()) }
+    }
+
+    /**
+     * S6c-1 F2: the installment reaction is dispatched exactly [expectedCalls] times, and every
+     * recorded call ran after the Room transaction committed (never inside it).
+     */
+    private fun assertInstallmentReaction(expenseId: Long, expectedCalls: Int) {
+        coVerify(exactly = expectedCalls) { installmentCoordinator.onExpenseChanged(expenseId) }
+        assertEquals(
+            "Installment reaction must run after commit, once per dispatch",
+            List(expectedCalls) { false },
+            installmentCallsInTransaction.toList()
+        )
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -175,6 +206,8 @@ class TransactionTargetedUpdateSideEffectsTest {
 
         // The real planner/runner must perform the budget check after commit.
         assertBudgetCheckedAfterUpdate(expenseId)
+        // A category edit never reacts on installment plans (AE-20).
+        assertInstallmentReaction(expenseId, expectedCalls = 0)
 
         // AND: expense categoryId changed to Shopping in DB
         val updatedExpense = db.expenseDao().getById(expenseId)
@@ -220,6 +253,8 @@ class TransactionTargetedUpdateSideEffectsTest {
 
         // THEN: the planner's budget action completed after the DB transaction
         assertBudgetCheckedAfterUpdate(expenseId)
+        // A merchant edit is not read by the installment reconcile rules.
+        assertInstallmentReaction(expenseId, expectedCalls = 0)
 
         // AND: merchant changed to "NewName" in DB
         val updatedExpense = db.expenseDao().getById(expenseId)
@@ -270,6 +305,8 @@ class TransactionTargetedUpdateSideEffectsTest {
 
         // THEN: the planner's budget action completed after the DB transaction
         assertBudgetCheckedAfterUpdate(expenseId)
+        // A type edit reacts on installment plans exactly once, after commit (R4).
+        assertInstallmentReaction(expenseId, expectedCalls = 1)
 
         // AND: transactionType changed to DEPOSIT in DB
         val updatedExpense = db.expenseDao().getById(expenseId)
@@ -330,6 +367,7 @@ class TransactionTargetedUpdateSideEffectsTest {
         // WHEN: calling updateCategory to change to Shopping
         coordinator.updateCategory(expenseId, shoppingId)
         assertBudgetCheckedAfterUpdate(expenseId)
+        assertInstallmentReaction(expenseId, expectedCalls = 0)
 
         // THEN: DB query shows categoryId = Shopping ID
         val expenseAfter = db.expenseDao().getById(expenseId)

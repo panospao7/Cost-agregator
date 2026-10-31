@@ -61,8 +61,25 @@ interface WarrantyDao {
         updatedAt: Long
     )
 
-    @Query("UPDATE warranties SET status = 'EXPIRED', updatedAt = :updatedAt WHERE warrantyEndDate < :currentTime AND status = 'ACTIVE'")
+    /**
+     * ai-fixes INV-11: sole SQL encoding of the "past end date" transition into EXPIRED.
+     * Covers ACTIVE and PENDING_REVIEW rows (same `warrantyEndDate < now` predicate).
+     * Leaves needsReview, autoDetected, extractionConfidence and extractionSource untouched,
+     * so an expired pending draft stays "expired unconfirmed" (status=EXPIRED, needsReview=1).
+     */
+    @Query("UPDATE warranties SET status = 'EXPIRED', updatedAt = :updatedAt WHERE warrantyEndDate < :currentTime AND status IN ('ACTIVE', 'PENDING_REVIEW')")
     suspend fun markExpiredWarranties(currentTime: Long, updatedAt: Long): Int
+
+    /**
+     * ai-fixes INV-11: number of PENDING_REVIEW rows that [markExpiredWarranties] would expire
+     * for the same [currentTime]. Must be read in the same transaction, before the update.
+     */
+    @Query("SELECT COUNT(*) FROM warranties WHERE warrantyEndDate < :currentTime AND status = 'PENDING_REVIEW'")
+    suspend fun getExpirablePendingWarrantyCount(currentTime: Long): Int
+
+    /** Fresh by-id read used by the repository's confirm transaction (ai-fixes INV-13). */
+    @Query("SELECT * FROM warranties WHERE id = :warrantyId")
+    suspend fun getWarrantyById(warrantyId: Long): Warranty?
 
     @Query("SELECT COUNT(*) FROM warranties WHERE status = 'ACTIVE' AND warrantyEndDate > :currentTime")
     suspend fun getActiveWarrantyCount(currentTime: Long): Int
@@ -80,6 +97,7 @@ interface WarrantyDao {
         message = "Use getTotalProtectedValueByCurrency() for multi-currency safety",
         level = DeprecationLevel.WARNING
     )
+    // spending-exempt: ASSET_VALUE
     @Query(
         """
         SELECT SUM(COALESCE(
@@ -98,6 +116,7 @@ interface WarrantyDao {
     )
     suspend fun getTotalProtectedValue(currentTime: Long): Double?
 
+    // spending-exempt: ASSET_VALUE
     @Query("""
         SELECT UPPER(COALESCE(e.currency, 'EUR')) AS currency,
                SUM(COALESCE(CASE 

@@ -504,6 +504,39 @@ class ReceiptSideEffectPlannerTest {
         assertEquals("WarrantyCreationResult.Failure", failure.errorClass)
     }
 
+    @Test
+    fun `warranty extraction without ephemeral raw is skipped with a privacy event and never reaches the use case`() = runTest {
+        // AE-13 (INV-9): DO_NOT_STORE receipt after a process restart -> no ephemeral raw text.
+        // Policy A: no silent fallback to the persisted/sanitized text; the use case (strict mock
+        // in this class) must not be invoked.
+        val writtenEvents = mutableListOf<ReceiptEvent>()
+        coEvery { receiptEventDao.insert(capture(writtenEvents)) } returns 1L
+
+        val receipt = retailReceipt(rawOcrText = "persisted placeholder that must never be used")
+        val batch = planner.planAfterReceiptSaved(
+            ReceiptSideEffectInput(
+                receipt = receipt,
+                ephemeralRawOcrText = null,
+                rawStorageMode = RawStorageMode.DO_NOT_STORE,
+                correlationId = "test-correlation"
+            )
+        )
+
+        val outcome = run(batch.actions.first { it.name == "warranty_extraction" })
+
+        assertTrue("Expected Skipped, got $outcome", outcome is SideEffectOutcome.Skipped)
+        assertEquals(SideEffectSkipReason.MISSING_ENTITY, (outcome as SideEffectOutcome.Skipped).reason)
+        assertTrue(
+            "Expected SIDE_EFFECT_SKIPPED_PRIVACY, got ${writtenEvents.map { it.eventType }}",
+            writtenEvents.any { it.eventType == "SIDE_EFFECT_SKIPPED_PRIVACY" }
+        )
+        assertTrue(
+            "Skip event must not carry receipt text",
+            writtenEvents.none { it.message.orEmpty().contains("persisted placeholder") }
+        )
+        coVerify(exactly = 0) { autoCreateWarrantyUseCase.execute(any(), any()) }
+    }
+
     private companion object {
         /** The allowed persisted representation under STORE_REDACTED (prices only). */
         val REDACTED_ITEMS_JSON = """

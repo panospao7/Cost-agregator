@@ -16,8 +16,35 @@ import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import com.yourname.expensetracker.domain.privacy.PrivacyGateReasonCodes
 import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.domain.currency.CurrencyRateHistoryOutcome
+import com.yourname.expensetracker.domain.currency.RateHistoryFailureReason
+import io.mockk.every
+import io.mockk.mockk
+import io.mockk.verify
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Delay
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.InternalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestDispatcher
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import kotlin.coroutines.CoroutineContext
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import org.junit.Rule
+import org.junit.rules.Timeout
+import timber.log.Timber
+import java.io.IOException
+import java.io.InputStream
+import java.net.HttpURLConnection
+import java.net.SocketTimeoutException
+import java.time.LocalDate
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
@@ -28,7 +55,6 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
-import org.xml.sax.SAXParseException
 import java.io.ByteArrayInputStream
 import java.time.Instant
 import java.util.Locale
@@ -281,11 +307,937 @@ class CurrencyRatesRepositoryImplTest {
         try {
             fixture.repository.refreshFromStream("USD", stream(xml))
             fail("DOCTYPE payload must be rejected")
-        } catch (error: Exception) {
-            assertTrue(error is SAXParseException)
+        } catch (error: IllegalStateException) {
+            // Rejected by the explicit parser-independent DTD pre-scan, not by a parser feature.
+            assertEquals("RATE_PAYLOAD_MALFORMED", error.message)
         }
         assertTrue(fixture.store.rates.isEmpty())
         assertTrue(fixture.settings.lastRateUpdates.isEmpty())
+    }
+
+    @Test
+    fun `daily payload with DOCTYPE fails like a malformed payload and stores nothing`() = runTest {
+        val malformed = fixture(now = fetchedNextDayMillis)
+        val malformedFailure = try {
+            malformed.repository.refreshFromStream("USD", stream("<not-closed"))
+            null
+        } catch (error: Exception) {
+            error
+        }
+        assertNotNull("a malformed daily payload must fail", malformedFailure)
+
+        val fixture = fixture(now = fetchedNextDayMillis)
+        val doctypeXml = ecbXml().replaceFirst("?>", "?>\n<!DOCTYPE gesmes:Envelope [<!ENTITY synthetic 'x'>]>")
+        val doctypeFailure = try {
+            fixture.repository.refreshFromStream("USD", stream(doctypeXml))
+            null
+        } catch (error: Exception) {
+            error
+        }
+
+        assertNotNull("a DOCTYPE daily payload must fail", doctypeFailure)
+        assertTrue(fixture.store.rates.isEmpty())
+        assertTrue(fixture.settings.lastRateUpdates.isEmpty())
+        assertTrue(malformed.store.rates.isEmpty())
+    }
+
+    private val dailyCapBytes = 256 * 1024
+
+    private fun paddedToBytes(xml: String, totalBytes: Int): ByteArray {
+        val base = xml.toByteArray(Charsets.UTF_8)
+        require(base.size <= totalBytes)
+        return base + ByteArray(totalBytes - base.size) { ' '.code.toByte() }
+    }
+
+    @Test
+    fun `daily payload one byte over the 256 KiB cap fails RATE_PAYLOAD_TOO_LARGE and stores nothing`() = runTest {
+        val oversized = paddedToBytes(ecbXml(), dailyCapBytes + 1)
+        assertEquals(dailyCapBytes + 1, oversized.size)
+
+        try {
+            fixture().repository.parseEcbDailyRates(ByteArrayInputStream(oversized))
+            fail("Expected RATE_PAYLOAD_TOO_LARGE")
+        } catch (error: IllegalStateException) {
+            assertEquals("RATE_PAYLOAD_TOO_LARGE", error.message)
+        }
+
+        val f = fixture(now = fetchedNextDayMillis)
+        try {
+            f.repository.refreshFromStream("USD", ByteArrayInputStream(oversized))
+            fail("Expected RATE_PAYLOAD_TOO_LARGE")
+        } catch (error: IllegalStateException) {
+            assertEquals("RATE_PAYLOAD_TOO_LARGE", error.message)
+        }
+        assertTrue(f.store.rates.isEmpty())
+        assertTrue(f.settings.lastRateUpdates.isEmpty())
+    }
+
+    @Test
+    fun `daily payload of exactly 256 KiB still parses and stores rates`() = runTest {
+        val atCap = paddedToBytes(ecbXml(), dailyCapBytes)
+        assertEquals(dailyCapBytes, atCap.size)
+
+        val parsed = fixture().repository.parseEcbDailyRates(ByteArrayInputStream(atCap))
+        assertEquals(1.1403, parsed.eurToCurrency.getValue("USD"), 0.0)
+
+        val f = fixture(now = fetchedNextDayMillis)
+        val storedCount = f.repository.refreshFromStream("USD", ByteArrayInputStream(atCap))
+        assertTrue(storedCount > 0)
+        assertTrue(f.store.rates.isNotEmpty())
+        assertEquals(listOf(fetchedNextDayMillis), f.settings.lastRateUpdates)
+    }
+
+    @Test
+    fun `containsDtdDeclaration is true for DOCTYPE or ENTITY in any case and false for a normal payload`() {
+        val repo = fixture().repository
+        fun detects(text: String) = repo.containsDtdDeclaration(text.toByteArray(Charsets.UTF_8))
+
+        assertTrue(detects("<?xml version=\"1.0\"?><!DOCTYPE x><a/>"))
+        assertTrue(detects("<?xml version=\"1.0\"?><!doctype x><a/>"))
+        assertTrue(detects("<?xml version=\"1.0\"?><!DocType x><a/>"))
+        assertTrue(detects("<a><!ENTITY e \"v\"></a>"))
+        assertTrue(detects("<a><!entity e \"v\"></a>"))
+
+        assertFalse(detects(ecbXml()))
+        assertFalse(detects(historyXml(datesBack(3))))
+        assertFalse(detects(""))
+        // Boundary: near-miss spellings are not a DTD declaration.
+        assertFalse(detects("<a>DOCTYPE and ENTITY words without the markup opener</a>"))
+        assertFalse(detects("<a><!-- DOCTYPE --></a>"))
+    }
+
+    @Test
+    fun `lowercase doctype history payload is PAYLOAD_MALFORMED with zero rows stored`() = runTest {
+        val xml = historyXml(datesBack(2)).replaceFirst("?>", "?><!doctype gesmes:envelope [<!entity e 'x'>]>")
+        val fixture = fixture(now = histNow)
+        fixture.repository.serve(fakeConnection(body = stream(xml)))
+
+        val outcome = fixture.repository.downloadRecentHistory("EUR")
+
+        assertEquals(CurrencyRateHistoryOutcome.Failed(RateHistoryFailureReason.PAYLOAD_MALFORMED), outcome)
+        assertEquals(1, connectionsOpened)
+        assertTrue(fixture.store.rates.isEmpty())
+        assertEquals(0, fixture.store.insertAllCalls)
+        assertTrue(fixture.settings.lastRateUpdates.isEmpty())
+    }
+
+    // ── Strict UTF-8 payload decoding (both parse paths) ────────────────────
+
+    private val bom8 = byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte())
+    private val bomLe = byteArrayOf(0xFF.toByte(), 0xFE.toByte())
+
+    private fun utf16LeWithBom(text: String) = bomLe + text.toByteArray(Charsets.UTF_16LE)
+
+    private fun withInvalidUtf8Inside(xml: String): ByteArray {
+        val head = xml.substringBefore("?>") + "?><!--"
+        val tail = "-->" + xml.substringAfter("?>")
+        return head.toByteArray(Charsets.UTF_8) + byteArrayOf(0xC3.toByte(), 0x28) + tail.toByteArray(Charsets.UTF_8)
+    }
+
+    private fun assertHistoryBytesMalformed(bytes: ByteArray) {
+        try {
+            fixture().repository.parseEcbHistoryRates(ByteArrayInputStream(bytes), histNow)
+            fail("Expected PAYLOAD_MALFORMED")
+        } catch (error: EcbHistoryPayloadException) {
+            assertEquals(RateHistoryFailureReason.PAYLOAD_MALFORMED, error.reason)
+        }
+    }
+
+    private fun assertDailyBytesMalformedAndNothingStored(bytes: ByteArray) = runTest {
+        try {
+            fixture().repository.parseEcbDailyRates(ByteArrayInputStream(bytes))
+            fail("Expected RATE_PAYLOAD_MALFORMED")
+        } catch (error: IllegalStateException) {
+            assertEquals("RATE_PAYLOAD_MALFORMED", error.message)
+        }
+        val f = fixture(now = fetchedNextDayMillis)
+        val failure = try {
+            f.repository.refreshFromStream("USD", ByteArrayInputStream(bytes))
+            null
+        } catch (error: Exception) {
+            error
+        }
+        assertNotNull("a non strict UTF-8 daily payload must fail", failure)
+        assertTrue(f.store.rates.isEmpty())
+        assertTrue(f.settings.lastRateUpdates.isEmpty())
+    }
+
+    @Test
+    fun `UTF-16LE payload with BOM and DOCTYPE is malformed on history and daily paths`() {
+        val doctype = "?>\n<!DOCTYPE gesmes:Envelope [<!ENTITY synthetic 'x'>]>"
+        assertHistoryBytesMalformed(utf16LeWithBom(historyXml(datesBack(2)).replaceFirst("?>", doctype)))
+        assertDailyBytesMalformedAndNothingStored(utf16LeWithBom(ecbXml().replaceFirst("?>", doctype)))
+    }
+
+    @Test
+    fun `UTF-16BE payload without BOM is malformed on history and daily paths`() {
+        assertHistoryBytesMalformed(historyXml(datesBack(2)).toByteArray(Charsets.UTF_16BE))
+        assertDailyBytesMalformedAndNothingStored(ecbXml().toByteArray(Charsets.UTF_16BE))
+    }
+
+    @Test
+    fun `UTF-8 payload with leading BOM is malformed on history and daily paths`() {
+        assertHistoryBytesMalformed(bom8 + historyXml(datesBack(2)).toByteArray(Charsets.UTF_8))
+        assertDailyBytesMalformedAndNothingStored(bom8 + ecbXml().toByteArray(Charsets.UTF_8))
+    }
+
+    @Test
+    fun `invalid UTF-8 byte sequence is malformed on history and daily paths`() {
+        assertHistoryBytesMalformed(withInvalidUtf8Inside(historyXml(datesBack(2))))
+        assertDailyBytesMalformedAndNothingStored(withInvalidUtf8Inside(ecbXml()))
+    }
+
+    @Test
+    fun `control plain UTF-8 payload still parses on history and daily paths`() {
+        val days = fixture().repository.parseEcbHistoryRates(stream(historyXml(datesBack(2))), histNow)
+        assertEquals(2, days.size)
+        val daily = fixture().repository.parseEcbDailyRates(stream(ecbXml()))
+        assertNotNull(daily)
+    }
+
+    // ── MEC 1b: history parser (INV-1b-7, INV-1b-9, C6-C8) ─────────────────
+
+    private val histNewest = LocalDate.of(2026, 10, 29)
+    private val histNow = Instant.parse("2026-10-30T12:00:00Z").toEpochMilli()
+
+    // 29 synthetic ECB-listed codes. 24 are in the app catalog, plus implicit EUR = 25 catalog codes,
+    // so one day yields 25 x 24 = 600 stored pairs.
+    private val ecbCodes = listOf(
+        "USD", "JPY", "CZK", "DKK", "GBP", "HUF", "PLN", "RON", "SEK", "CHF", "ISK", "NOK", "TRY", "AUD",
+        "BRL", "CAD", "CNY", "HKD", "IDR", "ILS", "INR", "KRW", "MXN", "MYR", "NZD", "PHP", "SGD", "THB", "ZAR"
+    )
+    private val pairsPerFixtureDay = 600
+
+    private fun datesBack(count: Int, newest: LocalDate = histNewest): List<LocalDate> =
+        (0 until count).map { newest.minusDays(it.toLong()) }
+
+    private fun historyXml(
+        dates: List<LocalDate>,
+        codes: List<String> = ecbCodes,
+        singleLine: Boolean = true,
+        quote: String = "\"",
+        rateText: (Int, Int) -> String = { c, d -> (1.0 + (c + 1) * 0.01 + d * 0.0001).toString() }
+    ): String {
+        val nl = if (singleLine) "" else "\n"
+        val t1 = if (singleLine) "" else "\t"
+        val t2 = if (singleLine) "" else "\t\t"
+        val t3 = if (singleLine) "" else "\t\t\t"
+        val q = quote
+        val sb = StringBuilder()
+        sb.append("<?xml version=${q}1.0$q encoding=${q}UTF-8$q?>$nl")
+        sb.append("<gesmes:Envelope xmlns:gesmes=${q}http://www.gesmes.org/xml/2002-08-01$q ")
+        sb.append("xmlns=${q}http://www.ecb.int/vocabulary/2002-08-01/eurofxref$q>$nl")
+        sb.append("${t1}<gesmes:subject>Reference rates</gesmes:subject>$nl")
+        sb.append("${t1}<Cube>$nl")
+        dates.forEachIndexed { d, date ->
+            sb.append("${t2}<Cube time=$q$date$q>$nl")
+            codes.forEachIndexed { c, code ->
+                sb.append("${t3}<Cube currency=$q$code$q rate=$q${rateText(c, d)}$q/>$nl")
+            }
+            sb.append("${t2}</Cube>$nl")
+        }
+        sb.append("${t1}</Cube>$nl")
+        sb.append("</gesmes:Envelope>")
+        return sb.toString()
+    }
+
+    private fun assertHistoryReason(expected: RateHistoryFailureReason, xml: String) {
+        try {
+            fixture().repository.parseEcbHistoryRates(stream(xml), histNow)
+            fail("Expected $expected")
+        } catch (error: EcbHistoryPayloadException) {
+            assertEquals(expected, error.reason)
+        }
+    }
+
+    @Test
+    fun `INV-1b-7 valid 64 day single line file parses newest first with all listed codes`() {
+        val days = fixture().repository.parseEcbHistoryRates(stream(historyXml(datesBack(64))), histNow)
+
+        assertEquals(64, days.size)
+        assertEquals(histNewest, days.first().date)
+        assertEquals(histNewest.minusDays(63), days.last().date)
+        assertEquals(days.map { it.date }.sortedDescending(), days.map { it.date })
+        assertTrue(days.all { it.eurToCurrency.size == 30 && it.eurToCurrency.getValue("EUR") == 1.0 })
+        assertEquals(1.01, days.first().eurToCurrency.getValue("USD"), 1e-12)
+        assertEquals(1.0405, days[5].eurToCurrency.getValue("DKK"), 1e-12)
+    }
+
+    @Test
+    fun `INV-1b-7 tab indented single quoted variant parses identically`() {
+        val repo = fixture().repository
+        val compact = repo.parseEcbHistoryRates(stream(historyXml(datesBack(5))), histNow)
+        val pretty = repo.parseEcbHistoryRates(
+            stream(historyXml(datesBack(5), singleLine = false, quote = "'")),
+            histNow
+        )
+
+        assertEquals(compact, pretty)
+    }
+
+    @Test
+    fun `C8 DOCTYPE payload is rejected by the hardened parser on the JVM`() {
+        val xml = "<?xml version=\"1.0\"?><!DOCTYPE x [<!ENTITY e SYSTEM \"file:///nope\">]>" +
+            historyXml(datesBack(2)).substringAfter("?>")
+        assertHistoryReason(RateHistoryFailureReason.PAYLOAD_MALFORMED, xml)
+    }
+
+    @Test
+    fun `INV-1b-9 file with no dated node is PAYLOAD_EMPTY`() {
+        assertHistoryReason(RateHistoryFailureReason.PAYLOAD_EMPTY, historyXml(emptyList()))
+    }
+
+    @Test
+    fun `INV-1b-9 day cap 70 is accepted and 71 is out of bounds`() {
+        val repo = fixture().repository
+        assertEquals(70, repo.parseEcbHistoryRates(stream(historyXml(datesBack(70))), histNow).size)
+
+        assertHistoryReason(RateHistoryFailureReason.PAYLOAD_OUT_OF_BOUNDS, historyXml(datesBack(71)))
+    }
+
+    @Test
+    fun `INV-1b-9 span cap 100 days is accepted and 101 is out of bounds`() {
+        val repo = fixture().repository
+        val ok = listOf(histNewest, histNewest.minusDays(100))
+        assertEquals(2, repo.parseEcbHistoryRates(stream(historyXml(ok)), histNow).size)
+
+        val tooWide = listOf(histNewest, histNewest.minusDays(101))
+        assertHistoryReason(RateHistoryFailureReason.PAYLOAD_OUT_OF_BOUNDS, historyXml(tooWide))
+    }
+
+    @Test
+    fun `INV-1b-9 future dated day is out of bounds and today is accepted`() {
+        val repo = fixture().repository
+        val today = listOf(LocalDate.of(2026, 10, 30), histNewest)
+        assertEquals(2, repo.parseEcbHistoryRates(stream(historyXml(today)), histNow).size)
+
+        val future = listOf(LocalDate.of(2026, 11, 2), histNewest)
+        assertHistoryReason(RateHistoryFailureReason.PAYLOAD_OUT_OF_BOUNDS, historyXml(future))
+    }
+
+    @Test
+    fun `INV-1b-7 duplicate date blank date and bad date are PAYLOAD_MALFORMED`() {
+        assertHistoryReason(
+            RateHistoryFailureReason.PAYLOAD_MALFORMED,
+            historyXml(listOf(histNewest, histNewest))
+        )
+        assertHistoryReason(
+            RateHistoryFailureReason.PAYLOAD_MALFORMED,
+            historyXml(datesBack(2)).replaceFirst("time=\"2026-10-29\"", "time=\"\"")
+        )
+        assertHistoryReason(
+            RateHistoryFailureReason.PAYLOAD_MALFORMED,
+            historyXml(datesBack(2)).replaceFirst("time=\"2026-10-29\"", "time=\"2026-13-01\"")
+        )
+    }
+
+    @Test
+    fun `INV-1b-7 a day whose rates are all non numeric rejects the whole payload`() {
+        val xml = historyXml(datesBack(3)) { c, d -> if (d == 1) "n/a" else (1.5 + c * 0.01).toString() }
+        assertHistoryReason(RateHistoryFailureReason.PAYLOAD_MALFORMED, xml)
+    }
+
+    // ── MEC 1b: history network phase (INV-1b-1, 3, 6, 9; C1-C5, C10) ─────────
+    //
+    // The repository exposes a @VisibleForTesting `historyConnectionOpener` seam, invoked only after the
+    // privacy gate and the home-currency precheck. No real network and no JDK class mocking is used.
+
+    /** Fails fast instead of hanging the suite if a regression blocks a test. */
+    @get:Rule
+    val testTimeout: Timeout = Timeout.seconds(60)
+
+    private var connectionsOpened = 0
+
+    private fun CurrencyRatesRepositoryImpl.serve(connection: HttpURLConnection) {
+        connectionsOpened = 0
+        historyConnectionOpener = {
+            connectionsOpened += 1
+            connection
+        }
+    }
+
+    /** An opener that must never be called; counts invocations and fails if reached. */
+    private fun CurrencyRatesRepositoryImpl.serveNothing() {
+        connectionsOpened = 0
+        historyConnectionOpener = {
+            connectionsOpened += 1
+            throw AssertionError("connection opener must not be called")
+        }
+    }
+
+    private fun fakeConnection(
+        status: Int = 200,
+        contentLength: Long = -1L,
+        body: InputStream = ByteArrayInputStream(ByteArray(0))
+    ): HttpURLConnection {
+        val connection = mockk<HttpURLConnection>(relaxed = true)
+        every { connection.responseCode } returns status
+        every { connection.contentLengthLong } returns contentLength
+        every { connection.inputStream } returns body
+        return connection
+    }
+
+    private fun okHistoryConnection(dayCount: Int = 64) =
+        fakeConnection(body = stream(historyXml(datesBack(dayCount))))
+
+    private fun repositoryWithGate(gate: PrivacyGate): CurrencyRatesRepositoryImpl {
+        val time = MutableTimeProvider(histNow)
+        return CurrencyRatesRepositoryImpl(
+            currencyConverter = CurrencyConverter(PairDateRateStore(), time),
+            currencySettingsRepository = RecordingCurrencySettingsRepository(),
+            timeProvider = time,
+            ioDispatcher = Dispatchers.Unconfined,
+            privacyGate = gate
+        )
+    }
+
+    @Test
+    fun `INV-1b-3 denied gate returns DisabledByPrivacy and opens no connection`() = runTest {
+        val fixture = fixture(
+            now = histNow,
+            privacyDecision = PrivacyDecision.Denied(PrivacyGateReasonCodes.EXCHANGE_RATE_DOWNLOAD_DISABLED)
+        )
+        fixture.repository.serveNothing()
+
+        val outcome = fixture.repository.downloadRecentHistory("EUR")
+
+        assertEquals(CurrencyRateHistoryOutcome.DisabledByPrivacy, outcome)
+        assertEquals(0, connectionsOpened)
+        assertEquals(listOf(PrivacyCapability.EXCHANGE_RATE_DOWNLOAD), fixture.privacyGate.checkedCapabilities)
+        assertTrue(fixture.store.rates.isEmpty())
+        assertTrue(fixture.settings.lastRateUpdates.isEmpty())
+    }
+
+    @Test
+    fun `INV-1b-3 fail closed gate with unbounded reason maps to PRIVACY_BLOCKED without a connection`() = runTest {
+        val fixture = fixture(
+            now = histNow,
+            privacyDecision = PrivacyDecision.FailClosed("raw /storage/emulated/0/secret path")
+        )
+        fixture.repository.serveNothing()
+
+        val outcome = fixture.repository.downloadRecentHistory("EUR")
+
+        assertEquals(CurrencyRateHistoryOutcome.PrivacyCheckFailed(PrivacyGateReasonCodes.PRIVACY_BLOCKED), outcome)
+        assertEquals(0, connectionsOpened)
+    }
+
+    @Test
+    fun `INV-1b-3 gate that throws fails closed as PrivacyCheckFailed with no connection`() = runTest {
+        val throwingGate = object : PrivacyGate {
+            override suspend fun check(capability: PrivacyCapability, context: Map<String, String>): PrivacyDecision =
+                throw IllegalStateException("gate exploded")
+        }
+        val repository = repositoryWithGate(throwingGate)
+        repository.serveNothing()
+
+        val outcome = repository.downloadRecentHistory("EUR")
+
+        assertEquals(CurrencyRateHistoryOutcome.PrivacyCheckFailed(PrivacyGateReasonCodes.PRIVACY_BLOCKED), outcome)
+        assertEquals(0, connectionsOpened)
+    }
+
+    @Test
+    fun `C1 C2 redirect 301 is HTTP_ERROR with one connection and no Location read or request headers`() = runTest {
+        val connection = fakeConnection(status = 301)
+        val fixture = fixture(now = histNow)
+        fixture.repository.serve(connection)
+
+        val outcome = fixture.repository.downloadRecentHistory("EUR")
+
+        assertEquals(CurrencyRateHistoryOutcome.Failed(RateHistoryFailureReason.HTTP_ERROR), outcome)
+        assertEquals(1, connectionsOpened)
+        verify { connection.instanceFollowRedirects = false }
+        verify { connection.useCaches = false }
+        verify(exactly = 0) { connection.setRequestProperty(any(), any()) }
+        verify(exactly = 0) { connection.addRequestProperty(any(), any()) }
+        verify(exactly = 0) { connection.getHeaderField(any<String>()) }
+        verify(atLeast = 1) { connection.disconnect() }
+        assertTrue(fixture.store.rates.isEmpty())
+    }
+
+    @Test
+    fun `INV-1b-9 not found 404 is HTTP_ERROR and stores nothing`() = runTest {
+        val fixture = fixture(now = histNow)
+        fixture.repository.serve(fakeConnection(status = 404))
+
+        val outcome = fixture.repository.downloadRecentHistory("EUR")
+
+        assertEquals(CurrencyRateHistoryOutcome.Failed(RateHistoryFailureReason.HTTP_ERROR), outcome)
+        assertTrue(fixture.store.rates.isEmpty())
+        assertTrue(fixture.settings.lastRateUpdates.isEmpty())
+    }
+
+    @Test
+    fun `C4 declared Content-Length above 512 KiB is rejected before the body is read`() = runTest {
+        val connection = fakeConnection(contentLength = 512L * 1024L + 1L)
+        val repository = fixture(now = histNow).repository
+        repository.serve(connection)
+
+        val outcome = repository.downloadRecentHistory("EUR")
+
+        assertEquals(CurrencyRateHistoryOutcome.Failed(RateHistoryFailureReason.PAYLOAD_TOO_LARGE), outcome)
+        verify(exactly = 0) { connection.inputStream }
+    }
+
+    @Test
+    fun `C6 streamed body over 512 KiB without Content-Length is PAYLOAD_TOO_LARGE`() = runTest {
+        val fixture = fixture(now = histNow)
+        fixture.repository.serve(
+            fakeConnection(contentLength = -1L, body = ByteArrayInputStream(ByteArray(512 * 1024 + 1) { 'a'.code.toByte() }))
+        )
+
+        val outcome = fixture.repository.downloadRecentHistory("EUR")
+
+        assertEquals(CurrencyRateHistoryOutcome.Failed(RateHistoryFailureReason.PAYLOAD_TOO_LARGE), outcome)
+        assertTrue(fixture.store.rates.isEmpty())
+    }
+
+    @Test
+    fun `C10 SocketTimeoutException is TIMEOUT and other IOException is OFFLINE`() = runTest {
+        val timeoutConnection = fakeConnection()
+        every { timeoutConnection.connect() } throws SocketTimeoutException("read timed out")
+        val timeoutRepository = fixture(now = histNow).repository
+        timeoutRepository.serve(timeoutConnection)
+        assertEquals(
+            CurrencyRateHistoryOutcome.Failed(RateHistoryFailureReason.TIMEOUT),
+            timeoutRepository.downloadRecentHistory("EUR")
+        )
+        verify(atLeast = 1) { timeoutConnection.disconnect() }
+
+        val offlineConnection = fakeConnection()
+        every { offlineConnection.connect() } throws IOException("Unable to resolve host")
+        val offlineRepository = fixture(now = histNow).repository
+        offlineRepository.serve(offlineConnection)
+        assertEquals(
+            CurrencyRateHistoryOutcome.Failed(RateHistoryFailureReason.OFFLINE),
+            offlineRepository.downloadRecentHistory("EUR")
+        )
+    }
+
+    // ── MEC 1b: store, home currency, single-flight, cancellation (INV-1b-6, 10, 11, 12, 21) ──
+
+    @Test
+    fun `INV-1b-10 INV-1b-11 64 day download stores catalog cross pairs in one bulk write`() = runTest {
+        val fixture = fixture(now = histNow)
+        fixture.repository.serve(okHistoryConnection(64))
+
+        val outcome = fixture.repository.downloadRecentHistory("EUR")
+
+        assertEquals(
+            CurrencyRateHistoryOutcome.Stored(
+                days = 64,
+                rows = 64 * pairsPerFixtureDay,
+                earliestDate = histNewest.minusDays(63),
+                latestDate = histNewest
+            ),
+            outcome
+        )
+        assertEquals(38_400, fixture.store.rates.size)
+        assertEquals(1, fixture.store.insertAllCalls)
+        assertEquals(listOf(histNow), fixture.settings.lastRateUpdates)
+        assertTrue(fixture.store.rates.values.all { it.source == "ecb" && it.lastUpdated == histNow })
+        assertTrue(fixture.store.rates.keys.none { it.from == it.to })
+        // IDR is ECB-listed but not in the app catalog: never stored.
+        assertTrue(fixture.store.rates.keys.none { it.from == "IDR" || it.to == "IDR" })
+        val newestMidnight = histNewest.atStartOfDay(java.time.ZoneOffset.UTC).toInstant().toEpochMilli()
+        val usdToGbp = fixture.store.rate("USD", "GBP", newestMidnight)
+        assertNotNull(usdToGbp)
+        assertEquals(1.05 / 1.01, usdToGbp!!.rate, 1e-9)
+        assertEquals(newestMidnight - 63 * dayMillis, fixture.store.rates.keys.minOf { it.validDate })
+    }
+
+    @Test
+    fun `INV-1b-12 repeating the download keeps the row count and never deletes or cleans up`() = runTest {
+        val fixture = fixture(now = histNow)
+        fixture.repository.serve(okHistoryConnection(64))
+        fixture.repository.downloadRecentHistory("EUR")
+        val firstCount = fixture.store.rates.size
+        fixture.repository.serve(okHistoryConnection(64))
+
+        val second = fixture.repository.downloadRecentHistory("EUR")
+
+        assertTrue(second is CurrencyRateHistoryOutcome.Stored)
+        assertEquals(64 * pairsPerFixtureDay, (second as CurrencyRateHistoryOutcome.Stored).rows)
+        assertEquals(firstCount, fixture.store.rates.size)
+        assertEquals(2, fixture.store.insertAllCalls)
+        assertEquals(0, fixture.store.deleteOldRatesCalls)
+    }
+
+    @Test
+    fun `INV-1b-10 home currency absent from the newest day is HOME_QUOTE_UNAVAILABLE and stores nothing`() = runTest {
+        val fixture = fixture(now = histNow)
+        fixture.repository.serve(okHistoryConnection(3))
+
+        val outcome = fixture.repository.downloadRecentHistory("RUB")
+
+        assertEquals(CurrencyRateHistoryOutcome.Failed(RateHistoryFailureReason.HOME_QUOTE_UNAVAILABLE), outcome)
+        assertTrue(fixture.store.rates.isEmpty())
+        assertEquals(0, fixture.store.insertAllCalls)
+        assertTrue(fixture.settings.lastRateUpdates.isEmpty())
+    }
+
+    @Test
+    fun `INV-1b-10 unknown home currency is INVALID_HOME_CURRENCY and stores nothing`() = runTest {
+        val fixture = fixture(now = histNow)
+        fixture.repository.serveNothing()
+
+        val outcome = fixture.repository.downloadRecentHistory("XYZ")
+
+        assertEquals(CurrencyRateHistoryOutcome.Failed(RateHistoryFailureReason.INVALID_HOME_CURRENCY), outcome)
+        assertEquals("home precheck must run before any connection is opened", 0, connectionsOpened)
+        assertTrue(fixture.store.rates.isEmpty())
+        assertEquals(0, fixture.store.insertAllCalls)
+        assertTrue(fixture.settings.lastRateUpdates.isEmpty())
+    }
+
+    @Test
+    fun `INV-1b-10 blank and unknown home currency codes are rejected before opening a connection`() = runTest {
+        val fixture = fixture(now = histNow)
+        fixture.repository.serveNothing()
+
+        listOf("", "  ", "ZZZ", "EURO").forEach { home ->
+            assertEquals(
+                "home=<$home>",
+                CurrencyRateHistoryOutcome.Failed(RateHistoryFailureReason.INVALID_HOME_CURRENCY),
+                fixture.repository.downloadRecentHistory(home)
+            )
+        }
+        assertEquals(0, connectionsOpened)
+        assertTrue(fixture.store.rates.isEmpty())
+    }
+
+    @Test
+    fun `INV-1b-6 second concurrent call is AlreadyInProgress and opens no second connection`() = runTest {
+        val fixture = fixture(now = histNow)
+        var second: CurrencyRateHistoryOutcome? = null
+        val xml = historyXml(datesBack(3)).toByteArray(Charsets.UTF_8)
+        val hooked = object : InputStream() {
+            private val inner = ByteArrayInputStream(xml)
+            private var first = true
+            override fun read(): Int = inner.read()
+            override fun read(b: ByteArray, off: Int, len: Int): Int {
+                if (first) {
+                    first = false
+                    second = runBlocking { fixture.repository.downloadRecentHistory("EUR") }
+                }
+                return inner.read(b, off, len)
+            }
+        }
+        fixture.repository.serve(fakeConnection(body = hooked))
+
+        val first = fixture.repository.downloadRecentHistory("EUR")
+
+        assertEquals(CurrencyRateHistoryOutcome.AlreadyInProgress, second)
+        assertTrue(first is CurrencyRateHistoryOutcome.Stored)
+        assertEquals(1, connectionsOpened)
+
+        // The lock is released after the first call: a later call runs normally.
+        fixture.repository.serve(okHistoryConnection(3))
+        assertTrue(fixture.repository.downloadRecentHistory("EUR") is CurrencyRateHistoryOutcome.Stored)
+    }
+
+    @Test
+    fun `INV-1b-21 cancellation propagates is never mapped and disconnects the connection`() = runTest {
+        val fixture = fixture(now = histNow)
+        var jobRef: Job? = null
+        var thrown: Throwable? = null
+        var returned: CurrencyRateHistoryOutcome? = null
+        val cancelling = object : InputStream() {
+            private var first = true
+            override fun read(): Int = -1
+            override fun read(b: ByteArray, off: Int, len: Int): Int {
+                if (!first) return -1
+                first = false
+                jobRef?.cancel()
+                b.fill(' '.code.toByte(), off, off + 10)
+                return 10
+            }
+        }
+        val connection = fakeConnection(body = cancelling)
+        fixture.repository.serve(connection)
+
+        val job = launch(Dispatchers.Unconfined) {
+            jobRef = coroutineContext[Job]
+            try {
+                returned = fixture.repository.downloadRecentHistory("EUR")
+            } catch (e: CancellationException) {
+                thrown = e
+                throw e
+            }
+        }
+        job.join()
+
+        assertTrue("CancellationException must propagate", thrown is CancellationException)
+        assertEquals(null, returned)
+        verify(atLeast = 1) { connection.disconnect() }
+        assertTrue(fixture.store.rates.isEmpty())
+        assertTrue(fixture.settings.lastRateUpdates.isEmpty())
+    }
+
+    // ── MEC 1b: one constant log line per attempt (C9, C11) ───────────────────
+
+    private suspend fun captureTimber(block: suspend () -> Unit): List<Triple<Int, String, Throwable?>> {
+        val lines = mutableListOf<Triple<Int, String, Throwable?>>()
+        val tree = object : Timber.Tree() {
+            override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
+                lines += Triple(priority, message, t)
+            }
+        }
+        Timber.plant(tree)
+        try {
+            block()
+        } finally {
+            Timber.uproot(tree)
+        }
+        return lines
+    }
+
+    private fun assertSingleConstantLine(expectedEnum: String, lines: List<Triple<Int, String, Throwable?>>) {
+        assertEquals("lines were ${lines.map { it.second }}", 1, lines.size)
+        assertEquals("RATE_HISTORY_DOWNLOAD $expectedEnum", lines.single().second)
+        assertNull(lines.single().third)
+        listOf("://", "ecb", "2026", "USD", "EUR", "38400", "64", "Exception").forEach {
+            assertFalse("line leaks $it", lines.single().second.contains(it, ignoreCase = true))
+        }
+    }
+
+    @Test
+    fun `C9 C11 exactly one constant line per attempt for stored failed blocked and offline`() = runTest {
+        val stored = captureTimber {
+            val repository = fixture(now = histNow).repository
+            repository.serve(okHistoryConnection(64))
+            repository.downloadRecentHistory("EUR")
+        }
+        assertSingleConstantLine("STORED", stored)
+
+        val http = captureTimber {
+            val repository = fixture(now = histNow).repository
+            repository.serve(fakeConnection(status = 404))
+            repository.downloadRecentHistory("EUR")
+        }
+        assertSingleConstantLine("HTTP_ERROR", http)
+
+        val offline = captureTimber {
+            val connection = fakeConnection()
+            every { connection.connect() } throws IOException("https://www.ecb.europa.eu/stats unreachable")
+            val repository = fixture(now = histNow).repository
+            repository.serve(connection)
+            repository.downloadRecentHistory("EUR")
+        }
+        assertSingleConstantLine("OFFLINE", offline)
+
+        val denied = captureTimber {
+            fixture(
+                now = histNow,
+                privacyDecision = PrivacyDecision.Denied(PrivacyGateReasonCodes.EXCHANGE_RATE_DOWNLOAD_DISABLED)
+            ).repository.downloadRecentHistory("EUR")
+        }
+        assertSingleConstantLine("DISABLED_BY_PRIVACY", denied)
+    }
+
+    @Test
+    fun `C9 INV-1b-21 cancelled attempt logs one constant CANCELLED line`() = runTest {
+        var jobRef: Job? = null
+        val cancelling = object : InputStream() {
+            private var first = true
+            override fun read(): Int = -1
+            override fun read(b: ByteArray, off: Int, len: Int): Int {
+                if (!first) return -1
+                first = false
+                jobRef?.cancel()
+                return 1.also { b[off] = ' '.code.toByte() }
+            }
+        }
+        val repository = fixture(now = histNow).repository
+        repository.serve(fakeConnection(body = cancelling))
+
+        val lines = captureTimber {
+            val job = launch(Dispatchers.Unconfined) {
+                jobRef = coroutineContext[Job]
+                repository.downloadRecentHistory("EUR")
+            }
+            job.join()
+        }
+
+        assertSingleConstantLine("CANCELLED", lines)
+    }
+
+    @Test
+    fun `F3b INV-1b-11 a store exception is STORE_FAILED and never updates the last rate timestamp`() = runTest {
+        val settings = RecordingCurrencySettingsRepository()
+        val repository = repositoryOf(
+            FailingBulkStore(PairDateRateStore()) { IllegalStateException("disk full") },
+            settings
+        )
+        repository.serve(okHistoryConnection(3))
+
+        val lines = captureTimber {
+            assertEquals(
+                CurrencyRateHistoryOutcome.Failed(RateHistoryFailureReason.STORE_FAILED),
+                repository.downloadRecentHistory("EUR")
+            )
+        }
+
+        assertTrue(settings.lastRateUpdates.isEmpty())
+        assertSingleConstantLine("STORE_FAILED", lines)
+    }
+
+    @Test
+    fun `F3c INV-1b-13 setLastRateUpdate failure after a committed store still returns Stored`() = runTest {
+        val store = PairDateRateStore()
+        val settings = ThrowingLastUpdateSettings(RecordingCurrencySettingsRepository())
+        val repository = repositoryOf(store, settings)
+        repository.serve(okHistoryConnection(3))
+
+        val outcome = repository.downloadRecentHistory("EUR")
+
+        assertEquals(
+            CurrencyRateHistoryOutcome.Stored(
+                days = 3,
+                rows = 3 * pairsPerFixtureDay,
+                earliestDate = histNewest.minusDays(2),
+                latestDate = histNewest
+            ),
+            outcome
+        )
+        assertEquals(1, settings.setCalls)
+        assertEquals(3 * pairsPerFixtureDay, store.rates.size)
+        assertEquals(1, store.insertAllCalls)
+    }
+
+    @Test
+    fun `F4 opener IOException is OFFLINE with one constant line and never throws`() = runTest {
+        val fixture = fixture(now = histNow)
+        fixture.repository.historyConnectionOpener = {
+            connectionsOpened += 1
+            throw IOException("https://www.ecb.europa.eu/stats unreachable")
+        }
+        connectionsOpened = 0
+
+        val lines = captureTimber {
+            assertEquals(
+                CurrencyRateHistoryOutcome.Failed(RateHistoryFailureReason.OFFLINE),
+                fixture.repository.downloadRecentHistory("EUR")
+            )
+        }
+
+        assertEquals(1, connectionsOpened)
+        assertSingleConstantLine("OFFLINE", lines)
+        assertTrue(fixture.store.rates.isEmpty())
+        assertTrue(fixture.settings.lastRateUpdates.isEmpty())
+        // The single-flight lock was released: a later call runs normally.
+        fixture.repository.serve(okHistoryConnection(3))
+        assertTrue(fixture.repository.downloadRecentHistory("EUR") is CurrencyRateHistoryOutcome.Stored)
+    }
+
+    @Test
+    fun `F4 opener CancellationException propagates and is never mapped to OFFLINE`() = runTest {
+        val repository = fixture(now = histNow).repository
+        repository.historyConnectionOpener = { throw CancellationException("cancelled while opening") }
+        var thrown: Throwable? = null
+        var returned: CurrencyRateHistoryOutcome? = null
+
+        captureTimber {
+            try {
+                returned = repository.downloadRecentHistory("EUR")
+            } catch (e: CancellationException) {
+                thrown = e
+            }
+        }
+
+        assertTrue("CancellationException must propagate", thrown is CancellationException)
+        assertNull(returned)
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun `F3a 30 second deadline returns TIMEOUT and disconnects the stuck connection`() = runTest {
+        val readStarted = CountDownLatch(1)
+        val released = CountDownLatch(1)
+        var unblockedByDisconnect = false
+        val stuckBody = object : InputStream() {
+            override fun read(): Int = -1
+            override fun read(b: ByteArray, off: Int, len: Int): Int {
+                readStarted.countDown()
+                unblockedByDisconnect = released.await(20, TimeUnit.SECONDS)
+                throw IOException("socket closed")
+            }
+        }
+        val connection = fakeConnection(body = stuckBody)
+        every { connection.disconnect() } answers { released.countDown() }
+        val store = PairDateRateStore()
+        val settings = RecordingCurrencySettingsRepository()
+        val repository = repositoryOf(
+            store,
+            settings,
+            VirtualDelayDispatcher(Dispatchers.IO, StandardTestDispatcher(testScheduler))
+        )
+        repository.serve(connection)
+
+        val result = async(Dispatchers.Default) { repository.downloadRecentHistory("EUR") }
+        assertTrue("read never started", readStarted.await(10, TimeUnit.SECONDS))
+
+        testScheduler.advanceTimeBy(29_999L)
+        testScheduler.runCurrent()
+        assertFalse("deadline fired early", result.isCompleted)
+        verify(exactly = 0) { connection.disconnect() }
+
+        testScheduler.advanceTimeBy(2L)
+        testScheduler.runCurrent()
+        assertEquals(CurrencyRateHistoryOutcome.Failed(RateHistoryFailureReason.TIMEOUT), result.await())
+        verify(atLeast = 1) { connection.disconnect() }
+        assertTrue("stuck read was not unblocked by disconnect()", unblockedByDisconnect)
+        assertTrue(store.rates.isEmpty())
+        assertTrue(settings.lastRateUpdates.isEmpty())
+    }
+
+    // ── MEC 1b: reviewer findings F3 / F4 (deadline, store failure, best-effort settings, opener) ──
+
+    /** Store whose bulk write always fails with [failure]; everything else delegates to a real fake. */
+    private class FailingBulkStore(
+        private val delegate: ExchangeRateStore,
+        private val failure: () -> Throwable
+    ) : ExchangeRateStore by delegate {
+        override suspend fun insertOrUpdateAll(rates: List<DomainExchangeRate>) {
+            throw failure()
+        }
+    }
+
+    /** Settings whose lastRateUpdate write always throws; counts the attempts. */
+    private class ThrowingLastUpdateSettings(
+        delegate: CurrencySettingsRepository
+    ) : CurrencySettingsRepository by delegate {
+        var setCalls = 0
+
+        override suspend fun setLastRateUpdate(timestamp: Long) {
+            setCalls += 1
+            throw IOException("settings write failed")
+        }
+    }
+
+    /** Dispatches on a real pool but takes timeouts from the virtual [virtual] scheduler. */
+    @OptIn(InternalCoroutinesApi::class, ExperimentalCoroutinesApi::class)
+    private class VirtualDelayDispatcher(
+        private val real: CoroutineDispatcher,
+        private val virtual: TestDispatcher
+    ) : CoroutineDispatcher(), Delay by virtual {
+        override fun dispatch(context: CoroutineContext, block: Runnable) = real.dispatch(context, block)
+    }
+
+    private fun repositoryOf(
+        store: ExchangeRateStore,
+        settings: CurrencySettingsRepository,
+        dispatcher: CoroutineDispatcher = Dispatchers.Unconfined
+    ): CurrencyRatesRepositoryImpl {
+        val time = MutableTimeProvider(histNow)
+        return CurrencyRatesRepositoryImpl(
+            currencyConverter = CurrencyConverter(store, time),
+            currencySettingsRepository = settings,
+            timeProvider = time,
+            ioDispatcher = dispatcher,
+            privacyGate = FixedPrivacyGate(PrivacyDecision.Allowed)
+        )
     }
 
     private fun fixture(
@@ -398,7 +1350,11 @@ private class PairDateRateStore : ExchangeRateStore {
         rates[PairDateKey(rate.fromCurrency, rate.toCurrency, validDate)] = rate
     }
 
+    var insertAllCalls = 0
+    var deleteOldRatesCalls = 0
+
     override suspend fun insertOrUpdateAll(rates: List<DomainExchangeRate>) {
+        insertAllCalls += 1
         rates.forEach { insertOrUpdate(it) }
     }
 
@@ -409,6 +1365,7 @@ private class PairDateRateStore : ExchangeRateStore {
         rates.values.maxByOrNull { it.lastUpdated }
 
     override suspend fun deleteOldRates(olderThan: Long) {
+        deleteOldRatesCalls += 1
         rates.entries.removeAll { it.value.lastUpdated < olderThan }
     }
 }

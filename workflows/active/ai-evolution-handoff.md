@@ -125,3 +125,49 @@ Source: docs/features/manual-entry-currency/impact-map.md §9.
 - New roadmap entries (from briefing-grounded-signals Gate 1): `home-insight-gap` (small standalone bug: Home Insight widget returns null for 0–20% pace band / no pace + no spend → card and hosted AI briefing vanish; ComputeDashboardWidgetsUseCase.kt:1352,1387-1407; EN/EL "on track" + neutral line + unit test; land before ai-fixes B3; post-1.0 unless owner says "send to release"); `briefing-worker-on-device-fallback` (parked stub; ai-fixes/brief.md:153); `why-this-number` (B2, future brief); `period-recap` (B7, future brief).
 - Follow-up (briefing-grounded-signals G2-8): Money Radar whole score hidden when monthly income is foreign-currency without a rate (ComputeMoneyRadarUseCase getMonthlyIncome :479 via calculateDueBillsScore).
 - 2026-10-16: briefing-grounded-signals PLAN APPROVED (Gate 3, owner "Recommended and approved"), parked post-1.0. home-insight-gap = its S-fix (ships alone, before ai-fixes B3a; loan-installments rebases if needed).
+
+## ai-fixes follow-ups and deferred items (Z closeout, 2026-10-24; collected from workflows/active/ai-fixes-handoff.md A..B3b + Part C)
+Status of the item: ai-fixes slices A, B1a-c, B2a-e, B3a-b, C1-C5, CX are DONE and validated per slice; bundle gate + fresh-session final acceptance pending (see ai-fixes-handoff.md Z). None of the items below blocks acceptance; each needs an owner or a later feature to pick it up.
+
+### Owner decisions pending
+- GenAI error collapse (INV-17 last bullet / INV-19): BUSY, QUOTA_EXCEEDED, MODEL_UNAVAILABLE and BACKGROUND_USE_BLOCKED all become `PROVIDER_ERROR` because `OnDeviceDashboardBriefingService` carries the code only as free text and INV-19 forbids parsing it; the four `TransactionInsightSkipReason` values are unused and the B2c "BACKGROUND_USE_BLOCKED backstop" is not delivered (the foreground short-circuit is the only background guard). Reason: a typed error carrier (widening `AiServiceError`) is a scope decision, together with insight timeout tuning (plan Deferred).
+- Nano warm-up vs the 3 s insight timeout (G2-12): owner measures on device. Reason: non-blocking, needs hardware.
+- Translation review (es/el are best-effort everywhere below; owner reviews before release), by slice: A (27 AiSettings keys); B1b (12 warranty keys; el dialog Cancel shows English, no el `action_cancel`); B1c (`ai_warranty_local_note`); B2a (`ai_capability_transaction_insight`); B2e (`ai_insight_label`, `ai_insight_desc`, `ai_insight_needs_ai`, `ai_insight_needs_on_device`); B3b (`ai_toggle_proactive`, `ai_proactive_desc`, `ai_proactive_notifications_blocked`; es/el name the English toggle labels and drift if those are translated); C2 (7 assistant unsupported-reason strings); C4 (5 clarification labels); C5 (`domain_ai_smallest_purchase`). Reason: PC-13/R28 require owner review of Greek.
+- Missing `domain_ai_largest_purchase` es/el (pre-existing; MAX title shows English). Reason: found at C5, outside Part C write set.
+
+### Privacy / log hygiene
+- `AiSettingsRepositoryImpl.settings()` `Timber.e(error, ...)` logs the IOException throwable: use a bounded message. Reason: pre-existing, debug-only, outside INV-3 scope of B2b.
+- `DailyBriefingWorker` log hygiene: ~:138 `Timber.w(e, ...)` on timeout and ~:155 `${result.error}` in a log message. Reason: pre-existing; B3a did not touch those lines.
+- Delivered briefing notification shows `summary.take(180)` on the lock screen. Reason: presentation belongs to the app-lock-privacy-mode lane at merge.
+- Other `Timber.w(e)` throwable logs: `OkHttpCloudProviderConnectionTester.kt:50`, `ReceiptSideEffectPlanner` ~:222, `WarrantyTrackerRepository` ~:197/:215. Reason: later INV-3 sweep.
+- `AutoCreateWarrantyFromReceiptUseCase` `Failure(e.message)` -> bounded code. Reason: B1a follow-up.
+- `dataExtractionRules`: exclude `ai_settings` from device-to-device transfer (allowBackup=false does not stop D2D on Android 12+). Reason: pre-existing, manifest/policy change outside ai-fixes.
+- Unredacted prior queries keep internal newlines (user's own text); optional collapse. Reason: C1 info item.
+- Six other AI input builders still OR redaction flags outside `EffectiveCloudAiPolicyResolver` (see PC-10 line above; pair with cloud-alias-hashing). Reason: deferred by PC-10/R29.
+
+### Dead code and duplicated tables
+- Dead redact branches: the `shouldRedact` branch in `TransactionInsightInputBuilder` and the `insight.redactForPrompt` branch in `DashboardBriefingPromptFormatter` are unreachable now that the insight is on-device and unredacted. Reason: cleanup out of B2d scope.
+- Router/policy duplicate toggle tables: `DefaultAiCapabilityRouter.isCapabilityEnabled` and `AiPolicyImpl.shouldAllowOnDevice` encode the same per-capability switch; make the router delegate to `AiPolicy`. Reason: pre-existing drift risk, B2a/B2b had to edit both.
+- `DebugScreen.supportsCloudFallback` re-encodes cloud eligibility and already disagrees with policy on LOCATION_SUMMARY: derive from AiPolicy/router. Reason: pre-existing, debug-only.
+- `createWarrantyForReview`/`promoteReviewDraft` have no caller and would reactivate expired rows; `CloudWarrantyExtractionService`/`WarrantyExtractionModels`/provider remain (A6, plan Deferred). Reason: removal is a separate approved increment.
+- ExecuteFinancialQueryUseCase `METRIC_NOT_SUPPORTED` is defensive-only (Interpret branch unreachable); `containsRichIntentCue` still lists dead "compare"/"vs" substrings; `PackageInstallProvenance.classify()` could rethrow CancellationException before its broad catch (synchronous, outside CANCEL-01). Reason: optional cleanups noted by reviewers.
+
+### Data / lifecycle
+- Recommendation retention: `RecommendationDao.deleteExpired` deletes only `status = 'EXPIRED'` and no production caller of the cleanup was found. Reason: pre-existing; needs a retention decision.
+- `DashboardFollowThroughEngine` stores `sourceArtifactId` "0" (the `AiArtifactRecord.id` default). Reason: pre-existing, found at B2d; also hard-coded "€" in its fallback text (already in the G2-15 list).
+- `WarrantyTrackerViewModel` `totalProtectedValue` is 0.0 on aggregate failure instead of an "unavailable" state. Reason: money rule "never render unavailable as zero", pre-existing, B1b follow-up.
+- R7 Pattern E / candidate truth-sync: candidate signatures still list the dead `toWarrantyEntityOrNull` row and lack `confirmWarranty`; stale accounting records (NotificationRepository, ReviewQueueRepository, RecurringLifecycleCoordinator, RetentionModule) and GR-14 registry / GR-11 corpus pins need the next full regeneration. Reason: B1a took the R21 minimal path; the regenerated set is in the orchestrator scratchpad (b1a-regen-set) if still present.
+
+### Guard and allowlist hygiene
+- Expired 2026-09-30 broad-catch entries remain (not enforced; first-allowlist-only expiry check): LocationBackfillWorker, MerchantKeyBackfillWorker, ReceiptMatchingWorker, BillReminderWorker. Only the WarrantyExpirationWorker entry was removed (B3a). Reason: owner-visible; renew or fix in a guard-hygiene slice, never extend silently.
+- `NotificationProcessingPipeline.kt` keeps its CancellationSafety KNOWN_VIOLATIONS entry (`catch (t: Throwable)` ~:706 inside a Room transaction); `OnDeviceQueryInterpretationService` KNOWN_VIOLATIONS (~:81, MIT-034) may now be removable (C2). Reason: baseline shrink proposals, not made in ai-fixes.
+- `ai-fixes` domain-spec reconciliation (domain-modeler): INV-C9 connector wording (looser regex shipped) and `domain-spec-part-c.md` ~:50/~:200 (executor `else` -> exhaustive `when`). Reason: spec drift recorded at C3/C5.
+
+### Product follow-ups
+- Plan Deferred list: A6 (Nano warranty route; delete cloud warranty service/models/provider); G2-15 list (above); backfill of older untranslated `ai_*`/`warranty_*` keys; localizing `runtime.message`; typed GenAI error carrier + insight timeout tuning; "7 AI services" vs "8 providers" doc inconsistency.
+- Part C Deferred: restored-transcript half of OD-C3; Greek period vocabulary (nl-quick-add normaliser + assistant-follow-ups 1b); session context + chips (assistant-follow-ups inc 1); MAX/MIN AmountSemantics alignment (money-correctness RF-C3: `convertAsOf(expense.date)` vs snapshot gap); backfill of EN-only `assistant_*`/`domain_ai_*` keys in `app/lint-baseline.xml`.
+- FEATURES.md optional wording: ":20 AI Forecasting" and ":225 AI suggestions". Reason: slice A reviewer minor.
+- UX: blocked-notifications caption refreshes only at existing refresh points (not on resume). Reason: B3b by design; revisit with a lifecycle hook.
+- `ai_proactive_desc` INV-25 behaviour change (cloud briefing generated at midnight with proactive off) is owner-visible; see release-note.md.
+- Merge notes for feature/app-lock-privacy-mode and feature/manual-entry-currency are in ai-fixes-handoff.md (Z section).
+- (ai-fixes Z, domain-modeler) Assistant comparison cue gap: the shipped connector accepts "comparing/comparison", but the cue keyword check (InterpretFinancialQueryUseCase ~:380, substring "compare"/"vs") does not match "comparing", so "comparing X with last month" is probably not treated as a comparison. One-word cue addition + spec INV-C10 update; product/owner call (behaviour change, small).

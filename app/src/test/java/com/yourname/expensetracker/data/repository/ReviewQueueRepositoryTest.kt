@@ -418,6 +418,53 @@ class ReviewQueueRepositoryTest {
         coVerify(exactly = 0) { pendingReviewDao.transitionStatus(any(), any(), any()) }
     }
 
+    // ── MEC A2 (INV-14, G2-3, D-14): per-currency cap via CurrencyAmountPolicy ──
+
+    private fun reviewWith(id: Long, amount: Double, currency: String) = PendingReview(
+        id = id,
+        rawNotificationId = 10L,
+        suggestedAmount = amount,
+        suggestedCurrency = currency,
+        suggestedMerchant = "Merchant",
+        suggestedType = "PURCHASE",
+        suggestedCategoryId = 1L,
+        confidence = 0.8f,
+        packageName = "com.bank",
+        notificationTitle = "Merchant",
+        notificationText = "Merchant"
+    )
+
+    @Test
+    fun `approveReview allows KRW 1,500,000 under the per-currency cap`() = runTest {
+        val reviewId = 31L
+        coEvery { pendingReviewDao.getById(reviewId) } returns reviewWith(reviewId, 1_500_000.0, "KRW")
+        coEvery {
+            pendingReviewDao.transitionStatus(reviewId, PendingReviewStatus.PENDING, PendingReviewStatus.PROCESSING)
+        } returns 1
+        coEvery { transactionLifecycleCoordinator.createExpenseDbOnlyV2(any()) } returns
+            MutationResult(CreateExpenseResult.Created(101L), PostCommitActionBatch.empty(""))
+
+        val result = repository.approveReview(reviewId)
+
+        assertTrue("Expected Success, got $result", result is Result.Success)
+        coVerify { transactionLifecycleCoordinator.createExpenseDbOnlyV2(match { it.currency == "KRW" && it.amount == 1_500_000.0 }) }
+    }
+
+    @Test
+    fun `approveReview refuses EUR 1,000,000_01 and KRW above one billion`() = runTest {
+        val eurId = 32L
+        coEvery { pendingReviewDao.getById(eurId) } returns reviewWith(eurId, 1_000_000.01, "EUR")
+        val eurResult = repository.approveReview(eurId)
+        assertEquals("AMOUNT_EXCEEDS_LIMIT", (eurResult as Result.Error).message)
+
+        val krwId = 33L
+        coEvery { pendingReviewDao.getById(krwId) } returns reviewWith(krwId, 1_000_000_001.0, "KRW")
+        val krwResult = repository.approveReview(krwId)
+        assertEquals("AMOUNT_EXCEEDS_LIMIT", (krwResult as Result.Error).message)
+
+        coVerify(exactly = 0) { transactionLifecycleCoordinator.createExpenseDbOnlyV2(any()) }
+    }
+
     @Test
     fun `rejectReview updates status and records negative correction`() = runTest {
         // Arrange

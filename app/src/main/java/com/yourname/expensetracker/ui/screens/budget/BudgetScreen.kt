@@ -275,6 +275,7 @@ fun BudgetScreen(
                                 status = budgetStatus,
                                 referenceNowMillis = uiState.referenceNowMillis,
                                 homeCurrency = uiState.homeCurrency,
+                                installmentLine = uiState.installmentLines[budgetStatus.budget.id],
                                 onEdit = { editingBudget = budgetStatus },
                                 onToggle = { isActive -> viewModel.toggleBudget(budgetStatus.budget.id, isActive) },
                                 onDelete = { viewModel.deleteBudget(it) },
@@ -463,7 +464,9 @@ fun BudgetCard(
     onDelete: (Budget) -> Unit,
     onViewForecast: (() -> Unit)? = null,
     /** R3: home currency; the "Confirm currency" action is offered only for home-currency rows. */
-    homeCurrency: String? = null
+    homeCurrency: String? = null,
+    /** S12b: installment info line (B-2); null = nothing to show (zero, or the feature is off). */
+    installmentLine: BudgetInstallmentLine? = null
 ) {
     val context = LocalContext.current
     val budgetActiveString = stringResource(R.string.budget_status_active)
@@ -681,6 +684,24 @@ fun BudgetCard(
             if (adjustedSpend != null && adjustedSpend.pendingReimbursements > 0.01) {
                 Spacer(Modifier.height(8.dp))
                 AdjustedSpendBreakdownRow(adjustedSpend)
+            }
+
+            // S12b (B-2, INV-1): installment info line, one budget currency, never a combined total.
+            // Unavailable is its own text and is never rendered as zero.
+            when (installmentLine) {
+                null -> Unit
+                is BudgetInstallmentLine.Included -> Text(
+                    text = stringResource(R.string.budget_includes_installments_format, installmentLine.amount.formatted),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+                BudgetInstallmentLine.Unavailable -> Text(
+                    text = stringResource(R.string.budget_includes_installments_unavailable),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
             }
 
             // S8-002: Show partial/conversion warning when repository marks data unreliable

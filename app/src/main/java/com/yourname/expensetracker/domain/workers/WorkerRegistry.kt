@@ -11,6 +11,7 @@ import com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
 import com.yourname.expensetracker.domain.diagnostics.EventOutcome
 import com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata
 import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.service.installment.InstallmentDueRecordingWorker
 import com.yourname.expensetracker.service.receiptmatching.ReceiptMatchingWorker
 import com.yourname.expensetracker.service.recurring.RecurringHorizonWorker
 import com.yourname.expensetracker.service.reminder.BillReminderWorker
@@ -107,6 +108,9 @@ object WorkerRegistry {
         },
         Entry("recurring_horizon") { context, _ ->
             WorkerSpecScheduler.scheduleFromSpec(context, "recurring_horizon", RecurringHorizonWorker::class.java)
+        },
+        Entry("installment_due_recording") { context, _ ->
+            WorkerSpecScheduler.scheduleFromSpec(context, "installment_due_recording", InstallmentDueRecordingWorker::class.java)
         },
         Entry("receipt_matching") { context, _ ->
             WorkerSpecScheduler.scheduleFromSpec(context, "receipt_matching", ReceiptMatchingWorker::class.java)

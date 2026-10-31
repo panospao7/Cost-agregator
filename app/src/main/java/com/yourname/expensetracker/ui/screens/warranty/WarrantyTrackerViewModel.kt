@@ -9,6 +9,8 @@ import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException
 import com.yourname.expensetracker.ui.util.UI_WRITE_BLOCKED_MESSAGE
 import com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
+import com.yourname.expensetracker.data.repository.WarrantyTrackerRepository.ConfirmWarrantyResult
+import com.yourname.expensetracker.domain.usecase.warranty.WarrantyReviewState
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -27,7 +29,10 @@ data class WarrantyTrackerState(
     val expiringSoonCount: Int = 0,
     val totalProtectedValue: Double = 0.0,
     val selectedFilter: WarrantyStatus? = null,
+    /** ai-fixes INV-10: rows whose [WarrantyReviewState] is AWAITING_REVIEW (derived, not persisted). */
     val needsReviewCount: Int = 0,
+    /** ai-fixes G2-8: rows whose [WarrantyReviewState] is EXPIRED_UNCONFIRMED. */
+    val expiredUnconfirmedCount: Int = 0,
     val autoDetectedWarranties: List<Warranty> = emptyList(),
     val showAutoDetectedOnly: Boolean = false,
     val showNeedsReviewOnly: Boolean = false,
@@ -39,6 +44,13 @@ data class WarrantyTrackerState(
     /** S12-004: true when add-manual dialog should close (emitted on success) */
     val addWarrantySuccess: Boolean = false
 ) {
+    /**
+     * ai-fixes INV-10: the single review-state derivation used by every count, filter, badge and
+     * action in the warranty UI. [referenceNowMillis] is the clock of the last list emission.
+     */
+    fun reviewStateOf(warranty: Warranty): WarrantyReviewState =
+        WarrantyReviewState.of(warranty, referenceNowMillis)
+
     val loadableState: com.yourname.expensetracker.ui.model.LoadableUiState<List<Warranty>>
         get() = when {
             isLoading -> com.yourname.expensetracker.ui.model.LoadableUiState.Loading
@@ -69,13 +81,18 @@ class WarrantyTrackerViewModel @Inject constructor(
             
             warrantyRepository.getAllWarranties()
                 .collect { warranties ->
+                    // INV-10: re-read the clock per emission so a row that has just passed its
+                    // end date is classified EXPIRED_UNCONFIRMED even before reconciliation.
+                    val now = timeProvider.now()
                     _state.update {
                         val autoDetected = warranties.filter { warranty -> warranty.autoDetected }
-                        val needsReview = warranties.filter { warranty -> warranty.needsReview }
+                        val states = warranties.map { warranty -> WarrantyReviewState.of(warranty, now) }
                         val updated = it.copy(
                             allWarranties = warranties,
                             autoDetectedWarranties = autoDetected,
-                            needsReviewCount = needsReview.size,
+                            needsReviewCount = states.count { s -> s == WarrantyReviewState.AWAITING_REVIEW },
+                            expiredUnconfirmedCount = states.count { s -> s == WarrantyReviewState.EXPIRED_UNCONFIRMED },
+                            referenceNowMillis = now,
                             isLoading = false
                         )
                         updated.withDerivedWarranties()
@@ -86,11 +103,20 @@ class WarrantyTrackerViewModel @Inject constructor(
 
     private fun loadStats() {
         viewModelScope.launch {
-            _state.update { it.copy(referenceNowMillis = timeProvider.now()) }
+            // The clock is owned by the list emission (counts, filters and cards are derived from
+            // one referenceNowMillis); stats never move it on their own.
             val activeCount = warrantyRepository.getActiveWarrantyCount()
             val expiringSoon = warrantyRepository.getWarrantiesExpiringSoon(30).size
             // S12-006: Use currency-normalized aggregate instead of deprecated raw sum
-            val protectedValueAggregate = runCatching { warrantyRepository.getTotalProtectedValueAggregate() }.getOrNull()
+            // CancellationException is rethrown (never swallowed); other failures log the class name only.
+            val protectedValueAggregate = try {
+                warrantyRepository.getTotalProtectedValueAggregate()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Timber.w("warranty protected value unavailable (%s)", e::class.simpleName)
+                null
+            }
             val protectedValue = protectedValueAggregate?.displayAmount ?: 0.0
             
             _state.update {
@@ -186,14 +212,17 @@ class WarrantyTrackerViewModel @Inject constructor(
      * localizable message (string resource only; never raw exception text) instead of
      * crashing the app from the viewModelScope coroutine.
      */
-    private fun reportMutationFailure(e: Exception) {
+    private fun reportMutationFailure(
+        e: Exception,
+        failureMessage: UiText = UiText.StringResource(R.string.warranty_mutation_failed)
+    ) {
         Timber.w("warranty mutation failed (%s)", e::class.simpleName)
         // R18b: a write rejected by the backup/restore/reset write barrier gets the shared,
         // retry-later maintenance message instead of the generic failure message.
         val message = if (e is DatabaseAccessBlockedException) {
             UI_WRITE_BLOCKED_MESSAGE
         } else {
-            UiText.StringResource(R.string.warranty_mutation_failed)
+            failureMessage
         }
         _state.update { it.copy(mutationError = message) }
     }
@@ -206,26 +235,31 @@ class WarrantyTrackerViewModel @Inject constructor(
         _state.update { it.copy(mutationError = null) }
     }
     
-    // F1: Confirm a low-confidence auto-detected warranty
-    fun confirmWarranty(warranty: Warranty) {
+    /**
+     * ai-fixes INV-13: confirm (or "keep in history" for an expired-unconfirmed row) passes the id
+     * only. The repository owns the status/needsReview transition; the ViewModel never builds it.
+     * [ConfirmWarrantyResult.AlreadyConfirmed] is a silent success (the list flow refreshes the card).
+     */
+    fun confirmWarranty(warrantyId: Long) {
         // S12-010: Idempotency guard
-        if (_state.value.mutatingWarrantyIds.contains(warranty.id)) return
+        if (_state.value.mutatingWarrantyIds.contains(warrantyId)) return
         viewModelScope.launch {
-            _state.update { it.copy(mutatingWarrantyIds = it.mutatingWarrantyIds + warranty.id) }
+            _state.update { it.copy(mutatingWarrantyIds = it.mutatingWarrantyIds + warrantyId) }
             try {
-                val updated = warranty.copy(
-                    status = WarrantyStatus.ACTIVE,
-                    needsReview = false,
-                    updatedAt = timeProvider.now()
-                )
-                warrantyRepository.updateWarranty(updated)
-                loadStats()
+                when (warrantyRepository.confirmWarranty(warrantyId)) {
+                    is ConfirmWarrantyResult.Confirmed,
+                    ConfirmWarrantyResult.AlreadyConfirmed -> loadStats()
+                    ConfirmWarrantyResult.NotFound ->
+                        _state.update {
+                            it.copy(mutationError = UiText.StringResource(R.string.warranty_error_not_found))
+                        }
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                reportMutationFailure(e)
+                reportMutationFailure(e, UiText.StringResource(R.string.warranty_error_confirm_failed))
             } finally {
-                _state.update { it.copy(mutatingWarrantyIds = it.mutatingWarrantyIds - warranty.id) }
+                _state.update { it.copy(mutatingWarrantyIds = it.mutatingWarrantyIds - warrantyId) }
             }
         }
     }
@@ -277,12 +311,31 @@ class WarrantyTrackerViewModel @Inject constructor(
     }
 
     private fun WarrantyTrackerState.withDerivedWarranties(): WarrantyTrackerState {
+        // INV-10: every review-related filter goes through WarrantyReviewState.
         val derived = when {
-            showNeedsReviewOnly -> allWarranties.filter { it.needsReview }
+            showNeedsReviewOnly -> allWarranties.filter {
+                reviewStateOf(it) == WarrantyReviewState.AWAITING_REVIEW
+            }
             showAutoDetectedOnly -> allWarranties.filter { it.autoDetected }
+            // A row under review is never listed as Active; expired-unconfirmed rows are listed
+            // as Expired even before the expiry sweep persists the transition (G2-8).
+            selectedFilter == WarrantyStatus.ACTIVE -> allWarranties.filter {
+                it.status == WarrantyStatus.ACTIVE && reviewStateOf(it) == WarrantyReviewState.NOT_IN_REVIEW
+            }
+            selectedFilter == WarrantyStatus.EXPIRED -> allWarranties.filter {
+                it.status == WarrantyStatus.EXPIRED ||
+                    reviewStateOf(it) == WarrantyReviewState.EXPIRED_UNCONFIRMED
+            }
             selectedFilter != null -> allWarranties.filter { it.status == selectedFilter }
             else -> allWarranties
         }
-        return copy(warranties = derived)
+        // UX §4.1: AWAITING_REVIEW first, then by end date (stable).
+        val ordered = derived.sortedWith(
+            compareBy<Warranty>(
+                { if (reviewStateOf(it) == WarrantyReviewState.AWAITING_REVIEW) 0 else 1 },
+                { it.warrantyEndDate }
+            )
+        )
+        return copy(warranties = ordered)
     }
 }

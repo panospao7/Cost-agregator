@@ -56,16 +56,12 @@ class DashboardBriefingInputBuilder @Inject constructor(
             }
 
         // --- upcoming item facts (capped at 5) --------------------------------
+        // S8a (INV-31, fail-closed): only the variants explicitly mapped in
+        // toCloudInputOrNull() reach the payload. Any other UpcomingItem variant is
+        // dropped WHOLE before the cap, so the cap fills from allowed items only.
         val upcomingItems = weather.upcomingItems
+            .mapNotNull { item -> item.toCloudInputOrNull() }
             .take(5)
-            .map { item ->
-                DashboardUpcomingItemInput(
-                    description = item.description,
-                    amount = item.amount,
-                    dateMillis = item.date,
-                    currencyCode = item.currencyCodeOrNull()
-                )
-            }
 
         return DashboardBriefingInput(
             dateKey              = Instant.ofEpochMilli(now)
@@ -84,9 +80,28 @@ class DashboardBriefingInputBuilder @Inject constructor(
         )
     }
 
-    private fun com.yourname.expensetracker.domain.model.UpcomingItem.currencyCodeOrNull(): String? = when (this) {
-        is com.yourname.expensetracker.domain.model.UpcomingItem.Recurring -> pattern.currency
-        is com.yourname.expensetracker.domain.model.UpcomingItem.Occurrence -> occurrence.expectedCurrency
-        is com.yourname.expensetracker.domain.model.UpcomingItem.Planned -> null
-    }
+    /**
+     * Explicit allow-list mapping (INV-31). The `else` branch is deliberate: a variant
+     * added to [com.yourname.expensetracker.domain.model.UpcomingItem] later (for example a
+     * locally projected plan item) is excluded from the cloud payload by default and has to
+     * be opted in here, never the other way round. Exclusion is whole-item: no field of an
+     * excluded item is copied. Never a user setting.
+     */
+    @Suppress("REDUNDANT_ELSE_IN_WHEN")
+    private fun com.yourname.expensetracker.domain.model.UpcomingItem.toCloudInputOrNull(): DashboardUpcomingItemInput? =
+        when (this) {
+            is com.yourname.expensetracker.domain.model.UpcomingItem.Recurring -> cloudInput(pattern.currency)
+            is com.yourname.expensetracker.domain.model.UpcomingItem.Occurrence -> cloudInput(occurrence.expectedCurrency)
+            is com.yourname.expensetracker.domain.model.UpcomingItem.Planned -> cloudInput(null)
+            else -> null
+        }
+
+    private fun com.yourname.expensetracker.domain.model.UpcomingItem.cloudInput(
+        currencyCode: String?
+    ): DashboardUpcomingItemInput = DashboardUpcomingItemInput(
+        description = description,
+        amount = amount,
+        dateMillis = date,
+        currencyCode = currencyCode
+    )
 }

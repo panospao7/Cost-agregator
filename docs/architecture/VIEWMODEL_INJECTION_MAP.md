@@ -65,8 +65,8 @@
 
 ### AddExpenseViewModel
 **File:** `ui/screens/addexpense/AddExpenseViewModel.kt`
-**Injections:** ManualExpenseRepository, ExpenseRepository, CategoryRepository, TimeProvider, CurrencySettingsRepository
-**Complexity:** 🟢 Low (5 dependencies)
+**Injections:** ManualExpenseRepository, ExpenseRepository, CategoryRepository, TimeProvider, CurrencySettingsRepository, QuickAddParser, QuickAddLearnedCategoryLookup
+**Complexity:** 🟡 Medium (7 dependencies; the last two are nl-quick-add C1/C2, both `@Inject`, no Hilt module)
 
 ### ReceiptScanViewModel
 **File:** `ui/screens/receiptscan/ReceiptScanViewModel.kt`
@@ -85,7 +85,7 @@
 
 ### AssistantViewModel
 **File:** `ui/screens/assistant/AssistantViewModel.kt`
-**Injections:** Application, AiSettingsRepository, AiChatRepository, GetAiRuntimeStatusUseCase, InterpretFinancialQueryUseCase, ExecuteFinancialQueryUseCase, MapFinancialQueryToNavigationUseCase, PrivacySettingsRepository, MonotonicTimeProvider
+**Injections:** Application, AiSettingsRepository, AiChatRepository, GetAiRuntimeStatusUseCase, InterpretFinancialQueryUseCase, ExecuteFinancialQueryUseCase, CompleteFinancialQueryClarificationUseCase, MapFinancialQueryToNavigationUseCase, MonotonicTimeProvider
 **Complexity:** 🟡 Medium (9 dependencies)
 
 ---

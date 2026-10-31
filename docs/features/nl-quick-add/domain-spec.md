@@ -544,3 +544,29 @@ Top risks:
 - **F3** `CategorizationEngine.categorizeWithContext` logs raw merchant at `Timber.d` (`:185-186`).
 - **F4** `ManualExpenseRepository :252` `Timber.e(e, …)` attaches a throwable; `:214-216` passes raw `exception.message` upward → OD-2 handles the VM side only.
 - **F5** `GreeklishNormalizer.toLatinStatic` (merchant keys) does not fold accented diphthongs ("μασούτης" → "masoytis" vs "μασουτης" → "masoutis"), so merchant keys split on accents. Pre-existing; it affects dedup and history matching, not quick-add correctness.
+
+---
+
+## Clarification 2026-10-27 (owner-approvals item 57)
+
+Append-only. Existing text above is unchanged.
+
+- **AE-12 superseded.** AE-12's "20 abc → 20.00" example is superseded by OD-3 / G2-3: a leading bare integer followed by text is `AMOUNT_QUANTITY` (Flagged), as in "15 taxi".
+- **Emoji-only lines.** An emoji-only (or otherwise letterless and digitless) line is FILL_NONE plus `NOTHING_RECOGNISED`. A merchant candidate must contain at least one Unicode letter or digit (Greek letters count). A text token with neither is not a merchant. An emoji token combined with letters or digits stays part of the merchant.
+- **Accepted interpretations of ambiguous spec text:**
+  - the grouping-join spaces (§4.1 step 3) are U+00A0, U+202F and U+2009;
+  - the numeric-date year (§4.2) has 2 to 4 digits;
+  - attached currency markers (§4.6) may be a prefix or a suffix;
+  - the non-catalog ISO code list is ISO 4217 alphabetic codes minus the catalog codes.
+
+## Clarification 2026-10-28 (owner-approvals item 58)
+
+Append-only. Existing text above is unchanged. These rules extend §4.6 and OD-5 and fail closed. The amount priority of §4.5 is unchanged: a foreign marker (`AMOUNT_FOREIGN_CURRENCY`) is decided before every other amount rule, including R0 (`AMOUNT_NOT_POSITIVE`).
+
+- **(a) Currency-symbol code points.** Any token that contains a code point of Unicode general category Sc (currency symbol) and is not exactly a home marker is a FOREIGN marker anywhere in the line, adjacent to a number or not, detached or attached ("taxi 200 ฿", "dinner 50 ₪", "pho 90000 ₫", "taxi 200฿"). A symbol that is a catalog marker follows §4.6 (home iff its currency set equals the home currency).
+- **(b) Dollar compounds outside the catalog.** "US$", "CA$", "AU$" and "$US" style compounds are not catalog markers. They contain an Sc code point, so they are FOREIGN under (a) for every home currency, including USD.
+- **(c) Leading minus.** In the attached-marker split of a number-like token, a single leading minus-class character is skipped before the prefix marker is matched and is kept in the core. "-$5" is the marker `$` plus the core "-5": R0 still fires on the core, but the foreign decision has priority, so "taxi -$5" with home EUR gives `AMOUNT_FOREIGN_CURRENCY` plus the `FOREIGN_CURRENCY_NOT_SUPPORTED` hint (not only `AMOUNT_NOT_POSITIVE`). With a home marker ("-€5" with home EUR) the amount is `AMOUNT_NOT_POSITIVE`.
+- **(d) Adjacency for alphabetic catalog symbols.** The OD-5 adjacency rule is extended to the alphabetic catalog symbols `Fr R kr lei Ft kn Kč zł лв`: such a token that is the token immediately before or after a money candidate is a detached marker ("dinner 100 kr", "obiad 50 zł"); attached ones were already markers. Away from a number they stay text. A marker that is exactly the home currency never blocks ("obiad 50 zł" with home PLN stays a Value); `kr` denotes {SEK, NOK, DKK, ISK} and is never home.
+- **(e) ISO list.** The embedded non-catalog list is all current ISO 4217 alphabetic codes minus the 28 catalog codes, including VED, ZWG, XCG, SVC, UYW and the fund, metal and testing codes BOV, CHE, CHW, CLF, COU, MXV, USN, UYI, XAU, XAG, XBA, XBB, XBC, XBD, XDR, XPD, XPT, XSU, XTS, XUA and XXX. A catalog (home) code is never in the block list.
+- **NOTHING_RECOGNISED is owned by the parser (C1).** The parser emits `NOTHING_RECOGNISED` when every parse field is `Absent` (and the line was not too long). C3 must not re-derive it: the §5.4 wording "add hint `NOTHING_RECOGNISED` iff every parse field was `Absent`" is moved to C1 by the owner, and C3 only passes the parser's hint set through.
+- **Category-token removal (§4.11), refined.** The category tokens are removed from the merchant only when the remaining text tokens still contain a Unicode letter or digit; otherwise all text tokens stay ("groceries 🛒 42.30" gives category Groceries and merchant "groceries 🛒").

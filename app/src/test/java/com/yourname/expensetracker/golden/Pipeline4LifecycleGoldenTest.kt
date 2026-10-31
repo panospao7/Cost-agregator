@@ -136,10 +136,19 @@ class Pipeline4LifecycleGoldenTest : GoldenTestBase() {
 
         val eventWriter = RoomRecurringLifecycleEventWriter(eventDao, timeProvider, writeBarrier)
 
+        // Real reader over the real DB (S6c-2 8d), not a null reader; one shared eligibility helper.
+        val installmentEligibility = com.yourname.expensetracker.domain.recurring.RecurringInstallmentEligibility(
+            dagger.Lazy {
+                com.yourname.expensetracker.data.repository.InstallmentEntryLinkReaderImpl(
+                    database.installmentPlanDao()
+                )
+            }
+        )
+
         val lifecycleCoordinator = com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator(
             database = database,
             expander = com.yourname.expensetracker.domain.recurring.RecurringOccurrenceExpander(),
-            resolver = com.yourname.expensetracker.domain.recurring.OccurrenceConflictResolver(),
+            resolver = com.yourname.expensetracker.domain.recurring.OccurrenceConflictResolver(installmentEligibility),
             materializer = com.yourname.expensetracker.domain.recurring.lifecycle.RecurringOccurrenceMaterializer(
                 database = database,
                 writeBarrier = writeBarrier,
@@ -159,7 +168,8 @@ class Pipeline4LifecycleGoldenTest : GoldenTestBase() {
             writeBarrier = writeBarrier,
             plannedExpenseDao = plannedDao,
             transactionRunner = RoomDomainTransactionRunner(database, timeProvider),
-            eventWriter = eventWriter
+            eventWriter = eventWriter,
+            installmentEligibility = installmentEligibility
         )
 
         val projectionService = com.yourname.expensetracker.domain.recurring.RecurringPlanProjectionService(
@@ -179,7 +189,7 @@ class Pipeline4LifecycleGoldenTest : GoldenTestBase() {
             lifecycleEventDao = eventDao,
             lifecycleCoordinator = dagger.Lazy { lifecycleCoordinator },
             expander = com.yourname.expensetracker.domain.recurring.RecurringOccurrenceExpander(),
-            resolver = com.yourname.expensetracker.domain.recurring.OccurrenceConflictResolver(),
+            resolver = com.yourname.expensetracker.domain.recurring.OccurrenceConflictResolver(installmentEligibility),
             materializer = com.yourname.expensetracker.domain.recurring.lifecycle.RecurringOccurrenceMaterializer(
                 database = database,
                 writeBarrier = writeBarrier,

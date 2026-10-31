@@ -42,7 +42,10 @@ class BillReminderManagerTest {
             recurringExpenseRepository,
             timeProvider,
             multiCurrencyRepository,
-            currencySettingsRepository
+            currencySettingsRepository,
+            mockk<com.yourname.expensetracker.domain.installment.projection.InstallmentProjectionPort>(relaxed = true),
+            mockk<InstallmentReminderLedger>(relaxed = true),
+            mockk<BillReminderSettingsRepository>(relaxed = true)
         )
         every { timeProvider.now() } returns 0L
         coEvery { currencySettingsRepository.resolveHomeCurrency() } returns

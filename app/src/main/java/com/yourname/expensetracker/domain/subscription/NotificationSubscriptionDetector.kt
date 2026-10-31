@@ -3,6 +3,7 @@ package com.yourname.expensetracker.domain.subscription
 import com.yourname.expensetracker.data.database.entity.SubscriptionCandidate
 import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
+import com.yourname.expensetracker.domain.recurring.RecurringInstallmentEligibility
 import com.yourname.expensetracker.domain.util.StatisticsUtils
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -41,7 +42,8 @@ data class SubscriptionCandidateResult(
 @Singleton
 class NotificationSubscriptionDetector @Inject constructor(
     private val merchantNormalizer: MerchantNormalizer,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val installmentEligibility: RecurringInstallmentEligibility
 ) {
     companion object {
         private const val TAG = "NotificationSubscriptionDetector"
@@ -83,12 +85,26 @@ class NotificationSubscriptionDetector @Inject constructor(
             return emptyList()
         }
 
+        // INV-5 / INV-29 (decision 46(b)): installment-linked and plan-purchase expenses are
+        // scheduled payments, never subscription candidates. One batch read through the single
+        // owner (never per expense); a reader failure or CancellationException propagates.
+        val installmentExcludedIds = installmentEligibility.excludedExpenseIds(transactions.map { it.expense })
+        val eligibleTransactions = if (installmentExcludedIds.isEmpty()) {
+            transactions
+        } else {
+            transactions.filter { it.expense.id !in installmentExcludedIds }
+        }
+        if (eligibleTransactions.size < MIN_TRANSACTIONS) {
+            Timber.d("Not enough transactions for subscription detection after installment exclusion: ${eligibleTransactions.size}")
+            return emptyList()
+        }
+
         val now = timeProvider.now()
         val candidates = mutableListOf<SubscriptionCandidateResult>()
 
         // Group transactions by (canonical merchant name, currency) to avoid
         // conflating subscriptions in different currencies (REC-12).
-        val groupedByMerchant = transactions.groupBy { expenseWithCategory ->
+        val groupedByMerchant = eligibleTransactions.groupBy { expenseWithCategory ->
             val expense = expenseWithCategory.expense
             val merchant = expense.merchant
             val currency = expense.currency.uppercase()

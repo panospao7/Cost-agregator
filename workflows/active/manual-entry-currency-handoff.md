@@ -108,3 +108,390 @@ MEC A1 dependency ("money-correctness 1b landed") is met only after the merge.
 ## Cross-feature notes from money-correctness domain-spec (2026-10-16)
 - After money-correctness 1b, unconverted no-rate rows store baseCurrency="" (not 'EUR') → this feature's domain-spec AE-21, AE-29, §5 must be updated at MEC S0.
 - DECIDED (money-correctness Gate 2 G2-1, 2026-10-16): money-correctness 1b creates the fraction-digits accessor + HALF_EVEN rounding helper in domain/core/money; MEC A1's CurrencyAmountPolicy REUSES it (MEC A1 dependency becomes "money-correctness 1b landed").
+
+## S0 results (2026-10-23, orchestrator; worktree C:\Users\panos\Desktop\Cost-agregator-mec, branch feature/manual-entry-currency from bcd8e921)
+- Base: Release 1.0.2 (044be2c8) + money-correctness 681d49a3 + money-aggregates bcd8e921. MC landed -> A1 dependency met (amendment 2026-10-16).
+- Discovery (scout Sonnet): only line drift; TLC create snapshot now :605-674 (unflagged :630-667, dedup :676); CREATE_ATTEMPTED reason :473; ReviewQueueRepository cap :190; 11 TLC-constructing tests (plan said 8; D-9/N11 check at A2). nl-quick-add inc 1 NOT landed -> B1 waits (after ai-fixes B2d). Lane order: A1 -> A2 -> loan S1.. ; B1/B2/C after nl-quick-add.
+- Baselines: tree == bcd8e921 which passed money-aggregates G1 on the same code (unit-tests 7759/0 incl. integration-golden vr-20261022-202152-88b92f0f, static-guards vr-20261022-203211-16dbf07c, lint vr-20261022-204926-763fcf27) -> reused. db_access vr-20261022-221113-a58331d3 PASS; db_artifact_sync vr-20261022-221402-b54dc57c PASS.
+- RF-10 applied (domain-modeler) to domain-spec.md / ux-flows.md / impact-map.md: sentinel triple + one MISSING_RATE for unflagged no-rate rows (AE-21, AE-29, §5); INV-12 owner = CurrencyFractionDigits.of + roundSnapshot (CurrencyAmountPolicy delegates); INV-15 interim ended (preview = roundSnapshot(parsed x rate, home), equals stored baseAmount); RF-5 resolved in MC 1b. New OD-6 (digits unavailable).
+- OD-6 / N14 DECIDED by orchestrator under the owner's standing instruction ("do your recommendation and continue"; owner may override): FAIL CLOSED. When CurrencyFractionDigits.of(code) returns null: CurrencyAmountPolicy.fractionDigits returns null and check() returns a distinct DigitsUnavailable outcome (never assumes 2); flagged user-present saves in that currency are refused (A2 maps it to the existing amount-validation refusal path, never the sentinel triple); preview shows no converted amount; home with unavailable digits -> flagged conversion refused (HOME_CURRENCY_UNRESOLVED-style refusal), unflagged path unchanged (MC sentinel). Normal UI paths only offer catalog codes, so this is a defensive branch.
+- Plan text drift to apply when executing (spec already corrected): A1 :66 fractionDigits delegates to CurrencyFractionDigits.of (not java.util.Currency directly); A1 :69 ConvertedPreview amount = roundSnapshot result (not unrounded); B2 :105 preview uses roundSnapshot; A2 :81 / R9 :160 cite :630-667; Z :120 / Deferred :174 RF-5 resolved.
+- needs-sonnet-confirm before A2: DiagnosticReasonCode MANUAL_SAVE_BLOCKED_NO_RATE registry pin (N13), SafeEventMetadata key limits, Dagger defaulted-param (N11), CREATE_ATTEMPTED reason readers (N12).
+S0 DONE. Next: A1.
+
+## A1 DONE (2026-10-23)
+CurrencyAmountPolicy (digits delegate to CurrencyFractionDigits.of; cap table §6; check never rounds; DigitsUnavailable per OD-6), CurrencySelectionPolicy, RateEligibilityEvaluator (calendar date in injected zone, UTC-midnight bound, convertOutcome TRANSACTION_DATE + StaleRatePolicy.None, ≤7 days, via-EUR older leg, ECB label rule; no clock/logging/network), UserPresentRatePreview (roundSnapshot of parsed × rate; AmountUnavailable never 0.0). Docs: CODEBASE_SEGMENTS, LEGAL_PATHS Money/Currency, ENGINE_INTERACTION_MAP.
+Review (reviewer-strict) ACCEPT-WITH-MINORS -> fixed: CurrencyConversionTest converter pins (via-EUR min date, "+" sources, as-of only, typed Failed); evaluator fail-closed branch tests with a rule-breaking store (IDENTITY and invalid-rate branches unreachable, documented); KDoc "store exceptions propagate; callers map them; CE never caught"; EUR literal -> CurrencyCode.EUR.code. A fixer test wrongly expected a same-calendar-day row 1 ms after the bound to be None; rewritten to the spec's calendar-day rule (Eligible, ageDays 0).
+Validation: targeted vr-20261023-010114-3ea6ebbc PASS; domain-a-m vr-20261023-010315-1685e16c PASS; static-guards vr-20261023-010418-3a74499f PASS. 28 catalog digit pins match the JDK (N14 clear).
+A2 notes: flagged snapshot = roundSnapshot(amount × Eligible.rate, home) with exchangeRateUsed = Eligible.rate from ONE evaluate() call (AE-38); TLC owns the store-exception catch (CE rethrow); refusal mapping for DigitsUnavailable/AmountUnavailable (OD-6). Residual: via-EUR with one leg after the bound only prevented by the DAO <= rule.
+Next: A2.
+
+## A2 notes (strict-review fixes, 2026-10-23)
+- Per-currency cap (CurrencyAmountPolicy) also applies to UPDATES via TransactionValidator.validateFields/validateFinalExpenseState; this only loosens the old flat 1,000,000 and is required so large KRW rows (up to 1,000,000,000) stay editable. Flagged precision check is create-only.
+- RF-1b follow-up (route to privacy / money-correctness; NOT fixed in A2): CREATE_ATTEMPTED.dedupeKey still stores `amount_merchant_bucket_CURRENCY_TYPE` in plaintext (pre-existing). Either null/hash it or confirm `transaction_events` is excluded from export/backup (plan D-8 / N12). The new flagged-refusal CREATE_VALIDATION_FAILED event deliberately omits dedupeKey.
+- INV-13 `myShareAmount` precision check is NOT implemented in A2: spec INV-13 / edge-case table says "same digits as the expense currency ([U] semantics)" and plan D-10 lists `myShareAmount` currency semantics as an unresolved discovery item with no slice owning the check. Deferred; needs an owner (VM inline validation slice or a follow-up) once semantics are confirmed.
+- DB ownership: the flagged-refusal event is written by `transactionEventDao.insert` literally inside `createExpenseMutation` (already authorized); `buildUserPresentRefusalEvent` is pure. No db_ownership_policy.yml change.
+
+## A2 DONE (2026-10-23)
+Validation on the final tree: db_access vr-20261023-031650-60125163 PASS; db_artifact_sync vr-20261023-031923-ce05fed5 PASS; shards data vr-20261023-032125-fa719ea9 PASS, architecture-contracts vr-20261023-032457-9b653e21 PASS; static-guards vr-20261023-032545-b2c14873 PASS. The first targeted run (vr-20261023-030500-d49428f3) and domain-n-z (vr-20261023-031939-06972765) both FAILED on one test only: `flagged amount precision error from the validator is a plain validation failure with no rate read` built TransactionValidationError positionally (code, message, field), so message = "amount". That was a test bug; TLC correctly maps `.message`. Fixed with named args (test-only); targeted rerun vr-20261023-042923-c12acee8 PASS, which covers the only domain-n-z failure.
+Next: loan-installments S1 in this lane (after the S0 D-10/D-12/D-13/D-20 discovery); MEC B1/B2/C wait for nl-quick-add inc 1.
+
+## Note from nl-quick-add final review (2026-10-28, N4)
+- B1 must add an AddExpenseViewModel.mapSaveError branch mapping RECURRING_FOREIGN_CURRENCY_ERROR_CODE to a bounded mec_ resource. Slice A's default maps every Result.Error to add_expense_error_save_failed.
+
+## Merge of feature/ai-evolution 4add2466 (2026-10-28; NOT validated)
+- This lane (feature/manual-entry-currency) merged origin/feature/ai-evolution 4add2466 (merge-base bcd8e921) with `--no-ff --no-commit`; plan `workflows/active/mec-merge-ai-evolution-plan.md`. Resolved without builds, tests or guards; the orchestrator stages and validates. Not committed.
+- Room: this lane is v152 (`152.json` unchanged); int is v151 and did not bump. No schema change from the merge.
+- MEC-side conflicts resolved as unions: `ManualExpenseRepository` imports (the 4 currency imports plus `AppConfig`), `DiagnosticReasonCode` (`MANUAL_SAVE_BLOCKED_NO_RATE` first, then int's NOTIF_/DL_/LOCK_ block), es/el strings (loan block then int block, no duplicate names), docs, ownership pins at 454.
+- S3: `ManualExpenseRepositoryRecommendationTest` gets a `currencySettingsRepository` mock stubbed with `resolveHomeCurrency()` returning `HomeCurrencyResolution.Resolved(CurrencyCode.EUR)`, like `ManualExpenseRepositoryTest`.
+- D-M1 = A (owner-approvals 79a): `BillReminderWorker` installment reminders use the BILL presentation (resolver plus applier, 10-param constructor). Loan-owned code; see the loan handoff entry.
+- S13-a C1 now targets `DeepLinkPolicy` / `DeepLinkHost` / `DeepLinkApplier` (host branches inside `DeepLinkApplier.kt` only; `MainActivity` stays router-only). The mec pre-1a `handleIntent` host switch is gone.
+- Q1 OWNER-PENDING (owner-approvals 79): the 3 enabled-path `parseDeepLink` tests in `DeepLinkParserTest.kt` (lines 152 to 196) are left in place and do not compile until the owner retires or restates them.
+- S4 follow-up (MEC B1, separate post-merge commit): `AddExpenseViewModel.mapSaveError` hides `RECURRING_FOREIGN_CURRENCY_ERROR_CODE`; it fails closed. Add a bounded `mec_` string (es/el DRAFT).
+
+## Merge review fixes (2026-10-28; NOT validated)
+- Guardian verdicts on the staged merge: privacy-security-guardian ACCEPT-WITH-CONDITIONS; architecture-guardian ACCEPT-WITH-CONDITIONS. Fixes decided by the orchestrator under standing approval item 62.
+- Fixes applied (test, docs and config only; no production Kotlin):
+  - Privacy P3 #2: `BillReminderWorkerInstallmentTest` gains `presentation resolve cancellation after the claim releases the claim and propagates` (claim released, nothing posted, nothing marked sent, cancellation rethrown).
+  - Privacy P3 #5: `LEGAL_PATHS.md` builder owner 2 now lists `sendInstallmentNotification` (S7b, D-M1 A) and notes that int's INV-12 "six composition sites" now has a seventh BILL site, so loan S13-a must re-count.
+  - Architecture P3 #2: `CODEBASE_SEGMENTS.md` header v152 / 2026-10-28; added `QuickAddSection.kt`, `QuickAddUiMapper.kt` (Segment 9), `domain/receipt/statement/*` (Segment 4) and `ui/navigation/InstallmentsFeature.kt` (Segment 40).
+  - Architecture P2 #1 (strengthening): `config/validation/test-shards.json` now assigns the 7 previously unassigned classes (`domain.diagnostics.*` and `domain.LifecycleWritersWriteBarrierTest` to domain-a-m; `di.RetentionModuleBatchedPurgeTest` to data). No filter was removed or narrowed.
+- Q1 is still OWNER-PENDING (the enabled-path `parseDeepLink` block in `DeepLinkParserTest.kt` is untouched).
+- MEC B1/B2 follow-up: once B2 adds the currency selector, the quick-add Fill must parse with the SELECTED entry currency, not `snapshot.homeCurrency` (`AddExpenseViewModel.kt:551-570`). `FOREIGN_CURRENCY_BLOCKED` (`QuickAddFillContract.kt:182`) and the `quick_add_hint_foreign` / `quick_add_flag_amount_foreign` copy (`QuickAddUiMapper.kt:194-196`, `strings.xml` ~:1977) must be revisited in that slice, with a test.
+- S4 (`mapSaveError` hiding `RECURRING_FOREIGN_CURRENCY_ERROR_CODE`) is tracked as above.
+
+## 2026-10-28: Q1 approved (owner-approvals 81a)
+- The 3 enabled-path parseDeepLink tests are retired from DeepLinkParserTest.kt and restated as S13-a acceptance examples in loan-installments-handoff.md.
+- The merge is now compile-eligible. The validation ladder from mec-merge-ai-evolution-plan.md is queued serially. Then reviewer-strict, then the merge commit and a push of feature/manual-entry-currency.
+
+## 2026-10-28: catch-up merge COMMITTED 59275eac and pushed (owner-approvals 82)
+- All validation PASS; the reviewer-strict conditions are applied; run IDs are in the commit message.
+- Next (MEC lane, in order):
+  1. S4: the AddExpenseViewModel.mapSaveError RECURRING_FOREIGN_CURRENCY_ERROR_CODE branch (mec_ string, es/el DRAFT).
+  2. MEC B1/B2: the currency selector, plus the quick-add selected-currency follow-up (owner-approvals 80c).
+  3. MEC C.
+- Loan: S11 and S13. S13-a must use the acceptance examples (a)-(d) and clear the BLOCKING INV-1 smallest/largest item first.
+
+## 2026-10-28: B0′ + B1 DONE (owner-approvals 83-86)
+- B0′ (RF-2 refuted; picker seeds from the current date) and B1 (home-only flagged save; per-currency precision and cap; no rounding; S4 mapping; entry zone F1 b′).
+- Validation, all PASS:
+  - targeted vr-20261028-180859-c32b9c14;
+  - runtime-ui vr-20261028-181446-a4a72908;
+  - data vr-20261028-181732-22952e85;
+  - architecture-contracts vr-20261028-182219-5040aef7;
+  - lint vr-20261028-182305-48ffc9f6;
+  - static-guards vr-20261028-182910-b8cc3b6b;
+  - app-check vr-20261028-184628-a9f72d80.
+- Gates: privacy ACCEPT; architecture ACCEPT-WITH-CONDITIONS (fixed); reviewer-strict ACCEPT-WITH-CONDITIONS.
+- B2 REQUIRED TEST (reviewer-strict ISSUE-1): a Robolectric Compose test of the sheet's F1 wiring. The zone is cleared when the sheet leaves composition and kept across `ActivityScenario.recreate()`.
+- Follow-ups: F4 capFor; P1 home code for mec_repeat_home_only (B2); P2 bounded code instead of exception.message; D-B1-2 edit precision plus myShareAmount; 3-decimal typing; HomeScreen.kt:1531 stale picker (Home owner).
+- Process (owner-approvals 86): from now on there is one writer per slice (it writes its own tests) and one combined guardian. reviewer-strict runs only at merges and candidates. Sonnet for writers.
+- Next: B2 (currency control, preview, blocked card; quick-add selected currency 80c; the ISSUE-1 test), then C, then loan S11, then Z.
+
+## 2026-10-29: B2a COMMITTED (checkpoint)
+- VM currency selection, preview and refresh logic, the CurrencyRateRegion model, and 35 mec_ strings (es/el DRAFT).
+- CurrencyConverter gains a defaulted @IoDispatcher seam (behaviour-neutral; fixes test determinism).
+- targeted vr-20261028-233743-0bb33234 PASS.
+- Combined guardian ACCEPT-WITH-CONDITIONS: F1/F2 fixed; F3/F4 are B2b items.
+- Shards, lint, static-guards and app-check run at the B2 candidate after B2b, when the strings get consumers.
+- Next: B2b UI (sheet, CurrencySelectionControl, region composables, a callback-only MainActivity hunk, the ISSUE-1 sheet test).
+
+## 2026-10-29: B2b status (uncommitted)
+- B2b UI is written: AddExpenseSheet, CurrencySelectionControl (new), CurrencyRateRegion composables, the MainActivity callback, and 2 new strings (es/el DRAFT).
+- Tests are written (AddExpenseSheetZoneSessionTest for ISSUE-1, AddExpenseSheetCurrencyUiTest, CurrencySelectionControlTest, CurrencyRateRegionContentTest).
+- Combined guardian ACCEPT-WITH-CONDITIONS; F-2 (picker reopen on layout flip) is fixed.
+- B2 ladder: targeted PASS vr-20261029-013405-f2492fd6, plus architecture-contracts, domain-a-m, cancellation and lint PASS.
+- FAILS:
+  - runtime-ui vr-20261029-013937-a32e827a: QuickAddSectionTest AppNotIdleException (an infinite animation or recomposition loop).
+  - known_good_state vr-20261029-015504-3e508679: row active_db_gate INFRA, gate_exit=2 (likely a Kotlin parser trap in the B2b code).
+  - static-guards and app-check fail downstream of these.
+- A debugger is diagnosing. Next: fix, re-run the ladder, reviewer-strict at the MEC B2 candidate, commit. Then C (receipt review), loan S11, Z.
+
+## 2026-10-29: MEC B2 candidate ACCEPTED and COMMITTED (B2b + review fixes)
+- Failures fixed before review:
+  - known_good_state active_db_gate exit 2: the scanner trap `get() = when (val region = …)` in AddExpenseViewModel was rewritten without the binding (behaviour identical).
+  - The runtime-ui QuickAddSectionTest AppNotIdle was order-dependent, bisected to AddExpenseSheetZoneSessionTest (a process-static snapshot state). It moved to an activity field and the harness `close()` cancels VM scopes.
+- reviewer-strict (Opus xhigh), two halves:
+  - B2a ACCEPT-WITH-CONDITIONS; B2b REJECT. Both found the same MAJOR: a draft re-denominated across sessions, and confirm not discarding.
+  - Fixes R-1 to R-5 per the plan dispositions; R-6 is a deviation.
+  - Re-review 2/2: ACCEPT-WITH-CONDITIONS. C-1 is applied (confirmOpenExchangeRateSetting = reset then NAVIGATE; tests rewritten in place, none deleted). C-2: F-B2-A11Y-1 is a HARD GATE for the MEC 1b release.
+- Validation (final tree):
+  - targeted PASS vr-20261029-082747-3f0f4a6d;
+  - known_good_state PASS vr-20261029-083322-cf5d66cf;
+  - app-check PASS vr-20261029-083638-7c7a7dcb.
+  - Earlier on this candidate: static-guards PASS vr-20261029-075030-bfb289f9; lint PASS vr-20261029-015550-c539bec0; architecture-contracts, domain-a-m and cancellation PASS.
+- Follow-ups: F-B2-A11Y-1 (HARD GATE for 1b); F-B2-TYPED-REFRESH; F-B2-HOME-CHANGE; es/el sign-off for the mec_ strings, including mec_open_setting_confirm_title/body.
+- Next: MEC C (receipt review; a money slice, so a writer plus a separate test-author), then loan S11, then Z.
+
+## 2026-10-29: MEC C1 (receipt review logic) COMMITTED
+- The plan's "C re-anchor and split" amendment is persisted (D-C-1..4 under item 62).
+- Writer and separate test-author; combined guardian ACCEPT. Its LOW items are applied: no unselectable OCR token in debug data; a guard-scope comment.
+- Test-found defects fixed: INV-10 (an unparseable pick is ignored) and INV-3 (an AI-applied date or total re-evaluates the region, so quick-save is blocked on AmountInvalid). The debug ParsedTransaction is skipped for an unselectable token (its init requires [A-Z]{3}).
+- Validation:
+  - targeted PASS vr-20261029-100141-ec91ab50;
+  - runtime-ui PASS vr-20261029-100543-2c95119c;
+  - domain-n-z PASS vr-20261029-100845-62a4f638;
+  - known_good_state PASS vr-20261029-095350-b0a4e5fe;
+  - db_access PASS vr-20261029-095709-86267dd8.
+- Next: C2 (ReceiptScanScreen UI; the MainActivity callback-only hunk). Then the MEC C candidate: lint, architecture-contracts, static-guards, app-check, and reviewer-strict at the candidate.
+
+## 2026-10-29: MEC C ACCEPTED and C2 COMMITTED (receipt review UI + review fixes)
+- C2: CurrencySelectionControl replaces the private picker; rate region under the amount; the kept line under the card (not live); Save, quick-save and the dialog confirm blocked with reasons; open-setting confirm = reset then navigate; MainActivity callback-only.
+- Writer-time fixes:
+  - the real home code (not first-option);
+  - an amountError text for AmountInvalid;
+  - inline home-currency precision.
+- Guardian (combined) ACCEPT-WITH-CONDITIONS: dialog reason, exhaustive AmountCheck mapping.
+- reviewer-strict at the C candidate: ACCEPT-WITH-CONDITIONS.
+  - F1 kept-line placement and F2 no carry-over / pending proposal while home is unresolved: fixed.
+  - Also fixed: no raw OCR token in the item breakdown currency.
+  - F3 (tax-inclusive override, pre-existing) is ROUTED to the receipt owner as F-C-TAX-OVERRIDE, with RF-6 (D-C-4) and RF-7.
+- Validation (final tree):
+  - targeted vr-20261029-113240-fd6780a6;
+  - known_good_state vr-20261029-113829-ed83f0c1;
+  - lint vr-20261029-114145-c90e1e96;
+  - architecture-contracts vr-20261029-114717-ddf7d128;
+  - static-guards vr-20261029-114805-ea98c171;
+  - app-check vr-20261029-120509-b6aaf271.
+  - All PASS.
+- Follow-ups: F-C-REGION-DEDUP, F-C-HOME-PRECISION-PARITY, F-C-TAX-OVERRIDE (receipt owner), RF-6/RF-7 (receipt owner), F-B2-A11Y-1 (a HARD GATE for 1b). Note: `parsedReceipt.currency` still holds the raw token in state (pre-existing; not displayed).
+- Next (MEC lane): loan S11, then Z closeout.
+
+## 2026-10-29: F-B2-A11Y-1 CLOSED (MEC 1b HARD GATE) and COMMITTED
+- previewAnnounceKey is bumped only on a currency, date or home change (and the receipt AI date apply), never on keystrokes, and is monotonic across reset (add-expense and receipt). The preview line is a polite live region only after a key change. Save stateDescription 'Fix the amount' (mec_save_disabled_amount, es/el DRAFT) for AmountInvalid; the receipt screen keeps its specific amountError.
+- Combined guardian ACCEPT-WITH-CONDITIONS: F1 (receipt reset dropped the key) FIXED plus a test. F2 (latch writes plain fields in composition; worst case a silently skipped announcement) DECLINED for now and recorded as follow-up F-A11Y-LATCH-PURE for the MEC 1b candidate review. F3 noted (installment toggle does not bump; not a spec trigger).
+- Validation:
+  - targeted vr-20261029-174359-13998ace;
+  - runtime-ui vr-20261029-174716-8f273b41;
+  - lint vr-20261029-175047-e2ce6564;
+  - known_good_state vr-20261029-175436-33dcec1f;
+  - F1 targeted vr-20261029-180239-1b51e504.
+- Next (MEC lane): Z closeout. MEC 1b release still needs the es/el sign-off of the mec_ strings.
+
+## 2026-10-29: Z closeout (docs, one androidTest, and one fail-closed fix in CurrencyFractionDigits found by H-4)
+Written by the Z writer; NOT validated. The inventory is refreshed (`docs/architecture/CODEBASE_INVENTORY.md`, Drift Sync 2026-10-29). The orchestrator owns the validation run and the final fresh-session reviewer-strict acceptance (no discovery role).
+
+### Slice status (all slices)
+| Slice | Status |
+|---|---|
+| S0 | DONE 2026-10-23 |
+| D | ACCEPTED 2026-10-16 |
+| A1 | DONE 2026-10-23 |
+| A2 | DONE 2026-10-23 |
+| B0 / B0' | B0' DONE 2026-10-28 (RF-2 refuted; no date-picker fix needed) |
+| B1 | DONE 2026-10-28 |
+| B2 (B2a + B2b) | ACCEPTED and COMMITTED 2026-10-29 |
+| C (C1 + C2) | ACCEPTED and COMMITTED 2026-10-29 |
+| F-B2-A11Y-1 | CLOSED and COMMITTED 2026-10-29 (MEC 1b hard gate cleared; F-A11Y-LATCH-PURE remains for the 1b candidate review) |
+| Loan S11a/b/c (AddExpense installment section) | DONE on this lane (loan handoff owns the detail) |
+| Z | COMMITTED 2026-10-29 (validated; H-4 PASS on device; reviewer-strict deferred to the MEC 1b candidate or merge review per item 86) |
+
+### H-1 status
+B2, C and loan S11 are UNRELEASED until MEC 1b (ECB history behind the rate setting, N1/H-1). The release track must not ship them before 1b. MEC 1b still needs the es/el sign-off below.
+
+### H-4 (instrumented ICU digits check)
+Taken as YES: one `connected-test-class` run on AVD `wave5-api35`: `com.yourname.expensetracker.domain.currency.CurrencyFractionDigitsDeviceTest`. It pins the 28 catalog digit values (0 for JPY, KRW, ISK; 2 for the rest, HUF included) through `CurrencyAmountPolicy.fractionDigits`, plus the fail-closed `ZZZ` case (null, `DigitsUnavailable`). No new dependency, no network, no permission. If the run is not made, this becomes a follow-up and the plan's R4 row stays open.
+
+### Consolidated follow-ups (17)
+1. F-B2-TYPED-REFRESH: refresh behaviour after a typed amount/date change in the add-expense region.
+2. F-B2-HOME-CHANGE: reaction of the AddExpense draft/region to a home-currency change while the sheet is open.
+3. F-C-REGION-DEDUP: the add-expense and receipt rate-region logic duplicate each other; merge to one owner.
+4. F-C-HOME-PRECISION-PARITY: receipt inline home-currency precision vs the AddExpense rule.
+5. F-C-TAX-OVERRIDE: tax-inclusive total override (pre-existing, C guardian F3) to the receipt owner.
+6. RF-6 (D-C-4): receipt owner (H-5: fixed in C only if confined to ReceiptScanViewModel.kt:416; otherwise this follow-up).
+7. RF-7: `ReceiptParser.kt:690` to the receipt owner.
+8. F-A11Y-LATCH-PURE: the announce latch writes plain fields in composition; make it pure (review at the 1b candidate).
+9. 3-decimal homes (BHD-style): typing and display for homes with 3 digits.
+10. AE-36 edit precision (D-B1-2): precision check on the edit path.
+11. `myShareAmount` precision (INV-13; A2 deferred; no slice owner yet).
+12. The other "(EUR)" labels that are hard-coded in amount fields outside the MEC screens.
+13. Prefill and suggestion "%.2f" formatting (not currency-digits aware).
+14. The quick-add 1M flag (`FOREIGN`/cap flag still uses the flat 1,000,000; align with `CurrencyAmountPolicy.cap`).
+15. Spanish native review (es DRAFT for all keys below).
+16. Parser and notification amount caps (G2-3) to their owners (`AmountUtils`, `AppParserRegistry`, notification parser, `AppConfig`; RF-4 duplication).
+17. RF-5 + OD-3 alignment to money-correctness (RF-5 itself was resolved in MC 1b; the OD-3 near-midnight analytics vs stored-conversion alignment remains).
+Also still open from earlier notes (not in the requested list): RF-1b (CREATE_ATTEMPTED dedupeKey plaintext), F4 `capFor`, P1 home code for `mec_repeat_home_only`, P2 bounded code instead of `exception.message`, HomeScreen.kt:1531 stale picker (Home owner), the R23 / release-track items above, G2-20 (unsent).
+
+### OWNER es/el sign-off list (51 keys; all DRAFT in both `values-es` and `values-el`)
+`add_expense_installments_*` (9, loan S11b/S11c): `add_expense_installments_repeat_exclusive`, `add_expense_installments_not_spending`, `add_expense_installments_preview_summary`, `add_expense_installments_preview_total`, `add_expense_installments_preview_residual`, `add_expense_installments_preview_ends`, `add_expense_installments_preview_financing_less`, `add_expense_installments_preview_needs_amount`, `add_expense_installments_past_due`.
+
+`mec_*` B1 (5): `mec_block_home_unresolved`, `mec_amount_no_decimals`, `mec_amount_max_decimals`, `mec_amount_too_large`, `mec_repeat_home_only`.
+
+`mec_*` B2a/B2b/C/A11Y (37): `mec_control_label`, `mec_control_cd`, `mec_control_unset`, `mec_control_readonly_cd`, `mec_sheet_search`, `mec_sheet_home`, `mec_sheet_other`, `mec_sheet_no_results`, `mec_sheet_installment_note`, `mec_installment_unset`, `mec_preview_checking`, `mec_preview_ecb`, `mec_preview_other`, `mec_preview_rate_only`, `mec_block_none`, `mec_block_stale`, `mec_block_unsupported`, `mec_block_off_hint`, `mec_block_alt_hint`, `mec_action_refresh`, `mec_action_refreshing`, `mec_action_open_setting`, `mec_action_change_currency`, `mec_refresh_still_blocked`, `mec_refresh_offline`, `mec_refresh_failed`, `mec_refresh_home_unavailable`, `mec_save_disabled_rate`, `mec_save_disabled_currency`, `mec_save_disabled_amount`, `mec_repeat_cleared`, `mec_receipt_unmatched`, `mec_receipt_not_detected`, `mec_receipt_kept`, `mec_declaration_nothing_saved`, `mec_open_setting_confirm_title`, `mec_open_setting_confirm_body`.
+
+Total: 9 + 5 + 37 = 51 (42 `mec_*` + 9 `add_expense_installments_*`); the count equals the keys in `values/strings.xml`. Other DRAFT keys in those files (quick_add_*, loan blocks, app-lock) belong to their own features' sign-off lists.
+
+### Z validation and H-4 result (2026-10-29; orchestrator)
+- H-4 first device run FAILED as designed: Android ICU returned 2 fraction digits for the unknown code `ZZZ` (the JVM throws), so `CurrencyFractionDigits` was not fail-closed on device.
+- Fix: `CurrencyFractionDigits.of(code)` returns null for any code absent from `Currency.getAvailableCurrencies()` (lazy set). `CurrencyFractionDigitsTest` adds KWD -> 3 and QQQ/AAA -> null. This is a fail-closed strengthening, not a behaviour change for any catalog currency.
+- Ladder on the final fingerprint, all PASS:
+  - targeted `*CurrencyFractionDigits*,*CurrencyAmountPolicy*,*Currency*,*Money*`: vr-20261029-192053-b21a24d4;
+  - connected `CurrencyFractionDigitsDeviceTest` on wave5-api35: vr-20261029-192810-7c25ea23 (H-4 closed; plan row R4 closed);
+  - static-guards: vr-20261029-192914-bad99aa2;
+  - app-check: vr-20261029-194632-821acce2.
+- reviewer-strict: per owner items 86/87, it runs at the MEC 1b candidate or merge review, which must include this Z diff.
+- Next (MEC lane): loan S13 (see the loan plan's S13 re-anchor amendment; owner-approvals 91).
+
+## 2026-10-30: MEC 1b design started (loan S13 done on this lane, aa397b95)
+- Explorer finding: 1b is framed only. The frame is in brief :38-39, critique :37/:54/:60 and domain-spec §10 :301-310. The fetch is on the same host (www.ecb.europa.eu) behind the R23 setting, with no new permission and no schema change expected. Open items: the endpoint, retention keyed on validDate, the trigger UX, outcomes and codes, parser caps, F-B2-HOME-CHANGE.
+- Running in parallel, with disjoint write sets: domain-modeler (Opus) appends "1b - ECB 90-day history (domain rules)" to domain-spec.md, and ux-flow-designer (Opus) appends "1b - Rate history download" to ux-flows.md.
+- Next: impact-mapper (tier), then the orchestrator gate under owner-approvals 92 (same host; payload and fetch-timing privacy review by privacy-security-guardian), then a feature-planner slice plan.
+- 2026-10-30: the 1b impact map is persisted (docs/features/manual-entry-currency/impact-map-1b.md): T3; schema NONE; no permission; same host; no URL allowlist. Gate decisions D-1b-1..6 are in owner-approvals 94. The S0 docs reconciliation is running.
+- **VG-1b-1 CONFIRMED (2026-10-30, ECB pages fetched):**
+  - The official page links "XML (last 90 days only)" at https://www.ecb.europa.eu/stats/eurofxref/eurofxref-hist-90d.xml. Same host, HTTPS, 200, text/xml. Plain http returns a 301 to the same https path, so the app calls https directly.
+  - Size 69,509 B (~68 KB), as a single line with no whitespace. The daily file is tab-indented with single quotes, so the parser must not depend on formatting.
+  - Root `gesmes:Envelope` with the gesmes and eurofxref namespaces; structure Cube > Cube@time > Cube@currency/@rate.
+  - 64 publication days (not 90), newest first, 2026-08-03..2026-10-29, 29 currencies per day.
+  - The latest day equals the daily file's date (2026-10-29).
+  - Caps check against INV-1b-9 (512 KiB, 70 days, 100-day span): size OK (~7.5x headroom); 64 days <= 70 (only ~6 days of headroom, so S1 must confirm the day cap against the maximum weekdays in 90 calendar days, ~66); span 87 days <= 100.
+  - Row count: 29 + EUR = 30 currencies, so cross pairs = 30 x 29 = 870 per day, x 64 = ~55,700 rows. The spec estimated ~39k on 25 currencies. S1 must size the batch write and the test for ~56k rows (one transaction; performance budget).
+- 2026-10-30: 1b S0 docs reconciliation DONE: domain-spec 1b (21 INV, 25 AE; Cancelled outcome; D-1b-5 mapping) and ux-flows 1b (RateRemedy names, refresh-first, one "amount cleared" note, the Currency-management row DEFERRED); no `[ALIGN]` markers remain. Derived calls accepted: AlreadyInProgress is presented as FAILED (the button is disabled while running); the home-change note shows in both cases; a cancel during the commit leaves all rows or none. COMMITTED with impact-map-1b.md.
+- Next: the 1b slice plan (feature-planner) and the privacy-security-guardian design review (payload size, fetch timing, the ~56k-row bulk write) in parallel; then S1.
+- 2026-10-30: 1b S1 (data layer) DONE.
+  - Writer, plus a follow-up that populates Blocked.latestStoredPairDate via the ExchangeRateStore port (INV-1b-5); two test-authors.
+  - Combined guardian ACCEPT-WITH-CONDITIONS. Fixed:
+    - F1: parity test against the daily path;
+    - F3: home-currency precheck before any connection;
+    - F4: KDoc;
+    - F5: `historyConnectionOpener` test seam, because mocking URL hung a run (vr-20261030-043455-197fcd9c TIMEOUT).
+  - Ladder fixes:
+    - the atomicity test seeded validDate 0, rejected by CURR-70F-04 (test fix);
+    - G-CANCEL-01 on the gate catch: `ensureActive()` added;
+    - db_access / known_good_state INFRA came from DB_DAO_SCOPE_UNRESOLVED at `connection.disconnect()` (it collides with BankConnectionDao.disconnect): fixed by typing `val connection: HttpURLConnection`. No guard, allowlist or policy edit.
+  - Final ladder, all PASS:
+    - targeted vr-20261030-055300-9a81d944;
+    - db_access vr-20261030-061755-881c3206;
+    - known_good_state vr-20261030-062058-5e213491;
+    - data vr-20261030-062500-514c8874;
+    - domain-a-m vr-20261030-063202-e15db9d3;
+    - cancellation vr-20261030-063336-662b4a52;
+    - static-guards vr-20261030-063354-84e54589.
+  - COMMITTED. Dormant (no caller). Next: S2 (add-expense VM + UI).
+- 2026-10-30: 1b S2 (add-expense VM + UI) DONE.
+  - Written in two writer steps (VM, then UI + strings); 11 mec_history_* keys, es/el DRAFT.
+  - Combined guardian ACCEPT-WITH-CONDITIONS. Fixed:
+    - S2-G1 MEDIUM regression: Refresh shown again after a daily FAILED_HOME_UNAVAILABLE;
+    - S2-G2: keep the home-unavailable explanation for the session;
+    - S2-G3: one-shot announce flag cleared on the first evaluation, bump only when Eligible is applied. Recorded for the F-A11Y-LATCH-PURE review at the 1b candidate.
+  - S4 docs to do:
+    - ux-flows 1b.9 / 1b.8 / wireframes D-E still show the old "No personal data" disclosure; update to C13 (en/el/es as in the guardian report);
+    - mark mec_history_section_title / _done / _done_range as not built;
+    - mec_home_changed_cleared lands in S2b;
+    - LOG_RATE_HISTORY_FAILED is a constant log line;
+    - the single download call site goes into LEGAL_PATHS / ENGINE_INTERACTION_MAP;
+    - focus-on-success is not implemented (allowed by spec).
+  - Ladder, all PASS:
+    - targeted `*AddExpense*,*CurrencyRateRegion*,*ReceiptScan*` vr-20261030-073111-e965bedd;
+    - runtime-ui vr-20261030-073743-59195c90;
+    - cancellation vr-20261030-074117-211d3ec1;
+    - known_good_state vr-20261030-074135-a582e9c4;
+    - lint vr-20261030-074507-b24644c1.
+  - The first targeted run vr-20261030-071533-b58674e7 failed on a stray brace in the new UI test (fixed).
+  - COMMITTED. Next: S2b (home-change rule) and S3 (receipt parity), which may run in parallel; then S4 docs and the 1b candidate gate.
+- 2026-10-30: 1b S2b (home-change rule) DONE.
+  - Writer, plus a separate test-author (12 + 7 regression tests).
+  - Combined guardian ACCEPT-WITH-CONDITIONS. Fixed:
+    - MEDIUM: installment fixedText and myShareAmount count as draft money;
+    - LOW: a single pendingHomeDiscardJob;
+    - LOW: no discard on an already-blank draft or a successful save.
+    - Accepted: the note clears on an amount edit or a currency change.
+    - Noted: during SAVING the selector shows the new home beside the old-home amount. Taps are blocked and the request carries the original code (spec gap, no money effect).
+  - AE-50 type pin (owner item 63; no String-typed VM field): `lastObservedHome: String` failed it, and so did a `CurrencyCode?` retype (a nullable value class over String is still a String field). Fixed by reading the previous home from state, with a Boolean `homeObserved`. The pin is unchanged.
+  - Ladder (final fingerprint), all PASS:
+    - targeted `*AddExpense*` vr-20261030-091800-61bd5608;
+    - runtime-ui vr-20261030-092317-6b54dc5d;
+    - known_good_state vr-20261030-092651-117c4724;
+    - lint vr-20261030-093007-130b2c07.
+  - Process note: one earlier targeted run went STALE (an edit landed during the run) and was re-run.
+  - COMMITTED. Next: S3 (receipt-review parity), then S4 docs, then the 1b candidate gate.
+
+## 2026-10-30: PAUSED by the owner ("after these tasks are done stop for now") — RESUME HERE
+- Committed on this lane (pushed): S1 97264a04, S2 66a1f7fb, S2b 631f69a5.
+- 1b S3 (receipt-review parity): IMPLEMENTED and TESTED but UNCOMMITTED and NOT VALIDATED.
+  - Main: ReceiptScanViewModel.kt, ReceiptScanScreen.kt.
+  - Tests: new ReceiptScanViewModelRateHistoryTest (20 tests); ReceiptScanCurrencyUiTest (+2).
+  - ReceiptScanViewModelMecC1Test fakes changed: getLatestRateForPair returns the newest row; an onHistory hook was added.
+- EXACT NEXT ACTION:
+  1. Combined guardian on the S3 diff (money/receipt; check the STOP list: no ReceiptEvent or file change from a download; INV-1b-20 receipt Unset).
+  2. In parallel, queue targeted `*ReceiptScan*,*CurrencyRateRegion*,*AddExpense*`, runtime-ui, cancellation, known_good_state, lint.
+  3. Apply fixes and commit.
+- Then S4 docs:
+  - ux-flows 1b C13 disclosure copy (lines ~243/299/358/370);
+  - mark unbuilt keys (mec_history_section_title/_done/_done_range);
+  - LEGAL_PATHS 1b.13 block + ENGINE_INTERACTION_MAP + CODEBASE_SEGMENTS + CODEBASE_INVENTORY;
+  - LOG_RATE_HISTORY_FAILED note.
+- Then the 1b candidate gate per the plan:
+  1. unit-tests, static-guards, app-check;
+  2. F-A11Y-LATCH-PURE review (incl. the S2 historyAnnouncePending flag);
+  3. privacy guardian;
+  4. device check on wave5-api35 against the live ECB file;
+  5. reviewer-strict on the full 1b diff incl. Z;
+  6. then the self-approved merge into feature/ai-evolution (owner-approvals 92), which also releases B2, C and loan S11/S13 from H-1.
+- Owner items: es/el sign-off for mec_history_* (11), mec_home_changed_cleared, deeplink_confirm_installments_*, the el action_confirm/cancel, and the earlier mec_ list; the loan item-14 device check.
+
+## 2026-10-30: resumed; 1b S3 ACCEPTED and COMMITTED
+- Combined guardian: ACCEPT with two Low findings, both applied to BOTH view models for parity:
+  - spec 1b.10: `if (snapshot.isSaving) return` in onDownloadRateHistory;
+  - `ensureActive()` after downloadRecentHistory returns, so a repository that ignores Cancel cannot overwrite CANCELLED.
+- Informational, not adopted: a home change H1 to H2 with an explicit foreign code keeps the history session (conservative; same as AddExpense).
+- Test fix: the INV-1b-20 receipt test wrongly asserted an amount of "10.00" for a blank-currency receipt. That amount is not prefilled, by design (sourceMoneyOrNull). The test now sets the amount explicitly and asserts the fields are kept. The test was not weakened.
+- New tests: saving-guard and ignore-cancel cases in ReceiptScanViewModelRateHistoryTest and AddExpenseViewModelRateHistoryTest.
+- First ladder: the targeted run vr-20261030-113656-48635b4e and runtime-ui vr-20261030-114413-c71c37d7 both FAILED on the one INV-1b-20 test above; cancellation passed (vr-20261030-114747-b6f50a09).
+- Final ladder, all PASS:
+  - targeted vr-20261030-115751-3d3f9972
+  - runtime-ui vr-20261030-120439-51cd7a51
+  - cancellation vr-20261030-120828-2a7952b2
+  - known_good_state vr-20261030-120846-f384647b
+  - lint vr-20261030-121202-bb842d19
+- NEXT: S4 docs (see the RESUME block above), then the 1b candidate gate.
+- 1b S4 docs COMMITTED:
+  - ux-flows C13 copy; unbuilt keys marked (D-1b-4);
+  - LEGAL_PATHS "EXCHANGE-RATE history download (MEC 1b)" block;
+  - ENGINE_INTERACTION_MAP, CODEBASE_SEGMENTS (seg 16), CODEBASE_INVENTORY;
+  - domain-spec 1b.7 built-diagnostics note.
+  - guard_docs_truth PASS vr-20261030-122639-3f1d5dc0.
+- NEXT: the 1b candidate gate (unit-tests, static-guards, app-check; F-A11Y-LATCH-PURE review; privacy guardian; reviewer-strict; device check against the live ECB file).
+
+## 2026-10-30: 1b candidate gate in progress
+- Combined candidate guardian (privacy plus F-A11Y-LATCH-PURE): ACCEPT. C1-C13 hold. F-A11Y-LATCH-PURE is a LOW post-release follow-up; the pure-latch fix is recorded in the review. Pre-existing CurrencyConverter pair logs are LOW and optional.
+- reviewer-strict (Opus xhigh): ACCEPT-WITH-FIXES.
+  - F1 MEDIUM, the Save card's stale remedy: fixed in both VMs (REFRESH_LATEST floor plus a keepSaveBlock re-read).
+  - F2 MEDIUM, the currency-management list flooded after a download: fixed with latestPerSource.
+  - F3 LOW: tests added.
+  - F4 LOW, the opener exception: mapped to OFFLINE.
+  - F5 LOW: KDoc and INV-1b-2 wording.
+  - F6 LOW: distinctUntilChanged on the home flow.
+  - F7 LOW: spec deviation note.
+- Fix-pass run vr-20261030-132048-995d972d: 4 failures.
+  - ReceiptScan keepSaveBlock overwrote the refusal's STALE card (production bug; fix: keep the SAVE card, the re-read upgrades only the remedy).
+  - CurrencyManagementViewModelTest fixtures used an unrealistic from=EUR orientation (test fix).
+- Passed on the fix-pass tree:
+  - cancellation vr-20261030-133225-6f530c48
+  - known_good_state vr-20261030-133243-badbb4bb
+  - lint vr-20261030-133559-77038aef
+- **DEVICE FINDING (run vr-20261030-134202-13496e37, wave5-api35).** `secureDocumentBuilderFactory()` throws ParserConfigurationException (FEATURE_SECURE_PROCESSING) on Android's Harmony DocumentBuilderFactory.
+  - Effect: every live history download ends Failed.
+  - The SAME factory backs the DAILY ECB refresh. It has been in origin/bug-fixes since fc11cf9d (2026-04-04), so the daily refresh in released 1.0.x very likely fails on all devices.
+  - Fix on this branch: best-effort feature setting, plus an explicit `<!DOCTYPE`/`<!ENTITY` byte pre-scan (PAYLOAD_MALFORMED), plus a capped daily body read.
+  - The release-branch hotfix and store release are an OWNER decision (surfaced 2026-10-30).
+  - The airplane-mode device test PASSED.
+- Android XML follow-up (privacy guardian ACCEPT-WITH-FIXES): a UTF-16 payload could bypass an ASCII pre-scan. Fixed with a strict UTF-8 decode (malformed bytes, NUL or a leading BOM are rejected), then the DTD scan, then a parse from a StringReader. Tests added. The literal BOM char in the source was replaced with '﻿'.
+- Re-validation, all PASS:
+  - targeted vr-20261030-142219-849d7086
+  - DEVICE CurrencyRateHistoryDeviceTest (5/5: live 90-day download under 20 s, REPLACE idempotence, cancel, airplane, DOCTYPE on the Android parser, live daily refresh) vr-20261030-142851-1d559e0d
+  - runtime-ui vr-20261030-143038-370ca30f
+  - data vr-20261030-143409-a6549c05
+- Earlier on the fix-pass tree: cancellation, known_good_state and lint PASS. Static-guards and app-check will run on the integration merge commit.
+- Owner item 95: a 1.0.3 hotfix of the XML defect on hotfix/1.0.3-ecb-xml (worktree Cost-agregator-hf).
+- NEXT: re-merge into integration/ai-evolution-1b; unit-tests, static-guards and app-check on the merge commit; a reviewer-strict delta review of the fix pass; then a fast-forward of feature/ai-evolution.
+- reviewer-strict delta review of 009b3996: ACCEPT-WITH-FIXES, all MINOR.
+  - Live device tests gated to explicit class runs (the instrumentation "class" argument).
+  - A ReceiptScan keepSaveBlock pin: four tests.
+  - Daily 256 KiB cap tests.
+  - "byte pre-scan" comments corrected.
+- Integration unit-tests vr-20261030-150452-7d7108a3 FAILED: CancellationSafetyArchitectureGuardTest requires a CE reference inside each broad-catch body (a sibling CE catch does not count). Five catches in CurrencyRatesRepositoryImpl now rethrow CE in the body.
+  - Lesson: include the architecture-contracts shard in the MEC ladder.
+- Delta runs, all PASS:
+  - targeted, including CancellationSafetyArchitectureGuardTest, vr-20261030-163916-1b10a883
+  - architecture-contracts vr-20261030-164503-63dc0c0c
+  - device (gated, explicit run) vr-20261030-164549-ab4196cb

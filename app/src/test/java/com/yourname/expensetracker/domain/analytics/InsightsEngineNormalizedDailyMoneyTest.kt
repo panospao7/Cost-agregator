@@ -26,7 +26,8 @@ class InsightsEngineNormalizedDailyMoneyTest {
     private val now = Instant.parse("2026-03-15T12:00:00Z").toEpochMilli()
     private val timeProvider = mockk<TimeProvider>().also { every { it.now() } returns now }
     private val engine = InsightsEngine(
-        mockk(), mockk(), timeProvider, mockk(), mockk(), mockk(), mockk(), mockk(), mockk()
+        mockk(), mockk(), timeProvider, mockk(), mockk(), mockk(), mockk(), mockk(), mockk(),
+        noPlansInstallmentEligibility()
     )
 
     @Test

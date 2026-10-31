@@ -720,6 +720,118 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
         coVerify(exactly = 0) { expenseRepository.getExpensesBetween(any(), any()) }
     }
 
+    // ── loan-installments S9 / owner-approvals 41(a)/42: flagged rows excluded ─────
+
+    private fun installmentExpense(
+        id: Long,
+        start: Long,
+        merchant: String,
+        currency: String = "EUR",
+        flagged: Boolean = false
+    ): Expense = Expense(
+        id = id,
+        amount = 10.0 * id,
+        currency = currency,
+        merchant = merchant,
+        transactionType = TransactionType.PURCHASE,
+        date = start + id * 1_000L,
+        categoryId = 1L,
+        spendingExclusionReason = if (flagged) "INSTALLMENT_PURCHASE" else null
+    )
+
+    private fun stubSinglePage(start: Long, end: Long, expenses: List<Expense>) {
+        coEvery {
+            expenseRepository.getExpensesBetweenForExportKeyset(
+                start, end, DeterministicExpenseExportPager.EXPORT_PAGE_SIZE, null, null
+            )
+        } returns expenses
+    }
+
+    @Test
+    fun `installment exclusion recordCount equals unflagged count for Xero FreshBooks and QuickBooks`() = runTest {
+        val start = ms("2026-03-01")
+        val end = ms("2026-04-01")
+        val expenses = listOf(
+            installmentExpense(1L, start, "RealOne"),
+            installmentExpense(2L, start, "PlanRowTwo", flagged = true),
+            installmentExpense(3L, start, "RealThree"),
+            installmentExpense(4L, start, "PlanRowFour", flagged = true)
+        )
+        stubSinglePage(start, end, expenses)
+
+        for (format in listOf(ExportFormat.XERO_CSV, ExportFormat.FRESHBOOKS_CSV, ExportFormat.QUICKBOOKS_IIF)) {
+            val result = repository.exportExpenses(fakeContext(), start, end, format)
+
+            assertTrue("$format must succeed", result.success)
+            assertEquals("$format recordCount must be the unflagged count", 2, result.recordCount)
+            val content = File(result.filePath!!).readText()
+            assertTrue("$format must contain RealOne", content.contains("RealOne"))
+            assertTrue("$format must contain RealThree", content.contains("RealThree"))
+            assertFalse("$format must omit flagged PlanRowTwo", content.contains("PlanRowTwo"))
+            assertFalse("$format must omit flagged PlanRowFour", content.contains("PlanRowFour"))
+        }
+    }
+
+    @Test
+    fun `installment exclusion all-flagged accounting range fails with No expenses found`() = runTest {
+        val start = ms("2026-03-01")
+        val end = ms("2026-04-01")
+        stubSinglePage(
+            start, end,
+            listOf(
+                installmentExpense(1L, start, "PlanA", flagged = true),
+                installmentExpense(2L, start, "PlanB", flagged = true)
+            )
+        )
+
+        for (format in listOf(ExportFormat.XERO_CSV, ExportFormat.FRESHBOOKS_CSV, ExportFormat.QUICKBOOKS_IIF)) {
+            val result = repository.exportExpenses(fakeContext(), start, end, format)
+
+            assertFalse("$format all-flagged range must be refused", result.success)
+            assertTrue(result.errorMessage.orEmpty().contains("No expenses found"))
+            assertEquals(null, result.filePath)
+            assertEquals(0, result.recordCount)
+        }
+    }
+
+    @Test
+    fun `installment exclusion flagged USD row does not trip single currency validation`() = runTest {
+        val start = ms("2026-03-01")
+        val end = ms("2026-04-01")
+        stubSinglePage(
+            start, end,
+            listOf(
+                installmentExpense(1L, start, "EuroCafe", currency = "EUR"),
+                installmentExpense(2L, start, "PlanUsd", currency = "USD", flagged = true)
+            )
+        )
+
+        val result = repository.exportExpenses(fakeContext(), start, end, ExportFormat.XERO_CSV)
+
+        assertTrue("Flagged USD row must be filtered before validation", result.success)
+        assertEquals(1, result.recordCount)
+        assertFalse(File(result.filePath!!).readText().contains("PlanUsd"))
+    }
+
+    @Test
+    fun `installment exclusion unflagged USD row still trips single currency validation`() = runTest {
+        val start = ms("2026-03-01")
+        val end = ms("2026-04-01")
+        stubSinglePage(
+            start, end,
+            listOf(
+                installmentExpense(1L, start, "EuroCafe", currency = "EUR"),
+                installmentExpense(2L, start, "UsdTaxi", currency = "USD")
+            )
+        )
+
+        val result = repository.exportExpenses(fakeContext(), start, end, ExportFormat.XERO_CSV)
+
+        assertFalse(result.success)
+        assertTrue(result.errorMessage.orEmpty().contains("single-currency dataset"))
+        assertEquals(0, result.recordCount)
+    }
+
     // ── P12-P1-05: Privacy gate ──────────────────────────────────────────────
 
     /**

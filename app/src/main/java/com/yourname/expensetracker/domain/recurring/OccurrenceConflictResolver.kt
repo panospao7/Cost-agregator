@@ -1,7 +1,6 @@
 package com.yourname.expensetracker.domain.recurring
 
 import com.yourname.expensetracker.data.database.entity.Expense
-import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.recurring.RecurringOccurrenceExpander.OccurrenceCandidate
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
@@ -12,19 +11,24 @@ import javax.inject.Inject
  * Resolves occurrence candidates against actual expenses to determine whether
  * each candidate has been paid, is still planned, or should be skipped.
  *
- * Pure domain logic — no DI needed. Instantiate as a plain class.
+ * Matching is pure domain logic. The one read it performs is the installment exclusion set from
+ * [RecurringInstallmentEligibility] (INV-5, S6c-2b), taken once per [resolve] call.
  *
  * TODO (P4-CURRENT-007): Rule CRUD is not coordinator-owned. A future
  * RecurringRuleLifecycleCoordinator should own create/update/delete of rules
  * and ensure occurrence regeneration, reminder cleanup, and planned-expense
  * invalidation happen atomically with rule mutations.
  *
- * TODO (P4-CURRENT-011): Same expense can currently pay multiple rules if
- * merchant/amount/date match more than one rule's occurrence. A global
- * "expense already linked" check across all rules is needed to prevent
- * double-counting.
+ * P4-CURRENT-011 (resolved elsewhere, comment corrected in loan-installments S6c-5): this resolver
+ * still matches per call, so one expense can be offered to more than one rule's occurrence by
+ * separate calls. The global "one expense, one occurrence" check lives downstream:
+ * `RecurringOccurrenceMaterializer` downgrades a PAID resolution whose expense is already linked to
+ * ANY occurrence (R21 F1), and RecurringRuleLifecycleCoordinator.topUpHorizon additionally
+ * pre-filters already-linked expenses before it resolves.
  */
-class OccurrenceConflictResolver @Inject constructor() {
+class OccurrenceConflictResolver @Inject constructor(
+    private val installmentEligibility: RecurringInstallmentEligibility
+) {
 
     /**
      * The resolved status of an occurrence candidate after matching against
@@ -53,6 +57,10 @@ class OccurrenceConflictResolver @Inject constructor() {
      * 3. Amount within ±10% tolerance of the expected amount.
      * 4. Same currency.
      *
+     * 5. The expense is not excluded by the installment link policy (INV-5): an expense that pays an
+     *    installment entry, or is a plan purchase record, is never a match, so its occurrence stays
+     *    PLANNED and unlinked. The exclusion set is read ONCE per call, not per expense.
+     *
      * Each actual expense may be matched to **at most one** occurrence
      * (first-matched wins).
      *
@@ -64,16 +72,22 @@ class OccurrenceConflictResolver @Inject constructor() {
         candidates: List<OccurrenceCandidate>,
         actualExpenses: List<Expense>
     ): List<ResolvedOccurrence> {
+        if (candidates.isEmpty()) return emptyList()
+
+        // One batch read per call (never per expense). The read joins the caller's Room
+        // transaction when resolve runs inside one.
+        val installmentExcludedIds = installmentEligibility.excludedExpenseIds(actualExpenses)
         val matchedExpenseIds = mutableSetOf<Long>()
 
         return candidates.map { candidate ->
             val match = actualExpenses.firstOrNull { expense ->
                 if (matchedExpenseIds.contains(expense.id)) return@firstOrNull false
+                if (installmentExcludedIds.contains(expense.id)) return@firstOrNull false
 
-                if (expense.isNotMine) return@firstOrNull false
-                if (expense.transactionType == TransactionType.TRANSFER ||
-                    expense.transactionType == TransactionType.DEPOSIT ||
-                    expense.transactionType == TransactionType.UNKNOWN) return@firstOrNull false
+                // Layer 1 (owner item 37(b)): the single type/ownership rule for NEW links.
+                if (!RecurringLinkTypeEligibility.mayCreateLink(expense.transactionType, expense.isNotMine)) {
+                    return@firstOrNull false
+                }
 
                 if (!isSameCalendarDay(candidate.dueDate, expense.date)) return@firstOrNull false
                 if (!merchantsMatch(candidate.merchant, expense)) return@firstOrNull false

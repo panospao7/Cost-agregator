@@ -1214,7 +1214,7 @@
 | `ai/provider/CloudReceiptAssistService.kt` | CloudReceiptAssistService | Cloud receipt extraction | Service | - | Yes |
 | `ai/provider/CloudReceiptItemCategorizationService.kt` | CloudReceiptItemCategorizationService | Cloud item categorization | Service | - | No |
 | `ai/provider/CloudReviewExplanationService.kt` | CloudReviewExplanationService | Cloud review explanation | Service | - | No |
-| `ai/provider/CloudWarrantyExtractionService.kt` | CloudWarrantyExtractionService | Cloud warranty extraction | Service | - | No |
+| `ai/provider/CloudWarrantyExtractionService.kt` | CloudWarrantyExtractionService | Cloud warranty extraction (retained; no production caller since ai-fixes B1a) | Service | - | No |
 | `ai/provider/DefaultAiEnvironmentMonitor.kt` | DefaultAiEnvironmentMonitor | Environment monitoring | Service | - | No |
 | `ai/provider/HybridCategorizationAssistService.kt` | HybridCategorizationAssistService | Hybrid categorization | Service | - | No |
 | `ai/provider/HybridDashboardBriefingService.kt` | HybridDashboardBriefingService | Hybrid briefing | Service | - | No |

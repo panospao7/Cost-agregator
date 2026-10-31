@@ -235,7 +235,8 @@ class AnalyticsViewModelInsightsTest : ViewModelTestUtils() {
             monthlyComparisonCalculator = MonthlyComparisonCalculator(),
             categoryInsightEngine = CategoryInsightEngine(),
             merchantInsightEngine = MerchantInsightEngine(),
-            dayOfWeekAnalyzer = DayOfWeekAnalyzer()
+            dayOfWeekAnalyzer = DayOfWeekAnalyzer(),
+            installmentEligibility = com.yourname.expensetracker.domain.analytics.noPlansInstallmentEligibility()
         )
 
         val now = 1704067200000L
@@ -354,7 +355,8 @@ class AnalyticsViewModelInsightsTest : ViewModelTestUtils() {
             monthlyComparisonCalculator = MonthlyComparisonCalculator(),
             categoryInsightEngine = CategoryInsightEngine(),
             merchantInsightEngine = MerchantInsightEngine(),
-            dayOfWeekAnalyzer = DayOfWeekAnalyzer()
+            dayOfWeekAnalyzer = DayOfWeekAnalyzer(),
+            installmentEligibility = com.yourname.expensetracker.domain.analytics.noPlansInstallmentEligibility()
         )
 
         val now = 1704067200000L

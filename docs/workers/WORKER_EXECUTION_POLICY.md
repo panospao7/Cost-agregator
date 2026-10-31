@@ -95,6 +95,7 @@ Backoff is read from `WorkerSpec.DEFAULTS`:
 | `location_backfill` | Exponential | 15s |
 | `bill_reminder_periodic` | Exponential | 30s (default) |
 | `recurring_horizon` | Exponential | 30s (default) |
+| `installment_due_recording` | Exponential | 30s (default) |
 | `receipt_matching` | Exponential | 600s |
 | `ai_daily_briefing` | Exponential | 30s (default) |
 | `warranty_expiration_check` | Exponential | 600s |
@@ -269,7 +270,7 @@ This is the correct, safe behaviour — the worker stops promptly when maintenan
 
 Every key in `WorkerSpec.DEFAULTS` must have a matching `Entry` in `WorkerRegistry.entries` with the same `specName`, and vice versa.
 
-**Current parity: 8/8 (R21 S3b added `recurring_horizon`; last verified 7/7 at commit `241adee`)**
+**Current parity: 9/9 (loan-installments S7a-2 added `installment_due_recording`; R21 S3b added `recurring_horizon`; last verified 7/7 at commit `241adee`)**
 
 | `WorkerSpec.DEFAULTS` key | `WorkerRegistry.entries` name | Match |
 |---|---|---|
@@ -277,6 +278,7 @@ Every key in `WorkerSpec.DEFAULTS` must have a matching `Entry` in `WorkerRegist
 | `location_backfill` | `location_backfill` | ✓ |
 | `bill_reminder_periodic` | `bill_reminder_periodic` | ✓ |
 | `recurring_horizon` | `recurring_horizon` | ✓ |
+| `installment_due_recording` | `installment_due_recording` | ✓ |
 | `receipt_matching` | `receipt_matching` | ✓ |
 | `ai_daily_briefing` | `ai_daily_briefing` | ✓ |
 | `warranty_expiration_check` | `warranty_expiration_check` | ✓ |
@@ -307,6 +309,7 @@ Workers that exceed the 10-minute limit:
 | `location_backfill` | UNMETERED | None | None | None | None |
 | `bill_reminder_periodic` | NOT_REQUIRED | None | None | None | None |
 | `recurring_horizon` | NOT_REQUIRED | None | None | None | None |
+| `installment_due_recording` | NOT_REQUIRED | None | None | None | None |
 | `receipt_matching` | NOT_REQUIRED | None | None | None | None |
 | `ai_daily_briefing` | UNMETERED | Battery NOT LOW | Required | None | None |
 | `warranty_expiration_check` | NOT_REQUIRED | None | None | None | None |

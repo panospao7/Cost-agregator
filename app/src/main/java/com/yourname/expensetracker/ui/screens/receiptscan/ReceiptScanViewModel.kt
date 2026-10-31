@@ -3,6 +3,7 @@ package com.yourname.expensetracker.ui.screens.receiptscan
 import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.data.repository.CategoryRepository
@@ -29,9 +30,42 @@ import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.usecase.CategorizeReceiptItemsUseCase
 import com.yourname.expensetracker.domain.ai.usecase.SuggestCategoryFallbackUseCase
 import com.yourname.expensetracker.domain.ai.usecase.SuggestReceiptExtractionUseCase
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.currency.AmountCheck
+import com.yourname.expensetracker.domain.currency.CurrencyAmountPolicy
+import com.yourname.expensetracker.domain.currency.CurrencyEntryMode
+import com.yourname.expensetracker.domain.currency.CurrencyRateHistoryOutcome
+import com.yourname.expensetracker.domain.currency.CurrencyRateRefreshOutcome
+import com.yourname.expensetracker.domain.currency.NoRemedyReason
+import com.yourname.expensetracker.domain.currency.RateHistoryFailureReason
+import com.yourname.expensetracker.domain.currency.RateRemedy
+import com.yourname.expensetracker.domain.currency.RateRemedyDecision
+import com.yourname.expensetracker.domain.currency.RateRemedyPolicy
+import com.yourname.expensetracker.domain.currency.CurrencyRatesRepository
+import com.yourname.expensetracker.domain.currency.CurrencySelection
+import com.yourname.expensetracker.domain.currency.CurrencySelectionPolicy
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.currency.CurrencyUnsetReason
+import com.yourname.expensetracker.domain.currency.RateEligibility
+import com.yourname.expensetracker.domain.currency.UserPresentRatePreview
+import com.yourname.expensetracker.domain.currency.UserPresentRatePreviewResult
+import com.yourname.expensetracker.domain.privacy.PrivacySettingsLoadState
+import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
+import com.yourname.expensetracker.domain.transaction.RateRefusalReason
+import com.yourname.expensetracker.domain.transaction.UserPresentRateRequirement
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
+import com.yourname.expensetracker.ui.components.currency.CurrencyAmountInvalidKind
+import com.yourname.expensetracker.ui.components.currency.CurrencyBlockOrigin
+import com.yourname.expensetracker.ui.components.currency.CurrencyBlockVariant
+import com.yourname.expensetracker.ui.components.currency.CurrencyHistoryStatus
+import com.yourname.expensetracker.ui.components.currency.CurrencyOpenSettingRequest
+import com.yourname.expensetracker.ui.components.currency.CurrencyRateFixAction
+import com.yourname.expensetracker.ui.components.currency.CurrencyRatesSetting
+import com.yourname.expensetracker.ui.components.currency.CurrencyRefreshStatus
+import com.yourname.expensetracker.ui.components.currency.CurrencyRegionUi
 import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
 import com.yourname.expensetracker.domain.model.Result
+import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.parser.ParsedTransaction
 import com.yourname.expensetracker.domain.parser.ParsedTransactionType
 import com.yourname.expensetracker.domain.receipt.ReceiptParser
@@ -45,16 +79,23 @@ import com.yourname.expensetracker.ui.screens.debug.DebugData
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import timber.log.Timber
+import java.time.LocalDate
+import java.time.ZoneId
 import javax.inject.Inject
 
 enum class ScanStep {
@@ -131,8 +172,78 @@ data class ReceiptScanState(
      * Quick-save is disabled until the user explicitly picks/confirms a currency;
      * manual save after review stays allowed.
      */
-    val currencyUnverified: Boolean = false
-)
+    val currencyUnverified: Boolean = false,
+
+    // MEC C1: the currency/rate region under the amount. Enums, codes and LocalDate only. Session-only:
+    // never persisted (no SavedStateHandle) and never logged. editCurrency == null with
+    // currencyRegion == Unset means "no currency chosen yet" (Save disabled).
+    /** MEC INV-10: options from [CurrencySelectionPolicy] (STANDARD): home first, the others by code. */
+    val currencyOptions: List<String> = emptyList(),
+    /** MEC: the resolved home currency code; null while home is unresolved. Never inferred from option order. */
+    val homeCurrency: String? = null,
+    /** MEC: why the amount is invalid (supporting text); non-null only while the region is AmountInvalid. */
+    val amountError: UiText? = null,
+    /** MEC INV-15/INV-6: the preview or blocked-card state under the amount. */
+    val currencyRegion: CurrencyRegionUi = CurrencyRegionUi.Loading,
+    /** MEC R23: the exchange-rate download setting; UNKNOWN is treated as OFF. The VM never enables it. */
+    val ratesSetting: CurrencyRatesSetting = CurrencyRatesSetting.UNKNOWN,
+    /** MEC INV-20: progress and bounded outcome of a user-started refresh. */
+    val rateRefresh: CurrencyRefreshStatus = CurrencyRefreshStatus.IDLE,
+    /** The device-local calendar date of "today" (injected clock, review zone) for rate-date wording. */
+    val ratesToday: LocalDate? = null,
+    /**
+     * MEC F-B2-A11Y-1: monotonically increasing counter, bumped only when the currency, the date or the
+     * home currency changes (never on an amount keystroke); the preview is announced only for its change.
+     */
+    val previewAnnounceKey: Int = 0,
+    /** MEC D-11/D-C-3: the "Open exchange-rate setting" request; the screen shows the confirm and hands over to the host. */
+    val openSettingRequest: CurrencyOpenSettingRequest = CurrencyOpenSettingRequest.NONE,
+    /** MEC 1b INV-1b-3: progress and bounded outcome of a user-started rate-history download. */
+    val historyStatus: CurrencyHistoryStatus = CurrencyHistoryStatus.IDLE,
+    /** MEC 1b (ux 1b.2, C13): home rates not downloadable; the history action stays hidden for this review. */
+    val historyHomeUnavailable: Boolean = false,
+    /** MEC 1b INV-1b-5: the domain remedy chosen by [RateRemedyPolicy] at the last evaluation (enums only). */
+    val rateRemedy: RateRemedyDecision = RateRemedyDecision(RateRemedy.REFRESH_LATEST)
+) {
+    /**
+     * MEC 1b (ux 1b.5): the one fix action of the blocked card. Setting Off/Unknown is always
+     * OPEN_SETTING (R23, fail closed); otherwise the domain remedy is copied through.
+     */
+    val rateFixAction: CurrencyRateFixAction
+        get() {
+            val region = currencyRegion
+            if (region !is CurrencyRegionUi.Blocked) return CurrencyRateFixAction.NONE
+            if (region.variant != CurrencyBlockVariant.STALE && region.variant != CurrencyBlockVariant.NONE) {
+                return CurrencyRateFixAction.NONE
+            }
+            if (ratesSetting != CurrencyRatesSetting.ON) return CurrencyRateFixAction.OPEN_SETTING
+            if (rateRefresh == CurrencyRefreshStatus.FAILED_HOME_UNAVAILABLE) return CurrencyRateFixAction.NONE
+            if (historyHomeUnavailable || historyStatus == CurrencyHistoryStatus.FAILED_HOME_UNAVAILABLE) {
+                return CurrencyRateFixAction.NONE
+            }
+            return when (rateRemedy.remedy) {
+                RateRemedy.REFRESH_LATEST -> CurrencyRateFixAction.REFRESH_LATEST
+                RateRemedy.DOWNLOAD_HISTORY -> CurrencyRateFixAction.DOWNLOAD_HISTORY
+                RateRemedy.NONE ->
+                    if (rateRemedy.noRemedyReason == NoRemedyReason.OUTSIDE_HISTORY_WINDOW) {
+                        CurrencyRateFixAction.TOO_OLD
+                    } else {
+                        CurrencyRateFixAction.NONE
+                    }
+            }
+        }
+
+    /**
+     * MEC ux section 4: Save is disabled for a blocked rate (except a retryable home-unresolved refusal),
+     * an invalid amount, or an unset currency. While [CurrencyRegionUi.Evaluating] Save stays enabled
+     * (the coordinator is authoritative, INV-6).
+     */
+    val isCurrencySaveBlocked: Boolean
+        get() = currencyRegion is CurrencyRegionUi.Unset ||
+            currencyRegion is CurrencyRegionUi.AmountInvalid ||
+            (currencyRegion is CurrencyRegionUi.Blocked &&
+                currencyRegion.variant != CurrencyBlockVariant.HOME_UNRESOLVED)
+}
 
 data class ReceiptQuickSavePreview(
     val merchant: String,
@@ -163,7 +274,9 @@ private data class ReceiptSaveRequest(
     val paymentMethod: PaymentMethod,
     val notes: String?,
     /** S7-007: Capabilities to mark applied only after successful save */
-    val appliedAiCapabilities: Set<AiCapability> = emptySet()
+    val appliedAiCapabilities: Set<AiCapability> = emptySet(),
+    /** MEC G2-14/B1: the review zone captured at request build (never re-read at save time). */
+    val entryZone: ZoneId
 )
 
 sealed class SaveReceiptResult {
@@ -173,6 +286,12 @@ sealed class SaveReceiptResult {
     data class DuplicateReceipt(val existingReceiptId: Long, val linkedExpenseId: Long?) : SaveReceiptResult()
     data class PartialLinkFailure(val expenseId: Long, val message: String) : SaveReceiptResult()
     data class Error(val message: String) : SaveReceiptResult()
+
+    /**
+     * MEC INV-6: the coordinator refused a user-present create for rate reasons. Nothing was saved and the
+     * form is kept; the reason is in [ReceiptScanState.currencyRegion] (a SAVE-origin card). Payload-free.
+     */
+    data object RateNotEligible : SaveReceiptResult()
 }
 
 @HiltViewModel
@@ -198,8 +317,26 @@ class ReceiptScanViewModel @Inject constructor(
     private val transactionLifecycleCoordinator: TransactionLifecycleCoordinator,
     private val receiptLinkService: ReceiptLinkService,
     private val merchantNormalizer: MerchantNormalizer,
-    private val hybridClassifier: HybridExpenseClassifier
+    private val hybridClassifier: HybridExpenseClassifier,
+    private val userPresentRatePreview: UserPresentRatePreview,
+    private val currencyRatesRepository: CurrencyRatesRepository,
+    private val privacySettingsRepository: PrivacySettingsRepository
 ) : ViewModel() {
+
+    private companion object {
+        // MEC: bounded diagnostic codes only (INV-19): never an amount, currency, rate, zone, date or throwable.
+        const val LOG_RATE_PREVIEW_FAILED = "RATE_PREVIEW_FAILED"
+        const val LOG_RATE_REFRESH_FAILED = "RATE_REFRESH_FAILED"
+        const val LOG_RATES_SETTING_READ_FAILED = "RATES_SETTING_READ_FAILED"
+        const val LOG_RATE_HISTORY_FAILED = "RATE_HISTORY_FAILED"
+
+        // MEC ux section 3: "Checking exchange rate" shows only if an evaluation exceeds this delay.
+        const val EVALUATING_DELAY_MS = 250L
+
+        // Bounded message tokens of the existing refresh failures (matched by equality, never displayed).
+        const val REFRESH_HOME_QUOTE_UNAVAILABLE = "HOME_CURRENCY_QUOTE_UNAVAILABLE"
+        const val REFRESH_INVALID_HOME_CURRENCY = "INVALID_HOME_CURRENCY"
+    }
 
     /** G-TIME-01: the screen's single TimeProvider-backed "now" source. */
     fun referenceNowMillis(): Long = timeProvider.now()
@@ -225,17 +362,93 @@ class ReceiptScanViewModel @Inject constructor(
     /** Last home currency loaded by the init collector; re-applied by reset()/retry(). */
     private var homeCurrencyCode: String? = null
 
+    // MEC G2-14/RF-6: the entry zone captured when the step becomes REVIEW (and by onReviewOpened()).
+    // A plain field: never in state, never persisted or logged. Cleared at scan start, reset, retry and
+    // cancelActiveWork. Save falls back to the device zone when it is null.
+    private var reviewZone: ZoneId? = null
+
+    // MEC review F2: an OCR currency proposal held while the home currency is unresolved. Only a parsed
+    // CurrencyCode (or null = none proposed) is ever held, never the raw token; never in state or logs.
+    // Cleared at scan start, reset, retry and cancelActiveWork; consumed by applyPendingProposal().
+    private var pendingProposal: CurrencyCode? = null
+    private var proposalAwaitingHome: Boolean = false
+
+    // MEC INV-3: latest-wins evaluation, and the single user-started refresh.
+    private var evaluationJob: Job? = null
+    private var refreshJob: Job? = null
+
+    // MEC 1b INV-1b-3/6: the single user-started history download and its session-only data. Plain fields,
+    // never in state beyond the status enum, never persisted or logged; cleared with the review.
+    private var historyJob: Job? = null
+    private var historyDownloadedThisSession: Boolean = false
+    private var historyEarliestDate: LocalDate? = null
+    private var historyAnnouncePending: Boolean = false
+
     init {
         // S7-009: Load home currency on init so editCurrency is never a hardcoded "EUR"
         viewModelScope.launch {
-            currencySettingsRepository.homeCurrency().collect { homeCurrency ->
+            currencySettingsRepository.homeCurrency().distinctUntilChanged().collect { homeCurrency ->
                 homeCurrencyCode = homeCurrency
+                // Review F2: a proposal held while home was unresolved is resolved below, not defaulted to home.
+                val holdForProposal = proposalAwaitingHome &&
+                    homeCurrency?.let { CurrencyCode.parse(it) } != null
+                if (proposalAwaitingHome && !holdForProposal) {
+                    proposalAwaitingHome = false
+                    pendingProposal = null
+                }
                 _state.update { current ->
+                    // MEC 1b INV-1b-20 (receipt): an in-review selection that was only the assumed home and
+                    // cannot follow a changed home becomes Unset (fields kept, Save blocked); never
+                    // re-denominated. An explicit (proposed or picked) code is kept as is.
+                    val priorHome = current.homeCurrency
+                    val assumedHomeLost = current.step == ScanStep.REVIEW && priorHome != null &&
+                        homeCurrency != null && priorHome != homeCurrency &&
+                        current.editCurrency == priorHome && current.currencyUnverified
                     current.copy(
-                        editCurrency = current.editCurrency ?: homeCurrency
+                        // An Unset region keeps editCurrency null on purpose (no silent swap to home).
+                        editCurrency = if (assumedHomeLost) {
+                            null
+                        } else {
+                            current.editCurrency
+                                ?: homeCurrency.takeUnless {
+                                    holdForProposal || current.currencyRegion is CurrencyRegionUi.Unset
+                                }
+                        },
+                        currencyUnverified = current.currencyUnverified && !assumedHomeLost,
+                        currencyRegion = if (assumedHomeLost) {
+                            CurrencyRegionUi.Unset(CurrencyUnsetReason.NONE_PROPOSED)
+                        } else {
+                            current.currencyRegion
+                        },
+                        currencyOptions = optionsFor(homeCurrency),
+                        homeCurrency = homeCurrency,
+                        previewAnnounceKey = current.previewAnnounceKey + 1
                     )
                 }
+                applyPendingProposal()
+                reevaluateRegion(invalidate = true)
             }
+        }
+        viewModelScope.launch {
+            // R23: the setting is read, never written. Loaded/FirstRunDefault map by flag; a corrupted
+            // (fail-closed) state or a read error is Unknown, which the UI treats as Off.
+            privacySettingsRepository.observeLoadState()
+                .map { loadState ->
+                    when (loadState) {
+                        is PrivacySettingsLoadState.Loaded ->
+                            if (loadState.settings.exchangeRateDownloadEnabled) CurrencyRatesSetting.ON else CurrencyRatesSetting.OFF
+                        is PrivacySettingsLoadState.FirstRunDefault ->
+                            if (loadState.settings.exchangeRateDownloadEnabled) CurrencyRatesSetting.ON else CurrencyRatesSetting.OFF
+                        is PrivacySettingsLoadState.CorruptedFailClosed -> CurrencyRatesSetting.UNKNOWN
+                    }
+                }
+                .distinctUntilChanged()
+                .catch { e ->
+                    if (e is CancellationException) throw e
+                    Timber.w(LOG_RATES_SETTING_READ_FAILED)
+                    emit(CurrencyRatesSetting.UNKNOWN)
+                }
+                .collect { setting -> _state.update { it.copy(ratesSetting = setting) } }
         }
         viewModelScope.launch {
             aiSettingsRepository.settings().collect { settings ->
@@ -280,15 +493,27 @@ class ReceiptScanViewModel @Inject constructor(
         val requestId = ++scanRequestSeq
         scanJob?.cancel()
         itemAnalysisJob?.cancel()
+        // MEC constraint 1/7: a new scan returns to home and drops the previous review zone, so no
+        // currency selection or zone carries over across receipts.
+        reviewZone = null
+        pendingProposal = null
+        proposalAwaitingHome = false
+        // MEC 1b: a new receipt starts a new review; the history session data and status do not carry over.
+        clearHistorySession()
 
         _state.update {
             it.copy(
+                historyStatus = CurrencyHistoryStatus.IDLE,
+                historyHomeUnavailable = false,
                 step = ScanStep.PROCESSING,
                 imageUri = uri,
                 errorMessage = null,
                 hasPartialOcr = false,
                 hasUnverifiedOcrCoverage = false,
+                // Review F2: no carry-over across scans; null while home is unresolved (like the amount reset).
+                editCurrency = homeCurrencyCode,
                 currencyUnverified = false,
+                saveResult = it.saveResult.takeUnless { r -> r is SaveReceiptResult.RateNotEligible },
                 reopenedExistingReceipt = false,
                 pendingAppliedAiCapabilities = emptySet(),
                 receiptAssistState = AiLoadState.Idle,
@@ -300,6 +525,8 @@ class ReceiptScanViewModel @Inject constructor(
                 quickSavePreview = null
             ).clearItemAnalysisState()
         }
+        // The region follows the reset currency (home) and cancels any in-flight evaluation.
+        reevaluateRegion(invalidate = true)
 
         scanJob = viewModelScope.launch {
             val startTime = timeProvider.now()
@@ -364,7 +591,9 @@ class ReceiptScanViewModel @Inject constructor(
                         parserUsed = "Manual (OCR Failed)"
                     )
                     // S7-009: Use loaded home currency, not hardcoded "EUR"
-                    val homeCurrency = _state.value.editCurrency
+                    val homeCurrency = homeCurrencyCode ?: _state.value.editCurrency
+                    // MEC RF-6/G2-14: the review zone is captured when the step becomes REVIEW.
+                    reviewZone = ZoneId.systemDefault()
                     _state.update {
                         it.copy(
                             step = ScanStep.REVIEW,
@@ -401,6 +630,7 @@ class ReceiptScanViewModel @Inject constructor(
                             debugData = debugData
                         ).clearItemAnalysisState()
                     }
+                    reevaluateRegion(invalidate = true)
                 } else {
                     // RP-12 12b (P3-007): redacted persisted items carry prices
                     // only — never parse them as full line items; item-dependent
@@ -432,10 +662,14 @@ class ReceiptScanViewModel @Inject constructor(
                         taxInclusive = receipt.taxInclusive || computedTaxInclusive
                     )
 
+                    // MEC INV-11: the OCR currency is a proposal; an unsupported one is never swapped for home.
+                    val proposal = resolveReviewProposal(parsed.currency)
                     val debugData = DebugData(
                         rawText = receipt.rawOcrText,
                         parsedTransactions = listOfNotNull(
-                            parsed.total?.amount?.let { total ->
+                            // MEC privacy: with an unselectable raw OCR currency token no debug transaction is built,
+                            // so the token is not kept in debug data (ParsedTransaction requires a valid ISO code).
+                            parsed.total?.amount?.takeIf { proposal.unsetRegion == null && !proposal.awaitingHome }?.let { total ->
                                 ParsedTransaction(
                                     amount = total,
                                     currency = parsed.currency,
@@ -454,6 +688,8 @@ class ReceiptScanViewModel @Inject constructor(
                         parserUsed = "ReceiptParser"
                     )
 
+                    // MEC RF-6/G2-14: the review zone is captured when the step becomes REVIEW.
+                    reviewZone = ZoneId.systemDefault()
                     _state.update {
                         it.copy(
                             step = ScanStep.REVIEW,
@@ -469,10 +705,14 @@ class ReceiptScanViewModel @Inject constructor(
                             editAmount = parsed.total?.amount?.let { total ->
                                 String.format(java.util.Locale.US, "%.2f", total)
                             } ?: "",
-                            // S7-009: Use OCR currency if present, else keep loaded home currency
-                            editCurrency = parsed.currency.takeIf { c -> c.isNotBlank() } ?: it.editCurrency,
-                            // R24c: blank OCR currency means the home currency is only assumed
-                            currencyUnverified = parsed.currency.isBlank(),
+                            // S7-009 / MEC INV-11: a selectable OCR currency is used; a blank one means home is
+                            // only assumed (R24c); an unsupported one leaves the currency unset.
+                            editCurrency = proposal.editCurrency
+                                ?: if (proposal.unsetRegion == null && !proposal.awaitingHome) it.editCurrency else null,
+                            currencyUnverified = proposal.currencyUnverified,
+                            currencyRegion = proposal.unsetRegion
+                                ?: if (proposal.awaitingHome) CurrencyRegionUi.Loading else it.currencyRegion,
+                            amountError = if (proposal.unsetRegion != null) null else it.amountError,
                             editDate = parsed.date ?: timeProvider.now(),
                             ocrConfidence = parsed.confidence,
                             selectedCategoryId = null,
@@ -486,6 +726,7 @@ class ReceiptScanViewModel @Inject constructor(
                             debugData = debugData
                         ).clearItemAnalysisState()
                     }
+                    reevaluateRegion(invalidate = true)
 
                     if (lineItems.isNotEmpty()) {
                         itemAnalysisJob?.cancel()
@@ -561,20 +802,192 @@ class ReceiptScanViewModel @Inject constructor(
     fun updateAmount(value: String) {
         // S7-013: Use shared sanitizer — consistent with Add Expense and other money fields
         val sanitized = com.yourname.expensetracker.ui.util.AmountInputSanitizer.sanitize(value)
-        _state.update { it.copy(editAmount = sanitized, isAmountEditedByUser = true) }
+        _state.update {
+            it.copy(
+                editAmount = sanitized,
+                isAmountEditedByUser = true,
+                saveResult = it.saveResult.takeUnless { r -> r is SaveReceiptResult.RateNotEligible }
+            )
+        }
+        // MEC INV-3: the figure changed; drop to Pending at once so a converted amount for the previous
+        // figure (or a SAVE-origin card) is never shown for the new one. MEC R-4: a Blocked card that
+        // carries no amount is kept, so the card and Save do not toggle per keystroke.
+        reevaluateRegion(invalidate = !_state.value.currencyRegion.isAmountIndependentBlock())
     }
 
     fun updateDate(dateMs: Long) {
-        _state.update { it.copy(editDate = dateMs) }
+        _state.update {
+            it.copy(
+                editDate = dateMs,
+                previewAnnounceKey = it.previewAnnounceKey + 1,
+                saveResult = it.saveResult.takeUnless { r -> r is SaveReceiptResult.RateNotEligible }
+            )
+        }
+        // MEC INV-3: a new date can change eligibility.
+        reevaluateRegion(invalidate = true)
     }
 
     /**
      * RCP-10/N2: User can change the currency of the scanned receipt
      * before saving. Default is the OCR-detected currency or home currency.
+     * MEC INV-10/11: ignored unless the pick parses to a currency code and, when the home currency is
+     * known, is selectable for it.
      */
     fun updateCurrency(currency: String) {
+        val chosen = CurrencyCode.parse(currency) ?: return
+        val homeCode = homeCurrencyCode?.let { CurrencyCode.parse(it) }
+        if (homeCode != null &&
+            !CurrencySelectionPolicy.isSelectable(chosen, homeCode, CurrencyEntryMode.STANDARD)
+        ) {
+            return
+        }
         // R24c: any explicit pick (including re-selecting the assumed home currency) confirms it
-        _state.update { it.copy(editCurrency = currency, currencyUnverified = false) }
+        _state.update {
+            it.copy(
+                editCurrency = currency,
+                currencyUnverified = false,
+                previewAnnounceKey = it.previewAnnounceKey + 1,
+                saveResult = it.saveResult.takeUnless { r -> r is SaveReceiptResult.RateNotEligible }
+            )
+        }
+        reevaluateRegion(invalidate = true)
+    }
+
+    /**
+     * MEC AE-34/G2-14: called by the screen when the review is shown. Captures the device zone once per
+     * review (null-guarded) so a zone change while reviewing cannot move the expense's local date. A
+     * configuration change keeps the captured zone; a new scan, reset and retry clear it.
+     */
+    fun onReviewOpened() {
+        if (_state.value.step != ScanStep.REVIEW) return
+        if (reviewZone == null) {
+            reviewZone = ZoneId.systemDefault()
+            // MEC INV-3: the captured zone may differ from the one used so far.
+            reevaluateRegion(invalidate = true)
+        }
+    }
+
+    /**
+     * MEC D-11/D-C-3: the user tapped "Open exchange-rate setting". If an amount was entered the host must
+     * confirm first ([CurrencyOpenSettingRequest.CONFIRM_NEEDED]); otherwise navigate now. The VM never
+     * enables the setting.
+     */
+    fun requestOpenExchangeRateSetting() {
+        _state.update {
+            it.copy(
+                openSettingRequest = if (it.editAmount.isNotBlank()) {
+                    CurrencyOpenSettingRequest.CONFIRM_NEEDED
+                } else {
+                    CurrencyOpenSettingRequest.NAVIGATE
+                }
+            )
+        }
+    }
+
+    /**
+     * The user confirmed leaving the review to open the setting. The confirmation copy promises the entry
+     * is discarded, so reset first, then raise NAVIGATE exactly like the blank-amount path.
+     */
+    fun confirmOpenExchangeRateSetting() {
+        if (_state.value.openSettingRequest != CurrencyOpenSettingRequest.CONFIRM_NEEDED) return
+        reset()
+        _state.update { it.copy(openSettingRequest = CurrencyOpenSettingRequest.NAVIGATE) }
+    }
+
+    /** The user declined the confirmation or the host finished navigating: clears the request. */
+    fun consumeOpenSettingRequest() {
+        _state.update { it.copy(openSettingRequest = CurrencyOpenSettingRequest.NONE) }
+    }
+
+    /** MEC R-4: true for a Blocked region whose variant carries no amount-dependent data. */
+    private fun CurrencyRegionUi.isAmountIndependentBlock(): Boolean =
+        this is CurrencyRegionUi.Blocked && when (variant) {
+            CurrencyBlockVariant.NONE,
+            CurrencyBlockVariant.STALE,
+            CurrencyBlockVariant.UNSUPPORTED,
+            CurrencyBlockVariant.HOME_UNRESOLVED -> true
+        }
+
+    /** MEC INV-10: STANDARD options (home first, the others by code); just [home] if it does not parse. */
+    private fun optionsFor(home: String?): List<String> {
+        if (home == null) return emptyList()
+        val homeCode = CurrencyCode.parse(home) ?: return listOf(home)
+        return CurrencySelectionPolicy.selectable(homeCode, CurrencyEntryMode.STANDARD).map { it.code }
+    }
+
+    /** The outcome of resolving the scanned receipt's currency token into the editable state. */
+    private class ProposalOutcome(
+        /** The currency to edit; null together with a null [unsetRegion] keeps the current one. */
+        val editCurrency: String?,
+        val currencyUnverified: Boolean,
+        /** Non-null when the proposal is not selectable: no currency, Save blocked, no OCR token kept. */
+        val unsetRegion: CurrencyRegionUi.Unset?,
+        /** True while the home currency is unresolved: no currency yet, region Loading, proposal held privately. */
+        val awaitingHome: Boolean = false
+    )
+
+    /**
+     * MEC INV-11: resolves the OCR currency [token] through [CurrencySelectionPolicy.resolveProposal].
+     * Selected -> that currency; NONE_PROPOSED (blank) -> home, flagged unverified (R24c);
+     * PROPOSAL_NOT_SELECTABLE -> unset, and the token is not kept. While the home currency is unresolved
+     * (review F2) the proposal stays pending: only a parsed [CurrencyCode] (or none) is held in a private
+     * field, the raw token never, and [applyPendingProposal] resolves it when home loads.
+     */
+    private fun resolveReviewProposal(token: String): ProposalOutcome {
+        val home = homeCurrencyCode
+        val homeCode = home?.let { CurrencyCode.parse(it) }
+        val proposed = if (token.isBlank()) null else CurrencyCode.parse(token)
+        if (token.isNotBlank() && proposed == null) {
+            pendingProposal = null
+            proposalAwaitingHome = false
+            return ProposalOutcome(null, false, CurrencyRegionUi.Unset(CurrencyUnsetReason.PROPOSAL_NOT_SELECTABLE))
+        }
+        if (home == null || homeCode == null) {
+            pendingProposal = proposed
+            proposalAwaitingHome = true
+            return ProposalOutcome(null, false, null, awaitingHome = true)
+        }
+        pendingProposal = null
+        proposalAwaitingHome = false
+        return resolveProposalWithHome(proposed, home, homeCode)
+    }
+
+    private fun resolveProposalWithHome(proposed: CurrencyCode?, home: String, homeCode: CurrencyCode): ProposalOutcome {
+        val resolution = CurrencySelectionPolicy.resolveProposal(proposed, homeCode, CurrencyEntryMode.STANDARD)
+        return if (resolution is CurrencySelection.Selected) {
+            ProposalOutcome(resolution.code.code, false, null)
+        } else if (resolution is CurrencySelection.Unset && resolution.reason == CurrencyUnsetReason.NONE_PROPOSED) {
+            ProposalOutcome(home, true, null)
+        } else {
+            ProposalOutcome(null, false, CurrencyRegionUi.Unset(CurrencyUnsetReason.PROPOSAL_NOT_SELECTABLE))
+        }
+    }
+
+    /**
+     * Review F2: called by the home collector once [homeCurrencyCode] is set. Resolves a proposal held
+     * while home was unresolved (Selected / Unset / NONE_PROPOSED -> home). An explicit user pick made in the
+     * meantime wins. No-op when nothing is pending.
+     */
+    private fun applyPendingProposal() {
+        if (!proposalAwaitingHome) return
+        val home = homeCurrencyCode ?: return
+        val homeCode = CurrencyCode.parse(home) ?: return
+        val proposed = pendingProposal
+        proposalAwaitingHome = false
+        pendingProposal = null
+        val outcome = resolveProposalWithHome(proposed, home, homeCode)
+        _state.update {
+            if (it.step != ScanStep.REVIEW || it.editCurrency != null) {
+                it
+            } else {
+                it.copy(
+                    editCurrency = outcome.editCurrency,
+                    currencyUnverified = outcome.currencyUnverified,
+                    currencyRegion = outcome.unsetRegion ?: it.currencyRegion,
+                    amountError = if (outcome.unsetRegion != null) null else it.amountError
+                )
+            }
+        }
     }
 
     fun selectCategory(categoryId: Long) {
@@ -868,6 +1281,7 @@ class ReceiptScanViewModel @Inject constructor(
     }
 
     fun applyReceiptAssistTotal() {
+        val before = _state.value
         applySuggestedValue(_state.value.receiptAssistState) { state, suggestion ->
             suggestion.total?.value?.let { total ->
                 state.copy(
@@ -877,9 +1291,11 @@ class ReceiptScanViewModel @Inject constructor(
                 )
             } ?: state
         }
+        reevaluateRegionAfterWrite(before)
     }
 
     fun applyReceiptAssistDate() {
+        val before = _state.value
         applySuggestedValue(_state.value.receiptAssistState) { state, suggestion ->
             suggestion.date?.value?.let { date ->
                 state.copy(
@@ -889,11 +1305,27 @@ class ReceiptScanViewModel @Inject constructor(
                 )
             } ?: state
         }
+        reevaluateRegionAfterWrite(before)
+    }
+
+    /**
+     * MEC INV-3: re-evaluates the region after an AI-assist or quick-save write changed the amount or
+     * date, with the manual-edit semantics: a date change invalidates; an amount change invalidates
+     * unless the region is an amount-independent Blocked (R-4). No-op when neither changed.
+     */
+    private fun reevaluateRegionAfterWrite(before: ReceiptScanState) {
+        val after = _state.value
+        val dateChanged = after.editDate != before.editDate
+        val amountChanged = after.editAmount != before.editAmount
+        if (!dateChanged && !amountChanged) return
+        if (dateChanged) _state.update { it.copy(previewAnnounceKey = it.previewAnnounceKey + 1) }
+        reevaluateRegion(invalidate = dateChanged || !after.currencyRegion.isAmountIndependentBlock())
     }
 
     fun applyAllReceiptAssist() {
         val readyState = _state.value.receiptAssistState as? AiLoadState.Ready ?: return
         val suggestion = readyState.value
+        val before = _state.value
         _state.update { state ->
             state.copy(
                 editMerchant = suggestion.merchant?.value?.takeIf { it.isNotBlank() } ?: state.editMerchant,
@@ -904,6 +1336,7 @@ class ReceiptScanViewModel @Inject constructor(
                 pendingAppliedAiCapabilities = state.pendingAppliedAiCapabilities + AiCapability.RECEIPT_EXTRACTION
             )
         }
+        reevaluateRegionAfterWrite(before)
     }
 
     fun clearReceiptAssistMessage() {
@@ -962,6 +1395,12 @@ class ReceiptScanViewModel @Inject constructor(
             }
             return
         }
+        // MEC defence in depth: an unset currency or an invalid amount can never be quick-saved.
+        // The coordinator remains authoritative for rate eligibility (INV-6).
+        if (isCurrencyUnsavable(currentState)) {
+            _state.update { it.copy(quickSavePreview = null) }
+            return
+        }
 
         val request = ReceiptSaveRequest(
             receiptId = currentState.receiptId ?: return,
@@ -980,7 +1419,9 @@ class ReceiptScanViewModel @Inject constructor(
             categoryId = preview.categoryId,
             paymentMethod = currentState.paymentMethod,
             notes = currentState.notes.takeIf { it.isNotBlank() },
-            appliedAiCapabilities = preview.usedCapabilities
+            appliedAiCapabilities = preview.usedCapabilities,
+            // MEC G2-14/B1: captured at request build; falls back to the device zone now.
+            entryZone = reviewZone ?: ZoneId.systemDefault()
         )
 
         // S7-008: Do NOT clear quickSavePreview here — keep it open until save result is known
@@ -994,6 +1435,13 @@ class ReceiptScanViewModel @Inject constructor(
                     "AI quick save filled ${preview.autoAppliedFields.joinToString(", ")} before saving."
                 } else it.receiptAssistMessage
             )
+        }
+        // MEC INV-3: the quick-save write may change the amount or date; re-evaluate and re-apply the
+        // defence-in-depth guard against the written values (AmountInvalid is decided synchronously).
+        reevaluateRegionAfterWrite(currentState)
+        if (isCurrencyUnsavable(_state.value)) {
+            _state.update { it.copy(quickSavePreview = null) }
+            return
         }
 
         aiRuntimeDiagnostics.recordInteraction(
@@ -1029,31 +1477,42 @@ class ReceiptScanViewModel @Inject constructor(
         // S7-004: Idempotency guard
         if (_state.value.isSaving) return
         val currentState = _state.value
+        // MEC defence in depth: Save is disabled in the UI for these; the coordinator enforces rates.
+        if (isCurrencyUnsavable(currentState)) return
         val request = buildManualSaveRequest(currentState) ?: return
         saveExpenseInternal(request)
     }
 
+    // Intentionally narrower than ReceiptScanState.isCurrencySaveBlocked: the coordinator is authoritative for Blocked; the UI binds Save to isCurrencySaveBlocked in C2.
+    /** True when no currency is chosen or the amount fails the currency's rules (never rate eligibility). */
+    private fun isCurrencyUnsavable(s: ReceiptScanState): Boolean =
+        s.currencyRegion is CurrencyRegionUi.Unset || s.currencyRegion is CurrencyRegionUi.AmountInvalid
+
     fun retry() {
         cancelActiveWork()
-        _state.update {
-            ReceiptScanState(
-                editDate = timeProvider.now(),
-                editCurrency = homeCurrencyCode,
-                receiptQuickSaveEnabled = it.receiptQuickSaveEnabled
-            )
-        }
+        _state.update { freshStateKeeping(it) }
     }
 
     fun reset() {
         cancelActiveWork()
-        _state.update {
-            ReceiptScanState(
-                editDate = timeProvider.now(),
-                editCurrency = homeCurrencyCode,
-                receiptQuickSaveEnabled = it.receiptQuickSaveEnabled
-            )
-        }
+        _state.update { freshStateKeeping(it) }
     }
+
+    /**
+     * A blank state on the home currency. The currency choice is session-only (MEC constraint 1), so it
+     * is never carried over. The rates setting is a live observation of stored settings and is kept.
+     */
+    private fun freshStateKeeping(previous: ReceiptScanState): ReceiptScanState = ReceiptScanState(
+        editDate = timeProvider.now(),
+        editCurrency = homeCurrencyCode,
+        receiptQuickSaveEnabled = previous.receiptQuickSaveEnabled,
+        currencyOptions = optionsFor(homeCurrencyCode),
+        homeCurrency = homeCurrencyCode,
+        currencyRegion = if (homeCurrencyCode == null) CurrencyRegionUi.Loading else CurrencyRegionUi.Home,
+        ratesSetting = previous.ratesSetting,
+        ratesToday = todayFor(ZoneId.systemDefault()),
+        previewAnnounceKey = previous.previewAnnounceKey
+    )
 
     /** S7-F583-006: Centralized cleanup — cancels all in-flight work and clears assist state. */
     private fun cancelActiveWork() {
@@ -1063,11 +1522,466 @@ class ReceiptScanViewModel @Inject constructor(
         itemAnalysisJob?.cancel()
         itemAnalysisJob = null
         inFlightAssist.clear()
+        // MEC constraint 2/7: no late preview or refresh may land after a reset, retry or dismissal.
+        evaluationJob?.cancel()
+        evaluationJob = null
+        refreshJob?.cancel()
+        refreshJob = null
+        clearHistorySession()
+        reviewZone = null
+        pendingProposal = null
+        proposalAwaitingHome = false
     }
 
     override fun onCleared() {
         cancelActiveWork()
         super.onCleared()
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // MEC C1: rate preview, refresh (lean region orchestration; rules stay in the policy/preview)
+    // ---------------------------------------------------------------------------------------------
+
+    /** The bounded invalid-amount kind for the region, or null when the amount passes (INV-12/13/14). */
+    private fun amountInvalidKind(amount: Double, currency: CurrencyCode): CurrencyAmountInvalidKind? {
+        val check = CurrencyAmountPolicy.check(amount, currency)
+        return when (check) {
+            AmountCheck.Ok -> null
+            AmountCheck.NotPositive -> CurrencyAmountInvalidKind.NOT_POSITIVE
+            // OD-6: digits unknown. Never assume 2 digits; treat as an invalid amount.
+            AmountCheck.DigitsUnavailable -> CurrencyAmountInvalidKind.NOT_POSITIVE
+            is AmountCheck.PrecisionExceeded -> CurrencyAmountInvalidKind.PRECISION_EXCEEDED
+            is AmountCheck.AboveCap -> CurrencyAmountInvalidKind.ABOVE_CAP
+        }
+    }
+
+    /**
+     * The supporting text for an invalid amount, from the same [CurrencyAmountPolicy.check] result as
+     * [amountInvalidKind] (same keys and cap formatting as the add-expense sheet). A null or unparseable
+     * amount, and unavailable digits (OD-6), use the generic invalid-amount string.
+     */
+    private fun amountErrorText(amount: Double?, currency: CurrencyCode): UiText {
+        val generic = UiText.StringResource(R.string.add_expense_error_amount_invalid)
+        if (amount == null) return generic
+        return when (val check = CurrencyAmountPolicy.check(amount, currency)) {
+            is AmountCheck.PrecisionExceeded ->
+                if (check.allowedDigits == 0) {
+                    UiText.StringResource(R.string.mec_amount_no_decimals, listOf(currency.code))
+                } else {
+                    UiText.StringResource(R.string.mec_amount_max_decimals, listOf(currency.code, check.allowedDigits))
+                }
+            is AmountCheck.AboveCap ->
+                UiText.StringResource(
+                    R.string.mec_amount_too_large,
+                    listOf(java.text.NumberFormat.getIntegerInstance().format(check.cap.toLong()))
+                )
+            // Exhaustive over the sealed AmountCheck (no else): a new variant must be mapped here.
+            AmountCheck.Ok, AmountCheck.NotPositive, AmountCheck.DigitsUnavailable -> generic
+        }
+    }
+
+    /**
+     * MEC INV-3/INV-15: recomputes [ReceiptScanState.currencyRegion]. Latest wins: the previous
+     * evaluation is cancelled. Home and Loading need no evaluation; an Unset region stays Unset until a
+     * currency is picked. For a foreign currency a valid amount (or none) is evaluated through the single
+     * read-only [UserPresentRatePreview]; "Checking" ([CurrencyRegionUi.Evaluating]) appears only after
+     * [EVALUATING_DELAY_MS]. No fetch, and no logging of amounts, currencies, zones, rates or dates.
+     *
+     * @param invalidate true when the currency, date, home or zone changed: the displayed result is
+     * dropped to [CurrencyRegionUi.Pending] immediately so a stale amount is never shown.
+     * @param refreshCompleted true when called after a user-started refresh finished.
+     */
+    private fun reevaluateRegion(
+        invalidate: Boolean,
+        showEvaluating: Boolean = true,
+        refreshCompleted: Boolean = false,
+        keepSaveBlock: Boolean = false
+    ) {
+        evaluationJob?.cancel()
+        evaluationJob = null
+
+        val s = _state.value
+        val home = homeCurrencyCode
+        val selected = s.editCurrency
+        val zone = reviewZone ?: ZoneId.systemDefault()
+        val today = todayFor(zone)
+        if (home == null || selected == null) {
+            _state.update {
+                it.copy(
+                    currencyRegion = if (it.currencyRegion is CurrencyRegionUi.Unset) it.currencyRegion else CurrencyRegionUi.Loading,
+                    amountError = null,
+                    ratesToday = today
+                )
+            }
+            return
+        }
+        if (selected == home) {
+            val homeOnlyCode = CurrencyCode.parse(home)
+            val homeAmountText = s.editAmount
+            val homeParsed = if (homeAmountText.isBlank()) null
+            else com.yourname.expensetracker.ui.util.AmountInputSanitizer.parseOrNull(homeAmountText)
+            val homeInvalidKind = when {
+                homeOnlyCode == null || homeAmountText.isBlank() -> null
+                homeParsed == null -> CurrencyAmountInvalidKind.NOT_POSITIVE
+                else -> amountInvalidKind(homeParsed, homeOnlyCode)
+            }
+            if (homeInvalidKind != null && homeOnlyCode != null) {
+                val homeAmountError = amountErrorText(homeParsed, homeOnlyCode)
+                _state.update {
+                    it.copy(
+                        currencyRegion = CurrencyRegionUi.AmountInvalid(homeInvalidKind),
+                        amountError = homeAmountError,
+                        ratesToday = today,
+                        rateRefresh = settledRefresh(it, false)
+                    )
+                }
+                return
+            }
+            _state.update {
+                it.copy(currencyRegion = CurrencyRegionUi.Home, amountError = null, ratesToday = today, rateRefresh = settledRefresh(it, false))
+            }
+            return
+        }
+        val homeCode = CurrencyCode.parse(home)
+        val selectedCode = CurrencyCode.parse(selected)
+        if (homeCode == null || selectedCode == null) {
+            val variant = if (homeCode == null) CurrencyBlockVariant.HOME_UNRESOLVED else CurrencyBlockVariant.UNSUPPORTED
+            _state.update {
+                it.copy(
+                    currencyRegion = CurrencyRegionUi.Blocked(variant, null, CurrencyBlockOrigin.PREVIEW),
+                    amountError = null,
+                    ratesToday = today,
+                    rateRefresh = settledRefresh(it, refreshCompleted)
+                )
+            }
+            return
+        }
+
+        val amountText = s.editAmount
+        val parsedAmount = if (amountText.isBlank()) null
+        else com.yourname.expensetracker.ui.util.AmountInputSanitizer.parseOrNull(amountText)
+        val invalidKind = when {
+            amountText.isBlank() -> null
+            parsedAmount == null -> CurrencyAmountInvalidKind.NOT_POSITIVE
+            else -> amountInvalidKind(parsedAmount, selectedCode)
+        }
+        val amountError = if (invalidKind != null) amountErrorText(parsedAmount, selectedCode) else null
+        if (invalidKind != null) {
+            _state.update {
+                it.copy(
+                    currencyRegion = CurrencyRegionUi.AmountInvalid(invalidKind),
+                    amountError = amountError,
+                    ratesToday = today,
+                    rateRefresh = settledRefresh(it, refreshCompleted)
+                )
+            }
+            return
+        }
+
+        if (invalidate) {
+            _state.update { it.copy(currencyRegion = CurrencyRegionUi.Pending, amountError = null, ratesToday = today) }
+        }
+
+        val atMillis = s.editDate
+        evaluationJob = viewModelScope.launch {
+            val marker = if (showEvaluating) {
+                launch {
+                    delay(EVALUATING_DELAY_MS)
+                    _state.update { it.copy(currencyRegion = CurrencyRegionUi.Evaluating, amountError = null) }
+                }
+            } else {
+                null
+            }
+            // INV-1b-5: the remedy is copied from RateRemedyPolicy; the VM supplies only today and the flag.
+            var decision = RateRemedyDecision(RateRemedy.REFRESH_LATEST)
+            val region: CurrencyRegionUi = try {
+                val result = userPresentRatePreview.preview(
+                    parsedAmount = parsedAmount ?: 1.0,
+                    currency = selectedCode,
+                    home = homeCode,
+                    expenseAtMillis = atMillis,
+                    entryZone = zone
+                )
+                decision = if (result is UserPresentRatePreviewResult.Blocked) {
+                    RateRemedyPolicy.remedy(
+                        eligibility = result.eligibility,
+                        localDate = java.time.Instant.ofEpochMilli(atMillis).atZone(zone).toLocalDate(),
+                        latestStoredPairDate = result.latestStoredPairDate,
+                        today = today,
+                        historyDownloadedThisSession = historyDownloadedThisSession
+                    )
+                } else {
+                    RateRemedyDecision(RateRemedy.NONE)
+                }
+                regionFor(result, hasAmount = parsedAmount != null)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // INV-19: bounded code only. An unreadable rate store fails closed: no preview, blocked.
+                Timber.w(LOG_RATE_PREVIEW_FAILED)
+                CurrencyRegionUi.Blocked(CurrencyBlockVariant.NONE, null, CurrencyBlockOrigin.PREVIEW)
+            }
+            marker?.cancel()
+            ensureActive()
+            // F-B2-A11Y-1: after a history success the preview line is announced once (latest inputs win).
+            val announcePending = historyAnnouncePending
+            historyAnnouncePending = false
+            val doneStatus = doneStatusFor(region, decision, atMillis, zone)
+            _state.update {
+                val current = it.currencyRegion
+                // After a post-tap refusal the SAVE-origin Blocked card stays: its variant/date are the
+                // coordinator's authoritative refusal. A Blocked re-read only upgrades the remedy.
+                val keepCard = keepSaveBlock && current is CurrencyRegionUi.Blocked &&
+                    current.origin == CurrencyBlockOrigin.SAVE
+                val keep = keepCard && region !is CurrencyRegionUi.Blocked
+                val shown = if (keepCard) current else region
+                val announce = announcePending && !keep && region is CurrencyRegionUi.Eligible
+                it.copy(
+                    currencyRegion = shown,
+                    amountError = null,
+                    ratesToday = today,
+                    rateRefresh = settledRefresh(it, refreshCompleted && region is CurrencyRegionUi.Blocked),
+                    // A kept SAVE card keeps its REFRESH_LATEST floor; an Eligible re-read yields NONE.
+                    rateRemedy = if (keep) it.rateRemedy else decision,
+                    historyStatus = when {
+                        it.historyStatus == CurrencyHistoryStatus.RUNNING -> CurrencyHistoryStatus.RUNNING
+                        it.historyHomeUnavailable -> CurrencyHistoryStatus.FAILED_HOME_UNAVAILABLE
+                        else -> doneStatus
+                    },
+                    previewAnnounceKey = if (announce) it.previewAnnounceKey + 1 else it.previewAnnounceKey
+                )
+            }
+        }
+    }
+
+    /**
+     * The refresh status after an evaluation: RUNNING is kept; a finished refresh that is still blocked
+     * becomes DONE_STILL_BLOCKED; any other settled evaluation clears an earlier outcome to IDLE.
+     */
+    private fun settledRefresh(current: ReceiptScanState, doneStillBlocked: Boolean): CurrencyRefreshStatus = when {
+        current.rateRefresh == CurrencyRefreshStatus.RUNNING -> CurrencyRefreshStatus.RUNNING
+        doneStillBlocked -> CurrencyRefreshStatus.DONE_STILL_BLOCKED
+        else -> CurrencyRefreshStatus.IDLE
+    }
+
+    private fun todayFor(zone: ZoneId): LocalDate =
+        java.time.Instant.ofEpochMilli(timeProvider.now()).atZone(zone).toLocalDate()
+
+    /** MEC AE-38: the preview text is the shared formatter applied to the exact snapshot amount. */
+    private fun regionFor(result: UserPresentRatePreviewResult, hasAmount: Boolean): CurrencyRegionUi {
+        val origin = CurrencyBlockOrigin.PREVIEW
+        return when (result) {
+            UserPresentRatePreviewResult.NotApplicableHome -> CurrencyRegionUi.Home
+            is UserPresentRatePreviewResult.ConvertedPreview -> CurrencyRegionUi.Eligible(
+                rateDate = result.rateDate,
+                sourceLabel = result.sourceLabel,
+                formattedAmountInHome = if (hasAmount) CurrencyFormatter.formatMoney(result.amountInHome, result.home.code) else null,
+                amountUnavailable = false
+            )
+            // INV-15: eligible rate but no computable amount. Never shown as zero; the date still is.
+            is UserPresentRatePreviewResult.AmountUnavailable -> CurrencyRegionUi.Eligible(
+                rateDate = result.rateDate,
+                sourceLabel = result.sourceLabel,
+                formattedAmountInHome = null,
+                amountUnavailable = hasAmount
+            )
+            is UserPresentRatePreviewResult.Blocked -> {
+                val eligibility = result.eligibility
+                when (eligibility) {
+                    is RateEligibility.Stale ->
+                        CurrencyRegionUi.Blocked(CurrencyBlockVariant.STALE, eligibility.latestRateDate, origin)
+                    RateEligibility.None ->
+                        CurrencyRegionUi.Blocked(CurrencyBlockVariant.NONE, null, origin)
+                    is RateEligibility.Unsupported ->
+                        CurrencyRegionUi.Blocked(CurrencyBlockVariant.UNSUPPORTED, null, origin)
+                    // Not produced by the use case for a blocked result; fail closed.
+                    RateEligibility.Home, is RateEligibility.Eligible ->
+                        CurrencyRegionUi.Blocked(CurrencyBlockVariant.NONE, null, origin)
+                }
+            }
+        }
+    }
+
+    /**
+     * MEC INV-20: user-started "Refresh rates". Runs only when the setting is On and home is loaded;
+     * the only network path is [CurrencyRatesRepository.refresh], which is privacy-gated. The VM never
+     * enables the setting. On success the region is re-evaluated; failures map to bounded statuses.
+     */
+    fun refreshRates() {
+        val snapshot = _state.value
+        val home = homeCurrencyCode ?: return
+        if (snapshot.ratesSetting != CurrencyRatesSetting.ON) return
+        val selected = snapshot.editCurrency ?: return
+        if (selected == home) return
+        if (snapshot.rateRefresh == CurrencyRefreshStatus.RUNNING) return
+
+        _state.update { it.copy(rateRefresh = CurrencyRefreshStatus.RUNNING) }
+        refreshJob?.cancel()
+        refreshJob = viewModelScope.launch {
+            var status = CurrencyRefreshStatus.IDLE
+            var setting: CurrencyRatesSetting? = null
+            var refreshed = false
+            try {
+                val outcome = currencyRatesRepository.refresh(home)
+                if (outcome is CurrencyRateRefreshOutcome.Refreshed) {
+                    refreshed = true
+                } else if (outcome is CurrencyRateRefreshOutcome.DisabledByPrivacy) {
+                    // The setting was turned off meanwhile: show the Off variant, no failure line.
+                    setting = CurrencyRatesSetting.OFF
+                } else {
+                    // PrivacyCheckFailed: fail closed to Unknown (treated as Off).
+                    setting = CurrencyRatesSetting.UNKNOWN
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: java.io.IOException) {
+                Timber.w(LOG_RATE_REFRESH_FAILED)
+                status = CurrencyRefreshStatus.FAILED_OFFLINE
+            } catch (e: Exception) {
+                // INV-19: bounded code only; the exception message is matched by equality, never shown.
+                Timber.w(LOG_RATE_REFRESH_FAILED)
+                status = if (e.message == REFRESH_HOME_QUOTE_UNAVAILABLE || e.message == REFRESH_INVALID_HOME_CURRENCY) {
+                    CurrencyRefreshStatus.FAILED_HOME_UNAVAILABLE
+                } else {
+                    CurrencyRefreshStatus.FAILED
+                }
+            }
+            _state.update {
+                it.copy(
+                    rateRefresh = status,
+                    ratesSetting = setting ?: it.ratesSetting
+                )
+            }
+            if (refreshed) {
+                reevaluateRegion(invalidate = false, showEvaluating = false, refreshCompleted = true)
+            }
+        }
+    }
+
+    /**
+     * MEC 1b INV-1b-3: user-started "Download rate history". The only caller of
+     * [CurrencyRatesRepository.downloadRecentHistory] here; never reached from preview, save, scan or any
+     * automatic path. Single job: ignored while RUNNING (or a refresh runs). The VM never enables the
+     * setting; the repository is privacy-gated. Outcomes map per ux D-1b-5. No receipt, event or file
+     * changes: only the rate table is written (by the repository).
+     */
+    fun onDownloadRateHistory() {
+        val snapshot = _state.value
+        val home = homeCurrencyCode ?: return
+        if (snapshot.step != ScanStep.REVIEW) return
+        if (snapshot.ratesSetting != CurrencyRatesSetting.ON) return
+        val selected = snapshot.editCurrency ?: return
+        if (selected == home) return
+        if (snapshot.rateFixAction != CurrencyRateFixAction.DOWNLOAD_HISTORY) return
+        if (snapshot.historyStatus == CurrencyHistoryStatus.RUNNING || historyJob?.isActive == true) return
+        if (snapshot.rateRefresh == CurrencyRefreshStatus.RUNNING) return
+        // Spec 1b.10: a history download is illegal while saving.
+        if (snapshot.isSaving) return
+
+        _state.update { it.copy(historyStatus = CurrencyHistoryStatus.RUNNING) }
+        historyJob = viewModelScope.launch {
+            var status = CurrencyHistoryStatus.IDLE
+            var setting: CurrencyRatesSetting? = null
+            var stored = false
+            try {
+                val outcome = currencyRatesRepository.downloadRecentHistory(home)
+                // A repository that ignored Cancel must not overwrite CANCELLED (rethrown below).
+                ensureActive()
+                when (outcome) {
+                    is CurrencyRateHistoryOutcome.Stored -> {
+                        stored = true
+                        historyDownloadedThisSession = true
+                        historyEarliestDate = outcome.earliestDate
+                    }
+                    // The setting was turned off meanwhile: show the Off variant, no failure line.
+                    CurrencyRateHistoryOutcome.DisabledByPrivacy -> setting = CurrencyRatesSetting.OFF
+                    is CurrencyRateHistoryOutcome.PrivacyCheckFailed -> setting = CurrencyRatesSetting.UNKNOWN
+                    CurrencyRateHistoryOutcome.AlreadyInProgress -> status = CurrencyHistoryStatus.FAILED
+                    is CurrencyRateHistoryOutcome.Failed -> status = historyFailureStatus(outcome.reason)
+                    CurrencyRateHistoryOutcome.Cancelled -> status = CurrencyHistoryStatus.CANCELLED
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // INV-19: bounded code only; the exception is never attached.
+                Timber.w(LOG_RATE_HISTORY_FAILED)
+                status = CurrencyHistoryStatus.FAILED
+            }
+            if (stored) historyAnnouncePending = true
+            _state.update {
+                it.copy(
+                    historyStatus = status,
+                    historyHomeUnavailable = it.historyHomeUnavailable ||
+                        status == CurrencyHistoryStatus.FAILED_HOME_UNAVAILABLE,
+                    ratesSetting = setting ?: it.ratesSetting
+                )
+            }
+            if (stored) {
+                // Latest inputs win; the region becomes Eligible, or Blocked with a DONE_* status.
+                reevaluateRegion(invalidate = false, showEvaluating = false)
+            }
+        }
+    }
+
+    /** INV-1b-21: user Cancel, offered only while RUNNING. The job's CancellationException is rethrown. */
+    fun onCancelRateHistory() {
+        if (_state.value.historyStatus != CurrencyHistoryStatus.RUNNING) return
+        historyJob?.cancel()
+        historyJob = null
+        _state.update { it.copy(historyStatus = CurrencyHistoryStatus.CANCELLED) }
+    }
+
+    /** D-1b-5: bounded failure reason to UX status. */
+    private fun historyFailureStatus(reason: RateHistoryFailureReason): CurrencyHistoryStatus = when (reason) {
+        RateHistoryFailureReason.OFFLINE -> CurrencyHistoryStatus.FAILED_OFFLINE
+        RateHistoryFailureReason.INVALID_HOME_CURRENCY,
+        RateHistoryFailureReason.HOME_QUOTE_UNAVAILABLE -> CurrencyHistoryStatus.FAILED_HOME_UNAVAILABLE
+        RateHistoryFailureReason.TIMEOUT,
+        RateHistoryFailureReason.HTTP_ERROR,
+        RateHistoryFailureReason.PAYLOAD_TOO_LARGE,
+        RateHistoryFailureReason.PAYLOAD_EMPTY,
+        RateHistoryFailureReason.PAYLOAD_MALFORMED,
+        RateHistoryFailureReason.PAYLOAD_OUT_OF_BOUNDS,
+        RateHistoryFailureReason.STORE_FAILED -> CurrencyHistoryStatus.FAILED
+    }
+
+    /**
+     * D-1b-5: still blocked after a history download in this review. An entry date before the earliest
+     * stored ECB date is DONE_TOO_OLD; any other case is DONE_NO_RATE. Anything else settles to IDLE.
+     */
+    private fun doneStatusFor(
+        region: CurrencyRegionUi,
+        decision: RateRemedyDecision,
+        atMillis: Long,
+        zone: ZoneId
+    ): CurrencyHistoryStatus {
+        if (region !is CurrencyRegionUi.Blocked || decision.noRemedyReason != NoRemedyReason.HISTORY_ALREADY_DOWNLOADED) {
+            return CurrencyHistoryStatus.IDLE
+        }
+        val earliest = historyEarliestDate
+        val entryDate = java.time.Instant.ofEpochMilli(atMillis).atZone(zone).toLocalDate()
+        return if (earliest != null && entryDate.isBefore(earliest)) {
+            CurrencyHistoryStatus.DONE_TOO_OLD
+        } else {
+            CurrencyHistoryStatus.DONE_NO_RATE
+        }
+    }
+
+    /** Leaving the review (reset, retry, dismissal) stops a running download and drops the session data. */
+    private fun clearHistorySession() {
+        historyJob?.cancel()
+        historyJob = null
+        historyDownloadedThisSession = false
+        historyEarliestDate = null
+        historyAnnouncePending = false
+    }
+
+    /** MEC INV-6: maps a typed coordinator refusal reason to the card variant. */
+    private fun blockVariantFor(reason: RateRefusalReason): CurrencyBlockVariant = when (reason) {
+        RateRefusalReason.NO_RATE -> CurrencyBlockVariant.NONE
+        RateRefusalReason.STALE_RATE -> CurrencyBlockVariant.STALE
+        RateRefusalReason.UNSUPPORTED_CURRENCY -> CurrencyBlockVariant.UNSUPPORTED
+        RateRefusalReason.HOME_CURRENCY_UNRESOLVED -> CurrencyBlockVariant.HOME_UNRESOLVED
     }
 
     private fun buildManualSaveRequest(currentState: ReceiptScanState): ReceiptSaveRequest? {
@@ -1111,7 +2025,9 @@ class ReceiptScanViewModel @Inject constructor(
             paymentMethod = currentState.paymentMethod,
             notes = currentState.notes.takeIf { it.isNotBlank() },
             // S7-015: Include pending manual-apply capabilities
-            appliedAiCapabilities = currentState.pendingAppliedAiCapabilities
+            appliedAiCapabilities = currentState.pendingAppliedAiCapabilities,
+            // MEC G2-14/B1: captured at request build; falls back to the device zone now.
+            entryZone = reviewZone ?: ZoneId.systemDefault()
         )
     }
 
@@ -1292,7 +2208,10 @@ class ReceiptScanViewModel @Inject constructor(
                     notes = notes,
                     paymentMethod = request.paymentMethod,
                     isManualEntry = true,
-                    scannedReceiptId = request.receiptId
+                    scannedReceiptId = request.receiptId,
+                    // MEC INV-6/G2-14: the user-present flag; the coordinator evaluates the rate and
+                    // the amount precision with the zone captured at request build.
+                    userPresentRate = UserPresentRateRequirement(request.entryZone)
                 )
 
                 // S7-F583-001: Atomic create+link — if link fails, expense is rolled back
@@ -1328,6 +2247,40 @@ class ReceiptScanViewModel @Inject constructor(
                     },
                     onFailure = { e ->
                         if (e is CancellationException) throw e
+                        if (e is ReceiptLifecycleCoordinator.RateNotEligibleException) {
+                            // MEC INV-6/AE-24: nothing was saved. Keep the form and the review, close the
+                            // quick-save dialog, cancel any in-flight preview so a late result cannot
+                            // overwrite the SAVE card, and show the SAVE-origin card. Not logged as an error.
+                            evaluationJob?.cancel()
+                            evaluationJob = null
+                            val refusedMissingRate = e.reason == RateRefusalReason.NO_RATE ||
+                                e.reason == RateRefusalReason.STALE_RATE
+                            _state.update {
+                                it.copy(
+                                    isSaving = false,
+                                    quickSavePreview = null,
+                                    saveResult = SaveReceiptResult.RateNotEligible,
+                                    amountError = null,
+                                    currencyRegion = CurrencyRegionUi.Blocked(
+                                        variant = blockVariantFor(e.reason),
+                                        latestRateDate = if (e.reason == RateRefusalReason.STALE_RATE) e.latestRateDate else null,
+                                        origin = CurrencyBlockOrigin.SAVE
+                                    ),
+                                    // Spec 1b.2: same remedy policy as the preview card; floor at REFRESH_LATEST
+                                    // because an earlier Eligible/Evaluating preview left NONE.
+                                    rateRemedy = if (refusedMissingRate) {
+                                        RateRemedyDecision(RateRemedy.REFRESH_LATEST)
+                                    } else {
+                                        it.rateRemedy
+                                    }
+                                )
+                            }
+                            if (refusedMissingRate) {
+                                // Local re-read so RateRemedyPolicy can upgrade the floor to DOWNLOAD_HISTORY.
+                                reevaluateRegion(invalidate = false, showEvaluating = false, keepSaveBlock = true)
+                            }
+                            return@fold
+                        }
                         val isDuplicate = e is ReceiptLifecycleCoordinator.DuplicateTransactionException
                         if (!isDuplicate) {
                             Timber.e("ReceiptScan: atomic_save UNKNOWN_ERROR class=%s", e::class.java.simpleName)

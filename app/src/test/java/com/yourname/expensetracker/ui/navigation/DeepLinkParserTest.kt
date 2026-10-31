@@ -1,9 +1,9 @@
 package com.yourname.expensetracker.ui.navigation
 
 import android.content.Intent
-import com.yourname.expensetracker.domain.privacy.deeplink.DeepLinkHost
-import com.yourname.expensetracker.domain.privacy.deeplink.DeepLinkParameter
-import com.yourname.expensetracker.domain.privacy.deeplink.DeepLinkRequest
+import com.yourname.expensetracker.domain.navigation.deeplink.DeepLinkHost
+import com.yourname.expensetracker.domain.navigation.deeplink.DeepLinkParameter
+import com.yourname.expensetracker.domain.navigation.deeplink.DeepLinkRequest
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -112,5 +112,71 @@ class DeepLinkParserTest {
                 result
             )
         }
+    }
+
+    // ---- loan-installments S10a-1: dormant installments deep links ----
+
+    // mec merge: ported from the removed parseDeepLink to DeepLinkPolicy.evaluate. DeepLinkPolicy has no
+    // installment hosts until loan S13-a, so every installment link is Rejected(UNKNOWN_HOST) and lands on Home.
+    @Test
+    fun `installments links are rejected as unknown host while the flag is false`() {
+        listOf(
+            "expensetracker://installments",
+            "expensetracker://installment_plan?id=42"
+        ).forEach { uri ->
+            // S13-b: explicit seam, so flag-off behaviour stays covered now that the default is enabled.
+            val result = DeepLinkPolicy.evaluate(Intent.ACTION_VIEW, uri, installmentsEnabled = false)
+            assertEquals(
+                "Flag false must reject $uri",
+                DeepLinkPolicyResult.Rejected(DeepLinkRejection.UNKNOWN_HOST),
+                result
+            )
+            assertTrue("$uri falls back to Home", (result as DeepLinkPolicyResult.Rejected).fallsBackToHome)
+        }
+    }
+
+    @Test
+    fun `installments links are accepted by default while the compile-time gate is true`() {
+        // Canary: S13-b (owner-approvals 91(b)): enabled on this branch; flip back = revert S13-b.
+        assertTrue(InstallmentsFeature.ENABLED)
+        assertEquals(
+            DeepLinkPolicyResult.Accepted(DeepLinkRequest(DeepLinkHost.INSTALLMENTS)),
+            DeepLinkPolicy.evaluate(Intent.ACTION_VIEW, "expensetracker://installments")
+        )
+        assertEquals(
+            DeepLinkPolicyResult.Accepted(DeepLinkRequest(DeepLinkHost.INSTALLMENT_PLAN, planId = 42L)),
+            DeepLinkPolicy.evaluate(Intent.ACTION_VIEW, "expensetracker://installment_plan?id=42")
+        )
+    }
+
+    @Test
+    fun `installments links stay rejected when the explicit seam is false regardless of the default`() {
+        listOf(
+            "expensetracker://installments",
+            "expensetracker://installment_plan?id=42"
+        ).forEach { uri ->
+            assertEquals(
+                DeepLinkPolicyResult.Rejected(DeepLinkRejection.UNKNOWN_HOST),
+                DeepLinkPolicy.evaluate(Intent.ACTION_VIEW, uri, installmentsEnabled = false)
+            )
+        }
+    }
+
+    // Enabled-path installment link cases retired (owner-approvals 81a); restated as loan S13-a acceptance examples in loan-installments-handoff.md.
+
+    @Test
+    fun `installments flag does not change unrelated hosts`() {
+        assertEquals(
+            DeepLinkPolicyResult.Accepted(DeepLinkRequest(DeepLinkHost.HOME)),
+            DeepLinkPolicy.evaluate(Intent.ACTION_VIEW, "expensetracker://home")
+        )
+        assertEquals(
+            DeepLinkPolicyResult.Rejected(DeepLinkRejection.UNKNOWN_HOST),
+            DeepLinkPolicy.evaluate(Intent.ACTION_VIEW, "expensetracker://unknown")
+        )
+        assertEquals(
+            DeepLinkPolicyResult.NotADeepLink,
+            DeepLinkPolicy.evaluate(Intent.ACTION_VIEW, "https://expensetracker.app/installments")
+        )
     }
 }

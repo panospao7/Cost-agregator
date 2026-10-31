@@ -10,9 +10,9 @@ import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticCode
 import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticKey
 import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticMetadata
 import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticsEmitter
-import com.yourname.expensetracker.domain.privacy.deeplink.DeepLinkHost
-import com.yourname.expensetracker.domain.privacy.deeplink.DeepLinkParameter
-import com.yourname.expensetracker.domain.privacy.deeplink.DeepLinkRequest
+import com.yourname.expensetracker.domain.navigation.deeplink.DeepLinkHost
+import com.yourname.expensetracker.domain.navigation.deeplink.DeepLinkParameter
+import com.yourname.expensetracker.domain.navigation.deeplink.DeepLinkRequest
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.ui.MainViewModel
 import com.yourname.expensetracker.ui.screens.transactions.TransactionFilter
@@ -194,6 +194,46 @@ class DeepLinkApplierHoldTest {
 
         coVerify(exactly = 1) { markOpened("dashboard_home:2027-03-12") }
         verify(exactly = 1) { mainViewModel.navigateTo(NavigationDestination.Home) }
+    }
+
+    // --- S13-a confirmation is set only on the release -------------------------------------------------------
+
+    private val installments = DeepLinkRequest(DeepLinkHost.INSTALLMENTS)
+    private val installmentPlan = DeepLinkRequest(DeepLinkHost.INSTALLMENT_PLAN, planId = 42L)
+
+    @Test
+    fun `S13-a while held an installment link requests no confirmation and navigates nowhere`() = runTest {
+        val applier = applier()
+
+        applier.onHeld(DeepLinkPolicyResult.Accepted(installments))
+        applier.onHeld(DeepLinkPolicyResult.Accepted(installmentPlan))
+
+        verify(exactly = 0) { mainViewModel.requestDeepLinkConfirmation(any()) }
+        verifyNoNavigation()
+        assertEquals(emptyList<PrivacyDiagnosticCode>(), codes())
+    }
+
+    @Test
+    fun `S13-a after the release an installment link requests confirmation and still does not navigate`() = runTest {
+        val applier = applier()
+        applier.onHeld(DeepLinkPolicyResult.Accepted(installmentPlan))
+        verify(exactly = 0) { mainViewModel.requestDeepLinkConfirmation(any()) }
+
+        applier.applyReleased(HeldLinkRelease.Apply(installmentPlan, afterUnlock = true), mainViewModel)
+
+        verify(exactly = 1) {
+            mainViewModel.requestDeepLinkConfirmation(NavigationDestination.InstallmentPlanDetail(42L))
+        }
+        verifyNoNavigation()
+        assertEquals(true, emitted.single().metadata.entries[PrivacyDiagnosticKey.AFTER_UNLOCK])
+    }
+
+    @Test
+    fun `S13-a a released installments list link requests confirmation for the list`() = runTest {
+        applier().applyReleased(HeldLinkRelease.Apply(installments, afterUnlock = true), mainViewModel)
+
+        verify(exactly = 1) { mainViewModel.requestDeepLinkConfirmation(NavigationDestination.Installments) }
+        verifyNoNavigation()
     }
 
     // --- onRejectedWhileClosed -------------------------------------------------------------------------------

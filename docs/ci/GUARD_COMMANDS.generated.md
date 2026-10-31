@@ -305,6 +305,28 @@ argv as repeated single-token `--command-arg=<value>` entries.
 - command-identity: <resolved-interpreter> scripts/verify_raw_money_aggregates.py --fail-on-violation
 - documentation-anchor: docs/ci/GR-10A_COMMAND_AUTHORITY_MATRIX.md
 
+## installment_cloud_reachability
+
+- mode: blocking
+- owner: @panospao7 (doc anchor: docs/architecture/LEGAL_PATHS.md)
+- source-scope: production-kotlin-filtered
+- engine: python-direct
+- timeout-profile: standard (300s)
+- output-contract: stdout-human;exit:0=pass,1=violation,2=infra
+- command-identity: <resolved-interpreter> scripts/verify_installment_cloud_reachability.py --fail-on-violation
+- documentation-anchor: docs/architecture/LEGAL_PATHS.md
+
+## spending_predicate_usage
+
+- mode: blocking
+- owner: @panospao7 (doc anchor: docs/architecture/LEGAL_PATHS.md)
+- source-scope: production-kotlin-filtered
+- engine: python-direct
+- timeout-profile: standard (300s)
+- output-contract: stdout-human;exit:0=pass,1=violation,2=infra
+- command-identity: <resolved-interpreter> scripts/verify_spending_predicate_usage.py --fail-on-violation
+- documentation-anchor: docs/architecture/LEGAL_PATHS.md
+
 ## currency_guardrails_ps
 
 - mode: blocking

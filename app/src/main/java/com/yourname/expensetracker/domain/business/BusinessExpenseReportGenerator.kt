@@ -7,6 +7,7 @@ import com.yourname.expensetracker.data.repository.BusinessExpenseRepository
 import com.yourname.expensetracker.data.repository.TaxSettingsRepository
 import com.yourname.expensetracker.di.IoDispatcher
 import com.yourname.expensetracker.domain.export.CsvCellSanitizer
+import com.yourname.expensetracker.domain.export.ExportInstallmentMarker
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.CoroutineDispatcher
@@ -182,7 +183,7 @@ class BusinessExpenseReportGenerator @Inject constructor(
                     val date = formatInstant(expense.date, dateFormat)
                     val merchant = expense.merchant.take(25)
                     val purpose = expense.businessPurpose?.let { " - $it" } ?: ""
-                    append("${index + 1}. ${date} - $reportCurrency ${String.format("%.2f", expense.effectiveAmount)} - ${merchant}${purpose}\n")
+                    append("${index + 1}. ${date} - $reportCurrency ${String.format("%.2f", expense.effectiveAmount)} - ${merchant}${purpose}${installmentMarkerSuffix(expense)}\n")
                 }
                 append("\n")
             }
@@ -192,7 +193,7 @@ class BusinessExpenseReportGenerator @Inject constructor(
                 append("----------------------------------------\n")
                 for (expense in missingReceipts) {
                     val date = formatInstant(expense.date, dateFormat)
-                    append("${date} - $reportCurrency ${String.format("%.2f", expense.effectiveAmount)} - ${expense.merchant}\n")
+                    append("${date} - $reportCurrency ${String.format("%.2f", expense.effectiveAmount)} - ${expense.merchant}${installmentMarkerSuffix(expense)}\n")
                 }
                 append("\n")
             }
@@ -219,6 +220,10 @@ class BusinessExpenseReportGenerator @Inject constructor(
         )
     }
     
+    /** OD-11: " [marker]" for installment-flagged rows, empty otherwise. Label only; totals use effectiveAmount. */
+    private fun installmentMarkerSuffix(expense: Expense): String =
+        ExportInstallmentMarker.markerFor(expense)?.let { " $it" } ?: ""
+
     /**
      * Generate a mileage report for a period.
      */
@@ -272,7 +277,11 @@ class BusinessExpenseReportGenerator @Inject constructor(
             val purpose = CsvCellSanitizer.sanitize(expense.businessPurpose ?: "")
             val project = CsvCellSanitizer.sanitize(expense.businessProject ?: "")
             val requiresReceipt = if (expense.requiresReceipt) "Yes" else "No"
-            val notes = CsvCellSanitizer.sanitize(expense.notes ?: "")
+            // loan-installments OD-11: flagged rows are exported with the marker in Notes; the
+            // Amount column above is effectiveAmount (INV-1), so a flagged row shows 0.
+            val notes = CsvCellSanitizer.sanitize(
+                ExportInstallmentMarker.notesWithMarker(expense.notes, ExportInstallmentMarker.markerFor(expense)) ?: ""
+            )
             
             csv.append("${date},${merchant},${expense.effectiveAmount},${expense.currency},${category},${purpose},${project},${requiresReceipt},${notes}\n")
         }

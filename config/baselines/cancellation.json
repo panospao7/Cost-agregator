@@ -2,12 +2,10 @@
   "guard": "cancellation",
   "generated": "2026-09-30T15:56:00+00:00",
   "fingerprints": [
-    "G-CANCEL-01 app/src/main/java/com/yourname/expensetracker/data/ai/provider/DefaultAiEnvironmentMonitor.kt",
     "G-CANCEL-01 app/src/main/java/com/yourname/expensetracker/data/location/AndroidForegroundLocationProvider.kt",
     "G-CANCEL-01 app/src/main/java/com/yourname/expensetracker/data/repository/CategoryRepository.kt",
     "G-CANCEL-01 app/src/main/java/com/yourname/expensetracker/data/repository/CurrencySettingsRepositoryImpl.kt",
     "G-CANCEL-01 app/src/main/java/com/yourname/expensetracker/data/repository/GroupsRepositoryImpl.kt",
-    "G-CANCEL-01 app/src/main/java/com/yourname/expensetracker/data/repository/ManualExpenseRepository.kt",
     "G-CANCEL-01 app/src/main/java/com/yourname/expensetracker/data/repository/NotificationProcessingPipeline.kt",
     "G-CANCEL-01 app/src/main/java/com/yourname/expensetracker/data/repository/ReceiptRepository.kt",
     "G-CANCEL-01 app/src/main/java/com/yourname/expensetracker/data/repository/ReviewQueueRepository.kt",
@@ -43,12 +41,10 @@
     "G-CANCEL-03 app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptAssetStore.kt"
   ],
   "occurrence_counts": {
-    "G-CANCEL-01 app/src/main/java/com/yourname/expensetracker/data/ai/provider/DefaultAiEnvironmentMonitor.kt": 1,
     "G-CANCEL-01 app/src/main/java/com/yourname/expensetracker/data/location/AndroidForegroundLocationProvider.kt": 1,
     "G-CANCEL-01 app/src/main/java/com/yourname/expensetracker/data/repository/CategoryRepository.kt": 1,
     "G-CANCEL-01 app/src/main/java/com/yourname/expensetracker/data/repository/CurrencySettingsRepositoryImpl.kt": 1,
     "G-CANCEL-01 app/src/main/java/com/yourname/expensetracker/data/repository/GroupsRepositoryImpl.kt": 1,
-    "G-CANCEL-01 app/src/main/java/com/yourname/expensetracker/data/repository/ManualExpenseRepository.kt": 1,
     "G-CANCEL-01 app/src/main/java/com/yourname/expensetracker/data/repository/NotificationProcessingPipeline.kt": 1,
     "G-CANCEL-01 app/src/main/java/com/yourname/expensetracker/data/repository/ReceiptRepository.kt": 2,
     "G-CANCEL-01 app/src/main/java/com/yourname/expensetracker/data/repository/ReviewQueueRepository.kt": 1,

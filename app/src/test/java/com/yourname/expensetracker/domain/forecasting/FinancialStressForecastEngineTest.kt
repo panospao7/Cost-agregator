@@ -245,7 +245,9 @@ class FinancialStressForecastEngineTest {
             recurringOccurrenceDao = recurringOccurrenceDao,
             currencyConverter = currencyConverter,
             accountBalanceProvider = accountBalanceProvider,
-            databaseReadBarrier = databaseReadBarrier
+            databaseReadBarrier = databaseReadBarrier,
+            installmentProjectionPort = com.yourname.expensetracker.domain.installment.projection.emptyInstallmentProjectionPort(),
+            recurringInstallmentEligibility = com.yourname.expensetracker.domain.analytics.noPlansInstallmentEligibility()
         )
     }
 

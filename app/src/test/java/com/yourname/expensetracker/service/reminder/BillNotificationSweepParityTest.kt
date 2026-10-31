@@ -21,6 +21,7 @@ import com.yourname.expensetracker.domain.privacy.applock.AppLockPrivacySettings
 import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsLoadState
 import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticsEmitter
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
+import com.yourname.expensetracker.domain.reminder.BillReminderManager
 import com.yourname.expensetracker.domain.reminder.BillReminderSettings
 import com.yourname.expensetracker.domain.reminder.BillReminderSettingsRepository
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
@@ -129,6 +130,9 @@ class BillNotificationSweepParityTest {
         coEvery { coordinator.markReminderSent(DELIVERY_ID, any()) } returns true
 
         val resolver = resolver()
+        // mec merge: installment reminders ride the same worker; the parity shape is the recurring BILL post.
+        val billReminderManager = mockk<BillReminderManager>(relaxed = true)
+        coEvery { billReminderManager.getDueInstallmentReminders() } returns emptyList()
         val worker = TestListenableWorkerBuilder<BillReminderWorker>(context)
             .setWorkerFactory(object : WorkerFactory() {
                 override fun createWorker(
@@ -144,7 +148,8 @@ class BillNotificationSweepParityTest {
                     settings,
                     FakeTimeProvider(0L),
                     resolver,
-                    applier
+                    applier,
+                    billReminderManager
                 )
             })
             .build()

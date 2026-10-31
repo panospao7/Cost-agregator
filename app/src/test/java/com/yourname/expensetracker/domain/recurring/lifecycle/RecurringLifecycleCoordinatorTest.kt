@@ -14,8 +14,10 @@ import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
 import com.yourname.expensetracker.data.database.entity.RecurringLifecycleEvent
 import com.yourname.expensetracker.data.database.entity.RecurringOccurrence
 import com.yourname.expensetracker.data.database.entity.RecurringReminderDelivery
+import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentEntryLinkReader
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.recurring.OccurrenceConflictResolver
+import com.yourname.expensetracker.domain.recurring.RecurringInstallmentEligibility
 import com.yourname.expensetracker.domain.recurring.RecurringOccurrenceExpander
 import com.yourname.expensetracker.domain.transaction.DomainTransactionRunner
 import com.yourname.expensetracker.domain.transaction.TransactionContext
@@ -105,7 +107,17 @@ class RecurringLifecycleCoordinatorTest {
             writeBarrier = writeBarrier,
             plannedExpenseDao = plannedExpenseDao,
             transactionRunner = FakeDomainTransactionRunner(now),
-            eventWriter = mockk(relaxed = true)
+            eventWriter = mockk(relaxed = true),
+            installmentEligibility = RecurringInstallmentEligibility(
+                dagger.Lazy {
+                    object : InstallmentEntryLinkReader {
+                        override suspend fun linkedEntryIdFor(expenseId: Long): Long? = null
+                        override suspend fun isPlanPurchase(expenseId: Long): Boolean = false
+                        override suspend fun linkedExpenseIds(): Set<Long> = emptySet()
+                        override suspend fun planPurchaseExpenseIds(): Set<Long> = emptySet()
+                    }
+                }
+            )
         )
     }
 

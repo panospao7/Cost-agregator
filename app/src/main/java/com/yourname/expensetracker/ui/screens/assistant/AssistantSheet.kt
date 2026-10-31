@@ -44,6 +44,7 @@ import com.yourname.expensetracker.ui.components.ai.AiInsightsCard
 import com.yourname.expensetracker.ui.components.ai.AiRecommendationCard
 import com.yourname.expensetracker.ui.components.ai.AiTypingIndicator
 import com.yourname.expensetracker.ui.components.ai.AssistantResultCard
+import com.yourname.expensetracker.ui.components.ai.assistantClarificationChoiceLabelRes
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -171,7 +172,11 @@ fun AssistantSheet(
                                         onOpenTransactions = {
                                             item.drilldownFilter?.let(viewModel::openDrilldown)
                                         },
-                                        onClarificationSelected = viewModel::onClarificationSelected
+                                        onClarificationSelected = viewModel::onClarificationSelected,
+                                        onClarificationOptionSelected = { index ->
+                                            viewModel.onClarificationOptionSelected(item.id, index)
+                                        },
+                                        clarificationOptionsEnabled = uiState.livePendingClarification?.first == item.id
                                     )
 
                                     when (val result = item.result) {
@@ -190,17 +195,37 @@ fun AssistantSheet(
                                             var dismissedRecommendations by remember(item.id) {
                                                 mutableStateOf(emptySet<String>())
                                             }
-                                            result.options
-                                                .filterNot { it in dismissedRecommendations }
-                                                .forEach { option ->
-                                                    AiRecommendationCard(
-                                                        recommendation = option,
-                                                        onApply = { viewModel.onClarificationSelected(option) },
-                                                        onDismiss = {
-                                                            dismissedRecommendations += option
-                                                        }
-                                                    )
+                                            val completion = result.completion
+                                            if (completion != null) {
+                                                // C4: structured clarification routed by (item id, index);
+                                                // Apply is disabled unless this card is the live pending one.
+                                                val isLive = uiState.livePendingClarification?.first == item.id
+                                                completion.choices.forEachIndexed { index, choice ->
+                                                    val label = stringResource(assistantClarificationChoiceLabelRes(choice))
+                                                    if (label !in dismissedRecommendations) {
+                                                        AiRecommendationCard(
+                                                            recommendation = label,
+                                                            onApply = { viewModel.onClarificationOptionSelected(item.id, index) },
+                                                            onDismiss = {
+                                                                dismissedRecommendations += label
+                                                            },
+                                                            applyEnabled = isLive
+                                                        )
+                                                    }
                                                 }
+                                            } else {
+                                                result.options
+                                                    .filterNot { it in dismissedRecommendations }
+                                                    .forEach { option ->
+                                                        AiRecommendationCard(
+                                                            recommendation = option,
+                                                            onApply = { viewModel.onClarificationSelected(option) },
+                                                            onDismiss = {
+                                                                dismissedRecommendations += option
+                                                            }
+                                                        )
+                                                    }
+                                            }
                                         }
 
                                         else -> Unit

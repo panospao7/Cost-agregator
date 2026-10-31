@@ -139,6 +139,8 @@ class NavigationRouteContractTest {
             NavigationDestination.PrivacySettings,
             NavigationDestination.AppPinSettings,
             NavigationDestination.CategoryManagement,
+            NavigationDestination.Installments,
+            NavigationDestination.InstallmentHistory,
             NavigationDestination.Debug
         )
 
@@ -212,6 +214,9 @@ class NavigationRouteContractTest {
             // SpendingChallenges (false is not serialised)
             RoundtripCase(NavigationDestination.SpendingChallenges(showCreateDialog = false), "spending_challenges"),
             RoundtripCase(NavigationDestination.SpendingChallenges(showCreateDialog = true)),
+            // InstallmentPlanDetail (loan-installments S10a)
+            RoundtripCase(NavigationDestination.InstallmentPlanDetail(planId = 42L), "installment_plan?id=42"),
+            RoundtripCase(NavigationDestination.InstallmentPlanDetail(planId = 1L)),
             // BudgetForecasting (entity intentionally not serialised)
             RoundtripCase(NavigationDestination.BudgetForecasting(budget = null), "budget_forecasting"),
             // VisualSplitEditor
@@ -292,6 +297,18 @@ class NavigationRouteContractTest {
         assertNotNull(restored)
         restored as NavigationDestination.VisualSplitEditor
         assertNull(restored.templateId)
+    }
+
+    @Test
+    fun `installment_plan token with a non-positive or malformed id does not restore`() {
+        assertNull(destinationFromSaveToken("installment_plan?id=0"))
+        assertNull(destinationFromSaveToken("installment_plan?id=-7"))
+        assertNull(destinationFromSaveToken("installment_plan?id=abc"))
+        assertNull(destinationFromSaveToken("installment_plan"))
+        assertEquals(
+            NavigationDestination.InstallmentPlanDetail(planId = 5L),
+            destinationFromSaveToken("installment_plan?id=5")
+        )
     }
 
     // ── R19: deferred destinations are not restorable when unavailable ──────────

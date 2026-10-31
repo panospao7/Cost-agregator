@@ -27,8 +27,8 @@ import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticKey
 import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticMetadata
 import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticsEmitter
 import com.yourname.expensetracker.domain.privacy.applock.SettingsUnreadableCause
-import com.yourname.expensetracker.domain.privacy.deeplink.DeepLinkRequest
-import com.yourname.expensetracker.domain.privacy.deeplink.DeepLinkHost
+import com.yourname.expensetracker.domain.navigation.deeplink.DeepLinkRequest
+import com.yourname.expensetracker.domain.navigation.deeplink.DeepLinkHost
 import com.yourname.expensetracker.domain.service.NotificationService
 import com.yourname.expensetracker.data.service.PresentationFixtures.BRIEFING_DATA
 import com.yourname.expensetracker.data.service.PresentationFixtures.BRIEFING_KEY
