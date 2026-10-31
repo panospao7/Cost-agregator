@@ -186,6 +186,12 @@ class AppLockPrivacySettingsViewModelTest : ViewModelTestUtils() {
         every { controller.state } returns controllerState
         every { controller.openOriginEnd } returns endSignal
         every { controller.pin } returns pinState
+        // S27b: the confirm step is a real published step, like the controller's own beginPinConfirm / cancelPinStep.
+        every { controller.beginPinConfirm(any()) } answers {
+            pinState.value = pinState.value.copy(step = firstArg())
+            true
+        }
+        every { controller.cancelPinStep() } answers { pinState.value = pinState.value.copy(step = PinStep.NONE) }
         every { capabilityProvider.current() } answers {
             val failure = capabilityFailure
             if (failure != null) throw failure
@@ -603,12 +609,21 @@ class AppLockPrivacySettingsViewModelTest : ViewModelTestUtils() {
                     ReviewSaveResult.NOT_IN_ORIGIN,
                     ReviewSaveResult.ALREADY_IN_FLIGHT ->
                         AppLockPrivacySectionState.NeedsReview(true, false, AppLockPrivacySectionNotice.SAVE_FAILED) to 2
-                    // PIN_MODE (S27b): fail closed, nothing written, no re-read; the review-specific notice (the App PIN
-                    // screen cannot help until the settings are readable), not the generic PIN_MODE notice.
-                    ReviewSaveResult.PIN_MODE ->
-                        AppLockPrivacySectionState.NeedsReview(true, false, AppLockPrivacySectionNotice.PIN_MODE_REVIEW) to 1
+                    // PIN_REQUIRED (S27b): nothing written, no re-read, no notice; the PIN confirm opens instead.
+                    ReviewSaveResult.PIN_REQUIRED ->
+                        AppLockPrivacySectionState.NeedsReview(true, false, null) to 1
+                    // WRONG_PIN / PIN_DELAYED are only valid answers of requestReviewSaveWithPin; from the plain operation
+                    // they fail closed with the save-failed notice (no re-read, no dialog).
+                    ReviewSaveResult.WRONG_PIN,
+                    ReviewSaveResult.PIN_DELAYED ->
+                        AppLockPrivacySectionState.NeedsReview(true, false, AppLockPrivacySectionNotice.SAVE_FAILED) to 1
                 }
                 assertEquals("$result", expected, viewModel.uiState.value)
+                assertEquals(
+                    "$result opens the PIN confirm only for PIN_REQUIRED",
+                    result == ReviewSaveResult.PIN_REQUIRED,
+                    viewModel.pinConfirm.value?.step == PinStep.REVIEW_CONFIRM
+                )
                 assertEquals("$result observer subscriptions", expectedObserveCalls, repository.observeCalls)
                 assertTrue("$result direct repository review-save", repository.reviewSaves.isEmpty())
             }
@@ -3145,9 +3160,17 @@ class AppLockPrivacySettingsViewModelTest : ViewModelTestUtils() {
                     TimeoutChangeResult.FAILED,
                     TimeoutChangeResult.ALREADY_IN_FLIGHT,
                     TimeoutChangeResult.NOT_IN_ORIGIN -> AppLockPrivacySectionNotice.SAVE_FAILED to 2
-                    // PIN_MODE (S27b): nothing written, no re-read; the person is pointed to App PIN.
-                    TimeoutChangeResult.PIN_MODE -> AppLockPrivacySectionNotice.PIN_MODE to 1
+                    // PIN_REQUIRED (S27b): nothing written, no re-read, no notice; the PIN confirm opens instead.
+                    TimeoutChangeResult.PIN_REQUIRED -> null to 1
+                    // WRONG_PIN / PIN_DELAYED belong to requestTimeoutChangeWithPin only: fail closed from the plain call.
+                    TimeoutChangeResult.WRONG_PIN,
+                    TimeoutChangeResult.PIN_DELAYED -> AppLockPrivacySectionNotice.SAVE_FAILED to 1
                 }
+                assertEquals(
+                    "$result opens the PIN confirm only for PIN_REQUIRED",
+                    result == TimeoutChangeResult.PIN_REQUIRED,
+                    viewModel.pinConfirm.value?.step == PinStep.TIMEOUT_CONFIRM
+                )
                 val ready = readyOf(viewModel)
                 assertEquals("$result notice", expected.first, ready.notice)
                 assertEquals("$result observer subscriptions", expected.second, repository.observeCalls)
@@ -4028,11 +4051,11 @@ class AppLockPrivacySettingsViewModelTest : ViewModelTestUtils() {
         }
 
     @Test
-    fun `S27b a PIN_MODE timeout change maps to the PIN_MODE notice and keeps the committed timeout`() =
+    fun `S27b a PIN_REQUIRED timeout change opens the TIMEOUT_CONFIRM dialog, no notice, and keeps the committed timeout`() =
         runTest(testDispatcher) {
             controllerState.value = AppLockState.Unlocked
             pinState.value = appPinMode()
-            coEvery { operations.requestTimeoutChange(AutoLockTimeout.M5) } returns TimeoutChangeResult.PIN_MODE
+            coEvery { operations.requestTimeoutChange(AutoLockTimeout.M5) } returns TimeoutChangeResult.PIN_REQUIRED
             val repository = FakeRepository(
                 AppLockSettingsLoadState.Loaded(settingsOf(lock = true, timeout = AutoLockTimeout.M1))
             )
@@ -4042,7 +4065,10 @@ class AppLockPrivacySettingsViewModelTest : ViewModelTestUtils() {
             advanceUntilIdle()
 
             val ready = readyOf(viewModel)
-            assertEquals(AppLockPrivacySectionNotice.PIN_MODE, ready.notice)
+            assertNull(ready.notice)
+            assertEquals(PinConfirmUiState(PinStep.TIMEOUT_CONFIRM), viewModel.pinConfirm.value)
+            verify(exactly = 1) { controller.beginPinConfirm(PinStep.TIMEOUT_CONFIRM) }
+            coVerify(exactly = 0) { operations.requestTimeoutChangeWithPin(any(), any()) }
             assertEquals(AutoLockTimeoutRowState(AutoLockTimeout.M1, paused = false), ready.timeoutRow)
             assertFalse(ready.isWriting)
             assertEquals(1, repository.observeCalls)
@@ -4051,20 +4077,19 @@ class AppLockPrivacySettingsViewModelTest : ViewModelTestUtils() {
         }
 
     @Test
-    fun `S27b a PIN_MODE review save maps to the PIN_MODE_REVIEW notice, arms no REVIEW_SAVED and frees the card`() =
+    fun `S27b a PIN_REQUIRED review save opens the REVIEW_CONFIRM dialog, arms no REVIEW_SAVED and frees the card`() =
         runTest(testDispatcher) {
             pinState.value = appPinMode()
             val repository = FakeRepository(AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.CORRUPTED))
-            coEvery { operations.requestReviewSave(any()) } returns ReviewSaveResult.PIN_MODE
+            coEvery { operations.requestReviewSave(any()) } returns ReviewSaveResult.PIN_REQUIRED
             val viewModel = openSection(repository)
 
             viewModel.saveReview()
             advanceUntilIdle()
 
-            assertEquals(
-                AppLockPrivacySectionState.NeedsReview(true, false, AppLockPrivacySectionNotice.PIN_MODE_REVIEW),
-                viewModel.uiState.value
-            )
+            assertEquals(AppLockPrivacySectionState.NeedsReview(true, false, null), viewModel.uiState.value)
+            assertEquals(PinConfirmUiState(PinStep.REVIEW_CONFIRM), viewModel.pinConfirm.value)
+            coVerify(exactly = 0) { operations.requestReviewSaveWithPin(any(), any()) }
             // A later commit from elsewhere is not announced as a saved review (no pending flag).
             repository.state.value = AppLockSettingsLoadState.Loaded(committedOff(true))
             advanceUntilIdle()
@@ -4072,5 +4097,309 @@ class AppLockPrivacySettingsViewModelTest : ViewModelTestUtils() {
             verify(exactly = 1) { capabilityProvider.current() }
             assertTrue(repository.reviewSaves.isEmpty())
             confirmVerified(emitter)
+        }
+
+    // --- S27b PIN confirm (T30, AMD-2) -----------------------------------------------------------------------
+
+    private var pinSeenAtCall: String? = null
+
+    /** APP_PIN mode, lock on with a 1 minute timeout, and the user picked 5 minutes: the PIN confirm is open. */
+    private fun TestScope.openTimeoutConfirm(): Pair<AppLockPrivacySettingsViewModel, FakeRepository> {
+        controllerState.value = AppLockState.Unlocked
+        pinState.value = appPinMode()
+        coEvery { operations.requestTimeoutChange(AutoLockTimeout.M5) } returns TimeoutChangeResult.PIN_REQUIRED
+        val repository = FakeRepository(
+            AppLockSettingsLoadState.Loaded(settingsOf(lock = true, timeout = AutoLockTimeout.M1))
+        )
+        val viewModel = openSection(repository)
+        viewModel.onTimeoutSelected(AutoLockTimeout.M5)
+        advanceUntilIdle()
+        assertEquals(PinStep.TIMEOUT_CONFIRM, viewModel.pinConfirm.value?.step)
+        return viewModel to repository
+    }
+
+    /** Submits a synthetic PIN against the held 5 minute timeout; the operation answers [result]. Returns the array. */
+    private fun TestScope.submitTimeoutPin(viewModel: AppLockPrivacySettingsViewModel, result: TimeoutChangeResult): CharArray {
+        coEvery { operations.requestTimeoutChangeWithPin(AutoLockTimeout.M5, any()) } coAnswers {
+            pinSeenAtCall = String(secondArg<CharArray>())
+            result
+        }
+        val pin = "2468".toCharArray()
+        viewModel.submitPinConfirm(pin)
+        advanceUntilIdle()
+        return pin
+    }
+
+    private fun assertZeroed(label: String, pin: CharArray) =
+        assertTrue("$label: the submitted array is zero-filled", pin.all { it == '\u0000' })
+
+    @Test
+    fun `S27b a lengthening timeout in PIN mode with a wrong PIN stays open with WRONG, applies nothing and zero-fills the PIN`() =
+        runTest(testDispatcher) {
+            val (viewModel, repository) = openTimeoutConfirm()
+
+            val pin = submitTimeoutPin(viewModel, TimeoutChangeResult.WRONG_PIN)
+
+            assertEquals("2468", pinSeenAtCall)
+            assertEquals(PinConfirmUiState(PinStep.TIMEOUT_CONFIRM, PinConfirmMessage.WRONG), viewModel.pinConfirm.value)
+            assertNull(readyOf(viewModel).notice)
+            assertEquals(1, repository.observeCalls)
+            verify(exactly = 0) { controller.cancelPinStep() }
+            assertZeroed("wrong", pin)
+        }
+
+    @Test
+    fun `S27b a lengthening timeout with a delayed PIN check stays open with DELAYED and zero-fills the PIN`() =
+        runTest(testDispatcher) {
+            val (viewModel, _) = openTimeoutConfirm()
+
+            val pin = submitTimeoutPin(viewModel, TimeoutChangeResult.PIN_DELAYED)
+
+            assertEquals(PinConfirmUiState(PinStep.TIMEOUT_CONFIRM, PinConfirmMessage.DELAYED), viewModel.pinConfirm.value)
+            verify(exactly = 0) { controller.cancelPinStep() }
+            assertZeroed("delayed", pin)
+        }
+
+    @Test
+    fun `S27b a lengthening timeout with the correct PIN closes the dialog and the committed timeout arrives through the observer`() =
+        runTest(testDispatcher) {
+            val (viewModel, repository) = openTimeoutConfirm()
+
+            val pin = submitTimeoutPin(viewModel, TimeoutChangeResult.COMMITTED)
+            repository.state.value = AppLockSettingsLoadState.Loaded(settingsOf(lock = true, timeout = AutoLockTimeout.M5))
+            advanceUntilIdle()
+
+            assertNull(viewModel.pinConfirm.value)
+            assertNull(readyOf(viewModel).notice)
+            assertEquals(AutoLockTimeoutRowState(AutoLockTimeout.M5, paused = false), readyOf(viewModel).timeoutRow)
+            coVerify(exactly = 1) { operations.requestTimeoutChangeWithPin(AutoLockTimeout.M5, any()) }
+            assertZeroed("committed", pin)
+        }
+
+    @Test
+    fun `S27b a FAILED timeout apply from the PIN confirm closes it with SAVE_FAILED and keeps the committed timeout`() =
+        runTest(testDispatcher) {
+            val (viewModel, _) = openTimeoutConfirm()
+
+            val pin = submitTimeoutPin(viewModel, TimeoutChangeResult.FAILED)
+
+            assertNull(viewModel.pinConfirm.value)
+            assertEquals(AppLockPrivacySectionNotice.SAVE_FAILED, readyOf(viewModel).notice)
+            assertEquals(AutoLockTimeoutRowState(AutoLockTimeout.M1, paused = false), readyOf(viewModel).timeoutRow)
+            assertZeroed("failed", pin)
+        }
+
+    @Test
+    fun `S27b a shorter timeout in PIN mode is applied directly with no confirm and no PIN step`() =
+        runTest(testDispatcher) {
+            controllerState.value = AppLockState.Unlocked
+            pinState.value = appPinMode()
+            coEvery { operations.requestTimeoutChange(AutoLockTimeout.S30) } returns TimeoutChangeResult.COMMITTED
+            val viewModel = openSection(
+                FakeRepository(AppLockSettingsLoadState.Loaded(settingsOf(lock = true, timeout = AutoLockTimeout.M5)))
+            )
+
+            viewModel.onTimeoutSelected(AutoLockTimeout.S30)
+            advanceUntilIdle()
+
+            assertNull(viewModel.pinConfirm.value)
+            verify(exactly = 0) { controller.beginPinConfirm(any()) }
+            coVerify(exactly = 0) { operations.requestTimeoutChangeWithPin(any(), any()) }
+        }
+
+    @Test
+    fun `S27b a weakening review save asks the PIN, and the correct PIN applies exactly the held record`() =
+        runTest(testDispatcher) {
+            pinState.value = appPinMode()
+            val sent = slot<AppLockPrivacySettings>()
+            val applied = slot<AppLockPrivacySettings>()
+            coEvery { operations.requestReviewSave(capture(sent)) } returns ReviewSaveResult.PIN_REQUIRED
+            coEvery { operations.requestReviewSaveWithPin(capture(applied), any()) } returns ReviewSaveResult.COMMITTED
+            val repository = FakeRepository(AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.CORRUPTED))
+            val viewModel = openSection(repository)
+            viewModel.saveReview()
+            advanceUntilIdle()
+            assertEquals(PinStep.REVIEW_CONFIRM, viewModel.pinConfirm.value?.step)
+
+            val pin = "1357".toCharArray()
+            viewModel.submitPinConfirm(pin)
+            advanceUntilIdle()
+
+            assertEquals(sent.captured, applied.captured)
+            assertNull(viewModel.pinConfirm.value)
+            assertEquals(
+                AppLockPrivacySectionState.NeedsReview(true, true, AppLockPrivacySectionNotice.REVIEW_SAVED),
+                viewModel.uiState.value
+            )
+            assertTrue("no direct repository write", repository.reviewSaves.isEmpty())
+            assertZeroed("review committed", pin)
+        }
+
+    @Test
+    fun `S27b a wrong PIN on the review confirm keeps it open with WRONG and a non weakening review save never asks`() =
+        runTest(testDispatcher) {
+            pinState.value = appPinMode()
+            coEvery { operations.requestReviewSave(any()) } returns ReviewSaveResult.PIN_REQUIRED
+            coEvery { operations.requestReviewSaveWithPin(any(), any()) } returns ReviewSaveResult.WRONG_PIN
+            val viewModel = openSection(FakeRepository(AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.CORRUPTED)))
+            viewModel.saveReview()
+            advanceUntilIdle()
+            val pin = "1111".toCharArray()
+            viewModel.submitPinConfirm(pin)
+            advanceUntilIdle()
+            assertEquals(PinConfirmUiState(PinStep.REVIEW_CONFIRM, PinConfirmMessage.WRONG), viewModel.pinConfirm.value)
+            assertZeroed("review wrong", pin)
+
+            // Control: a non-weakening save commits directly, so no confirm and no PIN step.
+            coEvery { operations.requestReviewSave(any()) } returns ReviewSaveResult.COMMITTED
+            val direct = openSection(FakeRepository(AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.CORRUPTED)))
+            direct.saveReview()
+            advanceUntilIdle()
+            assertNull(direct.pinConfirm.value)
+            verify(exactly = 1) { controller.beginPinConfirm(any()) }
+        }
+
+    private fun callOnCleared(viewModel: AppLockPrivacySettingsViewModel) {
+        AppLockPrivacySettingsViewModel::class.java.getDeclaredMethod("onCleared")
+            .apply { isAccessible = true }
+            .invoke(viewModel)
+    }
+
+    @Test
+    fun `S27b dismiss, onScreenLeft and onCleared cancel the PIN step only when this confirm is open`() =
+        runTest(testDispatcher) {
+            controllerState.value = AppLockState.Unlocked
+            pinState.value = appPinMode()
+            val idle = openSection(
+                FakeRepository(AppLockSettingsLoadState.Loaded(settingsOf(lock = true, timeout = AutoLockTimeout.M1)))
+            )
+            idle.dismissPinConfirm()
+            idle.onScreenLeft()
+            callOnCleared(idle)
+            verify(exactly = 0) { controller.cancelPinStep() }
+
+            val (dismissed, _) = openTimeoutConfirm()
+            dismissed.dismissPinConfirm()
+            advanceUntilIdle()
+            assertNull(dismissed.pinConfirm.value)
+            verify(exactly = 1) { controller.cancelPinStep() }
+            dismissed.dismissPinConfirm()
+            dismissed.onScreenLeft()
+            verify(exactly = 1) { controller.cancelPinStep() }
+            val ignored = "9999".toCharArray()
+            dismissed.submitPinConfirm(ignored)
+            advanceUntilIdle()
+            assertZeroed("submit with no dialog", ignored)
+            coVerify(exactly = 0) { operations.requestTimeoutChangeWithPin(any(), any()) }
+
+            val (left, _) = openTimeoutConfirm()
+            left.onScreenLeft()
+            advanceUntilIdle()
+            assertNull(left.pinConfirm.value)
+            verify(exactly = 2) { controller.cancelPinStep() }
+
+            val (cleared, _) = openTimeoutConfirm()
+            callOnCleared(cleared)
+            advanceUntilIdle()
+            verify(exactly = 3) { controller.cancelPinStep() }
+        }
+
+    @Test
+    fun `S27b a PIN step already closed by the controller closes the dialog without cancelling anything`() =
+        runTest(testDispatcher) {
+            val (viewModel, _) = openTimeoutConfirm()
+
+            pinState.value = appPinMode()
+            advanceUntilIdle()
+            viewModel.dismissPinConfirm()
+
+            assertNull(viewModel.pinConfirm.value)
+            verify(exactly = 0) { controller.cancelPinStep() }
+        }
+
+    @Test
+    fun `S27b dismiss is ignored while a verification runs and a second submit is refused and zero-filled`() =
+        runTest(testDispatcher) {
+            val (viewModel, _) = openTimeoutConfirm()
+            val gate = CompletableDeferred<TimeoutChangeResult>()
+            coEvery { operations.requestTimeoutChangeWithPin(AutoLockTimeout.M5, any()) } coAnswers { gate.await() }
+            val first = "2468".toCharArray()
+            viewModel.submitPinConfirm(first)
+            advanceUntilIdle()
+            assertEquals(true, viewModel.pinConfirm.value?.busy)
+
+            viewModel.dismissPinConfirm()
+            val second = "1234".toCharArray()
+            viewModel.submitPinConfirm(second)
+            advanceUntilIdle()
+
+            assertEquals(true, viewModel.pinConfirm.value?.busy)
+            verify(exactly = 0) { controller.cancelPinStep() }
+            coVerify(exactly = 1) { operations.requestTimeoutChangeWithPin(any(), any()) }
+            assertZeroed("second submit while busy", second)
+            gate.complete(TimeoutChangeResult.WRONG_PIN)
+            advanceUntilIdle()
+            assertEquals(PinConfirmUiState(PinStep.TIMEOUT_CONFIRM, PinConfirmMessage.WRONG), viewModel.pinConfirm.value)
+            assertZeroed("first submit", first)
+            viewModel.dismissPinConfirm()
+            advanceUntilIdle()
+            assertNull(viewModel.pinConfirm.value)
+            verify(exactly = 1) { controller.cancelPinStep() }
+        }
+
+    @Test
+    fun `S27b the dialog mirrors the controller delay view, including the neutral flag, without counting itself`() =
+        runTest(testDispatcher) {
+            val (viewModel, _) = openTimeoutConfirm()
+
+            pinState.value = pinState.value.copy(delayRemainingMillis = 7000L, delayNeutral = true)
+            advanceUntilIdle()
+            assertEquals(7000L, viewModel.pinConfirm.value?.delayRemainingMillis)
+            assertEquals(true, viewModel.pinConfirm.value?.delayNeutral)
+
+            pinState.value = pinState.value.copy(delayRemainingMillis = null, delayNeutral = false)
+            advanceUntilIdle()
+            assertNull(viewModel.pinConfirm.value?.delayRemainingMillis)
+            assertEquals(false, viewModel.pinConfirm.value?.delayNeutral)
+        }
+
+    @Test
+    fun `S27b an exception from the PIN apply closes the dialog with SAVE_FAILED and still zero-fills the PIN`() =
+        runTest(testDispatcher) {
+            val (viewModel, _) = openTimeoutConfirm()
+            coEvery { operations.requestTimeoutChangeWithPin(AutoLockTimeout.M5, any()) } coAnswers {
+                throw IllegalStateException("boom")
+            }
+            val pin = "2468".toCharArray()
+
+            viewModel.submitPinConfirm(pin)
+            advanceUntilIdle()
+
+            assertNull(viewModel.pinConfirm.value)
+            assertEquals(AppLockPrivacySectionNotice.SAVE_FAILED, readyOf(viewModel).notice)
+            assertZeroed("exception", pin)
+        }
+
+    @Test
+    fun `S27b the submitted PIN is zero-filled for every timeout and review result`() =
+        runTest(testDispatcher) {
+            TimeoutChangeResult.values().forEach { result ->
+                val (viewModel, _) = openTimeoutConfirm()
+                assertZeroed("timeout $result", submitTimeoutPin(viewModel, result))
+            }
+            ReviewSaveResult.values().forEach { result ->
+                pinState.value = appPinMode()
+                coEvery { operations.requestReviewSave(any()) } returns ReviewSaveResult.PIN_REQUIRED
+                coEvery { operations.requestReviewSaveWithPin(any(), any()) } returns result
+                val viewModel = openSection(
+                    FakeRepository(AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.CORRUPTED))
+                )
+                viewModel.saveReview()
+                advanceUntilIdle()
+                val pin = "2468".toCharArray()
+                viewModel.submitPinConfirm(pin)
+                advanceUntilIdle()
+                assertZeroed("review $result", pin)
+            }
         }
 }

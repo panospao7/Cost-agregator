@@ -112,13 +112,19 @@ enum class EffectiveLockMode {
  * - [CHANGE_ENTRY]: change PIN (current PIN, new PIN twice).
  * - [REMOVE_CONFIRM]: remove the PIN (T30); the current PIN is entered.
  * - [DISABLE_CONFIRM]: disable the lock in effective `APP_PIN` mode (T30 as T18); the current PIN is entered.
+ * - [TIMEOUT_CONFIRM]: in effective `APP_PIN` mode a lengthening timeout change requires the current PIN (AMD-2, T30).
+ *   Reset by any re-lock (INV-54[2]).
+ * - [REVIEW_CONFIRM]: in effective `APP_PIN` mode a weakening review-save requires the current PIN (AMD-2, T30).
+ *   Reset by any re-lock (INV-54[2]).
  */
 enum class PinStep {
     NONE,
     SETUP_ENTRY,
     CHANGE_ENTRY,
     REMOVE_CONFIRM,
-    DISABLE_CONFIRM
+    DISABLE_CONFIRM,
+    TIMEOUT_CONFIRM,
+    REVIEW_CONFIRM
 }
 
 /**
@@ -153,7 +159,12 @@ data class PinPresentation(
     val recovery: PinRecovery?,
     val canOfferFingerprint: Boolean,
     /** Remaining time of an active PIN delay at publish time (INV-38, T25), or null when no delay applies. Never printed. */
-    val delayRemainingMillis: Long? = null
+    val delayRemainingMillis: Long? = null,
+    /**
+     * True when the active delay's reason is `ATTEMPT_STATE_UNREADABLE`, so the UI shows neutral "please wait" copy
+     * instead of "too many attempts". Carries no count (INV-38).
+     */
+    val delayNeutral: Boolean = false
 ) {
     override fun toString(): String =
         "PinPresentation(mode=$effectiveLockMode, step=$step, recovery=$recovery, delayed=${delayRemainingMillis != null})"

@@ -439,6 +439,10 @@ class AppLockController @Inject constructor(
     // S26 (G26 advisory): the reason of the last delayed verify; fingerprint is hidden for ATTEMPT_STATE_UNREADABLE.
     private var pinDelayReason: PinDelayReason? = null
 
+    // S27b (AMD-2, INV-54[2]): the one-shot authority a correct PIN grants for exactly one confirm step. Guarded by
+    // stateLock; memory only; cleared on close, consume and any exit from UNLOCKED. Carries no PIN data.
+    private var pinConfirmAuthority: PinStep? = null
+
     // S26: true only after the last committed PIN-store view had biometricEnabled and the key read READY. Fail closed: false.
     private var fingerprintKeyReady: Boolean = false
     private var currentPinPresentation: PinPresentation = PinPresentation.INITIAL
@@ -1144,7 +1148,14 @@ class AppLockController @Inject constructor(
 
     /** Closes any open PIN step and publishes the view. Idempotent. */
     private fun closePinStep() {
-        transition { pinStep = PinStep.NONE }
+        transition {
+            pinStep = PinStep.NONE
+            pinConfirmAuthority = null
+            if (current !is AppLockState.Locked) { // a confirm-step delay view ends with the step; the lock view keeps its own
+                pinDelayRemainingMillis = null
+                pinDelayReason = null
+            }
+        }
     }
 
     /**
@@ -1215,6 +1226,109 @@ class AppLockController @Inject constructor(
 
     /** Closes any open PIN step with nothing applied (the person left the step). Idempotent. */
     fun cancelPinStep() = closePinStep()
+
+    private fun isPinConfirmStep(step: PinStep): Boolean =
+        step == PinStep.TIMEOUT_CONFIRM || step == PinStep.REVIEW_CONFIRM
+
+    /**
+     * S27b (AMD-2, T30): opens [PinStep.TIMEOUT_CONFIRM] or [PinStep.REVIEW_CONFIRM] under the same preconditions as
+     * [beginPinChange]. Any other [step] is refused (false). False when not allowed.
+     */
+    fun beginPinConfirm(step: PinStep): Boolean = isPinConfirmStep(step) && beginAppPinStep(step)
+
+    /**
+     * S27b: verifies [pin] for the open confirm [step] through the SHARED attempt counter and delay (AMD-2; a correct PIN
+     * resets the counter as on every PIN surface). Success only grants the one-shot authority for exactly [step] and
+     * returns [PinOperationResult.Done]; nothing is written here. A wrong or delayed PIN publishes the bounded delay view
+     * like the unlock surface and keeps the step open. [pin] is zeroed in `finally`, also on cancellation; never logged.
+     */
+    internal suspend fun verifyPinForStep(step: PinStep, pin: CharArray): PinOperationResult {
+        try {
+            if (!isPinConfirmStep(step)) return PinOperationResult.NotInStep
+            if (!pinOperationRunning.compareAndSet(false, true)) return PinOperationResult.AlreadyInFlight
+            try {
+                if (!inPinStep(step)) return PinOperationResult.NotInStep
+                val verified = storeCall<PinVerifyResult>(PinVerifyResult.Unavailable) { pinStore.verify(pin) }
+                if (verified != PinVerifyResult.Correct) return rejectConfirmPin(verified)
+                val granted = transition {
+                    val ok = pinStepOpenLocked(step) && effectiveModeLocked() == EffectiveLockMode.APP_PIN
+                    if (ok) {
+                        pinConfirmAuthority = step
+                        pinDelayRemainingMillis = null
+                        pinDelayReason = null
+                    }
+                    ok
+                }
+                return if (granted) PinOperationResult.Done else PinOperationResult.NotInStep
+            } finally {
+                pinOperationRunning.set(false)
+            }
+        } finally {
+            pin.fill('\u0000')
+        }
+    }
+
+    /** S27b: true while a correct PIN's one-shot authority for exactly [step] is held (a pure read under the monitor). */
+    internal fun pinStepAuthorised(step: PinStep): Boolean = synchronized(stateLock) {
+        pinConfirmAuthority == step && pinStepOpenLocked(step)
+    }
+
+    /** S27b: true once if the authority for [step] is held and the step is still open, and clears it. */
+    internal fun consumePinStepAuthority(step: PinStep): Boolean = synchronized(stateLock) {
+        val held = pinConfirmAuthority == step && pinStepOpenLocked(step)
+        if (pinConfirmAuthority == step) pinConfirmAuthority = null
+        held
+    }
+
+    /**
+     * S27b: after the PIN-confirmed timeout write ([AppLockSettingsOperations] is the caller). Requires and consumes the
+     * [PinStep.TIMEOUT_CONFIRM] authority, else a no-op. Committed: takes [timeout] into the view (D6 sequence bump) and
+     * closes the step. Not committed: records `LOCK_SETTING_PERSIST_FAILED(AUTO_LOCK_TIMEOUT)`; the step stays open.
+     */
+    internal fun onPinConfirmedTimeoutApplied(timeout: AutoLockTimeout, committed: Boolean) {
+        // A1: a committed write is always applied; a re-lock after the authority re-check must not skip the apply.
+        val held = consumePinStepAuthority(PinStep.TIMEOUT_CONFIRM)
+        val diagnostic = transition {
+            if (!committed) return@transition claimTimeoutPersistFailedLocked()
+            writeSequence++ // D6: a settings write committed
+            applyTimeoutToViewLocked(timeout)
+            null
+        }
+        record(diagnostic)
+        if (committed && held) closePinStep()
+    }
+
+    /**
+     * S27b: after the PIN-confirmed review-save ([AppLockSettingsOperations] is the caller). Requires and consumes the
+     * [PinStep.REVIEW_CONFIRM] authority, else a no-op. Committed: the shared committed half runs with the PIN as
+     * authorisation (`direct = false`) and the step closes. Not committed: records
+     * `LOCK_SETTING_PERSIST_FAILED(REVIEW_SAVE)`; the step stays open.
+     */
+    internal fun onPinConfirmedReviewSaved(saved: AppLockPrivacySettings, committed: Boolean) {
+        // A1: a committed save is always applied; a re-lock after the authority re-check must not skip the apply.
+        val held = consumePinStepAuthority(PinStep.REVIEW_CONFIRM)
+        val diagnostic = transition {
+            if (!committed) return@transition claimPersistFailedLocked(AppLockSettingField.REVIEW_SAVE)
+            applyReviewSaveCommittedLocked(saved, direct = false)
+        }
+        record(diagnostic)
+        if (committed && held) closePinStep()
+    }
+
+    /** A confirm-step verify that did not accept the PIN: publishes the bounded delay view (like [rejectPin]), step stays open. */
+    private fun rejectConfirmPin(verified: PinVerifyResult): PinOperationResult {
+        transition {
+            pinConfirmAuthority = null // A2: a non-Correct verify never leaves an earlier authority standing
+            if (verified == PinVerifyResult.Absent) {
+                // AMD-4: no verifier exists, so the effective mode is DEVICE_AUTH again (as the unlock path records it).
+                pinState = (pinState ?: AppPinStoreState.ABSENT).copy(verifier = PinVerifierState.ABSENT)
+            }
+            val delayed = verified as? PinVerifyResult.Delayed
+            pinDelayRemainingMillis = delayed?.remainingMillis
+            pinDelayReason = delayed?.reason
+        }
+        return notVerified(verified)
+    }
 
     /** A verify that did not accept the current PIN, as a bounded result (no PIN, no count). */
     private fun notVerified(result: PinVerifyResult): PinOperationResult = when (result) {
@@ -2652,7 +2766,10 @@ class AppLockController @Inject constructor(
         current = next
         version++
         // S25: a PIN step lives only inside UNLOCKED; the recovery and delay views only inside LOCKED.
-        if (next != AppLockState.Unlocked) pinStep = PinStep.NONE
+        if (next != AppLockState.Unlocked) {
+            pinStep = PinStep.NONE
+            pinConfirmAuthority = null // INV-54[2]: a re-lock cancels any confirm authority
+        }
         if (next !is AppLockState.Locked) {
             pinRecoveryCause = null
             pinDelayRemainingMillis = null
@@ -2679,7 +2796,16 @@ class AppLockController @Inject constructor(
                 null -> if (pinState?.verifier == PinVerifierState.UNREADABLE) PinRecovery.RECORD_UNREADABLE else null
             }
         }
-        return PinPresentation(mode, pinStep, recovery, canOfferFingerprintLocked(), if (locked) pinDelayRemainingMillis else null)
+        // S27b: a delay is also shown inside a PIN confirm step (shared counter, AMD-2), never elsewhere in UNLOCKED.
+        val confirming = pinStep == PinStep.TIMEOUT_CONFIRM || pinStep == PinStep.REVIEW_CONFIRM
+        return PinPresentation(
+            mode,
+            pinStep,
+            recovery,
+            canOfferFingerprintLocked(),
+            if (locked || confirming) pinDelayRemainingMillis else null,
+            pinDelayReason == PinDelayReason.ATTEMPT_STATE_UNREADABLE
+        )
     }
 
     /**

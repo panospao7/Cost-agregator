@@ -89,10 +89,10 @@ class AppLockPinModeFailClosedTest {
     }
 
     @Test
-    fun `INV-40 a longer timeout in effective APP_PIN returns PIN_MODE with no device prompt and no write`() {
+    fun `INV-40 a longer timeout in effective APP_PIN returns PIN_REQUIRED with no device prompt and no write`() {
         val rig = pinModeRig(timeout = AutoLockTimeout.M1)
         val before = settingsOf(rig)
-        assertEquals(TimeoutChangeResult.PIN_MODE, runBlocking { rig.ops.requestTimeoutChange(AutoLockTimeout.M15) })
+        assertEquals(TimeoutChangeResult.PIN_REQUIRED,runBlocking { rig.ops.requestTimeoutChange(AutoLockTimeout.M15) })
         rig.h.settle()
         assertEquals(0, rig.h.authenticator.calls.size)
         assertTrue(rig.h.repository.timeoutWrites.isEmpty())
@@ -133,10 +133,10 @@ class AppLockPinModeFailClosedTest {
     }
 
     @Test
-    fun `INV-40 a weakening review-save in effective APP_PIN returns PIN_MODE with no device prompt and no write`() {
+    fun `INV-40 a weakening review-save in effective APP_PIN returns PIN_REQUIRED with no device prompt and no write`() {
         val rig = unreadablePinModeRig()
         val weakening = AppLockPrivacySettings(appLockEnabled = false)
-        assertEquals(ReviewSaveResult.PIN_MODE, runBlocking { rig.ops.requestReviewSave(weakening) })
+        assertEquals(ReviewSaveResult.PIN_REQUIRED,runBlocking { rig.ops.requestReviewSave(weakening) })
         rig.h.settle()
         assertEquals(0, rig.h.authenticator.calls.size)
         assertTrue(rig.h.repository.reviewSaves.isEmpty())
@@ -175,11 +175,11 @@ class AppLockPinModeFailClosedTest {
     }
 
     @Test
-    fun `INV-40 boundary a weakening review-save in effective APP_PIN with no capability is still PIN_MODE not committed`() {
+    fun `INV-40 boundary a weakening review-save in effective APP_PIN with no capability is still PIN_REQUIRED not committed`() {
         val rig = unreadablePinModeRig()
         rig.h.capabilityProvider.capability = DeviceAuthCapability.NO_CREDENTIAL
         val result = runBlocking { rig.ops.requestReviewSave(AppLockPrivacySettings(appLockEnabled = false)) }
-        assertEquals(ReviewSaveResult.PIN_MODE, result)
+        assertEquals(ReviewSaveResult.PIN_REQUIRED, result)
         assertTrue(rig.h.repository.reviewSaves.isEmpty())
         assertEquals(0, rig.h.authenticator.calls.size)
     }

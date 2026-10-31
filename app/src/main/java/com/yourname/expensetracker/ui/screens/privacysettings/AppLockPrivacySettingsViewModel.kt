@@ -20,6 +20,7 @@ import com.yourname.expensetracker.domain.privacy.applock.InertReason
 import com.yourname.expensetracker.domain.privacy.applock.OpenOriginEnd
 import com.yourname.expensetracker.domain.privacy.applock.OpenOriginEndKind
 import com.yourname.expensetracker.domain.privacy.applock.OpenOriginPrompt
+import com.yourname.expensetracker.domain.privacy.applock.PinStep
 import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticCode
 import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticKey
 import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticMetadata
@@ -32,6 +33,7 @@ import com.yourname.expensetracker.domain.privacy.applock.TimeoutChangeResult
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
@@ -40,6 +42,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import timber.log.Timber
@@ -70,17 +73,37 @@ enum class AppLockPrivacySectionNotice {
     ENABLE_FAILED,
 
     /**
-     * The lock runs in effective APP_PIN mode: a turn-off, timeout or review-save request got PIN_MODE (fail closed, no
-     * device prompt). The person is pointed to App PIN (Turn off app lock); timeout and review changes wait for S27b.
+     * The lock runs in effective APP_PIN mode: a turn-off request got PIN_MODE (fail closed, no device prompt). The
+     * person is pointed to App PIN (Turn off app lock). Timeout and review-save use the PIN confirm dialog (S27b).
      */
     PIN_MODE,
 
-    /**
-     * A review-save (settings unreadable) got PIN_MODE: the App PIN screen cannot help until the settings are readable.
-     * The person is told to save with app lock on and Immediately first.
-     */
+    /** No longer produced since S27b (a weakening review-save in APP_PIN mode opens the PIN confirm instead). */
     PIN_MODE_REVIEW
 }
+
+/** The bounded message of the PIN confirm dialog besides the delay countdown (S27b). Never carries PIN data. */
+enum class PinConfirmMessage {
+    NONE,
+
+    /** The PIN was wrong (shared attempt counter). */
+    WRONG,
+
+    /** The PIN check is delayed or unavailable; the countdown (if any) comes from the controller's pin view. */
+    DELAYED
+}
+
+/**
+ * The PIN confirm dialog state (S27b, T30). [step] is TIMEOUT_CONFIRM or REVIEW_CONFIRM. [delayRemainingMillis] and
+ * [delayNeutral] mirror the controller's published pin view (the delay is never counted here). No PIN, digit or count.
+ */
+data class PinConfirmUiState(
+    val step: PinStep,
+    val message: PinConfirmMessage = PinConfirmMessage.NONE,
+    val busy: Boolean = false,
+    val delayRemainingMillis: Long? = null,
+    val delayNeutral: Boolean = false
+)
 
 /** Why the lock row cannot be switched on (the explanation variant of the unavailable row, ux 2.1). */
 enum class AppLockUnavailableReason {
@@ -366,9 +389,34 @@ class AppLockPrivacySettingsViewModel @Inject constructor(
      */
     private val openOriginEndBaseline: OpenOriginEnd? = controller.openOriginEnd.value
 
+    /** The PIN confirm's own state: the step, the last message and the busy flag. Null = no dialog. */
+    private data class PinConfirmLocal(
+        val step: PinStep,
+        val message: PinConfirmMessage = PinConfirmMessage.NONE,
+        val busy: Boolean = false
+    )
+
+    private val pinConfirmLocal = MutableStateFlow<PinConfirmLocal?>(null)
+
+    /**
+     * The timeout or record waiting for the PIN (S27b). Process memory only: never a SavedStateHandle, Bundle or log. A
+     * PIN is never held here; it exists only in the CharArray passed to [submitPinConfirm].
+     */
+    @Volatile
+    private var pendingTimeout: AutoLockTimeout? = null
+
+    @Volatile
+    private var pendingRecord: AppLockPrivacySettings? = null
+
+    /** The PIN confirm dialog state (S27b), or null while no confirm is open. The delay comes from the controller's pin view. */
+    val pinConfirm: StateFlow<PinConfirmUiState?> = combine(pinConfirmLocal, controller.pin) { local, pin ->
+        local?.let { PinConfirmUiState(it.step, it.message, it.busy, pin.delayRemainingMillis, pin.delayNeutral) }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
     init {
         startObserving()
         observeOpenOriginEnds()
+        observePinStepClosed()
     }
 
     /**
@@ -449,7 +497,7 @@ class AppLockPrivacySettingsViewModel @Inject constructor(
             try {
                 // Serialised inside the operations: deliberately NO outer serializer (non-reentrant: it would deadlock).
                 withContext(NonCancellable) {
-                    handleTimeoutResult(operations.requestTimeoutChange(timeout))
+                    handleTimeoutResult(operations.requestTimeoutChange(timeout), timeout)
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -519,7 +567,7 @@ class AppLockPrivacySettingsViewModel @Inject constructor(
             try {
                 // Serialised inside the operations: deliberately NO outer serializer (non-reentrant: it would deadlock).
                 withContext(NonCancellable) {
-                    handleReviewResult(operations.requestReviewSave(record))
+                    handleReviewResult(operations.requestReviewSave(record), record)
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -643,7 +691,11 @@ class AppLockPrivacySettingsViewModel @Inject constructor(
      * Exhaustive over [ReviewSaveResult] (no else: a new value must be mapped here). The review-save diagnostics and
      * the post-commit discreet sweep are owned by the controller and the operations (D7), not by this ViewModel.
      */
-    private fun handleReviewResult(result: ReviewSaveResult) {
+    private fun handleReviewResult(
+        result: ReviewSaveResult,
+        record: AppLockPrivacySettings,
+        fromPinConfirm: Boolean = false
+    ) {
         // Every result except ALREADY_IN_FLIGHT (the confirmed apply may still be writing) replaces the pending flag.
         if (result != ReviewSaveResult.ALREADY_IN_FLIGHT) pendingReviewSave.set(result == ReviewSaveResult.STARTED)
         when (result) {
@@ -667,8 +719,19 @@ class AppLockPrivacySettingsViewModel @Inject constructor(
                 notice.value = AppLockPrivacySectionNotice.SAVE_FAILED
                 resubscribeOnMain()
             }
-            // Effective APP_PIN mode (fail closed, no device prompt, nothing written). The pending flag was cleared above.
-            ReviewSaveResult.PIN_MODE -> notice.value = AppLockPrivacySectionNotice.PIN_MODE_REVIEW
+            // Effective APP_PIN mode, weakening record, nothing written (fail closed, no device prompt): the PIN confirm
+            // opens and holds the record in memory. The pending flag was cleared above. From the PIN confirm itself this
+            // result is unexpected: fail closed with the save-failed notice instead of reopening.
+            ReviewSaveResult.PIN_REQUIRED ->
+                if (fromPinConfirm) {
+                    notice.value = AppLockPrivacySectionNotice.SAVE_FAILED
+                    resubscribeOnMain()
+                } else {
+                    openPinConfirm(PinStep.REVIEW_CONFIRM, null, record)
+                }
+            // WRONG_PIN and PIN_DELAYED are handled by handlePinReviewResult (the dialog stays); they do not reach here.
+            ReviewSaveResult.WRONG_PIN,
+            ReviewSaveResult.PIN_DELAYED -> notice.value = AppLockPrivacySectionNotice.SAVE_FAILED
         }
     }
 
@@ -692,7 +755,11 @@ class AppLockPrivacySettingsViewModel @Inject constructor(
      * Exhaustive over [TimeoutChangeResult] (no else: a new value must be mapped here). The failure diagnostic is owned by
      * the controller and the operations (D7), not by this ViewModel.
      */
-    private fun handleTimeoutResult(result: TimeoutChangeResult) {
+    private fun handleTimeoutResult(
+        result: TimeoutChangeResult,
+        timeout: AutoLockTimeout,
+        fromPinConfirm: Boolean = false
+    ) {
         when (result) {
             // COMMITTED: written with no prompt; the committed value arrives through the store observer (INV-46).
             // STARTED: the CHANGE prompt is open and nothing is committed; the row keeps the old committed value and the
@@ -708,9 +775,151 @@ class AppLockPrivacySettingsViewModel @Inject constructor(
                 notice.value = AppLockPrivacySectionNotice.SAVE_FAILED
                 resubscribeOnMain()
             }
-            // Effective APP_PIN mode (fail closed, no device prompt, nothing written): point to the App PIN screen.
-            TimeoutChangeResult.PIN_MODE -> notice.value = AppLockPrivacySectionNotice.PIN_MODE
+            // Effective APP_PIN mode, lengthening, nothing written (fail closed, no device prompt): the PIN confirm opens and
+            // holds the timeout in memory. From the PIN confirm itself this result is unexpected: fail closed.
+            TimeoutChangeResult.PIN_REQUIRED ->
+                if (fromPinConfirm) {
+                    notice.value = AppLockPrivacySectionNotice.SAVE_FAILED
+                    resubscribeOnMain()
+                } else {
+                    openPinConfirm(PinStep.TIMEOUT_CONFIRM, timeout, null)
+                }
+            // WRONG_PIN and PIN_DELAYED are handled by handlePinTimeoutResult (the dialog stays); they do not reach here.
+            TimeoutChangeResult.WRONG_PIN,
+            TimeoutChangeResult.PIN_DELAYED -> notice.value = AppLockPrivacySectionNotice.SAVE_FAILED
         }
+    }
+
+    // --- PIN confirm (S27b, T30, AMD-2) ------------------------------------------------------------------------
+
+    /**
+     * Opens the PIN confirm for a lengthening timeout or a weakening review-save that the operations answered with
+     * PIN_REQUIRED. Exactly one of [timeout] and [record] is held, in memory only. A refused step (the controller is not
+     * in its origin, or another PIN step is open) shows the save-failed notice and holds nothing.
+     */
+    private fun openPinConfirm(step: PinStep, timeout: AutoLockTimeout?, record: AppLockPrivacySettings?) {
+        if (pinConfirmLocal.value != null) return
+        pendingTimeout = timeout
+        pendingRecord = record
+        if (!controller.beginPinConfirm(step)) {
+            pendingTimeout = null
+            pendingRecord = null
+            notice.value = AppLockPrivacySectionNotice.SAVE_FAILED
+            resubscribeOnMain()
+            return
+        }
+        pinConfirmLocal.value = PinConfirmLocal(step)
+    }
+
+    /**
+     * Verifies [pin] and applies the held timeout or record through the matching WithPin operation (INV-38: the array is
+     * zeroed in `finally`; it is never a String and never logged). The operations are serialised internally (no outer
+     * serializer) and run under `NonCancellable` in the application scope. The VM takes ownership of [pin].
+     */
+    fun submitPinConfirm(pin: CharArray) {
+        val local = pinConfirmLocal.value
+        val timeout = pendingTimeout
+        val record = pendingRecord
+        val ready = local != null && !local.busy &&
+            ((local.step == PinStep.TIMEOUT_CONFIRM && timeout != null) ||
+                (local.step == PinStep.REVIEW_CONFIRM && record != null))
+        if (!ready || local == null) {
+            pin.fill(ZERO_CHAR)
+            return
+        }
+        pinConfirmLocal.update { it?.copy(busy = true, message = PinConfirmMessage.NONE) }
+        appScope.launch(start = CoroutineStart.ATOMIC) {
+            try {
+                withContext(NonCancellable) {
+                    if (local.step == PinStep.TIMEOUT_CONFIRM && timeout != null) {
+                        handlePinTimeoutResult(operations.requestTimeoutChangeWithPin(timeout, pin), timeout)
+                    } else if (record != null) {
+                        handlePinReviewResult(operations.requestReviewSaveWithPin(record, pin), record)
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Timber.w("PIN confirm failed: class=%s", DiagnosticThrowableSummary.className(e))
+                closePinConfirm()
+                notice.value = AppLockPrivacySectionNotice.SAVE_FAILED
+            } finally {
+                pin.fill(ZERO_CHAR)
+            }
+        }
+    }
+
+    private fun handlePinTimeoutResult(result: TimeoutChangeResult, timeout: AutoLockTimeout) {
+        when (result) {
+            TimeoutChangeResult.WRONG_PIN -> setPinMessage(PinConfirmMessage.WRONG)
+            TimeoutChangeResult.PIN_DELAYED -> setPinMessage(PinConfirmMessage.DELAYED)
+            else -> {
+                closePinConfirm()
+                handleTimeoutResult(result, timeout, fromPinConfirm = true)
+            }
+        }
+    }
+
+    private fun handlePinReviewResult(result: ReviewSaveResult, record: AppLockPrivacySettings) {
+        when (result) {
+            ReviewSaveResult.WRONG_PIN -> setPinMessage(PinConfirmMessage.WRONG)
+            ReviewSaveResult.PIN_DELAYED -> setPinMessage(PinConfirmMessage.DELAYED)
+            else -> {
+                closePinConfirm()
+                handleReviewResult(result, record, fromPinConfirm = true)
+            }
+        }
+    }
+
+    /** A wrong or delayed PIN: the step stays open, the dialog stays and shows the message (the delay is the controller's). */
+    private fun setPinMessage(message: PinConfirmMessage) {
+        pinConfirmLocal.update { it?.copy(busy = false, message = message) }
+    }
+
+    /** Cancel of the dialog. Ignored while a verification or write runs. Closes the controller step if it is still ours. */
+    fun dismissPinConfirm() {
+        val local = pinConfirmLocal.value ?: return
+        if (local.busy) return
+        closePinConfirm()
+    }
+
+    /**
+     * The screen was left (this ViewModel may be activity-scoped, so [onCleared] may not run): drop the held timeout or
+     * record and close the confirm step. Does nothing unless a confirm is open, so it never closes another screen's step.
+     */
+    fun onScreenLeft() {
+        if (pinConfirmLocal.value != null) closePinConfirm()
+    }
+
+    /** Clears the held state and closes the controller step only if it is still this dialog's own confirm step. */
+    private fun closePinConfirm() {
+        val local = pinConfirmLocal.value
+        pendingTimeout = null
+        pendingRecord = null
+        pinConfirmLocal.value = null
+        if (local != null && controller.pin.value.step == local.step) controller.cancelPinStep()
+    }
+
+    /** The controller closed the step (a re-lock, INV-54[2]) while the dialog idles: close the dialog too. */
+    private fun observePinStepClosed() {
+        viewModelScope.launch {
+            try {
+                controller.pin.collect {
+                    val local = pinConfirmLocal.value
+                    // Re-read the latest step: an emission older than a just-opened confirm must not close it.
+                    if (local != null && !local.busy && controller.pin.value.step != local.step) closePinConfirm()
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Timber.w("PIN step observer failed: class=%s", DiagnosticThrowableSummary.className(e))
+            }
+        }
+    }
+
+    override fun onCleared() {
+        closePinConfirm()
+        super.onCleared()
     }
 
     /**
@@ -967,6 +1176,9 @@ class AppLockPrivacySettingsViewModel @Inject constructor(
     }
 
     private companion object {
+        /** Fill value used to zero a PIN array (INV-38). */
+        const val ZERO_CHAR: Char = '\u0000'
+
         /** Fail-closed effective value of the discreet flag (INV-2): on. */
         val FAIL_CLOSED_DISCREET: Boolean = AppLockPrivacySettings.FAIL_CLOSED.discreetNotifications
 

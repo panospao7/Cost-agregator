@@ -3310,3 +3310,31 @@ Validation to request: unchanged, targeted `*AppLockController*` (covers both te
   - S26b: fingerprint enable plus the AE-120 prompt plus the AE-76 device check;
   - S27b: PIN-entry timeout and review-save, hardware keyboard, neutral delay copy.
 - OWNER items: es/el sign-off, the G2 real-phone checks, a TalkBack check, OD-19 Option C.
+
+## 2026-10-31: S27b ACCEPTED and COMMITTED
+- **Domain:**
+  - PinStep TIMEOUT_CONFIRM / REVIEW_CONFIRM;
+  - controller beginPinConfirm, verifyPinForStep (shared counter, AMD-2), a one-shot step authority (cleared on close or re-lock, and on a failed re-verify);
+  - onPinConfirmed* always apply a committed durable write (D6), and only the authority closes the step;
+  - operations requestTimeoutChangeWithPin / requestReviewSaveWithPin (verify, then re-check the authority in the serializer, then write with the F7 settle);
+  - PIN_MODE renamed PIN_REQUIRED for timeout/review; disable keeps PIN_MODE (Turn off in App PIN).
+- **UI:**
+  - PinConfirmDialog from the privacy settings (lengthening timeout / weakening review-save in PIN mode);
+  - PinPad hardware keyboard (digits/numpad, Backspace/Delete, Enter consumed, confirm only at MIN_LENGTH; Ctrl/Alt/Meta ignored);
+  - neutral delay copy (PinPresentation.delayNeutral).
+- Combined guardian A/B: ACCEPT-WITH-FIXES. All applied (A1 MEDIUM durable apply on re-lock, A2, B1, B2).
+- Debugger fix passes:
+  - two production fixes: Enter consumed below MIN_LENGTH; the dialog message node uses mergeDescendants;
+  - test pins updated to the approved API, exact and scoped per method;
+  - stale expectations and idles fixed.
+- Ladder, all PASS:
+  - targeted vr-20261031-093839-84379af1
+  - runtime-ui vr-20261031-094527-f44c3214
+  - domain-n-z vr-20261031-094943-b3cb21f6
+  - architecture-contracts vr-20261031-095200-c7c9060f
+  - static-guards vr-20261031-095303-f0aff219
+  - lint vr-20261031-101709-9406ffee
+  - The first lint attempt was a transient E_EXTERNAL_GRADLE_ACTIVE.
+- NEXT:
+  1. S26b (fingerprint enable): C1 -> C2 -> C3 -> C4 per the plan, with the orchestrator decisions STOP-1 (no guard change; neutral "not available") and STOP-5 (disable is direct).
+  2. Then reviewer-strict on S27b+S26b, then the merge.

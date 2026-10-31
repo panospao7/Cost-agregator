@@ -93,6 +93,7 @@ fun AppLockPrivacySection(
     viewModel: AppLockPrivacySettingsViewModel = hiltViewModel()
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val pinConfirm by viewModel.pinConfirm.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, viewModel) {
@@ -103,7 +104,11 @@ fun AppLockPrivacySection(
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            // S27b: leaving the screen drops the held timeout/record and closes the PIN confirm step.
+            viewModel.onScreenLeft()
+        }
     }
     AppLockPrivacySectionContent(
         state = state,
@@ -121,6 +126,9 @@ fun AppLockPrivacySection(
         onReviewTimeoutChange = viewModel::setReviewTimeoutChoice,
         onReviewSecureChange = viewModel::setReviewSecureChoice,
         onOpenAppPin = onOpenAppPinSettings,
+        pinConfirm = pinConfirm,
+        onPinConfirmSubmit = viewModel::submitPinConfirm,
+        onPinConfirmCancel = viewModel::dismissPinConfirm,
         modifier = modifier
     )
 }
@@ -157,7 +165,10 @@ internal fun AppLockPrivacySectionContent(
     onReviewLockChange: (Boolean) -> Unit = {},
     onReviewTimeoutChange: (AutoLockTimeout) -> Unit = {},
     onReviewSecureChange: (Boolean) -> Unit = {},
-    onOpenAppPin: () -> Unit = {}
+    onOpenAppPin: () -> Unit = {},
+    pinConfirm: PinConfirmUiState? = null,
+    onPinConfirmSubmit: (CharArray) -> Unit = { it.fill('\u0000') },
+    onPinConfirmCancel: () -> Unit = {}
 ) {
     val lockIsOff = state is AppLockPrivacySectionState.Ready && state.lock == AppLockRowState.Off
     var explainerVisible by rememberSaveable { mutableStateOf(false) }
@@ -165,9 +176,9 @@ internal fun AppLockPrivacySectionContent(
         if (!lockIsOff) explainerVisible = false
     }
     val timeoutRow = (state as? AppLockPrivacySectionState.Ready)?.timeoutRow
-    // S27b: in effective APP_PIN mode the timeout change is not available (it needs the app PIN, coming soon).
+    // S27b: in effective APP_PIN mode a longer timeout opens the PIN confirm dialog; the row stays usable.
     val timeoutPickable = state is AppLockPrivacySectionState.Ready && timeoutRow != null &&
-        !state.isWriting && state.lock !is AppLockRowState.Waiting && !state.pinMode
+        !state.isWriting && state.lock !is AppLockRowState.Waiting
     var timeoutDialogVisible by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(timeoutPickable) {
         if (!timeoutPickable) timeoutDialogVisible = false
@@ -231,15 +242,6 @@ internal fun AppLockPrivacySectionContent(
                         onClick = { timeoutDialogVisible = true },
                         tag = AppLockPrivacySectionTags.TIMEOUT_ROW
                     )
-                    // The notice shows the same text after a request; do not draw it twice.
-                    if (state.pinMode && state.notice != AppLockPrivacySectionNotice.PIN_MODE) {
-                        Text(
-                            text = stringResource(R.string.applock_pin_mode_note),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = SemanticColors.TextSecondary,
-                            modifier = Modifier.testTag(AppLockPrivacySectionTags.PIN_MODE_NOTE)
-                        )
-                    }
                 }
                 SwitchRow(
                     title = stringResource(R.string.privacy_toggle_discreet_notifications),
@@ -399,6 +401,9 @@ internal fun AppLockPrivacySectionContent(
             },
             onDismiss = { timeoutDialogVisible = false }
         )
+    }
+    if (pinConfirm != null) {
+        PinConfirmDialog(state = pinConfirm, onSubmit = onPinConfirmSubmit, onCancel = onPinConfirmCancel)
     }
     if (reviewTimeoutDialogVisible && state is AppLockPrivacySectionState.NeedsReview) {
         AutoLockTimeoutDialog(

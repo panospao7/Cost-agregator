@@ -71,8 +71,14 @@
     <string name="applock_pin_turn_off_title">Απενεργοποίηση κλειδώματος εφαρμογής;</string>
     <string name="applock_pin_turn_off_body">Το PIN εφαρμογής θα αφαιρεθεί και η εφαρμογή δεν θα κλειδώνει πια.</string>
     <string name="applock_pin_turn_off_confirm">Απενεργοποίηση</string>
-    <string name="applock_pin_mode_note">Το κλείδωμα εφαρμογής χρησιμοποιεί το PIN εφαρμογής. Για να το απενεργοποιήσετε, ανοίξτε το PIN εφαρμογής και επιλέξτε Απενεργοποίηση κλειδώματος εφαρμογής. Οι αλλαγές χρονικού ορίου και ελέγχου απαιτούν το PIN εφαρμογής (σύντομα). Αφαιρέστε το PIN για να τις αλλάξετε.</string>
+    <string name="applock_pin_mode_note">Το κλείδωμα εφαρμογής χρησιμοποιεί το PIN εφαρμογής. Για να το απενεργοποιήσετε, ανοίξτε το PIN εφαρμογής και επιλέξτε Απενεργοποίηση κλειδώματος εφαρμογής.</string>
     <!-- DRAFT el: pending native review -->
     <string name="applock_pin_mode_review_note">Αποθηκεύστε πρώτα με ενεργό το κλείδωμα εφαρμογής και Άμεσα. Μετά μπορείτε να το απενεργοποιήσετε στο PIN εφαρμογής.</string>
     <string name="applock_pin_turn_off_incomplete">Το PIN της εφαρμογής αφαιρέθηκε, αλλά το κλείδωμα εφαρμογής παραμένει ενεργό. Απενεργοποιήστε το στις ρυθμίσεις απορρήτου.</string>
+    <!-- S27b B2 (el DRAFT, pending native sign-off): PIN confirm dialog. -->
+    <string name="applock_pin_confirm_timeout_title">Εισαγάγετε το PIN εφαρμογής για να αλλάξετε το χρονικό όριο</string>
+    <string name="applock_pin_confirm_review_title">Εισαγάγετε το PIN εφαρμογής για να αποθηκεύσετε αυτές τις ρυθμίσεις</string>
+    <string name="applock_pin_confirm_button">Επιβεβαίωση</string>
+    <string name="applock_pin_confirm_cancel">Ακύρωση</string>
+    <string name="applock_pin_confirm_unavailable">Το PIN εφαρμογής δεν μπορεί να ελεγχθεί αυτή τη στιγμή. Δοκιμάστε ξανά αργότερα.</string>
 </resources>

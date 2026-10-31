@@ -548,6 +548,14 @@ class AppLockControllerIllegalTransitionTest {
         // S25, exact addition, allowed for these four methods only (like the committed flag above, no global CharArray
         // allowance): the entered PIN, which the controller zeroes after use.
         val pinArrayMethods = setOf("enablePin", "changePin", "disablePin", "submitUnlockPin")
+        // S27b, exact addition (this one method, possibly mangled): verifyPinForStep also takes the entered PIN.
+        val pinArrayStepMethods = setOf("verifyPinForStep")
+        // S27b, exact additions, scoped per method (no global allowance): the PIN-step type is allowed for the PIN
+        // confirm entries only; Boolean only for the two onPinConfirmed* reports; the settings record only for the
+        // review-saved report (see reviewSaveRecordMethods). Internal methods are mangled `name$app_debug`.
+        val pinStepMethods = setOf("beginPinConfirm", "verifyPinForStep", "pinStepAuthorised", "consumePinStepAuthority")
+        val pinConfirmBooleanMethods = setOf("onPinConfirmedTimeoutApplied", "onPinConfirmedReviewSaved")
+        fun nameIsOneOf(name: String, methods: Set<String>) = methods.any { name == it || name.startsWith("$it\$") }
         // internal (Operations-only) entry, G25-7b: the write result of the lock-off in AppLockSettingsOperations.removePin.
         // Allowed for this ONE method only (its JVM name carries the internal module suffix after a dollar sign).
         val writeResultMethodPrefix = "onPinRemovalLockOffApplied\$"
@@ -563,8 +571,12 @@ class AppLockControllerIllegalTransitionTest {
                 method.parameterTypes.any {
                     it !in allowedParameterTypes && !it.name.startsWith("kotlin.coroutines") &&
                         !(it == Boolean::class.javaPrimitiveType && method.name in committedFlagMethods) &&
+                        !(it == Boolean::class.javaPrimitiveType && nameIsOneOf(method.name, pinConfirmBooleanMethods)) &&
                         !(it == AppLockPrivacySettings::class.java && method.name in reviewSaveRecordMethods) &&
+                        !(it == AppLockPrivacySettings::class.java && nameIsOneOf(method.name, setOf("onPinConfirmedReviewSaved"))) &&
                         !(it == CharArray::class.java && method.name in pinArrayMethods) &&
+                        !(it == CharArray::class.java && nameIsOneOf(method.name, pinArrayStepMethods)) &&
+                        !(it == PinStep::class.java && nameIsOneOf(method.name, pinStepMethods)) &&
                         !(it == AppLockSettingsWriteResult::class.java && method.name.startsWith(writeResultMethodPrefix))
                 }
             }
@@ -642,7 +654,10 @@ class AppLockControllerIllegalTransitionTest {
                 "getCanOfferFingerprintUnlock",
                 // S26 (D-I2-7 amended), exact replacement of the removed proof-less onFingerprintUnlockSucceeded: the
                 // request opens a PIN_FINGERPRINT UNLOCK attempt; only a verified prompt success can unlock.
-                "requestFingerprintUnlock"
+                "requestFingerprintUnlock",
+                // S27b, exact addition: the PIN-confirm step start (the other S27b entries are internal, hence
+                // mangled and absent from this unmangled set).
+                "beginPinConfirm"
             ),
             production
         )
@@ -920,7 +935,10 @@ class AppLockControllerIllegalTransitionTest {
                     "requestEnable",
                     "requestDisable",
                     "requestTimeoutChange",
-                    "requestSecureScreenChange"
+                    "requestSecureScreenChange",
+                    // S27b, exact additions: the PIN-confirmed variants of the timeout change and the review save.
+                    "requestTimeoutChangeWithPin",
+                    "requestReviewSaveWithPin"
                 ),
             // S27 (PIN settings, owner-approvals 92/96): the third legitimate caller. It names only the type and calls
             // removePin, the single legal PIN-removal write path (INV-49); no request* entry.
@@ -1022,12 +1040,14 @@ class AppLockControllerIllegalTransitionTest {
     }
 
     @Test
-    fun `S20 F6 and S22-a_1 O-1 - the settings ViewModel's only uses of the controller are requestSettingsReread, state, openOriginEnd and pin`() {
+    fun `S20 F6 and S27b - the settings ViewModel's only uses of the controller are requestSettingsReread, state, openOriginEnd, pin, beginPinConfirm and cancelPinStep`() {
         // Per-file pin (strengthening): the per-file token exemption above allows `requestSettingsReread` and the end
         // signal in the settings ViewModel; this keeps every OTHER member access on its `controller` property out.
         // S22-a.1 (owner item 81b, O-1) plus W2: the member set is EXACTLY {requestSettingsReread, state, openOriginEnd,
         // pin}, the retry's re-read request plus the read-only StateFlows (the lock row's Waiting, the lock notices and
-        // the read-only pinMode).
+        // the read-only pinMode). S27b adds EXACTLY {beginPinConfirm, cancelPinStep}: the PIN-confirm step start and
+        // its cancel, so the member set is now {requestSettingsReread, state, openOriginEnd, pin, beginPinConfirm,
+        // cancelPinStep}.
         // Comments and string literals are stripped so KDoc and messages are not calls.
         val roots = locateProductionSourceRoots()
         val viewModelFile = roots.map { File(it, SETTINGS_VIEW_MODEL_PATH) }.firstOrNull { it.isFile }
@@ -1037,7 +1057,10 @@ class AppLockControllerIllegalTransitionTest {
             .replace(Regex("//[^\\n]*"), " ")
             .replace(Regex("\"(?:\\\\.|[^\"\\\\])*\""), "\"\"")
         val members = Regex("\\bcontroller\\s*\\??\\.\\s*(\\w+)").findAll(code).map { it.groupValues[1] }.toSet()
-        assertEquals(setOf("requestSettingsReread", "state", "openOriginEnd", "pin"), members)
+        assertEquals(
+            setOf("requestSettingsReread", "state", "openOriginEnd", "pin", "beginPinConfirm", "cancelPinStep"),
+            members
+        )
     }
 
     @Test
@@ -1137,7 +1160,10 @@ class AppLockControllerIllegalTransitionTest {
             "requestDiscreetChange",
             "requestSecureScreenChange",
             // S18 (ii-d), exact addition: the 1a ViewModel routes through it from S20-e (S18-ii-h).
-            "requestReviewSave"
+            "requestReviewSave",
+            // S27b, exact additions: the PIN-confirmed variants (public request* entries of the Operations).
+            "requestTimeoutChangeWithPin",
+            "requestReviewSaveWithPin"
         )
     }
 

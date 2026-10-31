@@ -75,8 +75,14 @@
     <string name="applock_pin_turn_off_title">¿Desactivar el bloqueo de la app?</string>
     <string name="applock_pin_turn_off_body">Se eliminará tu PIN de la app y la app ya no se bloqueará.</string>
     <string name="applock_pin_turn_off_confirm">Desactivar</string>
-    <string name="applock_pin_mode_note">El bloqueo de la app usa tu PIN de la app. Para desactivarlo, abre PIN de la app y elige Desactivar el bloqueo de la app. Los cambios del tiempo de espera y de la revisión requieren el PIN de la app (próximamente). Elimina el PIN para cambiarlos.</string>
+    <string name="applock_pin_mode_note">El bloqueo de la app usa tu PIN de la app. Para desactivarlo, abre PIN de la app y elige Desactivar el bloqueo de la app.</string>
     <!-- DRAFT es: pending native review -->
     <string name="applock_pin_mode_review_note">Guarda primero con el bloqueo de la app activado e Inmediatamente. Después podrás desactivarlo en PIN de la app.</string>
     <string name="applock_pin_turn_off_incomplete">Se eliminó el PIN de la app, pero el bloqueo de la app sigue activado. Desactívalo en los ajustes de privacidad.</string>
+    <!-- S27b B2 (es DRAFT, pending native sign-off): PIN confirm dialog. -->
+    <string name="applock_pin_confirm_timeout_title">Introduce el PIN de la app para cambiar el tiempo de espera</string>
+    <string name="applock_pin_confirm_review_title">Introduce el PIN de la app para guardar estos ajustes</string>
+    <string name="applock_pin_confirm_button">Confirmar</string>
+    <string name="applock_pin_confirm_cancel">Cancelar</string>
+    <string name="applock_pin_confirm_unavailable">No se puede comprobar el PIN de la app ahora mismo. Inténtalo más tarde.</string>
 </resources>

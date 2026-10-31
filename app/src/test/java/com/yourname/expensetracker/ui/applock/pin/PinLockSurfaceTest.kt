@@ -12,6 +12,7 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import com.yourname.expensetracker.R
@@ -187,6 +188,21 @@ class PinLockSurfaceTest : AppLockComposeTestBase() {
         composeRule.waitForIdle()
         val waitPrefix = text(R.string.applock_pin_wait, "\u0001").substringBefore("\u0001")
         composeRule.onNodeWithTag(PinLockTags.MESSAGE).assertTextContains(waitPrefix, substring = true)
+        composeRule.onNodeWithTag(PinPadTags.KEY_PREFIX + "3").assertIsNotEnabled()
+    }
+
+    @Test
+    fun s27b_publishedNeutralDelay_showsNeutralCopy_notTooManyAttempts_andDisablesPad() {
+        composeRule.mainClock.autoAdvance = false
+        presentation.value = PinPresentation(EffectiveLockMode.APP_PIN, PinStep.NONE, null, false, 120_000L, true)
+        show()
+        composeRule.mainClock.advanceTimeByFrame()
+        composeRule.waitForIdle()
+        val neutralPrefix = text(R.string.applock_pin_wait_neutral, "\u0001").substringBefore("\u0001")
+        val tooManyPrefix = text(R.string.applock_pin_wait, "\u0001").substringBefore("\u0001")
+        composeRule.onNodeWithTag(PinLockTags.MESSAGE).assertTextContains(neutralPrefix, substring = true)
+        assertTrue(neutralPrefix != tooManyPrefix)
+        composeRule.onAllNodesWithText(tooManyPrefix, substring = true).assertCountEquals(0)
         composeRule.onNodeWithTag(PinPadTags.KEY_PREFIX + "3").assertIsNotEnabled()
     }
 

@@ -177,21 +177,21 @@ class AppLockPrivacySectionPinRowTest : AppLockComposeTestBase() {
     }
 
     @Test
-    fun `S27b pinMode - the timeout row is disabled and shows the PIN mode note exactly once`() {
+    fun `S27b pinMode - the timeout row is enabled (the PIN confirm guards a lengthening) and no persistent note is drawn`() {
         show(ready(AppLockRowState.On, pinMode = true))
 
-        composeRule.onNodeWithTag(AppLockPrivacySectionTags.TIMEOUT_ROW).assertIsNotEnabled()
-        assertEquals(1, composeRule.onAllNodesWithTag(AppLockPrivacySectionTags.PIN_MODE_NOTE).fetchSemanticsNodes().size)
-        assertEquals("the note text is drawn once", 1, pinModeNoteCount())
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.TIMEOUT_ROW).assertIsEnabled()
+        assertEquals(0, composeRule.onAllNodesWithTag(AppLockPrivacySectionTags.PIN_MODE_NOTE).fetchSemanticsNodes().size)
+        assertEquals("no PIN mode text without a notice", 0, pinModeNoteCount())
     }
 
     @Test
-    fun `S27b pinMode - the PIN_MODE notice replaces the note instead of duplicating it`() {
-        show(ready(AppLockRowState.On, pinMode = true, notice = AppLockPrivacySectionNotice.PIN_MODE))
+    fun `S27b pinMode - a disabled-by-write timeout row stays disabled while writing, and the PIN_MODE notice is drawn once`() {
+        show(ready(AppLockRowState.On, pinMode = true, isWriting = true, notice = AppLockPrivacySectionNotice.PIN_MODE))
 
-        assertEquals(0, composeRule.onAllNodesWithTag(AppLockPrivacySectionTags.PIN_MODE_NOTE).fetchSemanticsNodes().size)
-        assertEquals("the same text is drawn once, by the notice", 1, pinModeNoteCount())
         composeRule.onNodeWithTag(AppLockPrivacySectionTags.TIMEOUT_ROW).assertIsNotEnabled()
+        assertEquals(0, composeRule.onAllNodesWithTag(AppLockPrivacySectionTags.PIN_MODE_NOTE).fetchSemanticsNodes().size)
+        assertEquals("the notice text is drawn once", 1, pinModeNoteCount())
     }
 
     @Test

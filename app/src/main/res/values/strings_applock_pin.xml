@@ -72,7 +72,13 @@
     <string name="applock_pin_turn_off_title">Turn off app lock?</string>
     <string name="applock_pin_turn_off_body">Your app PIN will be removed and the app will no longer lock.</string>
     <string name="applock_pin_turn_off_confirm">Turn off</string>
-    <string name="applock_pin_mode_note">App lock uses your app PIN. To turn it off, open App PIN and choose Turn off app lock. Timeout and review changes need the app PIN (coming soon). Remove the PIN to change them.</string>
+    <string name="applock_pin_mode_note">App lock uses your app PIN. To turn it off, open App PIN and choose Turn off app lock.</string>
     <string name="applock_pin_mode_review_note">Save with app lock on and Immediately first. Then you can turn it off in App PIN.</string>
     <string name="applock_pin_turn_off_incomplete">App PIN removed, but app lock is still on. Turn it off in Privacy settings.</string>
+    <!-- S27b B2: PIN confirm dialog for a longer timeout and a review-save. -->
+    <string name="applock_pin_confirm_timeout_title">Enter your app PIN to change the timeout</string>
+    <string name="applock_pin_confirm_review_title">Enter your app PIN to save these settings</string>
+    <string name="applock_pin_confirm_button">Confirm</string>
+    <string name="applock_pin_confirm_cancel">Cancel</string>
+    <string name="applock_pin_confirm_unavailable">The app PIN can\'t be checked right now. Try again later.</string>
 </resources>

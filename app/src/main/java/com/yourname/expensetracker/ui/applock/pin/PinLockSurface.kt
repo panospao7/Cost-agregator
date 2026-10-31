@@ -272,7 +272,7 @@ fun PinLockSurface(
     PinDelayTicker(ui)
     LaunchedEffect(pin.delayRemainingMillis) {
         val published = pin.delayRemainingMillis
-        if (published != null && published > 0L && !ui.delayActive) ui.startDelay(published, false)
+        if (published != null && published > 0L && !ui.delayActive) ui.startDelay(published, pin.delayNeutral)
     }
     val recovery = pin.recovery
     val padEnabled = !promptInFlight && !ui.submitting && !ui.delayActive && recovery == null

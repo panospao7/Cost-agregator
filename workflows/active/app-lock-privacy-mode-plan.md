@@ -2429,3 +2429,59 @@ Conditions:
 ### D-I2-7 amended (2026-10-30, owner-approvals 92)
 - The frozen fingerprint API is now `suspend fun requestFingerprintUnlock()` (user tap; opens an UNLOCK attempt with PIN_FINGERPRINT copy through the existing attempt/watchdog machinery). `onFingerprintUnlockSucceeded()` is REMOVED (proof-less unlock, G26-1/G26-2). S27 had not consumed it.
 - `closeWith` unlocks a PIN_FINGERPRINT success only in effective APP_PIN with the verifier PRESENT and `biometricEnabled`; NotAvailable/LockedOut/Cancelled return to LOCKED (never INERT, no device credential); `resetAttempts()` runs after the close inside NonCancellable.
+
+## S27b and S26b slice plan (feature-planner, 2026-10-31, at 5ded089e; orchestrator-accepted under owner-approvals 92)
+Order: S27b A1 -> A2 -> A3 (serial), then {B1 || B2}, then B3; then S26b C1 -> C2 -> C3 -> C4 (serial on the controller).
+
+### S27b: PIN-verified timeout and review-save, hardware keyboard, neutral delay
+- **A1 types** (AppLockState.kt):
+  - PinStep.TIMEOUT_CONFIRM and REVIEW_CONFIRM;
+  - PinPresentation.delayNeutral (default false) for ATTEMPT_STATE_UNREADABLE.
+- **A2 controller:**
+  - beginPinConfirm(step);
+  - internal suspend verifyPinForStep(step, pin), using the shared counter (AMD-2); the PIN is zeroed in finally;
+  - a one-shot step authority, cleared by closePinStep/setState;
+  - onPinConfirmedTimeoutApplied / onPinConfirmedReviewSaved consume the authority and reuse the existing apply paths;
+  - publish delayNeutral.
+- **A3 operations:**
+  - requestTimeoutChangeWithPin and requestReviewSaveWithPin: verify, then re-check the step and authority inside writeSerializer, then write (NonCancellable, F7 settle), then apply, then close the step;
+  - shorter timeout and non-weakening saves stay direct;
+  - TimeoutChangeResult/ReviewSaveResult PIN_MODE becomes PIN_REQUIRED;
+  - SettingsRequestResult.PIN_MODE stays for disable (Turn off via removePin).
+- **B1 pad:** hardware keyboard on PinPad (digits/numpad, Backspace/Delete, Enter only when enabled and at least MIN_LENGTH; never logged); PinLockSurface uses pin.delayNeutral.
+- **B2 settings UI:**
+  - a PinConfirmDialog (PinDotRow + PinPad + delay UI);
+  - the VM holds the pending timeout/record in memory only; on PIN_REQUIRED it begins the step; cancelPinStep on dismiss or leaving the screen;
+  - the PIN_MODE/PIN_MODE_REVIEW dead ends removed for these paths.
+- **B3:** strings.
+- **Risks:**
+  - AppPinSettingsViewModel's init cancelPinStep can close a card-opened step; scope it or test it.
+  - The ordering of the verify reset against the write.
+  - A cold-start delay may need a store read: STOP if AppPinStore changes.
+- **STOP:**
+  - guard or allowlist changes;
+  - a PIN in a String, log or diagnostic;
+  - es/el sign-off;
+  - a weakening write without the PIN;
+  - an AppPinStore interface change.
+
+### S26b: fingerprint enable/disable in PIN mode
+- **C1 types:**
+  - OpenOriginPrompt.FINGERPRINT_ENABLE;
+  - PinStep.FINGERPRINT_CONFIRM;
+  - PinPresentation.fingerprintEnabled;
+  - PinFingerprintKeyGate.create()/delete() with defaults;
+  - LockNotice.BIOMETRIC_INVALIDATED with its derivation (INV-51, AE-100).
+- **C2 controller + DI:**
+  - enable = verify the PIN, then gate.create(), then the FINGERPRINT_ENABLE open-origin attempt (PIN_FINGERPRINT copy, BIOMETRIC_STRONG);
+  - on success setBiometricEnabled(true) (NonCancellable); on failure delete the key;
+  - the AE-120 non-unlock-equivalent close keeps promptBackgroundAt;
+  - disable is DIRECT, no PIN (a strengthening);
+  - dismissBiometricNotice; the AE-76 invalidation is one write.
+- **C3 UI:** an App PIN settings toggle, the banner dismiss.
+- **C4:** strings.
+- **Orchestrator decisions (item 92, conservative):**
+  - STOP-1: NO guard or scan change. The toggle shows on API 30+ in PIN mode, and NotAvailable shows a neutral "fingerprint not available" message.
+  - STOP-5: disabling fingerprint is direct.
+  - Any manifest or permission diff = STOP (USE_BIOMETRIC already merged from androidx.biometric; USE_FINGERPRINT is removed).
+- **Device checks at G2:** `adb emu finger` for AE-76 and the AE-120 timing (emulator only).
