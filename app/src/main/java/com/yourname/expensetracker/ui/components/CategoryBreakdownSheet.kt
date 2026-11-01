@@ -2,10 +2,16 @@ package com.yourname.expensetracker.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -37,17 +43,21 @@ fun CategoryBreakdownSheet(
     /** Placeholder default. Production callers should pass explicit currency. */
     currency: String = "EUR"
 ) {
-    val displayCategories = categories.take(5)
-    val hasMore = categories.size > 5
+    var expanded by remember { mutableStateOf(false) }
+    val displayCategories = if (expanded) categories else categories.take(5)
+    val hasMore = !expanded && categories.size > 5
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         containerColor = SemanticColors.BaseNavy,
         dragHandle = { BottomSheetDefaults.DragHandle() }
     ) {
+        // A plain Column (not a LazyColumn) under verticalScroll: the expanded list can
+        // exceed the sheet height, and a lazy list inside a scrollable parent would crash.
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 24.dp)
                 .padding(bottom = 32.dp)
         ) {
@@ -92,7 +102,7 @@ fun CategoryBreakdownSheet(
 
             if (hasMore) {
                 OutlinedButton(
-                    onClick = { },
+                    onClick = { expanded = true },
                     modifier = Modifier.fillMaxWidth(),
                     colors = ButtonDefaults.outlinedButtonColors(
                         contentColor = SemanticColors.TextSecondary
