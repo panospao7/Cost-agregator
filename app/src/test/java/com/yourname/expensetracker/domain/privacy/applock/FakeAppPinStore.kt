@@ -143,6 +143,11 @@ internal class FakeAppPinStore(initial: AppPinStoreState = AppPinStoreState.ABSE
 
     override suspend fun recordBiometricInvalidated(): PinStoreWriteResult {
         record("recordBiometricInvalidated")
+        // Mirrors the real store (G2-F1 MINOR-3): with the flag on, one write turns it off and raises the notice; with
+        // the flag already off nothing changes. Applied only when [applyFlagWrites] is set, so earlier tests are unchanged.
+        if (applyFlagWrites && stateFlow.value.biometricEnabled) {
+            stateFlow.value = stateFlow.value.copy(biometricEnabled = false, biometricInvalidatedNoticePending = true)
+        }
         return PinStoreWriteResult.DONE
     }
 

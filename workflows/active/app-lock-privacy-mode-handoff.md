@@ -3405,3 +3405,59 @@ Validation to request: unchanged, targeted `*AppLockController*` (covers both te
   - Test gaps that are not reachable: the LOW-4(b) out-of-step close, and the LOCKED to LOCKED delay-keep half of F1.
   - For the delta review to confirm: a timeout lock that fires on the enable-success close still commits biometricEnabled. Both the PIN and a STRONG biometric were verified.
   - Queue note: a duplicate driver was started by mistake. The runner lock serialised the runs, so nothing ran in parallel. The duplicate was killed, and one driver remains.
+
+### S27b + S26b merged (2026-11-01)
+- reviewer-strict delta `bf335ece..961846f5`: ACCEPT-WITH-MINORS.
+  - AE-120 confirmed: the commit is kept when the enable-success close ends LOCKED(TIMEOUT).
+  - One stale-comment MINOR, fixed in the next lane commit (comment-only, no validation needed).
+- Integration merge `5f49624e`: all PASS.
+  - static-guards vr-20261101-190322-dd2019c4
+  - unit-tests vr-20261101-192226-f9e02ad8
+  - app-check vr-20261101-193629-6c1243f3
+- Fast-forward pushed to origin/feature/ai-evolution. Owner-approvals item 99. The lane is synced to 5f49624e.
+- Accepted residuals:
+  - the async key delete racing an instant re-enable (fails closed);
+  - the setPinMessage check-then-update window;
+  - LOW-2 checks the step type, not the step instance.
+- NEXT: the G2 emulator checks on emulator-5554 only: AE-76 fingerprint enrolment via `adb emu finger touch`, and the AE-120 timing.
+- OWNER: es/el sign-off of the S27b/S26b strings; the real-phone G2 checks (item 98).
+
+### G2 emulator checks (2026-11-01, emulator-5554 wave5-api35 only; debug APK vr-20261101-201940-5fb1d49e at 97db8a43)
+- Setup on the emulator:
+  - device PIN plus fingerprint 1;
+  - app lock ON (1-min timeout);
+  - app PIN set (T31 device prompt, then PIN twice);
+  - fingerprint enable: PIN, then the STRONG prompt, then the switch ON. The lock screen offers "Use fingerprint" and unlocks.
+- AE-120: PASS (fail closed).
+  - Pressing HOME during the enable prompt makes the system cancel the prompt. After a 75 s background the app reopens LOCKED (PIN screen).
+  - The flag is not committed and no key is left in use. The "success after background" order is not reachable on the platform.
+- No PIN digits in logcat.
+- AE-76 at cold start: PASS.
+  - After a second enrolment plus a process restart: no fingerprint button, and the "Fingerprint unlock turned off" banner after the PIN unlock.
+  - Dismiss persists across a restart.
+- **G2-F1 MEDIUM (AE-76/AE-100, live process):** when an enrolment changes while the process lives, the key state is never re-read.
+  - The key state is read only in `fingerprintReadyFor`, called from the `observeState` collector, which is distinctUntilChanged. Foreground does not re-read it.
+  - The lock screen keeps "Use fingerprint". A tap ends in PROMPT_UNAVAILABLE, then a silent NotLaunched: a dead button, no notice, and the flag stays ON until the process restarts.
+  - Fails closed: the PIN is still required.
+  - Debugger fix: re-check `fingerprintReadyFor` in the requestFingerprintUnlock path, and on foreground when biometricEnabled is set.
+- G2-N1 LOW (follow-up): StrictMode DiskRead on main, from `AndroidBiometricPinKeyManager.verifyAuthenticatedCrypto` inside `onAuthenticationSucceeded` (a Keystore op on the main thread).
+- UX note: the enable prompt reuses the PIN_FINGERPRINT copy "Unlock with fingerprint" plus the negative "Use PIN". Copy polish candidate (owner es/el pass).
+- NEXT: the G2-F1 fix slice (writer, then test-author), the ladder, an integration merge with the full suites, reviewer-strict on the delta, then a fast-forward. Then re-run the AE-76 live-process check on the emulator.
+- G2-F1 fix:
+  - Writer:
+    - private `recheckFingerprintKey(observed)`, re-checked at requestFingerprintUnlock before an attempt and on APP_FOREGROUNDED (`launchFingerprintKeyRecheck`, when biometricEnabled is set);
+    - INVALIDATED gives the single recordBiometricInvalidated write;
+    - a stale snapshot changes nothing; READY self-heals after a transient UNAVAILABLE.
+  - Test-author: `AppLockControllerPinBiometricTest`, "G2-F1" section, 12 tests.
+  - Ladder PASS:
+    - targeted vr-20261101-204603-e0c9495a
+    - architecture-contracts vr-20261101-205336-69dac266
+- reviewer-strict G2-F1 delta `97db8a43..24cdf1c9`: ACCEPT-WITH-MINORS. Fixed in the next commit:
+  - MINOR-1: `AppPinStoreImpl.recordBiometricInvalidated` is idempotent; no edit and no emit when the flag is already off.
+  - MINOR-2: a private AtomicBoolean `fingerprintRecheckRunning` makes the foreground and tap re-checks single-flight. A tap during a re-check returns without an attempt (fail closed).
+  - MINOR-3: FakeAppPinStore applies the invalidation when `applyFlagWrites` is set; end-to-end, race and single-flight tests added.
+- The superseded integration merge `be3dee1a`: static-guards PASS vr-20261101-205540-b9bff6bf. Its other suites were withdrawn.
+- Lane ladder PASS:
+  - targeted vr-20261101-211629-490eeb2a
+  - architecture-contracts vr-20261101-212347-5af05cbb
+  - data vr-20261101-212448-c39ef1cc

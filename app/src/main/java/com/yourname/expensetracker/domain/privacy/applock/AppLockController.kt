@@ -460,6 +460,9 @@ class AppLockController @Inject constructor(
     private var currentPinPresentation: PinPresentation = PinPresentation.INITIAL
     private val mutablePin = MutableStateFlow(PinPresentation.INITIAL)
     private val pinOperationRunning = AtomicBoolean(false)
+
+    /** G2-F1: true while one fingerprint-key re-check (foreground or tap) runs; at most one Keystore read at a time. */
+    private val fingerprintRecheckRunning = AtomicBoolean(false)
     @Volatile private var pinObservationJob: Job? = null
 
     // Written only under publishLock; read without it for the cheap staleness pre-check.
@@ -668,6 +671,7 @@ class AppLockController @Inject constructor(
         // INV-47: the evaluation above used the state held at that moment (F while unreadable) and never waited. The
         // re-read starts after it, on the controller scope.
         launchReread(foreground = true)
+        launchFingerprintKeyRecheck() // G2-F1
     }
 
     /**
@@ -965,6 +969,47 @@ class AppLockController @Inject constructor(
             storeCall(PinStoreWriteResult.FAILED) { pinStore.recordBiometricInvalidated() }
         }
         return keyState == PinFingerprintKeyState.READY
+    }
+
+    /**
+     * G2-F1: re-reads the key for [observed] (the view held when the check was requested) and applies the result to
+     * [fingerprintKeyReady] by the same rule as the store collector (ready only for a PRESENT verifier with
+     * `biometricEnabled` and a READY key), so a transient failure heals on the next foreground. A stale snapshot
+     * ([pinState] no longer equal to [observed]) changes nothing; the collector owns the newer view. Returns whether the
+     * key is ready. The Keystore read runs off the main thread and outside [stateLock].
+     */
+    private suspend fun recheckFingerprintKey(observed: AppPinStoreState): Boolean {
+        val ready = fingerprintReadyFor(observed)
+        transition {
+            if (pinState == observed) {
+                if (!ready) {
+                    fingerprintKeyReady = false
+                } else if (observed.biometricEnabled && observed.verifier == PinVerifierState.PRESENT) {
+                    fingerprintKeyReady = true
+                }
+            }
+        }
+        return ready
+    }
+
+    /**
+     * G2-F1: on a foreground with the flag on, hides a stale "use fingerprint" before any tap. Never blocks the caller.
+     * Single-flight: while a re-check (this one or the tap path's) holds [fingerprintRecheckRunning], a new foreground
+     * launches nothing, so a hung Keystore cannot pile up jobs.
+     */
+    private fun launchFingerprintKeyRecheck() {
+        val observed = synchronized(stateLock) { pinState?.takeIf { it.biometricEnabled } } ?: return
+        if (!fingerprintRecheckRunning.compareAndSet(false, true)) return
+        scope.launch {
+            try {
+                recheckFingerprintKey(observed)
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                Timber.w("App-lock fingerprint key recheck failed: class=%s", DiagnosticThrowableSummary.className(e))
+            } finally {
+                fingerprintRecheckRunning.set(false)
+            }
+        }
     }
 
     /**
@@ -1497,6 +1542,18 @@ class AppLockController @Inject constructor(
      * prompt success unlocks, and [closeWith] re-reads the mode, verifier and flag at close time.
      */
     suspend fun requestFingerprintUnlock() {
+        // G2-F1: re-read the key before any attempt (off the main thread, outside the monitor). A key invalidated while the
+        // process lives hides the button and records the notice through the single store write; no attempt starts.
+        val observed = synchronized(stateLock) { if (canOfferFingerprintLocked()) pinState else null } ?: return
+        // Single-flight with the foreground re-check: if one is running, no second Keystore read starts and no attempt
+        // opens (fail closed; the user can tap again once it finishes).
+        if (!fingerprintRecheckRunning.compareAndSet(false, true)) return
+        val ready = try {
+            recheckFingerprintKey(observed)
+        } finally {
+            fingerprintRecheckRunning.set(false)
+        }
+        if (!ready) return
         val opened: InFlightAttempt? = transition {
             val cur = current
             if (cur !is AppLockState.Locked || inFlight != null || pinOperationRunning.get() || !canOfferFingerprintLocked()) {
@@ -2707,8 +2764,9 @@ class AppLockController @Inject constructor(
                 Closing.OpenOriginSuccess -> {
                     // T33 hand-off, nothing applied here. Back to the origin; the attempt's promptBackgroundAt
                     // is discarded with it and the pending background is cleared (spec 3.4: an auth success that
-                    // ends in an open state clears it). Increment 1 has no prompt that is not unlock-equivalent
-                    // (INV-54), so the "otherwise hand the background to the timer" clause has no case yet.
+                    // ends in an open state clears it). FINGERPRINT_ENABLE (S26b) is the one prompt that is not
+                    // unlock-equivalent (INV-54 [2], AE-120): its recorded prompt background goes to the timer;
+                    // every other prompt clears the pending background.
                     // RS26b-LOW-1: the origin state first, so the hand-off's timer evaluation sees UNLOCKED (as the
                     // non-success path orders it).
                     setState(originState(attempt))
@@ -2845,7 +2903,8 @@ class AppLockController @Inject constructor(
 
     /**
      * T34 timer hand-off for a CONFIRM_CHANGE attempt that ended without success (cancel, error, lockout, host
-     * loss, the watchdog or a launch that never happened). Must be called with [stateLock] held, after the state
+     * loss, the watchdog or a launch that never happened) or a FINGERPRINT_ENABLE attempt that ended with
+     * success (AE-120, RS26b-LOW-1). Must be called with [stateLock] held, after the state
      * returned to `UNLOCKED`.
      *
      * - No background was recorded during the prompt and none was pending: nothing to hand over, and since no
