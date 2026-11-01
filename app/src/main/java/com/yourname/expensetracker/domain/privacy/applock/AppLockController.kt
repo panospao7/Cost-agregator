@@ -668,6 +668,7 @@ class AppLockController @Inject constructor(
         // INV-47: the evaluation above used the state held at that moment (F while unreadable) and never waited. The
         // re-read starts after it, on the controller scope.
         launchReread(foreground = true)
+        launchFingerprintKeyRecheck() // G2-F1
     }
 
     /**
@@ -965,6 +966,40 @@ class AppLockController @Inject constructor(
             storeCall(PinStoreWriteResult.FAILED) { pinStore.recordBiometricInvalidated() }
         }
         return keyState == PinFingerprintKeyState.READY
+    }
+
+    /**
+     * G2-F1: re-reads the key for [observed] (the view held when the check was requested) and applies the result to
+     * [fingerprintKeyReady] by the same rule as the store collector (ready only for a PRESENT verifier with
+     * `biometricEnabled` and a READY key), so a transient failure heals on the next foreground. A stale snapshot
+     * ([pinState] no longer equal to [observed]) changes nothing; the collector owns the newer view. Returns whether the
+     * key is ready. The Keystore read runs off the main thread and outside [stateLock].
+     */
+    private suspend fun recheckFingerprintKey(observed: AppPinStoreState): Boolean {
+        val ready = fingerprintReadyFor(observed)
+        transition {
+            if (pinState == observed) {
+                if (!ready) {
+                    fingerprintKeyReady = false
+                } else if (observed.biometricEnabled && observed.verifier == PinVerifierState.PRESENT) {
+                    fingerprintKeyReady = true
+                }
+            }
+        }
+        return ready
+    }
+
+    /** G2-F1: on a foreground with the flag on, hides a stale "use fingerprint" before any tap. Never blocks the caller. */
+    private fun launchFingerprintKeyRecheck() {
+        val observed = synchronized(stateLock) { pinState?.takeIf { it.biometricEnabled } } ?: return
+        scope.launch {
+            try {
+                recheckFingerprintKey(observed)
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                Timber.w("App-lock fingerprint key recheck failed: class=%s", DiagnosticThrowableSummary.className(e))
+            }
+        }
     }
 
     /**
@@ -1497,6 +1532,10 @@ class AppLockController @Inject constructor(
      * prompt success unlocks, and [closeWith] re-reads the mode, verifier and flag at close time.
      */
     suspend fun requestFingerprintUnlock() {
+        // G2-F1: re-read the key before any attempt (off the main thread, outside the monitor). A key invalidated while the
+        // process lives hides the button and records the notice through the single store write; no attempt starts.
+        val observed = synchronized(stateLock) { if (canOfferFingerprintLocked()) pinState else null } ?: return
+        if (!recheckFingerprintKey(observed)) return
         val opened: InFlightAttempt? = transition {
             val cur = current
             if (cur !is AppLockState.Locked || inFlight != null || pinOperationRunning.get() || !canOfferFingerprintLocked()) {
