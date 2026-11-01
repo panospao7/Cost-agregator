@@ -1,13 +1,18 @@
 package com.yourname.expensetracker.data.backup
 
+import com.yourname.expensetracker.domain.backup.SemanticNotVerifiableReason
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import java.math.BigDecimal
 
 /**
  * P7-CURRENT-014 / P7-CURRENT-015 — verifier hardening.
@@ -162,65 +167,392 @@ class BackupVerifierManifestTest {
         }
     }
 
-    // ── P7-P1-05: semantic aggregate verification ──────────────────
+    // ── UF-46 / S1: typed semantic-aggregate pass ──────────────────
+    //
+    // This section REPLACES the two tests of the deleted SQL-keyed API (owner decision O-2, INV-1):
+    //  - `semantic_aggregates_match_passes_verification`    -> the "fixture F" match tests below
+    //  - `semantic_aggregates_mismatch_fails_verification`  -> the mismatch / flag-flip / hostile tests
+    // The expectation is a typed SemanticExpectation built from hand-computed values for the synthetic
+    // fixture F of the spec (section 7); nothing here executes a manifest-supplied string.
 
-    @Test
-    fun `semantic_aggregates_match_passes_verification`() {
-        val db = android.database.sqlite.SQLiteDatabase.create(null)
-        try {
-            // Create required tables
-            db.execSQL("CREATE TABLE expenses (id INTEGER PRIMARY KEY, effectiveAmount REAL, transactionType TEXT, isNotMine INTEGER)")
-            db.execSQL("CREATE TABLE budgets (id INTEGER PRIMARY KEY, name TEXT)")
-            db.execSQL("CREATE TABLE receipt_expense_links (id INTEGER PRIMARY KEY, receiptId INTEGER, expenseId INTEGER)")
+    private val forbiddenInBoundedText = listOf("12.5", "1000", "EUR", "USD", "PURCHASE", "SELECT", "DROP", "DELETE")
 
-            // Insert data
-            db.execSQL("INSERT INTO expenses (id, effectiveAmount, transactionType, isNotMine) VALUES (1, 100.0, 'EXPENSE', 0)")
-            db.execSQL("INSERT INTO expenses (id, effectiveAmount, transactionType, isNotMine) VALUES (2, 50.0, 'INCOME', 0)")
-            db.execSQL("INSERT INTO expenses (id, effectiveAmount, transactionType, isNotMine) VALUES (3, 200.0, 'EXPENSE', 1)") // isNotMine, excluded
-            db.execSQL("INSERT INTO budgets (id, name) VALUES (1, 'Groceries')")
-            db.execSQL("INSERT INTO receipt_expense_links (id, receiptId, expenseId) VALUES (1, 1, 1)")
+    private fun fixtureBucket(n: Int, s: BigDecimal, vararg key: String, u: Int = 0) =
+        AggregateBucket(key.toList(), n, u, s)
 
-            // Build expected aggregates matching what the DB produces
-            val expected = mapOf(
-                "SELECT CAST(SUM(effectiveAmount) AS TEXT) FROM expenses WHERE transactionType = 'EXPENSE' AND isNotMine = 0" to "100.0",
-                "SELECT CAST(SUM(effectiveAmount) AS TEXT) FROM expenses WHERE transactionType = 'INCOME' AND isNotMine = 0" to "50.0",
-                "SELECT CAST(COUNT(*) AS TEXT) FROM expenses" to "3",
-                "SELECT CAST(COUNT(*) AS TEXT) FROM budgets" to "1",
-                "SELECT CAST(COUNT(*) AS TEXT) FROM receipt_expense_links" to "1"
+    private fun fixtureEntry(id: SemanticAggregateId, vararg buckets: AggregateBucket) =
+        AggregateEntry(SemanticAggregates.definitionHash(id), buckets.toList())
+
+    /**
+     * Hand-computed aggregates of fixture F (E1..E6, R1, R2); with [withFlaggedPurchase] also E7, a PURCHASE
+     * EUR 100.0 row carrying a spending-exclusion reason (counts in n, adds 0 to the spending sum).
+     */
+    private fun fixtureFExpectedSet(withFlaggedPurchase: Boolean = false): SemanticAggregateSet {
+        val purchaseEurRows = if (withFlaggedPurchase) 3 else 2
+        val purchaseEurSum = if (withFlaggedPurchase) BigDecimal("152.5") else BigDecimal("52.5")
+        val spendingEurRows = if (withFlaggedPurchase) 3 else 2
+        return SemanticAggregateSet.ofCaptured(
+            mapOf(
+                SemanticAggregateId.EXPENSE_RAW_BY_TYPE_CURRENCY to fixtureEntry(
+                    SemanticAggregateId.EXPENSE_RAW_BY_TYPE_CURRENCY,
+                    fixtureBucket(1, BigDecimal("1000"), "DEPOSIT", "EUR"),
+                    fixtureBucket(purchaseEurRows, purchaseEurSum, "PURCHASE", "EUR"),
+                    fixtureBucket(1, BigDecimal(9.99), "PURCHASE", "USD"),
+                    fixtureBucket(1, BigDecimal("200"), "TRANSFER", "EUR"),
+                    fixtureBucket(1, BigDecimal("5"), "UNKNOWN", "GBP")
+                ),
+                SemanticAggregateId.SPENDING_EFFECTIVE_BY_CURRENCY to fixtureEntry(
+                    SemanticAggregateId.SPENDING_EFFECTIVE_BY_CURRENCY,
+                    fixtureBucket(spendingEurRows, BigDecimal("32.5"), "EUR"),
+                    fixtureBucket(1, BigDecimal.ZERO, "USD")
+                ),
+                SemanticAggregateId.INCOME_EFFECTIVE_BY_CURRENCY to fixtureEntry(
+                    SemanticAggregateId.INCOME_EFFECTIVE_BY_CURRENCY,
+                    fixtureBucket(1, BigDecimal("1000"), "EUR")
+                ),
+                SemanticAggregateId.RECURRING_RULE_AMOUNT_BY_ACTIVE_CURRENCY to fixtureEntry(
+                    SemanticAggregateId.RECURRING_RULE_AMOUNT_BY_ACTIVE_CURRENCY,
+                    fixtureBucket(1, BigDecimal("15"), "0", "USD"),
+                    fixtureBucket(1, BigDecimal("9"), "1", "EUR")
+                )
             )
+        )
+    }
 
-            val issues = BackupVerifier.verifySemanticAggregates(db, expected)
-            assertTrue("All aggregates should match: $issues", issues.isEmpty())
+    private fun compareExpectation(
+        set: SemanticAggregateSet,
+        checkpoint: SemanticCheckpoint = SemanticCheckpoint.C1_STAGED_SOURCE
+    ) = SemanticExpectation(checkpoint, SemanticBasis.Compare(set))
+
+    /** Replaces the two fingerprinted tables of an all-tables database with the columns the registry reads. */
+    private fun applyFixtureF(db: android.database.sqlite.SQLiteDatabase, withFlaggedPurchase: Boolean) {
+        db.execSQL("DROP TABLE expenses")
+        db.execSQL(
+            "CREATE TABLE expenses (id INTEGER PRIMARY KEY, transactionType TEXT NOT NULL, currency TEXT NOT NULL, " +
+                "amount REAL, isNotMine INTEGER NOT NULL DEFAULT 0, isSharedExpense INTEGER NOT NULL DEFAULT 0, " +
+                "myShareAmount REAL, mySharePercentage REAL, spendingExclusionReason TEXT DEFAULT NULL)"
+        )
+        db.execSQL("DROP TABLE manual_recurring_expenses")
+        db.execSQL(
+            "CREATE TABLE manual_recurring_expenses (id INTEGER PRIMARY KEY, isActive INTEGER NOT NULL, " +
+                "currency TEXT NOT NULL, amount REAL NOT NULL)"
+        )
+        db.execSQL("INSERT INTO expenses (id, transactionType, currency, amount) VALUES (1, 'PURCHASE', 'EUR', 12.5)")
+        db.execSQL(
+            "INSERT INTO expenses (id, transactionType, currency, amount, isSharedExpense, mySharePercentage) " +
+                "VALUES (2, 'PURCHASE', 'EUR', 40.0, 1, 50)"
+        )
+        db.execSQL("INSERT INTO expenses (id, transactionType, currency, amount) VALUES (3, 'DEPOSIT', 'EUR', 1000.0)")
+        db.execSQL(
+            "INSERT INTO expenses (id, transactionType, currency, amount, isNotMine) " +
+                "VALUES (4, 'PURCHASE', 'USD', 9.99, 1)"
+        )
+        db.execSQL("INSERT INTO expenses (id, transactionType, currency, amount) VALUES (5, 'TRANSFER', 'EUR', 200.0)")
+        db.execSQL("INSERT INTO expenses (id, transactionType, currency, amount) VALUES (6, 'UNKNOWN', 'GBP', 5.0)")
+        if (withFlaggedPurchase) {
+            db.execSQL(
+                "INSERT INTO expenses (id, transactionType, currency, amount, spendingExclusionReason) " +
+                    // Any non-null reason excludes the row from spending. The two orphan-checked reason texts
+                    // are avoided on purpose so that only the semantic aggregate is under test.
+                    "VALUES (7, 'PURCHASE', 'EUR', 100.0, 'FIXTURE_EXCLUSION')"
+            )
+        }
+        db.execSQL("INSERT INTO manual_recurring_expenses (id, isActive, currency, amount) VALUES (1, 1, 'EUR', 9.0)")
+        db.execSQL("INSERT INTO manual_recurring_expenses (id, isActive, currency, amount) VALUES (2, 0, 'USD', 15.0)")
+    }
+
+    private fun createFixtureFDatabase(withFlaggedPurchase: Boolean = false): android.database.sqlite.SQLiteDatabase {
+        val db = createAllTablesDatabase()
+        applyFixtureF(db, withFlaggedPurchase)
+        return db
+    }
+
+    private inline fun <T> withFixtureF(withFlaggedPurchase: Boolean = false, block: (android.database.sqlite.SQLiteDatabase) -> T): T {
+        val db = createFixtureFDatabase(withFlaggedPurchase)
+        try {
+            return block(db)
         } finally {
             db.close()
         }
     }
 
-    @Test
-    fun `semantic_aggregates_mismatch_fails_verification`() {
-        val db = android.database.sqlite.SQLiteDatabase.create(null)
-        try {
-            // Create tables and insert data
-            db.execSQL("CREATE TABLE expenses (id INTEGER PRIMARY KEY, effectiveAmount REAL, transactionType TEXT, isNotMine INTEGER)")
-            db.execSQL("CREATE TABLE budgets (id INTEGER PRIMARY KEY, name TEXT)")
-            db.execSQL("CREATE TABLE receipt_expense_links (id INTEGER PRIMARY KEY, receiptId INTEGER, expenseId INTEGER)")
-            db.execSQL("INSERT INTO expenses (id, effectiveAmount, transactionType, isNotMine) VALUES (1, 100.0, 'EXPENSE', 0)")
-            db.execSQL("INSERT INTO budgets (id, name) VALUES (1, 'Groceries')")
-            db.execSQL("INSERT INTO receipt_expense_links (id, receiptId, expenseId) VALUES (1, 1, 1)")
+    private fun expenseCount(db: android.database.sqlite.SQLiteDatabase): Long =
+        android.database.DatabaseUtils.queryNumEntries(db, "expenses")
 
-            // Build expected aggregates where one value intentionally mismatches
-            val expected = mapOf(
-                "SELECT CAST(SUM(effectiveAmount) AS TEXT) FROM expenses WHERE transactionType = 'EXPENSE' AND isNotMine = 0" to "999.0", // wrong!
-                "SELECT CAST(COUNT(*) AS TEXT) FROM expenses" to "42" // intentional mismatch
+    @Test
+    fun semantic_expectation_fixture_F_columns_exist_in_the_exported_152_schema() {
+        val fixtureColumns = mapOf(
+            "expenses" to listOf(
+                "transactionType", "currency", "amount", "isNotMine", "isSharedExpense",
+                "myShareAmount", "mySharePercentage", "spendingExclusionReason"
+            ),
+            "manual_recurring_expenses" to listOf("isActive", "currency", "amount")
+        )
+        val file = listOf(
+            java.io.File("app/schemas/com.yourname.expensetracker.data.database.AppDatabase/152.json"),
+            java.io.File("schemas/com.yourname.expensetracker.data.database.AppDatabase/152.json"),
+            java.io.File(System.getProperty("user.dir") ?: ".", "app/schemas/com.yourname.expensetracker.data.database.AppDatabase/152.json"),
+            java.io.File(System.getProperty("user.dir") ?: ".", "schemas/com.yourname.expensetracker.data.database.AppDatabase/152.json")
+        ).firstOrNull { it.isFile }
+        assertNotNull("Could not locate exported Room schema 152.json", file)
+        val entities = org.json.JSONObject(file!!.readText(Charsets.UTF_8))
+            .getJSONObject("database").getJSONArray("entities")
+        val columnsByTable = (0 until entities.length()).associate { index ->
+            val entity = entities.getJSONObject(index)
+            val fields = entity.getJSONArray("fields")
+            entity.getString("tableName") to (0 until fields.length()).map { fields.getJSONObject(it).getString("columnName") }.toSet()
+        }
+        fixtureColumns.forEach { (table, columns) ->
+            val real = columnsByTable[table]
+            assertNotNull("$table must exist in the exported schema", real)
+            columns.forEach { column -> assertTrue("$table.$column must exist in schema 152", column in real!!) }
+        }
+    }
+
+    @Test
+    fun semantic_expectation_matching_fixture_F_verifies_and_passes_verify() {
+        withFixtureF { db ->
+            val counts = BackupVerifier.collectTableCountsStrict(db)
+            assertEquals(6, counts["expenses"])
+            assertEquals(2, counts["manual_recurring_expenses"])
+
+            val summary = BackupVerifier.verify(db, counts, compareExpectation(fixtureFExpectedSet()))
+
+            assertTrue(summary.errors.toString(), summary.passed)
+            val result = summary.semanticResult
+            assertTrue("expected Verified but was $result", result is SemanticCheckResult.Verified)
+            assertEquals(SemanticCheckpoint.C1_STAGED_SOURCE, result!!.checkpoint)
+        }
+    }
+
+    @Test
+    fun semantic_pass_does_not_run_without_an_expectation() {
+        withFixtureF { db ->
+            val counts = BackupVerifier.collectTableCountsStrict(db)
+
+            val summary = BackupVerifier.verify(db, counts)
+
+            assertTrue(summary.errors.toString(), summary.passed)
+            assertNull(summary.semanticResult)
+        }
+    }
+
+    @Test
+    fun semantic_expectation_with_a_changed_amount_fails_verify_with_bounded_issue_text() {
+        withFixtureF { db ->
+            val counts = BackupVerifier.collectTableCountsStrict(db)
+            // Control: unchanged data verifies against the same expectation.
+            assertTrue(BackupVerifier.verify(db, counts, compareExpectation(fixtureFExpectedSet())).passed)
+
+            db.execSQL("UPDATE expenses SET amount = 12.500000001 WHERE id = 1")
+            val summary = BackupVerifier.verify(db, counts, compareExpectation(fixtureFExpectedSet()))
+
+            assertFalse(summary.passed)
+            val failed = summary.semanticResult as SemanticCheckResult.Failed
+            assertEquals(SemanticCode.SEMANTIC_MISMATCH, failed.code)
+            assertEquals(SemanticAggregateId.EXPENSE_RAW_BY_TYPE_CURRENCY, failed.aggregateId)
+            assertEquals(SemanticCheckpoint.C1_STAGED_SOURCE, failed.checkpoint)
+            assertEquals(1, failed.mismatchedBuckets)
+            val issue = summary.errors.single()
+            assertTrue(issue, issue.startsWith("SEMANTIC_MISMATCH"))
+            assertTrue(issue, issue.contains("EXPENSE_RAW_BY_TYPE_CURRENCY"))
+            assertTrue(issue, issue.contains("C1_STAGED_SOURCE"))
+            forbiddenInBoundedText.forEach { assertFalse("issue text must not contain $it: $issue", issue.contains(it)) }
+        }
+    }
+
+    @Test
+    fun flipping_the_isNotMine_flag_is_detected_as_a_spending_mismatch() {
+        withFixtureF { db ->
+            val counts = BackupVerifier.collectTableCountsStrict(db)
+            db.execSQL("UPDATE expenses SET isNotMine = 1 WHERE id = 1")
+
+            val summary = BackupVerifier.verify(db, counts, compareExpectation(fixtureFExpectedSet()))
+
+            assertFalse(summary.passed)
+            val failed = summary.semanticResult as SemanticCheckResult.Failed
+            assertEquals(SemanticCode.SEMANTIC_MISMATCH, failed.code)
+            // The raw aggregate is unaffected by the flag, so the first divergence is the spending one.
+            assertEquals(SemanticAggregateId.SPENDING_EFFECTIVE_BY_CURRENCY, failed.aggregateId)
+            assertEquals(1, failed.mismatchedBuckets)
+        }
+    }
+
+    @Test
+    fun flagged_purchase_row_counts_in_n_without_changing_s_and_dropping_the_flag_changes_s() {
+        withFixtureF(withFlaggedPurchase = true) { db ->
+            val counts = BackupVerifier.collectTableCountsStrict(db)
+            assertEquals(7, counts["expenses"])
+            val expectation = compareExpectation(fixtureFExpectedSet(withFlaggedPurchase = true))
+
+            // Control: the flagged row adds to n (3) and contributes 0 to the EUR spending sum (32.5).
+            val control = BackupVerifier.verify(db, counts, expectation)
+            assertTrue(control.errors.toString(), control.passed)
+            assertTrue(control.semanticResult is SemanticCheckResult.Verified)
+
+            // Boundary: losing the exclusion flag moves 100.0 into the spending sum.
+            db.execSQL("UPDATE expenses SET spendingExclusionReason = NULL WHERE id = 7")
+            val summary = BackupVerifier.verify(db, counts, expectation)
+
+            assertFalse(summary.passed)
+            val failed = summary.semanticResult as SemanticCheckResult.Failed
+            assertEquals(SemanticCode.SEMANTIC_MISMATCH, failed.code)
+            assertEquals(SemanticAggregateId.SPENDING_EFFECTIVE_BY_CURRENCY, failed.aggregateId)
+            assertEquals(1, failed.mismatchedBuckets)
+        }
+    }
+
+    @Test
+    fun hostile_manifest_aggregate_ids_are_malformed_and_fail_closed_without_executing_anything() {
+        withFixtureF { db ->
+            val counts = BackupVerifier.collectTableCountsStrict(db)
+            val rowsBefore = expenseCount(db)
+            val hostile = SemanticAggregates.registry.fold(org.json.JSONObject()) { acc, definition ->
+                acc.put(definition.id.name, org.json.JSONObject().put("definitionHash", "h").put("buckets", org.json.JSONArray()))
+            }.put("SELECT 1", org.json.JSONObject()).put("DROP TABLE x", org.json.JSONObject())
+            val section = org.json.JSONObject()
+                .put("version", SemanticAggregates.SECTION_VERSION)
+                .put("status", "CAPTURED")
+                .put("aggregates", hostile)
+
+            val parsed = SemanticAggregates.parse(section)
+            assertTrue(parsed is SemanticParseResult.Malformed)
+            val basis = BackupVerifier.expectedAggregatesForSection(parsed, 152)
+            assertTrue(basis is SemanticBasis.Malformed)
+            val summary = BackupVerifier.verify(
+                db, counts, SemanticExpectation(SemanticCheckpoint.C1_STAGED_SOURCE, basis)
             )
 
-            val issues = BackupVerifier.verifySemanticAggregates(db, expected)
-            assertEquals("Should have 2 mismatches", 2, issues.size)
-            assertTrue("First issue should be SEMANTIC_MISMATCH", issues[0].code == "SEMANTIC_MISMATCH")
-            assertTrue("Second issue should be SEMANTIC_MISMATCH", issues[1].code == "SEMANTIC_MISMATCH")
-            assertTrue("Message should mention expected=999.0", issues[0].message.contains("expected=999.0"))
+            assertFalse(summary.passed)
+            val failed = summary.semanticResult as SemanticCheckResult.Failed
+            assertEquals(SemanticCode.SEMANTIC_MANIFEST_MALFORMED, failed.code)
+            assertNull(failed.aggregateId)
+            assertTrue(summary.errors.single().startsWith("SEMANTIC_MANIFEST_MALFORMED"))
+            forbiddenInBoundedText.forEach { word ->
+                summary.errors.forEach { assertFalse("issue text must not contain $word: $it", it.contains(word)) }
+            }
+            assertEquals(rowsBefore, expenseCount(db))
+        }
+    }
+
+    @Test
+    fun hostile_text_inside_a_well_formed_section_is_inert_data_that_never_reaches_sql() {
+        withFixtureF { db ->
+            val counts = BackupVerifier.collectTableCountsStrict(db)
+            val rowsBefore = expenseCount(db)
+            val section = fixtureFExpectedSet().toJson()
+            val aggregates = section.getJSONObject("aggregates")
+            aggregates.getJSONObject("EXPENSE_RAW_BY_TYPE_CURRENCY")
+                .put("definitionHash", "x'); DELETE FROM expenses; --")
+            aggregates.getJSONObject("INCOME_EFFECTIVE_BY_CURRENCY")
+                .getJSONArray("buckets").getJSONObject(0)
+                .put("key", org.json.JSONArray().put("'; DROP TABLE expenses; --"))
+
+            val parsed = SemanticAggregates.parse(section)
+            assertTrue("hostile text is data, not structure", parsed is SemanticParseResult.Parsed)
+            val basis = BackupVerifier.expectedAggregatesForSection(parsed, 152)
+            val summary = BackupVerifier.verify(db, counts, SemanticExpectation(SemanticCheckpoint.C2_STAGED_POST_MIGRATION, basis))
+
+            assertFalse(summary.passed)
+            val failed = summary.semanticResult as SemanticCheckResult.Failed
+            assertEquals(SemanticCode.SEMANTIC_MISMATCH, failed.code)
+            // The foreign hash only makes EXPENSE_RAW not comparable; the hostile INCOME key is a plain
+            // bucket that exists on one side only (expected side hostile, actual side EUR).
+            assertEquals(SemanticAggregateId.INCOME_EFFECTIVE_BY_CURRENCY, failed.aggregateId)
+            assertEquals(2, failed.mismatchedBuckets)
+            summary.errors.forEach { issue ->
+                forbiddenInBoundedText.forEach { assertFalse("issue text must not contain $it: $issue", issue.contains(it)) }
+            }
+            assertEquals(rowsBefore, expenseCount(db))
+        }
+    }
+
+    @Test
+    fun not_verifiable_expectations_pass_verify_and_never_report_verified() {
+        SemanticNotVerifiableReason.values().forEach { reason ->
+            withFixtureF { db ->
+                val counts = BackupVerifier.collectTableCountsStrict(db)
+
+                val summary = BackupVerifier.verify(
+                    db,
+                    counts,
+                    SemanticExpectation(SemanticCheckpoint.C3_LIVE_POST_SWAP, SemanticBasis.NotVerifiable(reason))
+                )
+
+                assertTrue("$reason: ${summary.errors}", summary.passed)
+                val result = summary.semanticResult as SemanticCheckResult.NotVerifiable
+                assertEquals(reason, result.reason)
+                assertEquals(SemanticCheckpoint.C3_LIVE_POST_SWAP, result.checkpoint)
+            }
+        }
+    }
+
+    @Test
+    fun semantic_pass_is_skipped_when_an_earlier_check_already_failed() {
+        withFixtureF { db ->
+            val counts = BackupVerifier.collectTableCountsStrict(db)
+
+            val summary = BackupVerifier.verify(
+                db, counts + ("expenses" to 99), compareExpectation(fixtureFExpectedSet())
+            )
+
+            assertFalse(summary.passed)
+            assertNull("the semantic pass must not run behind a failed count check", summary.semanticResult)
+        }
+    }
+
+    @Test
+    fun verifyQuick_and_file_verify_run_the_semantic_pass_read_only() {
+        val file = java.io.File.createTempFile("s1-semantic-", ".db")
+        try {
+            val seed = android.database.sqlite.SQLiteDatabase.openOrCreateDatabase(file, null)
+            val counts = try {
+                createAllTables(seed)
+                applyFixtureF(seed, withFlaggedPurchase = false)
+                BackupVerifier.collectTableCountsStrict(seed)
+            } finally {
+                seed.close()
+            }
+            val bytesBefore = file.readBytes()
+
+            // Control: no expectation -> no semantic pass.
+            assertNull(BackupVerifier.verifyQuick(file, counts))
+            // Match -> Verified, with the checkpoint passed in.
+            val verified = BackupVerifier.verifyQuick(file, counts, compareExpectation(fixtureFExpectedSet()))
+            assertTrue(verified is SemanticCheckResult.Verified)
+            assertEquals(SemanticCheckpoint.C1_STAGED_SOURCE, verified!!.checkpoint)
+            val full = BackupVerifier.verify(file, counts, compareExpectation(fixtureFExpectedSet()))
+            assertTrue(full.errors.toString(), full.passed)
+            assertTrue(full.semanticResult is SemanticCheckResult.Verified)
+            // NOT_VERIFIABLE is returned, not thrown.
+            val notVerifiable = BackupVerifier.verifyQuick(
+                file, counts,
+                SemanticExpectation(
+                    SemanticCheckpoint.C2_STAGED_POST_MIGRATION,
+                    SemanticBasis.NotVerifiable(SemanticNotVerifiableReason.LEGACY)
+                )
+            )
+            assertEquals(SemanticNotVerifiableReason.LEGACY, (notVerifiable as SemanticCheckResult.NotVerifiable).reason)
+
+            // Mismatch -> throws a bounded exception (message is the code only).
+            val mismatch = assertThrows(BackupVerifier.SemanticVerificationFailedException::class.java) {
+                BackupVerifier.verifyQuick(file, counts, compareExpectation(fixtureFExpectedSet(withFlaggedPurchase = true)))
+            }
+            assertEquals("SEMANTIC_MISMATCH", mismatch.message)
+            assertEquals(SemanticCode.SEMANTIC_MISMATCH, mismatch.result.code)
+            // Malformed expectation -> fails closed with the malformed code.
+            val malformed = assertThrows(BackupVerifier.SemanticVerificationFailedException::class.java) {
+                BackupVerifier.verifyQuick(
+                    file, counts,
+                    SemanticExpectation(SemanticCheckpoint.C1_STAGED_SOURCE, SemanticBasis.Malformed())
+                )
+            }
+            assertEquals("SEMANTIC_MANIFEST_MALFORMED", malformed.message)
+
+            // INV-16: every pass above left the database file byte-identical.
+            assertArrayEquals(bytesBefore, file.readBytes())
         } finally {
-            db.close()
+            file.delete()
         }
     }
 
