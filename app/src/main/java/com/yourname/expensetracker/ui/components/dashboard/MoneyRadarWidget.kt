@@ -269,7 +269,7 @@ fun MoneyRadarWidget(
                 
                 // Budget Risk Chip
                 data.budgetRisk?.let { risk ->
-                    if (risk.probabilityOfOverrun >= 0.25) {
+                    if (risk.probabilityOfOverrun >= 0.25 && risk.riskTier != RiskTier.LOW) {
                         RadarSummaryChip(
                             icon = Icons.Rounded.TrendingUp,
                             count = null,

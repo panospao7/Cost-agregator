@@ -907,10 +907,7 @@ fun HomeScreen(
                                     )
                                 }
                                 is com.yourname.expensetracker.domain.usecase.dashboard.MoneyRadarAction.AdjustBudget -> {
-                                    if (action.riskInfo.riskTier == com.yourname.expensetracker.domain.model.budget.MonteCarloBudgetImpact.RiskTier.CRITICAL ||
-                                        action.riskInfo.riskTier == com.yourname.expensetracker.domain.model.budget.MonteCarloBudgetImpact.RiskTier.HIGH) {
-                                        onNavigateToAnalytics("month")
-                                    }
+                                    onNavigateToFeature(NavigationDestination.Budget)
                                 }
                             }
                         }
