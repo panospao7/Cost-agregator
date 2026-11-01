@@ -22,7 +22,6 @@ import com.yourname.expensetracker.ui.theme.SemanticColors
  * @property destination Navigation destination when clicked
  * @property descriptionRes String resource ID for the description (optional)
  * @property isNew Whether to show a "New" badge
- * @property isBeta Whether to show a "Beta" badge
  */
 data class FeatureConfig(
     val id: String,
@@ -31,8 +30,7 @@ data class FeatureConfig(
     val color: Color,
     val destination: NavigationDestination,
     @StringRes val descriptionRes: Int? = null,
-    val isNew: Boolean = false,
-    val isBeta: Boolean = false
+    val isNew: Boolean = false
 ) {
     companion object {
         /**
@@ -278,20 +276,6 @@ data class FeatureConfig(
          */
         fun getById(id: String): FeatureConfig? {
             return allFeatures.find { it.id == id }
-        }
-        
-        /**
-         * Get features marked as new.
-         */
-        fun getNewFeatures(): List<FeatureConfig> {
-            return allFeatures.filter { it.isNew }
-        }
-        
-        /**
-         * Get features marked as beta.
-         */
-        fun getBetaFeatures(): List<FeatureConfig> {
-            return allFeatures.filter { it.isBeta }
         }
 
         /** RP-17 17-A: stable id of the bank-connections feature entry. */

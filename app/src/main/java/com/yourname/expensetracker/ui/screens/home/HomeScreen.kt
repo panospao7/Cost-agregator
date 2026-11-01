@@ -1639,7 +1639,6 @@ private fun FeaturesMenu(
                             description = feature.descriptionRes?.let { stringResource(it) } ?: "",
                             color = feature.color,
                             isNew = feature.isNew,
-                            isBeta = feature.isBeta,
                             onClick = { onNavigateToFeature(feature.destination) }
                         )
                     }
@@ -1702,7 +1701,6 @@ private fun FeatureItem(
     description: String,
     color: Color,
     isNew: Boolean = false,
-    isBeta: Boolean = false,
     onClick: () -> Unit
 ) {
     Card(
@@ -1749,16 +1747,6 @@ private fun FeatureItem(
                         Badge(containerColor = Color(0xFF4CAF50)) {
                             Text(
                                 stringResource(R.string.label_new),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = SemanticColors.TextPrimary
-                            )
-                        }
-                    }
-                    if (isBeta) {
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Badge(containerColor = Color(0xFFFF9800)) {
-                            Text(
-                                stringResource(R.string.label_beta),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = SemanticColors.TextPrimary
                             )
