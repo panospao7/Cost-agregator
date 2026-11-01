@@ -40,20 +40,53 @@ object BackupVerifier {
     /** Loan installments (INV-30): plan and entry tables exist from schema 152. */
     private const val INSTALLMENT_TABLES_SCHEMA_VERSION = 152
 
-    // ── Verification tier assignment for all 61 tables ──────────
+    /**
+     * P-07-1 / S0b: tables that were classified after older app builds had already
+     * written manifests. Manifests produced by builds before this schema version carry
+     * no row count for them, so they are only required (and only count-verified when a
+     * count is present) for manifests at or above this version.
+     */
+    private const val FULL_TABLE_COVERAGE_SCHEMA_VERSION = 152
+
+    /** negotiation_outcomes is created by MIGRATION_145_146 (additive, empty). */
+    private const val NEGOTIATION_OUTCOMES_SCHEMA_VERSION = 146
 
     /**
-     * All 61 tracked table names with their verification tier.
-     * 61 = 42 exact (35 listed in the Tier 1 block + 7 event/link) + 10 validity
-     * + 9 optional. TABLE_TIERS is a single literal mapOf (no merged maps/sets).
+     * Tier 1 tables first classified by S0b (P-07-1). Introduced at: source_stats_events 117,
+     * warranty_lifecycle_events 118, investment_transactions 119, group_settlements 120,
+     * group_lifecycle_events 121, entity_source_links 132, bank_statement_import_runs/items 135,
+     * negotiation_outcomes 146. All exist in every supported source DB (baseline 145) except
+     * negotiation_outcomes, but pre-coverage manifests carry no count for any of them.
+     */
+    private val COVERAGE_GATED_TABLES: Set<String> = setOf(
+        "source_stats_events",
+        "warranty_lifecycle_events",
+        "investment_transactions",
+        "group_settlements",
+        "group_lifecycle_events",
+        "entity_source_links",
+        "bank_statement_import_runs",
+        "bank_statement_import_items",
+        "negotiation_outcomes"
+    )
+
+    // ── Verification tier assignment for all 74 tables ──────────
+
+    /**
+     * All 74 tracked table names with their verification tier (one per AppDatabase
+     * entity at schema 152; room_master_table and sqlite internals are not entities).
+     * 74 = 51 exact + 10 validity + 13 optional. 51 exact = 35 in the first Tier 1
+     * block + 7 event/link + 9 S0b-classified (see [COVERAGE_GATED_TABLES]).
+     * TABLE_TIERS is a single literal mapOf (no merged maps/sets).
      */
     private val TABLE_TIERS: Map<String, VerificationTier> = mapOf(
-        // ── Tier 1: Exact row count required (42 total) ──
+        // ── Tier 1: Exact row count required (51 total) ──
         // 35 listed here + 7 event/link tables grouped under the Tier 2 comment
         // below (transaction_events, receipt_events, receipt_expense_links,
         // recurring_occurrences, recurring_reminder_deliveries,
         // recurring_lifecycle_events, warranty_reminder_deliveries) which are also
-        // TIER_1_EXACT. requiredManifestTables() filters by value, so the physical
+        // TIER_1_EXACT, + 9 S0b tables grouped under the Tier 3 comment below.
+        // requiredManifestTables() filters by value, so the physical
         // grouping is cosmetic; the tier assignment is authoritative.
         "raw_notifications"              to VerificationTier.TIER_1_EXACT,
         "expenses"                       to VerificationTier.TIER_1_EXACT,
@@ -115,7 +148,25 @@ object BackupVerifier {
         // recurring_reminder_deliveries; exact-count verified so it survives restore.
         "warranty_reminder_deliveries"   to VerificationTier.TIER_1_EXACT,
 
-        // ── Tier 3: Optional (9 tables) ──
+        // S0b / P-07-1: previously unclassified user-data and event-log tables. Exact-count
+        // verified; required in the manifest only from FULL_TABLE_COVERAGE_SCHEMA_VERSION.
+        "source_stats_events"            to VerificationTier.TIER_1_EXACT,
+        "warranty_lifecycle_events"      to VerificationTier.TIER_1_EXACT,
+        "investment_transactions"        to VerificationTier.TIER_1_EXACT,
+        "group_settlements"              to VerificationTier.TIER_1_EXACT,
+        "group_lifecycle_events"         to VerificationTier.TIER_1_EXACT,
+        "entity_source_links"            to VerificationTier.TIER_1_EXACT,
+        "bank_statement_import_runs"     to VerificationTier.TIER_1_EXACT,
+        "bank_statement_import_items"    to VerificationTier.TIER_1_EXACT,
+        "negotiation_outcomes"           to VerificationTier.TIER_1_EXACT,
+
+        // ── Tier 3: Optional (13 tables) ──
+        // S0b: diagnostics / transient queue tables. Restore itself writes
+        // operation_runs/operation_run_events, so they cannot be exact-count verified.
+        "pipeline_diagnostic_events"     to VerificationTier.TIER_3_OPTIONAL,
+        "operation_runs"                 to VerificationTier.TIER_3_OPTIONAL,
+        "operation_run_events"           to VerificationTier.TIER_3_OPTIONAL,
+        "notification_intake"            to VerificationTier.TIER_3_OPTIONAL,
         "exchange_rates"                 to VerificationTier.TIER_3_OPTIONAL,
         "anomaly_alerts"                 to VerificationTier.TIER_3_OPTIONAL,
         "prompt_states"                  to VerificationTier.TIER_3_OPTIONAL,
@@ -214,6 +265,8 @@ object BackupVerifier {
                     databaseVersion >= SAVINGS_SWEEP_MONTH_SCHEMA_VERSION
                 "installment_plans", "installment_entries" -> databaseVersion == null ||
                     databaseVersion >= INSTALLMENT_TABLES_SCHEMA_VERSION
+                in COVERAGE_GATED_TABLES -> databaseVersion == null ||
+                    databaseVersion >= FULL_TABLE_COVERAGE_SCHEMA_VERSION
                 else -> true
             }
         }
@@ -266,6 +319,12 @@ object BackupVerifier {
         if (sourceDatabaseVersion != null && sourceDatabaseVersion < INSTALLMENT_TABLES_SCHEMA_VERSION) {
             if ("installment_plans" !in expectedCounts) migrated["installment_plans"] = 0
             if ("installment_entries" !in expectedCounts) migrated["installment_entries"] = 0
+        }
+        // Pre-146 restores create negotiation_outcomes empty (additive migration).
+        if (sourceDatabaseVersion != null && sourceDatabaseVersion < NEGOTIATION_OUTCOMES_SCHEMA_VERSION &&
+            "negotiation_outcomes" !in expectedCounts
+        ) {
+            migrated["negotiation_outcomes"] = 0
         }
         return migrated
     }
@@ -412,7 +471,14 @@ object BackupVerifier {
             val (passed, message) = when (tier) {
                 VerificationTier.TIER_1_EXACT -> {
                     if (expected == null) {
-                        false to "Table '$tableName' not found in manifest counts"
+                        if (tableName in COVERAGE_GATED_TABLES) {
+                            // Legacy manifest written before S0b classified this table. A
+                            // manifest at/above FULL_TABLE_COVERAGE_SCHEMA_VERSION is rejected
+                            // pre-swap by validateManifestCompleteness, so null here is legacy.
+                            true to "OK (legacy manifest: no recorded count, actual: $actual)"
+                        } else {
+                            false to "Table '$tableName' not found in manifest counts"
+                        }
                     } else if (actual != expected) {
                         false to "Count mismatch: expected $expected, actual $actual"
                     } else {
@@ -630,7 +696,7 @@ object BackupVerifier {
     }
 
     /**
-     * Returns the set of all tracked table names (61, see TABLE_TIERS) for ArchUnit/grep assertions.
+     * Returns the set of all tracked table names (one per AppDatabase entity, see TABLE_TIERS) for ArchUnit/grep assertions.
      */
     fun allTableNames(): Set<String> = TABLE_TIERS.keys
 

@@ -3001,7 +3001,7 @@ class DatabaseBackupRepositoryImplTest {
     }
 
     /**
-     * Creates a database containing every table tracked by [BackupVerifier] (61 tables, see TABLE_TIERS),
+     * Creates a database containing every table tracked by [BackupVerifier] (one per AppDatabase entity, see TABLE_TIERS),
      * so the strict backup pipeline (`collectTableCountsStrict` + `BackupVerifier.verify`)
      * passes and `createCostBackup` reaches `CostbackupBundle.create`.
      */
@@ -3316,7 +3316,7 @@ class DatabaseBackupRepositoryImplTest {
 
     @Test
     fun `createCostBackup stamps CountingTimeProvider timestamp into manifest createdAt`() = runTest(testDispatcher) {
-        // Full 57-table schema so the strict backup pipeline (collectTableCountsStrict +
+        // Full table schema (every TABLE_TIERS table) so the strict backup pipeline (collectTableCountsStrict +
         // BackupVerifier.verify) passes and the flow actually reaches CostbackupBundle.create.
         createFullSchemaDatabase(file = dbFile)
         val cacheDir = File(tempDir, "cache").apply { mkdirs() }
