@@ -3461,3 +3461,24 @@ Validation to request: unchanged, targeted `*AppLockController*` (covers both te
   - targeted vr-20261101-211629-490eeb2a
   - architecture-contracts vr-20261101-212347-5af05cbb
   - data vr-20261101-212448-c39ef1cc
+- G2-F1 merged as `a5d659de`:
+  - static-guards vr-20261101-213107-d22aafbc
+  - unit-tests vr-20261101-215312-c17d5072
+  - app-check vr-20261101-220746-0b64b185
+  - owner-approvals item 100
+- Second G2-F1 reviewer-strict pass: ACCEPT-WITH-MINORS; the 2-iteration cap was reached. The final minors are a follow-up commit:
+  - `CoroutineStart.ATOMIC` for the foreground re-check launch;
+  - the comment wording;
+  - a store test that pins a flag-only guard.
+  - Targeted PASS vr-20261101-225428-eaa21786.
+- G2-F1 emulator re-check (debug vr-20261101-224640-b66a26bd, same PID 7154): PASS.
+  - A third fingerprint was enrolled while the process was alive. On return there was no fingerprint button. After the PIN, the notice was shown and the switch was OFF.
+  - Re-enabling with the new finger and unlocking with it works. No PIN in logcat.
+- App-lock engineering complete. Remaining items are owner items:
+  - es/el sign-off;
+  - real-phone G2 checks (PBKDF2 timing on a low-end API-30 device, TEE level, AE-73 reboot delay, AE-42/117 OEM screens, TalkBack);
+  - OD-19 Option C.
+- LOW follow-ups:
+  - G2-N1: a Keystore op on main;
+  - the enable-prompt copy;
+  - the S26b key-delete race (fails closed).
