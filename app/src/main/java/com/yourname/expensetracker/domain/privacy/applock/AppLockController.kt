@@ -2707,8 +2707,9 @@ class AppLockController @Inject constructor(
                 Closing.OpenOriginSuccess -> {
                     // T33 hand-off, nothing applied here. Back to the origin; the attempt's promptBackgroundAt
                     // is discarded with it and the pending background is cleared (spec 3.4: an auth success that
-                    // ends in an open state clears it). Increment 1 has no prompt that is not unlock-equivalent
-                    // (INV-54), so the "otherwise hand the background to the timer" clause has no case yet.
+                    // ends in an open state clears it). FINGERPRINT_ENABLE (S26b) is the one prompt that is not
+                    // unlock-equivalent (INV-54 [2], AE-120): its recorded prompt background goes to the timer;
+                    // every other prompt clears the pending background.
                     // RS26b-LOW-1: the origin state first, so the hand-off's timer evaluation sees UNLOCKED (as the
                     // non-success path orders it).
                     setState(originState(attempt))
@@ -2845,7 +2846,8 @@ class AppLockController @Inject constructor(
 
     /**
      * T34 timer hand-off for a CONFIRM_CHANGE attempt that ended without success (cancel, error, lockout, host
-     * loss, the watchdog or a launch that never happened). Must be called with [stateLock] held, after the state
+     * loss, the watchdog or a launch that never happened) or a FINGERPRINT_ENABLE attempt that ended with
+     * success (AE-120, RS26b-LOW-1). Must be called with [stateLock] held, after the state
      * returned to `UNLOCKED`.
      *
      * - No background was recorded during the prompt and none was pending: nothing to hand over, and since no

@@ -3405,3 +3405,19 @@ Validation to request: unchanged, targeted `*AppLockController*` (covers both te
   - Test gaps that are not reachable: the LOW-4(b) out-of-step close, and the LOCKED to LOCKED delay-keep half of F1.
   - For the delta review to confirm: a timeout lock that fires on the enable-success close still commits biometricEnabled. Both the PIN and a STRONG biometric were verified.
   - Queue note: a duplicate driver was started by mistake. The runner lock serialised the runs, so nothing ran in parallel. The duplicate was killed, and one driver remains.
+
+### S27b + S26b merged (2026-11-01)
+- reviewer-strict delta `bf335ece..961846f5`: ACCEPT-WITH-MINORS.
+  - AE-120 confirmed: the commit is kept when the enable-success close ends LOCKED(TIMEOUT).
+  - One stale-comment MINOR, fixed in the next lane commit (comment-only, no validation needed).
+- Integration merge `5f49624e`: all PASS.
+  - static-guards vr-20261101-190322-dd2019c4
+  - unit-tests vr-20261101-192226-f9e02ad8
+  - app-check vr-20261101-193629-6c1243f3
+- Fast-forward pushed to origin/feature/ai-evolution. Owner-approvals item 99. The lane is synced to 5f49624e.
+- Accepted residuals:
+  - the async key delete racing an instant re-enable (fails closed);
+  - the setPinMessage check-then-update window;
+  - LOW-2 checks the step type, not the step instance.
+- NEXT: the G2 emulator checks on emulator-5554 only: AE-76 fingerprint enrolment via `adb emu finger touch`, and the AE-120 timing.
+- OWNER: es/el sign-off of the S27b/S26b strings; the real-phone G2 checks (item 98).
