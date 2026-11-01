@@ -109,8 +109,7 @@ class AndroidSpeechInputGateway @Inject constructor(
      * - Timeout handling
      * - Permission revoked edge case
      *
-     * TODO (W35): Wire this to ViewModel.onCleared() in the speech
-     * input ViewModel/HiltViewModel lifecycle.
+     * Wired: NaturalLanguageSearchViewModel.onCleared() calls this method.
      */
     override fun destroy() {
         try {

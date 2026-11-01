@@ -48,12 +48,13 @@ import com.yourname.expensetracker.ui.theme.SemanticColors
 /**
  * Privacy settings screen.
  *
- * Note: Changing certain settings may require an app restart to take full effect:
- * - "Capture notifications" — requires restart of NotificationListenerService
- * - "Background location backfill" — requires restart of background location workers
+ * Setting changes apply immediately and no app restart is needed:
+ * - Notification capture follows the settings flow live.
+ * - Location gates read the current settings on each call.
+ * - Saving a change cancels or reschedules the privacy-gated background workers.
  *
- * TODO: Add per-setting "restart required" badges or snackbar hints once the
- *       underlying services support dynamic reconfiguration.
+ * Also hosts the app lock entry point ([AppLockPrivacySection]) and the read-only
+ * notification-access status card.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
