@@ -1120,8 +1120,6 @@
     <string name="empty_action_connect_notifications_desc">Connect notifications to detect subscriptions</string>
     <string name="empty_action_add_subscription_title">Add Subscription</string>
     <string name="empty_action_add_subscription_desc">Add a subscription manually</string>
-    <string name="empty_action_scan_bank_title">Scan Bank Statements</string>
-    <string name="empty_action_scan_bank_desc">Scan bank statements for subscriptions</string>
     <string name="empty_action_create_goal_title">Create First Goal</string>
     <string name="empty_action_create_goal_desc">Create your first savings goal</string>
     <string name="empty_action_view_recommendations_title">View Recommendations</string>
