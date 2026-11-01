@@ -1,23 +1,52 @@
 package com.yourname.expensetracker.data.repository
 
+import androidx.room.withTransaction
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+import com.yourname.expensetracker.data.database.AppDatabase
+import com.yourname.expensetracker.data.database.dao.SavingsContributionLedgerDao
 import com.yourname.expensetracker.data.database.dao.SavingsGoalDao
 import com.yourname.expensetracker.domain.model.GoalProtectionLevel
 import com.yourname.expensetracker.domain.model.SavingsGoal
+import com.yourname.expensetracker.domain.savings.SavingsGoalDeleteResult
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.mockkStatic
+import io.mockk.unmockkStatic
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
+import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Before
 import org.junit.Test
 
 class SavingsGoalRepositoryCurrencyTest {
     private val dao = mockk<SavingsGoalDao>()
     private val barrier = mockk<DatabaseWriteBarrier>(relaxed = true)
-    private val repository = SavingsGoalRepository(barrier, dao)
+    private val database = mockk<AppDatabase>(relaxed = true)
+    private val history = mockk<SavingsContributionHistoryRepository>()
+    private val ledgerDao = mockk<SavingsContributionLedgerDao>()
+    private val repository = SavingsGoalRepository(barrier, dao, database, history, ledgerDao)
+
+    @Before
+    fun setUp() {
+        // withTransaction compiles to the top-level static facade
+        // androidx.room.RoomDatabaseKt.withTransaction, so a pass-through stub only
+        // intercepts with mockkStatic (same pattern as WarrantyTrackerRepositoryTest).
+        mockkStatic("androidx.room.RoomDatabaseKt")
+        coEvery { database.withTransaction(any<suspend () -> Any>()) } coAnswers {
+            secondArg<suspend () -> Any>().invoke()
+        }
+        coEvery { history.getAllContributions() } returns emptyList()
+        coEvery { ledgerDao.getAll() } returns emptyList()
+    }
+
+    @After
+    fun tearDown() {
+        unmockkStatic("androidx.room.RoomDatabaseKt")
+    }
 
     @Test
     fun `created goals preserve computation currency and provenance after repository round trip`() = runTest {
@@ -62,11 +91,32 @@ class SavingsGoalRepositoryCurrencyTest {
             currency = "EUR", currencyAssumption = "LEGACY_DEFAULT", createdAt = 500L
         )
         every { dao.getAllGoals() } returns MutableStateFlow(listOf(entity))
+        coEvery { dao.getById(9L) } returns entity
         coEvery { dao.deleteGoal(any()) } returns Unit
         val goal = repository.getSavingsGoals().single()
         assertEquals("EUR", goal.currency)
         assertEquals("LEGACY_DEFAULT", goal.currencyAssumption)
-        repository.deleteSavingsGoal(goal)
+        // Balance 30.0 is non-empty: the delete is now rejected (INV-1) and nothing is deleted.
+        assertEquals(
+            SavingsGoalDeleteResult.Rejected("SAVINGS_GOAL_DELETE_HAS_BALANCE"),
+            repository.deleteSavingsGoal(goal)
+        )
+        coVerify(exactly = 0) { dao.deleteGoal(any()) }
+        coVerify(exactly = 1) { barrier.checkWritesAllowed("SavingsGoalRepository.deleteSavingsGoal") }
+    }
+
+    @Test
+    fun `legacy assumption goal with zero balance is deleted using the row re-read in the transaction`() = runTest {
+        val entity = com.yourname.expensetracker.data.database.entity.SavingsGoal(
+            id = 9L, name = "Legacy", targetAmount = 100.0, currentAmount = 0.0,
+            currency = "EUR", currencyAssumption = "LEGACY_DEFAULT", createdAt = 500L
+        )
+        every { dao.getAllGoals() } returns MutableStateFlow(listOf(entity))
+        coEvery { dao.getById(9L) } returns entity
+        coEvery { dao.deleteGoal(any()) } returns Unit
+        val goal = repository.getSavingsGoals().single()
+        assertEquals("LEGACY_DEFAULT", goal.currencyAssumption)
+        assertEquals(SavingsGoalDeleteResult.Deleted, repository.deleteSavingsGoal(goal))
         coVerify(exactly = 1) { dao.deleteGoal(entity) }
         coVerify(exactly = 1) { barrier.checkWritesAllowed("SavingsGoalRepository.deleteSavingsGoal") }
     }
