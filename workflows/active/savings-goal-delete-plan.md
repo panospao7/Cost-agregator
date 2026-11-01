@@ -374,3 +374,23 @@ The owner lifted "planning only" on 2026-11-02.
   - `lint-baseline.xml` is still at 2223 MissingTranslation.
 - **fix-1.0.4 lane** (unmerged, another session): no code overlap. Only `LEGAL_PATHS.md` (~:168) and `strings.xml` overlap textually; rebase at merge.
 - **Review findings:** E-02-1 and E-02-1b (HIGH: manual contribution writes Room and DataStore non-atomically, no ledger row) bear on INV-17. Note them in S2, **not folded in**.
+- **S-pre DONE (explorer, 2026-11-02):** no STOP condition.
+  - The only implementor is `data/repository/SavingsGoalRepository.kt:17` (override :35, DAO call :37). The only product caller is `SavingsGoalsViewModel.kt:467` (inside `deleteGoal` :464).
+  - Test constructions:
+    - `NotificationParserDashboardTotalSeamTest:415`;
+    - `SavingsGoalRepositoryCurrencyTest:20` (calls delete :69; DAO stub :65).
+  - Repository stub: `SavingsGoalsViewModelWriteBlockedTest:131` (throws).
+  - No `just Runs`/`coJustRun` stubs. No fakes implement the interface.
+  - INV-7 holds.
+  - Hilt: `SavingsRepositoryBindingsModule:17` and `DashboardContractsModule:53`, unchanged.
+  - Baselines:
+    - MissingTranslation 2223;
+    - schema 152.json;
+    - `db_access_allowlist.yml` ~596 lines, `db_ownership_policy.yml` ~8062 lines.
+  - Guards: `db_artifact_sync` (guard_registry :410), `db_access` (:598). The data shard is named "data".
+  - No SavingsGoalsScreen Compose test and no en/el/es parity test, so S5 relies on lint, VM tests and a manual a11y check.
+  - T-2:
+    - B6-18 is partial; SavingsSweepAcceptanceCoordinatorTest is WAIT, so whoever lands second rebases.
+    - B6-23 was DROPPED.
+    - B8-5 was ACCEPTED; the DAO tests are in `data.database.dao`.
+  - Batch 1 test classes confirmed (FQCN): `data.repository.SavingsGoalRepositoryCurrencyTest`, `data.database.dao.SavingsGoalDaoTest`, `data.repository.SavingsSweepAcceptanceCoordinatorTest`, `data.backup.BackupVerifierSavingsLedgerTest`, `ui.screens.savings.SavingsGoalsViewModelWriteBlockedTest`, `e2e.NotificationParserDashboardTotalSeamTest`, plus the new S1/S2 tests.
