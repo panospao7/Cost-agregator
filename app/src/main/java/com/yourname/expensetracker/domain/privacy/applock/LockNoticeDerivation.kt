@@ -15,7 +15,8 @@ package com.yourname.expensetracker.domain.privacy.applock
  * - [LockNotice.ReviewSettings] comes from the LOAD STATE (R4), and only for a persistent unreadable cause
  *   (`CORRUPTED`, `INVALID_VALUE`). Transient causes (`IO_ERROR`, `TIMEOUT`) and a missing load state (the
  *   controller's own resolve fallback) produce no review notice (INV-47).
- * - [LockNotice.BiometricInvalidated] is `false` in Increment 1 (no biometric pending flag exists yet).
+ * - [LockNotice.BiometricInvalidated] follows [biometricPending], the PIN store's `biometricInvalidatedNoticePending`
+ *   flag (S26b, AMD-6). It is `false` when no PIN store view exists.
  *
  * Notices carry no amounts, counts or link hints (INV-35).
  */

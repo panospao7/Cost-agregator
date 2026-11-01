@@ -7,8 +7,13 @@ import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performKeyInput
+import androidx.compose.ui.test.pressKey
 import com.yourname.expensetracker.architecture.SourceTextSanitizer
 import com.yourname.expensetracker.domain.privacy.applock.pin.PinFormatPolicy
 import com.yourname.expensetracker.ui.applock.AppLockComposeTestBase
@@ -262,5 +267,109 @@ class PinPadTest : AppLockComposeTestBase() {
         composeRule.waitForIdle()
         assertEquals(0, remembered!!.length)
         assertTrue(allZero(backing(remembered!!)))
+    }
+
+    // ---- S27b hardware keyboard (ux-flows 8) ----
+
+    @OptIn(ExperimentalTestApi::class)
+    private fun keys(keys: List<Key>) {
+        composeRule.waitForIdle() // the pad takes focus in a LaunchedEffect
+        keys.forEach { k -> composeRule.onRoot().performKeyInput { pressKey(k) } }
+        composeRule.waitForIdle()
+    }
+
+    /** Presses [key] while [modifier] is held down (a chord such as Ctrl+1). */
+    @OptIn(ExperimentalTestApi::class)
+    private fun chord(modifier: Key, key: Key) {
+        composeRule.waitForIdle()
+        composeRule.onRoot().performKeyInput {
+            keyDown(modifier)
+            pressKey(key)
+            keyUp(modifier)
+        }
+        composeRule.waitForIdle()
+    }
+
+    private val sixDigitKeys = listOf(Key.One, Key.Three, Key.Five, Key.Seven, Key.Nine, Key.Zero)
+
+    @Test
+    fun s27b_hardwareKeys_ctrlOrAltOrMetaModifiedDigitsDoNotAppend_shiftStillAppends() {
+        show()
+        keys(listOf(Key.One)) // control: an unmodified digit appends
+        assertEquals(1, buffer.length)
+        chord(Key.CtrlLeft, Key.Two)
+        chord(Key.CtrlRight, Key.Three)
+        chord(Key.AltLeft, Key.Four)
+        chord(Key.AltRight, Key.Five)
+        chord(Key.MetaLeft, Key.Six)
+        assertEquals(1, buffer.length)
+        chord(Key.ShiftLeft, Key.Seven)
+        assertEquals(2, buffer.length)
+        assertEquals("2 digits entered", dotRowDescription())
+    }
+
+    @Test
+    fun s27b_hardwareKeys_digitsAppend_andEnterAtMinLengthConfirmsOnce() {
+        assertEquals(6, PinFormatPolicy.MIN_LENGTH)
+        show()
+        keys(sixDigitKeys)
+        assertEquals("6 digits entered", dotRowDescription())
+        assertEquals(0, confirmCalls)
+        keys(listOf(Key.Enter))
+        assertEquals(1, confirmCalls)
+        assertArrayEquals("135790".toCharArray(), confirmed)
+        assertEquals(0, buffer.length)
+        assertTrue(allZero(backing(buffer)))
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun s27b_hardwareKeys_numpadDigitsAppend_andNumpadEnterConfirms() {
+        show()
+        keys(listOf(Key.NumPad1, Key.NumPad2, Key.NumPad0, Key.NumPad3, Key.NumPad4, Key.NumPad5))
+        assertEquals(6, buffer.length)
+        keys(listOf(Key.NumPadEnter))
+        assertEquals(1, confirmCalls)
+        assertArrayEquals("120345".toCharArray(), confirmed)
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun s27b_hardwareKeys_backspaceAndDeleteRemoveTheLastDigit_andNonPinKeysAreIgnored() {
+        show()
+        keys(listOf(Key.One, Key.Two, Key.Three, Key.A, Key.Spacebar))
+        assertEquals(3, buffer.length)
+        keys(listOf(Key.Backspace))
+        assertEquals(2, buffer.length)
+        keys(listOf(Key.Delete))
+        assertEquals(1, buffer.length)
+        keys(listOf(Key.Backspace, Key.Backspace))
+        assertEquals(0, buffer.length)
+        assertTrue(allZero(backing(buffer)))
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun s27b_hardwareKeys_enterBelowMinLengthDoesNothing() {
+        show()
+        keys(listOf(Key.One, Key.Three, Key.Five, Key.Seven, Key.Nine))
+        assertEquals(PinFormatPolicy.MIN_LENGTH - 1, buffer.length)
+        keys(listOf(Key.Enter, Key.NumPadEnter))
+        assertEquals(0, confirmCalls)
+        assertNull(confirmed)
+        assertEquals(PinFormatPolicy.MIN_LENGTH - 1, buffer.length)
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun s27b_hardwareKeys_areIgnoredWhileThePadIsDisabled() {
+        show()
+        padEnabled.value = false
+        composeRule.waitForIdle()
+        keys(sixDigitKeys + listOf(Key.Backspace, Key.Enter, Key.NumPadEnter))
+        assertEquals(0, buffer.length)
+        assertEquals(0, confirmCalls)
+        assertNull(confirmed)
+        assertTrue(allZero(backing(buffer)))
     }
 }

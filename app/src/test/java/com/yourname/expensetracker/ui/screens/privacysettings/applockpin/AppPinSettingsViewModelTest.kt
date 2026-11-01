@@ -41,11 +41,19 @@ import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+import com.yourname.expensetracker.domain.privacy.applock.AuthPromptCopy
+import com.yourname.expensetracker.domain.privacy.applock.DeviceAuthErrorBucket
 
 /**
  * S27 b1: [AppPinSettingsViewModel] end-to-end over the REAL [AppLockController] and settings operations (harness
  * fakes only for the stores and the device prompt). INV-50, UQ-4, INV-38, INV-42, AE-104, AE-119.
+ * Runs on Robolectric (API 34) so the S26b fingerprint toggle's `SDK_INT >= 30` gate is satisfied.
  */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34])
 @OptIn(ExperimentalCoroutinesApi::class)
 class AppPinSettingsViewModelTest {
 
@@ -99,11 +107,11 @@ class AppPinSettingsViewModelTest {
     }
 
     /** UNLOCKED in effective APP_PIN mode (verifier PRESENT, stored APP_PIN). */
-    private fun pinModeRig(): Rig {
+    private fun pinModeRig(biometricEnabled: Boolean = false): Rig {
         val settings = AppLockPrivacySettings(
             appLockEnabled = true, autoLockTimeout = AutoLockTimeout.IMMEDIATE, lockMode = LockMode.APP_PIN
         )
-        val store = FakeAppPinStore(AppPinStoreState(PinVerifierState.PRESENT, false, false))
+        val store = FakeAppPinStore(AppPinStoreState(PinVerifierState.PRESENT, biometricEnabled, false))
         store.verifyScript += PinVerifyResult.Correct
         val h = AppLockControllerHarness(AppLockSettingsLoadState.Loaded(settings), pinStore = store)
         val c = h.resolvedController()
@@ -553,5 +561,91 @@ class AppPinSettingsViewModelTest {
         val vm = rig.vm()
         assertEquals(PinStep.NONE, rig.c.pin.value.step)
         assertEquals(PinFlowStep.NONE, vm.uiState.value.step)
+    }
+
+    // --- S26b fingerprint unlock (INV-40, INV-54, STOP-5) -------------------------------------------------------
+
+    /** Opens FINGERPRINT_ENTER through the VM on an unlocked APP_PIN rig whose store applies flag writes. */
+    private fun Rig.openFingerprintEnter(): AppPinSettingsViewModel {
+        store.applyFlagWrites = true
+        store.verifyScript += PinVerifyResult.Correct // the entry for the enable (the unlock consumed the first)
+        val vm = vm()
+        vm.collectEvents()
+        assertTrue(vm.uiState.value.fingerprintToggleVisible)
+        vm.startFingerprintEnable()
+        assertEquals(PinFlowStep.FINGERPRINT_ENTER, vm.uiState.value.step)
+        return vm
+    }
+
+    /** Settles and polls [condition] (bounded 5 s): enableFingerprint hops to Dispatchers.Default for the key creation. */
+    private fun awaitCondition(h: AppLockControllerHarness, condition: () -> Boolean) {
+        val deadline = System.nanoTime() + 5_000_000_000L
+        while (System.nanoTime() < deadline) {
+            h.settle()
+            if (condition()) return
+            Thread.sleep(10)
+        }
+        h.settle()
+    }
+
+    @Test
+    fun `INV-40 fingerprint enable with the correct PIN and a successful prompt emits FINGERPRINT_ON and the flag is on`() {
+        val rig = pinModeRig()
+        val vm = rig.openFingerprintEnter()
+        assertFalse(vm.uiState.value.fingerprintEnabled)
+        val promptsBefore = rig.h.authenticator.calls.size
+        vm.submitEntry(pin("482916"))
+        awaitCondition(rig.h) { rig.h.authenticator.calls.size > promptsBefore }
+        assertEquals(1, rig.h.fingerprintKeyGate.createCalls)
+        assertTrue(events.isEmpty()) // nothing is claimed before the prompt outcome
+        rig.h.authenticator.deliver(DeviceAuthOutcome.Succeeded)
+        awaitCondition(rig.h) { events.isNotEmpty() }
+        assertEquals(listOf(PinFlowEvent.FINGERPRINT_ON), events)
+        assertEquals(listOf(true), rig.store.biometricWrites)
+        assertTrue(vm.uiState.value.fingerprintEnabled)
+    }
+
+    @Test
+    fun `INV-40 fingerprint enable whose key cannot be created emits FINGERPRINT_UNAVAILABLE and starts no prompt`() {
+        val rig = pinModeRig()
+        val vm = rig.openFingerprintEnter()
+        rig.h.fingerprintKeyGate.createResult = false
+        val promptsBefore = rig.h.authenticator.calls.size
+        vm.submitEntry(pin("482916"))
+        awaitCondition(rig.h) { events.isNotEmpty() }
+        assertEquals(listOf(PinFlowEvent.FINGERPRINT_UNAVAILABLE), events)
+        assertEquals(promptsBefore, rig.h.authenticator.calls.size)
+        assertEquals(PinFlowStep.NONE, vm.uiState.value.step)
+        assertFalse(vm.uiState.value.fingerprintEnabled)
+        assertTrue(rig.store.biometricWrites.isEmpty())
+    }
+
+    @Test
+    fun `INV-40 fingerprint enable whose prompt is NotAvailable emits FINGERPRINT_UNAVAILABLE and leaves the flag off`() {
+        val rig = pinModeRig()
+        val vm = rig.openFingerprintEnter()
+        val promptsBefore = rig.h.authenticator.calls.size
+        vm.submitEntry(pin("482916"))
+        awaitCondition(rig.h) { rig.h.authenticator.calls.size > promptsBefore }
+        rig.h.authenticator.deliver(DeviceAuthOutcome.NotAvailable)
+        awaitCondition(rig.h) { events.isNotEmpty() }
+        assertEquals(listOf(PinFlowEvent.FINGERPRINT_UNAVAILABLE), events)
+        assertFalse(vm.uiState.value.fingerprintEnabled)
+        assertTrue(rig.store.biometricWrites.isEmpty())
+    }
+
+    @Test
+    fun `STOP-5 disableFingerprint after it was enabled emits FINGERPRINT_OFF with one biometric write of false`() {
+        val rig = pinModeRig(biometricEnabled = true)
+        rig.store.applyFlagWrites = true
+        val vm = rig.vm()
+        vm.collectEvents()
+        assertTrue(vm.uiState.value.fingerprintEnabled) // control: it is on
+        vm.disableFingerprint()
+        rig.h.settle()
+        awaitCondition(rig.h) { events.isNotEmpty() }
+        assertEquals(listOf(PinFlowEvent.FINGERPRINT_OFF), events)
+        assertEquals(listOf(false), rig.store.biometricWrites)
+        assertFalse(vm.uiState.value.fingerprintEnabled)
     }
 }

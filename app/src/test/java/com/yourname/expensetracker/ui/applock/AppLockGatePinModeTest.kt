@@ -5,6 +5,7 @@ import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performClick
 import com.yourname.expensetracker.domain.privacy.applock.AppLockState
 import com.yourname.expensetracker.domain.privacy.applock.AuthPurpose
 import com.yourname.expensetracker.domain.privacy.applock.EffectiveLockMode
@@ -156,5 +157,30 @@ class AppLockGatePinModeTest : AppLockComposeTestBase() {
         composeRule.waitForIdle()
         count(PinLockTags.SURFACE, 1)
         assertNothingLaunched()
+    }
+
+    @Test
+    fun biometricInvalidatedNotice_dismissTap_invokesOnDismissNoticeOnce_stateOverload() {
+        var dismissed = 0
+        composeRule.setContent {
+            AppLockGate(
+                state = AppLockState.Unlocked,
+                notice = LockNotice.BiometricInvalidated,
+                inAppActionsAllowed = true,
+                onUnlock = { unlockTaps++ },
+                onOpenSecuritySettings = { },
+                onOpenAppLockSettings = { },
+                onReviewSettings = { },
+                onDismissNotice = { dismissed++ }
+            ) { ProbeContent(probe) }
+        }
+        composeRule.waitForIdle()
+        assertEquals(0, dismissed)
+
+        composeRule.onNodeWithTag(LOCK_NOTICE_DISMISS_TAG).performClick()
+        composeRule.waitForIdle()
+
+        assertEquals(1, dismissed)
+        assertEquals(0, unlockTaps)
     }
 }

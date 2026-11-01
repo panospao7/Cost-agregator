@@ -179,7 +179,7 @@ class AppLockControllerOpenOriginEndTest {
             add(DeviceAuthOutcome.LockedOut(permanent = true) to OpenOriginEndKind.LOCKED_OUT)
             DeviceAuthErrorBucket.entries.forEach { add(DeviceAuthOutcome.Failed(it) to OpenOriginEndKind.ERROR) }
         }
-        for (prompt in OpenOriginPrompt.entries) {
+        for (prompt in PUBLIC_OPEN_ORIGIN_PROMPTS) {
             for ((outcome, kind) in cases) {
                 val label = "$prompt / $outcome"
                 val (h, controller) = controllerFor(prompt)
@@ -219,7 +219,7 @@ class AppLockControllerOpenOriginEndTest {
             DeviceAuthCapability.AVAILABLE to OpenOriginEndKind.ERROR
         )
         assertEquals(DeviceAuthCapability.entries.toSet(), enableKinds.keys)
-        for (prompt in OpenOriginPrompt.entries) {
+        for (prompt in PUBLIC_OPEN_ORIGIN_PROMPTS) {
             for (capability in DeviceAuthCapability.entries) {
                 val label = "$prompt / $capability"
                 val expected = if (prompt == OpenOriginPrompt.ENABLE) enableKinds.getValue(capability) else OpenOriginEndKind.ERROR
@@ -241,7 +241,7 @@ class AppLockControllerOpenOriginEndTest {
     @Test
     fun `a prompt that never launched publishes ERROR, so nobody waits for an end that never comes`() {
         for (result in listOf(AuthLaunch.ALREADY_IN_FLIGHT, AuthLaunch.HOST_UNAVAILABLE, AuthLaunch.PROMPT_UNAVAILABLE)) {
-            for (prompt in OpenOriginPrompt.entries) {
+            for (prompt in PUBLIC_OPEN_ORIGIN_PROMPTS) {
                 val label = "$result / $prompt"
                 val (h, controller) = controllerFor(prompt)
                 h.authenticator.defaultResult = result
@@ -254,7 +254,7 @@ class AppLockControllerOpenOriginEndTest {
                 }
             }
         }
-        for (prompt in OpenOriginPrompt.entries) {
+        for (prompt in PUBLIC_OPEN_ORIGIN_PROMPTS) {
             val (h, controller) = controllerFor(prompt)
             h.authenticator.throwOnAuthenticate = IllegalStateException("boom")
             collecting(controller) { ends ->
@@ -266,7 +266,7 @@ class AppLockControllerOpenOriginEndTest {
 
     @Test
     fun `a launch retry budget that runs out publishes ERROR at once, without the watchdog`() {
-        for (prompt in OpenOriginPrompt.entries) {
+        for (prompt in PUBLIC_OPEN_ORIGIN_PROMPTS) {
             val (h, controller) = controllerFor(prompt)
             h.authenticator.defaultResult = AuthLaunch.AWAITING_PRIOR_TERMINAL
             val step = AppLockController.AWAITING_PRIOR_TERMINAL_STEP_MILLIS
@@ -287,7 +287,7 @@ class AppLockControllerOpenOriginEndTest {
 
     @Test
     fun `a foreign cancellation of the launch publishes ERROR, and one that races a LAUNCHED answer publishes HOST_LOST`() {
-        for (prompt in OpenOriginPrompt.entries) {
+        for (prompt in PUBLIC_OPEN_ORIGIN_PROMPTS) {
             val (h, controller) = controllerFor(prompt)
             h.authenticator.throwOnAuthenticate = CancellationException("cancelled")
             collecting(controller) { ends ->
@@ -295,7 +295,7 @@ class AppLockControllerOpenOriginEndTest {
                 assertEquals("$prompt", listOf(end(id, prompt, OpenOriginEndKind.ERROR)), ends.published)
             }
         }
-        for (prompt in OpenOriginPrompt.entries) {
+        for (prompt in PUBLIC_OPEN_ORIGIN_PROMPTS) {
             val (h, controller) = controllerFor(prompt)
             h.authenticator.onAuthenticate = { h.cancelControllerJobs() } // it still answers LAUNCHED: a prompt may show
             collecting(controller) { ends ->
@@ -308,7 +308,7 @@ class AppLockControllerOpenOriginEndTest {
 
     @Test
     fun `T35 host loss publishes HOST_LOST once, the adapter echo and a late success publish nothing more`() {
-        for (prompt in OpenOriginPrompt.entries) {
+        for (prompt in PUBLIC_OPEN_ORIGIN_PROMPTS) {
             val (h, controller) = controllerFor(prompt)
             collecting(controller) { ends ->
                 val id = h.startOpenOrigin(controller, prompt, RecordingSuccessHandler())
@@ -329,7 +329,7 @@ class AppLockControllerOpenOriginEndTest {
 
     @Test
     fun `the watchdog publishes HOST_LOST once at the bound, and a late success publishes nothing`() {
-        for (prompt in OpenOriginPrompt.entries) {
+        for (prompt in PUBLIC_OPEN_ORIGIN_PROMPTS) {
             val (h, controller) = controllerFor(prompt)
             collecting(controller) { ends ->
                 val id = h.startOpenOrigin(controller, prompt, RecordingSuccessHandler())
@@ -394,7 +394,7 @@ class AppLockControllerOpenOriginEndTest {
 
     @Test
     fun `an open-origin attempt that closes out of step is dropped with ERROR, never with an applied kind`() {
-        for (prompt in OpenOriginPrompt.entries) {
+        for (prompt in PUBLIC_OPEN_ORIGIN_PROMPTS) {
             val (h, controller) = controllerFor(prompt)
             val handler = RecordingSuccessHandler()
             collecting(controller) { ends ->
@@ -420,7 +420,7 @@ class AppLockControllerOpenOriginEndTest {
 
     @Test
     fun `T12 outcomes and host losses for a wrong, closed or older attempt publish nothing`() {
-        for (prompt in OpenOriginPrompt.entries) {
+        for (prompt in PUBLIC_OPEN_ORIGIN_PROMPTS) {
             val (h, controller) = controllerFor(prompt)
             val handler = RecordingSuccessHandler()
             collecting(controller) { ends ->
@@ -476,7 +476,7 @@ class AppLockControllerOpenOriginEndTest {
 
     @Test
     fun `T32 backgrounds, foregrounds and queries during the prompt publish nothing and BACKGROUNDED has no producer`() {
-        for (prompt in OpenOriginPrompt.entries) {
+        for (prompt in PUBLIC_OPEN_ORIGIN_PROMPTS) {
             val (h, controller) = controllerFor(prompt)
             collecting(controller) { ends ->
                 val id = h.startOpenOrigin(controller, prompt, RecordingSuccessHandler())
@@ -497,7 +497,7 @@ class AppLockControllerOpenOriginEndTest {
 
     @Test
     fun `T33 a success publishes nothing at the close, and neither does the apply completion without a move`() {
-        for (prompt in OpenOriginPrompt.entries) {
+        for (prompt in PUBLIC_OPEN_ORIGIN_PROMPTS) {
             val (h, controller) = controllerFor(prompt)
             val handler = RecordingSuccessHandler()
             collecting(controller) { ends ->

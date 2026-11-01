@@ -677,19 +677,31 @@ class AppLockControllerPromptOutcomeTest {
         val expectedCopy = mapOf(
             OpenOriginPrompt.ENABLE to AuthPromptCopy.ENABLE,
             OpenOriginPrompt.DISABLE to AuthPromptCopy.DISABLE,
-            OpenOriginPrompt.CHANGE to AuthPromptCopy.CHANGE
+            OpenOriginPrompt.CHANGE to AuthPromptCopy.CHANGE,
+            OpenOriginPrompt.FINGERPRINT_ENABLE to AuthPromptCopy.PIN_FINGERPRINT
         )
         val expectedPurpose = mapOf(
             OpenOriginPrompt.ENABLE to AuthPurpose.ENABLE,
             OpenOriginPrompt.DISABLE to AuthPurpose.CONFIRM_CHANGE,
-            OpenOriginPrompt.CHANGE to AuthPurpose.CONFIRM_CHANGE
+            OpenOriginPrompt.CHANGE to AuthPurpose.CONFIRM_CHANGE,
+            OpenOriginPrompt.FINGERPRINT_ENABLE to AuthPurpose.CONFIRM_CHANGE
         )
         assertEquals(OpenOriginPrompt.entries.toSet(), expectedCopy.keys)
+        assertEquals(OpenOriginPrompt.entries.toSet(), expectedPurpose.keys)
         for (prompt in OpenOriginPrompt.entries) {
             assertEquals("$prompt", expectedCopy.getValue(prompt), prompt.copy)
             assertEquals("$prompt", expectedPurpose.getValue(prompt), prompt.purpose)
 
             val (h, controller) = openOriginController(prompt)
+            if (prompt == OpenOriginPrompt.FINGERPRINT_ENABLE) {
+                // By design not startable through the public API (only via enableFingerprint after a verified PIN).
+                assertEquals(
+                    "$prompt",
+                    OpenOriginStartResult.NotInOrigin,
+                    controller.startOpenOriginAttempt(prompt, RecordingSuccessHandler())
+                )
+                continue
+            }
             var stateAtCall: AppLockState? = null
             var openAtCall: Long? = null
             h.authenticator.onAuthenticate = {
@@ -721,7 +733,7 @@ class AppLockControllerPromptOutcomeTest {
 
     @Test
     fun `ii-b authenticate and cancel of an open-origin attempt are never called under the controller's monitor`() {
-        for (prompt in OpenOriginPrompt.entries) {
+        for (prompt in PUBLIC_OPEN_ORIGIN_PROMPTS) {
             val (h, controller) = openOriginController(prompt)
             val probesInTime = AtomicInteger(0)
             val probe: (Long) -> Unit = {
@@ -745,7 +757,7 @@ class AppLockControllerPromptOutcomeTest {
 
     @Test
     fun `T33 a matching success returns to the origin, hands the success over once and applies nothing`() {
-        for (prompt in OpenOriginPrompt.entries) {
+        for (prompt in PUBLIC_OPEN_ORIGIN_PROMPTS) {
             val (h, controller) = openOriginController(prompt)
             h.emitted.clear()
             val handler = RecordingSuccessHandler()
@@ -781,7 +793,7 @@ class AppLockControllerPromptOutcomeTest {
 
     @Test
     fun `T33 an outcome delivered synchronously inside authenticate is handed over, the attempt was already open`() {
-        for (prompt in OpenOriginPrompt.entries) {
+        for (prompt in PUBLIC_OPEN_ORIGIN_PROMPTS) {
             val (h, controller) = openOriginController(prompt)
             h.authenticator.reentrantOutcome = DeviceAuthOutcome.Succeeded
             val handler = RecordingSuccessHandler()
@@ -797,7 +809,7 @@ class AppLockControllerPromptOutcomeTest {
 
     @Test
     fun `T33 a failing success handler never affects the controller and is not swallowed into an error state`() {
-        for (prompt in OpenOriginPrompt.entries) {
+        for (prompt in PUBLIC_OPEN_ORIGIN_PROMPTS) {
             val (h, controller) = openOriginController(prompt)
             val handler = RecordingSuccessHandler().apply { failure = IllegalStateException("secret-path /data/x") }
             val id = h.startOpenOrigin(controller, prompt, handler)
@@ -828,7 +840,7 @@ class AppLockControllerPromptOutcomeTest {
                 mapOf<PrivacyDiagnosticKey, Any>(PrivacyDiagnosticKey.CAUSE to bucket)
             )
         }
-        for (prompt in OpenOriginPrompt.entries) {
+        for (prompt in PUBLIC_OPEN_ORIGIN_PROMPTS) {
             for ((outcome, code, metadata) in cases) {
                 val (h, controller) = openOriginController(prompt)
                 h.emitted.clear()
@@ -884,7 +896,7 @@ class AppLockControllerPromptOutcomeTest {
     @Test
     fun `P2 a launch that did not happen returns an open-origin attempt to its origin with no LOCK_AUTH code`() {
         for (result in listOf(AuthLaunch.ALREADY_IN_FLIGHT, AuthLaunch.HOST_UNAVAILABLE, AuthLaunch.PROMPT_UNAVAILABLE)) {
-            for (prompt in OpenOriginPrompt.entries) {
+            for (prompt in PUBLIC_OPEN_ORIGIN_PROMPTS) {
                 val (h, controller) = openOriginController(prompt)
                 h.emitted.clear()
                 h.authenticator.defaultResult = result
@@ -1398,7 +1410,7 @@ class AppLockControllerPromptOutcomeTest {
     @Test
     fun `F4 a NotAvailable whose capability re-check throws still closes the attempt back on its origin and rethrows what it threw`() {
         class RecheckBoom : Error("recheck boom")
-        for (prompt in OpenOriginPrompt.entries) {
+        for (prompt in PUBLIC_OPEN_ORIGIN_PROMPTS) {
             val label = "$prompt"
             val (h, controller) = openOriginController(prompt)
             val handler = RecordingSuccessHandler()
@@ -1458,7 +1470,7 @@ class AppLockControllerPromptOutcomeTest {
 
     @Test
     fun `F5 a stale open-origin success while the state is AUTHENTICATING(UNLOCK) locks the app instead of returning to the origin`() {
-        for (prompt in OpenOriginPrompt.entries) {
+        for (prompt in PUBLIC_OPEN_ORIGIN_PROMPTS) {
             val label = "$prompt"
             val (h, controller) = openOriginController(prompt)
             val handler = RecordingSuccessHandler()
@@ -1480,7 +1492,7 @@ class AppLockControllerPromptOutcomeTest {
 
     @Test
     fun `ISSUE-1 a cancel of an attempt whose state is AUTHENTICATING(UNLOCK) of another id locks the app, calls no handler and records no code`() {
-        for (prompt in OpenOriginPrompt.entries) {
+        for (prompt in PUBLIC_OPEN_ORIGIN_PROMPTS) {
             val label = "$prompt"
             val (h, controller) = openOriginController(prompt)
             val handler = RecordingSuccessHandler()
@@ -1580,7 +1592,7 @@ class AppLockControllerPromptOutcomeTest {
 
     @Test
     fun `a success handler that throws CancellationException is rethrown unchanged after the attempt closed on its origin`() {
-        for (prompt in OpenOriginPrompt.entries) {
+        for (prompt in PUBLIC_OPEN_ORIGIN_PROMPTS) {
             val label = "$prompt"
             val (h, controller) = openOriginController(prompt)
             val cancellation = CancellationException("handler cancelled")
@@ -1609,7 +1621,7 @@ class AppLockControllerPromptOutcomeTest {
 
     @Test
     fun `AE-117 a success discards the prompt background, whether it arrives before or after the foreground`() {
-        for (prompt in OpenOriginPrompt.entries) {
+        for (prompt in PUBLIC_OPEN_ORIGIN_PROMPTS) {
             for (afterForeground in listOf(false, true)) {
                 val label = "$prompt / afterForeground=$afterForeground"
                 val (h, controller) = openOriginController(prompt, AutoLockTimeout.IMMEDIATE)
@@ -1639,7 +1651,7 @@ class AppLockControllerPromptOutcomeTest {
 
     @Test
     fun `AE-118 T35 host loss closes an open-origin attempt before the adapter cancel echo, and a late success is stale`() {
-        for (prompt in OpenOriginPrompt.entries) {
+        for (prompt in PUBLIC_OPEN_ORIGIN_PROMPTS) {
             val (h, controller) = openOriginController(prompt)
             h.emitted.clear()
             val handler = RecordingSuccessHandler()
@@ -1704,7 +1716,7 @@ class AppLockControllerPromptOutcomeTest {
 
     @Test
     fun `AE-118 T12 a host loss for an unknown or stale id changes nothing for an open-origin attempt`() {
-        for (prompt in OpenOriginPrompt.entries) {
+        for (prompt in PUBLIC_OPEN_ORIGIN_PROMPTS) {
             val (h, controller) = openOriginController(prompt)
             val id = h.startOpenOrigin(controller, prompt, RecordingSuccessHandler())
             h.emitted.clear()
@@ -1723,7 +1735,7 @@ class AppLockControllerPromptOutcomeTest {
 
     @Test
     fun `AE-118 a rotation keeps an open-origin attempt and a matching success on the recreated host is accepted`() {
-        for (prompt in OpenOriginPrompt.entries) {
+        for (prompt in PUBLIC_OPEN_ORIGIN_PROMPTS) {
             val (h, controller) = openOriginController(prompt)
             val handler = RecordingSuccessHandler()
             val id = h.startOpenOrigin(controller, prompt, handler)
@@ -1744,7 +1756,7 @@ class AppLockControllerPromptOutcomeTest {
 
     @Test
     fun `AE-118 T35 host loss while the launch waits for the prior terminal stops the retries for an open-origin attempt`() {
-        for (prompt in OpenOriginPrompt.entries) {
+        for (prompt in PUBLIC_OPEN_ORIGIN_PROMPTS) {
             val (h, controller) = openOriginController(prompt)
             h.authenticator.defaultResult = AuthLaunch.AWAITING_PRIOR_TERMINAL
             val callsBefore = h.authenticator.calls.size
@@ -1764,7 +1776,7 @@ class AppLockControllerPromptOutcomeTest {
 
     @Test
     fun `F5 an open-origin prompt left open past the watchdog bound is abandoned and the change is not applied`() {
-        for (prompt in OpenOriginPrompt.entries) {
+        for (prompt in PUBLIC_OPEN_ORIGIN_PROMPTS) {
             val (h, controller) = openOriginController(prompt)
             h.emitted.clear()
             val handler = RecordingSuccessHandler()

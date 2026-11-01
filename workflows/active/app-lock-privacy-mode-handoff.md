@@ -3299,3 +3299,109 @@ Validation to request: unchanged, targeted `*AppLockController*` (covers both te
 - Fix pass diagnosed by the debugger and fixed: one production bug (a second capability re-check inside writeReviewSaveDirect) plus test-harness issues. Kotlin default arguments were replaced with explicit overloads, so the reflection API pin stays strict.
 - Fix-pass ladder, all PASS (in order): targeted, runtime-ui, domain-n-z, architecture-contracts, static-guards, lint = vr-20261030-230636-075b96b9 vr-20261030-231253-722919bd vr-20261030-231610-ef45cd3d vr-20261030-231811-206e644b vr-20261030-231900-9278933b vr-20261030-233503-6bfea5f9 
 - COMMITTED. NEXT: merge onto the integration branch (on top of 98549381), run the full suites, fast-forward feature/ai-evolution.
+
+## 2026-10-31: INCREMENT 2 MERGED into feature/ai-evolution (d9c55d4d)
+- Merge-commit gate PASS:
+  - static-guards vr-20261030-234122-a26f8071
+  - unit-tests vr-20261030-235926-ea4926c3
+  - app-check vr-20261031-001700-9b29fe44
+- Recorded as owner-approvals 98.
+- The lane remains open for the follow-ups:
+  - S26b: fingerprint enable plus the AE-120 prompt plus the AE-76 device check;
+  - S27b: PIN-entry timeout and review-save, hardware keyboard, neutral delay copy.
+- OWNER items: es/el sign-off, the G2 real-phone checks, a TalkBack check, OD-19 Option C.
+
+## 2026-10-31: S27b ACCEPTED and COMMITTED
+- **Domain:**
+  - PinStep TIMEOUT_CONFIRM / REVIEW_CONFIRM;
+  - controller beginPinConfirm, verifyPinForStep (shared counter, AMD-2), a one-shot step authority (cleared on close or re-lock, and on a failed re-verify);
+  - onPinConfirmed* always apply a committed durable write (D6), and only the authority closes the step;
+  - operations requestTimeoutChangeWithPin / requestReviewSaveWithPin (verify, then re-check the authority in the serializer, then write with the F7 settle);
+  - PIN_MODE renamed PIN_REQUIRED for timeout/review; disable keeps PIN_MODE (Turn off in App PIN).
+- **UI:**
+  - PinConfirmDialog from the privacy settings (lengthening timeout / weakening review-save in PIN mode);
+  - PinPad hardware keyboard (digits/numpad, Backspace/Delete, Enter consumed, confirm only at MIN_LENGTH; Ctrl/Alt/Meta ignored);
+  - neutral delay copy (PinPresentation.delayNeutral).
+- Combined guardian A/B: ACCEPT-WITH-FIXES. All applied (A1 MEDIUM durable apply on re-lock, A2, B1, B2).
+- Debugger fix passes:
+  - two production fixes: Enter consumed below MIN_LENGTH; the dialog message node uses mergeDescendants;
+  - test pins updated to the approved API, exact and scoped per method;
+  - stale expectations and idles fixed.
+- Ladder, all PASS:
+  - targeted vr-20261031-093839-84379af1
+  - runtime-ui vr-20261031-094527-f44c3214
+  - domain-n-z vr-20261031-094943-b3cb21f6
+  - architecture-contracts vr-20261031-095200-c7c9060f
+  - static-guards vr-20261031-095303-f0aff219
+  - lint vr-20261031-101709-9406ffee
+  - The first lint attempt was a transient E_EXTERNAL_GRADLE_ACTIVE.
+- NEXT:
+  1. S26b (fingerprint enable): C1 -> C2 -> C3 -> C4 per the plan, with the orchestrator decisions STOP-1 (no guard change; neutral "not available") and STOP-5 (disable is direct).
+  2. Then reviewer-strict on S27b+S26b, then the merge.
+
+## 2026-10-31: S26b ACCEPTED and COMMITTED (fingerprint enable/disable in PIN mode)
+- **Domain:**
+  - OpenOriginPrompt.FINGERPRINT_ENABLE, startable only via enableFingerprint after a correct PIN (verifyPinForStep FINGERPRINT_CONFIRM; the public start returns NotInOrigin);
+  - key createKey, then a BIOMETRIC_STRONG PIN_FINGERPRINT crypto prompt, then a NonCancellable setBiometricEnabled(true) (still APP_PIN);
+  - the key is deleted on every non-success close;
+  - AE-120: the enable prompt hands its background to the timer;
+  - disable is direct (STOP-5);
+  - dismissBiometricNotice through the existing store method; a successful re-enable clears a stale invalidated notice (guardian LOW-2);
+  - the LockNotice BiometricInvalidated banner gets copy and a Dismiss button.
+- **UI:**
+  - App PIN settings "Use fingerprint to unlock" switch (shown with a PIN set and API 30+; no capability check, STOP-1);
+  - PIN entry, then the system prompt; neutral "not available" message;
+  - the privacy-settings noticeForEnd ignores FINGERPRINT_ENABLE ends.
+- Combined guardian: ACCEPT with LOWs. LOW-2 applied.
+  - LOW-1 (an async key delete racing an instant re-enable; fails closed) is a residual.
+  - LOW-3 is covered by a test.
+- Static-guards caught:
+  - G-CANCEL-01: the cleanup-before-rethrow catch shape, fixed;
+  - the db_access DB_DAO_SCOPE_UNRESOLVED in MerchantNormalizer.kt:296, caused by the new generic gate method names create()/delete(). They were renamed to createKey()/deleteKey(). Lesson: avoid generic method names that collide with DAO verbs.
+- Ladder, all PASS:
+  - targeted vr-20261031-123021-b98ffda3
+  - runtime-ui vr-20261031-123708-1d949815
+  - domain-n-z vr-20261031-124125-ce803b39
+  - architecture-contracts vr-20261031-124341-f3c860bc
+  - static-guards vr-20261031-124444-d55794ea
+  - lint vr-20261031-130303-540ffa58
+  - data vr-20261031-115408-f4300d4c (on the prior tree; the later changes do not touch data tests)
+- NEXT:
+  1. reviewer-strict on S27b + S26b.
+  2. The integration merge into feature/ai-evolution with full suites, then fast-forward.
+  3. The emulator device checks at G2: AE-76 enrolment via `adb emu finger`; the AE-120 timing.
+
+### Integration candidate a9d249e1 (2026-10-31 / 2026-11-01)
+- Merge `a9d249e1` in Cost-agregator-int: feature/app-lock-privacy-mode `bf335ece` into feature/ai-evolution `d9c55d4d`, no conflicts.
+- Full suites, all PASS:
+  - static-guards vr-20261031-131037-0ace72d8
+  - unit-tests vr-20261031-132911-0939a956
+  - app-check vr-20261031-134314-7ba0fd8f
+- reviewer-strict (Opus xhigh) on S27b and S26b: the first attempt hit the Opus weekly limit (2026-10-31). Relaunched after the reset (2026-11-01 21:30). Results pending.
+- NEXT: on ACCEPT of both reviews, fast-forward feature/ai-evolution to a9d249e1 (owner item 92), record it in owner-approvals, then the G2 emulator checks.
+- reviewer-strict S26b (2026-11-01): ACCEPT-WITH-MINORS. No BLOCKER, HIGH or MEDIUM issues.
+  - RS26b-LOW-1 `AppLockController.kt:2704`: after a successful enable, the auto-lock timeout check runs with `capability=null`. If the app was backgrounded during the prompt, it stays UNLOCKED past the timeout until the next foreground. Fix: pass CHECK_FAILED, as `:2679` does.
+  - RS26b-LOW-2 `:1615-1622`: the enable prompt start does not re-check that `pinStep == FINGERPRINT_CONFIRM` after the `createKey` suspend. Not a bypass.
+  - RS26b-LOW-3 `:1704`: FINGERPRINT_ENABLE commit bumps `writeSequence` with no settings write, which needlessly throws away a concurrent re-read.
+  - RS26b-LOW-4: test gaps:
+    - cancellation during `createKey`;
+    - an abandoned or out-of-step close deleting the key;
+    - the LOW-1 ordering;
+    - a successful enable clearing the invalidated notice.
+- reviewer-strict S27b (2026-11-01): ACCEPT-WITH-MINORS. Strict-gate rule: fix F1 before merge. Line numbers are at 9b9beb74.
+  - RS27b-F1 MEDIUM `AppLockController.setState` (~2765): the UNLOCKED to LOCKED move clears the step and authority but keeps `pinDelayRemainingMillis` and `pinDelayReason`. PinLockSurface then restarts an old countdown (up to 60 min). Fix: clear both fields when leaving UNLOCKED, plus a test.
+  - RS27b-F2 LOW `PinConfirmUiState` (AppLockPrivacySettingsViewModel ~100): the default toString prints `delayRemainingMillis` (INV-38). Fix: override toString.
+  - RS27b-F3 LOW: VM `setPinMessage` (~875/904) leaves the dialog open after a re-lock during a WRONG/DELAYED verify. Fails closed. Fix: close it when the controller step no longer matches.
+  - RS27b-F4 LOW: the `onPinConfirmed*` KDoc says "no-op", which is stale; the matching test name in AppLockControllerPinConfirmTest (~322) is stale too.
+- DECISION (orchestrator, item 92): one combined fix batch (RS27b F1-F4 and RS26b LOW-1..LOW-4) on the lane before merge: a production writer, then a separate test-author (decision 86, privacy slice). Then the ladder, a new integration merge, and the full suites.
+- Fix batch (RS27b F1-F4, RS26b LOW-1..LOW-4): production writer, then a separate test-author.
+  - The first targeted run vr-20261101-184607-764cf363 FAILED on 2 new tests. Both were production defects (debug iteration 1):
+    - RS26b-LOW-4: `deleteFingerprintKeyBestEffort` (a NonCancellable withContext with a dispatcher switch) rethrows the CE of a cancelled caller on resume, so `closePinStep()` was skipped. Fix: close the step first, then delete, at both sites.
+    - RS26b-LOW-1: `handOffPromptBackground` ran while `current` was still Authenticating, so `evaluateForegroundLocked` was a no-op. Fix: `setState(originState)` first, as the non-success path orders it.
+  - Re-run PASS:
+    - targeted vr-20261101-185532-1a43cd28
+    - architecture-contracts vr-20261101-190103-9a4a65e7
+  - Not re-run on the lane: static-guards and lint (bodies only, no new catches, DB access or API). They are covered by the full suites on the new integration merge.
+  - Test gaps that are not reachable: the LOW-4(b) out-of-step close, and the LOCKED to LOCKED delay-keep half of F1.
+  - For the delta review to confirm: a timeout lock that fires on the enable-success close still commits biometricEnabled. Both the PIN and a STRONG biometric were verified.
+  - Queue note: a duplicate driver was started by mistake. The runner lock serialised the runs, so nothing ran in parallel. The duplicate was killed, and one driver remains.

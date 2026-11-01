@@ -114,6 +114,18 @@ fun interface OpenOriginSuccessHandler {
 }
 
 /**
+ * Bounded result of [AppLockController.enableFingerprint] (S26b). Carries no PIN, no key material and no platform text.
+ * [Started]: the PIN was accepted, the key exists and the BIOMETRIC_STRONG prompt opened (its end arrives on
+ * [AppLockController.openOriginEnd] for `OpenOriginPrompt.FINGERPRINT_ENABLE`). [KeyUnavailable]: no usable key.
+ * [Rejected]: the PIN step did not pass; [result] is the same bounded result every PIN surface returns (shared counter).
+ */
+sealed interface FingerprintEnableResult {
+    data object Started : FingerprintEnableResult
+    data object KeyUnavailable : FingerprintEnableResult
+    data class Rejected(val result: PinOperationResult) : FingerprintEnableResult
+}
+
+/**
  * The process-level app-lock controller and the ONLY writer of [AppLockState] (INV-24, spec 2.4).
  *
  * S16 covers: resolution from the settings store (T1 to T6, T6b), the inert escapes (T4, T6, T7b, T11,
@@ -438,6 +450,10 @@ class AppLockController @Inject constructor(
 
     // S26 (G26 advisory): the reason of the last delayed verify; fingerprint is hidden for ATTEMPT_STATE_UNREADABLE.
     private var pinDelayReason: PinDelayReason? = null
+
+    // S27b (AMD-2, INV-54[2]): the one-shot authority a correct PIN grants for exactly one confirm step. Guarded by
+    // stateLock; memory only; cleared on close, consume and any exit from UNLOCKED. Carries no PIN data.
+    private var pinConfirmAuthority: PinStep? = null
 
     // S26: true only after the last committed PIN-store view had biometricEnabled and the key read READY. Fail closed: false.
     private var fingerprintKeyReady: Boolean = false
@@ -1144,7 +1160,14 @@ class AppLockController @Inject constructor(
 
     /** Closes any open PIN step and publishes the view. Idempotent. */
     private fun closePinStep() {
-        transition { pinStep = PinStep.NONE }
+        transition {
+            pinStep = PinStep.NONE
+            pinConfirmAuthority = null
+            if (current !is AppLockState.Locked) { // a confirm-step delay view ends with the step; the lock view keeps its own
+                pinDelayRemainingMillis = null
+                pinDelayReason = null
+            }
+        }
     }
 
     /**
@@ -1215,6 +1238,235 @@ class AppLockController @Inject constructor(
 
     /** Closes any open PIN step with nothing applied (the person left the step). Idempotent. */
     fun cancelPinStep() = closePinStep()
+
+    private fun isPinConfirmStep(step: PinStep): Boolean =
+        step == PinStep.TIMEOUT_CONFIRM || step == PinStep.REVIEW_CONFIRM
+
+    /**
+     * S27b (AMD-2, T30): opens [PinStep.TIMEOUT_CONFIRM] or [PinStep.REVIEW_CONFIRM] under the same preconditions as
+     * [beginPinChange]. Any other [step] is refused (false). False when not allowed.
+     */
+    fun beginPinConfirm(step: PinStep): Boolean = isPinConfirmStep(step) && beginAppPinStep(step)
+
+    /**
+     * S27b: verifies [pin] for the open confirm [step] through the SHARED attempt counter and delay (AMD-2; a correct PIN
+     * resets the counter as on every PIN surface). Success only grants the one-shot authority for exactly [step] and
+     * returns [PinOperationResult.Done]; nothing is written here. A wrong or delayed PIN publishes the bounded delay view
+     * like the unlock surface and keeps the step open. [pin] is zeroed in `finally`, also on cancellation; never logged.
+     */
+    internal suspend fun verifyPinForStep(step: PinStep, pin: CharArray): PinOperationResult {
+        try {
+            // S26b: FINGERPRINT_CONFIRM verifies the same way (shared counter) but is opened only by beginFingerprintEnable.
+            if (!isPinConfirmStep(step) && step != PinStep.FINGERPRINT_CONFIRM) return PinOperationResult.NotInStep
+            if (!pinOperationRunning.compareAndSet(false, true)) return PinOperationResult.AlreadyInFlight
+            try {
+                if (!inPinStep(step)) return PinOperationResult.NotInStep
+                val verified = storeCall<PinVerifyResult>(PinVerifyResult.Unavailable) { pinStore.verify(pin) }
+                if (verified != PinVerifyResult.Correct) return rejectConfirmPin(verified)
+                val granted = transition {
+                    val ok = pinStepOpenLocked(step) && effectiveModeLocked() == EffectiveLockMode.APP_PIN
+                    if (ok) {
+                        pinConfirmAuthority = step
+                        pinDelayRemainingMillis = null
+                        pinDelayReason = null
+                    }
+                    ok
+                }
+                return if (granted) PinOperationResult.Done else PinOperationResult.NotInStep
+            } finally {
+                pinOperationRunning.set(false)
+            }
+        } finally {
+            pin.fill('\u0000')
+        }
+    }
+
+    /** S27b: true while a correct PIN's one-shot authority for exactly [step] is held (a pure read under the monitor). */
+    internal fun pinStepAuthorised(step: PinStep): Boolean = synchronized(stateLock) {
+        pinConfirmAuthority == step && pinStepOpenLocked(step)
+    }
+
+    /** S27b: true once if the authority for [step] is held and the step is still open, and clears it. */
+    internal fun consumePinStepAuthority(step: PinStep): Boolean = synchronized(stateLock) {
+        val held = pinConfirmAuthority == step && pinStepOpenLocked(step)
+        if (pinConfirmAuthority == step) pinConfirmAuthority = null
+        held
+    }
+
+    /**
+     * S26b phase 1 (AMD-2): opens [PinStep.FINGERPRINT_CONFIRM] from `UNLOCKED` in effective `APP_PIN` mode when a
+     * verifier is present and fingerprint unlock is off. False when not allowed. Not a prompt: nothing is written.
+     */
+    fun beginFingerprintEnable(): Boolean {
+        val eligible = synchronized(stateLock) {
+            pinState?.verifier == PinVerifierState.PRESENT && pinState?.biometricEnabled == false
+        }
+        return eligible && beginAppPinStep(PinStep.FINGERPRINT_CONFIRM)
+    }
+
+    /**
+     * S26b phase 2 (INV-40, AMD-2, INV-54 [2]): verifies [pin] for the open [PinStep.FINGERPRINT_CONFIRM] step through
+     * the SHARED counter ([pin] is zeroed), creates the fingerprint key, then opens the BIOMETRIC_STRONG
+     * `PIN_FINGERPRINT` prompt as a `FINGERPRINT_ENABLE` open-origin attempt. Only the prompt's success turns the flag
+     * on (one NonCancellable write); any other end deletes the key and leaves the flag off. Never a device credential.
+     */
+    suspend fun enableFingerprint(pin: CharArray): FingerprintEnableResult {
+        val verified = verifyPinForStep(PinStep.FINGERPRINT_CONFIRM, pin)
+        if (verified != PinOperationResult.Done) return FingerprintEnableResult.Rejected(verified)
+        if (!consumePinStepAuthority(PinStep.FINGERPRINT_CONFIRM)) {
+            return FingerprintEnableResult.Rejected(PinOperationResult.NotInStep)
+        }
+        val keyReady = try {
+            withContext(Dispatchers.Default) { fingerprintKey.createKey() }
+        } catch (e: Exception) {
+            if (e is CancellationException) {
+                // RS26b-LOW-4: close the step before the suspending delete; a cancelled caller resumes the delete with CE.
+                closePinStep()
+                deleteFingerprintKeyBestEffort()
+                throw e
+            }
+            Timber.w("App-lock fingerprint key create failed: class=%s", DiagnosticThrowableSummary.className(e))
+            false
+        }
+        if (!keyReady) {
+            closePinStep()
+            return FingerprintEnableResult.KeyUnavailable
+        }
+        val started = startOpenOriginAttemptWith(
+            OpenOriginPrompt.FINGERPRINT_ENABLE, OpenOriginSuccessHandler { id, _ -> onFingerprintEnableConfirmed(id) }, null, null
+        )
+        if (started is OpenOriginStartResult.Started) return FingerprintEnableResult.Started
+        // RS26b-LOW-4: close the step before the suspending delete; a cancelled caller resumes the delete with CE.
+        closePinStep()
+        deleteFingerprintKeyBestEffort()
+        return FingerprintEnableResult.Rejected(
+            if (started == OpenOriginStartResult.AlreadyInFlight) PinOperationResult.AlreadyInFlight else PinOperationResult.NotInStep
+        )
+    }
+
+    /**
+     * S27b: after the PIN-confirmed timeout write ([AppLockSettingsOperations] is the caller). Requires and consumes the
+     * [PinStep.TIMEOUT_CONFIRM] authority. Committed: always takes [timeout] into the view (D6 sequence bump), even if the
+     * authority was lost to a re-lock; only a still-held authority also closes the step. Not committed: records
+     * `LOCK_SETTING_PERSIST_FAILED(AUTO_LOCK_TIMEOUT)`; the step stays open.
+     */
+    internal fun onPinConfirmedTimeoutApplied(timeout: AutoLockTimeout, committed: Boolean) {
+        // A1: a committed write is always applied; a re-lock after the authority re-check must not skip the apply.
+        val held = consumePinStepAuthority(PinStep.TIMEOUT_CONFIRM)
+        val diagnostic = transition {
+            if (!committed) return@transition claimTimeoutPersistFailedLocked()
+            writeSequence++ // D6: a settings write committed
+            applyTimeoutToViewLocked(timeout)
+            null
+        }
+        record(diagnostic)
+        if (committed && held) closePinStep()
+    }
+
+    /**
+     * S27b: after the PIN-confirmed review-save ([AppLockSettingsOperations] is the caller). Requires and consumes the
+     * [PinStep.REVIEW_CONFIRM] authority. Committed: the shared committed half always runs with the PIN as
+     * authorisation (`direct = false`), even if the authority was lost to a re-lock; only a still-held authority also
+     * closes the step. Not committed: records
+     * `LOCK_SETTING_PERSIST_FAILED(REVIEW_SAVE)`; the step stays open.
+     */
+    internal fun onPinConfirmedReviewSaved(saved: AppLockPrivacySettings, committed: Boolean) {
+        // A1: a committed save is always applied; a re-lock after the authority re-check must not skip the apply.
+        val held = consumePinStepAuthority(PinStep.REVIEW_CONFIRM)
+        val diagnostic = transition {
+            if (!committed) return@transition claimPersistFailedLocked(AppLockSettingField.REVIEW_SAVE)
+            applyReviewSaveCommittedLocked(saved, direct = false)
+        }
+        record(diagnostic)
+        if (committed && held) closePinStep()
+    }
+
+    /**
+     * S26b success hand-off of the FINGERPRINT_ENABLE prompt: ONE NonCancellable `setBiometricEnabled(true)` (only while
+     * the effective mode is still `APP_PIN`), the key is deleted if that did not commit, then the end is published
+     * ([onOpenOriginSettingApplied]) and the T33 gate closes ([onOpenOriginApplyCompleted]) in `finally`.
+     */
+    private fun onFingerprintEnableConfirmed(attemptId: Long) {
+        scope.launch {
+            var committed = false
+            try {
+                committed = withContext(NonCancellable) {
+                    val ok = isEffectiveAppPinMode() &&
+                        storeCall(PinStoreWriteResult.FAILED) { pinStore.setBiometricEnabled(true) } == PinStoreWriteResult.DONE
+                    if (!ok) deleteFingerprintKeyBestEffort()
+                    refreshPinState()
+                    // A stale "fingerprint turned off" notice must not outlive the user turning fingerprint back on.
+                    if (ok && synchronized(stateLock) { pinState?.biometricInvalidatedNoticePending == true }) {
+                        storeCall(PinStoreWriteResult.FAILED) { pinStore.dismissBiometricInvalidatedNotice() }
+                        refreshPinState()
+                    }
+                    ok
+                }
+            } finally {
+                onOpenOriginSettingApplied(attemptId, committed)
+                onOpenOriginApplyCompleted(attemptId)
+            }
+        }
+    }
+
+    /**
+     * S26b (STOP-5, INV-51): turns fingerprint unlock off directly, no PIN. Only from `UNLOCKED` with no prompt in
+     * effective `APP_PIN` mode, else [PinOperationResult.NotInStep]. ONE `setBiometricEnabled(false)` write, then a
+     * best-effort key delete. A failed write leaves the key and reports [PinOperationResult.Failed].
+     */
+    suspend fun disableFingerprint(): PinOperationResult {
+        if (!pinOperationRunning.compareAndSet(false, true)) return PinOperationResult.AlreadyInFlight
+        try {
+            val allowed = synchronized(stateLock) {
+                current == AppLockState.Unlocked && inFlight == null && effectiveModeLocked() == EffectiveLockMode.APP_PIN
+            }
+            if (!allowed) return PinOperationResult.NotInStep
+            return withContext(NonCancellable) {
+                if (storeCall(PinStoreWriteResult.FAILED) { pinStore.setBiometricEnabled(false) } != PinStoreWriteResult.DONE) {
+                    return@withContext PinOperationResult.Failed
+                }
+                refreshPinState()
+                deleteFingerprintKeyBestEffort()
+                PinOperationResult.Done
+            }
+        } finally {
+            pinOperationRunning.set(false)
+        }
+    }
+
+    /** S26b (INV-51): the user dismissed the "fingerprint turned off" notice; clears the store's pending flag. */
+    suspend fun dismissBiometricNotice() {
+        withContext(NonCancellable) {
+            storeCall(PinStoreWriteResult.FAILED) { pinStore.dismissBiometricInvalidatedNotice() }
+            refreshPinState()
+        }
+    }
+
+    /** S26b: best-effort delete of the fingerprint key off the main thread; only a bounded class name is logged. */
+    private suspend fun deleteFingerprintKeyBestEffort() = withContext(NonCancellable + Dispatchers.Default) {
+        try {
+            fingerprintKey.deleteKey()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Timber.w("App-lock fingerprint key delete failed: class=%s", DiagnosticThrowableSummary.className(e))
+        }
+    }
+
+    /** A confirm-step verify that did not accept the PIN: publishes the bounded delay view (like [rejectPin]), step stays open. */
+    private fun rejectConfirmPin(verified: PinVerifyResult): PinOperationResult {
+        transition {
+            pinConfirmAuthority = null // A2: a non-Correct verify never leaves an earlier authority standing
+            if (verified == PinVerifyResult.Absent) {
+                // AMD-4: no verifier exists, so the effective mode is DEVICE_AUTH again (as the unlock path records it).
+                pinState = (pinState ?: AppPinStoreState.ABSENT).copy(verifier = PinVerifierState.ABSENT)
+            }
+            val delayed = verified as? PinVerifyResult.Delayed
+            pinDelayRemainingMillis = delayed?.remainingMillis
+            pinDelayReason = delayed?.reason
+        }
+        return notVerified(verified)
+    }
 
     /** A verify that did not accept the current PIN, as a bounded result (no PIN, no count). */
     private fun notVerified(result: PinVerifyResult): PinOperationResult = when (result) {
@@ -1307,7 +1559,12 @@ class AppLockController @Inject constructor(
      * with nothing written (T34).
      */
     fun startOpenOriginAttempt(prompt: OpenOriginPrompt, onSuccess: OpenOriginSuccessHandler): OpenOriginStartResult =
-        startOpenOriginAttemptWith(prompt, onSuccess, null, null)
+        // S26b: FINGERPRINT_ENABLE starts only inside enableFingerprint, after a correct PIN (AMD-2); never from here.
+        if (prompt == OpenOriginPrompt.FINGERPRINT_ENABLE) {
+            OpenOriginStartResult.NotInOrigin
+        } else {
+            startOpenOriginAttemptWith(prompt, onSuccess, null, null)
+        }
 
     /**
      * S18 i-b1: starts the CONFIRM_CHANGE attempt (CHANGE copy) of a LONGER auto-lock timeout. Same legality as
@@ -1357,7 +1614,19 @@ class AppLockController @Inject constructor(
             if (!purpose.isOpenOrigin || !inOrigin) return@transition OpenOriginStartResult.NotInOrigin
             // T30, AMD-2, INV-40: in effective APP_PIN mode the device credential must not weaken the lock (disable,
             // longer timeout, weakening review-save). Fail closed: no device prompt; the PIN surfaces are the way.
-            if (purpose.origin == AppLockOrigin.UNLOCKED && effectiveModeLocked() == EffectiveLockMode.APP_PIN) {
+            // S26b (INV-40): FINGERPRINT_ENABLE is the one device prompt that runs in APP_PIN mode (BIOMETRIC_STRONG only,
+            // never a device credential); it needs a present verifier and the flag still off.
+            val fingerprintEnable = prompt == OpenOriginPrompt.FINGERPRINT_ENABLE
+            val appPin = effectiveModeLocked() == EffectiveLockMode.APP_PIN
+            if (purpose.origin == AppLockOrigin.UNLOCKED && appPin != fingerprintEnable) {
+                return@transition OpenOriginStartResult.NotInOrigin
+            }
+            if (fingerprintEnable && (pinState?.verifier != PinVerifierState.PRESENT || pinState?.biometricEnabled != false)) {
+                return@transition OpenOriginStartResult.NotInOrigin
+            }
+            // RS26b-LOW-2: the key was created while this thread was suspended; a re-lock or cancel in that window
+            // closed the step, so the prompt starts only while FINGERPRINT_CONFIRM is still the open step (fail closed).
+            if (fingerprintEnable && pinStep != PinStep.FINGERPRINT_CONFIRM) {
                 return@transition OpenOriginStartResult.NotInOrigin
             }
             // F5: no new attempt while the previous open-origin success is still being applied (the T33 gate).
@@ -1441,7 +1710,10 @@ class AppLockController @Inject constructor(
         val diagnostic = transition {
             // F3 (fail closed): a committed write is counted even when no token matches, so D6 drops any older
             // re-read or kept snapshot.
-            if (committed) writeSequence++ // D6: a settings write committed
+            // RS26b-LOW-3: a FINGERPRINT_ENABLE apply wrote the PIN store only, no settings write, so no bump for it.
+            val fingerprintEnableApply = pendingApplyPrompt == OpenOriginPrompt.FINGERPRINT_ENABLE &&
+                pendingApplyAttemptId == attemptId
+            if (committed && !fingerprintEnableApply) writeSequence++ // D6: a settings write committed
             // F2: the prompt (and so ENABLE or DISABLE) is the one recorded by the close of THIS attempt. No token
             // (no prior success, or already consumed) or a different id: a no-op, nothing recorded.
             val prompt = pendingApplyPrompt
@@ -1705,6 +1977,8 @@ class AppLockController @Inject constructor(
         val enable = when (prompt) {
             OpenOriginPrompt.ENABLE -> true
             OpenOriginPrompt.DISABLE -> false
+            // S26b: turning fingerprint on never changes the lock setting or the state; nothing to apply here.
+            OpenOriginPrompt.FINGERPRINT_ENABLE -> return null
             OpenOriginPrompt.CHANGE -> {
                 // S18 ii-d (T27): a weakening review-save carries its record in the token. Committed: the shared T27 move
                 // (lock off to DISABLED, lock on to UNLOCKED) and LOCK_SETTINGS_REVIEW_SAVED; not committed: nothing moves
@@ -2435,8 +2709,18 @@ class AppLockController @Inject constructor(
                     // is discarded with it and the pending background is cleared (spec 3.4: an auth success that
                     // ends in an open state clears it). Increment 1 has no prompt that is not unlock-equivalent
                     // (INV-54), so the "otherwise hand the background to the timer" clause has no case yet.
-                    lastBackgroundedAtMillis = null
+                    // RS26b-LOW-1: the origin state first, so the hand-off's timer evaluation sees UNLOCKED (as the
+                    // non-success path orders it).
                     setState(originState(attempt))
+                    if (attempt.prompt == OpenOriginPrompt.FINGERPRINT_ENABLE) {
+                        // AE-120, INV-54 [2], T33: the fingerprint enable prompt is NOT unlock-equivalent. The recorded
+                        // prompt background goes to the timer like a background. No capability was read here, so it counts
+                        // as CHECK_FAILED (transient, never INERT, as the cancelled CONFIRM_CHANGE path): a
+                        // background-elapsed timeout locks immediately (RS26b-LOW-1).
+                        timerDiagnostic = handOffPromptBackground(attempt, DeviceAuthCapability.CHECK_FAILED)
+                    } else {
+                        lastBackgroundedAtMillis = null
+                    }
                     // S17: the T33 gate. A held link is not released by this close publishing the origin state;
                     // it waits for onOpenOriginApplyCompleted(attemptId) (S18's apply completed or failed).
                     applyGateAttemptId = attempt.attemptId
@@ -2487,6 +2771,7 @@ class AppLockController @Inject constructor(
                 attempt.cancelJobs()
                 // S22-a.0: an open-origin attempt that closed out of step is dropped, never silently: the end is ERROR.
                 publishOpenOriginClose(attempt, OpenOriginEndKind.ERROR)
+                discardFingerprintEnableKey(attempt)
                 record(timerDiagnostic) // only a T34 lock that really happened; the stale outcome claims no code
             }
             return false
@@ -2495,6 +2780,7 @@ class AppLockController @Inject constructor(
         // S22-a.0: after the monitor is released and the state is published; an UNLOCK attempt and a success (which
         // publishes at the apply) map to no kind.
         publishOpenOriginClose(attempt, openOriginEndKindOf(closing))
+        if (closing != Closing.OpenOriginSuccess) discardFingerprintEnableKey(attempt) // S26b: no success, no key
         record(diagnostic)
         record(timerDiagnostic)
         if (closing == Closing.Abandoned) postCancel(attempt.attemptId)
@@ -2523,6 +2809,15 @@ class AppLockController @Inject constructor(
         is Closing.BecameInert -> OpenOriginEndKind.NOT_AVAILABLE // UNLOCK only today; never published for it
         Closing.Abandoned -> OpenOriginEndKind.HOST_LOST
         Closing.NotLaunched -> OpenOriginEndKind.ERROR
+    }
+
+    /**
+     * S26b: a FINGERPRINT_ENABLE attempt that ended without a handed-over success leaves the flag off, so its key is
+     * deleted (best effort, off the caller's thread, not cancellable). Other attempts: no-op. Called outside [stateLock].
+     */
+    private fun discardFingerprintEnableKey(attempt: InFlightAttempt) {
+        if (attempt.prompt != OpenOriginPrompt.FINGERPRINT_ENABLE) return
+        scope.launch { deleteFingerprintKeyBestEffort() }
     }
 
     /** Publishes the end of an open-origin [attempt] (never an UNLOCK one). Called outside [stateLock]. */
@@ -2634,7 +2929,9 @@ class AppLockController @Inject constructor(
      * published too; an unchanged notice leaves the version alone.
      */
     private fun publicationLocked(): Publication {
-        val derived = LockNoticeDerivation.derive(current, loadState)
+        val derived = LockNoticeDerivation.derive(
+            current, loadState, biometricPending = pinState?.biometricInvalidatedNoticePending == true
+        )
         if (derived != currentNotice) {
             currentNotice = derived
             version++
@@ -2649,12 +2946,21 @@ class AppLockController @Inject constructor(
 
     /** Must be called with [stateLock] held. Every state change goes through here. */
     private fun setState(next: AppLockState) {
+        val previous = current
         current = next
         version++
         // S25: a PIN step lives only inside UNLOCKED; the recovery and delay views only inside LOCKED.
-        if (next != AppLockState.Unlocked) pinStep = PinStep.NONE
+        if (next != AppLockState.Unlocked) {
+            pinStep = PinStep.NONE
+            pinConfirmAuthority = null // INV-54[2]: a re-lock cancels any confirm authority
+        }
         if (next !is AppLockState.Locked) {
             pinRecoveryCause = null
+            pinDelayRemainingMillis = null
+            pinDelayReason = null
+        } else if (previous !is AppLockState.Locked) {
+            // RS27b-F1: a delay mirrored outside LOCKED belongs to a confirm step, which a re-lock ends; only a
+            // LOCKED -> LOCKED change keeps the unlock-surface delay (the store owns the real counter, this is a mirror).
             pinDelayRemainingMillis = null
             pinDelayReason = null
         }
@@ -2679,7 +2985,17 @@ class AppLockController @Inject constructor(
                 null -> if (pinState?.verifier == PinVerifierState.UNREADABLE) PinRecovery.RECORD_UNREADABLE else null
             }
         }
-        return PinPresentation(mode, pinStep, recovery, canOfferFingerprintLocked(), if (locked) pinDelayRemainingMillis else null)
+        // S27b: a delay is also shown inside a PIN confirm step (shared counter, AMD-2), never elsewhere in UNLOCKED.
+        val confirming = pinStep == PinStep.TIMEOUT_CONFIRM || pinStep == PinStep.REVIEW_CONFIRM
+        return PinPresentation(
+            mode,
+            pinStep,
+            recovery,
+            canOfferFingerprintLocked(),
+            if (locked || confirming) pinDelayRemainingMillis else null,
+            pinDelayReason == PinDelayReason.ATTEMPT_STATE_UNREADABLE,
+            pinState?.biometricEnabled == true
+        )
     }
 
     /**

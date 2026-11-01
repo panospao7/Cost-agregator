@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.ui.applock.pin
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,6 +17,7 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
@@ -23,6 +25,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEvent
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isAltPressed
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isMetaPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
@@ -168,6 +181,47 @@ private fun PinKey(
 
 private val DIGIT_ROWS = listOf("123", "456", "789")
 
+/** Maps a hardware key to an ASCII digit, or null. */
+private fun pinDigitFor(key: Key): Char? = when (key) {
+    Key.Zero, Key.NumPad0 -> '0'
+    Key.One, Key.NumPad1 -> '1'
+    Key.Two, Key.NumPad2 -> '2'
+    Key.Three, Key.NumPad3 -> '3'
+    Key.Four, Key.NumPad4 -> '4'
+    Key.Five, Key.NumPad5 -> '5'
+    Key.Six, Key.NumPad6 -> '6'
+    Key.Seven, Key.NumPad7 -> '7'
+    Key.Eight, Key.NumPad8 -> '8'
+    Key.Nine, Key.NumPad9 -> '9'
+    else -> null
+}
+
+/**
+ * Hardware-keyboard handling for [PinPad] (ux-flows 8). Digits append, Backspace/Delete remove the last digit, Enter
+ * is always consumed while enabled, but confirms only once [PinFormatPolicy.MIN_LENGTH] digits are entered (so a short
+ * Enter can never fall through to a focused key or view). Everything else is not consumed.
+ * Nothing is logged, echoed or announced. Does nothing while [enabled] is false.
+ */
+private fun handlePinKeyEvent(
+    event: KeyEvent,
+    enabled: Boolean,
+    buffer: PinEntryBuffer,
+    confirm: () -> Unit
+): Boolean {
+    if (!enabled || event.type != KeyEventType.KeyDown) return false
+    if (event.isCtrlPressed || event.isAltPressed || event.isMetaPressed) return false
+    val digit = pinDigitFor(event.key)
+    return when {
+        digit != null -> buffer.append(digit).let { true }
+        event.key == Key.Backspace || event.key == Key.Delete -> { buffer.deleteLast(); true }
+        event.key == Key.Enter || event.key == Key.NumPadEnter -> {
+            if (buffer.length >= PinFormatPolicy.MIN_LENGTH) confirm()
+            true
+        }
+        else -> false
+    }
+}
+
 /**
  * The in-app numeric pad (ux-flows 2.4, UQ-1): fixed digit order, 64dp circular keys, delete, an optional
  * fingerprint key and an explicit confirm button that is enabled from [PinFormatPolicy.MIN_LENGTH] digits and never
@@ -190,8 +244,26 @@ fun PinPad(
     androidx.compose.runtime.LaunchedEffect(enabled) { if (!enabled) buffer.clear() }
     val deleteCd = stringResource(R.string.applock_pin_key_delete_cd)
     val fingerprintCd = stringResource(R.string.applock_pin_key_fingerprint_cd)
+    val focusRequester = remember { FocusRequester() }
+    // Hardware keyboard (ux-flows 8): focus the pad while it is usable. Failure to take focus is harmless.
+    LaunchedEffect(enabled) {
+        if (enabled) {
+            // Narrow catch, not runCatching: CancellationSafetyArchitectureGuardTest bans raw runCatching in suspend paths.
+            try {
+                focusRequester.requestFocus()
+            } catch (_: IllegalStateException) {
+                // Not attached yet: focus is best effort.
+            }
+        }
+    }
     Column(
-        modifier = modifier.widthIn(max = 360.dp),
+        modifier = modifier
+            .widthIn(max = 360.dp)
+            .focusRequester(focusRequester)
+            .onPreviewKeyEvent { event ->
+                handlePinKeyEvent(event, enabled, buffer) { onConfirm(buffer.consumeCopy()) }
+            }
+            .focusable(),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {

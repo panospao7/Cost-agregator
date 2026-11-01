@@ -76,8 +76,19 @@ class AppLockShellControllerSourceTest {
     }
 
     @Test
+    fun dismissBiometricNotice_delegatesToTheControllerOnce() = runBlocking {
+        val source = source()
+        coEvery { controller.dismissBiometricNotice() } just Runs
+
+        source.dismissBiometricNotice()
+
+        coVerify(exactly = 1) { controller.dismissBiometricNotice() }
+    }
+
+    @Test
     fun constructingTheSource_callsNoControllerAction() {
         source()
+        coVerify(exactly = 0) { controller.dismissBiometricNotice() }
         coVerify(exactly = 0) { controller.submitUnlockPin(any()) }
         coVerify(exactly = 0) { controller.retryPinRecovery() }
         coVerify(exactly = 0) { controller.requestFingerprintUnlock() }
