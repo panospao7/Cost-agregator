@@ -1320,8 +1320,9 @@ class AppLockController @Inject constructor(
             withContext(Dispatchers.Default) { fingerprintKey.createKey() }
         } catch (e: Exception) {
             if (e is CancellationException) {
-                deleteFingerprintKeyBestEffort()
+                // RS26b-LOW-4: close the step before the suspending delete; a cancelled caller resumes the delete with CE.
                 closePinStep()
+                deleteFingerprintKeyBestEffort()
                 throw e
             }
             Timber.w("App-lock fingerprint key create failed: class=%s", DiagnosticThrowableSummary.className(e))
@@ -1335,8 +1336,9 @@ class AppLockController @Inject constructor(
             OpenOriginPrompt.FINGERPRINT_ENABLE, OpenOriginSuccessHandler { id, _ -> onFingerprintEnableConfirmed(id) }, null, null
         )
         if (started is OpenOriginStartResult.Started) return FingerprintEnableResult.Started
-        deleteFingerprintKeyBestEffort()
+        // RS26b-LOW-4: close the step before the suspending delete; a cancelled caller resumes the delete with CE.
         closePinStep()
+        deleteFingerprintKeyBestEffort()
         return FingerprintEnableResult.Rejected(
             if (started == OpenOriginStartResult.AlreadyInFlight) PinOperationResult.AlreadyInFlight else PinOperationResult.NotInStep
         )
@@ -1344,8 +1346,9 @@ class AppLockController @Inject constructor(
 
     /**
      * S27b: after the PIN-confirmed timeout write ([AppLockSettingsOperations] is the caller). Requires and consumes the
-     * [PinStep.TIMEOUT_CONFIRM] authority, else a no-op. Committed: takes [timeout] into the view (D6 sequence bump) and
-     * closes the step. Not committed: records `LOCK_SETTING_PERSIST_FAILED(AUTO_LOCK_TIMEOUT)`; the step stays open.
+     * [PinStep.TIMEOUT_CONFIRM] authority. Committed: always takes [timeout] into the view (D6 sequence bump), even if the
+     * authority was lost to a re-lock; only a still-held authority also closes the step. Not committed: records
+     * `LOCK_SETTING_PERSIST_FAILED(AUTO_LOCK_TIMEOUT)`; the step stays open.
      */
     internal fun onPinConfirmedTimeoutApplied(timeout: AutoLockTimeout, committed: Boolean) {
         // A1: a committed write is always applied; a re-lock after the authority re-check must not skip the apply.
@@ -1362,8 +1365,9 @@ class AppLockController @Inject constructor(
 
     /**
      * S27b: after the PIN-confirmed review-save ([AppLockSettingsOperations] is the caller). Requires and consumes the
-     * [PinStep.REVIEW_CONFIRM] authority, else a no-op. Committed: the shared committed half runs with the PIN as
-     * authorisation (`direct = false`) and the step closes. Not committed: records
+     * [PinStep.REVIEW_CONFIRM] authority. Committed: the shared committed half always runs with the PIN as
+     * authorisation (`direct = false`), even if the authority was lost to a re-lock; only a still-held authority also
+     * closes the step. Not committed: records
      * `LOCK_SETTING_PERSIST_FAILED(REVIEW_SAVE)`; the step stays open.
      */
     internal fun onPinConfirmedReviewSaved(saved: AppLockPrivacySettings, committed: Boolean) {
@@ -1620,6 +1624,11 @@ class AppLockController @Inject constructor(
             if (fingerprintEnable && (pinState?.verifier != PinVerifierState.PRESENT || pinState?.biometricEnabled != false)) {
                 return@transition OpenOriginStartResult.NotInOrigin
             }
+            // RS26b-LOW-2: the key was created while this thread was suspended; a re-lock or cancel in that window
+            // closed the step, so the prompt starts only while FINGERPRINT_CONFIRM is still the open step (fail closed).
+            if (fingerprintEnable && pinStep != PinStep.FINGERPRINT_CONFIRM) {
+                return@transition OpenOriginStartResult.NotInOrigin
+            }
             // F5: no new attempt while the previous open-origin success is still being applied (the T33 gate).
             // A lapsed gate is not cleared here, so a link still held is dropped as expired by the next release (F2).
             if (applyGateWithinBoundLocked(clock.elapsedRealtimeMillis())) return@transition OpenOriginStartResult.NotInOrigin
@@ -1701,7 +1710,10 @@ class AppLockController @Inject constructor(
         val diagnostic = transition {
             // F3 (fail closed): a committed write is counted even when no token matches, so D6 drops any older
             // re-read or kept snapshot.
-            if (committed) writeSequence++ // D6: a settings write committed
+            // RS26b-LOW-3: a FINGERPRINT_ENABLE apply wrote the PIN store only, no settings write, so no bump for it.
+            val fingerprintEnableApply = pendingApplyPrompt == OpenOriginPrompt.FINGERPRINT_ENABLE &&
+                pendingApplyAttemptId == attemptId
+            if (committed && !fingerprintEnableApply) writeSequence++ // D6: a settings write committed
             // F2: the prompt (and so ENABLE or DISABLE) is the one recorded by the close of THIS attempt. No token
             // (no prior success, or already consumed) or a different id: a no-op, nothing recorded.
             val prompt = pendingApplyPrompt
@@ -2697,15 +2709,18 @@ class AppLockController @Inject constructor(
                     // is discarded with it and the pending background is cleared (spec 3.4: an auth success that
                     // ends in an open state clears it). Increment 1 has no prompt that is not unlock-equivalent
                     // (INV-54), so the "otherwise hand the background to the timer" clause has no case yet.
+                    // RS26b-LOW-1: the origin state first, so the hand-off's timer evaluation sees UNLOCKED (as the
+                    // non-success path orders it).
+                    setState(originState(attempt))
                     if (attempt.prompt == OpenOriginPrompt.FINGERPRINT_ENABLE) {
                         // AE-120, INV-54 [2], T33: the fingerprint enable prompt is NOT unlock-equivalent. The recorded
-                        // prompt background goes to the timer like a background (no capability read here: evaluated at
-                        // the next APP_FOREGROUNDED or LOCK_QUERY, fail closed).
-                        timerDiagnostic = handOffPromptBackground(attempt, null)
+                        // prompt background goes to the timer like a background. No capability was read here, so it counts
+                        // as CHECK_FAILED (transient, never INERT, as the cancelled CONFIRM_CHANGE path): a
+                        // background-elapsed timeout locks immediately (RS26b-LOW-1).
+                        timerDiagnostic = handOffPromptBackground(attempt, DeviceAuthCapability.CHECK_FAILED)
                     } else {
                         lastBackgroundedAtMillis = null
                     }
-                    setState(originState(attempt))
                     // S17: the T33 gate. A held link is not released by this close publishing the origin state;
                     // it waits for onOpenOriginApplyCompleted(attemptId) (S18's apply completed or failed).
                     applyGateAttemptId = attempt.attemptId
@@ -2931,6 +2946,7 @@ class AppLockController @Inject constructor(
 
     /** Must be called with [stateLock] held. Every state change goes through here. */
     private fun setState(next: AppLockState) {
+        val previous = current
         current = next
         version++
         // S25: a PIN step lives only inside UNLOCKED; the recovery and delay views only inside LOCKED.
@@ -2940,6 +2956,11 @@ class AppLockController @Inject constructor(
         }
         if (next !is AppLockState.Locked) {
             pinRecoveryCause = null
+            pinDelayRemainingMillis = null
+            pinDelayReason = null
+        } else if (previous !is AppLockState.Locked) {
+            // RS27b-F1: a delay mirrored outside LOCKED belongs to a confirm step, which a re-lock ends; only a
+            // LOCKED -> LOCKED change keeps the unlock-surface delay (the store owns the real counter, this is a mirror).
             pinDelayRemainingMillis = null
             pinDelayReason = null
         }

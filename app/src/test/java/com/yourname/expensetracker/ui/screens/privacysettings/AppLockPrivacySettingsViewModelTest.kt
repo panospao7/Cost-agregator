@@ -4411,4 +4411,97 @@ class AppLockPrivacySettingsViewModelTest : ViewModelTestUtils() {
                 assertZeroed("review $result", pin)
             }
         }
+
+    // --- RS27b-F2: INV-38, no timing in toString -----------------------------------------------------------
+
+    @Test
+    fun `RS27b-F2 INV-38 PinConfirmUiState toString prints neither the delay value nor the delayRemainingMillis name`() {
+        val distinctive = 4_321_987L
+        val text = PinConfirmUiState(
+            step = PinStep.TIMEOUT_CONFIRM,
+            message = PinConfirmMessage.DELAYED,
+            busy = false,
+            delayRemainingMillis = distinctive,
+            delayNeutral = true
+        ).toString()
+
+        val digits = distinctive.toString()
+        assertFalse("the full value is printed: $text", text.contains(digits))
+        digits.windowed(3).forEach { part -> assertFalse("digits '$part' are printed: $text", text.contains(part)) }
+        assertFalse("the field name is printed: $text", text.contains("delayRemainingMillis"))
+        // Boundary control: only the presence of a delay is reported, so a missing delay reads differently.
+        assertTrue(text.contains("delayed=true"))
+        assertTrue(PinConfirmUiState(PinStep.REVIEW_CONFIRM).toString().contains("delayed=false"))
+    }
+
+    // --- RS27b-F3: a re-lock during a WRONG / DELAYED verify closes the dialog ---------------------------------
+
+    @Test
+    fun `RS27b-F3 a re-lock while a WRONG or DELAYED timeout verify is in flight closes the dialog once it completes`() =
+        runTest(testDispatcher) {
+            for (result in listOf(TimeoutChangeResult.WRONG_PIN, TimeoutChangeResult.PIN_DELAYED)) {
+                val (viewModel, _) = openTimeoutConfirm()
+                val gate = CompletableDeferred<TimeoutChangeResult>()
+                coEvery { operations.requestTimeoutChangeWithPin(AutoLockTimeout.M5, any()) } coAnswers { gate.await() }
+                val pin = "2468".toCharArray()
+                viewModel.submitPinConfirm(pin)
+                advanceUntilIdle()
+                assertEquals("$result", true, viewModel.pinConfirm.value?.busy)
+
+                // The controller re-locks mid-verify: its step is gone, which it publishes as step NONE.
+                pinState.value = appPinMode()
+                advanceUntilIdle()
+                assertEquals("$result: still busy until the verify completes", true, viewModel.pinConfirm.value?.busy)
+
+                gate.complete(result)
+                advanceUntilIdle()
+
+                assertNull("$result", viewModel.pinConfirm.value)
+                assertNull("$result", readyOf(viewModel).notice)
+                verify(exactly = 0) { controller.cancelPinStep() } // the controller step is not ours any more
+                assertZeroed("$result", pin)
+            }
+        }
+
+    @Test
+    fun `RS27b-F3 a re-lock while a WRONG review verify is in flight closes the dialog once it completes`() =
+        runTest(testDispatcher) {
+            pinState.value = appPinMode()
+            val gate = CompletableDeferred<ReviewSaveResult>()
+            coEvery { operations.requestReviewSave(any()) } returns ReviewSaveResult.PIN_REQUIRED
+            coEvery { operations.requestReviewSaveWithPin(any(), any()) } coAnswers { gate.await() }
+            val viewModel = openSection(FakeRepository(AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.CORRUPTED)))
+            viewModel.saveReview()
+            advanceUntilIdle()
+            assertEquals(PinStep.REVIEW_CONFIRM, viewModel.pinConfirm.value?.step)
+            val pin = "1111".toCharArray()
+            viewModel.submitPinConfirm(pin)
+            advanceUntilIdle()
+            assertEquals(true, viewModel.pinConfirm.value?.busy)
+
+            pinState.value = appPinMode() // the re-lock ended the controller step
+            advanceUntilIdle()
+            gate.complete(ReviewSaveResult.WRONG_PIN)
+            advanceUntilIdle()
+
+            assertNull(viewModel.pinConfirm.value)
+            verify(exactly = 0) { controller.cancelPinStep() }
+            assertZeroed("review wrong after re-lock", pin)
+        }
+
+    @Test
+    fun `RS27b-F3 control a WRONG verify with the controller step still open keeps the dialog with the message`() =
+        runTest(testDispatcher) {
+            val (viewModel, _) = openTimeoutConfirm()
+            val gate = CompletableDeferred<TimeoutChangeResult>()
+            coEvery { operations.requestTimeoutChangeWithPin(AutoLockTimeout.M5, any()) } coAnswers { gate.await() }
+            viewModel.submitPinConfirm("2468".toCharArray())
+            advanceUntilIdle()
+
+            gate.complete(TimeoutChangeResult.PIN_DELAYED)
+            advanceUntilIdle()
+
+            assertEquals(PinConfirmUiState(PinStep.TIMEOUT_CONFIRM, PinConfirmMessage.DELAYED), viewModel.pinConfirm.value)
+            verify(exactly = 0) { controller.cancelPinStep() }
+        }
 }

@@ -103,7 +103,11 @@ data class PinConfirmUiState(
     val busy: Boolean = false,
     val delayRemainingMillis: Long? = null,
     val delayNeutral: Boolean = false
-)
+) {
+    // INV-38: timings are never printed, so toString omits the remaining delay (mirrors PinPresentation).
+    override fun toString(): String =
+        "PinConfirmUiState(step=$step, message=$message, busy=$busy, delayed=${delayRemainingMillis != null}, delayNeutral=$delayNeutral)"
+}
 
 /** Why the lock row cannot be switched on (the explanation variant of the unavailable row, ux 2.1). */
 enum class AppLockUnavailableReason {
@@ -873,6 +877,13 @@ class AppLockPrivacySettingsViewModel @Inject constructor(
 
     /** A wrong or delayed PIN: the step stays open, the dialog stays and shows the message (the delay is the controller's). */
     private fun setPinMessage(message: PinConfirmMessage) {
+        val local = pinConfirmLocal.value
+        // RS27b-F3: a re-lock while the verify was busy ended the controller step; the dialog closes instead of
+        // showing a message for a step that no longer exists.
+        if (local != null && controller.pin.value.step != local.step) {
+            closePinConfirm()
+            return
+        }
         pinConfirmLocal.update { it?.copy(busy = false, message = message) }
     }
 

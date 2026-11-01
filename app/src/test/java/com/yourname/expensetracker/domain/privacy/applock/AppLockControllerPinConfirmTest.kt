@@ -277,6 +277,67 @@ class AppLockControllerPinConfirmTest {
         assertFalse(rig.controller.consumePinStepAuthority(timeoutStep))
     }
 
+    // --- 3b. RS27b-F1: a confirm-step delay does not outlive the step into LOCKED ------------------
+
+    @Test
+    fun `RS27b-F1 INV-38 a re-lock after a confirm-step delay leaves no delay on the LOCKED pin view`() {
+        val cases = listOf(
+            Triple(timeoutStep, PinDelayReason.FAILURES, false),
+            Triple(reviewStep, PinDelayReason.FAILURES, false),
+            Triple(reviewStep, PinDelayReason.ATTEMPT_STATE_UNREADABLE, true)
+        )
+        for ((step, reason, neutral) in cases) {
+            val rig = openRig(step, PinVerifyResult.Delayed(reason, 3_000_000L))
+            val delayed = runBlocking { rig.controller.verifyPinForStep(step, pin()) }
+            assertEquals("$step $reason", PinOperationResult.NotVerified(PinRejection.Delayed(reason, 3_000_000L)), delayed)
+            // Control: while the confirm step is open the delay is published.
+            assertEquals("$step $reason", 3_000_000L, rig.controller.pin.value.delayRemainingMillis)
+            assertEquals("$step $reason", neutral, rig.controller.pin.value.delayNeutral)
+
+            relockByTimeout(rig)
+
+            assertNull("$step $reason", rig.controller.pin.value.delayRemainingMillis)
+            assertFalse("$step $reason", rig.controller.pin.value.delayNeutral)
+            assertEquals("$step $reason", PinStep.NONE, rig.controller.pin.value.step)
+        }
+    }
+
+    @Test
+    fun `RS27b-F1 INV-38 a re-lock after a confirm-step delay shows no stale delay after the next PIN unlock either`() {
+        val rig = openRig(reviewStep, PinVerifyResult.Delayed(PinDelayReason.FAILURES, 3_000_000L))
+        runBlocking { rig.controller.verifyPinForStep(reviewStep, pin()) }
+        relockByTimeout(rig)
+        rig.h.pinStore.verifyScript += PinVerifyResult.Correct
+        assertEquals(PinUnlockResult.Unlocked, runBlocking { rig.controller.submitUnlockPin(pin()) })
+        assertNull(rig.controller.pin.value.delayRemainingMillis)
+        assertFalse(rig.controller.pin.value.delayNeutral)
+    }
+
+    @Test
+    fun `RS27b-F1 INV-38 guard an unlock-screen delay in LOCKED survives background and foreground events`() {
+        // A LOCKED to LOCKED setState is not reachable through a public helper (the only enterLocked callers are the cold
+        // resolve and the UNLOCKED/INERT foreground evaluation), so this pins the reachable half of the F1 guard: the
+        // delay of the unlock surface is not cleared by LOCKED-state events.
+        val settings = AppLockPrivacySettings(appLockEnabled = true, autoLockTimeout = AutoLockTimeout.M15, lockMode = LockMode.APP_PIN)
+        val store = FakeAppPinStore(AppPinStoreState(PinVerifierState.PRESENT, false, false))
+        store.verifyScript += PinVerifyResult.Delayed(PinDelayReason.FAILURES, 27_000L)
+        val h = AppLockControllerHarness(AppLockSettingsLoadState.Loaded(settings), pinStore = store)
+        val controller = h.resolvedController()
+        controller.onAppForegrounded()
+        assertEquals(
+            PinUnlockResult.Rejected(PinRejection.Delayed(PinDelayReason.FAILURES, 27_000L)),
+            runBlocking { controller.submitUnlockPin(pin()) }
+        )
+        assertEquals(27_000L, controller.pin.value.delayRemainingMillis)
+
+        controller.onAppBackgrounded()
+        h.clock.advance(AutoLockTimeout.M15.millis + 1_000L)
+        controller.onAppForegrounded()
+
+        assertTrue(controller.state.value is AppLockState.Locked)
+        assertEquals(27_000L, controller.pin.value.delayRemainingMillis)
+    }
+
     // --- 4. applied callbacks ----------------------------------------------------------------------
 
     /** True when the controller's settings view now measures with [timeout]: a background of that length re-locks. */
@@ -319,13 +380,15 @@ class AppLockControllerPinConfirmTest {
     }
 
     @Test
-    fun `INV-54 onPinConfirmedTimeoutApplied with the review authority is a no-op and keeps that authority`() {
+    fun `RS27b-F4 INV-54 onPinConfirmedTimeoutApplied committed with only the review authority applies the timeout to the view but neither consumes that authority nor closes the review step`() {
         val rig = openRig(reviewStep, PinVerifyResult.Correct)
         runBlocking { rig.controller.verifyPinForStep(reviewStep, pin()) }
         rig.controller.onPinConfirmedTimeoutApplied(AutoLockTimeout.M1, true)
         assertEquals(reviewStep, rig.controller.pin.value.step)
         assertTrue(rig.controller.pinStepAuthorised(reviewStep))
         assertTrue(rig.h.emitted.isEmpty())
+        // The committed value reaches the view without the timeout authority: a 1-minute background now re-locks (M15 before).
+        assertTrue("the committed 1-minute timeout is now the view", relocksAfter(rig, AutoLockTimeout.M1))
     }
 
     @Test

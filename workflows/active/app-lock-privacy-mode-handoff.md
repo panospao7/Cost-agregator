@@ -3370,3 +3370,38 @@ Validation to request: unchanged, targeted `*AppLockController*` (covers both te
   1. reviewer-strict on S27b + S26b.
   2. The integration merge into feature/ai-evolution with full suites, then fast-forward.
   3. The emulator device checks at G2: AE-76 enrolment via `adb emu finger`; the AE-120 timing.
+
+### Integration candidate a9d249e1 (2026-10-31 / 2026-11-01)
+- Merge `a9d249e1` in Cost-agregator-int: feature/app-lock-privacy-mode `bf335ece` into feature/ai-evolution `d9c55d4d`, no conflicts.
+- Full suites, all PASS:
+  - static-guards vr-20261031-131037-0ace72d8
+  - unit-tests vr-20261031-132911-0939a956
+  - app-check vr-20261031-134314-7ba0fd8f
+- reviewer-strict (Opus xhigh) on S27b and S26b: the first attempt hit the Opus weekly limit (2026-10-31). Relaunched after the reset (2026-11-01 21:30). Results pending.
+- NEXT: on ACCEPT of both reviews, fast-forward feature/ai-evolution to a9d249e1 (owner item 92), record it in owner-approvals, then the G2 emulator checks.
+- reviewer-strict S26b (2026-11-01): ACCEPT-WITH-MINORS. No BLOCKER, HIGH or MEDIUM issues.
+  - RS26b-LOW-1 `AppLockController.kt:2704`: after a successful enable, the auto-lock timeout check runs with `capability=null`. If the app was backgrounded during the prompt, it stays UNLOCKED past the timeout until the next foreground. Fix: pass CHECK_FAILED, as `:2679` does.
+  - RS26b-LOW-2 `:1615-1622`: the enable prompt start does not re-check that `pinStep == FINGERPRINT_CONFIRM` after the `createKey` suspend. Not a bypass.
+  - RS26b-LOW-3 `:1704`: FINGERPRINT_ENABLE commit bumps `writeSequence` with no settings write, which needlessly throws away a concurrent re-read.
+  - RS26b-LOW-4: test gaps:
+    - cancellation during `createKey`;
+    - an abandoned or out-of-step close deleting the key;
+    - the LOW-1 ordering;
+    - a successful enable clearing the invalidated notice.
+- reviewer-strict S27b (2026-11-01): ACCEPT-WITH-MINORS. Strict-gate rule: fix F1 before merge. Line numbers are at 9b9beb74.
+  - RS27b-F1 MEDIUM `AppLockController.setState` (~2765): the UNLOCKED to LOCKED move clears the step and authority but keeps `pinDelayRemainingMillis` and `pinDelayReason`. PinLockSurface then restarts an old countdown (up to 60 min). Fix: clear both fields when leaving UNLOCKED, plus a test.
+  - RS27b-F2 LOW `PinConfirmUiState` (AppLockPrivacySettingsViewModel ~100): the default toString prints `delayRemainingMillis` (INV-38). Fix: override toString.
+  - RS27b-F3 LOW: VM `setPinMessage` (~875/904) leaves the dialog open after a re-lock during a WRONG/DELAYED verify. Fails closed. Fix: close it when the controller step no longer matches.
+  - RS27b-F4 LOW: the `onPinConfirmed*` KDoc says "no-op", which is stale; the matching test name in AppLockControllerPinConfirmTest (~322) is stale too.
+- DECISION (orchestrator, item 92): one combined fix batch (RS27b F1-F4 and RS26b LOW-1..LOW-4) on the lane before merge: a production writer, then a separate test-author (decision 86, privacy slice). Then the ladder, a new integration merge, and the full suites.
+- Fix batch (RS27b F1-F4, RS26b LOW-1..LOW-4): production writer, then a separate test-author.
+  - The first targeted run vr-20261101-184607-764cf363 FAILED on 2 new tests. Both were production defects (debug iteration 1):
+    - RS26b-LOW-4: `deleteFingerprintKeyBestEffort` (a NonCancellable withContext with a dispatcher switch) rethrows the CE of a cancelled caller on resume, so `closePinStep()` was skipped. Fix: close the step first, then delete, at both sites.
+    - RS26b-LOW-1: `handOffPromptBackground` ran while `current` was still Authenticating, so `evaluateForegroundLocked` was a no-op. Fix: `setState(originState)` first, as the non-success path orders it.
+  - Re-run PASS:
+    - targeted vr-20261101-185532-1a43cd28
+    - architecture-contracts vr-20261101-190103-9a4a65e7
+  - Not re-run on the lane: static-guards and lint (bodies only, no new catches, DB access or API). They are covered by the full suites on the new integration merge.
+  - Test gaps that are not reachable: the LOW-4(b) out-of-step close, and the LOCKED to LOCKED delay-keep half of F1.
+  - For the delta review to confirm: a timeout lock that fires on the enable-success close still commits biometricEnabled. Both the PIN and a STRONG biometric were verified.
+  - Queue note: a duplicate driver was started by mistake. The runner lock serialised the runs, so nothing ran in parallel. The duplicate was killed, and one driver remains.
