@@ -286,16 +286,25 @@ class AppPinStoreImpl @Inject constructor(
             mutex.withLock { writeResult { store.edit { it[K_BIOMETRIC_ENABLED] = enabled } } }
         }
 
+    /**
+     * One write: fingerprint off and the notice pending, then one diagnostic. Idempotent: a second call while the flag
+     * is already off (recorded earlier, or fingerprint never on) writes and emits nothing and returns DONE, because
+     * the caller's goal state already holds. The check and the write share one edit, under the store mutex.
+     */
     override suspend fun recordBiometricInvalidated(): PinStoreWriteResult =
         withContext(dispatcher) {
             mutex.withLock {
+                var recorded = false
                 val result = writeResult {
                     store.edit {
-                        it[K_BIOMETRIC_ENABLED] = false
-                        it[K_BIOMETRIC_NOTICE] = true
+                        if (it[K_BIOMETRIC_ENABLED] == true) {
+                            it[K_BIOMETRIC_ENABLED] = false
+                            it[K_BIOMETRIC_NOTICE] = true
+                            recorded = true
+                        }
                     }
                 }
-                if (result == PinStoreWriteResult.DONE) emitSafe(PrivacyDiagnosticCode.PIN_BIOMETRIC_INVALIDATED)
+                if (result == PinStoreWriteResult.DONE && recorded) emitSafe(PrivacyDiagnosticCode.PIN_BIOMETRIC_INVALIDATED)
                 result
             }
         }

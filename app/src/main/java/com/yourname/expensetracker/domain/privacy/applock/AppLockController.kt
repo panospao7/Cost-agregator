@@ -460,6 +460,9 @@ class AppLockController @Inject constructor(
     private var currentPinPresentation: PinPresentation = PinPresentation.INITIAL
     private val mutablePin = MutableStateFlow(PinPresentation.INITIAL)
     private val pinOperationRunning = AtomicBoolean(false)
+
+    /** G2-F1: true while one fingerprint-key re-check (foreground or tap) runs; at most one Keystore read at a time. */
+    private val fingerprintRecheckRunning = AtomicBoolean(false)
     @Volatile private var pinObservationJob: Job? = null
 
     // Written only under publishLock; read without it for the cheap staleness pre-check.
@@ -989,15 +992,22 @@ class AppLockController @Inject constructor(
         return ready
     }
 
-    /** G2-F1: on a foreground with the flag on, hides a stale "use fingerprint" before any tap. Never blocks the caller. */
+    /**
+     * G2-F1: on a foreground with the flag on, hides a stale "use fingerprint" before any tap. Never blocks the caller.
+     * Single-flight: while a re-check (this one or the tap path's) holds [fingerprintRecheckRunning], a new foreground
+     * launches nothing, so a hung Keystore cannot pile up jobs.
+     */
     private fun launchFingerprintKeyRecheck() {
         val observed = synchronized(stateLock) { pinState?.takeIf { it.biometricEnabled } } ?: return
+        if (!fingerprintRecheckRunning.compareAndSet(false, true)) return
         scope.launch {
             try {
                 recheckFingerprintKey(observed)
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 Timber.w("App-lock fingerprint key recheck failed: class=%s", DiagnosticThrowableSummary.className(e))
+            } finally {
+                fingerprintRecheckRunning.set(false)
             }
         }
     }
@@ -1535,7 +1545,15 @@ class AppLockController @Inject constructor(
         // G2-F1: re-read the key before any attempt (off the main thread, outside the monitor). A key invalidated while the
         // process lives hides the button and records the notice through the single store write; no attempt starts.
         val observed = synchronized(stateLock) { if (canOfferFingerprintLocked()) pinState else null } ?: return
-        if (!recheckFingerprintKey(observed)) return
+        // Single-flight with the foreground re-check: if one is running, no second Keystore read starts and no attempt
+        // opens (fail closed; the user can tap again once it finishes).
+        if (!fingerprintRecheckRunning.compareAndSet(false, true)) return
+        val ready = try {
+            recheckFingerprintKey(observed)
+        } finally {
+            fingerprintRecheckRunning.set(false)
+        }
+        if (!ready) return
         val opened: InFlightAttempt? = transition {
             val cur = current
             if (cur !is AppLockState.Locked || inFlight != null || pinOperationRunning.get() || !canOfferFingerprintLocked()) {

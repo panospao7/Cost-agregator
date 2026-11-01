@@ -491,6 +491,83 @@ class AppPinStoreImplTest {
         assertEquals(AppPinStoreState(PinVerifierState.PRESENT, false, false), store.readState())
     }
 
+    private fun invalidatedEmits(): Int = emitted.count { it == PrivacyDiagnosticCode.PIN_BIOMETRIC_INVALIDATED }
+
+    @Test
+    fun g2_f1_inv51_recording_with_the_flag_on_turns_it_off_raises_the_notice_and_emits_exactly_once() = runBlocking {
+        setUpPin()
+        assertEquals(PinStoreWriteResult.DONE, store.setBiometricEnabled(true))
+        emitted.clear()
+
+        assertEquals(PinStoreWriteResult.DONE, store.recordBiometricInvalidated())
+
+        assertEquals(AppPinStoreState(PinVerifierState.PRESENT, false, true), store.readState())
+        assertEquals(1, invalidatedEmits())
+        assertEquals(1, emitted.size)
+    }
+
+    @Test
+    fun g2_f1_inv51_a_second_record_right_after_is_done_with_no_further_emit_and_the_state_unchanged() = runBlocking {
+        setUpPin()
+        assertEquals(PinStoreWriteResult.DONE, store.setBiometricEnabled(true))
+        emitted.clear()
+        assertEquals(PinStoreWriteResult.DONE, store.recordBiometricInvalidated())
+        val afterFirst = prefs()
+
+        assertEquals(PinStoreWriteResult.DONE, store.recordBiometricInvalidated())
+
+        assertEquals(afterFirst, prefs())
+        assertEquals(AppPinStoreState(PinVerifierState.PRESENT, false, true), store.readState())
+        assertEquals(1, invalidatedEmits())
+        assertEquals(1, emitted.size)
+    }
+
+    @Test
+    fun g2_f1_inv51_recording_with_the_flag_never_enabled_is_done_and_writes_and_emits_nothing() = runBlocking {
+        setUpPin()
+        assertEquals(AppPinStoreState(PinVerifierState.PRESENT, false, false), store.readState())
+        val before = prefs()
+        emitted.clear()
+
+        assertEquals(PinStoreWriteResult.DONE, store.recordBiometricInvalidated())
+
+        assertEquals(before, prefs())
+        assertEquals(AppPinStoreState(PinVerifierState.PRESENT, false, false), store.readState())
+        assertEquals(0, invalidatedEmits())
+        assertTrue(emitted.isEmpty())
+    }
+
+    @Test
+    fun g2_f1_inv51_a_record_after_the_notice_was_dismissed_does_not_raise_it_again() = runBlocking {
+        setUpPin()
+        store.setBiometricEnabled(true)
+        store.recordBiometricInvalidated()
+        assertEquals(PinStoreWriteResult.DONE, store.dismissBiometricInvalidatedNotice())
+        emitted.clear()
+
+        assertEquals(PinStoreWriteResult.DONE, store.recordBiometricInvalidated())
+
+        assertEquals(AppPinStoreState(PinVerifierState.PRESENT, false, false), store.readState())
+        assertTrue(emitted.isEmpty())
+    }
+
+    @Test
+    fun g2_f1_inv51_a_failed_write_with_the_flag_on_emits_nothing_and_a_retry_after_recovery_records_once() = runBlocking {
+        setUpPin()
+        store.setBiometricEnabled(true)
+        emitted.clear()
+        faulty.failWrite = IOException("injected")
+
+        assertEquals(PinStoreWriteResult.FAILED, store.recordBiometricInvalidated())
+        assertEquals(0, invalidatedEmits())
+
+        faulty.failWrite = null
+        assertEquals(PinStoreWriteResult.DONE, store.recordBiometricInvalidated())
+        assertEquals(PinStoreWriteResult.DONE, store.recordBiometricInvalidated())
+        assertEquals(AppPinStoreState(PinVerifierState.PRESENT, false, true), store.readState())
+        assertEquals(1, invalidatedEmits())
+    }
+
     @Test
     fun a_failed_biometric_write_reports_failed_and_leaves_the_flags_unchanged() = runBlocking {
         setUpPin()

@@ -3452,3 +3452,12 @@ Validation to request: unchanged, targeted `*AppLockController*` (covers both te
   - Ladder PASS:
     - targeted vr-20261101-204603-e0c9495a
     - architecture-contracts vr-20261101-205336-69dac266
+- reviewer-strict G2-F1 delta `97db8a43..24cdf1c9`: ACCEPT-WITH-MINORS. Fixed in the next commit:
+  - MINOR-1: `AppPinStoreImpl.recordBiometricInvalidated` is idempotent; no edit and no emit when the flag is already off.
+  - MINOR-2: a private AtomicBoolean `fingerprintRecheckRunning` makes the foreground and tap re-checks single-flight. A tap during a re-check returns without an attempt (fail closed).
+  - MINOR-3: FakeAppPinStore applies the invalidation when `applyFlagWrites` is set; end-to-end, race and single-flight tests added.
+- The superseded integration merge `be3dee1a`: static-guards PASS vr-20261101-205540-b9bff6bf. Its other suites were withdrawn.
+- Lane ladder PASS:
+  - targeted vr-20261101-211629-490eeb2a
+  - architecture-contracts vr-20261101-212347-5af05cbb
+  - data vr-20261101-212448-c39ef1cc

@@ -324,9 +324,11 @@ class AppLockControllerPinBiometricTest {
     @OptIn(ExperimentalCoroutinesApi::class)
     private fun fpLockedWithGate(
         gate: ScriptedKeyGate,
-        expectOffered: Boolean = true
+        expectOffered: Boolean = true,
+        applyWrites: Boolean = false
     ): Pair<AppLockControllerHarness, AppLockController> {
         val store = FakeAppPinStore(AppPinStoreState(PinVerifierState.PRESENT, true, false))
+        store.applyFlagWrites = applyWrites
         val h = AppLockControllerHarness(appPinSettings(AutoLockTimeout.IMMEDIATE), pinStore = store)
         val scope = CoroutineScope(SupervisorJob() + UnconfinedTestDispatcher(h.scheduler))
         val controller = AppLockController(
@@ -550,13 +552,16 @@ class AppLockControllerPinBiometricTest {
     fun `G2-F1 a double tap while the re-check is blocked starts at most one attempt`() {
         val gate = ScriptedKeyGate()
         val (h, controller) = fpLockedWithGate(gate)
+        val readsBefore = gate.reads
         gate.blockWith = PinFingerprintKeyState.READY
 
         runBlocking {
             val taps = List(2) { launch(Dispatchers.Default) { controller.requestFingerprintUnlock() } }
             try {
                 assertTrue("a re-check reached the key read", gate.entered.tryAcquire(5, TimeUnit.SECONDS))
-                gate.entered.tryAcquire(500, TimeUnit.MILLISECONDS) // the second tap may park as well
+                // Single-flight (MINOR-2): the second tap returns without a read, so no second read parks.
+                assertFalse("no second read may park", gate.entered.tryAcquire(500, TimeUnit.MILLISECONDS))
+                assertEquals(readsBefore + 1, gate.reads)
                 h.settle()
                 assertEquals(locked, controller.state.value)
                 assertNull(controller.inFlightAttemptId)
@@ -612,6 +617,187 @@ class AppLockControllerPinBiometricTest {
         gate.blockWith = null // the controller is still usable afterwards
         request(h, controller)
         assertEquals(1, h.authenticator.calls.size)
+    }
+
+    // --- G2-F1 review minors: idempotent record (MINOR-1/3) and the shared single-flight re-check (MINOR-2) ----------------
+
+    @Test
+    fun `G2-F1 INV-51 end to end a foreground on an invalidated key flips the flag off and raises the notice once`() {
+        val gate = ScriptedKeyGate()
+        val (h, controller) = fpLockedWithGate(gate, applyWrites = true)
+        val readsBefore = gate.reads
+        gate.keyState = PinFingerprintKeyState.INVALIDATED
+
+        controller.onAppForegrounded()
+
+        val expectedStore = AppPinStoreState(PinVerifierState.PRESENT, false, true)
+        awaitUntil("the store applied the single invalidation write") { h.pinStore.stateFlow.value == expectedStore }
+        awaitUntil("the controller took the re-emitted view") {
+            !controller.canOfferFingerprintUnlock.value && !controller.pin.value.fingerprintEnabled
+        }
+        letAsyncWorkRun()
+
+        assertEquals(expectedStore, h.pinStore.stateFlow.value) // notice pending, flag off
+        assertFalse(controller.canOfferFingerprintUnlock.value)
+        assertFalse(controller.pin.value.canOfferFingerprint)
+        assertFalse(controller.pin.value.fingerprintEnabled)
+        assertEquals(1, invalidatedWrites(h))
+        assertEquals(readsBefore + 1, gate.reads) // the re-emitted flag-off view reads no key
+        request(h, controller)
+        assertNothingStarted(h, controller)
+        assertEquals(1, invalidatedWrites(h))
+        assertEquals(readsBefore + 1, gate.reads)
+    }
+
+    @Test
+    fun `G2-F1 INV-51 a tap while a foreground re-check of an invalidated key is blocked adds no read and records once`() {
+        val gate = ScriptedKeyGate()
+        val (h, controller) = fpLockedWithGate(gate)
+        val readsBefore = gate.reads
+        gate.blockWith = PinFingerprintKeyState.INVALIDATED
+
+        controller.onAppForegrounded()
+        assertTrue("the foreground re-check reached the key read", gate.entered.tryAcquire(5, TimeUnit.SECONDS))
+        runBlocking { controller.requestFingerprintUnlock() } // returns at once: the re-check is in flight
+        assertFalse("no second read may be in flight", gate.entered.tryAcquire(500, TimeUnit.MILLISECONDS))
+        assertEquals(readsBefore + 1, gate.reads)
+        assertEquals(0, invalidatedWrites(h))
+        gate.release()
+
+        awaitUntil("the single invalidation is recorded") { invalidatedWrites(h) == 1 }
+        letAsyncWorkRun()
+        assertEquals(1, invalidatedWrites(h))
+        assertEquals(readsBefore + 1, gate.reads)
+        h.settle()
+        assertNothingStarted(h, controller)
+        assertFalse(controller.canOfferFingerprintUnlock.value)
+    }
+
+    @Test
+    fun `G2-F1 INV-51 a foreground while a tap re-check of an invalidated key is blocked adds no read and records once`() {
+        val gate = ScriptedKeyGate()
+        val (h, controller) = fpLockedWithGate(gate)
+        val readsBefore = gate.reads
+        gate.blockWith = PinFingerprintKeyState.INVALIDATED
+
+        runBlocking {
+            val tap = launch(Dispatchers.Default) { controller.requestFingerprintUnlock() }
+            try {
+                assertTrue("the tap re-check reached the key read", gate.entered.tryAcquire(5, TimeUnit.SECONDS))
+                controller.onAppForegrounded() // launches nothing: the tap's re-check holds the single-flight
+                assertFalse("no second read may be in flight", gate.entered.tryAcquire(500, TimeUnit.MILLISECONDS))
+                assertEquals(readsBefore + 1, gate.reads)
+            } finally {
+                gate.release()
+            }
+            tap.join()
+        }
+        h.settle()
+
+        letAsyncWorkRun()
+        assertEquals(1, invalidatedWrites(h))
+        assertEquals(readsBefore + 1, gate.reads)
+        assertNothingStarted(h, controller)
+        assertFalse(controller.canOfferFingerprintUnlock.value)
+    }
+
+    @Test
+    fun `G2-F1 two foregrounds with a blocked gate read once and a later foreground reads again after it is released`() {
+        val gate = ScriptedKeyGate()
+        val (_, controller) = fpLockedWithGate(gate)
+        val readsBefore = gate.reads
+        gate.blockWith = PinFingerprintKeyState.READY
+
+        controller.onAppForegrounded()
+        assertTrue("the first re-check reached the key read", gate.entered.tryAcquire(5, TimeUnit.SECONDS))
+        controller.onAppForegrounded()
+        assertFalse("no second read may be in flight", gate.entered.tryAcquire(500, TimeUnit.MILLISECONDS))
+        assertEquals(readsBefore + 1, gate.reads)
+
+        gate.release()
+        gate.blockWith = null
+        letAsyncWorkRun() // the first re-check finished and released the flag
+        assertEquals(readsBefore + 1, gate.reads)
+        controller.onAppForegrounded()
+
+        awaitUntil("a later foreground reads the key again") { gate.reads >= readsBefore + 2 }
+        letAsyncWorkRun()
+        assertEquals(readsBefore + 2, gate.reads)
+        assertTrue("the offer is unchanged by READY re-checks", controller.canOfferFingerprintUnlock.value)
+    }
+
+    @Test
+    fun `G2-F1 a tap during a blocked foreground re-check starts no attempt and a tap after it completes does`() {
+        val gate = ScriptedKeyGate()
+        val (h, controller) = fpLockedWithGate(gate)
+        val readsBefore = gate.reads
+        gate.blockWith = PinFingerprintKeyState.READY
+
+        controller.onAppForegrounded()
+        assertTrue("the foreground re-check reached the key read", gate.entered.tryAcquire(5, TimeUnit.SECONDS))
+        runBlocking { controller.requestFingerprintUnlock() }
+        h.settle()
+
+        assertNothingStarted(h, controller)
+        assertEquals(readsBefore + 1, gate.reads)
+        assertFalse("the tap issued no read of its own", gate.entered.tryAcquire(300, TimeUnit.MILLISECONDS))
+
+        gate.release()
+        gate.blockWith = null
+        letAsyncWorkRun()
+        assertNothingStarted(h, controller) // a foreground re-check never opens an attempt
+        assertTrue(controller.canOfferFingerprintUnlock.value)
+
+        request(h, controller) // the flag is released: the tap re-checks and starts the attempt
+        assertEquals(readsBefore + 2, gate.reads)
+        assertEquals(1, h.authenticator.calls.size)
+        assertEquals(AuthPromptCopy.PIN_FINGERPRINT, h.authenticator.calls.single().copy)
+    }
+
+    @Test
+    fun `G2-F1 the single-flight is released after a throwing gate read on the tap path`() {
+        val gate = ScriptedKeyGate()
+        val (h, controller) = fpLockedWithGate(gate)
+        val readsBefore = gate.reads
+        gate.failure = IllegalStateException("synthetic keystore failure")
+
+        request(h, controller)
+        assertEquals(readsBefore + 1, gate.reads)
+        assertNothingStarted(h, controller)
+        assertFalse(controller.canOfferFingerprintUnlock.value)
+
+        // The failure hid the offer, so the next re-check is a foreground (self-heal); it must not be refused as in flight.
+        gate.failure = null
+        gate.keyState = PinFingerprintKeyState.READY
+        controller.onAppForegrounded()
+
+        awaitUntil("the foreground re-check ran and offers the fingerprint again") { controller.canOfferFingerprintUnlock.value }
+        assertEquals(readsBefore + 2, gate.reads)
+        request(h, controller)
+        assertEquals(1, h.authenticator.calls.size)
+        assertEquals(0, invalidatedWrites(h))
+    }
+
+    @Test
+    fun `G2-F1 the single-flight is released after a throwing gate read on the foreground path`() {
+        val gate = ScriptedKeyGate()
+        val (h, controller) = fpLockedWithGate(gate)
+        val readsBefore = gate.reads
+        gate.failure = IllegalStateException("synthetic keystore failure")
+
+        controller.onAppForegrounded()
+        awaitUntil("the foreground re-check hid the offer") { !controller.canOfferFingerprintUnlock.value }
+        assertEquals(readsBefore + 1, gate.reads)
+        letAsyncWorkRun() // the failed re-check has released the flag
+
+        gate.failure = null
+        gate.keyState = PinFingerprintKeyState.READY
+        controller.onAppForegrounded()
+
+        awaitUntil("a later foreground re-checks and offers the fingerprint again") { controller.canOfferFingerprintUnlock.value }
+        assertEquals(readsBefore + 2, gate.reads)
+        assertEquals(0, invalidatedWrites(h))
+        assertNothingStarted(h, controller)
     }
 
     // END-OF-TESTS
