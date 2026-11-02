@@ -13,6 +13,8 @@ import com.yourname.expensetracker.domain.model.GoalProtectionLevel
 import com.yourname.expensetracker.domain.model.SavingsGoal
 import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.savings.SavingsGamificationEngine
+import com.yourname.expensetracker.domain.savings.SavingsGoalDeleteEligibility
+import com.yourname.expensetracker.domain.savings.SavingsGoalDeleteResult
 import com.yourname.expensetracker.domain.savings.SavingsStreak
 import com.yourname.expensetracker.domain.savings.SmartSavingsComputationResult
 import com.yourname.expensetracker.domain.savings.SmartSavingsEngine
@@ -27,6 +29,7 @@ import io.mockk.mockk
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -139,6 +142,61 @@ class SavingsGoalsViewModelWriteBlockedTest : ViewModelTestUtils() {
         advanceUntilIdle()
 
         assertEquals(blockedEvent, viewModel.events.first())
+    }
+
+    @Test
+    fun `blocked deleteGoal returns the delete flow to Idle and emits neither GoalDeleted nor DeleteRejected`() = runTest(testDispatcher) {
+        val events = mutableListOf<SavingsGoalsEvent>()
+        backgroundScope.launch(testDispatcher) { viewModel.events.collect { events += it } }
+        val goal = SavingsGoal(
+            id = 1L, name = "Test Goal A", targetAmount = 100.0, currentAmount = 0.0, targetDate = null,
+            protectionLevel = GoalProtectionLevel.WARNING, currencyAssumption = "EXPLICIT",
+            createdAt = timeProvider.now()
+        )
+        goalsFlow.value = listOf(goal)
+        advanceUntilIdle()
+        coEvery { savingsGoalRepository.getSavingsGoalDeletionEligibility(1L) } returns
+            SavingsGoalDeleteEligibility.Deletable
+        coEvery { savingsGoalRepository.deleteSavingsGoal(any()) } throws blockedWriteException()
+        viewModel.requestDeleteGoal(1L)
+        advanceUntilIdle()
+        assertEquals(DeleteFlowState.Confirm(1L, "Test Goal A"), viewModel.state.value.deleteFlow)
+
+        viewModel.deleteGoal(goal)
+        advanceUntilIdle()
+
+        assertEquals(DeleteFlowState.Idle, viewModel.state.value.deleteFlow)
+        assertEquals(listOf<SavingsGoalsEvent>(blockedEvent), events.toList())
+        assertEquals("a blocked delete must not remove the goal from the state", listOf(goal), viewModel.state.value.goals)
+    }
+
+    @Test
+    fun `delete flow works again after the write barrier lifts`() = runTest(testDispatcher) {
+        val events = mutableListOf<SavingsGoalsEvent>()
+        backgroundScope.launch(testDispatcher) { viewModel.events.collect { events += it } }
+        val goal = SavingsGoal(
+            id = 1L, name = "Test Goal A", targetAmount = 100.0, currentAmount = 0.0, targetDate = null,
+            protectionLevel = GoalProtectionLevel.WARNING, currencyAssumption = "EXPLICIT",
+            createdAt = timeProvider.now()
+        )
+        goalsFlow.value = listOf(goal)
+        advanceUntilIdle()
+        coEvery { savingsGoalRepository.getSavingsGoalDeletionEligibility(1L) } returns
+            SavingsGoalDeleteEligibility.Deletable
+        coEvery { savingsGoalRepository.deleteSavingsGoal(any()) } throws blockedWriteException()
+        viewModel.requestDeleteGoal(1L)
+        advanceUntilIdle()
+        viewModel.deleteGoal(goal)
+        advanceUntilIdle()
+        coEvery { savingsGoalRepository.deleteSavingsGoal(any()) } returns SavingsGoalDeleteResult.Deleted
+
+        viewModel.requestDeleteGoal(1L)
+        advanceUntilIdle()
+        viewModel.deleteGoal(goal)
+        advanceUntilIdle()
+
+        assertEquals(DeleteFlowState.Idle, viewModel.state.value.deleteFlow)
+        assertEquals(listOf<SavingsGoalsEvent>(blockedEvent, SavingsGoalsEvent.GoalDeleted), events.toList())
     }
 
     @Test
