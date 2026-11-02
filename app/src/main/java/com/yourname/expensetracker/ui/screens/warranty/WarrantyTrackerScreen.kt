@@ -117,7 +117,9 @@ fun WarrantyTrackerScreen(
     // Applied to the dialog open right now only; a result tagged with any other id is dropped.
     val handleEditOutcome by rememberUpdatedState<(WarrantyEditResult) -> Unit> { result ->
         val openId = editingWarrantyId
-        if (openId != null && result.warrantyId == openId && awaitingEditId == openId) {
+        if (openId != null &&
+            WarrantyEditFormState.shouldApplyEditResult(result.warrantyId, openId, awaitingEditId)
+        ) {
             val outcome = result.outcome
             when (outcome) {
                 is WarrantyEditOutcome.Saved -> {

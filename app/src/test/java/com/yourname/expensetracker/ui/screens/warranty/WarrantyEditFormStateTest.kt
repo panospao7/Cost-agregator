@@ -365,6 +365,34 @@ class WarrantyEditFormStateTest {
         assertTrue(WarrantyEditFormState.visibleErrors(emptyMap(), WarrantyFormField.values().toSet()).isEmpty())
     }
 
+    // ---- shouldApplyEditResult (edit outcome gate) -------------------------------------------------------------
+
+    @Test
+    fun `shouldApplyEditResult is true when the result matches the open and awaiting dialog`() {
+        assertTrue(WarrantyEditFormState.shouldApplyEditResult(7L, openWarrantyId = 7L, awaitingWarrantyId = 7L))
+    }
+
+    @Test
+    fun `shouldApplyEditResult is false for a result tagged with another id`() {
+        assertFalse(WarrantyEditFormState.shouldApplyEditResult(8L, openWarrantyId = 7L, awaitingWarrantyId = 7L))
+    }
+
+    @Test
+    fun `shouldApplyEditResult is false when no dialog is open`() {
+        assertFalse(WarrantyEditFormState.shouldApplyEditResult(7L, openWarrantyId = null, awaitingWarrantyId = 7L))
+        assertFalse(WarrantyEditFormState.shouldApplyEditResult(7L, openWarrantyId = null, awaitingWarrantyId = null))
+    }
+
+    @Test
+    fun `shouldApplyEditResult is false when the dialog awaits a different id`() {
+        assertFalse(WarrantyEditFormState.shouldApplyEditResult(7L, openWarrantyId = 7L, awaitingWarrantyId = 9L))
+    }
+
+    @Test
+    fun `shouldApplyEditResult is false when the open dialog is not awaiting a result`() {
+        assertFalse(WarrantyEditFormState.shouldApplyEditResult(7L, openWarrantyId = 7L, awaitingWarrantyId = null))
+    }
+
     // ---- isSaveEnabled (INV-8, INV-10, INV-15) ---------------------------------------------------------------
 
     @Test

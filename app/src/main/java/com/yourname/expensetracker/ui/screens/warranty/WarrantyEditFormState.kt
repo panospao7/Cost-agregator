@@ -317,6 +317,22 @@ object WarrantyEditFormState {
         }
     }
 
+    // ---- edit outcome gating --------------------------------------------------------------------------
+
+    /**
+     * True only when an edit result belongs to the dialog open right now AND that dialog is the one
+     * awaiting a result. A result tagged with any other id, or arriving with no dialog open or no
+     * pending save, is dropped.
+     */
+    fun shouldApplyEditResult(
+        resultWarrantyId: Long,
+        openWarrantyId: Long?,
+        awaitingWarrantyId: Long?
+    ): Boolean =
+        openWarrantyId != null &&
+            resultWarrantyId == openWarrantyId &&
+            awaitingWarrantyId == openWarrantyId
+
     // ---- date picker bounds --------------------------------------------------------------------------
 
     /**
