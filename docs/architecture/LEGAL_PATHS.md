@@ -1640,14 +1640,33 @@ CONFIRM / EXPIRE (review lifecycle):
   → WarrantyTrackerRepository.confirmWarranty(warrantyId): barrier check first → one transaction:
     fresh read by id → NotFound | AlreadyConfirmed (no write, no event) | needsReview=false,
     status = EXPIRED if already EXPIRED or warrantyEndDate < now, else ACTIVE → CONFIRMED
-    lifecycle event (fail-closed in transaction). Never moves EXPIRED → ACTIVE.
-  → WarrantyTrackerRepository.reconcileExpiredItems(now): barrier check first → sole writer of any
-    transition into EXPIRED: status ACTIVE/PENDING_REVIEW with warrantyEndDate < now → EXPIRED
+    lifecycle event (fail-closed in transaction). confirmWarranty itself never moves EXPIRED → ACTIVE;
+    the only EXPIRED → ACTIVE move is USER EDIT below (O-5).
+  → WarrantyTrackerRepository.reconcileExpiredItems(now): barrier check first → writer of the
+    background transition into EXPIRED (sweep, plus the confirm/edit status predicate
+    warrantyEndDate < now): status ACTIVE/PENDING_REVIEW with warrantyEndDate < now → EXPIRED
     (needsReview unchanged; expired pending = "expired unconfirmed"); one batch EXPIRED event with
     counts only; idempotent
   → rejectAutoDetectedWarranty (existing): deletes warranty + return window atomically
   → Review state for UI is derived only by WarrantyReviewState.of(warranty, now)
   → Reminders consider status='ACTIVE' only (PENDING_REVIEW / EXPIRED never get reminders)
+
+USER EDIT (warranty-edit; the edit dialog UI lands in S4):
+  → WarrantyTrackerViewModel.editWarranty(id, WarrantyEditInput) (single-flight per id; bounded
+    outcome Saved | NoChange | NotFound | NotEditable | Invalid(reason code); in-dialog error state)
+  → WarrantyTrackerRepository.editWarranty: barrier check first → one transaction: fresh read by id →
+    NotFound | NotEditable (CLAIMED/TRANSFERRED) → WarrantyEditValidator (single validation owner,
+    Invalid = no write, no event) → WarrantyEndDate.resolveEditDates (exclusive end recomputed only
+    when the purchase day or months changed; otherwise stored end preserved) → NoChange (not in
+    review and nothing changed: no write, no event) → updateWarranty (row update + UPDATED
+    "WARRANTY_UPDATED" event, same transaction) → for a row in review only, the nested
+    confirmWarranty (CONFIRMED event; the edit always leaves review). Fail-closed: any failure
+    propagates and rolls the whole transaction back; CancellationException is never swallowed.
+  → Writes only warranties + warranty_lifecycle_events; provenance fields, return windows, receipts,
+    expenses, reminders and WorkManager are untouched
+  → Status after an edit that changes the end date or leaves review: EXPIRED if newEnd < now else
+    ACTIVE. EXPIRED → ACTIVE is legal ONLY here, because the user moved the end date into the future
+    (O-5); the sweep and confirmWarranty never revive. CLAIMED/TRANSFERRED are never touched.
 
 FORBIDDEN:
   ❌ Warranty promotion out of review (needsReview=false / status ACTIVE / PENDING_REVIEW→ACTIVE) by any path other than WarrantyTrackerRepository (confirmWarranty, or promoteReviewDraft which applies a content-only edit to a fresh in-transaction read and then runs confirmWarranty in the same transaction) (F-AI-1; AutoCreateWarrantyFromReceiptUseCase calls promoteReviewDraft only; WarrantyPromotionBypassGuardTest enforces that no function outside WarrantyTrackerRepository.kt pairs an updateWarranty call with a promotion write; DAO writes are covered by the db_access ownership guards)
@@ -1659,6 +1678,7 @@ FORBIDDEN:
   ❌ Reminders for non-ACTIVE warranties
   ❌ Reading persisted rawOcrText for warranty or return-window derivation
   ❌ ViewModel-built warranty status/needsReview changes (use confirm/reject/claim)
+  ❌ Any warranty content write outside `WarrantyTrackerRepository.editWarranty/promoteReviewDraft`
 ```
 
 ---

@@ -343,7 +343,7 @@ Assistant is an overlay/entry surface, not a bottom tab.
 - SyncProactiveBriefingWorkUseCase
 - CompleteFinancialQueryClarificationUseCase, AssistantPeriodResolver
 - TransactionInsightOutcome, BriefingDeliveryOutcome (typed outcomes of GenerateTransactionInsightUseCase / DeliverProactiveBriefingNotificationUseCase)
-- WarrantyReviewState (`domain/usecase/warranty/`)
+- WarrantyReviewState, WarrantyEndDate, WarrantyEditInput, WarrantyEditValidator (`domain/usecase/warranty/`; the last three are warranty-edit)
 - AiArtifactFreshness, TransactionInsightInputBuilder
 - ValidateBankStatementTransactionsUseCase
 - Plus 7 InputBuilder classes
