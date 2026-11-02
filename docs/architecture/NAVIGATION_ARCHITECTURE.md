@@ -70,7 +70,7 @@ Every destination has a `toSaveToken()` / `destinationFromSaveToken()` pair for 
 - `destination` — `NavigationDestination` to navigate to
 - `titleRes` / `descriptionRes` — display strings
 - `icon` / `color` — visual presentation
-- `isNew` / `isBeta` — badge flags
+- `isNew` — badge flag
 
 > **Note**: `PrivacySettings` **does** have a standalone `NavigationDestination.PrivacySettings` and a `FeatureConfig` entry (`id = "privacy"`); it renders in the standard feature-screen `when` block in `MainActivity`. Two other config entries do not open feature screens: `recurring` targets the `ManualRecurringExpense` overlay and `privacy` targets the `PrivacySettings` management screen. `NavigationDestination.featureDestinations` (27 entries) is the broader list used by the FeaturesMenu wiring and adds `RecurringExpenses`, `AiSettings`, and `CategoryManagement` beyond the `allFeatures` targets (the remaining difference is only naming: config `recurring` targets `ManualRecurringExpense`, config `privacy` targets `PrivacySettings`).
 

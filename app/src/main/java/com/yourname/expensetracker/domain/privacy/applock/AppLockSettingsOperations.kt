@@ -69,8 +69,17 @@ enum class TimeoutChangeResult {
      */
     NOT_IN_ORIGIN,
 
-    /** T30, AMD-2, INV-40: a longer timeout in effective `APP_PIN` mode is refused without a prompt (no device credential). */
-    PIN_MODE
+    /**
+     * S27b (T30, AMD-2, INV-40): a longer timeout in effective `APP_PIN` mode needs the current PIN
+     * ([AppLockSettingsOperations.requestTimeoutChangeWithPin]); never the device credential. Nothing written.
+     */
+    PIN_REQUIRED,
+
+    /** S27b: the PIN was wrong (shared attempt counter, AMD-2). Nothing written; the PIN step stays open. */
+    WRONG_PIN,
+
+    /** S27b: the PIN check is delayed (lock-out delay or unavailable verifier). Nothing written; the step stays open. */
+    PIN_DELAYED
 }
 
 /**
@@ -120,8 +129,17 @@ enum class ReviewSaveResult {
     /** A prompt or an apply is already in flight (INV-34, INV-54). Nothing changed. */
     ALREADY_IN_FLIGHT,
 
-    /** T30, AMD-2, INV-40: a weakening record in effective `APP_PIN` mode is refused without a prompt (no device credential). */
-    PIN_MODE
+    /**
+     * S27b (T30, AMD-2, INV-40): a weakening record in effective `APP_PIN` mode needs the current PIN
+     * ([AppLockSettingsOperations.requestReviewSaveWithPin]); never the device credential. Nothing written.
+     */
+    PIN_REQUIRED,
+
+    /** S27b: the PIN was wrong (shared attempt counter, AMD-2). Nothing written; the PIN step stays open. */
+    WRONG_PIN,
+
+    /** S27b: the PIN check is delayed (lock-out delay or unavailable verifier). Nothing written; the step stays open. */
+    PIN_DELAYED
 }
 
 /**
@@ -387,8 +405,9 @@ class AppLockSettingsOperations @Inject constructor(
         }
         if (direct != null) return direct
         if (controller.state.value is AppLockState.Inert) return TimeoutChangeResult.NOT_IN_ORIGIN // TECH-13
-        // T30, AMD-2, INV-40: a longer timeout never takes the device prompt in effective APP_PIN mode (fail closed).
-        if (controller.isEffectiveAppPinMode()) return TimeoutChangeResult.PIN_MODE
+        // T30, AMD-2, INV-40: a longer timeout never takes the device prompt in effective APP_PIN mode (fail closed);
+        // it needs the PIN (S27b: requestTimeoutChangeWithPin).
+        if (controller.isEffectiveAppPinMode()) return TimeoutChangeResult.PIN_REQUIRED
         return when (
             controller.startTimeoutChangeAttempt(
                 newTimeout,
@@ -400,6 +419,76 @@ class AppLockSettingsOperations @Inject constructor(
             OpenOriginStartResult.NotInOrigin -> TimeoutChangeResult.NOT_IN_ORIGIN
         }
     }
+
+    /**
+     * S27b (AMD-2, T30, INV-40): the PIN-confirmed timeout change. Only the LENGTHENING case in effective `APP_PIN` mode
+     * (lock on, [newTimeout] longer than the committed one) is PIN-gated; every other request is delegated unchanged to
+     * [requestTimeoutChange] (the direct path), so a shorter timeout never needs the PIN. The caller opens the step with
+     * `AppLockController.beginPinConfirm(PinStep.TIMEOUT_CONFIRM)` first (else [TimeoutChangeResult.NOT_IN_ORIGIN]).
+     *
+     * Steps: the controller verifies [pin] through the shared counter (a wrong or delayed PIN is [TimeoutChangeResult.WRONG_PIN]
+     * or [TimeoutChangeResult.PIN_DELAYED], nothing written, step open), then inside the [writeSerializer] under
+     * `NonCancellable` the one-shot authority is RE-CHECKED, the unconditional timeout write runs with the F7 settle, and
+     * the controller applies the outcome (`onPinConfirmedTimeoutApplied`). [pin] is zeroed on every path; never logged.
+     */
+    suspend fun requestTimeoutChangeWithPin(newTimeout: AutoLockTimeout, pin: CharArray): TimeoutChangeResult {
+        try {
+            if (applyRunning.get()) return TimeoutChangeResult.ALREADY_IN_FLIGHT
+            val committed = readCommittedSettings()
+            val lengthening = committed != null && committed.appLockEnabled &&
+                newTimeout.millis > committed.autoLockTimeout.millis
+            if (!lengthening || !controller.isEffectiveAppPinMode()) return requestTimeoutChange(newTimeout)
+            val verified = controller.verifyPinForStep(PinStep.TIMEOUT_CONFIRM, pin)
+            if (verified != PinOperationResult.Done) {
+                return when (pinGateFailure(verified)) {
+                    PinGateFailure.WRONG_PIN -> TimeoutChangeResult.WRONG_PIN
+                    PinGateFailure.PIN_DELAYED -> TimeoutChangeResult.PIN_DELAYED
+                    PinGateFailure.NOT_IN_STEP -> TimeoutChangeResult.NOT_IN_ORIGIN
+                    PinGateFailure.ALREADY_IN_FLIGHT -> TimeoutChangeResult.ALREADY_IN_FLIGHT
+                    PinGateFailure.FAILED -> TimeoutChangeResult.FAILED
+                }
+            }
+            return withContext(NonCancellable) {
+                writeSerializer.withExclusiveWrite {
+                    if (!controller.pinStepAuthorised(PinStep.TIMEOUT_CONFIRM)) {
+                        return@withExclusiveWrite TimeoutChangeResult.NOT_IN_ORIGIN
+                    }
+                    if (applyRunning.get()) {
+                        controller.consumePinStepAuthority(PinStep.TIMEOUT_CONFIRM)
+                        return@withExclusiveWrite TimeoutChangeResult.ALREADY_IN_FLIGHT
+                    }
+                    // The PIN authorises the weakening: unconditional write. F7: a cancelled write is settled from one re-read.
+                    val outcome = settleCancelledWrite(AppLockSettingField.AUTO_LOCK_TIMEOUT, { it.autoLockTimeout == newTimeout }) {
+                        writeTimeout(newTimeout, conditional = false)
+                    }
+                    outcome.applyThenRethrow { result ->
+                        val wrote = result is AppLockSettingsWriteResult.Committed
+                        controller.onPinConfirmedTimeoutApplied(newTimeout, wrote)
+                        if (wrote) TimeoutChangeResult.COMMITTED else TimeoutChangeResult.FAILED
+                    }
+                }
+            }
+        } finally {
+            pin.fill('\u0000') // the controller zeroes too; defensively again on every path
+        }
+    }
+
+    /** The bounded reasons a [PinOperationResult] other than `Done` stops a PIN-confirmed request (no PIN, no count). */
+    private enum class PinGateFailure { WRONG_PIN, PIN_DELAYED, NOT_IN_STEP, ALREADY_IN_FLIGHT, FAILED }
+
+    private fun pinGateFailure(result: PinOperationResult): PinGateFailure =
+        when (result) {
+            is PinOperationResult.NotVerified ->
+                when (result.reason) {
+                    is PinRejection.Wrong -> PinGateFailure.WRONG_PIN
+                    is PinRejection.Delayed -> PinGateFailure.PIN_DELAYED
+                    // Fail closed: an unavailable or unreadable verifier confirms nothing.
+                    else -> PinGateFailure.FAILED
+                }
+            PinOperationResult.NotInStep -> PinGateFailure.NOT_IN_STEP
+            PinOperationResult.AlreadyInFlight -> PinGateFailure.ALREADY_IN_FLIGHT
+            else -> PinGateFailure.FAILED
+        }
 
     /**
      * S18 part (i-b2): the discreet-notifications setting (INV-3, INV-48, AE-103, INV-13). Under INV-48 the value is
@@ -460,7 +549,7 @@ class AppLockSettingsOperations @Inject constructor(
         if (ReviewSaveAuthorisation.isWeakening(record)) {
             if (controller.state.value !is AppLockState.Inert) {
                 // T30, AMD-2, INV-40: no device prompt in effective APP_PIN mode (fail closed).
-                return if (controller.isEffectiveAppPinMode()) ReviewSaveResult.PIN_MODE else startReviewSavePrompt(record)
+                return if (controller.isEffectiveAppPinMode()) ReviewSaveResult.PIN_REQUIRED else startReviewSavePrompt(record)
             }
             // D3: with nothing that can authenticate (neither AVAILABLE nor CHECK_FAILED) no authentication is possible.
             if (capability == DeviceAuthCapability.AVAILABLE || capability == DeviceAuthCapability.CHECK_FAILED) {
@@ -469,6 +558,80 @@ class AppLockSettingsOperations @Inject constructor(
             noAuthUnderD3 = true
         }
         return writeReviewSaveDirect(record, noAuthUnderD3)
+    }
+
+    /**
+     * S27b (AMD-2, T30, INV-40, T27): the PIN-confirmed review-save. Only a WEAKENING record in effective `APP_PIN` mode
+     * from `UNLOCKED` is PIN-gated; every other request (non-weakening, not `APP_PIN`, `INERT`) is delegated unchanged to
+     * [requestReviewSave]. The caller opens the step with `beginPinConfirm(PinStep.REVIEW_CONFIRM)` first. The PIN is the
+     * authorisation, so the device capability is not consulted (nothing uses the device credential here).
+     *
+     * Steps: review state check, the controller verifies [pin] (shared counter; [ReviewSaveResult.WRONG_PIN] or
+     * [ReviewSaveResult.PIN_DELAYED], nothing written, step open), then inside the [writeSerializer] under `NonCancellable`
+     * the authority and the review state are RE-CHECKED, the conditional `reviewSave` runs with the F7 settle, and the
+     * controller applies the outcome (`onPinConfirmedReviewSaved`), then the discreet trigger. [pin] is zeroed on every
+     * path; never logged.
+     */
+    suspend fun requestReviewSaveWithPin(record: AppLockPrivacySettings, pin: CharArray): ReviewSaveResult {
+        try {
+            if (applyRunning.get()) return ReviewSaveResult.ALREADY_IN_FLIGHT
+            if (!isReviewOpen()) return ReviewSaveResult.NOT_IN_REVIEW
+            val pinGated = ReviewSaveAuthorisation.isWeakening(record) &&
+                controller.state.value !is AppLockState.Inert && controller.isEffectiveAppPinMode()
+            if (!pinGated) return requestReviewSave(record)
+            val verified = controller.verifyPinForStep(PinStep.REVIEW_CONFIRM, pin)
+            if (verified != PinOperationResult.Done) {
+                return when (pinGateFailure(verified)) {
+                    PinGateFailure.WRONG_PIN -> ReviewSaveResult.WRONG_PIN
+                    PinGateFailure.PIN_DELAYED -> ReviewSaveResult.PIN_DELAYED
+                    PinGateFailure.NOT_IN_STEP -> ReviewSaveResult.NOT_IN_ORIGIN
+                    PinGateFailure.ALREADY_IN_FLIGHT -> ReviewSaveResult.ALREADY_IN_FLIGHT
+                    PinGateFailure.FAILED -> ReviewSaveResult.FAILED
+                }
+            }
+            return withContext(NonCancellable) {
+                writeSerializer.withExclusiveWrite {
+                    if (!controller.pinStepAuthorised(PinStep.REVIEW_CONFIRM)) {
+                        return@withExclusiveWrite ReviewSaveResult.NOT_IN_ORIGIN
+                    }
+                    if (applyRunning.get() || !isReviewOpen()) {
+                        controller.consumePinStepAuthority(PinStep.REVIEW_CONFIRM)
+                        return@withExclusiveWrite if (applyRunning.get()) {
+                            ReviewSaveResult.ALREADY_IN_FLIGHT
+                        } else {
+                            ReviewSaveResult.NOT_IN_REVIEW
+                        }
+                    }
+                    val outcome = settleCancelledWrite(AppLockSettingField.REVIEW_SAVE, { it == record }) {
+                        writeReviewSave(record)
+                    }
+                    outcome.applyThenRethrow { result ->
+                        when (result) {
+                            is AppLockSettingsWriteResult.Committed -> {
+                                controller.onPinConfirmedReviewSaved(result.settings, true)
+                                runReviewSaveTrigger(result.settings)
+                                ReviewSaveResult.COMMITTED
+                            }
+                            // D8: already recovered by another commit; not a persist failure, nothing applied.
+                            is AppLockSettingsWriteResult.Rejected ->
+                                if (result.reason == AppLockWriteRejection.NOT_UNDER_REVIEW) {
+                                    controller.consumePinStepAuthority(PinStep.REVIEW_CONFIRM)
+                                    ReviewSaveResult.NOT_IN_REVIEW
+                                } else {
+                                    controller.onPinConfirmedReviewSaved(record, false)
+                                    ReviewSaveResult.FAILED
+                                }
+                            is AppLockSettingsWriteResult.Failed -> {
+                                controller.onPinConfirmedReviewSaved(record, false)
+                                ReviewSaveResult.FAILED
+                            }
+                        }
+                    }
+                }
+            }
+        } finally {
+            pin.fill('\u0000') // the controller zeroes too; defensively again on every path
+        }
     }
 
     /** True while the state is `UNLOCKED` or `INERT` and the controller's load state is persistently unreadable. */

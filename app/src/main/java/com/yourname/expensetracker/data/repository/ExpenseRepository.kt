@@ -171,13 +171,11 @@ data class ExpenseCountFilter(
  *
  * Total: 6 remaining (all intentional/backfill).
  *
- * ### NOT YET IMPLEMENTED (no update path exists yet):
- * - Business/tax field updates (isBusinessExpense, businessPurpose, businessCategory,
- *   businessProject, requiresReceipt) — these fields are currently set at creation
- *   time only. When a dedicated update method is added, it MUST route through the
- *   lifecycle coordinator.
- *   TODO (T10): Add updateBusinessFlags(expenseId, patch, source) coordinator
- *               method that writes UPDATED event.
+ * ### Business/tax field updates (isBusinessExpense, businessPurpose, businessCategory,
+ * businessProject, requiresReceipt):
+ * - The coordinator path exists: `TransactionLifecycleCoordinator.updateBusinessExpensePatch()`
+ *   (writes the UPDATED event). `updateBusinessFlags()` is only its deprecated legacy wrapper.
+ *   Business-field edits MUST route through the lifecycle coordinator, never this repository.
  *
  * See docs/analyses and debug master/debugging/pipeline-2-transaction-lifecycle-debug-report.md
  * for the full inventory and migration plan.

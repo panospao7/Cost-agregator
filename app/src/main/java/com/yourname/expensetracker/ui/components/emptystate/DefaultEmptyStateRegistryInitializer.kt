@@ -76,14 +76,6 @@ class DefaultEmptyStateRegistryInitializer @Inject constructor() : EmptyStateReg
                     icon = Icons.Default.Add,
                     action = EmptyStateActionType.OpenFeature(EmptyStateFeatureAction.AddSubscription),
                     priority = 8
-                ),
-                EmptyStateAction(
-                    id = "scan_bank",
-                    titleRes = R.string.empty_action_scan_bank_title,
-                    descriptionRes = R.string.empty_action_scan_bank_desc,
-                    icon = Icons.Default.ReceiptLong,
-                    action = EmptyStateActionType.NavigateToDestination(NavigationDestination.BankConnections),
-                    priority = 5
                 )
             )
         )

@@ -336,6 +336,22 @@
     <string name="notification_access_open_failed">No se pudo abrir la pantalla de ajustes. Abre Ajustes y busca \"Acceso a notificaciones\".</string>
     <string name="money_radar_unavailable">Money Radar no está disponible temporalmente. No se pudieron evaluar algunas señales financieras.</string>
     <string name="stress_forecast_unavailable">La previsión de estrés financiero no está disponible temporalmente. No hay ninguna estimación de riesgo disponible.</string>
+    <!-- stress-forecast-actions: localized stress forecast recommendations (es draft, sign-off at release gate) -->
+    <string name="stress_recs_header">Recomendaciones</string>
+    <string name="stress_rec_review_recurring_obligations">Tus obligaciones recurrentes son altas. Considera cancelar las suscripciones que no uses.</string>
+    <plurals name="stress_rec_reduce_discretionary_spending">
+        <item quantity="one">Podrías quedarte sin dinero en %1$d día. Considera reducir los gastos discrecionales.</item>
+        <item quantity="many">Podrías quedarte sin dinero en %1$d de días. Considera reducir los gastos discrecionales.</item>
+        <item quantity="other">Podrías quedarte sin dinero en %1$d días. Considera reducir los gastos discrecionales.</item>
+    </plurals>
+    <string name="stress_rec_build_emergency_buffer">Tu fondo de emergencia es bajo. Intenta alcanzar al menos %1$s.</string>
+    <string name="stress_rec_build_emergency_buffer_no_amount">Tu fondo de emergencia es bajo. Considera aumentarlo.</string>
+    <string name="stress_rec_delay_non_essential_purchases">Crítico: Considera posponer las compras no esenciales hasta que mejore tu flujo de caja.</string>
+    <string name="stress_rec_healthy_outlook">¡Buen trabajo! Tu nivel de estrés financiero es bajo. Sigue con los buenos hábitos.</string>
+    <string name="stress_rec_no_immediate_concerns">Sin preocupaciones inmediatas. Sigue controlando tus gastos.</string>
+    <string name="stress_rec_action_open_recurring">Abrir pagos recurrentes</string>
+    <string name="stress_rec_action_open_transactions">Ver las transacciones de este mes</string>
+    <string name="stress_rec_action_open_savings_goals">Abrir objetivos de ahorro</string>
     <!-- R18: group-linked expense guard -->
     <string name="expense_delete_blocked_group_linked">Este gasto forma parte de un grupo compartido y no se puede eliminar, porque cambiaría los saldos del grupo.</string>
     <string name="expense_edit_blocked_group_linked">Este gasto forma parte de un grupo compartido, así que no se pueden cambiar su importe, moneda, tipo ni reparto. Puedes seguir editando otros datos, como la categoría o el comercio.</string>

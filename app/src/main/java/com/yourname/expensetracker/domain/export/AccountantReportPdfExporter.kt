@@ -37,9 +37,14 @@ import javax.inject.Inject
  * spending by default rather than all account activity. Pass `null` to
  * include all transaction types (legacy behavior).
  */
-// TODO (PR-E22): Return MoneyAggregate for deductible/income totals instead of raw Double.
-// Apply hardened CSV cell sanitizer (neutralize =+@- leading characters) per OWASP.
-// Add updateBusinessFlags coordinator method.
+// PR-E22 status: per-currency source totals are already MoneyAggregate ([SourceSection.total],
+// [SourceSection.categories]) and the deductible total is built as a MoneyAggregate by
+// [generateDeductibleAggregate]. That function currently has no production caller, so [export]
+// renders no deductible-total line; wiring it into the PDF is still open (needs a home-currency
+// source and unavailable-state wording). There is no income total in this report.
+// This exporter writes no CSV cells, so CSV sanitization (see CsvCellSanitizer) does not apply here.
+// Business-flag edits already have a coordinator path: TransactionLifecycleCoordinator
+// .updateBusinessExpensePatch (updateBusinessFlags is the deprecated legacy wrapper).
 class AccountantReportPdfExporter @Inject constructor(
     private val timeProvider: TimeProvider,
     private val currencyConverter: CurrencyConverter,

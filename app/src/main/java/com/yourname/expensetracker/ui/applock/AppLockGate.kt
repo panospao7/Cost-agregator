@@ -31,6 +31,7 @@ import com.yourname.expensetracker.ui.applock.pin.PinLockActions
 import com.yourname.expensetracker.ui.applock.pin.PinLockSurface
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
 
 /**
  * The gate's content slot. A named alias (not an inline function type) so the db_guard callable parser, which
@@ -78,6 +79,9 @@ interface AppLockGateSource {
 
     /** The PIN lock surface's controller calls, or null when the source has none (no PIN surface is then drawn). */
     val pinActions: PinLockActions? get() = null
+
+    /** S26b (AE-100): the user dismissed the "fingerprint unlock turned off" notice. A plain source has nothing to clear. */
+    suspend fun dismissBiometricNotice() {}
 }
 
 private val DEVICE_AUTH_PIN_PRESENTATION: StateFlow<PinPresentation> = MutableStateFlow(PinPresentation.INITIAL)
@@ -121,6 +125,7 @@ fun AppLockGate(
     unlockMessage: LockSurfaceMessage? = null,
     pin: PinPresentation = PinPresentation.INITIAL,
     pinActions: PinLockActions? = null,
+    onDismissNotice: () -> Unit = {},
     content: AppLockContent
 ) {
     // The gate's own scope: PIN calls started by the PIN surface outlive that surface when an unlock removes it.
@@ -171,7 +176,8 @@ fun AppLockGate(
                         onOpenSecuritySettings = onOpenSecuritySettings,
                         onOpenAppLockSettings = onOpenAppLockSettings,
                         onReviewSettings = onReviewSettings,
-                        modifier = Modifier.windowInsetsPadding(bannerInsets)
+                        modifier = Modifier.windowInsetsPadding(bannerInsets),
+                        onDismissNotice = onDismissNotice
                     )
                 }
                 Box(
@@ -207,11 +213,13 @@ fun AppLockGate(
     val state = source.state.collectAsState().value
     val notice = source.notice.collectAsState().value
     val pin = source.pin.collectAsState().value
+    val dismissScope = rememberCoroutineScope()
     AppLockGate(
         state = state,
         notice = notice,
         pin = pin,
         pinActions = source.pinActions,
+        onDismissNotice = { dismissScope.launch { source.dismissBiometricNotice() } },
         inAppActionsAllowed = inAppActionsAllowed,
         onUnlock = onUnlock,
         onOpenSecuritySettings = onOpenSecuritySettings,

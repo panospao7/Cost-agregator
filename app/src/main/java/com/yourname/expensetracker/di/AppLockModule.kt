@@ -107,17 +107,25 @@ abstract class AppLockModule {
         @AppLockMainDispatcher
         fun provideAppLockMainDispatcher(): CoroutineDispatcher = Dispatchers.Main
 
-        /** Domain view of the PIN-mode fingerprint key (S26). Maps the port result to three bounded states. */
+        /**
+         * Domain view of the PIN-mode fingerprint key (S26, S26b). `state` maps the port result to three bounded states;
+         * `create` and `delete` (S26b, turning fingerprint unlock on and off) go to the port, not the interface defaults.
+         */
         @Provides
         @Singleton
         fun providePinFingerprintKeyGate(manager: BiometricPinKeyManager): PinFingerprintKeyGate =
-            PinFingerprintKeyGate {
-                when (manager.cipherForAuthentication()) {
-                    is BiometricKeyResult.Ready -> PinFingerprintKeyState.READY
-                    BiometricKeyResult.KeyInvalidated -> PinFingerprintKeyState.INVALIDATED
-                    BiometricKeyResult.KeyMissing,
-                    BiometricKeyResult.KeystoreError -> PinFingerprintKeyState.UNAVAILABLE
-                }
+            object : PinFingerprintKeyGate {
+                override fun state(): PinFingerprintKeyState =
+                    when (manager.cipherForAuthentication()) {
+                        is BiometricKeyResult.Ready -> PinFingerprintKeyState.READY
+                        BiometricKeyResult.KeyInvalidated -> PinFingerprintKeyState.INVALIDATED
+                        BiometricKeyResult.KeyMissing,
+                        BiometricKeyResult.KeystoreError -> PinFingerprintKeyState.UNAVAILABLE
+                    }
+
+                override fun createKey(): Boolean = manager.createKey()
+
+                override fun deleteKey() = manager.deleteKey()
             }
 
         /**

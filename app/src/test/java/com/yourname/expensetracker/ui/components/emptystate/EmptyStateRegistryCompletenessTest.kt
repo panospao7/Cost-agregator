@@ -67,4 +67,42 @@ class EmptyStateRegistryCompletenessTest {
             }
         }
     }
+
+    @Test
+    fun `no registered action targets BankConnections and scan_bank id is absent`() {
+        val registry = ContextualActionRegistry()
+        val initializer = DefaultEmptyStateRegistryInitializer()
+        initializer.initialize(registry)
+
+        val allKeys = listOf(
+            EmptyStateScreenKeys.WARRANTY,
+            EmptyStateScreenKeys.SUBSCRIPTION,
+            EmptyStateScreenKeys.SAVINGS,
+            EmptyStateScreenKeys.CHALLENGES,
+            EmptyStateScreenKeys.CARBON,
+            EmptyStateScreenKeys.LIFESTYLE,
+            EmptyStateScreenKeys.TRANSACTIONS,
+            EmptyStateScreenKeys.RECEIPTS,
+            EmptyStateScreenKeys.ANALYTICS,
+            EmptyStateScreenKeys.BUDGET
+        )
+
+        allKeys.forEach { key ->
+            registry.getActions(key, excludeCompleted = false).forEach { action ->
+                assertNotEquals(
+                    "Action '${action.id}' in '$key' must not use the scan_bank id",
+                    "scan_bank",
+                    action.id
+                )
+                val type = action.action
+                if (type is EmptyStateActionType.NavigateToDestination) {
+                    assertNotEquals(
+                        "Action '${action.id}' in '$key' must not target BankConnections",
+                        com.yourname.expensetracker.ui.navigation.NavigationDestination.BankConnections,
+                        type.destination
+                    )
+                }
+            }
+        }
+    }
 }

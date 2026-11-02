@@ -907,10 +907,7 @@ fun HomeScreen(
                                     )
                                 }
                                 is com.yourname.expensetracker.domain.usecase.dashboard.MoneyRadarAction.AdjustBudget -> {
-                                    if (action.riskInfo.riskTier == com.yourname.expensetracker.domain.model.budget.MonteCarloBudgetImpact.RiskTier.CRITICAL ||
-                                        action.riskInfo.riskTier == com.yourname.expensetracker.domain.model.budget.MonteCarloBudgetImpact.RiskTier.HIGH) {
-                                        onNavigateToAnalytics("month")
-                                    }
+                                    onNavigateToFeature(NavigationDestination.Budget)
                                 }
                             }
                         }
@@ -920,21 +917,15 @@ fun HomeScreen(
             FinancialStressForecastCard(
                 result = widget.result,
                 currency = homeCurrency ?: "",
-                onActionClick = { recommendation ->
-                    // Navigate based on recommendation type
-                    when {
-                        recommendation.contains("subscriptions", ignoreCase = true) -> {
-                            onNavigateToRecurring()
-                        }
-                        recommendation.contains("spending", ignoreCase = true) -> {
-                            onNavigateToTransactions(
-                                TransactionFilter(dateRange = TimePeriodUtils.getMonthRange(state.referenceNowMillis))
-                            )
-                        }
-                        recommendation.contains("emergency", ignoreCase = true) -> {
-                            onNavigateToFeature(NavigationDestination.SavingsGoals)
-                        }
-                    }
+                onActionClick = { action ->
+                    // Route by typed action (locale-independent), never by recommendation text
+                    dispatchStressRecommendationAction(
+                        action = action,
+                        referenceNowMillis = state.referenceNowMillis,
+                        onOpenRecurring = onNavigateToRecurring,
+                        onOpenTransactions = onNavigateToTransactions,
+                        onOpenSavingsGoals = { onNavigateToFeature(NavigationDestination.SavingsGoals) }
+                    )
                 }
             )
                             }
@@ -1642,7 +1633,6 @@ private fun FeaturesMenu(
                             description = feature.descriptionRes?.let { stringResource(it) } ?: "",
                             color = feature.color,
                             isNew = feature.isNew,
-                            isBeta = feature.isBeta,
                             onClick = { onNavigateToFeature(feature.destination) }
                         )
                     }
@@ -1705,7 +1695,6 @@ private fun FeatureItem(
     description: String,
     color: Color,
     isNew: Boolean = false,
-    isBeta: Boolean = false,
     onClick: () -> Unit
 ) {
     Card(
@@ -1752,16 +1741,6 @@ private fun FeatureItem(
                         Badge(containerColor = Color(0xFF4CAF50)) {
                             Text(
                                 stringResource(R.string.label_new),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = SemanticColors.TextPrimary
-                            )
-                        }
-                    }
-                    if (isBeta) {
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Badge(containerColor = Color(0xFFFF9800)) {
-                            Text(
-                                stringResource(R.string.label_beta),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = SemanticColors.TextPrimary
                             )

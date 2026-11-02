@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.ui.screens.privacysettings.applockpin
 
+import android.os.Build
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.yourname.expensetracker.domain.privacy.applock.AppLockController
@@ -8,6 +9,10 @@ import com.yourname.expensetracker.domain.privacy.applock.AppLockState
 import com.yourname.expensetracker.domain.privacy.applock.DeviceAuthCapability
 import com.yourname.expensetracker.domain.privacy.applock.DeviceAuthCapabilityProvider
 import com.yourname.expensetracker.domain.privacy.applock.EffectiveLockMode
+import com.yourname.expensetracker.domain.privacy.applock.FingerprintEnableResult
+import com.yourname.expensetracker.domain.privacy.applock.OpenOriginEnd
+import com.yourname.expensetracker.domain.privacy.applock.OpenOriginEndKind
+import com.yourname.expensetracker.domain.privacy.applock.OpenOriginPrompt
 import com.yourname.expensetracker.domain.privacy.applock.PinOperationResult
 import com.yourname.expensetracker.domain.privacy.applock.PinPresentation
 import com.yourname.expensetracker.domain.privacy.applock.PinRejection
@@ -32,6 +37,9 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
+/** STOP-1: the fingerprint toggle is offered from API 30 (BIOMETRIC_STRONG without a device credential). */
+private const val FINGERPRINT_MIN_SDK = 30
+
 /** Whether the App PIN row and its entries can be used (INV-50: unavailable while the lock is paused or off). */
 enum class AppPinAvailability { AVAILABLE, PAUSED, LOCK_OFF, NOT_READY }
 
@@ -40,14 +48,22 @@ enum class PinFlowStep {
     NONE, SETUP_ACK, SETUP_ENTER, SETUP_CONFIRM, CHANGE_CURRENT, CHANGE_NEW, CHANGE_CONFIRM, REMOVE_ENTER, REMOVE_CONFIRM,
 
     /** "Turn off app lock" (T30 disable variant): the current PIN entry, then the confirm dialog. */
-    TURN_OFF_ENTER, TURN_OFF_CONFIRM
+    TURN_OFF_ENTER, TURN_OFF_CONFIRM,
+
+    /** "Use fingerprint to unlock" (S26b): the current PIN entry before the system fingerprint prompt. */
+    FINGERPRINT_ENTER
 }
 
 /** Bounded, content-free message under the pad (no PIN, no failure count). */
 enum class PinFlowMessage { NONE, MISMATCH, TOO_WEAK, WRONG, DELAYED, DELAYED_NEUTRAL, UNREADABLE, FAILED }
 
 /** One-shot results. [OPEN_BACKUP_RESTORE] is navigation only: no backup is started (AE-104). */
-enum class PinFlowEvent { PIN_SET, PIN_CHANGED, PIN_REMOVED, PIN_REMOVED_LOCK_OFF, TURN_OFF_INCOMPLETE, OPERATION_FAILED, OPEN_BACKUP_RESTORE }
+enum class PinFlowEvent {
+    PIN_SET, PIN_CHANGED, PIN_REMOVED, PIN_REMOVED_LOCK_OFF, TURN_OFF_INCOMPLETE, OPERATION_FAILED, OPEN_BACKUP_RESTORE,
+
+    /** S26b: fingerprint unlock turned on / off, or the phone cannot do it (neutral; no cause is named). */
+    FINGERPRINT_ON, FINGERPRINT_OFF, FINGERPRINT_UNAVAILABLE
+}
 
 /** Bounded UI state. It carries no PIN, no digit and no failure count (INV-38). */
 data class AppPinSettingsUiState(
@@ -61,7 +77,11 @@ data class AppPinSettingsUiState(
     val delayToken: Int = 0,
     val busy: Boolean = false,
     /** Remove dialog variant: the phone has no usable screen lock, so removing the PIN turns app lock off. */
-    val removeNoSecure: Boolean = false
+    val removeNoSecure: Boolean = false,
+    /** S26b: fingerprint unlock is on (from the controller's PIN presentation). */
+    val fingerprintEnabled: Boolean = false,
+    /** S26b (STOP-1): a PIN is set, effective APP_PIN and API 30+; no capability check is made. */
+    val fingerprintToggleVisible: Boolean = false
 )
 
 /**
@@ -73,7 +93,10 @@ data class AppPinSettingsUiState(
  *
  * PIN material (INV-38): entries arrive as CharArrays and are held ONLY in the private fields below (never a String, a
  * SavedStateHandle or a Bundle). They are zeroed on cancel, mismatch, completion, re-lock and [onCleared]; the controller
- * zeroes the arrays it receives. Nothing PIN-related is logged. Fingerprint unlock is not handled here.
+ * zeroes the arrays it receives. Nothing PIN-related is logged.
+ *
+ * Fingerprint unlock (S26b): on -> [AppLockController.beginFingerprintEnable] + PIN entry ([PinFlowStep.FINGERPRINT_ENTER]) +
+ * [AppLockController.enableFingerprint]; the system prompt's outcome arrives on `openOriginEnd`. Off -> direct (STOP-5).
  */
 @HiltViewModel
 class AppPinSettingsViewModel @Inject constructor(
@@ -95,15 +118,23 @@ class AppPinSettingsViewModel @Inject constructor(
     private var mismatches = 0
     private var lastControllerStep = PinStep.NONE
 
+    // S26b: the enable attempt this screen started and is waiting on. No PIN is held here.
+    private var awaitingEnableEnd = false
+    private var enableEndBaseline: OpenOriginEnd? = null
+
     val uiState: StateFlow<AppPinSettingsUiState> = combine(controller.state, controller.pin, local, busy) { s, p, l, b ->
+        val pinSet = p.effectiveLockMode == EffectiveLockMode.APP_PIN
         l.copy(
             availability = availabilityOf(s),
-            pinSet = p.effectiveLockMode == EffectiveLockMode.APP_PIN,
-            busy = b || s is AppLockState.Authenticating
+            pinSet = pinSet,
+            busy = b || s is AppLockState.Authenticating,
+            fingerprintEnabled = p.fingerprintEnabled,
+            fingerprintToggleVisible = pinSet && Build.VERSION.SDK_INT >= FINGERPRINT_MIN_SDK
         )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, AppPinSettingsUiState())
 
     init {
+        viewModelScope.launch { controller.openOriginEnd.collect { onOpenOriginEnd(it) } }
         // AE-119: a step left open by an earlier screen is closed; a step always starts empty.
         if (controller.pin.value.step != PinStep.NONE) controller.cancelPinStep()
         viewModelScope.launch {
@@ -200,6 +231,31 @@ class AppPinSettingsViewModel @Inject constructor(
         local.value = AppPinSettingsUiState(step = PinFlowStep.TURN_OFF_ENTER)
     }
 
+    /** "Use fingerprint to unlock" switched on: opens the controller step (no prompt) and asks for the current PIN. */
+    fun startFingerprintEnable() {
+        val s = uiState.value
+        if (s.availability != AppPinAvailability.AVAILABLE || !s.pinSet || !s.fingerprintToggleVisible) return
+        if (s.fingerprintEnabled || s.step != PinFlowStep.NONE || s.busy) return
+        if (!controller.beginFingerprintEnable()) return
+        local.value = AppPinSettingsUiState(step = PinFlowStep.FINGERPRINT_ENTER)
+    }
+
+    /** Switched off: direct, no PIN (STOP-5). One controller write; the flag is read back from the presentation. */
+    fun disableFingerprint() {
+        val s = uiState.value
+        if (s.availability != AppPinAvailability.AVAILABLE || !s.pinSet || !s.fingerprintEnabled) return
+        if (s.step != PinFlowStep.NONE || s.busy) return
+        launchOp {
+            when (controller.disableFingerprint()) {
+                PinOperationResult.Done -> events.trySend(PinFlowEvent.FINGERPRINT_OFF)
+                else -> events.trySend(PinFlowEvent.OPERATION_FAILED)
+            }
+        }
+    }
+
+    /** The switch row: on starts the PIN step, off is direct. */
+    fun onFingerprintToggle(on: Boolean) = if (on) startFingerprintEnable() else disableFingerprint()
+
     /** "Back up now" (AE-104): navigation to Backup & Restore only. No backup call exists in this class. */
     fun onBackUpNow() {
         events.trySend(PinFlowEvent.OPEN_BACKUP_RESTORE)
@@ -217,6 +273,7 @@ class AppPinSettingsViewModel @Inject constructor(
      * close the controller step. Safe while an operation runs: [launchOp] owns the arrays it was given.
      */
     fun onScreenLeft() {
+        awaitingEnableEnd = false
         reset()
         controller.cancelPinStep()
     }
@@ -233,6 +290,7 @@ class AppPinSettingsViewModel @Inject constructor(
             PinFlowStep.CHANGE_CURRENT -> holdCurrent(entry, PinFlowStep.CHANGE_NEW)
             PinFlowStep.REMOVE_ENTER -> holdCurrent(entry, PinFlowStep.REMOVE_CONFIRM)
             PinFlowStep.TURN_OFF_ENTER -> holdCurrent(entry, PinFlowStep.TURN_OFF_CONFIRM)
+            PinFlowStep.FINGERPRINT_ENTER -> runFingerprintEnable(entry)
             PinFlowStep.SETUP_CONFIRM -> confirmNew(entry, PinFlowStep.SETUP_ENTER, ::runSetup)
             PinFlowStep.CHANGE_CONFIRM -> confirmNew(entry, PinFlowStep.CHANGE_NEW, ::runChange)
             else -> entry.zero()
@@ -352,6 +410,48 @@ class AppPinSettingsViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Verifies [pin] (shared counter) and starts the system fingerprint prompt. [Started]: the list is shown again and
+     * the outcome arrives through [onOpenOriginEnd]. The array is zeroed by the controller and again in `finally`.
+     */
+    private fun runFingerprintEnable(pin: CharArray) {
+        enableEndBaseline = controller.openOriginEnd.value
+        awaitingEnableEnd = true
+        launchOp(pin) {
+            when (val result = controller.enableFingerprint(pin)) {
+                FingerprintEnableResult.Started -> reset()
+                FingerprintEnableResult.KeyUnavailable -> {
+                    awaitingEnableEnd = false
+                    finish(PinFlowEvent.FINGERPRINT_UNAVAILABLE)
+                }
+                is FingerprintEnableResult.Rejected -> {
+                    awaitingEnableEnd = false
+                    when (val rejected = result.result) {
+                        is PinOperationResult.NotVerified -> applyRejection(rejected.reason, PinFlowStep.FINGERPRINT_ENTER)
+                        PinOperationResult.NotInStep -> reset()
+                        PinOperationResult.Failed -> finish(PinFlowEvent.OPERATION_FAILED)
+                        else -> enterStep(PinFlowStep.FINGERPRINT_ENTER, PinFlowMessage.FAILED)
+                    }
+                }
+            }
+        }
+    }
+
+    /** The end of the enable prompt this screen started (a replayed older end is ignored). No change on cancel. */
+    private fun onOpenOriginEnd(end: OpenOriginEnd?) {
+        if (end == null || !awaitingEnableEnd || end == enableEndBaseline) return
+        if (end.prompt != OpenOriginPrompt.FINGERPRINT_ENABLE) return
+        awaitingEnableEnd = false
+        if (controller.pin.value.step == PinStep.FINGERPRINT_CONFIRM) controller.cancelPinStep()
+        when (end.kind) {
+            OpenOriginEndKind.APPLIED -> events.trySend(PinFlowEvent.FINGERPRINT_ON)
+            OpenOriginEndKind.NOT_COMMITTED -> events.trySend(PinFlowEvent.OPERATION_FAILED)
+            OpenOriginEndKind.ERROR, OpenOriginEndKind.NOT_AVAILABLE -> events.trySend(PinFlowEvent.FINGERPRINT_UNAVAILABLE)
+            OpenOriginEndKind.CANCELLED, OpenOriginEndKind.LOCKED_OUT, OpenOriginEndKind.HOST_LOST,
+            OpenOriginEndKind.BACKGROUNDED -> Unit
+        }
+    }
+
     /** The "Remove" button of the dialog (after the current PIN was entered). Verification and removal are one operation. */
     fun confirmRemove() = runRemoval(PinFlowStep.REMOVE_CONFIRM, PinFlowStep.REMOVE_ENTER, turnLockOff = false)
 
@@ -411,6 +511,7 @@ class AppPinSettingsViewModel @Inject constructor(
     }
 
     override fun onCleared() {
+        awaitingEnableEnd = false
         heldCurrent.zero()
         heldNew.zero()
         heldCurrent = null

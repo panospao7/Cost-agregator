@@ -25,6 +25,13 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import kotlin.coroutines.CoroutineContext
 
+/**
+ * Prompts startable through the public [AppLockController.startOpenOriginAttempt]. FINGERPRINT_ENABLE is excluded
+ * by design: it is startable only via enableFingerprint after a verified PIN, so the public start returns NotInOrigin.
+ */
+internal val PUBLIC_OPEN_ORIGIN_PROMPTS: List<OpenOriginPrompt> =
+    OpenOriginPrompt.entries.filter { it != OpenOriginPrompt.FINGERPRINT_ENABLE }
+
 /** Controllable [MonotonicClock]: only the monotonic clock exists for the controller (AE-43). */
 internal class FakeMonotonicClock(var nowMillis: Long = 1_000L) : MonotonicClock {
     override fun elapsedRealtimeMillis(): Long = nowMillis
@@ -413,6 +420,30 @@ internal class FakePinFingerprintKeyGate(@Volatile var keyState: PinFingerprintK
     override fun state(): PinFingerprintKeyState {
         reads++
         return keyState
+    }
+
+    /** S26b: how many times the controller asked to create / delete the key, and what [create] answers (scriptable). */
+    @Volatile
+    var createCalls = 0
+
+    @Volatile
+    var deleteCalls = 0
+
+    @Volatile
+    var createResult = true
+
+    /** When set, [create] throws it after counting the call. */
+    @Volatile
+    var createFailure: Exception? = null
+
+    override fun createKey(): Boolean {
+        createCalls++
+        createFailure?.let { throw it }
+        return createResult
+    }
+
+    override fun deleteKey() {
+        deleteCalls++
     }
 }
 
