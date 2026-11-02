@@ -3893,6 +3893,8 @@ class DatabaseBackupRepositoryImplTest {
         createFullSchemaDatabase(file = dbFile)
         val control = exportToFile(recordingRun(), encryption, "snapshot_verify_control", redacted = true)
         assertTrue("control export must succeed: ${control.exceptionOrNull()}", control.isSuccess)
+        // The control legitimately wrote a bundle; clear it so the per-row "no bundle" assertion is meaningful.
+        File(tempDir, "costbackups").listFiles().orEmpty().forEach { it.delete() }
 
         val rows = listOf(
             "installment purchase orphan" to

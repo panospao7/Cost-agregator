@@ -112,6 +112,7 @@ class RestoreSemanticPreSwapTest {
     private val realAppContext: Context by lazy { ApplicationProvider.getApplicationContext() }
 
     private lateinit var tempDir: File
+    private var fixtureSeq = 0
 
     @Before
     fun setUp() {
@@ -158,7 +159,7 @@ class RestoreSemanticPreSwapTest {
     /** Real-schema fixture F (6 expenses, 2 recurring rules) as a database file outside the app files dir. */
     private fun realSource(): Source {
         val file = File(tempDir, "source-${UUID.randomUUID()}.sqlite")
-        val created = RealSchemaFixture.createFixtureF(realSchemaHelper, "rsv-s3-${UUID.randomUUID()}")
+        val created = RealSchemaFixture.createFixtureF(realSchemaHelper, "rsv-${fixtureSeq++}")
         created.copyTo(file, overwrite = true)
         created.delete()
         return Source(file, RealSchemaFixture.manifestCounts(file))
