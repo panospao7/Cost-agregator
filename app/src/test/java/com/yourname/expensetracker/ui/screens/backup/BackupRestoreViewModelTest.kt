@@ -547,12 +547,19 @@ class BackupRestoreViewModelTest : ViewModelTestUtils() {
     @Test
     fun `AE-19 semantic mismatch maps to the blocked resource by type even when the message mentions password`() =
         runTest(testDispatcher) {
-            val mismatch = io.mockk.spyk(
+            // The real exception's message is the code name; a plain mock (no field copy, unlike spyk, which
+            // cannot read Throwable's private fields under JPMS) lets the message mention "password".
+            val mismatch = io.mockk.mockk<com.yourname.expensetracker.data.repository.BackupSemanticVerificationException>(relaxed = true)
+            every { mismatch.code } returns com.yourname.expensetracker.data.backup.SemanticCode.SEMANTIC_MISMATCH
+            every { mismatch.message } returns "wrong password"
+
+            val real = restoreFailingWith(
                 com.yourname.expensetracker.data.repository.BackupSemanticVerificationException(
                     com.yourname.expensetracker.data.backup.SemanticCode.SEMANTIC_MISMATCH
                 )
             )
-            every { mismatch.message } returns "wrong password"
+            assertEquals(com.yourname.expensetracker.R.string.backup_restore_blocked_content_mismatch, real.errorMessageRes)
+            assertNull(real.errorMessage)
 
             val state = restoreFailingWith(mismatch)
 
