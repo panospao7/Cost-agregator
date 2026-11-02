@@ -1,7 +1,6 @@
 package com.yourname.expensetracker.data.backup
 
 import android.database.sqlite.SQLiteDatabase
-import android.database.sqlite.SQLiteException
 import androidx.room.testing.MigrationTestHelper
 import com.yourname.expensetracker.domain.backup.SemanticNotVerifiableReason
 import io.mockk.every
@@ -723,18 +722,31 @@ class SemanticAggregatesTest {
     // ── AE-17 / INV-16: read-only ────────────────────────────────
 
     @Test
-    fun AE17_capture_and_verifyAgainst_succeed_on_a_read_only_handle_which_rejects_writes() {
+    fun AE17_capture_and_verifyAgainst_succeed_on_a_read_only_handle_and_never_write() {
         val file = fixtureFile("ae17-readonly")
+        val bytesBefore = file.readBytes()
 
         fixture.readOnly(file) { db ->
+            fun totalChanges(): Long =
+                db.rawQuery("SELECT total_changes()", null).use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    cursor.getLong(0)
+                }
+
+            val changesBefore = totalChanges()
             val set = SemanticAggregates.capture(db, fixture.tableCounts(db))
             assertEquals(SemanticCaptureStatus.CAPTURED, set.status)
             assertTrue(SemanticAggregates.verifyAgainst(db, compareExpectation(set)) is SemanticCheckResult.Verified)
-            // Control: the handle really is read-only, so any write inside the verifier would have failed.
-            assertThrows(SQLiteException::class.java) {
-                db.execSQL("UPDATE expenses SET amount = 0.0 WHERE id = 1")
-            }
+            // The connection performed no row change while capturing and verifying.
+            assertEquals("capture/verifyAgainst must not write", changesBefore, totalChanges())
         }
+
+        // Neither entry point altered the database file.
+        assertArrayEquals("capture/verifyAgainst must not write the database file", bytesBefore, file.readBytes())
+
+        // Control: the byte comparison is able to see a write.
+        fixture.mutate(file, "UPDATE expenses SET amount = 13.5 WHERE id = 1")
+        assertFalse(bytesBefore.contentEquals(file.readBytes()))
     }
 
     @Test

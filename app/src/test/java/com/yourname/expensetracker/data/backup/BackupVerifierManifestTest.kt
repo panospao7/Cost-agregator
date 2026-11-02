@@ -619,7 +619,11 @@ class BackupVerifierManifestTest {
             // Rows exist in gated tables, but a legacy manifest recorded no count for them.
             db.execSQL("INSERT INTO group_settlements (id) VALUES (1)")
             db.execSQL("INSERT INTO entity_source_links (id) VALUES (1)")
-            val legacyCounts = BackupVerifier.requiredManifestTables(databaseVersion = 151).associateWith { 0 }
+            val legacyManifestCounts = BackupVerifier.requiredManifestTables(databaseVersion = 151).associateWith { 0 }
+            s0bGatedTables.forEach { assertFalse(legacyManifestCounts.containsKey(it)) }
+            // Real restore flow: the staged DB is migrated from the source version, so the
+            // expectations are extended with tables the migration creates empty (installment_*).
+            val legacyCounts = BackupVerifier.expectedCountsAfterMigration(legacyManifestCounts, 151)
             s0bGatedTables.forEach { assertFalse(legacyCounts.containsKey(it)) }
 
             val summary = BackupVerifier.verify(db, legacyCounts)
@@ -639,13 +643,20 @@ class BackupVerifierManifestTest {
     fun P071_legacy_leniency_is_limited_to_the_gated_tables() {
         val db = createAllTablesDatabase()
         try {
-            val legacyCounts = BackupVerifier.requiredManifestTables(databaseVersion = 151).associateWith { 0 }
-            // Control: complete legacy manifest passes.
-            assertTrue(BackupVerifier.verify(db, legacyCounts).passed)
+            val legacyManifestCounts = BackupVerifier.requiredManifestTables(databaseVersion = 151).associateWith { 0 }
+            // Real restore flow: counts pass through the migration step before post-restore verify.
+            val legacyCounts = BackupVerifier.expectedCountsAfterMigration(legacyManifestCounts, 151)
+            // Control: complete legacy manifest (gated counts null) passes.
+            val control = BackupVerifier.verify(db, legacyCounts)
+            assertTrue(control.errors.toString(), control.passed)
 
-            val missingCore = BackupVerifier.verify(db, legacyCounts - "expenses")
+            val missingCore = BackupVerifier.verify(
+                db,
+                BackupVerifier.expectedCountsAfterMigration(legacyManifestCounts - "expenses", 151)
+            )
 
             assertFalse(missingCore.passed)
+            assertTrue(missingCore.errors.contains("Table 'expenses' not found in manifest counts"))
             assertFalse(missingCore.tableResults.single { it.tableName == "expenses" }.passed)
         } finally {
             db.close()
