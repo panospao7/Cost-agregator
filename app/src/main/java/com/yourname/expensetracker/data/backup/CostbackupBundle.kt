@@ -60,7 +60,19 @@ object CostbackupBundle {
         val tableCounts: Map<String, Int> = emptyMap(),
         val receiptAssetCount: Int = 0,
         val options: BackupOptionsManifest = BackupOptionsManifest(),
-        val privacyMode: String? = null
+        val privacyMode: String? = null,
+        /**
+         * Restore semantic verification (UF-46): the aggregate fingerprints captured from the export
+         * snapshot. `null` for a legacy manifest (no section). Written inside the encrypted manifest
+         * only, never in the plaintext header. Backward and forward compatible: an old reader ignores
+         * the unknown key, and `backupFormatVersion` / `FORMAT_VERSION` are unchanged.
+         */
+        val semanticAggregates: SemanticAggregateSet? = null,
+        /**
+         * True when a `semanticAggregates` key was present but structurally malformed (INV-12). The
+         * set is then `null`. Never serialised; restore blocks on it before any destructive step.
+         */
+        val semanticSectionMalformed: Boolean = false
     ) {
         fun toJson(): JSONObject = JSONObject().apply {
             put("backupFormatVersion", backupFormatVersion)
@@ -71,6 +83,7 @@ object CostbackupBundle {
             put("receiptAssetCount", receiptAssetCount)
             put("options", options.toJson())
             put("privacyMode", privacyMode)
+            semanticAggregates?.let { put("semanticAggregates", it.toJson()) }
         }
 
         companion object {
@@ -78,24 +91,43 @@ object CostbackupBundle {
              * Parses a manifest. Legacy bundles without a `createdAt` field fall back
              * to the caller-supplied [nowEpochMs] — no hidden wall-clock read.
              */
-            fun fromJson(json: JSONObject, nowEpochMs: Long): BackupManifest = BackupManifest(
-                backupFormatVersion = json.optInt("backupFormatVersion", 1),
-                databaseVersion = json.getInt("databaseVersion"),
-                createdAt = json.optLong("createdAt", nowEpochMs),
-                includes = json.optJSONObject("includes")?.let { BackupIncludes.fromJson(it) }
-                    ?: BackupIncludes(),
-                tableCounts = json.optJSONObject("tableCounts")?.let { obj ->
-                    val map = mutableMapOf<String, Int>()
-                    for (key in obj.keys()) {
-                        map[key] = obj.getInt(key)
-                    }
-                    map
-                } ?: emptyMap(),
-                receiptAssetCount = json.optInt("receiptAssetCount", 0),
-                options = json.optJSONObject("options")?.let { BackupOptionsManifest.fromJson(it) }
-                    ?: BackupOptionsManifest(),
-                privacyMode = json.optString("privacyMode", null)
-            )
+            fun fromJson(json: JSONObject, nowEpochMs: Long): BackupManifest {
+                val semantic = parseSemanticSection(json)
+                return BackupManifest(
+                    backupFormatVersion = json.optInt("backupFormatVersion", 1),
+                    databaseVersion = json.getInt("databaseVersion"),
+                    createdAt = json.optLong("createdAt", nowEpochMs),
+                    includes = json.optJSONObject("includes")?.let { BackupIncludes.fromJson(it) }
+                        ?: BackupIncludes(),
+                    tableCounts = json.optJSONObject("tableCounts")?.let { obj ->
+                        val map = mutableMapOf<String, Int>()
+                        for (key in obj.keys()) {
+                            map[key] = obj.getInt(key)
+                        }
+                        map
+                    } ?: emptyMap(),
+                    receiptAssetCount = json.optInt("receiptAssetCount", 0),
+                    options = json.optJSONObject("options")?.let { BackupOptionsManifest.fromJson(it) }
+                        ?: BackupOptionsManifest(),
+                    privacyMode = json.optString("privacyMode", null),
+                    semanticAggregates = semantic.first,
+                    semanticSectionMalformed = semantic.second
+                )
+            }
+
+            /**
+             * INV-12: the semantic section never makes [fromJson] throw. Returns the parsed set (or
+             * null when the key is absent) and whether a present section was structurally malformed.
+             * A present key that is not a JSON object (including JSON null) is malformed (fail-closed).
+             */
+            private fun parseSemanticSection(json: JSONObject): Pair<SemanticAggregateSet?, Boolean> {
+                if (!json.has("semanticAggregates")) return Pair(null, false)
+                val section = json.opt("semanticAggregates") as? JSONObject ?: return Pair(null, true)
+                return when (val parsed = SemanticAggregates.parse(section)) {
+                    is SemanticParseResult.Parsed -> Pair(parsed.set, false)
+                    is SemanticParseResult.Malformed -> Pair(null, true)
+                }
+            }
         }
     }
 
@@ -261,6 +293,32 @@ object CostbackupBundle {
         return ciphertext
     }
 
+    // ── Semantic section self-check (C0) ──────────────────────────
+
+    /**
+     * C0 (INV-6): serialises [set] exactly as the manifest does, parses it back with the production
+     * parser and compares the result to [set]. Only a [SemanticCheckResult.Verified] outcome lets the
+     * section be written as CAPTURED. Any serialisation, parse or compare problem is a bounded
+     * SEMANTIC_SELF_CHECK_FAILED result (never a throw); CancellationException is rethrown.
+     * [serialize] is a test seam and defaults to the manifest's own section serialiser.
+     */
+    internal fun selfCheckSemanticSection(
+        set: SemanticAggregateSet,
+        serialize: (SemanticAggregateSet) -> String = { it.toJson().toString() }
+    ): SemanticCheckResult {
+        val checkpoint = SemanticCheckpoint.C0_BACKUP_SELF_CHECK
+        return try {
+            when (val parsed = SemanticAggregates.parse(JSONObject(serialize(set)))) {
+                is SemanticParseResult.Parsed -> SemanticAggregates.compare(set, parsed.set, checkpoint)
+                is SemanticParseResult.Malformed ->
+                    SemanticCheckResult.Failed(checkpoint, SemanticCode.SEMANTIC_SELF_CHECK_FAILED, null, 0)
+            }
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            SemanticCheckResult.Failed(checkpoint, SemanticCode.SEMANTIC_SELF_CHECK_FAILED, null, 0)
+        }
+    }
+
     // ── Create ────────────────────────────────────────────────────
 
     /**
@@ -292,7 +350,8 @@ object CostbackupBundle {
         redacted: Boolean = true,
         includeReceiptImages: Boolean = true,
         encryptionService: BackupEncryptionService = BackupEncryptionService(),
-        privacyModeName: String? = null
+        privacyModeName: String? = null,
+        semanticAggregates: SemanticAggregateSet? = null
     ): Result<File> = runCatching {
         val parentDir = outputFile.parentFile ?: File(".")
         parentDir.mkdirs()
@@ -309,7 +368,8 @@ object CostbackupBundle {
                 redacted = redacted,
                 includeReceiptImages = includeReceiptImages,
                 encryptionService = encryptionService,
-                privacyModeName = privacyModeName
+                privacyModeName = privacyModeName,
+                semanticAggregates = semanticAggregates
             )
         }
         Timber.d("Created .costbackup bundle (%d bytes)", outputFile.length())
@@ -338,7 +398,8 @@ object CostbackupBundle {
         includeReceiptImages: Boolean = true,
         encryptionService: BackupEncryptionService = BackupEncryptionService(),
         privacyModeName: String? = null,
-        tempDir: File? = null
+        tempDir: File? = null,
+        semanticAggregates: SemanticAggregateSet? = null
     ): Result<Unit> = runCatching {
         writeToStream(
             outputStream = outputStream,
@@ -352,7 +413,8 @@ object CostbackupBundle {
             redacted = redacted,
             includeReceiptImages = includeReceiptImages,
             encryptionService = encryptionService,
-            privacyModeName = privacyModeName
+            privacyModeName = privacyModeName,
+            semanticAggregates = semanticAggregates
         )
         Unit
     }
@@ -373,7 +435,8 @@ object CostbackupBundle {
         redacted: Boolean,
         includeReceiptImages: Boolean,
         encryptionService: BackupEncryptionService,
-        privacyModeName: String?
+        privacyModeName: String?,
+        semanticAggregates: SemanticAggregateSet?
     ) {
         // 1. Create a temp file for streaming ZIP construction (avoids OOM)
         tempDir.mkdirs()
@@ -381,7 +444,7 @@ object CostbackupBundle {
 
         try {
             // 2. Build ZIP streaming to temp file (avoids OOM from ByteArrayOutputStream)
-            buildZip(tempZip, databaseFile, receiptFiles, tableCounts, databaseVersion, redacted, includeReceiptImages, nowEpochMs, privacyModeName)
+            buildZip(tempZip, databaseFile, receiptFiles, tableCounts, databaseVersion, redacted, includeReceiptImages, nowEpochMs, privacyModeName, semanticAggregates)
 
             // 3. Encrypt from temp file + write header + ciphertext to the output stream
             writeHeader(outputStream)
@@ -583,7 +646,8 @@ object CostbackupBundle {
         redacted: Boolean,
         includeReceiptImages: Boolean,
         nowEpochMs: Long,
-        privacyModeName: String? = null
+        privacyModeName: String? = null,
+        semanticAggregates: SemanticAggregateSet? = null
     ) {
         ZipOutputStream(BufferedOutputStream(FileOutputStream(tempZip))).use { zos ->
 
@@ -600,7 +664,8 @@ object CostbackupBundle {
                 includes = BackupIncludes(
                     receiptImages = includeReceiptImages && receiptFiles.isNotEmpty()
                 ),
-                privacyMode = privacyModeName
+                privacyMode = privacyModeName,
+                semanticAggregates = semanticAggregates
             )
             zos.putNextEntry(ZipEntry("manifest.json"))
             zos.write(manifest.toJson().toString(2).toByteArray(Charsets.UTF_8))

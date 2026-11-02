@@ -16,6 +16,11 @@ import com.yourname.expensetracker.data.backup.RestoreJournal
 import com.yourname.expensetracker.data.backup.ReceiptAssetRecovery
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.backup.RestoreDatabaseOpener
+import com.yourname.expensetracker.data.backup.SemanticAggregateSet
+import com.yourname.expensetracker.data.backup.SemanticAggregates
+import com.yourname.expensetracker.data.backup.SemanticCaptureStatus
+import com.yourname.expensetracker.data.backup.SemanticCheckResult
+import com.yourname.expensetracker.data.backup.SemanticNotCapturedReason
 import com.yourname.expensetracker.data.backup.WorkerDrainTimeoutException
 import com.yourname.expensetracker.data.privacy.BackupEncryptionService
 import com.yourname.expensetracker.data.privacy.ExportAnonymizer
@@ -582,7 +587,8 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             redacted = snapshot.redacted,
             includeReceiptImages = snapshot.includeReceiptImages,
             encryptionService = backupEncryptionService,
-            privacyModeName = privacyMode?.name
+            privacyModeName = privacyMode?.name,
+            semanticAggregates = snapshot.semanticAggregates
         )
     }
 
@@ -613,7 +619,9 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         val tableCounts: Map<String, Int>,
         val receiptFiles: Map<String, File>,
         val includeReceiptImages: Boolean,
-        val redacted: Boolean
+        val redacted: Boolean,
+        /** Semantic aggregate section captured from the snapshot; null only if it could not be built. */
+        val semanticAggregates: SemanticAggregateSet? = null
     )
 
     private class ReceiptAssetCollectionException : IllegalStateException(
@@ -802,8 +810,13 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 val snapshotDb = android.database.sqlite.SQLiteDatabase.openDatabase(
                     tempDb.absolutePath, null, android.database.sqlite.SQLiteDatabase.OPEN_READONLY
                 )
+                var semanticAggregates: SemanticAggregateSet? = null
                 val tableCounts = try {
-                    BackupVerifier.collectTableCountsStrict(snapshotDb)
+                    val counts = BackupVerifier.collectTableCountsStrict(snapshotDb)
+                    // UF-46 CAPTURE + C0: after every write to tempDb (sanitize) and after the counts,
+                    // on the same read-only handle. Never fails the backup; CE propagates.
+                    semanticAggregates = captureSemanticSection(snapshotDb, counts, run)
+                    counts
                 } catch (e: BackupVerifier.RequiredTableCountException) {
                     // snapshotDb is closed by the finally below.
                     run.event("SNAPSHOT_VERIFIED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
@@ -821,9 +834,8 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     run.event("SNAPSHOT_VERIFIED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
                         reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.VALIDATION_FAILED)
                     deferredTerminal.defer { run.failedFinal("Backup snapshot verification failed") }
-                    return@withContext Result.failure(
-                        Exception("Backup snapshot verification failed: ${snapshotVerification.errors.joinToString("; ")}")
-                    )
+                    // INV-14: bounded code only; the internal issue list never reaches the message.
+                    return@withContext Result.failure(Exception("SNAPSHOT_VERIFICATION_FAILED"))
                 }
 
                 // Collect receipt assets
@@ -839,7 +851,8 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     tableCounts = tableCounts,
                     receiptFiles = receiptFiles,
                     includeReceiptImages = resolvedIncludeReceiptImages,
-                    redacted = resolvedRedacted
+                    redacted = resolvedRedacted,
+                    semanticAggregates = semanticAggregates
                 )
 
                 // Destination-specific write (SAF Uri or legacy File delegate)
@@ -871,6 +884,46 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             // (runCatching above) and on cancellation (flush is NonCancellable and never throws).
             deferredTerminal.flush()
         }
+    }
+
+    /**
+     * UF-46 CAPTURE + C0 (INV-5, INV-6). Captures the semantic aggregates from the read-only
+     * [snapshotDb] and self-checks the serialised section. This NEVER fails the backup: a capture
+     * problem or a failed self-check degrades to a NOT_CAPTURED section with a bounded reason, and
+     * exactly one `SEMANTIC_CAPTURED`/SKIPPED event is emitted carrying only `semanticCode`. A partial
+     * CAPTURED section is never returned. CancellationException is rethrown.
+     */
+    private suspend fun captureSemanticSection(
+        snapshotDb: android.database.sqlite.SQLiteDatabase,
+        tableCounts: Map<String, Int>,
+        run: OperationRunHandle
+    ): SemanticAggregateSet {
+        val captured = try {
+            SemanticAggregates.capture(snapshotDb, tableCounts)
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            SemanticAggregateSet.ofNotCaptured(SemanticNotCapturedReason.SEMANTIC_CAPTURE_FAILED)
+        }
+        val section = if (captured.status == SemanticCaptureStatus.CAPTURED &&
+            CostbackupBundle.selfCheckSemanticSection(captured) !is SemanticCheckResult.Verified
+        ) {
+            SemanticAggregateSet.ofNotCaptured(SemanticNotCapturedReason.SEMANTIC_SELF_CHECK_FAILED)
+        } else {
+            captured
+        }
+        val reason = section.notCapturedReason
+        if (section.status == SemanticCaptureStatus.NOT_CAPTURED && reason != null) {
+            Timber.w("Backup: semantic section not captured code=%s", reason.code.name)
+            run.event(
+                "SEMANTIC_CAPTURED",
+                com.yourname.expensetracker.domain.diagnostics.EventOutcome.SKIPPED,
+                reasonCode = DiagnosticReasonCode.VALIDATION_FAILED,
+                metadata = SafeEventMetadata.builder()
+                    .put("semanticCode", reason.code.name)
+                    .build()
+            )
+        }
+        return section
     }
 
     /**
@@ -917,7 +970,8 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     includeReceiptImages = snapshot.includeReceiptImages,
                     encryptionService = backupEncryptionService,
                     privacyModeName = privacyMode?.name,
-                    tempDir = context.cacheDir
+                    tempDir = context.cacheDir,
+                    semanticAggregates = snapshot.semanticAggregates
                 )
             }
         } catch (t: Throwable) {
