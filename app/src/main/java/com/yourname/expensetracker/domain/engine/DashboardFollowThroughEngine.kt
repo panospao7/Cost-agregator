@@ -8,6 +8,7 @@ import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.navigation.DomainTransactionFilter
 import com.yourname.expensetracker.domain.model.recommendation.DashboardFollowThroughRecommendation
 import com.yourname.expensetracker.domain.model.recommendation.RecommendationPriority
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.service.TransactionFilterSerializer
@@ -147,7 +148,7 @@ class DashboardFollowThroughEngine @Inject constructor(
         userId: String
     ): DashboardFollowThroughRecommendation {
         val recommendationText = aiArtifact?.summaryText 
-            ?: "Large transaction detected: ${transaction.merchant ?: "Unknown"} - €${String.format("%.2f", transaction.amount)}"
+            ?: "Large transaction detected: ${transaction.merchant ?: "Unknown"} - ${CurrencyFormatter.formatMoney(transaction.amount, transaction.currency)}"
         
         // Filter: Show all transactions >= this amount in the same category
         val filter = DomainTransactionFilter(
