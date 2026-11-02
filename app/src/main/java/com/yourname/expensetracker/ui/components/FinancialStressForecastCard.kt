@@ -356,6 +356,15 @@ private fun BreakdownItem(
 }
 
 /**
+ * True when the emergency-buffer amount can be shown: a finite target and a non-blank currency.
+ * A NaN/Infinite target never reaches the money formatter; the no-amount fallback copy is used.
+ */
+internal fun hasDisplayableBufferAmount(recommendation: StressRecommendation): Boolean {
+    val bufferTarget = recommendation.bufferTarget
+    return bufferTarget != null && bufferTarget.isFinite() && !recommendation.bufferCurrency.isNullOrBlank()
+}
+
+/**
  * Resolves the localized text of a recommendation from its kind and parameters (INV-4/INV-8).
  * Returns null only when a kind's required parameter is missing (defensive; the engine always
  * supplies it), in which case the row is omitted rather than rendered with a guessed value.
@@ -376,7 +385,7 @@ private fun stressRecommendationText(recommendation: StressRecommendation): Stri
         StressRecommendationKind.BUILD_EMERGENCY_BUFFER -> {
             val bufferTarget = recommendation.bufferTarget
             val bufferCurrency = recommendation.bufferCurrency
-            if (bufferTarget != null && !bufferCurrency.isNullOrBlank()) {
+            if (hasDisplayableBufferAmount(recommendation) && bufferTarget != null && bufferCurrency != null) {
                 stringResource(
                     R.string.stress_rec_build_emergency_buffer,
                     CurrencyFormatter.formatMoney(bufferTarget, bufferCurrency, showCents = false)
