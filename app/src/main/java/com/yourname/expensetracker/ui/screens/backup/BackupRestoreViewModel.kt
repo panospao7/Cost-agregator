@@ -264,7 +264,7 @@ class BackupRestoreViewModel @Inject constructor(
 
             result.fold(
                 onSuccess = { importResult ->
-                    Timber.d("Restore completed: %s", importResult)
+                    Timber.d("RESTORE_COMPLETED type=%s", importResult.javaClass.simpleName)
                     when (importResult) {
                         is DatabaseImportResult.SuccessNeedsRestart -> {
                             _uiState.value = _uiState.value.copy(
@@ -414,7 +414,7 @@ class BackupRestoreViewModel @Inject constructor(
                     if (idx >= 0 && !cursor.isNull(idx)) cursor.getLong(idx) else null
                 }
         } catch (e: Exception) {
-            Timber.w(e, "Failed to query backup URI size")
+            Timber.w("BACKUP_URI_SIZE_UNAVAILABLE class=%s", e.javaClass.simpleName)
             null
         }
     }
