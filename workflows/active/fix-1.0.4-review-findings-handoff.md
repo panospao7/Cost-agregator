@@ -332,3 +332,36 @@ eefdaa6f; the LOCAL bug-fixes branch is at 8e449c6f and has diverged from origin
 ai-evolution forward, or cherry-pick onto bug-fixes) is an owner decision - not done here.
 
 ### STATUS: branch is merge-ready pending owner decision. Nothing committed, nothing pushed.
+## MERGE FORWARD (2026-11-02) - ai-evolution 179cb3e3 merged into our branch
+
+### What happened
+`179cb3e3` (feature/ai-evolution tip, 25 commits ahead of our base d9c55d4d) was merged into our branch as `cdf32c89`.
+Those 25 commits include: app-lock S26b/S27b, G2-F1 live fingerprint invalidation, uf-quick-fixes Batch A, stress-forecast-actions.
+
+### Conflict surface was small
+Only 4 files were modified on BOTH sides (predicted 2, actual 4):
+- `data/repository/ExpenseRepository.kt`
+- `res/values/strings.xml`
+- `res/values-el/strings.xml`
+- `res/values-es/strings.xml`
+`MainActivity.kt` was NOT a conflict (only we touched it). Git auto-merged all 4 with NO conflicts.
+
+### Post-merge verification
+- `git merge-base --is-ancestor 8a895772 HEAD` -> our fixes preserved.
+- Spot-checked all 5 key fixes still present: RefundLikelihoodDetector, isAmountAmbiguous, MAX_USABLE_SIGMA,
+  deferred carbon/price/negotiation, historicalDiscretionaryShare.
+- strings.xml: our key (1) AND their stress_* keys (12) both present. el/es translations of our key intact,
+  encoding still clean (no BOM, no U+FFFD, real Greek/Spanish).
+- Validation `vr-20261102-062328-e67341a5`: PASS, 2759 tests, 0 failures, no semantic merge conflicts.
+
+### Correction to an earlier claim in this handoff
+An earlier note said local `bug-fixes` had "diverged" from origin. That was WRONG. Verified:
+`8e449c6f` (local bug-fixes) IS an ancestor of `eefdaa6f` (origin/bug-fixes) - local is simply STALE, not diverged.
+1.0.3 is on bug-fixes at eefdaa6f, merged into ai-evolution as 747d4828, and our branch contains all of it.
+
+### Still outstanding after the merge
+- The full Z ladder has NOT been re-run post-merge. Only the broad targeted filter (2759 tests) has. A full `unit-tests` +
+  `app-check` + `static-guards` re-run is advisable before merge, because the merge touched strings.xml and ExpenseRepository.kt.
+- `I-01-1` (barrier dominance, 115 groups) still deferred.
+- `DR-05` (refund type) still a separate plan.
+- Merge target for release still an owner decision.
