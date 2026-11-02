@@ -16,6 +16,10 @@ import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
 import com.yourname.expensetracker.domain.transaction.DomainTransactionRunner
 import com.yourname.expensetracker.domain.transaction.TransactionContext
+import com.yourname.expensetracker.domain.usecase.warranty.WarrantyEditError
+import com.yourname.expensetracker.domain.usecase.warranty.WarrantyEditInput
+import com.yourname.expensetracker.domain.usecase.warranty.WarrantyEditValidator
+import com.yourname.expensetracker.domain.usecase.warranty.WarrantyEndDate
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.Lazy
@@ -180,10 +184,16 @@ class WarrantyTrackerRepository @Inject constructor(
     }
     }
     
+    /**
+     * warranty-edit INV-20: fail-closed and transactional. Barrier first, then the row update and
+     * the UPDATED event in one transaction; an event-insert failure propagates and rolls back the
+     * row update (R29). No try/catch, so a CancellationException is never swallowed. The event
+     * metadata stays null. Joins the outer transaction when called from [editWarranty].
+     */
     suspend fun updateWarranty(warranty: Warranty) {
         writeBarrier.checkWritesAllowed("WarrantyTrackerRepository.updateWarranty")
-        warrantyDao.updateWarranty(warranty)
-        try {
+        database.withTransaction {
+            warrantyDao.updateWarranty(warranty)
             warrantyLifecycleEventDao.insert(
                 WarrantyLifecycleEvent(
                     warrantyId = warranty.id,
@@ -192,9 +202,6 @@ class WarrantyTrackerRepository @Inject constructor(
                     description = "WARRANTY_UPDATED"
                 )
             )
-        } catch (e: Exception) {
-            if (e is CancellationException) throw e
-            Timber.w(e, "Failed to write UPDATED lifecycle event for warrantyId=${warranty.id}")
         }
     }
 
@@ -370,6 +377,101 @@ class WarrantyTrackerRepository @Inject constructor(
             }
         }
     }
+
+    /**
+     * warranty-edit: user edit of the six content fields (product, merchant, purchase date,
+     * duration, type, support phone) as ONE atomic operation.
+     *
+     * Barrier first, then one transaction: fresh read by id -> editability and validation checks ->
+     * candidate (fresh row + normalized content + [WarrantyEndDate.resolveEditDates]) -> write via
+     * [updateWarranty] (UPDATED event) -> for a review row only, the nested [confirmWarranty]
+     * (CONFIRMED event). Order is never reversed (INV-18): the status written first is what the
+     * nested confirm reads, and `needsReview` is never written here (it stays as in the fresh
+     * row), so the confirm still sees the row as in review.
+     *
+     * - Row missing -> [EditWarrantyResult.NotFound]; CLAIMED / TRANSFERRED ->
+     *   [EditWarrantyResult.NotEditable]; validation failure -> [EditWarrantyResult.Invalid]
+     *   (bounded reason code only). None of these write or log.
+     * - Not in review and nothing changed -> [EditWarrantyResult.NoChange] (no write, no event).
+     * - Status is recomputed only when the end date changed or the row is in review:
+     *   EXPIRED when the new end is before now, else ACTIVE. Otherwise it is kept.
+     *
+     * Fail-closed: any failure (including a nested confirm that does not return Confirmed) throws
+     * and rolls the whole transaction back. Nothing user-entered is logged.
+     */
+    suspend fun editWarranty(warrantyId: Long, input: WarrantyEditInput): EditWarrantyResult {
+        writeBarrier.checkWritesAllowed("WarrantyTrackerRepository.editWarranty")
+        return database.withTransaction {
+            val fresh = warrantyDao.getWarrantyById(warrantyId)
+            if (fresh == null) {
+                EditWarrantyResult.NotFound
+            } else if (fresh.status == WarrantyStatus.CLAIMED || fresh.status == WarrantyStatus.TRANSFERRED) {
+                EditWarrantyResult.NotEditable
+            } else {
+                val now = timeProvider.now()
+                val invalid = WarrantyEditValidator.validate(input, now)
+                if (invalid != null) {
+                    EditWarrantyResult.Invalid(invalid)
+                } else {
+                    val normalized = input.normalized()
+                    val inReview = !isNoLongerInReview(fresh)
+                    val dates = WarrantyEndDate.resolveEditDates(
+                        storedPurchase = fresh.purchaseDate,
+                        storedEnd = fresh.warrantyEndDate,
+                        storedMonths = fresh.warrantyDurationMonths,
+                        chosenPurchase = normalized.purchaseDate,
+                        chosenMonths = normalized.durationMonths
+                    )
+                    val candidate = fresh.copy(
+                        productName = normalized.productName,
+                        merchantName = normalized.merchantName,
+                        purchaseDate = dates.purchaseDate,
+                        warrantyDurationMonths = normalized.durationMonths,
+                        warrantyEndDate = dates.warrantyEndDate,
+                        warrantyType = normalized.warrantyType,
+                        supportPhone = normalized.supportPhone
+                    )
+                    if (!inReview && candidate == fresh) {
+                        EditWarrantyResult.NoChange
+                    } else {
+                        val statusAfterEdit =
+                            if (dates.endChanged || inReview) {
+                                resolveStatusAfterEdit(candidate.warrantyEndDate, now)
+                            } else {
+                                fresh.status
+                            }
+                        updateWarranty(candidate.copy(status = statusAfterEdit, updatedAt = now))
+                        if (inReview) {
+                            val confirmed = confirmWarranty(warrantyId)
+                            if (confirmed is ConfirmWarrantyResult.Confirmed) {
+                                EditWarrantyResult.Edited(
+                                    id = warrantyId,
+                                    status = confirmed.status,
+                                    leftReview = true
+                                )
+                            } else {
+                                // Fail closed: roll back the content write. Constant message only.
+                                throw IllegalStateException("Warranty edit could not leave review")
+                            }
+                        } else {
+                            EditWarrantyResult.Edited(
+                                id = warrantyId,
+                                status = statusAfterEdit,
+                                leftReview = false
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * warranty-edit INV-9: status after an edit that moved the end date or leaves review. EXPIRED
+     * when [newEnd] is before [now] (an end exactly at now is still ACTIVE), else ACTIVE.
+     */
+    private fun resolveStatusAfterEdit(newEnd: Long, now: Long): WarrantyStatus =
+        if (newEnd < now) WarrantyStatus.EXPIRED else WarrantyStatus.ACTIVE
 
     /**
      * Single review-exit predicate shared by [confirmWarranty] and [promoteReviewDraft]:
@@ -596,6 +698,24 @@ class WarrantyTrackerRepository @Inject constructor(
 
         /** No row with that id (no write, no event). */
         object NotFound : ConfirmWarrantyResult()
+    }
+
+    /** warranty-edit: outcome of [editWarranty]. */
+    sealed class EditWarrantyResult {
+        /** Content saved; [status] is the persisted status, [leftReview] true when the row was confirmed too. */
+        data class Edited(val id: Long, val status: WarrantyStatus, val leftReview: Boolean) : EditWarrantyResult()
+
+        /** Row not in review and every editable field is unchanged (no write, no event). */
+        object NoChange : EditWarrantyResult()
+
+        /** No row with that id (no write, no event). */
+        object NotFound : EditWarrantyResult()
+
+        /** Row is CLAIMED or TRANSFERRED (no write, no event). */
+        object NotEditable : EditWarrantyResult()
+
+        /** Input failed validation; [reason] is a bounded code (no write, no event). */
+        data class Invalid(val reason: WarrantyEditError) : EditWarrantyResult()
     }
 
     private fun createReturnWindowTimestamps(): ReturnWindowTimestamps {

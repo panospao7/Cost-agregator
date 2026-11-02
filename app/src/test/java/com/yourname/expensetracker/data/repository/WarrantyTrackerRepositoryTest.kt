@@ -817,8 +817,12 @@ class WarrantyTrackerRepositoryTest {
         )
     }
 
+    // warranty-edit T-1 (owner-approved inversion of the former
+    // `lifecycleEventFailure_doesNotFailPrimaryTransaction`): updateWarranty is fail-closed (INV-20,
+    // R29). An UPDATED-event write failure propagates and the row update, attempted inside the
+    // transaction, is rolled back (real rollback evidence: WarrantyTrackerRepositoryTransactionTest).
     @Test
-    fun `lifecycleEventFailure_doesNotFailPrimaryTransaction`() = runTest(timeout = 60.seconds) {
+    fun `lifecycleEventFailure_propagatesAndRollsBack`() = runTest(timeout = 60.seconds) {
         val testWarranty = Warranty(
             id = 3,
             receiptId = 3,
@@ -831,9 +835,136 @@ class WarrantyTrackerRepositoryTest {
         coEvery { warrantyDao.updateWarranty(any()) } just Runs
         coEvery { warrantyLifecycleEventDao.insert(any()) } throws RuntimeException("Simulated DB failure")
 
+        val thrown = runCatching { repository.updateWarranty(testWarranty) }
+
+        assertEquals(
+            "Event write failure must propagate (fail closed)",
+            "Simulated DB failure",
+            thrown.exceptionOrNull()?.message
+        )
+        // The row update ran inside the (mocked pass-through) transaction, so the propagating
+        // failure is what makes Room roll it back.
+        coVerify(exactly = 1) { database.withTransaction(any<suspend () -> Any>()) }
+        coVerifyOrder {
+            warrantyDao.updateWarranty(testWarranty)
+            warrantyLifecycleEventDao.insert(any())
+        }
+    }
+
+    @Test
+    fun `INV-20 AE-21 updateWarranty row update failure propagates and writes no event`() = runTest(timeout = 60.seconds) {
+        val testWarranty = Warranty(
+            id = 3,
+            receiptId = 3,
+            productName = "Test Product",
+            merchantName = "Test Store",
+            purchaseDate = 1000,
+            warrantyDurationMonths = 12,
+            warrantyEndDate = 2000
+        )
+        coEvery { warrantyDao.updateWarranty(any()) } throws RuntimeException("Simulated row failure")
+
+        val thrown = runCatching { repository.updateWarranty(testWarranty) }
+
+        assertEquals("Simulated row failure", thrown.exceptionOrNull()?.message)
+        coVerify(exactly = 0) { warrantyLifecycleEventDao.insert(any()) }
+    }
+
+    @Test
+    fun `INV-20 AE-21 updateWarranty success writes one UPDATED event with constant description and null metadata`() = runTest(timeout = 60.seconds) {
+        val testWarranty = Warranty(
+            id = 3,
+            receiptId = 3,
+            productName = "Test Product",
+            merchantName = "Test Store",
+            purchaseDate = 1000,
+            warrantyDurationMonths = 12,
+            warrantyEndDate = 2000
+        )
+        coEvery { warrantyDao.updateWarranty(any()) } just Runs
+        val event = slot<WarrantyLifecycleEvent>()
+        coEvery { warrantyLifecycleEventDao.insert(capture(event)) } returns 1L
+
         repository.updateWarranty(testWarranty)
 
-        coVerify { warrantyDao.updateWarranty(testWarranty) }
+        coVerify(exactly = 1) { warrantyLifecycleEventDao.insert(any()) }
+        assertEquals(3L, event.captured.warrantyId)
+        assertEquals(WarrantyLifecycleEventTypes.UPDATED, event.captured.eventType)
+        assertEquals("WARRANTY_UPDATED", event.captured.description)
+        assertNull(event.captured.metadata)
+        assertEquals(timeProvider.now(), event.captured.occurredAt)
+    }
+
+    @Test
+    fun `INV-20 AE-21 updateWarranty cancellation from the event insert propagates unchanged`() = runTest(timeout = 60.seconds) {
+        val testWarranty = Warranty(
+            id = 3,
+            receiptId = 3,
+            productName = "Test Product",
+            merchantName = "Test Store",
+            purchaseDate = 1000,
+            warrantyDurationMonths = 12,
+            warrantyEndDate = 2000
+        )
+        val cancellation = kotlinx.coroutines.CancellationException("synthetic cancellation")
+        coEvery { warrantyDao.updateWarranty(any()) } just Runs
+        coEvery { warrantyLifecycleEventDao.insert(any()) } throws cancellation
+
+        val thrown = runCatching { repository.updateWarranty(testWarranty) }
+
+        assertTrue(
+            "CancellationException must not be caught or converted",
+            thrown.exceptionOrNull() is kotlinx.coroutines.CancellationException
+        )
+        assertEquals("synthetic cancellation", thrown.exceptionOrNull()?.message)
+    }
+
+    @Test
+    fun `INV-20 AE-21 updateWarranty cancellation from the row update propagates unchanged and writes no event`() = runTest(timeout = 60.seconds) {
+        val testWarranty = Warranty(
+            id = 3,
+            receiptId = 3,
+            productName = "Test Product",
+            merchantName = "Test Store",
+            purchaseDate = 1000,
+            warrantyDurationMonths = 12,
+            warrantyEndDate = 2000
+        )
+        val cancellation = kotlinx.coroutines.CancellationException("synthetic cancellation")
+        coEvery { warrantyDao.updateWarranty(any()) } throws cancellation
+
+        val thrown = runCatching { repository.updateWarranty(testWarranty) }
+
+        assertTrue(thrown.exceptionOrNull() is kotlinx.coroutines.CancellationException)
+        assertEquals("synthetic cancellation", thrown.exceptionOrNull()?.message)
+        coVerify(exactly = 0) { warrantyLifecycleEventDao.insert(any()) }
+    }
+
+    @Test
+    fun `INV-20 updateWarranty fails closed under maintenance mode and neither writes the row nor the event`() = runTest(timeout = 60.seconds) {
+        val barrier = mockk<DatabaseWriteBarrier>(relaxed = true)
+        val op = "WarrantyTrackerRepository.updateWarranty"
+        every { barrier.checkWritesAllowed(op) } throws blockedException(op)
+        val blockedRepository = repositoryWith(barrier, mockk(relaxed = true))
+
+        val thrown = runCatching {
+            blockedRepository.updateWarranty(
+                Warranty(
+                    id = 3,
+                    receiptId = 3,
+                    productName = "Test Product",
+                    merchantName = "Test Store",
+                    purchaseDate = 1000,
+                    warrantyDurationMonths = 12,
+                    warrantyEndDate = 2000
+                )
+            )
+        }
+
+        assertTrue(thrown.exceptionOrNull() is DatabaseAccessBlockedException)
+        coVerify(exactly = 0) { database.withTransaction(any<suspend () -> Any>()) }
+        coVerify(exactly = 0) { warrantyDao.updateWarranty(any()) }
+        coVerify(exactly = 0) { warrantyLifecycleEventDao.insert(any()) }
     }
 
     // ──────────────────────────────────────────────────────────────────────────

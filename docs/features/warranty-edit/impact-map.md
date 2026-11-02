@@ -31,7 +31,7 @@
 - **`WarrantyPromotionBypassGuardTest`:** the mapper left this open. **The orchestrator closed it (below): not flagged.**
 
 ## 2. Tests
-- **O-6 stop-gate:** `WarrantyTrackerRepositoryTest.kt:820-837` (`lifecycleEventFailure_doesNotFailPrimaryTransaction`) mocks `insert` to throw, calls `updateWarranty`, and asserts no throw.
+- **O-6 stop-gate:** `WarrantyTrackerRepositoryTest.kt:820-837` (`lifecycleEventFailure_doesNotFailPrimaryTransaction`, renamed in S2 to `lifecycleEventFailure_propagatesAndRollsBack`) mocked `insert` to throw, called `updateWarranty`, and asserted no throw.
   - It must be **inverted** to "propagates; rolled back". That is a rewrite, not a deletion.
   - The pattern already exists for `confirmWarranty` at `:750-818` (`:806-818`).
   - The harness mocks `withTransaction` at `:44-55`.

@@ -3,6 +3,7 @@ package com.yourname.expensetracker.data.repository
 import android.content.Context
 import androidx.room.withTransaction
 import androidx.test.core.app.ApplicationProvider
+import com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.AppDatabase
@@ -12,6 +13,8 @@ import com.yourname.expensetracker.data.database.entity.Warranty
 import com.yourname.expensetracker.data.database.entity.WarrantyLifecycleEvent
 import com.yourname.expensetracker.data.database.entity.WarrantyLifecycleEventTypes
 import com.yourname.expensetracker.data.database.entity.WarrantyStatus
+import com.yourname.expensetracker.data.database.entity.WarrantyType
+import com.yourname.expensetracker.domain.usecase.warranty.WarrantyEditInput
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleEvent
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleEventWriter
 import com.yourname.expensetracker.domain.transaction.TransactionContext
@@ -20,6 +23,7 @@ import com.yourname.expensetracker.testfixtures.database.AppDatabaseTestFactory
 import dagger.Lazy
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.After
@@ -30,6 +34,8 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import java.time.LocalDate
+import java.time.ZoneId
 
 /**
  * R29: REAL Room regression for fail-closed in-transaction lifecycle event / audit writes
@@ -588,5 +594,330 @@ class WarrantyTrackerRepositoryTransactionTest {
 
         assertTrue("reject must fail", thrown.exceptionOrNull() is IllegalStateException)
         assertEquals("deletion must be rolled back", 1, warrantyCount())
+    }
+
+    // ------------------------------------------------------------------ warranty-edit S2
+    // Real Room evidence for editWarranty / updateWarranty (INV-5, INV-6, INV-12, INV-18, INV-20;
+    // AE-5, AE-21). Event dates are not used for ordering because every event is stamped with the
+    // same fake clock; event kinds are compared by count.
+
+    /** Fails (real nested failing transaction, or a cancellation) only for one event type. */
+    private class SelectiveFailingEventDao(
+        private val database: AppDatabase,
+        private val failOnType: String,
+        private val cancellation: Boolean = false
+    ) : WarrantyLifecycleEventDao {
+        override suspend fun insert(event: WarrantyLifecycleEvent): Long {
+            if (event.eventType == failOnType) {
+                if (cancellation) {
+                    database.withTransaction<Unit> { throw CancellationException("synthetic cancellation") }
+                }
+                database.withTransaction<Unit> { throw IllegalStateException("synthetic selective event failure") }
+            }
+            return database.warrantyLifecycleEventDao().insert(event)
+        }
+
+        override suspend fun getByWarrantyId(id: Long): List<WarrantyLifecycleEvent> =
+            database.warrantyLifecycleEventDao().getByWarrantyId(id)
+    }
+
+    private fun repositoryWith(
+        events: WarrantyLifecycleEventDao,
+        writeBarrier: DatabaseWriteBarrier = barrier
+    ): WarrantyTrackerRepository {
+        val receiptRepository = mockk<ReceiptRepository>(relaxed = true)
+        return WarrantyTrackerRepository(
+            database = database,
+            warrantyDao = database.warrantyDao(),
+            returnWindowDao = database.returnWindowDao(),
+            warrantyLifecycleEventDao = events,
+            receiptRepository = object : Lazy<ReceiptRepository> {
+                override fun get() = receiptRepository
+            },
+            timeProvider = timeProvider,
+            currencyConverter = mockk(relaxed = true),
+            currencySettingsRepository = mockk(relaxed = true),
+            writeBarrier = writeBarrier,
+            receiptLifecycleEventWriter = auditWriter,
+            transactionRunner = RoomDomainTransactionRunner(database, timeProvider)
+        )
+    }
+
+    private fun blockedBarrier(): DatabaseWriteBarrier {
+        val maintenanceMode = mockk<RestoreMaintenanceMode>()
+        every { maintenanceMode.currentMode() } returns RestoreMaintenanceMode.Mode.RESTORE_STAGING
+        every { maintenanceMode.isWritesAllowed() } returns false
+        return DatabaseWriteBarrier(maintenanceMode)
+    }
+
+    private fun localDay(year: Int, month: Int, day: Int): Long =
+        LocalDate.of(year, month, day).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+
+    private fun editInput(
+        w: Warranty,
+        productName: String = w.productName,
+        purchaseDate: Long = w.purchaseDate,
+        durationMonths: Int = w.warrantyDurationMonths,
+        warrantyType: WarrantyType = w.warrantyType,
+        supportPhone: String? = w.supportPhone
+    ) = WarrantyEditInput(
+        productName = productName,
+        merchantName = w.merchantName,
+        purchaseDate = purchaseDate,
+        durationMonths = durationMonths,
+        warrantyType = warrantyType,
+        supportPhone = supportPhone
+    )
+
+    private suspend fun eventCount(id: Long, type: String): Int = eventTypesOf(id).count { it == type }
+
+    @Test
+    fun editWarranty_activeRow_success_persistsContentRecomputedEndAndOneUpdatedEvent() = runTest {
+        val id = repository.addWarranty(warranty())
+        val before = database.warrantyDao().getWarrantyById(id)!!
+
+        val result = repository.editWarranty(
+            id,
+            editInput(
+                before,
+                productName = "Edited Product",
+                purchaseDate = localDay(2023, 12, 1),
+                durationMonths = 24,
+                warrantyType = WarrantyType.EXTENDED,
+                supportPhone = "+00 555 0100"
+            )
+        )
+
+        assertEquals(WarrantyTrackerRepository.EditWarrantyResult.Edited(id, WarrantyStatus.ACTIVE, false), result)
+        val stored = database.warrantyDao().getWarrantyById(id)!!
+        assertEquals("Edited Product", stored.productName)
+        assertEquals(localDay(2023, 12, 1), stored.purchaseDate)
+        assertEquals(24, stored.warrantyDurationMonths)
+        assertEquals(localDay(2025, 12, 2), stored.warrantyEndDate)
+        assertEquals(WarrantyType.EXTENDED, stored.warrantyType)
+        assertEquals("+00 555 0100", stored.supportPhone)
+        assertEquals(before.autoDetected, stored.autoDetected)
+        assertEquals(before.extractionSource, stored.extractionSource)
+        assertEquals(before.createdAt, stored.createdAt)
+        assertEquals(1, eventCount(id, WarrantyLifecycleEventTypes.CREATED))
+        assertEquals(1, eventCount(id, WarrantyLifecycleEventTypes.UPDATED))
+        assertEquals(0, eventCount(id, WarrantyLifecycleEventTypes.CONFIRMED))
+    }
+
+    @Test
+    fun editWarranty_reviewRow_success_clearsReviewAndWritesUpdatedAndConfirmedEvents() = runTest {
+        val id = repository.addWarranty(pendingWarranty(endDate = now + 5 * dayMs))
+        val before = database.warrantyDao().getWarrantyById(id)!!
+
+        val result = repository.editWarranty(id, editInput(before, productName = "Edited Product"))
+
+        assertEquals(WarrantyTrackerRepository.EditWarrantyResult.Edited(id, WarrantyStatus.ACTIVE, true), result)
+        val stored = database.warrantyDao().getWarrantyById(id)!!
+        assertEquals("Edited Product", stored.productName)
+        assertEquals(WarrantyStatus.ACTIVE, stored.status)
+        assertEquals(false, stored.needsReview)
+        assertEquals(1, eventCount(id, WarrantyLifecycleEventTypes.UPDATED))
+        assertEquals(1, eventCount(id, WarrantyLifecycleEventTypes.CONFIRMED))
+    }
+
+    @Test
+    fun editWarranty_expiredUnconfirmedRowMovedToFuture_confirmsActiveBecauseStatusIsWrittenBeforeConfirm() = runTest {
+        // INV-18 / AE-9 against the real database: the nested confirm reads the status the
+        // preceding update wrote, so the row is not kept EXPIRED.
+        val id = repository.addWarranty(
+            pendingWarranty(endDate = now - 3 * dayMs).copy(status = WarrantyStatus.EXPIRED)
+        )
+        val before = database.warrantyDao().getWarrantyById(id)!!
+
+        val result = repository.editWarranty(
+            id,
+            editInput(before, purchaseDate = localDay(2023, 12, 1), durationMonths = 24)
+        )
+
+        assertEquals(WarrantyTrackerRepository.EditWarrantyResult.Edited(id, WarrantyStatus.ACTIVE, true), result)
+        val stored = database.warrantyDao().getWarrantyById(id)!!
+        assertEquals(WarrantyStatus.ACTIVE, stored.status)
+        assertEquals(false, stored.needsReview)
+        assertEquals(localDay(2025, 12, 2), stored.warrantyEndDate)
+        assertEquals(1, eventCount(id, WarrantyLifecycleEventTypes.UPDATED))
+        assertEquals(1, eventCount(id, WarrantyLifecycleEventTypes.CONFIRMED))
+    }
+
+    @Test
+    fun editWarranty_updatedEventWriteFailure_throwsAndRollsBackTheRowUpdate() = runTest {
+        // AE-5 pattern (see promoteReviewDraft_confirmedEventWriteFailure above).
+        val id = repository.addWarranty(warranty())
+        val before = database.warrantyDao().getWarrantyById(id)!!
+        val eventsBefore = eventTypesOf(id)
+        eventDao.failInserts = true
+
+        val thrown = runCatching { repository.editWarranty(id, editInput(before, productName = "Edited Product")) }
+
+        assertTrue("edit must fail", thrown.exceptionOrNull() is IllegalStateException)
+        assertEquals("row update must be rolled back", before, database.warrantyDao().getWarrantyById(id))
+        assertEquals("no event persisted", eventsBefore, eventTypesOf(id))
+    }
+
+    @Test
+    fun editWarranty_confirmedEventFailureAfterUpdated_rollsBackContentStatusReviewFlagAndTheUpdatedEvent() = runTest {
+        val id = repository.addWarranty(pendingWarranty(endDate = now + 5 * dayMs))
+        val before = database.warrantyDao().getWarrantyById(id)!!
+        val eventsBefore = eventTypesOf(id)
+        val failingConfirmed = repositoryWith(
+            SelectiveFailingEventDao(database, failOnType = WarrantyLifecycleEventTypes.CONFIRMED)
+        )
+
+        val thrown = runCatching {
+            failingConfirmed.editWarranty(id, editInput(before, productName = "Edited Product"))
+        }
+
+        val failure = thrown.exceptionOrNull()
+        assertTrue("edit must fail, got $failure", failure is IllegalStateException)
+        assertTrue(failure!!.message?.contains("synthetic selective event failure") == true)
+        assertEquals(
+            "content, status and review flag are one atomic unit with both events",
+            before,
+            database.warrantyDao().getWarrantyById(id)
+        )
+        assertEquals("UPDATED event rolled back too", eventsBefore, eventTypesOf(id))
+        assertEquals(0, eventCount(id, WarrantyLifecycleEventTypes.UPDATED))
+        assertEquals(0, eventCount(id, WarrantyLifecycleEventTypes.CONFIRMED))
+    }
+
+    @Test
+    fun editWarranty_cancellationDuringConfirmedEvent_propagatesAndRollsBackEverything() = runTest {
+        val id = repository.addWarranty(pendingWarranty(endDate = now + 5 * dayMs))
+        val before = database.warrantyDao().getWarrantyById(id)!!
+        val eventsBefore = eventTypesOf(id)
+        val cancelling = repositoryWith(
+            SelectiveFailingEventDao(database, WarrantyLifecycleEventTypes.CONFIRMED, cancellation = true)
+        )
+
+        val thrown = runCatching { cancelling.editWarranty(id, editInput(before, productName = "Edited Product")) }
+
+        assertTrue("CancellationException must propagate", thrown.exceptionOrNull() is CancellationException)
+        assertEquals(before, database.warrantyDao().getWarrantyById(id))
+        assertEquals(eventsBefore, eventTypesOf(id))
+    }
+
+    @Test
+    fun updateWarranty_success_persistsRowAndExactlyOneUpdatedEvent() = runTest {
+        val id = repository.addWarranty(warranty())
+        val before = database.warrantyDao().getWarrantyById(id)!!
+
+        repository.updateWarranty(before.copy(productName = "Edited Product"))
+
+        assertEquals("Edited Product", database.warrantyDao().getWarrantyById(id)!!.productName)
+        assertEquals(1, eventCount(id, WarrantyLifecycleEventTypes.UPDATED))
+    }
+
+    @Test
+    fun updateWarranty_eventWriteFailure_throwsAndRollsBackTheRowUpdate() = runTest {
+        // AE-21 / T-1: the inverted mock test's real-rollback evidence.
+        val id = repository.addWarranty(warranty())
+        val before = database.warrantyDao().getWarrantyById(id)!!
+        val eventsBefore = eventTypesOf(id)
+        eventDao.failInserts = true
+
+        val thrown = runCatching { repository.updateWarranty(before.copy(productName = "Edited Product")) }
+
+        assertTrue("update must fail", thrown.exceptionOrNull() is IllegalStateException)
+        assertEquals("row update must be rolled back", before, database.warrantyDao().getWarrantyById(id))
+        assertEquals(eventsBefore, eventTypesOf(id))
+    }
+
+    @Test
+    fun updateWarranty_cancellationDuringEventInsert_propagatesAndRollsBackTheRowUpdate() = runTest {
+        // AE-21: a CancellationException is never caught or converted.
+        val id = repository.addWarranty(warranty())
+        val before = database.warrantyDao().getWarrantyById(id)!!
+        val eventsBefore = eventTypesOf(id)
+        val cancelling = repositoryWith(
+            SelectiveFailingEventDao(database, WarrantyLifecycleEventTypes.UPDATED, cancellation = true)
+        )
+
+        val thrown = runCatching { cancelling.updateWarranty(before.copy(productName = "Edited Product")) }
+
+        assertTrue("CancellationException must propagate", thrown.exceptionOrNull() is CancellationException)
+        assertEquals(before, database.warrantyDao().getWarrantyById(id))
+        assertEquals(eventsBefore, eventTypesOf(id))
+    }
+
+    @Test
+    fun editWarranty_whileBarrierBlocksWrites_throwsAndLeavesRowAndEventsUntouched() = runTest {
+        val id = repository.addWarranty(pendingWarranty(endDate = now + 5 * dayMs))
+        val before = database.warrantyDao().getWarrantyById(id)!!
+        val eventsBefore = eventTypesOf(id)
+        val blockedRepository = repositoryWith(eventDao, blockedBarrier())
+
+        val thrown = runCatching {
+            blockedRepository.editWarranty(id, editInput(before, productName = "Edited Product"))
+        }
+
+        assertTrue(thrown.exceptionOrNull() is DatabaseAccessBlockedException)
+        assertEquals(before, database.warrantyDao().getWarrantyById(id))
+        assertEquals(eventsBefore, eventTypesOf(id))
+    }
+
+    @Test
+    fun updateWarranty_whileBarrierBlocksWrites_throwsAndLeavesRowAndEventsUntouched() = runTest {
+        val id = repository.addWarranty(warranty())
+        val before = database.warrantyDao().getWarrantyById(id)!!
+        val eventsBefore = eventTypesOf(id)
+        val blockedRepository = repositoryWith(eventDao, blockedBarrier())
+
+        val thrown = runCatching { blockedRepository.updateWarranty(before.copy(productName = "Edited Product")) }
+
+        assertTrue(thrown.exceptionOrNull() is DatabaseAccessBlockedException)
+        assertEquals(before, database.warrantyDao().getWarrantyById(id))
+        assertEquals(eventsBefore, eventTypesOf(id))
+    }
+
+    @Test
+    fun editWarranty_afterEdit_promoteReviewDraftReturnsAlreadyConfirmedAndKeepsTheUsersContent() = runTest {
+        // INV-12 against the real database.
+        val id = repository.addWarranty(pendingWarranty(endDate = now + 5 * dayMs))
+        val before = database.warrantyDao().getWarrantyById(id)!!
+        repository.editWarranty(id, editInput(before, productName = "User Edited Product"))
+        var invocations = 0
+
+        val result = repository.promoteReviewDraft(id) { fresh ->
+            invocations++
+            fresh.copy(productName = "Receipt Reprocessed Product")
+        }
+
+        assertEquals(WarrantyTrackerRepository.ConfirmWarrantyResult.AlreadyConfirmed, result)
+        assertEquals(0, invocations)
+        assertEquals("User Edited Product", database.warrantyDao().getWarrantyById(id)!!.productName)
+        assertEquals(1, eventCount(id, WarrantyLifecycleEventTypes.CONFIRMED))
+    }
+
+    @Test
+    fun editWarranty_identicalInputOnConfirmedRow_returnsNoChangeWithoutWriteOrEvent() = runTest {
+        val id = repository.addWarranty(warranty())
+        val before = database.warrantyDao().getWarrantyById(id)!!
+        val eventsBefore = eventTypesOf(id)
+
+        val result = repository.editWarranty(id, editInput(before))
+
+        assertEquals(WarrantyTrackerRepository.EditWarrantyResult.NoChange, result)
+        assertEquals(before, database.warrantyDao().getWarrantyById(id))
+        assertEquals(eventsBefore, eventTypesOf(id))
+    }
+
+    @Test
+    fun editWarranty_claimedAndMissingRows_returnNotEditableAndNotFoundWithoutWriteOrEvent() = runTest {
+        val claimedId = repository.addWarranty(warranty().copy(status = WarrantyStatus.CLAIMED, claimedAt = now - dayMs))
+        val claimed = database.warrantyDao().getWarrantyById(claimedId)!!
+        val eventsBefore = eventTypesOf(claimedId)
+
+        val notEditable = repository.editWarranty(claimedId, editInput(claimed, productName = "Edited Product"))
+        val notFound = repository.editWarranty(9_999L, editInput(claimed, productName = "Edited Product"))
+
+        assertEquals(WarrantyTrackerRepository.EditWarrantyResult.NotEditable, notEditable)
+        assertEquals(WarrantyTrackerRepository.EditWarrantyResult.NotFound, notFound)
+        assertEquals(claimed, database.warrantyDao().getWarrantyById(claimedId))
+        assertEquals(eventsBefore, eventTypesOf(claimedId))
+        assertEquals(emptyList<WarrantyLifecycleEvent>(), database.warrantyLifecycleEventDao().getByWarrantyId(9_999L))
     }
 }
