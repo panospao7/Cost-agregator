@@ -118,6 +118,20 @@ class ExportOptionsViewModel @Inject constructor(
         val start = TimePeriodUtils.addMonths(now, -1)
         _uiState.value = _uiState.value.copy(startDate = start, endDate = now)
         loadExpenseCount()
+        sweepStaleExportFilesBestEffort(now)
+    }
+
+    /** J-12-1: off-main, best-effort; never fails or delays screen load. */
+    private fun sweepStaleExportFilesBestEffort(nowMs: Long) {
+        viewModelScope.launch(ioDispatcher) {
+            try {
+                exportDataRepository.sweepStaleExportFiles(nowMs = nowMs)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Timber.w("Export file sweep failed class=%s", e::class.java.simpleName)
+            }
+        }
     }
 
     private fun loadExpenseCount() {
@@ -353,7 +367,7 @@ class ExportOptionsViewModel @Inject constructor(
                 // CancellationException is rethrown, never swallowed.
                 try {
                     withContext(ioDispatcher) {
-                        exportDataRepository.sweepStaleTempFiles(nowMs = timeProvider.now())
+                        exportDataRepository.sweepStaleExportFiles(nowMs = timeProvider.now())
                     }
                 } catch (e: kotlinx.coroutines.CancellationException) {
                     throw e

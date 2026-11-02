@@ -281,6 +281,12 @@ fun ExportOptionsScreen(
                     }
                 }
 
+                uiState.privacyBlocked?.let { blocked ->
+                    item {
+                        com.yourname.expensetracker.ui.components.PrivacyBlockedCard(state = blocked)
+                    }
+                }
+
                 uiState.error?.let { errorText ->
                     item {
                         Card(
