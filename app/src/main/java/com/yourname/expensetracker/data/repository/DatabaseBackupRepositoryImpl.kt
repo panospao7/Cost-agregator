@@ -1268,7 +1268,10 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 BackupVerifier.validateManifestCompleteness(
                     manifestTableCounts,
                     manifest.backupFormatVersion,
-                    manifest.databaseVersion
+                    manifest.databaseVersion,
+                    // m1: the 9 coverage-gated tables are required only for manifests that carry a
+                    // semantic section (present or present-but-malformed).
+                    semanticMarker = manifest.semanticAggregates != null || manifest.semanticSectionMalformed
                 )
             } catch (e: BackupVerifier.IncompleteManifestException) {
                 restoreEvents.event("BUNDLE_VALIDATED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,

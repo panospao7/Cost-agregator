@@ -257,10 +257,16 @@ object BackupVerifier {
      * Tier 1 table — they are exact-count verified and a missing entry would let
      * a malformed manifest pass [verifyQuick] (which skips null counts) and only
      * fail in full [verify] AFTER the destructive swap.
+     *
+     * [semanticMarker] (INV-11, m1): true when the manifest carries a semantic section (present, or
+     * present but malformed). The [COVERAGE_GATED_TABLES] are required from
+     * FULL_TABLE_COVERAGE_SCHEMA_VERSION only for such manifests; a pre-lane v152 dev backup with no
+     * section keeps the legacy tier. Defaults to true (fail-closed: full coverage required).
      */
     fun requiredManifestTables(
         backupFormatVersion: Int = 1,
-        databaseVersion: Int? = null
+        databaseVersion: Int? = null,
+        semanticMarker: Boolean = true
     ): Set<String> = TABLE_TIERS
         .filterValues { it == VerificationTier.TIER_1_EXACT }
         .keys
@@ -273,7 +279,7 @@ object BackupVerifier {
                 "installment_plans", "installment_entries" -> databaseVersion == null ||
                     databaseVersion >= INSTALLMENT_TABLES_SCHEMA_VERSION
                 in COVERAGE_GATED_TABLES -> databaseVersion == null ||
-                    databaseVersion >= FULL_TABLE_COVERAGE_SCHEMA_VERSION
+                    (databaseVersion >= FULL_TABLE_COVERAGE_SCHEMA_VERSION && semanticMarker)
                 else -> true
             }
         }
@@ -288,9 +294,10 @@ object BackupVerifier {
     fun validateManifestCompleteness(
         expectedCounts: Map<String, Int>,
         backupFormatVersion: Int = 1,
-        databaseVersion: Int? = null
+        databaseVersion: Int? = null,
+        semanticMarker: Boolean = true
     ) {
-        val missing = requiredManifestTables(backupFormatVersion, databaseVersion)
+        val missing = requiredManifestTables(backupFormatVersion, databaseVersion, semanticMarker)
             .filter { it !in expectedCounts }
         if (missing.isNotEmpty()) {
             throw IncompleteManifestException(missing)
@@ -542,8 +549,9 @@ object BackupVerifier {
                     if (expected == null) {
                         if (tableName in COVERAGE_GATED_TABLES) {
                             // Legacy manifest written before S0b classified this table. A
-                            // manifest at/above FULL_TABLE_COVERAGE_SCHEMA_VERSION is rejected
-                            // pre-swap by validateManifestCompleteness, so null here is legacy.
+                            // manifest at/above FULL_TABLE_COVERAGE_SCHEMA_VERSION that carries a
+                            // semantic section is rejected pre-swap by validateManifestCompleteness,
+                            // so null here is legacy (including a pre-lane v152 backup, m1).
                             true to "OK (legacy manifest: no recorded count, actual: $actual)"
                         } else {
                             false to "Table '$tableName' not found in manifest counts"

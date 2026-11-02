@@ -309,7 +309,14 @@ object CostbackupBundle {
         val checkpoint = SemanticCheckpoint.C0_BACKUP_SELF_CHECK
         return try {
             when (val parsed = SemanticAggregates.parse(JSONObject(serialize(set)))) {
-                is SemanticParseResult.Parsed -> SemanticAggregates.compare(set, parsed.set, checkpoint)
+                is SemanticParseResult.Parsed ->
+                    // m3: compare() checks bucket content only; the parsed set must also equal the
+                    // original (version, status, reason, every entry's definitionHash and buckets).
+                    if (parsed.set != set) {
+                        SemanticCheckResult.Failed(checkpoint, SemanticCode.SEMANTIC_SELF_CHECK_FAILED, null, 0)
+                    } else {
+                        SemanticAggregates.compare(set, parsed.set, checkpoint)
+                    }
                 is SemanticParseResult.Malformed ->
                     SemanticCheckResult.Failed(checkpoint, SemanticCode.SEMANTIC_SELF_CHECK_FAILED, null, 0)
             }
