@@ -114,10 +114,11 @@ fun WarrantyTrackerScreen(
     val notFoundText = stringResource(R.string.warranty_error_not_found)
     val notEditableText = stringResource(R.string.warranty_edit_error_not_editable)
 
-    // Applied to the dialog open right now only; an outcome for any other id is ignored.
-    val handleEditOutcome by rememberUpdatedState<(WarrantyEditOutcome) -> Unit> { outcome ->
+    // Applied to the dialog open right now only; a result tagged with any other id is dropped.
+    val handleEditOutcome by rememberUpdatedState<(WarrantyEditResult) -> Unit> { result ->
         val openId = editingWarrantyId
-        if (openId != null && awaitingEditId == openId) {
+        if (openId != null && result.warrantyId == openId && awaitingEditId == openId) {
+            val outcome = result.outcome
             when (outcome) {
                 is WarrantyEditOutcome.Saved -> {
                     closeEditForm()
@@ -143,7 +144,7 @@ fun WarrantyTrackerScreen(
     LaunchedEffect(viewModel, lifecycleOwner) {
         viewModel.editOutcomes
             .flowWithLifecycle(lifecycleOwner.lifecycle, Lifecycle.State.STARTED)
-            .collect { outcome -> handleEditOutcome(outcome) }
+            .collect { result -> handleEditOutcome(result) }
     }
 
     // warranty-edit: the open form's row (re-resolved by id from the live list, also after process

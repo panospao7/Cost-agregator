@@ -32,6 +32,8 @@
     <string name="action_confirm">Επιβεβαίωση</string>
     <!-- S13-a: DRAFT: owner native sign-off pending -->
     <string name="action_cancel">Ακύρωση</string>
+    <!-- warranty-edit S4: DRAFT: owner native sign-off pending -->
+    <string name="action_edit">Επεξεργασία</string>
     <!-- S13-a: DRAFT: owner native sign-off pending -->
     <string name="deeplink_confirm_installments_title">Άνοιγμα δόσεων;</string>
     <!-- S13-a: DRAFT: owner native sign-off pending -->

@@ -92,6 +92,12 @@ sealed interface WarrantyEditOutcome {
     data class Invalid(val reason: WarrantyEditError) : WarrantyEditOutcome
 }
 
+/**
+ * warranty-edit: a [WarrantyEditOutcome] tagged with the id of the warranty it belongs to, so the
+ * screen can drop a late result that no longer matches the open dialog.
+ */
+data class WarrantyEditResult(val warrantyId: Long, val outcome: WarrantyEditOutcome)
+
 @HiltViewModel
 class WarrantyTrackerViewModel @Inject constructor(
     private val warrantyRepository: WarrantyTrackerRepository,
@@ -102,10 +108,10 @@ class WarrantyTrackerViewModel @Inject constructor(
     val state: StateFlow<WarrantyTrackerState> = _state.asStateFlow()
     private var warrantiesCollectorJob: Job? = null
 
-    private val _editOutcomes = Channel<WarrantyEditOutcome>(Channel.BUFFERED)
+    private val _editOutcomes = Channel<WarrantyEditResult>(Channel.BUFFERED)
 
-    /** warranty-edit: one-shot outcomes of [editWarranty]; each is delivered to one collector. */
-    val editOutcomes: Flow<WarrantyEditOutcome> = _editOutcomes.receiveAsFlow()
+    /** warranty-edit: one-shot id-tagged results of [editWarranty]; each is delivered to one collector. */
+    val editOutcomes: Flow<WarrantyEditResult> = _editOutcomes.receiveAsFlow()
 
     init {
         loadWarranties()
@@ -301,19 +307,23 @@ class WarrantyTrackerViewModel @Inject constructor(
                 when (val result = warrantyRepository.editWarranty(warrantyId, input)) {
                     is EditWarrantyResult.Edited -> {
                         loadStats()
-                        _editOutcomes.trySend(WarrantyEditOutcome.Saved(result.leftReview))
+                        _editOutcomes.trySend(
+                            WarrantyEditResult(warrantyId, WarrantyEditOutcome.Saved(result.leftReview))
+                        )
                     }
                     EditWarrantyResult.NoChange -> {
                         loadStats()
-                        _editOutcomes.trySend(WarrantyEditOutcome.NoChange)
+                        _editOutcomes.trySend(WarrantyEditResult(warrantyId, WarrantyEditOutcome.NoChange))
                     }
                     EditWarrantyResult.NotFound ->
-                        _editOutcomes.trySend(WarrantyEditOutcome.NotFound)
+                        _editOutcomes.trySend(WarrantyEditResult(warrantyId, WarrantyEditOutcome.NotFound))
                     EditWarrantyResult.NotEditable ->
-                        _editOutcomes.trySend(WarrantyEditOutcome.NotEditable)
+                        _editOutcomes.trySend(WarrantyEditResult(warrantyId, WarrantyEditOutcome.NotEditable))
                     is EditWarrantyResult.Invalid -> {
                         Timber.w("warranty edit rejected (%s)", result.reason.name)
-                        _editOutcomes.trySend(WarrantyEditOutcome.Invalid(result.reason))
+                        _editOutcomes.trySend(
+                            WarrantyEditResult(warrantyId, WarrantyEditOutcome.Invalid(result.reason))
+                        )
                     }
                 }
             } catch (e: CancellationException) {

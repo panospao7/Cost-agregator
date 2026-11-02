@@ -63,8 +63,8 @@ class WarrantyTrackerViewModelEditTest : ViewModelTestUtils() {
         testDispatcher.scheduler.advanceUntilIdle()
     }
 
-    private fun kotlinx.coroutines.test.TestScope.collectOutcomes(): List<WarrantyEditOutcome> {
-        val outcomes = mutableListOf<WarrantyEditOutcome>()
+    private fun kotlinx.coroutines.test.TestScope.collectOutcomes(): List<WarrantyEditResult> {
+        val outcomes = mutableListOf<WarrantyEditResult>()
         backgroundScope.launch(UnconfinedTestDispatcher(testDispatcher.scheduler)) {
             viewModel.editOutcomes.toList(outcomes)
         }
@@ -81,8 +81,9 @@ class WarrantyTrackerViewModelEditTest : ViewModelTestUtils() {
         viewModel.editWarranty(7L, input)
         advanceUntilIdle()
 
-        assertEquals(listOf<WarrantyEditOutcome>(WarrantyEditOutcome.Saved(leftReview = false)), outcomes)
-        assertEquals(9, viewModel.state.value.activeCount)
+        assertEquals(listOf<WarrantyEditOutcome>(WarrantyEditOutcome.Saved(leftReview = false)), outcomes.map { it.outcome })
+        assertEquals(listOf(7L), outcomes.map { it.warrantyId })
+        assertEquals(9,viewModel.state.value.activeCount)
         assertNull(viewModel.state.value.editFormError)
         assertNull(viewModel.state.value.mutationError)
         assertTrue(viewModel.state.value.mutatingWarrantyIds.isEmpty())
@@ -99,7 +100,8 @@ class WarrantyTrackerViewModelEditTest : ViewModelTestUtils() {
         viewModel.editWarranty(8L, input)
         advanceUntilIdle()
 
-        assertEquals(listOf<WarrantyEditOutcome>(WarrantyEditOutcome.Saved(leftReview = true)), outcomes)
+        assertEquals(listOf<WarrantyEditOutcome>(WarrantyEditOutcome.Saved(leftReview = true)), outcomes.map { it.outcome })
+        assertEquals(listOf(8L), outcomes.map { it.warrantyId })
         assertNull(viewModel.state.value.mutationError)
     }
 
@@ -112,7 +114,8 @@ class WarrantyTrackerViewModelEditTest : ViewModelTestUtils() {
         viewModel.editWarranty(9L, input)
         advanceUntilIdle()
 
-        assertEquals(listOf<WarrantyEditOutcome>(WarrantyEditOutcome.NoChange), outcomes)
+        assertEquals(listOf<WarrantyEditOutcome>(WarrantyEditOutcome.NoChange), outcomes.map { it.outcome })
+        assertEquals(listOf(9L), outcomes.map { it.warrantyId })
         assertEquals(4, viewModel.state.value.activeCount)
         assertNull(viewModel.state.value.editFormError)
     }
@@ -128,8 +131,9 @@ class WarrantyTrackerViewModelEditTest : ViewModelTestUtils() {
 
         assertEquals(
             listOf<WarrantyEditOutcome>(WarrantyEditOutcome.Invalid(WarrantyEditError.PRODUCT_BLANK)),
-            outcomes
+            outcomes.map { it.outcome }
         )
+        assertEquals(listOf(10L), outcomes.map { it.warrantyId })
         assertNull(viewModel.state.value.mutationError)
         assertNull(viewModel.state.value.editFormError)
         assertTrue(viewModel.state.value.mutatingWarrantyIds.isEmpty())
@@ -148,8 +152,9 @@ class WarrantyTrackerViewModelEditTest : ViewModelTestUtils() {
 
         assertEquals(
             listOf(WarrantyEditOutcome.NotFound, WarrantyEditOutcome.NotEditable),
-            outcomes
+            outcomes.map { it.outcome }
         )
+        assertEquals(listOf(11L, 12L), outcomes.map { it.warrantyId })
         assertNull(viewModel.state.value.mutationError)
         assertNull(viewModel.state.value.editFormError)
     }
@@ -196,7 +201,8 @@ class WarrantyTrackerViewModelEditTest : ViewModelTestUtils() {
             viewModel.editWarranty(15L, input)
             advanceUntilIdle()
             assertNull(viewModel.state.value.editFormError)
-            assertEquals(listOf<WarrantyEditOutcome>(WarrantyEditOutcome.Saved(false)), outcomes)
+            assertEquals(listOf<WarrantyEditOutcome>(WarrantyEditOutcome.Saved(false)), outcomes.map { it.outcome })
+            assertEquals(listOf(15L), outcomes.map { it.warrantyId })
 
             coEvery { warrantyRepository.editWarranty(16L, input) } throws RuntimeException("x")
             viewModel.editWarranty(16L, input)
@@ -243,6 +249,31 @@ class WarrantyTrackerViewModelEditTest : ViewModelTestUtils() {
             assertEquals(3, viewModel.state.value.activeCount)
             assertTrue(viewModel.state.value.mutatingWarrantyIds.isEmpty())
             assertEquals(1, outcomes.size)
+            assertEquals(18L, outcomes.single().warrantyId)
+        }
+
+    /** M1: each result carries the id of the warranty it was produced for, never a neighbour's. */
+    @Test
+    fun `edits of two different warranties each emit a result tagged with their own id`() =
+        runTest(testDispatcher) {
+            val outcomes = collectOutcomes()
+            coEvery { warrantyRepository.editWarranty(21L, input) } returns
+                EditWarrantyResult.Edited(21L, WarrantyStatus.ACTIVE, leftReview = false)
+            coEvery { warrantyRepository.editWarranty(22L, input) } returns
+                EditWarrantyResult.Invalid(WarrantyEditError.PRODUCT_BLANK)
+
+            viewModel.editWarranty(21L, input)
+            advanceUntilIdle()
+            viewModel.editWarranty(22L, input)
+            advanceUntilIdle()
+
+            assertEquals(
+                listOf(
+                    WarrantyEditResult(21L, WarrantyEditOutcome.Saved(leftReview = false)),
+                    WarrantyEditResult(22L, WarrantyEditOutcome.Invalid(WarrantyEditError.PRODUCT_BLANK))
+                ),
+                outcomes
+            )
         }
 
     /** INV-14: logs carry bounded codes only, never user text or exception messages. */
