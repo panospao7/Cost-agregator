@@ -1702,8 +1702,9 @@ USER EDIT (warranty-edit; UI: WarrantyTrackerScreen → shared WarrantyFormDialo
   → Writes only warranties + warranty_lifecycle_events; provenance fields, return windows, receipts,
     expenses, reminders and WorkManager are untouched
   → Status after an edit that changes the end date or leaves review: EXPIRED if newEnd < now else
-    ACTIVE. EXPIRED → ACTIVE is legal ONLY here, because the user moved the end date into the future
-    (O-5); the sweep and confirmWarranty never revive. CLAIMED/TRANSFERRED are never touched.
+    ACTIVE. An edit that changes the end date or leaves review recomputes the status from the end
+    date against now (INV-9, O-5), so EXPIRED → ACTIVE is legal ONLY on this path; the sweep and
+    confirmWarranty never revive. CLAIMED/TRANSFERRED are never touched.
 
 FORBIDDEN:
   ❌ Warranty promotion out of review (needsReview=false / status ACTIVE / PENDING_REVIEW→ACTIVE) by any path other than WarrantyTrackerRepository (confirmWarranty; promoteReviewDraft, which applies a content-only edit to a fresh in-transaction read and then runs confirmWarranty in the same transaction; or editWarranty, which writes through updateWarranty and then runs the nested confirmWarranty in the same transaction, INV-18) (F-AI-1; AutoCreateWarrantyFromReceiptUseCase calls promoteReviewDraft only; WarrantyPromotionBypassGuardTest enforces that no function outside WarrantyTrackerRepository.kt pairs an updateWarranty call with a promotion write; DAO writes are covered by the db_access ownership guards)
