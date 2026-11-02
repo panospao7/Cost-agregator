@@ -1047,6 +1047,70 @@ class ExpenseDaoTest {
         assertEquals(trioMerchants, rows.map { it.merchant }.toSet())
     }
 
+    /** Inserts a listed control row plus two isNotMine business rows (plain, and with an installment reason). */
+    private suspend fun insertBusinessNotMineRows() {
+        expenseDao.insert(Expense(
+            amount = 100.0, currency = "EUR", merchant = "NormalBiz",
+            transactionType = TransactionType.PURCHASE, date = BASE_NOW,
+            isBusinessExpense = true, requiresReceipt = true
+        ))
+        expenseDao.insert(Expense(
+            amount = 70.0, currency = "EUR", merchant = "NotMineBiz",
+            transactionType = TransactionType.PURCHASE, date = BASE_NOW,
+            isBusinessExpense = true, requiresReceipt = true,
+            isNotMine = true
+        ))
+        expenseDao.insert(Expense(
+            amount = 600.0, currency = "EUR", merchant = "NotMineInstallmentBiz",
+            transactionType = TransactionType.PURCHASE, date = BASE_NOW,
+            isBusinessExpense = true, requiresReceipt = true,
+            isNotMine = true, spendingExclusionReason = "INSTALLMENT_PURCHASE"
+        ))
+    }
+
+    @Test
+    fun getBusinessExpensesBetween_doesNotListIsNotMineRows() = runTest {
+        insertBusinessNotMineRows()
+
+        val rows = expenseDao.getBusinessExpensesBetween(BASE_NOW - 1000L, BASE_NOW + 1000L)
+
+        assertEquals(listOf("NormalBiz"), rows.map { it.merchant })
+    }
+
+    @Test
+    fun getBusinessExpensesBetweenFlow_doesNotListIsNotMineRows() = runTest {
+        insertBusinessNotMineRows()
+
+        val rows = expenseDao.getBusinessExpensesBetweenFlow(BASE_NOW - 1000L, BASE_NOW + 1000L).first()
+
+        assertEquals(listOf("NormalBiz"), rows.map { it.merchant })
+    }
+
+    @Test
+    fun getBusinessExpensesMissingReceipts_doesNotListIsNotMineRows() = runTest {
+        insertBusinessNotMineRows()
+
+        val rows = expenseDao.getBusinessExpensesMissingReceipts(BASE_NOW - 1000L, BASE_NOW + 1000L)
+
+        assertEquals(listOf("NormalBiz"), rows.map { it.merchant })
+    }
+
+    @Test
+    fun getBusinessExpensesBetween_isNotMineWithInstallmentReasonIsNotListedButOwnMarkerStillIs() = runTest {
+        insertBusinessNotMineRows()
+        // Control: the same installment reason on an isNotMine = false row is still listed.
+        expenseDao.insert(Expense(
+            amount = 600.0, currency = "EUR", merchant = "OwnInstallmentBiz",
+            transactionType = TransactionType.PURCHASE, date = BASE_NOW,
+            isBusinessExpense = true, requiresReceipt = true,
+            spendingExclusionReason = "INSTALLMENT_PURCHASE"
+        ))
+
+        val rows = expenseDao.getBusinessExpensesBetween(BASE_NOW - 1000L, BASE_NOW + 1000L)
+
+        assertEquals(setOf("NormalBiz", "OwnInstallmentBiz"), rows.map { it.merchant }.toSet())
+    }
+
     @Test
     fun getBusinessExpensesBetweenByCurrency_totalCountsOnlyNormalPurchase() = runTest {
         insertBusinessInstallmentTrio()

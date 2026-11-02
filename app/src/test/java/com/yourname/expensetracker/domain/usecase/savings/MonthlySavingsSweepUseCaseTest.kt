@@ -391,6 +391,43 @@ class MonthlySavingsSweepUseCaseTest {
         assertApproxEquals(nullResult.safeSweepAmount, degradedResult.safeSweepAmount, 0.0001)
     }
 
+    private fun stageDegradedSweepOn(day: Int) {
+        every { timeProvider.now() } returns millis(2026, Calendar.JANUARY, day)
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(
+            listOf(budgetStatus(budgetId = 1L, categoryId = null, amount = 1000.0, spent = 700.0))
+        )
+        every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(
+            listOf(goal(1L, "Emergency", target = 1000.0, current = 100.0))
+        )
+        // No recurring or planned obligations: knownUpcoming == 0, spent to date == 0.
+        val degraded = monteCarlo(p50 = 300.0, p75 = 300.0, confidence = 0.9)
+        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) } returns
+            degraded.copy(metadata = degraded.metadata.copy(iterations = 0))
+    }
+
+    @Test
+    fun `R-SWEEP-2 degraded result on the last day of the month with zero days remaining yields a zero buffer`() = runTest {
+        stageDegradedSweepOn(day = 31) // January has 31 days, so daysRemaining == 0
+
+        val result = requireNotNull(useCase.computeSweepRecommendation())
+
+        // Hand-derived: nothing can still be spent after the last day, so no uncertainty and no
+        // upcoming bills: buffer 0, safe sweep == underspend (1000 - 700) == 300.
+        assertApproxEquals(0.0, result.riskBuffer, 0.0001)
+        assertApproxEquals(300.0, result.safeSweepAmount, 0.01)
+    }
+
+    @Test
+    fun `R-SWEEP-2 boundary - degraded result with one day remaining keeps the conservative fallback buffer`() = runTest {
+        stageDegradedSweepOn(day = 30) // daysRemaining == 1
+
+        val result = requireNotNull(useCase.computeSweepRecommendation())
+
+        // Hand-derived fallback: max(0 * 0.15, 0 * 0.20, 1000 * 0.03) = 30; safe sweep 300 - 30 = 270.
+        assertApproxEquals(30.0, result.riskBuffer, 0.01)
+        assertApproxEquals(270.0, result.safeSweepAmount, 0.01)
+    }
+
     @Test
     fun `R-SWEEP-1 control a real simulation with p75 equal p50 keeps zero uncertainty not the fallback`() = runTest {
         every { budgetRepository.getBudgetStatuses() } returns flowOf(

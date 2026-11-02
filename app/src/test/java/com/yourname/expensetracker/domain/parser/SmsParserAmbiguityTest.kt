@@ -69,8 +69,134 @@ class SmsParserAmbiguityTest {
         )
     }
 
-    private fun parse(text: String, title: String = "NBG"): ParsedTransaction? =
-        parser.parse(title = title, text = text, bigText = null, subText = null, packageName = smsPackage)
+    private fun parse(text: String, title: String = "NBG", bigText: String? = null): ParsedTransaction? =
+        parser.parse(title = title, text = text, bigText = bigText, subText = null, packageName = smsPackage)
+
+    // --- Closure pass: balance/purchase ordering, Greek typing, grouping and currency words ---
+
+    @Test
+    fun `R-SMS-1 purchase followed by Balance without punctuation is ambiguous and routes to NEEDS_REVIEW`() = runBlocking {
+        val result = parse("Purchase EUR 12.50 Balance EUR 500.00")
+        assertNotNull(result)
+        assertEquals(12.50, result!!.amount, 0.001)
+        assertTrue(result.isAmountAmbiguous)
+        assertEquals(RoutingDecision.NEEDS_REVIEW, router.route(result, smsPackage).decision)
+    }
+
+    @Test
+    fun `R-SMS-2 deposit followed by Balance picks the deposit amount as DEPOSIT`() {
+        val result = parse("Deposit EUR 1,500.00 Balance EUR 2,000.00")
+        assertNotNull(result)
+        assertEquals(1500.00, result!!.amount, 0.001)
+        assertEquals(ParsedTransactionType.DEPOSIT, result.type)
+    }
+
+    @Test
+    fun `R-SMS-2 all-caps Greek charge keyword is a PURCHASE`() {
+        val result = parse("ΧΡΕΩΣΗ ΚΑΡΤΑΣ 12,50 EUR")
+        assertNotNull(result)
+        assertEquals(ParsedTransactionType.PURCHASE, result!!.type)
+        assertEquals(12.50, result.amount, 0.001)
+    }
+
+    @Test
+    fun `R-SMS-2 Greek refund to debit card is a DEPOSIT not a purchase`() {
+        val result = parse("Επιστροφή 15,00 EUR στη χρεωστική *1234")
+        assertNotNull(result)
+        assertEquals(ParsedTransactionType.DEPOSIT, result!!.type)
+        assertEquals(15.00, result.amount, 0.001)
+    }
+
+    @Test
+    fun `R-SMS-2 Greek charge cancellation with inflected charge word is not accepted`() {
+        assertNull(parse("ΑΚΥΡΩΣΗ ΧΡΕΩΣΗΣ 12,50 EUR"))
+    }
+
+    @Test
+    fun `R-SMS-5 amount directly after a comma separator parses`() {
+        val result = parse("Purchase at SHOP,12.50 EUR")
+        assertNotNull(result)
+        assertEquals(12.50, result!!.amount, 0.001)
+    }
+
+    @Test
+    fun `R-SMS-5 amount followed by comma and a date fragment parses as the amount only`() {
+        val result = parse("Purchase EUR 12.50,15/11")
+        assertNotNull(result)
+        assertEquals(12.50, result!!.amount, 0.001)
+    }
+
+    @Test
+    fun `R-SMS-5 grouped million is never truncated to 1500`() {
+        val result = parse("Purchase EUR 1,500,000")
+        assertTrue(result == null || result.amount != 1500.0)
+    }
+
+    @Test
+    fun `FL-02 control - text duplicated into bigText stays one clean amount and auto accepts`() = runBlocking {
+        val body = "Purchase EUR 12.50 at COFFEE"
+        val result = parse(body, title = "Revolut", bigText = body)
+        assertNotNull(result)
+        assertEquals(12.50, result!!.amount, 0.001)
+        assertFalse(result.isAmountAmbiguous)
+        assertEquals(RoutingDecision.AUTO_ACCEPT, router.route(result, smsPackage).decision)
+    }
+
+    @Test
+    fun `FL-02 lone amount after a balance-like merchant word is kept but routes to NEEDS_REVIEW`() = runBlocking {
+        val result = parse("Purchase at BAL HARBOUR EUR 25.00")
+        assertNotNull(result)
+        assertEquals(25.00, result!!.amount, 0.001)
+        assertTrue(result.isAmountAmbiguous)
+        assertEquals(RoutingDecision.NEEDS_REVIEW, router.route(result, smsPackage).decision)
+    }
+
+    @Test
+    fun `FL-02 lone amount after a limit word with a purchase cue routes to NEEDS_REVIEW`() = runBlocking {
+        val result = parse("Limit alert: purchase EUR 12.50")
+        assertNotNull(result)
+        assertEquals(12.50, result!!.amount, 0.001)
+        assertTrue(result.isAmountAmbiguous)
+        assertEquals(RoutingDecision.NEEDS_REVIEW, router.route(result, smsPackage).decision)
+    }
+
+    @Test
+    fun `FL-02 deposit followed by the word available is ambiguous and routes to NEEDS_REVIEW`() = runBlocking {
+        val result = parse("Deposit EUR 100.00 available now")
+        assertNotNull(result)
+        assertEquals(100.00, result!!.amount, 0.001)
+        assertTrue(result.isAmountAmbiguous)
+        assertEquals(RoutingDecision.NEEDS_REVIEW, router.route(result, smsPackage).decision)
+    }
+
+    @Test
+    fun `R-SMS-1 a balance keyword directly attached to the only amount is rejected despite a farther payment cue`() {
+        assertNull(parse("Payment info: balance EUR 500.00"))
+    }
+
+    @Test
+    fun `R-SMS-4 date-like number before a Greek adjective is not a currency amount`() {
+        val result = parse("Payment 15.11 ΕΥΡΩΠΑΙΚΗ ΠΙΣΤΗ EUR 50.00")
+        assertNotNull(result)
+        assertEquals(50.00, result!!.amount, 0.001)
+    }
+
+    @Test
+    fun `R-SMS-6 EURO word currency-first normalises to EUR`() {
+        val realParser = SmsParser(CurrencyNormalizer(), MerchantCleaner())
+        val result = realParser.parse("NBG", "Purchase EURO 12.50", null, null, smsPackage)
+        assertNotNull(result)
+        assertEquals(12.50, result!!.amount, 0.001)
+        assertEquals("EUR", result.currency)
+    }
+
+    @Test
+    fun `R-SMS-6 Greek EYRO word after the amount normalises to EUR`() {
+        val result = parse("Purchase 12,50 ΕΥΡΩ")
+        assertNotNull(result)
+        assertEquals(12.50, result!!.amount, 0.001)
+        assertEquals("EUR", result.currency)
+    }
 
     // --- R-SMS-5: an amount directly followed by a comma still parses ---
 

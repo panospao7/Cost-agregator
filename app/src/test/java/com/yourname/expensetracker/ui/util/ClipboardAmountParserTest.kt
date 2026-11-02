@@ -155,6 +155,26 @@ class ClipboardAmountParserTest {
         assertNull(parse("€50 and €20"))
     }
 
+    @Test
+    fun `R-CLIP-1 decimal amount followed by a currency code and a slash date picks the amount only`() {
+        assertEquals("12.50", parse("12,50 EUR 15/11/2026"))
+    }
+
+    @Test
+    fun `R-CLIP-1 masked card digits before the amount are not a second amount`() {
+        assertEquals("12.50", parse("Card *1234 EUR 12.50"))
+    }
+
+    @Test
+    fun `R-CLIP-1 integer with currency code followed by a sentence period parses`() {
+        assertEquals("50.00", parse("50 EUR."))
+    }
+
+    @Test
+    fun `R-CLIP-1 integer with currency symbol followed by a comma parses`() {
+        assertEquals("50.00", parse("€50, thanks"))
+    }
+
     private fun parse(text: String): String? =
         ClipboardAmountParser.parseAmountFromClipboard(clipboardWithText(text))
 

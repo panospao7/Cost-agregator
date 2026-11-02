@@ -367,4 +367,88 @@ class TransactionClassifierTest {
         assertEquals(firstStats.totalNegative, secondStats.totalNegative)
         second.destroy()
     }
+
+    // ---------------------------------------------------------------------------------------
+    // R-LEARN-2: the "[REDACTED]" placeholder (written by the store-time redaction) is not
+    // notification text. A row whose title AND text are the placeholder is unusable; a row with
+    // one real field and one placeholder field is usable.
+    // ---------------------------------------------------------------------------------------
+
+    private fun placeholderCorrection(index: Int, approved: Boolean): UserCorrection =
+        redactedCorrection(index, approved).copy(
+            notificationTitle = "[REDACTED]",
+            notificationText = "[REDACTED]"
+        )
+
+    @Test
+    fun `R-LEARN-2 twenty-five placeholder-redacted corrections leave trained model and predictions unchanged`() = runBlocking {
+        val (control, _) = classifierFor(emptyList())
+        trainBaseline(control)
+        control.initialize()
+        val controlStats = control.getStats()
+        val controlPredictions = probes.map { control.predict(it) }
+        assertTrue("control must be ready so the comparison is meaningful", controlStats.isReady)
+
+        val placeholders = (0 until 25).map { placeholderCorrection(it, approved = it % 2 == 0) }
+        val (subject, repo) = classifierFor(placeholders)
+        trainBaseline(subject)
+        subject.initialize()
+
+        coVerify(exactly = 1) { repo.getAll() }
+        val stats = subject.getStats()
+        assertEquals("no sample may be added", 15, stats.totalPositive)
+        assertEquals("no sample may be added", 15, stats.totalNegative)
+        assertEquals(controlStats, stats)
+        probes.forEachIndexed { i, probe ->
+            assertEquals("prediction for '$probe' must be unchanged", controlPredictions[i], subject.predict(probe), 0f)
+        }
+    }
+
+    @Test
+    fun `R-LEARN-2 placeholder-only corrections alone never make an untrained model ready`() = runBlocking {
+        val placeholders = (0 until 30).map { placeholderCorrection(it, approved = it % 2 == 0) }
+        val (subject, _) = classifierFor(placeholders)
+
+        subject.initialize()
+
+        val stats = subject.getStats()
+        assertEquals(0, stats.totalPositive)
+        assertEquals(0, stats.totalNegative)
+        assertFalse(stats.isReady)
+        assertEquals(0.5f, subject.predict("payment of 12.50 EUR"), 0f)
+    }
+
+    @Test
+    fun `R-LEARN-2 boundary - one real field plus one placeholder field is usable`() = runBlocking {
+        // 20 rows, each with exactly one real field and one "[REDACTED]" field.
+        val halfRedacted = (0 until 20).map {
+            val base = unredactedCorrection(it, approved = it < 12)
+            if (it % 2 == 0) base.copy(notificationText = "[REDACTED]")
+            else base.copy(notificationTitle = "[REDACTED]")
+        }
+        val (subject, _) = classifierFor(halfRedacted)
+
+        subject.initialize()
+
+        val stats = subject.getStats()
+        assertEquals(12, stats.totalPositive)
+        assertEquals(8, stats.totalNegative)
+        assertTrue(stats.isReady)
+    }
+
+    @Test
+    fun `R-LEARN-2 boundary - nineteen usable plus fully placeholder rows do not retrain`() = runBlocking {
+        val usable = (0 until 19).map {
+            unredactedCorrection(it, approved = it < 11).copy(notificationText = "[REDACTED]")
+        }
+        val placeholders = (0 until 10).map { placeholderCorrection(it, approved = true) }
+        val (subject, _) = classifierFor(usable + placeholders)
+
+        subject.initialize()
+
+        val stats = subject.getStats()
+        assertEquals(0, stats.totalPositive)
+        assertEquals(0, stats.totalNegative)
+        assertEquals(0.5f, subject.predict("payment of 12.50 EUR"), 0f)
+    }
 }
