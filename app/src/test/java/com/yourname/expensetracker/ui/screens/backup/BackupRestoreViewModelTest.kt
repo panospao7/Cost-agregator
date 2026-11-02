@@ -6,12 +6,14 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.cancelAndJoin
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.backup.RestoreRestartSignal
+import com.yourname.expensetracker.data.backup.RestoreVerificationNoticeStore
 import com.yourname.expensetracker.domain.backup.DatabaseBackupRepository
 import com.yourname.expensetracker.domain.backup.DatabaseImportResult
 import com.yourname.expensetracker.domain.backup.DatabaseStats
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.util.ViewModelTestUtils
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -35,6 +37,7 @@ class BackupRestoreViewModelTest : ViewModelTestUtils() {
     private val viewModels = mutableListOf<BackupRestoreViewModel>()
 
     private val restoreRestartSignal = RestoreRestartSignal()
+    private val noticeStore = mockk<RestoreVerificationNoticeStore>(relaxed = true)
     private val context = mockk<Context>(relaxed = true)
     private val databaseBackupRepository = mockk<DatabaseBackupRepository>(relaxed = true)
     private val restoreMaintenanceMode = mockk<RestoreMaintenanceMode>(relaxed = true).also {
@@ -89,7 +92,8 @@ class BackupRestoreViewModelTest : ViewModelTestUtils() {
             databaseBackupRepository,
             restoreMaintenanceMode,
             FakeTimeProvider(1_700_000_000_000L),
-            restoreRestartSignal
+            restoreRestartSignal,
+            noticeStore
         ).also { viewModels += it }
     }
 
@@ -634,8 +638,76 @@ class BackupRestoreViewModelTest : ViewModelTestUtils() {
         assertNotNull(state.successMessage)
     }
 
+    /** Stubs a SuccessNeedsRestart restore and records whether the restart signal was already requested at record() time. */
+    private suspend fun kotlinx.coroutines.test.TestScope.restoreSuccessWith(
+        outcome: com.yourname.expensetracker.domain.backup.SemanticVerificationOutcome,
+        requestedAtRecordTime: MutableList<Pair<Boolean, Boolean>>
+    ) {
+        val uri = destinationUri()
+        every { context.contentResolver.openInputStream(uri) } returns bundleInputStream()
+        coEvery { databaseBackupRepository.restoreCostBackup(any(), any()) } returns Result.success(
+            DatabaseImportResult.SuccessNeedsRestart(summaryWith(outcome))
+        )
+        coEvery { noticeStore.record(any()) } coAnswers {
+            requestedAtRecordTime += firstArg<Boolean>() to restoreRestartSignal.isRequested()
+        }
+        val vm = createViewModel()
+        advanceUntilIdle()
+        vm.restoreBackup(uri, "test-password")
+        advanceUntilIdle()
+    }
+
     @Test
-    fun `createBackup snapshot verification failure keeps the existing generic message`() = runTest(testDispatcher) {
+    fun `UF-46 not verifiable restore records the notice before the restart is requested`() = runTest(testDispatcher) {
+        val calls = mutableListOf<Pair<Boolean, Boolean>>()
+        restoreSuccessWith(
+            com.yourname.expensetracker.domain.backup.SemanticVerificationOutcome.NotVerifiable(
+                com.yourname.expensetracker.domain.backup.SemanticNotVerifiableReason.values().first()
+            ),
+            calls
+        )
+
+        assertEquals("exactly one record call", 1, calls.size)
+        assertEquals("record(true) for NOT_VERIFIABLE", true, calls.single().first)
+        assertFalse("record must complete before markRequested", calls.single().second)
+        assertTrue("restart requested after record", restoreRestartSignal.isRequested())
+        coVerify(exactly = 1) { noticeStore.record(true) }
+    }
+
+    @Test
+    fun `UF-46 verified restore records false to clear a stale notice before the restart is requested`() = runTest(testDispatcher) {
+        val calls = mutableListOf<Pair<Boolean, Boolean>>()
+        restoreSuccessWith(
+            com.yourname.expensetracker.domain.backup.SemanticVerificationOutcome.Verified,
+            calls
+        )
+
+        assertEquals(listOf(false to false), calls)
+        assertTrue(restoreRestartSignal.isRequested())
+    }
+
+    @Test
+    fun `UF-46 failed restore records nothing`() = runTest(testDispatcher) {
+        val uri = destinationUri()
+        every { context.contentResolver.openInputStream(uri) } returns bundleInputStream()
+        coEvery { databaseBackupRepository.restoreCostBackup(any(), any()) } returns
+            Result.failure(RuntimeException("boom"))
+        val vm = createViewModel()
+        advanceUntilIdle()
+        vm.restoreBackup(uri, "test-password")
+        advanceUntilIdle()
+
+        every { context.contentResolver.openInputStream(uri) } returns bundleInputStream()
+        coEvery { databaseBackupRepository.restoreCostBackup(any(), any()) } returns
+            Result.success(DatabaseImportResult.Error("restore aborted"))
+        vm.restoreBackup(uri, "test-password")
+        advanceUntilIdle()
+
+        coVerify(exactly = 0) { noticeStore.record(any()) }
+    }
+
+    @Test
+    fun `createBackup snapshot verification failure keeps the existing generic message`()= runTest(testDispatcher) {
         val destination = destinationUri()
         coEvery {
             databaseBackupRepository.createCostBackup(destination, "test-password", any(), any(), any())

@@ -9,6 +9,7 @@ import androidx.lifecycle.viewModelScope
 import com.yourname.expensetracker.data.backup.CostbackupBundle
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.backup.RestoreRestartSignal
+import com.yourname.expensetracker.data.backup.RestoreVerificationNoticeStore
 import com.yourname.expensetracker.domain.backup.DatabaseBackupRepository
 import com.yourname.expensetracker.domain.backup.DatabaseImportResult
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -56,7 +57,8 @@ class BackupRestoreViewModel @Inject constructor(
     private val databaseBackupRepository: DatabaseBackupRepository,
     private val restoreMaintenanceMode: RestoreMaintenanceMode,
     private val timeProvider: TimeProvider,
-    private val restoreRestartSignal: RestoreRestartSignal
+    private val restoreRestartSignal: RestoreRestartSignal,
+    private val restoreVerificationNoticeStore: RestoreVerificationNoticeStore
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(BackupRestoreUiState())
@@ -280,7 +282,17 @@ class BackupRestoreViewModel @Inject constructor(
                             // RestoreMaintenanceMode persists the restart-required mode with
                             // SharedPreferences.commit() (synchronous) before the repository
                             // returns, so the relaunched process reads it back.
-                            restoreRestartSignal.markRequested()
+                            //
+                            // UF-46 (INV-17): the one-shot NOT_VERIFIABLE notice is persisted
+                            // (commit, IO) BEFORE the restart is requested so the relaunched
+                            // process can show it; false clears a stale flag. record() is
+                            // best-effort and rethrows only cancellation; the finally keeps the
+                            // restart request independent of that cancellation.
+                            try {
+                                restoreVerificationNoticeStore.record(importResult.summary.isSemanticNotVerifiable())
+                            } finally {
+                                restoreRestartSignal.markRequested()
+                            }
                         }
                         is DatabaseImportResult.Success ->
                             _uiState.value = _uiState.value.copy(
