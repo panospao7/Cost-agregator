@@ -3,6 +3,7 @@ package com.yourname.expensetracker.ui.components
 import com.yourname.expensetracker.domain.forecasting.StressRecommendation
 import com.yourname.expensetracker.domain.forecasting.StressRecommendationKind
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -64,6 +65,26 @@ class StressRecommendationVisibleCapTest {
     @Test
     fun `INV-11 an empty list stays empty`() {
         assertTrue(visibleStressRecommendations(emptyList()).isEmpty())
+    }
+
+    @Test
+    fun `non-finite buffer target takes the no-amount fallback`() {
+        listOf(Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY).forEach { target ->
+            val rec = StressRecommendation(
+                StressRecommendationKind.BUILD_EMERGENCY_BUFFER,
+                bufferTarget = target,
+                bufferCurrency = "EUR"
+            )
+            assertFalse("target=$target", hasDisplayableBufferAmount(rec))
+        }
+    }
+
+    @Test
+    fun `finite buffer target with currency is displayable but missing parts are not`() {
+        assertTrue(hasDisplayableBufferAmount(r3))
+        assertFalse(hasDisplayableBufferAmount(r3.copy(bufferCurrency = " ")))
+        assertFalse(hasDisplayableBufferAmount(r3.copy(bufferCurrency = null)))
+        assertFalse(hasDisplayableBufferAmount(r3.copy(bufferTarget = null)))
     }
 
     @Test
