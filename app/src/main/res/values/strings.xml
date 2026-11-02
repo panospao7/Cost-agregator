@@ -79,7 +79,6 @@
     <string name="label_warning">Warning</string>
     <string name="label_info">Info</string>
     <string name="label_new">New</string>
-    <string name="label_beta">Beta</string>
     <string name="label_percent">%</string>
     <string name="label_none">None</string>
     <string name="unknown">Unknown</string>
@@ -1120,8 +1119,6 @@
     <string name="empty_action_connect_notifications_desc">Connect notifications to detect subscriptions</string>
     <string name="empty_action_add_subscription_title">Add Subscription</string>
     <string name="empty_action_add_subscription_desc">Add a subscription manually</string>
-    <string name="empty_action_scan_bank_title">Scan Bank Statements</string>
-    <string name="empty_action_scan_bank_desc">Scan bank statements for subscriptions</string>
     <string name="empty_action_create_goal_title">Create First Goal</string>
     <string name="empty_action_create_goal_desc">Create your first savings goal</string>
     <string name="empty_action_view_recommendations_title">View Recommendations</string>
@@ -2788,6 +2785,21 @@
     <string name="debug_database_stats_unavailable">Database statistics are temporarily unavailable</string>
     <string name="money_radar_unavailable">Money Radar is temporarily unavailable. Some financial signals could not be evaluated.</string>
     <string name="stress_forecast_unavailable">Stress forecast is temporarily unavailable. No risk estimate is available.</string>
+    <!-- stress-forecast-actions: localized stress forecast recommendations -->
+    <string name="stress_recs_header">Recommendations</string>
+    <string name="stress_rec_review_recurring_obligations">Your recurring obligations are high. Consider canceling unused subscriptions.</string>
+    <plurals name="stress_rec_reduce_discretionary_spending">
+        <item quantity="one">You may run out of money in %1$d day. Consider reducing discretionary spending.</item>
+        <item quantity="other">You may run out of money in %1$d days. Consider reducing discretionary spending.</item>
+    </plurals>
+    <string name="stress_rec_build_emergency_buffer">Your emergency buffer is low. Aim for at least %1$s.</string>
+    <string name="stress_rec_build_emergency_buffer_no_amount">Your emergency buffer is low. Consider building it up.</string>
+    <string name="stress_rec_delay_non_essential_purchases">Critical: Consider delaying non-essential purchases until your cash flow improves.</string>
+    <string name="stress_rec_healthy_outlook">Great job! Your financial stress level is low. Keep up the good habits.</string>
+    <string name="stress_rec_no_immediate_concerns">No immediate concerns. Continue monitoring your spending.</string>
+    <string name="stress_rec_action_open_recurring">Open recurring payments</string>
+    <string name="stress_rec_action_open_transactions">View this month\'s transactions</string>
+    <string name="stress_rec_action_open_savings_goals">Open savings goals</string>
     <string name="backup_restore_success">Backup created successfully</string>
     <string name="backup_restore_restore_success">Restore completed successfully</string>
     <string name="backup_restore_restart_required">Restart required. Please restart the app to use the restored data.</string>

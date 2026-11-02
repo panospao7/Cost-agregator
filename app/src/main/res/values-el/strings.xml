@@ -64,6 +64,21 @@
     <string name="notification_access_open_failed">Δεν ήταν δυνατό το άνοιγμα των ρυθμίσεων. Ανοίξτε τις Ρυθμίσεις και αναζητήστε \"Πρόσβαση ειδοποιήσεων\".</string>
     <string name="money_radar_unavailable">Το Money Radar δεν είναι προσωρινά διαθέσιμο. Δεν ήταν δυνατό να αξιολογηθούν ορισμένες οικονομικές ενδείξεις.</string>
     <string name="stress_forecast_unavailable">Η πρόβλεψη οικονομικής πίεσης δεν είναι προσωρινά διαθέσιμη. Δεν υπάρχει διαθέσιμη εκτίμηση κινδύνου.</string>
+    <!-- stress-forecast-actions: localized stress forecast recommendations (el draft, sign-off at release gate) -->
+    <string name="stress_recs_header">Συστάσεις</string>
+    <string name="stress_rec_review_recurring_obligations">Οι επαναλαμβανόμενες υποχρεώσεις σας είναι υψηλές. Σκεφτείτε να ακυρώσετε συνδρομές που δεν χρησιμοποιείτε.</string>
+    <plurals name="stress_rec_reduce_discretionary_spending">
+        <item quantity="one">Μπορεί να μείνετε από χρήματα σε %1$d ημέρα. Σκεφτείτε να μειώσετε τα διακριτικά έξοδα.</item>
+        <item quantity="other">Μπορεί να μείνετε από χρήματα σε %1$d ημέρες. Σκεφτείτε να μειώσετε τα διακριτικά έξοδα.</item>
+    </plurals>
+    <string name="stress_rec_build_emergency_buffer">Το αποθεματικό έκτακτης ανάγκης σας είναι χαμηλό. Στοχεύστε τουλάχιστον σε %1$s.</string>
+    <string name="stress_rec_build_emergency_buffer_no_amount">Το αποθεματικό έκτακτης ανάγκης σας είναι χαμηλό. Σκεφτείτε να το ενισχύσετε.</string>
+    <string name="stress_rec_delay_non_essential_purchases">Κρίσιμο: Σκεφτείτε να αναβάλετε μη απαραίτητες αγορές μέχρι να βελτιωθεί η ταμειακή σας ροή.</string>
+    <string name="stress_rec_healthy_outlook">Μπράβο! Το επίπεδο οικονομικής πίεσής σας είναι χαμηλό. Συνεχίστε με τις καλές συνήθειες.</string>
+    <string name="stress_rec_no_immediate_concerns">Καμία άμεση ανησυχία. Συνεχίστε να παρακολουθείτε τα έξοδά σας.</string>
+    <string name="stress_rec_action_open_recurring">Άνοιγμα επαναλαμβανόμενων πληρωμών</string>
+    <string name="stress_rec_action_open_transactions">Προβολή συναλλαγών του μήνα</string>
+    <string name="stress_rec_action_open_savings_goals">Άνοιγμα στόχων αποταμίευσης</string>
     <!-- R18: group-linked expense guard -->
     <string name="expense_delete_blocked_group_linked">Αυτό το έξοδο ανήκει σε κοινόχρηστη ομάδα και δεν μπορεί να διαγραφεί, γιατί θα άλλαζαν τα υπόλοιπα της ομάδας.</string>
     <string name="expense_edit_blocked_group_linked">Αυτό το έξοδο ανήκει σε κοινόχρηστη ομάδα, οπότε το ποσό, το νόμισμα, ο τύπος και ο διαμοιρασμός του δεν μπορούν να αλλάξουν. Μπορείτε ακόμη να αλλάξετε άλλα στοιχεία, όπως κατηγορία ή έμπορο.</string>

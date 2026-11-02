@@ -14,7 +14,6 @@ import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 /**
@@ -149,13 +148,6 @@ class NaturalLanguageSearchViewModel @Inject constructor(
             throw e
         } catch (e: Exception) {
             _searchState.value = SearchState.Error("SEARCH_FAILED")
-        }
-    }
-    
-    fun executeVoiceQuery(voiceText: String) {
-        _query.value = voiceText
-        viewModelScope.launch {
-            performSearch(voiceText)
         }
     }
 }

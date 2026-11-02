@@ -22,6 +22,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.R
@@ -36,6 +37,7 @@ import com.yourname.expensetracker.ui.components.emptystate.EmptyStateFeatureAct
 import com.yourname.expensetracker.ui.components.emptystate.EmptyStateScreenKeys
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.ui.theme.SemanticColors
+import com.yourname.expensetracker.ui.util.NotificationListenerSettingsLauncher
 import com.yourname.expensetracker.ui.util.AmountInputSanitizer
 import com.yourname.expensetracker.ui.util.UiTimeUtils
 import java.time.Instant
@@ -47,11 +49,10 @@ import java.util.Locale
 @Composable
 fun SubscriptionManagementScreen(
     onNavigateBack: () -> Unit,
-    onOpenNotificationSettings: () -> Unit = {},
-    onOpenBankConnections: () -> Unit = {},
     viewModel: SubscriptionManagementViewModel = hiltViewModel(),
     actionRegistry: ContextualActionRegistry
 ) {
+    val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsState()
     val homeCurrency by viewModel.homeCurrency.collectAsState(initial = "")
     val completedActionKeys by actionRegistry.completedActions.collectAsState()
@@ -144,7 +145,10 @@ fun SubscriptionManagementScreen(
                                 is EmptyStateActionType.ExecuteAction -> actionType.action.invoke()
                                 is EmptyStateActionType.OpenFeature -> {
                                     when (actionType.feature) {
-                                        EmptyStateFeatureAction.NotificationSettings -> onOpenNotificationSettings()
+                                        EmptyStateFeatureAction.NotificationSettings -> {
+                                            // D-NS: on failure do nothing (no toast, string or log).
+                                            NotificationListenerSettingsLauncher.open(context)
+                                        }
                                         EmptyStateFeatureAction.AddSubscription -> showAddDialog = true
                                         else -> {}
                                     }

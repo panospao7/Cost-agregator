@@ -1112,15 +1112,6 @@ class MultiCurrencyRepository @Inject constructor(
             transactionCounts = counts
         )
     }
-    suspend fun updateExpenseCurrency(
-        expenseId: Long,
-        newCurrency: String,
-        convertedAmount: Double? = null
-    ) {
-        // This would need a new DAO method
-        // For now, this is a placeholder
-        // expenseDao.updateCurrency(expenseId, newCurrency, convertedAmount)
-    }
 
     /**
      * Check if rates need updating (older than 24 hours).
