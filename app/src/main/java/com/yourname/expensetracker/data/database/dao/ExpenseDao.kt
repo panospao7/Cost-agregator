@@ -299,14 +299,13 @@ interface ExpenseDao {
     """)
     suspend fun getRecentExpensesForMerchant(merchant: String, since: Long): List<Expense>
 
-    // spending-exempt: SUGGESTION
     @Transaction
     @Query("""
         SELECT * FROM expenses
         WHERE merchant = :merchant
         AND date >= :since
         AND ${SPENDING_TYPE_SQL}
-        AND isNotMine = 0
+        AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         ORDER BY date ASC
     """)
     suspend fun getRecentExpensesWithCategoryForMerchant(merchant: String, since: Long): List<ExpenseWithCategory>
@@ -2522,22 +2521,22 @@ AND LENGTH(:merchantKey) >= 8
 
     // === Business Expense Queries (v41) ===
     
+    // spending-exempt: ROW_COUNT
     @Query("""
-        SELECT * FROM expenses 
-        WHERE isBusinessExpense = 1 
+        SELECT * FROM expenses
+        WHERE isBusinessExpense = 1
         AND ${SPENDING_TYPE_SQL}
-        AND date >= :startDate AND date < :endDate 
-        AND ${SpendingInclusionSql.SPENDING_PREDICATE}
+        AND date >= :startDate AND date < :endDate
         ORDER BY date DESC
     """)
     suspend fun getBusinessExpensesBetween(startDate: Long, endDate: Long): List<Expense>
     
+    // spending-exempt: ROW_COUNT
     @Query("""
-        SELECT * FROM expenses 
-        WHERE isBusinessExpense = 1 
+        SELECT * FROM expenses
+        WHERE isBusinessExpense = 1
         AND ${SPENDING_TYPE_SQL}
-        AND date >= :startDate AND date < :endDate 
-        AND ${SpendingInclusionSql.SPENDING_PREDICATE}
+        AND date >= :startDate AND date < :endDate
         ORDER BY date DESC
     """)
     fun getBusinessExpensesBetweenFlow(startDate: Long, endDate: Long): Flow<List<Expense>>
@@ -2628,15 +2627,15 @@ AND LENGTH(:merchantKey) >= 8
      * not receipt attachment).  A LEFT JOIN / IS NULL anti-join correctly
      * identifies expenses with no linked receipt row.
      */
+    // spending-exempt: ROW_COUNT
     @Query("""
         SELECT e.* FROM expenses e
         LEFT JOIN scanned_receipts sr ON sr.expenseId = e.id
-        WHERE e.isBusinessExpense = 1 
+        WHERE e.isBusinessExpense = 1
         AND ${SPENDING_TYPE_E_SQL}
-        AND e.requiresReceipt = 1 
+        AND e.requiresReceipt = 1
         AND sr.id IS NULL
         AND e.date >= :startDate AND e.date < :endDate
-        AND ${SpendingInclusionSql.SPENDING_PREDICATE_E}
         ORDER BY e.date DESC
     """)
     suspend fun getBusinessExpensesMissingReceipts(startDate: Long, endDate: Long): List<Expense>

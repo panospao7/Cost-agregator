@@ -44,27 +44,39 @@ class SmsParser @Inject constructor(
         )
     }
 
-    private val bareAmountPattern by lazy {
-        val amt = CommonPatterns.GROUPED_AMOUNT_TOKEN
-        Pattern.compile("""(?<![\d.,/*])($amt)(?![\d,/*]|\.\d)""")
-    }
+    // Matched as whole tokens (case-insensitive via lowercased text; accented and unaccented
+    // Greek forms are both listed). Abbreviations carry no trailing dot. The dot is a clause
+    // separator in isAdjacentToKeyword, so a dot directly after an abbreviation token ("Bal.",
+    // "Υπόλ.") is collapsed first via abbreviationDotRegex (prefix path); the trailing path
+    // already cuts at the dot, leaving the bare token.
+    private val abbreviationDotRegex =
+        Regex("""(?<![\p{L}\p{N}])(bal|avl|avail|υπόλ|υπολ)\.""")
 
     private val BALANCE_KEYWORDS = listOf(
-        "balance", "available", "avail", "remaining", "limit",
-        "υπόλοιπο", "υπολοιπο", "διαθέσιμο", "διαθεσιμο",
+        "balance", "available", "avail", "avl", "bal", "remaining", "limit", "saldo",
+        "υπόλοιπο", "υπολοιπο", "υπόλ", "υπολ", "διαθέσιμο", "διαθεσιμο",
         "ypoloipo", "ipolipo", "diathesimo"
     )
 
     private val PURCHASE_PREFERENCE_KEYWORDS = listOf(
-        "purchase", "spent", "payment", "paid",
+        "purchase", "spent", "payment", "paid", "charged", "debit",
         "αγορά", "αγορα", "χρέωση", "χρεωση", "πληρωμή", "πληρωμη",
-        "agora", "xreosi", "hreosi", "pliromi", "plirwmi"
+        "συναλλαγή", "συναλλαγη",
+        "agora", "xreosi", "hreosi", "pliromi", "plirwmi", "synallagi",
+        "compra", "pago", "cargo"
     )
 
+    // Trailing-keyword form ("EUR 500.00 balance"), built from BALANCE_KEYWORDS (longest first).
+    private val trailingBalanceRegex by lazy {
+        val alternation = BALANCE_KEYWORDS.sortedByDescending { it.length }.joinToString("|") { Regex.escape(it) }
+        Regex("""^\s*(?:in|of|for|:)?\s*(?:avail(?:able)?\s+|διαθέσιμο\s+|διαθεσιμο\s+|diathesimo\s+)?(?:$alternation)(?![\p{L}\p{N}])""")
+    }
+
     private val TRANSACTION_KEYWORDS = listOf(
-        // Purchase keywords
+        // Purchase keywords ("paid"/"spent" are intentionally absent: they match "prepaid" and
+        // "paid by" in deposits; they remain token-bounded in PURCHASE_PREFERENCE_KEYWORDS)
         "αγορ", "αγορά", "αγορα", "πληρωμ", "πληρωμή", "πληρωμη", "χρέωσ", "χρεωσ", "συναλλαγ",
-        "purchase", "payment", "paid", "spent", "charged", "debit",
+        "purchase", "payment", "charged", "debit",
         "agora", "pliromi", "plirwmi", "hreosi", "xreosi", "synallagi"
     )
 
@@ -194,15 +206,6 @@ class SmsParser @Inject constructor(
             candidates.add(AmountCandidate(amount, normalizedCurrency, matcher.start(), matcher.end()))
         }
 
-        if (candidates.isEmpty()) {
-            val bareMatcher = bareAmountPattern.matcher(body)
-            while (bareMatcher.find()) {
-                val amountStr = bareMatcher.group(1) ?: continue
-                val amount = AmountUtils.parseAmount(amountStr) ?: continue
-                candidates.add(AmountCandidate(amount, currencyNormalizer.normalize(null), bareMatcher.start(), bareMatcher.end()))
-            }
-        }
-
         val hadMultipleCandidates = candidates.size > 1
         val nonBalance = candidates.filterNot {
             isAdjacentToKeyword(body, it.start, it.end, BALANCE_KEYWORDS, allowTrailingKeyword = true)
@@ -219,10 +222,11 @@ class SmsParser @Inject constructor(
             return ExtractedAmount(chosen.amount, chosen.currency, isAmbiguous = true)
         }
 
-        // Ambiguous: multiple plausible currency amounts remain. Take the LAST currency amount
-        // (banks print the balance first) and lower confidence below AUTO_ACCEPT_THRESHOLD for review.
+        // Ambiguous: multiple plausible currency amounts remain. Take the FIRST one (the
+        // transaction amount precedes the balance in bank SMS); ConfidenceRouter demotes the
+        // ambiguous result to review.
         val pool = if (purchaseAdjacent.isNotEmpty()) purchaseAdjacent else nonBalance
-        val chosen = pool.last()
+        val chosen = pool.first()
         return ExtractedAmount(chosen.amount, chosen.currency, isAmbiguous = hadMultipleCandidates)
     }
 
@@ -235,7 +239,8 @@ class SmsParser @Inject constructor(
     ): Boolean {
         val prefixStart = (matchStart - KEYWORD_ADJACENCY_WINDOW).coerceAtLeast(0)
         val prefix = text.substring(prefixStart, matchStart).lowercase()
-        val lastClause = prefix.substringAfterLast('.').substringAfterLast(';').substringAfterLast(',')
+        val lastClause = prefix.replace(abbreviationDotRegex, "$1")
+            .substringAfterLast('.').substringAfterLast(';').substringAfterLast(',')
             .substringAfterLast('\n').substringAfterLast('(').substringAfterLast('-')
         if (!Regex("""\d""").containsMatchIn(lastClause) && containsKeywordToken(lastClause, keywords)) {
             return true
@@ -246,7 +251,7 @@ class SmsParser @Inject constructor(
             val suffix = text.substring(matchEnd, suffixEnd).lowercase()
             val nextClause = suffix.substringBefore('.').substringBefore(';').substringBefore(',')
                 .substringBefore('\n').substringBefore(')').substringBefore('-')
-            if (Regex("""^\s*(?:in|of|for|:)?\s*(?:avail(?:able)?\s+|διαθέσιμο\s+|διαθεσιμο\s+|diathesimo\s+)?(?:balance|limit|remaining|υπόλοιπο|υπολοιπο|ypoloipo|ipolipo)(?![\p{L}\p{N}])""").containsMatchIn(nextClause)) {
+            if (trailingBalanceRegex.containsMatchIn(nextClause)) {
                 return true
             }
         }
@@ -261,8 +266,9 @@ class SmsParser @Inject constructor(
 
     private companion object {
         private const val CLEAN_AMOUNT_CONFIDENCE = 0.85f
-        // Below ConfidenceRouter.AUTO_ACCEPT_THRESHOLD (0.85f) so ambiguous multi-amount SMS land in review.
-        private const val AMBIGUOUS_AMOUNT_CONFIDENCE = 0.70f
+        // Equal to the clean confidence: ConfidenceRouter caps ambiguous amounts below
+        // AUTO_ACCEPT so multi-amount SMS land in review without a parser-side floor/penalty.
+        private const val AMBIGUOUS_AMOUNT_CONFIDENCE = 0.85f
         private const val KEYWORD_ADJACENCY_WINDOW = 35
     }
     
