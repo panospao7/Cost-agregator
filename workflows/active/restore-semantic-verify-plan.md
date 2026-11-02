@@ -465,3 +465,22 @@ S1 deletes the inert `SEMANTIC_AGGREGATE_QUERIES`, S2 records at export, and S3/
 1. D-SIS (a).
 2. Fold S0b, with the tier policy above.
 3. el/es sign-off on the S5 strings (unchanged).
+
+## Progress (2026-11-02, orchestrator)
+- S0b e99e5c03 and S1 8cf157b6 committed. Test fixes: e1276a99 (isNull matcher) and af193bd4 (legacy manifests take the migration step; AE-17 uses total_changes plus file bytes). Debug iteration 1 used.
+- B1 PASS: vr-20261102-012808-f438a457 (the earlier FAILs were 004245 compile and 004817 three test-side failures).
+- room-migration-guardian S0b: ACCEPT-WITH-FIXES.
+  - Fixtures now follow allTableNames; the tests pin the 152 gating.
+  - LOW: verifyInternal relies on validateManifestCompleteness (KDoc added in S1).
+  - LOW: negotiation_outcomes 146-151 gets a legacy pass (accepted).
+- Combined guardian S1 (Sonnet, 8cf157b6): ACCEPT.
+  - Unwired and neutral: all 4 callers use 2 args.
+  - D-SIS (a) is correct.
+  - SQL comes only from constants; parse limits hold.
+  - Privacy bounded. CE shape correct. Deleted symbols are clean.
+  - S6 docs:
+    - ARCHITECTURE.md :1290 and :1315-1329;
+    - backup-restore-barrier-contract.md :91;
+    - LEGAL_PATHS Backup/Restore RESTORE and FORBIDDEN (O-6);
+    - CODEBASE_INVENTORY/SEGMENTS: add SemanticAggregates.kt.
+  - The runner must confirm static-guards, db_access and cancellation (no new baseline entries) at the candidate gate.
