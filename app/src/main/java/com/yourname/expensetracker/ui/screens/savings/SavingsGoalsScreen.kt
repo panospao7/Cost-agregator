@@ -1,11 +1,15 @@
 package com.yourname.expensetracker.ui.screens.savings
 
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.rounded.TrendingUp
 import androidx.compose.material.icons.rounded.Savings
@@ -13,8 +17,14 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.platform.LocalContext
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.domain.savings.SavingsStreak
@@ -44,13 +54,112 @@ fun SavingsGoalsScreen(
     var showAddGoalDialog by remember { mutableStateOf(false) }
     var recommendationToConfirm by remember { mutableStateOf<SmartRecommendation?>(null) }
 
+    // True once an event reports that the last delete attempt did not remove the goal.
+    var deleteRetainedOutcome by remember { mutableStateOf(false) }
     LaunchedEffect(viewModel) {
         viewModel.events.collect { event ->
+            if (event is SavingsGoalsEvent.DeleteRejected || event is SavingsGoalsEvent.WriteBlocked) {
+                deleteRetainedOutcome = true
+            }
             val message = when (event) {
                 SavingsGoalsEvent.GoalCreated -> context.getString(R.string.savings_goal_created_message)
                 is SavingsGoalsEvent.WriteBlocked -> event.message.asString(context)
+                SavingsGoalsEvent.GoalDeleted -> context.getString(R.string.savings_goal_deleted_message)
+                is SavingsGoalsEvent.DeleteRejected -> context.getString(
+                    when (event.reason) {
+                        DeleteRejectReason.NOT_EMPTY -> R.string.savings_goal_delete_not_empty_message
+                        DeleteRejectReason.HISTORY_UNAVAILABLE -> R.string.savings_goal_delete_history_unavailable_message
+                        DeleteRejectReason.GENERIC -> R.string.error_delete_failed
+                    }
+                )
             }
             snackbarHostState.showSnackbar(message = message, withDismissAction = true)
+        }
+    }
+
+    // INV-11 (screen-local): drop the pending recommendation confirm once its goal has left the list.
+    LaunchedEffect(state.goals, recommendationToConfirm) {
+        val pending = recommendationToConfirm
+        if (pending != null && state.goals.none { it.id == pending.goal.id }) {
+            recommendationToConfirm = null
+        }
+    }
+
+    // D1/D3 dismiss silently when their goal disappears (treated as already absent; no snackbar here).
+    val deleteFlow = state.deleteFlow
+    LaunchedEffect(deleteFlow, state.goals) {
+        val flowGoalId = when (deleteFlow) {
+            is DeleteFlowState.Confirm -> deleteFlow.goalId
+            is DeleteFlowState.NotAllowed -> deleteFlow.goalId
+            else -> null
+        }
+        if (flowGoalId != null && state.goals.none { it.id == flowGoalId }) {
+            viewModel.dismissDeleteFlow()
+        }
+    }
+
+    // Focus return (ux-flows section 6): after the delete flow ends, focus goes back to the origin
+    // card's overflow button, or to the "Your Goals" heading when that card is gone.
+    val overflowFocusRequesters = remember { mutableMapOf<Long, FocusRequester>() }
+    val goalsHeadingFocusRequester = remember { FocusRequester() }
+    var deleteOriginGoalId by remember { mutableStateOf<Long?>(null) }
+    // After a delete attempt the flow returns to Idle before state.goals drops the goal, so the
+    // origin is kept until the goal leaves the list (heading) or the attempt is reported as not
+    // deleting it (rejected/blocked: overflow).
+    var originWasDeleting by remember { mutableStateOf(false) }
+    LaunchedEffect(deleteFlow, state.goals, deleteRetainedOutcome) {
+        when (deleteFlow) {
+            is DeleteFlowState.Checking -> {
+                deleteOriginGoalId = deleteFlow.goalId
+                originWasDeleting = false
+            }
+            is DeleteFlowState.Confirm -> {
+                deleteOriginGoalId = deleteFlow.goalId
+                originWasDeleting = false
+            }
+            is DeleteFlowState.NotAllowed -> {
+                deleteOriginGoalId = deleteFlow.goalId
+                originWasDeleting = false
+            }
+            is DeleteFlowState.Deleting -> {
+                deleteOriginGoalId = deleteFlow.goalId
+                originWasDeleting = true
+                deleteRetainedOutcome = false
+            }
+            DeleteFlowState.Idle -> {
+                val origin = deleteOriginGoalId
+                if (origin != null) {
+                    val originPresent = state.goals.any { it.id == origin }
+                    if (originWasDeleting && originPresent && !deleteRetainedOutcome) {
+                        // Delete outcome not yet visible in the list: keep the origin and wait.
+                        return@LaunchedEffect
+                    }
+                    deleteOriginGoalId = null
+                    originWasDeleting = false
+                    val originRequester = if (originPresent) {
+                        overflowFocusRequesters[origin]
+                    } else {
+                        null
+                    }
+                    // requestFocus is non-suspending; only the not-attached failure is tolerated.
+                    var originFocused = false
+                    if (originRequester != null) {
+                        try {
+                            originRequester.requestFocus()
+                            originFocused = true
+                        } catch (_: IllegalStateException) {
+                            // Origin overflow not attached (scrolled out): fall back to the heading.
+                        }
+                    }
+                    if (!originFocused) {
+                        try {
+                            goalsHeadingFocusRequester.requestFocus()
+                        } catch (_: IllegalStateException) {
+                            // Heading not attached either: focus is best effort.
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -170,7 +279,11 @@ fun SavingsGoalsScreen(
             Text(
                 text = stringResource(R.string.savings_section_your_goals),
                 style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier
+                    .focusRequester(goalsHeadingFocusRequester)
+                    .focusable()
+                    .semantics { heading() }
             )
 
             Spacer(modifier = Modifier.height(8.dp))
@@ -194,13 +307,19 @@ fun SavingsGoalsScreen(
                     LazyColumn(
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        items(loadable.value) { goal ->
+                        items(loadable.value, key = { it.id }) { goal ->
+                            val deleteCheckInProgress =
+                                deleteFlow is DeleteFlowState.Checking && deleteFlow.goalId == goal.id
                             GoalCard(
                                 goal = goal,
                                 dateFormat = dateFormat,
                                 onClick = { viewModel.selectGoal(goal) },
-                                canContribute = state.contributionHistoryWriteFailure == null,
-                                onQuickAdd = { viewModel.contributeToGoal(goal.id, 10.0, goal.currency) }
+                                canContribute = state.contributionHistoryWriteFailure == null &&
+                                    !deleteCheckInProgress,
+                                onQuickAdd = { viewModel.contributeToGoal(goal.id, 10.0, goal.currency) },
+                                canRequestDelete = deleteFlow == DeleteFlowState.Idle,
+                                onDelete = { viewModel.requestDeleteGoal(goal.id) },
+                                overflowFocusRequester = overflowFocusRequesters.getOrPut(goal.id) { FocusRequester() }
                             )
                         }
                     }
@@ -261,7 +380,94 @@ fun SavingsGoalsScreen(
                 }
             )
         }
+
+        // D1 (Confirm) and D2 (Deleting) share one dialog so the transition does not recompose it away.
+        val confirmGoalId = when (deleteFlow) {
+            is DeleteFlowState.Confirm -> deleteFlow.goalId
+            is DeleteFlowState.Deleting -> deleteFlow.goalId
+            else -> null
+        }
+        val confirmGoal = confirmGoalId?.let { id -> state.goals.firstOrNull { it.id == id } }
+        if (confirmGoal != null) {
+            DeleteGoalDialog(
+                goalName = confirmGoal.name,
+                isDeleting = deleteFlow is DeleteFlowState.Deleting,
+                onConfirm = { viewModel.deleteGoal(confirmGoal) },
+                onDismiss = { viewModel.dismissDeleteFlow() }
+            )
+        }
+
+        // D3 (NotAllowed): neutral explanation, no destructive action.
+        if (deleteFlow is DeleteFlowState.NotAllowed && state.goals.any { it.id == deleteFlow.goalId }) {
+            AlertDialog(
+                onDismissRequest = { viewModel.dismissDeleteFlow() },
+                title = { Text(stringResource(R.string.savings_goal_delete_blocked_title)) },
+                text = {
+                    Text(
+                        text = stringResource(R.string.savings_goal_delete_blocked_message),
+                        modifier = Modifier.verticalScroll(rememberScrollState())
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = { viewModel.dismissDeleteFlow() }) {
+                        Text(stringResource(R.string.action_got_it))
+                    }
+                }
+            )
+        }
     }
+}
+
+@Composable
+private fun DeleteGoalDialog(
+    goalName: String,
+    isDeleting: Boolean,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val deletingDescription = stringResource(R.string.savings_goal_deleting_cd)
+    AlertDialog(
+        // D2: outside taps and Back are ignored while the delete runs.
+        onDismissRequest = { if (!isDeleting) onDismiss() },
+        properties = DialogProperties(
+            dismissOnBackPress = !isDeleting,
+            dismissOnClickOutside = !isDeleting
+        ),
+        title = { Text(stringResource(R.string.savings_goal_delete_confirm_title)) },
+        text = {
+            Text(
+                text = stringResource(R.string.savings_goal_delete_confirm_message_format, goalName),
+                modifier = Modifier.verticalScroll(rememberScrollState())
+            )
+        },
+        confirmButton = {
+            Button(
+                onClick = onConfirm,
+                enabled = !isDeleting,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.error,
+                    contentColor = MaterialTheme.colorScheme.onError
+                )
+            ) {
+                if (isDeleting) {
+                    CircularProgressIndicator(
+                        modifier = Modifier
+                            .size(18.dp)
+                            .semantics { contentDescription = deletingDescription },
+                        strokeWidth = 2.dp,
+                        color = LocalContentColor.current
+                    )
+                } else {
+                    Text(stringResource(R.string.action_delete))
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !isDeleting) {
+                Text(stringResource(R.string.action_cancel))
+            }
+        }
+    )
 }
 
 @Composable
@@ -534,16 +740,32 @@ private fun GoalCard(
     dateFormat: DateTimeFormatter,
     onClick: () -> Unit,
     canContribute: Boolean,
-    onQuickAdd: () -> Unit
+    onQuickAdd: () -> Unit,
+    canRequestDelete: Boolean,
+    onDelete: () -> Unit,
+    overflowFocusRequester: FocusRequester
 ) {
     if (com.yourname.expensetracker.domain.savings.SavingsGoalCurrencyPolicy.knownCurrencyOrNull(goal) == null) {
         Card(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Text(goal.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                Text(
-                    stringResource(R.string.savings_goal_currency_unavailable),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 16.dp, top = 16.dp, bottom = 16.dp, end = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(goal.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        stringResource(R.string.savings_goal_currency_unavailable),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                GoalOverflowMenu(
+                    goalName = goal.name,
+                    enabled = canRequestDelete,
+                    onDelete = onDelete,
+                    focusRequester = overflowFocusRequester
                 )
             }
         }
@@ -591,6 +813,13 @@ private fun GoalCard(
                         Text(stringResource(R.string.savings_action_add_amount, "10"))
                     }
                 }
+
+                GoalOverflowMenu(
+                    goalName = goal.name,
+                    enabled = canRequestDelete,
+                    onDelete = onDelete,
+                    focusRequester = overflowFocusRequester
+                )
             }
             
             Spacer(modifier = Modifier.height(8.dp))
@@ -622,6 +851,43 @@ private fun GoalCard(
                 text = stringResource(R.string.savings_progress_percent_complete, (progress * 100).toInt()),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+/**
+ * Per-card overflow: a 48dp MoreVert button with a single "Delete" item. Eligibility is not decided
+ * here (INV-16); the item only asks the ViewModel to start the delete flow.
+ */
+@Composable
+private fun GoalOverflowMenu(
+    goalName: String,
+    enabled: Boolean,
+    onDelete: () -> Unit,
+    focusRequester: FocusRequester
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        IconButton(
+            onClick = { expanded = true },
+            enabled = enabled,
+            modifier = Modifier
+                .size(48.dp)
+                .focusRequester(focusRequester)
+        ) {
+            Icon(
+                imageVector = Icons.Filled.MoreVert,
+                contentDescription = stringResource(R.string.savings_goal_more_actions_cd_format, goalName)
+            )
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.action_delete)) },
+                onClick = {
+                    expanded = false
+                    onDelete()
+                }
             )
         }
     }

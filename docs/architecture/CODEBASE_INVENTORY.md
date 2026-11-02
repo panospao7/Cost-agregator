@@ -400,6 +400,7 @@ Assistant is an overlay/entry surface, not a bottom tab.
 
 ### Savings & Investment
 - AutomatedSavingsRuleEngine, SavingsGamificationEngine, SmartSavingsEngine
+- SavingsGoalDeletionPolicy, SavingsGoalDeleteResult, SavingsGoalDeleteEligibility (`domain/savings`; goal-delete decision and outcomes)
 - InvestmentTracker, SmartBillNegotiationEngine, MarketRateProvider
 - NaturalLanguageSearchEngine (with SearchCursor keyset pagination, QueryDataQuality), PriceProtectionTracker
 
@@ -493,7 +494,7 @@ Actual repository inventory (interfaces and implementations); counts shift as im
 - RecommendationRepository
 - RecurringExpenseRepository
 - ReviewQueueRepository
-- SavingsGoalRepository
+- SavingsGoalRepository (delete path also depends on DatabaseWriteBarrier, AppDatabase, SavingsContributionHistoryRepository, SavingsContributionLedgerDao)
 - SourceStatsRepository
 - UserCorrectionRepository
 - WarrantyTrackerRepository

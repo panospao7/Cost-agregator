@@ -2,6 +2,7 @@ package com.yourname.expensetracker.ui.screens.savings
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException
 import com.yourname.expensetracker.data.repository.SAVINGS_SWEEP_MONTH_ALREADY_ACCEPTED
 import com.yourname.expensetracker.data.repository.SavingsContributionHistoryRepository
 import com.yourname.expensetracker.data.repository.SavingsSweepAcceptanceCoordinator
@@ -56,7 +57,9 @@ data class SavingsGoalsState(
 	 * ViewModel's `init` block. It only serves as a non-null default before the
 	 * async home-currency load completes. See [CURR-6] in MASTER-ISSUE-REGISTRY.
 	 */
-	val homeCurrency: String = "EUR"
+	val homeCurrency: String = "EUR",
+	/** Delete overlay (UX-3). At most one flow is active; owned by the VM so it survives rotation. */
+	val deleteFlow: DeleteFlowState = DeleteFlowState.Idle
 ) {
  val smartUnavailableReason: String? get() =
      (smartComputationResult as? SmartSavingsComputationResult.Unavailable)?.reasonCode
@@ -83,6 +86,27 @@ sealed interface SavingsGoalsEvent {
 
     /** Emitted when a write was rejected because backup/restore/reset holds the write barrier. */
     data class WriteBlocked(val message: UiText) : SavingsGoalsEvent
+
+    /** Emitted after a goal was deleted, or was already gone (AlreadyAbsent). Carries no payload. */
+    object GoalDeleted : SavingsGoalsEvent
+
+    /** Emitted when a delete was refused or failed. Bounded enum only: no text, id, name or amount. */
+    data class DeleteRejected(val reason: DeleteRejectReason) : SavingsGoalsEvent
+}
+
+/** Bounded, text-free reason carried by [SavingsGoalsEvent.DeleteRejected]. */
+enum class DeleteRejectReason { NOT_EMPTY, HISTORY_UNAVAILABLE, GENERIC }
+
+/**
+ * Delete overlay state held in [SavingsGoalsState]. [Confirm.name] is UI-only data for the dialog
+ * and is never logged.
+ */
+sealed interface DeleteFlowState {
+    data object Idle : DeleteFlowState
+    data class Checking(val goalId: Long) : DeleteFlowState
+    data class Confirm(val goalId: Long, val name: String) : DeleteFlowState
+    data class NotAllowed(val goalId: Long) : DeleteFlowState
+    data class Deleting(val goalId: Long) : DeleteFlowState
 }
 
 data class SmartRecommendation(
@@ -461,11 +485,133 @@ class SavingsGoalsViewModel @Inject constructor(
                 it.displayCurrency == CurrencyCode.parse(targetCurrency) }
             ?.displayAmount
 
-    fun deleteGoal(goal: SavingsGoal) {
+    /**
+     * Starts the delete flow for [goalId]: a read-only eligibility pre-check owned by the
+     * repository/policy (INV-16; the VM holds no emptiness logic). Ignored unless the flow is Idle.
+     */
+    fun requestDeleteGoal(goalId: Long) {
+        var accepted = false
+        _state.update {
+            accepted = it.deleteFlow == DeleteFlowState.Idle
+            if (accepted) it.copy(deleteFlow = DeleteFlowState.Checking(goalId)) else it
+        }
+        if (!accepted) return
         viewModelScope.launch {
-            guardedWrite(::emitWriteBlocked) {
-                savingsGoalRepository.deleteSavingsGoal(goal)
+            val eligibility = try {
+                savingsGoalRepository.getSavingsGoalDeletionEligibility(goalId)
+            } catch (e: CancellationException) {
+                resetDeleteFlowIfActive(goalId)
+                throw e
+            } catch (_: Exception) {
+                // A late failure of a dismissed check must not touch a newer flow.
+                if (_state.value.deleteFlow != DeleteFlowState.Checking(goalId)) return@launch
+                finishDelete(SavingsGoalsEvent.DeleteRejected(DeleteRejectReason.GENERIC))
+                return@launch
             }
+            // The user may have dismissed the flow while the read was in flight.
+            if (_state.value.deleteFlow != DeleteFlowState.Checking(goalId)) return@launch
+            when (eligibility) {
+                SavingsGoalDeleteEligibility.Deletable -> {
+                    val name = _state.value.goals.firstOrNull { it.id == goalId }?.name
+                    if (name == null) {
+                        // Not in the visible list: nothing was deleted here, so no GoalDeleted
+                        // event; close silently and let the goal list refresh.
+                        finishDelete(null)
+                    } else {
+                        _state.update { it.copy(deleteFlow = DeleteFlowState.Confirm(goalId, name)) }
+                    }
+                }
+                SavingsGoalDeleteEligibility.AlreadyAbsent -> applyGoalRemoved(goalId)
+                is SavingsGoalDeleteEligibility.Rejected -> when (eligibility.reasonCode) {
+                    SAVINGS_GOAL_DELETE_HAS_BALANCE,
+                    SAVINGS_GOAL_DELETE_HAS_HISTORY ->
+                        _state.update { it.copy(deleteFlow = DeleteFlowState.NotAllowed(goalId)) }
+                    else -> finishDelete(SavingsGoalsEvent.DeleteRejected(rejectReasonFor(eligibility.reasonCode)))
+                }
+            }
+        }
+    }
+
+    /** Closes the Confirm / NotAllowed / Checking overlay. Ignored while [DeleteFlowState.Deleting]. */
+    fun dismissDeleteFlow() {
+        _state.update {
+            if (it.deleteFlow is DeleteFlowState.Deleting) it else it.copy(deleteFlow = DeleteFlowState.Idle)
+        }
+    }
+
+    /**
+     * Confirm path of the delete flow. The repository re-checks eligibility inside the delete
+     * transaction (INV-8); the pre-check result is never trusted here. Ignored while a check or a
+     * delete is already running (double tap).
+     */
+    fun deleteGoal(goal: SavingsGoal) {
+        var accepted = false
+        _state.update {
+            val flow = it.deleteFlow
+            accepted = flow == DeleteFlowState.Idle ||
+                (flow is DeleteFlowState.Confirm && flow.goalId == goal.id)
+            if (accepted) it.copy(deleteFlow = DeleteFlowState.Deleting(goal.id)) else it
+        }
+        if (!accepted) return
+        viewModelScope.launch {
+            val result = guardedWrite(::emitWriteBlocked) {
+                try {
+                    savingsGoalRepository.deleteSavingsGoal(goal)
+                } catch (e: CancellationException) {
+                    resetDeleteFlowIfActive(goal.id)
+                    throw e
+                } catch (e: DatabaseAccessBlockedException) {
+                    throw e
+                } catch (_: Exception) {
+                    SavingsGoalDeleteResult.Rejected(SAVINGS_GOAL_DELETE_UNAVAILABLE)
+                }
+            }
+            when (result) {
+                // Write barrier held: guardedWrite already emitted WriteBlocked.
+                null -> finishDelete(event = null)
+                SavingsGoalDeleteResult.Deleted,
+                SavingsGoalDeleteResult.AlreadyAbsent -> applyGoalRemoved(goal.id)
+                is SavingsGoalDeleteResult.Rejected ->
+                    finishDelete(SavingsGoalsEvent.DeleteRejected(rejectReasonFor(result.reasonCode)))
+            }
+        }
+    }
+
+    /** Maps a bounded repository rejection code to the bounded UI reason. No rule logic. */
+    private fun rejectReasonFor(reasonCode: String): DeleteRejectReason = when (reasonCode) {
+        SAVINGS_GOAL_DELETE_HAS_BALANCE,
+        SAVINGS_GOAL_DELETE_HAS_HISTORY -> DeleteRejectReason.NOT_EMPTY
+        SAVINGS_GOAL_DELETE_HISTORY_UNAVAILABLE -> DeleteRejectReason.HISTORY_UNAVAILABLE
+        else -> DeleteRejectReason.GENERIC
+    }
+
+    /** Single place for INV-11: the goal is gone, so drop every VM-held reference to its id. */
+    private fun applyGoalRemoved(goalId: Long) {
+        _state.update {
+            it.copy(
+                selectedGoal = it.selectedGoal?.takeUnless { selected -> selected.id == goalId },
+                smartRecommendations = it.smartRecommendations.filterNot { rec -> rec.goal.id == goalId },
+                sweepRecommendation = it.sweepRecommendation
+                    ?.takeUnless { rec -> rec.goalAllocations.any { allocation -> allocation.goalId == goalId } },
+                deleteFlow = DeleteFlowState.Idle
+            )
+        }
+        _events.trySend(SavingsGoalsEvent.GoalDeleted)
+    }
+
+    /** Every terminal result returns the flow to Idle; [event] is optional. */
+    private fun finishDelete(event: SavingsGoalsEvent?) {
+        _state.update { it.copy(deleteFlow = DeleteFlowState.Idle) }
+        if (event != null) _events.trySend(event)
+    }
+
+    /** Cancellation: back to Idle with no message. */
+    private fun resetDeleteFlowIfActive(goalId: Long) {
+        _state.update {
+            val flow = it.deleteFlow
+            val ours = (flow is DeleteFlowState.Checking && flow.goalId == goalId) ||
+                (flow is DeleteFlowState.Deleting && flow.goalId == goalId)
+            if (ours) it.copy(deleteFlow = DeleteFlowState.Idle) else it
         }
     }
 

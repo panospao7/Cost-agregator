@@ -21,6 +21,12 @@ The goal-independent `savings_sweep_month_acceptance` marker is the monthly cons
 
 Direct writes outside the five exact coordinator callable/DAO contracts in `config/guards/db_ownership_policy.yml` are forbidden. No blanket owner allowance.
 
+## Savings Goal Deletion
+
+`SavingsGoalsViewModel.deleteGoal()` (called from the confirm dialog) → `SavingsGoalRepository.deleteSavingsGoal()` → write barrier `"SavingsGoalRepository.deleteSavingsGoal"` → contribution-history pre-read (outside the transaction) → one Room transaction that re-reads the goal and its ledger rows → `SavingsGoalDeletionPolicy` decision → `SavingsGoalDao.deleteGoal()`. Only the goal id from the caller is used; the decision runs against the re-read row. Only an empty goal (zero balance, no ledger rows, no contribution events) is deleted. The result is `SavingsGoalDeleteResult` (`Deleted`, `AlreadyAbsent`, `Rejected(bounded reason code)`); cancellation propagates.
+
+`SavingsGoalRepository.getSavingsGoalDeletionEligibility()` is the read-only eligibility member called by `SavingsGoalsViewModel.requestDeleteGoal()` before the confirm dialog opens. It mutates nothing and applies the same policy. `SavingsGoalDao.deleteGoal()` is called only from `SavingsGoalRepository`.
+
 ## Expense Mutations
 
 ```

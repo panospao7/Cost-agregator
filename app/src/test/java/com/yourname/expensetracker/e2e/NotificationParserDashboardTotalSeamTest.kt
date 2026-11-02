@@ -412,7 +412,13 @@ class NotificationParserDashboardTotalSeamTest : AnalyticsEngineTestBase() {
 
         val savingsGoalDao = mockk<SavingsGoalDao>(relaxed = true)
         every { savingsGoalDao.getAllGoals() } returns flowOf(emptyList())
-        val savingsGoalRepository = SavingsGoalRepository(mockk(relaxed = true), savingsGoalDao)
+        val savingsGoalRepository = SavingsGoalRepository(
+            mockk(relaxed = true),
+            savingsGoalDao,
+            mockk(relaxed = true),
+            mockk(relaxed = true),
+            mockk(relaxed = true)
+        )
 
         val promptStateDao = mockk<PromptStateDao>(relaxed = true)
         coEvery { promptStateDao.countPromptsSince(any(), any()) } returns 0

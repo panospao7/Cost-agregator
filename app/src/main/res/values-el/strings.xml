@@ -661,4 +661,15 @@
     <string name="quick_add_flag_payment_conflict">Βρέθηκαν και κάρτα και μετρητά. Επιλέξτε ένα.</string>
     <string name="quick_add_flag_category_ambiguous">Ταίριαξαν περισσότερες κατηγορίες. Επιλέξτε μία.</string>
     <string name="add_expense_category_auto_hint">Δεν επιλέχθηκε κατηγορία. Θα ανατεθεί αυτόματα κατά την αποθήκευση.</string>
+    <string name="savings_goal_more_actions_cd_format">Περισσότερες ενέργειες για %1$s</string>
+    <string name="savings_goal_delete_confirm_title">Διαγραφή στόχου;</string>
+    <string name="savings_goal_delete_confirm_message_format">Διαγραφή του \"%1$s\"; Δεν έχει αποταμιεύσεις ή ιστορικό. Η ενέργεια δεν μπορεί να αναιρεθεί.</string>
+    <string name="savings_goal_delete_blocked_title">Δεν είναι δυνατή η διαγραφή αυτού του στόχου</string>
+    <string name="savings_goal_delete_blocked_message">Οι στόχοι με αποταμιεύσεις ή ιστορικό εισφορών δεν μπορούν να διαγραφούν, ώστε το αρχείο αποταμιεύσεών σας να παραμένει πλήρες.</string>
+    <string name="savings_goal_deleted_message">Ο στόχος διαγράφηκε</string>
+    <string name="savings_goal_delete_not_empty_message">Αυτός ο στόχος μόλις έλαβε αποταμιεύσεις, γι\' αυτό δεν διαγράφηκε.</string>
+    <string name="savings_goal_delete_history_unavailable_message">Δεν ήταν δυνατός ο έλεγχος του ιστορικού εισφορών, γι\' αυτό ο στόχος δεν διαγράφηκε. Δοκιμάστε ξανά αργότερα.</string>
+    <string name="savings_goal_deleting_cd">Διαγραφή στόχου σε εξέλιξη</string>
+    <string name="action_delete">Διαγραφή</string>
+    <string name="error_delete_failed">Αποτυχία διαγραφής</string>
 </resources>

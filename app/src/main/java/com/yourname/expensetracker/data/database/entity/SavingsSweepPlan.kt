@@ -22,7 +22,9 @@ import com.yourname.expensetracker.domain.core.money.MoneyAmount
     tableName = "savings_sweep_plan",
     foreignKeys = [
         // DB-8: CASCADE on SavingsSweepPlan.goalId → SavingsGoal(id)
-        // Safe: Sweep plans are derived recommendations for a goal; if the goal is deleted, plans have no meaning.
+        // Safe: PENDING/dismissed plans are derived recommendations that have no meaning without the goal.
+        // ACCEPTED plans are the provenance record of an accepted sweep (cross-checked against the ledger);
+        // goal deletion is therefore only allowed for empty goals (SavingsGoalDeletionPolicy).
         ForeignKey(
             entity = SavingsGoal::class,
             parentColumns = ["id"],

@@ -909,4 +909,13 @@
     <string name="quick_add_flag_payment_conflict">Se encontraron tarjeta y efectivo. Elige uno.</string>
     <string name="quick_add_flag_category_ambiguous">Coinciden varias categorías. Elige una.</string>
     <string name="add_expense_category_auto_hint">Sin categoría. Se asignará una automáticamente al guardar.</string>
+    <string name="savings_goal_more_actions_cd_format">Más acciones para %1$s</string>
+    <string name="savings_goal_delete_confirm_title">¿Eliminar objetivo?</string>
+    <string name="savings_goal_delete_confirm_message_format">¿Eliminar \"%1$s\"? No tiene ahorros ni historial. Esta acción no se puede deshacer.</string>
+    <string name="savings_goal_delete_blocked_title">No se puede eliminar este objetivo</string>
+    <string name="savings_goal_delete_blocked_message">Los objetivos con ahorros o historial de aportaciones no se pueden eliminar, para que tu registro de ahorros se mantenga completo.</string>
+    <string name="savings_goal_deleted_message">Objetivo eliminado</string>
+    <string name="savings_goal_delete_not_empty_message">Este objetivo acaba de recibir ahorros, por lo que no se eliminó.</string>
+    <string name="savings_goal_delete_history_unavailable_message">No se pudo comprobar el historial de aportaciones, por lo que el objetivo no se eliminó. Inténtalo de nuevo más tarde.</string>
+    <string name="savings_goal_deleting_cd">Eliminando objetivo</string>
 </resources>
