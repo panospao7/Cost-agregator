@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.intelligence
 
 import android.content.Context
+import com.yourname.expensetracker.data.database.entity.UserCorrection
 import com.yourname.expensetracker.data.repository.UserCorrectionRepository
 import io.mockk.*
 import kotlinx.coroutines.runBlocking
@@ -176,5 +177,194 @@ class TransactionClassifierTest {
         val stats = classifier.getStats()
         assertEquals(1, stats.totalPositive)
         assertEquals(1, stats.totalNegative)
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // R-LEARN-1: retention redaction nulls notificationTitle / notificationText. Such rows carry
+    // only the merchant name and must not (re)train the model. initialize() is the deterministic
+    // retrain trigger (getCount() > lastTrainingCount && getCount() >= 20), so these tests use it
+    // instead of the 2-second debounced retrainFromCorrections().
+    // ---------------------------------------------------------------------------------------
+
+    private fun redactedCorrection(index: Int, approved: Boolean): UserCorrection = UserCorrection(
+        id = 1000L + index,
+        packageName = "com.synthetic.bank",
+        originalMerchant = "manualmerchant$index",
+        correctedMerchant = null,
+        originalAmount = 10.0,
+        correctedAmount = null,
+        originalCategoryId = null,
+        correctedCategoryId = null,
+        originalType = null,
+        correctedType = null,
+        wasRejected = !approved,
+        wasApproved = approved,
+        notificationTitle = null,
+        notificationText = null,
+        createdAt = 1L
+    )
+
+    /** variant 0 = title and text, 1 = title only, 2 = text only (all count as unredacted). */
+    private fun unredactedCorrection(index: Int, approved: Boolean, variant: Int = 0): UserCorrection {
+        val title = if (approved) "Bank alert $index" else "Promo $index"
+        val text = if (approved) "Payment of $index.50 EUR at shop$index" else "Your OTP code verify offer $index"
+        return UserCorrection(
+            id = index.toLong(),
+            packageName = "com.synthetic.bank",
+            originalMerchant = "shop$index",
+            correctedMerchant = null,
+            originalAmount = 10.0,
+            correctedAmount = null,
+            originalCategoryId = null,
+            correctedCategoryId = null,
+            originalType = null,
+            correctedType = null,
+            wasRejected = !approved,
+            wasApproved = approved,
+            notificationTitle = if (variant == 2) null else title,
+            notificationText = if (variant == 1) null else text,
+            createdAt = 1L
+        )
+    }
+
+    private fun classifierFor(
+        corrections: List<UserCorrection>,
+        filesDir: File = createTempDir("classifier_retrain"),
+        crypto: com.yourname.expensetracker.data.privacy.AtRestEncryptionService = mockk(relaxed = true)
+    ): Pair<TransactionClassifier, UserCorrectionRepository> {
+        val repo = mockk<UserCorrectionRepository>()
+        coEvery { repo.getCount() } returns corrections.size
+        coEvery { repo.getAll() } returns corrections
+        val ctx = mockk<Context>(relaxed = true)
+        every { ctx.filesDir } returns filesDir
+        return TransactionClassifier(ctx, repo, crypto) to repo
+    }
+
+    private suspend fun trainBaseline(target: TransactionClassifier) {
+        repeat(15) { target.train("Payment of $it.99 EUR at baseline$it", isTransaction = true) }
+        repeat(15) { target.train("Your OTP code verify offer baseline$it", isTransaction = false) }
+    }
+
+    private val probes = listOf(
+        "payment of 12.50 EUR at baseline3",
+        "otp code verify offer",
+        "manualmerchant5",
+        "bank alert shop4"
+    )
+
+    @Test
+    fun `R-LEARN-1 twenty-five fully redacted corrections leave trained model and predictions unchanged`() = runBlocking {
+        // Control: identical baseline training, nothing to retrain from.
+        val (control, _) = classifierFor(emptyList())
+        trainBaseline(control)
+        control.initialize()
+        val controlStats = control.getStats()
+        val controlPredictions = probes.map { control.predict(it) }
+        assertTrue("control must be ready so the comparison is meaningful", controlStats.isReady)
+
+        // Subject: same baseline, then initialize() sees 25 redacted rows (>= MIN_TRAINING_SAMPLES).
+        val redacted = (0 until 25).map { redactedCorrection(it, approved = it % 2 == 0) }
+        val (subject, repo) = classifierFor(redacted)
+        trainBaseline(subject)
+        subject.initialize()
+
+        coVerify(exactly = 1) { repo.getAll() } // retrain was attempted, then rejected the rows
+        val stats = subject.getStats()
+        assertEquals("no sample may be added", 15, stats.totalPositive)
+        assertEquals("no sample may be added", 15, stats.totalNegative)
+        assertEquals("no merchant-only vocabulary may be added", controlStats, stats)
+        probes.forEachIndexed { i, probe ->
+            assertEquals("prediction for '$probe' must be unchanged", controlPredictions[i], subject.predict(probe), 0f)
+        }
+    }
+
+    @Test
+    fun `R-LEARN-1 redacted corrections alone never make an untrained model ready`() = runBlocking {
+        val redacted = (0 until 30).map { redactedCorrection(it, approved = it % 2 == 0) }
+        val (subject, _) = classifierFor(redacted)
+
+        subject.initialize()
+
+        val stats = subject.getStats()
+        assertEquals(0, stats.totalPositive)
+        assertEquals(0, stats.totalNegative)
+        assertFalse(stats.isReady)
+        assertEquals(0.5f, subject.predict("payment of 12.50 EUR"), 0f)
+    }
+
+    @Test
+    fun `R-LEARN-1 mixed set trains only the unredacted rows`() = runBlocking {
+        val unredacted = (0 until 22).map {
+            // 14 approved + 8 rejected, covering title+text, title-only and text-only rows.
+            unredactedCorrection(it, approved = it < 14, variant = it % 3)
+        }
+        val redacted = (0 until 12).map { redactedCorrection(it, approved = it % 2 == 0) }
+        val (subject, _) = classifierFor(unredacted + redacted)
+
+        subject.initialize()
+
+        val stats = subject.getStats()
+        assertEquals("only unredacted approved rows are positives", 14, stats.totalPositive)
+        assertEquals("only unredacted rejected rows are negatives", 8, stats.totalNegative)
+        assertTrue(stats.isReady)
+    }
+
+    @Test
+    fun `R-LEARN-1 boundary - nineteen unredacted plus redacted rows do not retrain despite total above minimum`() = runBlocking {
+        val unredacted = (0 until 19).map { unredactedCorrection(it, approved = it < 11) }
+        val redacted = (0 until 10).map { redactedCorrection(it, approved = true) }
+        // Total 29 >= 20 but only 19 are usable.
+        val (subject, _) = classifierFor(unredacted + redacted)
+
+        subject.initialize()
+
+        val stats = subject.getStats()
+        assertEquals(0, stats.totalPositive)
+        assertEquals(0, stats.totalNegative)
+        assertEquals(0.5f, subject.predict("payment of 12.50 EUR"), 0f)
+    }
+
+    @Test
+    fun `R-LEARN-1 boundary - exactly twenty unredacted rows train and redacted extras are ignored`() = runBlocking {
+        val unredacted = (0 until 20).map { unredactedCorrection(it, approved = it < 12) }
+        val redacted = (0 until 5).map { redactedCorrection(it, approved = false) }
+        val (subject, _) = classifierFor(unredacted + redacted)
+
+        subject.initialize()
+
+        val stats = subject.getStats()
+        assertEquals(12, stats.totalPositive)
+        assertEquals(8, stats.totalNegative)
+        assertTrue(stats.isReady)
+    }
+
+    @Test
+    fun `R-LEARN-1 lastTrainingCount is the unfiltered count so a restart does not retrain`() = runBlocking {
+        val sharedDir = createTempDir("classifier_restart")
+        // Passthrough crypto so the persisted model can be reloaded by the second instance.
+        val crypto = mockk<com.yourname.expensetracker.data.privacy.AtRestEncryptionService>()
+        every { crypto.encrypt(any()) } answers { firstArg<ByteArray>() }
+        every { crypto.decrypt(any()) } answers { firstArg<ByteArray>() }
+
+        val unredacted = (0 until 22).map { unredactedCorrection(it, approved = it < 14) }
+        val redacted = (0 until 8).map { redactedCorrection(it, approved = true) }
+        val all = unredacted + redacted // getCount() == 30, usable == 22
+
+        val (first, firstRepo) = classifierFor(all, sharedDir, crypto)
+        first.initialize()
+        coVerify(exactly = 1) { firstRepo.getAll() }
+        val firstStats = first.getStats()
+        assertEquals(14, firstStats.totalPositive)
+        assertEquals(8, firstStats.totalNegative)
+        first.destroy() // persists the model, including lastTrainingCount
+
+        val (second, secondRepo) = classifierFor(all, sharedDir, crypto)
+        second.initialize()
+
+        coVerify(exactly = 0) { secondRepo.getAll() } // getCount() (30) is not > lastTrainingCount (30)
+        val secondStats = second.getStats()
+        assertEquals(firstStats.totalPositive, secondStats.totalPositive)
+        assertEquals(firstStats.totalNegative, secondStats.totalNegative)
+        second.destroy()
     }
 }

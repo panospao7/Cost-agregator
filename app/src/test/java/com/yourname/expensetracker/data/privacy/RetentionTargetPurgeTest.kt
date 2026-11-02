@@ -494,9 +494,24 @@ class RetentionTargetPurgeTest {
                 )
                 assertFalse("raw item description must not survive", oldItem.itemDescription.contains("SENSITIVE_ITEM"))
                 assertNull("old aiRationale must be nulled", oldItem.aiRationale)
+                assertNull("old suggestedCategoryName must be nulled", oldItem.suggestedCategoryName)
+                assertNull("old alternativeCategoriesJson must be nulled", oldItem.alternativeCategoriesJson)
                 assertEquals("old itemAmount must be preserved", 9.0, oldItem.itemAmount, 0.0)
             }
         }
+
+        // R-RCPT-1: userCorrectedCategoryName is a user-chosen category label, not raw receipt
+        // text, so the retention scrub PRESERVES it (strict: the rows must exist, no null guard).
+        assertEquals(
+            "old userCorrectedCategoryName must be preserved",
+            "UserCat_old1",
+            itemDao.getById(oldItemId1)!!.userCorrectedCategoryName
+        )
+        assertEquals(
+            "old userCorrectedCategoryName must be preserved",
+            "UserCat_old2",
+            itemDao.getById(oldItemId2)!!.userCorrectedCategoryName
+        )
 
         // In-window receipt and its child categorization row must remain completely untouched
         val inWindowReceipt = receiptDao.getById(inWindowReceiptId)!!
@@ -508,6 +523,30 @@ class RetentionTargetPurgeTest {
         assertEquals("SENSITIVE_ITEM_in-window", inWindowItem!!.itemDescription)
         assertEquals("SENSITIVE_RATIONALE_in-window", inWindowItem.aiRationale)
         assertEquals("Suggested_in-window", inWindowItem.suggestedCategoryName)
+        assertEquals("UserCat_in-window", inWindowItem.userCorrectedCategoryName)
         assertEquals(9.0, inWindowItem.itemAmount, 0.0)
+    }
+
+    @Test
+    fun `R-RCPT-1 row whose only sensitive column is userCorrectedCategoryName is left untouched by the receipt retention redaction`() = runTest {
+        val receiptDao = database.scannedReceiptDao()
+        val itemDao = database.receiptItemCategorizationDao()
+        val oldReceiptId = receiptDao.insert(scannedReceiptRow(olderThanCutoff))
+        val onlyCategoryId = itemDao.insert(
+            receiptItemRow(oldReceiptId, "only-cat", olderThanCutoff).copy(
+                itemDescription = "",
+                aiRationale = null,
+                suggestedCategoryName = null,
+                alternativeCategoriesJson = null,
+                userCorrectedCategoryName = "UserCat_only"
+            )
+        )
+        val before = itemDao.getById(onlyCategoryId)!!
+
+        val redacted = itemDao.redactForReceiptsOlderThan(cutoffMs)
+
+        assertEquals("no sensitive column is set, so no row may be counted", 0, redacted)
+        assertEquals("row must be left completely untouched", before, itemDao.getById(onlyCategoryId))
+        assertEquals("UserCat_only", itemDao.getById(onlyCategoryId)!!.userCorrectedCategoryName)
     }
 }
