@@ -293,7 +293,7 @@ class SmsParserTest {
     }
 
     @Test
-    fun `English bank SMS with balance before purchase extracts purchase amount and does not auto-accept`() = runBlocking {
+    fun `English bank SMS with balance before purchase reads the first amount and is never auto-accepted`() = runBlocking {
         val result = parser.parse(
             title = "Eurobank",
             text = "Available balance EUR 1,245.67. Purchase of EUR 12.50 at COFFEE SHOP on 10/04",
@@ -301,15 +301,18 @@ class SmsParserTest {
             packageName = "com.google.android.apps.messaging"
         )
         assertNotNull(result)
-        assertEquals(12.50, result!!.amount, 0.001)
+        // Owner item 113: FL-02 is closed by review. The amount read is unchanged (first amount), so the
+        // review screen is pre-filled with the balance here: a known limitation, never a silent expense.
+        assertEquals(1245.67, result!!.amount, 0.001)
+        assertTrue(result.isAmountAmbiguous)
         assertEquals(ParsedTransactionType.PURCHASE, result.type)
 
         val routed = routeParsed(result)
-        assertNotEquals(RoutingDecision.AUTO_ACCEPT, routed.decision)
+        assertEquals(RoutingDecision.NEEDS_REVIEW, routed.decision)
     }
 
     @Test
-    fun `Greek bank SMS with ypoloipo before agora extracts purchase amount and does not auto-accept`() = runBlocking {
+    fun `Greek bank SMS with ypoloipo before agora reads the first amount and is never auto-accepted`() = runBlocking {
         val result = parser.parse(
             title = "NBG",
             text = "Διαθέσιμο υπόλοιπο 1.245,67 EUR. Αγορά 15,20 EUR στο SKLAVENITIS στις 07/02",
@@ -317,11 +320,12 @@ class SmsParserTest {
             packageName = "com.google.android.apps.messaging"
         )
         assertNotNull(result)
-        assertEquals(15.20, result!!.amount, 0.001)
+        assertEquals(1245.67, result!!.amount, 0.001)
+        assertTrue(result.isAmountAmbiguous)
         assertEquals(ParsedTransactionType.PURCHASE, result.type)
 
         val routed = routeParsed(result)
-        assertNotEquals(RoutingDecision.AUTO_ACCEPT, routed.decision)
+        assertEquals(RoutingDecision.NEEDS_REVIEW, routed.decision)
     }
 
     @Test
@@ -338,7 +342,7 @@ class SmsParserTest {
     }
 
     @Test
-    fun `Greek bank SMS with ypoloipo before xreosi extracts debit amount`() {
+    fun `Greek bank SMS with ypoloipo before xreosi reads the first amount and is never auto-accepted`() = runBlocking {
         val result = parser.parse(
             title = "Alpha",
             text = "Υπόλοιπο 540,00 EUR. Χρέωση κάρτας 18,90 EUR στο EVEREST στις 11/04",
@@ -346,19 +350,24 @@ class SmsParserTest {
             packageName = "com.google.android.apps.messaging"
         )
         assertNotNull(result)
-        assertEquals(18.90, result!!.amount, 0.001)
+        assertEquals(540.00, result!!.amount, 0.001)
+        assertTrue(result.isAmountAmbiguous)
         assertEquals(ParsedTransactionType.PURCHASE, result.type)
+        assertEquals(RoutingDecision.NEEDS_REVIEW, routeParsed(result).decision)
     }
 
     @Test
-    fun `balance-only bank SMS does not produce phantom purchase expense`() {
+    fun `balance-only bank SMS never becomes a silent expense`() = runBlocking {
         val greekBalanceOnly = parser.parse(
             title = "NBG",
             text = "Ενημέρωση συναλλαγών: Το διαθέσιμο υπόλοιπο του λογαριασμού σας είναι 1.250,00 EUR",
             bigText = null, subText = null,
             packageName = "com.google.android.apps.messaging"
         )
-        assertNull(greekBalanceOnly)
+        // Passes the keyword gate (συναλλαγ), so it goes to review, not to an expense.
+        assertNotNull(greekBalanceOnly)
+        assertTrue(greekBalanceOnly!!.isAmountAmbiguous)
+        assertEquals(RoutingDecision.NEEDS_REVIEW, routeParsed(greekBalanceOnly).decision)
 
         val englishBalanceOnly = parser.parse(
             title = "Eurobank",

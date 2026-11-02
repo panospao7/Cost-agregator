@@ -51,3 +51,18 @@ The original evidence base is `C:\Users\panos\Desktop\Cost-agregator\build\revie
 - The stress card does not use the simulator.
 - `isAmountAmbiguous` default and producers.
 - Strings merge.
+
+## Outcome for FL-02 (owner item 113, supersedes the R-SMS-* fixes above)
+reviewer-strict rejected the rule-based SmsParser rewrite on e042c2f5 after two review rounds. The owner chose option A.
+- `SmsParser` is back to its original logic: the amount read is the first currency amount, and the keyword gate and type rule are unchanged.
+- One rule is added: `isAmountAmbiguous` is true when an SMS has two or more different (amount, currency) pairs, or contains a balance word as a whole token. `ConfidenceRouter` sends these to NEEDS_REVIEW. FL-02's silent auto-creation of an expense from a balance therefore closes.
+- Known limitations, accepted by the owner:
+  - A balance-first SMS is pre-filled with the balance in review.
+  - A balance-only SMS that passes the gate appears in review.
+  - There are more review taps on bank SMS that include a balance.
+- Not carried over from the rewrite:
+  - `ΕΥΡΩ`/`ευρώ`/`EURO` as currencies.
+  - The unaccented all-caps `ΧΡΕΩΣΗ` gate.
+
+  Both remain gaps from before the lane; they are follow-ups, ideally built against real SMS samples.
+- R-EXPORT-1/2 final form: the business listings use `(SPENDING_PREDICATE OR installment markers)`, with no exemptions. This replaces the plan's `ROW_COUNT` markers. The guard's recorded exempt set goes 36 -> 35 because the subscription query now applies the predicate.
