@@ -39,7 +39,7 @@ class SmsParser @Inject constructor(
         val amt = CommonPatterns.GROUPED_AMOUNT_TOKEN
         val cur = """EUR|€|ΕΥΡΩ|ευρώ|EURO|USD|\$|GBP|£"""
         Pattern.compile(
-            """(?<![\d.,])($amt)(?![\d,]|\.\d)\s*($cur)|($cur)\s*(?<![\d.,])($amt)(?![\d,]|\.\d)""",
+            """(?<![\d.,])($amt)(?!\d|[.,]\d)\s*($cur)|($cur)\s*(?<![\d.,])($amt)(?!\d|[.,]\d)""",
             Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
         )
     }
