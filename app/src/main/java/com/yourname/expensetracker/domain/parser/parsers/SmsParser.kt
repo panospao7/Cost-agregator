@@ -37,49 +37,14 @@ class SmsParser @Inject constructor(
 
     private val amountPattern by lazy {
         val amt = CommonPatterns.GROUPED_AMOUNT_TOKEN
-        // Word-like currencies are boundary-checked so "ΕΥΡΩΠΑΙΚΗ" / "EUROPE"-style words are not
-        // read as a currency. The amount may follow a single separator ("SHOP,12.50") but not a
-        // digit-separator pair ("15.11" / "15,11").
-        val cur = """EURO(?!\p{L})|EUR|ΕΥΡΩ(?!\p{L})|ευρώ(?!\p{L})|€|USD|\$|GBP|£"""
         Pattern.compile(
-            """(?<!\d)(?<!\d[.,])($amt)(?!\d)\s*($cur)|($cur)\s*(?<!\d)(?<!\d[.,])($amt)(?!\d)""",
-            Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
+            """($amt)\s*(EUR|€|USD|\$|GBP|£)|(EUR|€|USD|\$|GBP|£)\s*($amt)""",
+            Pattern.CASE_INSENSITIVE
         )
     }
 
-    // Matched as whole tokens (case-insensitive via lowercased text; accented and unaccented
-    // Greek forms are both listed). Abbreviations carry no trailing dot. The dot is a clause
-    // separator in isAdjacentToKeyword, so a dot directly after an abbreviation token ("Bal.",
-    // "Υπόλ.") is collapsed first via abbreviationDotRegex (prefix path); the trailing path
-    // already cuts at the dot, leaving the bare token.
-    private val abbreviationDotRegex =
-        Regex("""(?<![\p{L}\p{N}])(bal|avl|avail|υπόλ|υπολ)\.""")
-
-    private val BALANCE_KEYWORDS = listOf(
-        "balance", "available", "avail", "avl", "bal", "remaining", "limit", "saldo",
-        "υπόλοιπο", "υπολοιπο", "υπόλ", "υπολ", "διαθέσιμο", "διαθεσιμο",
-        "ypoloipo", "ipolipo", "diathesimo"
-    )
-
-    private val PURCHASE_PREFERENCE_KEYWORDS = listOf(
-        "purchase", "spent", "payment", "paid", "charged", "debit",
-        "αγορά", "αγορα", "χρέωση", "χρεωση", "πληρωμή", "πληρωμη",
-        "συναλλαγή", "συναλλαγη",
-        "agora", "xreosi", "hreosi", "pliromi", "plirwmi", "synallagi",
-        "compra", "pago", "cargo"
-    )
-
-    // Trailing-keyword form ("EUR 500.00 balance"), built from BALANCE_KEYWORDS (longest first).
-    private val trailingBalanceRegex by lazy {
-        val alternation = BALANCE_KEYWORDS.sortedByDescending { it.length }.joinToString("|") { Regex.escape(it) }
-        Regex("""^\s*(?:in|of|for|:)?\s*(?:avail(?:able)?\s+|διαθέσιμο\s+|διαθεσιμο\s+|diathesimo\s+)?(?:$alternation)(?![\p{L}\p{N}])""")
-    }
-
     private val TRANSACTION_KEYWORDS = listOf(
-        // Purchase keywords. "paid"/"spent" are intentionally absent (they match "prepaid" and
-        // "paid by" in deposits). The unaccented stem "χρεωσ" is intentionally absent too: it
-        // matches "χρεωστική" (debit card); all-caps "ΧΡΕΩΣΗ" is covered by a token-bounded
-        // check in parse().
+        // Purchase keywords
         "αγορ", "πληρωμ", "χρέωσ", "συναλλαγ",
         "purchase", "payment", "charged", "debit",
         "agora", "pliromi", "plirwmi", "hreosi", "xreosi", "synallagi"
@@ -135,8 +100,7 @@ class SmsParser @Inject constructor(
 
 
         // Must contain transaction keywords (purchase, deposit OR transfer)
-        val hasPurchaseKeyword = TRANSACTION_KEYWORDS.any { lowerBody.contains(it) } ||
-            containsKeywordToken(lowerBody, listOf("χρεωση"))
+        val hasPurchaseKeyword = TRANSACTION_KEYWORDS.any { lowerBody.contains(it) }
         val hasDepositKeyword = DEPOSIT_KEYWORDS.any { lowerBody.contains(it) }
         val hasTransferKeyword = TRANSFER_KEYWORDS.any { lowerBody.contains(it) }
         
@@ -149,16 +113,20 @@ class SmsParser @Inject constructor(
             else -> ParsedTransactionType.PURCHASE
         }
 
-        // Extract amount (rejecting balance-adjacent numbers and preferring purchase-adjacent ones)
-        val extracted = extractBestAmount(body) ?: return null
-        val amount = extracted.amount
-        val currency = extracted.currency
+        // Extract amount
+        val matcher = amountPattern.matcher(body)
+        if (!matcher.find()) return null
+
+        val amountStr = (matcher.group(1) ?: matcher.group(4)) ?: return null
+        val amount = AmountUtils.parseAmount(amountStr) ?: return null
+        val currency = currencyNormalizer.normalize(matcher.group(2) ?: matcher.group(3))
 
         if (amount < 0.10 || amount > 50000) return null
 
         // Try to extract merchant from the SMS body
         val merchant = extractMerchantFromSms(body)
-        
+        val isAmountAmbiguous = hasMultipleDistinctAmounts(body) || containsBalanceWord(lowerBody)
+
         // Detect transfer direction for deposits/transfers
         val direction = detectSmsDirection(lowerBody, transactionType)
         val accountName = extractAccountNameFromSms(body)
@@ -168,7 +136,8 @@ class SmsParser @Inject constructor(
             currency = currency,
             merchant = merchant,
             type = transactionType,
-            confidence = if (extracted.isAmbiguous) AMBIGUOUS_AMOUNT_CONFIDENCE else CLEAN_AMOUNT_CONFIDENCE,
+            confidence = 0.85f,
+            isAmountAmbiguous = isAmountAmbiguous,
             transferDirection = direction,
             transferAccountName = accountName?.let { 
                 when (direction) {
@@ -176,139 +145,39 @@ class SmsParser @Inject constructor(
                     ParsedTransferDirection.OUTGOING -> "To: $it"
                     else -> null
                 }
-            },
-            isAmountAmbiguous = extracted.isAmbiguous
+            }
         )
     }
-
-    private data class AmountCandidate(
-        val amount: Double,
-        val currency: String,
-        val start: Int,
-        val end: Int
-    )
-
-    private data class ExtractedAmount(
-        val amount: Double,
-        val currency: String,
-        val isAmbiguous: Boolean
-    )
-
-    private fun extractBestAmount(body: String): ExtractedAmount? {
-        val candidates = mutableListOf<AmountCandidate>()
-        val matcher = amountPattern.matcher(body)
-        while (matcher.find()) {
-            val amountStr = matcher.group(1) ?: matcher.group(4) ?: continue
+    
+    /**
+     * FL-02 is closed by review, not by guessing: the amount read is unchanged (first
+     * [amountPattern] match), and an SMS with several distinct amounts or a balance word
+     * is flagged ambiguous so it is never auto-accepted.
+     */
+    private fun hasMultipleDistinctAmounts(body: String): Boolean {
+        val m = amountPattern.matcher(body)
+        val seen = HashSet<Pair<Double, String>>()
+        while (m.find()) {
+            val amountStr = (m.group(1) ?: m.group(4)) ?: continue
             val amount = AmountUtils.parseAmount(amountStr) ?: continue
-            val rawCurrency = matcher.group(2) ?: matcher.group(3)
-            val normalizedCurrency = if (
-                rawCurrency?.equals("ΕΥΡΩ", ignoreCase = true) == true ||
-                rawCurrency?.equals("ευρώ", ignoreCase = true) == true
-            ) {
-                "EUR"
-            } else {
-                currencyNormalizer.normalize(rawCurrency)
-            }
-            candidates.add(AmountCandidate(amount, normalizedCurrency, matcher.start(), matcher.end()))
-        }
-
-        // Distinct (amount, currency), first occurrence kept: text duplicated into bigText
-        // ("text + bigText") must stay a single clean amount.
-        val distinct = candidates.distinctBy { it.amount to it.currency }
-        val hadMultipleCandidates = distinct.size > 1
-        val nonBalance = distinct.filterNot {
-            isAdjacentToKeyword(body, it.start, it.end, BALANCE_KEYWORDS, allowTrailingKeyword = true)
-        }
-        if (nonBalance.isEmpty()) {
-            // Every candidate looks balance-adjacent. Keep a lone candidate only when a purchase or
-            // deposit keyword precedes it ("Purchase at BAL HARBOUR EUR 25.00"), and route it to review.
-            val only = distinct.singleOrNull() ?: return null
-            return if (hasPurchaseOrDepositContext(body, only)) {
-                ExtractedAmount(only.amount, only.currency, isAmbiguous = true)
-            } else {
-                null
-            }
-        }
-        if (nonBalance.size == 1) {
-            val single = nonBalance.single()
-            return ExtractedAmount(single.amount, single.currency, isAmbiguous = hadMultipleCandidates)
-        }
-
-        val purchaseAdjacent = nonBalance.filter { isAdjacentToKeyword(body, it.start, it.end, PURCHASE_PREFERENCE_KEYWORDS) }
-        if (purchaseAdjacent.size == 1) {
-            val chosen = purchaseAdjacent.single()
-            return ExtractedAmount(chosen.amount, chosen.currency, isAmbiguous = true)
-        }
-
-        // Ambiguous: multiple plausible currency amounts remain. Take the FIRST one (the
-        // transaction amount precedes the balance in bank SMS); ConfidenceRouter demotes the
-        // ambiguous result to review.
-        val pool = if (purchaseAdjacent.isNotEmpty()) purchaseAdjacent else nonBalance
-        val chosen = pool.first()
-        return ExtractedAmount(chosen.amount, chosen.currency, isAmbiguous = hadMultipleCandidates)
-    }
-
-    // Prefix-clause keyword context for a lone balance-adjacent candidate. A balance keyword attached
-    // directly to the amount ("Payment info: balance EUR 500.00") outranks a farther purchase
-    // keyword; a balance-like word followed by other words ("BAL HARBOUR EUR 25.00") does not.
-    private fun hasPurchaseOrDepositContext(text: String, candidate: AmountCandidate): Boolean {
-        val clause = prefixClauseOf(text, candidate.start)
-        if (Regex("""\d""").containsMatchIn(clause)) return false
-        val keywords = PURCHASE_PREFERENCE_KEYWORDS + DEPOSIT_KEYWORDS.map { it.trim() }
-        if (!containsKeywordToken(clause, keywords)) return false
-        val balanceAlternation = BALANCE_KEYWORDS.sortedByDescending { it.length }.joinToString("|") { Regex.escape(it) }
-        val directBalance = Regex("""(?<![\p{L}\p{N}])(?:$balanceAlternation)[\s:=]*$""")
-        return !directBalance.containsMatchIn(clause)
-    }
-
-    private fun prefixClauseOf(text: String, matchStart: Int): String {
-        val prefixStart = (matchStart - KEYWORD_ADJACENCY_WINDOW).coerceAtLeast(0)
-        val prefix = text.substring(prefixStart, matchStart).lowercase()
-        return prefix.replace(abbreviationDotRegex, "$1")
-            .substringAfterLast('.').substringAfterLast(';').substringAfterLast(',')
-            .substringAfterLast('\n').substringAfterLast('(').substringAfterLast('-')
-    }
-
-    private fun isAdjacentToKeyword(
-        text: String,
-        matchStart: Int,
-        matchEnd: Int,
-        keywords: List<String>,
-        allowTrailingKeyword: Boolean = false
-    ): Boolean {
-        val lastClause = prefixClauseOf(text, matchStart)
-        if (!Regex("""\d""").containsMatchIn(lastClause) && containsKeywordToken(lastClause, keywords)) {
-            return true
-        }
-
-        if (allowTrailingKeyword) {
-            val suffixEnd = (matchEnd + KEYWORD_ADJACENCY_WINDOW).coerceAtMost(text.length)
-            val suffix = text.substring(matchEnd, suffixEnd).lowercase()
-            val nextClause = suffix.substringBefore('.').substringBefore(';').substringBefore(',')
-                .substringBefore('\n').substringBefore(')').substringBefore('-')
-            // A digit in the next clause means the trailing keyword belongs to the NEXT amount
-            // ("Purchase EUR 12.50 Balance EUR 500.00").
-            if (!Regex("""\d""").containsMatchIn(nextClause) && trailingBalanceRegex.containsMatchIn(nextClause)) {
-                return true
-            }
+            val currency = currencyNormalizer.normalize(m.group(2) ?: m.group(3))
+            seen.add(amount to currency)
+            if (seen.size > 1) return true
         }
         return false
     }
 
-    private fun containsKeywordToken(clause: String, keywords: List<String>): Boolean {
-        return keywords.any { kw ->
-            Regex("""(?<![\p{L}\p{N}])${Regex.escape(kw)}(?![\p{L}\p{N}])""").containsMatchIn(clause)
-        }
+    private val balanceWordRegex by lazy {
+        val keywords = listOf(
+            "balance", "available", "avail", "avl", "bal", "remaining", "limit", "saldo",
+            "υπόλοιπο", "υπολοιπο", "υπόλ", "υπολ", "διαθέσιμο", "διαθεσιμο",
+            "ypoloipo", "ipolipo", "diathesimo"
+        )
+        Regex(keywords.joinToString("|") { """(?<![\p{L}\p{N}])${Regex.escape(it)}(?![\p{L}\p{N}])""" })
     }
 
-    private companion object {
-        private const val CLEAN_AMOUNT_CONFIDENCE = 0.85f
-        // Equal to the clean confidence: ConfidenceRouter caps ambiguous amounts below
-        // AUTO_ACCEPT so multi-amount SMS land in review without a parser-side floor/penalty.
-        private const val AMBIGUOUS_AMOUNT_CONFIDENCE = 0.85f
-        private const val KEYWORD_ADJACENCY_WINDOW = 35
-    }
-    
+    private fun containsBalanceWord(lowerBody: String): Boolean = balanceWordRegex.containsMatchIn(lowerBody)
+
     /**
      * Detects transfer direction from SMS text.
      * Returns null for ambiguous cases (tie/no evidence) to avoid biasing unknown transfers.
