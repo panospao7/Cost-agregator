@@ -31,6 +31,12 @@ class ExportDataRepository @Inject constructor(
 
         /** Sweep only temps idle for at least 24h — deliberately conservative. */
         const val STALE_TEMP_MIN_AGE_MS: Long = 24L * 60L * 60L * 1000L
+
+        /** J-12-1: minimum age before a generated export file is swept (1 hour). */
+        const val EXPORT_SWEEP_MIN_AGE_MS: Long = 60L * 60L * 1000L
+
+        /** J-12-1: file-name prefixes the export sweep may delete (nothing else). */
+        private val EXPORT_SWEEP_PREFIXES = listOf(TEMP_FILE_PREFIX, "expenses_", "accountant_report_")
     }
 
     /**
@@ -130,6 +136,40 @@ class ExportDataRepository @Inject constructor(
             val age = nowMs - file.lastModified()
             if (age >= minAgeMs && file.delete()) {
                 deleted++
+            }
+        }
+        return deleted
+    }
+
+    /**
+     * ## J-12-1: age-based sweep of generated export files
+     *
+     * Deletes only REGULAR files directly inside `files/exports/` (no recursion,
+     * nothing outside that directory) whose names start with `.tmp_`,
+     * `expenses_` or `accountant_report_` and that are at least [minAgeMs] old
+     * (last-modified based). Every other name, and every sub-directory, is kept.
+     * Failures on individual files are skipped (best effort); no paths or
+     * exception text are logged. Returns the number of files removed.
+     */
+    fun sweepStaleExportFiles(
+        nowMs: Long,
+        minAgeMs: Long = EXPORT_SWEEP_MIN_AGE_MS
+    ): Int {
+        if (nowMs < 0 || minAgeMs < 0) return 0
+        val exportDir = File(context.filesDir, "exports")
+        val candidates = exportDir.listFiles() ?: return 0
+        var deleted = 0
+        for (file in candidates) {
+            try {
+                if (!file.isFile) continue
+                val name = file.name
+                if (EXPORT_SWEEP_PREFIXES.none { name.startsWith(it) }) continue
+                val age = nowMs - file.lastModified()
+                if (age >= minAgeMs && file.delete()) {
+                    deleted++
+                }
+            } catch (_: SecurityException) {
+                // best effort: skip this entry
             }
         }
         return deleted
