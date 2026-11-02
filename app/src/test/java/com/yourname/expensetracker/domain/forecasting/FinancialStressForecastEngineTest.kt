@@ -1214,6 +1214,49 @@ class FinancialStressForecastEngineTest {
     }
 
     @Test
+    fun `AE-1 INV-1 INV-2 recurring above 80 percent of income with healthy balances and buffers and no high risk emits exactly R1`() = runTest {
+        // Fixture design (engine uses its own seeded bootstrap, so only the bands below matter):
+        // - Six spend days of 4000 in a 60 day history (spend-day share 0.1), so the 90 day
+        //   discretionary total is 4000 x Binomial(90, 0.1): median 9 spikes (36000) and about an
+        //   18.6 percent chance of 12 or more spikes.
+        // - Starting balance 43400, monthly income 1000 (1000/2000/3000 per horizon) and one
+        //   900 obligation per horizon (annual cadence): available is 43500/44500/45500, so only
+        //   the 90 day horizon has a crunch chance (about 0.19, MODERATE); 30 and 60 days are LOW.
+        // - Every horizon projects far above 0 and far above twice the 500 buffer.
+        // - 900 recurring > 0.8 x 1000 income.
+        coEvery { accountBalanceProvider.currentBalance(any()) } returns 43_400.0
+        val spikeDayOffsets = listOf(59, 48, 37, 26, 15, 4)
+        allExpenses = spikeDayOffsets.mapIndexed { index, offsetDays ->
+            expense(1000L + index, 4_000.0, TransactionType.PURCHASE, now - offsetDays * dayMs)
+        }
+        allDeposits = listOf(expense(1100L, 1_000.0, TransactionType.DEPOSIT, now - 2 * dayMs, merchant = "Employer"))
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+            RecurringPattern(
+                id = null,
+                merchantName = "Annual Insurance",
+                averageAmount = 900.0,
+                currency = "EUR",
+                frequency = RecurrenceFrequency.ANNUALLY,
+                periodVarianceDays = 0,
+                amountVariancePercent = 0.0,
+                nextExpectedDate = now + dayMs,
+                confidence = 1.0f,
+                previousDates = emptyList()
+            )
+        )
+
+        val result = engine.computeStressForecast()
+
+        // Scenario preconditions from the spec: some risk, but not high; balances and buffers healthy.
+        assertNull(result.failure)
+        assertTrue(result.horizons.any { it.riskLevel >= StressRiskLevel.MODERATE })
+        assertTrue(result.horizons.none { it.riskLevel >= StressRiskLevel.HIGH })
+        assertTrue(result.horizons.all { it.projectedBalance >= 0.0 })
+        assertTrue(result.horizons.minOf { it.discretionaryBuffer } >= 500.0)
+        assertEquals(listOf(StressRecommendationKind.REVIEW_RECURRING_OBLIGATIONS), kindsOf(result))
+    }
+
+    @Test
     fun `INV-2 at most one recommendation per kind`() = runTest {
         allExpenses = emptyList()
         allDeposits = emptyList()
