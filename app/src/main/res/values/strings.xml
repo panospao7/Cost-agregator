@@ -3143,5 +3143,14 @@
     <!-- loan-installments S12b: budget info line (dormant behind InstallmentsFeature.ENABLED); %1$s is a formatted amount with its currency -->
     <string name="budget_includes_installments_format">Includes %1$s in installments</string>
     <string name="budget_includes_installments_unavailable">Installment amount unavailable</string>
+    <string name="savings_goal_more_actions_cd_format">More actions for %1$s</string>
+    <string name="savings_goal_delete_confirm_title">Delete goal?</string>
+    <string name="savings_goal_delete_confirm_message_format">Delete \"%1$s\"? It has no savings or history. This can\'t be undone.</string>
+    <string name="savings_goal_delete_blocked_title">Can\'t delete this goal</string>
+    <string name="savings_goal_delete_blocked_message">Goals with savings or contribution history can\'t be deleted, so your savings record stays complete.</string>
+    <string name="savings_goal_deleted_message">Goal deleted</string>
+    <string name="savings_goal_delete_not_empty_message">This goal just received savings, so it wasn\'t deleted.</string>
+    <string name="savings_goal_delete_history_unavailable_message">Contribution history couldn\'t be checked, so the goal wasn\'t deleted. Try again later.</string>
+    <string name="savings_goal_deleting_cd">Deleting goal</string>
 
 </resources>
