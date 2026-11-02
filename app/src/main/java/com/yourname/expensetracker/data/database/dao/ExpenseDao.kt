@@ -288,6 +288,7 @@ interface ExpenseDao {
      * Fetch recent expenses for a specific merchant for subscription detection.
      * Returns all purchases for the merchant since the given timestamp.
      */
+    // spending-exempt: SUGGESTION
     @Query("""
         SELECT * FROM expenses 
         WHERE merchant = :merchant 
@@ -298,6 +299,7 @@ interface ExpenseDao {
     """)
     suspend fun getRecentExpensesForMerchant(merchant: String, since: Long): List<Expense>
 
+    // spending-exempt: SUGGESTION
     @Transaction
     @Query("""
         SELECT * FROM expenses
@@ -1550,7 +1552,7 @@ AND LENGTH(:merchantKey) >= 8
         WHERE categoryId = :categoryId
         AND date >= :startDate AND date < :endDate
         AND ${SPENDING_TYPE_SQL}
-        AND isNotMine = 0
+        AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         ORDER BY date ASC
     """)
     suspend fun getExpensesByCategory(categoryId: Long, startDate: Long, endDate: Long): List<Expense>
@@ -2525,6 +2527,7 @@ AND LENGTH(:merchantKey) >= 8
         WHERE isBusinessExpense = 1 
         AND ${SPENDING_TYPE_SQL}
         AND date >= :startDate AND date < :endDate 
+        AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         ORDER BY date DESC
     """)
     suspend fun getBusinessExpensesBetween(startDate: Long, endDate: Long): List<Expense>
@@ -2534,6 +2537,7 @@ AND LENGTH(:merchantKey) >= 8
         WHERE isBusinessExpense = 1 
         AND ${SPENDING_TYPE_SQL}
         AND date >= :startDate AND date < :endDate 
+        AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         ORDER BY date DESC
     """)
     fun getBusinessExpensesBetweenFlow(startDate: Long, endDate: Long): Flow<List<Expense>>
@@ -2632,6 +2636,7 @@ AND LENGTH(:merchantKey) >= 8
         AND e.requiresReceipt = 1 
         AND sr.id IS NULL
         AND e.date >= :startDate AND e.date < :endDate
+        AND ${SpendingInclusionSql.SPENDING_PREDICATE_E}
         ORDER BY e.date DESC
     """)
     suspend fun getBusinessExpensesMissingReceipts(startDate: Long, endDate: Long): List<Expense>

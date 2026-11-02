@@ -772,6 +772,9 @@ EXPECTED_EXEMPT = {
     ("ExpenseDao.kt", "getOldestExpenseDate", "NON_MONEY"),
     ("ExpenseDao.kt", "getMerchantLocationClusters", "NON_MONEY"),
     ("ExpenseDao.kt", "searchMerchants", "SUGGESTION"),
+    # 1.0.4 S7b: +2 merchant-context readers classified as SUGGESTION-exempt.
+    ("ExpenseDao.kt", "getRecentExpensesForMerchant", "SUGGESTION"),
+    ("ExpenseDao.kt", "getRecentExpensesWithCategoryForMerchant", "SUGGESTION"),
     ("WarrantyDao.kt", "getTotalProtectedValue", "ASSET_VALUE"),
     ("WarrantyDao.kt", "getTotalProtectedValueByCurrency", "ASSET_VALUE"),
 }
@@ -782,7 +785,8 @@ EXPECTED_REASON_COUNTS = {
     "ROW_COUNT": 7,
     "NON_SPENDING_INCOME": 4,
     "NON_MONEY": 2,
-    "SUGGESTION": 1,
+    # 1.0.4 S7b: +2 merchant-context readers in ExpenseDao marked as SUGGESTION-exempt (1 -> 3).
+    "SUGGESTION": 3,
     "ASSET_VALUE": 2,
 }
 
@@ -830,7 +834,8 @@ def test_real_tree_is_clean(real_tree_report):
 def test_real_tree_report_exemption_set_equals_recorded_a12_6_set(real_tree_report):
     _proc, rows = real_tree_report
     exempt = [(f, fn, cls.split(":", 1)[1]) for f, fn, cls in rows if cls.startswith("exempt:")]
-    assert len(exempt) == len(set(exempt)) == 34
+    # 1.0.4 S7b: +2 merchant-context readers in ExpenseDao marked as SUGGESTION-exempt (34 -> 36).
+    assert len(exempt) == len(set(exempt)) == 36
     assert set(exempt) == EXPECTED_EXEMPT
 
 
@@ -843,10 +848,33 @@ def test_real_tree_report_reason_counts_and_no_unclassified(real_tree_report):
             counts[reason] = counts.get(reason, 0) + 1
     assert counts == EXPECTED_REASON_COUNTS
     assert not any(cls == "UNCLASSIFIED" for _f, _fn, cls in rows)
-    assert "SUMMARY: exempt=34 " in proc.stdout and "unclassified=0" in proc.stdout
+    # 1.0.4 S7b: +2 merchant-context readers in ExpenseDao marked as SUGGESTION-exempt (34 -> 36).
+    assert "SUMMARY: exempt=36 " in proc.stdout and "unclassified=0" in proc.stdout
 
 
 def test_real_tree_converted_samples_are_classified_as_predicate(real_tree_report):
     _proc, rows = real_tree_report
     predicate = {fn for _f, fn, cls in rows if cls == "predicate"}
     assert EXPECTED_PREDICATE_SAMPLE <= predicate
+
+
+# ── S6 (I-04-5): non-aggregate SELECT coverage ───────────────────────────────
+
+
+def test_non_aggregate_select_without_predicate_or_marker_is_rule_01():
+    text = _dao_text(
+        _q("SELECT * FROM expenses WHERE categoryId = :c AND isNotMine = 0", name="unfilteredSelect")
+    )
+    result = guard.scan_text(_PATH, text, enforce_non_aggregate_selects=True)
+    assert _triples(result) == [(R1, guard.CODE_NON_AGG_UNCOVERED, "unfilteredSelect")]
+
+
+def test_non_aggregate_select_with_predicate_or_column_or_marker_passes():
+    text = _dao_text(
+        _q("SELECT * FROM expenses WHERE ${SpendingInclusionSql.SPENDING_PREDICATE}", name="withPred"),
+        _q("SELECT id, spendingExclusionReason FROM expenses WHERE spendingExclusionReason IS NOT NULL", name="withCol"),
+        _marked("NON_MONEY", "SELECT DISTINCT merchant FROM expenses", name="withMarker"),
+    )
+    result = guard.scan_text(_PATH, text, enforce_non_aggregate_selects=True)
+    assert result.violations == []
+

@@ -743,4 +743,5 @@
     <string name="savings_goal_deleting_cd">Διαγραφή στόχου σε εξέλιξη</string>
     <string name="action_delete">Διαγραφή</string>
     <string name="error_delete_failed">Αποτυχία διαγραφής</string>
+    <string name="transactions_refund_likelihood_notice">Αυτό μοιάζει με επιστροφή χρημάτων. Οι επιστροφές καταγράφονται ως καταθέσεις, επομένως το σύνολο κατηγορίας της αρχικής αγοράς δεν μειώνεται. Για διόρθωση, επεξεργαστείτε ή διαγράψτε την αρχική αγορά.</string>
 </resources>

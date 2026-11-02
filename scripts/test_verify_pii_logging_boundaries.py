@@ -565,3 +565,62 @@ def test_undeclared_root_file_is_never_scanned(tmp_path, monkeypatch, capsys):
 
     assert code == 0
     assert "BadLogger" not in out.out
+
+
+# ── S6 (I-04-4): .message in event/diagnostic payload construction ──────────
+
+def test_event_constructor_with_raw_exception_message_detected(tmp_path):
+    """SideEffectOutcome.FailedRetryable(e.message) and TransactionEvent(reason = e.message) -> violation."""
+    kt_file = _write_kt(
+        tmp_path,
+        "BadEventPlanner.kt",
+        """package com.example
+
+class BadEventPlanner {
+    fun plan(e: Exception): Any {
+        val outcome = SideEffectOutcome.FailedRetryable(e.message ?: "Budget check failed", e.javaClass.name)
+        val event = TransactionEvent(
+            expenseId = 1L,
+            eventType = "SIDE_EFFECT_FAILED",
+            reason = e.message
+        )
+        return outcome to event
+    }
+}
+""",
+    )
+    allowlist = load_allowlist(_make_allowlist(tmp_path, "# empty allowlist\n"))
+    violations, fatal = scan_file(kt_file, allowlist)
+
+    assert not fatal
+    assert len(violations) == 2, f"Expected 2 event-payload violations, got: {violations}"
+    assert all("Event/diagnostic payload" in v for v in violations)
+
+
+def test_event_constructor_with_controlled_reason_code_passes(tmp_path):
+    """Event/diagnostic constructed with controlled constant and e.javaClass.simpleName -> no violation."""
+    kt_file = _write_kt(
+        tmp_path,
+        "SafeEventPlanner.kt",
+        """package com.example
+
+class SafeEventPlanner {
+    fun plan(e: Exception): Any {
+        val outcome = SideEffectOutcome.FailedRetryable("BUDGET_CHECK_FAILED", e.javaClass.simpleName)
+        val event = PipelineDiagnosticEvent(
+            pipeline = "TRANSACTION",
+            stage = "SIDE_EFFECT",
+            reasonCode = "SIDE_EFFECT_EXCEPTION",
+            exceptionClass = e.javaClass.simpleName
+        )
+        return outcome to event
+    }
+}
+""",
+    )
+    allowlist = load_allowlist(_make_allowlist(tmp_path, "# empty allowlist\n"))
+    violations, fatal = scan_file(kt_file, allowlist)
+
+    assert not fatal
+    assert violations == [], f"Expected NO violations for controlled reason code, got: {violations}"
+

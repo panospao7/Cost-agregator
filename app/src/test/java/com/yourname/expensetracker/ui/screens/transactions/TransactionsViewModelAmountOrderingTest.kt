@@ -21,6 +21,7 @@ import com.yourname.expensetracker.domain.currency.ReadHomeCurrencyState
 import com.yourname.expensetracker.domain.currency.ReadHomeFailure
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.ui.screens.transactions.TransactionsViewModel.TransactionTab
 import com.yourname.expensetracker.util.ViewModelTestUtils
@@ -124,7 +125,8 @@ class TransactionsViewModelAmountOrderingTest : ViewModelTestUtils() {
                 mockk<MerchantNormalizer>(relaxed = true),
                 mockk<TransferDirectionAnalytics>(relaxed = true),
                 mockk<TransactionLifecycleCoordinator>(relaxed = true),
-                mockk(relaxed = true)
+                debugExpenseAuditWriter = mockk(relaxed = true),
+                timeProvider = FakeTimeProvider(1_700_000_000_000L)
             )
         )
         categoryRepository = mockk(relaxed = true)

@@ -36,6 +36,7 @@ object RetentionPolicyContract {
         "notification_intake",
         "pipeline_diagnostic_events",
         "pending_reviews.notificationText",
+        "user_corrections.notificationText",
         "background_job_runs.errorMessage",
         "bank_statement_import_items.merchant",
         // ── RP-14 additions (D14-approved cutoffs) ─────────────────────────

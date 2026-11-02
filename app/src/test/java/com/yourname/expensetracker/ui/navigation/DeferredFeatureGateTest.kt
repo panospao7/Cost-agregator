@@ -9,8 +9,12 @@ import org.junit.Test
 class DeferredFeatureGateTest {
 
     @Test
-    fun `deferred feature ids are exactly tax investment challenges`() {
-        assertEquals(setOf("tax", "investment", "challenges"), DeferredFeatureGate.DEFERRED_FEATURE_IDS)
+    fun `deferred feature ids are tax investment challenges carbon price negotiation`() {
+        // Extended in S4: carbon, price, and negotiation were gated from release because they render fabricated financial data.
+        assertEquals(
+            setOf("tax", "investment", "challenges", "carbon", "price", "negotiation"),
+            DeferredFeatureGate.DEFERRED_FEATURE_IDS
+        )
     }
 
     @Test
@@ -20,10 +24,14 @@ class DeferredFeatureGateTest {
 
     @Test
     fun `deferred save tokens match the destination tokens`() {
+        // Extended in S4: carbon_footprint, price_protection, and bill_negotiation were gated from release because they render fabricated financial data.
         val tokens = setOf(
             NavigationDestination.TaxConfiguration.toSaveToken(),
             NavigationDestination.InvestmentPortfolio.toSaveToken(),
-            NavigationDestination.SpendingChallenges().toSaveToken().substringBefore('?')
+            NavigationDestination.SpendingChallenges().toSaveToken().substringBefore('?'),
+            NavigationDestination.CarbonFootprint.toSaveToken(),
+            NavigationDestination.PriceProtection.toSaveToken(),
+            NavigationDestination.BillNegotiation.toSaveToken()
         )
         assertEquals(DeferredFeatureGate.DEFERRED_SAVE_TOKENS, tokens)
     }
@@ -58,6 +66,41 @@ class DeferredFeatureGateTest {
         DeferredFeatureGate.DEFERRED_FEATURE_IDS.forEach { id ->
             val feature = FeatureConfig.getById(id)!!
             assertTrue(DeferredFeatureGate.isDeferredDestination(feature.destination))
+        }
+    }
+
+    @Test
+    fun `fabricated data features carbon price negotiation and existing deferred set are gated by id`() {
+        listOf("carbon", "price", "negotiation", "tax", "investment", "challenges").forEach { id ->
+            assertTrue("Expected '$id' to be deferred", DeferredFeatureGate.isDeferredFeatureId(id))
+        }
+        listOf("savings", "warranty", "bill-reminders", "privacy").forEach { id ->
+            assertFalse("Expected '$id' not to be deferred", DeferredFeatureGate.isDeferredFeatureId(id))
+        }
+    }
+
+    @Test
+    fun `carbon price negotiation destinations are deferred and redirect home when unavailable`() {
+        listOf(
+            NavigationDestination.CarbonFootprint,
+            NavigationDestination.PriceProtection,
+            NavigationDestination.BillNegotiation,
+            NavigationDestination.TaxConfiguration,
+            NavigationDestination.InvestmentPortfolio,
+            NavigationDestination.SpendingChallenges()
+        ).forEach { destination ->
+            assertTrue(
+                "Expected $destination to be a deferred destination",
+                DeferredFeatureGate.isDeferredDestination(destination)
+            )
+            assertTrue(
+                "Expected $destination to redirect home when deferredAvailable=false",
+                DeferredFeatureGate.shouldRedirectHome(destination, deferredAvailable = false)
+            )
+            assertFalse(
+                "Expected $destination not to redirect home when deferredAvailable=true",
+                DeferredFeatureGate.shouldRedirectHome(destination, deferredAvailable = true)
+            )
         }
     }
 }

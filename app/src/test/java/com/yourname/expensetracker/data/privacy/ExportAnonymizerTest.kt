@@ -2,6 +2,9 @@ package com.yourname.expensetracker.data.privacy
 
 import android.database.sqlite.SQLiteDatabase
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -312,5 +315,104 @@ class ExportAnonymizerTest {
         // Row 2 merchant is null — should not be affected
         assertEquals(null, queryString(file, "SELECT merchant FROM bank_statement_import_items WHERE id=2"))
         assertEquals("KEEP_FP2", queryString(file, "SELECT transactionFingerprint FROM bank_statement_import_items WHERE id=2"))
+    }
+
+    // ── S1: user_corrections and receipt_item_categorizations export scrub ────
+
+    @Test
+    fun sanitizeExport_redacts_user_corrections_notification_text_and_keeps_structural_fields() {
+        val file = tempFolder.newFile("user_corrections_export.db")
+        val db = SQLiteDatabase.openOrCreateDatabase(file, null)
+        db.execSQL(
+            """CREATE TABLE user_corrections (
+                id INTEGER PRIMARY KEY,
+                packageName TEXT NOT NULL,
+                originalMerchant TEXT NOT NULL,
+                correctedMerchant TEXT,
+                originalAmount REAL NOT NULL,
+                wasApproved INTEGER NOT NULL,
+                notificationTitle TEXT,
+                notificationText TEXT,
+                createdAt INTEGER NOT NULL
+            )"""
+        )
+        db.execSQL(
+            "INSERT INTO user_corrections(id, packageName, originalMerchant, correctedMerchant, originalAmount, wasApproved, notificationTitle, notificationText, createdAt) " +
+                "VALUES (1, 'com.bank.app', 'KEEP_ORIG_MERCHANT', 'KEEP_CORR_MERCHANT', 15.75, 1, 'SECRET_TITLE', 'SECRET_BODY_TEXT', 1700000000000)"
+        )
+        db.execSQL(
+            "INSERT INTO user_corrections(id, packageName, originalMerchant, correctedMerchant, originalAmount, wasApproved, notificationTitle, notificationText, createdAt) " +
+                "VALUES (2, 'com.bank.app', 'KEEP_ORIG_2', NULL, 8.0, 0, NULL, NULL, 1700000000000)"
+        )
+        db.close()
+
+        anonymizer.sanitizeExport(file)
+
+        assertNull(queryString(file, "SELECT notificationTitle FROM user_corrections WHERE id=1"))
+        assertNull(queryString(file, "SELECT notificationText FROM user_corrections WHERE id=1"))
+        assertEquals("KEEP_ORIG_MERCHANT", queryString(file, "SELECT originalMerchant FROM user_corrections WHERE id=1"))
+        assertEquals("KEEP_CORR_MERCHANT", queryString(file, "SELECT correctedMerchant FROM user_corrections WHERE id=1"))
+        assertEquals(15.75, queryDouble(file, "SELECT originalAmount FROM user_corrections WHERE id=1"), 0.0)
+        // Row 2 already null — preserved as-is, TIER_1_EXACT row count intact
+        assertEquals("KEEP_ORIG_2", queryString(file, "SELECT originalMerchant FROM user_corrections WHERE id=2"))
+        assertEquals(2.0, queryDouble(file, "SELECT COUNT(*) FROM user_corrections"), 0.0)
+    }
+
+    @Test
+    fun sanitizeExport_redacts_receipt_item_categorizations_and_preserves_unrelated_table() {
+        val file = tempFolder.newFile("receipt_items_export.db")
+        val db = SQLiteDatabase.openOrCreateDatabase(file, null)
+        db.execSQL(
+            """CREATE TABLE receipt_item_categorizations (
+                id INTEGER PRIMARY KEY,
+                receiptId INTEGER NOT NULL,
+                expenseId INTEGER,
+                itemDescription TEXT NOT NULL,
+                itemAmount REAL NOT NULL,
+                suggestedCategoryId INTEGER,
+                suggestedCategoryName TEXT,
+                confidence REAL NOT NULL,
+                aiRationale TEXT,
+                alternativeCategoriesJson TEXT,
+                userCorrectedCategoryId INTEGER,
+                userCorrectedCategoryName TEXT
+            )"""
+        )
+        db.execSQL(
+            "INSERT INTO receipt_item_categorizations(id, receiptId, expenseId, itemDescription, itemAmount, suggestedCategoryId, suggestedCategoryName, confidence, aiRationale, alternativeCategoriesJson, userCorrectedCategoryId, userCorrectedCategoryName) " +
+                "VALUES (1, 10, 20, 'SECRET_LINE_ITEM_DESC', 12.99, 5, 'SECRET_SUGGESTED_CAT', 0.91, 'SECRET_AI_RATIONALE', '[{\"id\":1,\"name\":\"SECRET_ALT\"}]', 6, 'SECRET_USER_CAT')"
+        )
+        // Negative control: an unrelated table with sensitive-looking columns must NOT be touched by the scrub
+        db.execSQL(
+            """CREATE TABLE categories (
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                icon TEXT NOT NULL,
+                color TEXT NOT NULL
+            )"""
+        )
+        db.execSQL(
+            "INSERT INTO categories(id, name, icon, color) VALUES (5, 'KEEP_CATEGORY_NAME', 'cart', '#FF0000')"
+        )
+        db.close()
+
+        anonymizer.sanitizeExport(file)
+
+        val redactedDesc = queryString(file, "SELECT itemDescription FROM receipt_item_categorizations WHERE id=1")
+        assertNotNull("itemDescription is NOT NULL in schema and must not be nulled", redactedDesc)
+        assertTrue(
+            "itemDescription must be redacted to '' or '[REDACTED]', got '$redactedDesc'",
+            redactedDesc == "" || redactedDesc == "[REDACTED]"
+        )
+        assertFalse("raw itemDescription must not survive", redactedDesc!!.contains("SECRET_LINE_ITEM_DESC"))
+        assertNull(queryString(file, "SELECT aiRationale FROM receipt_item_categorizations WHERE id=1"))
+        assertNull(queryString(file, "SELECT suggestedCategoryName FROM receipt_item_categorizations WHERE id=1"))
+        assertEquals(12.99, queryDouble(file, "SELECT itemAmount FROM receipt_item_categorizations WHERE id=1"), 0.0)
+        assertEquals(1.0, queryDouble(file, "SELECT COUNT(*) FROM receipt_item_categorizations"), 0.0)
+
+        // Negative control assertion: unrelated table is completely untouched
+        assertEquals("KEEP_CATEGORY_NAME", queryString(file, "SELECT name FROM categories WHERE id=5"))
+        assertEquals("cart", queryString(file, "SELECT icon FROM categories WHERE id=5"))
+        assertEquals("#FF0000", queryString(file, "SELECT color FROM categories WHERE id=5"))
     }
 }

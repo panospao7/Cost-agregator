@@ -132,6 +132,7 @@ ACCEPTED_CONSTANTS: Tuple[str, ...] = (
 
 # Bounded violation codes (fixed vocabulary, never source text).
 CODE_UNCOVERED = "AGGREGATE_WITHOUT_PREDICATE_OR_MARKER"
+CODE_NON_AGG_UNCOVERED = "SELECT_WITHOUT_PREDICATE_OR_MARKER"
 CODE_UNKNOWN_REASON = "UNKNOWN_REASON"
 CODE_MALFORMED = "MALFORMED_MARKER"
 CODE_ORPHAN = "MARKER_WITHOUT_QUERY"
@@ -144,6 +145,11 @@ _DESCRIPTIONS = {
     CODE_UNCOVERED: (
         "aggregate over expenses has neither a qualified SpendingInclusionSql "
         "reference nor a spending-exempt marker"
+    ),
+    CODE_NON_AGG_UNCOVERED: (
+        "non-aggregate SELECT over expenses has neither a qualified "
+        "SpendingInclusionSql / spendingExclusionReason reference, a "
+        "// spending-exempt: <REASON> marker, nor an allowlist entry"
     ),
     CODE_UNKNOWN_REASON: "spending-exempt marker has an unknown reason",
     CODE_MALFORMED: "malformed spending-exempt marker",
@@ -160,6 +166,55 @@ _DESCRIPTIONS = {
     ),
 }
 
+# S6 (I-04-5): Narrow, justified allowlist for legitimate non-aggregate SELECTs
+# over `expenses` that genuinely must not filter out spending-excluded rows in SQL.
+# Keyed by (dao_filename, function_name) -> justification.
+NON_AGGREGATE_SELECT_ALLOWLIST: Dict[Tuple[str, str], str] = {
+    # Primary-key lookup of a single row by id (used by edit/detail/coordinator/installment facts).
+    ("ExpenseDao.kt", "getById"): "Single-row primary-key lookup by id must return the row regardless of spending exclusion.",
+    # Unfiltered transaction-list / feed queries where flagged installment purchases are rendered with an installment badge.
+    ("ExpenseDao.kt", "getAllFlow"): "Unfiltered recent transactions feed for UI listing where flagged rows display an installment badge.",
+    ("ExpenseDao.kt", "getPage"): "Unfiltered paginated transaction listing where flagged rows are rendered in the ledger.",
+    ("ExpenseDao.kt", "getAllWithCategoryFlow"): "Unfiltered recent transactions with category for UI listing.",
+    ("ExpenseDao.kt", "getExpensesWithCategoryPaged"): "Unfiltered paged transactions with category for the Transactions screen.",
+    ("ExpenseDao.kt", "getExpensesWithCategoryFilteredFlow"): "User-filtered Transactions screen feed that displays all matching ledger rows.",
+    ("ExpenseDao.kt", "getExpensesWithCategoryInPeriodFlow"): "Period transaction feed where downstream consumers inspect Expense.effectiveAmount / countsAsSpending.",
+    ("ExpenseDao.kt", "getAll"): "Deprecated bounded full-table listing helper.",
+    ("ExpenseDao.kt", "getAllFlowUncapped"): "Full-table reactive stream consumed by mappers that project Expense.effectiveAmount.",
+    ("ExpenseDao.kt", "getAllUncapped"): "Full-table snapshot read used for debug/export snapshots of all ledger rows.",
+    # Date-range / type-filtered row readers used by export, recurring/installment linkers, and normalizers (which read Expense.effectiveAmount).
+    ("ExpenseDao.kt", "getExpensesBetweenUncapped"): "Full-range row reader used by export, receipt matching, and normalizers that apply Expense.effectiveAmount.",
+    ("ExpenseDao.kt", "getExpensesByTypeBetweenUncapped"): "Type-filtered row reader used by deposit/income and analytics normalizers that apply Expense.effectiveAmount.",
+    ("ExpenseDao.kt", "getExpensesBetweenFlowUncapped"): "Reactive date-range row stream consumed by normalizers using Expense.effectiveAmount.",
+    ("ExpenseDao.kt", "getExpensesByTypeBetweenFlowUncapped"): "Reactive type-filtered row stream.",
+    ("ExpenseDao.kt", "getExpensesSince"): "Date-bounded row reader consumed by recurring/radar flows using Expense.effectiveAmount.",
+    ("ExpenseDao.kt", "getExpensesBetween"): "Paginated date-range row listing.",
+    ("ExpenseDao.kt", "getExpensesBetweenForExport"): "Paginated export query; exports include flagged rows with ExportInstallmentMarker.",
+    ("ExpenseDao.kt", "getExpensesBetweenForExportKeyset"): "Keyset-paginated export query; exports include flagged rows with ExportInstallmentMarker.",
+    ("ExpenseDao.kt", "getExpensesFilteredKeyset"): "Keyset-paginated natural-language search row reader (maps Expense.effectiveAmount).",
+    ("ExpenseDao.kt", "getExpensesByTypeBetween"): "Paginated type-filtered row listing.",
+    ("ExpenseDao.kt", "getExpensesBetweenFlow"): "Bounded reactive date-range row listing.",
+    ("ExpenseDao.kt", "getExpensesByTypeBetweenFlow"): "Bounded reactive type-filtered row listing.",
+    # Deposit / income row queries (non-spending transactionType = 'DEPOSIT').
+    ("ExpenseDao.kt", "getDepositsBetween"): "Deposit-only (non-spending income) row query.",
+    ("ExpenseDao.kt", "getDepositsBetweenFlow"): "Deposit-only (non-spending income) reactive row query.",
+    # Location / map / backfill row queries (coordinate resolution and map pin rendering).
+    ("ExpenseDao.kt", "getLocatedExpensesFlow"): "Map pin stream for all geocoded transactions.",
+    ("ExpenseDao.kt", "getLocatedExpenses"): "One-shot geocoded transaction list for map display.",
+    ("ExpenseDao.kt", "getLocatedExpensesBatch"): "Bounded batch of geocoded transactions for location helpers.",
+    ("ExpenseDao.kt", "getUnlocatedExpenses"): "Ungeocoded transaction batch for location resolution UI.",
+    ("ExpenseDao.kt", "getUnlocatedExpensesForBackfill"): "Ungeocoded transaction batch for background geocoding backfill worker.",
+    ("ExpenseDao.kt", "getUnlocatedExpensesFlow"): "Reactive stream of ungeocoded transactions for map UI.",
+    ("ExpenseDao.kt", "getExpensesInBoundingBox"): "Geographic bounding-box row lookup for map viewport.",
+    ("ExpenseDao.kt", "getExpensesInBoundingBoxBatch"): "Bounded geographic bounding-box row lookup for map viewport.",
+    # Merchant-key backfill / bulk rename maintenance queries (must update all rows sharing the merchant).
+    ("ExpenseDao.kt", "getExpensesWithNullMerchantKey"): "Backfill worker query to populate missing merchantKey on all rows.",
+    ("ExpenseDao.kt", "getExpensesByMerchantKey"): "Bulk merchant rename lookup that must re-key every row for that merchant.",
+    # Autocomplete / categorization hint queries (non-money merchant/category lookups).
+    ("ExpenseDao.kt", "getRecentMerchantNames"): "Distinct merchant name autocomplete list (non-money).",
+    ("ExpenseDao.kt", "getRecentTransactionsForMerchant"): "Recent merchant category hints for AI categorization assist (non-money).",
+}
+
 E_SURFACE_EMPTY = "E_SPENDING_PREDICATE_DAO_SURFACE_EMPTY"
 E_NO_QUERIES = "E_SPENDING_PREDICATE_NO_QUERY_PARSED"
 E_UNREADABLE = "E_SPENDING_PREDICATE_SOURCE_UNREADABLE"
@@ -172,6 +227,12 @@ _DAO_PATH_RE = re.compile(r"(?:^|/)data/database/dao/[^/]+\.kt$", _ASCII)
 
 _TABLE_RE = re.compile(
     r"\b(?:FROM|JOIN)\s+[`\"\[]?expenses(?![A-Za-z0-9_])", _ASCII | re.IGNORECASE
+)
+_SELECT_RE = re.compile(
+    r"^\s*(?:WITH\b[\s\S]*?)?\bSELECT\b", _ASCII | re.IGNORECASE
+)
+_EXCLUSION_COL_RE = re.compile(
+    r"(?<![A-Za-z0-9_])spendingExclusionReason(?![A-Za-z0-9_])", _ASCII
 )
 _AGGREGATE_RE = re.compile(
     r"(?<![A-Za-z0-9_])(?:SUM|AVG|TOTAL|COUNT|MIN|MAX)\s*\(", _ASCII | re.IGNORECASE
@@ -470,7 +531,12 @@ def _marker_target(
     return None
 
 
-def scan_text(relative_path: str, text: str) -> ScanResult:
+def scan_text(
+    relative_path: str,
+    text: str,
+    *,
+    enforce_non_aggregate_selects: bool = False,
+) -> ScanResult:
     """Scan one DAO file's text (fixture-level API).
 
     Raises ``KotlinParseError`` on unparseable Kotlin; the CLI maps it to an
@@ -479,6 +545,7 @@ def scan_text(relative_path: str, text: str) -> ScanResult:
     queries, comments = _lex(text)
     lines = text.split("\n")
     violations: List[Violation] = []
+    dao_filename = relative_path.replace("\\", "/").rsplit("/", 1)[-1]
 
     attached: Dict[int, List[_Marker]] = {}
     for comment in comments:
@@ -502,7 +569,15 @@ def scan_text(relative_path: str, text: str) -> ScanResult:
         sql = query.sql
         refs_any = _ANY_REF_RE.search(sql) is not None
         refs_qualified = _QUALIFIED_REF_RE.search(sql) is not None
-        in_scope = _TABLE_RE.search(sql) is not None and _AGGREGATE_RE.search(sql) is not None
+        has_table = _TABLE_RE.search(sql) is not None
+        has_agg = _AGGREGATE_RE.search(sql) is not None
+        in_scope = has_table and has_agg
+        non_agg_select_in_scope = (
+            enforce_non_aggregate_selects
+            and has_table
+            and not has_agg
+            and _SELECT_RE.search(sql) is not None
+        )
         markers = attached.get(index, [])
 
         if len(markers) > 1:
@@ -530,10 +605,12 @@ def scan_text(relative_path: str, text: str) -> ScanResult:
                         Violation(relative_path, query.line, RULE_MARKER, query.function, CODE_MARKER_WITH_REFERENCE)
                     )
             if not in_scope and first_valid.reason not in DEDUPE_REASONS:
-                # DEDUPE markers stay allowed on non-aggregating dedupe-family queries.
-                violations.append(
-                    Violation(relative_path, query.line, RULE_MARKER, query.function, CODE_STALE_MARKER)
-                )
+                # DEDUPE markers stay allowed on non-aggregating dedupe-family queries;
+                # non-aggregate SELECTs may also carry a valid spending-exempt marker.
+                if not non_agg_select_in_scope:
+                    violations.append(
+                        Violation(relative_path, query.line, RULE_MARKER, query.function, CODE_STALE_MARKER)
+                    )
             classified.append(
                 Classified(relative_path, query.line, query.function, "exempt:" + str(first_valid.reason))
             )
@@ -546,6 +623,17 @@ def scan_text(relative_path: str, text: str) -> ScanResult:
                 Violation(relative_path, query.line, RULE_UNCOVERED, query.function, CODE_UNCOVERED)
             )
             classified.append(Classified(relative_path, query.line, query.function, "UNCLASSIFIED"))
+        elif non_agg_select_in_scope:
+            if (
+                refs_qualified
+                or _EXCLUSION_COL_RE.search(sql) is not None
+                or (dao_filename, query.function) in NON_AGGREGATE_SELECT_ALLOWLIST
+            ):
+                pass
+            else:
+                violations.append(
+                    Violation(relative_path, query.line, RULE_UNCOVERED, query.function, CODE_NON_AGG_UNCOVERED)
+                )
 
     violations.sort(key=lambda v: (v.path, v.line, v.rule_id, v.code))
     return ScanResult(violations, classified, len(queries))
@@ -556,7 +644,12 @@ def is_dao_path(relative_path: str) -> bool:
     return _DAO_PATH_RE.search(relative_path.replace("\\", "/")) is not None
 
 
-def _scan_declared_roots(repo_root: Path, root_set) -> ScanOutcome:
+def _scan_declared_roots(
+    repo_root: Path,
+    root_set,
+    *,
+    enforce_non_aggregate_selects: bool = True,
+) -> ScanOutcome:
     violations: List[Violation] = []
     classified: List[Classified] = []
     files = 0
@@ -571,7 +664,11 @@ def _scan_declared_roots(repo_root: Path, root_set) -> ScanOutcome:
             except (OSError, UnicodeError):
                 return ScanOutcome([], [], 0, 0, E_UNREADABLE)
             try:
-                result = scan_text(relative, text)
+                result = scan_text(
+                    relative,
+                    text,
+                    enforce_non_aggregate_selects=enforce_non_aggregate_selects,
+                )
             except KotlinParseError:
                 return ScanOutcome([], [], 0, 0, E_UNPARSEABLE)
             files += 1
@@ -589,14 +686,22 @@ def _scan_declared_roots(repo_root: Path, root_set) -> ScanOutcome:
     return ScanOutcome(violations, classified, files, queries, None)
 
 
-def scan_source_root(source_root: Path) -> ScanOutcome:
+def scan_source_root(
+    source_root: Path,
+    *,
+    enforce_non_aggregate_selects: bool = False,
+) -> ScanOutcome:
     """Scan ``<source_root>`` (fixture-level API, test-fixture scope seam)."""
     if not Path(source_root).is_dir():
         return ScanOutcome([], [], 0, 0, E_ROOT_MISSING)
     root_set, _diagnostics = resolve_source_root_set_for_test_fixtures(str(source_root))
     if root_set is None:
         return ScanOutcome([], [], 0, 0, E_ROOT_MISSING)
-    return _scan_declared_roots(Path(source_root), root_set)
+    return _scan_declared_roots(
+        Path(source_root),
+        root_set,
+        enforce_non_aggregate_selects=enforce_non_aggregate_selects,
+    )
 
 
 def format_report(outcome: ScanOutcome) -> List[str]:

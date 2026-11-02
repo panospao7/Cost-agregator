@@ -18,13 +18,23 @@ import com.yourname.expensetracker.BuildConfig
 object DeferredFeatureGate {
 
     /** FeatureConfig ids of the deferred features. */
-    val DEFERRED_FEATURE_IDS: Set<String> = setOf("tax", "investment", "challenges")
+    val DEFERRED_FEATURE_IDS: Set<String> = setOf(
+        "tax",
+        "investment",
+        "challenges",
+        "carbon",
+        "price",
+        "negotiation"
+    )
 
     /** Save-token base names of the deferred destinations. */
     val DEFERRED_SAVE_TOKENS: Set<String> = setOf(
         "tax_configuration",
         "investment_portfolio",
-        "spending_challenges"
+        "spending_challenges",
+        "carbon_footprint",
+        "price_protection",
+        "bill_negotiation"
     )
 
     /** Deferred features are available only in debug builds. */
@@ -36,7 +46,10 @@ object DeferredFeatureGate {
     fun isDeferredDestination(destination: NavigationDestination): Boolean =
         destination is NavigationDestination.TaxConfiguration ||
             destination is NavigationDestination.InvestmentPortfolio ||
-            destination is NavigationDestination.SpendingChallenges
+            destination is NavigationDestination.SpendingChallenges ||
+            destination is NavigationDestination.CarbonFootprint ||
+            destination is NavigationDestination.PriceProtection ||
+            destination is NavigationDestination.BillNegotiation
 
     /**
      * True when the render layer must redirect away from [destination]

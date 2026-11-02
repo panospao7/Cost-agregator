@@ -72,6 +72,54 @@ class MonteCarloSpendingSimulatorGoldenTest : AnalyticsEngineTestBase() {
         assertEquals(1000, result.metadata.iterations)
     }
 
+    @Test
+    fun `positive week fit near ln 100 with 14 days remaining produces tight p50 and p90 band`() = runTest {
+        // April 16, 2026 -> 14 days remaining in April (2.0 weeks).
+        every { timeProvider.now() } returns atTime("2026-04-16", 12, 0, 0)
+
+        // Positive-week fit for 6 weeks around 100.00 EUR (mu = ln(100) = 4.60517, sigma = 0.05).
+        val fit = DistributionFit(
+            mu = 4.605170,
+            sigma = 0.05,
+            qualifyingWeekCount = 6,
+            totalWeeksExamined = 8,
+            trimmedWeeklyTotals = listOf(96.0, 98.0, 100.0, 100.0, 102.0, 104.0),
+            allWeeklyTotals = listOf(96.0, 98.0, 100.0, 100.0, 102.0, 104.0),
+            displayCurrency = "EUR"
+        )
+        val confidence = SimulationConfidence(
+            score = 0.75,
+            level = ConfidenceLevel.HIGH,
+            reason = "Based on 6 positive weeks"
+        )
+
+        coEvery { historicalDistribution.computeDistributionResult("EUR") } returns
+            HistoricalDistributionResult.Available(fit)
+        every { dataQualityAssessor.assess(any(), any()) } returns confidence
+
+        val result = requireNotNull(
+            simulator.simulate(
+                spentToDate = 0.0,
+                knownUpcoming = 0.0,
+                budgetAmount = 300.0,
+                displayCurrency = "EUR"
+            )
+        )
+
+        assertEquals(14, result.metadata.daysRemaining)
+        assertEquals(1000, result.metadata.iterations)
+        // 2 weeks at exp(4.60517) = 100/wk (either unscaled ~200 or 6/8 activity-scaled ~150):
+        // P50 is in [140, 205] and P90 is in [155, 225], never the old 0.01-substituted P50 ~ 20 or P90 ~ 4720.
+        org.junit.Assert.assertTrue(
+            "Expected 14-day P50 in [140.0, 205.0], got ${result.percentile50}",
+            result.percentile50 in 140.0..205.0
+        )
+        org.junit.Assert.assertTrue(
+            "Expected 14-day P90 in [155.0, 225.0], got ${result.percentile90}",
+            result.percentile90 in 155.0..225.0
+        )
+    }
+
     private fun atTime(date: String, hour: Int, minute: Int, second: Int): Long {
         val start = com.yourname.expensetracker.dateToMillis(date)
         return java.util.Calendar.getInstance().apply {

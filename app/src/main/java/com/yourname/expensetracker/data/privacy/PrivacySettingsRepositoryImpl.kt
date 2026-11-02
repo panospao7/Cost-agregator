@@ -107,7 +107,7 @@ class PrivacySettingsRepositoryImpl @Inject constructor(
             Timber.e(e, "Privacy settings read failed (getLoadState) — using fail-closed defaults")
             PrivacySettingsLoadState.CorruptedFailClosed(
                 settings = PrivacySettings.FAIL_CLOSED_DEFAULTS,
-                reason = e.message ?: "IO error"
+                reason = "IO error"
             )
         }
 

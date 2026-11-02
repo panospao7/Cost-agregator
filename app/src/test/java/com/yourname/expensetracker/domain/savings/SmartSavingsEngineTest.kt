@@ -411,9 +411,10 @@ class SmartSavingsEngineTest : AnalyticsEngineTestBase() {
 
         // monthly discretionary baseline uses only discretionary purchases: 90 / 3 = 30
         assertTrue(result.isAvailable)
-        // monte-carlo component => remaining = 30 - (400 * 0.3) < 0 => 0
-        // pace also 0 (projected above baseline), budget surplus 0 => safe amount 0
-        assertApproxEquals(0.0, result.safeAmount)
+        // discretionary budget (30) is compared against projected DISCRETIONARY spending (total 400 scaled by historical share 90 / 390 = 3/13 => 92.3077), not total spending:
+        // remaining = 30 - (92.3077 * 0.30) = 2.3077 => monte-carlo component = 2.3077 * 0.20 = 0.4615 => weighted (0.30) = 0.13846
+        // pace also 0 (projected above baseline), budget surplus 0 => safe amount 0.13846
+        assertApproxEquals(0.1384615384615386, result.safeAmount, 0.01)
     }
 
     @Test
@@ -616,6 +617,221 @@ class SmartSavingsEngineTest : AnalyticsEngineTestBase() {
             assertEquals(if (staleRate) 0 else 1, capQuality.excludedInputCount)
             assertTrue((if (staleRate) "STALE_EXCHANGE_RATE" else "MISSING_EXCHANGE_RATE") in capQuality.warningCodes)
             coVerify(exactly = 0) { dao.getAmountsForPercentileCalc(any(), any()) }
+        }
+    }
+
+    @Test
+    fun `bl03 regression rent 1000 plus dining 300 recommends meaningful savings above 25`() = runTest {
+        val dao = mockk<ExpenseDao>()
+        val converter = mockk<CurrencyConverter>()
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(
+            listOf(budgetStatus(remaining = 300.0))
+        )
+        coEvery { categoryRepository.getAll() } returns listOf(
+            Category(id = 1L, name = "Housing", icon = "🏠", color = "#0000FF"),
+            Category(id = 2L, name = "Dining", icon = "🍽️", color = "#FF8800")
+        )
+
+        // 3 months of history: 3 x 1000 EUR rent (essential) + 90 x 30 EUR dining (300/month discretionary).
+        // Total monthly spend = 1300 EUR (1000 rent + 300 dining).
+        val dayMs = 24L * 60 * 60 * 1000
+        val rentHistory = (1..3).map { monthIdx ->
+            com.yourname.expensetracker.data.database.entity.Expense(
+                id = monthIdx.toLong(),
+                amount = 1000.0,
+                currency = "EUR",
+                merchant = "Landlord",
+                categoryId = 1L,
+                transactionType = TransactionType.PURCHASE,
+                date = now - (monthIdx * 25L * dayMs)
+            ).toExpenseSnapshot()
+        }
+        val diningHistory = (1..90).map { idx ->
+            com.yourname.expensetracker.data.database.entity.Expense(
+                id = (100 + idx).toLong(),
+                amount = 30.0,
+                currency = "EUR",
+                merchant = "Bistro",
+                categoryId = 2L,
+                transactionType = TransactionType.PURCHASE,
+                date = now - ((idx % 85 + 2) * dayMs)
+            ).toExpenseSnapshot()
+        }
+        val allHistory = rentHistory + diningHistory
+
+        coEvery { expenseRepository.getExpenseSnapshotsBetween(any(), any()) } answers {
+            val start = firstArg<Long>()
+            val end = secondArg<Long>()
+            // Keep current-month spend at 0 so the user has the full 300/month discretionary headroom,
+            // while historical lookback windows receive the 3x1000 rent + 90x30 dining history.
+            if (start < now - 20L * dayMs) allHistory.filter { it.date in start until end } else emptyList()
+        }
+
+        // Simulator returns total projected spend of 1300 (1000 rent + 300 dining).
+        // Old Defect A subtracted 0.30 * 1300 = 390 from the 300 discretionary baseline -> -90 -> 0.
+        // Old Defect B computed P90 over single transactions (90x30 + 3x1000 -> P90 = 30, floored to 50 -> cap = 25).
+        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) } returns
+            monteCarloResult(1300.0).copy(spentToDate = 1000.0, knownUpcoming = 0.0)
+
+        val result = realCapEngine(converter, dao).calculatePortfolioRecommendationsResult(
+            listOf(typedGoal()),
+            timeHorizon = SmartSavingsEngine.TimeHorizon.MONTH,
+            homeCurrency = "EUR"
+        ) as SmartSavingsComputationResult.Available
+
+        val safeAmount = result.recommendations.single().recommendation.safeAmount
+        assertTrue(
+            "Expected recommendation well above the old 25.0 single-tx cap and within 300.0 headroom, but was $safeAmount",
+            safeAmount in 60.0..300.0
+        )
+    }
+
+    @Test
+    fun `bl03 monte carlo component isolates discretionary spend when rent dominates total projection`() = runTest {
+        // Zero budget surplus and zero pace surplus so ONLY the Monte Carlo component can contribute.
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
+        coEvery { categoryRepository.getAll() } returns listOf(
+            Category(id = 1L, name = "Housing", icon = "🏠", color = "#0000FF"),
+            Category(id = 2L, name = "Dining", icon = "🍽️", color = "#FF8800")
+        )
+
+        val dayMs = 24L * 60 * 60 * 1000
+        // 3 months of history: 3 x 1000 EUR rent (essential) + 9 x 100 EUR dining (300/month discretionary).
+        // Current month (day 15 of 30) already has 1000 EUR rent + 150 EUR dining = 1150 EUR spent
+        // (projected pace = 2300 >= avgMonthly 1300, so pace surplus = 0).
+        val currentMonthExpenses = listOf(
+            com.yourname.expensetracker.data.database.entity.Expense(
+                id = 1L, amount = 1000.0, currency = "EUR", merchant = "Landlord",
+                categoryId = 1L, transactionType = TransactionType.PURCHASE, date = now - dayMs
+            ),
+            com.yourname.expensetracker.data.database.entity.Expense(
+                id = 2L, amount = 150.0, currency = "EUR", merchant = "Bistro",
+                categoryId = 2L, transactionType = TransactionType.PURCHASE, date = now - dayMs
+            )
+        )
+        val historicalExpenses = (1..3).flatMap { m ->
+            listOf(
+                com.yourname.expensetracker.data.database.entity.Expense(
+                    id = (10 + m).toLong(), amount = 1000.0, currency = "EUR", merchant = "Landlord",
+                    categoryId = 1L, transactionType = TransactionType.PURCHASE, date = now - (m * 28L * dayMs)
+                ),
+                com.yourname.expensetracker.data.database.entity.Expense(
+                    id = (20 + m).toLong(), amount = 300.0, currency = "EUR", merchant = "Bistro",
+                    categoryId = 2L, transactionType = TransactionType.PURCHASE, date = now - (m * 28L * dayMs)
+                )
+            )
+        }
+
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } answers {
+            val start = firstArg<Long>()
+            if (start < now - 20L * dayMs) historicalExpenses else currentMonthExpenses
+        }
+        coEvery { expenseRepository.getExpenseSnapshotsBetween(any(), any()) } answers {
+            val start = firstArg<Long>()
+            if (start < now - 20L * dayMs) historicalExpenses.map { it.toExpenseSnapshot() }
+            else currentMonthExpenses.map { it.toExpenseSnapshot() }
+        }
+
+        // Simulator projects 1300 total (1000 rent + 300 dining).
+        // Old Defect A: discretionaryBaseline (300) - 0.30 * totalProjected (1300) = 300 - 390 = -90 -> 0.0!
+        // Fixed like-for-like: discretionaryBaseline (300) - 0.30 * discretionaryProjected (300) = 210
+        // -> mcBuffer = 210 * 0.20 = 42.0 -> weighted 0.30 * 42.0 = 12.60.
+        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) } returns
+            monteCarloResult(1300.0).copy(spentToDate = 1150.0, knownUpcoming = 0.0)
+
+        val result = engine.calculateSafeToSaveAmount(typedGoal(), homeCurrency = "EUR")
+
+        assertTrue(result.isAvailable)
+        assertTrue(
+            "Monte Carlo component must stay positive (~12.60) instead of collapsing to 0.0 from rent",
+            result.safeAmount in 8.0..45.0
+        )
+    }
+
+    @Test
+    fun `bl03 monthly cap scales with aggregate volume instead of single transaction p90`() = runTest {
+        val dao = mockk<ExpenseDao>()
+        val converter = mockk<CurrencyConverter>()
+        // Large budget surplus so the monthly cap is the binding constraint.
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(
+            listOf(budgetStatus(remaining = 2000.0))
+        )
+        coEvery { categoryRepository.getAll() } returns listOf(
+            Category(id = 2L, name = "Dining", icon = "🍽️", color = "#FF8800")
+        )
+
+        val dayMs = 24L * 60 * 60 * 1000
+        // 90 small transactions of 30 EUR across 3 months (900 EUR/month aggregate, single-tx P90 = 30 EUR).
+        val smallTxHistory = (1..90).map { idx ->
+            com.yourname.expensetracker.data.database.entity.Expense(
+                id = idx.toLong(),
+                amount = 30.0,
+                currency = "EUR",
+                merchant = "Cafe",
+                categoryId = 2L,
+                transactionType = TransactionType.PURCHASE,
+                date = now - ((idx % 85 + 2) * dayMs)
+            ).toExpenseSnapshot()
+        }
+        coEvery { expenseRepository.getExpenseSnapshotsBetween(any(), any()) } answers {
+            val start = firstArg<Long>()
+            val end = secondArg<Long>()
+            if (start < now - 20L * dayMs) smallTxHistory.filter { it.date in start until end } else emptyList()
+        }
+        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) } returns null
+
+        val engineWithRealCap = realCapEngine(converter, dao)
+        val monthResult = engineWithRealCap.calculatePortfolioRecommendationsResult(
+            listOf(typedGoal()),
+            timeHorizon = SmartSavingsEngine.TimeHorizon.MONTH,
+            homeCurrency = "EUR"
+        ) as SmartSavingsComputationResult.Available
+        val weekResult = engineWithRealCap.calculatePortfolioRecommendationsResult(
+            listOf(typedGoal()),
+            timeHorizon = SmartSavingsEngine.TimeHorizon.WEEK,
+            homeCurrency = "EUR"
+        ) as SmartSavingsComputationResult.Available
+
+        val monthSafe = monthResult.recommendations.single().recommendation.safeAmount
+        val weekSafe = weekResult.recommendations.single().recommendation.safeAmount
+
+        // Old single-tx cap: P90(30) = 30 -> floored to 50 -> 0.40 * 50 = 20 -> floored to 25.00.
+        // With 900 EUR/month spending and 2,000 EUR surplus, the monthly cap must be well above 25.00
+        // and strictly greater than the weekly cap.
+        assertTrue(
+            "Monthly recommendation ($monthSafe) must not be capped at the old single-tx floor (25.0)",
+            monthSafe >= 100.0
+        )
+        assertTrue(
+            "Monthly cap ($monthSafe) must scale above weekly cap ($weekSafe)",
+            monthSafe > weekSafe * 2.0
+        )
+    }
+
+    @Test
+    fun `bl03 calculateSafeToSaveAmount fails closed when forecast is partial or unavailable`() = runTest {
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(budgetStatus(remaining = 700.0)))
+        coEvery { expenseRepository.getExpenseSnapshotsBetween(any(), any()) } returns emptyList()
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns emptyList()
+
+        val partialForecast = monteCarloResult(300.0).let { res ->
+            res.copy(
+                metadata = res.metadata.copy(
+                    historicalMoneyQuality = HistoricalMoneyQuality(
+                        quality = ConversionQuality.PARTIAL,
+                        totalInputCount = 6,
+                        includedInputCount = 5,
+                        excludedInputCount = 1
+                    )
+                )
+            )
+        }
+        for (badForecast in listOf(MonteCarloResult.unavailable("UNAVAILABLE"), partialForecast)) {
+            coEvery { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) } returns badForecast
+
+            val singleGoalRec = engine.calculateSafeToSaveAmount(typedGoal(), homeCurrency = "EUR")
+            assertTrue("Expected single-goal recommendation to be unavailable", !singleGoalRec.isAvailable)
+            assertEquals("Unavailable recommendation must not fabricate a safeAmount", 0.0, singleGoalRec.safeAmount, 0.0)
         }
     }
 

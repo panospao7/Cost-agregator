@@ -74,6 +74,7 @@ import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.ui.screens.transactions.TransactionsViewModel.OwnershipFilter
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.model.DomainTransactionType
+import com.yourname.expensetracker.domain.transaction.RefundLikelihoodDetector
 import com.yourname.expensetracker.ui.components.asString
 import androidx.compose.ui.platform.LocalContext
 import com.yourname.expensetracker.ui.screens.transactions.TransactionsViewModel.TransactionTab
@@ -154,6 +155,12 @@ fun TransactionsScreen(
         } else {
             groupedTransactionsBase
         }
+    }
+    val likelyRefundDepositIds = remember(transactions) {
+        val candidateExpenses = transactions.map { it.expense }
+        candidateExpenses
+            .filter { it.transactionType == TransactionType.DEPOSIT && RefundLikelihoodDetector.isLikelyRefund(it, candidateExpenses) }
+            .mapTo(HashSet()) { it.id }
     }
     val categories by viewModel.categories.collectAsState()
     val selectedTab by viewModel.selectedTab.collectAsState()
@@ -692,6 +699,7 @@ fun TransactionsScreen(
                                     TransactionItem(
                                         transaction = item,
                                         isHighlighted = highlightedExpenseId == item.expense.id,
+                                        isLikelyRefund = item.expense.id in likelyRefundDepositIds,
                                         onDelete = { expenseToDelete = item.expense },
                                         onEditCategory = { expenseToCategorize = item.expense },
                                         onMarkRecurring = { expenseToRecurring = item.expense },
@@ -905,6 +913,7 @@ fun TransactionsScreen(
                 currentType = expenseToChangeType?.transactionType ?: TransactionType.PURCHASE,
                 currentTransferDirection = expenseToChangeType?.transferDirection,
                 currentTransferAccountName = expenseToChangeType?.transferAccountName,
+                isLikelyRefund = expenseToChangeType?.id in likelyRefundDepositIds,
                 onDismiss = { expenseToChangeType = null },
                 onConfirm = { newType, transferDirection, transferAccountName ->
                     expenseToChangeType?.let {
@@ -1483,7 +1492,8 @@ private fun TransactionItem(
     onViewProvenance: () -> Unit = {},
     installmentRow: InstallmentRowUi? = null,
     onPayInInstallments: () -> Unit = {},
-    onOpenInstallmentPlan: (Long) -> Unit = {}
+    onOpenInstallmentPlan: (Long) -> Unit = {},
+    isLikelyRefund: Boolean = false
 ) {
     val expense = transaction.expense
     val category = transaction.category
@@ -1680,6 +1690,15 @@ private fun TransactionItem(
                         direction = expense.transferDirection,
                         accountName = expense.transferAccountName,
                         compact = true
+                    )
+                }
+
+                if (isLikelyRefund) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = stringResource(R.string.transactions_refund_likelihood_notice),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = SemanticColors.WarningOrange
                     )
                 }
                 
@@ -2252,7 +2271,8 @@ fun ChangeTypeDialog(
     currentTransferDirection: TransferDirection?,
     currentTransferAccountName: String?,
     onDismiss: () -> Unit,
-    onConfirm: (TransactionType, TransferDirection?, String) -> Unit
+    onConfirm: (TransactionType, TransferDirection?, String) -> Unit,
+    isLikelyRefund: Boolean = false
 ) {
     var selectedType by remember { mutableStateOf(currentType) }
     var transferDirection by remember { mutableStateOf(currentTransferDirection) }
@@ -2276,6 +2296,14 @@ fun ChangeTypeDialog(
                     style = MaterialTheme.typography.bodySmall,
                     color = SemanticColors.TextSecondary
                 )
+
+                if (isLikelyRefund) {
+                    Text(
+                        text = stringResource(R.string.transactions_refund_likelihood_notice),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = SemanticColors.WarningOrange
+                    )
+                }
 
                 Spacer(modifier = Modifier.height(8.dp))
 

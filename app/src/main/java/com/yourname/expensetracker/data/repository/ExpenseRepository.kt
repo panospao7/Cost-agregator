@@ -192,7 +192,8 @@ class ExpenseRepository @Inject constructor(
     private val merchantNormalizer: MerchantNormalizer,
     private val transferDirectionAnalytics: TransferDirectionAnalytics,
     private val transactionLifecycleCoordinator: TransactionLifecycleCoordinator,
-    private val debugExpenseAuditWriter: DebugExpenseAuditWriter
+    private val debugExpenseAuditWriter: DebugExpenseAuditWriter,
+    private val timeProvider: com.yourname.expensetracker.domain.util.TimeProvider
 ) {
     data class DebugExpenseSnapshot(
         val expenses: List<Expense>
@@ -672,7 +673,8 @@ class ExpenseRepository @Inject constructor(
                 wasRejected = false,
                 wasApproved = true,
                 notificationTitle = "Bulk category update",
-                notificationText = "Applied to all transactions for $merchant"
+                notificationText = "Applied to all transactions for $merchant",
+                createdAt = timeProvider.now()
             )
             userCorrectionDao.insert(correction)
         }

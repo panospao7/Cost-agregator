@@ -18,7 +18,9 @@ import com.yourname.expensetracker.data.database.entity.OperationRunEvent
 import com.yourname.expensetracker.data.database.entity.PendingReview
 import com.yourname.expensetracker.data.database.entity.PipelineDiagnosticEvent
 import com.yourname.expensetracker.data.database.entity.RawNotification
+import com.yourname.expensetracker.data.database.entity.ReceiptItemCategorization
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
+import com.yourname.expensetracker.data.database.entity.UserCorrection
 import com.yourname.expensetracker.di.RetentionModule
 import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
 import com.yourname.expensetracker.domain.ai.model.AiCapability
@@ -33,6 +35,7 @@ import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -649,5 +652,144 @@ class RetentionTargetCoverageGapTest {
         assertTrue("[child of 1ms older] gone", eventDao.getByCorrelationId("child-of-1ms-older").isEmpty())
         assertNotNull("[run at cutoff] kept", runDao.getById(atCutoffRunId))
         assertEquals("[child of at cutoff] kept", 1, eventDao.getByCorrelationId("child-of-at-cutoff").size)
+    }
+
+    // ══ S1: user_corrections & receipt_item_categorizations reachability and exact-at-cutoff ══
+
+    private fun allRegisteredTargets(): Set<RetentionTarget> =
+        RetentionModule.provideRetentionTargets(database, timeProvider, DatabaseWriteBarrier(maintenanceMode))
+
+    private fun userCorrectionRow(
+        tag: String,
+        createdAt: Long,
+        redacted: Boolean = false
+    ) = UserCorrection(
+        packageName = "com.bank.app",
+        originalMerchant = "Merchant $tag",
+        correctedMerchant = "Corrected $tag",
+        originalAmount = 19.99,
+        correctedAmount = 20.0,
+        originalCategoryId = null,
+        correctedCategoryId = null,
+        originalType = "PURCHASE",
+        correctedType = null,
+        wasRejected = false,
+        wasApproved = true,
+        notificationTitle = if (redacted) null else "Title $tag",
+        notificationText = if (redacted) null else "Body $tag",
+        createdAt = createdAt
+    )
+
+    private fun receiptItemRow(
+        receiptId: Long,
+        tag: String,
+        createdAt: Long,
+        updatedAt: Long = createdAt
+    ) = ReceiptItemCategorization(
+        receiptId = receiptId,
+        expenseId = null,
+        itemDescription = "Organic Milk $tag",
+        itemAmount = 4.25,
+        suggestedCategoryId = null,
+        suggestedCategoryName = "Groceries $tag",
+        confidence = 0.85f,
+        aiRationale = "Matched dairy keyword $tag",
+        alternativeCategoriesJson = """[{"id":1,"name":"Food","confidence":0.5}]""",
+        userCorrectedCategoryId = null,
+        userCorrectedCategoryName = null,
+        userCorrectedAt = null,
+        taxAmount = 0.40,
+        isNewCategorySuggestion = false,
+        createdAt = createdAt,
+        updatedAt = updatedAt
+    )
+
+    @Test
+    fun `user_corrections is reachable by a registered target that nulls notification text 1ms older than cutoff and keeps at-cutoff and recent rows`() = runTest {
+        val dao = database.userCorrectionDao()
+        val oldId = dao.insert(userCorrectionRow("old", oneMsOlder))
+        val atCutoffId = dao.insert(userCorrectionRow("at-cutoff", atCutoff))
+        val recentId = dao.insert(userCorrectionRow("recent", now))
+        val alreadyRedactedId = dao.insert(userCorrectionRow("already", oneMsOlder, redacted = true))
+
+        val targets = allRegisteredTargets().sortedBy { it.name }
+        val userCorrectionTargets = targets.filter { it.name.startsWith("user_corrections") }
+        assertTrue(
+            "RetentionModule must register a target for user_corrections (found: ${targets.map { it.name }})",
+            userCorrectionTargets.isNotEmpty()
+        )
+
+        val results = userCorrectionTargets.map { it.purge(cutoffMs) }
+        assertTrue(results.all { it.success })
+        assertEquals("only the unredacted 1ms-older row is counted", 1, results.sumOf { it.rowsPurged })
+
+        val rowsById = dao.getAll().associateBy { it.id }
+        assertEquals("rows are scrubbed, never deleted", 4, rowsById.size)
+
+        val old = rowsById.getValue(oldId)
+        assertNull("[1ms older] notificationTitle", old.notificationTitle)
+        assertNull("[1ms older] notificationText", old.notificationText)
+        assertEquals("[1ms older] originalMerchant kept", "Merchant old", old.originalMerchant)
+        assertEquals("[1ms older] correctedMerchant kept", "Corrected old", old.correctedMerchant)
+        assertEquals("[1ms older] originalAmount kept", 19.99, old.originalAmount, 0.0)
+        assertTrue("[1ms older] wasApproved kept", old.wasApproved)
+        assertEquals("[1ms older] createdAt kept", oneMsOlder, old.createdAt)
+
+        for ((rowName, id, tag) in listOf(
+            Triple("at cutoff", atCutoffId, "at-cutoff"),
+            Triple("recent", recentId, "recent")
+        )) {
+            val row = rowsById.getValue(id)
+            assertEquals("[$rowName] notificationTitle kept", "Title $tag", row.notificationTitle)
+            assertEquals("[$rowName] notificationText kept", "Body $tag", row.notificationText)
+        }
+        assertNull("[already redacted] stays null", rowsById.getValue(alreadyRedactedId).notificationText)
+    }
+
+    @Test
+    fun `receipt_item_categorizations is reachable by a registered target that scrubs row 1ms older than cutoff and keeps at-cutoff and recent rows`() = runTest {
+        val receiptDao = database.scannedReceiptDao()
+        val itemDao = database.receiptItemCategorizationDao()
+        val stale = oneMsOlder - 1_000
+
+        val oldReceiptId = receiptDao.insert(ocrReceipt(oneMsOlder, otherTimestamp = now))
+        val atCutoffReceiptId = receiptDao.insert(ocrReceipt(atCutoff, otherTimestamp = stale))
+        val recentReceiptId = receiptDao.insert(ocrReceipt(now, otherTimestamp = stale))
+
+        val oldItemId = itemDao.insert(receiptItemRow(oldReceiptId, "old", oneMsOlder, updatedAt = now))
+        val atCutoffItemId = itemDao.insert(receiptItemRow(atCutoffReceiptId, "at-cutoff", atCutoff, updatedAt = stale))
+        val recentItemId = itemDao.insert(receiptItemRow(recentReceiptId, "recent", now, updatedAt = stale))
+
+        val targets = allRegisteredTargets().sortedBy { it.name }
+        val receiptTargets = targets.filter {
+            it.name == "scanned_receipts.rawOcrText" || it.name.startsWith("receipt_item_categorizations")
+        }
+        assertTrue("receipt retention target(s) must be registered", receiptTargets.isNotEmpty())
+
+        val results = receiptTargets.map { it.purge(cutoffMs) }
+        assertTrue(results.all { it.success })
+
+        val oldItem = itemDao.getById(oldItemId)
+        if (oldItem != null) {
+            assertNotNull("[1ms older] itemDescription is NON-NULL", oldItem.itemDescription)
+            assertTrue(
+                "[1ms older] itemDescription must be '' or '[REDACTED]', got '${oldItem.itemDescription}'",
+                oldItem.itemDescription == "" || oldItem.itemDescription == "[REDACTED]"
+            )
+            assertFalse("[1ms older] raw item text must not survive", oldItem.itemDescription.contains("Organic Milk"))
+            assertNull("[1ms older] aiRationale must be nulled", oldItem.aiRationale)
+            assertEquals("[1ms older] itemAmount kept", 4.25, oldItem.itemAmount, 0.0)
+        }
+
+        for ((rowName, itemId, tag) in listOf(
+            Triple("at cutoff", atCutoffItemId, "at-cutoff"),
+            Triple("recent", recentItemId, "recent")
+        )) {
+            val kept = itemDao.getById(itemId)
+            assertNotNull("[$rowName] categorization row must survive", kept)
+            assertEquals("[$rowName] itemDescription kept", "Organic Milk $tag", kept!!.itemDescription)
+            assertEquals("[$rowName] aiRationale kept", "Matched dairy keyword $tag", kept.aiRationale)
+            assertEquals("[$rowName] suggestedCategoryName kept", "Groceries $tag", kept.suggestedCategoryName)
+        }
     }
 }

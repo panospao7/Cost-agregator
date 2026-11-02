@@ -1,17 +1,27 @@
 package com.yourname.expensetracker.domain.forecasting
 
 import com.yourname.expensetracker.assertApproxEquals
+import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.data.repository.ExpenseRepository
+import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
+import com.yourname.expensetracker.domain.analytics.AnalyticsNormalizationResult
+import com.yourname.expensetracker.domain.analytics.NormalizedExpenseSnapshot
 import com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableException
 import com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableReasonCode
 import com.yourname.expensetracker.domain.core.money.ConversionQuality
 import com.yourname.expensetracker.domain.core.money.RateBasis
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.toExpenseSnapshot
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -262,6 +272,127 @@ class MonteCarloSpendingSimulatorTest {
                 assertApproxEquals(150.0, result.percentile50, 0.0001, "[$label] percentile50")
             }
         }
+    }
+
+    @Test
+    fun `bl01 regression 6 weeks at 100 and 2 quiet weeks produces sane 14 day p50 and p90`() = runTest {
+        // April 16, 2026 in a 30-day month -> 14 days remaining.
+        val now = ms(2026, 4, 16)
+        every { timeProvider.now() } returns now
+
+        val expenseRepository = mockk<ExpenseRepository>(relaxed = true)
+        val normalizer = mockk<AnalyticsCurrencyNormalizer>(relaxed = true)
+        val currencySettings = mockk<CurrencySettingsRepository>()
+        every { currencySettings.homeCurrency() } returns flowOf("EUR")
+        coEvery { normalizer.normalizeExpenses(any(), any()) } answers {
+            val rows = firstArg<List<Expense>>()
+            AnalyticsNormalizationResult(
+                homeCurrency = "EUR",
+                normalizedExpenses = rows.map {
+                    NormalizedExpenseSnapshot(it.toExpenseSnapshot(), it.currency, it.effectiveAmount, it.effectiveAmount)
+                },
+                includedExpenses = rows.map { it.toExpenseSnapshot() },
+                warnings = emptyList(),
+                latestRateTimestamp = null,
+                totalInputCount = rows.size
+            )
+        }
+
+        val currentWeekStart = TimePeriodUtils.getStartOfWeek(now)
+        // 6 positive weeks around 100.00 (small natural spread so sigma > 0) + 2 quiet weeks (weeks 3 and 6 = 0.00).
+        val activeWeeks = mapOf(
+            1 to 96.0,
+            2 to 98.0,
+            4 to 100.0,
+            5 to 100.0,
+            7 to 102.0,
+            8 to 104.0
+        )
+        val expenses = mutableListOf<Expense>()
+        var id = 1L
+        for ((weekOffset, total) in activeWeeks) {
+            val weekStart = TimePeriodUtils.addDays(currentWeekStart, -(weekOffset * 7))
+            for (dayOffset in 0..3) {
+                val date = TimePeriodUtils.addDays(weekStart, dayOffset) + 36_000_000L
+                expenses.add(
+                    Expense(
+                        id = id++,
+                        amount = total / 4.0,
+                        merchant = "TestMerchant",
+                        transactionType = TransactionType.PURCHASE,
+                        date = date
+                    )
+                )
+            }
+        }
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns expenses
+
+        val realDistribution = HistoricalSpendingDistribution(
+            expenseRepository = expenseRepository,
+            timeProvider = timeProvider,
+            analyticsCurrencyNormalizer = normalizer,
+            currencySettingsRepository = currencySettings
+        )
+        every { dataQualityAssessor.assess(any(), any()) } returns highConfidence()
+        val realSimulator = MonteCarloSpendingSimulator(
+            historicalDistribution = realDistribution,
+            dataQualityAssessor = dataQualityAssessor,
+            timeProvider = timeProvider
+        )
+
+        val result = requireNotNull(
+            realSimulator.simulate(
+                spentToDate = 0.0,
+                knownUpcoming = 0.0,
+                budgetAmount = 500.0,
+                displayCurrency = "EUR"
+            )
+        )
+
+        assertEquals(14, result.metadata.daysRemaining)
+        // Hand-computed old bug: mu = 2.3026 (exp=10), sigma = 4.2636 -> 14d P50 ~ 20, P90 ~ 4,720.
+        // True 14d spend (2 weeks at ~100/wk, optionally scaled by 6/8 active rate):
+        // P50 must be in a sane band [100, 260] (never ~20) and P90 in [130, 450] (never ~4,720).
+        assertTrue(
+            "14-day P50 should be in sane band [100.0, 260.0], but was ${result.percentile50}",
+            result.percentile50 in 100.0..260.0
+        )
+        assertTrue(
+            "14-day P90 should be plausible [130.0, 450.0] (old bug produced ~4720), but was ${result.percentile90}",
+            result.percentile90 in 130.0..450.0
+        )
+        assertTrue("P90 must be >= P50", result.percentile90 >= result.percentile50)
+    }
+
+    @Test
+    fun `implausible high sigma fit above ceiling degrades to deterministic instead of absurd p90`() = runTest {
+        every { timeProvider.now() } returns ms(2026, 4, 16) // 14 days remaining
+        // Direct fit with implausible sigma = 4.2636 (the BL-01 pathology).
+        val pathologicalFit = usableFit().copy(
+            mu = 2.302585,
+            sigma = 4.2636,
+            qualifyingWeekCount = 8,
+            totalWeeksExamined = 8
+        )
+        coEvery { historicalDistribution.computeDistributionResult("EUR") } returns
+            HistoricalDistributionResult.Available(pathologicalFit)
+        every { dataQualityAssessor.assess(any(), any()) } returns
+            SimulationConfidence(0.2, ConfidenceLevel.LOW, "Implausible variance")
+
+        val result = requireNotNull(
+            simulator.simulate(
+                spentToDate = 200.0,
+                knownUpcoming = 50.0,
+                budgetAmount = 600.0,
+                displayCurrency = "EUR"
+            )
+        )
+
+        // With sigma ceiling enforced, an implausible fit (sigma = 4.2636) must degrade to
+        // deterministic (spentToDate + knownUpcoming = 250.0, 0 iterations) rather than exploding to >4,000.
+        assertEquals("Implausible sigma must take degraded 0-iteration path", 0, result.metadata.iterations)
+        assertApproxEquals(250.0, result.percentile50, 0.01)
+        assertApproxEquals(250.0, result.percentile90, 0.01)
     }
 
     private fun usableFit(): DistributionFit = DistributionFit(

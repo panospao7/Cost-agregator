@@ -8,6 +8,9 @@ import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.entity.NotificationIntakeEntity
 import com.yourname.expensetracker.data.database.entity.PipelineDiagnosticEvent
+import com.yourname.expensetracker.data.database.entity.ReceiptItemCategorization
+import com.yourname.expensetracker.data.database.entity.ScannedReceipt
+import com.yourname.expensetracker.data.database.entity.UserCorrection
 import com.yourname.expensetracker.di.RetentionModule
 import com.yourname.expensetracker.domain.privacy.RetentionTarget
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -17,6 +20,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -342,5 +346,168 @@ class RetentionTargetPurgeTest {
         }.exceptionOrNull()
 
         assertTrue(thrown is CancellationException)
+    }
+
+    // ── S1: user_corrections and receipt_item_categorizations retention ───────
+
+    private fun userCorrectionRow(
+        tag: String,
+        createdAt: Long,
+        notificationTitle: String? = "Payment alert $tag",
+        notificationText: String? = "Card charged 24.50 EUR at $tag"
+    ) = UserCorrection(
+        packageName = "com.bank.app",
+        originalMerchant = "ORIG_$tag",
+        correctedMerchant = "CORR_$tag",
+        originalAmount = 24.50,
+        correctedAmount = 25.00,
+        originalCategoryId = null,
+        correctedCategoryId = null,
+        originalType = "PURCHASE",
+        correctedType = null,
+        wasRejected = false,
+        wasApproved = true,
+        notificationTitle = notificationTitle,
+        notificationText = notificationText,
+        createdAt = createdAt
+    )
+
+    private fun scannedReceiptRow(createdAt: Long) = ScannedReceipt(
+        imagePath = null,
+        rawOcrText = "OCR PAYLOAD $createdAt",
+        parsedTotal = 18.0,
+        parsedMerchant = "Test Store",
+        parsedDate = createdAt,
+        parsedItems = """[{"desc":"secret item","price":18.0}]""",
+        parsedTaxAmount = 1.80,
+        confidence = 0.9f,
+        createdAt = createdAt,
+        updatedAt = createdAt,
+        parseFailureReason = "Some failure text"
+    )
+
+    private fun receiptItemRow(
+        receiptId: Long,
+        tag: String,
+        createdAt: Long
+    ) = ReceiptItemCategorization(
+        receiptId = receiptId,
+        expenseId = null,
+        itemDescription = "SENSITIVE_ITEM_$tag",
+        itemAmount = 9.0,
+        suggestedCategoryId = null,
+        suggestedCategoryName = "Suggested_$tag",
+        confidence = 0.8f,
+        aiRationale = "SENSITIVE_RATIONALE_$tag",
+        alternativeCategoriesJson = """[{"id":2,"name":"Alt","confidence":0.4}]""",
+        userCorrectedCategoryId = null,
+        userCorrectedCategoryName = "UserCat_$tag",
+        userCorrectedAt = createdAt,
+        taxAmount = 0.90,
+        isNewCategorySuggestion = false,
+        createdAt = createdAt,
+        updatedAt = createdAt
+    )
+
+    @Test
+    fun `user_corrections target nulls notificationTitle and notificationText of old rows and keeps in-window rows untouched`() = runTest {
+        val dao = database.userCorrectionDao()
+        val oldId = dao.insert(userCorrectionRow("old", olderThanCutoff))
+        val inWindowId = dao.insert(userCorrectionRow("in-window", now - TimeUnit.DAYS.toMillis(5)))
+        val recentId = dao.insert(userCorrectionRow("recent", now))
+
+        val targets = RetentionModule.provideRetentionTargets(
+            database,
+            timeProvider,
+            writeBarrier(RestoreMaintenanceMode.Mode.NORMAL)
+        ).filter { it.name.startsWith("user_corrections") }
+        assertTrue("user_corrections retention target must be registered", targets.isNotEmpty())
+
+        val firstResults = targets.map { it.purge(cutoffMs) }
+        assertTrue(firstResults.all { it.success })
+        assertEquals(1, firstResults.sumOf { it.rowsPurged })
+
+        val rowsById = dao.getAll().associateBy { it.id }
+        assertEquals("user_corrections rows must be retained (scrubbed, not deleted)", 3, rowsById.size)
+
+        val old = rowsById.getValue(oldId)
+        assertNull("old notificationTitle must be nulled", old.notificationTitle)
+        assertNull("old notificationText must be nulled", old.notificationText)
+        assertEquals("old originalMerchant must be preserved", "ORIG_old", old.originalMerchant)
+        assertEquals("old correctedMerchant must be preserved", "CORR_old", old.correctedMerchant)
+        assertEquals("old originalAmount must be preserved", 24.50, old.originalAmount, 0.0)
+        assertTrue("old wasApproved must be preserved", old.wasApproved)
+
+        val inWindow = rowsById.getValue(inWindowId)
+        assertEquals("Payment alert in-window", inWindow.notificationTitle)
+        assertEquals("Card charged 24.50 EUR at in-window", inWindow.notificationText)
+
+        val recent = rowsById.getValue(recentId)
+        assertEquals("Payment alert recent", recent.notificationTitle)
+        assertEquals("Card charged 24.50 EUR at recent", recent.notificationText)
+
+        // Idempotency: second run must report 0 rowsPurged and leave in-window rows untouched.
+        val secondResults = targets.map { it.purge(cutoffMs) }
+        assertTrue(secondResults.all { it.success })
+        assertEquals(0, secondResults.sumOf { it.rowsPurged })
+    }
+
+    @Test
+    fun `receipt retention sweep scrubs old receipt_item_categorizations and keeps in-window child rows untouched`() = runTest {
+        val receiptDao = database.scannedReceiptDao()
+        val itemDao = database.receiptItemCategorizationDao()
+
+        val oldReceiptId = receiptDao.insert(scannedReceiptRow(olderThanCutoff))
+        val inWindowTs = now - TimeUnit.DAYS.toMillis(5)
+        val inWindowReceiptId = receiptDao.insert(scannedReceiptRow(inWindowTs))
+
+        val oldItemId1 = itemDao.insert(receiptItemRow(oldReceiptId, "old1", olderThanCutoff))
+        val oldItemId2 = itemDao.insert(receiptItemRow(oldReceiptId, "old2", olderThanCutoff))
+        val inWindowItemId = itemDao.insert(receiptItemRow(inWindowReceiptId, "in-window", inWindowTs))
+
+        val targets = RetentionModule.provideRetentionTargets(
+            database,
+            timeProvider,
+            writeBarrier(RestoreMaintenanceMode.Mode.NORMAL)
+        ).sortedBy { it.name }.filter {
+            it.name == "scanned_receipts.rawOcrText" || it.name.startsWith("receipt_item_categorizations")
+        }
+        assertTrue("receipt retention target(s) must be registered", targets.isNotEmpty())
+
+        val results = targets.map { it.purge(cutoffMs) }
+        assertTrue(results.all { it.success })
+        assertTrue("at least the old receipt/items must be counted as purged", results.sumOf { it.rowsPurged } >= 1)
+
+        // Parent old receipt must have its OCR text cleared
+        val oldReceipt = receiptDao.getById(oldReceiptId)!!
+        assertEquals("", oldReceipt.rawOcrText)
+        assertNotNull(oldReceipt.rawOcrTextPurgedAt)
+
+        // Child rows of the old receipt must be scrubbed (non-null itemDescription '' or '[REDACTED]', null aiRationale)
+        for (oldItemId in listOf(oldItemId1, oldItemId2)) {
+            val oldItem = itemDao.getById(oldItemId)
+            if (oldItem != null) {
+                assertNotNull("itemDescription column is NON-NULL", oldItem.itemDescription)
+                assertTrue(
+                    "old itemDescription must be '' or '[REDACTED]', got '${oldItem.itemDescription}'",
+                    oldItem.itemDescription == "" || oldItem.itemDescription == "[REDACTED]"
+                )
+                assertFalse("raw item description must not survive", oldItem.itemDescription.contains("SENSITIVE_ITEM"))
+                assertNull("old aiRationale must be nulled", oldItem.aiRationale)
+                assertEquals("old itemAmount must be preserved", 9.0, oldItem.itemAmount, 0.0)
+            }
+        }
+
+        // In-window receipt and its child categorization row must remain completely untouched
+        val inWindowReceipt = receiptDao.getById(inWindowReceiptId)!!
+        assertEquals("OCR PAYLOAD $inWindowTs", inWindowReceipt.rawOcrText)
+        assertNull(inWindowReceipt.rawOcrTextPurgedAt)
+
+        val inWindowItem = itemDao.getById(inWindowItemId)
+        assertNotNull("in-window categorization row must be preserved", inWindowItem)
+        assertEquals("SENSITIVE_ITEM_in-window", inWindowItem!!.itemDescription)
+        assertEquals("SENSITIVE_RATIONALE_in-window", inWindowItem.aiRationale)
+        assertEquals("Suggested_in-window", inWindowItem.suggestedCategoryName)
+        assertEquals(9.0, inWindowItem.itemAmount, 0.0)
     }
 }

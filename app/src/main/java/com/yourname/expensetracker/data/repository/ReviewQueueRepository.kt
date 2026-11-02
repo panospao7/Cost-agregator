@@ -383,7 +383,8 @@ class ReviewQueueRepository @Inject constructor(
                             wasRejected = false,
                             wasApproved = true,
                             notificationTitle = review.notificationTitle,
-                            notificationText = review.notificationText
+                            notificationText = review.notificationText,
+                            createdAt = timeProvider.now()
                         )
                         userCorrectionDao.insert(correction)
                         ReviewApprovalTxOutcome(
@@ -534,7 +535,8 @@ class ReviewQueueRepository @Inject constructor(
                 wasRejected = true,
                 wasApproved = false,
                 notificationTitle = review.notificationTitle,
-                notificationText = review.notificationText
+                notificationText = review.notificationText,
+                createdAt = timeProvider.now()
             )
             userCorrectionDao.insert(correction)
             true
@@ -712,7 +714,8 @@ class ReviewQueueRepository @Inject constructor(
                 wasRejected = !isRelevant,
                 wasApproved = isRelevant,
                 notificationTitle = notification.title,
-                notificationText = notification.text ?: notification.bigText
+                notificationText = notification.text ?: notification.bigText,
+                createdAt = timeProvider.now()
             )
 
             when {

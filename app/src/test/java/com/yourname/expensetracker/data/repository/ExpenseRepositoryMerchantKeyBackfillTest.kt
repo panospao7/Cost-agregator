@@ -7,6 +7,7 @@ import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.RestrictedExpenseDaoMutation
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import io.mockk.coVerify
 import io.mockk.every
@@ -57,7 +58,8 @@ class ExpenseRepositoryMerchantKeyBackfillTest {
         merchantNormalizer = mockk(relaxed = true),
         transferDirectionAnalytics = mockk(relaxed = true),
         transactionLifecycleCoordinator = mockk(relaxed = true),
-        debugExpenseAuditWriter = mockk(relaxed = true)
+        debugExpenseAuditWriter = mockk(relaxed = true),
+        timeProvider = FakeTimeProvider(1_700_000_000_000L)
     )
 
     private suspend fun seed(merchant: String = "Original Merchant", key: String? = null): Expense {

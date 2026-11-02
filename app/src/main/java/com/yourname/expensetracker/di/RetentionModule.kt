@@ -123,10 +123,12 @@ object RetentionModule {
                 return CancellationSafe.runCatchingCancellable {
                     // GR-08k1 accessor normalization: DAO-named local (was `dao`).
                     val scannedReceiptDao = appDatabase.scannedReceiptDao()
+                    val receiptItemCategorizationDao = appDatabase.receiptItemCategorizationDao()
                     val count = scannedReceiptDao.purgeRawOcrText(
                         beforeMs = cutoffMs,
                         nowMs = timeProvider.now()
                     )
+                    receiptItemCategorizationDao.redactForReceiptsOlderThan(cutoffMs)
                     RetentionPurgeResult(name, count, true)
                 }.getOrElse {
                     RetentionPurgeResult(
@@ -373,6 +375,39 @@ object RetentionModule {
                     // database-chained receiver (GR-08e precedent).
                     val pendingReviewDao = appDatabase.pendingReviewDao()
                     val count = pendingReviewDao.redactNotificationTextOlderThan(cutoffMs)
+                    RetentionPurgeResult(name, count, true)
+                }.getOrElse {
+                    RetentionPurgeResult(
+                        targetName = name,
+                        rowsPurged = 0,
+                        success = false,
+                        errorMessage = "RETENTION_PURGE_FAILED:${it::class.simpleName}"
+                    )
+                }
+            }
+        },
+
+        object : RetentionTarget {
+            override val name = "user_corrections.notificationText"
+            // S1 (P-08-1): Redact notification text/title in user_corrections past the
+            // raw-text retention window while preserving learning rows and structural fields.
+            override suspend fun purge(cutoffMs: Long): RetentionPurgeResult {
+                try {
+                    writeBarrier.checkWritesAllowed("RetentionModule.UserCorrectionDao.purge")
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    return RetentionPurgeResult(
+                        targetName = name,
+                        rowsPurged = 0,
+                        success = false,
+                        errorMessage = "WRITE_BARRIER_BLOCKED",
+                        isTransient = true,
+                        errorCode = "WRITE_BARRIER_BLOCKED"
+                    )
+                }
+                return CancellationSafe.runCatchingCancellable {
+                    val userCorrectionDao = appDatabase.userCorrectionDao()
+                    val count = userCorrectionDao.redactNotificationTextOlderThan(cutoffMs)
                     RetentionPurgeResult(name, count, true)
                 }.getOrElse {
                     RetentionPurgeResult(

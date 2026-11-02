@@ -19,6 +19,7 @@ import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
 import com.yourname.expensetracker.domain.sideeffect.MutationResult
 import com.yourname.expensetracker.domain.sideeffect.PostCommitActionBatch
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
@@ -913,5 +914,101 @@ class ReviewQueueRepositoryTest {
                 any<suspend () -> Any?>()
             )
         }
+    }
+
+    private fun repositoryWithTimeProvider(tp: TimeProvider): ReviewQueueRepository =
+        ReviewQueueRepository(
+            writeBarrier = writeBarrier,
+            database = database,
+            pendingReviewDao = pendingReviewDao,
+            rawNotificationDao = rawNotificationDao,
+            expenseDao = expenseDao,
+            sourceStatsDao = sourceStatsDao,
+            receiptLinkService = receiptLinkService,
+            userCorrectionDao = userCorrectionDao,
+            merchantNormalizer = merchantNormalizer,
+            hybridClassifier = hybridClassifier,
+            classifier = classifier,
+            budgetMonitor = budgetMonitor,
+            parserRegistry = parserRegistry,
+            timeProvider = tp,
+            confidenceRouter = confidenceRouter,
+            transactionLifecycleCoordinator = transactionLifecycleCoordinator,
+            pendingReviewSourceLinkService = mockk(relaxed = true),
+            pendingReviewSourceLinkPromoter = mockk(relaxed = true),
+            transactionRunner = mockk(relaxed = true),
+            transactionLifecycleEventWriter = mockk(relaxed = true),
+            postCommitActionRunner = mockk(relaxed = true),
+        )
+
+    @Test
+    fun `approveReview populates UserCorrection createdAt from TimeProvider`() = runTest {
+        val fixedTime = 1_712_345_678_001L
+        val repo = repositoryWithTimeProvider(FakeTimeProvider(fixedTime))
+        val reviewId = 801L
+        coEvery { pendingReviewDao.getById(reviewId) } returns approvablePendingReview(reviewId)
+        coEvery {
+            pendingReviewDao.transitionStatus(
+                reviewId,
+                PendingReviewStatus.PENDING,
+                PendingReviewStatus.PROCESSING
+            )
+        } returns 1
+        coEvery { transactionLifecycleCoordinator.createExpenseDbOnlyV2(any()) } returns
+            MutationResult(CreateExpenseResult.Created(901L), PostCommitActionBatch.empty(""))
+
+        val result = repo.approveReview(reviewId)
+
+        assertTrue(result is Result.Success)
+        val correctionSlot = slot<UserCorrection>()
+        coVerify(exactly = 1) { userCorrectionDao.insert(capture(correctionSlot)) }
+        assertTrue(correctionSlot.captured.createdAt > 0L)
+        assertEquals(fixedTime, correctionSlot.captured.createdAt)
+    }
+
+    @Test
+    fun `rejectReview populates UserCorrection createdAt from TimeProvider`() = runTest {
+        val fixedTime = 1_712_345_678_002L
+        val repo = repositoryWithTimeProvider(FakeTimeProvider(fixedTime))
+        val reviewId = 802L
+        coEvery { pendingReviewDao.getById(reviewId) } returns approvablePendingReview(reviewId)
+        coEvery {
+            pendingReviewDao.transitionStatus(
+                reviewId,
+                PendingReviewStatus.PENDING,
+                PendingReviewStatus.REJECTED
+            )
+        } returns 1
+
+        repo.rejectReview(reviewId)
+
+        val correctionSlot = slot<UserCorrection>()
+        coVerify(exactly = 1) { userCorrectionDao.insert(capture(correctionSlot)) }
+        assertTrue(correctionSlot.captured.createdAt > 0L)
+        assertEquals(fixedTime, correctionSlot.captured.createdAt)
+    }
+
+    @Test
+    fun `markAsRelevant populates UserCorrection createdAt from TimeProvider`() = runTest {
+        val fixedTime = 1_712_345_678_003L
+        val repo = repositoryWithTimeProvider(FakeTimeProvider(fixedTime))
+        val notificationId = 803L
+        val notification = RawNotification(
+            id = notificationId,
+            packageName = "com.bank.app",
+            appName = "Bank",
+            title = null,
+            text = null,
+            timestamp = 1_700_000_000_000L,
+            capturedAt = 1_700_000_000_000L
+        )
+        coEvery { rawNotificationDao.getById(notificationId) } returns notification
+
+        repo.markAsRelevant(notificationId, isRelevant = false)
+
+        val correctionSlot = slot<UserCorrection>()
+        coVerify(exactly = 1) { userCorrectionDao.insert(capture(correctionSlot)) }
+        assertTrue(correctionSlot.captured.createdAt > 0L)
+        assertEquals(fixedTime, correctionSlot.captured.createdAt)
     }
 }

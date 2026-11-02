@@ -20,6 +20,7 @@ import com.yourname.expensetracker.domain.analytics.AnalyticsPeriodRange
 import com.yourname.expensetracker.domain.analytics.TotalsAggregationEngine
 import com.yourname.expensetracker.domain.analytics.TransferDirectionAnalytics
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import io.mockk.coEvery
 import io.mockk.every
@@ -133,7 +134,8 @@ class EffectiveAmountPipelineIntegrationTest : AnalyticsEngineTestBase() {
             merchantNormalizer = mockk(relaxed = true),
             transferDirectionAnalytics = mockk<TransferDirectionAnalytics>(relaxed = true),
             transactionLifecycleCoordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true),
-            debugExpenseAuditWriter = mockk(relaxed = true)
+            debugExpenseAuditWriter = mockk(relaxed = true),
+            timeProvider = FakeTimeProvider(ms(2026, 3, 20))
         )
         val currencySettingsRepository = TestCurrencySettingsRepository()
         val currencyConverter = testCurrencyConverter()

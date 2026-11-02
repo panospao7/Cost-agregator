@@ -156,6 +156,7 @@ class DataRetentionWorker @AssistedInject constructor(
                 "50_privacy_audit_events" ->
                     now - TimeUnit.DAYS.toMillis(PRIVACY_AUDIT_RETENTION_DAYS)
                 "pending_reviews.notificationText" -> notificationTextCutoff
+                "user_corrections.notificationText" -> notificationTextCutoff
                 "background_job_runs.errorMessage" -> textRedactionCutoff
                 "bank_statement_import_items.merchant" -> textRedactionCutoff
                 else -> now - TimeUnit.DAYS.toMillis(30)
@@ -164,7 +165,7 @@ class DataRetentionWorker @AssistedInject constructor(
             fun retentionDaysFor(targetName: String): Int = when (targetName) {
                 "raw_notifications", "notification_intake" -> settings.rawNotificationRetentionDays
                 "scanned_receipts.rawOcrText" -> settings.rawOcrRetentionDays
-                "pending_reviews.notificationText" -> notificationTextDays
+                "pending_reviews.notificationText", "user_corrections.notificationText" -> notificationTextDays
                 // RP-14 (D14): fixed policy cutoffs for the new targets.
                 "10_transaction_events.snapshots" -> TRANSACTION_EVENT_SNAPSHOT_RETENTION_DAYS.toInt()
                 "20_transaction_events.rows" -> TRANSACTION_EVENT_ROW_RETENTION_DAYS.toInt()

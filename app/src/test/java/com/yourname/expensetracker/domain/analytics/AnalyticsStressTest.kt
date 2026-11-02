@@ -14,6 +14,7 @@ import com.yourname.expensetracker.data.database.dao.CurrencyTotal
 import com.yourname.expensetracker.domain.analytics.TransferDirectionAnalytics
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.testAnalyticsCurrencyNormalizer
+import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.every
@@ -84,7 +85,8 @@ class AnalyticsStressTest {
             merchantNormalizer = mockk(relaxed = true),
             transferDirectionAnalytics = mockk<TransferDirectionAnalytics>(relaxed = true),
             transactionLifecycleCoordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true),
-            debugExpenseAuditWriter = mockk(relaxed = true)
+            debugExpenseAuditWriter = mockk(relaxed = true),
+            timeProvider = FakeTimeProvider(ms(2026, 3, 31))
         )
 
         val engine = AdvancedAnalyticsEngine(

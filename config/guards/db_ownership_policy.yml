@@ -3739,6 +3739,24 @@ entries:
   - com.yourname.expensetracker.data.database.AppDatabase
   - com.yourname.expensetracker.domain.util.TimeProvider
   - com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+  daoAccessor: receiptItemCategorizationDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ReceiptItemCategorizationDao
+  operation: redactForReceiptsOlderThan
+  barrierMode: helper
+  reason: 'S1 P-08-2 EXACT_POLICY: scanned_receipts.rawOcrText retention target redacts
+    receipt_item_categorizations sensitive fields (itemDescription, aiRationale,
+    suggestedCategoryName) for receipts past the retention cutoff'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/di/RetentionModule.kt
+  ownerFqcn: com.yourname.expensetracker.di.RetentionModule
+  kind: function
+  method: provideRetentionTargets
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.AppDatabase
+  - com.yourname.expensetracker.domain.util.TimeProvider
+  - com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
   daoAccessor: scannedReceiptDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
   operation: purgeRawOcrText
@@ -3786,6 +3804,24 @@ entries:
     snapshot nulling)'
   owner: '@panospao7'
   linkedIssue: RP-14
+- path: app/src/main/java/com/yourname/expensetracker/di/RetentionModule.kt
+  ownerFqcn: com.yourname.expensetracker.di.RetentionModule
+  kind: function
+  method: provideRetentionTargets
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.AppDatabase
+  - com.yourname.expensetracker.domain.util.TimeProvider
+  - com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+  daoAccessor: userCorrectionDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.UserCorrectionDao
+  operation: redactNotificationTextOlderThan
+  barrierMode: helper
+  reason: 'S1 P-08-1 EXACT_POLICY: user_corrections.notificationText retention target
+    redacts notification text/title past the raw-text retention window while preserving
+    learning rows and structural fields'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
 - path: app/src/main/java/com/yourname/expensetracker/domain/bank/BankApiIntegration.kt
   ownerFqcn: com.yourname.expensetracker.domain.bank.BankApiIntegration
   kind: function

@@ -11,6 +11,7 @@ import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.analytics.TransferDirectionAnalytics
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import androidx.room.withTransaction
 import io.mockk.*
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -72,7 +73,8 @@ class ExpenseRepositoryTruncationTest {
             merchantNormalizer,
             transferDirectionAnalytics,
             transactionLifecycleCoordinator,
-            mockk(relaxed = true)
+            debugExpenseAuditWriter = mockk(relaxed = true),
+            timeProvider = FakeTimeProvider(1_700_000_000_000L)
         )
     }
 

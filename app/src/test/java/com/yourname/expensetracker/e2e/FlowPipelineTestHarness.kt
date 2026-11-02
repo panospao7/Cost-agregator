@@ -144,7 +144,8 @@ internal fun buildPipeline(
         merchantNormalizer = merchantNormalizer,
         transferDirectionAnalytics = transferDirectionAnalytics,
         transactionLifecycleCoordinator = transactionLifecycleCoordinator,
-        debugExpenseAuditWriter = mockk(relaxed = true)
+        debugExpenseAuditWriter = mockk(relaxed = true),
+        timeProvider = FakeTimeProvider(nowMs)
     )
 
     val analyticsRepository = AnalyticsRepository(expenseDao, categoryRepository, currencySettingsRepository, currencyConverter = currencyConverter, analyticsCurrencyNormalizer = analyticsCurrencyNormalizer, multiCurrencyRepository = mockk(relaxed = true))
