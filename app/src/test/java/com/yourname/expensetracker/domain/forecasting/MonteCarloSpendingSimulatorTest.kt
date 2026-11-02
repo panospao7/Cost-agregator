@@ -362,6 +362,96 @@ class MonteCarloSpendingSimulatorTest {
             result.percentile90 in 130.0..450.0
         )
         assertTrue("P90 must be >= P50", result.percentile90 >= result.percentile50)
+        assertTrue("P10 must be <= P50", result.percentile10 <= result.percentile50)
+        // Derivation (BL-01 per-week draw, 25% quiet, 2 remaining weeks): K active weeks ~ Binomial(2, 0.25)
+        // gives P(K=0)=0.0625, P(K=1)=0.375, P(K=2)=0.5625. Cumulative 0.4375 after K<=1, so the
+        // median sits in the K=2 group (~200) and P90 is ~200 as well; both are inside the bands above.
+    }
+
+    @Test
+    fun `BL-01 sixty percent quiet weeks with 14 days left gives zero p10 and positive p50 near one active week`() = runTest {
+        every { timeProvider.now() } returns ms(2026, 4, 16) // 30-day month -> 14 days = exactly 2 weeks
+        // Active-week LogNormal: exp(mu) = 100 per week, tiny sigma so the spread comes from the quiet draw.
+        val fit = usableFit().copy(
+            mu = Math.log(100.0),
+            sigma = 0.05,
+            zeroWeekProbability = 0.6
+        )
+        coEvery { historicalDistribution.computeDistributionResult("EUR") } returns
+            HistoricalDistributionResult.Available(fit)
+        every { dataQualityAssessor.assess(any(), any()) } returns highConfidence()
+
+        val result = requireNotNull(
+            simulator.simulate(
+                spentToDate = 0.0,
+                knownUpcoming = 0.0,
+                budgetAmount = null,
+                displayCurrency = "EUR"
+            )
+        )
+
+        assertEquals(14, result.metadata.daysRemaining)
+        assertEquals(1000, result.metadata.iterations)
+        // Derivation: each of the 2 weeks is independently quiet with p = 0.6, so active weeks
+        // K ~ Binomial(2, 0.4): P(K=0)=0.36, P(K=1)=0.48, P(K=2)=0.16. Total ~ K * 100 * exp(0.05 z).
+        //  - P10: rank 10% lies inside the K=0 mass (36%) -> exactly 0 (no spent/known added).
+        //  - P50: rank 50% lies inside the K=1 mass (36%..84%) -> ~100. 0.05*z with |z| <= 1.6 bounds
+        //    the factor to [0.923, 1.083], so +-8 around the active-week mean (100) is justified.
+        //  - P90: rank 90% lies inside the K=2 mass (84%..100%) -> ~200, same factor -> +-16.
+        // The sampling-noise margin on the 36%/84% boundaries is ~1.5 and ~1.2 percentage points (1 sd),
+        // far from the 10%/50%/90% ranks.
+        assertEquals("P10 must be exactly zero", 0.0, result.percentile10, 0.0)
+        assertTrue("P50 must be positive, was ${result.percentile50}", result.percentile50 > 0.0)
+        assertApproxEquals(100.0, result.percentile50, 8.0)
+        assertApproxEquals(200.0, result.percentile90, 16.0)
+        assertTrue("P10 <= P50", result.percentile10 <= result.percentile50)
+        assertTrue("P50 <= P90", result.percentile50 <= result.percentile90)
+    }
+
+    @Test
+    fun `BL-01 partial last week is weighted by days over seven in the per week quiet draw`() = runTest {
+        every { timeProvider.now() } returns ms(2026, 4, 20) // 10 days left = 1 full week + 3/7 week
+        val fit = usableFit().copy(
+            mu = Math.log(100.0),
+            sigma = 0.05,
+            zeroWeekProbability = 0.6
+        )
+        coEvery { historicalDistribution.computeDistributionResult("EUR") } returns
+            HistoricalDistributionResult.Available(fit)
+        every { dataQualityAssessor.assess(any(), any()) } returns highConfidence()
+
+        val result = requireNotNull(simulator.simulate(0.0, 0.0, null, displayCurrency = "EUR"))
+
+        assertEquals(10, result.metadata.daysRemaining)
+        // Derivation: weights are 1 (full week) and 3/7 (partial week), each active with p = 0.4.
+        // Active horizon: 0 (both quiet, p .6*.6 = .36), 3/7 (only the partial week, p .6*.4 = .24),
+        // 1 (only the full week, p .4*.6 = .24), 10/7 (both, p .4*.4 = .16). Sorted mass: [0,.36) zero,
+        // [.36,.60) ~42.9, [.60,.84) ~100, [.84,1] ~142.9.
+        //  - P10 -> 0, P50 (rank .50, inside the 3/7 group) -> ~42.9, P90 (inside the 10/7 group) -> ~142.9.
+        // The partial-week weight is what separates 42.9 from 100: an unweighted draw would give ~100.
+        assertEquals("P10 must be exactly zero", 0.0, result.percentile10, 0.0)
+        assertApproxEquals(300.0 / 7.0, result.percentile50, 6.0)
+        assertApproxEquals(1000.0 / 7.0, result.percentile90, 14.0)
+        assertTrue("P10 <= P50 <= P90", result.percentile10 <= result.percentile50 && result.percentile50 <= result.percentile90)
+    }
+
+    @Test
+    fun `BL-01 zero week probability of zero produces no zero mass and the full horizon median`() = runTest {
+        every { timeProvider.now() } returns ms(2026, 4, 16) // 14 days = 2 weeks
+        every { dataQualityAssessor.assess(any(), any()) } returns highConfidence()
+        // usableFit() has the default zeroWeekProbability (0.0): the pre-change path. The exact
+        // pre-change numbers are pinned in MonteCarloSpendingSimulatorGoldenTest.
+        coEvery { historicalDistribution.computeDistributionResult("EUR") } returns
+            HistoricalDistributionResult.Available(usableFit().copy(zeroWeekProbability = 0.0))
+
+        val result = requireNotNull(simulator.simulate(100.0, 50.0, 2_000.0, displayCurrency = "EUR"))
+
+        // Derivation: total = 150 + exp(5.8 + 0.35 z) * (14 / 7). Median z ~ 0 (sampling error of the
+        // empirical median ~ 1.25/sqrt(1000) = 0.04 in z, i.e. ~1.4%), so P50 ~ 150 + 330.3 * 2 = 810.6.
+        // P10 (z ~ -1.28) ~ 150 + 660.6 * 0.639 = 572. No quiet draw: P10 stays far above the 150 floor.
+        assertApproxEquals(810.6, result.percentile50, 30.0)
+        assertTrue("P10 must stay above the deterministic floor, was ${result.percentile10}", result.percentile10 > 400.0)
+        assertTrue(result.percentile10 < result.percentile50 && result.percentile50 < result.percentile90)
     }
 
     @Test
