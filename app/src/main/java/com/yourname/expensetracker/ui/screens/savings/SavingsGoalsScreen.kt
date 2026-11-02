@@ -98,7 +98,7 @@ fun SavingsGoalsScreen(
     val overflowFocusRequesters = remember { mutableMapOf<Long, FocusRequester>() }
     val goalsHeadingFocusRequester = remember { FocusRequester() }
     var deleteOriginGoalId by remember { mutableStateOf<Long?>(null) }
-    LaunchedEffect(deleteFlow) {
+    LaunchedEffect(deleteFlow, state.goals) {
         when (deleteFlow) {
             is DeleteFlowState.Checking -> deleteOriginGoalId = deleteFlow.goalId
             is DeleteFlowState.Confirm -> deleteOriginGoalId = deleteFlow.goalId
@@ -108,15 +108,27 @@ fun SavingsGoalsScreen(
                 val origin = deleteOriginGoalId
                 if (origin != null) {
                     deleteOriginGoalId = null
-                    val target = if (state.goals.any { it.id == origin }) {
-                        overflowFocusRequesters[origin] ?: goalsHeadingFocusRequester
+                    val originRequester = if (state.goals.any { it.id == origin }) {
+                        overflowFocusRequesters[origin]
                     } else {
-                        goalsHeadingFocusRequester
+                        null
                     }
-                    try {
-                        target.requestFocus()
-                    } catch (_: IllegalStateException) {
-                        // Target not attached (item scrolled out or removed): focus is best effort.
+                    // requestFocus is non-suspending; only the not-attached failure is tolerated.
+                    var originFocused = false
+                    if (originRequester != null) {
+                        try {
+                            originRequester.requestFocus()
+                            originFocused = true
+                        } catch (_: IllegalStateException) {
+                            // Origin overflow not attached (scrolled out): fall back to the heading.
+                        }
+                    }
+                    if (!originFocused) {
+                        try {
+                            goalsHeadingFocusRequester.requestFocus()
+                        } catch (_: IllegalStateException) {
+                            // Heading not attached either: focus is best effort.
+                        }
                     }
                 }
             }

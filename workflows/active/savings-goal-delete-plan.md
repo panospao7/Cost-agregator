@@ -394,3 +394,27 @@ The owner lifted "planning only" on 2026-11-02.
     - B6-23 was DROPPED.
     - B8-5 was ACCEPTED; the DAO tests are in `data.database.dao`.
   - Batch 1 test classes confirmed (FQCN): `data.repository.SavingsGoalRepositoryCurrencyTest`, `data.database.dao.SavingsGoalDaoTest`, `data.repository.SavingsSweepAcceptanceCoordinatorTest`, `data.backup.BackupVerifierSavingsLedgerTest`, `ui.screens.savings.SavingsGoalsViewModelWriteBlockedTest`, `e2e.NotificationParserDashboardTotalSeamTest`, plus the new S1/S2 tests.
+
+## Progress (2026-11-02, orchestrator)
+- S1+S2 dd4dd9a2; S3 eb689681 plus guardian fixes d519a930; S4/S5 aae05278; test collector fix e33483ed; S5 follow-ups and S6 docs (this commit).
+- Validation PASS: Batch 1 vr-20261102-002804-429e4154; G db_access vr-20261102-003508-3616a28a and db_artifact_sync vr-20261102-004229-dcec62eb; lint vr-20261102-015146-0aef6e7e; Batch 2 vr-20261102-023852-e61e0b4c (vr-20261102-014559 FAIL was the test collector, debug iteration 2).
+- Combined guardian S1+S2 (Sonnet, dd4dd9a2): ACCEPT-WITH-FIXES, no blocking findings.
+  - INV-2/7/12/14/15/17/18: PASS.
+  - Identity traps: PASS; predicts db_access and db_artifact_sync PASS.
+  - Atomicity: PASS. Privacy: PASS. Cancellation: PASS (sibling CE catch, first line `throw error`).
+  - LOWs (accepted, no change):
+    - `SavingsGoalRepositoryDeleteConcurrencyTest:522` `settle()` uses a fixed delay;
+    - the evaluate block is duplicated in delete and eligibility;
+    - no repository-level -0.0 row test (the policy test covers it).
+  - S6 docs (FG-26):
+    - LEGAL_PATHS: savings-goal delete entry (VM, repo, barrier, history pre-read, one Room transaction re-reading goal and ledger, policy, deleteGoal) plus the eligibility read-only member;
+    - CODEBASE_INVENTORY ~402/~496: the new types and the repository dependencies;
+    - check ENGINE_INTERACTION_MAP and CODEBASE_SEGMENTS.
+- Combined guardian S3 (d519a930 fixes): F1 (stale pre-check exception) and F2 (no GoalDeleted when the goal is unlisted) FIXED. F3: deleteGoal is only called from the Confirm dialog (done in S5). F4: info.
+- S3 compile break: the Screen `when` was not exhaustive. Resolved by S4/S5 aae05278 (debug iteration 1). Batch 2+3 queued: 1793583589798/989.
+- Combined guardian S4/S5 (aae05278): ACCEPT-WITH-FIXES. Privacy PASS.
+  - Follow-up (low):
+    - el `action_delete` and `error_delete_failed` drafts (existing keys; baseline entries become stale, which is harmless);
+    - the focus-return fallback to the heading when the origin card is gone (re-key on state.goals);
+    - nit: overflowFocusRequesters is not pruned.
+- Known gap: el action_delete and error_delete_failed now have drafts. es/el sign-off is deferred to the release gate (owner-approvals 103).

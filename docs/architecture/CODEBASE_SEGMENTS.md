@@ -800,6 +800,7 @@ Owns smart savings optimization and financial health score computation.
 - `domain/savings/AutomatedSavingsRuleEngine.kt`
 - `domain/savings/SavingsGamificationEngine.kt`
 - `domain/savings/SmartSavingsEngine.kt`
+- `domain/savings/SavingsGoalDeletionPolicy.kt`, `domain/savings/SavingsGoalDeleteResult.kt` — savings goal delete decision and outcomes
 - `data/repository/SavingsSweepAcceptanceCoordinator.kt` — authoritative Room balance/plan/ledger commit
 - `data/repository/SavingsContributionHistoryRepository.kt` — read-only legacy history view plus Room ledger
 - `domain/health/FinancialHealthCalculator.kt`
