@@ -21,6 +21,9 @@
     <string name="unsupported_db_export_auth_denied">Para exportar se necesita tu huella o el bloqueo de pantalla. No se exportó nada.</string>
     <string name="backup_schema_too_old">Esta copia de seguridad es de una versión de la app demasiado antigua para restaurarla.</string>
     <string name="backup_schema_too_new">Esta copia de seguridad se creó con una versión más reciente de la app. Actualiza la app para restaurarla.</string>
+    <!-- UF-46: DRAFT: owner native sign-off pending -->
+    <string name="backup_restore_blocked_content_mismatch">Restauración bloqueada: el contenido de la copia no coincide</string>
+    <string name="backup_restore_not_verifiable_notice">Restauración completada. No se pudo comprobar esta copia con sus totales originales.</string>
 
     <!-- Common Actions (Top Priority) -->
     <string name="action_save">Guardar</string>
