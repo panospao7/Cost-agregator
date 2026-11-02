@@ -824,6 +824,63 @@ class CostbackupBundleTest {
     }
 
     @Test
+    fun `INV6 m3 self check passes for an identical NOT_CAPTURED set at C0`() {
+        val set = SemanticAggregateSet.ofNotCaptured(SemanticNotCapturedReason.SEMANTIC_CAPTURE_FAILED)
+
+        val result = CostbackupBundle.selfCheckSemanticSection(set)
+
+        assertTrue("expected Verified but was ${result.javaClass.simpleName}", result is SemanticCheckResult.Verified)
+        assertEquals(SemanticCheckpoint.C0_BACKUP_SELF_CHECK, result.checkpoint)
+    }
+
+    @Test
+    fun `INV6 m3 serialized section differing only in definitionHash fails the self check`() {
+        val set = sampleCapturedSet()
+        val hashAltered: (SemanticAggregateSet) -> String = { s ->
+            val json = s.toJson()
+            val entry = json.getJSONObject("aggregates").getJSONObject("INCOME_EFFECTIVE_BY_CURRENCY")
+            val original = entry.getString("definitionHash")
+            entry.put("definitionHash", original + "x")
+            json.toString()
+        }
+
+        val result = CostbackupBundle.selfCheckSemanticSection(set, hashAltered)
+
+        assertSelfCheckFailed("hash only", result)
+        assertEquals(SemanticCode.SEMANTIC_SELF_CHECK_FAILED, (result as SemanticCheckResult.Failed).code)
+    }
+
+    @Test
+    fun `INV6 m3 serialized section differing only in version fails the self check`() {
+        val set = sampleCapturedSet()
+        val versionAltered: (SemanticAggregateSet) -> String = { s ->
+            val json = s.toJson()
+            json.put("version", s.version + 1)
+            json.toString()
+        }
+
+        val result = CostbackupBundle.selfCheckSemanticSection(set, versionAltered)
+
+        assertSelfCheckFailed("version only", result)
+        assertEquals(SemanticCode.SEMANTIC_SELF_CHECK_FAILED, (result as SemanticCheckResult.Failed).code)
+    }
+
+    @Test
+    fun `INV6 m3 serialized section differing only in notCapturedReason fails the self check`() {
+        val set = SemanticAggregateSet.ofNotCaptured(SemanticNotCapturedReason.SEMANTIC_CAPTURE_FAILED)
+        val reasonAltered: (SemanticAggregateSet) -> String = { s ->
+            val json = s.toJson()
+            json.put("notCapturedReason", SemanticNotCapturedReason.SEMANTIC_BUCKET_LIMIT.name)
+            json.toString()
+        }
+
+        val result = CostbackupBundle.selfCheckSemanticSection(set, reasonAltered)
+
+        assertSelfCheckFailed("reason only", result)
+        assertEquals(SemanticCode.SEMANTIC_SELF_CHECK_FAILED, (result as SemanticCheckResult.Failed).code)
+    }
+
+    @Test
     fun `AE6 self check rethrows cancellation from the serializer with identity`() {
         val cancellation = CancellationException("cancelled during self check")
 

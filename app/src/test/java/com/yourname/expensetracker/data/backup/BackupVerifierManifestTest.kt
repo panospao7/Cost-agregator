@@ -612,6 +612,96 @@ class BackupVerifierManifestTest {
         }
     }
 
+    // ── INV-11 / m1: the gated-table requirement depends on the semantic marker ──
+
+    @Test
+    fun INV11_m1_v152_without_marker_does_not_require_the_gated_counts() {
+        val required = BackupVerifier.requiredManifestTables(databaseVersion = 152, semanticMarker = false)
+
+        s0bGatedTables.forEach { table ->
+            assertFalse("v152 without marker must not require $table", required.contains(table))
+        }
+        // Everything else a 152 manifest requires is unchanged by the marker.
+        assertTrue(required.contains("expenses"))
+        assertTrue(required.contains("installment_plans"))
+        assertTrue(required.contains("installment_entries"))
+        assertEquals(
+            BackupVerifier.requiredManifestTables(databaseVersion = 152, semanticMarker = true) - s0bGatedTables.toSet(),
+            required
+        )
+        // Control: counts for exactly the required set (no gated counts) are complete without the marker.
+        BackupVerifier.validateManifestCompleteness(
+            required.associateWith { 0 }, databaseVersion = 152, semanticMarker = false
+        )
+    }
+
+    @Test
+    fun INV11_m1_v152_with_marker_requires_all_nine_gated_counts() {
+        val required = BackupVerifier.requiredManifestTables(databaseVersion = 152, semanticMarker = true)
+
+        assertEquals(9, s0bGatedTables.size)
+        s0bGatedTables.forEach { table ->
+            assertTrue("v152 with marker must require $table", required.contains(table))
+        }
+        val complete = required.associateWith { 0 }
+        BackupVerifier.validateManifestCompleteness(complete, databaseVersion = 152, semanticMarker = true)
+        // Boundary: dropping any single gated count is rejected and named when the marker is set.
+        s0bGatedTables.forEach { table ->
+            val thrown = assertThrows(BackupVerifier.IncompleteManifestException::class.java) {
+                BackupVerifier.validateManifestCompleteness(complete - table, databaseVersion = 152, semanticMarker = true)
+            }
+            assertEquals(listOf(table), thrown.missingTables)
+        }
+    }
+
+    @Test
+    fun INV11_m1_v151_and_below_never_require_the_gated_counts_whatever_the_marker() {
+        listOf(145, 149, 150, 151).forEach { version ->
+            listOf(true, false).forEach { marker ->
+                val required = BackupVerifier.requiredManifestTables(databaseVersion = version, semanticMarker = marker)
+                s0bGatedTables.forEach { table ->
+                    assertFalse("v$version marker=$marker must not require $table", required.contains(table))
+                }
+                BackupVerifier.validateManifestCompleteness(
+                    required.associateWith { 0 }, databaseVersion = version, semanticMarker = marker
+                )
+            }
+        }
+    }
+
+    @Test
+    fun INV11_m1_unknown_database_version_requires_the_gated_counts_whatever_the_marker() {
+        listOf(true, false).forEach { marker ->
+            val required = BackupVerifier.requiredManifestTables(databaseVersion = null, semanticMarker = marker)
+            s0bGatedTables.forEach { table ->
+                assertTrue("null version marker=$marker must require $table", required.contains(table))
+            }
+            val complete = required.associateWith { 0 }
+            BackupVerifier.validateManifestCompleteness(complete, databaseVersion = null, semanticMarker = marker)
+            assertThrows(BackupVerifier.IncompleteManifestException::class.java) {
+                BackupVerifier.validateManifestCompleteness(
+                    complete - "negotiation_outcomes", databaseVersion = null, semanticMarker = marker
+                )
+            }
+        }
+    }
+
+    @Test
+    fun INV11_m1_default_marker_parameter_is_fail_closed_like_marker_true() {
+        assertEquals(
+            BackupVerifier.requiredManifestTables(databaseVersion = 152, semanticMarker = true),
+            BackupVerifier.requiredManifestTables(databaseVersion = 152)
+        )
+        val withoutGated = BackupVerifier.requiredManifestTables(databaseVersion = 152, semanticMarker = false)
+            .associateWith { 0 }
+        // Control: marker=false accepts this map, the default (marker=true) rejects it.
+        BackupVerifier.validateManifestCompleteness(withoutGated, databaseVersion = 152, semanticMarker = false)
+        val thrown = assertThrows(BackupVerifier.IncompleteManifestException::class.java) {
+            BackupVerifier.validateManifestCompleteness(withoutGated, databaseVersion = 152)
+        }
+        assertEquals(s0bGatedTables.sorted(), thrown.missingTables.sorted())
+    }
+
     @Test
     fun P071_post_restore_verify_with_legacy_manifest_and_null_gated_counts_passes() {
         val db = createAllTablesDatabase()

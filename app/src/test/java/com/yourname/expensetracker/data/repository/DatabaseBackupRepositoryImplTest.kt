@@ -1713,6 +1713,130 @@ class DatabaseBackupRepositoryImplTest {
         }
     }
 
+    // ── INV-11 / m1: the nine coverage-gated table counts depend on the semantic marker ──
+
+    /** The nine Tier 1 tables first classified at schema 152 (spec INV-11); independent of production constants. */
+    private val m1GatedTables = listOf(
+        "source_stats_events",
+        "warranty_lifecycle_events",
+        "investment_transactions",
+        "group_settlements",
+        "group_lifecycle_events",
+        "entity_source_links",
+        "bank_statement_import_runs",
+        "bank_statement_import_items",
+        "negotiation_outcomes"
+    )
+
+    @Test
+    fun `INV11 m1 v152 manifest with no semantic section and no gated counts is accepted as NotVerifiable LEGACY`() =
+        runTest(testDispatcher) {
+            val fixture = restoreFixture()
+            try {
+                val counts = BackupVerifier.allTableNames().toSet().minus(m1GatedTables.toSet())
+                    .associateWith { if (it == "expenses") 1 else 0 }
+                assertEquals(
+                    "precondition: exactly the nine gated counts are absent",
+                    m1GatedTables.toSet(),
+                    BackupVerifier.allTableNames().toSet() - counts.keys
+                )
+                // tier1Manifest is a v152 manifest with semanticAggregates = null and no malformed marker
+                // (a pre-lane v152 development backup).
+                val manifest = tier1Manifest(counts)
+                assertEquals(APP_DATABASE_SCHEMA_VERSION, manifest.databaseVersion)
+                assertNull(manifest.semanticAggregates)
+                assertFalse(manifest.semanticSectionMalformed)
+                stubExtractionResult(manifest, fixture.source, withReceiptAsset = true)
+
+                val result = createRepository(journal = fixture.journal)
+                    .restoreCostBackup(File(tempDir, "bundle.costbackup"), "pw")
+
+                assertTrue("a section-less v152 manifest must be accepted: ${result.exceptionOrNull()}", result.isSuccess)
+                val summary = (result.getOrThrow() as com.yourname.expensetracker.domain.backup.DatabaseImportResult.SuccessNeedsRestart).summary
+                assertEquals(
+                    com.yourname.expensetracker.domain.backup.SemanticVerificationOutcome.NotVerifiable(
+                        SemanticNotVerifiableReason.LEGACY
+                    ),
+                    summary.semanticVerification
+                )
+                assertEquals(RestoreJournal.JournalState.COMPLETE, fixture.journal.readSuccessJournal()?.state)
+            } finally {
+                releaseRestoreFixture()
+            }
+        }
+
+    /**
+     * Drives a restore whose v152 manifest lacks the nine gated counts and carries the semantic marker (a present
+     * section or a present-but-malformed one). It must fail closed BEFORE staging with the reused bounded
+     * MANIFEST_INCOMPLETE literal and name exactly the nine missing tables.
+     */
+    private suspend fun assertMarkedManifestWithoutGatedCountsIsRejected(
+        buildManifest: (counts: Map<String, Int>, section: SemanticAggregateSet) -> CostbackupBundle.BackupManifest
+    ) {
+        val realSource = File(tempDir, "m1-src.sqlite")
+        createFullSchemaDatabase(realSource)
+        val section = RealSchemaFixture.capture(realSource)
+        val fullCounts = RealSchemaFixture.manifestCounts(realSource)
+        m1GatedTables.forEach { assertTrue("precondition: fixture counts include $it", fullCounts.containsKey(it)) }
+        val counts = fullCounts - m1GatedTables.toSet()
+
+        val fixture = restoreFixture()
+        try {
+            val before = dbFile.readBytes()
+            val failReasons = mutableListOf<String>()
+            every { fixture.journal.failJournal(any(), any()) } answers {
+                failReasons += secondArg<String>()
+                callOriginal()
+            }
+            // The extracted database is garbage: reaching staging would give STAGED_VERIFICATION_FAILED instead,
+            // so MANIFEST_INCOMPLETE also proves the block happens before staging.
+            val garbage = File(tempDir, "m1-garbage.sqlite").apply { writeText("not a database") }
+            stubExtractionResult(buildManifest(counts, section), garbage)
+
+            val result = createRepository(journal = fixture.journal)
+                .restoreCostBackup(File(tempDir, "bundle.costbackup"), "pw")
+
+            assertTrue(result.isFailure)
+            val error = result.exceptionOrNull() as BackupVerifier.IncompleteManifestException
+            assertEquals(m1GatedTables.sorted(), error.missingTables.sorted())
+            assertEquals(listOf("MANIFEST_INCOMPLETE"), failReasons)
+            assertEquals(RestoreJournal.JournalState.FAILED, fixture.journal.readFailureJournal()?.state)
+            verify { mockRestoreMaintenanceMode.exit(forceRestartRequired = false) }
+            verify(exactly = 0) { database.close() }
+            assertFalse("live database must not be swapped", fixture.trace.contains("CLOSE_LIVE"))
+            org.junit.Assert.assertArrayEquals(before, dbFile.readBytes())
+        } finally {
+            releaseRestoreFixture()
+        }
+    }
+
+    @Test
+    fun `INV11 m1 v152 manifest WITH a semantic section lacking the gated counts still fails MANIFEST_INCOMPLETE`() =
+        runTest(testDispatcher) {
+            assertMarkedManifestWithoutGatedCountsIsRejected { counts, section ->
+                CostbackupBundle.BackupManifest(
+                    databaseVersion = APP_DATABASE_SCHEMA_VERSION,
+                    createdAt = fixedTime,
+                    tableCounts = counts,
+                    semanticAggregates = section
+                )
+            }
+        }
+
+    @Test
+    fun `INV11 m1 v152 manifest WITH a malformed semantic section lacking the gated counts still fails MANIFEST_INCOMPLETE`() =
+        runTest(testDispatcher) {
+            assertMarkedManifestWithoutGatedCountsIsRejected { counts, _ ->
+                CostbackupBundle.BackupManifest(
+                    databaseVersion = APP_DATABASE_SCHEMA_VERSION,
+                    createdAt = fixedTime,
+                    tableCounts = counts,
+                    semanticAggregates = null,
+                    semanticSectionMalformed = true
+                )
+            }
+        }
+
     @Test
     fun `UF46 S3 BackupSemanticVerificationException maps to VALIDATION_FAILED and an unrelated exception does not`() {
         val mapper = DatabaseBackupRepositoryImpl::class.java
@@ -3850,6 +3974,20 @@ class DatabaseBackupRepositoryImplTest {
         val extracted = extractExport(result.getOrThrow(), "semantic_query_failure_password", encryption, "queryfail")
         assertNotCaptured(extracted.manifest.semanticAggregates, SemanticNotCapturedReason.SEMANTIC_CAPTURE_FAILED)
         assertFalse(extracted.manifest.semanticSectionMalformed)
+        // m1: the degraded section is still WRITTEN (key present, parsed non-null), so the restore-side marker
+        // (semanticAggregates != null) keeps requiring the nine gated counts for this bundle.
+        assertNotNull(
+            "the semanticAggregates key must be written even when the capture is degraded",
+            extracted.manifest.semanticAggregates
+        )
+        val gatedCountsInDegradedBundle = listOf(
+            "source_stats_events", "warranty_lifecycle_events", "investment_transactions", "group_settlements",
+            "group_lifecycle_events", "entity_source_links", "bank_statement_import_runs",
+            "bank_statement_import_items", "negotiation_outcomes"
+        )
+        gatedCountsInDegradedBundle.forEach {
+            assertTrue("degraded bundle must still count $it", extracted.manifest.tableCounts.containsKey(it))
+        }
         assertEquals("the bundle is otherwise complete", 1, extracted.manifest.tableCounts["expenses"])
         assertSingleBoundedSemanticEvent(recorded, SemanticCode.SEMANTIC_CAPTURE_FAILED)
         coVerify(exactly = 1) { recorded.handle.success() }
