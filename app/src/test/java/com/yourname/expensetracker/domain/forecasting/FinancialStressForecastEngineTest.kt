@@ -1155,6 +1155,292 @@ class FinancialStressForecastEngineTest {
         assertEquals(3, result.horizons.size)
     }
 
+    // ── stress-forecast-actions S1 (AE-1..AE-7): structured recommendations ──
+    //
+    // The fixtures below are built from the engine's own no-history fallback (20 per day spend,
+    // sigma 5) so that only kinds, order and parameters are asserted, never simulated money.
+
+    private val kindsOf: (StressForecastResult) -> List<StressRecommendationKind> =
+        { result -> result.recommendations.map { it.kind } }
+
+    @Test
+    fun `AE-2 AE-3 AE-4 INV-1 INV-2 high risk with no recurring emits R2 R3 R4 in order with no R5 or R6`() = runTest {
+        allExpenses = emptyList()
+        allDeposits = emptyList()
+
+        val result = engine.computeStressForecast()
+
+        assertNull(result.failure)
+        assertEquals(
+            listOf(
+                StressRecommendationKind.REDUCE_DISCRETIONARY_SPENDING,
+                StressRecommendationKind.BUILD_EMERGENCY_BUFFER,
+                StressRecommendationKind.DELAY_NON_ESSENTIAL_PURCHASES
+            ),
+            kindsOf(result)
+        )
+    }
+
+    @Test
+    fun `AE-1 AE-4 INV-2 recurring obligations above income put R1 first then R2 R3 R4`() = runTest {
+        allExpenses = emptyList()
+        allDeposits = emptyList()
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+            RecurringPattern(
+                id = null,
+                merchantName = "Detected Rent",
+                averageAmount = 800.0,
+                currency = "EUR",
+                frequency = RecurrenceFrequency.MONTHLY,
+                periodVarianceDays = 0,
+                amountVariancePercent = 0.0,
+                nextExpectedDate = now + dayMs,
+                confidence = 1.0f,
+                previousDates = emptyList()
+            )
+        )
+
+        val result = engine.computeStressForecast()
+
+        assertEquals(
+            listOf(
+                StressRecommendationKind.REVIEW_RECURRING_OBLIGATIONS,
+                StressRecommendationKind.REDUCE_DISCRETIONARY_SPENDING,
+                StressRecommendationKind.BUILD_EMERGENCY_BUFFER,
+                StressRecommendationKind.DELAY_NON_ESSENTIAL_PURCHASES
+            ),
+            kindsOf(result)
+        )
+    }
+
+    @Test
+    fun `INV-2 at most one recommendation per kind`() = runTest {
+        allExpenses = emptyList()
+        allDeposits = emptyList()
+
+        val kinds = kindsOf(engine.computeStressForecast())
+
+        assertEquals(kinds.distinct(), kinds)
+    }
+
+    @Test
+    fun `AE-2 INV-8 R2 daysAhead is the worst horizon and is 90 when balances worsen with the horizon`() = runTest {
+        allExpenses = emptyList()
+        allDeposits = emptyList()
+
+        val result = engine.computeStressForecast()
+        val r2 = result.recommendations.single { it.kind == StressRecommendationKind.REDUCE_DISCRETIONARY_SPENDING }
+
+        assertEquals(90, r2.daysAhead)
+        assertTrue(r2.daysAhead in listOf(30, 60, 90))
+    }
+
+    @Test
+    fun `AE-2 INV-8 R2 daysAhead is 30 when the 30 day horizon is the worst`() = runTest {
+        // Starting balance -1000 with income 700 a month and fallback spend of about 600 a month:
+        // every horizon is negative and improves with the horizon, so 30 days is the worst.
+        coEvery { accountBalanceProvider.currentBalance(any()) } returns -1000.0
+        allExpenses = emptyList()
+        allDeposits = listOf(expense(900L, 700.0, TransactionType.DEPOSIT, now - dayMs, merchant = "Employer"))
+
+        val result = engine.computeStressForecast()
+        val r2 = result.recommendations.single { it.kind == StressRecommendationKind.REDUCE_DISCRETIONARY_SPENDING }
+
+        assertEquals(30, r2.daysAhead)
+        assertEquals(30, result.horizons.minByOrNull { it.projectedBalance }!!.daysAhead)
+    }
+
+    @Test
+    fun `AE-3 INV-8 R3 carries the 500 default buffer and the forecast display currency`() = runTest {
+        allExpenses = emptyList()
+        allDeposits = emptyList()
+
+        val result = engine.computeStressForecast()
+        val r3 = result.recommendations.single { it.kind == StressRecommendationKind.BUILD_EMERGENCY_BUFFER }
+
+        assertEquals(500.0, r3.bufferTarget!!, 0.0)
+        assertEquals("EUR", r3.bufferCurrency)
+        assertEquals(result.displayCurrency, r3.bufferCurrency)
+    }
+
+    @Test
+    fun `AE-3 INV-8 R3 buffer currency follows an explicit display currency and the configured buffer`() = runTest {
+        every { currencySettingsRepository.emergencyBuffer() } returns flowOf(750.0)
+        allExpenses = emptyList()
+        allDeposits = emptyList()
+
+        val result = engine.computeStressForecast("USD")
+        val r3 = result.recommendations.single { it.kind == StressRecommendationKind.BUILD_EMERGENCY_BUFFER }
+
+        assertEquals("USD", result.displayCurrency)
+        assertEquals("USD", r3.bufferCurrency)
+        assertEquals(750.0, r3.bufferTarget!!, 0.0)
+    }
+
+    @Test
+    fun `AE-3 INV-8 R3 buffer target falls back to 500 when the buffer setting is unavailable`() = runTest {
+        every { currencySettingsRepository.emergencyBuffer() } returns kotlinx.coroutines.flow.flow {
+            throw IllegalStateException("buffer down")
+        }
+        allExpenses = emptyList()
+        allDeposits = emptyList()
+
+        val result = engine.computeStressForecast()
+        val r3 = result.recommendations.single { it.kind == StressRecommendationKind.BUILD_EMERGENCY_BUFFER }
+
+        assertEquals(500.0, r3.bufferTarget!!, 0.0)
+        assertEquals("EUR", r3.bufferCurrency)
+    }
+
+    @Test
+    fun `INV-8 parameters are present only on R2 and R3 and absent on every other kind`() = runTest {
+        allExpenses = emptyList()
+        allDeposits = emptyList()
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+            RecurringPattern(
+                id = null,
+                merchantName = "Detected Rent",
+                averageAmount = 800.0,
+                currency = "EUR",
+                frequency = RecurrenceFrequency.MONTHLY,
+                periodVarianceDays = 0,
+                amountVariancePercent = 0.0,
+                nextExpectedDate = now + dayMs,
+                confidence = 1.0f,
+                previousDates = emptyList()
+            )
+        )
+
+        val result = engine.computeStressForecast()
+
+        assertEquals(4, result.recommendations.size)
+        result.recommendations.forEach { recommendation ->
+            val isR2 = recommendation.kind == StressRecommendationKind.REDUCE_DISCRETIONARY_SPENDING
+            val isR3 = recommendation.kind == StressRecommendationKind.BUILD_EMERGENCY_BUFFER
+            if (isR2) assertNotNull(recommendation.daysAhead) else assertNull(recommendation.daysAhead)
+            if (isR3) {
+                assertNotNull(recommendation.bufferTarget)
+                assertNotNull(recommendation.bufferCurrency)
+            } else {
+                assertNull(recommendation.bufferTarget)
+                assertNull(recommendation.bufferCurrency)
+            }
+        }
+    }
+
+    @Test
+    fun `AE-5 INV-2 all low with ample balances emits exactly healthy outlook and no R6`() = runTest {
+        val hugeDeposit = expense(100L, 1_000_000.0, TransactionType.DEPOSIT, now - dayMs)
+        allExpenses = listOf(hugeDeposit)
+        allDeposits = listOf(hugeDeposit)
+
+        val result = engine.computeStressForecast()
+
+        assertEquals(StressRiskLevel.LOW, result.overallRiskLevel)
+        assertEquals(listOf(StressRecommendation(StressRecommendationKind.HEALTHY_OUTLOOK)), result.recommendations)
+    }
+
+    @Test
+    fun `AE-6 INV-2 all low but a balance at or below the buffer emits exactly R6`() = runTest {
+        // Income 620 a month against fallback spend of about 600 a month: every horizon stays LOW
+        // (projected balance 20, 40, 60) yet none exceeds the 500 buffer, so R5 is not emitted.
+        allExpenses = emptyList()
+        allDeposits = listOf(expense(910L, 620.0, TransactionType.DEPOSIT, now - dayMs, merchant = "Employer"))
+
+        val result = engine.computeStressForecast()
+
+        assertEquals(StressRiskLevel.LOW, result.overallRiskLevel)
+        assertTrue(result.horizons.all { it.projectedBalance <= 500.0 })
+        assertEquals(
+            listOf(StressRecommendation(StressRecommendationKind.NO_IMMEDIATE_CONCERNS)),
+            result.recommendations
+        )
+    }
+
+    @Test
+    fun `INV-2 R6 is never emitted alongside another recommendation`() = runTest {
+        allExpenses = emptyList()
+        allDeposits = emptyList()
+
+        val kinds = kindsOf(engine.computeStressForecast())
+
+        assertTrue(kinds.isNotEmpty())
+        assertTrue(StressRecommendationKind.NO_IMMEDIATE_CONCERNS !in kinds)
+        assertTrue(StressRecommendationKind.HEALTHY_OUTLOOK !in kinds)
+    }
+
+    @Test
+    fun `AE-7 INV-10 calculation failure yields unavailable with an empty list and no synthesized R6`() = runTest {
+        coEvery { expenseRepository.getDepositsBetween(any(), any()) } throws IllegalStateException("boom")
+
+        val result = engine.computeStressForecast()
+
+        assertEquals(StressForecastFailure.CALCULATION_UNAVAILABLE, result.failure)
+        assertTrue(result.recommendations.isEmpty())
+        assertTrue(StressRecommendationKind.NO_IMMEDIATE_CONCERNS !in kindsOf(result))
+    }
+
+    @Test
+    fun `AE-7 INV-10 settings failure yields unavailable with an empty list`() = runTest {
+        every { currencySettingsRepository.homeCurrency() } returns kotlinx.coroutines.flow.flow {
+            throw IllegalStateException("settings unavailable")
+        }
+
+        val result = engine.computeStressForecast()
+
+        assertEquals(StressForecastFailure.CALCULATION_UNAVAILABLE, result.failure)
+        assertTrue(result.recommendations.isEmpty())
+    }
+
+    @Test
+    fun `INV-8 two identical computes give equal recommendation lists`() = runTest {
+        allExpenses = emptyList()
+        allDeposits = emptyList()
+
+        val first = engine.computeStressForecast()
+        val second = engine.computeStressForecast()
+
+        assertEquals(first.recommendations, second.recommendations)
+    }
+
+    @Test
+    fun `INV-6 recommendations are identical under different default locales`() = runTest {
+        val originalLocale = java.util.Locale.getDefault()
+        try {
+            allExpenses = emptyList()
+            allDeposits = emptyList()
+            val perLocale = listOf(java.util.Locale.US, java.util.Locale.GERMANY, java.util.Locale("el", "GR"))
+                .map { locale ->
+                    java.util.Locale.setDefault(locale)
+                    engine.computeStressForecast().recommendations
+                }
+
+            assertTrue(perLocale.first().isNotEmpty())
+            assertEquals(1, perLocale.distinct().size)
+        } finally {
+            java.util.Locale.setDefault(originalLocale)
+        }
+    }
+
+    @Test
+    fun `INV-7 engine source does not use CurrencyFormatter or format money text`() {
+        val root = com.yourname.expensetracker.architecture.FailClosedScan.requireRoot(
+            listOf(
+                java.io.File("src/main/java"),
+                java.io.File("app/src/main/java"),
+                java.io.File(System.getProperty("user.dir") ?: ".", "src/main/java"),
+                java.io.File(System.getProperty("user.dir") ?: ".", "app/src/main/java")
+            ),
+            "production source root"
+        )
+        val source = com.yourname.expensetracker.architecture.FailClosedScan.requireScannedFile(
+            root,
+            "com/yourname/expensetracker/domain/forecasting/FinancialStressForecastEngine.kt"
+        ).readText()
+
+        assertTrue(!source.contains("CurrencyFormatter"))
+    }
+
     private fun millis(year: Int, month: Int, day: Int, hourOfDay: Int = 12): Long {
         return Calendar.getInstance().apply {
             set(Calendar.YEAR, year)

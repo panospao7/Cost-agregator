@@ -917,21 +917,15 @@ fun HomeScreen(
             FinancialStressForecastCard(
                 result = widget.result,
                 currency = homeCurrency ?: "",
-                onActionClick = { recommendation ->
-                    // Navigate based on recommendation type
-                    when {
-                        recommendation.contains("subscriptions", ignoreCase = true) -> {
-                            onNavigateToRecurring()
-                        }
-                        recommendation.contains("spending", ignoreCase = true) -> {
-                            onNavigateToTransactions(
-                                TransactionFilter(dateRange = TimePeriodUtils.getMonthRange(state.referenceNowMillis))
-                            )
-                        }
-                        recommendation.contains("emergency", ignoreCase = true) -> {
-                            onNavigateToFeature(NavigationDestination.SavingsGoals)
-                        }
-                    }
+                onActionClick = { action ->
+                    // Route by typed action (locale-independent), never by recommendation text
+                    dispatchStressRecommendationAction(
+                        action = action,
+                        referenceNowMillis = state.referenceNowMillis,
+                        onOpenRecurring = onNavigateToRecurring,
+                        onOpenTransactions = onNavigateToTransactions,
+                        onOpenSavingsGoals = { onNavigateToFeature(NavigationDestination.SavingsGoals) }
+                    )
                 }
             )
                             }
