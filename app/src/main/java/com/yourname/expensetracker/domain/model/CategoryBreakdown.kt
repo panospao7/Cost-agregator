@@ -5,7 +5,9 @@ data class CategoryBreakdown(
     val totalAmount: Double,
     val transactionCount: Int,
     val percentageOfTotal: Double,
-    val periodLabel: String
+    val periodLabel: String,
+    val isPartial: Boolean = false,
+    val isUnavailable: Boolean = false
 ) {
     init {
         require(totalAmount.isFinite()) { "totalAmount must be finite" }

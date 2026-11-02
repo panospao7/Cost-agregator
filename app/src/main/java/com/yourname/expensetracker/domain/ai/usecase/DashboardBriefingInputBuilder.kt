@@ -92,7 +92,7 @@ class DashboardBriefingInputBuilder @Inject constructor(
         when (this) {
             is com.yourname.expensetracker.domain.model.UpcomingItem.Recurring -> cloudInput(pattern.currency)
             is com.yourname.expensetracker.domain.model.UpcomingItem.Occurrence -> cloudInput(occurrence.expectedCurrency)
-            is com.yourname.expensetracker.domain.model.UpcomingItem.Planned -> cloudInput(null)
+            is com.yourname.expensetracker.domain.model.UpcomingItem.Planned -> cloudInput(currency)
             else -> null
         }
 

@@ -461,7 +461,11 @@ private fun RetroStageCard(
             
             // Amount (score)
             Text(
-                text = CurrencyFormatter.formatMoney(period.totalAmount, currency, showCents = false),
+                text = if (period.isUnavailable) {
+                    stringResource(R.string.groups_total_unavailable)
+                } else {
+                    CurrencyFormatter.formatMoney(period.totalAmount, currency, showCents = false)
+                },
                 style = MaterialTheme.typography.bodySmall.copy(
                     fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                     fontWeight = FontWeight.ExtraBold
@@ -535,7 +539,11 @@ private fun RetroSelectedStageIndicator(
                     letterSpacing = 1.sp
                 )
                 Text(
-                    text = stringResource(R.string.retro_score_label_format, period.totalAmount),
+                    text = if (period.isUnavailable) {
+                        stringResource(R.string.groups_total_unavailable)
+                    } else {
+                        stringResource(R.string.retro_score_label_format, period.totalAmount)
+                    },
                     style = MaterialTheme.typography.bodyMedium.copy(
                         fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                         fontWeight = FontWeight.Bold
@@ -687,7 +695,11 @@ private fun RetroStageDialog(
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = stringResource(R.string.retro_score_label_format, period.totalAmount),
+                            text = if (period.isUnavailable) {
+                                stringResource(R.string.groups_total_unavailable)
+                            } else {
+                                stringResource(R.string.retro_score_label_format, period.totalAmount)
+                            },
                             style = MaterialTheme.typography.bodyMedium.copy(
                                 fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                                 fontWeight = FontWeight.Bold
@@ -782,8 +794,12 @@ private fun RetroStageDialog(
                     RetroStatRowTotals("STAGE BUDGET", CurrencyFormatter.formatMoney(averageAmount, currency), RetroColorsTotals.NeonCyan)
                     Spacer(modifier = Modifier.height(4.dp))
                     val diff = period.totalAmount - averageAmount
-                    val diffText = CurrencyFormatter.formatWithSign(diff, currency)
-                    val diffColor = if (diff > 0) RetroColorsTotals.NeonRed else if (diff < 0) RetroColorsTotals.NeonGreen else RetroColorsTotals.NeonWhite
+                    val diffText = if (period.isUnavailable) {
+                        stringResource(R.string.groups_total_unavailable)
+                    } else {
+                        CurrencyFormatter.formatWithSign(diff, currency)
+                    }
+                    val diffColor = if (period.isUnavailable) RetroColorsTotals.NeonWhite else if (diff > 0) RetroColorsTotals.NeonRed else if (diff < 0) RetroColorsTotals.NeonGreen else RetroColorsTotals.NeonWhite
                     RetroStatRowTotals("DIFFERENCE", diffText, diffColor)
                 }
             }

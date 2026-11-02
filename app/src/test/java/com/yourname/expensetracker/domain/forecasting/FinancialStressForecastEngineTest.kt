@@ -1309,6 +1309,7 @@ class FinancialStressForecastEngineTest {
     @Test
     fun `AE-3 INV-8 R3 buffer currency follows an explicit display currency and the configured buffer`() = runTest {
         every { currencySettingsRepository.emergencyBuffer() } returns flowOf(750.0)
+        rates = mapOf("EUR" to (1.2 to now))
         allExpenses = emptyList()
         allDeposits = emptyList()
 
@@ -1317,7 +1318,37 @@ class FinancialStressForecastEngineTest {
 
         assertEquals("USD", result.displayCurrency)
         assertEquals("USD", r3.bufferCurrency)
-        assertEquals(750.0, r3.bufferTarget!!, 0.0)
+        assertEquals(900.0, r3.bufferTarget!!, 0.0)
+    }
+
+    @Test
+    fun `B1-12 emergency buffer currency label matches buffer value currency when displayCurrency differs from homeCurrency`() = runTest {
+        every { currencySettingsRepository.homeCurrency() } returns flowOf("EUR")
+        coEvery { currencySettingsRepository.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
+        every { currencySettingsRepository.emergencyBuffer() } returns flowOf(500.0)
+        // EUR -> USD conversion rate = 1.2 (so 500 EUR = 600 USD)
+        rates = mapOf("EUR" to (1.2 to now))
+        allExpenses = emptyList()
+        allDeposits = emptyList()
+
+        val convertedResult = engine.computeStressForecast("USD")
+        val convertedR3 = convertedResult.recommendations.single { it.kind == StressRecommendationKind.BUILD_EMERGENCY_BUFFER }
+
+        // Invariant: either the value is converted to USD (600.0) and labelled "USD",
+        // or the value stays in home currency (500.0) and is labelled "EUR". Never 500.0 labelled "USD".
+        assertTrue(
+            "Buffer currency must match the buffer value's actual currency, got ${convertedR3.bufferTarget} ${convertedR3.bufferCurrency}",
+            (convertedR3.bufferCurrency == "USD" && kotlin.math.abs(convertedR3.bufferTarget!! - 600.0) < 0.01) ||
+                (convertedR3.bufferCurrency == "EUR" && kotlin.math.abs(convertedR3.bufferTarget!! - 500.0) < 0.01)
+        )
+
+        // When FX rate is missing, conversion cannot happen so if buffer remains 500.0 it must be labelled "EUR"
+        rates = emptyMap()
+        val unconvertibleResult = engine.computeStressForecast("USD")
+        val unconvertibleR3 = unconvertibleResult.recommendations.single { it.kind == StressRecommendationKind.BUILD_EMERGENCY_BUFFER }
+
+        assertEquals("EUR", unconvertibleR3.bufferCurrency)
+        assertEquals(500.0, unconvertibleR3.bufferTarget!!, 0.01)
     }
 
     @Test

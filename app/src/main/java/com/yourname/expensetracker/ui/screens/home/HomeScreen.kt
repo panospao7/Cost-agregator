@@ -666,13 +666,14 @@ fun HomeScreen(
                                         color = SemanticColors.TextSecondary
                                     )
                                     Spacer(modifier = Modifier.height(16.dp))
+                                    val unavailableText = stringResource(R.string.groups_total_unavailable)
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
                                         horizontalArrangement = Arrangement.SpaceBetween
                                     ) {
-                    StatLabel(stringResource(R.string.widget_today), com.yourname.expensetracker.ui.model.MoneyDisplayUi.from(widget.todaySpent, homeCurrency ?: "").formatted, modifier = Modifier.weight(1f))
-                    StatLabel(stringResource(R.string.widget_week), com.yourname.expensetracker.ui.model.MoneyDisplayUi.from(widget.weekSpent, homeCurrency ?: "").formatted, modifier = Modifier.weight(1f))
-                    StatLabel(stringResource(R.string.widget_month), com.yourname.expensetracker.ui.model.MoneyDisplayUi.from(widget.monthSpent, homeCurrency ?: "").formatted, modifier = Modifier.weight(1f))
+                    StatLabel(stringResource(R.string.widget_today), if (widget.isUnavailable) unavailableText else com.yourname.expensetracker.ui.model.MoneyDisplayUi.from(widget.todaySpent, homeCurrency ?: "").formatted, modifier = Modifier.weight(1f))
+                    StatLabel(stringResource(R.string.widget_week), if (widget.isUnavailable) unavailableText else com.yourname.expensetracker.ui.model.MoneyDisplayUi.from(widget.weekSpent, homeCurrency ?: "").formatted, modifier = Modifier.weight(1f))
+                    StatLabel(stringResource(R.string.widget_month), if (widget.isUnavailable) unavailableText else com.yourname.expensetracker.ui.model.MoneyDisplayUi.from(widget.monthSpent, homeCurrency ?: "").formatted, modifier = Modifier.weight(1f))
                                     }
                                     // S4-D914-007: Show partial-conversion warning
                                     if (widget.isPartial) {
@@ -801,9 +802,8 @@ fun HomeScreen(
                     currentLevel = totalsState.currentLevel.toPeriodLevel(),
                     selectedPeriod = totalsState.selectedPeriod,
                     isLoading = totalsState.isLoading,
-                    averageAmount = if (totalsState.periodTotals.isNotEmpty()) {
-                        totalsState.periodTotals.map { it.totalAmount }.average()
-                    } else 0.0,
+                    averageAmount = totalsState.periodTotals.filterNot { it.isUnavailable }
+                        .takeIf { it.isNotEmpty() }?.map { it.totalAmount }?.average() ?: 0.0,
                     onPeriodSelected = { viewModel.drillDownToPeriod(it) },
                     onLevelChanged = { if (it.ordinal < totalsState.currentLevel.ordinal) viewModel.drillUp() },
                     onEnterStage = { period ->

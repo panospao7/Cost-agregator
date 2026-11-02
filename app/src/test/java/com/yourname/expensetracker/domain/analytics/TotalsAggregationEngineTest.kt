@@ -344,6 +344,60 @@ class TotalsAggregationEngineTest {
         ))
     }
 
+    @Test
+    fun `N-08-5 PeriodTotal distinguishes unavailable from zero and keeps isPartial separate`() = runTest {
+        every { timeProvider.now() } returns LocalDate.of(2026, 4, 15).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+
+        // Pair 1: Genuinely zero current year -> isUnavailable = false, isPartial = false, totalAmount = 0.0
+        coEvery { multiCurrencyRepo.getHomeCurrencyPurchaseTotalHistoricalResult(any(), any()) } returns
+            com.yourname.expensetracker.domain.core.money.MoneyAggregateResult.Available(
+                MoneyAggregate.empty(CurrencyCode.EUR)
+            )
+        val zeroYear = engine.getYearlyTotals().first().single { it.periodKey == "2026" }
+        assertFalse("Genuinely zero year must not be unavailable", zeroYear.isUnavailable)
+        assertFalse("Genuinely zero year must not be partial", zeroYear.isPartial)
+        assertEquals(0.0, zeroYear.totalAmount, 0.0)
+
+        // Pair 2: Unavailable result -> isUnavailable = true, isPartial = false
+        coEvery { multiCurrencyRepo.getHomeCurrencyPurchaseTotalHistoricalResult(any(), any()) } returns
+            com.yourname.expensetracker.domain.core.money.MoneyAggregateResult.Unavailable(
+                reason = "DISPLAY_CONVERSION_UNAVAILABLE",
+                requestedRateBasis = com.yourname.expensetracker.domain.core.money.RateBasis.TRANSACTION_DATE
+            )
+        val unavailYear = engine.getYearlyTotals().first().single { it.periodKey == "2026" }
+        assertTrue("Unavailable aggregate result must mark PeriodTotal.isUnavailable true", unavailYear.isUnavailable)
+        assertFalse("isPartial must remain false when data is unavailable", unavailYear.isPartial)
+
+        // Pair 3: Monthly PeriodTotal with ConversionQuality.UNAVAILABLE aggregate -> isUnavailable = true, isPartial = false
+        val unavailMonthAgg = MoneyAggregate(
+            displayAmount = 0.0,
+            displayCurrency = CurrencyCode.EUR,
+            sourceBuckets = listOf(com.yourname.expensetracker.domain.core.money.MoneyBucket(CurrencyCode.USD, 100.0, 1)),
+            conversionFailures = listOf(
+                com.yourname.expensetracker.domain.core.money.ConversionFailure(
+                    originalAmount = com.yourname.expensetracker.domain.core.money.MoneyAmount(100.0, CurrencyCode.USD),
+                    targetCurrency = CurrencyCode.EUR,
+                    reason = com.yourname.expensetracker.domain.core.money.FailureReason.MISSING_RATE,
+                    transactionCount = 1
+                )
+            ),
+            isPartial = false,
+            conversionQuality = com.yourname.expensetracker.domain.core.money.ConversionQuality.UNAVAILABLE
+        )
+        coEvery { multiCurrencyRepo.getMonthlyAggregatesHistorical(any(), any()) } returns listOf(
+            MonthMoneyAggregate("2026-01", MoneyAggregate.singleCurrency(0.0, CurrencyCode.EUR, 0)),
+            MonthMoneyAggregate("2026-02", unavailMonthAgg)
+        )
+        val months = engine.getMonthlyTotals(2026).first()
+        val janZero = months.first { it.periodKey == "2026-01" }
+        val febUnavail = months.first { it.periodKey == "2026-02" }
+        assertFalse(janZero.isUnavailable)
+        assertFalse(janZero.isPartial)
+        assertEquals(0.0, janZero.totalAmount, 0.0)
+        assertTrue("Unconvertible month must mark PeriodTotal.isUnavailable true", febUnavail.isUnavailable)
+        assertFalse("Unconvertible month must not conflate isPartial with isUnavailable", febUnavail.isPartial)
+    }
+
     private fun partialAggregate(amount: Double, count: Int): MoneyAggregate =
         MoneyAggregate.partial(
             displayAmount = amount,

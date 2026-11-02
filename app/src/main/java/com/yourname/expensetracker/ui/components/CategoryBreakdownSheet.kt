@@ -30,7 +30,8 @@ data class CategorySpending(
     val icon: String,
     val color: Color,
     val amount: Double,
-    val percentage: Float
+    val percentage: Float,
+    val isUnavailable: Boolean = false
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -93,7 +94,8 @@ fun CategoryBreakdownSheet(
                     icon = breakdown.category.icon,
                     color = color,
                     amount = breakdown.totalAmount,
-                    percentage = (breakdown.percentageOfTotal / 100.0).toFloat()
+                    percentage = (breakdown.percentageOfTotal / 100.0).toFloat(),
+                    isUnavailable = breakdown.isUnavailable
                 ),
                 currency = currency
             )
@@ -178,7 +180,11 @@ private fun CategoryRow(category: CategorySpending, /** Placeholder default. Pro
                 }
 
                 Text(
-                    text = CurrencyFormatter.formatMoney(category.amount, currency),
+                    text = if (category.isUnavailable) {
+                        stringResource(R.string.groups_total_unavailable)
+                    } else {
+                        CurrencyFormatter.formatMoney(category.amount, currency)
+                    },
                     style = MaterialTheme.typography.bodyMedium.copy(
                         fontWeight = FontWeight.Bold,
                         fontFeatureSettings = "tnum"

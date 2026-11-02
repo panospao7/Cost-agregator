@@ -16,6 +16,7 @@ import io.mockk.mockk
 import kotlinx.coroutines.Dispatchers
 import org.junit.Test
 import java.time.Instant
+import java.util.Locale
 
 class TotalsAggregationEngineNormalizedMoneyTest {
 
@@ -80,6 +81,44 @@ class TotalsAggregationEngineNormalizedMoneyTest {
         assertThat(summary.total).isNull()
         assertThat(summary.avgPerDay).isNull()
         assertThat(summary.avgPerWeek).isNull()
+    }
+
+    @Test
+    fun normalizedPeriodTotalsProduceAsciiDayKeysUnderArabicLocale() {
+        val previousLocale = Locale.getDefault()
+        val arabicLocale = Locale.forLanguageTag("ar-EG")
+        val day1 = Instant.parse("2026-01-10T12:00:00Z").toEpochMilli()
+        val day2 = Instant.parse("2026-01-11T12:00:00Z").toEpochMilli()
+        val input = NormalizedAnalyticsInput(
+            homeCurrency = CurrencyCode.EUR.code,
+            period = PeriodRange(PeriodKind.CUSTOM, day1, day2 + 86_400_000L),
+            includedExpenses = listOf(
+                normalizedExpense(day1, 15.0, 1L),
+                normalizedExpense(day2, 25.0, 2L)
+            )
+        )
+
+        val rootTotals: List<com.yourname.expensetracker.domain.model.PeriodTotal>
+        val arabicTotals: List<com.yourname.expensetracker.domain.model.PeriodTotal>
+        try {
+            Locale.setDefault(Locale.ROOT)
+            rootTotals = engine.computeFromNormalized(input)
+
+            Locale.setDefault(arabicLocale)
+            arabicTotals = engine.computeFromNormalized(input)
+        } finally {
+            Locale.setDefault(previousLocale)
+        }
+
+        val asciiDayKeyRegex = Regex("^[0-9]{8}$")
+        assertThat(arabicTotals).hasSize(2)
+        arabicTotals.forEach { period ->
+            assertThat(asciiDayKeyRegex.matches(period.periodKey)).isTrue()
+            assertThat(period.periodKey.none { it.isDigit() && it !in '0'..'9' }).isTrue()
+        }
+        assertThat(arabicTotals.map { it.periodKey }).isEqualTo(rootTotals.map { it.periodKey })
+        assertThat(arabicTotals.map { it.totalAmount }).containsExactly(15.0, 25.0).inOrder()
+        assertThat(arabicTotals.map { it.totalAmount }).isEqualTo(rootTotals.map { it.totalAmount })
     }
 
     private fun normalizedExpense(date: Long, amount: Double = 9.0, id: Long = 1L) = NormalizedExpense(

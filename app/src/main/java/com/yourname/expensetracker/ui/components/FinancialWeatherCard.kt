@@ -268,7 +268,7 @@ fun FinancialWeatherCard(
                 Spacer(modifier = Modifier.height(12.dp))
                 
                 upcomingItems.take(3).forEach { item ->
-                    UpcomingRow(item = item, referenceNowMillis = referenceNowMillis, currency = currency)
+                    UpcomingRow(item = item, referenceNowMillis = referenceNowMillis, currency = item.currency)
                     Spacer(modifier = Modifier.height(12.dp))
                 }
             } else {
@@ -410,7 +410,7 @@ fun UpcomingRow(item: UpcomingItem, referenceNowMillis: Long, currency: String) 
         }
         
         Text(
-            text = CurrencyFormatter.formatMoney(item.amount, currency, showCents = false),
+            text = CurrencyFormatter.formatMoney(item.amount, item.currency, showCents = false),
             style = MaterialTheme.typography.bodyMedium,
             fontWeight = FontWeight.Bold,
             color = SemanticColors.TextPrimary

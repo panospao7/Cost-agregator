@@ -384,7 +384,11 @@ private fun RetroCategoryBreakdownRow(
                 ) {
                     // Amount
                     Text(
-                        text = CurrencyFormatter.formatMoney(breakdown.totalAmount, currency, showCents = false),
+                        text = if (breakdown.isUnavailable) {
+                            stringResource(R.string.groups_total_unavailable)
+                        } else {
+                            CurrencyFormatter.formatMoney(breakdown.totalAmount, currency, showCents = false)
+                        },
                         style = MaterialTheme.typography.bodyMedium.copy(
                             fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                             fontWeight = FontWeight.ExtraBold

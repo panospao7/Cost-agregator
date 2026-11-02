@@ -1242,7 +1242,11 @@ fun CategoryItem(item: AnalyticsCategoryBreakdown, homeCurrency: String = item.d
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(item.category.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
                 Text(
-                    CurrencyFormatter.formatMoney(item.moneyTotal.amount, item.moneyTotal.currency.code),
+                    if (item.isUnavailable) {
+                        stringResource(R.string.groups_total_unavailable)
+                    } else {
+                        CurrencyFormatter.formatMoney(item.moneyTotal.amount, item.moneyTotal.currency.code)
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.Bold
                 )

@@ -19,6 +19,9 @@ import com.yourname.expensetracker.data.database.entity.PaymentMethod
  */
 object ExpenseExportMapper {
     fun map(expense: Expense): ExportTransaction {
+        val isNoRateSentinel = !expense.exchangeRateUsed.isFinite() ||
+            expense.exchangeRateUsed <= 0.0 ||
+            expense.baseCurrency.isBlank()
         return ExportTransaction(
             id = expense.id,
             date = expense.date,
@@ -46,10 +49,10 @@ object ExpenseExportMapper {
 
             // Currency conversion audit snapshot (populated by TransactionLifecycleCoordinator at creation)
             originalCurrency = expense.currency,
-            homeCurrency = expense.baseCurrency,
-            baseAmount = expense.baseAmount.takeIf { it.isFinite() } ?: 0.0,
-            baseCurrency = expense.baseCurrency,
-            exchangeRateUsed = expense.exchangeRateUsed.takeIf { it.isFinite() } ?: 0.0,
+            homeCurrency = if (isNoRateSentinel) "" else expense.baseCurrency,
+            baseAmount = if (isNoRateSentinel) 0.0 else (expense.baseAmount.takeIf { it.isFinite() } ?: 0.0),
+            baseCurrency = if (isNoRateSentinel) "" else expense.baseCurrency,
+            exchangeRateUsed = if (isNoRateSentinel) 0.0 else expense.exchangeRateUsed,
 
             // Business / tax fields
             isBusinessExpense = expense.isBusinessExpense,

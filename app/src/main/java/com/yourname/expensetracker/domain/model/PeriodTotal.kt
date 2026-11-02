@@ -19,6 +19,8 @@ data class PeriodTotal(
     val dataQuality: AnalyticsDataQuality? = null,
     /** E2-005: Propagated from MoneyAggregate.isPartial — true when conversion failures exist. */
     val isPartial: Boolean = false,
+    /** N-08-5: true when the period aggregate is genuinely unavailable (not zero / not merely partial). */
+    val isUnavailable: Boolean = false,
     /** E2-005: Propagated from MoneyAggregate.warningMessage — describes excluded transactions. */
     val warningMessage: String? = null,
     /** Typed money result retained alongside the legacy scalar projection. */

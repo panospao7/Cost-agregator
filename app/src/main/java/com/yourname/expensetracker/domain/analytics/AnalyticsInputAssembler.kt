@@ -139,6 +139,7 @@ class AnalyticsInputAssembler @Inject constructor(
                     originalCurrency = exp.currency,
                     reason = reason,
                     date = exp.date,
+                    categoryId = exp.categoryId,
                     warningType = result.excludedReasons[exp.id]?.first,
                     message = result.excludedReasons[exp.id]?.second
                 )

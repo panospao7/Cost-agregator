@@ -3,8 +3,13 @@ package com.yourname.expensetracker.ui.components
 import com.yourname.expensetracker.domain.forecasting.StressRecommendation
 import com.yourname.expensetracker.domain.forecasting.StressRecommendationKind
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.w3c.dom.Element
+import java.io.File
+import java.util.Locale
+import javax.xml.parsers.DocumentBuilderFactory
 
 /**
  * stress-forecast-actions AE-11 (INV-11): the card shows at most [STRESS_RECOMMENDATION_VISIBLE_CAP]
@@ -73,5 +78,29 @@ class StressRecommendationVisibleCapTest {
         assertEquals(60, visible[0].daysAhead)
         assertEquals(500.0, visible[1].bufferTarget)
         assertEquals("EUR", visible[1].bufferCurrency)
+    }
+
+    @Test
+    fun `B1-11 stress_forecast_risk_percent_format exists and formats with percent placeholder`() {
+        val stringsXml = listOf(
+            "src/main/res/values/strings.xml",
+            "app/src/main/res/values/strings.xml",
+            "../app/src/main/res/values/strings.xml"
+        ).map { File(it) }.firstOrNull { it.isFile }
+        assertNotNull("values/strings.xml not found", stringsXml)
+
+        val doc = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(stringsXml!!)
+        val nodes = doc.getElementsByTagName("string")
+        val rawValue = (0 until nodes.length)
+            .map { nodes.item(it) as Element }
+            .firstOrNull { it.getAttribute("name") == "stress_forecast_risk_percent_format" }
+            ?.textContent
+
+        assertNotNull("stress_forecast_risk_percent_format must exist in strings.xml", rawValue)
+        assertTrue(
+            "stress_forecast_risk_percent_format must contain %1\$s placeholder, was: $rawValue",
+            rawValue!!.contains("%1\$s")
+        )
+        assertEquals("25% risk", String.format(Locale.US, rawValue, "25"))
     }
 }

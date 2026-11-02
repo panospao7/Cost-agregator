@@ -637,8 +637,9 @@ class ExportOptionsViewModelTest {
 
         viewModel.generateExport()
         val csvRow = csvOut.readLines().single { it.contains("NoRateCafe") }
-        // originalAmount, homeCurrency (empty), baseAmount, baseCurrency (empty)
-        assertTrue(csvRow, csvRow.contains(",,0.0,,"))
+        // Previously encoded the P-12-1 bug (`,,0.0,,` for sentinel baseAmount);
+        // originalAmount (12.34), homeCurrency (empty), baseAmount (empty), baseCurrency (empty), exchangeRateUsed (empty), conversionRateUsed (empty)
+        assertTrue(csvRow, csvRow.contains(",USD,12.34,,,,,,false,"))
         assertFalse(csvRow, csvRow.contains("EUR"))
 
         stubPagedExpenses(listOf(expense), emptyList())
@@ -649,8 +650,111 @@ class ExportOptionsViewModelTest {
         viewModel.generateExport()
         val jsonText = jsonOut.readText()
         assertTrue(jsonText.contains("\"homeCurrency\":\"\""))
-        assertTrue(jsonText.contains("\"baseCurrency\":\"\""))
+        assertTrue(jsonText.contains("\"baseCurrency\":null"))
         assertFalse(jsonText.contains("\"EUR\""))
+    }
+
+    @Test
+    fun `P-12-1 csv sentinel row emits blank baseAmount baseCurrency exchangeRateUsed and preserves column count`() = runBlocking {
+        val sentinel = createExpense(id = 10L, merchant = "SentinelRow", currency = "USD").copy(
+            amount = 50.0,
+            baseAmount = 0.0,
+            baseCurrency = "",
+            exchangeRateUsed = 0.0
+        )
+        val converted = createExpense(id = 11L, merchant = "ConvertedRow", currency = "USD").copy(
+            amount = 50.0,
+            baseAmount = 42.5,
+            baseCurrency = "EUR",
+            exchangeRateUsed = 0.85
+        )
+        val expenses = listOf(sentinel, converted)
+        coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns expenses.size
+        coEvery { exportDataRepository.getExpensesBetween(any(), any()) } returns expenses
+        stubPagedExpenses(expenses, emptyList())
+        val csvOut = createTempFile(prefix = "export_p12_1_csv_", suffix = ".csv")
+        every { exportDataRepository.createExportFile(any(), any()) } returns csvOut
+
+        viewModel.selectFormat("csv")
+        viewModel.generateExport()
+        val lines = csvOut.readLines()
+        val headerCells = lines.single { it.startsWith("ID,Date") }.split(",")
+        val sentinelCells = lines.single { it.contains("SentinelRow") }.split(",")
+        val convertedCells = lines.single { it.contains("ConvertedRow") }.split(",")
+
+        // Column count invariant: header, sentinel row, and non-sentinel row must have identical field counts
+        assertEquals(headerCells.size, sentinelCells.size)
+        assertEquals(convertedCells.size, sentinelCells.size)
+
+        val baseAmountIdx = headerCells.indexOf("BaseAmount")
+        val baseCurrencyIdx = headerCells.indexOf("BaseCurrency")
+        val exchangeRateIdx = headerCells.indexOf("ExchangeRateUsed")
+        assertTrue(baseAmountIdx >= 0 && baseCurrencyIdx >= 0 && exchangeRateIdx >= 0)
+
+        // Sentinel row produces empty cells for all three fields
+        assertEquals("", sentinelCells[baseAmountIdx])
+        assertEquals("", sentinelCells[baseCurrencyIdx])
+        assertEquals("", sentinelCells[exchangeRateIdx])
+
+        // Non-sentinel negative control keeps its real values unchanged
+        assertEquals("42.5", convertedCells[baseAmountIdx])
+        assertEquals("EUR", convertedCells[baseCurrencyIdx])
+        assertEquals("0.85", convertedCells[exchangeRateIdx])
+    }
+
+    @Test
+    fun `P-12-1 json sentinel row emits literal null tokens for baseAmount baseCurrency exchangeRateUsed and remains parseable`() = runBlocking {
+        val sentinel = createExpense(id = 20L, merchant = "SentinelJson", currency = "USD").copy(
+            amount = 50.0,
+            baseAmount = 0.0,
+            baseCurrency = "",
+            exchangeRateUsed = 0.0
+        )
+        val converted = createExpense(id = 21L, merchant = "ConvertedJson", currency = "USD").copy(
+            amount = 50.0,
+            baseAmount = 42.5,
+            baseCurrency = "EUR",
+            exchangeRateUsed = 0.85
+        )
+        val expenses = listOf(sentinel, converted)
+        coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns expenses.size
+        coEvery { exportDataRepository.getExpensesBetween(any(), any()) } returns expenses
+        stubPagedExpenses(expenses, emptyList())
+        val jsonOut = createTempFile(prefix = "export_p12_1_json_", suffix = ".json")
+        every { exportDataRepository.createExportFile(any(), any()) } returns jsonOut
+
+        viewModel.selectFormat("json")
+        viewModel.generateExport()
+        val jsonText = jsonOut.readText()
+
+        // Assert literal JSON null token (not string "null") in raw text
+        assertTrue(jsonText.contains("\"baseAmount\":null"))
+        assertTrue(jsonText.contains("\"baseCurrency\":null"))
+        assertTrue(jsonText.contains("\"exchangeRateUsed\":null"))
+        assertFalse(jsonText.contains("\"baseAmount\":\"null\""))
+        assertFalse(jsonText.contains("\"baseCurrency\":\"null\""))
+        assertFalse(jsonText.contains("\"exchangeRateUsed\":\"null\""))
+
+        // Assert JSON is parseable and inspect parsed rows
+        val root = org.json.JSONObject(jsonText)
+        val rows = root.getJSONArray("rows")
+        assertEquals(2, rows.length())
+
+        val sentinelObj = rows.getJSONObject(0)
+        assertEquals("SentinelJson", sentinelObj.getString("merchant"))
+        assertTrue(sentinelObj.isNull("baseAmount"))
+        assertTrue(sentinelObj.isNull("baseCurrency"))
+        assertTrue(sentinelObj.isNull("exchangeRateUsed"))
+
+        // Non-sentinel negative control keeps its real values unchanged
+        val convertedObj = rows.getJSONObject(1)
+        assertEquals("ConvertedJson", convertedObj.getString("merchant"))
+        assertFalse(convertedObj.isNull("baseAmount"))
+        assertFalse(convertedObj.isNull("baseCurrency"))
+        assertFalse(convertedObj.isNull("exchangeRateUsed"))
+        assertEquals(42.5, convertedObj.getDouble("baseAmount"), 0.0001)
+        assertEquals("EUR", convertedObj.getString("baseCurrency"))
+        assertEquals(0.85, convertedObj.getDouble("exchangeRateUsed"), 0.0001)
     }
 
     @Test

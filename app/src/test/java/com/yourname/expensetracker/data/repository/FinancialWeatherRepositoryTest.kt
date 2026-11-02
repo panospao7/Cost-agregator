@@ -605,6 +605,127 @@ class FinancialWeatherRepositoryTest {
         assertEquals(false, result.goalReservesPartial)
     }
 
+    // =========================================================================
+    // P-05-4: UpcomingItem carries source currency from wrapped model
+    // =========================================================================
+
+    @Test
+    fun `P-05-4 UpcomingItem subclasses report source currency for USD and EUR models`() {
+        val dueDate = 1705400000000L
+
+        val usdPattern = RecurringPattern(
+            merchantName = "Cloud Host",
+            averageAmount = 29.99,
+            currency = "USD",
+            frequency = RecurrenceFrequency.MONTHLY,
+            periodVarianceDays = 0,
+            amountVariancePercent = 0.0,
+            nextExpectedDate = dueDate,
+            confidence = 0.95f,
+            previousDates = emptyList()
+        )
+        val eurPattern = usdPattern.copy(merchantName = "Rent", currency = "EUR")
+
+        val usdOccurrence = ConfirmedOccurrence(
+            dueDate = dueDate,
+            expectedAmount = 19.99,
+            expectedCurrency = "USD",
+            merchant = "Streaming",
+            categoryId = 1L
+        )
+        val eurOccurrence = usdOccurrence.copy(expectedCurrency = "EUR")
+
+        val usdPlanned = PlannedExpense(
+            id = 10L,
+            description = "Flight",
+            amount = 450.0,
+            currency = "USD",
+            date = dueDate,
+            categoryId = 2L,
+            isRecurring = false,
+            priority = PlannedExpensePriority.MUST
+        )
+        val eurPlanned = usdPlanned.copy(id = 11L, currency = "EUR")
+
+        assertEquals("USD", UpcomingItem.Recurring(usdPattern).currency)
+        assertEquals("EUR", UpcomingItem.Recurring(eurPattern).currency)
+        assertEquals("USD", UpcomingItem.Occurrence(usdOccurrence).currency)
+        assertEquals("EUR", UpcomingItem.Occurrence(eurOccurrence).currency)
+        assertEquals("USD", UpcomingItem.Planned(usdPlanned).currency)
+        assertEquals("EUR", UpcomingItem.Planned(eurPlanned).currency)
+    }
+
+    @Test
+    fun `P-05-4 getFinancialWeather preserves USD and EUR currencies across all UpcomingItem subclasses`() = runTest {
+        val now = 1705320000000L
+        stubEmptyWeatherInputs()
+
+        val detectedUsdPattern = RecurringPattern(
+            id = null,
+            merchantName = "USD SaaS",
+            averageAmount = 49.0,
+            currency = "USD",
+            frequency = RecurrenceFrequency.MONTHLY,
+            periodVarianceDays = 0,
+            amountVariancePercent = 0.0,
+            nextExpectedDate = now + 86_400_000L,
+            confidence = 0.9f,
+            previousDates = emptyList()
+        )
+        val usdOccurrence = ConfirmedOccurrence(
+            dueDate = now + 2 * 86_400_000L,
+            expectedAmount = 12.0,
+            expectedCurrency = "USD",
+            merchant = "USD Sub",
+            categoryId = null
+        )
+        val usdPlanned = PlannedExpense(
+            id = 101L,
+            description = "USD Conference",
+            amount = 300.0,
+            currency = "USD",
+            date = now + 3 * 86_400_000L,
+            categoryId = null,
+            isRecurring = false,
+            priority = PlannedExpensePriority.LIKELY
+        )
+        val eurPlanned = PlannedExpense(
+            id = 102L,
+            description = "EUR Groceries",
+            amount = 80.0,
+            currency = "EUR",
+            date = now + 4 * 86_400_000L,
+            categoryId = null,
+            isRecurring = false,
+            priority = PlannedExpensePriority.MUST
+        )
+
+        val base = createMockForecast()
+        coEvery {
+            synthesisEngine.synthesize(any<ForecastInputAssembler.ForecastInput>())
+        } returns base.copy(
+            components = base.components.copy(
+                recurringExpenses = listOf(detectedUsdPattern),
+                confirmedOccurrences = listOf(usdOccurrence),
+                plannedExpenses = listOf(usdPlanned, eurPlanned)
+            )
+        )
+
+        val result = repository.getFinancialWeather().first()
+
+        assertEquals(4, result.upcomingItems.size)
+        val byDescription = result.upcomingItems.associateBy { it.description }
+        val recurringItem = byDescription.getValue("USD SaaS") as UpcomingItem.Recurring
+        val occurrenceItem = byDescription.getValue("USD Sub") as UpcomingItem.Occurrence
+        val plannedUsdItem = byDescription.getValue("USD Conference") as UpcomingItem.Planned
+        val plannedEurItem = byDescription.getValue("EUR Groceries") as UpcomingItem.Planned
+
+        assertEquals("USD", recurringItem.currency)
+        assertEquals("USD", occurrenceItem.currency)
+        assertEquals("USD", plannedUsdItem.currency)
+        assertEquals("EUR", plannedEurItem.currency)
+    }
+
     private fun createExpense(amount: Double, date: Long, type: TransactionType): Expense {
         return Expense(
             amount = amount,

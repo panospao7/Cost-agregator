@@ -775,4 +775,396 @@ class AnalyticsViewModelInsightsTest : ViewModelTestUtils() {
 
         collectJob.cancel()
     }
+
+    @Test
+    fun `N-08-7 one failed row in one category preserves all three categories and marks only affected one`() = runTest(testDispatcher) {
+        val now = 1718452800000L // 2024-06-15 12:00:00 UTC
+        val txDate = 1718366400000L // 2024-06-14 12:00:00 UTC
+        every { timeProvider.now() } returns now
+
+        val categories = listOf(
+            com.yourname.expensetracker.data.database.entity.Category(id = 1L, name = "Groceries", icon = "G", color = "#111111"),
+            com.yourname.expensetracker.data.database.entity.Category(id = 2L, name = "Transport", icon = "T", color = "#222222"),
+            com.yourname.expensetracker.data.database.entity.Category(id = 3L, name = "Travel", icon = "V", color = "#333333")
+        )
+        every { categoryRepository.allCategories } returns flowOf(categories)
+
+        // 3 categories: Cat 1 (100 EUR), Cat 2 (200 EUR), Cat 3 (50 EUR + 80 USD that fails conversion)
+        val expenses = listOf(
+            Expense(id = 1L, amount = 100.0, currency = "EUR", merchant = "M1", transactionType = TransactionType.PURCHASE, date = txDate, categoryId = 1L),
+            Expense(id = 2L, amount = 200.0, currency = "EUR", merchant = "M2", transactionType = TransactionType.PURCHASE, date = txDate, categoryId = 2L),
+            Expense(id = 3L, amount = 50.0, currency = "EUR", merchant = "M3", transactionType = TransactionType.PURCHASE, date = txDate, categoryId = 3L),
+            Expense(id = 4L, amount = 80.0, currency = "USD", merchant = "M4", transactionType = TransactionType.PURCHASE, date = txDate, categoryId = 3L)
+        )
+        every { expenseRepository.getAllExpenses() } returns flowOf(expenses)
+
+        viewModel = AnalyticsViewModel(
+            expenseRepository,
+            categoryRepository,
+            budgetRepository,
+            insightsEngine,
+            recurringExpenseEngine,
+            analyticsRepository,
+            advancedAnalyticsEngine,
+            analyticsCurrencyNormalizer,
+            locationInsightsEngine,
+            areaSpendingEngine,
+            travelDetectionEngine,
+            spendingPersonalityClassifier,
+            timeProvider,
+            analyticsInputAssembler,
+            currencyConverter,
+            currencySettingsRepository,
+            budgetVsActualEngine,
+            dailyBucketEngine
+        )
+
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } answers {
+            val s = firstArg<Long>()
+            val e = secondArg<Long>()
+            expenses.filter { it.date in s until e }
+        }
+
+        coEvery { analyticsInputAssembler.build(any<List<Expense>>(), any<String>(), any(), any()) } answers {
+            val raw = firstArg<List<Expense>>()
+            val period = arg<PeriodRange>(2)
+            val included = raw.filter { it.currency == "EUR" }.map { exp ->
+                NormalizedExpense(
+                    id = exp.id,
+                    originalAmount = exp.amount,
+                    originalEffectiveAmount = exp.amount,
+                    originalCurrency = exp.currency,
+                    normalizedAmount = exp.amount,
+                    normalizedCurrency = "EUR",
+                    date = exp.date,
+                    merchant = exp.merchant,
+                    merchantKey = null,
+                    categoryId = exp.categoryId,
+                    categoryNameSnapshot = null,
+                    transactionType = "PURCHASE",
+                    isNotMine = false,
+                    isSharedExpense = false,
+                    ownershipMode = null,
+                    source = null
+                )
+            }
+            val excluded = raw.filter { it.currency != "EUR" }.map { exp ->
+                ExcludedExpense(
+                    id = exp.id,
+                    originalAmount = exp.amount,
+                    originalCurrency = exp.currency,
+                    reason = ExclusionReason.CONVERSION_FAILED,
+                    date = exp.date,
+                    categoryId = exp.categoryId,
+                    warningType = AnalyticsConversionWarningType.MISSING_EXCHANGE_RATE,
+                    message = "Missing rate for ${exp.currency}"
+                )
+            }
+            NormalizedAnalyticsInput(
+                period = period,
+                homeCurrency = "EUR",
+                includedExpenses = included,
+                excludedExpenses = excluded,
+                dataQuality = AnalyticsDataQuality(
+                    isPartial = excluded.isNotEmpty(),
+                    excludedCount = excluded.size,
+                    missingRateCount = excluded.size
+                )
+            )
+        }
+
+        val collectJob = launch { viewModel.state.collect { } }
+        coEvery { advancedAnalyticsEngine.getCategoryAnalytics(any(), any(), any(), any(), any()) } returns
+            Pair(emptyList(), emptyList())
+        val merchantResult: Pair<List<EnhancedMerchantAnalytics>, List<AnalyticsConversionWarning>> =
+            Pair(emptyList(), emptyList())
+        coEvery {
+            advancedAnalyticsEngine.getMerchantAnalytics(
+                any<NormalizedAnalyticsInput>(),
+                any<NormalizedAnalyticsInput>(),
+                any()
+            )
+        } returns merchantResult
+        val patternResult: Pair<SpendingPatternAnalysis, List<AnalyticsConversionWarning>> =
+            Pair(mockk(relaxed = true), emptyList())
+        coEvery { advancedAnalyticsEngine.getSpendingPatterns(any<NormalizedAnalyticsInput>()) } returns patternResult
+        val statsResult: Pair<StatisticalInsights, List<AnalyticsConversionWarning>> =
+            Pair(mockk(relaxed = true), emptyList())
+        coEvery { advancedAnalyticsEngine.getStatisticalInsights(any<NormalizedAnalyticsInput>()) } returns statsResult
+        every { insightsEngine.getLegacyInsights(any(), any()) } returns emptyList()
+
+        testDispatcher.scheduler.advanceTimeBy(400)
+        advanceUntilIdle()
+
+        val breakdown = viewModel.state.value.categoryBreakdown
+        assertEquals(3, breakdown.size, "All 3 categories must remain when 1 row in 1 category fails conversion")
+
+        val cat1 = breakdown.first { it.category.id == 1L }
+        val cat2 = breakdown.first { it.category.id == 2L }
+        val cat3 = breakdown.first { it.category.id == 3L }
+
+        assertEquals(100.0, cat1.moneyTotal.amount, 0.001)
+        org.junit.Assert.assertFalse("Clean category 1 must not be partial", cat1.isPartial)
+        org.junit.Assert.assertFalse("Clean category 1 must not be unavailable", cat1.isUnavailable)
+
+        assertEquals(200.0, cat2.moneyTotal.amount, 0.001)
+        org.junit.Assert.assertFalse("Clean category 2 must not be partial", cat2.isPartial)
+        org.junit.Assert.assertFalse("Clean category 2 must not be unavailable", cat2.isUnavailable)
+
+        assertEquals(50.0, cat3.moneyTotal.amount, 0.001)
+        assertTrue(cat3.isPartial || cat3.isUnavailable, "Affected category 3 must be marked partial or unavailable")
+        assertTrue(cat3.isPartial, "Partially converted category 3 must have isPartial = true")
+        org.junit.Assert.assertFalse("Partially converted category 3 has converted rows so isUnavailable = false", cat3.isUnavailable)
+
+        collectJob.cancel()
+    }
+
+    @Test
+    fun `N-08-7 fully unconvertible category is kept as unavailable while clean categories keep exact totals`() = runTest(testDispatcher) {
+        val now = 1718452800000L
+        val txDate = 1718366400000L
+        every { timeProvider.now() } returns now
+
+        val categories = listOf(
+            com.yourname.expensetracker.data.database.entity.Category(id = 1L, name = "Groceries", icon = "G", color = "#111111"),
+            com.yourname.expensetracker.data.database.entity.Category(id = 2L, name = "Transport", icon = "T", color = "#222222"),
+            com.yourname.expensetracker.data.database.entity.Category(id = 3L, name = "Travel", icon = "V", color = "#333333")
+        )
+        every { categoryRepository.allCategories } returns flowOf(categories)
+
+        // Cat 3 has ONLY an unconvertible USD row
+        val expenses = listOf(
+            Expense(id = 1L, amount = 100.0, currency = "EUR", merchant = "M1", transactionType = TransactionType.PURCHASE, date = txDate, categoryId = 1L),
+            Expense(id = 2L, amount = 200.0, currency = "EUR", merchant = "M2", transactionType = TransactionType.PURCHASE, date = txDate, categoryId = 2L),
+            Expense(id = 4L, amount = 80.0, currency = "USD", merchant = "M4", transactionType = TransactionType.PURCHASE, date = txDate, categoryId = 3L)
+        )
+        every { expenseRepository.getAllExpenses() } returns flowOf(expenses)
+
+        viewModel = AnalyticsViewModel(
+            expenseRepository,
+            categoryRepository,
+            budgetRepository,
+            insightsEngine,
+            recurringExpenseEngine,
+            analyticsRepository,
+            advancedAnalyticsEngine,
+            analyticsCurrencyNormalizer,
+            locationInsightsEngine,
+            areaSpendingEngine,
+            travelDetectionEngine,
+            spendingPersonalityClassifier,
+            timeProvider,
+            analyticsInputAssembler,
+            currencyConverter,
+            currencySettingsRepository,
+            budgetVsActualEngine,
+            dailyBucketEngine
+        )
+
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } answers {
+            val s = firstArg<Long>()
+            val e = secondArg<Long>()
+            expenses.filter { it.date in s until e }
+        }
+
+        coEvery { analyticsInputAssembler.build(any<List<Expense>>(), any<String>(), any(), any()) } answers {
+            val raw = firstArg<List<Expense>>()
+            val period = arg<PeriodRange>(2)
+            val included = raw.filter { it.currency == "EUR" }.map { exp ->
+                NormalizedExpense(
+                    id = exp.id,
+                    originalAmount = exp.amount,
+                    originalEffectiveAmount = exp.amount,
+                    originalCurrency = exp.currency,
+                    normalizedAmount = exp.amount,
+                    normalizedCurrency = "EUR",
+                    date = exp.date,
+                    merchant = exp.merchant,
+                    merchantKey = null,
+                    categoryId = exp.categoryId,
+                    categoryNameSnapshot = null,
+                    transactionType = "PURCHASE",
+                    isNotMine = false,
+                    isSharedExpense = false,
+                    ownershipMode = null,
+                    source = null
+                )
+            }
+            val excluded = raw.filter { it.currency != "EUR" }.map { exp ->
+                ExcludedExpense(
+                    id = exp.id,
+                    originalAmount = exp.amount,
+                    originalCurrency = exp.currency,
+                    reason = ExclusionReason.CONVERSION_FAILED,
+                    date = exp.date,
+                    categoryId = exp.categoryId,
+                    warningType = AnalyticsConversionWarningType.MISSING_EXCHANGE_RATE,
+                    message = "Missing rate for ${exp.currency}"
+                )
+            }
+            NormalizedAnalyticsInput(
+                period = period,
+                homeCurrency = "EUR",
+                includedExpenses = included,
+                excludedExpenses = excluded,
+                dataQuality = AnalyticsDataQuality(
+                    isPartial = excluded.isNotEmpty(),
+                    excludedCount = excluded.size,
+                    missingRateCount = excluded.size
+                )
+            )
+        }
+
+        val collectJob = launch { viewModel.state.collect { } }
+        coEvery { advancedAnalyticsEngine.getCategoryAnalytics(any(), any(), any(), any(), any()) } returns
+            Pair(emptyList(), emptyList())
+        val merchantResult: Pair<List<EnhancedMerchantAnalytics>, List<AnalyticsConversionWarning>> =
+            Pair(emptyList(), emptyList())
+        coEvery {
+            advancedAnalyticsEngine.getMerchantAnalytics(
+                any<NormalizedAnalyticsInput>(),
+                any<NormalizedAnalyticsInput>(),
+                any()
+            )
+        } returns merchantResult
+        val patternResult: Pair<SpendingPatternAnalysis, List<AnalyticsConversionWarning>> =
+            Pair(mockk(relaxed = true), emptyList())
+        coEvery { advancedAnalyticsEngine.getSpendingPatterns(any<NormalizedAnalyticsInput>()) } returns patternResult
+        val statsResult: Pair<StatisticalInsights, List<AnalyticsConversionWarning>> =
+            Pair(mockk(relaxed = true), emptyList())
+        coEvery { advancedAnalyticsEngine.getStatisticalInsights(any<NormalizedAnalyticsInput>()) } returns statsResult
+        every { insightsEngine.getLegacyInsights(any(), any()) } returns emptyList()
+
+        testDispatcher.scheduler.advanceTimeBy(400)
+        advanceUntilIdle()
+
+        val breakdown = viewModel.state.value.categoryBreakdown
+        assertEquals(3, breakdown.size, "All 3 categories must remain even when Cat 3 has 0 convertible rows")
+
+        val cat1 = breakdown.first { it.category.id == 1L }
+        val cat2 = breakdown.first { it.category.id == 2L }
+        val cat3 = breakdown.first { it.category.id == 3L }
+
+        assertEquals(100.0, cat1.moneyTotal.amount, 0.001)
+        org.junit.Assert.assertFalse(cat1.isPartial)
+        org.junit.Assert.assertFalse(cat1.isUnavailable)
+
+        assertEquals(200.0, cat2.moneyTotal.amount, 0.001)
+        org.junit.Assert.assertFalse(cat2.isPartial)
+        org.junit.Assert.assertFalse(cat2.isUnavailable)
+
+        assertTrue(cat3.isUnavailable, "Fully unconvertible category 3 must be marked isUnavailable = true")
+        org.junit.Assert.assertFalse("Fully unconvertible category 3 must not conflate isPartial with isUnavailable", cat3.isPartial)
+
+        collectJob.cancel()
+    }
+
+    @Test
+    fun `N-08-7 negative control all rows convert produces no partial or unavailable category flags`() = runTest(testDispatcher) {
+        val now = 1718452800000L
+        val txDate = 1718366400000L
+        every { timeProvider.now() } returns now
+
+        val categories = listOf(
+            com.yourname.expensetracker.data.database.entity.Category(id = 1L, name = "Groceries", icon = "G", color = "#111111"),
+            com.yourname.expensetracker.data.database.entity.Category(id = 2L, name = "Transport", icon = "T", color = "#222222"),
+            com.yourname.expensetracker.data.database.entity.Category(id = 3L, name = "Travel", icon = "V", color = "#333333")
+        )
+        every { categoryRepository.allCategories } returns flowOf(categories)
+
+        val expenses = listOf(
+            Expense(id = 1L, amount = 100.0, currency = "EUR", merchant = "M1", transactionType = TransactionType.PURCHASE, date = txDate, categoryId = 1L),
+            Expense(id = 2L, amount = 200.0, currency = "EUR", merchant = "M2", transactionType = TransactionType.PURCHASE, date = txDate, categoryId = 2L),
+            Expense(id = 3L, amount = 130.0, currency = "EUR", merchant = "M3", transactionType = TransactionType.PURCHASE, date = txDate, categoryId = 3L)
+        )
+        every { expenseRepository.getAllExpenses() } returns flowOf(expenses)
+
+        viewModel = AnalyticsViewModel(
+            expenseRepository,
+            categoryRepository,
+            budgetRepository,
+            insightsEngine,
+            recurringExpenseEngine,
+            analyticsRepository,
+            advancedAnalyticsEngine,
+            analyticsCurrencyNormalizer,
+            locationInsightsEngine,
+            areaSpendingEngine,
+            travelDetectionEngine,
+            spendingPersonalityClassifier,
+            timeProvider,
+            analyticsInputAssembler,
+            currencyConverter,
+            currencySettingsRepository,
+            budgetVsActualEngine,
+            dailyBucketEngine
+        )
+
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } answers {
+            val s = firstArg<Long>()
+            val e = secondArg<Long>()
+            expenses.filter { it.date in s until e }
+        }
+
+        coEvery { analyticsInputAssembler.build(any<List<Expense>>(), any<String>(), any(), any()) } answers {
+            val raw = firstArg<List<Expense>>()
+            val period = arg<PeriodRange>(2)
+            NormalizedAnalyticsInput(
+                period = period,
+                homeCurrency = "EUR",
+                includedExpenses = raw.map { exp ->
+                    NormalizedExpense(
+                        id = exp.id,
+                        originalAmount = exp.amount,
+                        originalEffectiveAmount = exp.amount,
+                        originalCurrency = exp.currency,
+                        normalizedAmount = exp.amount,
+                        normalizedCurrency = "EUR",
+                        date = exp.date,
+                        merchant = exp.merchant,
+                        merchantKey = null,
+                        categoryId = exp.categoryId,
+                        categoryNameSnapshot = null,
+                        transactionType = "PURCHASE",
+                        isNotMine = false,
+                        isSharedExpense = false,
+                        ownershipMode = null,
+                        source = null
+                    )
+                }
+            )
+        }
+
+        val collectJob = launch { viewModel.state.collect { } }
+        coEvery { advancedAnalyticsEngine.getCategoryAnalytics(any(), any(), any(), any(), any()) } returns
+            Pair(emptyList(), emptyList())
+        val merchantResult: Pair<List<EnhancedMerchantAnalytics>, List<AnalyticsConversionWarning>> =
+            Pair(emptyList(), emptyList())
+        coEvery {
+            advancedAnalyticsEngine.getMerchantAnalytics(
+                any<NormalizedAnalyticsInput>(),
+                any<NormalizedAnalyticsInput>(),
+                any()
+            )
+        } returns merchantResult
+        val patternResult: Pair<SpendingPatternAnalysis, List<AnalyticsConversionWarning>> =
+            Pair(mockk(relaxed = true), emptyList())
+        coEvery { advancedAnalyticsEngine.getSpendingPatterns(any<NormalizedAnalyticsInput>()) } returns patternResult
+        val statsResult: Pair<StatisticalInsights, List<AnalyticsConversionWarning>> =
+            Pair(mockk(relaxed = true), emptyList())
+        coEvery { advancedAnalyticsEngine.getStatisticalInsights(any<NormalizedAnalyticsInput>()) } returns statsResult
+        every { insightsEngine.getLegacyInsights(any(), any()) } returns emptyList()
+
+        testDispatcher.scheduler.advanceTimeBy(400)
+        advanceUntilIdle()
+
+        val breakdown = viewModel.state.value.categoryBreakdown
+        assertEquals(3, breakdown.size)
+        assertTrue(breakdown.all { !it.isPartial && !it.isUnavailable }, "No category may be marked partial or unavailable when all rows convert")
+        assertEquals(100.0, breakdown.first { it.category.id == 1L }.moneyTotal.amount, 0.001)
+        assertEquals(200.0, breakdown.first { it.category.id == 2L }.moneyTotal.amount, 0.001)
+        assertEquals(130.0, breakdown.first { it.category.id == 3L }.moneyTotal.amount, 0.001)
+
+        collectJob.cancel()
+    }
 }

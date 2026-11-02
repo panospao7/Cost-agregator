@@ -110,6 +110,8 @@ sealed class DashboardWidget {
         val monthSpent: Double,
         /** S4-006: true when any conversion failed for these totals */
         val isPartial: Boolean = false,
+        /** N-08-5: true when period totals are unavailable (not zero / not merely partial) */
+        val isUnavailable: Boolean = false,
         val currencyQuality: CurrencyQualityUi? = null
     ) : DashboardWidget()
 
@@ -1298,18 +1300,21 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             add(
                 when (val normalized = ctx.normalizedInputResult) {
                     is DashboardNormalizedInputResult.Available -> {
-                        // Budget remaining not yet normalized — show unavailable. F-DEV-2: the
-                        // currency-quality flag mirrors the real conversion quality of the
+                        // F-DEV-2: the currency-quality flag mirrors the real conversion quality of the
                         // normalized input; it must not be hardcoded partial, otherwise every
                         // user sees a "could not be converted" warning with fully converted data.
                         val inputQuality = normalized.input.dataQuality
                         val conversionPartial = inputQuality.isPartial || inputQuality.excludedTransactionCount > 0
+                        val validBudget = ctx.overallBudget?.takeIf { it.hasCompleteAmountIn(normalized.input.homeCurrency.code) }?.budgetAmount
+                        val safeAmount = if (validBudget != null && !conversionPartial) {
+                            (validBudget - normalized.input.monthAggregate.displayAmount).coerceAtLeast(0.0)
+                        } else null
                         DashboardWidget.SafeToSpend(
-                            amount = null,
-                            totalBudget = ctx.overallBudget?.takeIf { it.hasCompleteAmountIn(normalized.input.homeCurrency.code) }?.budgetAmount,
+                            amount = safeAmount,
+                            totalBudget = validBudget,
                             daysRemaining = ctx.daysRemaining,
                             isPartial = inputQuality.isPartial,
-                            isUnavailable = true,
+                            isUnavailable = safeAmount == null,
                             currencyQuality = CurrencyQualityUi(
                                 isPartial = conversionPartial,
                                 quality = inputQuality.conversionQuality,
@@ -1366,11 +1371,13 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
                         weekSpent = normalized.input.weekAggregate.displayAmount,
                         monthSpent = normalized.input.monthAggregate.displayAmount,
                         isPartial = normalized.input.dataQuality.isPartial,
+                        isUnavailable = normalized.input.dataQuality.conversionQuality == com.yourname.expensetracker.domain.core.money.ConversionQuality.UNAVAILABLE,
                         currencyQuality = CurrencyQualityUi.from(normalized.input.dataQuality)
                     )
                     is DashboardNormalizedInputResult.Unavailable -> DashboardWidget.PeriodSummary(
-                        todaySpent = 0.0, weekSpent = 0.0, monthSpent = 0.0,
-                        isPartial = true,
+                        todaySpent = Double.NaN, weekSpent = Double.NaN, monthSpent = Double.NaN,
+                        isPartial = false,
+                        isUnavailable = true,
                         currencyQuality = CurrencyQualityUi.unavailable(normalized.reason)
                     )
                 }
