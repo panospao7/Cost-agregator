@@ -144,6 +144,13 @@ class AppParserRegistry @Inject constructor(
     private val aiFallbackParser: com.yourname.expensetracker.domain.ai.service.NotificationFallbackParser,
     private val timeProvider: TimeProvider
 ) {
+    /**
+     * FL-02: an SMS may be auto-accepted only when [SmsParser] itself read one clean amount.
+     * Any SMS result produced by a fallback parser is flagged ambiguous so the router sends it to review.
+     */
+    private fun ParsedTransaction.withSmsFallbackReview(packageName: String): ParsedTransaction =
+        if (packageName in SmsParser.SMS_PACKAGES) copy(isAmountAmbiguous = true) else this
+
     private val parsers = mutableListOf<AppNotificationParser>()
     private val packageToParserMap = mutableMapOf<String, AppNotificationParser>()
 
@@ -186,6 +193,7 @@ class AppParserRegistry @Inject constructor(
         // 2. Fallback to generic parser when package parser fails or cannot parse this format.
         val genericResult = try {
             genericParser.parse(title, text, bigText, subText, packageName)
+                ?.withSmsFallbackReview(packageName)
         } catch (e: Exception) {
             Timber.w(e, "Generic parser failed for package: $packageName")
             null
@@ -234,6 +242,7 @@ class AppParserRegistry @Inject constructor(
 			attempts.add(ParserAttempt("GenericTransactionParser", ParserSource.GENERIC_DETERMINISTIC, true, false))
 			parsed = try {
 				genericParser.parse(title, text, bigText, subText, packageName)
+					?.withSmsFallbackReview(packageName)
 			} catch (e: Exception) {
 				if (e is kotlinx.coroutines.CancellationException) throw e
 				Timber.w(e, "Generic parser failed for package: $packageName")
@@ -259,6 +268,7 @@ class AppParserRegistry @Inject constructor(
 				aiAttempted = true
 				try {
 					val aiResult = aiFallbackParser.parse(title, text, bigText, packageName)
+						?.withSmsFallbackReview(packageName)
 					if (aiResult != null) {
 						parsed = aiResult
 						source = ParserSource.AI_FALLBACK
@@ -337,6 +347,7 @@ class AppParserRegistry @Inject constructor(
 		Timber.d("AppParserRegistry: Trying AI fallback for package: $packageName")
 		return try {
 			aiFallbackParser.parse(title, text, bigText, packageName)
+				?.withSmsFallbackReview(packageName)
 		} catch (e: Exception) {
 			if (e is kotlinx.coroutines.CancellationException) throw e
 			Timber.w(e, "AI fallback parser failed for package: $packageName")

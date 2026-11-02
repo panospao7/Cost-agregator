@@ -22,11 +22,15 @@ class SmsParser @Inject constructor(
     private val merchantCleaner: MerchantCleaner
 ) : AppNotificationParser {
 
-    override val supportedPackages = setOf(
-        "com.google.android.apps.messaging",
-        "com.samsung.android.messaging",
-        "com.android.mms"
-    )
+    companion object {
+        val SMS_PACKAGES = setOf(
+            "com.google.android.apps.messaging",
+            "com.samsung.android.messaging",
+            "com.android.mms"
+        )
+    }
+
+    override val supportedPackages = SMS_PACKAGES
 
     // Known bank SMS sender IDs
     private val BANK_SENDERS = setOf(
