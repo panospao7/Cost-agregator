@@ -402,6 +402,7 @@ class ExportAnonymizer @Inject constructor() {
     /**
      * S1 (P-08-2): Redacts item descriptions, AI rationales, and suggested category names
      * in `receipt_item_categorizations` while preserving rows and numeric/ID fields.
+     * `userCorrectedCategoryName` is a category label (not raw receipt text) and is preserved.
      * `itemDescription` is NOT NULL so it is set to '[REDACTED]'.
      * @return number of rows updated
      */
@@ -409,7 +410,7 @@ class ExportAnonymizer @Inject constructor() {
         if (!tableExists(db, "receipt_item_categorizations")) return 0
         val where = "(itemDescription <> '' AND itemDescription <> '[REDACTED]') " +
             "OR aiRationale IS NOT NULL OR suggestedCategoryName IS NOT NULL " +
-            "OR alternativeCategoriesJson IS NOT NULL OR userCorrectedCategoryName IS NOT NULL"
+            "OR alternativeCategoriesJson IS NOT NULL"
         val count = countWhere(db, "receipt_item_categorizations", where)
         if (count == 0) return 0
         val values = android.content.ContentValues().apply {
@@ -417,7 +418,6 @@ class ExportAnonymizer @Inject constructor() {
             putNull("aiRationale")
             putNull("suggestedCategoryName")
             putNull("alternativeCategoriesJson")
-            putNull("userCorrectedCategoryName")
         }
         db.update("receipt_item_categorizations", values, where, null)
         Timber.d("$TAG: Redacted receipt_item_categorizations fields in $count rows")

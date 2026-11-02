@@ -407,6 +407,12 @@ class ExportAnonymizerTest {
         assertFalse("raw itemDescription must not survive", redactedDesc!!.contains("SECRET_LINE_ITEM_DESC"))
         assertNull(queryString(file, "SELECT aiRationale FROM receipt_item_categorizations WHERE id=1"))
         assertNull(queryString(file, "SELECT suggestedCategoryName FROM receipt_item_categorizations WHERE id=1"))
+        assertNull(queryString(file, "SELECT alternativeCategoriesJson FROM receipt_item_categorizations WHERE id=1"))
+        // R-RCPT-1: userCorrectedCategoryName is a category label, not raw receipt text: PRESERVED.
+        assertEquals(
+            "SECRET_USER_CAT",
+            queryString(file, "SELECT userCorrectedCategoryName FROM receipt_item_categorizations WHERE id=1")
+        )
         assertEquals(12.99, queryDouble(file, "SELECT itemAmount FROM receipt_item_categorizations WHERE id=1"), 0.0)
         assertEquals(1.0, queryDouble(file, "SELECT COUNT(*) FROM receipt_item_categorizations"), 0.0)
 
@@ -414,5 +420,47 @@ class ExportAnonymizerTest {
         assertEquals("KEEP_CATEGORY_NAME", queryString(file, "SELECT name FROM categories WHERE id=5"))
         assertEquals("cart", queryString(file, "SELECT icon FROM categories WHERE id=5"))
         assertEquals("#FF0000", queryString(file, "SELECT color FROM categories WHERE id=5"))
+    }
+
+    @Test
+    fun sanitizeExport_leaves_receipt_item_row_untouched_when_only_userCorrectedCategoryName_is_set() {
+        val file = tempFolder.newFile("receipt_items_only_category_export.db")
+        val db = SQLiteDatabase.openOrCreateDatabase(file, null)
+        db.execSQL(
+            """CREATE TABLE receipt_item_categorizations (
+                id INTEGER PRIMARY KEY,
+                receiptId INTEGER NOT NULL,
+                expenseId INTEGER,
+                itemDescription TEXT NOT NULL,
+                itemAmount REAL NOT NULL,
+                suggestedCategoryId INTEGER,
+                suggestedCategoryName TEXT,
+                confidence REAL NOT NULL,
+                aiRationale TEXT,
+                alternativeCategoriesJson TEXT,
+                userCorrectedCategoryId INTEGER,
+                userCorrectedCategoryName TEXT
+            )"""
+        )
+        // Already-scrubbed shape: itemDescription '[REDACTED]', every other sensitive column NULL,
+        // only the category label remains.
+        db.execSQL(
+            "INSERT INTO receipt_item_categorizations(id, receiptId, expenseId, itemDescription, itemAmount, suggestedCategoryId, suggestedCategoryName, confidence, aiRationale, alternativeCategoriesJson, userCorrectedCategoryId, userCorrectedCategoryName) " +
+                "VALUES (1, 10, 20, '[REDACTED]', 4.5, 5, NULL, 0.7, NULL, NULL, 6, 'KEEP_USER_CAT')"
+        )
+        db.close()
+
+        anonymizer.sanitizeExport(file)
+
+        assertEquals("[REDACTED]", queryString(file, "SELECT itemDescription FROM receipt_item_categorizations WHERE id=1"))
+        assertNull(queryString(file, "SELECT aiRationale FROM receipt_item_categorizations WHERE id=1"))
+        assertNull(queryString(file, "SELECT suggestedCategoryName FROM receipt_item_categorizations WHERE id=1"))
+        assertNull(queryString(file, "SELECT alternativeCategoriesJson FROM receipt_item_categorizations WHERE id=1"))
+        assertEquals(
+            "KEEP_USER_CAT",
+            queryString(file, "SELECT userCorrectedCategoryName FROM receipt_item_categorizations WHERE id=1")
+        )
+        assertEquals(4.5, queryDouble(file, "SELECT itemAmount FROM receipt_item_categorizations WHERE id=1"), 0.0)
+        assertEquals(1.0, queryDouble(file, "SELECT COUNT(*) FROM receipt_item_categorizations"), 0.0)
     }
 }

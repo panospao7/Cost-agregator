@@ -696,7 +696,7 @@ class RetentionTargetCoverageGapTest {
         aiRationale = "Matched dairy keyword $tag",
         alternativeCategoriesJson = """[{"id":1,"name":"Food","confidence":0.5}]""",
         userCorrectedCategoryId = null,
-        userCorrectedCategoryName = null,
+        userCorrectedCategoryName = "Corrected Cat $tag",
         userCorrectedAt = null,
         taxAmount = 0.40,
         isNewCategorySuggestion = false,
@@ -778,8 +778,16 @@ class RetentionTargetCoverageGapTest {
             )
             assertFalse("[1ms older] raw item text must not survive", oldItem.itemDescription.contains("Organic Milk"))
             assertNull("[1ms older] aiRationale must be nulled", oldItem.aiRationale)
+            assertNull("[1ms older] suggestedCategoryName must be nulled", oldItem.suggestedCategoryName)
+            assertNull("[1ms older] alternativeCategoriesJson must be nulled", oldItem.alternativeCategoriesJson)
             assertEquals("[1ms older] itemAmount kept", 4.25, oldItem.itemAmount, 0.0)
         }
+        // R-RCPT-1: userCorrectedCategoryName is a category label and is preserved (strict, no null guard).
+        assertEquals(
+            "[1ms older] userCorrectedCategoryName preserved",
+            "Corrected Cat old",
+            itemDao.getById(oldItemId)!!.userCorrectedCategoryName
+        )
 
         for ((rowName, itemId, tag) in listOf(
             Triple("at cutoff", atCutoffItemId, "at-cutoff"),
@@ -790,6 +798,29 @@ class RetentionTargetCoverageGapTest {
             assertEquals("[$rowName] itemDescription kept", "Organic Milk $tag", kept!!.itemDescription)
             assertEquals("[$rowName] aiRationale kept", "Matched dairy keyword $tag", kept.aiRationale)
             assertEquals("[$rowName] suggestedCategoryName kept", "Groceries $tag", kept.suggestedCategoryName)
+            assertEquals("[$rowName] userCorrectedCategoryName kept", "Corrected Cat $tag", kept.userCorrectedCategoryName)
         }
+    }
+
+    @Test
+    fun `R-RCPT-1 receipt_item_categorizations row whose only sensitive column is userCorrectedCategoryName is untouched at the 1ms-older boundary`() = runTest {
+        val receiptDao = database.scannedReceiptDao()
+        val itemDao = database.receiptItemCategorizationDao()
+        val oldReceiptId = receiptDao.insert(ocrReceipt(oneMsOlder, otherTimestamp = now))
+        val onlyCategoryId = itemDao.insert(
+            receiptItemRow(oldReceiptId, "only-cat", oneMsOlder).copy(
+                itemDescription = "",
+                aiRationale = null,
+                suggestedCategoryName = null,
+                alternativeCategoriesJson = null,
+                userCorrectedCategoryName = "Corrected Cat only"
+            )
+        )
+        val before = itemDao.getById(onlyCategoryId)!!
+
+        val redacted = itemDao.redactForReceiptsOlderThan(cutoffMs)
+
+        assertEquals("nothing sensitive to scrub, so no row may be counted", 0, redacted)
+        assertEquals("row must be left completely untouched", before, itemDao.getById(onlyCategoryId))
     }
 }

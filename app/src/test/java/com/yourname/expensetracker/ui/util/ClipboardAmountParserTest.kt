@@ -127,6 +127,34 @@ class ClipboardAmountParserTest {
         assertEquals("42.80", parse("42.80"))
     }
 
+    @Test
+    fun `parseAmountFromClipboard accepts integer with adjacent currency symbol`() {
+        assertEquals("50.00", parse("€50"))
+        assertEquals("50.00", parse("50€"))
+    }
+
+    @Test
+    fun `parseAmountFromClipboard accepts integer with adjacent currency code`() {
+        assertEquals("50.00", parse("50 EUR"))
+        assertEquals("50.00", parse("EUR 50"))
+    }
+
+    @Test
+    fun `parseAmountFromClipboard returns null for bare integer`() {
+        assertNull(parse("50"))
+    }
+
+    @Test
+    fun `parseAmountFromClipboard returns null for phone number`() {
+        assertNull(parse("+30 210 1234567"))
+        assertNull(parse("Call 6912345678"))
+    }
+
+    @Test
+    fun `parseAmountFromClipboard returns null for two currency integers`() {
+        assertNull(parse("€50 and €20"))
+    }
+
     private fun parse(text: String): String? =
         ClipboardAmountParser.parseAmountFromClipboard(clipboardWithText(text))
 

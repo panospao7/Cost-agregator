@@ -22,6 +22,16 @@ object ClipboardAmountParser {
         RegexOption.IGNORE_CASE
     )
 
+    /**
+     * R-CLIP-1: integers (no decimal part) are accepted only with an adjacent currency
+     * symbol or code (`€50`, `50€`, `EUR 50`, `50 EUR`). Bare integers (phone numbers,
+     * dates, ids) are never treated as amounts.
+     */
+    private val integerWithCurrencyRegex = Regex(
+        """(?<![\d.,\p{L}])(?:(?:€|\$|EUR(?![\p{L}])|ΕΥΡΩ(?![\p{L}])|ευρώ(?![\p{L}]))\s*(\d+)|(\d+)\s*(?:€|\$|EUR(?![\p{L}])|ΕΥΡΩ(?![\p{L}])|ευρώ(?![\p{L}])))(?!\d|[.,]\d)""",
+        RegexOption.IGNORE_CASE
+    )
+
     fun parseAmountFromClipboard(clipboardManager: ClipboardManager): String? {
         return try {
             if (!clipboardManager.hasPrimaryClip()) return null
@@ -29,12 +39,16 @@ object ClipboardAmountParser {
             val item = clipboardManager.primaryClip?.getItemAt(0)
             val text = item?.text?.toString() ?: ""
             
-            val matches = regex.findAll(text).toList()
+            val matches: List<Pair<MatchResult, String>> =
+                regex.findAll(text).map { it to it.groupValues[1] }.toList() +
+                    integerWithCurrencyRegex.findAll(text)
+                        .map { it to it.groupValues[1].ifEmpty { it.groupValues[2] } }
+                        .toList()
             if (matches.isEmpty()) return null
 
             val validCandidates = mutableListOf<Pair<MatchResult, String>>()
-            for (m in matches) {
-                val parsed = QuickAddAmountRules.canonicalize(m.groupValues[1])
+            for ((m, rawAmount) in matches) {
+                val parsed = QuickAddAmountRules.canonicalize(rawAmount)
                 if (parsed is FieldParse.Value) {
                     val canonical = parsed.value.text
                     val value = BigDecimal(canonical)

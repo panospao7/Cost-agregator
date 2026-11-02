@@ -73,6 +73,47 @@ class MonteCarloSpendingSimulatorGoldenTest : AnalyticsEngineTestBase() {
     }
 
     @Test
+    fun `BL-01 explicit zero week probability of zero reproduces the pre-change golden snapshot`() = runTest {
+        every { timeProvider.now() } returns atTime("2026-03-15", 12, 0, 0)
+
+        val fit = DistributionFit(
+            mu = 5.8,
+            sigma = 0.35,
+            qualifyingWeekCount = 12,
+            totalWeeksExamined = 18,
+            trimmedWeeklyTotals = listOf(420.0, 500.0, 560.0, 610.0, 700.0, 760.0),
+            allWeeklyTotals = listOf(400.0, 480.0, 520.0, 610.0, 730.0, 810.0, 920.0, 1010.0),
+            displayCurrency = "EUR",
+            zeroWeekProbability = 0.0
+        )
+        coEvery { historicalDistribution.computeDistributionResult("EUR") } returns
+            HistoricalDistributionResult.Available(fit)
+        every { dataQualityAssessor.assess(fit, 8) } returns SimulationConfidence(
+            score = 0.82,
+            level = ConfidenceLevel.HIGH,
+            reason = "Based on 12 weeks"
+        )
+
+        val result = requireNotNull(
+            simulator.simulate(
+                spentToDate = 991.79,
+                knownUpcoming = 300.0,
+                budgetAmount = 2500.0,
+                displayCurrency = "EUR"
+            )
+        )
+
+        // Same values as the default-fit golden snapshot above: the per-week quiet draw must not run,
+        // and the single nextGaussian() stream is unchanged, so nothing moves (tolerance stays 1.0).
+        assertApproxEquals(2072.41, result.percentile50, 1.0)
+        assertApproxEquals(1781.63, result.percentile10, 1.0)
+        assertApproxEquals(1894.42, result.percentile25, 1.0)
+        assertApproxEquals(2273.03, result.percentile75, 1.0)
+        assertApproxEquals(2484.39, result.percentile90, 1.0)
+        assertEquals(1000, result.metadata.iterations)
+    }
+
+    @Test
     fun `positive week fit near ln 100 with 14 days remaining produces tight p50 and p90 band`() = runTest {
         // April 16, 2026 -> 14 days remaining in April (2.0 weeks).
         every { timeProvider.now() } returns atTime("2026-04-16", 12, 0, 0)

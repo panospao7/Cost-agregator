@@ -343,6 +343,82 @@ class MonthlySavingsSweepUseCaseTest {
     }
 
     @Test
+    fun `R-SWEEP-1 degraded Monte Carlo result with zero iterations uses the same fallback buffer as null`() = runTest {
+        // Same fixtures as the null-simulator test above, so the null result is the control.
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(
+            listOf(budgetStatus(budgetId = 1L, categoryId = null, amount = 1000.0, spent = 700.0))
+        )
+        every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(
+            listOf(goal(1L, "Emergency", target = 1000.0, current = 100.0))
+        )
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
+            com.yourname.expensetracker.data.database.entity.Expense(
+                amount = 300.0,
+                merchant = "Groceries",
+                transactionType = com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE,
+                date = withinWindowNow - dayMs
+            )
+        )
+        every { recurringExpenseRepository.getAllFlow() } returns flowOf(
+            listOf(
+                ManualRecurringExpense(
+                    id = 1L,
+                    merchant = "Rent",
+                    amount = 80.0,
+                    currency = "EUR",
+                    frequency = RecurrenceFrequency.MONTHLY,
+                    nextDate = withinWindowNow + dayMs,
+                    note = null
+                )
+            )
+        )
+        every { plannedExpenseRepository.getAllPlannedExpenses() } returns flowOf(emptyList())
+
+        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) } returns null
+        val nullResult = requireNotNull(useCase.computeSweepRecommendation())
+
+        // Degraded deterministic-only result: iterations == 0 and every percentile equals the
+        // deterministic total, so p75 - p50 == 0. It must not be read as "zero uncertainty".
+        val degraded = monteCarlo(p50 = 300.0, p75 = 300.0, confidence = 0.0)
+        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) } returns
+            degraded.copy(metadata = degraded.metadata.copy(iterations = 0))
+        val degradedResult = requireNotNull(useCase.computeSweepRecommendation())
+
+        // Hand-derived: bills 80 + max(80*0.15, 0, 1000*0.03) = 80 + 30 = 110 (non-zero).
+        assertApproxEquals(110.0, degradedResult.riskBuffer, 0.01)
+        assertApproxEquals(190.0, degradedResult.safeSweepAmount, 0.01)
+        assertApproxEquals(nullResult.riskBuffer, degradedResult.riskBuffer, 0.0001)
+        assertApproxEquals(nullResult.safeSweepAmount, degradedResult.safeSweepAmount, 0.0001)
+    }
+
+    @Test
+    fun `R-SWEEP-1 control a real simulation with p75 equal p50 keeps zero uncertainty not the fallback`() = runTest {
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(
+            listOf(budgetStatus(budgetId = 1L, categoryId = null, amount = 1000.0, spent = 700.0))
+        )
+        every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(
+            listOf(goal(1L, "Emergency", target = 1000.0, current = 100.0))
+        )
+        every { recurringExpenseRepository.getAllFlow() } returns flowOf(
+            listOf(
+                ManualRecurringExpense(
+                    id = 1L, merchant = "Rent", amount = 80.0, currency = "EUR",
+                    frequency = RecurrenceFrequency.MONTHLY, nextDate = withinWindowNow + dayMs, note = null
+                )
+            )
+        )
+        // iterations stays 1000 (helper default): a genuinely simulated zero spread is not degraded.
+        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) } returns
+            monteCarlo(p50 = 300.0, p75 = 300.0, confidence = 0.9)
+
+        val result = requireNotNull(useCase.computeSweepRecommendation())
+
+        // Bills 80 + uncertainty (p75 - p50 = 0) = 80; the 30 fallback must NOT be added.
+        assertApproxEquals(80.0, result.riskBuffer, 0.01)
+        assertApproxEquals(220.0, result.safeSweepAmount, 0.01)
+    }
+
+    @Test
     fun `computeSweepRecommendation subtracts upcoming bills and uncertainty so displayed buffer reconciles`() = runTest {
         every { budgetRepository.getBudgetStatuses() } returns flowOf(
             listOf(budgetStatus(budgetId = 1L, categoryId = null, amount = 1000.0, spent = 700.0)) // underspend 300
