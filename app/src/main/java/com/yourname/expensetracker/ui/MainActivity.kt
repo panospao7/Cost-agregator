@@ -806,10 +806,16 @@ fun MainScreen(
                     )
                 }
                 is NavigationDestination.CarbonFootprint -> {
-                    CarbonFootprintScreen(
-                        onNavigateBack = { navigation.navigateBack() },
-                        actionRegistry = actionRegistry
-                    )
+                    if (deferredFeaturesAvailable) {
+                        CarbonFootprintScreen(
+                            onNavigateBack = { navigation.navigateBack() },
+                            actionRegistry = actionRegistry
+                        )
+                    } else {
+                        androidx.compose.runtime.LaunchedEffect(Unit) {
+                            navigation.navigateHome()
+                        }
+                    }
                 }
                 is NavigationDestination.WarrantyTracker -> {
                     WarrantyTrackerScreen(
@@ -818,14 +824,26 @@ fun MainScreen(
                     )
                 }
                 is NavigationDestination.PriceProtection -> {
-                    PriceProtectionScreen(
-                        onNavigateBack = { navigation.navigateBack() }
-                    )
+                    if (deferredFeaturesAvailable) {
+                        PriceProtectionScreen(
+                            onNavigateBack = { navigation.navigateBack() }
+                        )
+                    } else {
+                        androidx.compose.runtime.LaunchedEffect(Unit) {
+                            navigation.navigateHome()
+                        }
+                    }
                 }
                 is NavigationDestination.BillNegotiation -> {
-                    BillNegotiationScreen(
-                        onNavigateBack = { navigation.navigateBack() }
-                    )
+                    if (deferredFeaturesAvailable) {
+                        BillNegotiationScreen(
+                            onNavigateBack = { navigation.navigateBack() }
+                        )
+                    } else {
+                        androidx.compose.runtime.LaunchedEffect(Unit) {
+                            navigation.navigateHome()
+                        }
+                    }
                 }
                 is NavigationDestination.SmartSearch -> {
                     NaturalLanguageSearchScreen(

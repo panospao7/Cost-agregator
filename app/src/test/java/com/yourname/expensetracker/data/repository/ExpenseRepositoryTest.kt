@@ -24,6 +24,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
+import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -66,7 +67,8 @@ class ExpenseRepositoryTest {
             merchantNormalizer,
             transferDirectionAnalytics,
             transactionLifecycleCoordinator,
-            mockk(relaxed = true)
+            debugExpenseAuditWriter = mockk(relaxed = true),
+            timeProvider = FakeTimeProvider(1_700_000_000_000L)
         )
     }
 
@@ -401,5 +403,31 @@ class ExpenseRepositoryTest {
         assertTrue(countSql.contains("e.isSharedExpense = 1"))
         assertTrue(listSql.contains("LIMIT") .not())
         assertTrue(countSql.contains("ORDER BY").not())
+    }
+
+    @Suppress("DEPRECATION")
+    @Test
+    fun `updateExpenseCategoryBulk populates UserCorrection createdAt from TimeProvider`() = runTest {
+        val fixedTime = 1_712_345_678_004L
+        val repo = ExpenseRepository(
+            writeBarrier,
+            database,
+            expenseDao,
+            userCorrectionDao,
+            pendingReviewDao,
+            merchantCategoryRepository,
+            merchantNormalizer,
+            transferDirectionAnalytics,
+            transactionLifecycleCoordinator,
+            debugExpenseAuditWriter = mockk(relaxed = true),
+            timeProvider = FakeTimeProvider(fixedTime)
+        )
+
+        repo.updateExpenseCategoryBulk("Test Merchant", 9L)
+
+        val correctionSlot = slot<UserCorrection>()
+        coVerify(exactly = 1) { userCorrectionDao.insert(capture(correctionSlot)) }
+        assertTrue(correctionSlot.captured.createdAt > 0L)
+        assertEquals(fixedTime, correctionSlot.captured.createdAt)
     }
 }

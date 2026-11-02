@@ -28,6 +28,7 @@ import com.yourname.expensetracker.domain.analytics.SpendingPaceCalculator
 import com.yourname.expensetracker.domain.analytics.TransferDirectionAnalytics
 import com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import io.mockk.coEvery
 import io.mockk.every
@@ -64,7 +65,8 @@ class AnalyticsPipelineTest : AnalyticsEngineTestBase() {
             merchantNormalizer = mockk(relaxed = true),
             transferDirectionAnalytics = TransferDirectionAnalytics(),
             transactionLifecycleCoordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true),
-            debugExpenseAuditWriter = mockk(relaxed = true)
+            debugExpenseAuditWriter = mockk(relaxed = true),
+            timeProvider = FakeTimeProvider(fixedNow)
         )
 
         val recurringExpenseRepository = RecurringExpenseRepository(

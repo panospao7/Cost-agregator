@@ -893,4 +893,5 @@
     <string name="quick_add_flag_payment_conflict">Se encontraron tarjeta y efectivo. Elige uno.</string>
     <string name="quick_add_flag_category_ambiguous">Coinciden varias categorías. Elige una.</string>
     <string name="add_expense_category_auto_hint">Sin categoría. Se asignará una automáticamente al guardar.</string>
+    <string name="transactions_refund_likelihood_notice">Esto parece un reembolso. Los reembolsos se registran como depósitos, por lo que el total de la categoría de la compra original no se reduce. Para corregirlo, edite o elimine la compra original.</string>
 </resources>

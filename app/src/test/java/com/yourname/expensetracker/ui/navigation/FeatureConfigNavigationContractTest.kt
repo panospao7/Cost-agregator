@@ -132,4 +132,42 @@ class FeatureConfigNavigationContractTest {
             FeatureConfig.allFeatures.size >= 20
         )
     }
+
+    @Test
+    fun `release build withholds carbon price negotiation and existing deferred features while preserving unrelated features`() {
+        val releaseIds = FeatureConfig.availableFeatures(
+            bankSyncAvailable = true,
+            deferredAvailable = false
+        ).map { it.id }.toSet()
+
+        listOf("carbon", "price", "negotiation", "tax", "investment", "challenges").forEach { id ->
+            assertFalse("Release menu must withhold '$id'", id in releaseIds)
+        }
+        listOf("savings", "warranty", "bill-reminders", "privacy").forEach { id ->
+            assertTrue("Release menu must keep unrelated feature '$id'", id in releaseIds)
+        }
+    }
+
+    @Test
+    fun `debug build retains carbon price negotiation existing deferred and unrelated features`() {
+        val debugIds = FeatureConfig.availableFeatures(
+            bankSyncAvailable = true,
+            deferredAvailable = true
+        ).map { it.id }.toSet()
+
+        listOf(
+            "carbon",
+            "price",
+            "negotiation",
+            "tax",
+            "investment",
+            "challenges",
+            "savings",
+            "warranty",
+            "bill-reminders",
+            "privacy"
+        ).forEach { id ->
+            assertTrue("Debug menu must include '$id'", id in debugIds)
+        }
+    }
 }

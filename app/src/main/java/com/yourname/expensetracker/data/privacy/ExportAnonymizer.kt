@@ -85,6 +85,8 @@ class ExportAnonymizer @Inject constructor() {
                 val merchantLocPurged = sanitizeMerchantLocations(db)
                 val emailPurged = sanitizeEmailReceiptSources(db)
                 val pendingReviewsPurged = sanitizePendingReviews(db)
+                val userCorrectionsPurged = sanitizeUserCorrections(db)
+                val receiptItemsPurged = sanitizeReceiptItemCategorizations(db)
                 val bankItemsPurged = sanitizeBankStatementImportItems(db)
                 val diagnosticTextPurged = sanitizeDiagnosticFreeText(db)
                 val planLabelsPurged = sanitizeLoanPlanLabels(db)
@@ -95,6 +97,7 @@ class ExportAnonymizer @Inject constructor() {
                         "notificationIntake=$intakePurged aiArtifacts=$aiArtifactsPurged " +
                         "aiChat=$aiChatPurged merchantLocations=$merchantLocPurged " +
                         "emailSources=$emailPurged pendingReviews=$pendingReviewsPurged " +
+                        "userCorrections=$userCorrectionsPurged receiptItems=$receiptItemsPurged " +
                         "bankImportItems=$bankItemsPurged diagnosticText=$diagnosticTextPurged " +
                         "planLabels=$planLabelsPurged"
                 )
@@ -384,6 +387,40 @@ class ExportAnonymizer @Inject constructor() {
             "UPDATE pending_reviews SET notificationText = NULL, notificationTitle = NULL WHERE $where"
         )
         Timber.d("$TAG: Redacted pending_reviews notification fields in $count rows")
+        return count
+    }
+
+    /**
+     * S1 (P-08-1): Nulls out notification text/title in `user_corrections` while
+     * preserving learning rows and structural fields (merchant, amount, flags).
+     * @return number of rows updated
+     */
+    private fun sanitizeUserCorrections(db: SQLiteDatabase): Int {
+        return nullifyColumnsWhereSet(db, "user_corrections", listOf("notificationTitle", "notificationText"))
+    }
+
+    /**
+     * S1 (P-08-2): Redacts item descriptions, AI rationales, and suggested category names
+     * in `receipt_item_categorizations` while preserving rows and numeric/ID fields.
+     * `itemDescription` is NOT NULL so it is set to '[REDACTED]'.
+     * @return number of rows updated
+     */
+    private fun sanitizeReceiptItemCategorizations(db: SQLiteDatabase): Int {
+        if (!tableExists(db, "receipt_item_categorizations")) return 0
+        val where = "(itemDescription <> '' AND itemDescription <> '[REDACTED]') " +
+            "OR aiRationale IS NOT NULL OR suggestedCategoryName IS NOT NULL " +
+            "OR alternativeCategoriesJson IS NOT NULL OR userCorrectedCategoryName IS NOT NULL"
+        val count = countWhere(db, "receipt_item_categorizations", where)
+        if (count == 0) return 0
+        val values = android.content.ContentValues().apply {
+            put("itemDescription", "[REDACTED]")
+            putNull("aiRationale")
+            putNull("suggestedCategoryName")
+            putNull("alternativeCategoriesJson")
+            putNull("userCorrectedCategoryName")
+        }
+        db.update("receipt_item_categorizations", values, where, null)
+        Timber.d("$TAG: Redacted receipt_item_categorizations fields in $count rows")
         return count
     }
 

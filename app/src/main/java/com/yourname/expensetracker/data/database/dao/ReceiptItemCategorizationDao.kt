@@ -105,4 +105,23 @@ interface ReceiptItemCategorizationDao {
         WHERE receiptId = :receiptId
     """)
     suspend fun clearExpenseId(receiptId: Long, timestamp: Long)
+
+    @androidx.room.Transaction
+    suspend fun redactForReceiptsOlderThan(cutoffMs: Long): Int =
+        redactForReceiptsOlderThanInternal(cutoffMs)
+
+    @Query("""
+        UPDATE receipt_item_categorizations
+        SET itemDescription = '',
+            aiRationale = NULL,
+            suggestedCategoryName = NULL,
+            alternativeCategoriesJson = NULL,
+            userCorrectedCategoryName = NULL
+        WHERE receiptId IN (
+            SELECT id FROM scanned_receipts
+            WHERE createdAt < :cutoffMs
+        )
+          AND (itemDescription <> '' OR aiRationale IS NOT NULL OR suggestedCategoryName IS NOT NULL OR alternativeCategoriesJson IS NOT NULL OR userCorrectedCategoryName IS NOT NULL)
+    """)
+    suspend fun redactForReceiptsOlderThanInternal(cutoffMs: Long): Int
 }

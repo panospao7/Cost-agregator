@@ -94,6 +94,7 @@ import com.yourname.expensetracker.domain.usecase.dashboard.ProcessedDashboardDa
 import com.yourname.expensetracker.domain.usecase.dashboard.UrgencyLevel
 import com.yourname.expensetracker.domain.usecase.savings.LifestyleSavingsPromptUseCase
 import com.yourname.expensetracker.domain.usecase.savings.MonthlySavingsSweepUseCase
+import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.domain.util.PinnedUtcTimeZoneRule
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import io.mockk.coEvery
@@ -301,7 +302,8 @@ class CrossEngineParityMatrixTest : AnalyticsEngineTestBase() {
             merchantNormalizer = mockk(relaxed = true),
             transferDirectionAnalytics = mockk<TransferDirectionAnalytics>(relaxed = true),
             transactionLifecycleCoordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true),
-            debugExpenseAuditWriter = mockk(relaxed = true)
+            debugExpenseAuditWriter = mockk(relaxed = true),
+            timeProvider = FakeTimeProvider(scenario.nowMs)
         )
         val recurringExpenseEngine = mockk<RecurringExpenseEngine>(relaxed = true)
         coEvery { recurringExpenseEngine.getPatterns(any()) } returns emptyList()

@@ -169,6 +169,17 @@ FORBIDDEN:
 ```
 
 ```
+REFUNDS (1.0.x limitation — DR-05):
+  → There is no dedicated REFUND transaction type in 1.0.x; negative amounts are rejected by
+    TransactionValidator and parsers map refund/reversal/cashback credits to TransactionType.DEPOSIT.
+  → Because DEPOSIT rows are excluded from spending aggregates, a refund does NOT reduce the original
+    purchase's category spend or budget totals.
+  → Supported workaround: edit or delete the original purchase (RefundLikelihoodDetector surfaces an
+    informational notice on DEPOSIT rows that match a PURCHASE in the preceding 90 days by amount and
+    canonical merchant key).
+```
+
+```
 DUPLICATE BLOCKING vs OWNERSHIP RESOLUTION (RP-11):
   Two deliberately separate ExpenseDao query families exist (P2-008 11c + RP-11 FIX 2):
 

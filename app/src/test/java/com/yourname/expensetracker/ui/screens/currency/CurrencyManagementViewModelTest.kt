@@ -31,6 +31,7 @@ import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.domain.privacy.PrivacySettings
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.util.ViewModelTestUtils
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -109,7 +110,8 @@ class CurrencyManagementViewModelTest : ViewModelTestUtils() {
             mockk<MerchantNormalizer>(relaxed = true),
             mockk<TransferDirectionAnalytics>(relaxed = true),
             mockk<TransactionLifecycleCoordinator>(relaxed = true),
-            mockk(relaxed = true)
+            debugExpenseAuditWriter = mockk(relaxed = true),
+            timeProvider = FakeTimeProvider(1_700_000_000_000L)
         )
         homeSource.tryEmit(available(eur))
         every { settingsRepository.observeReadHomeCurrency() } returns homeSource

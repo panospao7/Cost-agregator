@@ -103,4 +103,17 @@ interface UserCorrectionDao {
 
     @Query("DELETE FROM user_corrections")
     suspend fun deleteAll()
+
+    @Transaction
+    suspend fun redactNotificationTextOlderThan(cutoffMs: Long): Int =
+        redactNotificationTextOlderThanInternal(cutoffMs)
+
+    @Query("""
+        UPDATE user_corrections
+        SET notificationTitle = NULL,
+            notificationText = NULL
+        WHERE createdAt < :cutoffMs
+          AND (notificationTitle IS NOT NULL OR notificationText IS NOT NULL)
+    """)
+    suspend fun redactNotificationTextOlderThanInternal(cutoffMs: Long): Int
 }

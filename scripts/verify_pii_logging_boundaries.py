@@ -132,9 +132,29 @@ USER_DATA_RE = re.compile(
 )
 
 # ── Raw exception message patterns ──────────────────────────
-# Matches: e.message, ex.message, exception.message
+# Matches: e.message, ex.message, exception.message, e?.message, e.localizedMessage
 E_MESSAGE_RE = re.compile(
-    r'\b(?:e|ex|exc|exception|error|err|throwable)\s*\.\s*message\b'
+    r'\b(?:e|ex|exc|exception|error|err|throwable|cause)\s*(?:\?\s*)?\.\s*(?:message|localizedMessage)\b'
+)
+
+# ── Event / diagnostic payload construction patterns ────────
+# Matches constructors of persisted lifecycle/diagnostic events and side-effect outcomes
+EVENT_CONSTRUCTOR_RE = re.compile(
+    r'(?:SideEffectOutcome\s*\.\s*)?\b(?:'
+    r'TransactionEvent|TransactionLifecycleEvent|'
+    r'PipelineDiagnosticEvent|DiagnosticEvent|'
+    r'ReceiptEvent|ReceiptLifecycleEvent|'
+    r'RecurringLifecycleEvent|'
+    r'BackgroundJobRun|'
+    r'OperationRun|OperationRunEvent|'
+    r'FailedRetryable|FailedFinal'
+    r')\s*\('
+)
+
+# Named payload fields or metadata keys carrying failure/reason strings into events/diagnostics
+EVENT_PAYLOAD_FIELD_RE = re.compile(
+    r'\b(?:reason|failureReason|errorDetails|exceptionMessage|errorSummary)\s*=|'
+    r'"(?:reason|failureReason|errorDetails|exceptionMessage|errorSummary)"\s*(?:to|,)'
 )
 
 # Matches: .printStackTrace() call
@@ -179,6 +199,22 @@ def _has_debug_gate_nearby(lines: List[str], line_idx: int, window: int = 10) ->
             if pattern.search(line):
                 return True
     return False
+
+
+def _is_inside_event_constructor(lines: List[str], line_idx: int, window: int = 20) -> bool:
+    """True when `line_idx` is on or inside an unclosed event/diagnostic constructor call."""
+    start = max(0, line_idx - window)
+    non_comment_lines = [
+        lines[i] for i in range(start, line_idx + 1)
+        if not _is_comment_line(lines[i])
+    ]
+    window_text = "\n".join(non_comment_lines)
+    for match in EVENT_CONSTRUCTOR_RE.finditer(window_text):
+        tail = window_text[match.end() - 1:]
+        if tail.count("(") > tail.count(")"):
+            return True
+    return False
+
 
 
 # ── Violation Detection ────────────────────────────────────
@@ -257,7 +293,7 @@ def scan_file(
                     f"Never put user PII in exception messages — use safe reason codes."
                 )
 
-        # ── Rule 3: e.message in log/exception context ───
+        # ── Rule 3: e.message in log/exception/event context ───
         if E_MESSAGE_RE.search(raw_line):
             # Flag if used in a log/print statement
             if ANY_LOG_OR_PRINT_RE.search(raw_line):
@@ -278,6 +314,19 @@ def scan_file(
                         f"Exception wrapping raw e.message — "
                         f"may propagate PII from the original exception. "
                         f"Use structured diagnostics with safe reason codes."
+                    )
+            # Flag if used when constructing an event/diagnostic payload
+            elif (
+                EVENT_CONSTRUCTOR_RE.search(raw_line)
+                or EVENT_PAYLOAD_FIELD_RE.search(raw_line)
+                or _is_inside_event_constructor(lines, i)
+            ):
+                if not is_allowlisted(rel_for_allowlist, "e.message_event_payload", allowlist):
+                    violations.append(
+                        f"G-PII-01 {filepath}:{line_no} "
+                        f"Event/diagnostic payload constructed with raw exception message (.message). "
+                        f"Exception messages may contain PII. "
+                        f"Use controlled reason codes and exception class names only."
                     )
 
         # ── Rule 4: printStackTrace in non-test code ─────
@@ -409,9 +458,10 @@ def main() -> None:
 
     for source_file in source_files:
         filepath = Path(source_file.absolute_path)
-        # Skip test and generated files (semantic filter, preserved verbatim)
-        path_str = str(filepath).replace("\\", "/")
-        if any(excl in path_str for excl in EXCLUDED_DIR_PATTERNS):
+        # Skip test and generated files (semantic filter on repository-relative path
+        # so a checkout under a directory named `build/` is never silently skipped)
+        rel_str = source_file.repository_relative_path.replace("\\", "/")
+        if any(excl in rel_str for excl in EXCLUDED_DIR_PATTERNS):
             continue
         violations, had_fatal = scan_file(filepath, allowlist)
         if had_fatal:

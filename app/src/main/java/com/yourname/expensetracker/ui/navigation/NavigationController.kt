@@ -223,9 +223,12 @@ internal fun destinationFromSaveToken(
         baseToken == "installment_history" -> NavigationDestination.InstallmentHistory
         baseToken == "savings_goals" -> NavigationDestination.SavingsGoals
         baseToken == "carbon_footprint" -> NavigationDestination.CarbonFootprint
+            .takeIf { deferredAvailable }
         baseToken == "warranty_tracker" -> NavigationDestination.WarrantyTracker
         baseToken == "price_protection" -> NavigationDestination.PriceProtection
+            .takeIf { deferredAvailable }
         baseToken == "bill_negotiation" -> NavigationDestination.BillNegotiation
+            .takeIf { deferredAvailable }
         baseToken == "smart_search" -> NavigationDestination.SmartSearch
         baseToken == "receipt_matching" -> NavigationDestination.ReceiptMatching
         // R19 (H-1 hide): deferred destinations (investment / challenges / tax) are

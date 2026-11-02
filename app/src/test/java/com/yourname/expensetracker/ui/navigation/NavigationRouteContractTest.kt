@@ -364,6 +364,54 @@ class NavigationRouteContractTest {
         assertEquals(NavigationDestination.Home, current)
     }
 
+    @Test
+    fun `carbon price negotiation and existing deferred save tokens are blocked when deferred unavailable and restored when available`() {
+        val deferredDestinations = listOf(
+            NavigationDestination.CarbonFootprint to "carbon_footprint",
+            NavigationDestination.PriceProtection to "price_protection",
+            NavigationDestination.BillNegotiation to "bill_negotiation",
+            NavigationDestination.TaxConfiguration to "tax_configuration",
+            NavigationDestination.InvestmentPortfolio to "investment_portfolio",
+            NavigationDestination.SpendingChallenges() to "spending_challenges"
+        )
+
+        deferredDestinations.forEach { (destination, expectedToken) ->
+            val token = destination.toSaveToken()
+            assertEquals(expectedToken, token)
+            assertNull(
+                "Token '$token' must not restore when deferredAvailable=false",
+                destinationFromSaveToken(token, deferredAvailable = false)
+            )
+            assertEquals(
+                "Token '$token' must restore to $destination when deferredAvailable=true",
+                destination,
+                destinationFromSaveToken(token, deferredAvailable = true)
+            )
+        }
+
+        val mixedStackTokens = listOf(
+            "home",
+            "carbon_footprint",
+            "savings_goals",
+            "price_protection",
+            "warranty_tracker",
+            "bill_negotiation",
+            "bill_reminders"
+        )
+        val releaseRestoredStack = mixedStackTokens.mapNotNull {
+            destinationFromSaveToken(it, bankSyncAvailable = true, deferredAvailable = false)
+        }
+        assertEquals(
+            listOf(
+                NavigationDestination.Home,
+                NavigationDestination.SavingsGoals,
+                NavigationDestination.WarrantyTracker,
+                NavigationDestination.BillReminders
+            ),
+            releaseRestoredStack
+        )
+    }
+
     // ── Test 11: Route token format contract (no accidental changes) ────────────
 
     @Test

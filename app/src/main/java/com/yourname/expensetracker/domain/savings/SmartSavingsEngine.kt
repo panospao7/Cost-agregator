@@ -105,6 +105,12 @@ class SmartSavingsEngine @Inject constructor(
          * currency.
          */
         private const val DEFAULT_FALLBACK_MONTHLY_DISCRETIONARY = 500.0
+
+        /**
+         * Number of weeks in the 90-day dynamic cap lookback window (90 / 7 ≈ 12.86 weeks),
+         * matching [SpendingThresholdCalculator]'s 90-day percentile analysis window.
+         */
+        private const val CAP_LOOKBACK_WEEKS = 90.0 / 7.0
     }
 
     @Deprecated("Presentation compatibility only; use calculatePortfolioRecommendationsResult")
@@ -471,10 +477,21 @@ class SmartSavingsEngine @Inject constructor(
         }
 
         // SAFE: data normalized via AnalyticsCurrencyNormalizer at line 295
-        val averageHistoricalDailySpending = if (historicalPurchases.isNotEmpty()) {
-            historicalNormalized.completeMoneyAggregateForRows(historicalPurchases, homeCurrency).displayAmount / simulationConfig.lookbackDays.toDouble()
+        val historicalTotalSpending = if (historicalPurchases.isNotEmpty()) {
+            historicalNormalized.completeMoneyAggregateForRows(historicalPurchases, homeCurrency).displayAmount
         } else {
             0.0
+        }
+        val averageHistoricalDailySpending = if (historicalPurchases.isNotEmpty()) {
+            historicalTotalSpending / simulationConfig.lookbackDays.toDouble()
+        } else {
+            0.0
+        }
+        // Observed share of historical spending that goes to discretionary categories (1.0 when no history).
+        val historicalDiscretionaryShare = if (historicalTotalSpending > 0.0) {
+            (discretionaryHistoricalTotal / historicalTotalSpending).coerceIn(0.0, 1.0)
+        } else {
+            1.0
         }
 
         // AI-4: Calculate known upcoming obligations from CashFlowCalculator using
@@ -533,8 +550,12 @@ class SmartSavingsEngine @Inject constructor(
             )
         }
 
+        // BL-03: Compare like-with-like by scaling total projected horizon spending by the user's
+        // observed discretionary share before applying the risk buffer, so essential spending
+        // (rent, groceries) does not wipe out the discretionary savings pool.
+        val projectedDiscretionarySpending = projectedHorizonSpending * historicalDiscretionaryShare
         val remaining = horizonDiscretionary -
-            (projectedHorizonSpending * simulationConfig.projectedSpendingRiskBufferRatio)
+            (projectedDiscretionarySpending * simulationConfig.projectedSpendingRiskBufferRatio)
 
         return if (remaining > 0.0) remaining * simulationConfig.safeToSaveRatio else 0.0
     }
@@ -560,10 +581,15 @@ class SmartSavingsEngine @Inject constructor(
         val p90 = spendingThresholdCalculator.calculateHighAmountThresholdFromNormalizedAmounts(
             normalizedPurchaseAmounts
         )
+        // BL-03: Scale the single-transaction P90 by the observed average number of transactions
+        // per week across the 90-day (CAP_LOOKBACK_WEEKS) lookback so frequent small purchases are not
+        // capped as if only one transaction occurred in the horizon.
+        val avgWeeklyTransactions = (normalizedPurchaseAmounts.size.toDouble() / CAP_LOOKBACK_WEEKS).coerceAtLeast(1.0)
+        val weeklyAggregateP90 = p90 * avgWeeklyTransactions
         return when (timeHorizon) {
-            TimeHorizon.WEEK -> (p90 * 0.15).coerceAtLeast(10.0)   // ~15% of P90 single-txn cap
-            TimeHorizon.MONTH -> (p90 * 0.40).coerceAtLeast(25.0)  // ~40% of P90
-            TimeHorizon.QUARTER -> (p90 * 1.00).coerceAtLeast(75.0) // ~100% of P90
+            TimeHorizon.WEEK -> (weeklyAggregateP90 * 0.15).coerceAtLeast(10.0)   // ~15% of weekly P90 aggregate
+            TimeHorizon.MONTH -> (weeklyAggregateP90 * 0.40).coerceAtLeast(25.0)  // ~40% of weekly P90 aggregate
+            TimeHorizon.QUARTER -> (weeklyAggregateP90 * 1.00).coerceAtLeast(75.0) // ~100% of weekly P90 aggregate
         }
     }
 
@@ -673,7 +699,7 @@ class SmartSavingsEngine @Inject constructor(
         categoriesById: Map<Long, Category>
     ): Boolean {
         val essentialCategories = setOf(
-            "groceries", "rent", "utilities", "transport",
+            "groceries", "rent", "housing", "utilities", "transport",
             "insurance", "healthcare", "bills", "mortgage", "education", "loan"
         )
 

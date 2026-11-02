@@ -103,6 +103,30 @@ class ClipboardAmountParserTest {
         assertNull(parsed)
     }
 
+    @Test
+    fun `parseAmountFromClipboard returns null for bank SMS with balance before purchase`() {
+        assertNull(parse("Eurobank: Available balance EUR 1,245.67. Purchase of EUR 12.50 at COFFEE SHOP"))
+        assertNull(parse("NBG: Διαθέσιμο υπόλοιπο 1.245,67 EUR. Αγορά 15,20 EUR στο SKLAVENITIS"))
+    }
+
+    @Test
+    fun `parseAmountFromClipboard returns null for multi-amount text`() {
+        assertNull(parse("Purchase EUR 12.50 at COFFEE, remaining limit EUR 500.00"))
+        assertNull(parse("Subtotal 10.00 Total 12.50"))
+    }
+
+    @Test
+    fun `parseAmountFromClipboard returns null for balance-only text`() {
+        assertNull(parse("Available balance: €1,245.67"))
+        assertNull(parse("Διαθέσιμο υπόλοιπο: 850,00 EUR"))
+    }
+
+    @Test
+    fun `parseAmountFromClipboard still parses clean single-amount strings`() {
+        assertEquals("12.50", parse("Purchase of EUR 12.50 at COFFEE"))
+        assertEquals("42.80", parse("42.80"))
+    }
+
     private fun parse(text: String): String? =
         ClipboardAmountParser.parseAmountFromClipboard(clipboardWithText(text))
 

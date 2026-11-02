@@ -246,7 +246,8 @@ class NotificationParserDashboardTotalSeamTest : AnalyticsEngineTestBase() {
             merchantNormalizer = merchantNormalizer,
             transferDirectionAnalytics = TransferDirectionAnalytics(),
             transactionLifecycleCoordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true),
-            debugExpenseAuditWriter = mockk(relaxed = true)
+            debugExpenseAuditWriter = mockk(relaxed = true),
+            timeProvider = FakeTimeProvider(dateToMillis("2026-03-31") + 12L * 60 * 60 * 1000)
         )
 
         val recurringExpenseDao = mockk<ManualRecurringExpenseDao>(relaxed = true)

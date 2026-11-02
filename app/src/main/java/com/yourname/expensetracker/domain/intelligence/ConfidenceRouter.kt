@@ -225,6 +225,7 @@ class ConfidenceRouter @Inject constructor(
 
         // Route
         val decision = when {
+            parsed.isAmountAmbiguous && adjustedConfidence >= REVIEW_THRESHOLD -> RoutingDecision.NEEDS_REVIEW
             adjustedConfidence >= AUTO_ACCEPT_THRESHOLD -> RoutingDecision.AUTO_ACCEPT
             adjustedConfidence >= REVIEW_THRESHOLD -> RoutingDecision.NEEDS_REVIEW
             else -> RoutingDecision.AUTO_REJECT

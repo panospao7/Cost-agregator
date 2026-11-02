@@ -498,4 +498,134 @@ class HistoricalSpendingDistributionBoundaryTest {
             assertEquals("Weekly total should only include purchases", 400.0, total, 0.01)
         }
     }
+
+    // ========================================================================
+    // BL-01: Quiet weeks, new-user lookback, and sparse degradation
+    // ========================================================================
+
+    @Test
+    fun `quiet zero spend weeks do not substitute 0_01 or explode sigma`() = runTest {
+        val now = toEpochMs(2026, 4, 15, 12, 0)
+        timeProvider.setTime(now)
+        val currentWeekStart = TimePeriodUtils.getStartOfWeek(now)
+
+        // 8 weeks observed: 6 active weeks around 100.00 (slight natural variance so sigma > 0)
+        // and 2 quiet weeks with 0.00 spend (weeks -3 and -6).
+        val activeTotals = mapOf(
+            1 to 96.0,
+            2 to 98.0,
+            4 to 100.0,
+            5 to 100.0,
+            7 to 102.0,
+            8 to 104.0
+        )
+        val expenses = mutableListOf<Expense>()
+        var id = 1L
+        for ((weekOffset, weeklyTotal) in activeTotals) {
+            val weekStart = TimePeriodUtils.addDays(currentWeekStart, -(weekOffset * 7))
+            val perDay = weeklyTotal / 4.0
+            for (dayOffset in 0..3) {
+                val date = TimePeriodUtils.addDays(weekStart, dayOffset) + 36_000_000L
+                expenses.add(expense(id++, date, perDay))
+            }
+        }
+
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns expenses
+
+        val distribution = HistoricalSpendingDistribution(
+            expenseRepository,
+            timeProvider,
+            analyticsCurrencyNormalizer,
+            currencySettingsRepository
+        )
+        val fit = distribution.computeDistribution("EUR")
+
+        assertNotNull("Fit should be computed from the 6 positive weeks", fit)
+        fit!!
+        assertTrue("Fit should be usable", fit.isUsable)
+        // Old buggy behaviour substituted 0.01 for the 2 quiet weeks -> mu ~ 2.30 (exp=10), sigma ~ 4.26.
+        // Positive-week fit has mu ~ ln(100) = 4.605 and small sigma (< 0.5).
+        assertEquals("mu should center near ln(100) = 4.605, not dragged to 2.30 by ln(0.01)", 4.605, fit.mu, 0.15)
+        assertTrue("sigma should reflect positive weeks (< 0.5), not explode to ~4.26", fit.sigma in 0.001..0.5)
+        assertTrue("No 0.01 artificial weekly total should be present", fit.trimmedWeeklyTotals.all { it >= 90.0 })
+    }
+
+    @Test
+    fun `new user with 2 months of data ignores ~70 pre-first-transaction weeks`() = runTest {
+        val now = toEpochMs(2026, 4, 15, 12, 0)
+        timeProvider.setTime(now)
+        val currentWeekStart = TimePeriodUtils.getStartOfWeek(now)
+
+        // New user: only the most recent 8 completed weeks have history; ~70 earlier weeks in the
+        // 18-month lookback are before the user's first transaction.
+        val weeklyTotals = listOf(90.0, 95.0, 100.0, 100.0, 100.0, 100.0, 105.0, 110.0)
+        val expenses = mutableListOf<Expense>()
+        var id = 1L
+        for ((index, total) in weeklyTotals.withIndex()) {
+            val weekOffset = index + 1
+            val weekStart = TimePeriodUtils.addDays(currentWeekStart, -(weekOffset * 7))
+            for (dayOffset in 0..3) {
+                val date = TimePeriodUtils.addDays(weekStart, dayOffset) + 36_000_000L
+                expenses.add(expense(id++, date, total / 4.0))
+            }
+        }
+
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns expenses
+
+        val distribution = HistoricalSpendingDistribution(
+            expenseRepository,
+            timeProvider,
+            analyticsCurrencyNormalizer,
+            currencySettingsRepository
+        )
+        val fit = distribution.computeDistribution("EUR")
+
+        assertNotNull("New user with 8 active weeks must produce a distribution fit", fit)
+        fit!!
+        assertTrue("New user fit must be usable", fit.isUsable)
+        assertTrue(
+            "Pre-first-transaction weeks (~70) must not be counted as observed weeks (was ${fit.totalWeeksExamined})",
+            fit.totalWeeksExamined <= 8
+        )
+        assertEquals("Qualifying positive weeks should be 8", 8, fit.qualifyingWeekCount)
+        assertEquals("mu should center near ln(100) = 4.605", 4.605, fit.mu, 0.15)
+        assertTrue("sigma must remain small (< 0.5), not inflated by ~70 pre-history weeks", fit.sigma < 0.5)
+    }
+
+    @Test
+    fun `fewer than 4 positive weeks degrades to NoFit instead of fitting quiet weeks`() = runTest {
+        val now = toEpochMs(2026, 4, 15, 12, 0)
+        timeProvider.setTime(now)
+        val currentWeekStart = TimePeriodUtils.getStartOfWeek(now)
+
+        // Only 3 positive weeks (spanning 10 calendar weeks so there are 7 quiet weeks in between).
+        // Quiet weeks must NOT pad the sample count to >= 4.
+        val activeWeekOffsets = listOf(1, 5, 10)
+        val activeAmounts = listOf(90.0, 100.0, 110.0)
+        val expenses = mutableListOf<Expense>()
+        var id = 1L
+        for (i in activeWeekOffsets.indices) {
+            val weekStart = TimePeriodUtils.addDays(currentWeekStart, -(activeWeekOffsets[i] * 7))
+            for (dayOffset in 0..3) {
+                val date = TimePeriodUtils.addDays(weekStart, dayOffset) + 36_000_000L
+                expenses.add(expense(id++, date, activeAmounts[i] / 4.0))
+            }
+        }
+
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns expenses
+
+        val distribution = HistoricalSpendingDistribution(
+            expenseRepository,
+            timeProvider,
+            analyticsCurrencyNormalizer,
+            currencySettingsRepository
+        )
+        val result = distribution.computeDistributionResult("EUR")
+
+        assertTrue(
+            "Expected NoFit when fewer than 4 positive weeks exist, but got $result",
+            result is HistoricalDistributionResult.NoFit ||
+                (result is HistoricalDistributionResult.Available && !result.fit.isUsable)
+        )
+    }
 }

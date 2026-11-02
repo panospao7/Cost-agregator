@@ -48,7 +48,8 @@ data class ParsedTransaction(
      * compiling and keep their previous UNKNOWN meaning.
      */
     val currencyAssumption: com.yourname.expensetracker.domain.core.money.CurrencyAssumption =
-        com.yourname.expensetracker.domain.core.money.CurrencyAssumption.UNKNOWN
+        com.yourname.expensetracker.domain.core.money.CurrencyAssumption.UNKNOWN,
+    val isAmountAmbiguous: Boolean = false
 ) {
     /**
      * Helper property to quickly check if this is an incoming transaction

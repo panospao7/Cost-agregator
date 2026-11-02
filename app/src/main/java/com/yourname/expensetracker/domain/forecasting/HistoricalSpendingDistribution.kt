@@ -149,10 +149,14 @@ class HistoricalSpendingDistribution @Inject constructor(
             )
         }
 
+        // Exclude pre-first-transaction weeks so new users' pre-history does not inflate observed quiet weeks
+        val firstTransactionWeekStart = spendingExpenses.minOf { TimePeriodUtils.getStartOfWeek(it.date) }
+        val effectiveRangeStart = maxOf(lookbackStart, firstTransactionWeekStart)
+
         // Group into ISO weeks
         val weeklyData = groupIntoWeeks(
             expenses = spendingExpenses,
-            rangeStart = lookbackStart,
+            rangeStart = effectiveRangeStart,
             rangeEnd = currentWeekStart,
             homeCurrency = resolvedHomeCurrency,
             normalized = normalized
@@ -164,48 +168,37 @@ class HistoricalSpendingDistribution @Inject constructor(
         // Filter: only weeks with >= MIN_TRANSACTION_DAYS_PER_WEEK distinct transaction-days
         val qualifyingWeeks = weeklyData.filter { it.distinctDays >= MIN_TRANSACTION_DAYS_PER_WEEK }
 
-        // FCST-16: Include zero-spend weeks in the distribution.
-        // Weeks with zero total spending (and >= MIN_TRANSACTION_DAYS_PER_WEEK
-        // distinct days, meaning the user was active but spent nothing) are
-        // legitimate data points. Previously these were excluded because they
-        // had no transactions; now they are included as 0.0 totals.
-        val allWeeksIncludingZero = weeklyData.map { week ->
-            if (week.distinctDays == 0 && week.total.displayAmount == 0.0) {
-                // Genuinely quiet week — set a small positive value to keep
-                // log-normal fit numerically stable (ln(0) = -inf).
-                // Use 0.01 as a nominal minimum.
-                week.copy(
-                    total = MoneyAggregateBuilder.fromHomeCurrencyAmounts(
-                        amounts = listOf(0.01),
-                        homeCurrency = resolvedHomeCurrency
-                    )
-                )
-            } else {
-                week
-            }
+        // BL-01: Fit LogNormal strictly on positive qualifying weeks (no 0.01 substitution for quiet weeks),
+        // and record observed quiet (zero-spend) weeks separately so ln(0.01) never poisons mu/sigma.
+        val positiveQualifying = qualifyingWeeks.filter { it.total.displayAmount > 0.0 }
+        val zeroWeekCount = weeklyData.count { it.distinctDays == 0 && it.total.displayAmount == 0.0 }
+        val observedWeekCount = positiveQualifying.size + zeroWeekCount
+        val zeroWeekProbability = if (observedWeekCount > 0) {
+            zeroWeekCount.toDouble() / observedWeekCount
+        } else {
+            0.0
         }
-        // Rebuild qualifying weeks list that includes quiet weeks as valid data points
-        val expandedQualifying = allWeeksIncludingZero.filter { it.distinctDays >= MIN_TRANSACTION_DAYS_PER_WEEK || it.distinctDays == 0 } // include qualifying weeks + quiet zero-spend weeks
-        val qualifyingForFit = if (expandedQualifying.size >= 4) expandedQualifying else qualifyingWeeks
 
-        if (qualifyingForFit.size < 4) {
-            Timber.w("Only ${qualifyingForFit.size} qualifying weeks — need at least 4 for distribution fit")
+        if (positiveQualifying.size < 4) {
+            Timber.w("Only ${positiveQualifying.size} positive qualifying weeks — need at least 4 for distribution fit")
             return HistoricalDistributionResult.Available(
                 DistributionFit(
                     mu = 0.0,
                     sigma = 0.0,
-                    qualifyingWeekCount = qualifyingForFit.size,
+                    qualifyingWeekCount = positiveQualifying.size,
                     totalWeeksExamined = totalWeeksExamined,
-                    trimmedWeeklyTotals = qualifyingForFit.map { it.total.displayAmount },
+                    trimmedWeeklyTotals = positiveQualifying.map { it.total.displayAmount },
                     allWeeklyTotals = weeklyData.map { it.total.displayAmount },
                     displayCurrency = resolvedHomeCurrency,
-                    moneyQuality = moneyQuality
+                    moneyQuality = moneyQuality,
+                    zeroWeekCount = zeroWeekCount,
+                    zeroWeekProbability = zeroWeekProbability
                 )
             )
         }
 
         // Sort and trim outliers (middle 80%)
-        val sortedTotals = qualifyingForFit.map { it.total.displayAmount }.sorted()
+        val sortedTotals = positiveQualifying.map { it.total.displayAmount }.sorted()
         val trimCount = (sortedTotals.size * TRIM_PERCENTILE).toInt().coerceAtLeast(0)
         val trimmed = if (trimCount > 0 && sortedTotals.size > 2 * trimCount) {
             sortedTotals.subList(trimCount, sortedTotals.size - trimCount)
@@ -223,11 +216,13 @@ class HistoricalSpendingDistribution @Inject constructor(
             return HistoricalDistributionResult.Available(
                 fitLogNormal(
                     fallback,
-                    qualifyingForFit.size,
+                    positiveQualifying.size,
                     totalWeeksExamined,
                     weeklyData.map { it.total.displayAmount },
                     resolvedHomeCurrency,
-                    moneyQuality
+                    moneyQuality,
+                    zeroWeekCount,
+                    zeroWeekProbability
                 )
             )
         }
@@ -235,11 +230,13 @@ class HistoricalSpendingDistribution @Inject constructor(
         return HistoricalDistributionResult.Available(
             fitLogNormal(
                 trimmed,
-                qualifyingForFit.size,
+                positiveQualifying.size,
                 totalWeeksExamined,
                 weeklyData.map { it.total.displayAmount },
                 resolvedHomeCurrency,
-                moneyQuality
+                moneyQuality,
+                zeroWeekCount,
+                zeroWeekProbability
             )
         )
     }
@@ -304,7 +301,9 @@ class HistoricalSpendingDistribution @Inject constructor(
         totalWeeksExamined: Int,
         allWeeklyTotals: List<Double>,
         displayCurrency: String,
-        moneyQuality: HistoricalMoneyQuality
+        moneyQuality: HistoricalMoneyQuality,
+        zeroWeekCount: Int = 0,
+        zeroWeekProbability: Double = 0.0
     ): DistributionFit {
         val logValues = weeklyTotals.map { ln(it) }
         val mu = logValues.average()
@@ -323,7 +322,9 @@ class HistoricalSpendingDistribution @Inject constructor(
             trimmedWeeklyTotals = weeklyTotals,
             allWeeklyTotals = allWeeklyTotals,
             displayCurrency = displayCurrency,
-            moneyQuality = moneyQuality
+            moneyQuality = moneyQuality,
+            zeroWeekCount = zeroWeekCount,
+            zeroWeekProbability = zeroWeekProbability
         )
     }
 
@@ -431,8 +432,26 @@ data class DistributionFit(
     /** Explicit supported currency in which all amounts in this fit are denominated. */
     val displayCurrency: String,
 
-    val moneyQuality: HistoricalMoneyQuality = HistoricalMoneyQuality()
+    val moneyQuality: HistoricalMoneyQuality = HistoricalMoneyQuality(),
+
+    /** Number of observed quiet (zero-spend) weeks after the user's first transaction. */
+    val zeroWeekCount: Int = 0,
+
+    /** Proportion of observed weeks (positive qualifying + quiet) that had zero spend. */
+    val zeroWeekProbability: Double = 0.0
 ) {
-    /** Whether this fit has enough data to be usable for simulation. */
-    val isUsable: Boolean get() = qualifyingWeekCount >= 4 && sigma > 0.0
+    companion object {
+        /**
+         * Maximum plausible LogNormal weekly sigma before the fit is considered too noisy to model.
+         * Aligns with [DataQualityAssessor]'s `sigma > 2.0` noisy threshold (where P90/P50 = exp(1.28 * 2.0) ≈ 13x).
+         */
+        const val MAX_USABLE_SIGMA = 2.0
+    }
+
+    /**
+     * Whether this fit has enough data and bounded log-variance to be usable for simulation.
+     * Requires at least 4 positive qualifying weeks and `0.0 < sigma <= MAX_USABLE_SIGMA` so extreme
+     * dispersion degrades gracefully to deterministic totals instead of producing implausible P90s.
+     */
+    val isUsable: Boolean get() = qualifyingWeekCount >= 4 && sigma > 0.0 && sigma <= MAX_USABLE_SIGMA
 }

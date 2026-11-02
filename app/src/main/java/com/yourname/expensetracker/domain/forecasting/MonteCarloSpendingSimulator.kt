@@ -118,13 +118,17 @@ class MonteCarloSpendingSimulator @Inject constructor(
         // Step 2: Run Monte Carlo simulation
         val fractionOfWeek = daysRemaining / 7.0
         val random = Random(SEED)
+        val zeroProbRandom = if (fit.zeroWeekProbability > 0.0) Random(SEED xor 0x5DEECE66DL) else null
         val simulatedTotals = DoubleArray(NUM_ITERATIONS)
 
         for (i in 0 until NUM_ITERATIONS) {
             // Sample from LogNormal(mu, sigma):
             // If Z ~ Normal(0,1), then exp(mu + sigma*Z) ~ LogNormal(mu, sigma)
             val z = random.nextGaussian()
-            val sampledWeekly = exp(fit.mu + fit.sigma * z)
+            // BL-01: Draw a zero-spend week with the observed quiet-week probability;
+            // otherwise sample from the positive-week LogNormal fit.
+            val isZeroWeek = zeroProbRandom != null && zeroProbRandom.nextDouble() < fit.zeroWeekProbability
+            val sampledWeekly = if (isZeroWeek) 0.0 else exp(fit.mu + fit.sigma * z)
 
             // FCST-4: Subtract estimated weekly recurring from the sampled weekly total
             // so the stochastic component only models truly discretionary spending.

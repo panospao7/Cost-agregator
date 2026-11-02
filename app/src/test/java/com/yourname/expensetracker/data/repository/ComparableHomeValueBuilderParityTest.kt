@@ -12,6 +12,7 @@ import com.yourname.expensetracker.domain.core.money.ComparableValue
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
 import org.junit.After
@@ -68,7 +69,8 @@ class ComparableHomeValueBuilderParityTest {
             mockk<MerchantNormalizer>(relaxed = true),
             mockk<TransferDirectionAnalytics>(relaxed = true),
             mockk<TransactionLifecycleCoordinator>(relaxed = true),
-            mockk(relaxed = true)
+            debugExpenseAuditWriter = mockk(relaxed = true),
+            timeProvider = FakeTimeProvider(1_700_000_000_000L)
         )
     }
 

@@ -324,6 +324,7 @@
     <string name="transactions_type_withdrawal_description">Cash withdrawn from ATM</string>
     <string name="transactions_type_transfer_description">Money transferred between accounts</string>
     <string name="transactions_update_type_button">Update Type</string>
+    <string name="transactions_refund_likelihood_notice">This looks like a refund. Refunds are recorded as deposits, so the original purchase\'s category total is not reduced. To correct it, edit or delete the original purchase.</string>
     
     <!-- Transactions Screen - Edit Ownership Dialog -->
     <string name="transactions_edit_expense_details_title">Edit Expense Details</string>
