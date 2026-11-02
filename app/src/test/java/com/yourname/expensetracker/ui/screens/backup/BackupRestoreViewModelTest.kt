@@ -236,6 +236,90 @@ class BackupRestoreViewModelTest : ViewModelTestUtils() {
         assertEquals(0, vm.uiState.value.receiptAssetWarningCount)
     }
 
+    // ── UF follow-up: restore diagnostics are bounded (type/class only; no summary text, no throwable) ──
+
+    @Test
+    fun `restore success log carries only the result type and never summary text or a throwable`() = runTest(testDispatcher) {
+        val uri = destinationUri()
+        val warningMarker = "SENTINEL_WARNING_MARKER_7f3a"
+        val tableMarker = "SENTINEL_TABLE_MARKER_91bc"
+        coEvery { databaseBackupRepository.restoreCostBackup(any(), any()) } returns
+            Result.success(DatabaseImportResult.SuccessNeedsRestart(
+                com.yourname.expensetracker.domain.backup.DatabaseImportSummary(
+                    transactionCount = 1,
+                    categoryCount = 0,
+                    merchantCount = 0,
+                    pendingReviewCount = 0,
+                    budgetCount = 0,
+                    allTableCounts = mapOf(tableMarker to 3),
+                    receiptAssetWarnings = listOf("Receipt asset task rejected: $warningMarker")
+                )
+            ))
+        every { context.contentResolver.openInputStream(uri) } returns bundleInputStream()
+
+        val logs = mutableListOf<Pair<Throwable?, String>>()
+        val tree = object : timber.log.Timber.Tree() {
+            override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
+                logs += t to message
+            }
+        }
+        timber.log.Timber.plant(tree)
+        try {
+            val vm = createViewModel()
+            advanceUntilIdle()
+            vm.restoreBackup(uri, "test-password")
+            advanceUntilIdle()
+
+            assertTrue(vm.uiState.value.restartRequired)
+            assertTrue(
+                "expected a RESTORE_COMPLETED type= log, got: ${logs.map { it.second }}",
+                logs.any { it.second.startsWith("RESTORE_COMPLETED type=") }
+            )
+            assertTrue(
+                "no log may contain summary text",
+                logs.none { it.second.contains(warningMarker) || it.second.contains(tableMarker) }
+            )
+            assertTrue("no log may carry a throwable", logs.all { it.first == null })
+        } finally {
+            timber.log.Timber.uproot(tree)
+        }
+    }
+
+    @Test
+    fun `uri size query failure logs only the exception class and never the message or a throwable`() = runTest(testDispatcher) {
+        val uri = destinationUri()
+        val messageMarker = "SENTINEL_URI_MARKER_c0de"
+        every { context.contentResolver.query(any(), any(), any(), any(), any()) } throws
+            SecurityException("provider denied $messageMarker")
+        coEvery { databaseBackupRepository.restoreCostBackup(any(), any()) } returns
+            Result.success(DatabaseImportResult.Loading)
+        every { context.contentResolver.openInputStream(uri) } returns bundleInputStream()
+
+        val logs = mutableListOf<Pair<Throwable?, String>>()
+        val tree = object : timber.log.Timber.Tree() {
+            override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
+                logs += t to message
+            }
+        }
+        timber.log.Timber.plant(tree)
+        try {
+            val vm = createViewModel()
+            advanceUntilIdle()
+            vm.restoreBackup(uri, "test-password")
+            advanceUntilIdle()
+
+            assertFalse(vm.uiState.value.isRestoring)
+            val sizeLogs = logs.filter { it.second.startsWith("BACKUP_URI_SIZE_UNAVAILABLE") }
+            assertEquals(1, sizeLogs.size)
+            assertEquals("BACKUP_URI_SIZE_UNAVAILABLE class=SecurityException", sizeLogs.single().second)
+            assertNull("size-query log must not carry the throwable", sizeLogs.single().first)
+            assertTrue("marker must appear nowhere", logs.none { it.second.contains(messageMarker) })
+            assertTrue("no log may carry a throwable", logs.all { it.first == null })
+        } finally {
+            timber.log.Timber.uproot(tree)
+        }
+    }
+
     @Test
     fun `clearError resets error message`() = runTest(testDispatcher) {
         val destination = destinationUri()
