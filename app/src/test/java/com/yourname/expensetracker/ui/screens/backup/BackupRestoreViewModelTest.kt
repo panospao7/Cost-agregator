@@ -707,7 +707,7 @@ class BackupRestoreViewModelTest : ViewModelTestUtils() {
     }
 
     @Test
-    fun `createBackup snapshot verification failure keeps the existing generic message`()= runTest(testDispatcher) {
+    fun `createBackup snapshot verification failure keeps the existing generic message`() = runTest(testDispatcher) {
         val destination = destinationUri()
         coEvery {
             databaseBackupRepository.createCostBackup(destination, "test-password", any(), any(), any())

@@ -97,6 +97,8 @@ The manifest may carry a `semanticAggregates` section (four code-owned aggregate
 - **Before staging:** a structurally malformed section blocks the restore through the pre-destructive abort path (journal reason `MANIFEST_INCOMPLETE`, `BackupSemanticVerificationException(SEMANTIC_MANIFEST_MALFORMED)`).
 - **C1 / C2 (pre-swap):** the staged DB is compared in `verifyQuick` before and after Room migration (journal reasons `STAGED_VERIFICATION_FAILED` / `POST_MIGRATION_VERIFICATION_FAILED`). A mismatch or query failure aborts while the live DB is intact: no safety backup, no swap, no override.
 - **C3 (post-swap):** the live DB is compared inside the existing `RESTORE_VERIFYING` step. A failure is thrown into the existing catch and takes the existing rollback (`VERIFICATION_FAILED_ROLLED_BACK`); a failed rollback still ends in `CRITICAL_RECOVERY_REQUIRED`.
+- Sources below schema 152 are `NOT_VERIFIABLE(VERSION)`.
+- **Coverage marker rule:** the coverage-gated tables are required only when `databaseVersion >= 152` and the manifest carries a semantic section, present or malformed. A v152+ backup with no section keeps legacy coverage.
 - Legacy, unknown-version, not-captured and definition-changed sections are `NOT_VERIFIABLE` (restore succeeds with a non-blocking notice). Exception text carries bounded codes only; the verifier's table, count and integrity detail never reaches it.
 
 ## Restore URI preflight (P7-CURRENT-017)
