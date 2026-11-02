@@ -301,7 +301,17 @@ fun LocationSearchPicker(
         }
 
         if (showMap) {
+            // S19-2: base-map tiles only load once the privacy gate allows EXTERNAL_GEOCODING.
+            // Result markers and long-press pinning keep working when it does not.
+            val tileAccess = rememberMapTileAccess()
+            tileAccess.blocked?.let { blockedState ->
+                PrivacyBlockedCard(
+                    state = blockedState,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
             ResultsMapView(
+                tilesAllowed = tileAccess.tilesAllowed,
                 results = state.results,
                 defaultCentre = GeoPoint(biasLat ?: 37.9838, biasLon ?: 23.7275),
                 onSelect = { result -> onResultSelected(result) },
@@ -422,6 +432,7 @@ fun LocationSearchPicker(
 @Suppress("DEPRECATION") // PreferenceManager.getDefaultSharedPreferences is fine for osmdroid config
 @Composable
 private fun ResultsMapView(
+    tilesAllowed: Boolean,     // S19-2: false until the privacy gate allows EXTERNAL_GEOCODING
     results: List<GeocodingResult>,
     defaultCentre: GeoPoint,   // F1: used to centre the map when no results exist yet
     onSelect: (GeocodingResult) -> Unit,
@@ -443,6 +454,9 @@ private fun ResultsMapView(
     val onLongPressRef = rememberUpdatedState(onLongPress)
     val onSelectRef = rememberUpdatedState(onSelect)
 
+    // S19-2: last tiles-allowed value applied to the MapView (factory starts it at false).
+    val appliedTilesAllowed = remember { mutableStateOf(false) }
+
     AndroidView(
         factory = { ctx ->
             // F4: Load osmdroid config synchronously before MapView construction so
@@ -452,6 +466,8 @@ private fun ResultsMapView(
                 com.yourname.expensetracker.domain.config.AppConfig.Location.NOMINATIM_USER_AGENT
 
             MapView(ctx).also { mv ->
+                // S19-2: no tile download before the privacy gate has answered.
+                mv.setUseDataConnection(false)
                 mv.setTileSource(TileSourceFactory.MAPNIK)
                 mv.setMultiTouchControls(true)
                 mv.setBuiltInZoomControls(false)
@@ -489,6 +505,14 @@ private fun ResultsMapView(
             }
         },
         update = { mapView ->
+            // S19-2: apply the gate result first (before any early return below).
+            // The factory left data connection off; cached tiles may still render.
+            mapView.setUseDataConnection(tilesAllowed)
+            if (appliedTilesAllowed.value != tilesAllowed) {
+                appliedTilesAllowed.value = tilesAllowed
+                mapView.invalidate()  // re-request tiles now that the setting flipped
+            }
+
             // B2: Build a key representing current data; skip rebuild if nothing changed
             val newKey = results.joinToString("|") { "${it.latitude},${it.longitude}" } +
                     "|$pinnedLat,$pinnedLon"

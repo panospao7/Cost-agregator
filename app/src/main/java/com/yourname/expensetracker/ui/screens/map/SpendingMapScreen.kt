@@ -48,7 +48,10 @@ import com.yourname.expensetracker.ui.components.LocationCorrectionSheet
 import com.yourname.expensetracker.ui.components.LocationPermissionDialog
 import com.yourname.expensetracker.ui.components.LocationSearchPicker
 import com.yourname.expensetracker.ui.components.NearbyShopSuggestionCard
+import com.yourname.expensetracker.ui.components.MapTileAccessUiState
 import com.yourname.expensetracker.ui.components.PlaceInsightCard
+import com.yourname.expensetracker.ui.components.PrivacyBlockedCard
+import com.yourname.expensetracker.ui.components.rememberMapTileAccess
 import com.yourname.expensetracker.ui.components.common.ListSkeleton
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
@@ -142,7 +145,8 @@ fun SpendingMapScreen(
                 Manifest.permission.ACCESS_COARSE_LOCATION
             ))
         },
-        viewModel = viewModel
+        viewModel = viewModel,
+        tileAccess = rememberMapTileAccess()
     )
 }
 
@@ -157,7 +161,8 @@ fun SpendingMapScreenContent(
     locationPickerState: LocationPickerState,
     snackbarHostState: SnackbarHostState,
     onRequestPermission: () -> Unit,
-    viewModel: SpendingMapViewModel
+    viewModel: SpendingMapViewModel,
+    tileAccess: MapTileAccessUiState = MapTileAccessUiState.Pending
 ) {
 
     // ── Permission dialog ─────────────────────────────────────────────────────
@@ -404,8 +409,20 @@ fun SpendingMapScreenContent(
                     deviceLon = state.deviceLongitude,
                     centreOnDeviceRequest = centreOnDeviceRequest,
                     onCentreHandled = { centreOnDeviceRequest = false },
-                    onMarkerClick = { viewModel.onMarkerSelected(it) }
+                    onMarkerClick = { viewModel.onMarkerSelected(it) },
+                    tilesAllowed = tileAccess.tilesAllowed
                 )
+
+                // S19-2: base-map tiles are off while EXTERNAL_GEOCODING is denied.
+                // Markers and heatmap stay; only the tile background is withheld.
+                tileAccess.blocked?.let { blockedState ->
+                    PrivacyBlockedCard(
+                        state = blockedState,
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .padding(8.dp)
+                    )
+                }
 
                 // S10-003: Show My Location button whenever permission is granted
                 // (first tap fetches GPS; subsequent taps re-center)
@@ -535,7 +552,8 @@ private fun OsmMapView(
     deviceLon: Double?,
     centreOnDeviceRequest: Boolean,  // F3: one-shot flag to animate to device location
     onCentreHandled: () -> Unit,     // F3: call this after the animation is triggered
-    onMarkerClick: (MapExpenseMarker) -> Unit
+    onMarkerClick: (MapExpenseMarker) -> Unit,
+    tilesAllowed: Boolean  // S19-2: false until the privacy gate allows EXTERNAL_GEOCODING
 ) {
     val context = LocalContext.current
 
@@ -553,6 +571,9 @@ private fun OsmMapView(
     // F6: Track the last overlay key to avoid clearing overlays when nothing changed.
     val lastRenderKey = remember { mutableStateOf("") }
 
+    // S19-2: last tiles-allowed value applied to the MapView (factory starts it at false).
+    val appliedTilesAllowed = remember { mutableStateOf(false) }
+
     AndroidView(
         factory = { ctx ->
             // F4: Load osmdroid config synchronously before MapView construction so
@@ -562,6 +583,8 @@ private fun OsmMapView(
                 com.yourname.expensetracker.domain.config.AppConfig.Location.NOMINATIM_USER_AGENT
 
             MapView(ctx).also { mv ->
+                // S19-2: no tile download before the privacy gate has answered.
+                mv.setUseDataConnection(false)
                 mv.setTileSource(TileSourceFactory.MAPNIK)
                 mv.setMultiTouchControls(true)
                 mv.controller.setZoom(13.0)
@@ -588,6 +611,14 @@ private fun OsmMapView(
             }
         },
         update = { mapView ->
+            // S19-2: apply the gate result first (before any early return below).
+            // The factory left data connection off; cached tiles may still render.
+            mapView.setUseDataConnection(tilesAllowed)
+            if (appliedTilesAllowed.value != tilesAllowed) {
+                appliedTilesAllowed.value = tilesAllowed
+                mapView.invalidate()  // re-request tiles now that the setting flipped
+            }
+
             // F3: Handle one-shot re-centre request from the MyLocation FAB.
             if (centreOnDeviceRequest && deviceLat != null && deviceLon != null) {
                 mapView.controller.animateTo(GeoPoint(deviceLat, deviceLon))
