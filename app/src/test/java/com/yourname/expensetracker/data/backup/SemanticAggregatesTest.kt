@@ -603,7 +603,7 @@ class SemanticAggregatesTest {
     fun AE14_cancellation_is_rethrown_by_capture_and_by_verifyAgainst() {
         val expected = fixture.capture(fixtureFile("ae14-cancel"))
         val db = mockk<SQLiteDatabase>()
-        every { db.rawQuery(any<String>(), any<Array<String>?>()) } throws CancellationException("cancelled")
+        every { db.rawQuery(any<String>(), isNull<Array<String>>()) } throws CancellationException("cancelled")
 
         assertThrows(CancellationException::class.java) {
             SemanticAggregates.capture(db, mapOf("expenses" to 6, "manual_recurring_expenses" to 2))
@@ -617,7 +617,7 @@ class SemanticAggregatesTest {
     fun AE14_a_non_cancellation_failure_is_bounded_and_never_a_pass() {
         val expected = fixture.capture(fixtureFile("ae14-boom"))
         val db = mockk<SQLiteDatabase>()
-        every { db.rawQuery(any<String>(), any<Array<String>?>()) } throws
+        every { db.rawQuery(any<String>(), isNull<Array<String>>()) } throws
             IllegalStateException("secret 12.5 EUR PURCHASE /data/user/0/file.db SELECT x")
 
         val captured = SemanticAggregates.capture(db, mapOf("expenses" to 6, "manual_recurring_expenses" to 2))
