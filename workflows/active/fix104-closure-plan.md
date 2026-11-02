@@ -32,6 +32,7 @@
 
 ## Lane P: `Cost-agregator-qf`, branch `feature/fix-1.0.4-closure`
 ### P1. SMS parser (R-SMS-1..4, FL-02 tests). Writer + test-author.
+**Superseded for FL-02:** the SmsParser design was replaced by owner item 113. See `workflows/active/fix104-closure-findings.md`, "Outcome for FL-02".
 - **Source:** `domain/parser/parsers/SmsParser.kt`.
 - **Tests:**
   - `domain/parser/SmsParserTest.kt`
@@ -65,6 +66,7 @@
 - **Filter:** `*SmsParser*,*ConfidenceRouter*,*AppParserRegistry*,*NotificationParserDashboardTotalSeam*,*NotificationExpenseDashboardE2E*,*NotificationProcessingPipeline*`
 
 ### P2. Export and subscription list queries (R-EXPORT-1, N-02). Writer + test-author.
+**Superseded:** the business listings use `(SPENDING_PREDICATE OR installment markers)`, not `ROW_COUNT` exemptions. See the findings file.
 - **Source:** `data/database/dao/ExpenseDao.kt`.
 - **Tests:**
   - `data/database/dao/ExpenseDaoTest.kt` (Robolectric, real Room).

@@ -74,6 +74,7 @@ Rationale for order: privacy first (only release-blocking exposure), then the tw
 - Exit: targeted tests PASS + `db_access`/`privacy` area guards PASS.
 
 ### S2 - Parser: balance stripping + auto-accept boundary (FL-02, FL-01)
+**Superseded for FL-02:** the SmsParser design was replaced by owner item 113. See `workflows/active/fix104-closure-findings.md`, "Outcome for FL-02".
 - Goal: a bank SMS must not auto-create an expense for the account balance, and clipboard prefill must not take the balance.
 - Prod files: `A/domain/parser/parsers/SmsParser.kt` (strip/ignore balance clauses; require purchase-keyword adjacency; when
   more than one currency amount is present, drop confidence below `AUTO_ACCEPT_THRESHOLD`),

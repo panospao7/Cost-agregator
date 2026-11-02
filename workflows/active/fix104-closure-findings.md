@@ -55,7 +55,7 @@ The original evidence base is `C:\Users\panos\Desktop\Cost-agregator\build\revie
 ## Outcome for FL-02 (owner item 113, supersedes the R-SMS-* fixes above)
 reviewer-strict rejected the rule-based SmsParser rewrite on e042c2f5 after two review rounds. The owner chose option A.
 - `SmsParser` is back to its original logic: the amount read is the first currency amount, and the keyword gate and type rule are unchanged.
-- One rule is added: `isAmountAmbiguous` is true when an SMS has two or more different (amount, currency) pairs, or contains a balance word as a whole token. `ConfidenceRouter` sends these to NEEDS_REVIEW. FL-02's silent auto-creation of an expense from a balance therefore closes.
+- One rule is added: `isAmountAmbiguous` is true when an SMS has two or more different (amount, currency) pairs, or contains a balance word as a whole token. `ConfidenceRouter` sends these to NEEDS_REVIEW. This closes FL-02's silent auto-creation for messages `SmsParser` parses. FL-02 is NOT fully closed: see the follow-up below.
 - Known limitations, accepted by the owner:
   - A balance-first SMS is pre-filled with the balance in review.
   - A balance-only SMS that passes the gate appears in review.
@@ -66,3 +66,10 @@ reviewer-strict rejected the rule-based SmsParser rewrite on e042c2f5 after two 
 
   Both remain gaps from before the lane; they are follow-ups, ideally built against real SMS samples.
 - R-EXPORT-1/2 final form: the business listings use `(SPENDING_PREDICATE OR installment markers)`, with no exemptions. This replaces the plan's `ROW_COUNT` markers. The guard's recorded exempt set goes 36 -> 35 because the subscription query now applies the predicate.
+
+## FL-02 follow-ups (reviewer-strict on 4c2ff648; owner decision)
+- **Generic fallback (MAJOR, pre-existing):** when `SmsParser` returns null (unlisted sender, or a gate miss such as "paid"), `AppParserRegistry.kt:233` falls back to `GenericTransactionParser`, which never sets `isAmountAmbiguous`.
+  - Its scoring picks 500.00 for `Paid €5.00. Balance €500.00`.
+  - Its 0.60 confidence reaches AUTO_ACCEPT only with a trained ML weight plus the approval boost (by arithmetic; not reproduced on a device).
+  - Proposed fix: flag generic results for the three SMS packages.
+- **Review screen:** `ReviewScreen.kt:813` shows ambiguous rows at 0.85 as green, even when the row is pre-filled with a balance.

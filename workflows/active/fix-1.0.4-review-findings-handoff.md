@@ -148,6 +148,7 @@ S0, S1 COMPLETE. S2 (parser FL-02/FL-01) next.
    This is why attempts 1 and 2 failed despite correct disambiguation logic.
 
 ### Behaviour now
+**Superseded for FL-02:** the SmsParser design was replaced by owner item 113. See `workflows/active/fix104-closure-findings.md`, "Outcome for FL-02".
 - "...Balance EUR 1,245.67. Purchase of EUR 12.50 at COFFEE..." -> 12.50 at 0.70f -> NEEDS_REVIEW.
 - "Your balance is 1,234.56, you spent 12.50" -> clipboard null; SMS -> 12.50 at 0.70f.
 - "Purchase of EUR 12.50 at COFFEE" -> 12.50 at 0.85f -> AUTO_ACCEPT (happy path asserted by test).

@@ -41,9 +41,7 @@ class SmsParserAmbiguityTest {
 
     @Before
     fun setup() {
-        val currencyNormalizer = mockk<CurrencyNormalizer> {
-            every { normalize(any()) } answers { firstArg() ?: "EUR" }
-        }
+        val currencyNormalizer = CurrencyNormalizer()
         val merchantCleaner = mockk<MerchantCleaner> {
             every { clean(any()) } answers { firstArg() ?: "Unknown" }
         }
