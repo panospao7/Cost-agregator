@@ -165,4 +165,112 @@ class ConfidenceRouterTest {
         assertTrue(result.adjustedConfidence <= 1.0f)
         assertTrue(result.adjustedConfidence >= 0.0f)
     }
+
+    // --- R-SMS-3 / FL-02: ambiguous-amount routing (parser emits 0.85 for ambiguous results) ---
+
+    private fun makeAmbiguous(confidence: Float = 0.85f, merchant: String = "TestMerchant") =
+        ParsedTransaction(
+            amount = 10.0,
+            currency = "EUR",
+            merchant = merchant,
+            type = ParsedTransactionType.PURCHASE,
+            confidence = confidence,
+            isAmountAmbiguous = true
+        )
+
+    private fun makeClean(confidence: Float = 0.85f, merchant: String = "TestMerchant") =
+        makeAmbiguous(confidence, merchant).copy(isAmountAmbiguous = false)
+
+    private fun mlReady(totalSamples: Int) {
+        coEvery { classifier.getStats() } returns
+            ClassifierStats(totalPositive = totalSamples / 2, totalNegative = totalSamples - totalSamples / 2, vocabularySize = 100, isReady = true)
+        coEvery { classifier.predict(any()) } returns 0.1f
+    }
+
+    private fun trustedSource(pkg: String) {
+        // trustScore = 95/100 = 0.95 > 0.8 -> trust modifier 1.1
+        coEvery { sourceStatsRepository.getByPackage(pkg) } returns
+            com.yourname.expensetracker.data.database.entity.SourceStats(
+                packageName = pkg,
+                totalNotifications = 100,
+                acceptedAsExpense = 95,
+                lastSeen = fixedNow
+            )
+    }
+
+    @Test
+    fun `ambiguous 0_85 with no boosts is NEEDS_REVIEW not AUTO_ACCEPT`() = runBlocking {
+        val result = router.route(makeAmbiguous(), "com.test")
+        assertEquals(RoutingDecision.NEEDS_REVIEW, result.decision)
+    }
+
+    @Test
+    fun `ambiguous 0_85 with ML ready low weight and prediction 0_1 is NEEDS_REVIEW never AUTO_REJECT`() = runBlocking {
+        // 60 samples -> ML weight 0.35: 0.85*0.65 + 0.1*0.35 = 0.5875 >= REVIEW_THRESHOLD
+        mlReady(60)
+        val result = router.route(makeAmbiguous(), "com.test", notificationText = "synthetic text")
+        assertEquals(RoutingDecision.NEEDS_REVIEW, result.decision)
+        assertNotEquals(RoutingDecision.AUTO_REJECT, result.decision)
+    }
+
+    @Test
+    fun `ambiguous 0_85 with ML ready moderate weight 0_5 and prediction 0_1 is never AUTO_REJECT`() = runBlocking {
+        // 150 samples -> ML weight 0.5: raw blend 0.85*0.5 + 0.1*0.5 = 0.475 < REVIEW_THRESHOLD.
+        // R-SMS-3 requires an ambiguous result to land in review, not be auto-rejected.
+        mlReady(150)
+        val result = router.route(makeAmbiguous(), "com.test", notificationText = "synthetic text")
+        assertEquals(RoutingDecision.NEEDS_REVIEW, result.decision)
+        assertNotEquals(RoutingDecision.AUTO_REJECT, result.decision)
+    }
+
+    @Test
+    fun `ambiguous 0_85 with ML ready max weight 0_6 and prediction 0_1 is never AUTO_REJECT`() = runBlocking {
+        // 300 samples -> ML weight 0.6: raw blend 0.85*0.4 + 0.1*0.6 = 0.40 < REVIEW_THRESHOLD.
+        mlReady(300)
+        val result = router.route(makeAmbiguous(), "com.test", notificationText = "synthetic text")
+        assertEquals(RoutingDecision.NEEDS_REVIEW, result.decision)
+        assertNotEquals(RoutingDecision.AUTO_REJECT, result.decision)
+    }
+
+    @Test
+    fun `ambiguous with previous-approval boost and source trust adjusted at least 0_85 is NEEDS_REVIEW`() = runBlocking {
+        coEvery { userCorrectionRepository.hasPreviousApprovals("TestMerchant", "com.trusted") } returns true
+        trustedSource("com.trusted")
+
+        val result = router.route(makeAmbiguous(), "com.trusted")
+        assertTrue(
+            "precondition: boosts must lift adjusted confidence to AUTO_ACCEPT range",
+            result.adjustedConfidence >= ConfidenceRouter.AUTO_ACCEPT_THRESHOLD
+        )
+        assertEquals(RoutingDecision.NEEDS_REVIEW, result.decision)
+    }
+
+    @Test
+    fun `non-ambiguous 0_85 with same boosts still AUTO_ACCEPT`() = runBlocking {
+        coEvery { userCorrectionRepository.hasPreviousApprovals("TestMerchant", "com.trusted") } returns true
+        trustedSource("com.trusted")
+
+        val result = router.route(makeClean(), "com.trusted")
+        assertTrue(result.adjustedConfidence >= ConfidenceRouter.AUTO_ACCEPT_THRESHOLD)
+        assertEquals(RoutingDecision.AUTO_ACCEPT, result.decision)
+    }
+
+    @Test
+    fun `non-ambiguous 0_85 without boosts is AUTO_ACCEPT`() = runBlocking {
+        val result = router.route(makeClean(), "com.test")
+        assertEquals(RoutingDecision.AUTO_ACCEPT, result.decision)
+    }
+
+    @Test
+    fun `ambiguous result from spam source is still AUTO_REJECT because anti-spam signal is respected`() = runBlocking {
+        coEvery { sourceStatsRepository.getByPackage("com.spam") } returns
+            com.yourname.expensetracker.data.database.entity.SourceStats(
+                packageName = "com.spam",
+                totalNotifications = 100,
+                acceptedAsExpense = 1,
+                lastSeen = fixedNow
+            )
+        val result = router.route(makeAmbiguous(), "com.spam")
+        assertEquals(RoutingDecision.AUTO_REJECT, result.decision)
+    }
 }

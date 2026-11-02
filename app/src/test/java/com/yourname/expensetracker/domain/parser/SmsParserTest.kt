@@ -377,9 +377,12 @@ class SmsParserTest {
             bigText = null, subText = null,
             packageName = "com.google.android.apps.messaging"
         )
-        if (result != null) {
-            val routed = routeParsed(result)
-            assertNotEquals(RoutingDecision.AUTO_ACCEPT, routed.decision)
-        }
+        assertNotNull("Purchase + card-limit SMS must parse, not be dropped", result)
+        assertEquals(12.50, result!!.amount, 0.001)
+        assertEquals(ParsedTransactionType.PURCHASE, result.type)
+        assertTrue("Second amount present -> ambiguous", result.isAmountAmbiguous)
+
+        val routed = routeParsed(result)
+        assertEquals(RoutingDecision.NEEDS_REVIEW, routed.decision)
     }
 }
