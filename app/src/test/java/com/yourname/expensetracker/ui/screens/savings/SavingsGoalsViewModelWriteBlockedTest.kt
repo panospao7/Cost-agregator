@@ -31,6 +31,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Before
@@ -147,7 +148,7 @@ class SavingsGoalsViewModelWriteBlockedTest : ViewModelTestUtils() {
     @Test
     fun `blocked deleteGoal returns the delete flow to Idle and emits neither GoalDeleted nor DeleteRejected`() = runTest(testDispatcher) {
         val events = mutableListOf<SavingsGoalsEvent>()
-        backgroundScope.launch(testDispatcher) { viewModel.events.collect { events += it } }
+        backgroundScope.launch(UnconfinedTestDispatcher(testDispatcher.scheduler)) { viewModel.events.collect { events += it } }
         val goal = SavingsGoal(
             id = 1L, name = "Test Goal A", targetAmount = 100.0, currentAmount = 0.0, targetDate = null,
             protectionLevel = GoalProtectionLevel.WARNING, currencyAssumption = "EXPLICIT",
@@ -173,7 +174,7 @@ class SavingsGoalsViewModelWriteBlockedTest : ViewModelTestUtils() {
     @Test
     fun `delete flow works again after the write barrier lifts`() = runTest(testDispatcher) {
         val events = mutableListOf<SavingsGoalsEvent>()
-        backgroundScope.launch(testDispatcher) { viewModel.events.collect { events += it } }
+        backgroundScope.launch(UnconfinedTestDispatcher(testDispatcher.scheduler)) { viewModel.events.collect { events += it } }
         val goal = SavingsGoal(
             id = 1L, name = "Test Goal A", targetAmount = 100.0, currentAmount = 0.0, targetDate = null,
             protectionLevel = GoalProtectionLevel.WARNING, currencyAssumption = "EXPLICIT",

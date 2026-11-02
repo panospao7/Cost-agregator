@@ -47,6 +47,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -862,7 +863,7 @@ class SavingsGoalsViewModelDeleteTest : ViewModelTestUtils() {
             timeProvider = timeProvider,
             currencySettingsRepository = currencyRepo
         )
-        backgroundScope.launch(testDispatcher) { viewModel.events.collect { events += it } }
+        backgroundScope.launch(UnconfinedTestDispatcher(testDispatcher.scheduler)) { viewModel.events.collect { events += it } }
         advanceUntilIdle()
     }
 
