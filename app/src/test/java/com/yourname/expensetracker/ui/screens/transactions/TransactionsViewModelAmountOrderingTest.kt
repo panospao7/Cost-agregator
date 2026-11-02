@@ -324,6 +324,8 @@ class TransactionsViewModelAmountOrderingTest : ViewModelTestUtils() {
         assertEquals(19.0, call.minAmount)
         assertEquals(TransactionsViewModel.PAGE_SIZE, call.limit)
         assertEquals(0, call.offset)
+        // The filter reload restarted the IO count; let it settle before the test ends.
+        vm.amountUi.first { it is TransactionsAmountUi.Ready && it.hidesRows }
     }
 
     @Test
@@ -388,6 +390,8 @@ class TransactionsViewModelAmountOrderingTest : ViewModelTestUtils() {
         assertEquals(listOf(0, 50, 100), pagedCalls.map { it.offset })
         assertTrue(pagedCalls.all { it.semantics == AmountSemantics.HomeComparable(eur) })
         assertTrue(pagedCalls.all { it.sortOrder == SortOrder.AMOUNT_DESC })
+        // The initial load started the IO count; let it settle before the test ends.
+        vm.amountUi.first { it is TransactionsAmountUi.Ready }
     }
 
     // ------------------------------------------------------------------
@@ -433,6 +437,8 @@ class TransactionsViewModelAmountOrderingTest : ViewModelTestUtils() {
         assertEquals(15.0, reload.minAmount)
         assertEquals(SortOrder.AMOUNT_DESC, reload.sortOrder)
         assertEquals(AmountOrderingState.AVAILABLE, vm.amountOrderingState.value)
+        // The reload started the IO count (Available + amount sort); let it settle before the test ends.
+        vm.amountUi.first { it is TransactionsAmountUi.Ready }
         // the EUR placeholder never reached a query
         assertTrue(pagedCalls.none { it.semantics == AmountSemantics.HomeComparable(eur) })
     }
@@ -774,6 +780,8 @@ class TransactionsViewModelAmountOrderingTest : ViewModelTestUtils() {
         vm.refresh()
         callStarted.receive()
         vm.isLoading.first { !it }
+        // The refresh restarted the IO count (Available + amount sort); let it settle before the test ends.
+        vm.amountUi.first { it is TransactionsAmountUi.Ready }
 
         assertNotNull(pagedCalls.firstOrNull())
         assertTrue(pagedCalls.size >= 5)
