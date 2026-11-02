@@ -1332,6 +1332,66 @@ class DatabaseBackupRepositoryImplTest {
         assertEquals(3, countRows(dbFile, "categories"))
     }
 
+    private suspend fun importRawDbAndReadOutcome(
+        liveVerifier: suspend (AppDatabase, File, Int, DatabaseImportSummary) -> DatabaseImportSummary
+    ): com.yourname.expensetracker.domain.backup.SemanticVerificationOutcome {
+        createSqliteDatabase(
+            file = dbFile,
+            expenseCount = 1,
+            categoryCount = 1,
+            merchantCount = 1,
+            pendingCount = 1,
+            budgetCount = 1
+        )
+        val sourceBackup = File(tempDir, "source_no_manifest.db")
+        createSqliteDatabase(
+            file = sourceBackup,
+            schemaVersion = DatabaseSchemaPolicy.MIGRATION_BASELINE,
+            expenseCount = 3,
+            categoryCount = 2,
+            merchantCount = 1,
+            pendingCount = 1,
+            budgetCount = 1
+        )
+        val result = createRepository(liveVerifier = liveVerifier).importDatabase(sourceBackup)
+        assertTrue(result.isSuccess)
+        return result.getOrThrow().semanticVerification
+    }
+
+    @Test
+    fun `UF46 S4 AE12 INV11 importDatabase of a raw db is NotVerifiable NO_MANIFEST`() = runTest(testDispatcher) {
+        if (!BuildConfig.DEBUG) {
+            assertLegacyImportDeniedInRelease()
+            return@runTest
+        }
+        // A raw .db has no manifest to compare against.
+        assertEquals(
+            com.yourname.expensetracker.domain.backup.SemanticVerificationOutcome.NotVerifiable(
+                SemanticNotVerifiableReason.NO_MANIFEST
+            ),
+            importRawDbAndReadOutcome { _, _, _, summary -> summary }
+        )
+    }
+
+    @Test
+    fun `UF46 S4 AE12 INV11 importDatabase is never Verified even when the live verifier claims Verified`() = runTest(testDispatcher) {
+        if (!BuildConfig.DEBUG) {
+            assertLegacyImportDeniedInRelease()
+            return@runTest
+        }
+        val outcome = importRawDbAndReadOutcome { _, _, _, summary ->
+            summary.copy(
+                semanticVerification = com.yourname.expensetracker.domain.backup.SemanticVerificationOutcome.Verified
+            )
+        }
+        assertEquals(
+            com.yourname.expensetracker.domain.backup.SemanticVerificationOutcome.NotVerifiable(
+                SemanticNotVerifiableReason.NO_MANIFEST
+            ),
+            outcome
+        )
+    }
+
     @Test
     fun `verification rejects partial count loss for core tables`() {
         val sourceSummary = DatabaseImportSummary(

@@ -459,6 +459,9 @@ class RestoreSemanticPreSwapTest {
         assertPersistedErrorUnchanged(f)
         val event = terminalEvent(f, eventStage)
         assertBoundedSemanticEvent(event, code, checkpoint)
+        // Domain spec section 6: every semantic failure event (malformed, C1, C2, and C3 in the post-swap
+        // tests) carries the existing VALIDATION_FAILED reason code, never null.
+        assertEquals(DiagnosticReasonCode.VALIDATION_FAILED, event.reasonCode)
         assertBounded("exception message", error.message, f)
         assertBounded("exception text", error.toString(), f)
         assertBounded("event metadata", event.metadataJson, f)
