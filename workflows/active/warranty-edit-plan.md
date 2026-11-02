@@ -326,3 +326,19 @@ The owner lifted "planning only" on 2026-11-02 (owner-approvals 101).
   - `updateWarranty(` has zero production callers.
   - E-05-1 (protectedValue drops currency) is in the same files on different lines; NOT folded in.
 - **es/el:** sign-off is deferred to the release gate (owner-approvals 103).
+- **S-pre DONE (explorer, 2026-11-02): no STOP condition.**
+  - **Item 2:** `updateWarranty(` has 0 external production callers. Internal: REPO:185 own DAO call, :301 confirm, :352 promote.
+  - **Item 3:** QF-2d touches SCR, NaturalLanguageSearchScreen and MainActivity only, so S4 waits; S1-S3 are unaffected.
+  - **Item 4:** WarrantyLifecycleEvent `data/database/entity/WarrantyLifecycleEvent.kt:18-25`, types :27-38 (UPDATED exists).
+    - The existing `updateWarranty` (:183-199) is NON-transactional and swallows event failures. `rejectAutoDetectedWarranty` (:225-242) is the fail-closed prior art (`withTransaction`).
+    - **S2 binding:** rework `updateWarranty` IN PLACE. Keep the name and the parameter type (Warranty) so both policy rows (`db_ownership_policy.yml:3436-3466`: helper barrier, ops warrantyDao.updateWarranty and warrantyLifecycleEventDao.insert) stay valid. Any new mutation-named method would need policy rows, which is a guard edit: STOP.
+  - **Item 5:** both `calculateWarrantyEndDate` are private (UC `AutoCreateWarrantyFromReceiptUseCase.kt:439-450`, `WarrantyTextExtractor.kt:274-287`). Public: UC `getDisplayEndDate` :417. The parity test uses public outputs; the receipt-path files are not edited.
+  - **Item 6:** the import directions have precedent. REPO→domain.usecase.warranty is new for that file; no architecture test forbids it.
+  - **Item 7:** `mutationError` VM:43, `reportMutationFailure` :215-228, `clearMutationError` :234. SCR:90-98 shows it as a one-shot snackbar and clears it, so the UX-2 in-dialog banner needs its own state field in S3.
+  - **Item 8:**
+    - FormDropdown and FormDateField have 0 callers.
+    - No Compose test for SCR; no general locale parity test.
+    - No collisions for the new keys.
+    - `confirm_discard_*` exist in en/es, not el (baselined), with no Kotlin reference.
+  - **Item 9:** `lifecycleEventFailure_doesNotFailPrimaryTransaction` (WarrantyTrackerRepositoryTest:821) is referenced in no config or allowlist, so the rename is allowed. Update impact-map:34.
+  - **Item 10:** the policy row identities are recorded above. `promoteReviewDraft` (:3324-3337) is the prior art for a content-only edit.
