@@ -503,6 +503,8 @@ class SavingsGoalsViewModel @Inject constructor(
                 resetDeleteFlowIfActive(goalId)
                 throw e
             } catch (_: Exception) {
+                // A late failure of a dismissed check must not touch a newer flow.
+                if (_state.value.deleteFlow != DeleteFlowState.Checking(goalId)) return@launch
                 finishDelete(SavingsGoalsEvent.DeleteRejected(DeleteRejectReason.GENERIC))
                 return@launch
             }
@@ -512,8 +514,9 @@ class SavingsGoalsViewModel @Inject constructor(
                 SavingsGoalDeleteEligibility.Deletable -> {
                     val name = _state.value.goals.firstOrNull { it.id == goalId }?.name
                     if (name == null) {
-                        // Not in the visible list any more: treated as already gone.
-                        applyGoalRemoved(goalId)
+                        // Not in the visible list: nothing was deleted here, so no GoalDeleted
+                        // event; close silently and let the goal list refresh.
+                        finishDelete(null)
                     } else {
                         _state.update { it.copy(deleteFlow = DeleteFlowState.Confirm(goalId, name)) }
                     }

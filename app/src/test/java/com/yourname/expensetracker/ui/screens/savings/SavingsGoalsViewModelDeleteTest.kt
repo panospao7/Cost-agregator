@@ -265,7 +265,7 @@ class SavingsGoalsViewModelDeleteTest : ViewModelTestUtils() {
     }
 
     @Test
-    fun `pre-check Deletable for a goal no longer listed takes the Deleted path`() = runTest(testDispatcher) {
+    fun `pre-check Deletable for a goal no longer listed returns to Idle with no event`() = runTest(testDispatcher) {
         startViewModel(listOf(goalA))
         coEvery { savingsGoalRepository.getSavingsGoalDeletionEligibility(99L) } returns
             SavingsGoalDeleteEligibility.Deletable
@@ -274,7 +274,34 @@ class SavingsGoalsViewModelDeleteTest : ViewModelTestUtils() {
         advanceUntilIdle()
 
         assertEquals(DeleteFlowState.Idle, viewModel.state.value.deleteFlow)
-        assertEquals(listOf<SavingsGoalsEvent>(SavingsGoalsEvent.GoalDeleted), events.toList())
+        assertTrue("nothing was deleted, so no GoalDeleted or DeleteRejected", events.isEmpty())
+        coVerify(exactly = 0) { savingsGoalRepository.deleteSavingsGoal(any()) }
+    }
+
+    @Test
+    fun `late pre-check exception of a dismissed check does not disturb a newer flow`() = runTest(testDispatcher) {
+        startViewModel(listOf(goalA, goalB))
+        val gateA = CompletableDeferred<SavingsGoalDeleteEligibility>()
+        val gateB = CompletableDeferred<SavingsGoalDeleteEligibility>()
+        coEvery { savingsGoalRepository.getSavingsGoalDeletionEligibility(1L) } coAnswers { gateA.await() }
+        coEvery { savingsGoalRepository.getSavingsGoalDeletionEligibility(2L) } coAnswers { gateB.await() }
+        viewModel.requestDeleteGoal(1L)
+        advanceUntilIdle()
+        viewModel.dismissDeleteFlow()
+        viewModel.requestDeleteGoal(2L)
+        advanceUntilIdle()
+        assertEquals(DeleteFlowState.Checking(2L), viewModel.state.value.deleteFlow)
+
+        gateA.completeExceptionally(IllegalStateException(SECRET))
+        advanceUntilIdle()
+
+        assertEquals(DeleteFlowState.Checking(2L), viewModel.state.value.deleteFlow)
+        assertTrue("a stale failure must not emit an event", events.isEmpty())
+
+        gateB.complete(SavingsGoalDeleteEligibility.Deletable)
+        advanceUntilIdle()
+        assertEquals(DeleteFlowState.Confirm(2L, GOAL_B_NAME), viewModel.state.value.deleteFlow)
+        assertTrue(events.isEmpty())
     }
 
     @Test
