@@ -39,6 +39,7 @@ import com.google.gson.Gson
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.backup.AppOperationalState
 import com.yourname.expensetracker.data.backup.RestoreRestartSignal
+import com.yourname.expensetracker.data.backup.RestoreVerificationNoticeStore
 import com.yourname.expensetracker.data.database.DatabaseOpenGate
 import com.yourname.expensetracker.ui.unsupported.UnsupportedDatabaseActivity
 import com.yourname.expensetracker.domain.privacy.applock.AppLockController
@@ -153,6 +154,10 @@ class MainActivity : FragmentActivity() {
     @Inject
     lateinit var notificationPromptOnce: NotificationPermissionPromptOnce
 
+    /** UF-46 (INV-17): one-shot "restore was not verifiable" notice recorded before the post-restore restart. */
+    @Inject
+    lateinit var restoreVerificationNoticeStore: RestoreVerificationNoticeStore
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // S20-c / INV-29: the window is secure before anything else can draw (synchronous add; never cleared here).
@@ -203,7 +208,8 @@ class MainActivity : FragmentActivity() {
                                 expenseRepository = expenseRepository,
                                 gson = gson,
                                 restoreRestartSignal = restoreRestartSignal,
-                                notificationPromptOnce = notificationPromptOnce
+                                notificationPromptOnce = notificationPromptOnce,
+                                restoreVerificationNoticeStore = restoreVerificationNoticeStore
                             )
                         }
                     }
@@ -304,7 +310,8 @@ fun MainScreen(
     expenseRepository: ExpenseRepository,
     gson: Gson,
     restoreRestartSignal: RestoreRestartSignal,
-    notificationPromptOnce: NotificationPermissionPromptOnce
+    notificationPromptOnce: NotificationPermissionPromptOnce,
+    restoreVerificationNoticeStore: RestoreVerificationNoticeStore
 ) {
     // RP-17 17-A / D1: availability resolved here (same seam as
     // NavigationController/HomeScreen) — the Activity's injected instance is
@@ -465,6 +472,16 @@ fun MainScreen(
             return
         }
         else -> { /* Normal / BackupExporting — app continues */ }
+    }
+
+    // UF-46 (INV-17): the restore screen's in-screen card dies with the post-restore restart, so a
+    // NOT_VERIFIABLE outcome is shown once here, after the relaunch, and only in a normal state
+    // (never on the restart-required / critical-recovery lock screens). Boolean only; consumed once.
+    val restoreNotVerifiableNotice = stringResource(R.string.backup_restore_not_verifiable_notice)
+    LaunchedEffect(Unit) {
+        if (restoreVerificationNoticeStore.consume()) {
+            snackbarHostState.showSnackbar(restoreNotVerifiableNotice)
+        }
     }
 
     // R24b: ask once per install (max 2 dialogs, no loop). If the system request is denied and the

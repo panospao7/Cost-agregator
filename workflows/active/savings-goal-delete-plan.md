@@ -361,3 +361,61 @@ git -C C:\Users\panos\Desktop\Cost-agregator-sgd rev-parse HEAD   # expect e6967
   2. Run validation-runner `-Action Plan` / `-Action Profiles`.
   3. Start S1: implementer, then test-author.
 - If HEAD differs, diff the in-scope files first, then re-anchor or re-plan.
+
+## Re-anchor amendment (2026-11-02, orchestrator)
+The owner lifted "planning only" on 2026-11-02.
+- **Base:** `a5d659de` (origin/feature/ai-evolution), not e6967db1. No savings files changed since e6967db1.
+- **Explorer re-anchor at a5d659de:** STILL-VALID. Full report: `docs/features/savings-goal-delete/reanchor-20261102.md`.
+  - Schema is v152, not v151: loan added the installment tables and `expenses.spendingExclusionReason`. No impact, because this plan has no schema change.
+  - Anchors that moved:
+    - `NotificationParserDashboardTotalSeamTest:408` → :415;
+    - `SavingsModule.kt:56-66` → ~:58-63.
+  - Repository :35-38, the domain interface :13, VM `deleteGoal` :464 and `SavingsGoalDao` (getById :13, deleteGoal :22, ledger getAll :18) are unchanged.
+  - `lint-baseline.xml` is still at 2223 MissingTranslation.
+- **fix-1.0.4 lane** (unmerged, another session): no code overlap. Only `LEGAL_PATHS.md` (~:168) and `strings.xml` overlap textually; rebase at merge.
+- **Review findings:** E-02-1 and E-02-1b (HIGH: manual contribution writes Room and DataStore non-atomically, no ledger row) bear on INV-17. Note them in S2, **not folded in**.
+- **S-pre DONE (explorer, 2026-11-02):** no STOP condition.
+  - The only implementor is `data/repository/SavingsGoalRepository.kt:17` (override :35, DAO call :37). The only product caller is `SavingsGoalsViewModel.kt:467` (inside `deleteGoal` :464).
+  - Test constructions:
+    - `NotificationParserDashboardTotalSeamTest:415`;
+    - `SavingsGoalRepositoryCurrencyTest:20` (calls delete :69; DAO stub :65).
+  - Repository stub: `SavingsGoalsViewModelWriteBlockedTest:131` (throws).
+  - No `just Runs`/`coJustRun` stubs. No fakes implement the interface.
+  - INV-7 holds.
+  - Hilt: `SavingsRepositoryBindingsModule:17` and `DashboardContractsModule:53`, unchanged.
+  - Baselines:
+    - MissingTranslation 2223;
+    - schema 152.json;
+    - `db_access_allowlist.yml` ~596 lines, `db_ownership_policy.yml` ~8062 lines.
+  - Guards: `db_artifact_sync` (guard_registry :410), `db_access` (:598). The data shard is named "data".
+  - No SavingsGoalsScreen Compose test and no en/el/es parity test, so S5 relies on lint, VM tests and a manual a11y check.
+  - T-2:
+    - B6-18 is partial; SavingsSweepAcceptanceCoordinatorTest is WAIT, so whoever lands second rebases.
+    - B6-23 was DROPPED.
+    - B8-5 was ACCEPTED; the DAO tests are in `data.database.dao`.
+  - Batch 1 test classes confirmed (FQCN): `data.repository.SavingsGoalRepositoryCurrencyTest`, `data.database.dao.SavingsGoalDaoTest`, `data.repository.SavingsSweepAcceptanceCoordinatorTest`, `data.backup.BackupVerifierSavingsLedgerTest`, `ui.screens.savings.SavingsGoalsViewModelWriteBlockedTest`, `e2e.NotificationParserDashboardTotalSeamTest`, plus the new S1/S2 tests.
+
+## Progress (2026-11-02, orchestrator)
+- S1+S2 dd4dd9a2; S3 eb689681 plus guardian fixes d519a930; S4/S5 aae05278; test collector fix e33483ed; S5 follow-ups and S6 docs (this commit).
+- Validation PASS: Batch 1 vr-20261102-002804-429e4154; G db_access vr-20261102-003508-3616a28a and db_artifact_sync vr-20261102-004229-dcec62eb; lint vr-20261102-015146-0aef6e7e; Batch 2 vr-20261102-023852-e61e0b4c (vr-20261102-014559 FAIL was the test collector, debug iteration 2).
+- Combined guardian S1+S2 (Sonnet, dd4dd9a2): ACCEPT-WITH-FIXES, no blocking findings.
+  - INV-2/7/12/14/15/17/18: PASS.
+  - Identity traps: PASS; predicts db_access and db_artifact_sync PASS.
+  - Atomicity: PASS. Privacy: PASS. Cancellation: PASS (sibling CE catch, first line `throw error`).
+  - LOWs (accepted, no change):
+    - `SavingsGoalRepositoryDeleteConcurrencyTest:522` `settle()` uses a fixed delay;
+    - the evaluate block is duplicated in delete and eligibility;
+    - no repository-level -0.0 row test (the policy test covers it).
+  - S6 docs (FG-26):
+    - LEGAL_PATHS: savings-goal delete entry (VM, repo, barrier, history pre-read, one Room transaction re-reading goal and ledger, policy, deleteGoal) plus the eligibility read-only member;
+    - CODEBASE_INVENTORY ~402/~496: the new types and the repository dependencies;
+    - check ENGINE_INTERACTION_MAP and CODEBASE_SEGMENTS.
+- Combined guardian S3 (d519a930 fixes): F1 (stale pre-check exception) and F2 (no GoalDeleted when the goal is unlisted) FIXED. F3: deleteGoal is only called from the Confirm dialog (done in S5). F4: info.
+- S3 compile break: the Screen `when` was not exhaustive. Resolved by S4/S5 aae05278 (debug iteration 1). Batch 2+3 queued: 1793583589798/989.
+- Combined guardian S4/S5 (aae05278): ACCEPT-WITH-FIXES. Privacy PASS.
+  - Follow-up (low):
+    - el `action_delete` and `error_delete_failed` drafts (existing keys; baseline entries become stale, which is harmless);
+    - the focus-return fallback to the heading when the origin card is gone (re-key on state.goals);
+    - nit: overflowFocusRequesters is not pruned.
+- Known gap: el action_delete and error_delete_failed now have drafts. es/el sign-off is deferred to the release gate (owner-approvals 103).
+- reviewer-strict (Opus) at candidate 2674893b: ACCEPT-WITH-MINORS. Both MINORs (focus fallback held until the goal leaves the list; LEGAL_PATHS chain wording) and the el savings_goal_deleting_cd draft are fixed in the next commit. Residual: a cancelled delete emits no event, so focus stays unset (accepted).

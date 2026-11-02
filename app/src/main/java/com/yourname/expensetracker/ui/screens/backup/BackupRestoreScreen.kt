@@ -378,6 +378,26 @@ fun BackupRestoreScreen(
                 }
             }
 
+            // UF-46 (INV-17): non-blocking info notice; the restore already succeeded. Plain text
+            // (not colour-only), no action.
+            if (uiState.semanticNotVerifiableNotice) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer
+                    )
+                ) {
+                    Text(
+                        text = stringResource(R.string.backup_restore_not_verifiable_notice),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                    )
+                }
+            }
+
             // Spacer at bottom for scrolling
             Spacer(Modifier.height(32.dp))
         }

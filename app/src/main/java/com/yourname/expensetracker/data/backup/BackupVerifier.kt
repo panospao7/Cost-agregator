@@ -2,6 +2,7 @@ package com.yourname.expensetracker.data.backup
 
 import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
+import com.yourname.expensetracker.domain.backup.SemanticNotVerifiableReason
 import timber.log.Timber
 
 /**
@@ -16,21 +17,13 @@ import timber.log.Timber
  *   differ but must pass integrity and FK checks.
  * - **Tier 3 (OPTIONAL):** Cache/external data tables. May be absent entirely.
  *
- * ## Future verification
- * P7-P1-05: Full semantic equivalence checks are required to prove that a
- * restored database produces identical dashboard totals, analytics aggregates,
- * budget projections, and receipt-to-expense link integrity as the original.
- * Current verification covers: table existence, row counts (Tier 1),
- * PRAGMA integrity_check, and PRAGMA foreign_key_check.
- *
- * TODO (P7-P1-05): Implement post-restore semantic equivalence verification:
- *   1. Compare SUM(amount) per category between manifest snapshot and restored DB
- *   2. Verify budget spent/remaining calculations match pre-backup values
- *   3. Validate receipt_expense_links referential integrity (all linked receipts exist)
- *   4. Check analytics aggregates (monthly totals, category breakdowns) match
- *   5. Verify investment portfolio total value matches manifest checkpoint
- *   These checks should run as a Tier 0 (SEMANTIC) verification pass after
- *   Tier 1 row counts pass, and failures should trigger rollback.
+ * ## Semantic verification (UF-46, P7-P1-05)
+ * Verification covers: table existence, row counts (Tier 1), PRAGMA integrity_check,
+ * PRAGMA foreign_key_check, the orphan checks, and (when a [SemanticExpectation] is
+ * supplied) the four code-owned semantic aggregate fingerprints defined in
+ * [SemanticAggregates]. The aggregates are keyed by a closed registry; no manifest
+ * string is ever executed. The semantic pass runs on the already-open read-only handle,
+ * after every other check, and only when those checks produced no error.
  */
 object BackupVerifier {
 
@@ -40,20 +33,53 @@ object BackupVerifier {
     /** Loan installments (INV-30): plan and entry tables exist from schema 152. */
     private const val INSTALLMENT_TABLES_SCHEMA_VERSION = 152
 
-    // ── Verification tier assignment for all 61 tables ──────────
+    /**
+     * P-07-1 / S0b: tables that were classified after older app builds had already
+     * written manifests. Manifests produced by builds before this schema version carry
+     * no row count for them, so they are only required (and only count-verified when a
+     * count is present) for manifests at or above this version.
+     */
+    private const val FULL_TABLE_COVERAGE_SCHEMA_VERSION = 152
+
+    /** negotiation_outcomes is created by MIGRATION_145_146 (additive, empty). */
+    private const val NEGOTIATION_OUTCOMES_SCHEMA_VERSION = 146
 
     /**
-     * All 61 tracked table names with their verification tier.
-     * 61 = 42 exact (35 listed in the Tier 1 block + 7 event/link) + 10 validity
-     * + 9 optional. TABLE_TIERS is a single literal mapOf (no merged maps/sets).
+     * Tier 1 tables first classified by S0b (P-07-1). Introduced at: source_stats_events 117,
+     * warranty_lifecycle_events 118, investment_transactions 119, group_settlements 120,
+     * group_lifecycle_events 121, entity_source_links 132, bank_statement_import_runs/items 135,
+     * negotiation_outcomes 146. All exist in every supported source DB (baseline 145) except
+     * negotiation_outcomes, but pre-coverage manifests carry no count for any of them.
+     */
+    private val COVERAGE_GATED_TABLES: Set<String> = setOf(
+        "source_stats_events",
+        "warranty_lifecycle_events",
+        "investment_transactions",
+        "group_settlements",
+        "group_lifecycle_events",
+        "entity_source_links",
+        "bank_statement_import_runs",
+        "bank_statement_import_items",
+        "negotiation_outcomes"
+    )
+
+    // ── Verification tier assignment for all 74 tables ──────────
+
+    /**
+     * All 74 tracked table names with their verification tier (one per AppDatabase
+     * entity at schema 152; room_master_table and sqlite internals are not entities).
+     * 74 = 51 exact + 10 validity + 13 optional. 51 exact = 35 in the first Tier 1
+     * block + 7 event/link + 9 S0b-classified (see [COVERAGE_GATED_TABLES]).
+     * TABLE_TIERS is a single literal mapOf (no merged maps/sets).
      */
     private val TABLE_TIERS: Map<String, VerificationTier> = mapOf(
-        // ── Tier 1: Exact row count required (42 total) ──
+        // ── Tier 1: Exact row count required (51 total) ──
         // 35 listed here + 7 event/link tables grouped under the Tier 2 comment
         // below (transaction_events, receipt_events, receipt_expense_links,
         // recurring_occurrences, recurring_reminder_deliveries,
         // recurring_lifecycle_events, warranty_reminder_deliveries) which are also
-        // TIER_1_EXACT. requiredManifestTables() filters by value, so the physical
+        // TIER_1_EXACT, + 9 S0b tables grouped under the Tier 3 comment below.
+        // requiredManifestTables() filters by value, so the physical
         // grouping is cosmetic; the tier assignment is authoritative.
         "raw_notifications"              to VerificationTier.TIER_1_EXACT,
         "expenses"                       to VerificationTier.TIER_1_EXACT,
@@ -115,7 +141,25 @@ object BackupVerifier {
         // recurring_reminder_deliveries; exact-count verified so it survives restore.
         "warranty_reminder_deliveries"   to VerificationTier.TIER_1_EXACT,
 
-        // ── Tier 3: Optional (9 tables) ──
+        // S0b / P-07-1: previously unclassified user-data and event-log tables. Exact-count
+        // verified; required in the manifest only from FULL_TABLE_COVERAGE_SCHEMA_VERSION.
+        "source_stats_events"            to VerificationTier.TIER_1_EXACT,
+        "warranty_lifecycle_events"      to VerificationTier.TIER_1_EXACT,
+        "investment_transactions"        to VerificationTier.TIER_1_EXACT,
+        "group_settlements"              to VerificationTier.TIER_1_EXACT,
+        "group_lifecycle_events"         to VerificationTier.TIER_1_EXACT,
+        "entity_source_links"            to VerificationTier.TIER_1_EXACT,
+        "bank_statement_import_runs"     to VerificationTier.TIER_1_EXACT,
+        "bank_statement_import_items"    to VerificationTier.TIER_1_EXACT,
+        "negotiation_outcomes"           to VerificationTier.TIER_1_EXACT,
+
+        // ── Tier 3: Optional (13 tables) ──
+        // S0b: diagnostics / transient queue tables. Restore itself writes
+        // operation_runs/operation_run_events, so they cannot be exact-count verified.
+        "pipeline_diagnostic_events"     to VerificationTier.TIER_3_OPTIONAL,
+        "operation_runs"                 to VerificationTier.TIER_3_OPTIONAL,
+        "operation_run_events"           to VerificationTier.TIER_3_OPTIONAL,
+        "notification_intake"            to VerificationTier.TIER_3_OPTIONAL,
         "exchange_rates"                 to VerificationTier.TIER_3_OPTIONAL,
         "anomaly_alerts"                 to VerificationTier.TIER_3_OPTIONAL,
         "prompt_states"                  to VerificationTier.TIER_3_OPTIONAL,
@@ -151,7 +195,13 @@ object BackupVerifier {
         val totalTablesChecked: Int,
         val totalTablesPassed: Int,
         val totalTablesFailed: Int,
-        val errors: List<String>
+        val errors: List<String>,
+        /**
+         * Result of the semantic aggregate pass, or null when no [SemanticExpectation] was supplied
+         * or an earlier check had already failed. A [SemanticCheckResult.Failed] result also makes
+         * [passed] false (fail-closed).
+         */
+        val semanticResult: SemanticCheckResult? = null
     )
 
     enum class VerificationTier {
@@ -191,6 +241,14 @@ object BackupVerifier {
     class RequiredTableCountException(val tableName: String, cause: Throwable?) :
         Exception("Row-count query failed for required table '$tableName'", cause)
 
+    /**
+     * UF-46: thrown by [verifyQuick] when the semantic pass fails (mismatch, query failure or malformed
+     * expectation). The message is the bounded [SemanticCode] name only; the structured detail is in
+     * [result] (aggregate id, checkpoint, mismatched-bucket count).
+     */
+    class SemanticVerificationFailedException(val result: SemanticCheckResult.Failed) :
+        Exception(result.code.name)
+
     // ── Manifest completeness (P7-CURRENT-014) ───────────────────
 
     /**
@@ -199,10 +257,16 @@ object BackupVerifier {
      * Tier 1 table — they are exact-count verified and a missing entry would let
      * a malformed manifest pass [verifyQuick] (which skips null counts) and only
      * fail in full [verify] AFTER the destructive swap.
+     *
+     * [semanticMarker] (INV-11, m1): true when the manifest carries a semantic section (present, or
+     * present but malformed). The [COVERAGE_GATED_TABLES] are required from
+     * FULL_TABLE_COVERAGE_SCHEMA_VERSION only for such manifests; a pre-lane v152 dev backup with no
+     * section keeps the legacy tier. Defaults to true (fail-closed: full coverage required).
      */
     fun requiredManifestTables(
         backupFormatVersion: Int = 1,
-        databaseVersion: Int? = null
+        databaseVersion: Int? = null,
+        semanticMarker: Boolean = true
     ): Set<String> = TABLE_TIERS
         .filterValues { it == VerificationTier.TIER_1_EXACT }
         .keys
@@ -214,6 +278,8 @@ object BackupVerifier {
                     databaseVersion >= SAVINGS_SWEEP_MONTH_SCHEMA_VERSION
                 "installment_plans", "installment_entries" -> databaseVersion == null ||
                     databaseVersion >= INSTALLMENT_TABLES_SCHEMA_VERSION
+                in COVERAGE_GATED_TABLES -> databaseVersion == null ||
+                    (databaseVersion >= FULL_TABLE_COVERAGE_SCHEMA_VERSION && semanticMarker)
                 else -> true
             }
         }
@@ -228,9 +294,10 @@ object BackupVerifier {
     fun validateManifestCompleteness(
         expectedCounts: Map<String, Int>,
         backupFormatVersion: Int = 1,
-        databaseVersion: Int? = null
+        databaseVersion: Int? = null,
+        semanticMarker: Boolean = true
     ) {
-        val missing = requiredManifestTables(backupFormatVersion, databaseVersion)
+        val missing = requiredManifestTables(backupFormatVersion, databaseVersion, semanticMarker)
             .filter { it !in expectedCounts }
         if (missing.isNotEmpty()) {
             throw IncompleteManifestException(missing)
@@ -267,7 +334,66 @@ object BackupVerifier {
             if ("installment_plans" !in expectedCounts) migrated["installment_plans"] = 0
             if ("installment_entries" !in expectedCounts) migrated["installment_entries"] = 0
         }
+        // Pre-146 restores create negotiation_outcomes empty (additive migration).
+        if (sourceDatabaseVersion != null && sourceDatabaseVersion < NEGOTIATION_OUTCOMES_SCHEMA_VERSION &&
+            "negotiation_outcomes" !in expectedCounts
+        ) {
+            migrated["negotiation_outcomes"] = 0
+        }
         return migrated
+    }
+
+    /**
+     * Semantic-aggregate counterpart of [expectedCountsAfterMigration] (UF-46, INV-9 / INV-10 / INV-11).
+     *
+     * Decides what a checkpoint may compare against, for a manifest [set] written at [sourceDbVersion]:
+     * - no section: NOT_VERIFIABLE(LEGACY);
+     * - unknown section version, or a source schema below
+     *   [SemanticAggregates.MIN_SOURCE_SCHEMA_VERSION] (the spending aggregate needs the schema-152
+     *   column), or an unknown source schema: NOT_VERIFIABLE(VERSION);
+     * - a NOT_CAPTURED section: NOT_VERIFIABLE(NOT_CAPTURED);
+     * - otherwise [SemanticBasis.Compare].
+     *
+     * Declared migration (INV-9): the 151 to 152 migration only creates tables and adds one nullable
+     * column, so it is the identity for every fingerprinted value and needs no transform. A later
+     * migration that writes a fingerprinted table must be listed in
+     * [SemanticAggregates.DECLARED_MIGRATION_INVALIDATIONS]; the aggregates it names are then reported as
+     * DEFINITION_CHANGED for sources below that migration's end version. The migration chain test
+     * enforces the declaration.
+     */
+    fun expectedAggregatesAfterMigration(
+        set: SemanticAggregateSet?,
+        sourceDbVersion: Int?
+    ): SemanticBasis {
+        if (set == null) return SemanticBasis.NotVerifiable(SemanticNotVerifiableReason.LEGACY)
+        if (set.version != SemanticAggregates.SECTION_VERSION ||
+            sourceDbVersion == null ||
+            sourceDbVersion < SemanticAggregates.MIN_SOURCE_SCHEMA_VERSION
+        ) {
+            return SemanticBasis.NotVerifiable(SemanticNotVerifiableReason.VERSION)
+        }
+        if (set.status != SemanticCaptureStatus.CAPTURED) {
+            return SemanticBasis.NotVerifiable(SemanticNotVerifiableReason.NOT_CAPTURED)
+        }
+        val invalidated = SemanticAggregates.DECLARED_MIGRATION_INVALIDATIONS
+            .filterKeys { endVersion -> endVersion > sourceDbVersion }
+            .values
+            .flatten()
+            .toSet()
+        return SemanticBasis.Compare(set, invalidated)
+    }
+
+    /**
+     * Same as [expectedAggregatesAfterMigration] for a freshly parsed manifest section: an absent section
+     * (null) is LEGACY and a malformed one stays malformed (it must have been blocked before the swap).
+     */
+    fun expectedAggregatesForSection(
+        parsed: SemanticParseResult?,
+        sourceDbVersion: Int?
+    ): SemanticBasis = when (parsed) {
+        null -> SemanticBasis.NotVerifiable(SemanticNotVerifiableReason.LEGACY)
+        is SemanticParseResult.Malformed -> SemanticBasis.Malformed(parsed.code)
+        is SemanticParseResult.Parsed -> expectedAggregatesAfterMigration(parsed.set, sourceDbVersion)
     }
 
     // ── Strict count collection for backup creation (P7-CURRENT-015) ──
@@ -309,12 +435,14 @@ object BackupVerifier {
      *
      * @param dbFile the SQLite database file to verify
      * @param expectedCounts expected row counts per table (from backup manifest)
+     * @param semanticExpectation optional typed semantic-aggregate expectation (UF-46); when null no
+     *   semantic pass runs. The pass uses this same read-only open.
      * @return [VerificationSummary] with per-table results
      */
     fun verify(
         dbFile: java.io.File,
         expectedCounts: Map<String, Int>,
-        manifestSemanticAggregates: Map<String, String> = emptyMap()
+        semanticExpectation: SemanticExpectation? = null
     ): VerificationSummary {
         val db = SQLiteDatabase.openDatabase(
             dbFile.absolutePath,
@@ -322,7 +450,7 @@ object BackupVerifier {
             SQLiteDatabase.OPEN_READONLY
         )
         return try {
-            verifyInternal(db, expectedCounts, manifestSemanticAggregates)
+            verifyInternal(db, expectedCounts, semanticExpectation)
         } finally {
             db.close()
         }
@@ -334,15 +462,22 @@ object BackupVerifier {
     fun verify(
         db: SQLiteDatabase,
         expectedCounts: Map<String, Int>,
-        manifestSemanticAggregates: Map<String, String> = emptyMap()
+        semanticExpectation: SemanticExpectation? = null
     ): VerificationSummary {
-        return verifyInternal(db, expectedCounts, manifestSemanticAggregates)
+        return verifyInternal(db, expectedCounts, semanticExpectation)
     }
 
+    /**
+     * Shared body of both [verify] overloads.
+     *
+     * Manifest completeness (every required Tier 1 count is present) is NOT checked here: it is enforced
+     * earlier, before any destructive step, by [validateManifestCompleteness]. A count that is still
+     * missing here is handled by the per-table check below.
+     */
     private fun verifyInternal(
         db: SQLiteDatabase,
         expectedCounts: Map<String, Int>,
-        manifestSemanticAggregates: Map<String, String> = emptyMap()
+        semanticExpectation: SemanticExpectation?
     ): VerificationSummary {
         val errors = mutableListOf<String>()
         val tableResults = mutableListOf<TableResult>()
@@ -412,7 +547,15 @@ object BackupVerifier {
             val (passed, message) = when (tier) {
                 VerificationTier.TIER_1_EXACT -> {
                     if (expected == null) {
-                        false to "Table '$tableName' not found in manifest counts"
+                        if (tableName in COVERAGE_GATED_TABLES) {
+                            // Legacy manifest written before S0b classified this table. A
+                            // manifest at/above FULL_TABLE_COVERAGE_SCHEMA_VERSION that carries a
+                            // semantic section is rejected pre-swap by validateManifestCompleteness,
+                            // so null here is legacy (including a pre-lane v152 backup, m1).
+                            true to "OK (legacy manifest: no recorded count, actual: $actual)"
+                        } else {
+                            false to "Table '$tableName' not found in manifest counts"
+                        }
                     } else if (actual != expected) {
                         false to "Count mismatch: expected $expected, actual $actual"
                     } else {
@@ -461,10 +604,15 @@ object BackupVerifier {
         val semanticErrors = verifySemanticIntegrity(db)
         errors.addAll(semanticErrors)
 
-        // 5. Semantic aggregate verification (P7-P1-05)
-        if (manifestSemanticAggregates.isNotEmpty()) {
-            val semanticAggregateIssues = verifySemanticAggregates(db, manifestSemanticAggregates)
-            for (issue in semanticAggregateIssues) {
+        // 5. Semantic aggregate verification (UF-46). Only when the caller supplied a typed expectation
+        //    and every earlier check passed. The issue text is bounded: code, aggregate id, checkpoint
+        //    and a bucket count, never a value.
+        var semanticResult: SemanticCheckResult? = null
+        if (semanticExpectation != null && errors.isEmpty()) {
+            val result = SemanticAggregates.verifyAgainst(db, semanticExpectation)
+            semanticResult = result
+            if (result is SemanticCheckResult.Failed) {
+                val issue = semanticIssue(result)
                 errors.add("${issue.code}: ${issue.message}")
             }
         }
@@ -479,9 +627,17 @@ object BackupVerifier {
             totalTablesChecked = tableResults.size,
             totalTablesPassed = totalPassed,
             totalTablesFailed = totalFailed,
-            errors = errors
+            errors = errors,
+            semanticResult = semanticResult
         )
     }
+
+    private fun semanticIssue(failed: SemanticCheckResult.Failed): VerificationIssue =
+        VerificationIssue(
+            code = failed.code.name,
+            message = "aggregate=${failed.aggregateId?.name ?: "NONE"} " +
+                "checkpoint=${failed.checkpoint.name} mismatchedBuckets=${failed.mismatchedBuckets}"
+        )
 
     // ── Quick verification (for staged import) ────────────────────
 
@@ -489,12 +645,19 @@ object BackupVerifier {
      * Fast pre-swap verification: checks integrity, FK, and that Tier 1
      * tables have matching counts. Throws on failure.
      *
-     * @throws CountMismatchException, IntegrityCheckFailedException, ForeignKeyCheckFailedException
+     * When [semanticExpectation] is supplied, the semantic aggregate pass (UF-46) runs after the existing
+     * checks on the same read-only open. A pass that cannot be completed successfully fails closed by
+     * throwing [SemanticVerificationFailedException]; a pass that verifies, or is NOT_VERIFIABLE, is
+     * returned. Returns null when no expectation was supplied.
+     *
+     * @throws CountMismatchException, IntegrityCheckFailedException, ForeignKeyCheckFailedException,
+     *   SemanticVerificationFailedException
      */
     fun verifyQuick(
         dbFile: java.io.File,
-        expectedCounts: Map<String, Int>
-    ) {
+        expectedCounts: Map<String, Int>,
+        semanticExpectation: SemanticExpectation? = null
+    ): SemanticCheckResult? {
         val db = SQLiteDatabase.openDatabase(
             dbFile.absolutePath,
             null,
@@ -523,6 +686,12 @@ object BackupVerifier {
                     throw CountMismatchException(tableName, expected, actual)
                 }
             }
+
+            // Semantic aggregates (UF-46), after every existing check.
+            if (semanticExpectation == null) return null
+            val result = SemanticAggregates.verifyAgainst(db, semanticExpectation)
+            if (result is SemanticCheckResult.Failed) throw SemanticVerificationFailedException(result)
+            return result
         } finally {
             db.close()
         }
@@ -630,7 +799,7 @@ object BackupVerifier {
     }
 
     /**
-     * Returns the set of all tracked table names (61, see TABLE_TIERS) for ArchUnit/grep assertions.
+     * Returns the set of all tracked table names (one per AppDatabase entity, see TABLE_TIERS) for ArchUnit/grep assertions.
      */
     fun allTableNames(): Set<String> = TABLE_TIERS.keys
 
@@ -640,61 +809,5 @@ object BackupVerifier {
      */
     fun tableTier(tableName: String): VerificationTier {
         return TABLE_TIERS[tableName] ?: VerificationTier.TIER_3_OPTIONAL
-    }
-
-    // ── Semantic aggregate queries (P7-P1-05) ────────────────────
-
-    /**
-     * The five semantic aggregate queries whose results are captured at backup
-     * time and re-verified on restore. Each pair is (SQL query, human-readable
-     * label).
-     */
-    val SEMANTIC_AGGREGATE_QUERIES: List<Pair<String, String>> = listOf(
-        "SELECT CAST(SUM(effectiveAmount) AS TEXT) FROM expenses WHERE transactionType = 'EXPENSE' AND isNotMine = 0" to "total_expenses",
-        "SELECT CAST(SUM(effectiveAmount) AS TEXT) FROM expenses WHERE transactionType = 'INCOME' AND isNotMine = 0" to "total_income",
-        "SELECT CAST(COUNT(*) AS TEXT) FROM expenses" to "expense_count",
-        "SELECT CAST(COUNT(*) AS TEXT) FROM budgets" to "budget_count",
-        "SELECT CAST(COUNT(*) AS TEXT) FROM receipt_expense_links" to "receipt_link_count"
-    )
-
-    /**
-     * Verifies that the restored database produces the same aggregate values
-     * that were recorded in the backup manifest.
-     *
-     * @param db the restored (or about-to-be-restored) database
-     * @param expectedAggregates map of (SQL query → expected result string).
-     *   The key must match one of the queries in [SEMANTIC_AGGREGATE_QUERIES].
-     * @return a list of [VerificationIssue] for every aggregate that does not
-     *   match the expected value.
-     */
-    fun verifySemanticAggregates(
-        db: SQLiteDatabase,
-        expectedAggregates: Map<String, String>
-    ): List<VerificationIssue> {
-        val issues = mutableListOf<VerificationIssue>()
-        for ((query, expectedValue) in expectedAggregates) {
-            try {
-                val cursor = db.rawQuery(query, null)
-                val actualValue = cursor.use {
-                    if (it.moveToFirst()) it.getString(0) ?: "N/A" else "N/A"
-                }
-                if (actualValue != expectedValue) {
-                    issues.add(
-                        VerificationIssue(
-                            "SEMANTIC_MISMATCH",
-                            "Aggregate $query: expected=$expectedValue actual=$actualValue"
-                        )
-                    )
-                }
-            } catch (e: Exception) {
-                issues.add(
-                    VerificationIssue(
-                        "SEMANTIC_QUERY_FAILED",
-                            "Aggregate query failed: SEMANTIC_QUERY_FAILED"
-                    )
-                )
-            }
-        }
-        return issues
     }
 }

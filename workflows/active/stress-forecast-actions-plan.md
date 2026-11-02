@@ -170,3 +170,40 @@ Notes:
 2. Run `git -C C:\Users\panos\Desktop\Cost-agregator-int worktree add -b feature/stress-forecast-actions C:\Users\panos\Desktop\Cost-agregator-sfa <integration tip after QF-2>`.
 3. Send the S-pre anchor list to a Sonnet `scout`, and ask validation-runner for `-Action Plan` / `-Action Profiles`.
 4. Start S1 only after S-pre comes back clean.
+
+## Re-anchor amendment (2026-11-02, orchestrator)
+The owner lifted "planning only" on 2026-11-02; owner-approvals 101 is the standing instruction.
+- **Base:** `feature/uf-quick-fixes` @ c8149f25, which carries QF-2a/2b/2c and QF-3a/3b/3c, validated in Batch A. That base is `a5d659de`, not e6967db1. The QF-2 prerequisite (the HomeScreen `:909-914` Money Radar hunk, QF-2c ed431d51) is therefore present.
+- **Merge ordering:** this lane merges after feature/uf-quick-fixes, or together with it.
+- **Re-anchor (explorer at a5d659de):** report in `docs/features/stress-forecast-actions/reanchor-20261102.md`.
+  - `HomeScreen.kt:919-940` holds (`when` :925-937, `homeCurrency` :922). QF-2c removed 3 lines above it, so re-check the offsets at S-pre.
+  - FinancialStressForecastCard is unchanged (:27, :180, :194, :327).
+  - The engine drifted about +86 lines:
+    - `generateRecommendations` :778-824;
+    - `CurrencyFormatter.format` :808, import :29;
+    - class :918;
+    - `StressForecastResult(` :212 (success) and :232 (catch), rethrow :230;
+    - `calculateHorizon(` :162-196;
+    - R4/R5 copy :794/:801.
+  - `CancellationPropagationContractTest` is in the `contracts/` package, entry :75-76. The KDoc :106 has no "(", so it is safe.
+  - `stress_forecast_unavailable`: en `strings.xml:2790`, el :66, es :338. No `stress_rec*` collision.
+- **fix-1.0.4 lane** (unmerged, another session):
+  - No edits to the engine, HomeScreen or the Card.
+  - It changes `MonteCarloSpendingSimulator` (BL-01), injected at engine :62, so engine golden numbers may shift: rebase.
+  - strings.xml: a one-line rebase.
+- **Findings:** BL-09 and P-06-4 are adjacent engine risk/buffer logic. NOT folded in; do not fix them in this lane.
+- **es/el:** sign-off is deferred to the release gate (owner-approvals 103), so it does not block the merge.
+
+## Progress (2026-11-02, orchestrator)
+- S1 and S2 a2adcde7; L1 test fbb62c20.
+- Validation PASS: targeted vr-20261102-013326-b291912c; lint vr-20261102-013957-5343f009; targeted (AE-1 exact) vr-20261102-021800-941aa094; static-guards vr-20261102-022103-864bf6ae.
+- Cheap review, stress S1+S2 (Sonnet, a2adcde7): ACCEPT.
+  - The engine diff is mechanical; INV-14 anchor :211, rethrow :229.
+  - The UI holds no logic; formatMoney uses an explicit currency.
+  - R4-R6 are non-clickable; the cap is 2.
+  - HomeScreen has one hunk; QF-2c is untouched.
+  - 11 keys in all 3 locales. es one/many/other follows repo precedent.
+  - Follow-up, test-only: L1, an exact-[R1] fixture for AE-1 (projectedBalance >= 0, buffers >= 500).
+  - AE-14..17 are manual (lint plus a11y checklist).
+  - L3: `StressForecastSnapshot.recommendationsJson` has no writer, so no persistence regression.
+- Candidate: integration merge together with uf-quick-fixes Batch A (this lane's base). reviewer-strict at the merge.

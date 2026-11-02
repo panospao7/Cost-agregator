@@ -21,6 +21,9 @@
     <string name="unsupported_db_export_auth_denied">Para exportar se necesita tu huella o el bloqueo de pantalla. No se exportó nada.</string>
     <string name="backup_schema_too_old">Esta copia de seguridad es de una versión de la app demasiado antigua para restaurarla.</string>
     <string name="backup_schema_too_new">Esta copia de seguridad se creó con una versión más reciente de la app. Actualiza la app para restaurarla.</string>
+    <!-- UF-46: DRAFT: owner native sign-off pending -->
+    <string name="backup_restore_blocked_content_mismatch">Restauración bloqueada: el contenido de la copia no coincide</string>
+    <string name="backup_restore_not_verifiable_notice">Restauración completada. No se pudo comprobar esta copia con sus totales originales.</string>
 
     <!-- Common Actions (Top Priority) -->
     <string name="action_save">Guardar</string>
@@ -336,6 +339,22 @@
     <string name="notification_access_open_failed">No se pudo abrir la pantalla de ajustes. Abre Ajustes y busca \"Acceso a notificaciones\".</string>
     <string name="money_radar_unavailable">Money Radar no está disponible temporalmente. No se pudieron evaluar algunas señales financieras.</string>
     <string name="stress_forecast_unavailable">La previsión de estrés financiero no está disponible temporalmente. No hay ninguna estimación de riesgo disponible.</string>
+    <!-- stress-forecast-actions: localized stress forecast recommendations (es draft, sign-off at release gate) -->
+    <string name="stress_recs_header">Recomendaciones</string>
+    <string name="stress_rec_review_recurring_obligations">Tus obligaciones recurrentes son altas. Considera cancelar las suscripciones que no uses.</string>
+    <plurals name="stress_rec_reduce_discretionary_spending">
+        <item quantity="one">Podrías quedarte sin dinero en %1$d día. Considera reducir los gastos discrecionales.</item>
+        <item quantity="many">Podrías quedarte sin dinero en %1$d de días. Considera reducir los gastos discrecionales.</item>
+        <item quantity="other">Podrías quedarte sin dinero en %1$d días. Considera reducir los gastos discrecionales.</item>
+    </plurals>
+    <string name="stress_rec_build_emergency_buffer">Tu fondo de emergencia es bajo. Intenta alcanzar al menos %1$s.</string>
+    <string name="stress_rec_build_emergency_buffer_no_amount">Tu fondo de emergencia es bajo. Considera aumentarlo.</string>
+    <string name="stress_rec_delay_non_essential_purchases">Crítico: Considera posponer las compras no esenciales hasta que mejore tu flujo de caja.</string>
+    <string name="stress_rec_healthy_outlook">¡Buen trabajo! Tu nivel de estrés financiero es bajo. Sigue con los buenos hábitos.</string>
+    <string name="stress_rec_no_immediate_concerns">Sin preocupaciones inmediatas. Sigue controlando tus gastos.</string>
+    <string name="stress_rec_action_open_recurring">Abrir pagos recurrentes</string>
+    <string name="stress_rec_action_open_transactions">Ver las transacciones de este mes</string>
+    <string name="stress_rec_action_open_savings_goals">Abrir objetivos de ahorro</string>
     <!-- R18: group-linked expense guard -->
     <string name="expense_delete_blocked_group_linked">Este gasto forma parte de un grupo compartido y no se puede eliminar, porque cambiaría los saldos del grupo.</string>
     <string name="expense_edit_blocked_group_linked">Este gasto forma parte de un grupo compartido, así que no se pueden cambiar su importe, moneda, tipo ni reparto. Puedes seguir editando otros datos, como la categoría o el comercio.</string>
@@ -893,4 +912,13 @@
     <string name="quick_add_flag_payment_conflict">Se encontraron tarjeta y efectivo. Elige uno.</string>
     <string name="quick_add_flag_category_ambiguous">Coinciden varias categorías. Elige una.</string>
     <string name="add_expense_category_auto_hint">Sin categoría. Se asignará una automáticamente al guardar.</string>
+    <string name="savings_goal_more_actions_cd_format">Más acciones para %1$s</string>
+    <string name="savings_goal_delete_confirm_title">¿Eliminar objetivo?</string>
+    <string name="savings_goal_delete_confirm_message_format">¿Eliminar \"%1$s\"? No tiene ahorros ni historial. Esta acción no se puede deshacer.</string>
+    <string name="savings_goal_delete_blocked_title">No se puede eliminar este objetivo</string>
+    <string name="savings_goal_delete_blocked_message">Los objetivos con ahorros o historial de aportaciones no se pueden eliminar, para que tu registro de ahorros se mantenga completo.</string>
+    <string name="savings_goal_deleted_message">Objetivo eliminado</string>
+    <string name="savings_goal_delete_not_empty_message">Este objetivo acaba de recibir ahorros, por lo que no se eliminó.</string>
+    <string name="savings_goal_delete_history_unavailable_message">No se pudo comprobar el historial de aportaciones, por lo que el objetivo no se eliminó. Inténtalo de nuevo más tarde.</string>
+    <string name="savings_goal_deleting_cd">Eliminando objetivo</string>
 </resources>

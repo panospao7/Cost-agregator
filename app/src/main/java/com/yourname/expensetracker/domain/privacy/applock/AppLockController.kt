@@ -461,7 +461,7 @@ class AppLockController @Inject constructor(
     private val mutablePin = MutableStateFlow(PinPresentation.INITIAL)
     private val pinOperationRunning = AtomicBoolean(false)
 
-    /** G2-F1: true while one fingerprint-key re-check (foreground or tap) runs; at most one Keystore read at a time. */
+    /** G2-F1: true while one fingerprint-key re-check (foreground or tap) runs; at most one re-check Keystore read at a time (the store collector's read is separate). */
     private val fingerprintRecheckRunning = AtomicBoolean(false)
     @Volatile private var pinObservationJob: Job? = null
 
@@ -1000,7 +1000,7 @@ class AppLockController @Inject constructor(
     private fun launchFingerprintKeyRecheck() {
         val observed = synchronized(stateLock) { pinState?.takeIf { it.biometricEnabled } } ?: return
         if (!fingerprintRecheckRunning.compareAndSet(false, true)) return
-        scope.launch {
+        scope.launch(start = CoroutineStart.ATOMIC) {
             try {
                 recheckFingerprintKey(observed)
             } catch (e: Exception) {

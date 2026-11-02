@@ -384,3 +384,113 @@ No `app-check` unless a gate demands it. The ExpenseDao parity filters are not n
 - A capture/verify timeout, after the AE-18 measurements.
 - A semantic outcome in `DebugViewModel.importDatabase` (Q9: no).
 - Rescue-restore (`FinancialRescueCoordinator`) coverage.
+
+## Re-anchor revision (2026-11-02; feature-planner, Sonnet; persisted by the orchestrator)
+**Status: APPROVED plan and revision. D-SIS (a) and D-P071 (fold S0b) were confirmed by the owner on 2026-11-02 (owner-approvals 101).**
+
+### 1. Base and lane
+- Worktree `../Cost-agregator-rsv`, branch `feature/restore-semantic-verify`, from origin/feature/ai-evolution (a5d659de or later). Copy `local.properties`. One writer.
+- **O-5 is moot.** The loan S6c pre-reconcile (`DatabaseBackupRepositoryImpl.kt:684-705`) runs before the snapshot stage. Capture goes after `collectTableCountsStrict` (:806), inside the snapshotDb try. Delete the S2 "ordering obligation" fallback.
+- **Schema v152.** MIGRATION_151_152 (`DatabaseMigrations.kt:191-271`) only creates the installment tables plus `ALTER TABLE expenses ADD COLUMN spendingExclusionReason` (:269), so it is identity for the fingerprinted columns.
+- **S-pre:** items 2, 4 and 6 are answered; the G-CANCEL-02 baseline is still 13. The remaining S-pre items (9 CostbackupBundle anchors, 10 VM create-failure path, 8 real-schema fixture reuse) become the first step of the S1/S2 writers.
+
+### 2. Anchors, old to new ((v) = verified by the planner)
+- **DatabaseBackupRepositoryImpl**
+  - snapshot counts + finally close: :805-815 (v)
+  - snapshot verify: :818 (v); joined text: :825 (v)
+  - staged verifyQuick: :1206 (v); postMigrationCheck: :1235 (v)
+  - live verify and joined text: :1389-1391 (v); summary: :1396 (v)
+  - SuccessNeedsRestart: :1444; rollback: :1495; importDatabase: :1952; toImportSummary: :2461
+  - BackupSchemaUnsupportedException: :3207 (v)
+- **BackupVerifier**
+  - TODO: :26
+  - TABLE_TIERS: :50-128 (v)
+  - expectedCountsAfterMigration: :249 (v)
+  - verify: :314/:334; verifyInternal: :342 (v); step 5: :465 (v); verifyQuick: :494 (v)
+  - SEMANTIC_AGGREGATE_QUERIES: :652 (v)
+- **Other**
+  - VM mapper: `BackupRestoreViewModel.kt:299/309/334`
+  - `RestoreJournal.kt:910-923`
+  - `DatabaseBackupRepository.kt:128`
+  - LEGAL_PATHS: BACKUP :654, RESTORE :661, App Lock :2467
+  - fixture `createFullSchemaDatabase`: `DatabaseBackupRepositoryImplTest.kt:3004-3017` (v)
+
+### 3. D-SIS: loan `SpendingInclusionSql`
+- **Facts:**
+  - `SPENDING_PREDICATE` = `isNotMine = 0 AND spendingExclusionReason IS NULL`.
+  - `EFFECTIVE_AMOUNT` = `CASE WHEN spendingExclusionReason IS NOT NULL THEN 0.0 ELSE (ExpenseDao.EFFECTIVE_AMOUNT_SQL) END`.
+  - Every ExpenseDao spending aggregate now applies the predicate.
+- **Options:**
+  - (a) SPENDING uses `SpendingInclusionSql.EFFECTIVE_AMOUNT`.
+  - (b) Keep the ExpenseDao constants. This misses lost or flipped flags (double-counted installment spend) and disagrees with what the app shows.
+  - (c) Fingerprint both. This adds a 5th ID, an extra scan, and only marginal value.
+- **Recommendation: (a).**
+  - INCOME is unchanged. This amends erratum E-2 to E-3: "SPENDING uses `SpendingInclusionSql.EFFECTIVE_AMOUNT`; still no `isNotMine` filter and no ExpenseDao edit". No guard or allowlist edit.
+  - Consequence: the aggregate needs v152 or later. A manifest with `sourceDbVersion < 152` and a section is NotVerifiable(VERSION). AE-10's v149 case becomes a synthetic NOT_VERIFIABLE(VERSION) test. The chain test covers 152..current; 145..151 get a static "no undeclared write to a fingerprinted table" check.
+  - Slices affected:
+    - S1: registry, definitionHash, `expectedAggregatesAfterMigration` gated at 152, chain range, AE-2/3/10, a flagged-PURCHASE fixture (n+1, s unchanged), and a "dropping the flag changes s" test.
+    - S2: the fixture comes from the real 152.json.
+    - S3/S4: the VERSION case only.
+    - S6: the docs mention the flagged-row rule.
+
+### 4. D-P071: fold review P-07-1 as a new S0b, before S1
+- **Recommendation: fold.** It is in the same file, `BackupVerifier.kt`.
+- **Goal:** classify every AppDatabase entity in TABLE_TIERS. Recount against 152.json; the review's 61/73 is likely now 63/75.
+- **Source:** `BackupVerifier.kt`:
+  - add the missing tables, gated by introduction version, using the `requiredManifestTables`/`expectedCountsAfterMigration` pattern (:203, :249);
+  - fix the stale "61" comments.
+- **Tests:** new `BackupVerifierTableCoverageTest` (152.json table names == `allTableNames()` exactly, no exclusion list); extend `BackupVerifierTest`.
+- **Tier policy:** version-gated TIER_1_EXACT for user data, TIER_3 for caches and telemetry. The S0b writer proposes the table list.
+- **Risk:** an ungated Tier-1 table breaks old-backup `validateManifestCompleteness`.
+- **Gates:** room-migration-guardian and architecture-guardian.
+- **Not folded:**
+  - P-07-3: destructive restore-swap durability; needs its own plan.
+  - J-20-1: new destructive UI and legal paths; owner-gated.
+
+### 5. P-07-2 is fixed by this plan
+S1 deletes the inert `SEMANTIC_AGGREGATE_QUERIES`, S2 records at export, and S3/S4 wire C1-C3.
+
+### 6. fix-1.0.4 overlap
+- Disjoint: ExportAnonymizer sanitizers are compatible (capture happens after sanitize).
+- LEGAL_PATHS and db_ownership edits are in different regions; rebase LEGAL_PATHS at S6.
+- Can start before fix104 merges.
+
+### 7. Validation
+- B1 = S0b + S1: the original filters plus `*DatabaseBackupRepositoryImplTest*`, `*BackupRestoreContract*` and `*BackupRestoreRoundtripGolden*`. No migration-tests unless room-migration-guardian asks.
+- B2 and B3 are unchanged.
+- Candidate: static-guards once, then fresh-session final acceptance.
+- Order: S0b, S1, S2, S3, S4, S5, S6.
+
+### 8. Owner decisions
+1. D-SIS (a).
+2. Fold S0b, with the tier policy above.
+3. el/es sign-off on the S5 strings (unchanged).
+
+## Progress (2026-11-02, orchestrator)
+- S0b e99e5c03 and S1 8cf157b6 committed. Test fixes: e1276a99 (isNull matcher) and af193bd4 (legacy manifests take the migration step; AE-17 uses total_changes plus file bytes). Debug iteration 1 used.
+- B1 PASS: vr-20261102-012808-f438a457 (the earlier FAILs were 004245 compile and 004817 three test-side failures).
+- room-migration-guardian S0b: ACCEPT-WITH-FIXES.
+  - Fixtures now follow allTableNames; the tests pin the 152 gating.
+  - LOW: verifyInternal relies on validateManifestCompleteness (KDoc added in S1).
+  - LOW: negotiation_outcomes 146-151 gets a legacy pass (accepted).
+- Combined guardian S1 (Sonnet, 8cf157b6): ACCEPT.
+  - Unwired and neutral: all 4 callers use 2 args.
+  - D-SIS (a) is correct.
+  - SQL comes only from constants; parse limits hold.
+  - Privacy bounded. CE shape correct. Deleted symbols are clean.
+  - S6 docs:
+    - ARCHITECTURE.md :1290 and :1315-1329;
+    - backup-restore-barrier-contract.md :91;
+    - LEGAL_PATHS Backup/Restore RESTORE and FORBIDDEN (O-6);
+    - CODEBASE_INVENTORY/SEGMENTS: add SemanticAggregates.kt.
+  - The runner must confirm static-guards, db_access and cancellation (no new baseline entries) at the candidate gate.
+
+## S7 — reviewer-strict iteration 1 fixes (feature-planner, Sonnet high; persisted by the orchestrator, 2026-11-02)
+Trigger: reviewer-strict REJECT on candidate 69aec1dd (gate PASS: vr-20261102-084003-bf74ca0a, vr-20261102-084234-dea093fb, vr-20261102-084823-c3f54b59). Integrity core passed; M1 is UI reachability. Review iteration 1/2.
+
+- **S7a (M1) one-shot notice across the restart.** NEW `data/backup/RestoreVerificationNoticeStore.kt` (@Singleton, @ApplicationContext, prefs file `restore_verification_notice`, one boolean; `record(pending)` commit(), best-effort, CE rethrown; `consume()` read+remove; modelled on NotificationPromptStore). `BackupRestoreViewModel`: in SuccessNeedsRestart, `record(isSemanticNotVerifiable())` on IO **before** `restoreRestartSignal.markRequested()` (false clears a stale flag). `MainActivity`/`MainScreen`: after the operational-lock `when`, `LaunchedEffect(Unit) { if (store.consume()) snackbar(backup_restore_not_verifiable_notice) }` — no new string keys (AE-19 stays exactly two). BackupRestoreScreen card unchanged. Receipt-asset restore copies receipt files only; allowBackup=false. Tests: RestoreVerificationNoticeStoreTest (Robolectric), BackupRestoreViewModelTest (verifyOrder record→markRequested; false on Verified; nothing on failure).
+- **S7b (m1, m3, m4).** m1: coverage of the 9 gated tables is required only when `databaseVersion >= 152 && semantic marker` (marker = `semanticAggregates != null || semanticSectionMalformed`), via a parameter on requiredManifestTables/validateManifestCompleteness defaulting fail-closed (true); call site in DatabaseBackupRepositoryImpl. Every lane backup carries the section (NOT_CAPTURED when degraded) → still fully gated; pre-lane v152 dev backups → old coverage + NOT_VERIFIABLE(LEGACY). m3: C0 `selfCheckSemanticSection` requires `parsed.set == set` (confirm equals covers version/status/notCapturedReason/definitionHash, else compare explicitly) → SEMANTIC_SELF_CHECK_FAILED. m4: PreReconcile tests :194/:241/:442 capture BackupVerifier.verify's result (mockkObject + callOriginal) and assert the orphan issue, message still bounded. Tests: CostbackupBundleTest, BackupVerifier*Test, DatabaseBackupRepositoryImplTest (section-less v152 restore accepted; degraded capture still writes the key), DatabaseBackupRepositoryPreReconcileTest.
+- **S7c (m2) docs** last: domain-spec §1/INV-2 (spending SpendingInclusionSql.EFFECTIVE_AMOUNT, flagged-row rule; income EFFECTIVE_AMOUNT_SQL), INV-9/AE-10 (below 152 → NOT_VERIFIABLE(VERSION)); LEGAL_PATHS raw .db import Debug-only, no notice (Q9); schema-floor range text vs app v152; document S7a and the m1 marker rule.
+- **Order:** one writer per lane → S7a, then S7b (writer + separate test-author), then S7c.
+- **Validation (one batch):** targeted RestoreVerificationNoticeStoreTest, BackupRestoreViewModel*, CostbackupBundle*, BackupVerifier*, DatabaseBackupRepositoryImplTest, DatabaseBackupRepositoryPreReconcileTest, plus the previous candidate union; then lint (MainActivity UI change) and static-guards once. Gate: combined guardian; reviewer-strict iteration 2.
+- **Owner decisions:** none (no permission/network/legal path; boolean only; not in the DB). Fallback if the owner objects to a new prefs file: amend INV-17/O-1 to drop the notice.

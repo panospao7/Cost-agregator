@@ -38,6 +38,9 @@
     <string name="deeplink_confirm_installments_body">Ένας σύνδεσμος θέλει να ανοίξει τα προγράμματα δόσεων. Συνεχίστε μόνο αν το περιμένατε.</string>
     <string name="backup_schema_too_old">Αυτό το αντίγραφο ασφαλείας προέρχεται από πολύ παλιά έκδοση της εφαρμογής και δεν μπορεί να επαναφερθεί.</string>
     <string name="backup_schema_too_new">Αυτό το αντίγραφο ασφαλείας δημιουργήθηκε από νεότερη έκδοση της εφαρμογής. Ενημερώστε την εφαρμογή για να το επαναφέρετε.</string>
+    <!-- UF-46: DRAFT: owner native sign-off pending -->
+    <string name="backup_restore_blocked_content_mismatch">Η επαναφορά μπλοκαρίστηκε: το περιεχόμενο του αντιγράφου δεν ταιριάζει</string>
+    <string name="backup_restore_not_verifiable_notice">Η επαναφορά ολοκληρώθηκε. Το αντίγραφο δεν μπόρεσε να ελεγχθεί με τα αρχικά του σύνολα.</string>
     <string name="bank_sync_result_success">Ο συγχρονισμός ολοκληρώθηκε</string>
     <string name="bank_sync_result_partial">Ο συγχρονισμός ολοκληρώθηκε — ορισμένα στοιχεία παραλείφθηκαν ή απέτυχαν</string>
     <string name="bank_sync_result_reauth_required">Απαιτείται νέα ταυτοποίηση — συνδέστε ξανά αυτή την τράπεζα</string>
@@ -64,6 +67,21 @@
     <string name="notification_access_open_failed">Δεν ήταν δυνατό το άνοιγμα των ρυθμίσεων. Ανοίξτε τις Ρυθμίσεις και αναζητήστε \"Πρόσβαση ειδοποιήσεων\".</string>
     <string name="money_radar_unavailable">Το Money Radar δεν είναι προσωρινά διαθέσιμο. Δεν ήταν δυνατό να αξιολογηθούν ορισμένες οικονομικές ενδείξεις.</string>
     <string name="stress_forecast_unavailable">Η πρόβλεψη οικονομικής πίεσης δεν είναι προσωρινά διαθέσιμη. Δεν υπάρχει διαθέσιμη εκτίμηση κινδύνου.</string>
+    <!-- stress-forecast-actions: localized stress forecast recommendations (el draft, sign-off at release gate) -->
+    <string name="stress_recs_header">Συστάσεις</string>
+    <string name="stress_rec_review_recurring_obligations">Οι επαναλαμβανόμενες υποχρεώσεις σας είναι υψηλές. Σκεφτείτε να ακυρώσετε συνδρομές που δεν χρησιμοποιείτε.</string>
+    <plurals name="stress_rec_reduce_discretionary_spending">
+        <item quantity="one">Μπορεί να μείνετε από χρήματα σε %1$d ημέρα. Σκεφτείτε να μειώσετε τα διακριτικά έξοδα.</item>
+        <item quantity="other">Μπορεί να μείνετε από χρήματα σε %1$d ημέρες. Σκεφτείτε να μειώσετε τα διακριτικά έξοδα.</item>
+    </plurals>
+    <string name="stress_rec_build_emergency_buffer">Το αποθεματικό έκτακτης ανάγκης σας είναι χαμηλό. Στοχεύστε τουλάχιστον σε %1$s.</string>
+    <string name="stress_rec_build_emergency_buffer_no_amount">Το αποθεματικό έκτακτης ανάγκης σας είναι χαμηλό. Σκεφτείτε να το ενισχύσετε.</string>
+    <string name="stress_rec_delay_non_essential_purchases">Κρίσιμο: Σκεφτείτε να αναβάλετε μη απαραίτητες αγορές μέχρι να βελτιωθεί η ταμειακή σας ροή.</string>
+    <string name="stress_rec_healthy_outlook">Μπράβο! Το επίπεδο οικονομικής πίεσής σας είναι χαμηλό. Συνεχίστε με τις καλές συνήθειες.</string>
+    <string name="stress_rec_no_immediate_concerns">Καμία άμεση ανησυχία. Συνεχίστε να παρακολουθείτε τα έξοδά σας.</string>
+    <string name="stress_rec_action_open_recurring">Άνοιγμα επαναλαμβανόμενων πληρωμών</string>
+    <string name="stress_rec_action_open_transactions">Προβολή συναλλαγών του μήνα</string>
+    <string name="stress_rec_action_open_savings_goals">Άνοιγμα στόχων αποταμίευσης</string>
     <!-- R18: group-linked expense guard -->
     <string name="expense_delete_blocked_group_linked">Αυτό το έξοδο ανήκει σε κοινόχρηστη ομάδα και δεν μπορεί να διαγραφεί, γιατί θα άλλαζαν τα υπόλοιπα της ομάδας.</string>
     <string name="expense_edit_blocked_group_linked">Αυτό το έξοδο ανήκει σε κοινόχρηστη ομάδα, οπότε το ποσό, το νόμισμα, ο τύπος και ο διαμοιρασμός του δεν μπορούν να αλλάξουν. Μπορείτε ακόμη να αλλάξετε άλλα στοιχεία, όπως κατηγορία ή έμπορο.</string>
@@ -646,4 +664,15 @@
     <string name="quick_add_flag_payment_conflict">Βρέθηκαν και κάρτα και μετρητά. Επιλέξτε ένα.</string>
     <string name="quick_add_flag_category_ambiguous">Ταίριαξαν περισσότερες κατηγορίες. Επιλέξτε μία.</string>
     <string name="add_expense_category_auto_hint">Δεν επιλέχθηκε κατηγορία. Θα ανατεθεί αυτόματα κατά την αποθήκευση.</string>
+    <string name="savings_goal_more_actions_cd_format">Περισσότερες ενέργειες για %1$s</string>
+    <string name="savings_goal_delete_confirm_title">Διαγραφή στόχου;</string>
+    <string name="savings_goal_delete_confirm_message_format">Διαγραφή του \"%1$s\"; Δεν έχει αποταμιεύσεις ή ιστορικό. Η ενέργεια δεν μπορεί να αναιρεθεί.</string>
+    <string name="savings_goal_delete_blocked_title">Δεν είναι δυνατή η διαγραφή αυτού του στόχου</string>
+    <string name="savings_goal_delete_blocked_message">Οι στόχοι με αποταμιεύσεις ή ιστορικό εισφορών δεν μπορούν να διαγραφούν, ώστε το αρχείο αποταμιεύσεών σας να παραμένει πλήρες.</string>
+    <string name="savings_goal_deleted_message">Ο στόχος διαγράφηκε</string>
+    <string name="savings_goal_delete_not_empty_message">Αυτός ο στόχος μόλις έλαβε αποταμιεύσεις, γι\' αυτό δεν διαγράφηκε.</string>
+    <string name="savings_goal_delete_history_unavailable_message">Δεν ήταν δυνατός ο έλεγχος του ιστορικού εισφορών, γι\' αυτό ο στόχος δεν διαγράφηκε. Δοκιμάστε ξανά αργότερα.</string>
+    <string name="savings_goal_deleting_cd">Διαγραφή στόχου σε εξέλιξη</string>
+    <string name="action_delete">Διαγραφή</string>
+    <string name="error_delete_failed">Αποτυχία διαγραφής</string>
 </resources>

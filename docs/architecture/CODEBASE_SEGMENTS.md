@@ -470,7 +470,8 @@ Owns export pipelines, backup/restore flows, and file packaging.
 - `domain/export/AccountingExportPolicy.kt` — Export policy validation (single-currency, purchase-only, global dataset checks via `validateGlobalDataset()`)
 - `data/repository/AccountingExportRepository.kt`
 - `data/repository/DatabaseBackupRepositoryImpl.kt`
-- `data/backup/BackupVerifier.kt` — 58-table 3-tier verification (TIER_1_EXACT / TIER_2_VALIDITY / TIER_3_OPTIONAL)
+- `data/backup/BackupVerifier.kt` — 74-table 3-tier verification (TIER_1_EXACT / TIER_2_VALIDITY / TIER_3_OPTIONAL); optional semantic-aggregate comparison (C1/C2/C3)
+- `data/backup/SemanticAggregates.kt` — UF-46 closed four-ID code-owned aggregate registry: capture, manifest section parse, read-only compare/verify (bounded codes only)
 - `data/backup/CostbackupBundle.kt` — AES-256-GCM encrypted ZIP: header + manifest + DB + receipt images + checksums
 - `data/backup/RestoreJournal.kt` — Crash-safe 9-state restore journal; ASSETS_RESTORING state for asset recovery
 - `data/backup/RestoreMaintenanceMode.kt` — 11-state mode manager; pauses 7 workers; BACKUP_EXPORTING mode
@@ -478,6 +479,7 @@ Owns export pipelines, backup/restore flows, and file packaging.
 - `data/backup/DatabaseWriteBarrier.kt` — Operation-level write blocking during restore (throws IllegalStateException in non-NORMAL/BACKUP_EXPORTING modes)
 - `domain/backup/BackupPrivacyMode.kt` — enum defining 4 backup privacy levels
 - `domain/backup/DatabaseBackupRepository.kt`
+- `domain/backup/SemanticVerificationOutcome.kt` — UF-46 restore outcome (`Verified` / `NotVerifiable(reason)`); domain-local, no amounts
 - `domain/export/AccountingExporters.kt`
 - `ui/screens/export/ExportOptionsScreen.kt`
 - `di/BackupRepositoryModule.kt`
@@ -800,6 +802,7 @@ Owns smart savings optimization and financial health score computation.
 - `domain/savings/AutomatedSavingsRuleEngine.kt`
 - `domain/savings/SavingsGamificationEngine.kt`
 - `domain/savings/SmartSavingsEngine.kt`
+- `domain/savings/SavingsGoalDeletionPolicy.kt`, `domain/savings/SavingsGoalDeleteResult.kt` — savings goal delete decision and outcomes
 - `data/repository/SavingsSweepAcceptanceCoordinator.kt` — authoritative Room balance/plan/ledger commit
 - `data/repository/SavingsContributionHistoryRepository.kt` — read-only legacy history view plus Room ledger
 - `domain/health/FinancialHealthCalculator.kt`

@@ -26,7 +26,6 @@ import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.recurring.RecurringInstallmentEligibility
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
 import com.yourname.expensetracker.domain.util.CancellationSafe
-import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -779,9 +778,9 @@ class FinancialStressForecastEngine @Inject constructor(
         horizons: List<StressHorizon>,
         patterns: List<com.yourname.expensetracker.domain.model.RecurringPattern>,
         displayCurrency: String
-    ): List<String> {
-        val recommendations = mutableListOf<String>()
-        
+    ): List<StressRecommendation> {
+        val recommendations = mutableListOf<StressRecommendation>()
+
         val anyRisk = horizons.any { it.riskLevel >= StressRiskLevel.MODERATE }
         val highRisk = horizons.any { it.riskLevel >= StressRiskLevel.HIGH }
         
@@ -791,36 +790,48 @@ class FinancialStressForecastEngine @Inject constructor(
             val avgIncome = horizons.first().expectedIncome / horizons.first().daysAhead * 30.0
             
             if (avgRecurring > avgIncome * 0.8) {
-                recommendations.add("Your recurring obligations are high. Consider canceling unused subscriptions.")
+                recommendations.add(StressRecommendation(StressRecommendationKind.REVIEW_RECURRING_OBLIGATIONS))
             }
             
             // Check for projected negative balance
             val worstHorizon = horizons.minByOrNull { it.projectedBalance }
             if (worstHorizon != null && worstHorizon.projectedBalance < 0) {
                 val daysUntil = worstHorizon.daysAhead
-                recommendations.add("You may run out of money in $daysUntil days. Consider reducing discretionary spending.")
+                recommendations.add(
+                    StressRecommendation(
+                        kind = StressRecommendationKind.REDUCE_DISCRETIONARY_SPENDING,
+                        daysAhead = daysUntil
+                    )
+                )
             }
             
             // Check emergency buffer
             val emergencyBuffer = getEmergencyBuffer()
             val minBuffer = horizons.minOf { it.discretionaryBuffer }
             if (minBuffer < emergencyBuffer) {
-                val formattedBuffer = CurrencyFormatter.format(emergencyBuffer, displayCurrency)
-                recommendations.add("Your emergency buffer is low. Aim for at least $formattedBuffer.")
+                recommendations.add(
+                    StressRecommendation(
+                        kind = StressRecommendationKind.BUILD_EMERGENCY_BUFFER,
+                        bufferTarget = emergencyBuffer,
+                        bufferCurrency = displayCurrency
+                    )
+                )
             }
         }
         
         if (highRisk) {
-            recommendations.add("Critical: Consider delaying non-essential purchases until your cash flow improves.")
+            recommendations.add(StressRecommendation(StressRecommendationKind.DELAY_NON_ESSENTIAL_PURCHASES))
         }
         
         // Add positive reinforcement when healthy
         val emergencyBuffer = getEmergencyBuffer()
         if (!anyRisk && horizons.all { it.projectedBalance > emergencyBuffer }) {
-            recommendations.add("Great job! Your financial stress level is low. Keep up the good habits.")
+            recommendations.add(StressRecommendation(StressRecommendationKind.HEALTHY_OUTLOOK))
         }
-        
-        return recommendations.ifEmpty { listOf("No immediate concerns. Continue monitoring your spending.") }
+
+        return recommendations.ifEmpty {
+            listOf(StressRecommendation(StressRecommendationKind.NO_IMMEDIATE_CONCERNS))
+        }
     }
 
     /**
@@ -919,7 +930,7 @@ data class StressForecastResult(
     val horizons: List<StressHorizon>,
     val overallRiskLevel: StressRiskLevel?,
     val earliestCrunchDate: Long?,
-    val recommendations: List<String>,
+    val recommendations: List<StressRecommendation>,
     val displayCurrency: String = "",
     val mode: StressForecastMode = StressForecastMode.NET_CASHFLOW_ESTIMATE,
     val isPartial: Boolean = false,

@@ -143,7 +143,8 @@ class BackupRestoreViewModelPrivacyDenialTest : ViewModelTestUtils() {
         databaseBackupRepository,
         restoreMaintenanceMode,
         FakeTimeProvider(1_700_000_000_000L),
-        com.yourname.expensetracker.data.backup.RestoreRestartSignal()
+        com.yourname.expensetracker.data.backup.RestoreRestartSignal(),
+        mockk<com.yourname.expensetracker.data.backup.RestoreVerificationNoticeStore>(relaxed = true)
     ).also { viewModels += it }
 
     @After

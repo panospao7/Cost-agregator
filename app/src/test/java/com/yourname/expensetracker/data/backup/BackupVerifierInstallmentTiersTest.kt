@@ -72,11 +72,23 @@ class BackupVerifierInstallmentTiersTest {
     }
 
     @Test
-    fun INV30_requiredManifestTables_below_152_differ_from_152_by_exactly_the_installment_tables() {
+    fun INV30_requiredManifestTables_below_152_differ_from_152_by_exactly_the_installment_tables_and_the_s0b_coverage_tables() {
         val at151 = BackupVerifier.requiredManifestTables(databaseVersion = 151)
         val at152 = BackupVerifier.requiredManifestTables(databaseVersion = 152)
 
-        assertEquals(installmentTables, at152 - at151)
+        // P-07-1 / S0b: the nine newly classified Tier 1 tables are also first required at 152.
+        val s0bCoverageTables = setOf(
+            "source_stats_events",
+            "warranty_lifecycle_events",
+            "investment_transactions",
+            "group_settlements",
+            "group_lifecycle_events",
+            "entity_source_links",
+            "bank_statement_import_runs",
+            "bank_statement_import_items",
+            "negotiation_outcomes"
+        )
+        assertEquals(installmentTables + s0bCoverageTables, at152 - at151)
         assertTrue("152 must only add tables over 151", at152.containsAll(at151))
     }
 

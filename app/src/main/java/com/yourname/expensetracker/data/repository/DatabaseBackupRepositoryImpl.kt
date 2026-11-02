@@ -16,6 +16,16 @@ import com.yourname.expensetracker.data.backup.RestoreJournal
 import com.yourname.expensetracker.data.backup.ReceiptAssetRecovery
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.backup.RestoreDatabaseOpener
+import com.yourname.expensetracker.data.backup.SemanticAggregateSet
+import com.yourname.expensetracker.data.backup.SemanticAggregateId
+import com.yourname.expensetracker.data.backup.SemanticAggregates
+import com.yourname.expensetracker.data.backup.SemanticBasis
+import com.yourname.expensetracker.data.backup.SemanticCaptureStatus
+import com.yourname.expensetracker.data.backup.SemanticCheckResult
+import com.yourname.expensetracker.data.backup.SemanticCheckpoint
+import com.yourname.expensetracker.data.backup.SemanticCode
+import com.yourname.expensetracker.data.backup.SemanticExpectation
+import com.yourname.expensetracker.data.backup.SemanticNotCapturedReason
 import com.yourname.expensetracker.data.backup.WorkerDrainTimeoutException
 import com.yourname.expensetracker.data.privacy.BackupEncryptionService
 import com.yourname.expensetracker.data.privacy.ExportAnonymizer
@@ -31,6 +41,8 @@ import com.yourname.expensetracker.domain.backup.DatabaseBackupRepository
 import com.yourname.expensetracker.domain.backup.DatabaseImportResult
 import com.yourname.expensetracker.domain.backup.DatabaseImportSummary
 import com.yourname.expensetracker.domain.backup.DatabaseStats
+import com.yourname.expensetracker.domain.backup.SemanticNotVerifiableReason
+import com.yourname.expensetracker.domain.backup.SemanticVerificationOutcome
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.domain.privacy.PrivacyDeniedException
@@ -170,6 +182,34 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         private const val CURRENT_SUPPORTED_SCHEMA_VERSION = APP_DATABASE_SCHEMA_VERSION
         private const val BACKUP_ENCRYPTION_KEY_NAME = "backup_encryption_password"
         private const val BACKUP_ENCRYPTION_KEY_BYTES = 32 // 256 bits
+
+        /**
+         * UF-46 (INV-15): folds the three checkpoint results of one restore into the single outcome the
+         * summary carries. A [SemanticCheckResult.Failed] at any checkpoint is a failure, never an
+         * outcome: it is rethrown as [BackupSemanticVerificationException] (fail-closed). Otherwise the
+         * result is [SemanticVerificationOutcome.Verified] only when all three checkpoints are
+         * [SemanticCheckResult.Verified]; anything else is [SemanticVerificationOutcome.NotVerifiable]
+         * with the reason of the first non-verified checkpoint in order C1, C2, C3. A checkpoint that
+         * produced no result (null) is never Verified and maps to NOT_CAPTURED. Bounded: codes only.
+         */
+        internal fun combineSemanticOutcome(
+            c1: SemanticCheckResult?,
+            c2: SemanticCheckResult?,
+            c3: SemanticCheckResult?
+        ): SemanticVerificationOutcome {
+            var firstReason: SemanticNotVerifiableReason? = null
+            for (result in listOf(c1, c2, c3)) {
+                when (result) {
+                    is SemanticCheckResult.Failed -> throw BackupSemanticVerificationException(result)
+                    is SemanticCheckResult.Verified -> Unit
+                    is SemanticCheckResult.NotVerifiable ->
+                        if (firstReason == null) firstReason = result.reason
+                    null -> if (firstReason == null) firstReason = SemanticNotVerifiableReason.NOT_CAPTURED
+                }
+            }
+            return firstReason?.let { SemanticVerificationOutcome.NotVerifiable(it) }
+                ?: SemanticVerificationOutcome.Verified
+        }
 
         @JvmStatic
         suspend fun verifyStagedImportWithRoom(
@@ -582,7 +622,8 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             redacted = snapshot.redacted,
             includeReceiptImages = snapshot.includeReceiptImages,
             encryptionService = backupEncryptionService,
-            privacyModeName = privacyMode?.name
+            privacyModeName = privacyMode?.name,
+            semanticAggregates = snapshot.semanticAggregates
         )
     }
 
@@ -613,7 +654,9 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         val tableCounts: Map<String, Int>,
         val receiptFiles: Map<String, File>,
         val includeReceiptImages: Boolean,
-        val redacted: Boolean
+        val redacted: Boolean,
+        /** Semantic aggregate section captured from the snapshot; null only if it could not be built. */
+        val semanticAggregates: SemanticAggregateSet? = null
     )
 
     private class ReceiptAssetCollectionException : IllegalStateException(
@@ -802,8 +845,13 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 val snapshotDb = android.database.sqlite.SQLiteDatabase.openDatabase(
                     tempDb.absolutePath, null, android.database.sqlite.SQLiteDatabase.OPEN_READONLY
                 )
+                var semanticAggregates: SemanticAggregateSet? = null
                 val tableCounts = try {
-                    BackupVerifier.collectTableCountsStrict(snapshotDb)
+                    val counts = BackupVerifier.collectTableCountsStrict(snapshotDb)
+                    // UF-46 CAPTURE + C0: after every write to tempDb (sanitize) and after the counts,
+                    // on the same read-only handle. Never fails the backup; CE propagates.
+                    semanticAggregates = captureSemanticSection(snapshotDb, counts, run)
+                    counts
                 } catch (e: BackupVerifier.RequiredTableCountException) {
                     // snapshotDb is closed by the finally below.
                     run.event("SNAPSHOT_VERIFIED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
@@ -821,9 +869,8 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     run.event("SNAPSHOT_VERIFIED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
                         reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.VALIDATION_FAILED)
                     deferredTerminal.defer { run.failedFinal("Backup snapshot verification failed") }
-                    return@withContext Result.failure(
-                        Exception("Backup snapshot verification failed: ${snapshotVerification.errors.joinToString("; ")}")
-                    )
+                    // INV-14: bounded code only; the internal issue list never reaches the message.
+                    return@withContext Result.failure(Exception("SNAPSHOT_VERIFICATION_FAILED"))
                 }
 
                 // Collect receipt assets
@@ -839,7 +886,8 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     tableCounts = tableCounts,
                     receiptFiles = receiptFiles,
                     includeReceiptImages = resolvedIncludeReceiptImages,
-                    redacted = resolvedRedacted
+                    redacted = resolvedRedacted,
+                    semanticAggregates = semanticAggregates
                 )
 
                 // Destination-specific write (SAF Uri or legacy File delegate)
@@ -871,6 +919,46 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             // (runCatching above) and on cancellation (flush is NonCancellable and never throws).
             deferredTerminal.flush()
         }
+    }
+
+    /**
+     * UF-46 CAPTURE + C0 (INV-5, INV-6). Captures the semantic aggregates from the read-only
+     * [snapshotDb] and self-checks the serialised section. This NEVER fails the backup: a capture
+     * problem or a failed self-check degrades to a NOT_CAPTURED section with a bounded reason, and
+     * exactly one `SEMANTIC_CAPTURED`/SKIPPED event is emitted carrying only `semanticCode`. A partial
+     * CAPTURED section is never returned. CancellationException is rethrown.
+     */
+    private suspend fun captureSemanticSection(
+        snapshotDb: android.database.sqlite.SQLiteDatabase,
+        tableCounts: Map<String, Int>,
+        run: OperationRunHandle
+    ): SemanticAggregateSet {
+        val captured = try {
+            SemanticAggregates.capture(snapshotDb, tableCounts)
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            SemanticAggregateSet.ofNotCaptured(SemanticNotCapturedReason.SEMANTIC_CAPTURE_FAILED)
+        }
+        val section = if (captured.status == SemanticCaptureStatus.CAPTURED &&
+            CostbackupBundle.selfCheckSemanticSection(captured) !is SemanticCheckResult.Verified
+        ) {
+            SemanticAggregateSet.ofNotCaptured(SemanticNotCapturedReason.SEMANTIC_SELF_CHECK_FAILED)
+        } else {
+            captured
+        }
+        val reason = section.notCapturedReason
+        if (section.status == SemanticCaptureStatus.NOT_CAPTURED && reason != null) {
+            Timber.w("Backup: semantic section not captured code=%s", reason.code.name)
+            run.event(
+                "SEMANTIC_CAPTURED",
+                com.yourname.expensetracker.domain.diagnostics.EventOutcome.SKIPPED,
+                reasonCode = DiagnosticReasonCode.VALIDATION_FAILED,
+                metadata = SafeEventMetadata.builder()
+                    .put("semanticCode", reason.code.name)
+                    .build()
+            )
+        }
+        return section
     }
 
     /**
@@ -917,7 +1005,8 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     includeReceiptImages = snapshot.includeReceiptImages,
                     encryptionService = backupEncryptionService,
                     privacyModeName = privacyMode?.name,
-                    tempDir = context.cacheDir
+                    tempDir = context.cacheDir,
+                    semanticAggregates = snapshot.semanticAggregates
                 )
             }
         } catch (t: Throwable) {
@@ -1179,7 +1268,10 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 BackupVerifier.validateManifestCompleteness(
                     manifestTableCounts,
                     manifest.backupFormatVersion,
-                    manifest.databaseVersion
+                    manifest.databaseVersion,
+                    // m1: the 9 coverage-gated tables are required only for manifests that carry a
+                    // semantic section (present or present-but-malformed).
+                    semanticMarker = manifest.semanticAggregates != null || manifest.semanticSectionMalformed
                 )
             } catch (e: BackupVerifier.IncompleteManifestException) {
                 restoreEvents.event("BUNDLE_VALIDATED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
@@ -1192,19 +1284,73 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 return@withContext Result.failure(e)
             }
 
+            // 4b. UF-46 (INV-12): a structurally malformed semantic section blocks the restore BEFORE any
+            // staging or destructive step. It reuses the incomplete-manifest handling and journal reason;
+            // the semantic detail goes only into the bounded event metadata and the typed result.
+            if (manifest.semanticSectionMalformed) {
+                val malformedError = BackupSemanticVerificationException(
+                    SemanticCode.SEMANTIC_MANIFEST_MALFORMED
+                )
+                restoreEvents.event("BUNDLE_VALIDATED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
+                    severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.ERROR,
+                    reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.VALIDATION_FAILED,
+                    metadata = semanticFailureMetadata(malformedError),
+                    isTerminal = true)
+                restoreJournal.failJournal(journalEntry, "MANIFEST_INCOMPLETE")
+                exitAfterPreDestructiveAbort()
+                restoreEvents.finalizeRunFailed(SemanticCode.SEMANTIC_MANIFEST_MALFORMED.name)
+                tempDir.deleteRecursively()
+                return@withContext Result.failure(malformedError)
+            }
+
             val postMigrationTableCounts = BackupVerifier.expectedCountsAfterMigration(
                 manifestTableCounts,
                 manifest.databaseVersion
             )
 
+            // UF-46 (INV-9 / INV-10 / INV-11): what C1 and C2 may compare against. A missing section
+            // (LEGACY), an unknown section version or a source schema below the aggregate floor (VERSION)
+            // and a NOT_CAPTURED section are NOT_VERIFIABLE: they never block the restore. C1 runs at the
+            // source schema, so it never carries the migration invalidations that apply to C2.
+            val semanticBasisC2 = BackupVerifier.expectedAggregatesAfterMigration(
+                manifest.semanticAggregates,
+                manifest.databaseVersion
+            )
+            val semanticBasisC1 = when (semanticBasisC2) {
+                is SemanticBasis.Compare -> SemanticBasis.Compare(semanticBasisC2.set)
+                else -> semanticBasisC2
+            }
+
             // 5. Copy extracted DB to staging location
             val extractedDb = extractionResult.dbFile
             copyFile(extractedDb, stagedDbFile)
 
-            // 6. Quick-verify staged DB (integrity, FK, Tier 1 counts)
+            // 6. Quick-verify staged DB (integrity, FK, Tier 1 counts) and, UF-46 C1, the semantic
+            // aggregates at the source schema. A semantic failure throws before the swap (live DB intact).
+            var semanticC1Result: SemanticCheckResult? = null
+            var semanticC2Result: SemanticCheckResult? = null
             try {
-                BackupVerifier.verifyQuick(stagedDbFile, manifestTableCounts)
-                Timber.d("Staged DB quick verification passed")
+                semanticC1Result = BackupVerifier.verifyQuick(
+                    stagedDbFile,
+                    manifestTableCounts,
+                    SemanticExpectation(SemanticCheckpoint.C1_STAGED_SOURCE, semanticBasisC1)
+                )
+                Timber.d("Staged DB quick verification passed semantic=%s", semanticOutcomeCode(semanticC1Result))
+            } catch (e: BackupVerifier.SemanticVerificationFailedException) {
+                // Bounded failure: code, aggregate id, checkpoint and bucket count only (INV-14). The
+                // journal reason is the reused STAGED_VERIFICATION_FAILED literal (F2); no Throwable is
+                // attached to the event.
+                val semanticError = BackupSemanticVerificationException(e.result)
+                restoreEvents.event("STAGED_DB_VERIFIED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
+                    severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.ERROR,
+                    reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.VALIDATION_FAILED,
+                    metadata = semanticFailureMetadata(semanticError),
+                    isTerminal = true)
+                restoreJournal.failJournal(journalEntry, "STAGED_VERIFICATION_FAILED")
+                exitAfterPreDestructiveAbort()
+                restoreEvents.finalizeRunFailed("Staged verification failed")
+                cleanupRestoreStaging(stagedDbPath, tempDir)
+                return@withContext Result.failure(semanticError)
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 // DDL-512-01: emit terminal event BEFORE failJournal
@@ -1231,12 +1377,34 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
 
                     // P7-P1-1: Step 6b — Verify staged DB after migration BEFORE swapping to live.
                     // Catches migration corruption while the live DB remains intact.
+                    // UF-46 C2: the same verifyQuick also compares the semantic aggregates against the
+                    // manifest section (post-migration basis), still before the safety backup and swap.
                     val postMigrationCheck = com.yourname.expensetracker.domain.util.CancellationSafe.runCatchingCancellable {
-                        BackupVerifier.verifyQuick(stagedDbFile, postMigrationTableCounts)
+                        BackupVerifier.verifyQuick(
+                            stagedDbFile,
+                            postMigrationTableCounts,
+                            SemanticExpectation(SemanticCheckpoint.C2_STAGED_POST_MIGRATION, semanticBasisC2)
+                        )
                     }
 
-                    postMigrationCheck.getOrElse { error ->
+                    semanticC2Result = postMigrationCheck.getOrElse { error ->
                         Timber.e("Post-migration staged DB verification failed code=UNKNOWN_ERROR class=%s", error::class.java.simpleName)
+                        if (error is BackupVerifier.SemanticVerificationFailedException) {
+                            // Bounded semantic failure (INV-14): reused journal literal (F2), no Throwable
+                            // attached to the event, typed result carries only the bounded detail.
+                            val semanticError = BackupSemanticVerificationException(error.result)
+                            restoreEvents.event("STAGED_DB_POST_MIGRATION_VERIFIED",
+                                com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
+                                severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.ERROR,
+                                reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.VALIDATION_FAILED,
+                                metadata = semanticFailureMetadata(semanticError),
+                                isTerminal = true)
+                            restoreJournal.failJournal(journalEntry, "POST_MIGRATION_VERIFICATION_FAILED")
+                            exitAfterPreDestructiveAbort()
+                            restoreEvents.finalizeRunFailed("Post-migration verification failed")
+                            cleanupRestoreStaging(stagedDbPath, tempDir)
+                            return@withContext Result.failure(semanticError)
+                        }
                         // DDL-512-01: emit terminal event BEFORE failJournal
                         restoreEvents.event("STAGED_DB_POST_MIGRATION_VERIFIED",
                             com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
@@ -1251,7 +1419,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                         )
                     }
 
-                    Timber.d("Post-migration quick verification passed")
+                    Timber.d("Post-migration quick verification passed semantic=%s", semanticOutcomeCode(semanticC2Result))
                 } finally {
                     runCatching { stagedDatabase.close() }
                 }
@@ -1385,12 +1553,36 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     freshDb.openHelper.writableDatabase
                     liveSummary = queryRoomCountsForVerification(freshDb)
 
-                    // Full verification
-                    val verificationResult = BackupVerifier.verify(liveDbFile, postMigrationTableCounts)
+                    // Full verification. UF-46 C3: the same read-only open also compares the semantic
+                    // aggregates against the manifest section (post-migration basis, same as C2).
+                    val verificationResult = BackupVerifier.verify(
+                        liveDbFile,
+                        postMigrationTableCounts,
+                        SemanticExpectation(SemanticCheckpoint.C3_LIVE_POST_SWAP, semanticBasisC2)
+                    )
                     if (!verificationResult.passed) {
-                        throw Exception("Live verification failed: ${verificationResult.errors.joinToString("; ")}")
+                        // INV-8 / INV-14: a semantic failure goes into the existing catch (existing rollback)
+                        // as a typed, bounded exception; every other failure carries the bounded code only
+                        // (never the joined issue text).
+                        val semanticFailure = verificationResult.semanticResult as? SemanticCheckResult.Failed
+                        if (semanticFailure != null) {
+                            val semanticError = BackupSemanticVerificationException(semanticFailure)
+                            restoreEvents.event("LIVE_DB_VERIFIED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
+                                severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.ERROR,
+                                reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.VALIDATION_FAILED,
+                                metadata = semanticFailureMetadata(semanticError))
+                            throw semanticError
+                        }
+                        throw Exception("LIVE_VERIFICATION_FAILED")
                     }
+                    // INV-15: fold C1/C2/C3 into the one outcome carried by the success summary.
+                    val semanticOutcome = combineSemanticOutcome(
+                        semanticC1Result,
+                        semanticC2Result,
+                        verificationResult.semanticResult
+                    )
                     restoreEvents.event("LIVE_DB_VERIFIED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.COMPLETED)
+                    Timber.d("Live DB verification passed semantic=%s", semanticOutcomeCode(verificationResult.semanticResult))
 
                     verifySummaryPreservedForVerification(
                         DatabaseImportSummary(
@@ -1454,7 +1646,8 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                                 subscriptionCount = liveSummary.subscriptionCount,
                                 savingsGoalCount = liveSummary.savingsGoalCount,
                                 allTableCounts = liveSummary.allTableCounts,
-                                receiptAssetWarnings = receiptWarnings
+                                receiptAssetWarnings = receiptWarnings,
+                                semanticVerification = semanticOutcome
                             )
                         )
                     )
@@ -2154,7 +2347,12 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 restoreMaintenanceMode.exit(forceRestartRequired = true)
 
                 recoveryFinalized = true
-                Result.success(finalSummary)
+                // UF-46 (INV-11): a raw .db import has no manifest, so it is never semantically verified.
+                Result.success(
+                    finalSummary.copy(
+                        semanticVerification = SemanticVerificationOutcome.NotVerifiable(SemanticNotVerifiableReason.NO_MANIFEST)
+                    )
+                )
             } catch (importError: Exception) {
                 if (importError is kotlinx.coroutines.CancellationException) throw importError
                 if (isRestoreDurabilityFailure(importError) || (destinationFilesMutated && importSucceeded)) {
@@ -3107,6 +3305,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
 
     private fun restoreFailureReasonCode(error: Throwable): DiagnosticReasonCode = when (error) {
         is BackupSchemaUnsupportedException -> DiagnosticReasonCode.VALIDATION_FAILED
+        is BackupSemanticVerificationException -> DiagnosticReasonCode.VALIDATION_FAILED
         is WorkerDrainTimeoutException -> DiagnosticReasonCode.TIMEOUT
         is com.yourname.expensetracker.data.backup.WriteDrainTimeoutException -> DiagnosticReasonCode.TIMEOUT
         is DatabaseAccessBlockedException -> when (error.accessType) {
@@ -3114,6 +3313,27 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             DatabaseAccessType.READ -> DiagnosticReasonCode.READ_BARRIER_DENIED
         }
         else -> DiagnosticReasonCode.UNKNOWN_ERROR
+    }
+
+    /**
+     * UF-46 (INV-14): bounded event metadata for a semantic failure. Exactly `semanticCode`, `aggregateId`
+     * (when known), `checkpoint` (when known) and `mismatchedBuckets`; never an amount, sum, currency,
+     * bucket content, SQL or Throwable message.
+     */
+    private fun semanticFailureMetadata(error: BackupSemanticVerificationException): SafeEventMetadata {
+        val builder = SafeEventMetadata.builder().put("semanticCode", error.code.name)
+        error.aggregateId?.let { builder.put("aggregateId", it.name) }
+        error.checkpoint?.let { builder.put("checkpoint", it.name) }
+        builder.put("mismatchedBuckets", error.mismatchedBuckets)
+        return builder.build()
+    }
+
+    /** UF-46: bounded name of a checkpoint outcome for Timber (a code, never a value). */
+    private fun semanticOutcomeCode(result: SemanticCheckResult?): String = when (result) {
+        null -> "NONE"
+        is SemanticCheckResult.Verified -> SemanticCode.SEMANTIC_VERIFIED.name
+        is SemanticCheckResult.NotVerifiable -> SemanticCode.forNotVerifiable(result.reason).name
+        is SemanticCheckResult.Failed -> result.code.name
     }
     
     private fun cleanupOldSafetyBackups(backupDir: File) {
@@ -3216,6 +3436,26 @@ class BackupSchemaUnsupportedException(val code: String) : IllegalStateException
             else -> null
         }
     }
+}
+
+/**
+ * UF-46: a restore was blocked (before the swap) or rolled back (after it) by the semantic aggregate
+ * verification. The message is the bounded [code] name only; the structured detail is limited to the
+ * [checkpoint], the [aggregateId] and the [mismatchedBuckets] count (INV-14): never an amount, sum,
+ * currency, bucket content, SQL or path.
+ */
+class BackupSemanticVerificationException(
+    val code: SemanticCode,
+    val checkpoint: SemanticCheckpoint? = null,
+    val aggregateId: SemanticAggregateId? = null,
+    val mismatchedBuckets: Int = 0
+) : IllegalStateException(code.name) {
+    constructor(failed: SemanticCheckResult.Failed) : this(
+        failed.code,
+        failed.checkpoint,
+        failed.aggregateId,
+        failed.mismatchedBuckets
+    )
 }
 
 /**

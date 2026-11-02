@@ -538,6 +538,21 @@ class AppPinStoreImplTest {
     }
 
     @Test
+    fun g2_f1_inv51_re_enabling_the_flag_without_dismissing_the_notice_lets_the_next_record_fire_again() = runBlocking {
+        setUpPin()
+        emitted.clear()
+        assertEquals(PinStoreWriteResult.DONE, store.setBiometricEnabled(true))
+        assertEquals(PinStoreWriteResult.DONE, store.recordBiometricInvalidated())
+        assertEquals(AppPinStoreState(PinVerifierState.PRESENT, false, true), store.readState())
+        assertEquals(PinStoreWriteResult.DONE, store.setBiometricEnabled(true))
+
+        assertEquals(PinStoreWriteResult.DONE, store.recordBiometricInvalidated())
+
+        assertEquals(AppPinStoreState(PinVerifierState.PRESENT, false, true), store.readState())
+        assertEquals(2, invalidatedEmits())
+    }
+
+    @Test
     fun g2_f1_inv51_a_record_after_the_notice_was_dismissed_does_not_raise_it_again() = runBlocking {
         setUpPin()
         store.setBiometricEnabled(true)
