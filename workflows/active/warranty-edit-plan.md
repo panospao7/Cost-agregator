@@ -315,3 +315,14 @@
    ```
 3. Dispatch the S-pre scout (Sonnet override), and ask validation-runner for `-Action Plan` / `-Action Profiles`.
 4. Start the S1 implementer only once S-pre items 1-6 and 11 are answered.
+
+## Re-anchor amendment (2026-11-02, orchestrator)
+The owner lifted "planning only" on 2026-11-02 (owner-approvals 101).
+- **Base:** `feature/uf-quick-fixes` @ c8149f25 (a5d659de plus QF Batch A). S1–S3 can start. S4 waits for QF-2d, which is blocked until the fix-1.0.4 lane merges; then merge the QF tip in before S4.
+- **Re-anchor (explorer at a5d659de):** report in `docs/features/warranty-edit/reanchor-20261102.md`.
+  - All REPO, VM, SCR and FormComponents anchors hold.
+  - `DbGuardPolicyFixtureTest` is in the `guard/` package. The count is **454**, not 432 (comment :1071-1097). fix-1.0.4 makes it 456, so S2/G pins the then-current count, never a literal from this plan.
+  - The `updateWarranty` policy rows are at `db_ownership_policy.yml:3436-3466`.
+  - `updateWarranty(` has zero production callers.
+  - E-05-1 (protectedValue drops currency) is in the same files on different lines; NOT folded in.
+- **es/el:** sign-off is deferred to the release gate (owner-approvals 103).
