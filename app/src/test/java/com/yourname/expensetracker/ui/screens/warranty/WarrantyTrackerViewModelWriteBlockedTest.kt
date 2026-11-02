@@ -2,8 +2,10 @@ package com.yourname.expensetracker.ui.screens.warranty
 
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.database.entity.Warranty
+import com.yourname.expensetracker.data.database.entity.WarrantyType
 import com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
 import com.yourname.expensetracker.domain.model.UiText
+import com.yourname.expensetracker.domain.usecase.warranty.WarrantyEditInput
 import com.yourname.expensetracker.ui.util.blockedWriteException
 import com.yourname.expensetracker.util.ViewModelTestUtils
 import io.mockk.coEvery
@@ -14,6 +16,7 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Before
 import org.junit.Test
 
@@ -65,6 +68,28 @@ class WarrantyTrackerViewModelWriteBlockedTest : ViewModelTestUtils() {
             advanceUntilIdle()
 
             assertEquals(blockedMessage, viewModel.state.value.mutationError)
+            assertEquals(emptySet<Long>(), viewModel.state.value.mutatingWarrantyIds)
+        }
+
+    @Test
+    fun `blocked editWarranty shows maintenance message in the dialog state and releases the guard`() =
+        runTest(testDispatcher) {
+            // warranty-edit AE-16: the barrier rejects the edit; the dialog stays with its input.
+            val input = WarrantyEditInput(
+                productName = "Laptop",
+                merchantName = "Shop",
+                purchaseDate = 1_700_000_000_000L,
+                durationMonths = 24,
+                warrantyType = WarrantyType.MANUFACTURER,
+                supportPhone = null
+            )
+            coEvery { warrantyRepository.editWarranty(1L, input) } throws blockedWriteException()
+
+            viewModel.editWarranty(1L, input)
+            advanceUntilIdle()
+
+            assertEquals(blockedMessage, viewModel.state.value.editFormError)
+            assertNull(viewModel.state.value.mutationError)
             assertEquals(emptySet<Long>(), viewModel.state.value.mutatingWarrantyIds)
         }
 

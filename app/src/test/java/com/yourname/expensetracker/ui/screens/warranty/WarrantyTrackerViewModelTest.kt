@@ -11,6 +11,9 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.slot
+import com.yourname.expensetracker.data.database.entity.WarrantyType
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.usecase.warranty.WarrantyReviewState
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.CancellationException
@@ -283,6 +286,36 @@ class WarrantyTrackerViewModelTest : ViewModelTestUtils() {
 
         assertNull(viewModel.state.value.mutationError)
         assertFalse(viewModel.state.value.addWarrantySuccess)
+    }
+
+    // ---- warranty-edit S3: add flow end date unchanged (INV-1), default type MANUFACTURER ----
+
+    @Test
+    fun `addManualWarranty end date is unchanged and the default type is MANUFACTURER`() = runTest(testDispatcher) {
+        val purchase = FIXED_NOW + 3 * 3_600_000L
+        viewModel.addManualWarranty("Phone", "Store", purchase, 13, null)
+        advanceUntilIdle()
+
+        val saved = slot<Warranty>()
+        coVerify(exactly = 1) { warrantyRepository.addWarranty(capture(saved)) }
+        // The arithmetic addManualWarranty has always used: start of day + months, end of that day.
+        val start = TimePeriodUtils.getStartOfDay(purchase)
+        val expectedEnd = TimePeriodUtils.getEndOfDay(TimePeriodUtils.addMonths(start, 13))
+        assertEquals(start, saved.captured.purchaseDate)
+        assertEquals(expectedEnd, saved.captured.warrantyEndDate)
+        assertEquals(WarrantyType.MANUFACTURER, saved.captured.warrantyType)
+        assertEquals("manual", saved.captured.extractionSource)
+        assertTrue(viewModel.state.value.addWarrantySuccess)
+    }
+
+    @Test
+    fun `addManualWarranty persists an explicitly chosen warranty type`() = runTest(testDispatcher) {
+        viewModel.addManualWarranty("Phone", "Store", FIXED_NOW, 12, null, WarrantyType.EXTENDED)
+        advanceUntilIdle()
+
+        val saved = slot<Warranty>()
+        coVerify(exactly = 1) { warrantyRepository.addWarranty(capture(saved)) }
+        assertEquals(WarrantyType.EXTENDED, saved.captured.warrantyType)
     }
 
     // ---- ai-fixes B1b: confirm goes through repository.confirmWarranty(id) only (INV-13) ----

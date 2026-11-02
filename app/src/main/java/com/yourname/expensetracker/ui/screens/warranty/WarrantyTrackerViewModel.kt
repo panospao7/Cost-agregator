@@ -5,15 +5,21 @@ import androidx.lifecycle.viewModelScope
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.database.entity.Warranty
 import com.yourname.expensetracker.data.database.entity.WarrantyStatus
+import com.yourname.expensetracker.data.database.entity.WarrantyType
 import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException
 import com.yourname.expensetracker.ui.util.UI_WRITE_BLOCKED_MESSAGE
 import com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
 import com.yourname.expensetracker.data.repository.WarrantyTrackerRepository.ConfirmWarrantyResult
+import com.yourname.expensetracker.data.repository.WarrantyTrackerRepository.EditWarrantyResult
+import com.yourname.expensetracker.domain.usecase.warranty.WarrantyEditError
+import com.yourname.expensetracker.domain.usecase.warranty.WarrantyEditInput
+import com.yourname.expensetracker.domain.usecase.warranty.WarrantyEndDate
 import com.yourname.expensetracker.domain.usecase.warranty.WarrantyReviewState
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
@@ -42,7 +48,13 @@ data class WarrantyTrackerState(
     /** S12-010: non-null when a mutation failed (bounded string resource, never raw exception text) */
     val mutationError: UiText? = null,
     /** S12-004: true when add-manual dialog should close (emitted on success) */
-    val addWarrantySuccess: Boolean = false
+    val addWarrantySuccess: Boolean = false,
+    /**
+     * warranty-edit UX-2: non-null when saving an edit failed while the edit dialog is open (bounded
+     * string resource, never raw exception text). Separate from [mutationError], which the screen
+     * shows as a one-shot snackbar that would sit under the dialog scrim.
+     */
+    val editFormError: UiText? = null
 ) {
     /**
      * ai-fixes INV-10: the single review-state derivation used by every count, filter, badge and
@@ -59,6 +71,27 @@ data class WarrantyTrackerState(
         }
 }
 
+/**
+ * warranty-edit: bounded one-shot result of [WarrantyTrackerViewModel.editWarranty]. Carries no
+ * user text, only booleans and a bounded [WarrantyEditError] code.
+ */
+sealed interface WarrantyEditOutcome {
+    /** Saved; [leftReview] is true when the save also confirmed a row that was under review. */
+    data class Saved(val leftReview: Boolean) : WarrantyEditOutcome
+
+    /** Nothing changed (no write); the dialog can close silently. */
+    object NoChange : WarrantyEditOutcome
+
+    /** The row is gone (deleted or rejected while the dialog was open). */
+    object NotFound : WarrantyEditOutcome
+
+    /** The row was claimed or transferred while the dialog was open. */
+    object NotEditable : WarrantyEditOutcome
+
+    /** Validation failed; the dialog stays open and maps [reason] to a field. */
+    data class Invalid(val reason: WarrantyEditError) : WarrantyEditOutcome
+}
+
 @HiltViewModel
 class WarrantyTrackerViewModel @Inject constructor(
     private val warrantyRepository: WarrantyTrackerRepository,
@@ -68,6 +101,11 @@ class WarrantyTrackerViewModel @Inject constructor(
     private val _state = MutableStateFlow(WarrantyTrackerState())
     val state: StateFlow<WarrantyTrackerState> = _state.asStateFlow()
     private var warrantiesCollectorJob: Job? = null
+
+    private val _editOutcomes = Channel<WarrantyEditOutcome>(Channel.BUFFERED)
+
+    /** warranty-edit: one-shot outcomes of [editWarranty]; each is delivered to one collector. */
+    val editOutcomes: Flow<WarrantyEditOutcome> = _editOutcomes.receiveAsFlow()
 
     init {
         loadWarranties()
@@ -174,15 +212,16 @@ class WarrantyTrackerViewModel @Inject constructor(
         merchantName: String,
         purchaseDate: Long,
         warrantyDurationMonths: Int,
-        supportPhone: String?
+        supportPhone: String?,
+        warrantyType: WarrantyType = WarrantyType.MANUFACTURER
     ) {
         viewModelScope.launch {
             try {
+                // warranty-edit INV-1: WarrantyEndDate owns the half-open end-of-day arithmetic
+                // (the same start-of-day + months + end-of-day this method always used), so the
+                // warranty survives through its entire expiration day.
                 val purchaseStart = TimePeriodUtils.getStartOfDay(purchaseDate)
-                val endDateMidnight = TimePeriodUtils.addMonths(purchaseStart, warrantyDurationMonths)
-                // Use half-open end-of-day semantics so the warranty survives
-                // through its entire expiration day (matches WarrantyTrackerRepository).
-                val endDate = TimePeriodUtils.getEndOfDay(endDateMidnight)
+                val endDate = WarrantyEndDate.exclusiveEnd(purchaseDate, warrantyDurationMonths)
                 // WRN-4: receiptId is null — no placeholder receipt is created.
                 val manualWarranty = Warranty(
                     receiptId = null,
@@ -192,6 +231,7 @@ class WarrantyTrackerViewModel @Inject constructor(
                     purchaseDate = purchaseStart,
                     warrantyDurationMonths = warrantyDurationMonths,
                     warrantyEndDate = endDate,
+                    warrantyType = warrantyType,
                     supportPhone = supportPhone?.takeIf { it.isNotBlank() },
                     extractionSource = "manual"
                 )
@@ -217,15 +257,13 @@ class WarrantyTrackerViewModel @Inject constructor(
         failureMessage: UiText = UiText.StringResource(R.string.warranty_mutation_failed)
     ) {
         Timber.w("warranty mutation failed (%s)", e::class.simpleName)
-        // R18b: a write rejected by the backup/restore/reset write barrier gets the shared,
-        // retry-later maintenance message instead of the generic failure message.
-        val message = if (e is DatabaseAccessBlockedException) {
-            UI_WRITE_BLOCKED_MESSAGE
-        } else {
-            failureMessage
-        }
-        _state.update { it.copy(mutationError = message) }
+        _state.update { it.copy(mutationError = mutationFailureMessage(e, failureMessage)) }
     }
+
+    // R18b: a write rejected by the backup/restore/reset write barrier gets the shared,
+    // retry-later maintenance message instead of the generic failure message.
+    private fun mutationFailureMessage(e: Exception, failureMessage: UiText): UiText =
+        if (e is DatabaseAccessBlockedException) UI_WRITE_BLOCKED_MESSAGE else failureMessage
 
     fun clearAddWarrantySuccess() {
         _state.update { it.copy(addWarrantySuccess = false) }
@@ -233,6 +271,64 @@ class WarrantyTrackerViewModel @Inject constructor(
 
     fun clearMutationError() {
         _state.update { it.copy(mutationError = null) }
+    }
+
+    fun clearEditFormError() {
+        _state.update { it.copy(editFormError = null) }
+    }
+
+    /**
+     * warranty-edit INV-15: saves the six content fields through
+     * [WarrantyTrackerRepository.editWarranty] (the only legal path; the repository validates and
+     * owns every status/review transition). A second call for an id already being mutated is
+     * ignored. A failure while the dialog is open is reported through [WarrantyTrackerState.editFormError]
+     * (UX-2), never through the snackbar [WarrantyTrackerState.mutationError]. Logs only bounded codes.
+     */
+    fun editWarranty(warrantyId: Long, input: WarrantyEditInput) {
+        // S12-010: Idempotency guard, claimed atomically so two taps in one frame make one call.
+        var claimed = false
+        _state.update {
+            claimed = warrantyId !in it.mutatingWarrantyIds
+            if (claimed) {
+                it.copy(mutatingWarrantyIds = it.mutatingWarrantyIds + warrantyId, editFormError = null)
+            } else {
+                it
+            }
+        }
+        if (!claimed) return
+        viewModelScope.launch {
+            try {
+                when (val result = warrantyRepository.editWarranty(warrantyId, input)) {
+                    is EditWarrantyResult.Edited -> {
+                        loadStats()
+                        _editOutcomes.trySend(WarrantyEditOutcome.Saved(result.leftReview))
+                    }
+                    EditWarrantyResult.NoChange -> {
+                        loadStats()
+                        _editOutcomes.trySend(WarrantyEditOutcome.NoChange)
+                    }
+                    EditWarrantyResult.NotFound ->
+                        _editOutcomes.trySend(WarrantyEditOutcome.NotFound)
+                    EditWarrantyResult.NotEditable ->
+                        _editOutcomes.trySend(WarrantyEditOutcome.NotEditable)
+                    is EditWarrantyResult.Invalid -> {
+                        Timber.w("warranty edit rejected (%s)", result.reason.name)
+                        _editOutcomes.trySend(WarrantyEditOutcome.Invalid(result.reason))
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Timber.w("warranty edit failed (%s)", e::class.simpleName)
+                val message = mutationFailureMessage(
+                    e,
+                    UiText.StringResource(R.string.warranty_mutation_failed)
+                )
+                _state.update { it.copy(editFormError = message) }
+            } finally {
+                _state.update { it.copy(mutatingWarrantyIds = it.mutatingWarrantyIds - warrantyId) }
+            }
+        }
     }
     
     /**
