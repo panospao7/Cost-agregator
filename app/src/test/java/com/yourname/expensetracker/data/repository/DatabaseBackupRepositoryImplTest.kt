@@ -116,6 +116,9 @@ class DatabaseBackupRepositoryImplTest {
     @get:Rule
     val realSchemaHelper: MigrationTestHelper = RealSchemaFixture.newHelper()
 
+    /** Short unique fixture DB names (long names overflow the Windows path limit under Robolectric). */
+    private var fixtureSeq = 0
+
     private val context = mockk<Context>(relaxed = true)
     private val database = mockk<AppDatabase>(relaxed = true)
     private val openHelper = mockk<SupportSQLiteOpenHelper>(relaxed = true)
@@ -3187,7 +3190,7 @@ class DatabaseBackupRepositoryImplTest {
     private fun createRealSchemaDatabase(file: File, seed: (SupportSQLiteDatabase) -> Unit) {
         file.parentFile?.mkdirs()
         val created = RealSchemaFixture.createSeeded(
-            realSchemaHelper, "rsv-backup-fixture-${UUID.randomUUID()}", seed = seed
+            realSchemaHelper, "rsv-${fixtureSeq++}", seed = seed
         )
         created.copyTo(file, overwrite = true)
         created.delete()

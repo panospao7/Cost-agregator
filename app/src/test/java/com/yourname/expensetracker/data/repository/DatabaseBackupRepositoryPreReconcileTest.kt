@@ -192,11 +192,9 @@ class DatabaseBackupRepositoryPreReconcileTest {
         )
 
         assertTrue("expected a verify failure: ${detail(result)}", result.isFailure)
-        assertTrue(
-            detail(result),
-            result.exceptionOrNull()?.message.orEmpty()
-                .contains("Orphan installment_entries linked to non-existent expenses")
-        )
+        val failureMessage = result.exceptionOrNull()?.message.orEmpty()
+        assertEquals(detail(result), "SNAPSHOT_VERIFICATION_FAILED", failureMessage)
+        assertFalse(detail(result), failureMessage.contains("Orphan"))
         assertEquals(RestoreMaintenanceMode.Mode.NORMAL, currentMode)
         assertNoBackupArtifacts()
     }
@@ -241,11 +239,9 @@ class DatabaseBackupRepositoryPreReconcileTest {
         )
 
         assertTrue("expected a verify failure: ${detail(result)}", result.isFailure)
-        assertTrue(
-            detail(result),
-            result.exceptionOrNull()?.message.orEmpty()
-                .contains("Orphan installment_plans referencing non-existent purchase expenses")
-        )
+        val failureMessage = result.exceptionOrNull()?.message.orEmpty()
+        assertEquals(detail(result), "SNAPSHOT_VERIFICATION_FAILED", failureMessage)
+        assertFalse(detail(result), failureMessage.contains("Orphan"))
         assertEquals(RestoreMaintenanceMode.Mode.NORMAL, currentMode)
         assertNoBackupArtifacts()
     }
@@ -444,11 +440,9 @@ class DatabaseBackupRepositoryPreReconcileTest {
 
         assertEquals("the reconcile ran before the injection", listOf("RECONCILE", "ENTER", "EXIT"), trace.toList())
         assertTrue("the verify stays fail-closed: ${detail(result)}", result.isFailure)
-        assertTrue(
-            detail(result),
-            result.exceptionOrNull()?.message.orEmpty()
-                .contains("Orphan installment_entries linked to non-existent expenses")
-        )
+        val failureMessage = result.exceptionOrNull()?.message.orEmpty()
+        assertEquals(detail(result), "SNAPSHOT_VERIFICATION_FAILED", failureMessage)
+        assertFalse(detail(result), failureMessage.contains("Orphan"))
         assertEquals(RestoreMaintenanceMode.Mode.NORMAL, currentMode)
         assertNoBackupArtifacts()
     }
