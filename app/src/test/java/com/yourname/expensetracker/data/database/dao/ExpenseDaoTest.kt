@@ -977,6 +977,128 @@ class ExpenseDaoTest {
         assertEquals("Office Supply", missing[0].merchant)
     }
 
+    // ---- P2: installment marker rows in business listings (OD-11 / S4d) ----
+
+    /** Inserts normal + INSTALLMENT_PURCHASE + INSTALLMENT_REVERSED business rows lacking receipts. */
+    private suspend fun insertBusinessInstallmentTrio() {
+        val now = BASE_NOW
+        expenseDao.insert(Expense(
+            amount = 100.0, currency = "EUR", merchant = "NormalBiz",
+            transactionType = TransactionType.PURCHASE, date = now,
+            isBusinessExpense = true, requiresReceipt = true
+        ))
+        expenseDao.insert(Expense(
+            amount = 600.0, currency = "EUR", merchant = "InstallmentPurchaseBiz",
+            transactionType = TransactionType.PURCHASE, date = now,
+            isBusinessExpense = true, requiresReceipt = true,
+            spendingExclusionReason = "INSTALLMENT_PURCHASE"
+        ))
+        expenseDao.insert(Expense(
+            amount = 40.0, currency = "EUR", merchant = "InstallmentReversedBiz",
+            transactionType = TransactionType.PURCHASE, date = now,
+            isBusinessExpense = true, requiresReceipt = true,
+            spendingExclusionReason = "INSTALLMENT_REVERSED"
+        ))
+    }
+
+    private val trioMerchants = setOf("NormalBiz", "InstallmentPurchaseBiz", "InstallmentReversedBiz")
+
+    @Test
+    fun getBusinessExpensesBetween_listsInstallmentMarkerRows() = runTest {
+        insertBusinessInstallmentTrio()
+
+        val rows = expenseDao.getBusinessExpensesBetween(BASE_NOW - 1000L, BASE_NOW + 1000L)
+
+        assertEquals(trioMerchants, rows.map { it.merchant }.toSet())
+        assertEquals(3, rows.size)
+    }
+
+    @Test
+    fun getBusinessExpensesBetweenFlow_listsInstallmentMarkerRows() = runTest {
+        insertBusinessInstallmentTrio()
+
+        val rows = expenseDao.getBusinessExpensesBetweenFlow(BASE_NOW - 1000L, BASE_NOW + 1000L).first()
+
+        assertEquals(trioMerchants, rows.map { it.merchant }.toSet())
+        assertEquals(3, rows.size)
+    }
+
+    @Test
+    fun getBusinessExpensesMissingReceipts_listsInstallmentMarkerRows() = runTest {
+        insertBusinessInstallmentTrio()
+
+        val rows = expenseDao.getBusinessExpensesMissingReceipts(BASE_NOW - 1000L, BASE_NOW + 1000L)
+
+        assertEquals(trioMerchants, rows.map { it.merchant }.toSet())
+        assertEquals(3, rows.size)
+    }
+
+    @Test
+    fun getBusinessExpensesBetween_stillExcludesNonSpendingTypes() = runTest {
+        insertBusinessInstallmentTrio()
+        expenseDao.insert(Expense(
+            amount = 500.0, currency = "EUR", merchant = "BizDeposit",
+            transactionType = TransactionType.DEPOSIT, date = BASE_NOW,
+            isBusinessExpense = true, requiresReceipt = true
+        ))
+
+        val rows = expenseDao.getBusinessExpensesBetween(BASE_NOW - 1000L, BASE_NOW + 1000L)
+
+        assertEquals(trioMerchants, rows.map { it.merchant }.toSet())
+    }
+
+    @Test
+    fun getBusinessExpensesBetweenByCurrency_totalCountsOnlyNormalPurchase() = runTest {
+        insertBusinessInstallmentTrio()
+
+        val totals = expenseDao.getBusinessExpensesBetweenByCurrency(BASE_NOW - 1000L, BASE_NOW + 1000L)
+
+        assertEquals(1, totals.size)
+        assertEquals("EUR", totals[0].currency)
+        // Marker rows (600.0 and 40.0) contribute 0 to the money total.
+        assertEquals(100.0, totals[0].total, 0.001)
+    }
+
+    @Test
+    fun getBusinessCategoryCurrencyTotals_totalCountsOnlyNormalPurchase() = runTest {
+        insertBusinessInstallmentTrio()
+
+        val totals = expenseDao.getBusinessCategoryCurrencyTotals(BASE_NOW - 1000L, BASE_NOW + 1000L)
+
+        assertEquals(100.0, totals.sumOf { it.total }, 0.001)
+    }
+
+    @Test
+    fun getRecentExpensesWithCategoryForMerchant_appliesSpendingPredicate() = runTest {
+        val categoryId = database.categoryDao().insert(
+            Category(name = "Gadgets", icon = "G", color = "#123456")
+        )
+        val since = BASE_NOW - 10_000L
+        expenseDao.insert(Expense(
+            amount = 10.0, currency = "EUR", merchant = "ShopX",
+            transactionType = TransactionType.PURCHASE, date = BASE_NOW,
+            categoryId = categoryId
+        ))
+        expenseDao.insert(Expense(
+            amount = 20.0, currency = "EUR", merchant = "ShopX",
+            transactionType = TransactionType.PURCHASE, date = BASE_NOW + 1,
+            categoryId = categoryId, spendingExclusionReason = "INSTALLMENT_PURCHASE"
+        ))
+        expenseDao.insert(Expense(
+            amount = 30.0, currency = "EUR", merchant = "ShopX",
+            transactionType = TransactionType.PURCHASE, date = BASE_NOW + 2,
+            categoryId = categoryId, isNotMine = true
+        ))
+
+        val rows = expenseDao.getRecentExpensesWithCategoryForMerchant("ShopX", since)
+
+        assertEquals(1, rows.size)
+        assertEquals(10.0, rows[0].expense.amount, 0.001)
+        assertNull(rows[0].expense.spendingExclusionReason)
+        assertFalse(rows[0].expense.isNotMine)
+        assertEquals(categoryId, rows[0].category?.id)
+    }
+
     private companion object {
         /** Fixed base instant (2026-05-15 12:00 UTC); replaces the wall clock. */
         val BASE_NOW: Long = dateMs(2026, 5, 15, 12, 0)
