@@ -2521,21 +2521,25 @@ AND LENGTH(:merchantKey) >= 8
 
     // === Business Expense Queries (v41) ===
     
-    // spending-exempt: ROW_COUNT
+    // OD-11: listings keep installment marker rows visible (INSTALLMENT_PURCHASE / INSTALLMENT_REVERSED)
+    // while every other spending exclusion still applies.
     @Query("""
         SELECT * FROM expenses
         WHERE isBusinessExpense = 1
         AND ${SPENDING_TYPE_SQL}
+        AND (${SpendingInclusionSql.SPENDING_PREDICATE} OR (isNotMine = 0 AND spendingExclusionReason IN ('INSTALLMENT_PURCHASE','INSTALLMENT_REVERSED')))
         AND date >= :startDate AND date < :endDate
         ORDER BY date DESC
     """)
     suspend fun getBusinessExpensesBetween(startDate: Long, endDate: Long): List<Expense>
-    
-    // spending-exempt: ROW_COUNT
+
+    // OD-11: listings keep installment marker rows visible (INSTALLMENT_PURCHASE / INSTALLMENT_REVERSED)
+    // while every other spending exclusion still applies.
     @Query("""
         SELECT * FROM expenses
         WHERE isBusinessExpense = 1
         AND ${SPENDING_TYPE_SQL}
+        AND (${SpendingInclusionSql.SPENDING_PREDICATE} OR (isNotMine = 0 AND spendingExclusionReason IN ('INSTALLMENT_PURCHASE','INSTALLMENT_REVERSED')))
         AND date >= :startDate AND date < :endDate
         ORDER BY date DESC
     """)
@@ -2627,12 +2631,14 @@ AND LENGTH(:merchantKey) >= 8
      * not receipt attachment).  A LEFT JOIN / IS NULL anti-join correctly
      * identifies expenses with no linked receipt row.
      */
-    // spending-exempt: ROW_COUNT
+    // OD-11: listings keep installment marker rows visible (INSTALLMENT_PURCHASE / INSTALLMENT_REVERSED)
+    // while every other spending exclusion still applies.
     @Query("""
         SELECT e.* FROM expenses e
         LEFT JOIN scanned_receipts sr ON sr.expenseId = e.id
         WHERE e.isBusinessExpense = 1
         AND ${SPENDING_TYPE_E_SQL}
+        AND (${SpendingInclusionSql.SPENDING_PREDICATE_E} OR (e.isNotMine = 0 AND e.spendingExclusionReason IN ('INSTALLMENT_PURCHASE','INSTALLMENT_REVERSED')))
         AND e.requiresReceipt = 1
         AND sr.id IS NULL
         AND e.date >= :startDate AND e.date < :endDate

@@ -774,7 +774,7 @@ EXPECTED_EXEMPT = {
     ("ExpenseDao.kt", "searchMerchants", "SUGGESTION"),
     # 1.0.4 S7b: +2 merchant-context readers classified as SUGGESTION-exempt.
     ("ExpenseDao.kt", "getRecentExpensesForMerchant", "SUGGESTION"),
-    ("ExpenseDao.kt", "getRecentExpensesWithCategoryForMerchant", "SUGGESTION"),
+    # 1.0.4 closure: getRecentExpensesWithCategoryForMerchant now applies the predicate (36 -> 35)
     ("WarrantyDao.kt", "getTotalProtectedValue", "ASSET_VALUE"),
     ("WarrantyDao.kt", "getTotalProtectedValueByCurrency", "ASSET_VALUE"),
 }
@@ -786,7 +786,8 @@ EXPECTED_REASON_COUNTS = {
     "NON_SPENDING_INCOME": 4,
     "NON_MONEY": 2,
     # 1.0.4 S7b: +2 merchant-context readers in ExpenseDao marked as SUGGESTION-exempt (1 -> 3).
-    "SUGGESTION": 3,
+    # 1.0.4 closure: getRecentExpensesWithCategoryForMerchant now applies the predicate (36 -> 35)
+    "SUGGESTION": 2,
     "ASSET_VALUE": 2,
 }
 
@@ -835,7 +836,8 @@ def test_real_tree_report_exemption_set_equals_recorded_a12_6_set(real_tree_repo
     _proc, rows = real_tree_report
     exempt = [(f, fn, cls.split(":", 1)[1]) for f, fn, cls in rows if cls.startswith("exempt:")]
     # 1.0.4 S7b: +2 merchant-context readers in ExpenseDao marked as SUGGESTION-exempt (34 -> 36).
-    assert len(exempt) == len(set(exempt)) == 36
+    # 1.0.4 closure: getRecentExpensesWithCategoryForMerchant now applies the predicate (36 -> 35)
+    assert len(exempt) == len(set(exempt)) == 35
     assert set(exempt) == EXPECTED_EXEMPT
 
 
@@ -849,7 +851,8 @@ def test_real_tree_report_reason_counts_and_no_unclassified(real_tree_report):
     assert counts == EXPECTED_REASON_COUNTS
     assert not any(cls == "UNCLASSIFIED" for _f, _fn, cls in rows)
     # 1.0.4 S7b: +2 merchant-context readers in ExpenseDao marked as SUGGESTION-exempt (34 -> 36).
-    assert "SUMMARY: exempt=36 " in proc.stdout and "unclassified=0" in proc.stdout
+    # 1.0.4 closure: getRecentExpensesWithCategoryForMerchant now applies the predicate (36 -> 35)
+    assert "SUMMARY: exempt=35 " in proc.stdout and "unclassified=0" in proc.stdout
 
 
 def test_real_tree_converted_samples_are_classified_as_predicate(real_tree_report):

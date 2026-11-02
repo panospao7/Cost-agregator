@@ -1,6 +1,9 @@
 package com.yourname.expensetracker.domain.privacy
 
 object RawContentSanitizer {
+    /** Value written under STORE_REDACTED. Consumers that must ignore redacted text compare against this. */
+    internal const val REDACTED_PLACEHOLDER: String = "[REDACTED]"
+
     /**
      * P8-PR3 (NEW-P8-007): Sanitises OCR text for the given storage mode.
      *

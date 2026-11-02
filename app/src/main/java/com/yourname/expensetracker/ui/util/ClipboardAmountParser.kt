@@ -28,7 +28,7 @@ object ClipboardAmountParser {
      * dates, ids) are never treated as amounts.
      */
     private val integerWithCurrencyRegex = Regex(
-        """(?<![\d.,\p{L}])(?:(?:€|\$|EUR(?![\p{L}])|ΕΥΡΩ(?![\p{L}])|ευρώ(?![\p{L}]))\s*(\d+)|(\d+)\s*(?:€|\$|EUR(?![\p{L}])|ΕΥΡΩ(?![\p{L}])|ευρώ(?![\p{L}])))(?!\d|[.,]\d)""",
+        """(?<![\d.,/*\p{L}])(?:(?:€|\$|EUR(?![\p{L}])|ΕΥΡΩ(?![\p{L}])|ευρώ(?![\p{L}]))\s*(\d+)|(\d+)\s*(?:€|\$|EUR(?![\p{L}])|ΕΥΡΩ(?![\p{L}])|ευρώ(?![\p{L}])))(?![\d/]|[.,]\d)""",
         RegexOption.IGNORE_CASE
     )
 

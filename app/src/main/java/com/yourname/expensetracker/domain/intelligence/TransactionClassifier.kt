@@ -196,8 +196,9 @@ open class TransactionClassifier @Inject constructor(
         // notification text carry only the merchant name, so they must not train the model.
         // Filter first so the sample-count gate sees only usable rows; if too few remain we
         // return before clearing anything and the previous model is kept.
+        // R-LEARN-2: the STORE_REDACTED placeholder is not notification text either.
         val corrections = allCorrections.filter {
-            it.notificationTitle?.isNotBlank() == true || it.notificationText?.isNotBlank() == true
+            isUsableTrainingText(it.notificationTitle) || isUsableTrainingText(it.notificationText)
         }
         if (corrections.size < MIN_TRAINING_SAMPLES) {
             Timber.d("Not enough corrections to train")
@@ -376,6 +377,10 @@ open class TransactionClassifier @Inject constructor(
 
         return FeatureSet(words, bigrams)
     }
+
+    private fun isUsableTrainingText(value: String?): Boolean =
+        !value.isNullOrBlank() &&
+            value.trim() != com.yourname.expensetracker.domain.privacy.RawContentSanitizer.REDACTED_PLACEHOLDER
 
     private fun buildTrainingText(
         correction: com.yourname.expensetracker.data.database.entity.UserCorrection

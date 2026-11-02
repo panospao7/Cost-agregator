@@ -37,9 +37,12 @@ class SmsParser @Inject constructor(
 
     private val amountPattern by lazy {
         val amt = CommonPatterns.GROUPED_AMOUNT_TOKEN
-        val cur = """EUR|€|ΕΥΡΩ|ευρώ|EURO|USD|\$|GBP|£"""
+        // Word-like currencies are boundary-checked so "ΕΥΡΩΠΑΙΚΗ" / "EUROPE"-style words are not
+        // read as a currency. The amount may follow a single separator ("SHOP,12.50") but not a
+        // digit-separator pair ("15.11" / "15,11").
+        val cur = """EURO(?!\p{L})|EUR|ΕΥΡΩ(?!\p{L})|ευρώ(?!\p{L})|€|USD|\$|GBP|£"""
         Pattern.compile(
-            """(?<![\d.,])($amt)(?!\d|[.,]\d)\s*($cur)|($cur)\s*(?<![\d.,])($amt)(?!\d|[.,]\d)""",
+            """(?<!\d)(?<!\d[.,])($amt)(?!\d)\s*($cur)|($cur)\s*(?<!\d)(?<!\d[.,])($amt)(?!\d)""",
             Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
         )
     }
@@ -73,9 +76,11 @@ class SmsParser @Inject constructor(
     }
 
     private val TRANSACTION_KEYWORDS = listOf(
-        // Purchase keywords ("paid"/"spent" are intentionally absent: they match "prepaid" and
-        // "paid by" in deposits; they remain token-bounded in PURCHASE_PREFERENCE_KEYWORDS)
-        "αγορ", "αγορά", "αγορα", "πληρωμ", "πληρωμή", "πληρωμη", "χρέωσ", "χρεωσ", "συναλλαγ",
+        // Purchase keywords. "paid"/"spent" are intentionally absent (they match "prepaid" and
+        // "paid by" in deposits). The unaccented stem "χρεωσ" is intentionally absent too: it
+        // matches "χρεωστική" (debit card); all-caps "ΧΡΕΩΣΗ" is covered by a token-bounded
+        // check in parse().
+        "αγορ", "πληρωμ", "χρέωσ", "συναλλαγ",
         "purchase", "payment", "charged", "debit",
         "agora", "pliromi", "plirwmi", "hreosi", "xreosi", "synallagi"
     )
@@ -130,7 +135,8 @@ class SmsParser @Inject constructor(
 
 
         // Must contain transaction keywords (purchase, deposit OR transfer)
-        val hasPurchaseKeyword = TRANSACTION_KEYWORDS.any { lowerBody.contains(it) }
+        val hasPurchaseKeyword = TRANSACTION_KEYWORDS.any { lowerBody.contains(it) } ||
+            containsKeywordToken(lowerBody, listOf("χρεωση"))
         val hasDepositKeyword = DEPOSIT_KEYWORDS.any { lowerBody.contains(it) }
         val hasTransferKeyword = TRANSFER_KEYWORDS.any { lowerBody.contains(it) }
         
@@ -206,11 +212,23 @@ class SmsParser @Inject constructor(
             candidates.add(AmountCandidate(amount, normalizedCurrency, matcher.start(), matcher.end()))
         }
 
-        val hadMultipleCandidates = candidates.size > 1
-        val nonBalance = candidates.filterNot {
+        // Distinct (amount, currency), first occurrence kept: text duplicated into bigText
+        // ("text + bigText") must stay a single clean amount.
+        val distinct = candidates.distinctBy { it.amount to it.currency }
+        val hadMultipleCandidates = distinct.size > 1
+        val nonBalance = distinct.filterNot {
             isAdjacentToKeyword(body, it.start, it.end, BALANCE_KEYWORDS, allowTrailingKeyword = true)
         }
-        if (nonBalance.isEmpty()) return null
+        if (nonBalance.isEmpty()) {
+            // Every candidate looks balance-adjacent. Keep a lone candidate only when a purchase or
+            // deposit keyword precedes it ("Purchase at BAL HARBOUR EUR 25.00"), and route it to review.
+            val only = distinct.singleOrNull() ?: return null
+            return if (hasPurchaseOrDepositContext(body, only)) {
+                ExtractedAmount(only.amount, only.currency, isAmbiguous = true)
+            } else {
+                null
+            }
+        }
         if (nonBalance.size == 1) {
             val single = nonBalance.single()
             return ExtractedAmount(single.amount, single.currency, isAmbiguous = hadMultipleCandidates)
@@ -230,6 +248,27 @@ class SmsParser @Inject constructor(
         return ExtractedAmount(chosen.amount, chosen.currency, isAmbiguous = hadMultipleCandidates)
     }
 
+    // Prefix-clause keyword context for a lone balance-adjacent candidate. A balance keyword attached
+    // directly to the amount ("Payment info: balance EUR 500.00") outranks a farther purchase
+    // keyword; a balance-like word followed by other words ("BAL HARBOUR EUR 25.00") does not.
+    private fun hasPurchaseOrDepositContext(text: String, candidate: AmountCandidate): Boolean {
+        val clause = prefixClauseOf(text, candidate.start)
+        if (Regex("""\d""").containsMatchIn(clause)) return false
+        val keywords = PURCHASE_PREFERENCE_KEYWORDS + DEPOSIT_KEYWORDS.map { it.trim() }
+        if (!containsKeywordToken(clause, keywords)) return false
+        val balanceAlternation = BALANCE_KEYWORDS.sortedByDescending { it.length }.joinToString("|") { Regex.escape(it) }
+        val directBalance = Regex("""(?<![\p{L}\p{N}])(?:$balanceAlternation)[\s:=]*$""")
+        return !directBalance.containsMatchIn(clause)
+    }
+
+    private fun prefixClauseOf(text: String, matchStart: Int): String {
+        val prefixStart = (matchStart - KEYWORD_ADJACENCY_WINDOW).coerceAtLeast(0)
+        val prefix = text.substring(prefixStart, matchStart).lowercase()
+        return prefix.replace(abbreviationDotRegex, "$1")
+            .substringAfterLast('.').substringAfterLast(';').substringAfterLast(',')
+            .substringAfterLast('\n').substringAfterLast('(').substringAfterLast('-')
+    }
+
     private fun isAdjacentToKeyword(
         text: String,
         matchStart: Int,
@@ -237,11 +276,7 @@ class SmsParser @Inject constructor(
         keywords: List<String>,
         allowTrailingKeyword: Boolean = false
     ): Boolean {
-        val prefixStart = (matchStart - KEYWORD_ADJACENCY_WINDOW).coerceAtLeast(0)
-        val prefix = text.substring(prefixStart, matchStart).lowercase()
-        val lastClause = prefix.replace(abbreviationDotRegex, "$1")
-            .substringAfterLast('.').substringAfterLast(';').substringAfterLast(',')
-            .substringAfterLast('\n').substringAfterLast('(').substringAfterLast('-')
+        val lastClause = prefixClauseOf(text, matchStart)
         if (!Regex("""\d""").containsMatchIn(lastClause) && containsKeywordToken(lastClause, keywords)) {
             return true
         }
@@ -251,7 +286,9 @@ class SmsParser @Inject constructor(
             val suffix = text.substring(matchEnd, suffixEnd).lowercase()
             val nextClause = suffix.substringBefore('.').substringBefore(';').substringBefore(',')
                 .substringBefore('\n').substringBefore(')').substringBefore('-')
-            if (trailingBalanceRegex.containsMatchIn(nextClause)) {
+            // A digit in the next clause means the trailing keyword belongs to the NEXT amount
+            // ("Purchase EUR 12.50 Balance EUR 500.00").
+            if (!Regex("""\d""").containsMatchIn(nextClause) && trailingBalanceRegex.containsMatchIn(nextClause)) {
                 return true
             }
         }

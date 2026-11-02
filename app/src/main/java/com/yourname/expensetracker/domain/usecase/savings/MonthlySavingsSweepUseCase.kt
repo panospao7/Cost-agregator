@@ -386,9 +386,10 @@ class MonthlySavingsSweepUseCase @Inject constructor(
         currentDayOfMonth: Int,
         daysRemaining: Int
     ): Double {
-        // A degraded result (iterations == 0: deterministic-only or end-of-month) has
+        // A degraded result (iterations == 0: deterministic-only) with days still remaining has
         // p75 == p50, which would yield a zero buffer; use the conservative fallback instead.
-        if (monteCarloResult == null || monteCarloResult.metadata.iterations == 0) {
+        // R-SWEEP-2: on the last day of the month (daysRemaining == 0) the zero buffer is correct.
+        if (monteCarloResult == null || (monteCarloResult.metadata.iterations == 0 && daysRemaining > 0)) {
             val safeCurrentDay = currentDayOfMonth.coerceAtLeast(1)
             val currentDailySpend = spentToDate / safeCurrentDay
             val projectedRemainingSpend = currentDailySpend * daysRemaining.coerceAtLeast(0)
