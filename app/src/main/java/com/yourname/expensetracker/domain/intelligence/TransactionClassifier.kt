@@ -191,7 +191,14 @@ open class TransactionClassifier @Inject constructor(
     }
 
     private suspend fun retrainFromCorrectionsInternal() {
-        val corrections = userCorrectionRepository.getAll()
+        val allCorrections = userCorrectionRepository.getAll()
+        // R-LEARN-1: retention redaction nulls notificationTitle/notificationText. Rows with no
+        // notification text carry only the merchant name, so they must not train the model.
+        // Filter first so the sample-count gate sees only usable rows; if too few remain we
+        // return before clearing anything and the previous model is kept.
+        val corrections = allCorrections.filter {
+            it.notificationTitle?.isNotBlank() == true || it.notificationText?.isNotBlank() == true
+        }
         if (corrections.size < MIN_TRAINING_SAMPLES) {
             Timber.d("Not enough corrections to train")
             return
@@ -227,7 +234,9 @@ open class TransactionClassifier @Inject constructor(
         }
 
         vocabularySize = vocabulary.size
-        lastTrainingCount = corrections.size
+        // Total row count (not the filtered count) so it stays comparable with
+        // userCorrectionRepository.getCount() in initialize() and avoids a retrain on every start.
+        lastTrainingCount = allCorrections.size
 
         scheduleSave()
         Timber.d("Retrained ML model")

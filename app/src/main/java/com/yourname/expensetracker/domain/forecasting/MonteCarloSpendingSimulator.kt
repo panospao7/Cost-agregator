@@ -117,6 +117,8 @@ class MonteCarloSpendingSimulator @Inject constructor(
 
         // Step 2: Run Monte Carlo simulation
         val fractionOfWeek = daysRemaining / 7.0
+        val remainingWeeks = (daysRemaining + 6) / 7
+        val lastWeekWeight = minOf(1.0, (daysRemaining - 7 * (remainingWeeks - 1)) / 7.0)
         val random = Random(SEED)
         val zeroProbRandom = if (fit.zeroWeekProbability > 0.0) Random(SEED xor 0x5DEECE66DL) else null
         val simulatedTotals = DoubleArray(NUM_ITERATIONS)
@@ -127,8 +129,22 @@ class MonteCarloSpendingSimulator @Inject constructor(
             val z = random.nextGaussian()
             // BL-01: Draw a zero-spend week with the observed quiet-week probability;
             // otherwise sample from the positive-week LogNormal fit.
-            val isZeroWeek = zeroProbRandom != null && zeroProbRandom.nextDouble() < fit.zeroWeekProbability
-            val sampledWeekly = if (isZeroWeek) 0.0 else exp(fit.mu + fit.sigma * z)
+            // The draw is made independently for each remaining week (the last, possibly
+            // partial, week is weighted by min(1, its days / 7)); only active weeks
+            // contribute to the scaled horizon. With zeroWeekProbability == 0 no draw is
+            // made and the horizon is exactly daysRemaining / 7.0 (bit-identical to before).
+            val activeFraction = if (zeroProbRandom == null) {
+                fractionOfWeek
+            } else {
+                var active = 0.0
+                for (week in 0 until remainingWeeks) {
+                    val weight = if (week == remainingWeeks - 1) lastWeekWeight else 1.0
+                    val isZeroWeek = zeroProbRandom.nextDouble() < fit.zeroWeekProbability
+                    if (!isZeroWeek) active += weight
+                }
+                active
+            }
+            val sampledWeekly = exp(fit.mu + fit.sigma * z)
 
             // FCST-4: Subtract estimated weekly recurring from the sampled weekly total
             // so the stochastic component only models truly discretionary spending.
@@ -136,7 +152,7 @@ class MonteCarloSpendingSimulator @Inject constructor(
             val discretionaryWeekly = (sampledWeekly - estimatedWeeklyRecurring).coerceAtLeast(0.0)
 
             // Scale weekly rate to remaining days
-            val sampledDiscretionary = discretionaryWeekly * fractionOfWeek
+            val sampledDiscretionary = discretionaryWeekly * activeFraction
 
             simulatedTotals[i] = spentToDate + knownUpcoming + sampledDiscretionary
         }

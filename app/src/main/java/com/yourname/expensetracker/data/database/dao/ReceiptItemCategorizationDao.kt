@@ -115,13 +115,12 @@ interface ReceiptItemCategorizationDao {
         SET itemDescription = '',
             aiRationale = NULL,
             suggestedCategoryName = NULL,
-            alternativeCategoriesJson = NULL,
-            userCorrectedCategoryName = NULL
+            alternativeCategoriesJson = NULL
         WHERE receiptId IN (
             SELECT id FROM scanned_receipts
             WHERE createdAt < :cutoffMs
         )
-          AND (itemDescription <> '' OR aiRationale IS NOT NULL OR suggestedCategoryName IS NOT NULL OR alternativeCategoriesJson IS NOT NULL OR userCorrectedCategoryName IS NOT NULL)
+          AND (itemDescription <> '' OR aiRationale IS NOT NULL OR suggestedCategoryName IS NOT NULL OR alternativeCategoriesJson IS NOT NULL)
     """)
     suspend fun redactForReceiptsOlderThanInternal(cutoffMs: Long): Int
 }
