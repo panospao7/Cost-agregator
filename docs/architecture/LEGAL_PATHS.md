@@ -23,9 +23,9 @@ Direct writes outside the five exact coordinator callable/DAO contracts in `conf
 
 ## Savings Goal Deletion
 
-`SavingsGoalsViewModel.requestDeleteGoal()` / `deleteGoal()` → `SavingsGoalRepository.deleteSavingsGoal()` → write barrier `"SavingsGoalRepository.deleteSavingsGoal"` → contribution-history pre-read (outside the transaction) → one Room transaction that re-reads the goal and its ledger rows → `SavingsGoalDeletionPolicy` decision → `SavingsGoalDao.deleteGoal()`. Only the goal id from the caller is used; the decision runs against the re-read row. Only an empty goal (zero balance, no ledger rows, no contribution events) is deleted. The result is `SavingsGoalDeleteResult` (`Deleted`, `AlreadyAbsent`, `Rejected(bounded reason code)`); cancellation propagates.
+`SavingsGoalsViewModel.deleteGoal()` (called from the confirm dialog) → `SavingsGoalRepository.deleteSavingsGoal()` → write barrier `"SavingsGoalRepository.deleteSavingsGoal"` → contribution-history pre-read (outside the transaction) → one Room transaction that re-reads the goal and its ledger rows → `SavingsGoalDeletionPolicy` decision → `SavingsGoalDao.deleteGoal()`. Only the goal id from the caller is used; the decision runs against the re-read row. Only an empty goal (zero balance, no ledger rows, no contribution events) is deleted. The result is `SavingsGoalDeleteResult` (`Deleted`, `AlreadyAbsent`, `Rejected(bounded reason code)`); cancellation propagates.
 
-`SavingsGoalRepository.getSavingsGoalDeletionEligibility()` is the read-only eligibility member used by the confirm dialog. It mutates nothing and applies the same policy. `SavingsGoalDao.deleteGoal()` is called only from `SavingsGoalRepository`.
+`SavingsGoalRepository.getSavingsGoalDeletionEligibility()` is the read-only eligibility member called by `SavingsGoalsViewModel.requestDeleteGoal()` before the confirm dialog opens. It mutates nothing and applies the same policy. `SavingsGoalDao.deleteGoal()` is called only from `SavingsGoalRepository`.
 
 ## Expense Mutations
 

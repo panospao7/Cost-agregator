@@ -54,8 +54,13 @@ fun SavingsGoalsScreen(
     var showAddGoalDialog by remember { mutableStateOf(false) }
     var recommendationToConfirm by remember { mutableStateOf<SmartRecommendation?>(null) }
 
+    // True once an event reports that the last delete attempt did not remove the goal.
+    var deleteRetainedOutcome by remember { mutableStateOf(false) }
     LaunchedEffect(viewModel) {
         viewModel.events.collect { event ->
+            if (event is SavingsGoalsEvent.DeleteRejected || event is SavingsGoalsEvent.WriteBlocked) {
+                deleteRetainedOutcome = true
+            }
             val message = when (event) {
                 SavingsGoalsEvent.GoalCreated -> context.getString(R.string.savings_goal_created_message)
                 is SavingsGoalsEvent.WriteBlocked -> event.message.asString(context)
@@ -98,17 +103,40 @@ fun SavingsGoalsScreen(
     val overflowFocusRequesters = remember { mutableMapOf<Long, FocusRequester>() }
     val goalsHeadingFocusRequester = remember { FocusRequester() }
     var deleteOriginGoalId by remember { mutableStateOf<Long?>(null) }
-    LaunchedEffect(deleteFlow, state.goals) {
+    // After a delete attempt the flow returns to Idle before state.goals drops the goal, so the
+    // origin is kept until the goal leaves the list (heading) or the attempt is reported as not
+    // deleting it (rejected/blocked: overflow).
+    var originWasDeleting by remember { mutableStateOf(false) }
+    LaunchedEffect(deleteFlow, state.goals, deleteRetainedOutcome) {
         when (deleteFlow) {
-            is DeleteFlowState.Checking -> deleteOriginGoalId = deleteFlow.goalId
-            is DeleteFlowState.Confirm -> deleteOriginGoalId = deleteFlow.goalId
-            is DeleteFlowState.NotAllowed -> deleteOriginGoalId = deleteFlow.goalId
-            is DeleteFlowState.Deleting -> deleteOriginGoalId = deleteFlow.goalId
+            is DeleteFlowState.Checking -> {
+                deleteOriginGoalId = deleteFlow.goalId
+                originWasDeleting = false
+            }
+            is DeleteFlowState.Confirm -> {
+                deleteOriginGoalId = deleteFlow.goalId
+                originWasDeleting = false
+            }
+            is DeleteFlowState.NotAllowed -> {
+                deleteOriginGoalId = deleteFlow.goalId
+                originWasDeleting = false
+            }
+            is DeleteFlowState.Deleting -> {
+                deleteOriginGoalId = deleteFlow.goalId
+                originWasDeleting = true
+                deleteRetainedOutcome = false
+            }
             DeleteFlowState.Idle -> {
                 val origin = deleteOriginGoalId
                 if (origin != null) {
+                    val originPresent = state.goals.any { it.id == origin }
+                    if (originWasDeleting && originPresent && !deleteRetainedOutcome) {
+                        // Delete outcome not yet visible in the list: keep the origin and wait.
+                        return@LaunchedEffect
+                    }
                     deleteOriginGoalId = null
-                    val originRequester = if (state.goals.any { it.id == origin }) {
+                    originWasDeleting = false
+                    val originRequester = if (originPresent) {
                         overflowFocusRequesters[origin]
                     } else {
                         null

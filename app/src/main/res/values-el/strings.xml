@@ -654,7 +654,7 @@
     <string name="savings_goal_deleted_message">Ο στόχος διαγράφηκε</string>
     <string name="savings_goal_delete_not_empty_message">Αυτός ο στόχος μόλις έλαβε αποταμιεύσεις, γι\' αυτό δεν διαγράφηκε.</string>
     <string name="savings_goal_delete_history_unavailable_message">Δεν ήταν δυνατός ο έλεγχος του ιστορικού εισφορών, γι\' αυτό ο στόχος δεν διαγράφηκε. Δοκιμάστε ξανά αργότερα.</string>
-    <string name="savings_goal_deleting_cd">Διαγραφή στόχου</string>
+    <string name="savings_goal_deleting_cd">Διαγραφή στόχου σε εξέλιξη</string>
     <string name="action_delete">Διαγραφή</string>
     <string name="error_delete_failed">Αποτυχία διαγραφής</string>
 </resources>

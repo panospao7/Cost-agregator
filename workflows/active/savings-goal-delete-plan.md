@@ -418,3 +418,4 @@ The owner lifted "planning only" on 2026-11-02.
     - the focus-return fallback to the heading when the origin card is gone (re-key on state.goals);
     - nit: overflowFocusRequesters is not pruned.
 - Known gap: el action_delete and error_delete_failed now have drafts. es/el sign-off is deferred to the release gate (owner-approvals 103).
+- reviewer-strict (Opus) at candidate 2674893b: ACCEPT-WITH-MINORS. Both MINORs (focus fallback held until the goal leaves the list; LEGAL_PATHS chain wording) and the el savings_goal_deleting_cd draft are fixed in the next commit. Residual: a cancelled delete emits no event, so focus stays unset (accepted).
