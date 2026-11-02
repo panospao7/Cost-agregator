@@ -353,8 +353,12 @@ class AppLockControllerPinBiometricTest {
         store.verifyScript += PinVerifyResult.Correct
         val h = AppLockControllerHarness(appPinSettings(timeout), pinStore = store)
         val controller = h.resolvedController()
+        val jobsBefore = h.activeControllerJobs().toSet()
         controller.onAppForegrounded()
+        val setupJobs = h.activeControllerJobs().filter { it !in jobsBefore } // the setup re-read and fingerprint re-check
         awaitOffered(controller)
+        // The setup re-check holds the single-flight flag until it finishes; a test foreground before then launches nothing.
+        awaitUntil("the setup foreground jobs finished") { setupJobs.none { it.isActive } }
         assertEquals(PinUnlockResult.Unlocked, runBlocking { controller.submitUnlockPin(pin()) })
         assertEquals(AppLockState.Unlocked, controller.state.value)
         return h to controller
