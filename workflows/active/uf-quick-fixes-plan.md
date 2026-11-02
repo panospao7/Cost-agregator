@@ -343,3 +343,9 @@ The owner lifted "planning only" on 2026-11-02 ("start this work; I leave organi
   - J-19-1 (HIGH, from the whole-app review: the subscription empty state hides detected candidates) is in the same `when` as QF-2b. It is **not folded in** (scope growth); QF-2b does not touch the candidate condition. J-19-1 stays with the review-findings backlog.
   - P-05-5 and E-01-5 relate to QF-2c but are on different lines; not folded in.
 - **Deep-link plan:** `deeplink-diag-hardening-plan.md` DL-1/DL-2 are SUPERSEDED by app-lock S21: `MainActivity.handleIntent` :239 now uses `DeepLinkPolicy.evaluate`, then `AppLockDeepLinkRouter`. UF-62 stays in the backlog.
+- **A-14 (2026-11-02 12:00Z, orchestrator, under owner item 101): Batch B unblocked before the fix104 merge.**
+  - Lane fast-forwarded to origin/feature/ai-evolution `81234d08` (Batch A + SGD + sfa + RSV already merged).
+  - `git merge-tree 81234d08 03d519a8` (fix104 lane tip): MainActivity auto-merges; the only conflicts are el/es `strings.xml` (end-of-file appends), which the fix104 lane has to resolve against 81234d08 regardless of QF. QF-2d edits the `SmartSearch` / `WarrantyTracker` branches of the routing `when`, not the CarbonFootprint/PriceProtection/BillNegotiation branches fix104 gates.
+  - So the A-10 wait is lifted for: **QF-2d** (as planned) and **QF-1 rescoped** = UF-56 (`DashboardFollowThroughEngine` money text + test) and UF-22 (EN value edit of `ai_section_experimental` → "Experimental features"). No `strings_release_truth.xml`, no negotiation, no DeferredFeatureGate/NavigationController edits (superseded by fix104 D3).
+  - **UF-21 PARKED** until negotiation is un-gated (the recommended option of the A-10 owner call; item 101).
+  - Batch B validation: targeted `*DashboardFollowThroughEngineTest* *NaturalLanguageSearch* *MainScreenCallSiteTest* *Warranty*Screen* *CancellationSafetyArchitectureGuardTest*`, lint, static-guards once on the lane tip.

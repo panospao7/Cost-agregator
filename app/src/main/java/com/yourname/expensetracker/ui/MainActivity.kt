@@ -831,6 +831,7 @@ fun MainScreen(
                 is NavigationDestination.WarrantyTracker -> {
                     WarrantyTrackerScreen(
                         onNavigateBack = { navigation.navigateBack() },
+                        onNavigateToScanReceipt = { navigation.navigateTo(NavigationDestination.ScanReceipt) },
                         actionRegistry = actionRegistry
                     )
                 }
@@ -847,9 +848,12 @@ fun MainScreen(
                 is NavigationDestination.SmartSearch -> {
                     NaturalLanguageSearchScreen(
                         onNavigateBack = { navigation.navigateBack() },
-                        onViewTransaction = { transactionId ->
-                            // Navigate to Transactions tab (transaction detail view coming soon)
-                            navigation.navigateToTab(1)
+                        onViewTransaction = { transactionId, expenseDateMillis ->
+                            // Same day-filter shape as the Home day-tap, plus the expense highlight.
+                            activeTransactionFilter = TransactionFilter(
+                                dateRange = com.yourname.expensetracker.ui.util.UiTimeUtils.dayRange(expenseDateMillis)
+                            )
+                            navigation.navigateTo(NavigationDestination.Transactions(initialExpenseId = transactionId))
                         }
                     )
                 }

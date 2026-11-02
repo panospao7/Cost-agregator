@@ -48,7 +48,7 @@ import java.util.Locale
 @Composable
 fun NaturalLanguageSearchScreen(
     onNavigateBack: () -> Unit,
-    onViewTransaction: (Long) -> Unit,
+    onViewTransaction: (Long, Long) -> Unit,
     viewModel: NaturalLanguageSearchViewModel = hiltViewModel()
 ) {
     val searchState by viewModel.searchState.collectAsState()
@@ -191,7 +191,7 @@ fun InterpretingState() {
 fun SearchResultsContent(
     interpretation: NaturalLanguageSearchEngine.QueryInterpretation?,
     results: List<SearchResult>,
-    onViewTransaction: (Long) -> Unit = {},
+    onViewTransaction: (Long, Long) -> Unit = { _, _ -> },
     homeCurrency: String,
     totalInHomeCurrency: Double,
     modifier: Modifier = Modifier
@@ -261,7 +261,7 @@ fun SearchResultsContent(
         items(results) { searchResult ->
             TransactionResultCard(
                 expense = searchResult.expense,
-                onClick = { onViewTransaction(searchResult.expense.id) },
+                onClick = { onViewTransaction(searchResult.expense.id, searchResult.expense.date) },
                 homeCurrency = homeCurrency,
                 matchType = searchResult.matchType
             )

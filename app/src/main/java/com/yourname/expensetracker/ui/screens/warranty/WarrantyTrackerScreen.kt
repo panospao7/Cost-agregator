@@ -326,7 +326,7 @@ fun WarrantyTrackerScreen(
                             is EmptyStateActionType.ExecuteAction -> actionType.action.invoke()
                             is EmptyStateActionType.OpenFeature -> {
                                 when (actionType.feature) {
-                                    EmptyStateFeatureAction.AddWarranty -> { /* handled by primary button */ }
+                                    EmptyStateFeatureAction.AddWarranty -> { showManualAddDialog = true } // same dialog as the FAB
                                     else -> { /* other features not handled here */ }
                                 }
                             }
