@@ -73,6 +73,9 @@ import kotlinx.coroutines.withContext
  * authentication, before the document picker opens. The lock and the capability come from the one
  * narrow read-only entry point in `UnsupportedDatabaseExportAuth.kt`, read at the tap and bounded at 2 s.
  * A cancelled or failed prompt exports nothing and shows one constant message; no diagnostic is kept.
+ *
+ * G-LOCK-1: with the lock on or unreadable and the stored mode APP_PIN or unknown, a device that cannot run the
+ * prompt gets no export at all (the same constant message); this screen has no PIN prompt.
  */
 class UnsupportedDatabaseActivity : FragmentActivity() {
 
@@ -194,7 +197,7 @@ class UnsupportedDatabaseActivity : FragmentActivity() {
         exportGateJob = lifecycleScope.launch {
             try {
                 val testGate = exportAuthRequiredForTest
-                val authRequired = if (testGate != null) {
+                val decision = if (testGate != null) {
                     testGate(applicationContext)
                 } else {
                     UnsupportedDatabaseExportAuth.isAuthRequired(applicationContext)
@@ -206,11 +209,17 @@ class UnsupportedDatabaseActivity : FragmentActivity() {
                 if (gen != exportGateGeneration) return@launch
                 if (!lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED) || isFinishing) {
                     exportState = ExportState.IDLE
-                } else if (authRequired) {
-                    beginExportAuthentication(launchPicker)
                 } else {
-                    exportState = ExportState.IDLE
-                    launchPicker()
+                    when (decision) {
+                        ExportAuthDecision.Required -> beginExportAuthentication(launchPicker)
+                        ExportAuthDecision.NotRequired -> {
+                            exportState = ExportState.IDLE
+                            launchPicker()
+                        }
+                        // G-LOCK-1: the lock is on (or unknown) in a mode this screen cannot authenticate: no
+                        // prompt, no picker, the one existing constant denied message.
+                        ExportAuthDecision.Denied -> exportState = ExportState.AUTH_DENIED
+                    }
                 }
             } finally {
                 // A cancelled (or failed) gate read must not leave the button disabled. This only resets the
@@ -366,7 +375,7 @@ class UnsupportedDatabaseActivity : FragmentActivity() {
          * non-null. Always null in production; a test sets it and resets it to null afterwards.
          */
         @VisibleForTesting
-        internal var exportAuthRequiredForTest: (suspend (Context) -> Boolean)? = null
+        internal var exportAuthRequiredForTest: (suspend (Context) -> ExportAuthDecision)? = null
 
         /**
          * Test seam: replaces the system-prompt authenticator built in `onCreate` when non-null. Always null

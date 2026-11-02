@@ -122,9 +122,9 @@ class UnsupportedDatabaseActivityExportAuthSeamTest {
 
     /** A suspending gate held by a [CompletableDeferred]; counts its calls. */
     private class HeldGate {
-        val release = CompletableDeferred<Boolean>()
+        val release = CompletableDeferred<ExportAuthDecision>()
         var calls = 0
-        val gate: suspend (Context) -> Boolean = { _ ->
+        val gate: suspend (Context) -> ExportAuthDecision = { _ ->
             calls++
             release.await()
         }
@@ -135,8 +135,12 @@ class UnsupportedDatabaseActivityExportAuthSeamTest {
     private val exportButton: String get() = context.getString(R.string.unsupported_db_export_button)
     private val deniedMessage: String get() = context.getString(R.string.unsupported_db_export_auth_denied)
 
+    /** The old Boolean seam meaning: true is Required, false is NotRequired. */
+    private fun decisionOf(authRequired: Boolean): ExportAuthDecision =
+        if (authRequired) ExportAuthDecision.Required else ExportAuthDecision.NotRequired
+
     private fun startActivity(
-        gate: suspend (Context) -> Boolean,
+        gate: suspend (Context) -> ExportAuthDecision,
         authenticator: DeviceAuthenticator?
     ): UnsupportedDatabaseActivity {
         UnsupportedDatabaseActivity.exportAuthRequiredForTest = gate
@@ -186,7 +190,7 @@ class UnsupportedDatabaseActivityExportAuthSeamTest {
         val auth = FakeDeviceAuthenticator()
         var gateCalls = 0
         var gateContext: Context? = null
-        val activity = startActivity({ ctx -> gateCalls++; gateContext = ctx; false }, auth)
+        val activity = startActivity({ ctx -> gateCalls++; gateContext = ctx; ExportAuthDecision.NotRequired }, auth)
 
         tap()
 
@@ -203,7 +207,7 @@ class UnsupportedDatabaseActivityExportAuthSeamTest {
     @Test
     fun s21c_seam_requiredAndSucceeded_opensThePickerExactlyOnce_control() {
         val auth = FakeDeviceAuthenticator()
-        val activity = startActivity({ _ -> true }, auth)
+        val activity = startActivity({ _ -> ExportAuthDecision.Required }, auth)
 
         tap()
 
@@ -223,7 +227,7 @@ class UnsupportedDatabaseActivityExportAuthSeamTest {
     @Test
     fun s21c_seam_aRepeatedSucceededCallback_doesNotOpenASecondPicker() {
         val auth = FakeDeviceAuthenticator()
-        val activity = startActivity({ _ -> true }, auth)
+        val activity = startActivity({ _ -> ExportAuthDecision.Required }, auth)
         tap()
 
         deliver(auth, DeviceAuthOutcome.Succeeded)
@@ -234,7 +238,7 @@ class UnsupportedDatabaseActivityExportAuthSeamTest {
 
     private fun assertOutcomeDeniesWithNoPicker(outcome: DeviceAuthOutcome) {
         val auth = FakeDeviceAuthenticator()
-        val activity = startActivity({ _ -> true }, auth)
+        val activity = startActivity({ _ -> ExportAuthDecision.Required }, auth)
         tap()
         assertEquals(1, auth.authenticateIds.size)
 
@@ -276,7 +280,7 @@ class UnsupportedDatabaseActivityExportAuthSeamTest {
     @Test
     fun s21c_seam_aDeniedAttempt_canBeRetried_andASucceededRetryOpensThePicker() {
         val auth = FakeDeviceAuthenticator()
-        val activity = startActivity({ _ -> true }, auth)
+        val activity = startActivity({ _ -> ExportAuthDecision.Required }, auth)
         tap()
         deliver(auth, DeviceAuthOutcome.Cancelled)
         assertDeniedAndUsable()
@@ -295,7 +299,7 @@ class UnsupportedDatabaseActivityExportAuthSeamTest {
     @Test
     fun s21c_seam_aStaleAttemptId_isIgnored_andTheOpenAttemptStillDecides() {
         val auth = FakeDeviceAuthenticator()
-        val activity = startActivity({ _ -> true }, auth)
+        val activity = startActivity({ _ -> ExportAuthDecision.Required }, auth)
         tap()
         val openId = auth.authenticateIds.single()
 
@@ -314,7 +318,7 @@ class UnsupportedDatabaseActivityExportAuthSeamTest {
     @Test
     fun s21c_seam_aLateSucceededOfAClosedEarlierAttempt_neverOpensThePicker() {
         val auth = FakeDeviceAuthenticator()
-        val activity = startActivity({ _ -> true }, auth)
+        val activity = startActivity({ _ -> ExportAuthDecision.Required }, auth)
         tap()
         val firstId = auth.authenticateIds.single()
         deliver(auth, DeviceAuthOutcome.Cancelled)
@@ -334,7 +338,7 @@ class UnsupportedDatabaseActivityExportAuthSeamTest {
 
     private fun assertLaunchAnswerDenies(answer: AuthLaunch) {
         val auth = FakeDeviceAuthenticator(launchAnswer = answer)
-        val activity = startActivity({ _ -> true }, auth)
+        val activity = startActivity({ _ -> ExportAuthDecision.Required }, auth)
 
         tap()
 
@@ -360,6 +364,50 @@ class UnsupportedDatabaseActivityExportAuthSeamTest {
     @Test
     fun s21c_seam_launchAnswerPromptUnavailable_deniesWithNoPicker() = assertLaunchAnswerDenies(AuthLaunch.PROMPT_UNAVAILABLE)
 
+    // ---- G-LOCK-1: Denied --------------------------------------------------------------------------------------
+
+    @Test
+    fun gLock1_seam_denied_endsAuthDenied_withNoPromptAndNoPicker() {
+        val auth = FakeDeviceAuthenticator()
+        var gateCalls = 0
+        val activity = startActivity({ _ -> gateCalls++; ExportAuthDecision.Denied }, auth)
+
+        tap()
+
+        assertEquals("the gate is read once per tap", 1, gateCalls)
+        assertTrue("no prompt: nothing can be asked", auth.authenticateIds.isEmpty())
+        assertTrue("no prompt was opened, so none is cancelled", auth.cancelIds.isEmpty())
+        assertDeniedAndUsable()
+        assertNoPicker(activity)
+        assertEquals(
+            "the existing constant denied message",
+            "Exporting needs your fingerprint or screen lock. Nothing was exported.",
+            deniedMessage
+        )
+    }
+
+    @Test
+    fun gLock1_seam_denied_staysDeniedOnRetry_andALaterRequiredDecisionStillOpensThePicker_control() {
+        val auth = FakeDeviceAuthenticator()
+        var next = ExportAuthDecision.Denied
+        var gateCalls = 0
+        val activity = startActivity({ _ -> gateCalls++; next }, auth)
+
+        tap()
+        assertDeniedAndUsable()
+        tap()
+        assertEquals("a retry reads the gate again", 2, gateCalls)
+        assertDeniedAndUsable()
+        assertTrue(auth.authenticateIds.isEmpty())
+        assertNoPicker(activity)
+
+        next = ExportAuthDecision.Required // control: the denial was not sticky and the picker observation works
+        tap()
+        assertEquals(1, auth.authenticateIds.size)
+        deliver(auth, DeviceAuthOutcome.Succeeded)
+        assertPickerOpenedExactlyOnce(activity)
+    }
+
     // ---- double tap -------------------------------------------------------------------------------------------
 
     @Test
@@ -377,7 +425,7 @@ class UnsupportedDatabaseActivityExportAuthSeamTest {
         assertTrue(auth.authenticateIds.isEmpty())
         assertNoPicker(activity)
 
-        held.release.complete(true) // control: the one check continues to exactly one prompt
+        held.release.complete(ExportAuthDecision.Required) // control: the one check continues to exactly one prompt
         composeRule.waitForIdle()
         assertEquals(1, auth.authenticateIds.size)
         deliver(auth, DeviceAuthOutcome.Succeeded)
@@ -388,7 +436,7 @@ class UnsupportedDatabaseActivityExportAuthSeamTest {
     fun s21c_seam_aSecondTapWhileAuthenticating_doesNothing() {
         val auth = FakeDeviceAuthenticator()
         var gateCalls = 0
-        val activity = startActivity({ _ -> gateCalls++; true }, auth)
+        val activity = startActivity({ _ -> gateCalls++; ExportAuthDecision.Required }, auth)
 
         tap()
         assertEquals(1, auth.authenticateIds.size)
@@ -409,7 +457,7 @@ class UnsupportedDatabaseActivityExportAuthSeamTest {
     @Test
     fun s21c_seam_aSynchronousSucceededInsideAuthenticate_opensThePickerOnce() {
         val auth = FakeDeviceAuthenticator(synchronousOutcome = DeviceAuthOutcome.Succeeded)
-        val activity = startActivity({ _ -> true }, auth)
+        val activity = startActivity({ _ -> ExportAuthDecision.Required }, auth)
 
         tap()
 
@@ -422,7 +470,7 @@ class UnsupportedDatabaseActivityExportAuthSeamTest {
     @Test
     fun s21c_seam_aSynchronousCancelledInsideAuthenticate_deniesWithNoPicker() {
         val auth = FakeDeviceAuthenticator(synchronousOutcome = DeviceAuthOutcome.Cancelled)
-        val activity = startActivity({ _ -> true }, auth)
+        val activity = startActivity({ _ -> ExportAuthDecision.Required }, auth)
 
         tap()
 
@@ -481,7 +529,7 @@ class UnsupportedDatabaseActivityExportAuthSeamTest {
         val auth = FakeDeviceAuthenticator(
             outcomeOnCancel = DeviceAuthOutcome.Failed(DeviceAuthErrorBucket.SYSTEM_CANCELED)
         )
-        val activity = startActivity({ _ -> true }, auth)
+        val activity = startActivity({ _ -> ExportAuthDecision.Required }, auth)
         tap()
         val openId = auth.authenticateIds.single()
 
@@ -495,7 +543,7 @@ class UnsupportedDatabaseActivityExportAuthSeamTest {
     @Test
     fun s21c_seam_onStopWhileAuthenticating_cancelsTheOpenAttempt_andEndsDeniedWithNoPicker_whenNothingIsDelivered() {
         val auth = FakeDeviceAuthenticator() // cancel delivers nothing
-        val activity = startActivity({ _ -> true }, auth)
+        val activity = startActivity({ _ -> ExportAuthDecision.Required }, auth)
         tap()
         val openId = auth.authenticateIds.single()
 
@@ -514,7 +562,7 @@ class UnsupportedDatabaseActivityExportAuthSeamTest {
     @Test
     fun s21c_seam_aSecondStopAfterTheAttemptEnded_doesNotCancelAgain() {
         val auth = FakeDeviceAuthenticator()
-        startActivity({ _ -> true }, auth)
+        startActivity({ _ -> ExportAuthDecision.Required }, auth)
         tap()
         stopAndRestart()
         assertEquals(1, auth.cancelIds.size)
@@ -527,7 +575,7 @@ class UnsupportedDatabaseActivityExportAuthSeamTest {
     @Test
     fun s21c_seam_onStopWhileIdle_doesNotCancel() {
         val auth = FakeDeviceAuthenticator()
-        val activity = startActivity({ _ -> true }, auth)
+        val activity = startActivity({ _ -> ExportAuthDecision.Required }, auth)
 
         stopAndRestart()
 
@@ -577,14 +625,14 @@ class UnsupportedDatabaseActivityExportAuthSeamTest {
         val held = HeldGate()
         val auth = FakeDeviceAuthenticator()
         var taps = 0
-        val activity = startActivity({ ctx -> if (taps++ == 0) held.gate(ctx) else authRequiredAfterRelease }, auth)
+        val activity = startActivity({ ctx -> if (taps++ == 0) held.gate(ctx) else decisionOf(authRequiredAfterRelease) }, auth)
         tap()
         assertEquals(1, held.calls)
         composeRule.onNodeWithText(exportButton).assertIsNotEnabled()
 
         val current = checkNotNull(scenario)
         current.moveToState(Lifecycle.State.CREATED) // onStop while the gate read is held
-        held.release.complete(authRequiredAfterRelease)
+        held.release.complete(decisionOf(authRequiredAfterRelease))
         ShadowLooper.idleMainLooper()
 
         assertTrue("no prompt after the stop", auth.authenticateIds.isEmpty())
@@ -617,9 +665,9 @@ class UnsupportedDatabaseActivityExportAuthSeamTest {
                 // The lifecycle drops below STARTED while the read is in flight, without onStop (so the gate job is
                 // not cancelled by onStop): only the lifecycle check after the read can keep the prompt closed.
                 (host!!.lifecycle as LifecycleRegistry).currentState = Lifecycle.State.CREATED
-                authRequired
+                decisionOf(authRequired)
             } else {
-                authRequired
+                decisionOf(authRequired)
             }
         }, auth)
         host = activity
@@ -656,7 +704,7 @@ class UnsupportedDatabaseActivityExportAuthSeamTest {
         var host: UnsupportedDatabaseActivity? = null
         val activity = startActivity({ _ ->
             if (finish) host!!.finish() // the screen is finishing by the time the read returns
-            authRequired
+            decisionOf(authRequired)
         }, auth)
         host = activity
 
@@ -703,8 +751,8 @@ class UnsupportedDatabaseActivityExportAuthSeamTest {
      */
     @Test
     fun s22_f6_aStaleGateJobAfterStopAndRestart_neverResetsOrDrivesTheNewerTap() {
-        val gateA = CompletableDeferred<Boolean>()
-        val gateB = CompletableDeferred<Boolean>()
+        val gateA = CompletableDeferred<ExportAuthDecision>()
+        val gateB = CompletableDeferred<ExportAuthDecision>()
         val auth = FakeDeviceAuthenticator()
         var gateCalls = 0
         val activity = startActivity({ _ ->
@@ -734,7 +782,7 @@ class UnsupportedDatabaseActivityExportAuthSeamTest {
         composeRule.onNodeWithText(exportButton).assertIsNotEnabled()
 
         // The stale read A answers "auth required" while B is the live CHECKING attempt.
-        gateA.complete(true)
+        gateA.complete(ExportAuthDecision.Required)
         ShadowLooper.idleMainLooper()
         composeRule.waitForIdle()
 
@@ -750,7 +798,7 @@ class UnsupportedDatabaseActivityExportAuthSeamTest {
         assertNoPicker(activity)
 
         // positive control: the live read B continues through the normal path exactly once
-        gateB.complete(true)
+        gateB.complete(ExportAuthDecision.Required)
         ShadowLooper.idleMainLooper()
         composeRule.waitForIdle()
         assertEquals("exactly one prompt, from read B", 1, auth.authenticateIds.size)
@@ -774,7 +822,7 @@ class UnsupportedDatabaseActivityExportAuthSeamTest {
 
     private fun assertWatchdogClosesTheOpenPromptAsDenied(auth: FakeDeviceAuthenticator) {
         UnsupportedDatabaseActivity.exportAuthPromptTimeoutMillisForTest = watchdogMillis
-        val activity = startActivity({ _ -> true }, auth)
+        val activity = startActivity({ _ -> ExportAuthDecision.Required }, auth)
         tap()
         val openId = auth.authenticateIds.single()
 
@@ -818,7 +866,7 @@ class UnsupportedDatabaseActivityExportAuthSeamTest {
     fun s22_f6_watchdog_usesTheFiveMinuteConstantWhenTheSeamIsNull() {
         UnsupportedDatabaseActivity.exportAuthPromptTimeoutMillisForTest = null
         val auth = FakeDeviceAuthenticator()
-        val activity = startActivity({ _ -> true }, auth)
+        val activity = startActivity({ _ -> ExportAuthDecision.Required }, auth)
         tap()
         val openId = auth.authenticateIds.single()
 
@@ -835,7 +883,7 @@ class UnsupportedDatabaseActivityExportAuthSeamTest {
     private fun assertOutcomeDisarmsTheWatchdog(outcome: DeviceAuthOutcome) {
         UnsupportedDatabaseActivity.exportAuthPromptTimeoutMillisForTest = watchdogMillis
         val auth = FakeDeviceAuthenticator()
-        val activity = startActivity({ _ -> true }, auth)
+        val activity = startActivity({ _ -> ExportAuthDecision.Required }, auth)
         tap()
         val succeeded = outcome == DeviceAuthOutcome.Succeeded
 
@@ -874,7 +922,7 @@ class UnsupportedDatabaseActivityExportAuthSeamTest {
     fun s22_f6_watchdogIsDisarmedByOnStop_andTheStopCancelsOnlyOnce() {
         UnsupportedDatabaseActivity.exportAuthPromptTimeoutMillisForTest = watchdogMillis
         val auth = FakeDeviceAuthenticator() // cancel delivers nothing
-        val activity = startActivity({ _ -> true }, auth)
+        val activity = startActivity({ _ -> ExportAuthDecision.Required }, auth)
         tap()
         val openId = auth.authenticateIds.single()
 
@@ -893,7 +941,7 @@ class UnsupportedDatabaseActivityExportAuthSeamTest {
     fun s22_f6_aWatchdogOfAttemptN_doesNotAffectAttemptNPlus1() {
         UnsupportedDatabaseActivity.exportAuthPromptTimeoutMillisForTest = watchdogMillis
         val auth = FakeDeviceAuthenticator()
-        val activity = startActivity({ _ -> true }, auth)
+        val activity = startActivity({ _ -> ExportAuthDecision.Required }, auth)
         tap() // attempt 1, its watchdog would fire at 60 s
         val firstId = auth.authenticateIds.single()
         advance(40_000L)
@@ -919,7 +967,7 @@ class UnsupportedDatabaseActivityExportAuthSeamTest {
     fun s22_f6_aSynchronousOutcomeInsideAuthenticate_armsNoWatchdog() {
         UnsupportedDatabaseActivity.exportAuthPromptTimeoutMillisForTest = watchdogMillis
         val auth = FakeDeviceAuthenticator(synchronousOutcome = DeviceAuthOutcome.Cancelled)
-        val activity = startActivity({ _ -> true }, auth)
+        val activity = startActivity({ _ -> ExportAuthDecision.Required }, auth)
         tap()
         assertDeniedAndUsable()
 
@@ -934,7 +982,7 @@ class UnsupportedDatabaseActivityExportAuthSeamTest {
     fun s22_f6_aNonLaunchedAnswer_armsNoWatchdog() {
         UnsupportedDatabaseActivity.exportAuthPromptTimeoutMillisForTest = watchdogMillis
         val auth = FakeDeviceAuthenticator(launchAnswer = AuthLaunch.HOST_UNAVAILABLE)
-        val activity = startActivity({ _ -> true }, auth)
+        val activity = startActivity({ _ -> ExportAuthDecision.Required }, auth)
         tap()
         assertDeniedAndUsable()
 
@@ -961,7 +1009,7 @@ class UnsupportedDatabaseActivityExportAuthSeamTest {
         composeRule.onNodeWithText(exportButton).assertIsEnabled()
         composeRule.onNodeWithText(deniedMessage).assertDoesNotExist()
         assertNoPicker(activity)
-        held.release.complete(true) // a late answer reaches nobody
+        held.release.complete(ExportAuthDecision.Required) // a late answer reaches nobody
         composeRule.waitForIdle()
         assertTrue(auth.authenticateIds.isEmpty())
         assertNoPicker(activity)
