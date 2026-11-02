@@ -1560,6 +1560,156 @@ class DatabaseBackupRepositoryImplTest {
     }
 
     @Test
+    fun `UF46 S3 C1 semantic mismatch passes the reused STAGED_VERIFICATION_FAILED literal and persists the unchanged error`() = runTest(testDispatcher) {
+        stubCacheDir()
+        val journal = io.mockk.spyk(newRealJournal())
+        val failReasons = mutableListOf<String>()
+        every { journal.failJournal(any(), any()) } answers {
+            failReasons += secondArg<String>()
+            callOriginal()
+        }
+        val source = File(tempDir, "semantic_c1_source.sqlite")
+        createFullSchemaDatabase(source)
+        val section = RealSchemaFixture.capture(source)
+        // E3 DEPOSIT 1000.0 -> 1001.0: no row count changes, only the aggregates can notice.
+        RealSchemaFixture.mutate(source, "UPDATE expenses SET amount = 1001.0 WHERE id = 3")
+        stubExtractionResult(
+            CostbackupBundle.BackupManifest(
+                databaseVersion = APP_DATABASE_SCHEMA_VERSION,
+                createdAt = fixedTime,
+                tableCounts = RealSchemaFixture.manifestCounts(source),
+                semanticAggregates = section
+            ),
+            dbFile = source
+        )
+
+        try {
+            val result = createRepository(journal = journal)
+                .restoreCostBackup(File(tempDir, "bundle.costbackup"), "pw")
+
+            assertTrue(result.isFailure)
+            val error = result.exceptionOrNull() as BackupSemanticVerificationException
+            assertEquals(SemanticCode.SEMANTIC_MISMATCH, error.code)
+            assertEquals(SemanticCheckpoint.C1_STAGED_SOURCE, error.checkpoint)
+            assertEquals("the message is the bounded code only", "SEMANTIC_MISMATCH", error.message)
+            // F2: the journal literal is the reused one, never a new semantic literal.
+            assertEquals(listOf("STAGED_VERIFICATION_FAILED"), failReasons)
+            val failureJournal = journal.readFailureJournal()
+            assertEquals(RestoreJournal.JournalState.FAILED, failureJournal?.state)
+            // The persisted `error` is unchanged: not in FAILURE_REASON_CODES, so it stays UNKNOWN_ERROR.
+            assertEquals(DiagnosticReasonCode.UNKNOWN_ERROR.name, failureJournal?.error)
+            verify { mockRestoreMaintenanceMode.exit(forceRestartRequired = false) }
+            assertTrue("staged residue leaked: ${stagedResidueFiles()}", stagedResidueFiles().isEmpty())
+            assertTrue("extraction residue leaked: ${extractionResidueFiles()}", extractionResidueFiles().isEmpty())
+        } finally {
+            unmockkObject(CostbackupBundle)
+        }
+    }
+
+    @Test
+    fun `UF46 S3 malformed semantic section passes the reused MANIFEST_INCOMPLETE literal and persists the unchanged error`() = runTest(testDispatcher) {
+        stubCacheDir()
+        val journal = io.mockk.spyk(newRealJournal())
+        val failReasons = mutableListOf<String>()
+        every { journal.failJournal(any(), any()) } answers {
+            failReasons += secondArg<String>()
+            callOriginal()
+        }
+        // The extracted database is garbage: if the restore got as far as staging it, the failure would be
+        // STAGED_VERIFICATION_FAILED instead, so the literal also proves the block happens before staging.
+        val garbageDb = File(tempDir, "garbage_semantic_extracted.sqlite").apply { writeText("not a database") }
+        stubExtractionResult(
+            CostbackupBundle.BackupManifest(
+                databaseVersion = APP_DATABASE_SCHEMA_VERSION,
+                createdAt = fixedTime,
+                tableCounts = BackupVerifier.requiredManifestTables(1).associateWith { 1 },
+                semanticAggregates = null,
+                semanticSectionMalformed = true
+            ),
+            dbFile = garbageDb
+        )
+
+        try {
+            val result = createRepository(journal = journal)
+                .restoreCostBackup(File(tempDir, "bundle.costbackup"), "pw")
+
+            assertTrue(result.isFailure)
+            val error = result.exceptionOrNull() as BackupSemanticVerificationException
+            assertEquals(SemanticCode.SEMANTIC_MANIFEST_MALFORMED, error.code)
+            assertNull(error.checkpoint)
+            assertEquals("SEMANTIC_MANIFEST_MALFORMED", error.message)
+            assertEquals(listOf("MANIFEST_INCOMPLETE"), failReasons)
+            val failureJournal = journal.readFailureJournal()
+            assertEquals(RestoreJournal.JournalState.FAILED, failureJournal?.state)
+            assertEquals(DiagnosticReasonCode.UNKNOWN_ERROR.name, failureJournal?.error)
+            verify { mockRestoreMaintenanceMode.exit(forceRestartRequired = false) }
+            assertTrue("staged residue leaked: ${stagedResidueFiles()}", stagedResidueFiles().isEmpty())
+            assertTrue("extraction residue leaked: ${extractionResidueFiles()}", extractionResidueFiles().isEmpty())
+        } finally {
+            unmockkObject(CostbackupBundle)
+        }
+    }
+
+    @Test
+    fun `UF46 S3 BackupSemanticVerificationException maps to VALIDATION_FAILED and an unrelated exception does not`() {
+        val mapper = DatabaseBackupRepositoryImpl::class.java
+            .getDeclaredMethod("restoreFailureReasonCode", Throwable::class.java)
+            .apply { isAccessible = true }
+        fun reasonOf(error: Throwable): DiagnosticReasonCode = mapper.invoke(repository, error) as DiagnosticReasonCode
+
+        SemanticCode.values().forEach { code ->
+            val error = BackupSemanticVerificationException(code)
+            assertEquals(code.name, error.message)
+            assertEquals(DiagnosticReasonCode.VALIDATION_FAILED, reasonOf(error))
+        }
+        // Boundary: the mapping is by type, so an unrelated failure keeps the generic code.
+        assertEquals(DiagnosticReasonCode.UNKNOWN_ERROR, reasonOf(IllegalStateException("SEMANTIC_MISMATCH")))
+    }
+
+    @Test
+    fun `UF46 S3 DatabaseImportSummary semanticVerification default is NotVerifiable NO_MANIFEST and never Verified`() {
+        val summary = DatabaseImportSummary(
+            transactionCount = 3,
+            categoryCount = 2,
+            merchantCount = 1,
+            pendingReviewCount = 0,
+            budgetCount = 0
+        )
+
+        assertEquals(
+            com.yourname.expensetracker.domain.backup.SemanticVerificationOutcome.NotVerifiable(
+                SemanticNotVerifiableReason.NO_MANIFEST
+            ),
+            summary.semanticVerification
+        )
+        assertFalse(
+            "a summary that never set the outcome must not claim Verified",
+            summary.semanticVerification is com.yourname.expensetracker.domain.backup.SemanticVerificationOutcome.Verified
+        )
+        // The default survives copy and the legacy tracked-table constructor shape.
+        assertEquals(summary.semanticVerification, summary.copy(transactionCount = 9).semanticVerification)
+        assertEquals(summary.semanticVerification, trackedSummaryDefaultOutcome())
+        // Boundary: Verified is only ever an explicit choice of the producer.
+        assertEquals(
+            com.yourname.expensetracker.domain.backup.SemanticVerificationOutcome.Verified,
+            summary.copy(
+                semanticVerification = com.yourname.expensetracker.domain.backup.SemanticVerificationOutcome.Verified
+            ).semanticVerification
+        )
+    }
+
+    private fun trackedSummaryDefaultOutcome() =
+        DatabaseImportSummary(
+            transactionCount = 0,
+            categoryCount = 0,
+            merchantCount = 0,
+            pendingReviewCount = 0,
+            budgetCount = 0,
+            allTableCounts = mapOf("expenses" to 0),
+            receiptAssetWarnings = listOf("W")
+        ).semanticVerification
+
+    @Test
     fun `pre-swap generic failure writes terminal failed journal cleans residue and exits normally`() = runTest(testDispatcher) {
         stubCacheDir()
         val journal = newRealJournal()

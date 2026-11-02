@@ -137,7 +137,13 @@ data class DatabaseImportSummary(
     val subscriptionCount: Int = 0,
     val savingsGoalCount: Int = 0,
     val allTableCounts: Map<String, Int> = emptyMap(),
-    val receiptAssetWarnings: List<String> = emptyList()
+    val receiptAssetWarnings: List<String> = emptyList(),
+    /**
+     * UF-46: outcome of the restore-time semantic verification. Fail-closed default: a summary that
+     * does not set it was never semantically verified, so it is never [SemanticVerificationOutcome.Verified].
+     */
+    val semanticVerification: SemanticVerificationOutcome =
+        SemanticVerificationOutcome.NotVerifiable(SemanticNotVerifiableReason.NO_MANIFEST)
 ) {
     fun hasMeaningfulData(): Boolean {
         return transactionCount > 0 ||
