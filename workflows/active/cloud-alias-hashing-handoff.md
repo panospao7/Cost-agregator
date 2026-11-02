@@ -1,6 +1,6 @@
 # Handoff: cloud-alias-hashing
 
-Status: PLAN APPROVED — PARKED (post-1.0). DOCS-ONLY (Release 1.0 frozen; implementation post-1.0).
+Status: PLAN APPROVED — PARKED in the global build order (the Release 1.0 gate is now satisfied; docs-truth 2026-11-03). DOCS-ONLY (Release 1.0 frozen; implementation post-1.0).
 Feature-id: cloud-alias-hashing. Program: AI evolution roadmap item 2d (workflows/active/ai-evolution-handoff.md).
 
 ## Origin

@@ -1,7 +1,7 @@
 # Release 1.0 assurance handoff
 
 ```text
-Status: PENDING (Phase 0 PARTIAL; Phase 2 regression RG-01..RG-17 ALL DONE = PARTIAL (static only); stopped)
+Status: CLOSED / SUPERSEDED by docs/releases/release-1.0-assurance/release-1.0-final-acceptance.md, docs/releases/release-1.0.1/release-1.0.1-final-acceptance.md and docs/releases/release-1.0.1/release-1.0.2-acceptance.md (docs-truth 2026-11-03; historical record follows: PENDING (Phase 0 PARTIAL; Phase 2 regression RG-01..RG-17 ALL DONE = PARTIAL (static only); stopped))
 Last pin check (all RG agents, start+end): HEAD 279b7c92 (docs-only), app/ == ea446316, 0 untracked.
 
 PHASE 2 SUMMARY (2026-10-15; independent STATIC verification only; no tests/validation run in this lane):

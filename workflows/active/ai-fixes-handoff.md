@@ -2,7 +2,7 @@
 
 Feature id: `ai-fixes` (roadmap item 1 of the `ai-evolution` program; see `workflows/active/ai-evolution-handoff.md`)
 Branch at start: release-1.0-remediation
-Status: PLAN APPROVED — PARKED until Release 1.0 accepted + release-1.0-wt merged; next slice S0. DOCS-ONLY (Release 1.0 frozen).
+Status: PLAN APPROVED — the "PARKED until Release 1.0 accepted + release-1.0-wt merged" gate is SATISFIED and "next slice S0" is STALE (docs-truth 2026-11-03); slice progress is recorded in the sections below (see ai-evolution-handoff.md for the roll-up). DOCS-ONLY (Release 1.0 frozen).
 
 ## Origin
 Owner GO 2026-10-16 ("ok start") after approving roadmap order ai-fixes → nl-quick-add → assistant-follow-ups →

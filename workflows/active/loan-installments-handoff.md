@@ -2,7 +2,7 @@
 
 Feature id: `loan-installments`
 Branch at start: release-1.0-remediation (dirty tree with unrelated R16 amount-parsing work — preserve, do not touch)
-Status: PLAN APPROVED; domain-spec AMENDED (AMD-1..4). PAUSED until Release 1.0 accepted + release-1.0-wt merged
+Status: PLAN APPROVED; domain-spec AMENDED (AMD-1..4). The "PAUSED until Release 1.0 accepted + release-1.0-wt merged" gate is SATISFIED (docs-truth 2026-11-03); slices are implemented dormant behind InstallmentsFeature.ENABLED; the latest section below is authoritative.
 
 ## Raw idea (owner, 2026-10-16)
 "loan planner (a place that you can add a loan and its characteristics) and an installment

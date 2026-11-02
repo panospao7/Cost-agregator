@@ -2,12 +2,10 @@
 
 ## Overview
 
-This document describes all **22 features** implemented in the ExpenseTracker Android application across 4 phases.
+This document describes features implemented in the ExpenseTracker Android application. A feature listed here is not necessarily visible to release users: the per-feature **Status** line states the source-verified availability. Release visibility is controlled by `DeferredFeatureGate` (Tax, Investment, Challenges, Carbon, Price Protection, Bill Negotiation are debug-only) and `BankFeatureAvailability` (bank sync is debug-only). The financial rescue tool is compiled out (`RescueConfig.ENABLE_FINANCIAL_RESCUE = false`; a disabled break-glass tool, UF-35). For the unfinished-feature audit see `docs/features/_discovery/unfinished-features/audit.md` and `triage.md`.
 
-**Last Updated:** March 31, 2026  
-**Database Version:** 52  
-**Total Commits:** 17  
-**Branch:** `features/warranty-tracker-and-exports`
+**Last Updated:** November 3, 2026 (status truth pass; feature sections below were written between March and October 2026 and are not all re-verified)  
+**Database Version:** see `APP_DATABASE_SCHEMA_VERSION` in `app/src/main/java/com/yourname/expensetracker/data/database/AppDatabase.kt` (the migration list near the end of this file is historical)
 
 ---
 
@@ -18,12 +16,12 @@ This document describes all **22 features** implemented in the ExpenseTracker An
 | Phase 1 | Warranty, Export, Cash Flow, Receipt Matching | ✅ Complete |
 | Phase 2 | Savings Goals, Subscriptions, Business Expenses | ✅ Complete |
 | Phase 3 | Multi-Currency, Expense Groups, AI Forecasting, OCR | ✅ Complete |
-| Phase 4 | Investment, Bank API, Analytics, Budgets, Income, Tax, Reminders, Challenges | ✅ Complete |
-| Phase 5 | Enhanced Split, Lifestyle Inflation, Bill Negotiation, Price Protection, NLP Search, Carbon Footprint | ✅ Complete |
+| Phase 4 | Analytics, Shared Budgets, Income, Reminders | Implemented, see each feature's Status (Shared Budgets is not wired) |
+| Phase 4 (hidden or demo) | Investment, Tax, Challenges (hidden in release); Bank API (demo stub, unavailable in release) | Not release features |
+| Phase 5 | Enhanced Split, Lifestyle Inflation, NLP Search | Implemented, see each feature's Status |
+| Phase 5 (hidden) | Bill Negotiation, Price Protection, Carbon Footprint | Hidden in release builds |
 
-**Total: 28 Features**  
-**Codebase:** 528+ files  
-**Screens:** 77 screen files, 32 navigable routes
+Feature, file and screen counts are not recorded here; read them from `docs/architecture/CODEBASE_INVENTORY.md`.
 
 ---
 
@@ -483,7 +481,7 @@ val processed = ocrLanguageProcessor.autoNormalize(ocrText)
 ## Phase 4 Features (Completed)
 
 ### Feature #12: Investment Tracking
-**Status:** ✅ Complete | **Commit:** `84986dc` | **Migration:** 44→45
+**Status:** Hidden in release builds (debug only, `DeferredFeatureGate`); `InvestmentTracker.addHolding` has no UI caller, so a user cannot add a holding from the app (UF-31) | **Commit:** `84986dc` | **Migration:** 44→45
 
 #### Description
 Track stocks, crypto, bonds, ETFs and other investments with portfolio analytics and performance tracking.
@@ -521,7 +519,7 @@ InvestmentPortfolioScreen(
 ---
 
 ### Feature #9: Bank API Integration
-**Status:** ✅ Complete | **Commit:** `84986dc` | **Migration:** 45→46
+**Status:** Demo stub, unavailable in release builds (`BankFeatureAvailability`, debug only). The connect and sync code is marked `@StubForDemo` and generates mock transactions; there is no real provider integration (UF-30) | **Commit:** `84986dc` | **Migration:** 45→46
 
 #### Description
 Connect to bank APIs for automatic transaction import and synchronization.
@@ -602,7 +600,7 @@ AdvancedAnalyticsScreen(
 ---
 
 ### Feature #11: Shared Budgets
-**Status:** ✅ Complete | **Commit:** `84986dc`
+**Status:** Not wired (`SharedBudgetManager` has no production caller; dead code, see UF-34) | **Commit:** `84986dc`
 
 #### Description
 Multi-user budget tracking for families, couples, or groups with member contribution tracking.
@@ -639,7 +637,7 @@ Automatically detect and track recurring income sources like salary, dividends, 
 ---
 
 ### Feature #15: Tax Estimation
-**Status:** ✅ Complete | **Commit:** `84986dc`
+**Status:** Hidden in release builds (debug only, `DeferredFeatureGate`); not a release feature (UF-32) | **Commit:** `84986dc`
 
 #### Description
 Calculate estimated taxes based on spending, income, and deductible business expenses.
@@ -682,7 +680,7 @@ Smart bill reminder system with upcoming payment alerts and no-spend streak trac
 ---
 
 ### Feature #17: Spending Challenges
-**Status:** ✅ Complete | **Commit:** `84986dc`
+**Status:** Hidden in release builds (debug only, `DeferredFeatureGate`); not a release feature (UF-33) | **Commit:** `84986dc`
 
 #### Description
 Gamified spending challenges with no-spend streaks and achievement system.
@@ -895,7 +893,7 @@ LifestyleInflationScreen(onNavigateBack = { /* navigation */ })
 ---
 
 ### Feature #12: Smart Bill Negotiation
-**Status:** ✅ Complete
+**Status:** Hidden in release builds (debug only, `DeferredFeatureGate`)
 
 #### Description
 Rule-based bill negotiation assistant with market rate comparisons and template-based script generation (deterministic, on-device; no machine-learning model).
@@ -926,7 +924,7 @@ BillNegotiationScreen(onNavigateBack = { /* navigation */ })
 ---
 
 ### Feature #11: Price Protection & Deal Hunting
-**Status:** ✅ Complete
+**Status:** Hidden in release builds (debug only, `DeferredFeatureGate`); price data is simulated (UF-20)
 
 #### Description
 Monitors price drops on purchases and finds better deals, coupons, and credit card benefits.
@@ -991,7 +989,7 @@ NaturalLanguageSearchScreen(onNavigateBack = { /* navigation */ })
 ---
 
 ### Feature #10: Carbon Footprint Tracking
-**Status:** ✅ Complete
+**Status:** Hidden in release builds (debug only, `DeferredFeatureGate`)
 
 #### Description
 Calculates CO2 emissions from spending patterns with sustainability recommendations.
@@ -1093,16 +1091,10 @@ Every `catch (e: Exception)` block in a `suspend` function must rethrow `Cancell
 
 ---
 
-*Last updated: March 31, 2026*  
-*Version: 47*  
-*Total Features: 28 (core) + 15 (advanced) = 43 total features*
+*Last updated: November 3, 2026 (status truth pass; see the header)*
 
-## Current State (v68) Summary
-- Core features (Stable): 28
-- Advanced integrations (F1–F15): 15 (Beta)
-- Total features: 43
-- Codebase: 528+ Kotlin files
-- Screens: 77 screens
-- Database version: v68
-- Migrations: v52 → v68
-- Dependencies and requirements: Kotlin, AndroidX, Room, Hilt, Jetpack Compose, and related Android SDKs
+## Current State
+- Database version: `APP_DATABASE_SCHEMA_VERSION` in `AppDatabase.kt`; exported schemas are under `app/schemas/`.
+- File, screen and feature counts: `docs/architecture/CODEBASE_INVENTORY.md` (snapshot) and `docs/architecture/CODEBASE_SEGMENTS.md`.
+- Unfinished, hidden and demo features: `docs/features/_discovery/unfinished-features/audit.md` (UF-xx ids) and `triage.md`.
+- Dependencies: Kotlin, AndroidX, Room, Hilt, Jetpack Compose, WorkManager and related Android SDKs.

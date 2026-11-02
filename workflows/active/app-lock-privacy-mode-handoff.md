@@ -2,7 +2,7 @@
 
 Feature id: `app-lock-privacy-mode`
 Branch at start: release-1.0-remediation (release fix batches R16..R25 in progress — do not touch app/ or release docs)
-Status: STAGE 1 (Brief) running. Paper-only until Release 1.0 accepted.
+Status (docs-truth 2026-11-03): the original "STAGE 1 (Brief) running, paper-only" header is STALE. Plan v2 APPROVED 2026-10-17; the Release 1.0 gate is satisfied; slices are being implemented dormant (no production wiring yet). The latest section below is authoritative.
 
 ## Origin
 - Owner 2026-10-16: "lets do those things that can be done now" (paper-only lane from opportunity-scan).

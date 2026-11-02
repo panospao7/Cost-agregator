@@ -2,7 +2,7 @@
 
 Feature id: `ai-evolution` (umbrella; each chosen idea gets its own `<feature-id>` pipeline)
 Branch at start: release-1.0-remediation (clean)
-Status: ROADMAP — PLANS APPROVED (all parked post-1.0): ai-fixes, money-correctness 1a/1b, manual-entry-currency inc 1, nl-quick-add inc 1 (+ loan-installments outside this program). Not started: assistant-follow-ups, on-device-briefing, briefing-grounded-signals, nl-quick-add inc 1b/2, MEC inc 1b.
+Status: ROADMAP — PLANS APPROVED (the Release 1.0 gate is now satisfied, so "parked post-1.0" is stale; see each feature handoff for its own status; docs-truth 2026-11-03): ai-fixes, money-correctness 1a/1b, manual-entry-currency inc 1, nl-quick-add inc 1 (+ loan-installments outside this program). Not started: assistant-follow-ups, on-device-briefing, briefing-grounded-signals, nl-quick-add inc 1b/2, MEC inc 1b.
 
 ## Raw idea (owner, 2026-10-16, verbatim)
 "as you will see we already have ai integration in the app but i believe we can make it better

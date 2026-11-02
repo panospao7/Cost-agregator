@@ -1,6 +1,6 @@
 # Handoff: briefing-grounded-signals
 
-Status: PLAN APPROVED — PARKED (post-1.0). DOCS-ONLY (Release 1.0 frozen; implementation post-1.0).
+Status: PLAN APPROVED — PARKED in the global build order (the Release 1.0 gate is now satisfied; docs-truth 2026-11-03). DOCS-ONLY (Release 1.0 frozen; implementation post-1.0).
 Feature-id: briefing-grounded-signals. Program: AI evolution roadmap item 4 (+ B2 explain-this-number, B7 period-recap narration merged per ai-evolution critique) with roadmap item 3b on-device-briefing evaluated for folding in.
 
 ## Origin

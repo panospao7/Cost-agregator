@@ -2,7 +2,7 @@
 
 Feature id: `assistant-follow-ups` (roadmap item 3 of the `ai-evolution` program)
 Branch at start: release-1.0-remediation
-Status: PLAN APPROVED — PARKED (post-1.0). DOCS-ONLY (Release 1.0 frozen; implementation post-1.0).
+Status: PLAN APPROVED — PARKED behind ai-fixes + money-correctness 1a (the Release 1.0 gate is now satisfied; docs-truth 2026-11-03). DOCS-ONLY (Release 1.0 frozen; implementation post-1.0).
 
 ## Origin
 Owner 2026-10-16 (verbatim): "go" — after the orchestrator named assistant follow-ups as "the natural next one".

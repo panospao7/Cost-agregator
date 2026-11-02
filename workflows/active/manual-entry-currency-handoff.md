@@ -2,7 +2,7 @@
 
 Feature id: `manual-entry-currency` (roadmap item 2b of the `ai-evolution` program; split out of nl-quick-add at Gate 1)
 Branch at start: release-1.0-remediation
-Status: PLAN APPROVED — slice D ACCEPTED; rest PARKED per global post-1.0 order (next: S0 after Release 1.0, ai-fixes, money-correctness if specced). DOCS-ONLY (Release 1.0 frozen; implementation post-1.0).
+Status: PLAN APPROVED — slice D ACCEPTED; rest PARKED per the global build order (the Release 1.0 gate is now satisfied; next: S0 after ai-fixes and money-correctness if specced; docs-truth 2026-11-03). DOCS-ONLY (Release 1.0 frozen; implementation post-1.0).
 
 ## Origin
 Owner 2026-10-16 (verbatim): "go then" — given after the orchestrator's "what's left" summary with three open decisions

@@ -205,7 +205,7 @@ class ManualExpenseRepository @Inject constructor(
                             currency = currency,
                             note = recurringNote
                         )
-                        // TODO: Should route through RecurringLifecycleCoordinator for full lifecycle handling
+                        // RecurringExpenseRepository.insert delegates to RecurringRuleLifecycleCoordinator.createRule (the legal rule-creation path)
                         val recurringId = recurringExpenseRepository.insert(recurringExpense)
                         if (recurringId <= 0) {
                             throw IllegalStateException("Failed to create recurring expense rule")
