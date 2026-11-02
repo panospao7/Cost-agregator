@@ -656,6 +656,10 @@ BACKUP:
   → Checkpoint WAL (TRUNCATE)
   → Delete stale WAL/SHM
   → Copy DB file
+  → Semantic aggregates (UF-46): after the table counts, SemanticAggregates.capture reads the four
+    code-owned fingerprints from the final sanitized snapshot (read-only) into the manifest field
+    semanticAggregates; a C0 self-check re-reads the serialized section. A failed capture or self-check
+    never fails the backup: the section is NOT_CAPTURED with a bounded reason code
   → Exit BACKUP_EXPORTING mode (workers rescheduled)
 
 RESTORE:
@@ -679,6 +683,17 @@ RESTORE:
   → Reads use explicit DatabaseReadPolicy: NORMAL_APP_READ (NORMAL only),
     EXPORT_OR_BACKUP_SNAPSHOT_READ (NORMAL or BACKUP_EXPORTING),
     RESTORE_INTERNAL_STAGED_DB_READ (always denied through the app singleton)
+  → Semantic aggregates (UF-46): four fingerprints captured from the final sanitized snapshot. A failed
+    capture never fails the backup (NOT_CAPTURED). They are verified at C1 (staged source) and C2 (staged,
+    post-migration) before the swap and at C3 (live) after it. A malformed manifest section is blocked
+    before staging. Legacy, unknown-version, not-captured, definition-changed and raw .db imports
+    (importDatabase -> NO_MANIFEST) give NOT_VERIFIABLE (a non-blocking notice). A mismatch, a malformed
+    section or a query failure blocks the restore, or rolls it back after the swap through the existing
+    rollback (VERIFICATION_FAILED_ROLLED_BACK). There is no override. The outcome is carried by
+    DatabaseImportSummary.semanticVerification (Verified / NotVerifiable)
+  → Verifier failures surface only as bounded text: SNAPSHOT_VERIFICATION_FAILED (backup snapshot),
+    LIVE_VERIFICATION_FAILED (live post-swap) or BackupSemanticVerificationException(code); the verifier's
+    table, count and integrity detail stays in VerificationResult.errors and is never joined into exception text
 
 DATABASE OPEN GATE (R25):
   → The app opens ONLY schema v145 (DatabaseSchemaPolicy.MIGRATION_BASELINE) .. v151
@@ -749,6 +764,12 @@ FORBIDDEN:
   ❌ Using stale Room instance after DB swap (forced restart)
   ❌ Exiting maintenance to NORMAL after failed rollback
   ❌ Raw .db export in release builds
+  ❌ Executing manifest-supplied SQL (semantic aggregates come only from the closed four-ID, code-owned
+     SemanticAggregateId registry; no manifest string is executed or interpolated)
+  ❌ Semantic outcome VERIFIED without full comparison (all four aggregates at C1, C2 and C3)
+  ❌ Joined verifier messages in exception text
+  ❌ Any write in a semantic check (read-only handles only)
+  ❌ A user override, or a separate recovery path, for a semantic failure (C1/C2 abort pre-swap; C3 uses the existing rollback)
 ```
 
 ---

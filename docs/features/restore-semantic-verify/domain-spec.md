@@ -17,7 +17,7 @@ Evidence row: `docs/features/_discovery/unfinished-features/verification-backend
   - D5: `catch (e: Exception)` swallows `CancellationException` (`:656`).
   - D6: SQL `SUM(REAL)` depends on the SQLite version, which risks a false cross-device mismatch.
   - D7: the COUNT aggregates duplicate the Tier-1 `tableCounts`.
-- **The same leak exists today:** `BackupVerifier:340/347/359/381/399-403` (integrity text, table names, counts) is joined into the exception text at `:788` and `:1354` (Q3).
+- **The same leak exists today:** `BackupVerifier:340/347/359/381/399-403` (integrity text, table names, counts) is joined into the exception text at `:788` and `:1354` (Q3). **Status (S6, 2026-11-02): CLOSED.** The snapshot and live verification failures now carry exactly `SNAPSHOT_VERIFICATION_FAILED` / `LIVE_VERIFICATION_FAILED`; the issue lists stay internal.
 - **Test fixture:** `DatabaseBackupRepositoryImplTest.createFullSchemaDatabase` (`:2998-3017`) builds every table as `(id INTEGER PRIMARY KEY)`. Once capture is wired it would silently degrade to NOT_CAPTURED. **The capture slice must upgrade it to the real schema**, or add a real-schema variant, so that capture is actually exercised.
 - Migrations v145→v151 (`DatabaseMigrations.kt:24-173`) never write `expenses` or `manual_recurring_expenses`, and every fingerprinted column exists at v145. Loan's v151→152 is covered by INV-9.
 - Confirmed during this revision:
@@ -170,7 +170,7 @@ manifest parsed ─► section? ─ absent ────────────�
 
 - **Stored:** exact per-currency sums and counts. This is the same class of data as the bundled DB, in the same encrypted container. Nothing new goes in the plaintext header. Nothing new is exported.
 - **Logged:** bounded codes only (INV-14). The `SafeEventMetadata` keys are `semanticCode`, `aggregateId`, `checkpoint` and `mismatchedBuckets`, and events use the existing `DiagnosticReasonCode.VALIDATION_FAILED`.
-- The exceptions at `:788` and `:1354` become bounded codes, which closes the existing table, count and integrity leak (Q3).
+- The exceptions at `:788` and `:1354` become bounded codes, which closes the existing table, count and integrity leak (Q3). **Status (S6): closed**, including the live post-swap joined-text leak (exact `LIVE_VERIFICATION_FAILED`).
 - UI copy never shows values. Discreet mode and app-lock are unaffected (app-lock state is never in `.costbackup`).
 - `BackupSemanticVerificationException.message` equals its code. The VM maps it by type and never by message text.
 
@@ -254,7 +254,7 @@ Approved addition (O-6), applied in the docs slice under the doc lock:
 - **O-6:** the `LEGAL_PATHS.md` addition in §8 is approved for the docs slice.
 - **Q1:** (c) defer the base-snapshot aggregate. There is no `ExpenseDao` edit and no local copy.
 - **Q2:** exactly two new strings (the notice and "blocked: didn't match") in EN, EL and ES. There is no capture-failure string.
-- **Q3:** the exceptions at `:788` and `:1354` carry bounded codes only, and the internal issue lists are unchanged (INV-14).
+- **Q3:** the exceptions at `:788` and `:1354` carry bounded codes only, and the internal issue lists are unchanged (INV-14). **Status (S6): implemented and closed** (`SNAPSHOT_VERIFICATION_FAILED` / `LIVE_VERIFICATION_FAILED`).
 - **Q4:** reuse `STAGED_VERIFICATION_FAILED` and `POST_MIGRATION_VERIFICATION_FAILED`; C3 uses the existing rollback reason. Detail goes in bounded metadata only. There is no journal-state change and no `DiagnosticReasonCode` change.
 - **Q5:** above 256 buckets, record NOT_CAPTURED with a bounded diagnostic. No timeout in v1. A synthetic timing test is added.
 - **Q6:** capture or C0 failure lets the backup complete as NOT_CAPTURED (or with the section absent), with a bounded diagnostic. The later restore is NOT_VERIFIABLE (INV-5/6).
