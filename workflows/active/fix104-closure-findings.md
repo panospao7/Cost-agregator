@@ -68,6 +68,7 @@ reviewer-strict rejected the rule-based SmsParser rewrite on e042c2f5 after two 
 - R-EXPORT-1/2 final form: the business listings use `(SPENDING_PREDICATE OR installment markers)`, with no exemptions. This replaces the plan's `ROW_COUNT` markers. The guard's recorded exempt set goes 36 -> 35 because the subscription query now applies the predicate.
 
 ## FL-02 follow-ups (reviewer-strict on 4c2ff648; owner decision)
+- **Resolved by owner item 115:** generic AND AI fallback results for SMS packages now set `isAmountAmbiguous`, at all four registry sites. An SMS is auto-accepted only when `SmsParser` itself read one clean amount. The original finding follows.
 - **Generic fallback (MAJOR, pre-existing):** when `SmsParser` returns null (unlisted sender, or a gate miss such as "paid"), `AppParserRegistry.kt:233` falls back to `GenericTransactionParser`, which never sets `isAmountAmbiguous`.
   - Its scoring picks 500.00 for `Paid €5.00. Balance €500.00`.
   - Its 0.60 confidence reaches AUTO_ACCEPT only with a trained ML weight plus the approval boost (by arithmetic; not reproduced on a device).
