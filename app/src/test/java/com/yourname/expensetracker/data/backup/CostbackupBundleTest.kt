@@ -824,13 +824,15 @@ class CostbackupBundleTest {
     }
 
     @Test
-    fun `INV6 m3 self check passes for an identical NOT_CAPTURED set at C0`() {
+    fun `INV6 m3 an identical NOT_CAPTURED set round trips to an equal set`() {
+        // C0 runs only for CAPTURED sets (captureSemanticSection); the CAPTURED control is the INV6 Verified test
+        // above. This pins that the m3 equality check has no false mismatch on a NOT_CAPTURED round trip.
         val set = SemanticAggregateSet.ofNotCaptured(SemanticNotCapturedReason.SEMANTIC_CAPTURE_FAILED)
 
-        val result = CostbackupBundle.selfCheckSemanticSection(set)
+        val parsed = SemanticAggregates.parse(org.json.JSONObject(set.toJson().toString()))
 
-        assertTrue("expected Verified but was ${result.javaClass.simpleName}", result is SemanticCheckResult.Verified)
-        assertEquals(SemanticCheckpoint.C0_BACKUP_SELF_CHECK, result.checkpoint)
+        assertTrue("expected Parsed but was ${parsed.javaClass.simpleName}", parsed is SemanticParseResult.Parsed)
+        assertEquals(set, (parsed as SemanticParseResult.Parsed).set)
     }
 
     @Test
