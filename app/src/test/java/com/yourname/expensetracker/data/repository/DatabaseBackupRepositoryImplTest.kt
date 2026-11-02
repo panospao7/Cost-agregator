@@ -31,10 +31,23 @@ import io.mockk.verify
 import io.mockk.verifyOrder
 import io.mockk.mockkObject
 import io.mockk.unmockkObject
+import androidx.room.testing.MigrationTestHelper
 import com.yourname.expensetracker.data.backup.BackupVerifier
 import com.yourname.expensetracker.data.backup.CostbackupBundle
+import com.yourname.expensetracker.data.backup.RealSchemaFixture
 import com.yourname.expensetracker.data.backup.RestoreJournal
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
+import com.yourname.expensetracker.data.backup.SemanticAggregateId
+import com.yourname.expensetracker.data.backup.SemanticAggregateSet
+import com.yourname.expensetracker.data.backup.SemanticAggregates
+import com.yourname.expensetracker.data.backup.SemanticCaptureStatus
+import com.yourname.expensetracker.data.backup.SemanticCheckResult
+import com.yourname.expensetracker.data.backup.SemanticCheckpoint
+import com.yourname.expensetracker.data.backup.SemanticCode
+import com.yourname.expensetracker.data.backup.SemanticNotCapturedReason
+import com.yourname.expensetracker.domain.backup.SemanticNotVerifiableReason
+import com.yourname.expensetracker.domain.diagnostics.EventOutcome
+import com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata
 import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentPreBackupReconciler
 import com.yourname.expensetracker.domain.installment.lifecycle.PreBackupReconcileResult
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
@@ -67,6 +80,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -97,6 +111,13 @@ import java.util.UUID
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28])
 class DatabaseBackupRepositoryImplTest {
+
+    /** UF-46 S2: builds the export fixtures on the real exported Room schema (see [createFullSchemaDatabase]). */
+    @get:Rule
+    val realSchemaHelper: MigrationTestHelper = RealSchemaFixture.newHelper()
+
+    /** Short unique fixture DB names (long names overflow the Windows path limit under Robolectric). */
+    private var fixtureSeq = 0
 
     private val context = mockk<Context>(relaxed = true)
     private val database = mockk<AppDatabase>(relaxed = true)
@@ -1311,6 +1332,66 @@ class DatabaseBackupRepositoryImplTest {
         assertEquals(3, countRows(dbFile, "categories"))
     }
 
+    private suspend fun importRawDbAndReadOutcome(
+        liveVerifier: suspend (AppDatabase, File, Int, DatabaseImportSummary) -> DatabaseImportSummary
+    ): com.yourname.expensetracker.domain.backup.SemanticVerificationOutcome {
+        createSqliteDatabase(
+            file = dbFile,
+            expenseCount = 1,
+            categoryCount = 1,
+            merchantCount = 1,
+            pendingCount = 1,
+            budgetCount = 1
+        )
+        val sourceBackup = File(tempDir, "source_no_manifest.db")
+        createSqliteDatabase(
+            file = sourceBackup,
+            schemaVersion = DatabaseSchemaPolicy.MIGRATION_BASELINE,
+            expenseCount = 3,
+            categoryCount = 2,
+            merchantCount = 1,
+            pendingCount = 1,
+            budgetCount = 1
+        )
+        val result = createRepository(liveVerifier = liveVerifier).importDatabase(sourceBackup)
+        assertTrue(result.isSuccess)
+        return result.getOrThrow().semanticVerification
+    }
+
+    @Test
+    fun `UF46 S4 AE12 INV11 importDatabase of a raw db is NotVerifiable NO_MANIFEST`() = runTest(testDispatcher) {
+        if (!BuildConfig.DEBUG) {
+            assertLegacyImportDeniedInRelease()
+            return@runTest
+        }
+        // A raw .db has no manifest to compare against.
+        assertEquals(
+            com.yourname.expensetracker.domain.backup.SemanticVerificationOutcome.NotVerifiable(
+                SemanticNotVerifiableReason.NO_MANIFEST
+            ),
+            importRawDbAndReadOutcome { _, _, _, summary -> summary }
+        )
+    }
+
+    @Test
+    fun `UF46 S4 AE12 INV11 importDatabase is never Verified even when the live verifier claims Verified`() = runTest(testDispatcher) {
+        if (!BuildConfig.DEBUG) {
+            assertLegacyImportDeniedInRelease()
+            return@runTest
+        }
+        val outcome = importRawDbAndReadOutcome { _, _, _, summary ->
+            summary.copy(
+                semanticVerification = com.yourname.expensetracker.domain.backup.SemanticVerificationOutcome.Verified
+            )
+        }
+        assertEquals(
+            com.yourname.expensetracker.domain.backup.SemanticVerificationOutcome.NotVerifiable(
+                SemanticNotVerifiableReason.NO_MANIFEST
+            ),
+            outcome
+        )
+    }
+
     @Test
     fun `verification rejects partial count loss for core tables`() {
         val sourceSummary = DatabaseImportSummary(
@@ -1540,6 +1621,280 @@ class DatabaseBackupRepositoryImplTest {
             unmockkObject(CostbackupBundle)
         }
     }
+
+    @Test
+    fun `UF46 S3 C1 semantic mismatch passes the reused STAGED_VERIFICATION_FAILED literal and persists the unchanged error`() = runTest(testDispatcher) {
+        stubCacheDir()
+        val journal = io.mockk.spyk(newRealJournal())
+        val failReasons = mutableListOf<String>()
+        every { journal.failJournal(any(), any()) } answers {
+            failReasons += secondArg<String>()
+            callOriginal()
+        }
+        val source = File(tempDir, "semantic_c1_source.sqlite")
+        createFullSchemaDatabase(source)
+        val section = RealSchemaFixture.capture(source)
+        // E3 DEPOSIT 1000.0 -> 1001.0: no row count changes, only the aggregates can notice.
+        RealSchemaFixture.mutate(source, "UPDATE expenses SET amount = 1001.0 WHERE id = 3")
+        stubExtractionResult(
+            CostbackupBundle.BackupManifest(
+                databaseVersion = APP_DATABASE_SCHEMA_VERSION,
+                createdAt = fixedTime,
+                tableCounts = RealSchemaFixture.manifestCounts(source),
+                semanticAggregates = section
+            ),
+            dbFile = source
+        )
+
+        try {
+            val result = createRepository(journal = journal)
+                .restoreCostBackup(File(tempDir, "bundle.costbackup"), "pw")
+
+            assertTrue(result.isFailure)
+            val error = result.exceptionOrNull() as BackupSemanticVerificationException
+            assertEquals(SemanticCode.SEMANTIC_MISMATCH, error.code)
+            assertEquals(SemanticCheckpoint.C1_STAGED_SOURCE, error.checkpoint)
+            assertEquals("the message is the bounded code only", "SEMANTIC_MISMATCH", error.message)
+            // F2: the journal literal is the reused one, never a new semantic literal.
+            assertEquals(listOf("STAGED_VERIFICATION_FAILED"), failReasons)
+            val failureJournal = journal.readFailureJournal()
+            assertEquals(RestoreJournal.JournalState.FAILED, failureJournal?.state)
+            // The persisted `error` is unchanged: not in FAILURE_REASON_CODES, so it stays UNKNOWN_ERROR.
+            assertEquals(DiagnosticReasonCode.UNKNOWN_ERROR.name, failureJournal?.error)
+            verify { mockRestoreMaintenanceMode.exit(forceRestartRequired = false) }
+            assertTrue("staged residue leaked: ${stagedResidueFiles()}", stagedResidueFiles().isEmpty())
+            assertTrue("extraction residue leaked: ${extractionResidueFiles()}", extractionResidueFiles().isEmpty())
+        } finally {
+            unmockkObject(CostbackupBundle)
+        }
+    }
+
+    @Test
+    fun `UF46 S3 malformed semantic section passes the reused MANIFEST_INCOMPLETE literal and persists the unchanged error`() = runTest(testDispatcher) {
+        stubCacheDir()
+        val journal = io.mockk.spyk(newRealJournal())
+        val failReasons = mutableListOf<String>()
+        every { journal.failJournal(any(), any()) } answers {
+            failReasons += secondArg<String>()
+            callOriginal()
+        }
+        // The extracted database is garbage: if the restore got as far as staging it, the failure would be
+        // STAGED_VERIFICATION_FAILED instead, so the literal also proves the block happens before staging.
+        val garbageDb = File(tempDir, "garbage_semantic_extracted.sqlite").apply { writeText("not a database") }
+        stubExtractionResult(
+            CostbackupBundle.BackupManifest(
+                databaseVersion = APP_DATABASE_SCHEMA_VERSION,
+                createdAt = fixedTime,
+                tableCounts = BackupVerifier.requiredManifestTables(1).associateWith { 1 },
+                semanticAggregates = null,
+                semanticSectionMalformed = true
+            ),
+            dbFile = garbageDb
+        )
+
+        try {
+            val result = createRepository(journal = journal)
+                .restoreCostBackup(File(tempDir, "bundle.costbackup"), "pw")
+
+            assertTrue(result.isFailure)
+            val error = result.exceptionOrNull() as BackupSemanticVerificationException
+            assertEquals(SemanticCode.SEMANTIC_MANIFEST_MALFORMED, error.code)
+            assertNull(error.checkpoint)
+            assertEquals("SEMANTIC_MANIFEST_MALFORMED", error.message)
+            assertEquals(listOf("MANIFEST_INCOMPLETE"), failReasons)
+            val failureJournal = journal.readFailureJournal()
+            assertEquals(RestoreJournal.JournalState.FAILED, failureJournal?.state)
+            assertEquals(DiagnosticReasonCode.UNKNOWN_ERROR.name, failureJournal?.error)
+            verify { mockRestoreMaintenanceMode.exit(forceRestartRequired = false) }
+            assertTrue("staged residue leaked: ${stagedResidueFiles()}", stagedResidueFiles().isEmpty())
+            assertTrue("extraction residue leaked: ${extractionResidueFiles()}", extractionResidueFiles().isEmpty())
+        } finally {
+            unmockkObject(CostbackupBundle)
+        }
+    }
+
+    // ── INV-11 / m1: the nine coverage-gated table counts depend on the semantic marker ──
+
+    /** The nine Tier 1 tables first classified at schema 152 (spec INV-11); independent of production constants. */
+    private val m1GatedTables = listOf(
+        "source_stats_events",
+        "warranty_lifecycle_events",
+        "investment_transactions",
+        "group_settlements",
+        "group_lifecycle_events",
+        "entity_source_links",
+        "bank_statement_import_runs",
+        "bank_statement_import_items",
+        "negotiation_outcomes"
+    )
+
+    @Test
+    fun `INV11 m1 v152 manifest with no semantic section and no gated counts is accepted as NotVerifiable LEGACY`() =
+        runTest(testDispatcher) {
+            val fixture = restoreFixture()
+            try {
+                val counts = BackupVerifier.allTableNames().toSet().minus(m1GatedTables.toSet())
+                    .associateWith { if (it == "expenses") 1 else 0 }
+                assertEquals(
+                    "precondition: exactly the nine gated counts are absent",
+                    m1GatedTables.toSet(),
+                    BackupVerifier.allTableNames().toSet() - counts.keys
+                )
+                // tier1Manifest is a v152 manifest with semanticAggregates = null and no malformed marker
+                // (a pre-lane v152 development backup).
+                val manifest = tier1Manifest(counts)
+                assertEquals(APP_DATABASE_SCHEMA_VERSION, manifest.databaseVersion)
+                assertNull(manifest.semanticAggregates)
+                assertFalse(manifest.semanticSectionMalformed)
+                stubExtractionResult(manifest, fixture.source, withReceiptAsset = true)
+
+                val result = createRepository(journal = fixture.journal)
+                    .restoreCostBackup(File(tempDir, "bundle.costbackup"), "pw")
+
+                assertTrue("a section-less v152 manifest must be accepted: ${result.exceptionOrNull()}", result.isSuccess)
+                val summary = (result.getOrThrow() as com.yourname.expensetracker.domain.backup.DatabaseImportResult.SuccessNeedsRestart).summary
+                assertEquals(
+                    com.yourname.expensetracker.domain.backup.SemanticVerificationOutcome.NotVerifiable(
+                        SemanticNotVerifiableReason.LEGACY
+                    ),
+                    summary.semanticVerification
+                )
+                assertEquals(RestoreJournal.JournalState.COMPLETE, fixture.journal.readSuccessJournal()?.state)
+            } finally {
+                releaseRestoreFixture()
+            }
+        }
+
+    /**
+     * Drives a restore whose v152 manifest lacks the nine gated counts and carries the semantic marker (a present
+     * section or a present-but-malformed one). It must fail closed BEFORE staging with the reused bounded
+     * MANIFEST_INCOMPLETE literal and name exactly the nine missing tables.
+     */
+    private suspend fun assertMarkedManifestWithoutGatedCountsIsRejected(
+        buildManifest: (counts: Map<String, Int>, section: SemanticAggregateSet) -> CostbackupBundle.BackupManifest
+    ) {
+        val realSource = File(tempDir, "m1-src.sqlite")
+        createFullSchemaDatabase(realSource)
+        val section = RealSchemaFixture.capture(realSource)
+        val fullCounts = RealSchemaFixture.manifestCounts(realSource)
+        m1GatedTables.forEach { assertTrue("precondition: fixture counts include $it", fullCounts.containsKey(it)) }
+        val counts = fullCounts - m1GatedTables.toSet()
+
+        val fixture = restoreFixture()
+        try {
+            val before = dbFile.readBytes()
+            val failReasons = mutableListOf<String>()
+            every { fixture.journal.failJournal(any(), any()) } answers {
+                failReasons += secondArg<String>()
+                callOriginal()
+            }
+            // The extracted database is garbage: reaching staging would give STAGED_VERIFICATION_FAILED instead,
+            // so MANIFEST_INCOMPLETE also proves the block happens before staging.
+            val garbage = File(tempDir, "m1-garbage.sqlite").apply { writeText("not a database") }
+            stubExtractionResult(buildManifest(counts, section), garbage)
+
+            val result = createRepository(journal = fixture.journal)
+                .restoreCostBackup(File(tempDir, "bundle.costbackup"), "pw")
+
+            assertTrue(result.isFailure)
+            val error = result.exceptionOrNull() as BackupVerifier.IncompleteManifestException
+            assertEquals(m1GatedTables.sorted(), error.missingTables.sorted())
+            assertEquals(listOf("MANIFEST_INCOMPLETE"), failReasons)
+            assertEquals(RestoreJournal.JournalState.FAILED, fixture.journal.readFailureJournal()?.state)
+            verify { mockRestoreMaintenanceMode.exit(forceRestartRequired = false) }
+            verify(exactly = 0) { database.close() }
+            assertFalse("live database must not be swapped", fixture.trace.contains("CLOSE_LIVE"))
+            org.junit.Assert.assertArrayEquals(before, dbFile.readBytes())
+        } finally {
+            releaseRestoreFixture()
+        }
+    }
+
+    @Test
+    fun `INV11 m1 v152 manifest WITH a semantic section lacking the gated counts still fails MANIFEST_INCOMPLETE`() =
+        runTest(testDispatcher) {
+            assertMarkedManifestWithoutGatedCountsIsRejected { counts, section ->
+                CostbackupBundle.BackupManifest(
+                    databaseVersion = APP_DATABASE_SCHEMA_VERSION,
+                    createdAt = fixedTime,
+                    tableCounts = counts,
+                    semanticAggregates = section
+                )
+            }
+        }
+
+    @Test
+    fun `INV11 m1 v152 manifest WITH a malformed semantic section lacking the gated counts still fails MANIFEST_INCOMPLETE`() =
+        runTest(testDispatcher) {
+            assertMarkedManifestWithoutGatedCountsIsRejected { counts, _ ->
+                CostbackupBundle.BackupManifest(
+                    databaseVersion = APP_DATABASE_SCHEMA_VERSION,
+                    createdAt = fixedTime,
+                    tableCounts = counts,
+                    semanticAggregates = null,
+                    semanticSectionMalformed = true
+                )
+            }
+        }
+
+    @Test
+    fun `UF46 S3 BackupSemanticVerificationException maps to VALIDATION_FAILED and an unrelated exception does not`() {
+        val mapper = DatabaseBackupRepositoryImpl::class.java
+            .getDeclaredMethod("restoreFailureReasonCode", Throwable::class.java)
+            .apply { isAccessible = true }
+        fun reasonOf(error: Throwable): DiagnosticReasonCode = mapper.invoke(repository, error) as DiagnosticReasonCode
+
+        SemanticCode.values().forEach { code ->
+            val error = BackupSemanticVerificationException(code)
+            assertEquals(code.name, error.message)
+            assertEquals(DiagnosticReasonCode.VALIDATION_FAILED, reasonOf(error))
+        }
+        // Boundary: the mapping is by type, so an unrelated failure keeps the generic code.
+        assertEquals(DiagnosticReasonCode.UNKNOWN_ERROR, reasonOf(IllegalStateException("SEMANTIC_MISMATCH")))
+    }
+
+    @Test
+    fun `UF46 S3 DatabaseImportSummary semanticVerification default is NotVerifiable NO_MANIFEST and never Verified`() {
+        val summary = DatabaseImportSummary(
+            transactionCount = 3,
+            categoryCount = 2,
+            merchantCount = 1,
+            pendingReviewCount = 0,
+            budgetCount = 0
+        )
+
+        assertEquals(
+            com.yourname.expensetracker.domain.backup.SemanticVerificationOutcome.NotVerifiable(
+                SemanticNotVerifiableReason.NO_MANIFEST
+            ),
+            summary.semanticVerification
+        )
+        assertFalse(
+            "a summary that never set the outcome must not claim Verified",
+            summary.semanticVerification is com.yourname.expensetracker.domain.backup.SemanticVerificationOutcome.Verified
+        )
+        // The default survives copy and the legacy tracked-table constructor shape.
+        assertEquals(summary.semanticVerification, summary.copy(transactionCount = 9).semanticVerification)
+        assertEquals(summary.semanticVerification, trackedSummaryDefaultOutcome())
+        // Boundary: Verified is only ever an explicit choice of the producer.
+        assertEquals(
+            com.yourname.expensetracker.domain.backup.SemanticVerificationOutcome.Verified,
+            summary.copy(
+                semanticVerification = com.yourname.expensetracker.domain.backup.SemanticVerificationOutcome.Verified
+            ).semanticVerification
+        )
+    }
+
+    private fun trackedSummaryDefaultOutcome() =
+        DatabaseImportSummary(
+            transactionCount = 0,
+            categoryCount = 0,
+            merchantCount = 0,
+            pendingReviewCount = 0,
+            budgetCount = 0,
+            allTableCounts = mapOf("expenses" to 0),
+            receiptAssetWarnings = listOf("W")
+        ).semanticVerification
 
     @Test
     fun `pre-swap generic failure writes terminal failed journal cleans residue and exits normally`() = runTest(testDispatcher) {
@@ -2146,9 +2501,11 @@ class DatabaseBackupRepositoryImplTest {
         every { context.applicationContext } returns realAppContext
         every { context.getDatabasePath(any()) } answers { File(directory, firstArg<String>()) }
         dbFile = File(directory, AppDatabase.DATABASE_NAME)
-        createFullSchemaDatabase(dbFile)
+        // S2: the restore ordering fixture keeps the hand-rolled id-only shape (one expense row, a rewritten
+        // user_version and mocked count answers depend on it); it never reaches the export capture.
+        createIdOnlySchemaDatabase(dbFile)
         val source = File(directory, "source.db")
-        createFullSchemaDatabase(source)
+        createIdOnlySchemaDatabase(source)
         SQLiteDatabase.openDatabase(source.path, null, SQLiteDatabase.OPEN_READWRITE).use {
             // R25-C: oldest still-supported schema (legacy < 145 is rejected before any swap).
             it.execSQL("PRAGMA user_version = ${DatabaseSchemaPolicy.MIGRATION_BASELINE}")
@@ -3001,11 +3358,36 @@ class DatabaseBackupRepositoryImplTest {
     }
 
     /**
-     * Creates a database containing every table tracked by [BackupVerifier] (61 tables, see TABLE_TIERS),
-     * so the strict backup pipeline (`collectTableCountsStrict` + `BackupVerifier.verify`)
-     * passes and `createCostBackup` reaches `CostbackupBundle.create`.
+     * UF-46 S2: creates [file] on the REAL exported Room schema (152.json) through [RealSchemaFixture], seeded with
+     * fixture F (6 expenses, 2 recurring rules; plus a flagged PURCHASE when [withFlaggedPurchase]). Every table
+     * tracked by [BackupVerifier] exists, so the strict backup pipeline (`collectTableCountsStrict` +
+     * `BackupVerifier.verify`) passes, `createCostBackup` reaches `CostbackupBundle.create`, and the semantic
+     * capture sees real columns (CAPTURED). Use [createIdOnlySchemaDatabase] only where the id-only shape is required.
      */
-    private fun createFullSchemaDatabase(file: File) {
+    private fun createFullSchemaDatabase(file: File, withFlaggedPurchase: Boolean = false) {
+        createRealSchemaDatabase(file) { db ->
+            RealSchemaFixture.seedFixtureF(db, withFlaggedPurchase = withFlaggedPurchase)
+        }
+    }
+
+    /** Real-schema database at [file] whose rows are written by [seed]; the helper-owned original is removed. */
+    private fun createRealSchemaDatabase(file: File, seed: (SupportSQLiteDatabase) -> Unit) {
+        file.parentFile?.mkdirs()
+        val created = RealSchemaFixture.createSeeded(
+            realSchemaHelper, "rsv-${fixtureSeq++}", seed = seed
+        )
+        created.copyTo(file, overwrite = true)
+        created.delete()
+    }
+
+    /**
+     * The pre-S2 hand-rolled fixture, kept unchanged under an honest name: every table tracked by [BackupVerifier]
+     * (one per AppDatabase entity, see TABLE_TIERS) with only an `id` column (plus the few reference columns the
+     * verifier and anonymizer read) and one `expenses` row. The pipeline passes, but the expenses and recurring
+     * tables have no amount, currency or type columns, so the semantic capture cannot read them: this is the
+     * deliberate "capture query fails" shape for AE-5.
+     */
+    private fun createIdOnlySchemaDatabase(file: File) {
         file.parentFile?.mkdirs()
         val db = SQLiteDatabase.openOrCreateDatabase(file, null)
         try {
@@ -3316,7 +3698,7 @@ class DatabaseBackupRepositoryImplTest {
 
     @Test
     fun `createCostBackup stamps CountingTimeProvider timestamp into manifest createdAt`() = runTest(testDispatcher) {
-        // Full 57-table schema so the strict backup pipeline (collectTableCountsStrict +
+        // Full table schema (every TABLE_TIERS table) so the strict backup pipeline (collectTableCountsStrict +
         // BackupVerifier.verify) passes and the flow actually reaches CostbackupBundle.create.
         createFullSchemaDatabase(file = dbFile)
         val cacheDir = File(tempDir, "cache").apply { mkdirs() }
@@ -3381,6 +3763,422 @@ class DatabaseBackupRepositoryImplTest {
 
         runCatching { bundleFile.delete() }
     }
+
+    // ── UF-46 S2: semantic capture at export (INV-5, INV-6, INV-14, INV-16; AE-5, AE-6, AE-7, AE-15, AE-18) ──
+
+    private class RecordedEvent(
+        val stage: String,
+        val outcome: EventOutcome,
+        val reasonCode: DiagnosticReasonCode?,
+        val metadataJson: String
+    )
+
+    private class RecordedRun(
+        val recorder: OperationRunRecorder,
+        val handle: OperationRunHandle,
+        val events: MutableList<RecordedEvent>
+    ) {
+        fun semanticEvents(): List<RecordedEvent> = events.filter { it.stage == "SEMANTIC_CAPTURED" }
+    }
+
+    private fun recordingRun(): RecordedRun {
+        val events = mutableListOf<RecordedEvent>()
+        val handle = mockk<OperationRunHandle>(relaxed = true)
+        coEvery { handle.event(any(), any(), any(), any(), any(), any(), any(), any(), any()) } coAnswers {
+            events += RecordedEvent(
+                stage = arg<String>(0),
+                outcome = arg<EventOutcome>(1),
+                reasonCode = arg<DiagnosticReasonCode?>(2),
+                metadataJson = arg<SafeEventMetadata>(4).toJson()
+            )
+            Unit
+        }
+        val recorder = mockk<OperationRunRecorder>(relaxed = true)
+        coEvery { recorder.start(any(), any(), any()) } returns handle
+        return RecordedRun(recorder, handle, events)
+    }
+
+    private suspend fun exportToFile(
+        recorded: RecordedRun,
+        encryption: BackupEncryptionService,
+        password: String,
+        redacted: Boolean = false
+    ): Result<File> {
+        every { context.cacheDir } returns File(tempDir, "cache").apply { mkdirs() }
+        val repo = createRepository(encryptionService = encryption, operationRunRecorder = recorded.recorder)
+        return repo.createCostBackup(
+            password = password,
+            includeReceiptImages = false,
+            redacted = redacted,
+            privacyMode = null
+        )
+    }
+
+    private fun extractExport(
+        bundle: File,
+        password: String,
+        encryption: BackupEncryptionService,
+        label: String
+    ): CostbackupBundle.ExtractionResult = CostbackupBundle.extract(
+        bundle, File(tempDir, "extract_$label"), password, nowEpochMs = 0L, encryptionService = encryption
+    ).getOrThrow()
+
+    private fun assertSingleBoundedSemanticEvent(recorded: RecordedRun, expectedCode: SemanticCode) {
+        val events = recorded.semanticEvents()
+        assertEquals("exactly one SEMANTIC_CAPTURED event", 1, events.size)
+        val event = events.single()
+        assertEquals(EventOutcome.SKIPPED, event.outcome)
+        assertEquals(DiagnosticReasonCode.VALIDATION_FAILED, event.reasonCode)
+        val metadata = org.json.JSONObject(event.metadataJson)
+        val keys = mutableSetOf<String>()
+        metadata.keys().forEach { keys += it }
+        assertEquals("only the bounded code may be carried", setOf("semanticCode"), keys)
+        assertEquals(expectedCode.name, metadata.getString("semanticCode"))
+        val forbidden = RealSchemaFixture.forbiddenValueText + listOf(
+            "no such column", "FROM", "WHERE", tempDir.absolutePath, "secret"
+        )
+        forbidden.forEach { assertFalse("event must not contain '$it'", event.metadataJson.contains(it)) }
+    }
+
+    private fun assertNotCaptured(
+        section: SemanticAggregateSet?,
+        expected: SemanticNotCapturedReason
+    ) {
+        assertNotNull("a NOT_CAPTURED section must be written, not omitted", section)
+        assertEquals(SemanticCaptureStatus.NOT_CAPTURED, section!!.status)
+        assertEquals(expected, section.notCapturedReason)
+        assertTrue("a partial CAPTURED section is never written", section.aggregates.isEmpty())
+    }
+
+    @Test
+    fun `fixture schema version matches the app schema version and the upgraded fixture is stamped with it`() {
+        createFullSchemaDatabase(file = dbFile)
+
+        assertEquals(APP_DATABASE_SCHEMA_VERSION, RealSchemaFixture.SCHEMA_VERSION)
+        val userVersion = RealSchemaFixture.readOnly(dbFile) { db ->
+            db.rawQuery("PRAGMA user_version", null).use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                cursor.getInt(0)
+            }
+        }
+        assertEquals(APP_DATABASE_SCHEMA_VERSION, userVersion)
+    }
+
+    @Test
+    fun `INV5 export of fixture F bundles a captured section that round trips`() = runTest(testDispatcher) {
+        createFullSchemaDatabase(file = dbFile)
+        val encryption = lowIterationBackupEncryptionService()
+        val recorded = recordingRun()
+
+        val result = exportToFile(recorded, encryption, "semantic_captured_password")
+
+        assertTrue("backup must succeed: ${result.exceptionOrNull()}", result.isSuccess)
+        val extracted = extractExport(result.getOrThrow(), "semantic_captured_password", encryption, "captured")
+        val section = extracted.manifest.semanticAggregates
+        assertNotNull("the section must be present in the bundle manifest", section)
+        assertFalse(extracted.manifest.semanticSectionMalformed)
+        // Hand-computed expectations of fixture F (spec section 7), independent of production SQL.
+        RealSchemaFixture.assertFixtureF(section!!)
+        // Conservation against the manifest counts: the raw buckets add up to the expense row count.
+        assertEquals(6, extracted.manifest.tableCounts["expenses"])
+        assertEquals(
+            6,
+            section.aggregates.getValue(SemanticAggregateId.EXPENSE_RAW_BY_TYPE_CURRENCY).buckets.sumOf { it.n }
+        )
+        // The section describes the bundled bytes: recomputing from the bundled database gives the same set.
+        assertEquals(RealSchemaFixture.capture(extracted.dbFile), section)
+        assertTrue("a captured section emits no SEMANTIC_CAPTURED event", recorded.semanticEvents().isEmpty())
+        coVerify(exactly = 1) { recorded.handle.success() }
+    }
+
+    @Test
+    fun `INV5 export of fixture F with a flagged purchase captures the exclusion rule`() = runTest(testDispatcher) {
+        createFullSchemaDatabase(file = dbFile, withFlaggedPurchase = true)
+        val encryption = lowIterationBackupEncryptionService()
+        val recorded = recordingRun()
+
+        val result = exportToFile(recorded, encryption, "semantic_flagged_password")
+
+        assertTrue(result.isSuccess)
+        val extracted = extractExport(result.getOrThrow(), "semantic_flagged_password", encryption, "flagged")
+        // The flagged row counts in n and adds 0 to the spending sum (D-SIS), but is in the raw sum.
+        RealSchemaFixture.assertFixtureF(extracted.manifest.semanticAggregates!!, withFlaggedPurchase = true)
+        assertEquals(7, extracted.manifest.tableCounts["expenses"])
+    }
+
+    @Test
+    fun `INV5 SAF export carries the captured semantic section`() = runTest(testDispatcher) {
+        createFullSchemaDatabase(file = dbFile)
+        every { context.cacheDir } returns File(tempDir, "cache").apply { mkdirs() }
+        val resolver = mockk<ContentResolver>()
+        val output = ByteArrayOutputStream()
+        val destination = android.net.Uri.parse("content://backup/semantic-saf")
+        every { context.contentResolver } returns resolver
+        every { resolver.openOutputStream(destination, "wt") } returns output
+        val encryption = lowIterationBackupEncryptionService()
+        val recorded = recordingRun()
+        val repo = createRepository(encryptionService = encryption, operationRunRecorder = recorded.recorder)
+
+        val result = repo.createCostBackup(
+            destination = destination,
+            password = "semantic_saf_password",
+            includeReceiptImages = false,
+            redacted = false,
+            privacyMode = null
+        )
+
+        assertTrue(result.isSuccess)
+        val bundle = File(tempDir, "saf_semantic.costbackup").apply { writeBytes(output.toByteArray()) }
+        val section = extractExport(bundle, "semantic_saf_password", encryption, "saf").manifest.semanticAggregates
+        assertNotNull(section)
+        RealSchemaFixture.assertFixtureF(section!!)
+    }
+
+    @Test
+    fun `AE7 capture reads the snapshot after sanitize and equals the bundled database`() = runTest(testDispatcher) {
+        createFullSchemaDatabase(file = dbFile)
+        // Stand-in for any write to the snapshot after the raw copy (sanitize, loan S6c reconcile): E1 12.5 -> 13.0.
+        every { exportAnonymizer.sanitizeExport(any()) } answers {
+            RealSchemaFixture.mutate(firstArg<File>(), "UPDATE expenses SET amount = 13.0 WHERE id = 1")
+        }
+        val encryption = lowIterationBackupEncryptionService()
+        val recorded = recordingRun()
+
+        val result = exportToFile(recorded, encryption, "semantic_order_password", redacted = true)
+
+        assertTrue(result.isSuccess)
+        verify(exactly = 1) { exportAnonymizer.sanitizeExport(any()) }
+        val extracted = extractExport(result.getOrThrow(), "semantic_order_password", encryption, "order")
+        val section = extracted.manifest.semanticAggregates!!
+        assertEquals(SemanticCaptureStatus.CAPTURED, section.status)
+        // Hand-computed: PURCHASE EUR raw = 13.0 + 40.0 = 53.0 (was 52.5); spending EUR = 13.0 + 40.0 * 50 / 100 = 33.0.
+        val purchaseEur = section.aggregates.getValue(SemanticAggregateId.EXPENSE_RAW_BY_TYPE_CURRENCY)
+            .buckets.single { it.key == listOf("PURCHASE", "EUR") }
+        assertEquals(2, purchaseEur.n)
+        assertEquals(0, java.math.BigDecimal("53").compareTo(purchaseEur.s))
+        val spendingEur = section.aggregates.getValue(SemanticAggregateId.SPENDING_EFFECTIVE_BY_CURRENCY)
+            .buckets.single { it.key == listOf("EUR") }
+        assertEquals(0, java.math.BigDecimal("33").compareTo(spendingEur.s))
+        assertEquals(RealSchemaFixture.capture(extracted.dbFile), section)
+    }
+
+    @Test
+    fun `AE5 capture query failure degrades to NOT_CAPTURED and the backup still succeeds`() = runTest(testDispatcher) {
+        createIdOnlySchemaDatabase(dbFile)
+        val encryption = lowIterationBackupEncryptionService()
+        val recorded = recordingRun()
+
+        val result = exportToFile(recorded, encryption, "semantic_query_failure_password")
+
+        assertTrue("capture failure must not fail the backup: ${result.exceptionOrNull()}", result.isSuccess)
+        val extracted = extractExport(result.getOrThrow(), "semantic_query_failure_password", encryption, "queryfail")
+        assertNotCaptured(extracted.manifest.semanticAggregates, SemanticNotCapturedReason.SEMANTIC_CAPTURE_FAILED)
+        assertFalse(extracted.manifest.semanticSectionMalformed)
+        // m1: the degraded section is still WRITTEN (key present, parsed non-null), so the restore-side marker
+        // (semanticAggregates != null) keeps requiring the nine gated counts for this bundle.
+        assertNotNull(
+            "the semanticAggregates key must be written even when the capture is degraded",
+            extracted.manifest.semanticAggregates
+        )
+        val gatedCountsInDegradedBundle = listOf(
+            "source_stats_events", "warranty_lifecycle_events", "investment_transactions", "group_settlements",
+            "group_lifecycle_events", "entity_source_links", "bank_statement_import_runs",
+            "bank_statement_import_items", "negotiation_outcomes"
+        )
+        gatedCountsInDegradedBundle.forEach {
+            assertTrue("degraded bundle must still count $it", extracted.manifest.tableCounts.containsKey(it))
+        }
+        assertEquals("the bundle is otherwise complete", 1, extracted.manifest.tableCounts["expenses"])
+        assertSingleBoundedSemanticEvent(recorded, SemanticCode.SEMANTIC_CAPTURE_FAILED)
+        coVerify(exactly = 1) { recorded.handle.success() }
+        coVerify(exactly = 0) { recorded.handle.failedFinal(any(), any()) }
+    }
+
+    @Test
+    fun `AE5 a non cancellation failure inside capture degrades without leaking its message`() = runTest(testDispatcher) {
+        createFullSchemaDatabase(file = dbFile)
+        val encryption = lowIterationBackupEncryptionService()
+        val recorded = recordingRun()
+        mockkObject(SemanticAggregates)
+        try {
+            every { SemanticAggregates.capture(any(), any()) } throws
+                IllegalStateException("secret 12.5 EUR SELECT amount FROM expenses")
+
+            val result = exportToFile(recorded, encryption, "semantic_throw_password")
+
+            assertTrue("capture failure must not fail the backup: ${result.exceptionOrNull()}", result.isSuccess)
+            val extracted = extractExport(result.getOrThrow(), "semantic_throw_password", encryption, "throw")
+            assertNotCaptured(extracted.manifest.semanticAggregates, SemanticNotCapturedReason.SEMANTIC_CAPTURE_FAILED)
+            assertSingleBoundedSemanticEvent(recorded, SemanticCode.SEMANTIC_CAPTURE_FAILED)
+        } finally {
+            unmockkObject(SemanticAggregates)
+        }
+    }
+
+    @Test
+    fun `AE5 cancellation during capture propagates with identity and releases the barrier`() = runTest(testDispatcher) {
+        createFullSchemaDatabase(file = dbFile)
+        val cacheDir = File(tempDir, "cache").apply { mkdirs() }
+        every { context.cacheDir } returns cacheDir
+        every { context.contentResolver } returns mockk<ContentResolver>()
+        val cancellation = IdentityCancellationException("cancelled during capture")
+        val recorded = recordingRun()
+        val repo = createRepository(
+            encryptionService = lowIterationBackupEncryptionService(),
+            operationRunRecorder = recorded.recorder
+        )
+        mockkObject(SemanticAggregates)
+        try {
+            every { SemanticAggregates.capture(any(), any()) } throws cancellation
+
+            assertCancellationFromBothExports(repo, cancellation)
+        } finally {
+            unmockkObject(SemanticAggregates)
+        }
+
+        verify(exactly = 2) { mockRestoreMaintenanceMode.enter(RestoreMaintenanceMode.Mode.BACKUP_EXPORTING) }
+        verify(exactly = 2) { mockRestoreMaintenanceMode.exit(forceRestartRequired = false) }
+        assertTrue(
+            "no snapshot file may remain after a cancelled capture",
+            cacheDir.listFiles().orEmpty().none { it.name.startsWith("costbackup_snapshot_") }
+        )
+        assertTrue(
+            "no bundle may be written after a cancelled capture",
+            File(tempDir, "costbackups").listFiles().orEmpty().none { it.name.endsWith(".costbackup") }
+        )
+        assertTrue("a cancelled capture emits no SEMANTIC_CAPTURED event", recorded.semanticEvents().isEmpty())
+    }
+
+    @Test
+    fun `AE6 a failed self check degrades to NOT_CAPTURED SELF_CHECK_FAILED and the backup succeeds`() =
+        runTest(testDispatcher) {
+            createFullSchemaDatabase(file = dbFile)
+            val encryption = lowIterationBackupEncryptionService()
+            val c0 = SemanticCheckpoint.C0_BACKUP_SELF_CHECK
+            val rows = listOf(
+                "self check code" to SemanticCheckResult.Failed(c0, SemanticCode.SEMANTIC_SELF_CHECK_FAILED, null, 0),
+                "round trip mismatch" to SemanticCheckResult.Failed(
+                    c0, SemanticCode.SEMANTIC_MISMATCH, SemanticAggregateId.INCOME_EFFECTIVE_BY_CURRENCY, 1
+                ),
+                "anything but Verified" to SemanticCheckResult.NotVerifiable(
+                    c0, SemanticNotVerifiableReason.DEFINITION_CHANGED
+                )
+            )
+            mockkObject(CostbackupBundle)
+            try {
+                rows.forEachIndexed { index, (label, check) ->
+                    every { CostbackupBundle.selfCheckSemanticSection(any(), any()) } returns check
+                    val recorded = recordingRun()
+
+                    val result = exportToFile(recorded, encryption, "semantic_selfcheck_password")
+
+                    assertTrue("[$label] backup must succeed: ${result.exceptionOrNull()}", result.isSuccess)
+                    val section = extractExport(
+                        result.getOrThrow(), "semantic_selfcheck_password", encryption, "selfcheck$index"
+                    ).manifest.semanticAggregates
+                    assertNotCaptured(section, SemanticNotCapturedReason.SEMANTIC_SELF_CHECK_FAILED)
+                    assertSingleBoundedSemanticEvent(recorded, SemanticCode.SEMANTIC_SELF_CHECK_FAILED)
+                }
+            } finally {
+                unmockkObject(CostbackupBundle)
+            }
+        }
+
+    @Test
+    fun `AE15 snapshot verification failure carries exactly the bounded code`() = runTest(testDispatcher) {
+        val encryption = lowIterationBackupEncryptionService()
+        // Control: the same pipeline with an untouched snapshot succeeds.
+        createFullSchemaDatabase(file = dbFile)
+        val control = exportToFile(recordingRun(), encryption, "snapshot_verify_control", redacted = true)
+        assertTrue("control export must succeed: ${control.exceptionOrNull()}", control.isSuccess)
+        // The control legitimately wrote a bundle; clear it so the per-row "no bundle" assertion is meaningful.
+        File(tempDir, "costbackups").listFiles().orEmpty().forEach { it.delete() }
+
+        val rows = listOf(
+            "installment purchase orphan" to
+                "UPDATE expenses SET spendingExclusionReason = 'INSTALLMENT_PURCHASE' WHERE id = 1",
+            "installment reversed orphan" to
+                "UPDATE expenses SET spendingExclusionReason = 'INSTALLMENT_REVERSED' WHERE id = 1"
+        )
+        for ((label, statement) in rows) {
+            createFullSchemaDatabase(file = dbFile)
+            every { exportAnonymizer.sanitizeExport(any()) } answers {
+                RealSchemaFixture.mutate(firstArg<File>(), statement)
+            }
+            val recorded = recordingRun()
+
+            val result = exportToFile(recorded, encryption, "snapshot_verify_password", redacted = true)
+
+            assertTrue("[$label] the backup must fail", result.isFailure)
+            val failure = result.exceptionOrNull()!!
+            assertEquals("[$label]", "SNAPSHOT_VERIFICATION_FAILED", failure.message)
+            assertNull("[$label] no cause text may travel", failure.cause)
+            val rendered = failure.toString()
+            (listOf(
+                "orphan", "Orphan", "installment", "Installment", "INSTALLMENT", "expenses", "Count mismatch",
+                "Foreign key", "Integrity", "violation", tempDir.absolutePath
+            ) + RealSchemaFixture.forbiddenValueText).forEach {
+                assertFalse("[$label] exception text must not contain '$it': $rendered", rendered.contains(it))
+            }
+            assertTrue(
+                "[$label] no bundle may be written",
+                File(tempDir, "costbackups").listFiles().orEmpty().none { it.name.endsWith(".costbackup") }
+            )
+            assertTrue(
+                "[$label] the verification stage is recorded as a failure",
+                recorded.events.any {
+                    it.stage == "SNAPSHOT_VERIFIED" && it.outcome == EventOutcome.FAILED_FINAL &&
+                        it.reasonCode == DiagnosticReasonCode.VALIDATION_FAILED
+                }
+            )
+            assertTrue("[$label] capture itself succeeded", recorded.semanticEvents().isEmpty())
+            coVerify(exactly = 1) { recorded.handle.failedFinal(any(), any()) }
+            coVerify(exactly = 0) { recorded.handle.success() }
+        }
+    }
+
+    private suspend fun exportWithDistinctCurrencies(
+        count: Int,
+        password: String
+    ): Triple<Result<File>, RecordedRun, BackupEncryptionService> {
+        createRealSchemaDatabase(dbFile) { db ->
+            for (i in 1..count) {
+                RealSchemaFixture.insertExpense(db, i.toLong(), "PURCHASE", "C%03d".format(i), "1.0")
+            }
+        }
+        val encryption = lowIterationBackupEncryptionService()
+        val recorded = recordingRun()
+        return Triple(exportToFile(recorded, encryption, password), recorded, encryption)
+    }
+
+    @Test
+    fun `AE18 exactly 256 distinct currencies still capture`() = runTest(testDispatcher) {
+        val (result, recorded, encryption) = exportWithDistinctCurrencies(256, "semantic_256_password")
+
+        assertTrue(result.isSuccess)
+        val extracted = extractExport(result.getOrThrow(), "semantic_256_password", encryption, "c256")
+        val section = extracted.manifest.semanticAggregates!!
+        assertEquals(SemanticCaptureStatus.CAPTURED, section.status)
+        assertEquals(
+            256,
+            section.aggregates.getValue(SemanticAggregateId.EXPENSE_RAW_BY_TYPE_CURRENCY).buckets.size
+        )
+        assertEquals(256, extracted.manifest.tableCounts["expenses"])
+        assertTrue(recorded.semanticEvents().isEmpty())
+    }
+
+    @Test
+    fun `AE18 257 distinct currencies degrade to SEMANTIC_BUCKET_LIMIT and the backup succeeds`() =
+        runTest(testDispatcher) {
+            val (result, recorded, encryption) = exportWithDistinctCurrencies(257, "semantic_257_password")
+
+            assertTrue("bucket limit must not fail the backup: ${result.exceptionOrNull()}", result.isSuccess)
+            val extracted = extractExport(result.getOrThrow(), "semantic_257_password", encryption, "c257")
+            assertNotCaptured(extracted.manifest.semanticAggregates, SemanticNotCapturedReason.SEMANTIC_BUCKET_LIMIT)
+            assertEquals("the bundled data is still complete", 257, extracted.manifest.tableCounts["expenses"])
+            assertSingleBoundedSemanticEvent(recorded, SemanticCode.SEMANTIC_BUCKET_LIMIT)
+            coVerify(exactly = 1) { recorded.handle.success() }
+        }
 
     @Test
     fun `safety backup filename timestamp is derived from timeProvider`() = runTest(testDispatcher) {

@@ -3,6 +3,7 @@ package com.yourname.expensetracker.data.repository
 import android.content.Context
 import androidx.room.RoomDatabase
 import androidx.test.core.app.ApplicationProvider
+import com.yourname.expensetracker.data.backup.BackupVerifier
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.backup.MaintenanceOperationRunner
 import com.yourname.expensetracker.data.backup.RestoreDatabaseOpener
@@ -44,6 +45,8 @@ import com.yourname.expensetracker.testfixtures.backup.lowIterationBackupEncrypt
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.mockkObject
+import io.mockk.unmockkObject
 import io.mockk.verify
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -184,19 +187,14 @@ class DatabaseBackupRepositoryPreReconcileTest {
             coEvery { reconcileBeforeBackup() } returns PreBackupReconcileResult.Reconciled
         }
 
-        val result = newRepository(noRepair).createCostBackup(
-            password = "pre-reconcile-password",
-            includeReceiptImages = false,
-            redacted = false,
-            privacyMode = null
-        )
+        val (result, verifications) = backupCapturingSnapshotVerification(newRepository(noRepair))
 
         assertTrue("expected a verify failure: ${detail(result)}", result.isFailure)
-        assertTrue(
-            detail(result),
-            result.exceptionOrNull()?.message.orEmpty()
-                .contains("Orphan installment_entries linked to non-existent expenses")
-        )
+        val failureMessage = result.exceptionOrNull()?.message.orEmpty()
+        assertEquals(detail(result), "SNAPSHOT_VERIFICATION_FAILED", failureMessage)
+        assertFalse(detail(result), failureMessage.contains("Orphan"))
+        // m4: the orphan check is what failed (the bounded message alone cannot tell).
+        assertOrphanCheckFailed(verifications, ORPHAN_ENTRY_EXPENSE_ISSUE)
         assertEquals(RestoreMaintenanceMode.Mode.NORMAL, currentMode)
         assertNoBackupArtifacts()
     }
@@ -233,19 +231,14 @@ class DatabaseBackupRepositoryPreReconcileTest {
             coEvery { reconcileBeforeBackup() } returns PreBackupReconcileResult.Reconciled
         }
 
-        val result = newRepository(noRepair).createCostBackup(
-            password = "pre-reconcile-password",
-            includeReceiptImages = false,
-            redacted = false,
-            privacyMode = null
-        )
+        val (result, verifications) = backupCapturingSnapshotVerification(newRepository(noRepair))
 
         assertTrue("expected a verify failure: ${detail(result)}", result.isFailure)
-        assertTrue(
-            detail(result),
-            result.exceptionOrNull()?.message.orEmpty()
-                .contains("Orphan installment_plans referencing non-existent purchase expenses")
-        )
+        val failureMessage = result.exceptionOrNull()?.message.orEmpty()
+        assertEquals(detail(result), "SNAPSHOT_VERIFICATION_FAILED", failureMessage)
+        assertFalse(detail(result), failureMessage.contains("Orphan"))
+        // m4: the orphan check is what failed (the bounded message alone cannot tell).
+        assertOrphanCheckFailed(verifications, ORPHAN_PLAN_PURCHASE_ISSUE)
         assertEquals(RestoreMaintenanceMode.Mode.NORMAL, currentMode)
         assertNoBackupArtifacts()
     }
@@ -435,25 +428,63 @@ class DatabaseBackupRepositoryPreReconcileTest {
             )
         }
 
-        val result = newRepository(realReconciler()).createCostBackup(
-            password = "pre-reconcile-password",
-            includeReceiptImages = false,
-            redacted = false,
-            privacyMode = null
-        )
+        val (result, verifications) = backupCapturingSnapshotVerification(newRepository(realReconciler()))
 
         assertEquals("the reconcile ran before the injection", listOf("RECONCILE", "ENTER", "EXIT"), trace.toList())
         assertTrue("the verify stays fail-closed: ${detail(result)}", result.isFailure)
-        assertTrue(
-            detail(result),
-            result.exceptionOrNull()?.message.orEmpty()
-                .contains("Orphan installment_entries linked to non-existent expenses")
-        )
+        val failureMessage = result.exceptionOrNull()?.message.orEmpty()
+        assertEquals(detail(result), "SNAPSHOT_VERIFICATION_FAILED", failureMessage)
+        assertFalse(detail(result), failureMessage.contains("Orphan"))
+        // m4: the injected orphan entry link is what failed the verify (the bounded message alone cannot tell).
+        assertOrphanCheckFailed(verifications, ORPHAN_ENTRY_EXPENSE_ISSUE)
         assertEquals(RestoreMaintenanceMode.Mode.NORMAL, currentMode)
         assertNoBackupArtifacts()
     }
 
     // ------------------------------------------------------------------ harness
+
+    private companion object {
+        /** Fragments of the verifier's orphan issues (BackupVerifierInstallmentOrphanTest pins the full texts). */
+        const val ORPHAN_ENTRY_EXPENSE_ISSUE = "Orphan installment_entries linked to non-existent expenses"
+        const val ORPHAN_PLAN_PURCHASE_ISSUE = "Orphan installment_plans referencing non-existent purchase expenses"
+    }
+
+    /**
+     * Runs the export while recording every [BackupVerifier.verify] (file overload) result through a
+     * pass-through spy on the real verifier, so a test can prove WHICH check failed while the user-facing
+     * message stays the bounded code only.
+     */
+    private suspend fun backupCapturingSnapshotVerification(
+        repository: DatabaseBackupRepositoryImpl
+    ): Pair<Result<File>, List<BackupVerifier.VerificationSummary>> {
+        val captured = CopyOnWriteArrayList<BackupVerifier.VerificationSummary>()
+        mockkObject(BackupVerifier)
+        try {
+            every { BackupVerifier.verify(any<File>(), any(), any()) } answers {
+                callOriginal().also { captured += it }
+            }
+            val result = repository.createCostBackup(
+                password = "pre-reconcile-password",
+                includeReceiptImages = false,
+                redacted = false,
+                privacyMode = null
+            )
+            return result to captured.toList()
+        } finally {
+            unmockkObject(BackupVerifier)
+        }
+    }
+
+    private fun assertOrphanCheckFailed(
+        verifications: List<BackupVerifier.VerificationSummary>,
+        issueFragment: String
+    ) {
+        assertTrue("the snapshot verify must have run through the spy", verifications.isNotEmpty())
+        val failed = verifications.single { !it.passed }
+        assertTrue("the orphan integrity check must be among the errors: ${failed.errors}",
+            failed.errors.any { it.startsWith("Semantic integrity: ") && it.contains(issueFragment) })
+        assertTrue("the SQLite integrity check itself passed", failed.integrityCheckOk)
+    }
 
     /** Real reconciler over the real coordinator; the plan DAO traces the reconcile's first read. */
     private fun realReconciler(): InstallmentPreBackupReconciler {

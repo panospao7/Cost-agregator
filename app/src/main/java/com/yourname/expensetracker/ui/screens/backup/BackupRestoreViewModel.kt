@@ -9,6 +9,7 @@ import androidx.lifecycle.viewModelScope
 import com.yourname.expensetracker.data.backup.CostbackupBundle
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.backup.RestoreRestartSignal
+import com.yourname.expensetracker.data.backup.RestoreVerificationNoticeStore
 import com.yourname.expensetracker.domain.backup.DatabaseBackupRepository
 import com.yourname.expensetracker.domain.backup.DatabaseImportResult
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -44,6 +45,8 @@ data class BackupRestoreUiState(
     val restartRequired: Boolean = false,
     /** RG01-N1: number of receipt images skipped during restore (count only, never paths/names). */
     val receiptAssetWarningCount: Int = 0,
+    /** UF-46 (INV-17): non-blocking info notice; true when the restore succeeded but was NOT_VERIFIABLE. */
+    val semanticNotVerifiableNotice: Boolean = false,
     /** RP-15 (15-D): typed privacy-denied state — rendered via PrivacyBlockedCard. */
     val privacyBlocked: com.yourname.expensetracker.ui.components.PrivacyBlockedUiState? = null
 )
@@ -54,7 +57,8 @@ class BackupRestoreViewModel @Inject constructor(
     private val databaseBackupRepository: DatabaseBackupRepository,
     private val restoreMaintenanceMode: RestoreMaintenanceMode,
     private val timeProvider: TimeProvider,
-    private val restoreRestartSignal: RestoreRestartSignal
+    private val restoreRestartSignal: RestoreRestartSignal,
+    private val restoreVerificationNoticeStore: RestoreVerificationNoticeStore
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(BackupRestoreUiState())
@@ -193,6 +197,7 @@ class BackupRestoreViewModel @Inject constructor(
                 successMessage = null,
                 restartRequired = false,
                 receiptAssetWarningCount = 0,
+                semanticNotVerifiableNotice = false,
                 privacyBlocked = null
             )
 
@@ -267,7 +272,8 @@ class BackupRestoreViewModel @Inject constructor(
                                 successMessage = "Restore completed successfully!",
                                 restartRequired = true,
                                 // RG01-N1: count only; warning strings are never surfaced.
-                                receiptAssetWarningCount = importResult.summary.receiptAssetWarnings.size
+                                receiptAssetWarningCount = importResult.summary.receiptAssetWarnings.size,
+                                semanticNotVerifiableNotice = importResult.summary.isSemanticNotVerifiable()
                             )
                             // R27-S3: in-memory restart request, set ONLY from this in-process
                             // result (never from the persisted mode -> no restart loop). The
@@ -276,13 +282,24 @@ class BackupRestoreViewModel @Inject constructor(
                             // RestoreMaintenanceMode persists the restart-required mode with
                             // SharedPreferences.commit() (synchronous) before the repository
                             // returns, so the relaunched process reads it back.
-                            restoreRestartSignal.markRequested()
+                            //
+                            // UF-46 (INV-17): the one-shot NOT_VERIFIABLE notice is persisted
+                            // (commit, IO) BEFORE the restart is requested so the relaunched
+                            // process can show it; false clears a stale flag. record() is
+                            // best-effort and rethrows only cancellation; the finally keeps the
+                            // restart request independent of that cancellation.
+                            try {
+                                restoreVerificationNoticeStore.record(importResult.summary.isSemanticNotVerifiable())
+                            } finally {
+                                restoreRestartSignal.markRequested()
+                            }
                         }
                         is DatabaseImportResult.Success ->
                             _uiState.value = _uiState.value.copy(
                                 isRestoring = false,
                                 successMessage = "Restore completed successfully!",
-                                receiptAssetWarningCount = importResult.summary.receiptAssetWarnings.size
+                                receiptAssetWarningCount = importResult.summary.receiptAssetWarnings.size,
+                                semanticNotVerifiableNotice = importResult.summary.isSemanticNotVerifiable()
                             )
                         is DatabaseImportResult.Loading ->
                             _uiState.value = _uiState.value.copy(isRestoring = false)
@@ -298,8 +315,19 @@ class BackupRestoreViewModel @Inject constructor(
                     // bounded code; an unknown code falls through to the generic failure.
                     val schemaRes = (error as? com.yourname.expensetracker.data.repository.BackupSchemaUnsupportedException)
                         ?.let { schemaRejectionRes(it.code) }
+                    // UF-46 (INV-17): a semantic MISMATCH is mapped by type, before the "password"
+                    // substring match below, and is never the password error. MALFORMED and
+                    // QUERY_FAILED fall through to the generic restore-failure mapping.
+                    val blockedRes = if (
+                        (error as? com.yourname.expensetracker.data.repository.BackupSemanticVerificationException)
+                            ?.code == com.yourname.expensetracker.data.backup.SemanticCode.SEMANTIC_MISMATCH
+                    ) {
+                        com.yourname.expensetracker.R.string.backup_restore_blocked_content_mismatch
+                    } else {
+                        null
+                    }
                     val message = when {
-                        schemaRes != null -> null
+                        schemaRes != null || blockedRes != null -> null
                         error is com.yourname.expensetracker.data.backup.CostbackupBundle.WrongBackupPasswordException ->
                             "Incorrect password or corrupt backup file"
                         // P7-CURRENT-023: zip-bomb / oversized-bundle rejection from the
@@ -314,7 +342,7 @@ class BackupRestoreViewModel @Inject constructor(
                     _uiState.value = _uiState.value.copy(
                         isRestoring = false,
                         errorMessage = message,
-                        errorMessageRes = schemaRes,
+                        errorMessageRes = schemaRes ?: blockedRes,
                         privacyBlocked = denial
                     )
                 }
@@ -328,6 +356,9 @@ class BackupRestoreViewModel @Inject constructor(
     fun clearError() {
         _uiState.value = _uiState.value.copy(errorMessage = null, errorMessageRes = null, privacyBlocked = null)
     }
+
+    private fun com.yourname.expensetracker.domain.backup.DatabaseImportSummary.isSemanticNotVerifiable(): Boolean =
+        semanticVerification is com.yourname.expensetracker.domain.backup.SemanticVerificationOutcome.NotVerifiable
 
     @androidx.annotation.StringRes
     private fun schemaRejectionRes(code: String): Int? = when (code) {

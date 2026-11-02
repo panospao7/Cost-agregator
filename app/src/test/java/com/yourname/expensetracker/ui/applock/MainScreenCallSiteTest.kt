@@ -325,6 +325,31 @@ class MainScreenCallSiteTest {
     }
 
     @Test
+    fun uf46_restoreVerificationNoticeIsConsumedExactlyOnce_afterTheOperationalLockEarlyReturns() {
+        val text = sanitized(mainActivityFile)
+        val consume = Regex("""restoreVerificationNoticeStore\s*\.\s*consume\s*\(""").findAll(text).toList()
+        assertEquals("exactly one restoreVerificationNoticeStore.consume() in MainActivity.kt", 1, consume.size)
+        val consumeAt = consume.single().range.first
+
+        val whenStart = text.indexOf("when (val state = operationalState)")
+        assertTrue("operational-lock when found", whenStart >= 0)
+        val lockBranchReturns = listOf(
+            "is AppOperationalState.RestartRequiredAfterRestore",
+            "is AppOperationalState.CriticalRecoveryRequired",
+            "is AppOperationalState.RestoreInProgress"
+        ).map { branch ->
+            val branchAt = text.indexOf(branch, whenStart)
+            assertTrue("$branch branch found after the operational-lock when", branchAt > whenStart)
+            val returnAt = text.indexOf("return", branchAt)
+            assertTrue("$branch branch must return", returnAt > branchAt)
+            returnAt
+        }
+        lockBranchReturns.forEach { returnAt ->
+            assertTrue("the notice consume must come after every lock branch return", consumeAt > returnAt)
+        }
+    }
+
+    @Test
     fun tech1_mainActivityExtendsFragmentActivity() {
         val text = sanitized(mainActivityFile)
         assertTrue(Regex("""class\s+MainActivity\s*:\s*FragmentActivity\s*\(\s*\)""").containsMatchIn(text))

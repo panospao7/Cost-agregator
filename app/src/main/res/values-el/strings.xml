@@ -38,6 +38,9 @@
     <string name="deeplink_confirm_installments_body">Ένας σύνδεσμος θέλει να ανοίξει τα προγράμματα δόσεων. Συνεχίστε μόνο αν το περιμένατε.</string>
     <string name="backup_schema_too_old">Αυτό το αντίγραφο ασφαλείας προέρχεται από πολύ παλιά έκδοση της εφαρμογής και δεν μπορεί να επαναφερθεί.</string>
     <string name="backup_schema_too_new">Αυτό το αντίγραφο ασφαλείας δημιουργήθηκε από νεότερη έκδοση της εφαρμογής. Ενημερώστε την εφαρμογή για να το επαναφέρετε.</string>
+    <!-- UF-46: DRAFT: owner native sign-off pending -->
+    <string name="backup_restore_blocked_content_mismatch">Η επαναφορά μπλοκαρίστηκε: το περιεχόμενο του αντιγράφου δεν ταιριάζει</string>
+    <string name="backup_restore_not_verifiable_notice">Η επαναφορά ολοκληρώθηκε. Το αντίγραφο δεν μπόρεσε να ελεγχθεί με τα αρχικά του σύνολα.</string>
     <string name="bank_sync_result_success">Ο συγχρονισμός ολοκληρώθηκε</string>
     <string name="bank_sync_result_partial">Ο συγχρονισμός ολοκληρώθηκε — ορισμένα στοιχεία παραλείφθηκαν ή απέτυχαν</string>
     <string name="bank_sync_result_reauth_required">Απαιτείται νέα ταυτοποίηση — συνδέστε ξανά αυτή την τράπεζα</string>

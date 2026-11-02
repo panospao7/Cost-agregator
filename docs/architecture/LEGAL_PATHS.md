@@ -662,6 +662,10 @@ BACKUP:
   → Checkpoint WAL (TRUNCATE)
   → Delete stale WAL/SHM
   → Copy DB file
+  → Semantic aggregates (UF-46): after the table counts, SemanticAggregates.capture reads the four
+    code-owned fingerprints from the final sanitized snapshot (read-only) into the manifest field
+    semanticAggregates; a C0 self-check re-reads the serialized section. A failed capture or self-check
+    never fails the backup: the section is NOT_CAPTURED with a bounded reason code
   → Exit BACKUP_EXPORTING mode (workers rescheduled)
 
 RESTORE:
@@ -685,9 +689,26 @@ RESTORE:
   → Reads use explicit DatabaseReadPolicy: NORMAL_APP_READ (NORMAL only),
     EXPORT_OR_BACKUP_SNAPSHOT_READ (NORMAL or BACKUP_EXPORTING),
     RESTORE_INTERNAL_STAGED_DB_READ (always denied through the app singleton)
+  → Semantic aggregates (UF-46): four fingerprints captured from the final sanitized snapshot. A failed
+    capture never fails the backup (NOT_CAPTURED). They are verified at C1 (staged source) and C2 (staged,
+    post-migration) before the swap and at C3 (live) after it. A malformed manifest section is blocked
+    before staging. Legacy, below-schema-152 (VERSION), unknown-version, not-captured and definition-changed
+    backups give NOT_VERIFIABLE (a non-blocking notice). The raw .db importDatabase is Debug-only: it gives
+    NO_MANIFEST and shows no notice (Q9; DebugViewModel unchanged). Notice mechanism (S7a):
+    BackupRestoreViewModel records one boolean in RestoreVerificationNoticeStore (SharedPreferences commit(),
+    not in the DB) before the restart; MainActivity consumes it once after relaunch as a snackbar (the
+    in-screen card remains). Coverage marker rule (m1): BackupVerifier.requiredManifestTables requires the
+    coverage-gated tables only when databaseVersion >= 152 AND the manifest carries a semantic section
+    (present or malformed); a pre-lane v152 backup with no section keeps legacy coverage. A mismatch, a malformed
+    section or a query failure blocks the restore, or rolls it back after the swap through the existing
+    rollback (VERIFICATION_FAILED_ROLLED_BACK). There is no override. The outcome is carried by
+    DatabaseImportSummary.semanticVerification (Verified / NotVerifiable)
+  → Verifier failures surface only as bounded text: SNAPSHOT_VERIFICATION_FAILED (backup snapshot),
+    LIVE_VERIFICATION_FAILED (live post-swap) or BackupSemanticVerificationException(code); the verifier's
+    table, count and integrity detail stays in VerificationResult.errors and is never joined into exception text
 
 DATABASE OPEN GATE (R25):
-  → The app opens ONLY schema v145 (DatabaseSchemaPolicy.MIGRATION_BASELINE) .. v151
+  → The app opens ONLY schema v145 (DatabaseSchemaPolicy.MIGRATION_BASELINE) .. v152
     (APP_DATABASE_SCHEMA_VERSION). Older, newer, or unreadable live DBs are refused by
     DatabaseOpenGate; the live Room instance is built with GatedOpenHelperFactory, which throws
     DatabaseOpenBlockedException(<bounded code>) instead of opening. No destructive fallback:
@@ -717,12 +738,14 @@ DATABASE OPEN GATE (R25):
     is unchanged.
 
 BACKUP SCHEMA FLOOR (R25-C):
-  → Supported backup schema range == app open range: v145..v151. Both restoreCostBackup
+  → Supported backup schema range == app open range: v145..v152. Both restoreCostBackup
     (manifest.databaseVersion, checked right after the manifest is parsed) and importDatabase
     (PRAGMA user_version) reject out-of-range backups BEFORE staging or any swap, via the
     pre-destructive abort path (live DB untouched, failure journal written, maintenance exited,
     temp dir deleted), with BackupSchemaUnsupportedException(code):
-      BACKUP_SCHEMA_UNSUPPORTED_LEGACY (< v145), BACKUP_SCHEMA_UNSUPPORTED_NEWER (> v151).
+      BACKUP_SCHEMA_UNSUPPORTED_LEGACY (< v145), BACKUP_SCHEMA_UNSUPPORTED_NEWER (> v152).
+    Semantic verification additionally needs a source at schema >= 152; older in-range sources are
+    NOT_VERIFIABLE(VERSION) and restore under every other gate.
 
 INSTALLMENT PLAN TABLES (planned — loan-installments S2/S2b; tables installment_plans and
 installment_entries do not exist yet):
@@ -750,11 +773,17 @@ FORBIDDEN:
   ❌ Any raw-file export of a blocked DB other than the user-started SAF export in UnsupportedDatabaseActivity
   ❌ That export without device auth while the lock is on or unreadable and the device can authenticate (S21-c)
   ❌ A second @EntryPoint lookup, or any Room-backed binding, reachable from the UnsupportedDatabaseActivity surface
-  ❌ Restoring a backup below v145 or above v151
+  ❌ Restoring a backup below v145 or above v152
   ❌ Any DB read during restore stages (DatabaseReadBarrier denies during restore)
   ❌ Using stale Room instance after DB swap (forced restart)
   ❌ Exiting maintenance to NORMAL after failed rollback
   ❌ Raw .db export in release builds
+  ❌ Executing manifest-supplied SQL (semantic aggregates come only from the closed four-ID, code-owned
+     SemanticAggregateId registry; no manifest string is executed or interpolated)
+  ❌ Semantic outcome VERIFIED without full comparison (all four aggregates at C1, C2 and C3)
+  ❌ Joined verifier messages in exception text
+  ❌ Any write in a semantic check (read-only handles only)
+  ❌ A user override, or a separate recovery path, for a semantic failure (C1/C2 abort pre-swap; C3 uses the existing rollback)
 ```
 
 ---

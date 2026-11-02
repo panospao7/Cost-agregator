@@ -620,7 +620,7 @@ data/
 │   ├── CostbackupBundle.kt      # AES-256-GCM encrypted ZIP: header + manifest + DB + receipt images + checksums
 │   ├── RestoreMaintenanceMode.kt # 8-state mode manager; pauses workers + notification capture during restore
 │   ├── RestoreJournal.kt        # Crash-safe 9-state restore journal (PREPARING → COMPLETE/FAILED, incl. ASSETS_RESTORING)
-│   ├── BackupVerifier.kt        # Full 58-table 3-tier verification (EXACT / VALIDITY / OPTIONAL)
+│   ├── BackupVerifier.kt        # Full 74-table 3-tier verification (EXACT / VALIDITY / OPTIONAL)
 │   ├── DatabaseReadBarrier.kt   # Operation-level read blocking during restore
 │   └── DatabaseWriteBarrier.kt  # Operation-level write blocking during restore
 ├── ai/provider/                 # Cloud + on-device AI providers
@@ -1287,13 +1287,13 @@ crash-safe journaling, worker pausing, and full 58-table verification.
 | `CostbackupBundle` | `data/backup/CostbackupBundle.kt` | **`.costbackup` bundle format.** Outer layer: `COSTBACKUP1` magic (10B) + format version (2B) + salt (16B) + IV (12B) + AES-256-GCM ciphertext. Inner layer: standard ZIP containing `manifest.json`, `database.sqlite`, `files/receipts/`, `checksums.json`. Data classes: `BackupManifest`, `BackupIncludes`, `BackupOptionsManifest`, `ChecksumsManifest`. Exceptions: `WrongBackupPasswordException`, `UnsupportedBackupVersionException`, `InvalidBackupFormatException`, `ChecksumMismatchException`. Exposes `create()` and `extract()` as `Result<T>`. |
 | `RestoreMaintenanceMode` | `data/backup/RestoreMaintenanceMode.kt` | **8-state maintenance mode manager.** Modes: `NORMAL`, `BACKUP_EXPORTING`, `RESTORE_PREPARING`, `RESTORE_STAGING`, `RESTORE_SWAPPING`, `RESTORE_VERIFYING`, `RESTORE_ROLLING_BACK`, `RESTORE_COMPLETE_RESTART_REQUIRED`. On `enter()`: pauses all 7 WorkManager workers by cancelling each unique name in `WorkerSpec.DEFAULTS`. State persisted in `SharedPreferences` (survives process death). `isWritesAllowed()` returns `true` **only** in `NORMAL` (writes are blocked in `BACKUP_EXPORTING` too — that mode allows DB reads for snapshot export but not writes). `exit(forceRestartRequired)` optionally transitions to `RESTORE_COMPLETE_RESTART_REQUIRED` to keep writes blocked until app restart. |
 | `RestoreJournal` | `data/backup/RestoreJournal.kt` | **Crash-safe 9-state restore journal.** State machine: `PREPARING → STAGED → SAFETY_BACKUP_CREATED → SWAPPING → VERIFYING → ASSETS_RESTORING → COMPLETE` (with `ROLLING_BACK` and `FAILED` as recovery paths). Writes `restore_journal.json` before each critical step. `checkAndRecover()` returns `RecoveryResult` sealed class: `NoAction`, `CompleteClean`, `CleanedNonDestructive`, `AssetsIncomplete` (P7-P1-04: DB swapped but assets incomplete — journal preserved for recovery), `RecoveredFromSwap`, `CriticalRecoveryRequired`. Non-destructive states (`PREPARING`, `STAGED`, `FAILED`) clean staging files automatically. Destructive states (`SWAPPING`, `VERIFYING`, `ROLLING_BACK`) signal the caller to attempt safety-backup recovery. |
-| `BackupVerifier` | `data/backup/BackupVerifier.kt` | **Full 58-table verification in 3 tiers.** `TIER_1_EXACT` (39 tables — user/business data incl. the lifecycle/event tables: row count **must** match exactly). `TIER_2_VALIDITY` (10 tables — derived/event-log: must pass integrity + FK checks). `TIER_3_OPTIONAL` (9 tables — cache/external: may be absent). Methods: `verify()` returns `VerificationSummary` with per-table results; `verifyQuick()` throws on first failure for pre-swap gating. Runs `PRAGMA integrity_check` and `PRAGMA foreign_key_check` on the restored database. |
+| `BackupVerifier` | `data/backup/BackupVerifier.kt` | **Full 74-table verification in 3 tiers (`TABLE_TIERS`, schema 152).** `TIER_1_EXACT` (51 tables — user/business data incl. the lifecycle/event tables: row count **must** match exactly). `TIER_2_VALIDITY` (10 tables — derived/event-log: must pass integrity + FK checks). `TIER_3_OPTIONAL` (13 tables — cache/external: may be absent). The tables classified late (`COVERAGE_GATED_TABLES`) are required in the manifest only from `FULL_TABLE_COVERAGE_SCHEMA_VERSION` (152); older manifests carry no count and are not count-verified for them. Methods: `verify()` returns `VerificationSummary` with per-table results; `verifyQuick()` throws on first failure for pre-swap gating. Runs `PRAGMA integrity_check` and `PRAGMA foreign_key_check` on the restored database. Both methods also take an optional `SemanticExpectation` (UF-46) and compare the four code-owned semantic aggregates of `SemanticAggregates` against the manifest `semanticAggregates` section on a read-only handle; the issue text stays internal and never reaches exception text. |
 
 #### Integration Points
 
 | Component | What Changed |
 |-----------|--------------|
-| `DatabaseBackupRepositoryImpl` | **Rewritten** to use `CostbackupBundle.create()`/`extract()`, `BackupVerifier.verify()`/`verifyQuick()`, `RestoreJournal` for each step, and `RestoreMaintenanceMode.enter()`/`exit()` to pause workers during restore. Export path now produces `.costbackup` bundles; import path runs the full journaled restore pipeline. |
+| `DatabaseBackupRepositoryImpl` | **Rewritten** to use `CostbackupBundle.create()`/`extract()`, `BackupVerifier.verify()`/`verifyQuick()`, `RestoreJournal` for each step, and `RestoreMaintenanceMode.enter()`/`exit()` to pause workers during restore. Export path now produces `.costbackup` bundles; import path runs the full journaled restore pipeline. UF-46: backup creation captures `SemanticAggregates` from the final snapshot (after the table counts, with a C0 serialisation self-check) into the manifest field `semanticAggregates`; a capture failure never fails the backup (`NOT_CAPTURED`). Verification failures are typed `BackupSemanticVerificationException`; the snapshot and live verifier failures carry only the exact bounded texts `SNAPSHOT_VERIFICATION_FAILED` / `LIVE_VERIFICATION_FAILED`. `combineSemanticOutcome` folds C1/C2/C3 into `DatabaseImportSummary.semanticVerification`; `importDatabase` (raw `.db`) reports `NotVerifiable(NO_MANIFEST)`. |
 | `AppStartupCoordinator` | **`initialize()` now calls `checkRestoreJournal()` first** — before `registerLifecycleObserver()` and `scheduleStartupWork()`. Injects `RestoreJournal` and `RestoreMaintenanceMode`. On startup, reads the journal and handles crash recovery (cleans non-destructive states, logs critical failures, resets maintenance mode to `NORMAL`). |
 | `NotificationCaptureService` | **Injects `RestoreMaintenanceMode`** — checks `isWritesAllowed()` before processing any incoming notification. During restore, all notification ingestion is silently blocked. |
 
@@ -1310,13 +1310,20 @@ crash-safe journaling, worker pausing, and full 58-table verification.
 3. CostbackupBundle.extract(bundleFile, tempDir, password)
    → decrypts AES-256-GCM → extracts ZIP → validates manifest + checksums
 
+   → UF-46: a structurally malformed manifest `semanticAggregates` section blocks the
+     restore before staging (journal reason MANIFEST_INCOMPLETE, typed
+     BackupSemanticVerificationException(SEMANTIC_MANIFEST_MALFORMED))
+
 4. RestoreJournal.transitionTo(STAGED)
 
 5. BackupVerifier.verifyQuick(stagedDbFile, manifestTableCounts)
    → PRAGMA integrity_check + foreign_key_check + Tier 1 exact counts
+   → C1 (UF-46): semantic aggregates of the staged source DB vs the manifest section
    → after Room migration, verifyQuick(stagedDbFile, postMigrationTableCounts)
      verifies the migrated snapshot before any live swap; pre-v150 backups
      require an exact zero-row savings contribution ledger
+   → C2 (UF-46): semantic aggregates of the migrated staged DB (post-migration basis)
+   → a C1/C2 mismatch or query failure aborts pre-swap (live DB untouched, no override)
 
 6. Safety backup of live DB created
 
@@ -1327,7 +1334,10 @@ crash-safe journaling, worker pausing, and full 58-table verification.
 9. RestoreJournal.transitionTo(SWAPPING)
 
 10. Reopen live DB; BackupVerifier.verify(liveDbFile, postMigrationTableCounts)
-    → full 58-table 3-tier verification
+    → full 74-table 3-tier verification
+    → C3 (UF-46): semantic aggregates of the live DB; a failure goes through the
+      existing rollback (VERIFICATION_FAILED_ROLLED_BACK). A success carries
+      DatabaseImportSummary.semanticVerification (Verified / NotVerifiable)
 
 11. RestoreJournal.transitionTo(VERIFYING)
 

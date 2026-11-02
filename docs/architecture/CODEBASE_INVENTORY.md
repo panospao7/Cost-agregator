@@ -122,6 +122,7 @@ All 12 pipelines (P1-P12) are hardened and complete. Universal PRs U-PR1 through
 - `TransactionLifecycleCoordinator` — depends on `CurrencySettingsRepository` to resolve the user's home currency for base snapshot conversion metadata.
 - Reminder action receivers (`SnoozeReminderReceiver`, `DismissReminderReceiver`) are Hilt entry points; both enforce `RestoreMaintenanceMode` write gating and use `TimeProvider`.
 - `BackupVerifier` classifies lifecycle/event tables as exact-restore critical (`TIER_1_EXACT`) rather than validity-only.
+- `SemanticAggregates` (`data/backup`) + `SemanticVerificationOutcome` (`domain/backup`) — restore semantic verification (UF-46): four code-owned aggregate fingerprints captured into the manifest at backup time and compared at restore C1/C2 (pre-swap) and C3 (post-swap, existing rollback); `DatabaseImportSummary.semanticVerification` carries `Verified` / `NotVerifiable`.
 - Generic `CSV`/`JSON` exports use `Expense.effectiveAmount` (not raw `amount`) in `ExportOptionsViewModel`.
 
 ---

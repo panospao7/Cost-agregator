@@ -1,7 +1,14 @@
 package com.yourname.expensetracker.data.backup
 
 import com.yourname.expensetracker.testfixtures.backup.lowIterationBackupEncryptionService
+import org.json.JSONArray
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -9,6 +16,8 @@ import org.junit.rules.TemporaryFolder
 import java.io.BufferedOutputStream
 import java.io.File
 import java.io.FileOutputStream
+import java.math.BigDecimal
+import java.util.concurrent.CancellationException
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
@@ -45,7 +54,11 @@ class CostbackupBundleTest {
      * Builds a real .costbackup whose database.sqlite entry is [dbBytes] bytes.
      * [label] keeps file names unique so table rows can build several bundles.
      */
-    private fun buildBundle(dbBytes: Int, label: String = "default"): File {
+    private fun buildBundle(
+        dbBytes: Int,
+        label: String = "default",
+        semanticAggregates: SemanticAggregateSet? = null
+    ): File {
         val dbFile = tmp.newFile("database_source_$label.bin").apply {
             writeBytes(ByteArray(dbBytes) { (it % 251).toByte() })
         }
@@ -60,7 +73,8 @@ class CostbackupBundleTest {
             databaseVersion = 1,
             redacted = true,
             includeReceiptImages = false,
-            encryptionService = encryption
+            encryptionService = encryption,
+            semanticAggregates = semanticAggregates
         )
         assertTrue("bundle creation should succeed", result.isSuccess)
         return out
@@ -440,5 +454,442 @@ class CostbackupBundleTest {
             0,
             tempDir.listFiles()?.size ?: 0
         )
+    }
+
+    // ── UF-46 / S2: semantic section in the encrypted manifest (INV-5, INV-6, INV-12; AE-6, AE-13) ──
+
+    private fun bucket(n: Int, u: Int, s: BigDecimal, vararg key: String) =
+        AggregateBucket(key.toList(), n, u, s)
+
+    /** The entry carries the current definition hash of [id], as a real capture does (INV-10). */
+    private fun entry(id: SemanticAggregateId, vararg buckets: AggregateBucket) =
+        AggregateEntry(SemanticAggregates.definitionHash(id), buckets.toList())
+
+    /** Hand-built CAPTURED set: includes a u > 0 bucket, a zero-sum bucket and a full binary expansion sum. */
+    private fun sampleCapturedSet(): SemanticAggregateSet = SemanticAggregateSet.ofCaptured(
+        mapOf(
+            SemanticAggregateId.EXPENSE_RAW_BY_TYPE_CURRENCY to entry(
+                SemanticAggregateId.EXPENSE_RAW_BY_TYPE_CURRENCY,
+                bucket(1, 0, BigDecimal("1000"), "DEPOSIT", "EUR"),
+                bucket(2, 0, BigDecimal("52.5"), "PURCHASE", "EUR"),
+                bucket(1, 0, BigDecimal(9.99), "PURCHASE", "USD"),
+                bucket(1, 1, BigDecimal.ZERO, "UNKNOWN", "GBP")
+            ),
+            SemanticAggregateId.SPENDING_EFFECTIVE_BY_CURRENCY to entry(
+                SemanticAggregateId.SPENDING_EFFECTIVE_BY_CURRENCY,
+                bucket(2, 0, BigDecimal("32.5"), "EUR"),
+                bucket(1, 0, BigDecimal.ZERO, "USD")
+            ),
+            SemanticAggregateId.INCOME_EFFECTIVE_BY_CURRENCY to entry(
+                SemanticAggregateId.INCOME_EFFECTIVE_BY_CURRENCY,
+                bucket(1, 0, BigDecimal("1000"), "EUR")
+            ),
+            SemanticAggregateId.RECURRING_RULE_AMOUNT_BY_ACTIVE_CURRENCY to entry(
+                SemanticAggregateId.RECURRING_RULE_AMOUNT_BY_ACTIVE_CURRENCY,
+                bucket(1, 0, BigDecimal("15"), "0", "USD"),
+                bucket(1, 0, BigDecimal("9"), "1", "EUR")
+            )
+        )
+    )
+
+    private fun extractManifest(bundle: File, label: String): CostbackupBundle.BackupManifest {
+        val result = CostbackupBundle.extract(
+            bundle, File(tmp.root, "extract_semantic_$label"), password,
+            nowEpochMs = nowEpochMs,
+            encryptionService = encryption
+        )
+        assertTrue("[$label] extract should succeed", result.isSuccess)
+        return result.getOrThrow().manifest
+    }
+
+    private fun baseManifestJson(): JSONObject = JSONObject().apply {
+        put("backupFormatVersion", 1)
+        put("databaseVersion", 152)
+        put("createdAt", nowEpochMs)
+        put("tableCounts", JSONObject(mapOf("expenses" to 6)))
+    }
+
+    @Test
+    fun `INV5 bundle with a captured section round trips the exact set`() {
+        val set = sampleCapturedSet()
+        val bundle = buildBundle(dbBytes = 2048, label = "semantic_roundtrip", semanticAggregates = set)
+
+        val manifest = extractManifest(bundle, "roundtrip")
+
+        assertFalse(manifest.semanticSectionMalformed)
+        assertNotNull(manifest.semanticAggregates)
+        assertEquals(set, manifest.semanticAggregates)
+        // The 9.99 bucket must keep the exact binary expansion, not a rounded value.
+        val usd = manifest.semanticAggregates!!
+            .aggregates.getValue(SemanticAggregateId.EXPENSE_RAW_BY_TYPE_CURRENCY)
+            .buckets.single { it.key == listOf("PURCHASE", "USD") }
+        assertEquals(0, BigDecimal(9.99).compareTo(usd.s))
+        assertEquals(1, manifest.backupFormatVersion)
+    }
+
+    @Test
+    fun `INV5 bundle without a section yields a null section and no malformed marker`() {
+        val bundle = buildBundle(dbBytes = 2048, label = "semantic_absent")
+
+        val manifest = extractManifest(bundle, "absent")
+
+        assertNull(manifest.semanticAggregates)
+        assertFalse(manifest.semanticSectionMalformed)
+    }
+
+    @Test
+    fun `INV5 bundle with a NOT_CAPTURED section round trips its reason and stays empty`() {
+        val set = SemanticAggregateSet.ofNotCaptured(SemanticNotCapturedReason.SEMANTIC_BUCKET_LIMIT)
+        val bundle = buildBundle(dbBytes = 1024, label = "semantic_not_captured", semanticAggregates = set)
+
+        val manifest = extractManifest(bundle, "not_captured")
+
+        val read = manifest.semanticAggregates
+        assertNotNull(read)
+        assertEquals(SemanticCaptureStatus.NOT_CAPTURED, read!!.status)
+        assertEquals(SemanticNotCapturedReason.SEMANTIC_BUCKET_LIMIT, read.notCapturedReason)
+        assertTrue(read.aggregates.isEmpty())
+        assertFalse(manifest.semanticSectionMalformed)
+    }
+
+    @Test
+    fun `INV5 OutputStream create carries the section into an extractable bundle`() {
+        val set = sampleCapturedSet()
+        val dbFile = tmp.newFile("database_stream_semantic.bin").apply { writeBytes(ByteArray(512) { 7 }) }
+        val buffer = java.io.ByteArrayOutputStream()
+
+        val result = CostbackupBundle.create(
+            outputStream = buffer,
+            databaseFile = dbFile,
+            receiptFiles = emptyMap(),
+            password = password,
+            nowEpochMs = nowEpochMs,
+            tableCounts = mapOf("expenses" to 6),
+            databaseVersion = 152,
+            redacted = true,
+            includeReceiptImages = false,
+            encryptionService = encryption,
+            tempDir = tmp.newFolder(),
+            semanticAggregates = set
+        )
+        assertTrue(result.isSuccess)
+        val bundle = File(tmp.root, "streamed_semantic.costbackup").apply { writeBytes(buffer.toByteArray()) }
+
+        assertEquals(set, extractManifest(bundle, "streamed").semanticAggregates)
+    }
+
+    @Test
+    fun `INV5 plaintext header and format version are unchanged and carry no section text`() {
+        val bundle = buildBundle(
+            dbBytes = 4096, label = "semantic_header", semanticAggregates = sampleCapturedSet()
+        )
+        val bytes = bundle.readBytes()
+
+        assertEquals("COSTBACKUP1", String(bytes, 0, 11, Charsets.US_ASCII))
+        assertEquals("format version high byte", 0.toByte(), bytes[11])
+        assertEquals("format version low byte (FORMAT_VERSION must stay 1)", 1.toByte(), bytes[12])
+        assertEquals(13, CostbackupBundle.HEADER_SIZE)
+        val everything = String(bytes, Charsets.ISO_8859_1)
+        assertFalse(everything.contains("semanticAggregates"))
+        assertFalse(everything.contains("EXPENSE_RAW_BY_TYPE_CURRENCY"))
+        assertEquals(
+            "backupFormatVersion must stay 1 with a section present",
+            1,
+            extractManifest(bundle, "header").backupFormatVersion
+        )
+    }
+
+    @Test
+    fun `INV5 toJson writes the section only when present and sums stay JSON strings`() {
+        val without = CostbackupBundle.BackupManifest(databaseVersion = 152, createdAt = nowEpochMs)
+        assertFalse(without.toJson().has("semanticAggregates"))
+
+        val with = CostbackupBundle.BackupManifest(
+            databaseVersion = 152, createdAt = nowEpochMs, semanticAggregates = sampleCapturedSet()
+        ).toJson()
+        assertTrue(with.has("semanticAggregates"))
+        val bucket = with.getJSONObject("semanticAggregates")
+            .getJSONObject("aggregates")
+            .getJSONObject("INCOME_EFFECTIVE_BY_CURRENCY")
+            .getJSONArray("buckets").getJSONObject(0)
+        assertTrue("s must be serialised as a JSON string", bucket.opt("s") is String)
+        assertEquals("1000", bucket.getString("s"))
+    }
+
+    @Test
+    fun `INV12 malformed marker is never serialised`() {
+        val manifest = CostbackupBundle.BackupManifest(
+            databaseVersion = 152, createdAt = nowEpochMs, semanticSectionMalformed = true
+        )
+
+        assertFalse(manifest.toJson().has("semanticAggregates"))
+    }
+
+    @Test
+    fun `INV12 fromJson of a text manifest round trips the section`() {
+        val set = sampleCapturedSet()
+        val text = CostbackupBundle.BackupManifest(
+            databaseVersion = 152, createdAt = nowEpochMs, semanticAggregates = set
+        ).toJson().toString()
+
+        val manifest = CostbackupBundle.BackupManifest.fromJson(JSONObject(text), nowEpochMs)
+
+        assertEquals(set, manifest.semanticAggregates)
+        assertFalse(manifest.semanticSectionMalformed)
+    }
+
+    @Test
+    fun `INV12 fromJson ignores unknown keys at manifest and section level`() {
+        val json = CostbackupBundle.BackupManifest(
+            databaseVersion = 152, createdAt = nowEpochMs, semanticAggregates = sampleCapturedSet()
+        ).toJson()
+        json.put("futureTopLevelKey", JSONObject().put("anything", 1))
+        json.getJSONObject("semanticAggregates").put("futureSectionKey", "ignored")
+
+        val manifest = CostbackupBundle.BackupManifest.fromJson(json, nowEpochMs)
+
+        assertEquals(sampleCapturedSet(), manifest.semanticAggregates)
+        assertFalse(manifest.semanticSectionMalformed)
+        assertEquals(152, manifest.databaseVersion)
+    }
+
+    @Test
+    fun `INV12 legacy manifest without the key has a null section and no marker`() {
+        val manifest = CostbackupBundle.BackupManifest.fromJson(baseManifestJson(), nowEpochMs)
+
+        assertNull(manifest.semanticAggregates)
+        assertFalse(manifest.semanticSectionMalformed)
+    }
+
+    @Test
+    fun `AE13 unknown section version parses as a non malformed set that is never interpreted`() {
+        val json = baseManifestJson().put(
+            "semanticAggregates",
+            JSONObject().put("version", 99).put("status", "CAPTURED")
+                .put("aggregates", JSONObject().put("NOT_A_REGISTERED_ID", 5))
+        )
+
+        val manifest = CostbackupBundle.BackupManifest.fromJson(json, nowEpochMs)
+
+        assertFalse(manifest.semanticSectionMalformed)
+        assertEquals(99, manifest.semanticAggregates?.version)
+        assertTrue(manifest.semanticAggregates!!.aggregates.isEmpty())
+    }
+
+    private class MalformedSectionRow(val name: String, val manifest: () -> JSONObject)
+
+    @Test
+    fun `AE13 malformed section sets the marker and fromJson never throws`() {
+        fun mutated(change: (JSONObject) -> Unit): JSONObject {
+            val section = sampleCapturedSet().toJson()
+            change(section)
+            return baseManifestJson().put("semanticAggregates", section)
+        }
+        fun firstBucket(section: JSONObject): JSONObject = section.getJSONObject("aggregates")
+            .getJSONObject("SPENDING_EFFECTIVE_BY_CURRENCY").getJSONArray("buckets").getJSONObject(0)
+
+        val rows = listOf(
+            MalformedSectionRow("section is a string") { baseManifestJson().put("semanticAggregates", "oops") },
+            MalformedSectionRow("section is a number") { baseManifestJson().put("semanticAggregates", 5) },
+            MalformedSectionRow("section is a boolean") { baseManifestJson().put("semanticAggregates", true) },
+            MalformedSectionRow("section is an array") { baseManifestJson().put("semanticAggregates", JSONArray()) },
+            MalformedSectionRow("section is JSON null") {
+                baseManifestJson().put("semanticAggregates", JSONObject.NULL)
+            },
+            MalformedSectionRow("section is JSON null parsed from text") {
+                JSONObject("{\"databaseVersion\":152,\"semanticAggregates\":null}")
+            },
+            MalformedSectionRow("section is an empty object") {
+                baseManifestJson().put("semanticAggregates", JSONObject())
+            },
+            MalformedSectionRow("negative n") { mutated { firstBucket(it).put("n", -1) } },
+            MalformedSectionRow("sum written as a JSON number") { mutated { firstBucket(it).put("s", 32.5) } },
+            MalformedSectionRow("captured with three ids") {
+                mutated { it.getJSONObject("aggregates").remove("INCOME_EFFECTIVE_BY_CURRENCY") }
+            },
+            MalformedSectionRow("not captured with aggregates present") {
+                mutated { it.put("status", "NOT_CAPTURED") }
+            }
+        )
+        assertEquals("row names must be unique", rows.size, rows.map { it.name }.toSet().size)
+
+        // Control: the same builder with an untouched section is accepted.
+        val control = CostbackupBundle.BackupManifest.fromJson(mutated { }, nowEpochMs)
+        assertFalse(control.semanticSectionMalformed)
+        assertNotNull(control.semanticAggregates)
+
+        for (row in rows) {
+            val manifest = CostbackupBundle.BackupManifest.fromJson(row.manifest(), nowEpochMs)
+
+            assertTrue("[${row.name}] marker must be set", manifest.semanticSectionMalformed)
+            assertNull("[${row.name}] no set may be returned", manifest.semanticAggregates)
+            assertEquals("[${row.name}] other fields still parse", 152, manifest.databaseVersion)
+        }
+    }
+
+    @Test
+    fun `AE13 malformed section inside an encrypted bundle still extracts with the marker`() {
+        val dbFile = tmp.newFile("database_malformed_section.bin").apply { writeBytes(ByteArray(64) { 3 }) }
+        val innerZip = File(tmp.root, "malformed_section_inner.zip")
+        ZipOutputStream(BufferedOutputStream(FileOutputStream(innerZip))).use { zos ->
+            val manifest = baseManifestJson().put("semanticAggregates", "not an object")
+            zos.putNextEntry(ZipEntry("manifest.json"))
+            zos.write(manifest.toString(2).toByteArray(Charsets.UTF_8))
+            zos.closeEntry()
+            zos.putNextEntry(ZipEntry("database.sqlite"))
+            dbFile.inputStream().use { it.copyTo(zos) }
+            zos.closeEntry()
+            val checksums = JSONObject().put(
+                "entries", JSONObject(mapOf("database.sqlite" to CostbackupBundle.sha256Hex(dbFile)))
+            )
+            zos.putNextEntry(ZipEntry("checksums.json"))
+            zos.write(checksums.toString(2).toByteArray(Charsets.UTF_8))
+            zos.closeEntry()
+        }
+        val bundle = File(tmp.root, "malformed_section.costbackup")
+        FileOutputStream(bundle).use { fos ->
+            fos.write("COSTBACKUP1".toByteArray(Charsets.US_ASCII))
+            fos.write(byteArrayOf(0x00, 0x01))
+            encryption.encrypt(innerZip, fos, password)
+        }
+
+        val manifest = extractManifest(bundle, "malformed")
+
+        assertTrue(manifest.semanticSectionMalformed)
+        assertNull(manifest.semanticAggregates)
+    }
+
+    // ── C0 self-check (INV-6, AE-6) ──────────────────────────────
+
+    @Test
+    fun `INV6 self check of a well formed set is Verified at checkpoint C0`() {
+        val result = CostbackupBundle.selfCheckSemanticSection(sampleCapturedSet())
+
+        assertTrue("expected Verified but was ${result.javaClass.simpleName}", result is SemanticCheckResult.Verified)
+        assertEquals(SemanticCheckpoint.C0_BACKUP_SELF_CHECK, result.checkpoint)
+    }
+
+    private fun assertSelfCheckFailed(label: String, result: SemanticCheckResult) {
+        assertTrue("[$label] expected Failed but was ${result.javaClass.simpleName}", result is SemanticCheckResult.Failed)
+        assertEquals(label, SemanticCheckpoint.C0_BACKUP_SELF_CHECK, result.checkpoint)
+    }
+
+    @Test
+    fun `AE6 serializer writing sums as JSON numbers fails the self check with the self check code`() {
+        val numericSums: (SemanticAggregateSet) -> String = { set ->
+            val json = set.toJson()
+            val aggregates = json.getJSONObject("aggregates")
+            for (name in aggregates.keys()) {
+                val buckets = aggregates.getJSONObject(name).getJSONArray("buckets")
+                for (i in 0 until buckets.length()) buckets.getJSONObject(i).put("s", 12.5)
+            }
+            json.toString()
+        }
+
+        val result = CostbackupBundle.selfCheckSemanticSection(sampleCapturedSet(), numericSums)
+
+        assertSelfCheckFailed("numeric s", result)
+        assertEquals(
+            SemanticCode.SEMANTIC_SELF_CHECK_FAILED,
+            (result as SemanticCheckResult.Failed).code
+        )
+    }
+
+    @Test
+    fun `AE6 serializer that loses data or breaks fails the self check without throwing`() {
+        val set = sampleCapturedSet()
+        val droppedBucket: (SemanticAggregateSet) -> String = { s ->
+            val json = s.toJson()
+            json.getJSONObject("aggregates").getJSONObject("EXPENSE_RAW_BY_TYPE_CURRENCY")
+                .put("buckets", JSONArray())
+            json.toString()
+        }
+        val alteredSum: (SemanticAggregateSet) -> String = { s ->
+            val json = s.toJson()
+            json.getJSONObject("aggregates").getJSONObject("INCOME_EFFECTIVE_BY_CURRENCY")
+                .getJSONArray("buckets").getJSONObject(0).put("s", "1000.01")
+            json.toString()
+        }
+        val rows: List<Pair<String, (SemanticAggregateSet) -> String>> = listOf(
+            "bucket dropped" to droppedBucket,
+            "sum altered by one cent" to alteredSum,
+            "text is not JSON" to { _: SemanticAggregateSet -> "this is not json" },
+            "serializer throws" to { _: SemanticAggregateSet -> throw IllegalStateException("12.5 EUR /secret/path") }
+        )
+
+        for ((label, serializer) in rows) {
+            val result = CostbackupBundle.selfCheckSemanticSection(set, serializer)
+            assertSelfCheckFailed(label, result)
+        }
+    }
+
+    @Test
+    fun `INV6 m3 an identical NOT_CAPTURED set round trips to an equal set`() {
+        // C0 runs only for CAPTURED sets (captureSemanticSection); the CAPTURED control is the INV6 Verified test
+        // above. This pins that the m3 equality check has no false mismatch on a NOT_CAPTURED round trip.
+        val set = SemanticAggregateSet.ofNotCaptured(SemanticNotCapturedReason.SEMANTIC_CAPTURE_FAILED)
+
+        val parsed = SemanticAggregates.parse(org.json.JSONObject(set.toJson().toString()))
+
+        assertTrue("expected Parsed but was ${parsed.javaClass.simpleName}", parsed is SemanticParseResult.Parsed)
+        assertEquals(set, (parsed as SemanticParseResult.Parsed).set)
+    }
+
+    @Test
+    fun `INV6 m3 serialized section differing only in definitionHash fails the self check`() {
+        val set = sampleCapturedSet()
+        val hashAltered: (SemanticAggregateSet) -> String = { s ->
+            val json = s.toJson()
+            val entry = json.getJSONObject("aggregates").getJSONObject("INCOME_EFFECTIVE_BY_CURRENCY")
+            val original = entry.getString("definitionHash")
+            entry.put("definitionHash", original + "x")
+            json.toString()
+        }
+
+        val result = CostbackupBundle.selfCheckSemanticSection(set, hashAltered)
+
+        assertSelfCheckFailed("hash only", result)
+        assertEquals(SemanticCode.SEMANTIC_SELF_CHECK_FAILED, (result as SemanticCheckResult.Failed).code)
+    }
+
+    @Test
+    fun `INV6 m3 serialized section differing only in version fails the self check`() {
+        val set = sampleCapturedSet()
+        val versionAltered: (SemanticAggregateSet) -> String = { s ->
+            val json = s.toJson()
+            json.put("version", s.version + 1)
+            json.toString()
+        }
+
+        val result = CostbackupBundle.selfCheckSemanticSection(set, versionAltered)
+
+        assertSelfCheckFailed("version only", result)
+        assertEquals(SemanticCode.SEMANTIC_SELF_CHECK_FAILED, (result as SemanticCheckResult.Failed).code)
+    }
+
+    @Test
+    fun `INV6 m3 serialized section differing only in notCapturedReason fails the self check`() {
+        val set = SemanticAggregateSet.ofNotCaptured(SemanticNotCapturedReason.SEMANTIC_CAPTURE_FAILED)
+        val reasonAltered: (SemanticAggregateSet) -> String = { s ->
+            val json = s.toJson()
+            json.put("notCapturedReason", SemanticNotCapturedReason.SEMANTIC_BUCKET_LIMIT.name)
+            json.toString()
+        }
+
+        val result = CostbackupBundle.selfCheckSemanticSection(set, reasonAltered)
+
+        assertSelfCheckFailed("reason only", result)
+        assertEquals(SemanticCode.SEMANTIC_SELF_CHECK_FAILED, (result as SemanticCheckResult.Failed).code)
+    }
+
+    @Test
+    fun `AE6 self check rethrows cancellation from the serializer with identity`() {
+        val cancellation = CancellationException("cancelled during self check")
+
+        val thrown = assertThrows(CancellationException::class.java) {
+            CostbackupBundle.selfCheckSemanticSection(sampleCapturedSet()) { throw cancellation }
+        }
+
+        assertSame(cancellation, thrown)
     }
 }

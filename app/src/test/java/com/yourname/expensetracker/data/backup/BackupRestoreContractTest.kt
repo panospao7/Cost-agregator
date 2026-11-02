@@ -514,30 +514,10 @@ class BackupRestoreContractTest {
     /**
      * Schema tables intentionally NOT tracked by [BackupVerifier] (no tier in
      * `TABLE_TIERS`) as of the exported schema for [APP_DATABASE_SCHEMA_VERSION].
-     * The backup copies the whole database file; the verifier tiers only drive
-     * post-restore row-count/validity verification. Adding a table to the schema
-     * must either classify it in `BackupVerifier.TABLE_TIERS` or list it here.
+     * P-07-1 / S0b classified every entity, so this set is now empty; the exact
+     * schema-equals-registry check lives in [BackupVerifierTableCoverageTest].
      */
-    private val UNTRACKED_BY_VERIFIER: Set<String> = setOf(
-        // Not classified in BackupVerifier.TABLE_TIERS: included in the whole-database snapshot
-        // (VACUUM INTO / file copy) and restore file swap, and covered only by database-wide
-        // PRAGMA integrity_check / foreign_key_check (FK check applies only where FKs are
-        // declared). No manifest row count and no count verification after restore. Redacted
-        // backups sanitize notification_intake / bank_statement_import_items content.
-        "source_stats_events",
-        "warranty_lifecycle_events",
-        "investment_transactions",
-        "group_settlements",
-        "group_lifecycle_events",
-        "pipeline_diagnostic_events",
-        "operation_runs",
-        "operation_run_events",
-        "entity_source_links",
-        "notification_intake",
-        "bank_statement_import_runs",
-        "bank_statement_import_items",
-        "negotiation_outcomes"
-    )
+    private val UNTRACKED_BY_VERIFIER: Set<String> = emptySet()
 
     @Test
     fun `backupVerifier table registry is consistent with the exported schema`() {
