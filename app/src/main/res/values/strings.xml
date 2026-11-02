@@ -1652,6 +1652,33 @@
     <string name="warranty_manual_purchase_date">Purchase date</string>
     <string name="warranty_manual_duration_months">Warranty duration (months)</string>
     <string name="warranty_manual_support_phone_optional">Support phone (optional)</string>
+    <!-- warranty-edit (UF-02): shared add/edit form -->
+    <string name="warranty_edit_title">Edit warranty</string>
+    <string name="warranty_edit_save_and_confirm">Save and confirm</string>
+    <string name="warranty_action_edit_cd_format">Edit warranty %1$s</string>
+    <string name="warranty_field_type">Warranty type</string>
+    <string name="warranty_type_manufacturer">Manufacturer</string>
+    <string name="warranty_type_extended">Extended</string>
+    <string name="warranty_type_store">Store</string>
+    <string name="warranty_type_third_party">Third party</string>
+    <string name="warranty_edit_provenance_manual">Added manually</string>
+    <string name="warranty_edit_provenance_receipt_linked">Linked to a receipt. Your receipt is not changed.</string>
+    <string name="warranty_edit_outcome_confirm_active">Saving confirms this warranty and keeps it active.</string>
+    <string name="warranty_edit_outcome_confirm_expired">Saving confirms this warranty. It will be listed as expired.</string>
+    <string name="warranty_edit_outcome_reactivate">This warranty will become active again.</string>
+    <string name="warranty_edit_outcome_will_expire">This warranty will be marked expired.</string>
+    <string name="warranty_edit_error_product_blank">Enter a product name.</string>
+    <string name="warranty_edit_error_merchant_blank">Enter a merchant.</string>
+    <string name="warranty_edit_error_too_long">Use %1$d characters or fewer.</string>
+    <string name="warranty_edit_error_date_range">Choose a date from 1970 to one year from today.</string>
+    <string name="warranty_edit_error_duration_range">Enter a duration from %1$d to %2$d months.</string>
+    <string name="warranty_edit_error_invalid">Some details need fixing.</string>
+    <string name="warranty_edit_error_not_editable">This warranty can no longer be edited.</string>
+    <string name="warranty_edit_saved">Warranty saved</string>
+    <string name="warranty_edit_saved_confirmed">Warranty saved and confirmed</string>
+    <string name="warranty_edit_discard_action">Discard</string>
+    <string name="warranty_edit_keep_editing">Keep editing</string>
+    <string name="warranty_edit_saving_cd">Saving</string>
     
     <!-- Receipt Matching -->
     <string name="screen_receipt_matching">Receipt Matching</string>

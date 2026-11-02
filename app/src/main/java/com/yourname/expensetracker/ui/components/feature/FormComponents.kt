@@ -1,9 +1,17 @@
 package com.yourname.expensetracker.ui.components.feature
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CalendarToday
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.error
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.Role
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -85,7 +93,13 @@ fun FormDropdown(
     label: String,
     options: List<String>,
     modifier: Modifier = Modifier,
-    enabled: Boolean = true
+    enabled: Boolean = true,
+    isError: Boolean = false,
+    supportingText: String? = null,
+    // warranty-edit: index of the currently selected option (-1 = no marker, the previous behavior).
+    selectedIndex: Int = -1,
+    // warranty-edit: called with the picked option's index, so callers can map by index, not label.
+    onIndexSelected: (Int) -> Unit = {}
 ) {
     var expanded by remember { mutableStateOf(false) }
 
@@ -103,21 +117,35 @@ fun FormDropdown(
             readOnly = true,
             label = { Text(label) },
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
+            isError = isError,
+            supportingText = supportingText?.let { { Text(it) } },
             modifier = Modifier
                 .fillMaxWidth()
                 .menuAnchor(MenuAnchorType.PrimaryNotEditable, enabled),
             enabled = enabled
         )
-        
+
         ExposedDropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false }
         ) {
-            options.forEach { option ->
+            options.forEachIndexed { index, option ->
+                val isSelected = index == selectedIndex
                 DropdownMenuItem(
                     text = { Text(option) },
+                    leadingIcon = if (isSelected) {
+                        { Icon(Icons.Default.Check, contentDescription = null) }
+                    } else {
+                        null
+                    },
+                    modifier = if (selectedIndex >= 0) {
+                        Modifier.semantics { selected = isSelected }
+                    } else {
+                        Modifier
+                    },
                     onClick = {
                         onValueSelected(option)
+                        onIndexSelected(index)
                         expanded = false
                     }
                 )
@@ -136,28 +164,73 @@ fun FormDateField(
     onDateSelected: (Long) -> Unit,
     label: String,
     modifier: Modifier = Modifier,
-    enabled: Boolean = true
+    enabled: Boolean = true,
+    isError: Boolean = false,
+    supportingText: String? = null,
+    // warranty-edit: limits the days the picker lets the user choose (default: any day).
+    selectableDates: SelectableDates = DatePickerDefaults.AllDates,
+    // warranty-edit: when true the whole field (not only the trailing icon) opens the picker, as one
+    // merged button node described by fieldContentDescription (the icon becomes decorative).
+    wholeFieldClickable: Boolean = false,
+    fieldContentDescription: String? = null
 ) {
     var showDatePicker by remember { mutableStateOf(false) }
     val dateFormat = DateTimeFormatter.ofPattern("MMM dd, yyyy", Locale.getDefault())
-    
-    OutlinedTextField(
-        value = dateFormat.format(Instant.ofEpochMilli(dateMillis).atZone(ZoneId.systemDefault())),
-        onValueChange = {},
-        readOnly = true,
-        label = { Text(label) },
-        trailingIcon = {
-            IconButton(onClick = { showDatePicker = true }, enabled = enabled) {
-                Icon(Icons.Default.CalendarToday, contentDescription = stringResource(R.string.a11y_select_date))
-            }
-        },
-        modifier = modifier.fillMaxWidth(),
-        enabled = enabled
-    )
-    
+    val formattedDate = dateFormat.format(Instant.ofEpochMilli(dateMillis).atZone(ZoneId.systemDefault()))
+
+    if (!wholeFieldClickable) {
+        OutlinedTextField(
+            value = formattedDate,
+            onValueChange = {},
+            readOnly = true,
+            label = { Text(label) },
+            trailingIcon = {
+                IconButton(onClick = { showDatePicker = true }, enabled = enabled) {
+                    Icon(Icons.Default.CalendarToday, contentDescription = stringResource(R.string.a11y_select_date))
+                }
+            },
+            isError = isError,
+            supportingText = supportingText?.let { { Text(it) } },
+            modifier = modifier.fillMaxWidth(),
+            enabled = enabled
+        )
+    } else {
+        val clickLabel = stringResource(R.string.a11y_select_date)
+        Box(modifier = modifier.fillMaxWidth()) {
+            OutlinedTextField(
+                value = formattedDate,
+                onValueChange = {},
+                readOnly = true,
+                label = { Text(label) },
+                trailingIcon = { Icon(Icons.Default.CalendarToday, contentDescription = null) },
+                isError = isError,
+                supportingText = supportingText?.let { { Text(it) } },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clearAndSetSemantics { },
+                enabled = enabled
+            )
+            // Transparent click target over the field (the 48dp+ field height is the target).
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .semantics(mergeDescendants = true) {
+                        fieldContentDescription?.let { contentDescription = it }
+                        if (isError && supportingText != null) error(supportingText)
+                    }
+                    .clickable(
+                        enabled = enabled,
+                        onClickLabel = clickLabel,
+                        role = Role.Button
+                    ) { showDatePicker = true }
+            )
+        }
+    }
+
     if (showDatePicker) {
         val datePickerState = rememberDatePickerState(
-            initialSelectedDateMillis = UiTimeUtils.instantToPickerMillis(dateMillis)
+            initialSelectedDateMillis = UiTimeUtils.instantToPickerMillis(dateMillis),
+            selectableDates = selectableDates
         )
         
         DatePickerDialog(

@@ -13,13 +13,23 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.flowWithLifecycle
+import kotlinx.coroutines.launch
+import com.yourname.expensetracker.domain.usecase.warranty.WarrantyEditError
 import com.yourname.expensetracker.data.database.entity.Warranty
 import com.yourname.expensetracker.data.database.entity.WarrantyStatus
 import com.yourname.expensetracker.domain.usecase.warranty.WarrantyReviewState
@@ -35,35 +45,18 @@ import com.yourname.expensetracker.ui.components.emptystate.EmptyStateFeatureAct
 import com.yourname.expensetracker.ui.components.emptystate.EmptyStateScreenKeys
 import com.yourname.expensetracker.ui.navigation.NavigationDestination
 import java.time.Instant
-import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.*
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 
 /**
- * Warranty tracker screen — currently read-only display of warranties with
- * manual-add dialog and auto-detected warranty review.
+ * Warranty tracker screen: list of warranties with the shared add/edit form
+ * ([WarrantyFormDialog]) and auto-detected warranty review.
  *
- * ## WRN-19: Warranty edit form UI (planned)
- * Currently warranties are displayed read-only. There is no edit form to update
- * an existing warranty's fields. The plan is to add a dedicated edit dialog or
- * navigation target with the following fields:
- *
- * - **Product name** (pre-filled, editable)
- * - **Merchant name** (pre-filled, editable)
- * - **Purchase date** (date picker)
- * - **Warranty duration** (months spinner)
- * - **Support phone** (editable text, optional)
- * - **Warranty type** (dropdown: manufacturer, extended, store, third-party)
- *
- * The edit entry point would be from the [WarrantyCard] (e.g. a long-press or
- * edit icon button). On save, [WarrantyTrackerViewModel] should update the
- * warranty via [WarrantyTrackerRepository.update].
- *
- * TODO: Add edit button to WarrantyCard that opens WarrantyEditDialog.
- *       The dialog should reuse ManualWarrantyDialog's field layout but
- *       pre-populate from the existing [Warranty] entity.
+ * Edit (warranty-edit UF-02) is reached only from the card's Edit action; the screen holds the
+ * open-form flags in saved state (the draft itself is saved by the dialog) and applies the
+ * ViewModel's one-shot edit outcomes only to the dialog that is currently open.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -76,7 +69,13 @@ fun WarrantyTrackerScreen(
     val state by viewModel.state.collectAsState()
     val completedActionKeys by actionRegistry.completedActions.collectAsState()
     val dateFormat = remember { DateTimeFormatter.ofPattern("MMM dd, yyyy", Locale.getDefault()) }
-    var showManualAddDialog by remember { mutableStateOf(false) }
+    var showManualAddDialog by rememberSaveable { mutableStateOf(false) }
+    // warranty-edit: id of the row whose edit form is open (null = none). The draft is saved by the dialog.
+    var editingWarrantyId by rememberSaveable { mutableStateOf<Long?>(null) }
+    // warranty-edit: id this screen submitted for saving; an outcome is applied only if it equals the
+    // id of the dialog that is open now (the ViewModel outcome itself carries no id).
+    var awaitingEditId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var editInvalidReason by remember { mutableStateOf<WarrantyEditError?>(null) }
     // G2-9: Reject is irreversible (no undo path), so it always goes through a confirmation dialog.
     var pendingRejectWarranty by remember { mutableStateOf<Warranty?>(null) }
 
@@ -94,6 +93,66 @@ fun WarrantyTrackerScreen(
         if (mutationErrorText != null) {
             snackbarHostState.showSnackbar(mutationErrorText)
             viewModel.clearMutationError()
+        }
+    }
+
+    // warranty-edit: close the edit form, dropping every per-dialog marker (the draft is dropped with
+    // the dialog's composition) and any in-dialog banner.
+    val closeEditForm = {
+        editingWarrantyId = null
+        awaitingEditId = null
+        editInvalidReason = null
+        viewModel.clearEditFormError()
+    }
+    val snackbarScope = rememberCoroutineScope()
+    val showSnack: (String) -> Unit = { message ->
+        // Separate coroutine: showSnackbar suspends until dismissed and must not block outcome delivery.
+        snackbarScope.launch { snackbarHostState.showSnackbar(message) }
+    }
+    val savedText = stringResource(R.string.warranty_edit_saved)
+    val savedConfirmedText = stringResource(R.string.warranty_edit_saved_confirmed)
+    val notFoundText = stringResource(R.string.warranty_error_not_found)
+    val notEditableText = stringResource(R.string.warranty_edit_error_not_editable)
+
+    // Applied to the dialog open right now only; an outcome for any other id is ignored.
+    val handleEditOutcome by rememberUpdatedState<(WarrantyEditOutcome) -> Unit> { outcome ->
+        val openId = editingWarrantyId
+        if (openId != null && awaitingEditId == openId) {
+            when (outcome) {
+                is WarrantyEditOutcome.Saved -> {
+                    closeEditForm()
+                    showSnack(if (outcome.leftReview) savedConfirmedText else savedText)
+                }
+                WarrantyEditOutcome.NoChange -> closeEditForm()
+                WarrantyEditOutcome.NotFound -> {
+                    closeEditForm()
+                    showSnack(notFoundText)
+                }
+                WarrantyEditOutcome.NotEditable -> {
+                    closeEditForm()
+                    showSnack(notEditableText)
+                }
+                is WarrantyEditOutcome.Invalid -> {
+                    awaitingEditId = null
+                    editInvalidReason = outcome.reason
+                }
+            }
+        }
+    }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(viewModel, lifecycleOwner) {
+        viewModel.editOutcomes
+            .flowWithLifecycle(lifecycleOwner.lifecycle, Lifecycle.State.STARTED)
+            .collect { outcome -> handleEditOutcome(outcome) }
+    }
+
+    // warranty-edit: the open form's row (re-resolved by id from the live list, also after process
+    // death). If it is gone once the list has loaded, close with the "not found" snackbar.
+    val editTarget = editingWarrantyId?.let { id -> state.allWarranties.firstOrNull { it.id == id } }
+    LaunchedEffect(editingWarrantyId, editTarget == null, state.isLoading) {
+        if (editingWarrantyId != null && editTarget == null && !state.isLoading) {
+            closeEditForm()
+            showSnack(notFoundText)
         }
     }
 
@@ -352,7 +411,14 @@ fun WarrantyTrackerScreen(
                             onDelete = { viewModel.deleteWarranty(warranty) },
                             // F1: Review callbacks (INV-13: the ViewModel receives the id only)
                             onConfirm = { viewModel.confirmWarranty(warranty.id) },
-                            onReject = { pendingRejectWarranty = warranty }
+                            onReject = { pendingRejectWarranty = warranty },
+                            // warranty-edit: opens the shared form for this row (draft starts from the row).
+                            onEdit = {
+                                viewModel.clearEditFormError()
+                                awaitingEditId = null
+                                editInvalidReason = null
+                                editingWarrantyId = warranty.id
+                            }
                         )
                     }
                 }
@@ -383,117 +449,81 @@ fun WarrantyTrackerScreen(
         )
     }
 
+    // Add: the same shared form as edit, in add mode (top-bar +, FAB and the empty-state action
+    // all set showManualAddDialog).
     if (showManualAddDialog) {
-        ManualWarrantyDialog(
-            onDismiss = { showManualAddDialog = false },
+        WarrantyFormDialog(
+            editTarget = null,
+            reviewState = WarrantyReviewState.NOT_IN_REVIEW,
             referenceNowMillis = state.referenceNowMillis,
-            onSave = { productName, merchantName, purchaseDate, durationMonths, supportPhone ->
+            isSaving = false,
+            bannerMessage = null,
+            invalidReason = null,
+            onInvalidReasonConsumed = {},
+            onDismiss = { showManualAddDialog = false },
+            onSave = { input ->
                 viewModel.addManualWarranty(
-                    productName = productName,
-                    merchantName = merchantName,
-                    purchaseDate = purchaseDate,
-                    warrantyDurationMonths = durationMonths,
-                    supportPhone = supportPhone
+                    productName = input.productName,
+                    merchantName = input.merchantName,
+                    purchaseDate = input.purchaseDate,
+                    warrantyDurationMonths = input.durationMonths,
+                    supportPhone = input.supportPhone,
+                    warrantyType = input.warrantyType
                 )
                 showManualAddDialog = false
             }
         )
     }
+
+    // Edit: shown once the row is resolved from the live list (see the not-found effect above).
+    if (editingWarrantyId != null && editTarget != null) {
+        WarrantyFormDialog(
+            editTarget = editTarget,
+            reviewState = state.reviewStateOf(editTarget),
+            referenceNowMillis = state.referenceNowMillis,
+            isSaving = editTarget.id in state.mutatingWarrantyIds,
+            bannerMessage = state.editFormError?.asString(),
+            invalidReason = editInvalidReason,
+            onInvalidReasonConsumed = { editInvalidReason = null },
+            onDismiss = closeEditForm,
+            onSave = { input ->
+                awaitingEditId = editTarget.id
+                viewModel.editWarranty(editTarget.id, input)
+            }
+        )
+    }
 }
 
+/**
+ * Card Edit action: pencil + "Edit" (decorative icon), min height 48dp. The product name is added to
+ * the spoken description only (several Edit buttons share one list); it is UI-only and never logged.
+ */
 @Composable
-private fun ManualWarrantyDialog(
-    onDismiss: () -> Unit,
-    onSave: (productName: String, merchantName: String, purchaseDate: Long, durationMonths: Int, supportPhone: String?) -> Unit,
-    /**
-     * S12-008: Use ViewModel reference time instead of LocalDate.now().
-     * G-TIME-01: required — the caller passes state.referenceNowMillis
-     * (ViewModel TimeProvider-backed); no wall-clock default.
-     */
-    referenceNowMillis: Long
+private fun EditWarrantyButton(
+    productName: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    asText: Boolean = false
 ) {
-    var productName by remember { mutableStateOf("") }
-    var merchantName by remember { mutableStateOf("") }
-    // S12-008: Use referenceNowMillis from ViewModel (TimeProvider) not wall clock
-    var purchaseDateText by remember { mutableStateOf(DateTimeFormatter.ofPattern("yyyy-MM-dd", Locale.getDefault()).format(
-        java.time.Instant.ofEpochMilli(referenceNowMillis).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
-    )) }
-    var durationMonthsText by remember { mutableStateOf("24") }
-    var supportPhone by remember { mutableStateOf("") }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.warranty_manual_add_title)) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(
-                    value = productName,
-                    onValueChange = { productName = it },
-                    label = { Text(stringResource(R.string.warranty_manual_product_name)) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                OutlinedTextField(
-                    value = merchantName,
-                    onValueChange = { merchantName = it },
-                    label = { Text(stringResource(R.string.warranty_manual_merchant_name)) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                OutlinedTextField(
-                    value = purchaseDateText,
-                    onValueChange = { purchaseDateText = it },
-                    label = { Text(stringResource(R.string.warranty_manual_purchase_date)) },
-                    placeholder = { Text("yyyy-MM-dd") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                OutlinedTextField(
-                    value = durationMonthsText,
-                    onValueChange = { durationMonthsText = it.filter { c -> c.isDigit() } },
-                    label = { Text(stringResource(R.string.warranty_manual_duration_months)) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                OutlinedTextField(
-                    value = supportPhone,
-                    onValueChange = { supportPhone = it },
-                    label = { Text(stringResource(R.string.warranty_manual_support_phone_optional)) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
-        },
-        confirmButton = {
-            val parsedDate = runCatching {
-                LocalDate.parse(purchaseDateText, DateTimeFormatter.ofPattern("yyyy-MM-dd", Locale.getDefault()))
-                    .atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
-            }.getOrNull()
-            val parsedDuration = durationMonthsText.toIntOrNull()
-            val canSave = productName.isNotBlank() && merchantName.isNotBlank() && parsedDate != null && (parsedDuration ?: 0) > 0
-            Button(
-                onClick = {
-                    if (parsedDate != null && parsedDuration != null) {
-                        onSave(
-                            productName.trim(),
-                            merchantName.trim(),
-                            TimePeriodUtils.getStartOfDay(parsedDate),
-                            parsedDuration,
-                            supportPhone.trim().ifBlank { null }
-                        )
-                    }
-                },
-                enabled = canSave
-            ) {
-                Text(stringResource(R.string.action_save))
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text(stringResource(R.string.action_cancel))
-            }
-        }
-    )
+    val description = stringResource(R.string.warranty_action_edit_cd_format, productName)
+    val buttonModifier = modifier
+        .heightIn(min = 48.dp)
+        .semantics { contentDescription = description }
+    val content: @Composable RowScope.() -> Unit = {
+        Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(16.dp))
+        Spacer(modifier = Modifier.width(4.dp))
+        // The visible text is replaced by the description above in the accessibility tree.
+        Text(
+            text = stringResource(R.string.action_edit),
+            modifier = Modifier.clearAndSetSemantics { }
+        )
+    }
+    if (asText) {
+        TextButton(onClick = onClick, enabled = enabled, modifier = buttonModifier, content = content)
+    } else {
+        OutlinedButton(onClick = onClick, enabled = enabled, modifier = buttonModifier, content = content)
+    }
 }
 
 @Composable
@@ -531,6 +561,7 @@ private fun SummaryCard(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun WarrantyCard(
     warranty: Warranty,
@@ -538,14 +569,18 @@ private fun WarrantyCard(
     referenceNowMillis: Long,
     // INV-10: the single review-state derivation drives border, badge, date line and actions.
     reviewState: WarrantyReviewState,
-    // Buttons are disabled while this card's id is in mutatingWarrantyIds.
+    // INV-21: Edit, Confirm, Reject, Claim and Delete are all disabled while this card's id is
+    // in mutatingWarrantyIds.
     isMutating: Boolean,
     onMarkClaimed: () -> Unit,
     onDelete: () -> Unit,
     // F1: Review callbacks
     onConfirm: () -> Unit = {},
-    onReject: () -> Unit = {}
+    onReject: () -> Unit = {},
+    // warranty-edit: opens the shared form for this row
+    onEdit: () -> Unit = {}
 ) {
+    val actions = WarrantyEditFormState.cardActionState(warranty.status, reviewState, isMutating)
     val daysRemaining = TimePeriodUtils.daysBetween(referenceNowMillis, warranty.warrantyEndDate)
     val isExpiringSoon = daysRemaining in 0..30
     val isExpired = daysRemaining < 0
@@ -675,7 +710,7 @@ private fun WarrantyCard(
 
             // F1: Review actions for warranties needing review
             // Both review states offer confirm ("Keep in history" when expired) and reject; never Claim.
-            if (awaitingReview || expiredUnconfirmed) {
+            if (actions.placement == WarrantyEditPlacement.REVIEW_STACK) {
                 Spacer(modifier = Modifier.height(8.dp))
                 // Vertical stack so long labels wrap instead of truncating at large font scales.
                 Column(
@@ -684,7 +719,7 @@ private fun WarrantyCard(
                 ) {
                     Button(
                         onClick = onConfirm,
-                        enabled = !isMutating,
+                        enabled = actions.enabled,
                         modifier = Modifier.fillMaxWidth(),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = MaterialTheme.colorScheme.primary
@@ -706,9 +741,16 @@ private fun WarrantyCard(
                             )
                         }
                     }
+                    // Order: Confirm, Edit, Reject (the destructive action stays last).
+                    EditWarrantyButton(
+                        productName = warranty.productName,
+                        enabled = actions.enabled,
+                        onClick = onEdit,
+                        modifier = Modifier.fillMaxWidth()
+                    )
                     OutlinedButton(
                         onClick = onReject,
-                        enabled = !isMutating,
+                        enabled = actions.enabled,
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -716,18 +758,34 @@ private fun WarrantyCard(
                         Text(stringResource(R.string.warranty_action_reject))
                     }
                 }
-            } else if (warranty.status == WarrantyStatus.ACTIVE) {
+            } else if (actions.placement == WarrantyEditPlacement.ACTIVE_ROW) {
                 Spacer(modifier = Modifier.height(8.dp))
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                // FlowRow so Edit, Mark Claimed and Delete wrap at large font scales / long el-es labels.
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    TextButton(onClick = onMarkClaimed) {
+                    EditWarrantyButton(
+                        productName = warranty.productName,
+                        enabled = actions.enabled,
+                        onClick = onEdit
+                    )
+                    TextButton(onClick = onMarkClaimed, enabled = actions.enabled) {
                         Text(stringResource(R.string.warranty_action_mark_claimed))
                     }
-                    IconButton(onClick = onDelete) {
+                    IconButton(onClick = onDelete, enabled = actions.enabled) {
                         Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.warranty_action_delete))
                     }
                 }
+            } else if (actions.placement == WarrantyEditPlacement.EXPIRED_TEXT) {
+                // Confirmed EXPIRED card: Edit only (CLAIMED / TRANSFERRED cards have no actions).
+                Spacer(modifier = Modifier.height(8.dp))
+                EditWarrantyButton(
+                    productName = warranty.productName,
+                    enabled = actions.enabled,
+                    onClick = onEdit,
+                    asText = true
+                )
             }
         }
     }
