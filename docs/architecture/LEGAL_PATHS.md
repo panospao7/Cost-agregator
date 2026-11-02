@@ -1686,9 +1686,11 @@ CONFIRM / EXPIRE (review lifecycle):
   → Review state for UI is derived only by WarrantyReviewState.of(warranty, now)
   → Reminders consider status='ACTIVE' only (PENDING_REVIEW / EXPIRED never get reminders)
 
-USER EDIT (warranty-edit; the edit dialog UI lands in S4):
+USER EDIT (warranty-edit; UI: WarrantyTrackerScreen → shared WarrantyFormDialog, add and edit):
   → WarrantyTrackerViewModel.editWarranty(id, WarrantyEditInput) (single-flight per id; bounded
-    outcome Saved | NoChange | NotFound | NotEditable | Invalid(reason code); in-dialog error state)
+    outcome Saved | NoChange | NotFound | NotEditable | Invalid(reason code), emitted as
+    WarrantyEditResult(warrantyId, outcome) and applied only to the dialog open for that id;
+    in-dialog error state)
   → WarrantyTrackerRepository.editWarranty: barrier check first → one transaction: fresh read by id →
     NotFound | NotEditable (CLAIMED/TRANSFERRED) → WarrantyEditValidator (single validation owner,
     Invalid = no write, no event) → WarrantyEndDate.resolveEditDates (exclusive end recomputed only
@@ -1704,7 +1706,7 @@ USER EDIT (warranty-edit; the edit dialog UI lands in S4):
     (O-5); the sweep and confirmWarranty never revive. CLAIMED/TRANSFERRED are never touched.
 
 FORBIDDEN:
-  ❌ Warranty promotion out of review (needsReview=false / status ACTIVE / PENDING_REVIEW→ACTIVE) by any path other than WarrantyTrackerRepository (confirmWarranty, or promoteReviewDraft which applies a content-only edit to a fresh in-transaction read and then runs confirmWarranty in the same transaction) (F-AI-1; AutoCreateWarrantyFromReceiptUseCase calls promoteReviewDraft only; WarrantyPromotionBypassGuardTest enforces that no function outside WarrantyTrackerRepository.kt pairs an updateWarranty call with a promotion write; DAO writes are covered by the db_access ownership guards)
+  ❌ Warranty promotion out of review (needsReview=false / status ACTIVE / PENDING_REVIEW→ACTIVE) by any path other than WarrantyTrackerRepository (confirmWarranty; promoteReviewDraft, which applies a content-only edit to a fresh in-transaction read and then runs confirmWarranty in the same transaction; or editWarranty, which writes through updateWarranty and then runs the nested confirmWarranty in the same transaction, INV-18) (F-AI-1; AutoCreateWarrantyFromReceiptUseCase calls promoteReviewDraft only; WarrantyPromotionBypassGuardTest enforces that no function outside WarrantyTrackerRepository.kt pairs an updateWarranty call with a promotion write; DAO writes are covered by the db_access ownership guards)
   ❌ Creating warranty without confidence assessment
   ❌ Auto-creating an ACTIVE warranty below 70% confidence threshold
   ❌ Creating duplicate warranties for same receipt

@@ -72,8 +72,8 @@ fun WarrantyTrackerScreen(
     var showManualAddDialog by rememberSaveable { mutableStateOf(false) }
     // warranty-edit: id of the row whose edit form is open (null = none). The draft is saved by the dialog.
     var editingWarrantyId by rememberSaveable { mutableStateOf<Long?>(null) }
-    // warranty-edit: id this screen submitted for saving; an outcome is applied only if it equals the
-    // id of the dialog that is open now (the ViewModel outcome itself carries no id).
+    // warranty-edit: id this screen submitted for saving; a WarrantyEditResult is applied only if its
+    // warrantyId equals both this id and the id of the dialog that is open now.
     var awaitingEditId by rememberSaveable { mutableStateOf<Long?>(null) }
     var editInvalidReason by remember { mutableStateOf<WarrantyEditError?>(null) }
     // G2-9: Reject is irreversible (no undo path), so it always goes through a confirmation dialog.
