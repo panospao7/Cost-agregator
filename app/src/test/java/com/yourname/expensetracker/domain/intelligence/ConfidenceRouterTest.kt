@@ -214,22 +214,26 @@ class ConfidenceRouterTest {
     }
 
     @Test
-    fun `ambiguous 0_85 with ML ready moderate weight 0_5 and prediction 0_1 is never AUTO_REJECT`() = runBlocking {
-        // 150 samples -> ML weight 0.5: raw blend 0.85*0.5 + 0.1*0.5 = 0.475 < REVIEW_THRESHOLD.
-        // R-SMS-3 requires an ambiguous result to land in review, not be auto-rejected.
+    fun `ambiguity adds no penalty - at ML weight 0_5 an ambiguous parse routes exactly like a clean one`() = runBlocking {
+        // 150 samples -> ML weight 0.5: blend 0.85*0.5 + 0.1*0.5 = 0.475 < REVIEW_THRESHOLD for BOTH.
+        // R-SMS-3 removed the parser-side ambiguity penalty. A well-trained classifier rejecting the
+        // text is existing behaviour for clean parses too; the plan adds no floor, because a floor
+        // would override anti-spam signals.
         mlReady(150)
-        val result = router.route(makeAmbiguous(), "com.test", notificationText = "synthetic text")
-        assertEquals(RoutingDecision.NEEDS_REVIEW, result.decision)
-        assertNotEquals(RoutingDecision.AUTO_REJECT, result.decision)
+        val ambiguous = router.route(makeAmbiguous(), "com.test", notificationText = "synthetic text")
+        val clean = router.route(makeClean(), "com.test", notificationText = "synthetic text")
+        assertEquals(clean.decision, ambiguous.decision)
+        assertEquals(clean.adjustedConfidence, ambiguous.adjustedConfidence, 0.0001f)
     }
 
     @Test
-    fun `ambiguous 0_85 with ML ready max weight 0_6 and prediction 0_1 is never AUTO_REJECT`() = runBlocking {
-        // 300 samples -> ML weight 0.6: raw blend 0.85*0.4 + 0.1*0.6 = 0.40 < REVIEW_THRESHOLD.
+    fun `ambiguity adds no penalty - at ML weight 0_6 an ambiguous parse routes exactly like a clean one`() = runBlocking {
+        // 300 samples -> ML weight 0.6: blend 0.85*0.4 + 0.1*0.6 = 0.40 < REVIEW_THRESHOLD for BOTH.
         mlReady(300)
-        val result = router.route(makeAmbiguous(), "com.test", notificationText = "synthetic text")
-        assertEquals(RoutingDecision.NEEDS_REVIEW, result.decision)
-        assertNotEquals(RoutingDecision.AUTO_REJECT, result.decision)
+        val ambiguous = router.route(makeAmbiguous(), "com.test", notificationText = "synthetic text")
+        val clean = router.route(makeClean(), "com.test", notificationText = "synthetic text")
+        assertEquals(clean.decision, ambiguous.decision)
+        assertEquals(clean.adjustedConfidence, ambiguous.adjustedConfidence, 0.0001f)
     }
 
     @Test

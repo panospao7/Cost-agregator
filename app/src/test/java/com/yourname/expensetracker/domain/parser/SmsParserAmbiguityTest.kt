@@ -72,6 +72,21 @@ class SmsParserAmbiguityTest {
     private fun parse(text: String, title: String = "NBG"): ParsedTransaction? =
         parser.parse(title = title, text = text, bigText = null, subText = null, packageName = smsPackage)
 
+    // --- R-SMS-5: an amount directly followed by a comma still parses ---
+
+    @Test
+    fun `R-SMS-5 currency-first amount followed by a comma parses`() {
+        val result = parse("Purchase of EUR 12.50, at COFFEE", title = "Revolut")
+        assertNotNull(result)
+        assertEquals(12.50, result!!.amount, 0.001)
+    }
+
+    @Test
+    fun `R-SMS-5 comma lookahead never truncates a longer grouped number`() {
+        val result = parse("Purchase of EUR 1,500,000 at COFFEE", title = "Revolut")
+        assertNotEquals(1500.0, result?.amount ?: 0.0, 0.001)
+    }
+
     // --- R-SMS-1: purchase amount wins over a trailing / leading balance ---
 
     @Test
