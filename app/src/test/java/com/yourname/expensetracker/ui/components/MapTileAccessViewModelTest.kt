@@ -184,6 +184,58 @@ class MapTileAccessViewModelTest : ViewModelTestUtils() {
     }
 
     @Test
+    fun `S19-2 refresh turns tiles off immediately and keeps them off while the check is pending then Allowed turns them on`() =
+        runTest(testDispatcher) {
+            val pending = CompletableDeferred<PrivacyDecision>()
+            var calls = 0
+            coEvery { gate.check(PrivacyCapability.EXTERNAL_GEOCODING, any()) } coAnswers {
+                calls++
+                if (calls == 1) PrivacyDecision.Allowed else pending.await()
+            }
+            val vm = MapTileAccessViewModel(gate)
+            advanceUntilIdle()
+            assertTrue("tiles must be allowed before refresh", vm.tilesAllowed.value)
+
+            vm.refresh()
+            assertFalse("refresh must turn tiles off immediately", vm.tilesAllowed.value)
+            runCurrent()
+            assertEquals("refresh check must be in flight", 2, calls)
+            assertFalse("tiles must stay off while the check is pending", vm.tilesAllowed.value)
+
+            pending.complete(PrivacyDecision.Allowed)
+            advanceUntilIdle()
+
+            assertTrue(vm.tilesAllowed.value)
+            assertNull(vm.blocked.value)
+        }
+
+    @Test
+    fun `S19-2 refresh turns tiles off immediately and keeps them off while the check is pending then Denied keeps them off`() =
+        runTest(testDispatcher) {
+            val pending = CompletableDeferred<PrivacyDecision>()
+            var calls = 0
+            coEvery { gate.check(PrivacyCapability.EXTERNAL_GEOCODING, any()) } coAnswers {
+                calls++
+                if (calls == 1) PrivacyDecision.Allowed else pending.await()
+            }
+            val vm = MapTileAccessViewModel(gate)
+            advanceUntilIdle()
+            assertTrue("tiles must be allowed before refresh", vm.tilesAllowed.value)
+
+            vm.refresh()
+            assertFalse("refresh must turn tiles off immediately", vm.tilesAllowed.value)
+            runCurrent()
+            assertEquals("refresh check must be in flight", 2, calls)
+            assertFalse("tiles must stay off while the check is pending", vm.tilesAllowed.value)
+
+            pending.complete(PrivacyDecision.Denied("off"))
+            advanceUntilIdle()
+
+            assertFalse(vm.tilesAllowed.value)
+            assertDeniedState(vm.blocked.value)
+        }
+
+    @Test
     fun `S19-2 overlapping refreshes latest wins when a slow earlier allowed answer arrives late`() =
         runTest(testDispatcher) {
             val slowAllowed = CompletableDeferred<PrivacyDecision>()

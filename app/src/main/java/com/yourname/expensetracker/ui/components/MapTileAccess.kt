@@ -68,9 +68,10 @@ class MapTileAccessViewModel @Inject constructor(
         refresh()
     }
 
-    /** Re-evaluates the gate; the latest call wins. Call again after settings change. */
+    /** Re-evaluates the gate; the latest call wins. Call again after settings change. Tiles are switched off until the check answers, so a stale allow cannot request tiles. */
     fun refresh() {
         refreshJob?.cancel()
+        _tilesAllowed.value = false
         refreshJob = viewModelScope.launch { evaluate() }
     }
 
