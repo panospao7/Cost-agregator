@@ -12,6 +12,7 @@ import com.yourname.expensetracker.domain.model.navigation.DomainTransactionFilt
 import com.yourname.expensetracker.domain.model.recommendation.RecommendationPriority
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.domain.analytics.SpendingThresholdCalculator
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.service.TransactionFilterSerializer
 import io.mockk.mockk
@@ -56,7 +57,7 @@ class DashboardFollowThroughEngineTest {
     @Before
     fun setup() {
         Dispatchers.setMain(testDispatcher)
-        // Fallback text uses String.format("%.2f") with the default locale; pin it.
+        // Fallback text uses CurrencyFormatter (NumberFormat with the default locale); pin it.
         originalLocale = Locale.getDefault()
         Locale.setDefault(Locale.US)
         serializer = TransactionFilterSerializer()
@@ -144,6 +145,40 @@ class DashboardFollowThroughEngineTest {
             assertEquals(row.expectedText, rec.recommendationText, "[${row.label}] fallback text")
             assertEquals("", rec.sourceArtifactId, "[${row.label}] sourceArtifactId without artifact")
         }
+    }
+
+    @Test
+    fun `high amount fallback text uses the transaction currency not a hardcoded euro for USD`() = runTest {
+        val transaction = createExpense(amount = 250.0, merchant = "Amazon", categoryId = 5L, currency = "USD")
+
+        val recommendations = engine.generateRecommendations(transaction, null, "user123")
+
+        val high = recommendations.single { it.priority == RecommendationPriority.HIGH }
+        assertTrue(!high.recommendationText.contains("€"), "USD text must not contain a euro sign")
+        assertEquals(
+            "Large transaction detected: Amazon - " + CurrencyFormatter.formatMoney(250.0, "USD"),
+            high.recommendationText,
+            "USD high-amount fallback text"
+        )
+        // Locale is pinned to US in setup, so the literal is deterministic.
+        assertEquals("Large transaction detected: Amazon - \$250.00", high.recommendationText, "USD literal text")
+    }
+
+    @Test
+    fun `high amount fallback text for zero-decimal JPY has no euro sign and no fraction digits`() = runTest {
+        val transaction = createExpense(amount = 250.0, merchant = "Amazon", categoryId = 5L, currency = "JPY")
+
+        val recommendations = engine.generateRecommendations(transaction, null, "user123")
+
+        val high = recommendations.single { it.priority == RecommendationPriority.HIGH }
+        val prefix = "Large transaction detected: Amazon - "
+        assertEquals(
+            prefix + CurrencyFormatter.formatMoney(250.0, "JPY"),
+            high.recommendationText,
+            "JPY high-amount fallback text"
+        )
+        assertTrue(!high.recommendationText.contains("€"), "JPY text must not contain a euro sign")
+        assertTrue(!high.recommendationText.removePrefix(prefix).contains("."), "JPY amount has no decimal part")
     }
 
     // ── High-amount threshold (min 50.0, strictly greater) ────────────────────
@@ -511,12 +546,13 @@ class DashboardFollowThroughEngineTest {
         merchant: String = "Test Merchant",
         transactionType: TransactionType = TransactionType.PURCHASE,
         categoryId: Long? = null,
-        date: Long = FIXED_NOW
+        date: Long = FIXED_NOW,
+        currency: String = "EUR"
     ): Expense {
         return Expense(
             id = id,
             amount = amount,
-            currency = "EUR",
+            currency = currency,
             merchant = merchant,
             transactionType = transactionType,
             categoryId = categoryId,
