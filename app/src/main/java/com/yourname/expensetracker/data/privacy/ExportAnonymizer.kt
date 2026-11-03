@@ -374,17 +374,23 @@ class ExportAnonymizer @Inject constructor() {
     }
 
     /**
-     * PR5: Nulls out notification text/title in `pending_reviews` that carry
-     * raw notification content. Preserves structural fields (amount, merchant, status).
+     * PR5: Nulls out notification text/title and the deterministic `explanation` in
+     * `pending_reviews`. Preserves structural fields (amount, merchant, status).
      * @return number of rows updated
      */
     private fun sanitizePendingReviews(db: SQLiteDatabase): Int {
         if (!tableExists(db, "pending_reviews")) return 0
-        val where = "notificationText IS NOT NULL OR notificationTitle IS NOT NULL"
+        // J-11-4 (D6): `explanation` (nullable String?) can embed merchant text; null it as well.
+        // Guarded so a database copy without the column still sanitises the other fields.
+        val hasExplanation = columnExists(db, "pending_reviews", "explanation")
+        val where = "notificationText IS NOT NULL OR notificationTitle IS NOT NULL" +
+            if (hasExplanation) " OR explanation IS NOT NULL" else ""
         val count = countWhere(db, "pending_reviews", where)
         if (count == 0) return 0
+        val setExplanation = if (hasExplanation) ", explanation = NULL" else ""
         db.execSQL(
-            "UPDATE pending_reviews SET notificationText = NULL, notificationTitle = NULL WHERE $where"
+            "UPDATE pending_reviews SET notificationText = NULL, notificationTitle = NULL" +
+                "$setExplanation WHERE $where"
         )
         Timber.d("$TAG: Redacted pending_reviews notification fields in $count rows")
         return count
