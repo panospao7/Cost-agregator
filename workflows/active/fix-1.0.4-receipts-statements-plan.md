@@ -82,3 +82,13 @@ P-03-1 part 2; legacy duplicate receipt links; P-03-3; N-06-1 and N-06-2 (statem
 - Lane 1 guardian on 9be1a671 (first attempt lost to an API timeout, retried narrower, tests and docs not covered by it): one MAJOR. `ReceiptTransactionMatcher.findBestMatch` never excludes expenses another receipt owns, so an owned top candidate is refused on every periodic run, a lower-scored one is never tried, and a suggestion can never be approved. Confirmed OK: a suggestion writes only `suggestedExpenseId`, so SUGGESTED receipts still approve; reject and clear are not blocked for real rows; other link callers use new expenses. Fix pass (review round 1 for this lane): shared ownership rule used by the matcher; rerun error no longer erased by the reload (pre-existing, found by the failing test); a clear message when a link is refused.
 - Recorded residual: approving the `expense_already_linked` review re-runs creation, likely ending DUPLICATE with the receipt unlinked. Unedited, it stays unlinked. Edited, it creates a new expense and links it.
 - Combined candidate on `Cost-agregator-int`, branch feature/fix104-rs-candidate: batches D and E merged from 8de38722, plus the recorded doc minors and the S6 test race fix.
+
+## reviewer-strict on 92346ad0: REJECT (round 1 of 2)
+- MAJOR, J-05-1 regression: unedited TRANSFER or DEPOSIT rows now submit seeded values, and bulk approve (`ReviewViewModel.kt:558-559`) propagates them. Same merchant, row A OUTGOING/"Savings", row B INCOMING/"Main": approve-all on A stores B as OUTGOING/"Savings". Fix: submit only values changed from the suggestion.
+- MINOR: new `Timber.e(e, ...)` at `ReceiptMatchingViewModel.kt:371` logs a raw exception; use the class name.
+- Recorded, not fixed: post-commit matching can link an `expense_already_linked` receipt to a near-identical expense (same merchant and amount, within about 12h); the email refusal test mocks the link service and `AppDatabase`, so the real no-rollback path is not exercised.
+- Verified by the reviewer: P-03-1, P-03-2, P-08-4, the gate re-check and the dedupe clock. All changed existing tests are corrections, not weakenings.
+
+## Fix pass, round 1
+- J-05-1: 9f4db9dc submits a transfer value only when it differs from the dialog's seed, so unedited rows, alone or in bulk, fall back to their own suggestion. A direction or account edit on one row now reaches the others in a bulk approve; at base such an edit was dropped for every row. Other types never submit hidden values. Targeted vr-20261103-091140-17904d82 PASS. Bulk approve is pinned at view model level with a mocked repository; the Compose call site is not pinned.
+- e7276d60: rerun failures log the exception class only.
