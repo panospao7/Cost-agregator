@@ -486,10 +486,10 @@ class SavingsGoalRepositoryManualContributionTest {
             repository().recordManualContribution(1L, 25.0, snapshot(100.0), "manual-v1:m", NOW)
         )
 
-        val sweep = coordinator.accept(recommendation(allocation(1L, 25.0, 40.0)))
+        val sweep = coordinator.accept(recommendation(allocation(1L, 125.0, 40.0)))
 
         assertEquals(SavingsSweepAcceptanceResult.Accepted, sweep)
-        assertEquals(65.0, database.savingsGoalDao().getById(1L)!!.currentAmount, 0.0)
+        assertEquals(165.0, database.savingsGoalDao().getById(1L)!!.currentAmount, 0.0)
         assertEquals(listOf("manual", "sweep"), database.savingsContributionLedgerDao().getAll().map { it.source })
     }
 

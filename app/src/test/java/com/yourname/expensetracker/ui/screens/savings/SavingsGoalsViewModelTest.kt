@@ -260,13 +260,29 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
     }
 
     @Test
-    fun `SnapshotMismatch leaves goals untouched and fires no gamification refresh or event`() = runTest(testDispatcher) {
+    fun `SnapshotMismatch leaves goals untouched, no gamification refresh, and emits the one not-added message`() = runTest(testDispatcher) {
         assertNothingAddedFor(ManualContributionResult.SnapshotMismatch)
     }
 
     @Test
-    fun `Rejected leaves goals untouched and fires no gamification refresh or event`() = runTest(testDispatcher) {
+    fun `Rejected leaves goals untouched, no gamification refresh, and emits the one not-added message`() = runTest(testDispatcher) {
         assertNothingAddedFor(ManualContributionResult.Rejected("SAVINGS_MANUAL_CONTRIBUTION_UNAVAILABLE"))
+    }
+
+    @Test
+    fun `AlreadyRecorded changes nothing and emits no event`() = runTest(testDispatcher) {
+        configureRepositoryWithGoals(listOf(createGoal(1L, "Emergency", 1000.0, 100.0)))
+        manualResultOverride = ManualContributionResult.AlreadyRecorded
+        val events = mutableListOf<SavingsGoalsEvent>()
+        viewModel = createViewModel()
+        backgroundScope.launch(UnconfinedTestDispatcher(testDispatcher.scheduler)) { viewModel.events.collect { events += it } }
+        advanceUntilIdle()
+
+        viewModel.contributeToGoal(1L, 25.0, "EUR")
+        advanceUntilIdle()
+
+        assertEquals(1, manualCalls.size)
+        assertTrue("AlreadyRecorded must show nothing: $events", events.isEmpty())
     }
 
     @Test
@@ -334,7 +350,11 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
         assertEquals(1, manualCalls.size)
         assertEquals(100.0, goalsFlow.value.single().currentAmount, 0.0)
         assertEquals("no gamification refresh for a result that added nothing", before, streakCalls)
-        assertTrue("no event for a result that added nothing: $events", events.isEmpty())
+        assertEquals(
+            "exactly one bounded not-added message",
+            listOf<SavingsGoalsEvent>(SavingsGoalsEvent.WriteBlocked(UiText.StringResource(R.string.savings_contribution_not_added))),
+            events.toList()
+        )
         assertNull(viewModel.state.value.contributionHistoryWriteFailure)
         assertEquals(100.0, viewModel.state.value.goals.single().currentAmount, 0.0)
         assertTrue(!viewModel.state.value.toString().contains("SECRET"))
@@ -876,7 +896,7 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
     }
 
     @Test
-    fun rejectedManualHistoryWriteIsVisibleAndCannotBeRetriedAsSuccess() = runTest(testDispatcher) {
+    fun rejectedManualContributionLeavesBalanceUnchangedAndEachRetryUsesItsOwnKey() = runTest(testDispatcher) {
         // Balance and history now commit in one repository transaction, so a rejected write leaves BOTH
         // untouched (balance stays 200, was 225 when the two writes were separate). The old
         // SAVINGS_HISTORY_WRITE_REJECTED flag is no longer set by this path; a retry is a new user
@@ -901,7 +921,7 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
     }
 
     @Test
-    fun failedSmartHistoryWriteSuppressesHeldAndRecomputedActions() = runTest(testDispatcher) {
+    fun rejectedSmartContributionKeepsHeldRecommendationActionableAndBalanceUnchanged() = runTest(testDispatcher) {
         // A rejected atomic write changes nothing (no balance, no history row), so there is no
         // partial state to suppress: the held recommendation stays actionable and the failure flag is
         // not set. The balance is unchanged and every attempt goes through recordManualContribution.
@@ -1003,7 +1023,7 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
     }
 
     @Test
-    fun historyStorageFailureUsesOnlyControlledReasonWithoutPayload() = runTest(testDispatcher) {
+    fun rejectedManualContributionExposesNoPayloadInStateAndSetsNoHistoryFailureFlag() = runTest(testDispatcher) {
         val goal = createGoal(1L, "Known", 1000.0, 200.0)
         configureRepositoryWithGoals(listOf(goal))
         // The repository converts storage failures into Rejected with a bounded code (its own tests
@@ -1023,7 +1043,7 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
     }
 
     @Test
-    fun historyWriteCancellationIsNotConvertedToOrdinaryFailure() = runTest(testDispatcher) {
+    fun manualContributionCancellationIsNotConvertedToOrdinaryFailureAndSetsNoFlag() = runTest(testDispatcher) {
         val goal = createGoal(1L, "Known", 1000.0, 200.0)
         configureRepositoryWithGoals(listOf(goal))
         coEvery { savingsGoalRepository.recordManualContribution(any(), any(), any(), any(), any()) } throws

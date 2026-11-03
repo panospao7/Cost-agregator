@@ -9,6 +9,7 @@ import com.yourname.expensetracker.data.repository.SavingsSweepAcceptanceCoordin
 import com.yourname.expensetracker.data.repository.SavingsSweepAcceptanceResult
 import com.yourname.expensetracker.domain.model.GoalProtectionLevel
 import com.yourname.expensetracker.domain.model.SavingsGoal
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.ui.util.guardedWrite
 import com.yourname.expensetracker.domain.savings.*
@@ -491,8 +492,10 @@ class SavingsGoalsViewModel @Inject constructor(
                 timestamp = timeProvider.now()
             )
         } ?: return
-        if (result == ManualContributionResult.Recorded || result == ManualContributionResult.AlreadyRecorded) {
-            loadGamification()
+        when (result) {
+            ManualContributionResult.Recorded, ManualContributionResult.AlreadyRecorded -> loadGamification()
+            // Nothing was added: tell the user once, with a bounded message and no result detail.
+            else -> emitWriteBlocked(UiText.StringResource(R.string.savings_contribution_not_added))
         }
     }
 
