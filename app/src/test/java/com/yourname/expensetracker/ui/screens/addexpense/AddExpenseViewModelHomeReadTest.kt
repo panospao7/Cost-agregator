@@ -233,12 +233,19 @@ class AddExpenseViewModelHomeReadTest : ViewModelTestUtils() {
     }
 
     @Test
-    fun `N-01-2 USD share 10_005 on 20 is rejected as over-precise and never saved`() {
-        sharedDraft("USD", "20", "10.005")
+    fun `N-01-2 USD share typed with three decimals is limited to cents at input and saves`() {
+        newViewModelWithHome("USD")
+        viewModel.updateAmount("20")
+        viewModel.setIsSharedExpense(true)
+        viewModel.updateSharedWithName("Sam")
+        viewModel.updateMyShareAmount("10.005")
+        settle()
+        assertEquals("10.00", st.myShareAmount)
 
         saveWithMerchant()
 
-        assertSaveBlockedWithError()
+        coVerify(exactly = 1) { anySave() }
+        assertTrue(lastSaveArgs.contains(10.0))
     }
 
     @Test
