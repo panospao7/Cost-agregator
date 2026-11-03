@@ -242,11 +242,15 @@ private fun RiskLevelCard(forecast: BudgetForecast) {
 
 @Composable
 private fun ForecastDetailsCard(budget: Budget, forecast: BudgetForecast, homeCurrency: String, normalizedBudgetAmount: Double? = null) {
-    val (lowForecast, baseForecast, highForecast) = remember(forecast.predictedSpending, forecast.confidenceScore) {
-        calculateForecastBounds(
+    val spentToDate = forecast.spentToDate
+    val (lowForecast, baseForecast, highForecast) = remember(forecast.predictedSpending, forecast.confidenceScore, spentToDate) {
+        // predictedSpending is remaining-period spend; shift every bound by spentToDate
+        // so the range is full-period and comparable with the full-period limit.
+        val (low, base, high) = calculateForecastBounds(
             predictedSpending = forecast.predictedSpending,
             confidenceScore = forecast.confidenceScore
         )
+        Triple(low + spentToDate, base + spentToDate, high + spentToDate)
     }
     
     Card(
@@ -284,7 +288,7 @@ private fun ForecastDetailsCard(budget: Budget, forecast: BudgetForecast, homeCu
                 label = stringResource(R.string.budget_forecast_predicted_spending),
                 value = CurrencyFormatter.formatMoney(forecast.predictedSpending, homeCurrency ?: ""),
                 icon = Icons.Default.TrendingUp,
-                valueColor = if (forecast.predictedSpending > (normalizedBudgetAmount ?: budget.amount))
+                valueColor = if (projectedPeriodTotal(forecast) > (normalizedBudgetAmount ?: budget.amount))
                     SemanticColors.DangerRed else SemanticColors.TextPrimary
             )
             
@@ -415,6 +419,10 @@ private fun RangeRow(
         Spacer(modifier = Modifier.height(6.dp))
     }
 }
+
+/** Full-period projection: spent so far plus predicted remaining-period spend (home currency). */
+internal fun projectedPeriodTotal(forecast: BudgetForecast): Double =
+    forecast.spentToDate + forecast.predictedSpending
 
 private fun calculateForecastBounds(predictedSpending: Double, confidenceScore: Double): Triple<Double, Double, Double> {
     val uncertaintyRatio = ((1.0 - confidenceScore).coerceIn(0.0, 1.0) * 0.55) + 0.10
