@@ -597,7 +597,7 @@ class SynthesisEngine @Inject constructor(
         
         val components = forecast.components
         
-        // 1. Calculate Monthly Totals for pro-rating (frequency-adjusted)
+        // 1. Place this month's bills and planned items on their due days (cash basis, BL-02)
         //
         // RP-06 6b slice 2 (P5-CURRENT-009/U-MONEY-01): all raw-amount fallbacks
         // removed. On conversion failure the item is EXCLUDED (contributes 0) and
