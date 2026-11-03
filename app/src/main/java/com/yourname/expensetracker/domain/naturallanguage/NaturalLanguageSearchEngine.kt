@@ -5,6 +5,8 @@ import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
+import java.math.BigDecimal
+import java.math.RoundingMode
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -82,12 +84,44 @@ class NaturalLanguageSearchEngine @Inject constructor(
     private val merchantNormalizationRepository: com.yourname.expensetracker.data.repository.MerchantNormalizationRepository
 ) {
     
-    private val amountPattern = Regex("""
-        (?:€|\$|£|¥|EUR|USD|GBP)?\s*
-        (\d+(?:\.\d{2})?)
-        \s*(?:€|\$|£|¥|EUR|USD|GBP)?
-    """.trimIndent(), RegexOption.IGNORE_CASE)
-    
+    // FL-03R: Amount extraction runs on a date-masked copy of the lowercased query. A number is an
+    // amount only when it has a currency marker (symbol/code/word) or an immediately preceding
+    // comparison keyword; bare numbers ("coffee 15", "top 5", "2024") are never amounts, and numbers
+    // followed by a time/count unit ("last 3 months", "5 transactions") are rejected.
+    // Possessive quantifiers (++, *+) stop the number from backtracking to a shorter prefix.
+    private val currencyMarker =
+        """(?:€|\$|£|¥|(?<![a-z])(?:eur|usd|gbp|euros?|dollars?)(?![a-z]))"""
+    private val overKeyword =
+        """(?:(?<![a-z])(?:over|above|more\s+than|greater\s+than)(?![a-z])|>)"""
+    private val underKeyword =
+        """(?:(?<![a-z])(?:under|below|less\s+than)(?![a-z])|<)"""
+    private val numberToken =
+        """(?<![\d.,])\d++(?:[.,]\d++)*+(?!\s*(?:months?|weeks?|days?|years?|yrs?|hours?|hrs?|minutes?|mins?|seconds?|secs?|transactions?|expenses?|purchases?|items?|times|results?)(?![a-z]))"""
+
+    private val betweenAmountPattern = Regex(
+        """(?<![a-z])between\s+(?:$currencyMarker\s*)?($numberToken)(?:\s*$currencyMarker)?\s+and\s+(?:$currencyMarker\s*)?($numberToken)(?:\s*$currencyMarker)?""",
+        RegexOption.IGNORE_CASE
+    )
+
+    // Groups: 1 = over keyword, 2 = under keyword, 3 = prefix marker, 4 = number, 5 = suffix marker.
+    private val singleAmountPattern = Regex(
+        """(?:($overKeyword)\s*|($underKeyword)\s*)?($currencyMarker\s*)?($numberToken)(\s*$currencyMarker)?""",
+        RegexOption.IGNORE_CASE
+    )
+
+    // Full dates and times are masked before amount extraction so "10/05/2024" or "12:30" never yield amounts.
+    private val dateMaskPatterns = listOf(
+        Regex("""(?<![\d])\d{4}-\d{1,2}-\d{1,2}(?![\d])"""),
+        Regex("""(?<![\d])\d{1,2}[/.-]\d{1,2}[/.-](?:\d{4}|\d{2})(?![\d])"""),
+        Regex("""(?<![\d])\d{1,2}:\d{2}(?::\d{2})?(?![\d])""")
+    )
+
+    // Tokens that look like an amount: used so the "between X and Y" date pattern never consumes amounts.
+    private val amountLikeToken = Regex(
+        """^(?:€|\$|£|¥|eur|usd|gbp)?\d[\d.,]*(?:€|\$|£|¥|eur|usd|gbp)?$|^(?:€|\$|£|¥|eur|usd|gbp)$""",
+        RegexOption.IGNORE_CASE
+    )
+
     private val datePatterns = listOf(
         // "last week", "this month", "yesterday", etc.
         // "last week" / "last month" / "last year"
@@ -173,10 +207,15 @@ class NaturalLanguageSearchEngine @Inject constructor(
         PatternWithExtractor(
             pattern = Regex("between (\\S+) and (\\S+)", RegexOption.IGNORE_CASE),
             extractor = { match ->
-                // Simple date parsing - would need more sophisticated parsing in production
-                val start = parseRelativeDate(match.groupValues[1])
-                val end = parseRelativeDate(match.groupValues[2])
-                DateRange(start, end)
+                // FL-03R: "between 10 and 50" / "between €10 and €50" is an amount range, not a date range.
+                if (amountLikeToken.matches(match.groupValues[1]) || amountLikeToken.matches(match.groupValues[2])) {
+                    null
+                } else {
+                    // Simple date parsing - would need more sophisticated parsing in production
+                    val start = parseRelativeDate(match.groupValues[1])
+                    val end = parseRelativeDate(match.groupValues[2])
+                    DateRange(start, end)
+                }
             }
         ),
         PatternWithExtractor(
@@ -244,9 +283,13 @@ class NaturalLanguageSearchEngine @Inject constructor(
      * ## SR-1: Currency-aware amount filtering
      * Amount comparisons normalize expense amounts to the user's home currency
      * via [CurrencyConverter] before comparing with the filter value. Expenses
-     * in foreign currencies are converted using the latest available exchange
-     * rate. If conversion fails (missing rate), the raw amount is used as
-     * fallback and the comparison may be inaccurate — this is logged.
+     * in foreign currencies are converted with the rate as of the expense date.
+     * If an amount filter is present and conversion fails (missing rate), the row
+     * is excluded and counted in [QueryDataQuality.failedCurrencyConversions];
+     * there is no raw-amount fallback. Without an amount filter no conversion is
+     * needed and every row is kept. Amounts are compared in cents (HALF_UP).
+     * A currency marker in the query that differs from home is an extraction
+     * signal only; the number is treated as home currency.
      *
      * ## SRH-2: Category and location filters are parsed but NOT applied
      * The [interpretQuery] method extracts [locations] and [categories] from
@@ -325,108 +368,89 @@ class NaturalLanguageSearchEngine @Inject constructor(
         // NLP-5: Loop through all keyset pages for full result correctness
         val preFiltered = mutableListOf<NaturalLanguageExpense>()
         val categoryFilter = targetCategoryIds.takeIf { it.isNotEmpty() }
+        // FL-03R: with more than one merchant the repository filters in memory AFTER the DAO page,
+        // so a full DAO page could come back short or empty and end this loop early. Only a single
+        // merchant is pushed down (SQL LIKE, so page size stays honest); several merchants are
+        // matched here on the raw page, and the keyset cursor always comes from the raw page.
+        val pushedMerchants = merchants?.takeIf { it.size == 1 }
+        val inMemoryMerchants = merchants?.takeIf { it.size > 1 }
         var cursor: SearchCursor? = null
         while (true) {
-            val page = expenseQueryRepository.getExpensesBetweenFilteredKeyset(
+            val rawPage = expenseQueryRepository.getExpensesBetweenFilteredKeyset(
                 startMs = startMs, endMs = endMs,
                 categoryIds = categoryFilter,
-                merchants = merchants,
+                merchants = pushedMerchants,
                 transactionType = null,
                 keywordSearch = null,
                 limit = PAGE_SIZE_LARGE,
                 cursor = cursor
             )
-            if (page.isEmpty()) break
-            preFiltered.addAll(page)
-            if (page.size < PAGE_SIZE_LARGE) break
-            val last = page.last()
+            if (rawPage.isEmpty()) break
+            preFiltered.addAll(
+                if (inMemoryMerchants == null) rawPage
+                else rawPage.filter { row -> inMemoryMerchants.any { row.merchant.contains(it, ignoreCase = true) } }
+            )
+            if (rawPage.size < PAGE_SIZE_LARGE) break
+            val last = rawPage.last()
             cursor = SearchCursor(date = last.date, id = last.id)
         }
 
-        // W16: Apply currency-safe amount filtering.
-        // Normalize each row to home currency via convertAsOf(expense.date).
-        // Exclude failed conversions — no raw fallback.
-        val hasAmountFilter = interpretation.extractedAmounts != null &&
-            interpretation.extractedAmounts.isNotEmpty()
+        // W16: Apply currency-safe amount filtering, only when the query has an amount filter.
+        // Normalize each row to home currency via convertAsOf(expense.date). A row with no rate is
+        // excluded and counted (no raw-amount fallback). With no amount filter every row is kept,
+        // rated or not, and nothing is counted: no amount comparison happens, so no rate is needed.
+        val extractedAmounts = interpretation.extractedAmounts
+        val hasAmountFilter = !extractedAmounts.isNullOrEmpty()
 
-        val normalizedRows: List<Pair<NaturalLanguageExpense, Double>> = preFiltered.mapNotNull { expense ->
-            val normalizedAmount = if (expense.currency == homeCurrency) {
-                expense.effectiveAmount
-            } else {
-                currencyConverter.convertAsOf(
-                    amount = expense.effectiveAmount,
-                    fromCurrency = expense.currency,
-                    toCurrency = homeCurrency,
-                    atMillis = expense.date
-                )?.convertedAmount
-            }
-            if (normalizedAmount == null) {
-                failedConversions++
-                Timber.w("W16: Excluding expense %d (%s %.2f %s) — no rate for %s→%s as of %d",
-                    expense.id, expense.merchant, expense.effectiveAmount, expense.currency,
-                    expense.currency, homeCurrency, expense.date)
-                null
-            } else {
-                expense to normalizedAmount
-            }
-        }
-
-        // Apply amount filter if present
-        val matched = if (hasAmountFilter) {
-            normalizedRows.filter { (_, normalizedAmount) ->
-                interpretation.extractedAmounts!!.any { amount ->
-                    when (amount.comparison) {
-                        AmountComparison.EXACTLY -> normalizedAmount == amount.value
-                        AmountComparison.OVER -> normalizedAmount > amount.value
-                        AmountComparison.UNDER -> normalizedAmount < amount.value
-                        AmountComparison.BETWEEN -> {
-                            val other = interpretation.extractedAmounts.find { it != amount }
-                            other?.let { normalizedAmount in amount.value..it.value } ?: true
-                        }
-                    }
+        val matched: List<NaturalLanguageExpense> = if (!hasAmountFilter) {
+            preFiltered
+        } else {
+            val amountMatcher = buildAmountMatcher(extractedAmounts!!)
+            preFiltered.filter { expense ->
+                val normalizedAmount: Double? = if (expense.currency == homeCurrency) {
+                    expense.effectiveAmount
+                } else {
+                    currencyConverter.convertAsOf(
+                        amount = expense.effectiveAmount,
+                        fromCurrency = expense.currency,
+                        toCurrency = homeCurrency,
+                        atMillis = expense.date
+                    )?.convertedAmount
+                }
+                val money = normalizedAmount?.let { toMoney(it) }
+                if (money == null) {
+                    failedConversions++
+                    false
+                } else {
+                    amountMatcher(money)
                 }
             }
-        } else {
-            normalizedRows
+        }
+        if (failedConversions > 0) {
+            // Bounded: counts and currency code only, no merchant, amount or query text.
+            Timber.w("W16: excluded %d rows with no rate to %s for the amount filter", failedConversions, homeCurrency)
         }
 
         val dataQualityFinal = dataQuality.copy(
             failedCurrencyConversions = failedConversions
         )
 
-        // Label each result with match quality
+        // Label each result with match quality. Every row in [matched] already satisfies the amount
+        // filter (rows that fail it are removed above), so the amount criterion is always met here.
         val hasMerchantFilter = interpretation.merchants != null
-        val needsAmountMatch = hasAmountFilter && !hasCategoryFilter && !hasMerchantFilter
         val needsMerchantMatch = hasMerchantFilter
 
-        return matched.map { (expense, _) ->
+        return matched.map { expense ->
             val matchedMerchant = if (needsMerchantMatch) {
                 interpretation.merchants!!.any { expense.merchant.contains(it, ignoreCase = true) }
             } else {
                 !hasMerchantFilter  // exact when no merchant filter
             }
-            val matchedAmount = if (needsAmountMatch) {
-                normalizedRows.any { (e, norm) ->
-                    e == expense && interpretation.extractedAmounts!!.any { amount ->
-                        when (amount.comparison) {
-                            AmountComparison.EXACTLY -> norm == amount.value
-                            AmountComparison.OVER -> norm > amount.value
-                            AmountComparison.UNDER -> norm < amount.value
-                            AmountComparison.BETWEEN -> {
-                                val other = interpretation.extractedAmounts.find { it != amount }
-                                other?.let { norm in amount.value..it.value } ?: true
-                            }
-                        }
-                    }
-                }
-            } else {
-                !hasAmountFilter  // exact when no amount filter
-            }
             val matchedCategory = !hasCategoryFilter || expense.categoryId in targetCategoryIds
 
             SearchResult(
                 expense = expense,
-                matchType = if (matchedMerchant && matchedAmount && matchedCategory)
+                matchType = if (matchedMerchant && matchedCategory)
                     MatchType.EXACT else MatchType.PARTIAL
             )
         }.also {
@@ -481,35 +505,125 @@ class NaturalLanguageSearchEngine @Inject constructor(
     }
     
     private fun extractAmounts(query: String): List<ExtractedAmount>? {
-        val amounts = mutableListOf<ExtractedAmount>()
-        
-        // Extract explicit amounts
-        amountPattern.findAll(query).forEach { match ->
-            val value = match.groupValues[1].toDoubleOrNull()
-            if (value != null) {
-                amounts.add(ExtractedAmount(value, AmountComparison.EXACTLY))
-            }
+        // Works on a masked copy: full dates and times become blanks. The caller's query is untouched,
+        // so date, merchant and category extraction still read the original text.
+        var masked = query
+        dateMaskPatterns.forEach { pattern ->
+            masked = pattern.replace(masked) { " ".repeat(it.value.length) }
         }
-        
-        // Check for comparison operators
-        val overPattern = Regex("over|above|more than|greater than|>")
-        val underPattern = Regex("under|below|less than|<")
-        val betweenPattern = Regex("between")
-        
-        when {
-            overPattern.containsMatchIn(query) -> {
-                amounts.lastOrNull()?.let { it.comparison = AmountComparison.OVER }
+
+        // Pairs of (start offset, amount) so results come back in query order.
+        val found = mutableListOf<Pair<Int, ExtractedAmount>>()
+
+        // "between X and Y" pair: both values are BETWEEN. The span is blanked so the single-amount
+        // scan below cannot re-read it.
+        betweenAmountPattern.findAll(masked).toList().forEach { match ->
+            val low = parseAmountNumber(match.groupValues[1])
+            val high = parseAmountNumber(match.groupValues[2])
+            if (low == null || high == null) return@forEach
+            val hasMarker = match.value.any { it in "€\$£¥" } ||
+                Regex("(?<![a-z])(?:eur|usd|gbp|euros?|dollars?)(?![a-z])").containsMatchIn(match.value)
+            // A bare integer pair that looks like years ("between 2023 and 2024") is a period, not money.
+            if (!hasMarker && isYearLike(match.groupValues[1]) && isYearLike(match.groupValues[2])) {
+                return@forEach
             }
-            underPattern.containsMatchIn(query) -> {
-                amounts.lastOrNull()?.let { it.comparison = AmountComparison.UNDER }
-            }
-            betweenPattern.containsMatchIn(query) && amounts.size >= 2 -> {
-                amounts[0].comparison = AmountComparison.BETWEEN
-                amounts[1].comparison = AmountComparison.BETWEEN
-            }
+            found.add(match.range.first to ExtractedAmount(low, AmountComparison.BETWEEN))
+            found.add(match.range.last to ExtractedAmount(high, AmountComparison.BETWEEN))
+            val chars = masked.toCharArray()
+            for (i in match.range) chars[i] = ' '
+            masked = String(chars)
         }
-        
+
+        // Single amounts. Each comparison keyword attaches only to the number directly after it
+        // (so "over $50 under $100" gives OVER 50 and UNDER 100).
+        singleAmountPattern.findAll(masked).forEach { match ->
+            val overKeywordText = match.groups[1]?.value
+            val underKeywordText = match.groups[2]?.value
+            val hasMarker = !match.groups[3]?.value.isNullOrBlank() || !match.groups[5]?.value.isNullOrBlank()
+            val comparison = when {
+                overKeywordText != null -> AmountComparison.OVER
+                underKeywordText != null -> AmountComparison.UNDER
+                else -> AmountComparison.EXACTLY
+            }
+            // No marker and no comparison keyword: bare number, not an amount.
+            if (!hasMarker && comparison == AmountComparison.EXACTLY) return@forEach
+            val value = parseAmountNumber(match.groupValues[4]) ?: return@forEach
+            found.add(match.range.first to ExtractedAmount(value, comparison))
+        }
+
+        val amounts = found.sortedBy { it.first }.map { it.second }
         return if (amounts.isNotEmpty()) amounts else null
+    }
+
+    private fun isYearLike(token: String): Boolean {
+        val n = token.toIntOrNull() ?: return false
+        return n in 1900..2100
+    }
+
+    /**
+     * Parses a number token. A comma followed by exactly three digits is a thousands separator;
+     * any other single comma is a decimal separator. With both separators present, the last one
+     * is the decimal separator. Returns null for ambiguous or malformed tokens.
+     */
+    private fun parseAmountNumber(raw: String): Double? {
+        val hasComma = raw.contains(',')
+        val hasDot = raw.contains('.')
+        val canonical = when {
+            hasComma && hasDot ->
+                if (raw.lastIndexOf('.') > raw.lastIndexOf(',')) {
+                    raw.replace(",", "")
+                } else {
+                    raw.replace(".", "").replace(',', '.')
+                }
+            hasComma -> {
+                val parts = raw.split(',')
+                when {
+                    parts.size == 2 && parts[1].length != 3 -> raw.replace(',', '.')
+                    parts.drop(1).all { it.length == 3 } -> raw.replace(",", "")
+                    else -> return null
+                }
+            }
+            raw.count { it == '.' } > 1 -> return null
+            else -> raw
+        }
+        val value = canonical.toDoubleOrNull() ?: return null
+        return if (value.isFinite() && value >= 0.0) value else null
+    }
+
+    /** Money to 2 decimals, HALF_UP. Null for non-finite values. */
+    private fun toMoney(value: Double): BigDecimal? =
+        if (value.isFinite()) BigDecimal.valueOf(value).setScale(2, RoundingMode.HALF_UP) else null
+
+    /**
+     * Builds one predicate from the extracted amounts, once per search.
+     * - OVER / UNDER / BETWEEN rules must all hold (so "over 10 and under 50" is a range).
+     * - EXACTLY values are alternatives: the row must equal one of them.
+     * - BETWEEN values are consumed in pairs (min..max inclusive); a lone BETWEEN is the point range.
+     * - Comparison is in cents (2 decimals, HALF_UP) on the home-currency amount.
+     * - An invalid filter value matches nothing (never everything).
+     */
+    private fun buildAmountMatcher(amounts: List<ExtractedAmount>): (BigDecimal) -> Boolean {
+        val exacts = mutableListOf<BigDecimal>()
+        val rules = mutableListOf<(BigDecimal) -> Boolean>()
+        val betweenValues = mutableListOf<BigDecimal>()
+        for (amount in amounts) {
+            val value = toMoney(amount.value) ?: return { false }
+            when (amount.comparison) {
+                AmountComparison.EXACTLY -> exacts.add(value)
+                AmountComparison.OVER -> rules.add { it > value }
+                AmountComparison.UNDER -> rules.add { it < value }
+                AmountComparison.BETWEEN -> betweenValues.add(value)
+            }
+        }
+        betweenValues.chunked(2).forEach { pair ->
+            val low = pair.first().min(pair.last())
+            val high = pair.first().max(pair.last())
+            rules.add { it >= low && it <= high }
+        }
+        return { candidate ->
+            (exacts.isEmpty() || exacts.any { it.compareTo(candidate) == 0 }) &&
+                rules.all { it(candidate) }
+        }
     }
     
     private fun extractDateRange(query: String): DateRange? {

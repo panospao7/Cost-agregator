@@ -1,28 +1,58 @@
 package com.yourname.expensetracker.domain.naturallanguage
 
+import com.yourname.expensetracker.data.repository.MerchantNormalizationRepository
+import com.yourname.expensetracker.domain.naturallanguage.NaturalLanguageSearchEngine.AmountComparison
+import com.yourname.expensetracker.domain.naturallanguage.NaturalLanguageSearchEngine.DateRange
+import com.yourname.expensetracker.domain.naturallanguage.NaturalLanguageSearchEngine.ExtractedAmount
+import com.yourname.expensetracker.domain.util.TimeProvider
+import io.mockk.coEvery
+import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Test
 import java.time.LocalDate
+import java.time.ZoneId
 
 /**
  * FL-03: digits inside a full date (dd/mm/yyyy or ISO yyyy-mm-dd) are not read as amounts, so a date search
  * is not filtered by amount, and the date range is still parsed.
+ *
+ * FL-03R: a number is an amount only with a currency marker or a directly preceding comparison keyword.
+ * Bare numbers, years, counts and time spans are never amounts. Separators are parsed by locale-neutral rules.
  */
 @Suppress("DEPRECATION")
 class NaturalLanguageSearchEngineAmountTest {
 
-    private fun engine() = NaturalLanguageSearchEngine(
-        expenseQueryRepository = mockk(relaxed = true),
-        speechInputGateway = mockk(relaxed = true),
-        timeProvider = mockk(relaxed = true),
-        currencyConverter = mockk(relaxed = true),
-        currencySettingsRepository = mockk(relaxed = true),
-        categoryRepository = mockk(relaxed = true),
-        merchantNormalizationRepository = mockk(relaxed = true),
-    )
+    private val today = LocalDate.of(2024, 6, 15)
+    private val nowMs = today.atTime(12, 0).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+
+    private fun engine(): NaturalLanguageSearchEngine {
+        val timeProvider = mockk<TimeProvider>()
+        every { timeProvider.now() } returns nowMs
+        val merchants = mockk<MerchantNormalizationRepository>()
+        coEvery { merchants.getAliasByRawName(any()) } returns null
+        coEvery { merchants.getAliasByNormalizedKey(any()) } returns null
+        coEvery { merchants.getTopMerchants(any()) } returns emptyList()
+        return NaturalLanguageSearchEngine(
+            expenseQueryRepository = mockk(relaxed = true),
+            speechInputGateway = mockk(relaxed = true),
+            timeProvider = timeProvider,
+            currencyConverter = mockk(relaxed = true),
+            currencySettingsRepository = mockk(relaxed = true),
+            categoryRepository = mockk(relaxed = true),
+            merchantNormalizationRepository = merchants,
+        )
+    }
+
+    private suspend fun amounts(query: String): List<ExtractedAmount>? =
+        engine().interpretQuery(query).extractedAmounts
+
+    private fun amount(value: Double, comparison: AmountComparison) = ExtractedAmount(value, comparison)
+
+    // ---- FL-03 existing date tests ----
 
     @Test
     fun `slash date digits are not extracted as amounts`() = runTest {
@@ -30,7 +60,7 @@ class NaturalLanguageSearchEngineAmountTest {
 
         assertNull(result.extractedAmounts)
         assertEquals(
-            NaturalLanguageSearchEngine.DateRange(LocalDate.of(2024, 3, 15), LocalDate.of(2024, 3, 15)),
+            DateRange(LocalDate.of(2024, 3, 15), LocalDate.of(2024, 3, 15)),
             result.dateRange
         )
     }
@@ -40,5 +70,171 @@ class NaturalLanguageSearchEngineAmountTest {
         val result = engine().interpretQuery("paid 2024-03-15 for rent")
 
         assertNull(result.extractedAmounts)
+    }
+
+    // ---- Positive controls: a real amount next to a date is still extracted ----
+
+    @Test
+    fun `slash date with a real amount keeps the amount and the parsed date`() = runTest {
+        val result = engine().interpretQuery("spent 15/03/2024 over 20 euro")
+
+        assertEquals(listOf(amount(20.0, AmountComparison.OVER)), result.extractedAmounts)
+        assertEquals(
+            DateRange(LocalDate.of(2024, 3, 15), LocalDate.of(2024, 3, 15)),
+            result.dateRange
+        )
+    }
+
+    @Test
+    fun `iso date with a real amount keeps the amount and drops the date digits`() = runTest {
+        val result = engine().interpretQuery("paid 2024-03-15 over 20 euro")
+
+        assertEquals(listOf(amount(20.0, AmountComparison.OVER)), result.extractedAmounts)
+    }
+
+    // ---- Comparison keywords ----
+
+    @Test
+    fun `over with euro symbol is OVER 50`() = runTest {
+        assertEquals(listOf(amount(50.0, AmountComparison.OVER)), amounts("over €50"))
+    }
+
+    @Test
+    fun `under with euro word is UNDER 20`() = runTest {
+        assertEquals(listOf(amount(20.0, AmountComparison.UNDER)), amounts("under 20 euro"))
+    }
+
+    @Test
+    fun `between two euro amounts is a BETWEEN pair and not a date range`() = runTest {
+        val result = engine().interpretQuery("between €10 and €50")
+
+        assertEquals(
+            listOf(amount(10.0, AmountComparison.BETWEEN), amount(50.0, AmountComparison.BETWEEN)),
+            result.extractedAmounts
+        )
+        assertNull(result.dateRange)
+    }
+
+    @Test
+    fun `over and under in one query keep their own numbers`() = runTest {
+        assertEquals(
+            listOf(amount(50.0, AmountComparison.OVER), amount(100.0, AmountComparison.UNDER)),
+            amounts("over \$50 under \$100")
+        )
+    }
+
+    // ---- Numbers that are not amounts ----
+
+    @Test
+    fun `bare number after a word is not an amount`() = runTest {
+        assertNull(amounts("coffee 15"))
+    }
+
+    @Test
+    fun `number followed by a time unit is not an amount`() = runTest {
+        assertNull(amounts("last 3 months"))
+    }
+
+    @Test
+    fun `top N is not an amount`() = runTest {
+        assertNull(amounts("top 5"))
+    }
+
+    @Test
+    fun `bare year is not an amount`() = runTest {
+        assertNull(amounts("2024"))
+    }
+
+    @Test
+    fun `count with times is not an amount`() = runTest {
+        assertNull(amounts("3 times"))
+    }
+
+    @Test
+    fun `between two years is not an amount and parses no date range (characterisation)`() = runTest {
+        val result = engine().interpretQuery("between 2023 and 2024")
+
+        assertNull(result.extractedAmounts)
+        // Characterisation pin: the date pattern deliberately skips amount-like tokens, so years give no range.
+        assertNull(result.dateRange)
+    }
+
+    @Test
+    fun `over embedded in discover is not a comparison keyword`() = runTest {
+        assertNull(amounts("discover 5"))
+    }
+
+    @Test
+    fun `over embedded in cover is not a comparison keyword`() = runTest {
+        assertNull(amounts("cover 5"))
+    }
+
+    @Test
+    fun `discover with a marked amount is EXACTLY and not OVER`() = runTest {
+        assertEquals(listOf(amount(5.0, AmountComparison.EXACTLY)), amounts("discover 5 euro"))
+    }
+
+    // ---- Separators ----
+
+    @Test
+    fun `comma followed by three digits is a thousands separator`() = runTest {
+        assertEquals(listOf(amount(1000.0, AmountComparison.OVER)), amounts("over €1,000"))
+    }
+
+    @Test
+    fun `single comma with one digit is a decimal separator`() = runTest {
+        assertEquals(listOf(amount(1.5, AmountComparison.OVER)), amounts("over €1,5"))
+    }
+
+    @Test
+    fun `dot decimal separator is read as decimal`() = runTest {
+        assertEquals(listOf(amount(1.5, AmountComparison.OVER)), amounts("over €1.50"))
+    }
+
+    @Test
+    fun `marked amount with two decimals is EXACTLY 12_50`() = runTest {
+        val extracted = amounts("€12.50")
+
+        assertNotNull(extracted)
+        assertEquals(1, extracted!!.size)
+        assertEquals(12.5, extracted.single().value, 0.0)
+        assertEquals(AmountComparison.EXACTLY, extracted.single().comparison)
+    }
+
+    // ---- Other extractors still read the original query ----
+
+    @Test
+    fun `merchant extraction still works next to an amount`() = runTest {
+        val result = engine().interpretQuery("at Starbucks over €5")
+
+        assertEquals(listOf("Starbucks"), result.merchants)
+        assertEquals(listOf(amount(5.0, AmountComparison.OVER)), result.extractedAmounts)
+    }
+
+    @Test
+    fun `category extraction still works next to an amount`() = runTest {
+        val result = engine().interpretQuery("grocery over €5")
+
+        assertEquals(listOf("food"), result.categories)
+        assertEquals(listOf(amount(5.0, AmountComparison.OVER)), result.extractedAmounts)
+    }
+
+    @Test
+    fun `relative date extraction still works next to an amount`() = runTest {
+        val result = engine().interpretQuery("last month over €5")
+
+        assertEquals(DateRange(LocalDate.of(2024, 5, 1), LocalDate.of(2024, 5, 31)), result.dateRange)
+        assertEquals(listOf(amount(5.0, AmountComparison.OVER)), result.extractedAmounts)
+    }
+
+    @Test
+    fun `between yesterday and today yields no amounts and the yesterday date (characterisation)`() = runTest {
+        val result = engine().interpretQuery("between yesterday and today")
+
+        assertNull(result.extractedAmounts)
+        // Characterisation pin: the "(yesterday|today)" pattern runs before "between X and Y", so the range
+        // collapses to yesterday..yesterday rather than yesterday..today. Pre-existing behaviour.
+        val yesterday = today.minusDays(1)
+        assertEquals(DateRange(yesterday, yesterday), result.dateRange)
     }
 }
