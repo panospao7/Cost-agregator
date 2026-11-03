@@ -409,7 +409,7 @@ class AddExpenseViewModel @Inject constructor(
   return AddExpenseInstallmentsDerivation.derive(s, zone, todayFor(zone).toEpochDay())
  }
 
- init {
+ private fun startHomeCollection() {
  homeCurrencyJob = viewModelScope.launch {
  readHomeCurrencyCode().distinctUntilChanged().collect { hc ->
  // MEC 1b INV-1b-20(c): a home-denominated draft is discarded on a home change (open sheet or retained).
@@ -441,6 +441,10 @@ class AddExpenseViewModel @Inject constructor(
  }
  }
  }
+ }
+
+ init {
+ startHomeCollection()
  ratesSettingJob = viewModelScope.launch {
  // R23: the setting is read, never written. Loaded/FirstRunDefault map by flag; a corrupted
  // (fail-closed) state or a read error is Unknown, which the UI treats as Off.
@@ -1970,6 +1974,9 @@ class AddExpenseViewModel @Inject constructor(
      * A configuration change keeps the captured zone; [onSheetLeft] and [reset] clear it.
      */
     fun onSheetOpened() {
+        // The VM is Activity-scoped: after a read error ended the home flow, reopening must not stay blocked.
+        // Restart through the single homeCurrencyJob only when home is unknown and it is no longer active.
+        if (_state.value.homeCurrency == null && homeCurrencyJob?.isActive != true) startHomeCollection()
         if (sessionZone == null) {
             // MEC R-1(b): a retained draft with a NON-home selection is discarded whole (existing reset
             // path), so its amount is never re-denominated into the home currency. A home draft is kept.

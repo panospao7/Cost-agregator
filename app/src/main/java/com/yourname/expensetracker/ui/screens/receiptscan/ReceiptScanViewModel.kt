@@ -369,6 +369,9 @@ class ReceiptScanViewModel @Inject constructor(
     /** Last home currency loaded by the init collector; re-applied by reset()/retry(). */
     private var homeCurrencyCode: String? = null
 
+    /** Last non-null home seen by the collector; used only to detect a real home change across a null. */
+    private var lastRealHomeCode: String? = null
+
     /**
      * N-01-3: the typed read-time home currency as a code. Available -> the code; Loading, a read
      * error, an invalid stored code or no emission within [HOME_READ_TIMEOUT_MS] -> null, which keeps
@@ -422,15 +425,28 @@ class ReceiptScanViewModel @Inject constructor(
     private var historyEarliestDate: LocalDate? = null
     private var historyAnnouncePending: Boolean = false
 
-    init {
-        // S7-009: Load home currency on init so editCurrency is never a hardcoded "EUR"
-        viewModelScope.launch {
+    /** The single home-currency collection; restarted by [ensureHomeCollection] only when it has ended. */
+    private var homeCurrencyJob: Job? = null
+
+    /**
+     * The VM is Activity-scoped, so after a read error ended the home flow it would stay blocked until the
+     * Activity dies. Restarts the collection (never a duplicate collector) when home is still unknown.
+     */
+    private fun ensureHomeCollection() {
+        if (homeCurrencyCode == null && homeCurrencyJob?.isActive != true) startHomeCollection()
+    }
+
+    private fun startHomeCollection() {
+        // S7-009: Load home currency so editCurrency is never a hardcoded "EUR"
+        homeCurrencyJob = viewModelScope.launch {
             readHomeCurrencyCode().distinctUntilChanged().collect { homeCurrency ->
                 homeCurrencyCode = homeCurrency
                 // Review F2: a proposal held while home was unresolved is resolved below, not defaulted to home.
                 val holdForProposal = proposalAwaitingHome &&
                     homeCurrency?.let { CurrencyCode.parse(it) } != null
-                if (proposalAwaitingHome && !holdForProposal) {
+                // A null home is "home unknown", not a resolution: it changes nothing about the pending
+                // proposal, the currency, currencyUnverified or the R24c state. Only a real home resolves them.
+                if (homeCurrency != null && proposalAwaitingHome && !holdForProposal) {
                     proposalAwaitingHome = false
                     pendingProposal = null
                 }
@@ -438,7 +454,8 @@ class ReceiptScanViewModel @Inject constructor(
                     // MEC 1b INV-1b-20 (receipt): an in-review selection that was only the assumed home and
                     // cannot follow a changed home becomes Unset (fields kept, Save blocked); never
                     // re-denominated. An explicit (proposed or picked) code is kept as is.
-                    val priorHome = current.homeCurrency
+                    // A null emission in between does not hide the last real home from the comparison.
+                    val priorHome = current.homeCurrency ?: lastRealHomeCode
                     val assumedHomeLost = current.step == ScanStep.REVIEW && priorHome != null &&
                         homeCurrency != null && priorHome != homeCurrency &&
                         current.editCurrency == priorHome && current.currencyUnverified
@@ -463,10 +480,15 @@ class ReceiptScanViewModel @Inject constructor(
                         previewAnnounceKey = current.previewAnnounceKey + 1
                     )
                 }
+                if (homeCurrency != null) lastRealHomeCode = homeCurrency
                 applyPendingProposal()
                 reevaluateRegion(invalidate = true)
             }
         }
+    }
+
+    init {
+        startHomeCollection()
         viewModelScope.launch {
             // R23: the setting is read, never written. Loaded/FirstRunDefault map by flag; a corrupted
             // (fail-closed) state or a read error is Unknown, which the UI treats as Off.
@@ -529,6 +551,7 @@ class ReceiptScanViewModel @Inject constructor(
     private fun processImageUri(uri: Uri) {
         // S7-003: Cancel prior scan and increment request ID to detect stale results
         val requestId = ++scanRequestSeq
+        ensureHomeCollection()
         scanJob?.cancel()
         itemAnalysisJob?.cancel()
         // MEC constraint 1/7: a new scan returns to home and drops the previous review zone, so no
@@ -1426,8 +1449,8 @@ class ReceiptScanViewModel @Inject constructor(
         }
         // S7-004: Idempotency guard
         if (currentState.isSaving) return
-        // R24c: defense in depth — an unverified currency can never be quick-saved
-        if (currentState.currencyUnverified) {
+        // R24c: defense in depth — an unverified currency, or an unknown home, can never be quick-saved
+        if (currentState.currencyUnverified || homeCurrencyCode == null) {
             _state.update {
                 it.copy(quickSavePreview = null, errorMessage = "Check the receipt currency before saving.")
             }
@@ -1528,11 +1551,13 @@ class ReceiptScanViewModel @Inject constructor(
 
     fun retry() {
         cancelActiveWork()
+        ensureHomeCollection()
         _state.update { freshStateKeeping(it) }
     }
 
     fun reset() {
         cancelActiveWork()
+        ensureHomeCollection()
         _state.update { freshStateKeeping(it) }
     }
 
@@ -2081,6 +2106,8 @@ class ReceiptScanViewModel @Inject constructor(
         if (currentState.receiptId == null || currentState.isSaving) return null
         // S7-014: Quick save unavailable until currency is loaded
         if (currentState.editCurrency.isNullOrBlank()) return null
+        // Home unknown (read pending/unavailable): never quick-save (fail-closed)
+        if (homeCurrencyCode == null) return null
         // R24c: assumed (unread) currency must be confirmed by the user before quick save
         if (currentState.currencyUnverified) return null
 
