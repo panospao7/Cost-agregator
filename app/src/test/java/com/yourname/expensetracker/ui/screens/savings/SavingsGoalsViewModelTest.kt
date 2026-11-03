@@ -999,14 +999,18 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
     @Test
     fun `quickAdd with infinite current balance is a no-op`() = assertQuickAddNoOpForNonFinite(100.0, Double.POSITIVE_INFINITY)
 
-    // Expected to FAIL against the current production code: quickAdd computes the capped amount from
-    // its own snapshot and hands it to contributeToGoal, whose compare-and-set only compares against a
-    // snapshot re-read inside contributeToGoal. The second tap's amount (5.0) was computed before the
-    // first write landed, so it passes the CAS and the balance reaches 105.
+    // The write suspends, as a real database write does, so without quickAddMutex the second tap reads
+    // 95 while the first write is in flight and the balance reaches 105.
     @Test
     fun `quickAdd rapid double tap on 95 of 100 contributes once and ends at 100`() = runTest(testDispatcher) {
         val goal = createGoal(1L, "Quick", 100.0, 95.0)
         configureRepositoryWithGoals(listOf(goal))
+        coEvery { savingsGoalRepository.incrementSavingsGoalAmount(any(), any()) } coAnswers {
+            val delta = invocation.args[1] as Double
+            kotlinx.coroutines.delay(1)
+            goalsFlow.value = goalsFlow.value.map { it.copy(currentAmount = it.currentAmount + delta) }
+            true
+        }
         viewModel = createViewModel()
         advanceUntilIdle()
 
