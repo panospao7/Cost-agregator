@@ -242,10 +242,12 @@ private fun RiskLevelCard(forecast: BudgetForecast) {
 
 @Composable
 private fun ForecastDetailsCard(budget: Budget, forecast: BudgetForecast, homeCurrency: String, normalizedBudgetAmount: Double? = null) {
-    val (lowForecast, baseForecast, highForecast) = remember(forecast.predictedSpending, forecast.confidenceScore) {
-        calculateForecastBounds(
+    val spentToDate = forecast.spentToDate
+    val (lowForecast, baseForecast, highForecast) = remember(forecast.predictedSpending, forecast.confidenceScore, spentToDate) {
+        fullPeriodForecastBounds(
             predictedSpending = forecast.predictedSpending,
-            confidenceScore = forecast.confidenceScore
+            confidenceScore = forecast.confidenceScore,
+            spentToDate = spentToDate
         )
     }
     
@@ -284,7 +286,7 @@ private fun ForecastDetailsCard(budget: Budget, forecast: BudgetForecast, homeCu
                 label = stringResource(R.string.budget_forecast_predicted_spending),
                 value = CurrencyFormatter.formatMoney(forecast.predictedSpending, homeCurrency ?: ""),
                 icon = Icons.Default.TrendingUp,
-                valueColor = if (forecast.predictedSpending > (normalizedBudgetAmount ?: budget.amount))
+                valueColor = if (projectedPeriodTotal(forecast) > (normalizedBudgetAmount ?: budget.amount))
                     SemanticColors.DangerRed else SemanticColors.TextPrimary
             )
             
@@ -414,6 +416,23 @@ private fun RangeRow(
 
         Spacer(modifier = Modifier.height(6.dp))
     }
+}
+
+/** Full-period projection: spent so far plus predicted remaining-period spend (home currency). */
+internal fun projectedPeriodTotal(forecast: BudgetForecast): Double =
+    forecast.spentToDate + forecast.predictedSpending
+
+/**
+ * predictedSpending is remaining-period spend, so every bound is shifted by spentToDate.
+ * The range is then full-period and comparable with the full-period limit.
+ */
+internal fun fullPeriodForecastBounds(
+    predictedSpending: Double,
+    confidenceScore: Double,
+    spentToDate: Double
+): Triple<Double, Double, Double> {
+    val (low, base, high) = calculateForecastBounds(predictedSpending, confidenceScore)
+    return Triple(low + spentToDate, base + spentToDate, high + spentToDate)
 }
 
 private fun calculateForecastBounds(predictedSpending: Double, confidenceScore: Double): Triple<Double, Double, Double> {
