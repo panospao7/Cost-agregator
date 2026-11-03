@@ -45,6 +45,11 @@ interface CloudPayloadPolicy {
     /**
      * Prepare a bank statement validation payload.
      * Uses [CloudPayloadPurpose.BANK_STATEMENT_VALIDATION] with strict redaction.
+     *
+     * Fail-closed: when the prompt structure cannot be sanitized this throws an
+     * [IllegalStateException] whose message is the bounded reason code
+     * `BANK_STATEMENT_PAYLOAD_UNSANITIZABLE` (never any payload text). Callers treat it as
+     * "cloud unavailable"; nothing is sent.
      */
     suspend fun prepareBankStatementValidation(
         rawText: String,

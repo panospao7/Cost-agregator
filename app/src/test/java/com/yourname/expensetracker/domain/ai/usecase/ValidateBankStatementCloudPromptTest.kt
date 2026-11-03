@@ -9,7 +9,9 @@ import com.yourname.expensetracker.data.privacy.BankStatementPromptFixture.CARD
 import com.yourname.expensetracker.data.privacy.BankStatementPromptFixture.EMAIL
 import com.yourname.expensetracker.data.privacy.BankStatementPromptFixture.IBAN
 import com.yourname.expensetracker.data.privacy.BankStatementPromptFixture.OCR_MARKER
+import com.yourname.expensetracker.data.privacy.BankStatementPromptFixture.LONG_EMAIL
 import com.yourname.expensetracker.data.privacy.BankStatementPromptFixture.UNSANITIZABLE_CODE
+import com.yourname.expensetracker.data.privacy.BankStatementPromptFixture.words
 import com.yourname.expensetracker.data.privacy.BankStatementPromptFixture.candidate
 import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadPolicy
 import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor
@@ -277,6 +279,36 @@ class ValidateBankStatementCloudPromptTest {
         )
         assertFalse(wiring.sentBodyJson().contains("leak@example.com"))
         assertFalse(wiring.sentBodyJson().contains(IBAN))
+    }
+
+    @Test
+    fun N053_endToEndHeaderOnTheWireIsTheInstructionConstantAndAnEmailStraddling2000NeverReachesTheBody() = runTest {
+        val wiring = Wiring(realPolicy(), candidateCount = 1)
+        val ocr = words(1984) + " " + LONG_EMAIL + " " + words(100)
+        assertEquals(1985, ocr.indexOf(LONG_EMAIL))
+
+        val outcome = wiring.useCase.validateTransactions(ocr, listOf(candidate(0, "Shop A")), "EUR")
+
+        assertTrue(outcome is StatementValidationOutcome.Validated)
+        val sent = wiring.sentPromptText()
+        assertTrue(
+            "real builder header equals the constant on the wire",
+            sent.startsWith(StatementValidationContracts.PROMPT_INSTRUCTIONS + OCR_MARKER + "\n")
+        )
+        val body = wiring.sentBodyJson()
+        listOf(LONG_EMAIL, "alexander", "longname", "example-d", "@").forEach { fragment ->
+            assertFalse("'$fragment' must not reach the HTTP body", body.contains(fragment))
+        }
+        for (k in 4..LONG_EMAIL.length) {
+            assertFalse("prefix of $k chars", body.contains(LONG_EMAIL.take(k)))
+        }
+        assertEquals(1, BankStatementPromptFixture.Sections(sent).ocrLines.size)
+    }
+
+    @Test
+    fun N053_onDevicePromptFromTheRealBuilderStartsWithTheInstructionConstant() = runTest {
+        val prompt = BankStatementPromptFixture.capturePrompt("Paid at the shop", listOf(candidate(0, "Shop A")))
+        assertTrue(prompt.startsWith(StatementValidationContracts.PROMPT_INSTRUCTIONS + OCR_MARKER + "\n"))
     }
 
     // ───────────────────────── unsanitizable -> parser echo ─────────────────────────

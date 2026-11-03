@@ -134,7 +134,8 @@ class DefaultCloudPayloadPolicy @Inject constructor(
         } else {
             preparedText = segmented.text
             preparedFields = segmented.fieldsRedacted
-            preparedHash = segmented.text.sha256Prefix(32)
+            // Same format as the redactor's payloadHash: full SHA-256, 64 lowercase hex chars.
+            preparedHash = segmented.text.sha256Prefix(SHA256_HEX_LENGTH)
         }
         return PreparedCloudPayload(
             purpose = CloudPayloadPurpose.BANK_STATEMENT_VALIDATION,
@@ -174,15 +175,15 @@ class DefaultCloudPayloadPolicy @Inject constructor(
         val candidateIndex = lines.lastIndexOf(StatementValidationContracts.PROMPT_CANDIDATES_MARKER)
         if (candidateIndex <= ocrIndex) throw unsanitizable()
 
+        // The only unredacted segment must be exactly the program's instruction block; anything
+        // else (e.g. user text from a future caller) fails closed.
         val headerLines = lines.subList(0, ocrIndex)
-        if (headerLines.sumOf { it.length + 1 } > MAX_BANK_HEADER_CHARS) throw unsanitizable()
+        if (headerLines.joinToString("\n", postfix = "\n") != StatementValidationContracts.PROMPT_INSTRUCTIONS) {
+            throw unsanitizable()
+        }
 
         val fields = mutableSetOf<String>()
-        val ocrRedacted = redactor.redactText(
-            lines.subList(ocrIndex + 1, candidateIndex).joinToString("\n"),
-            CloudPayloadPurpose.BANK_STATEMENT_VALIDATION
-        )
-        fields += ocrRedacted.fieldsRedacted
+        val ocrText = redactOcrSegment(lines.subList(ocrIndex + 1, candidateIndex), fields)
 
         val candidateLines = lines.subList(candidateIndex + 1, lines.size).filter { it.isNotBlank() }
         if (candidateLines.isEmpty() ||
@@ -201,12 +202,51 @@ class DefaultCloudPayloadPolicy @Inject constructor(
         val assembled = buildList {
             addAll(headerLines)
             add(StatementValidationContracts.PROMPT_OCR_MARKER)
-            add(ocrRedacted.text)
+            add(ocrText)
             add("")
             add(StatementValidationContracts.PROMPT_CANDIDATES_MARKER)
             addAll(sanitizedCandidates)
         }.joinToString("\n", postfix = "\n")
         return SegmentedPrompt(assembled, fields)
+    }
+
+    /**
+     * Redacts the OCR segment line by line and returns ONE line (lines joined with a space,
+     * capped at [MAX_BANK_OCR_CHARS] AFTER redaction). The sanitizer cuts its input at
+     * [SANITIZER_INPUT_CUT] characters before redacting, so a whole-text call could leave a plain
+     * fragment of an email/number straddling that cut; every line handed to it is therefore
+     * shorter than the cut (see [fitLineBelowSanitizerCut]) and the cut never applies.
+     * Blank lines are skipped (a blank input makes the sanitizer emit a pseudonym placeholder).
+     * [fields] receives the union of the per-line redaction field names.
+     */
+    private fun redactOcrSegment(ocrLines: List<String>, fields: MutableSet<String>): String {
+        val out = StringBuilder()
+        for (rawLine in ocrLines) {
+            if (out.length >= MAX_BANK_OCR_CHARS) break // output is capped; bound the work
+            if (rawLine.isBlank()) continue
+            val line = fitLineBelowSanitizerCut(rawLine.trim())
+            if (line.isBlank()) continue
+            val redacted = redactor.redactText(line, CloudPayloadPurpose.BANK_STATEMENT_VALIDATION)
+            fields += redacted.fieldsRedacted
+            if (out.isNotEmpty()) out.append(' ')
+            out.append(redacted.text.replace(WHITESPACE_RUN_REGEX, " "))
+        }
+        return out.toString().take(MAX_BANK_OCR_CHARS)
+    }
+
+    /**
+     * Returns [line] unchanged when it is shorter than the sanitizer cut. Otherwise drops the
+     * tail: cut at the last whitespace inside a window that leaves [PII_STRADDLE_MARGIN] chars of
+     * margin, then strip trailing digit/separator characters so a multi-word number (card, phone)
+     * straddling the cut cannot leave a plain partial. The dropped tail is never sent. A line with
+     * no whitespace in the window is one oversize token that cannot be cut safely: fail closed.
+     */
+    private fun fitLineBelowSanitizerCut(line: String): String {
+        if (line.length < SANITIZER_INPUT_CUT) return line
+        val window = line.take(SANITIZER_INPUT_CUT - PII_STRADDLE_MARGIN)
+        val cut = window.indexOfLast { it.isWhitespace() }
+        if (cut <= 0) throw unsanitizable()
+        return window.substring(0, cut).trimEnd { it.isDigit() || it.isWhitespace() || it in NUMBER_SEPARATORS }
     }
 
     /** Redact first (the redactor caps the input), then bound; never cut raw text before redacting. */
@@ -222,8 +262,15 @@ class DefaultCloudPayloadPolicy @Inject constructor(
     private companion object {
         /** Bounded reason code carried by the fail-closed throw; never any payload text. */
         private const val BANK_PAYLOAD_UNSANITIZABLE_CODE = "BANK_STATEMENT_PAYLOAD_UNSANITIZABLE"
-        /** Instructions are constant program text (~1.5k chars); anything larger is not ours. */
-        private const val MAX_BANK_HEADER_CHARS = 2500
+        /** Final cap of the redacted OCR segment (matches the redactor's text cap). */
+        private const val MAX_BANK_OCR_CHARS = 2000
+        /** CloudPiiSanitizer.sanitizeText cuts its raw input at the caller's maxChars (2000 here). */
+        private const val SANITIZER_INPUT_CUT = 2000
+        /** Window kept clear below the sanitizer cut so a multi-word number cannot straddle it. */
+        private const val PII_STRADDLE_MARGIN = 64
+        private const val SHA256_HEX_LENGTH = 64
+        private const val NUMBER_SEPARATORS = "+-().,/"
+        private val WHITESPACE_RUN_REGEX = Regex("\\s+")
         private const val MAX_BANK_CANDIDATE_MERCHANT_CHARS = 80
         /**
          * Exactly the line ValidateBankStatementTransactionsUseCase writes per candidate:

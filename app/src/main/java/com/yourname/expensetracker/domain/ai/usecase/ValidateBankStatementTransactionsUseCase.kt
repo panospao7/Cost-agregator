@@ -109,6 +109,28 @@ object StatementValidationContracts {
      */
     const val PROMPT_OCR_MARKER = "--- OCR TEXT ---"
     const val PROMPT_CANDIDATES_MARKER = "--- CANDIDATE TRANSACTIONS ---"
+
+    /**
+     * The instruction block of the validation prompt: everything before [PROMPT_OCR_MARKER],
+     * including the blank line that precedes it. Constant program text with NO dynamic values.
+     * The prompt builder appends exactly this string, and the cloud payload policy sends the
+     * header unredacted only when it equals this string (any other header fails closed).
+     */
+    const val PROMPT_INSTRUCTIONS: String =
+        "You are a bank statement transaction validator.\n" +
+            "Below is OCR text from a bank statement. Candidate transactions were extracted by a parser.\n" +
+            "Filter out any entries that are NOT real financial transactions (headers, bank info, page numbers, etc).\n" +
+            "For real transactions, correct the merchant name, amount, and date if the parser got them wrong.\n" +
+            "\n" +
+            "RESPONSE CONTRACT (STRICT — violations are rejected):\n" +
+            "- Return a JSON array with EXACTLY ONE object per candidate listed below, in the SAME ORDER.\n" +
+            "- Every object MUST contain \"candidateId\" copied VERBATIM from the candidate as a JSON integer (never a string, never omitted).\n" +
+            "- Every object MUST contain \"status\": \"accepted\" for a real transaction, or \"rejected\" for a non-transaction (headers, bank info, etc). Never omit a candidate.\n" +
+            "- For \"accepted\" objects include merchant, amount (positive number), currency (ISO 4217 code; omit the value only if truly undeterminable), date (YYYY-MM-DD), confidence (0.0-1.0).\n" +
+            "- For \"rejected\" objects only candidateId and status are required.\n" +
+            "Return example: [{\"candidateId\":0,\"status\":\"accepted\",\"merchant\":\"...\"," +
+            "\"amount\":0.0,\"currency\":\"EUR\",\"date\":\"YYYY-MM-DD\",\"confidence\":0.9}]\n" +
+            "\n"
 }
 
 /**
@@ -444,22 +466,9 @@ class ValidateBankStatementTransactionsUseCase @Inject constructor(
         if (rawOcrText.isBlank()) {
             Timber.w("buildValidationPrompt: OCR text input is blank — AI validation will have no context")
         }
-        appendLine("You are a bank statement transaction validator.")
-        appendLine("Below is OCR text from a bank statement. Candidate transactions were extracted by a parser.")
-        appendLine("Filter out any entries that are NOT real financial transactions (headers, bank info, page numbers, etc).")
-        appendLine("For real transactions, correct the merchant name, amount, and date if the parser got them wrong.")
-        appendLine()
-        appendLine("RESPONSE CONTRACT (STRICT — violations are rejected):")
-        appendLine("- Return a JSON array with EXACTLY ONE object per candidate listed below, in the SAME ORDER.")
-        appendLine("- Every object MUST contain \"candidateId\" copied VERBATIM from the candidate as a JSON integer (never a string, never omitted).")
-        appendLine("- Every object MUST contain \"status\": \"accepted\" for a real transaction, or \"rejected\" for a non-transaction (headers, bank info, etc). Never omit a candidate.")
-        appendLine("- For \"accepted\" objects include merchant, amount (positive number), currency (ISO 4217 code; omit the value only if truly undeterminable), date (YYYY-MM-DD), confidence (0.0-1.0).")
-        appendLine("- For \"rejected\" objects only candidateId and status are required.")
-        appendLine(
-            """Return example: [{"candidateId":0,"status":"accepted","merchant":"...",""" +
-                """"amount":0.0,"currency":"EUR","date":"YYYY-MM-DD","confidence":0.9}]"""
-        )
-        appendLine()
+        // Constant instruction block shared with the cloud payload policy (which sends the header
+        // unredacted only when it equals this string).
+        append(StatementValidationContracts.PROMPT_INSTRUCTIONS)
         appendLine(StatementValidationContracts.PROMPT_OCR_MARKER)
         if (rawOcrText.length > 4000) {
             appendLine(rawOcrText.take(4000))

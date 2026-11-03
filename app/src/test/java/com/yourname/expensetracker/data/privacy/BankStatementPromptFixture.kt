@@ -69,9 +69,24 @@ internal object BankStatementPromptFixture {
         return captured.captured
     }
 
-    /** The constant instruction block of a real prompt (everything before the OCR marker). */
-    val realHeader: String by lazy {
-        capturePrompt("seed", listOf(candidate(0, "Seed"))).substringBefore(OCR_MARKER)
+    /**
+     * The only header the policy accepts: the program's instruction constant. (Earlier this was
+     * captured from a real prompt; the contract now pins it to the constant, and a separate test
+     * proves the real builder's output starts with that constant.)
+     */
+    val realHeader: String = StatementValidationContracts.PROMPT_INSTRUCTIONS
+
+    /** Synthetic address used by the straddle tests; local part and domain are distinctive. */
+    const val LONG_EMAIL = "alexander.longname@example-domain.org"
+
+    /**
+     * Digit-free filler of EXACTLY [n] characters made of short words separated by single spaces
+     * (so the policy has whitespace to cut at), starting and ending with a non-space character.
+     */
+    fun words(n: Int): String {
+        require(n >= 2)
+        val raw = "ab ".repeat(n / 3 + 1).take(n)
+        return if (raw.endsWith(" ")) raw.dropLast(1) + "b" else raw
     }
 
     /** One candidate line exactly as the use case writes it. */
