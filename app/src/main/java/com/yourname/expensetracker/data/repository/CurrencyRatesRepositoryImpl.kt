@@ -142,7 +142,7 @@ class CurrencyRatesRepositoryImpl @Inject constructor(
      * socket read. The blocking read runs on [ioDispatcher] (inherited from the enclosing withContext).
      */
     private suspend fun runDailyAttempt(homeCurrency: String): CurrencyRateRefreshOutcome = coroutineScope {
-        val connection = dailyConnectionOpener().apply {
+        val connection: HttpURLConnection = dailyConnectionOpener().apply {
             requestMethod = "GET"
             connectTimeout = TIMEOUT_MS
             readTimeout = TIMEOUT_MS

@@ -351,7 +351,7 @@ class WorkerExecutionGuard @Inject constructor(
                 writeBarrier.checkWritesAllowed(request.workerName)
             } catch (e: Exception) {
                 CancellationSafe.rethrowIfCancellation(e)
-                diagnosticSink.recordBlockedOperation(request.workerName, mode, "P9",
+                diagnosticSink.recordBlockedOperation(request.workerName, restoreMaintenanceMode.currentMode(), "P9",
                     reason = com.yourname.expensetracker.data.backup.MaintenanceBlockedReason.WRITE_BARRIER_DENIED)
                 return applyBlockedPolicy(request, DiagnosticReasonCode.WORKER_WRITE_BARRIER_DENIED.name)
             }

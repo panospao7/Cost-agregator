@@ -63,16 +63,23 @@ Keyset paging; non-retryable intake exception type; capture drop channel and pac
 ## Status
 | Slice | State |
 |---|---|
-| S4, S1, S2 | writers running |
-| S3, S5 | planned, Batch B |
+| S4, S1, S2, S3, S5 | merged into candidate 7c14da67; reviewer-strict ACCEPT-WITH-MINORS |
 
 ## Notes during Batch A
 - S2: only `capture()` used the bare `<id>` name; the other two sites already used `notification-intake-<id>`. All sites use `KEEP`, so a collision cannot cancel a running worker.
 - S2, pre-existing and not fixed: an encrypt failure in `capture()` loses that notification, because no row exists for recovery and the dedupe key is released; only a re-post by the source app brings it back. The fix gives this an honest bounded diagnostic instead of UNKNOWN_ERROR.
 - S1: an unexpected exception from the first barrier check now counts as a denial (BlockedRetry), matching `runGuarded`; it used to take the plain retry path. The diagnostic reason differs from `runGuarded` by design (decision 5).
 
-## S3 accepted residual (orchestrator, item 116)
-If the service shuts down during a burst of more than 4 notifications, those still queued for a permit are lost; their only trace is one `CAPTURE_CANCELLED` event, and a listener refresh is not automatic. Before the limiter they might have reached the NonCancellable region in time. Accepted because the old code already dropped anything that had not reached `gate.decide` at shutdown, so the new loss needs a burst in that short window, and the limit bounds a notification flood. Also: permit holders have no timeout on `intakeCoordinator.capture` or DO_NOT_STORE `processAndSave`, so 4 hung database calls would stall the queue; those callers would hit the same hung database anyway.
+## S3 accepted residual (orchestrator, item 116; wording corrected after reviewer-strict)
+The limiter bounds the capture pipelines only. Coroutines, each retained notification object and the RECEIVED emission stay unbounded.
+If the service shuts down while notifications wait for a permit, those are lost; each leaves one `CAPTURE_CANCELLED` event, and a listener refresh is not automatic. This does not need a burst alone: four stalled permit holders would let ordinary traffic queue, and shutdown then drops that backlog, whereas the old code's work was already inside NonCancellable. Permit holders have no timeout on `intakeCoordinator.capture` or DO_NOT_STORE `processAndSave`; gate calls time out at 300 ms. Accepted because reaching this takes both a stall and a shutdown, and because the limit stops a flood running unbounded pipelines.
 
 ## S5 known limit
 A device clock more than a day behind the ECB publication date makes a valid file fail the refresh (`OUT_OF_BOUNDS`, status FAILED), with no user-visible reason, so rates go stale on that device. Pinned by a test; reviewer-strict to judge. S5 test gap: nothing deterministically proves the second refresh waits on the mutex.
+
+## reviewer-strict on 7c14da67: ACCEPT-WITH-MINORS
+Follow-ups, not fixed before merge so the running gates stay valid:
+- `WorkerExecutionGuard.kt:354` records the captured `mode`, which always reads NORMAL on this branch; pass `restoreMaintenanceMode.currentMode()`. `runGuarded` :148 has the same issue already.
+- `NotificationCaptureService.kt:608`: the dedupe window starts after the permit wait. Two reposts up to 5 s apart can both pass if permits stall past 5 s, which adds an intake row. Canonical checks (`NotificationProcessingPipeline.kt:442-466`) should stop a duplicate expense; not fully traced. Take the arrival time before the permit.
+- Also deferred: RA-FX-1 per-chunk `ensureActive` (disconnect on cancel looks an adequate substitute); N-07-4's lock is not shared with the history path, so a refresh and a history download can still interleave.
+- Not checked by anyone: a live ECB response. One real refresh on the emulator before release.
