@@ -137,7 +137,7 @@ class ReceiptMatchingViewModel @Inject constructor(
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e  // never swallow cancellation
             } catch (e: Exception) {
-                Timber.e(e, "ReceiptMatchingViewModel: loadReceipts failed")
+                Timber.e("ReceiptMatchingViewModel: loadReceipts failed class=%s", e.javaClass.simpleName)
                 if (seq == loadSeq) _state.update { it.copy(isLoading = false, error = "Failed to load receipts.") }
             }
         }
@@ -166,7 +166,7 @@ class ReceiptMatchingViewModel @Inject constructor(
                             )
                             linkResult.fold(
                                 onSuccess = { autoMatched++ },
-                                onFailure = { e -> Timber.w(e, "Auto-match link failed for receipt ${receipt.id}") }
+                                onFailure = { e -> Timber.w("Auto-match link failed for receipt ${receipt.id} class=%s", e.javaClass.simpleName) }
                             )
                         }
                         is MatchResult.Suggested -> {
@@ -185,7 +185,7 @@ class ReceiptMatchingViewModel @Inject constructor(
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e  // never swallow cancellation
             } catch (e: Exception) {
-                Timber.e(e, "ReceiptMatchingViewModel: runAutoMatching failed")
+                Timber.e("ReceiptMatchingViewModel: runAutoMatching failed class=%s", e.javaClass.simpleName)
                 _state.update { it.copy(isAutoMatching = false, error = "Auto-matching failed. Please try again.") }
             }
         }
@@ -214,7 +214,7 @@ class ReceiptMatchingViewModel @Inject constructor(
                 result.fold(
                     onSuccess = { Timber.d("Approved match for receipt $receiptId -> expense $suggestedExpenseId") },
                     onFailure = { e ->
-                        Timber.e(e, "Failed to approve match for receipt $receiptId")
+                        Timber.e("Failed to approve match for receipt $receiptId class=%s", e.javaClass.simpleName)
                         _state.update { it.copy(error = linkFailureMessage(e, "Failed to approve match. Please try again.")) }
                     }
                 )
@@ -244,7 +244,7 @@ class ReceiptMatchingViewModel @Inject constructor(
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e  // never swallow cancellation
             } catch (e: Exception) {
-                Timber.e(e, "Failed to reject suggestion for receipt $receiptId")
+                Timber.e("Failed to reject suggestion for receipt $receiptId class=%s", e.javaClass.simpleName)
                 _state.update { it.copy(error = "Failed to reject suggestion. Please try again.") }
             } finally {
                 _state.update { it.copy(mutatingReceiptIds = it.mutatingReceiptIds - receiptId) }
@@ -292,7 +292,7 @@ class ReceiptMatchingViewModel @Inject constructor(
                         loadReceipts()
                     },
                     onFailure = { e ->
-                        Timber.e(e, "Manual match failed for receipt $receiptId")
+                        Timber.e("Manual match failed for receipt $receiptId class=%s", e.javaClass.simpleName)
                         _state.update { it.copy(error = linkFailureMessage(e, "Failed to link receipt. Please try again.")) }
                         // Dialog stays open so user can retry or cancel
                     }
@@ -300,7 +300,7 @@ class ReceiptMatchingViewModel @Inject constructor(
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e  // never swallow cancellation
             } catch (e: Exception) {
-                Timber.e(e, "Manual match exception for receipt $receiptId")
+                Timber.e("Manual match exception for receipt $receiptId class=%s", e.javaClass.simpleName)
                 _state.update { it.copy(error = "Failed to link receipt. Please try again.") }
             } finally {
                 _state.update { it.copy(mutatingReceiptIds = it.mutatingReceiptIds - receiptId) }
@@ -318,7 +318,7 @@ class ReceiptMatchingViewModel @Inject constructor(
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e  // never swallow cancellation
             } catch (e: Exception) {
-                Timber.e(e, "Failed to skip receipt $receiptId")
+                Timber.e("Failed to skip receipt $receiptId class=%s", e.javaClass.simpleName)
                 _state.update { it.copy(error = "Failed to skip receipt. Please try again.") }
             } finally {
                 _state.update { it.copy(mutatingReceiptIds = it.mutatingReceiptIds - receiptId) }
