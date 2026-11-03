@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.ui.screens.groups
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.yourname.expensetracker.data.database.entity.ExpenseGroup
@@ -41,7 +42,13 @@ import javax.inject.Inject
 data class GroupsUiState(
     val groups: List<GroupWithDetails> = emptyList(),
     val isLoading: Boolean = false,
+    /**
+     * Fixed user-readable message (never exception text). Shown full-screen with retry only when
+     * [loadFailed]; otherwise it is a transient mutation failure the screen shows once and clears.
+     */
     val error: String? = null,
+    /** True only when the last groups load failed; mutation failures never set it. */
+    val loadFailed: Boolean = false,
     val selectedGroup: GroupWithDetails? = null,
     val creatingGroup: Boolean = false,
     val addingMember: Boolean = false,
@@ -137,16 +144,19 @@ class SharedExpenseGroupsViewModel @Inject constructor(
                     groups = groupsWithDetails,
                     isLoading = false,
                     error = null,
+                    loadFailed = false,
                     selectedGroup = refreshedSelectedGroup,
                     homeCurrency = homeCurrency
                 )
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
+                Log.w(TAG, "op=load_groups error=${e.javaClass.simpleName}")
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
                     groups = emptyList(),
                     selectedGroup = null,
-                    error = "Failed to load group balances"
+                    error = "Failed to load group balances",
+                    loadFailed = true
                 )
             }
         }
@@ -191,13 +201,13 @@ class SharedExpenseGroupsViewModel @Inject constructor(
                         _uiState.value = _uiState.value.copy(creatingGroup = false)
                     }
                     is GroupCreationResult.Error -> {
-                        _uiState.value = _uiState.value.copy(error = result.message)
+                        postMutationError(result.message)
                     }
                 }
             } catch (e: Exception) {
-                _uiState.value = _uiState.value.copy(
-                    error = "Failed to create group: ${e.message}"
-                )
+                if (e is CancellationException) throw e
+                Log.w(TAG, "op=create_group error=${e.javaClass.simpleName}")
+                postMutationError("Failed to create group")
             }
         }
     }
@@ -220,14 +230,13 @@ class SharedExpenseGroupsViewModel @Inject constructor(
                     }
 
                     is AddGroupMemberUseCase.Result.Error -> {
-                        _uiState.value = _uiState.value.copy(error = result.error.toUserMessage())
+                        postMutationError(result.error.toUserMessage())
                     }
                 }
             } catch (e: Exception) {
-                _uiState.value = _uiState.value.copy(
-                    error = "Failed to add member: ${e.message}"
-                    
-                )
+                if (e is CancellationException) throw e
+                Log.w(TAG, "op=add_member error=${e.javaClass.simpleName}")
+                postMutationError("Failed to add member")
             }
         }
     }
@@ -265,7 +274,7 @@ class SharedExpenseGroupsViewModel @Inject constructor(
                 val groupMembers = resolveGroupMembers(groupId)
                 val payer = groupMembers.firstOrNull { it.id == paidById }
                 if (payer == null) {
-                    _uiState.value = _uiState.value.copy(error = "Payer is not an active member of this group")
+                    postMutationError("Payer is not an active member of this group")
                     return@launch
                 }
 
@@ -277,7 +286,7 @@ class SharedExpenseGroupsViewModel @Inject constructor(
                 )
                 val validatedCustomSplits = when (customSplitPayload) {
                     is CustomSplitPayload.Invalid -> {
-                        _uiState.value = _uiState.value.copy(error = customSplitPayload.reason)
+                        postMutationError(customSplitPayload.reason)
                         return@launch
                     }
 
@@ -301,15 +310,13 @@ class SharedExpenseGroupsViewModel @Inject constructor(
                         _uiState.value = _uiState.value.copy(addingExpense = false)
                     }
                     is GroupExpenseCreationResult.Error -> {
-                        _uiState.value = _uiState.value.copy(error = result.message)
+                        postMutationError(result.message)
                     }
                 }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Exception) {
-                _uiState.value = _uiState.value.copy(
-                    error = "Failed to add expense"
-                )
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                Log.w(TAG, "op=add_expense error=${e.javaClass.simpleName}")
+                postMutationError("Failed to add expense")
             }
         }
     }
@@ -338,14 +345,12 @@ class SharedExpenseGroupsViewModel @Inject constructor(
                     loadGroups()
                     selectGroup(null)
                 } else {
-                    _uiState.value = _uiState.value.copy(
-                        error = "Failed to delete group"
-                    )
+                    postMutationError("Failed to delete group")
                 }
             } catch (e: Exception) {
-                _uiState.value = _uiState.value.copy(
-                    error = "Failed to delete group: ${e.message}"
-                )
+                if (e is CancellationException) throw e
+                Log.w(TAG, "op=delete_group error=${e.javaClass.simpleName}")
+                postMutationError("Failed to delete group")
             }
         }
     }
@@ -383,7 +388,12 @@ class SharedExpenseGroupsViewModel @Inject constructor(
     }
     
     fun clearError() {
-        _uiState.value = _uiState.value.copy(error = null)
+        _uiState.value = _uiState.value.copy(error = null, loadFailed = false)
+    }
+
+    /** A mutation failure is transient: it never marks the load as failed or drops the loaded list. */
+    private fun postMutationError(message: String) {
+        _uiState.value = _uiState.value.copy(error = message, loadFailed = false)
     }
 
     private suspend fun resolveGroupMembers(groupId: Long): List<GroupMember> {
@@ -440,6 +450,10 @@ class SharedExpenseGroupsViewModel @Inject constructor(
             SplitType.CUSTOM_PERCENT -> CustomSplitMode.CUSTOM_PERCENT
             SplitType.UNEQUAL -> CustomSplitMode.UNEQUAL
         }
+    }
+
+    private companion object {
+        const val TAG = "SharedExpenseGroupsVM"
     }
 
     private sealed class CustomSplitPayload {
