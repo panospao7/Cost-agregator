@@ -302,30 +302,35 @@ fun LocationSearchPicker(
 
         if (showMap) {
             // S19-2: base-map tiles only load once the privacy gate allows EXTERNAL_GEOCODING.
-            // Result markers and long-press pinning keep working when it does not.
+            // Result markers keep working when it does not. Long-press pinning is off then: on a blank map a
+            // coordinate would be saved blind. The blocked card is an overlay so the sheet does not grow.
             val tileAccess = rememberMapTileAccess()
-            tileAccess.blocked?.let { blockedState ->
-                PrivacyBlockedCard(
-                    state = blockedState,
-                    modifier = Modifier.padding(top = 4.dp)
+            Box(modifier = Modifier.fillMaxWidth().height(260.dp).padding(top = 4.dp)) {
+                ResultsMapView(
+                    tilesAllowed = tileAccess.tilesAllowed,
+                    results = state.results,
+                    defaultCentre = GeoPoint(biasLat ?: 37.9838, biasLon ?: 23.7275),
+                    onSelect = { result -> onResultSelected(result) },
+                    onLongPress = if (tileAccess.tilesAllowed) onMapLongPressed else { _, _ -> },
+                    pinnedLat = state.pinnedLat,
+                    pinnedLon = state.pinnedLon,
+                    modifier = Modifier.fillMaxSize()
+                )
+                tileAccess.blocked?.let { blockedState ->
+                    PrivacyBlockedCard(
+                        state = blockedState,
+                        modifier = Modifier.align(Alignment.Center).padding(8.dp)
+                    )
+                }
+            }
+            if (tileAccess.tilesAllowed) {
+                Text(
+                    text = stringResource(R.string.location_map_interaction_hint),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp)
                 )
             }
-            ResultsMapView(
-                tilesAllowed = tileAccess.tilesAllowed,
-                results = state.results,
-                defaultCentre = GeoPoint(biasLat ?: 37.9838, biasLon ?: 23.7275),
-                onSelect = { result -> onResultSelected(result) },
-                onLongPress = onMapLongPressed,
-                pinnedLat = state.pinnedLat,
-                pinnedLon = state.pinnedLon,
-                modifier = Modifier.fillMaxWidth().height(260.dp).padding(top = 4.dp)
-            )
-            Text(
-                text = stringResource(R.string.location_map_interaction_hint),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp)
-            )
         }
 
         // ── Pin resolving indicator ─────────────────────────────────────────

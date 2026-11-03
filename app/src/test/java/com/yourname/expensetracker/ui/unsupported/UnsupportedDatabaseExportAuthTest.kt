@@ -38,9 +38,9 @@ import kotlin.test.assertFailsWith
  * - lock OFF (Loaded or FirstRunDefault): never required, and the capability is not even read;
  * - lock ON, or the store is unreadable (any cause), or the read threw, or timed out at 2000 ms, or no repository
  *   could be resolved: Required when the capability is AVAILABLE or CHECK_FAILED (or no answer). With a capability
- *   that cannot run a prompt (UNSUPPORTED_API, NO_CREDENTIAL, HW_UNAVAILABLE, UNKNOWN) the answer follows the stored
- *   mode (G-LOCK-1, fix-1.0.4 D1): DEVICE_AUTH is NotRequired (inert on this device); APP_PIN, or an unknown mode
- *   (store not read), is Denied, because a PIN lock is never inert and this screen has no PIN prompt.
+ *   that cannot run a prompt (UNSUPPORTED_API, NO_CREDENTIAL, HW_UNAVAILABLE, UNKNOWN) the answer is Denied in every
+ *   mode (G-LOCK-1, fix-1.0.4 D1 as revised after the reviewer-strict REJECT on 013b78be): the stored lock mode is not
+ *   read, because a corrupted store can leave the PIN verifier present while the mode token is absent or DEVICE_AUTH.
  *
  * Virtual time only (runTest); nothing sleeps.
  */
@@ -116,10 +116,12 @@ class UnsupportedDatabaseExportAuthTest {
     }
 
     @Test
-    fun s21c_lockOn_inertCapabilities_doNotRequireAuth() = runTest {
+    fun s21c_lockOn_inertCapabilities_areDenied() = runTest {
         for (value in ungatedCapabilities) {
             val provider = capability(value)
-            assertEquals("lock on + $value", notRequired, UnsupportedDatabaseExportAuth.decide(repo(loaded(true)), provider))
+            // G-LOCK-1 (fix-1.0.4 D1 revised): was NotRequired for a stored DEVICE_AUTH; the stored mode is no longer
+            // trusted, so lock on + a capability that cannot run a prompt is Denied in every mode.
+            assertEquals("lock on + $value", denied, UnsupportedDatabaseExportAuth.decide(repo(loaded(true)), provider))
             assertEquals("the capability is read once for $value", 1, provider.evaluations)
         }
     }
@@ -353,7 +355,8 @@ class UnsupportedDatabaseExportAuthTest {
 
         assertEquals(required, UnsupportedDatabaseExportAuth.decide(store, provider))
         provider.capability = DeviceAuthCapability.NO_CREDENTIAL
-        assertEquals(notRequired, UnsupportedDatabaseExportAuth.decide(store, provider))
+        // G-LOCK-1: was NotRequired (stored DEVICE_AUTH, inert capability); the lock is still on, so the fresh read is Denied.
+        assertEquals(denied, UnsupportedDatabaseExportAuth.decide(store, provider))
         assertEquals(2, provider.evaluations)
     }
 
@@ -431,7 +434,7 @@ class UnsupportedDatabaseExportAuthTest {
     // out or thrown store, or no repository.
     //   lock OFF, any mode, capability not read ........ NotRequired
     //   lock ON, DEVICE_AUTH, cap-able ................. Required
-    //   lock ON, DEVICE_AUTH, other .................... NotRequired
+    //   lock ON, DEVICE_AUTH, other .................... Denied (was NotRequired; the stored mode is no longer read)
     //   lock ON, APP_PIN, cap-able ..................... Required
     //   lock ON, APP_PIN, other ........................ Denied
     //   mode unknown, cap-able ......................... Required
@@ -481,19 +484,63 @@ class UnsupportedDatabaseExportAuthTest {
     }
 
     @Test
-    fun gLock1_lockOnDeviceAuth_other_isNotRequired() = runTest {
+    fun gLock1_lockOnDeviceAuth_other_isDenied() = runTest {
         for (value in ungatedCapabilities) {
+            // G-LOCK-1 (D1 revised): was NotRequired; a stored DEVICE_AUTH is not trusted, so the answer is Denied.
             assertEquals(
                 "$value",
-                notRequired,
+                denied,
                 UnsupportedDatabaseExportAuth.decide(repo(loaded(true, LockMode.DEVICE_AUTH)), capability(value))
             )
+            // G-LOCK-1 (D1 revised): was NotRequired, same reason.
             assertEquals(
                 "first run default, $value",
-                notRequired,
+                denied,
                 UnsupportedDatabaseExportAuth.decide(repo(firstRun(true, LockMode.DEVICE_AUTH)), capability(value))
             )
         }
+    }
+
+    @Test
+    fun gLock1_lockOn_inertCapability_isDenied_whateverModeIsStored_theModeCannotChangeTheAnswer() = runTest {
+        // Regression for the reviewer-strict REJECT on 013b78be: a corrupted store holds only the marker, review-save then
+        // writes the absent mode token as DEVICE_AUTH while the PIN verifier stays present. The gate sees lock on,
+        // DEVICE_AUTH, and NO_CREDENTIAL. That state, and every other mode, must be Denied.
+        for (value in ungatedCapabilities) {
+            val answers = mutableSetOf<ExportAuthDecision>()
+            for (mode in LockMode.entries) {
+                for ((label, state) in mapOf("loaded" to loaded(true, mode), "first run" to firstRun(true, mode))) {
+                    val provider = capability(value)
+                    val answer = UnsupportedDatabaseExportAuth.decide(repo(state), provider)
+                    assertEquals("$label lock on $mode $value", denied, answer)
+                    assertEquals("$label lock on $mode $value reads the capability once", 1, provider.evaluations)
+                    answers += answer
+                }
+            }
+            assertEquals("the mode must not change the answer for $value", setOf(denied), answers)
+        }
+        // The same proof for the capable side: the mode never changes Required either.
+        for (value in gatedCapabilities) {
+            val answers = LockMode.entries.map { mode ->
+                UnsupportedDatabaseExportAuth.decide(repo(loaded(true, mode)), capability(value))
+            }.toSet()
+            assertEquals("the mode must not change the answer for $value", setOf(required), answers)
+        }
+    }
+
+    @Test
+    fun gLock1_lockOnDeviceAuthRecord_withNoCredential_isDenied_thePinVerifierStateIsNotConsulted() = runTest {
+        // The record a corrupted store ends up with after review-save: lock on, mode DEVICE_AUTH (absent token read as
+        // the default), while the PIN verifier would still be present. The gate has no verifier binding, so the
+        // answer must be Denied; before the revision this gave NotRequired and the rescue export opened unauthenticated.
+        val provider = capability(DeviceAuthCapability.NO_CREDENTIAL)
+        assertEquals(denied, UnsupportedDatabaseExportAuth.decide(repo(loaded(true, LockMode.DEVICE_AUTH)), provider))
+        assertEquals(1, provider.evaluations)
+        // Control: the same record with a device prompt available still asks for it.
+        assertEquals(
+            required,
+            UnsupportedDatabaseExportAuth.decide(repo(loaded(true, LockMode.DEVICE_AUTH)), capability(DeviceAuthCapability.AVAILABLE))
+        )
     }
 
     @Test
@@ -592,7 +639,7 @@ class UnsupportedDatabaseExportAuthTest {
     }
 
     @Test
-    fun gLock1_theAnswerIsOneOfThreeEnumValues_andCarriesNoExceptionTextOrPin() = runTest {
+    fun gLock1_theAnswerIsOneOfThreeEnumValues_andNoThrownFailureEscapesTheGate() = runTest {
         val secret = "SYNTHETIC-SECRET-PIN-482916"
         val store = repo(loaded(true, LockMode.APP_PIN)).apply { failure = IOException("/synthetic/$secret") }
         val provider = capability(DeviceAuthCapability.NO_CREDENTIAL).apply { failure = IllegalStateException(secret) }
@@ -603,22 +650,14 @@ class UnsupportedDatabaseExportAuthTest {
             UnsupportedDatabaseExportAuth.decide(null, null)
         )
 
+        // A failure that escaped decide would throw here and fail the test; the secret-bearing exceptions are absorbed.
         assertEquals(listOf(denied, required, required), results)
-        for (result in results) {
-            assertFalse(result.toString().contains(secret))
-            assertFalse(result.toString().contains("482916"))
-            assertFalse(result.toString().contains("synthetic"))
-        }
+        // The toString checks on the enum values were removed: an enum name can never contain the secret, so they could not fail.
         assertEquals(
             setOf("Required", "NotRequired", "Denied"),
             ExportAuthDecision.entries.map { it.name }.toSet()
         )
         assertEquals(3, ExportAuthDecision.entries.size)
-        assertEquals(
-            "the lock snapshot carries only a lock read and a mode",
-            setOf("lock", "mode"),
-            ExportLockSnapshot::class.java.declaredFields.map { it.name }.toSet()
-        )
     }
 
     @Test
@@ -668,6 +707,37 @@ class UnsupportedDatabaseExportAuthTest {
     @Test
     fun s21c_sourceScan_newFileHasNoFunInterfaceComposableDaoAppDatabaseLoggingOrWrites() {
         assertEquals(emptyList<String>(), violations(sanitizedAuthSource()))
+    }
+
+    private val lockModeReference = Regex("""(?i)\block_?mode\b""")
+
+    @Test
+    fun gLock1_sourceScan_theGateNoLongerReadsTheStoredLockMode() {
+        // Comments are stripped first, so the KDoc that explains why the mode is not read does not count.
+        val sanitized = sanitizedAuthSource()
+        assertEquals(
+            "UnsupportedDatabaseExportAuth.kt must not read lockMode or import LockMode (D1 revised)",
+            emptyList<String>(),
+            lockModeReference.findAll(sanitized).map { it.value }.toList()
+        )
+    }
+
+    @Test
+    fun gLock1_sourceScan_selfCheck_theLockModeRuleCanFail() {
+        val planted = SourceTextSanitizer.stripCommentsAndStringBodies(
+            """
+            import com.yourname.expensetracker.domain.privacy.applock.LockMode
+            val m = state.settings.lockMode
+            """.trimIndent()
+        )
+        assertEquals(2, lockModeReference.findAll(planted).count())
+        assertEquals(
+            "a comment or a string is not a read",
+            0,
+            lockModeReference.findAll(
+                SourceTextSanitizer.stripCommentsAndStringBodies("// lockMode\n/** LockMode */ val s = \"lockMode\"")
+            ).count()
+        )
     }
 
     @Test

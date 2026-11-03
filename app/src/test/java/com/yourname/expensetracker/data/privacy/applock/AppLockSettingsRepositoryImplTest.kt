@@ -12,7 +12,11 @@ import com.yourname.expensetracker.domain.privacy.applock.AutoLockTimeout
 import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsLoadState
 import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsWriteResult
 import com.yourname.expensetracker.domain.privacy.applock.AppLockWriteRejection
+import com.yourname.expensetracker.domain.privacy.applock.DeviceAuthCapability
+import com.yourname.expensetracker.domain.privacy.applock.FakeCapabilityProvider
 import com.yourname.expensetracker.domain.privacy.applock.LockMode
+import com.yourname.expensetracker.ui.unsupported.ExportAuthDecision
+import com.yourname.expensetracker.ui.unsupported.UnsupportedDatabaseExportAuth
 import com.yourname.expensetracker.domain.privacy.applock.SettingsUnreadableCause
 import java.io.File
 import java.io.IOException
@@ -931,6 +935,29 @@ class AppLockSettingsRepositoryImplTest {
         assertEquals(AppLockSettingsWriteResult.Committed(expected), result)
         assertEquals("DEVICE_AUTH", real.data.first()[lockModeKey])
         assertEquals(AppLockSettingsLoadState.Loaded(expected), repository.getLoadState())
+    }
+
+    @Test
+    fun `G-LOCK-1 after a lock-on review save of a marker-only store the export gate is Denied with no credential`() = runBlocking {
+        // The reachable state from the reviewer-strict REJECT on 013b78be: a corrupted store holds only the marker, the
+        // user's review save turns the lock on, and the absent mode token is written as DEVICE_AUTH (the PIN verifier,
+        // outside this store, can still be present). The gate must not trust that DEVICE_AUTH.
+        real.edit { it[markerKey] = "CORRUPTED" }
+        val record = AppLockPrivacySettings(appLockEnabled = true, lockMode = LockMode.APP_PIN)
+        assertEquals(
+            AppLockSettingsWriteResult.Committed(record.copy(lockMode = LockMode.DEVICE_AUTH)),
+            repository.reviewSave(record)
+        )
+        assertEquals("DEVICE_AUTH", real.data.first()[lockModeKey])
+
+        val inert = FakeCapabilityProvider(DeviceAuthCapability.NO_CREDENTIAL)
+        assertEquals(ExportAuthDecision.Denied, UnsupportedDatabaseExportAuth.decide(repository, inert))
+        assertEquals(1, inert.evaluations)
+        // Control: with a device prompt available the same store asks for it.
+        assertEquals(
+            ExportAuthDecision.Required,
+            UnsupportedDatabaseExportAuth.decide(repository, FakeCapabilityProvider(DeviceAuthCapability.AVAILABLE))
+        )
     }
 
     @Test

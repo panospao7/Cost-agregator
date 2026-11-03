@@ -328,10 +328,10 @@ class ExportOptionsViewModel @Inject constructor(
             if (privacyDecision.blocksExecution()) {
                 // RP-15 (15-D): converge denial/fail-closed on the typed state.
                 // The raw decision reason is NOT rendered — only a bounded
-                // fallback message plus the resource-backed blocked state.
+                // resource-backed blocked card. No separate error text is set, so the denial shows once.
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
-                    error = "Export is blocked by your privacy settings.",
+                    error = null,
                     privacyBlocked = com.yourname.expensetracker.ui.components.PrivacyBlockedUiState.fromDecisionOrFallback(
                         privacyDecision,
                         exportCapability
@@ -361,8 +361,9 @@ class ExportOptionsViewModel @Inject constructor(
 
                 val categories = withContext(ioDispatcher) { exportDataRepository.getCategoryNameMap() }
                 val extension = extensionFor(format)
-                // RP-19 (19-C): best-effort conservative sweep of stale
-                // plaintext temp files from previously interrupted runs; a
+                // RP-19 (19-C): best-effort sweep of old export files in
+                // files/exports (.tmp_, expenses_ and accountant_report_ names
+                // older than one hour) left by earlier or interrupted runs; a
                 // sweep failure must never block or fail the export.
                 // CancellationException is rethrown, never swallowed.
                 try {
@@ -528,13 +529,15 @@ class ExportOptionsViewModel @Inject constructor(
                 )
                 Timber.i("Export finished: format=%s, previewChars=%d", format, previewCollector.value.length)
             } catch (e: kotlinx.coroutines.CancellationException) {
-                if (exportGeneration != generation ||
-                    _uiState.value.selectedFormat != selectedFormatAtStart
-                ) return@launch
-                _uiState.value = _uiState.value.copy(
-                    isLoading = false,
-                    error = "Export cancelled"
-                )
+                if (exportGeneration == generation &&
+                    _uiState.value.selectedFormat == selectedFormatAtStart
+                ) {
+                    _uiState.value = _uiState.value.copy(
+                        isLoading = false,
+                        error = "Export cancelled"
+                    )
+                }
+                throw e
             } catch (e: Exception) {
                 if (exportGeneration != generation ||
                     _uiState.value.selectedFormat != selectedFormatAtStart
@@ -1077,7 +1080,7 @@ class ExportOptionsViewModel @Inject constructor(
     }
 
     fun clearError() {
-        _uiState.value = _uiState.value.copy(error = null)
+        _uiState.value = _uiState.value.copy(error = null, privacyBlocked = null)
     }
 
     fun retry() {

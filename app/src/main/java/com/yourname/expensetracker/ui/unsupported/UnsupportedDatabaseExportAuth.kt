@@ -5,7 +5,6 @@ import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsLoadSta
 import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsRepository
 import com.yourname.expensetracker.domain.privacy.applock.DeviceAuthCapability
 import com.yourname.expensetracker.domain.privacy.applock.DeviceAuthCapabilityProvider
-import com.yourname.expensetracker.domain.privacy.applock.LockMode
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
@@ -39,12 +38,6 @@ internal enum class ExportLockRead { ON, OFF, UNREADABLE }
 internal enum class ExportAuthDecision { Required, NotRequired, Denied }
 
 /**
- * One bounded read of the lock: whether it is on, and the stored lock mode. [mode] is null whenever the store was
- * not read (unreadable, timed out, threw, or no repository), and that unknown mode is treated like APP_PIN.
- */
-internal data class ExportLockSnapshot(val lock: ExportLockRead, val mode: LockMode?)
-
-/**
  * The one narrow, read-only window the unsupported-database screen has into the app-lock feature
  * (app-lock S21-c, #10).
  *
@@ -64,18 +57,14 @@ interface UnsupportedDatabaseExportAuthEntryPoint {
  * Decides whether the user must pass device authentication before the database file is exported (S21-c).
  * [isAuthRequired] resolves the entry point; [decide] is the same decision over already resolved ports.
  *
- * Rule (G-LOCK-1, fix-1.0.4 D1). The lock OFF is [ExportAuthDecision.NotRequired], whatever the mode. Otherwise
- * (the committed lock is on, or the store cannot be read within the bound: fail closed) the stored lock mode
- * decides how the capability is read:
- *  - Mode DEVICE_AUTH (read from the store): the device-credential rule. Capability AVAILABLE, CHECK_FAILED or no
- *    answer is [ExportAuthDecision.Required] (CHECK_FAILED is transient, as in the lock controller). Any other
- *    capability (UNSUPPORTED_API, NO_CREDENTIAL, HW_UNAVAILABLE, UNKNOWN) leaves the lock inert on this device, as
- *    for the main screen, so it is [ExportAuthDecision.NotRequired].
- *  - Mode APP_PIN, or unknown (the store was not read, so the mode was not either): a PIN lock is never inert
- *    (ux-flows.md:211, T6 "no verifier"), but this screen has no PIN prompt and no PIN binding. Capability
- *    AVAILABLE, CHECK_FAILED or no answer is [ExportAuthDecision.Required] (the device prompt); any other
- *    capability is [ExportAuthDecision.Denied] (fail closed). A PIN-only user cannot use this rescue export
- *    until a PIN prompt exists here; nothing is deleted.
+ * Rule (G-LOCK-1, fix-1.0.4 D1 as revised). The stored lock mode is not read or used:
+ *  - Lock OFF: [ExportAuthDecision.NotRequired]; the capability is not read.
+ *  - Lock ON, or the store cannot be read within the bound (fail closed): capability AVAILABLE, CHECK_FAILED or no
+ *    answer is [ExportAuthDecision.Required] (CHECK_FAILED is transient, as in the lock controller); any other
+ *    capability (UNSUPPORTED_API, NO_CREDENTIAL, HW_UNAVAILABLE, UNKNOWN) is [ExportAuthDecision.Denied].
+ *
+ * This screen has no PIN prompt and no PIN binding, so the device prompt stands in for the App PIN. A user with the
+ * lock on and no working device prompt cannot export here until they set a screen lock; nothing is deleted.
  *
  * Every failure of a read maps to the stricter answer. Nothing here records a diagnostic and no exception
  * text, path, PIN or setting value leaves this object; the result is one of three enum values.
@@ -105,22 +94,15 @@ internal object UnsupportedDatabaseExportAuth {
         capabilityProvider: DeviceAuthCapabilityProvider?,
         timeoutMillis: Long = EXPORT_AUTH_READ_TIMEOUT_MILLIS
     ): ExportAuthDecision {
-        val snapshot = readLockSnapshot(repository, timeoutMillis)
-        if (snapshot.lock == ExportLockRead.OFF) return ExportAuthDecision.NotRequired
+        if (readLock(repository, timeoutMillis) == ExportLockRead.OFF) return ExportAuthDecision.NotRequired
         val capability = readCapability(capabilityProvider)
-        if (capabilityRequiresAuth(capability)) return ExportAuthDecision.Required
-        // The capability cannot run a prompt. Only a mode read as DEVICE_AUTH leaves the lock inert; APP_PIN and an
-        // unknown mode are never inert, and there is no PIN prompt here, so the export is denied.
-        return if (snapshot.mode == LockMode.DEVICE_AUTH) ExportAuthDecision.NotRequired else ExportAuthDecision.Denied
+        // The lock is on or unknown. A capability that cannot run a prompt is denied in every mode: nothing can be asked.
+        return if (capabilityRequiresAuth(capability)) ExportAuthDecision.Required else ExportAuthDecision.Denied
     }
 
     /** One fresh read bounded by [timeoutMillis]. A timeout, a thrown read and an unreadable store are all [ExportLockRead.UNREADABLE]. */
-    suspend fun readLock(repository: AppLockSettingsRepository?, timeoutMillis: Long): ExportLockRead =
-        readLockSnapshot(repository, timeoutMillis).lock
-
-    /** [readLock] plus the stored lock mode. The mode is null whenever the lock read is [ExportLockRead.UNREADABLE]. */
-    suspend fun readLockSnapshot(repository: AppLockSettingsRepository?, timeoutMillis: Long): ExportLockSnapshot {
-        if (repository == null) return ExportLockSnapshot(ExportLockRead.UNREADABLE, null)
+    suspend fun readLock(repository: AppLockSettingsRepository?, timeoutMillis: Long): ExportLockRead {
+        if (repository == null) return ExportLockRead.UNREADABLE
         val state: AppLockSettingsLoadState? = try {
             withTimeoutOrNull(timeoutMillis) { repository.getLoadState() }
         } catch (e: CancellationException) {
@@ -130,16 +112,15 @@ internal object UnsupportedDatabaseExportAuth {
             null
         }
         return when (state) {
-            is AppLockSettingsLoadState.Loaded -> snapshotOf(state.settings.appLockEnabled, state.settings.lockMode)
-            is AppLockSettingsLoadState.FirstRunDefault ->
-                snapshotOf(state.settings.appLockEnabled, state.settings.lockMode)
-            is AppLockSettingsLoadState.Unreadable -> ExportLockSnapshot(ExportLockRead.UNREADABLE, null)
-            null -> ExportLockSnapshot(ExportLockRead.UNREADABLE, null)
+            is AppLockSettingsLoadState.Loaded -> lockReadOf(state.settings.appLockEnabled)
+            is AppLockSettingsLoadState.FirstRunDefault -> lockReadOf(state.settings.appLockEnabled)
+            is AppLockSettingsLoadState.Unreadable -> ExportLockRead.UNREADABLE
+            null -> ExportLockRead.UNREADABLE
         }
     }
 
-    private fun snapshotOf(lockEnabled: Boolean, mode: LockMode): ExportLockSnapshot =
-        ExportLockSnapshot(if (lockEnabled) ExportLockRead.ON else ExportLockRead.OFF, mode)
+    private fun lockReadOf(lockEnabled: Boolean): ExportLockRead =
+        if (lockEnabled) ExportLockRead.ON else ExportLockRead.OFF
 
     /** One fresh capability evaluation (never cached). Null means the check could not be made. */
     fun readCapability(capabilityProvider: DeviceAuthCapabilityProvider?): DeviceAuthCapability? =
@@ -153,7 +134,7 @@ internal object UnsupportedDatabaseExportAuth {
 
     /**
      * Whether the device can (or may be able to) run the prompt. Null (no answer) is treated like CHECK_FAILED.
-     * This is the capability half only; [decide] adds the lock mode for a capability that returns false.
+     * A false answer means [decide] denies the export when the lock is on or unknown.
      */
     fun capabilityRequiresAuth(capability: DeviceAuthCapability?): Boolean =
         when (capability) {

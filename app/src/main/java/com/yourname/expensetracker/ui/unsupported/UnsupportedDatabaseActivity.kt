@@ -74,8 +74,8 @@ import kotlinx.coroutines.withContext
  * narrow read-only entry point in `UnsupportedDatabaseExportAuth.kt`, read at the tap and bounded at 2 s.
  * A cancelled or failed prompt exports nothing and shows one constant message; no diagnostic is kept.
  *
- * G-LOCK-1: with the lock on or unreadable and the stored mode APP_PIN or unknown, a device that cannot run the
- * prompt gets no export at all (the same constant message); this screen has no PIN prompt.
+ * G-LOCK-1: with the lock on or unreadable, in any lock mode, a device that cannot run the prompt gets no
+ * export at all (the same constant message); this screen has no PIN prompt.
  */
 class UnsupportedDatabaseActivity : FragmentActivity() {
 

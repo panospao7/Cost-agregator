@@ -734,17 +734,15 @@ DATABASE OPEN GATE (R25):
     SAF picker opens, the activity reads the committed lock and the device-auth capability through the one
     narrow read-only Hilt @EntryPoint in ui/unsupported/UnsupportedDatabaseExportAuth.kt (the lock settings
     reader and the capability port only; no AppDatabase, no Dao, nothing Room-backed), bounded at 2 s. The gate
-    result is tri-state (G-LOCK-1, fix-1.0.4 D1). Lock OFF: NotRequired. Lock ON, or the store is unreadable / the
-    read failed / timed out (then the stored lock mode is unknown and counts as APP_PIN): with capability
-    AVAILABLE, CHECK_FAILED or no answer (provider threw or entry point unresolved) device auth is Required. With
-    UNSUPPORTED_API, NO_CREDENTIAL, HW_UNAVAILABLE or UNKNOWN the result depends on the stored lockMode: DEVICE_AUTH
-    is NotRequired (the lock is INERT, the main app opens without a prompt in those states); APP_PIN or unknown
-    is Denied (a PIN lock is never inert and this screen has no PIN prompt, so the export does not start and the
-    existing constant denied message is shown; no data is deleted). Cost: a PIN-only user cannot use the rescue
-    export until a PIN prompt exists on that screen. Known residuals, both needing that prompt or a verifier read: in
-    APP_PIN mode the device credential stands in for the App PIN, so someone who knows the device credential but
-    not the App PIN can export; and lockMode is advisory, so a torn or restored store holding DEVICE_AUTH with a
-    leftover PIN verifier is treated as device auth. The prompt is a
+    result is tri-state (G-LOCK-1, fix-1.0.4 D1 as revised) and the stored lock mode is not read. Lock OFF:
+    NotRequired. Lock ON, or the store is unreadable / the read failed / timed out: with capability AVAILABLE,
+    CHECK_FAILED or no answer (provider threw or entry point unresolved) device auth is Required; with
+    UNSUPPORTED_API, NO_CREDENTIAL, HW_UNAVAILABLE or UNKNOWN the result is Denied in every mode (the export does
+    not start and the existing constant denied message is shown; no data is deleted). Cost: a user with the lock on
+    and no working device prompt cannot use this export until they set a screen lock; on API 26-29 they have no
+    remedy on this screen. Known partial: in PIN mode the device credential stands in for the App PIN, and on a
+    phone with no screen lock anyone holding it can add one and pass, so G-LOCK-1 is PARTIAL until a PIN prompt
+    exists on this screen (it needs an extra binding: separate item). The prompt is a
     per-Activity BiometricPromptDeviceAuthenticator with the constant EXPORT copy (D-S22-6;
     AuthPromptCopy.EXPORT, applock_prompt_title_export; the controller never selects it). Cancel, failure or a
     prompt that cannot launch exports nothing and shows one constant message; onStop cancels an open prompt and
@@ -791,7 +789,7 @@ FORBIDDEN:
   ❌ Destructive fallback / auto-reset of an unsupported, newer, or unreadable DB
   ❌ Any raw-file export of a blocked DB other than the user-started SAF export in UnsupportedDatabaseActivity
   ❌ That export without device auth while the lock is on or unreadable and the device can authenticate (S21-c)
-  ❌ That export while the lock is on or unreadable, the stored lockMode is APP_PIN or unknown and the device cannot authenticate (G-LOCK-1; Denied)
+  ❌ That export while the lock is on or unreadable and the device cannot authenticate, in any lock mode (G-LOCK-1; Denied; the stored mode is not read)
   ❌ A second @EntryPoint lookup, or any Room-backed binding, reachable from the UnsupportedDatabaseActivity surface
   ❌ Restoring a backup below v145 or above v152
   ❌ Any DB read during restore stages (DatabaseReadBarrier denies during restore)

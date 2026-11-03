@@ -13,9 +13,13 @@ import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.spyk
 import io.mockk.verify
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
@@ -79,7 +83,9 @@ class ExportOptionsViewModelStaleSweepTest {
         Dispatchers.resetMain()
     }
 
-    private fun buildViewModel(): ExportOptionsViewModel = ExportOptionsViewModel(
+    private fun buildViewModel(
+        serializer: ExportJobSerializer = ExportJobSerializer()
+    ): ExportOptionsViewModel = ExportOptionsViewModel(
         exportDataRepository = exportDataRepository,
         accountingExportPolicy = AccountingExportPolicy(),
         timeProvider = timeProvider,
@@ -88,9 +94,17 @@ class ExportOptionsViewModelStaleSweepTest {
         freshBooksExporter = FreshBooksExporter(),
         readBarrier = mockk<DatabaseReadBarrier>(relaxed = true),
         privacyGate = privacyGate,
-        exportJobSerializer = ExportJobSerializer(),
+        exportJobSerializer = serializer,
         ioDispatcher = testDispatcher
     )
+
+    /** A serializer that records every job it launched, so a test can inspect how the run really ended. */
+    private fun recordingSerializer(launched: MutableList<Job>): ExportJobSerializer {
+        val real = ExportJobSerializer()
+        val spy = spyk(real)
+        every { spy.launch(any(), any()) } answers { callOriginal().also { launched += it } }
+        return spy
+    }
 
     @Test
     fun `init calls the export sweep once with the provider now and the default one hour age`() {
@@ -209,5 +223,55 @@ class ExportOptionsViewModelStaleSweepTest {
         assertThat(state.isLoading).isFalse()
         // Cancellation escaped the sweep's try block: the export never proceeded.
         verify(exactly = 0) { exportDataRepository.createExportFile(any(), any()) }
+    }
+
+    // Review fix (reviewer-strict REJECT on 013b78be): the generate catch for CancellationException used to swallow it.
+    // The test above only proves no file was made; the two below prove the run ends cancelled and not stuck loading.
+    // (The state flag is `isLoading`; the ViewModel has no `isGenerating`.)
+
+    @Test
+    fun `generateExport cancelled by the sweep ends the job cancelled and does not leave the screen loading`() {
+        val out = tmp.newFile("expenses_${nowMs}.csv")
+        every { exportDataRepository.createExportFile(any(), any()) } returns out
+        var calls = 0
+        every { exportDataRepository.sweepStaleExportFiles(any(), any()) } answers {
+            calls++
+            if (calls > 1) throw CancellationException("cancelled in generateExport") else 0
+        }
+        val launched = mutableListOf<Job>()
+        val vm = buildViewModel(recordingSerializer(launched))
+
+        vm.generateExport()
+
+        assertThat(calls).isAtLeast(2)
+        val job = launched.single()
+        runBlocking { job.join() }
+        assertThat(job.isCancelled).isTrue()
+        assertThat(job.isCompleted).isTrue()
+        assertThat(vm.uiState.value.isLoading).isFalse()
+        assertThat(vm.uiState.value.exportSuccess).isFalse()
+    }
+
+    @Test
+    fun `cancelExport while the run is suspended ends the job cancelled and does not leave the screen loading`() {
+        val out = tmp.newFile("expenses_${nowMs}.csv")
+        every { exportDataRepository.createExportFile(any(), any()) } returns out
+        val launched = mutableListOf<Job>()
+        val vm = buildViewModel(recordingSerializer(launched))
+        coEvery { exportDataRepository.countExpensesBetween(any(), any()) } coAnswers { awaitCancellation() }
+
+        vm.generateExport()
+
+        val job = launched.single()
+        assertThat(job.isActive).isTrue()
+        assertThat(vm.uiState.value.isLoading).isTrue()
+
+        vm.cancelExport()
+        runBlocking { job.join() }
+
+        assertThat(job.isCancelled).isTrue()
+        assertThat(vm.uiState.value.isLoading).isFalse()
+        assertThat(vm.uiState.value.exportSuccess).isFalse()
+        assertThat(vm.uiState.value.exportFilePath).isNull()
     }
 }

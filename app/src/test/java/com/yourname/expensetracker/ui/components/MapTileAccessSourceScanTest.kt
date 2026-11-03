@@ -174,4 +174,164 @@ class MapTileAccessSourceScanTest {
 
         assertTrue(planted("fun f() { val x = 1 }").isNotEmpty())
     }
+
+    // ---- Review fix pins (reviewer-strict REJECT on 013b78be): the picker with tiles off ------------------------------
+    //
+    // With tiles off the picker must (1) not let a long press drop a pin on a blank map, (2) not show the "long press the
+    // map" hint, and (3) show the blocked card as an overlay inside the fixed-height map Box, not as a sibling that grows
+    // the sheet. These are text pins on the Compose source: they cannot prove that a real long press is ignored, that the
+    // hint is invisible, or that the card does not move the layout. That needs a Compose UI test or a device check.
+
+    private val longPressArgument = Regex("""\bonLongPress\s*=""")
+    private val longPressGated = Regex(
+        """\bonLongPress\s*=\s*if\s*\(\s*tileAccess\.tilesAllowed\s*\)\s*onMapLongPressed\s+else\s*\{\s*_\s*,\s*_\s*->\s*\}"""
+    )
+    private val hintReference = Regex("""R\.string\.location_map_interaction_hint\b""")
+    private val tilesAllowedBlock = Regex("""\bif\s*\(\s*tileAccess\.tilesAllowed\s*\)\s*\{""")
+    private val resultsMapCall = Regex("""(?<!fun )\bResultsMapView\s*\(""")
+    private val boxCall = Regex("""\bBox\s*\(""")
+    private val blockedCardCall = Regex("""\bPrivacyBlockedCard\s*\(""")
+    private val blockedCardAligned = Regex(
+        """\bPrivacyBlockedCard\s*\(\s*state\s*=\s*\w+\s*,\s*modifier\s*=\s*Modifier\s*\.\s*align\s*\("""
+    )
+
+    /** Index of the bracket that closes the one opened at [open], or -1. */
+    private fun closingIndex(text: String, open: Int, openChar: Char, closeChar: Char): Int {
+        var depth = 0
+        for (i in open until text.length) {
+            if (text[i] == openChar) depth++
+            if (text[i] == closeChar) {
+                depth--
+                if (depth == 0) return i
+            }
+        }
+        return -1
+    }
+
+    private fun pickerViolations(label: String, text: String): List<String> {
+        val out = mutableListOf<String>()
+
+        // 1. Long press: exactly one onLongPress argument, and it is the gated expression.
+        val arguments = longPressArgument.findAll(text).count()
+        if (arguments != 1) out += "$label: expected exactly one onLongPress argument, found $arguments"
+        else if (!longPressGated.containsMatchIn(text)) out += "$label: onLongPress is not gated on tileAccess.tilesAllowed with a no-op else"
+
+        // 2. Hint: present, and every reference sits inside an `if (tileAccess.tilesAllowed) { ... }` block.
+        val gatedRanges = tilesAllowedBlock.findAll(text).map { m ->
+            val open = m.range.last
+            open..closingIndex(text, open, '{', '}')
+        }.toList()
+        val hints = hintReference.findAll(text).map { it.range.first }.toList()
+        if (hints.isEmpty()) out += "$label: the map interaction hint is missing"
+        for (position in hints) {
+            if (gatedRanges.none { position in it }) out += "$label: the map interaction hint is not inside an if (tileAccess.tilesAllowed) block"
+        }
+
+        // 3. Blocked card: one call, inside the Box that holds the map, aligned, and that Box has a fixed height.
+        val cards = blockedCardCall.findAll(text).count()
+        if (cards != 1) out += "$label: expected exactly one PrivacyBlockedCard call, found $cards"
+        val call = resultsMapCall.find(text)
+        if (call == null) {
+            out += "$label: no ResultsMapView call found"
+        } else {
+            val box = boxCall.findAll(text).lastOrNull { it.range.first < call.range.first }
+            if (box == null) {
+                out += "$label: the map is not inside a Box"
+            } else {
+                val headerOpen = box.range.last
+                val headerClose = closingIndex(text, headerOpen, '(', ')')
+                val blockOpen = if (headerClose < 0) -1 else text.indexOf('{', headerClose)
+                val blockClose = if (blockOpen < 0) -1 else closingIndex(text, blockOpen, '{', '}')
+                if (headerClose < 0 || blockOpen < 0 || blockClose < 0) {
+                    out += "$label: the map Box could not be parsed"
+                } else {
+                    val header = text.substring(headerOpen, headerClose)
+                    val block = text.substring(blockOpen, blockClose)
+                    if (!header.contains("height(")) out += "$label: the map Box has no fixed height"
+                    if (!blockedCardCall.containsMatchIn(block)) out += "$label: PrivacyBlockedCard is not inside the map Box"
+                    if (!blockedCardAligned.containsMatchIn(block)) out += "$label: PrivacyBlockedCard is not aligned inside the map Box"
+                }
+            }
+        }
+        return out
+    }
+
+    @Test
+    fun `picker with tiles off ignores long press hides the hint and overlays the blocked card`() {
+        assertEquals(emptyList<String>(), pickerViolations(locationPicker, sanitized(locationPicker)))
+    }
+
+    @Test
+    fun `picker pins self-check planted violations are caught and a compliant sample passes`() {
+        val good = """
+            fun Picker() {
+                Box(modifier = Modifier.fillMaxWidth().height(260.dp).padding(top = 4.dp)) {
+                    ResultsMapView(
+                        tilesAllowed = tileAccess.tilesAllowed,
+                        onLongPress = if (tileAccess.tilesAllowed) onMapLongPressed else { _, _ -> },
+                        modifier = Modifier.fillMaxSize()
+                    )
+                    tileAccess.blocked?.let { blockedState ->
+                        PrivacyBlockedCard(
+                            state = blockedState,
+                            modifier = Modifier.align(Alignment.Center).padding(8.dp)
+                        )
+                    }
+                }
+                if (tileAccess.tilesAllowed) {
+                    Text(text = stringResource(R.string.location_map_interaction_hint))
+                }
+            }
+        """.trimIndent()
+        assertEquals(emptyList<String>(), pickerViolations("good", SourceTextSanitizer.stripCommentsAndStringBodies(good)))
+
+        fun planted(text: String) = pickerViolations("p", SourceTextSanitizer.stripCommentsAndStringBodies(text))
+
+        val longPressOpen = good.replace(
+            "onLongPress = if (tileAccess.tilesAllowed) onMapLongPressed else { _, _ -> }",
+            "onLongPress = onMapLongPressed"
+        )
+        assertTrue(longPressOpen != good && planted(longPressOpen).isNotEmpty())
+
+        val longPressCommentedOnly = good.replace(
+            "onLongPress = if (tileAccess.tilesAllowed) onMapLongPressed else { _, _ -> }",
+            "onLongPress = onMapLongPressed // if (tileAccess.tilesAllowed) onMapLongPressed else { _, _ -> }"
+        )
+        assertTrue(longPressCommentedOnly != good && planted(longPressCommentedOnly).isNotEmpty())
+
+        val hintAlways = good.replace("if (tileAccess.tilesAllowed) {", "run {")
+        assertTrue(hintAlways != good && planted(hintAlways).isNotEmpty())
+
+        val hintRemoved = good.replace("R.string.location_map_interaction_hint", "R.string.other")
+        assertTrue(hintRemoved != good && planted(hintRemoved).isNotEmpty())
+
+        val cardSibling = """
+            fun Picker() {
+                Box(modifier = Modifier.fillMaxWidth().height(260.dp)) {
+                    ResultsMapView(
+                        onLongPress = if (tileAccess.tilesAllowed) onMapLongPressed else { _, _ -> },
+                    )
+                }
+                tileAccess.blocked?.let { blockedState ->
+                    PrivacyBlockedCard(state = blockedState, modifier = Modifier.align(Alignment.Center))
+                }
+                if (tileAccess.tilesAllowed) { Text(stringResource(R.string.location_map_interaction_hint)) }
+            }
+        """.trimIndent()
+        assertTrue(planted(cardSibling).isNotEmpty())
+
+        val noHeight = good.replace(".height(260.dp)", "")
+        assertTrue(noHeight != good && planted(noHeight).isNotEmpty())
+
+        val notAligned = good.replace("Modifier.align(Alignment.Center).padding(8.dp)", "Modifier.padding(8.dp)")
+        assertTrue(notAligned != good && planted(notAligned).isNotEmpty())
+
+        val secondCard = good.replace(
+            "if (tileAccess.tilesAllowed) {",
+            "PrivacyBlockedCard(state = other, modifier = Modifier.align(Alignment.Center))\n    if (tileAccess.tilesAllowed) {"
+        )
+        assertTrue(secondCard != good && planted(secondCard).isNotEmpty())
+
+        assertTrue(planted("fun f() { val x = 1 }").isNotEmpty())
+    }
 }

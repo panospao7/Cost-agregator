@@ -26,7 +26,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import java.io.File
@@ -95,9 +94,61 @@ class ExportOptionsViewModelPrivacyDenialTest {
         val blocked = state.privacyBlocked
         assertNotNull("denial must set the typed state", blocked)
         assertEquals(PrivacyCapability.EXPENSE_EXPORT, blocked!!.capability)
-        assertTrue("message must be a bounded fallback", state.error == "Export is blocked by your privacy settings.")
-        assertFalse("raw decision text must not be rendered", state.error!!.contains("user setting"))
+        // Review fix (reviewer-strict REJECT on 013b78be): was error == "Export is blocked by your privacy settings.";
+        // the denial now shows once, through the typed card only, so error is null.
+        assertNull("a denial sets no separate error text", state.error)
+        assertFalse("raw decision text must not be carried by the card", blocked.toString().contains("user setting"))
         assertFalse(state.isLoading)
+    }
+
+    @Test
+    fun `a denial produces exactly one message path and the encrypted capability does the same`() = runBlocking {
+        coEvery { privacyGate.check(any(), any()) } returns PrivacyDecision.Denied("Encrypted export disabled by user setting")
+
+        viewModel.generateExport(encryptExport = true, passphrase = "synthetic-passphrase")
+
+        val state = viewModel.uiState.value
+        assertNotNull("the typed card is the one message path", state.privacyBlocked)
+        assertEquals(PrivacyCapability.EXPENSE_EXPORT_ENCRYPTED, state.privacyBlocked!!.capability)
+        assertNull("no second message path", state.error)
+        assertFalse(state.exportSuccess)
+        assertFalse(state.isLoading)
+    }
+
+    @Test
+    fun `clearError clears the blocked card as well as the error`() = runBlocking {
+        coEvery { privacyGate.check(any(), any()) } returns PrivacyDecision.Denied("Encrypted export disabled by user setting")
+        viewModel.generateExport(encryptExport = false)
+        assertNotNull("precondition: the card is showing", viewModel.uiState.value.privacyBlocked)
+
+        viewModel.clearError()
+
+        assertNull(viewModel.uiState.value.privacyBlocked)
+        assertNull(viewModel.uiState.value.error)
+    }
+
+    @Test
+    fun `clearError also clears an ordinary error and leaves no card behind`() = runBlocking {
+        viewModel.generateExport(encryptExport = true, passphrase = "")
+        assertEquals("Encrypted export requires a passphrase", viewModel.uiState.value.error)
+
+        viewModel.clearError()
+
+        assertNull(viewModel.uiState.value.error)
+        assertNull(viewModel.uiState.value.privacyBlocked)
+    }
+
+    @Test
+    fun `a permitted run after a denial removes the card`() = runBlocking {
+        coEvery { privacyGate.check(any(), any()) } returns PrivacyDecision.Denied("Encrypted export disabled by user setting")
+        viewModel.generateExport(encryptExport = false)
+        assertNotNull(viewModel.uiState.value.privacyBlocked)
+
+        coEvery { privacyGate.check(any(), any()) } returns PrivacyDecision.Allowed
+        coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns 0
+        viewModel.generateExport(encryptExport = false)
+
+        assertNull("the previous denial card must not survive a new run", viewModel.uiState.value.privacyBlocked)
     }
 
     // ── Denial class 2: gate FailClosed ───────────────────────────────────────
@@ -113,9 +164,11 @@ class ExportOptionsViewModelPrivacyDenialTest {
         assertNotNull("fail-closed must set the typed state", blocked)
         assertEquals(PrivacyCapability.EXPENSE_EXPORT, blocked!!.capability)
         assertEquals(PrivacyGateReasonCodes.PRIVACY_GATE_FAILURE, blocked.reasonCode)
+        // Review fix: was error!!.contains(...); a denial now sets no error text, so the card is the only message path.
+        assertNull(viewModel.uiState.value.error)
         assertFalse(
-            "fail-closed exception/decision text must not leak",
-            viewModel.uiState.value.error!!.contains("SECRET_INTERNAL_DETAIL")
+            "fail-closed exception/decision text must not leak into the card",
+            blocked.toString().contains("SECRET_INTERNAL_DETAIL")
         )
     }
 
