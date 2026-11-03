@@ -56,6 +56,16 @@ enum class ReceiptLinkFailureCode {
 class ReceiptLinkAbortedException(val code: ReceiptLinkFailureCode) : IllegalStateException(code.name)
 
 /**
+ * P-03-1: signals that a link was refused because a different non-statement receipt
+ * already links the expense. Nothing was written. Typed so callers inside an outer
+ * transaction (for example the email duplicate-skipped branch) can keep their own
+ * receipt and flag it for review instead of rolling back. The message carries ids only.
+ */
+class ExpenseAlreadyLinkedException(expenseId: Long) : IllegalStateException(
+    "Expense $expenseId is already linked to another receipt"
+)
+
+/**
  * Central service responsible for linking receipts to expenses and managing
  * the lifecycle of receipt-expense associations.
  *
@@ -242,6 +252,16 @@ class ReceiptLinkService @Inject constructor(
                     )
                 }
             }
+            // P-03-1: one non-statement receipt per expense. A different non-statement
+            // receipt already linked to this expense refuses the new link (nothing has
+            // been written yet). Bank-statement receipts may link many expenses and are
+            // not subject to this check. The same receipt/expense pair is left to the
+            // duplicate-insert path below. Failure text carries ids only.
+            if (!isBankStatement && isExpenseLinkedToOtherReceipt(expenseId, receiptId)) {
+                return@runInTransaction Result.failure(
+                    ExpenseAlreadyLinkedException(expenseId)
+                )
+            }
             val link = ReceiptExpenseLink(
                 receiptId = receiptId,
                 expenseId = expenseId,
@@ -285,6 +305,18 @@ class ReceiptLinkService @Inject constructor(
                     )
                     if (claimed == 0) {
                         throw ReceiptAlreadyClaimedException(receiptId)
+                    }
+                    // The claim always writes AUTO_MATCHED. A non-auto link type (for
+                    // example a review approval) keeps its own resolved status: this
+                    // runs only after a successful claim, in the same transaction.
+                    if (resolvedMatchStatus != MatchStatus.AUTO_MATCHED) {
+                        scannedReceiptDao.updateLinkTargets(
+                            receiptId = receiptId,
+                            expenseId = expenseId,
+                            matchStatus = resolvedMatchStatus.name,
+                            confidence = confidence,
+                            now = now
+                        )
                     }
                 } else {
                     scannedReceiptDao.updateLinkTargets(
@@ -446,6 +478,30 @@ class ReceiptLinkService @Inject constructor(
             // never caught here.
             Result.failure(e)
         }
+    }
+
+    /**
+     * P-03-1: the single ownership rule for "one non-statement receipt per expense".
+     * True when a receipt other than [receiptId] that is not a bank statement already
+     * links [expenseId]. A link from [receiptId] itself, and links from bank-statement
+     * receipts, never count. Read-only: uses [ReceiptExpenseLinkDao.getLinksForExpense]
+     * and [ScannedReceiptDao.getById] (one link read plus one receipt read per other
+     * link). Used by the link refusal and by the receipt matcher candidate filter.
+     * The caller decides whether the rule applies (bank-statement receipts are exempt).
+     */
+    suspend fun isExpenseLinkedToOtherReceipt(expenseId: Long, receiptId: Long): Boolean {
+        val linksForExpense: List<ReceiptExpenseLink> =
+            receiptExpenseLinkDao.getLinksForExpense(expenseId)
+        for (existingLink: ReceiptExpenseLink in linksForExpense) {
+            if (existingLink.receiptId == receiptId) continue
+            val otherReceipt = scannedReceiptDao.getById(existingLink.receiptId)
+            if (otherReceipt != null &&
+                otherReceipt.documentType != ReceiptDocumentType.BANK_STATEMENT.name
+            ) {
+                return true
+            }
+        }
+        return false
     }
 
     suspend fun dispatchAssignedCategorySideEffectsAfterCommit(

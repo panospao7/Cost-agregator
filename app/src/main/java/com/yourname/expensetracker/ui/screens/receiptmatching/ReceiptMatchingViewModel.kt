@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.yourname.expensetracker.data.database.entity.MatchStatus
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.data.repository.ReceiptRepository
+import com.yourname.expensetracker.domain.receipt.lifecycle.ExpenseAlreadyLinkedException
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService
 import com.yourname.expensetracker.domain.receiptmatching.MatchResult
 import com.yourname.expensetracker.domain.receiptmatching.ReceiptTransactionMatcher
@@ -160,7 +161,8 @@ class ReceiptMatchingViewModel @Inject constructor(
                                 expenseId = result.transaction.id,
                                 linkType = "AUTO_MATCH",
                                 source = "ReceiptMatchingViewModel",
-                                confidence = result.score.toFloat()
+                                confidence = result.score.toFloat(),
+                                requireUnmatchedClaim = true
                             )
                             linkResult.fold(
                                 onSuccess = { autoMatched++ },
@@ -180,9 +182,11 @@ class ReceiptMatchingViewModel @Inject constructor(
 
                 _state.update { it.copy(isAutoMatching = false, autoMatchedCount = autoMatched) }
                 loadReceipts()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e  // never swallow cancellation
             } catch (e: Exception) {
                 Timber.e(e, "ReceiptMatchingViewModel: runAutoMatching failed")
-                _state.update { it.copy(isAutoMatching = false, error = "Auto-matching failed: ${e.message}") }
+                _state.update { it.copy(isAutoMatching = false, error = "Auto-matching failed. Please try again.") }
             }
         }
     }
@@ -204,15 +208,18 @@ class ReceiptMatchingViewModel @Inject constructor(
                     expenseId = suggestedExpenseId,
                     linkType = "REVIEW_APPROVAL",
                     source = ExpenseSource.REVIEW_APPROVAL.name,
-                    matchStatus = MatchStatus.MANUALLY_MATCHED
+                    matchStatus = MatchStatus.MANUALLY_MATCHED,
+                    requireUnmatchedClaim = true
                 )
                 result.fold(
                     onSuccess = { Timber.d("Approved match for receipt $receiptId -> expense $suggestedExpenseId") },
                     onFailure = { e ->
                         Timber.e(e, "Failed to approve match for receipt $receiptId")
-                        _state.update { it.copy(error = "Failed to approve match. Please try again.") }
+                        _state.update { it.copy(error = linkFailureMessage(e, "Failed to approve match. Please try again.")) }
                     }
                 )
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e  // never swallow cancellation
             } catch (e: Exception) {
                 _state.update { it.copy(error = "Failed to approve match. Please try again.") }
             } finally {
@@ -234,6 +241,8 @@ class ReceiptMatchingViewModel @Inject constructor(
             try {
                 matchService.rejectAllSuggestions(receiptId)
                 loadReceipts()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e  // never swallow cancellation
             } catch (e: Exception) {
                 Timber.e(e, "Failed to reject suggestion for receipt $receiptId")
                 _state.update { it.copy(error = "Failed to reject suggestion. Please try again.") }
@@ -284,10 +293,12 @@ class ReceiptMatchingViewModel @Inject constructor(
                     },
                     onFailure = { e ->
                         Timber.e(e, "Manual match failed for receipt $receiptId")
-                        _state.update { it.copy(error = "Failed to link receipt. Please try again.") }
+                        _state.update { it.copy(error = linkFailureMessage(e, "Failed to link receipt. Please try again.")) }
                         // Dialog stays open so user can retry or cancel
                     }
                 )
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e  // never swallow cancellation
             } catch (e: Exception) {
                 Timber.e(e, "Manual match exception for receipt $receiptId")
                 _state.update { it.copy(error = "Failed to link receipt. Please try again.") }
@@ -304,6 +315,8 @@ class ReceiptMatchingViewModel @Inject constructor(
             try {
                 matchService.rejectAllSuggestions(receiptId)
                 loadReceipts()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e  // never swallow cancellation
             } catch (e: Exception) {
                 Timber.e(e, "Failed to skip receipt $receiptId")
                 _state.update { it.copy(error = "Failed to skip receipt. Please try again.") }
@@ -316,7 +329,7 @@ class ReceiptMatchingViewModel @Inject constructor(
     fun rerunForReceipt(receipt: ScannedReceipt) {
         if (_state.value.mutatingReceiptIds.contains(receipt.id)) return
         viewModelScope.launch {
-            _state.update { it.copy(mutatingReceiptIds = it.mutatingReceiptIds + receipt.id) }
+            _state.update { it.copy(mutatingReceiptIds = it.mutatingReceiptIds + receipt.id, error = null) }
             try {
                 // S12-032: Use ReceiptLinkService for unlink — goes through lifecycle/audit path
                 val currentExpenseId = receiptRepository.getReceiptById(receipt.id)?.expenseId
@@ -337,7 +350,8 @@ class ReceiptMatchingViewModel @Inject constructor(
                             expenseId = result.transaction.id,
                             linkType = "AUTO_MATCH",
                             source = "ReceiptMatchingViewModel",
-                            confidence = result.score.toFloat()
+                            confidence = result.score.toFloat(),
+                            requireUnmatchedClaim = true
                         )
                         linkResult.onFailure { e ->
                             _state.update { it.copy(error = "Rerun link failed. Please try again.") }
@@ -349,9 +363,13 @@ class ReceiptMatchingViewModel @Inject constructor(
                     }
                     else -> {}
                 }
-                loadReceipts()
+                // Reload clears error, so skip it when the rerun link failed (as approveSuggestion does)
+                if (_state.value.error == null) loadReceipts()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e  // never swallow cancellation
             } catch (e: Exception) {
-                _state.update { it.copy(error = "Rerun failed: ${e.message}") }
+                Timber.e(e, "ReceiptMatchingViewModel: rerunForReceipt failed")
+                _state.update { it.copy(error = "Rerun failed. Please try again.") }
             } finally {
                 _state.update { it.copy(mutatingReceiptIds = it.mutatingReceiptIds - receipt.id) }
             }
@@ -361,4 +379,8 @@ class ReceiptMatchingViewModel @Inject constructor(
     fun refresh() {
         loadReceipts()
     }
+
+    /** Fixed text for a refused link (expense already owned by another receipt); other failures keep [fallback]. */
+    private fun linkFailureMessage(e: Throwable, fallback: String): String =
+        if (e is ExpenseAlreadyLinkedException) "This expense already has a receipt." else fallback
 }

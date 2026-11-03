@@ -100,9 +100,17 @@ class ReceiptTransactionMatcher @Inject constructor(
             val score = calculateMatchScore(receipt, transaction)
             scored.add(MatchCandidate(transaction, score.first, score.second))
         }        
-        // Find best match
-        val best = scored.maxByOrNull { it.score }
-        
+        // Walk candidates best-first (stable sort keeps the earlier candidate on ties) and
+        // take the first one that can still be linked. An expense already linked to a
+        // different non-statement receipt would be refused by the link service on every
+        // run, so it is skipped and the next best candidate can win. Candidates below the
+        // suggestion threshold are never checked (no reads). Bank-statement receipts
+        // returned NoMatch above, so the ownership rule always applies here.
+        val best = scored.sortedByDescending { it.score }.firstOrNull { candidate ->
+            candidate.score < 0.80 ||
+                !receiptLinkService.isExpenseLinkedToOtherReceipt(candidate.transaction.id, receipt.id)
+        }
+
         return@withContext when {
             best == null -> MatchResult.NoMatch
             best.score >= 0.95 -> MatchResult.AutoMatch(best.transaction, best.score)
