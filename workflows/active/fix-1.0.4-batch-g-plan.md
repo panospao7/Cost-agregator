@@ -28,3 +28,17 @@ Filter: `*NavigationRestorePolicyTest,*DestinationPersistencePolicyTest,*Navigat
 
 ## Also merged with this batch
 Batch F review minors: `feature/fix104-g-receipt` (`Cost-agregator-we`), `feature/fix104-g-savings` (`Cost-agregator-sgd`).
+
+## reviewer-strict REJECT on a953b308 (review 1 of 2)
+- MAJOR: enforcing EPHEMERAL on ScanReceipt loses a photo after process death in the camera; today `temp_uri` restores it. Decision 2 reversed by the orchestrator: restore fallback applies to AddExpense only, the destination the finding names. Scan Receipt, Assistant and Debug restore as they do today.
+- MAJOR: `NaturalLanguageSearchViewModel.kt:139` ignores `isPartial`, so unrated rows give "Total EUR 0.00".
+- MAJOR: filter compares converted `effectiveAmount` while the card shows raw `amount` with the home symbol. "under 50" returns a neutralised EUR 1,200 row; "over 50" hides a EUR 100 row with a EUR 30 share; JPY 10,000 shows as EUR 10,000.00.
+- MAJOR: amount chips hard-code the euro sign and `%.0f` (`strings.xml:1897-1900`).
+- MINOR: "route 66 $20" takes 66; "over 1.500" parses as 1.50; "under 10 or over 50" matches nothing; test fixtures set effective = amount, no ViewModel test, no Saver test.
+- MINOR, recorded: `SavingsGamificationEngine` still uses `>=`, so a dust goal shows Done on the card but is not counted.
+- Pre-existing, recorded: queries containing "at", "in" or "around" return empty.
+
+## Fix pass after review 1
+- Restore fallback is AddExpense only; sfa 0e886c0b, targeted vr-20261103-201414-5c1fea88 PASS.
+- Search: filter compares gross converted amount (the figure the card shows); card shows the row's own currency; `SearchTotal.Unavailable` or `Available(amount, leftOutCount)` replaces the false zero; chips format the exact home amount; parsing minors fixed. rsv fd725ad4, targeted vr-20261103-202017-9bb4e1a0 PASS.
+- Recorded: totals still sum `effectiveAmount`, so a neutralised row shows on a card with its gross amount and adds 0 to the total; `nlp_*` strings have no el/es entries and fall back to English; "50€ 20€" loses the 50 (pinned characterisation); `InterpretationCard` and `TransactionResultCard` have no test seam.
