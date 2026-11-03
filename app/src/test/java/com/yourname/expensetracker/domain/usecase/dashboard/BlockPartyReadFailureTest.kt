@@ -283,7 +283,7 @@ class BlockPartyReadFailureTest {
         val bill = occurrence(1L, 20, 700.0, "Rent")
         val engine = SynthesisEngine(timeProvider, recurringOccurrenceDao = healthyDao, currencyConverter = currencyConverter)
 
-        val failing = realAssembler(failingDao(SQLiteException(sentinel)), openBarrier())
+        val failing = realAssembler(failingDao(IllegalStateException(sentinel)), openBarrier())
             .assembleNormalized(normalizedInput(listOf(projectedRow(30L, bill)), listOf(pattern(1L, "Rent", 700.0, at(20, 0, month = 7)))))
         val failingForecast = engine.synthesize(failing)
 
@@ -417,7 +417,7 @@ class BlockPartyReadFailureTest {
         }
         Timber.plant(tree)
         try {
-            val dao = failingDao(SQLiteException(sentinel))
+            val dao = failingDao(IllegalStateException(sentinel))
             val useCase = buildUseCase(engineDao = dao, engineBarrier = null, assembler = realAssembler(healthyDao, openBarrier()))
 
             useCase.compute(data(patterns = emptyList(), planned = emptyList(), budgets = listOf(overallBudget(3000.0))))
@@ -427,7 +427,7 @@ class BlockPartyReadFailureTest {
 
         val failureLog = logs.firstOrNull { it.second.contains("block-party occurrence read failed") }
         assertNotNull("failure log expected, logs: ${logs.map { it.second }}", failureLog)
-        assertTrue(failureLog!!.second, failureLog.second.contains("(SQLiteException)"))
+        assertTrue(failureLog!!.second, failureLog.second.contains("(IllegalStateException)"))
         assertNull("no throwable attached", failureLog.third)
         assertFalse("no exception text in any log", logs.any { it.second.contains(sentinel) || it.third != null })
     }
