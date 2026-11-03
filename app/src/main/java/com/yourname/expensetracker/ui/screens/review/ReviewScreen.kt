@@ -1346,24 +1346,28 @@ internal data class ReviewTransferSubmit(
 )
 
 /**
- * J-05-1: keyed on the type the user has selected now, not on whether it differs from the
- * suggestion. An unedited TRANSFER or DEPOSIT row submits the dialog state, which was seeded from
- * the suggestion, so the repository fallback and the explicit value agree. Direction and account
- * edits made without a type change are no longer dropped. Other types submit null (the repository
- * ignores transfer metadata for them). A blank account is submitted as null so the repository
- * falls back to the suggested account.
+ * J-05-1: keyed on the type the user has selected now, not on whether the type changed. Only a
+ * value the user changed from what the dialog was seeded with is submitted; an unchanged or blank
+ * value is null, so the repository falls back to each row's own suggestion (including bulk
+ * approve). Direction and account edits made without a type change are therefore kept. Only
+ * TRANSFER shows the fields, so every other type submits null.
  */
 internal fun resolveTransferSubmit(
     selectedType: TransactionType,
     transferDirection: TransferDirection?,
-    transferAccount: String
+    transferAccount: String,
+    seededDirection: TransferDirection?,
+    seededAccount: String
 ): ReviewTransferSubmit {
-    val carriesTransferMetadata =
-        selectedType == TransactionType.TRANSFER || selectedType == TransactionType.DEPOSIT
-    if (!carriesTransferMetadata) return ReviewTransferSubmit(direction = null, accountName = null)
+    // The direction and account fields are visible only for TRANSFER. Values left in the dialog
+    // state after switching away (for example back to the suggested DEPOSIT) are hidden, so they
+    // are never submitted.
+    if (selectedType != TransactionType.TRANSFER) {
+        return ReviewTransferSubmit(direction = null, accountName = null)
+    }
     return ReviewTransferSubmit(
-        direction = transferDirection,
-        accountName = transferAccount.takeIf { it.isNotBlank() }
+        direction = transferDirection.takeIf { it != seededDirection },
+        accountName = transferAccount.takeIf { it.isNotBlank() && it != seededAccount }
     )
 }
 
@@ -2012,7 +2016,13 @@ fun EditReviewDialog(
                         val locLon = locationEditState.selectedLon
                         val locAddress = locationEditState.selectedAddress
                         val locPlaceId = locationEditState.selectedPlaceId
-                        val transferSubmit = resolveTransferSubmit(selectedType, transferDirection, transferAccount)
+                        val transferSubmit = resolveTransferSubmit(
+                            selectedType,
+                            transferDirection,
+                            transferAccount,
+                            seededDirection = parseTransferDirectionOrNull(review.suggestedDirection),
+                            seededAccount = review.suggestedAccountName ?: ""
+                        )
                         onSave(
                             editedAmount, editedMerchant, editedCategory, editedDate, editedType,
                             // S6-004: Pass transfer direction/account
