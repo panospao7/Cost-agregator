@@ -180,6 +180,17 @@ internal class ReceiptScanMecDeps(dispatcher: CoroutineDispatcher, nowMs: Long) 
         every { categories.allCategories } returns flowOf(emptyList())
         val currency = mockk<CurrencySettingsRepository>(relaxed = true)
         every { currency.homeCurrency() } returns (homeSource ?: homeFlow)
+        // The view model collects the typed read; it follows the very same home flow as homeCurrency().
+        val homeValues: Flow<String> = homeSource ?: homeFlow
+        every { currency.observeReadHomeCurrency() } returns kotlinx.coroutines.flow.flow {
+            homeValues.collect {
+                emit(
+                    com.yourname.expensetracker.domain.currency.ReadHomeCurrencyState.Available(
+                        com.yourname.expensetracker.domain.core.money.CurrencyCode(it), firstRunDefault = false
+                    )
+                )
+            }
+        }
         val aiSettings = mockk<AiSettingsRepository>(relaxed = true)
         every { aiSettings.settings() } returns aiFlow
         return ReceiptScanViewModel(

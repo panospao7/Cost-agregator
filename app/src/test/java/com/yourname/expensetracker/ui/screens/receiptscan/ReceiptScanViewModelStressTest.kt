@@ -122,6 +122,11 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
             listOf(Category(id = 5L, name = "Groceries", icon = "G", color = "#008800"))
         )
         every { currencySettingsRepository.homeCurrency() } returns flowOf("EUR")
+        every { currencySettingsRepository.observeReadHomeCurrency() } returns flowOf(
+            com.yourname.expensetracker.domain.currency.ReadHomeCurrencyState.Available(
+                CurrencyCode("EUR"), firstRunDefault = false
+            )
+        )
         coEvery { currencySettingsRepository.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
         every { aiSettingsRepository.settings() } returns settingsFlow
         every { receiptRepository.createTempPhotoUri() } returns Uri.parse("content://test/photo.jpg")

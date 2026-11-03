@@ -33,6 +33,8 @@ import com.yourname.expensetracker.domain.util.AmountUtils
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.currency.ReadHomeCurrencyState
+import com.yourname.expensetracker.domain.currency.ReadHomeFailure
 import com.yourname.expensetracker.domain.quickadd.CategoryRef
 import com.yourname.expensetracker.domain.quickadd.CategoryMatch
 import com.yourname.expensetracker.domain.quickadd.FieldParse
@@ -274,6 +276,11 @@ class AddExpenseViewModel @Inject constructor(
         // MEC ux section 3: "Checking exchange rate" shows only if an evaluation exceeds this delay.
         const val EVALUATING_DELAY_MS = 250L
 
+        // N-01-3: no typed home-currency emission within this deadline is reported as TIMEOUT
+        // (same 5s as CurrencySettingsRepository.resolveHomeCurrency).
+        const val HOME_READ_TIMEOUT_MS = 5_000L
+        const val LOG_HOME_READ_UNAVAILABLE = "HOME_CURRENCY_READ_UNAVAILABLE"
+
         // Bounded message tokens of the existing refresh failures (matched by equality, never displayed).
         const val REFRESH_HOME_QUOTE_UNAVAILABLE = "HOME_CURRENCY_QUOTE_UNAVAILABLE"
         const val REFRESH_INVALID_HOME_CURRENCY = "INVALID_HOME_CURRENCY"
@@ -292,8 +299,43 @@ class AddExpenseViewModel @Inject constructor(
  private var initialValuesApplied: Boolean = false
 
  private var homeCurrencyJob: Job? = null
+
+ /**
+  * N-01-3: the typed read-time home currency as a code. Available -> the code; Loading, a read error,
+  * an invalid stored code or no emission within [HOME_READ_TIMEOUT_MS] -> null, which keeps the home
+  * unresolved and the save blocked (fail-closed; home is never defaulted). Only bounded reason codes
+  * are logged; CancellationException is rethrown.
+  */
+ private fun readHomeCurrencyCode(): kotlinx.coroutines.flow.Flow<String?> =
+  kotlinx.coroutines.flow.channelFlow {
+   val timeout = launch {
+    delay(HOME_READ_TIMEOUT_MS)
+    Timber.w("%s reason=%s", LOG_HOME_READ_UNAVAILABLE, ReadHomeFailure.TIMEOUT.name)
+    send(null)
+   }
+   currencySettingsRepository.observeReadHomeCurrency()
+    .catch { e ->
+     if (e is CancellationException) throw e
+     emit(ReadHomeCurrencyState.Unavailable(ReadHomeFailure.READ_ERROR))
+    }
+    .collect { homeState ->
+     if (homeState !is ReadHomeCurrencyState.Loading) timeout.cancel()
+     when (homeState) {
+      is ReadHomeCurrencyState.Available -> send(homeState.code.code)
+      is ReadHomeCurrencyState.Loading -> Unit
+      is ReadHomeCurrencyState.Unavailable -> {
+       Timber.w("%s reason=%s", LOG_HOME_READ_UNAVAILABLE, homeState.reason.name)
+       send(null)
+      }
+     }
+    }
+  }
  /** MEC 1b INV-1b-20: the previously observed home, to detect a change (null until first emission). */
- private var homeObserved = false // AE-50 (owner item 63): no String-typed VM field; the previous home is read from state
+ // AE-50 (owner item 63): no String-typed VM field; the last KNOWN home is held in a non-inline wrapper.
+ // A null emission (failed read, invalid code, timeout) means "home unknown", never "home changed".
+ private data class KnownHome(val code: String)
+
+ private var lastKnownHome: KnownHome? = null
  /** The single SAVING-wait for a deferred home-change discard (INV-1b-20(c)); replaced on each new home change. */
  private var pendingHomeDiscardJob: Job? = null
 
@@ -369,13 +411,19 @@ class AddExpenseViewModel @Inject constructor(
 
  init {
  homeCurrencyJob = viewModelScope.launch {
- currencySettingsRepository.homeCurrency().distinctUntilChanged().collect { hc ->
+ readHomeCurrencyCode().distinctUntilChanged().collect { hc ->
  // MEC 1b INV-1b-20(c): a home-denominated draft is discarded on a home change (open sheet or retained).
  val before = _state.value
- val oldHome = if (homeObserved) before.homeCurrency else null
- homeObserved = true
- val homeDraftAtRisk = oldHome != null && hc != oldHome && hasDraftMoney(before) &&
-  currencyOverride == null && before.selectedCurrency == oldHome
+ val oldHome = lastKnownHome?.code
+ if (hc != null) lastKnownHome = KnownHome(hc)
+ // J-02-2: at risk when the draft is home-denominated, or when its picked foreign currency becomes the
+ // new home (collision). A foreign pick that differs from the new home keeps its selection. A null hc
+ // is "home unknown" (fail-closed save block), never a change: nothing is discarded because of it. While
+ // the state home is null its selection is null, so no pick means the draft is still home-denominated.
+ val homeDraftAtRisk = hc != null && oldHome != null && hc != oldHome && hasDraftMoney(before) &&
+  ((currencyOverride == null &&
+    (before.selectedCurrency == oldHome || (before.homeCurrency == null && before.selectedCurrency == null))) ||
+   currencyOverride?.code?.code == hc)
  _state.update { applyHomeAndSelection(it.copy(homeCurrency = hc, previewAnnounceKey = it.previewAnnounceKey + 1)) }
  reevaluateRegion(invalidate = true)
  if (homeDraftAtRisk) {
@@ -765,6 +813,13 @@ class AddExpenseViewModel @Inject constructor(
             } else {
                 // OwnershipValidator already accepted this text via the same parser.
                 val parsedShareAmount = com.yourname.expensetracker.ui.util.AmountInputSanitizer.parseOrNull(shareAmountText)!!
+                // N-01-2: the share amount is money in the selected currency; same precision and cap
+                // check as the main amount (CurrencyAmountPolicy). A failing share blocks the save.
+                val shareCheckError = checkAmountForCurrency(parsedShareAmount, currency)
+                if (shareCheckError != null) {
+                    _state.update { it.withSaveError(shareCheckError) }
+                    return
+                }
                 sharePercentage = null
                 shareAmount = parsedShareAmount
             }
@@ -1155,7 +1210,7 @@ class AddExpenseViewModel @Inject constructor(
     private fun applyHomeAndSelection(s: AddExpenseState): AddExpenseState {
         val home = s.homeCurrency
         if (home == null) {
-            currencyOverride = null
+            // Home unknown (failed read): keep the user's foreign pick; the next resolved home revalidates it.
             return s.copy(selectedCurrency = null, currencyOptions = emptyList())
         }
         val homeCode = CurrencyCode.parse(home)

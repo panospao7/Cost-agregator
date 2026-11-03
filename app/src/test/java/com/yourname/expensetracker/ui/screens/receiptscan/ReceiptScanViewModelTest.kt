@@ -73,6 +73,11 @@ class ReceiptScanViewModelTest : ViewModelTestUtils() {
         every { categories.allCategories } returns flowOf(emptyList())
         val currency = mockk<CurrencySettingsRepository>(relaxed = true)
         every { currency.homeCurrency() } returns flowOf("EUR")
+        every { currency.observeReadHomeCurrency() } returns flowOf(
+            com.yourname.expensetracker.domain.currency.ReadHomeCurrencyState.Available(
+                com.yourname.expensetracker.domain.core.money.CurrencyCode("EUR"), firstRunDefault = false
+            )
+        )
         val aiSettings = mockk<AiSettingsRepository>(relaxed = true)
         every { aiSettings.settings() } returns flowOf(AiSettings(aiEnabled = false))
         val clock = mockk<TimeProvider>(relaxed = true)
@@ -702,7 +707,7 @@ class ReceiptScanViewModelTest : ViewModelTestUtils() {
     }
 
     @Test
-    fun `tax inclusive parsed amount is preserved in its original currency`() = runTest(testDispatcher) {
+    fun `tax inclusive parsed total never replaces the validated edit amount`() = runTest(testDispatcher) {
         coEvery { links.checkCanLinkReceipt(17L) } returns true
         coEvery { coordinator.createExpenseAndLinkReceipt(any()) } returns
             Result.failure(ReceiptLifecycleCoordinator.DuplicateTransactionException())
@@ -719,7 +724,7 @@ class ReceiptScanViewModelTest : ViewModelTestUtils() {
         advanceUntilIdle()
 
         coVerify(exactly = 1) { coordinator.createExpenseAndLinkReceipt(match {
-            it.amount == 10.0 && it.currency == "EUR"
+            it.amount == 20.0 && it.currency == "EUR"
         }) }
     }
 
