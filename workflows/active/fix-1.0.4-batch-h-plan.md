@@ -43,3 +43,28 @@ Pre-existing: the redactor rewrites "0.7-0.89" in the item prompt's confidence g
 - MINOR, Lane B: colour wiring unpinned; Base beside "Predicted Spending" is confusing but reconciles.
 
 Decision: Lane C held out of this merge and parked on `feature/fix104-h-prompt`. N-05-3 stays open, owner decision needed on the cap. Lanes A and B ship.
+
+## Owner decision on N-05-3 (item 127): option A
+Shorten the instructions, ITEM_CATEGORIZATION cap about 4,000 chars, partial results retry. Own strict review, tests with the real seeded category list. Fix the redactor rewriting "0.7-0.89" in the guidance by rewording it.
+
+## N-05-3 second attempt, plan (feature-planner, Sonnet high), step 1
+Lane: `Cost-agregator-rsv`, new branch `feature/fix104-h3-prompt` from 84d25027. The rejected attempt stays parked on `feature/fix104-h-prompt`.
+
+Root cause found: `AppConfig.kt:207` `CLOUD_RECEIPT_ITEM_MAX_TOKENS = 300` fits only 4 to 5 item objects, so the JSON is cut and `parseResponse` returns null. The input cap was never the real limit.
+
+Decisions under item 116, recorded for overrule:
+- Reply tokens: 256 + 80 per sent item, with at most 25 items per call. More cost per call, no more data sent.
+- Partial result status stays PENDING; `itemCategorizationStatus` has no reader in main.
+- Unsent items show the existing "Select category" chip.
+- Stale cancellation allowlist entries stay unless static-guards flags them.
+- A receipt with about 60 or more long custom categories that fits no item stays deferred.
+
+Step 1 write set (under app/src/main/java/com/yourname/expensetracker/):
+1. `data/privacy/DefaultCloudPayloadRedactor.kt`: ITEM_CATEGORIZATION cap 4000 as a shared `internal const`.
+2. `data/ai/provider/CloudReceiptItemCategorizationService.kt`: shortened fixed text, schema before items; one prepareText; budget in whole lines with a 100-char margin and at most 25 items; verify-and-shrink loop bounded by item count; parse against sentCount; placeholders for unsent; no tax figure or taxDistribution in the prompt (tax is local).
+3. `domain/config/AppConfig.kt`: token formula; `PROMPT_VERSION_RECEIPT_ITEMS` "v2".
+4. `domain/ai/usecase/CategorizeReceiptItemsUseCase.kt`: READY only when no placeholder remains, else PENDING.
+5. `ui/components/ai/ReceiptItemBreakdownCard.kt`: average over non-placeholders, hide badge when none; info button only for a non-blank rationale, as pure internal functions.
+6. A new placeholder predicate under `domain/ai/model/`.
+
+Step 2, held for owner: partial retry sending only unsent items needs a new repository write, so new exact rows in `db_ownership_policy.yml` and moved pinned counts.
