@@ -269,3 +269,22 @@ that does Double.parseDouble(cell) without a blank check, or binds a non-nullabl
 it IS a contract change.
 
 ### STATUS: branch is merge-ready pending owner decision. Nothing committed, nothing pushed.
+## RETRO PER-SLICE REVIEW + FIX (2026-11-03) - ALL GREEN
+
+### What the retroactive per-slice review found (4 MAJOR half-fixes)
+1. **RB1-S3-2**: `PeriodSummary` shared ONE `isUnavailable` flag across three horizons (today/week/month), so an unconvertible Today
+   with a convertible Month rendered `0.00` for Today. Fixed: added `isTodayUnavailable`, `isWeekUnavailable`, `isMonthUnavailable` and
+   wired each `StatLabel` in `HomeScreen.kt:674-676`.
+2. **RB1-S4-1**: `FinancialStressForecastEngine.getEmergencyBuffer` returned `rawBuffer to displayCurrency` when
+   `resolveHomeCurrency()` failed (`homeCurrency == null`), relabelling an unconverted home buffer as `displayCurrency` and comparing
+   incompatible units. Fixed: returns `rawBuffer to ""` so `bufferCurrency.equals(displayCurrency)` is false.
+3. **RB1-S3-1**: unavailable categories still showed `"0%"` / `"0% of total"` and top-3 medals, and were not sorted last. Fixed in
+   `TotalsAggregationEngine`, `AnalyticsViewModel`, `RetroCategoryBreakdownSheet`, `CategoryBreakdownSheet`, and `AnalyticsScreen`.
+4. **RB1-S2-1**: `budget_cd_format`, `budget_suggestion_cd_format`, and `budget_suggestion_message_format` still hardcoded euro signs,
+   and `budget_spent_format` was unwired. Fixed in `BudgetScreen.kt` and `values/strings.xml`.
+
+### Verification
+- Strict review of the 4 fixes: **GREEN** (all 4 rows).
+- Architecture guardian: **PASS** (0 violations).
+- Privacy-security guardian: **PASS**.
+- Validation `vr-20261103-134730-2d2e5e14`: **PASS** - 466 tests / 35 suites (including 6 new tests).

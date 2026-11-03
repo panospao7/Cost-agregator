@@ -671,9 +671,9 @@ fun HomeScreen(
                                         modifier = Modifier.fillMaxWidth(),
                                         horizontalArrangement = Arrangement.SpaceBetween
                                     ) {
-                    StatLabel(stringResource(R.string.widget_today), if (widget.isUnavailable) unavailableText else com.yourname.expensetracker.ui.model.MoneyDisplayUi.from(widget.todaySpent, homeCurrency ?: "").formatted, modifier = Modifier.weight(1f))
-                    StatLabel(stringResource(R.string.widget_week), if (widget.isUnavailable) unavailableText else com.yourname.expensetracker.ui.model.MoneyDisplayUi.from(widget.weekSpent, homeCurrency ?: "").formatted, modifier = Modifier.weight(1f))
-                    StatLabel(stringResource(R.string.widget_month), if (widget.isUnavailable) unavailableText else com.yourname.expensetracker.ui.model.MoneyDisplayUi.from(widget.monthSpent, homeCurrency ?: "").formatted, modifier = Modifier.weight(1f))
+                    StatLabel(stringResource(R.string.widget_today), if (widget.isTodayUnavailable || widget.isUnavailable) unavailableText else com.yourname.expensetracker.ui.model.MoneyDisplayUi.from(widget.todaySpent, homeCurrency ?: "").formatted, modifier = Modifier.weight(1f))
+                    StatLabel(stringResource(R.string.widget_week), if (widget.isWeekUnavailable || widget.isUnavailable) unavailableText else com.yourname.expensetracker.ui.model.MoneyDisplayUi.from(widget.weekSpent, homeCurrency ?: "").formatted, modifier = Modifier.weight(1f))
+                    StatLabel(stringResource(R.string.widget_month), if (widget.isMonthUnavailable || widget.isUnavailable) unavailableText else com.yourname.expensetracker.ui.model.MoneyDisplayUi.from(widget.monthSpent, homeCurrency ?: "").formatted, modifier = Modifier.weight(1f))
                                     }
                                     // S4-D914-007: Show partial-conversion warning
                                     if (widget.isPartial) {

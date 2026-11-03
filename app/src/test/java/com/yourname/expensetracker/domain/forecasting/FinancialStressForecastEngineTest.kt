@@ -1352,6 +1352,37 @@ class FinancialStressForecastEngineTest {
     }
 
     @Test
+    fun `RB1-S4-1 failed home currency resolution does not relabel raw buffer as displayCurrency or subtract from balances`() = runTest {
+        coEvery { currencySettingsRepository.resolveHomeCurrency() } returns
+            HomeCurrencyResolution.Failed("HOME_CURRENCY_UNAVAILABLE")
+        every { currencySettingsRepository.emergencyBuffer() } returns flowOf(500.0)
+
+        // 1. Positive balance case: verify raw buffer (500.0) is NOT subtracted from USD projectedBalance
+        coEvery { accountBalanceProvider.currentBalance("USD") } returns 5_000.0
+        allExpenses = emptyList()
+        allDeposits = emptyList()
+        val positiveResult = engine.computeStressForecast("USD")
+        for (horizon in positiveResult.horizons) {
+            assertTrue("Positive projectedBalance expected", horizon.projectedBalance > 0.0)
+            assertEquals(
+                "Unresolved buffer currency must not be subtracted from USD projectedBalance",
+                horizon.projectedBalance,
+                horizon.discretionaryBuffer,
+                0.0001
+            )
+        }
+
+        // 2. Negative balance case: R3 is emitted, verify bufferCurrency is "" (not "USD")
+        coEvery { accountBalanceProvider.currentBalance("USD") } returns 0.0
+        val result = engine.computeStressForecast("USD")
+        val r3 = result.recommendations.single { it.kind == StressRecommendationKind.BUILD_EMERGENCY_BUFFER }
+
+        org.junit.Assert.assertNotEquals("USD", r3.bufferCurrency)
+        assertEquals("", r3.bufferCurrency)
+        assertEquals(500.0, r3.bufferTarget!!, 0.01)
+    }
+
+    @Test
     fun `AE-3 INV-8 R3 buffer target falls back to 500 when the buffer setting is unavailable`() = runTest {
         every { currencySettingsRepository.emergencyBuffer() } returns kotlinx.coroutines.flow.flow {
             throw IllegalStateException("buffer down")

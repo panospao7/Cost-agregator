@@ -493,7 +493,7 @@ fun BudgetCard(
         }
     }
 
-    val cardDescription = remember(displaySpend, status.effectiveLimit, status.budget.amount, displayPercentUsed, displayHealthStatus) {
+    val cardDescription = remember(displaySpend, status.effectiveLimit, status.budget.amount, displayPercentUsed, displayHealthStatus, status.currency) {
         val statusText = if (status.budget.isActive) budgetActiveString else budgetInactiveString
         val categoryName = status.category?.name ?: "Overall Budget"
         if (displaySpend == null || displayPercentUsed == null || displayHealthStatus == null) {
@@ -504,8 +504,8 @@ fun BudgetCard(
                 R.string.budget_cd_format,
                 categoryName,
                 statusText,
-                displaySpend,
-                status.effectiveLimit,
+                CurrencyFormatter.formatMoney(displaySpend, status.currency),
+                CurrencyFormatter.formatMoney(status.effectiveLimit, status.currency),
                 (displayPercentUsed * 100).toInt(),
                 displayHealthStatus.name.lowercase().replaceFirstChar { it.titlecase() }
             )
@@ -612,8 +612,13 @@ fun BudgetCard(
                 // F11: Show adjusted spend if available
                 // INV-17: with no breakdown, effective spend is unavailable; gross spentAmount is never shown.
                 val spendText = if (displaySpend != null) {
+                    val spendFormatRes = if (hasPendingReimbursements) {
+                        R.string.budget_adjusted_spent_format
+                    } else {
+                        R.string.budget_spent_format
+                    }
                     stringResource(
-                        R.string.budget_adjusted_spent_format,
+                        spendFormatRes,
                         CurrencyFormatter.formatMoney(displaySpend, status.currency)
                     )
                 } else {
@@ -636,7 +641,7 @@ fun BudgetCard(
                 // Show base limit reference when rollover has inflated effectiveLimit
                 if (status.effectiveLimit != status.budget.amount) {
                     Text(
-                        text = "(base: ${status.budget.amount})",
+                        text = "(base: ${CurrencyFormatter.formatMoney(status.budget.amount, status.currency)})",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -849,11 +854,16 @@ fun SuggestionsBanner(
     var currentIndex by remember { mutableIntStateOf(0) }
     val suggestion = suggestions.getOrNull(currentIndex) ?: return
     val context = LocalContext.current
+    val formattedSuggestedAmount = CurrencyFormatter.formatMoney(
+        suggestion.suggestedAmount,
+        homeCurrency ?: "",
+        showCents = false
+    )
 
     val bannerDescription = stringResource(
         R.string.budget_suggestion_cd_format,
         suggestion.categoryName,
-        suggestion.suggestedAmount
+        formattedSuggestedAmount
     )
 
     Card(
@@ -881,7 +891,7 @@ fun SuggestionsBanner(
                 text = stringResource(
                     R.string.budget_suggestion_message_format,
                     suggestion.categoryName,
-                    suggestion.suggestedAmount
+                    formattedSuggestedAmount
                 ),
                 style = MaterialTheme.typography.bodyMedium
             )

@@ -49,11 +49,14 @@ fun RetroCategoryBreakdownSheet(
     currency: String = "EUR"
 ) {
     var showAll by remember { mutableStateOf(false) }
-    val displayCount = if (showAll) categories.size else minOf(5, categories.size)
-    val displayCategories = categories.take(displayCount)
+    val sortedCategories = remember(categories) {
+        categories.sortedWith(compareBy<CategoryBreakdown> { it.isUnavailable }.thenByDescending { it.totalAmount })
+    }
+    val displayCount = if (showAll) sortedCategories.size else minOf(5, sortedCategories.size)
+    val displayCategories = sortedCategories.take(displayCount)
     
     // Calculate max amount for percentage scaling
-    val maxAmount = categories.maxOfOrNull { it.totalAmount } ?: 1.0
+    val maxAmount = sortedCategories.maxOfOrNull { it.totalAmount } ?: 1.0
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -178,8 +181,8 @@ fun RetroCategoryBreakdownSheet(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 displayCategories.forEachIndexed { index, breakdown ->
-                    val percentage = if (maxAmount > 0) (breakdown.totalAmount / maxAmount).toFloat() else 0f
-                    val medal = when (index) {
+                    val percentage = if (!breakdown.isUnavailable && maxAmount > 0) (breakdown.totalAmount / maxAmount).toFloat() else 0f
+                    val medal = if (breakdown.isUnavailable) null else when (index) {
                         0 -> "🥇"
                         1 -> "🥈"
                         2 -> "🥉"
@@ -293,22 +296,27 @@ private fun RetroCategoryBreakdownRow(
     
     val totalBlocks = 20
     val filledBlocks = (percentage * totalBlocks).toInt()
+    val isTopRanked = !breakdown.isUnavailable && rank <= 3
     
     // Rank-based border color
-    val borderColor = when (rank) {
+    val borderColor = if (breakdown.isUnavailable) {
+        RetroColorsBreakdown.DarkBorder
+    } else when (rank) {
         1 -> RetroColorsBreakdown.Gold
         2 -> RetroColorsBreakdown.Silver
         3 -> RetroColorsBreakdown.Bronze
         else -> RetroColorsBreakdown.DarkBorder
     }
     
-    val backgroundAlpha = if (rank <= 3) 0.1f else 0.05f
+    val backgroundAlpha = if (isTopRanked) 0.1f else 0.05f
     
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .background(
-                when (rank) {
+                if (breakdown.isUnavailable) {
+                    RetroColorsBreakdown.DarkSurface.copy(alpha = backgroundAlpha)
+                } else when (rank) {
                     1 -> RetroColorsBreakdown.Gold.copy(alpha = backgroundAlpha)
                     2 -> RetroColorsBreakdown.Silver.copy(alpha = backgroundAlpha)
                     3 -> RetroColorsBreakdown.Bronze.copy(alpha = backgroundAlpha)
@@ -316,7 +324,7 @@ private fun RetroCategoryBreakdownRow(
                 }
             )
             .border(
-                width = if (rank <= 3) 1.5.dp else 1.dp,
+                width = if (isTopRanked) 1.5.dp else 1.dp,
                 color = borderColor
             )
             .drawBehind {
@@ -398,14 +406,16 @@ private fun RetroCategoryBreakdownRow(
                     )
                     
                     // Percentage
-                    Text(
-                        text = "${String.format("%.0f", breakdown.percentageOfTotal)}%",
-                        style = MaterialTheme.typography.labelSmall.copy(
-                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
-                        ),
-                        color = categoryColor,
-                        fontSize = 9.sp
-                    )
+                    if (!breakdown.isUnavailable) {
+                        Text(
+                            text = "${String.format("%.0f", breakdown.percentageOfTotal)}%",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                            ),
+                            color = categoryColor,
+                            fontSize = 9.sp
+                        )
+                    }
                     
                     // Medal for top 3
                     if (medal != null) {

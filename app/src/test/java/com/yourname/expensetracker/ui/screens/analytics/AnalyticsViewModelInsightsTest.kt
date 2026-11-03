@@ -1167,4 +1167,143 @@ class AnalyticsViewModelInsightsTest : ViewModelTestUtils() {
 
         collectJob.cancel()
     }
+
+    @Test
+    fun `RB1-S3-1 categoryBreakdown sorts unavailable categories last after available categories including zero total`() = runTest(testDispatcher) {
+        val now = 1718452800000L
+        val txDate = 1718366400000L
+        every { timeProvider.now() } returns now
+
+        val categories = listOf(
+            com.yourname.expensetracker.data.database.entity.Category(id = 1L, name = "Groceries", icon = "G", color = "#111111"),
+            com.yourname.expensetracker.data.database.entity.Category(id = 2L, name = "Transport", icon = "T", color = "#222222"),
+            com.yourname.expensetracker.data.database.entity.Category(id = 3L, name = "Travel", icon = "V", color = "#333333"),
+            com.yourname.expensetracker.data.database.entity.Category(id = 4L, name = "ZeroAvailable", icon = "Z", color = "#444444")
+        )
+        every { categoryRepository.allCategories } returns flowOf(categories)
+
+        // Put the unconvertible USD category first in raw input so insertion order would put it before 0.0 available if not sorted by isUnavailable
+        val expenses = listOf(
+            Expense(id = 4L, amount = 80.0, currency = "USD", merchant = "M4", transactionType = TransactionType.PURCHASE, date = txDate, categoryId = 3L),
+            Expense(id = 2L, amount = 50.0, currency = "EUR", merchant = "M2", transactionType = TransactionType.PURCHASE, date = txDate, categoryId = 2L),
+            Expense(id = 1L, amount = 100.0, currency = "EUR", merchant = "M1", transactionType = TransactionType.PURCHASE, date = txDate, categoryId = 1L),
+            Expense(id = 5L, amount = 0.0, currency = "EUR", merchant = "M5", transactionType = TransactionType.PURCHASE, date = txDate, categoryId = 4L)
+        )
+        every { expenseRepository.getAllExpenses() } returns flowOf(expenses)
+
+        viewModel = AnalyticsViewModel(
+            expenseRepository,
+            categoryRepository,
+            budgetRepository,
+            insightsEngine,
+            recurringExpenseEngine,
+            analyticsRepository,
+            advancedAnalyticsEngine,
+            analyticsCurrencyNormalizer,
+            locationInsightsEngine,
+            areaSpendingEngine,
+            travelDetectionEngine,
+            spendingPersonalityClassifier,
+            timeProvider,
+            analyticsInputAssembler,
+            currencyConverter,
+            currencySettingsRepository,
+            budgetVsActualEngine,
+            dailyBucketEngine
+        )
+
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } answers {
+            val s = firstArg<Long>()
+            val e = secondArg<Long>()
+            expenses.filter { it.date in s until e }
+        }
+
+        coEvery { analyticsInputAssembler.build(any<List<Expense>>(), any<String>(), any(), any()) } answers {
+            val raw = firstArg<List<Expense>>()
+            val period = arg<PeriodRange>(2)
+            val included = raw.filter { it.currency == "EUR" }.map { exp ->
+                NormalizedExpense(
+                    id = exp.id,
+                    originalAmount = exp.amount,
+                    originalEffectiveAmount = exp.amount,
+                    originalCurrency = exp.currency,
+                    normalizedAmount = exp.amount,
+                    normalizedCurrency = "EUR",
+                    date = exp.date,
+                    merchant = exp.merchant,
+                    merchantKey = null,
+                    categoryId = exp.categoryId,
+                    categoryNameSnapshot = null,
+                    transactionType = "PURCHASE",
+                    isNotMine = false,
+                    isSharedExpense = false,
+                    ownershipMode = null,
+                    source = null
+                )
+            }
+            val excluded = raw.filter { it.currency != "EUR" }.map { exp ->
+                ExcludedExpense(
+                    id = exp.id,
+                    originalAmount = exp.amount,
+                    originalCurrency = exp.currency,
+                    reason = ExclusionReason.CONVERSION_FAILED,
+                    date = exp.date,
+                    categoryId = exp.categoryId,
+                    warningType = AnalyticsConversionWarningType.MISSING_EXCHANGE_RATE,
+                    message = "Missing rate for ${exp.currency}"
+                )
+            }
+            NormalizedAnalyticsInput(
+                period = period,
+                homeCurrency = "EUR",
+                includedExpenses = included,
+                excludedExpenses = excluded,
+                dataQuality = AnalyticsDataQuality(
+                    isPartial = excluded.isNotEmpty(),
+                    excludedCount = excluded.size,
+                    missingRateCount = excluded.size
+                )
+            )
+        }
+
+        val collectJob = launch { viewModel.state.collect { } }
+        coEvery { advancedAnalyticsEngine.getCategoryAnalytics(any(), any(), any(), any(), any()) } returns
+            Pair(emptyList(), emptyList())
+        val merchantResult: Pair<List<EnhancedMerchantAnalytics>, List<AnalyticsConversionWarning>> =
+            Pair(emptyList(), emptyList())
+        coEvery {
+            advancedAnalyticsEngine.getMerchantAnalytics(
+                any<NormalizedAnalyticsInput>(),
+                any<NormalizedAnalyticsInput>(),
+                any()
+            )
+        } returns merchantResult
+        val patternResult: Pair<SpendingPatternAnalysis, List<AnalyticsConversionWarning>> =
+            Pair(mockk(relaxed = true), emptyList())
+        coEvery { advancedAnalyticsEngine.getSpendingPatterns(any<NormalizedAnalyticsInput>()) } returns patternResult
+        val statsResult: Pair<StatisticalInsights, List<AnalyticsConversionWarning>> =
+            Pair(mockk(relaxed = true), emptyList())
+        coEvery { advancedAnalyticsEngine.getStatisticalInsights(any<NormalizedAnalyticsInput>()) } returns statsResult
+        every { insightsEngine.getLegacyInsights(any(), any()) } returns emptyList()
+
+        testDispatcher.scheduler.advanceTimeBy(400)
+        advanceUntilIdle()
+
+        val breakdown = viewModel.state.value.categoryBreakdown
+        assertEquals(4, breakdown.size)
+        // Expected order: Cat 1 (100.0, available), Cat 2 (50.0, available), Cat 4 (0.0, available), Cat 3 (0.0, unavailable)
+        assertEquals(listOf(1L, 2L, 4L, 3L), breakdown.map { it.category.id })
+        org.junit.Assert.assertFalse(breakdown[0].isUnavailable)
+        org.junit.Assert.assertFalse(breakdown[1].isUnavailable)
+        org.junit.Assert.assertFalse("Zero-amount available category must sort before unavailable category", breakdown[2].isUnavailable)
+        assertEquals(0.0, breakdown[2].moneyTotal.amount, 0.001)
+        assertTrue(breakdown[3].isUnavailable, "Unavailable category must sort last")
+
+        // Also verify the 3-category sub-slice (2 available 100 and 50 + 1 unavailable) puts unavailable at index 2
+        val threeSlice = breakdown.filter { it.category.id != 4L }
+        assertEquals(listOf(1L, 2L, 3L), threeSlice.map { it.category.id })
+        assertTrue(threeSlice[2].isUnavailable)
+
+        collectJob.cancel()
+    }
 }

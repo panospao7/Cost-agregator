@@ -623,7 +623,7 @@ class AnalyticsViewModel @Inject constructor(
                     warningMessage = result.warningOrNull()
                 )
             }
-            .sortedByDescending { it.moneyTotal.amount }
+            .sortedWith(compareBy<AnalyticsCategoryBreakdown> { it.isUnavailable }.thenByDescending { it.moneyTotal.amount })
 
         // Merchant breakdown (Still manual for now, or move to Repo later)
         val purchaseSnapshots = purchases.filter { !it.isNotMine }.map { it.toExpenseSnapshot() }

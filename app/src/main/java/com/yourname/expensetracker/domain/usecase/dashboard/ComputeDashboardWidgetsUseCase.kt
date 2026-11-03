@@ -112,6 +112,9 @@ sealed class DashboardWidget {
         val isPartial: Boolean = false,
         /** N-08-5: true when period totals are unavailable (not zero / not merely partial) */
         val isUnavailable: Boolean = false,
+        val isTodayUnavailable: Boolean = false,
+        val isWeekUnavailable: Boolean = false,
+        val isMonthUnavailable: Boolean = false,
         val currencyQuality: CurrencyQualityUi? = null
     ) : DashboardWidget()
 
@@ -1366,18 +1369,31 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             if (insightText != null) add(DashboardWidget.NaturalLanguageInsight(insightText.first, insightText.second))
             add(
                 when (val normalized = ctx.normalizedInputResult) {
-                    is DashboardNormalizedInputResult.Available -> DashboardWidget.PeriodSummary(
-                        todaySpent = normalized.input.todayAggregate.displayAmount,
-                        weekSpent = normalized.input.weekAggregate.displayAmount,
-                        monthSpent = normalized.input.monthAggregate.displayAmount,
-                        isPartial = normalized.input.dataQuality.isPartial,
-                        isUnavailable = normalized.input.dataQuality.conversionQuality == com.yourname.expensetracker.domain.core.money.ConversionQuality.UNAVAILABLE,
-                        currencyQuality = CurrencyQualityUi.from(normalized.input.dataQuality)
-                    )
+                    is DashboardNormalizedInputResult.Available -> {
+                        val todayUnavailable = normalized.input.todayAggregate.conversionQuality == com.yourname.expensetracker.domain.core.money.ConversionQuality.UNAVAILABLE
+                        val weekUnavailable = normalized.input.weekAggregate.conversionQuality == com.yourname.expensetracker.domain.core.money.ConversionQuality.UNAVAILABLE
+                        val monthUnavailable = normalized.input.monthAggregate.conversionQuality == com.yourname.expensetracker.domain.core.money.ConversionQuality.UNAVAILABLE
+                        val allUnavailable = (todayUnavailable && weekUnavailable && monthUnavailable) ||
+                            normalized.input.dataQuality.conversionQuality == com.yourname.expensetracker.domain.core.money.ConversionQuality.UNAVAILABLE
+                        DashboardWidget.PeriodSummary(
+                            todaySpent = normalized.input.todayAggregate.displayAmount,
+                            weekSpent = normalized.input.weekAggregate.displayAmount,
+                            monthSpent = normalized.input.monthAggregate.displayAmount,
+                            isPartial = normalized.input.dataQuality.isPartial,
+                            isUnavailable = allUnavailable,
+                            isTodayUnavailable = todayUnavailable,
+                            isWeekUnavailable = weekUnavailable,
+                            isMonthUnavailable = monthUnavailable,
+                            currencyQuality = CurrencyQualityUi.from(normalized.input.dataQuality)
+                        )
+                    }
                     is DashboardNormalizedInputResult.Unavailable -> DashboardWidget.PeriodSummary(
                         todaySpent = Double.NaN, weekSpent = Double.NaN, monthSpent = Double.NaN,
                         isPartial = false,
                         isUnavailable = true,
+                        isTodayUnavailable = true,
+                        isWeekUnavailable = true,
+                        isMonthUnavailable = true,
                         currencyQuality = CurrencyQualityUi.unavailable(normalized.reason)
                     )
                 }

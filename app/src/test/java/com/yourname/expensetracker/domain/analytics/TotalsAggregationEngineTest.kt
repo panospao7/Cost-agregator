@@ -398,6 +398,58 @@ class TotalsAggregationEngineTest {
         assertFalse("Unconvertible month must not conflate isPartial with isUnavailable", febUnavail.isPartial)
     }
 
+    @Test
+    fun `RB1-S3-1 getCategoryBreakdown sorts unavailable categories last after zero-amount available categories`() = runTest {
+        val categories = listOf(
+            com.yourname.expensetracker.data.database.entity.Category(id = 1L, name = "Groceries", icon = "G", color = "#111111"),
+            com.yourname.expensetracker.data.database.entity.Category(id = 2L, name = "Transport", icon = "T", color = "#222222"),
+            com.yourname.expensetracker.data.database.entity.Category(id = 3L, name = "Travel", icon = "V", color = "#333333"),
+            com.yourname.expensetracker.data.database.entity.Category(id = 4L, name = "ZeroAvailable", icon = "Z", color = "#444444")
+        )
+        coEvery { categoryRepository.getAll() } returns categories
+
+        val unavailCatAgg = MoneyAggregate(
+            displayAmount = 0.0,
+            displayCurrency = CurrencyCode.EUR,
+            sourceBuckets = listOf(com.yourname.expensetracker.domain.core.money.MoneyBucket(CurrencyCode.USD, 80.0, 1)),
+            conversionFailures = listOf(
+                com.yourname.expensetracker.domain.core.money.ConversionFailure(
+                    originalAmount = com.yourname.expensetracker.domain.core.money.MoneyAmount(80.0, CurrencyCode.USD),
+                    targetCurrency = CurrencyCode.EUR,
+                    reason = com.yourname.expensetracker.domain.core.money.FailureReason.MISSING_RATE,
+                    transactionCount = 1
+                )
+            ),
+            isPartial = false,
+            conversionQuality = com.yourname.expensetracker.domain.core.money.ConversionQuality.UNAVAILABLE
+        )
+
+        // 3 categories: 2 available (totals 100 and 50) + 1 unavailable (total 0.0, isUnavailable = true) -> unavailable at index 2
+        coEvery { multiCurrencyRepo.getCategoryAggregatesHistorical(any(), any()) } returns linkedMapOf(
+            3L to unavailCatAgg,
+            2L to MoneyAggregate.singleCurrency(50.0, CurrencyCode.EUR, 1),
+            1L to MoneyAggregate.singleCurrency(100.0, CurrencyCode.EUR, 1)
+        )
+        val threeCats = engine.getCategoryBreakdown(0L, 1_000L, "Apr").first()
+        assertEquals(listOf(1L, 2L, 3L), threeCats.map { it.category.id })
+        assertTrue("Unavailable category must be at index 2 (last)", threeCats[2].isUnavailable)
+        assertFalse(threeCats[0].isUnavailable)
+        assertFalse(threeCats[1].isUnavailable)
+
+        // 4 categories: add available category with total 0.0 -> unavailable category STILL sorts last (index 3)
+        coEvery { multiCurrencyRepo.getCategoryAggregatesHistorical(any(), any()) } returns linkedMapOf(
+            3L to unavailCatAgg,
+            4L to MoneyAggregate.singleCurrency(0.0, CurrencyCode.EUR, 1),
+            2L to MoneyAggregate.singleCurrency(50.0, CurrencyCode.EUR, 1),
+            1L to MoneyAggregate.singleCurrency(100.0, CurrencyCode.EUR, 1)
+        )
+        val fourCats = engine.getCategoryBreakdown(0L, 1_000L, "Apr").first()
+        assertEquals(listOf(1L, 2L, 4L, 3L), fourCats.map { it.category.id })
+        assertFalse("Zero-amount available category must precede unavailable category", fourCats[2].isUnavailable)
+        assertEquals(0.0, fourCats[2].totalAmount, 0.0)
+        assertTrue("Unavailable category must be sorted last after zero-amount available category", fourCats[3].isUnavailable)
+    }
+
     private fun partialAggregate(amount: Double, count: Int): MoneyAggregate =
         MoneyAggregate.partial(
             displayAmount = amount,

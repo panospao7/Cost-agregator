@@ -2302,7 +2302,7 @@
     <string name="budget_summary_cd_format">%1$d budgets %2$s</string>
     <string name="budget_icon_cd">Budget icon</string>
     <string name="budget_category_icon_cd">%1$s category icon</string>
-    <string name="budget_cd_format">%1$s budget, %2$s, €%3$.2f spent of €%4$.2f limit, %5$d%% used, Status: %6$s</string>
+    <string name="budget_cd_format">%1$s budget, %2$s, %3$s spent of %4$s limit, %5$d%% used, Status: %6$s</string>
     <string name="budget_status_active">active</string>
     <string name="budget_status_inactive">inactive</string>
     <string name="budget_period_date_format">%1$s • Starts %2$s</string>
@@ -2314,9 +2314,9 @@
     <string name="budget_over_format">%1$s over budget</string>
     <string name="budget_remaining_format">%1$s remaining</string>
     <string name="budget_suggestion_title">Smart Suggestion</string>
-    <string name="budget_suggestion_cd_format">Smart budget suggestion for %1$s: Suggested monthly budget of €%2$.0f</string>
+    <string name="budget_suggestion_cd_format">Smart budget suggestion for %1$s: Suggested monthly budget of %2$s</string>
     <string name="budget_suggestion_icon_cd">Suggestion</string>
-    <string name="budget_suggestion_message_format">You spend a lot on %1$s. How about a monthly budget of €%2$.0f?</string>
+    <string name="budget_suggestion_message_format">You spend a lot on %1$s. How about a monthly budget of %2$s?</string>
     <string name="budget_suggestion_skip_cd">Skip this suggestion</string>
     <string name="budget_suggestion_skip">Skip</string>
     <string name="budget_suggestion_create_cd_format">Create budget for %1$s</string>

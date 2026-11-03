@@ -45,8 +45,11 @@ fun CategoryBreakdownSheet(
     currency: String = "EUR"
 ) {
     var expanded by remember { mutableStateOf(false) }
-    val displayCategories = if (expanded) categories else categories.take(5)
-    val hasMore = !expanded && categories.size > 5
+    val sortedCategories = remember(categories) {
+        categories.sortedWith(compareBy<CategoryBreakdown> { it.isUnavailable }.thenByDescending { it.totalAmount })
+    }
+    val displayCategories = if (expanded) sortedCategories else sortedCategories.take(5)
+    val hasMore = !expanded && sortedCategories.size > 5
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,

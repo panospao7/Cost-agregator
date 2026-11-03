@@ -396,7 +396,7 @@ class TotalsAggregationEngine @Inject constructor(
                 isPartial = aggregate.isPartial && !isUnavailable,
                 isUnavailable = isUnavailable
             )
-        }.sortedByDescending { it.totalAmount }
+        }.sortedWith(compareBy<CategoryBreakdown> { it.isUnavailable }.thenByDescending { it.totalAmount })
     }
 
     /**

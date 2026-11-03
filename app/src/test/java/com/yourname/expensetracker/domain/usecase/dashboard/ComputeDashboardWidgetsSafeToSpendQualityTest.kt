@@ -300,6 +300,44 @@ class ComputeDashboardWidgetsSafeToSpendQualityTest {
         assertFalse("Unavailable must not set isPartial (separate concepts)", unconvertibleSummary.isPartial)
     }
 
+    @Test
+    fun `RB1-S3-2 PeriodSummary mixed-horizon case marks today unavailable while month stays available`() = runTest {
+        val now = timeProvider.now()
+        val monthStart = TimePeriodUtils.getStartOfMonth(now)
+        val todayStart = TimePeriodUtils.getStartOfDay(now)
+
+        // Today has 1 unconvertible USD row (0 included, 1 excluded -> todayAggregate UNAVAILABLE),
+        // while earlier in the month has 1 convertible EUR row (monthAggregate PARTIAL, not UNAVAILABLE).
+        computeSafeToSpend(
+            listOf(
+                createExpense(100.0, monthStart + 86_400_000L, "EUR"),
+                createExpense(40.0, todayStart + 1_000L, "USD")
+            )
+        )
+        val summary = lastResult.allWidgets.filterIsInstance<DashboardWidget.PeriodSummary>().single()
+
+        assertTrue("Today has 0 convertible rows so isTodayUnavailable must be true", summary.isTodayUnavailable)
+        assertFalse("Month has a converted EUR row so isMonthUnavailable must be false", summary.isMonthUnavailable)
+        assertFalse("Top-level isUnavailable must be false when month is available", summary.isUnavailable)
+        assertTrue("Mixed-horizon partial conversion must mark isPartial true", summary.isPartial)
+        org.junit.Assert.assertEquals(100.0, summary.monthSpent, 0.0)
+    }
+
+    @Test
+    fun `RB1-S3-2 PeriodSummary all-unavailable control marks all four flags true`() = runTest {
+        val now = timeProvider.now()
+        val todayStart = TimePeriodUtils.getStartOfDay(now)
+
+        // Single unconvertible USD row today (inside today, week, and month windows) with no EUR rows anywhere.
+        computeSafeToSpend(listOf(createExpense(50.0, todayStart + 1_000L, "USD")))
+        val summary = lastResult.allWidgets.filterIsInstance<DashboardWidget.PeriodSummary>().single()
+
+        assertTrue("isTodayUnavailable must be true when all three horizons fail", summary.isTodayUnavailable)
+        assertTrue("isWeekUnavailable must be true when all three horizons fail", summary.isWeekUnavailable)
+        assertTrue("isMonthUnavailable must be true when all three horizons fail", summary.isMonthUnavailable)
+        assertTrue("Top-level isUnavailable must be true when all three horizons are unavailable", summary.isUnavailable)
+    }
+
     private lateinit var lastResult: CompiledDashboardData
 
     private suspend fun computeSafeToSpend(

@@ -881,7 +881,8 @@ class FinancialStressForecastEngine @Inject constructor(
             .getOrElse { DEFAULT_EMERGENCY_BUFFER_FALLBACK }
         val homeCurrency = CancellationSafe.runCatchingCancellable { currencySettingsRepository.resolveHomeCurrency() }
             .getOrNull()?.currencyOrNull?.code
-        if (homeCurrency == null || homeCurrency.equals(displayCurrency, ignoreCase = true)) {
+            ?: return rawBuffer to ""
+        if (homeCurrency.equals(displayCurrency, ignoreCase = true)) {
             return rawBuffer to displayCurrency
         }
         val converted = convertToDisplayOrNull(rawBuffer, homeCurrency, displayCurrency)
