@@ -861,15 +861,13 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
 
         val availableResult = runwayResult as RunwayResult.Available
 
-        // P-05-1: targets need a real, complete home-currency budget; never sum budgets
-        // in another currency or incomplete ones. The limit sources mirror resolveBudgetLimit.
-        val budgetStatuses = ctx.data.data.budgetStatuses
-        val limitSources = budgetStatuses.find { it.budgetCategoryId == null }
-            ?.takeIf { it.budgetAmount > 0 }?.let { listOf(it) } ?: budgetStatuses
-        if (limitSources.isEmpty() ||
-            limitSources.any { !it.hasCompleteAmountIn(normalized.input.homeCurrency.code) } ||
-            SynthesisEngine.resolveBudgetLimit(budgetStatuses) <= 0.0
-        ) return emptyList()
+        // P-05-1 / BL-02: the card needs an OVERALL budget above 0 that is complete in the
+        // home currency, and that budget is the limit. Category budgets are partial limits
+        // (all purchases are compared with the limit), so a category-only setup hides the card.
+        val overallBudget = ctx.data.data.budgetStatuses
+            .find { it.budgetCategoryId == null }
+            ?.takeIf { it.budgetAmount > 0.0 && it.hasCompleteAmountIn(normalized.input.homeCurrency.code) }
+            ?: return emptyList()
 
         // Use normalized daily aggregates instead of raw dailyHistory
         val dailySpending = normalized.input.normalizedExpenses
@@ -910,7 +908,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             // for the static guard, which matches per-line.)
             expenses = ctx.purchases.map { it.toTransactionSummary() }, // G-MONEY-ALLOW[CURR-587-05][G-MONEY-15]: metadata-only list; arithmetic converts via engine typed converter (RP-06 6b slice 3)
             dailySpending = dailyHistory,
-            budgetLimit = SynthesisEngine.resolveBudgetLimit(budgetStatuses) // P-05-1: fixed budget limit, not month spend
+            budgetLimit = overallBudget.budgetAmount // P-05-1: fixed overall budget limit, not month spend
         )
 
         // Build a lookup map from categoryId → categoryName so we can populate

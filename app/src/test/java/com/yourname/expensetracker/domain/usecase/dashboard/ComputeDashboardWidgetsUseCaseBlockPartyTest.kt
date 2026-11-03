@@ -179,30 +179,46 @@ class ComputeDashboardWidgetsUseCaseBlockPartyTest {
         assertTrue(blockDays(result).isEmpty())
     }
 
-    /** No overall budget, every category budget complete in home currency: limit is their sum. */
+    /**
+     * BL-02: category budgets are partial limits (all purchases are compared with the limit),
+     * so a category-only setup, even with every category budget complete in the home currency,
+     * hides the card. Fails on 92346ad0, which used the category sum (800 / 30) as the limit.
+     */
     @Test
-    fun `P-05-1 no overall budget with complete category budgets uses their sum as limit`() = runTest {
+    fun `BL-02 category-only complete budgets give empty list and no widget`() = runTest {
         fixedNowMs = at(15, 12)
-        val expenses = listOf(purchase(1L, 900.0, at(2, 12))) // spend must not leak into the limit
-        val days = blockDays(
-            computeUseCase.compute(data(expenses, listOf(budget(7L, 300.0), budget(8L, 500.0))))
-        )
+        val expenses = listOf(purchase(1L, 900.0, at(2, 12)))
+        val result = computeUseCase.compute(data(expenses, listOf(budget(7L, 300.0), budget(8L, 500.0))))
 
-        assertEquals(30, days.size)
-        days.forEach { assertEquals(800.0 / 30.0, it.targetBudget, TOL) }
+        assertTrue(blockDays(result).isEmpty())
+        assertTrue(result.allWidgets.none { it is DashboardWidget.BudgetBlockParty })
     }
 
-    /** Overall budget of 0 with complete category budgets falls back to the category sum. */
+    /** BL-02: an overall budget of 0 does not fall back to complete category budgets. */
     @Test
-    fun `P-05-1 zero overall budget falls back to complete category budgets sum`() = runTest {
+    fun `BL-02 zero overall budget with complete category budgets gives empty list`() = runTest {
+        fixedNowMs = at(15, 12)
+        val result = computeUseCase.compute(
+            data(emptyList(), listOf(budget(null, 0.0), budget(7L, 300.0), budget(8L, 500.0)))
+        )
+        assertTrue(blockDays(result).isEmpty())
+        assertTrue(result.allWidgets.none { it is DashboardWidget.BudgetBlockParty })
+    }
+
+    /**
+     * Control: with an overall budget the category budgets neither change nor hide the card;
+     * the limit is the overall amount only (2000, not 2000 + 800).
+     */
+    @Test
+    fun `BL-02 overall budget alongside complete category budgets uses the overall amount only`() = runTest {
         fixedNowMs = at(15, 12)
         val days = blockDays(
             computeUseCase.compute(
-                data(emptyList(), listOf(budget(null, 0.0), budget(7L, 300.0), budget(8L, 500.0)))
+                data(emptyList(), listOf(budget(null, 2000.0), budget(7L, 300.0), budget(8L, 500.0)))
             )
         )
         assertEquals(30, days.size)
-        days.forEach { assertEquals(800.0 / 30.0, it.targetBudget, TOL) }
+        days.forEach { assertEquals(BASE_2000_OVER_30, it.targetBudget, TOL) }
     }
 
     /** A positive complete overall budget wins; a foreign category budget must not block it. */

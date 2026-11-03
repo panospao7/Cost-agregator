@@ -79,6 +79,37 @@ class DashboardContractsAdapterTest {
     }
 
     @Test
+    fun `BL-02 observePlannedExpenses maps status so a FULFILLED row is not read as PLANNED`() = runTest {
+        fun entity(id: Long, status: String, key: String?) =
+            com.yourname.expensetracker.data.database.entity.PlannedExpense(
+                id = id,
+                description = "Item $id",
+                amount = 100.0,
+                currency = "EUR",
+                date = 1_000L,
+                categoryId = null,
+                isRecurring = key != null,
+                priority = com.yourname.expensetracker.data.database.entity.PlannedExpensePriority.MUST,
+                createdAt = 1L,
+                sourceOccurrenceKey = key,
+                status = status
+            )
+        every { plannedExpenseRepository.getAllPlannedExpenses() } returns flowOf(
+            listOf(
+                entity(1L, "PLANNED", null),
+                entity(2L, "FULFILLED", null),
+                entity(3L, "CANCELLED", "RECURRING_RULE|1|1|MONTHLY")
+            )
+        )
+
+        val result = adapter.observePlannedExpenses().first()
+
+        // Fails on 92346ad0: status was not mapped, so every row defaulted to PLANNED.
+        assertEquals(listOf(1L to "PLANNED", 2L to "FULFILLED", 3L to "CANCELLED"), result.map { it.id to it.status })
+        assertEquals("RECURRING_RULE|1|1|MONTHLY", result.single { it.id == 3L }.sourceOccurrenceKey)
+    }
+
+    @Test
     fun `observeRecurringPatterns uses confirmed recurring feed for dashboard forecast consumers`() = runTest {
         val confirmedPattern = recurringPattern("Confirmed Rent", 900.0)
         val mergedSuggestion = recurringPattern("Suggested Gym", 45.0)
