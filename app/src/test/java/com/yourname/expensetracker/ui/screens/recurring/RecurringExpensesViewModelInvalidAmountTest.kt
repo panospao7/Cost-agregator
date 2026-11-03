@@ -121,7 +121,7 @@ class RecurringExpensesViewModelInvalidAmountTest : ViewModelTestUtils() {
     )
 
     @Test
-    fun `FIX-104 F zero amount pattern through real coordinator emits generic message and does not refresh`() =
+    fun `FIX-104 F above-cap pattern through real coordinator emits generic message and does not refresh`() =
         runTest(testDispatcher) {
             val viewModel = realCoordinatorViewModel()
             backgroundScope.launch { viewModel.allPatterns.collect { } }
@@ -130,7 +130,7 @@ class RecurringExpensesViewModelInvalidAmountTest : ViewModelTestUtils() {
             assertTrue("list collector must have loaded once", readsBefore >= 1)
 
             viewModel.writeBlockedMessages.test {
-                viewModel.confirmPattern(pattern(amount = 0.0))
+                viewModel.confirmPattern(pattern(amount = 1_000_001.0)) // a zero amount cannot build a RecurringPattern
                 advanceUntilIdle()
                 assertEquals(genericMessage, awaitItem())
                 expectNoEvents()
