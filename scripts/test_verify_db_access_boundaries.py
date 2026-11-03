@@ -5637,7 +5637,9 @@ def test_checked_in_structural_only_manifest_contract_via_production_apis():
     # mec merge of feature/ai-evolution (4add2466): loan chain 452 plus the ai-fixes +2 = 454.
     # 1.0.4 S1 review fix: +2 retention DAO writes (receiptItemCategorizationDao.redactForReceiptsOlderThan,
     # userCorrectionDao.redactNotificationTextOlderThan), yielding 456.
-    assert len(entries) == 456
+    # 1.0.4 Batch F E-02-1 (owner item 124): +2 exact recordManualContribution identities
+    # (savingsGoalDao.addToGoalAmountIfSnapshot, savingsContributionLedgerDao.insert), yielding 458.
+    assert len(entries) == 458
     sweep_path = (
         "app/src/main/java/com/yourname/expensetracker/data/repository/"
         "SavingsSweepAcceptanceCoordinator.kt"
@@ -6123,8 +6125,10 @@ def test_current_db_gate_activated_policy_real_config_pipeline(tmp_path, monkeyp
     # promoteReviewDraft identity (warrantyDao.updateWarranty): +2 net, yielding 454 after the merge.
     # 1.0.4 S1 review fix: +2 retention DAO writes (receiptItemCategorizationDao.redactForReceiptsOlderThan,
     # userCorrectionDao.redactNotificationTextOlderThan), yielding 456.
+    # 1.0.4 Batch F E-02-1 (owner item 124): +2 exact recordManualContribution identities
+    # (savingsGoalDao.addToGoalAmountIfSnapshot, savingsContributionLedgerDao.insert), yielding 458.
     # Re-derived per the checked-in-manifest contract pin above.
-    assert len(entries) == 456
+    assert len(entries) == 458
 
     # The structural gate really ran (post-activation it is no longer
     # short-circuited by a loader block) and stayed clean.
