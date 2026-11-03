@@ -28,7 +28,8 @@ data class NavigationControllerSnapshot(
 )
 
 /**
- * J-01-1: enforces [DestinationPersistencePolicy.EPHEMERAL] on restore after process death only.
+ * J-01-1: Add Expense falls back on restore after process death only. Other EPHEMERAL destinations
+ * restore as saved (see fallsBackAfterProcessDeath).
  *
  * [processToken] is a random value held in memory for the lifetime of this process and never
  * persisted on its own. Every saved navigation state is stamped with it; a saved state carrying
@@ -580,8 +581,8 @@ fun ProvideNavigationController(
     val gatedBackStack = persistedState.backStackTokens
         .mapNotNull { destinationFromSaveToken(it, bankSyncAvailable, DeferredFeatureGate.available) }
         .filterNot { InstallmentsFeature.shouldRedirectHome(it) }
-    // J-01-1: ephemeral screens (Add Expense, Scan Receipt, Assistant, Debug) are not reopened after
-    // process death; a same-process restore (rotation, background/resume) is left untouched.
+    // J-01-1: Add Expense is not reopened after process death; Scan Receipt, Assistant and Debug restore
+    // as saved. A same-process restore (rotation, background/resume) is left untouched.
     val restored = applyEphemeralRestorePolicy(
         destination = gatedDestination,
         backStack = gatedBackStack,
