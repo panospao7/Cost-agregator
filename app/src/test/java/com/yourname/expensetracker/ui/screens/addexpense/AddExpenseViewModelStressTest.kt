@@ -93,6 +93,7 @@ class AddExpenseViewModelStressTest : ViewModelTestUtils() {
         every { categoryRepository.allCategories } returns flowOf(emptyList())
         val homeRepo = mockk<CurrencySettingsRepository>(relaxed = true)
         every { homeRepo.homeCurrency() } returns flowOf("EUR")
+        homeRepo.bridgeReadHome()
         return AddExpenseViewModel(
             manualExpenseRepository = mockk<ManualExpenseRepository>(relaxed = true),
             expenseRepository = mockk<ExpenseRepository>(relaxed = true),

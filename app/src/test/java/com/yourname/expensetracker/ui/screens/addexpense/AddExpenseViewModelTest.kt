@@ -159,7 +159,7 @@ class AddExpenseViewModelTest : ViewModelTestUtils() {
         expenseRepository = expenseRepository,
         categoryRepository = categoryRepository,
         timeProvider = timeProvider,
-        currencySettingsRepository = currencyRepo,
+        currencySettingsRepository = currencyRepo.bridgeReadHome(),
         quickAddParser = quickAddParser,
         quickAddLearnedCategoryLookup = quickAddLearnedCategoryLookup,
         userPresentRatePreview = UserPresentRatePreview(
@@ -1187,6 +1187,9 @@ class AddExpenseViewModelTest : ViewModelTestUtils() {
 
         assertNull(before.homeCurrency)
         assertEquals(before, loading.state.value)
+        // N-01-3: the only line so far is the bounded read timeout; Fill itself logged nothing.
+        assertTrue(loggedLines.all { it.message == "HOME_CURRENCY_READ_UNAVAILABLE reason=TIMEOUT" })
+        loggedLines.clear()
 
         val blankBefore = st
         viewModel.fill("   ")
@@ -2171,16 +2174,28 @@ class AddExpenseViewModelTest : ViewModelTestUtils() {
     }
 
     @Test
-    fun `B1 AE-19 AMOUNT_PRECISION_EXCEEDED with unavailable digits falls back to save-failed`() {
+    fun `B1 AE-19 an unparsable stored home blocks the save before the repository`() {
+        // N-01-3: the typed read reports an invalid stored code as unavailable, so home stays unknown
+        // and the save never reaches the repository's AMOUNT_PRECISION_EXCEEDED refusal.
         useUs()
-        useHome("12") // not a parsable currency code: digits unavailable
-        stubAddManualExpenseReturns(
-            Result.Error(message = com.yourname.expensetracker.domain.transaction.RateRefusalCodes.AMOUNT_PRECISION_EXCEEDED)
-        )
+        val repo = mockk<CurrencySettingsRepository>(relaxed = true)
+        every { repo.homeCurrency() } returns flowOf("12")
+        viewModel = createViewModel(repo)
+        testDispatcher.scheduler.advanceUntilIdle()
+        assertNull(viewModel.state.value.homeCurrency)
 
         typeAndSave("10.00")
 
-        assertEquals(SaveResult.Error(saveFailedText), viewModel.state.value.saveResult)
+        assertEquals(
+            SaveResult.Error(UiText.StringResource(R.string.add_expense_error_currency_loading)),
+            viewModel.state.value.saveResult
+        )
+        coVerify(exactly = 0) {
+            manualExpenseRepository.addManualExpense(
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()
+            )
+        }
     }
 
     @Test

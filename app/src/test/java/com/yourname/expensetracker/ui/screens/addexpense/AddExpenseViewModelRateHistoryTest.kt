@@ -165,6 +165,7 @@ class AddExpenseViewModelRateHistoryTest : ViewModelTestUtils() {
         privacyFlow.value = privacy
         val repo = mockk<CurrencySettingsRepository>(relaxed = true)
         every { repo.homeCurrency() } returns homeFlow
+        repo.bridgeReadHome()
         viewModel = AddExpenseViewModel(
             manualExpenseRepository = manualExpenseRepository,
             expenseRepository = expenseRepository,

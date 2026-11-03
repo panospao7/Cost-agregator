@@ -169,7 +169,7 @@ class AddExpenseInstallmentsViewModelTest : ViewModelTestUtils() {
         expenseRepository = expenseRepository,
         categoryRepository = categoryRepository,
         timeProvider = timeProvider,
-        currencySettingsRepository = currencyRepo,
+        currencySettingsRepository = currencyRepo.bridgeReadHome(),
         quickAddParser = QuickAddParser(),
         quickAddLearnedCategoryLookup = quickAddLearnedCategoryLookup,
         userPresentRatePreview = UserPresentRatePreview(

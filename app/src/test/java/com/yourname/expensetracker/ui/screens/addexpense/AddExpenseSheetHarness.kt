@@ -67,6 +67,7 @@ internal class AddExpenseSheetHarness(home: String = "EUR") {
         every { timeProvider.now() } returns FIXED_NOW_MS
         every { categoryRepository.allCategories } returns flowOf(emptyList())
         every { currencySettingsRepository.homeCurrency() } returns flowOf(home)
+        currencySettingsRepository.bridgeReadHome()
         every { privacyRepository.observeLoadState() } returns privacyFlow
         coEvery { quickAddLearnedCategoryLookup.lookup(any(), any()) } returns LearnedCategoryLookupResult.Absent
         coEvery {

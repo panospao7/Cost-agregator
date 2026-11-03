@@ -45,6 +45,8 @@ import com.yourname.expensetracker.domain.currency.CurrencyRatesRepository
 import com.yourname.expensetracker.domain.currency.CurrencySelection
 import com.yourname.expensetracker.domain.currency.CurrencySelectionPolicy
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.currency.ReadHomeCurrencyState
+import com.yourname.expensetracker.domain.currency.ReadHomeFailure
 import com.yourname.expensetracker.domain.currency.CurrencyUnsetReason
 import com.yourname.expensetracker.domain.currency.RateEligibility
 import com.yourname.expensetracker.domain.currency.UserPresentRatePreview
@@ -333,6 +335,11 @@ class ReceiptScanViewModel @Inject constructor(
         // MEC ux section 3: "Checking exchange rate" shows only if an evaluation exceeds this delay.
         const val EVALUATING_DELAY_MS = 250L
 
+        // N-01-3: no typed home-currency emission within this deadline is reported as TIMEOUT
+        // (same 5s as CurrencySettingsRepository.resolveHomeCurrency).
+        const val HOME_READ_TIMEOUT_MS = 5_000L
+        const val LOG_HOME_READ_UNAVAILABLE = "HOME_CURRENCY_READ_UNAVAILABLE"
+
         // Bounded message tokens of the existing refresh failures (matched by equality, never displayed).
         const val REFRESH_HOME_QUOTE_UNAVAILABLE = "HOME_CURRENCY_QUOTE_UNAVAILABLE"
         const val REFRESH_INVALID_HOME_CURRENCY = "INVALID_HOME_CURRENCY"
@@ -362,6 +369,37 @@ class ReceiptScanViewModel @Inject constructor(
     /** Last home currency loaded by the init collector; re-applied by reset()/retry(). */
     private var homeCurrencyCode: String? = null
 
+    /**
+     * N-01-3: the typed read-time home currency as a code. Available -> the code; Loading, a read
+     * error, an invalid stored code or no emission within [HOME_READ_TIMEOUT_MS] -> null, which keeps
+     * the currency unresolved and the save blocked (fail-closed; home is never defaulted). Only
+     * bounded reason codes are logged; CancellationException is rethrown.
+     */
+    private fun readHomeCurrencyCode(): kotlinx.coroutines.flow.Flow<String?> =
+        kotlinx.coroutines.flow.channelFlow {
+            val timeout = launch {
+                delay(HOME_READ_TIMEOUT_MS)
+                Timber.w("%s reason=%s", LOG_HOME_READ_UNAVAILABLE, ReadHomeFailure.TIMEOUT.name)
+                send(null)
+            }
+            currencySettingsRepository.observeReadHomeCurrency()
+                .catch { e ->
+                    if (e is CancellationException) throw e
+                    emit(ReadHomeCurrencyState.Unavailable(ReadHomeFailure.READ_ERROR))
+                }
+                .collect { homeState ->
+                    if (homeState !is ReadHomeCurrencyState.Loading) timeout.cancel()
+                    when (homeState) {
+                        is ReadHomeCurrencyState.Available -> send(homeState.code.code)
+                        is ReadHomeCurrencyState.Loading -> Unit
+                        is ReadHomeCurrencyState.Unavailable -> {
+                            Timber.w("%s reason=%s", LOG_HOME_READ_UNAVAILABLE, homeState.reason.name)
+                            send(null)
+                        }
+                    }
+                }
+        }
+
     // MEC G2-14/RF-6: the entry zone captured when the step becomes REVIEW (and by onReviewOpened()).
     // A plain field: never in state, never persisted or logged. Cleared at scan start, reset, retry and
     // cancelActiveWork. Save falls back to the device zone when it is null.
@@ -387,7 +425,7 @@ class ReceiptScanViewModel @Inject constructor(
     init {
         // S7-009: Load home currency on init so editCurrency is never a hardcoded "EUR"
         viewModelScope.launch {
-            currencySettingsRepository.homeCurrency().distinctUntilChanged().collect { homeCurrency ->
+            readHomeCurrencyCode().distinctUntilChanged().collect { homeCurrency ->
                 homeCurrencyCode = homeCurrency
                 // Review F2: a proposal held while home was unresolved is resolved below, not defaulted to home.
                 val holdForProposal = proposalAwaitingHome &&
@@ -2171,16 +2209,9 @@ class ReceiptScanViewModel @Inject constructor(
                         return@launch
                     }
 
-                // S7-012: Tax-inclusive override only when user has NOT edited the amount
-                val taxInclusive = _state.value.parsedReceipt?.taxInclusive == true
-                val parsedTotal = _state.value.parsedReceipt?.total
-                    ?.takeIf { it.currency.code == resolvedCurrency }?.amount
-                val effectiveAmount = if (taxInclusive && parsedTotal != null && !_state.value.isAmountEditedByUser) {
-                    Timber.d("ReceiptScan: tax_inclusive_total_applied receiptId=%d", request.receiptId)
-                    parsedTotal
-                } else {
-                    request.amount
-                }
+                // N-01-1: always the amount validated at request-build time (the seeded or edited amount);
+                // the raw parsed total is never substituted, so no unvalidated amount reaches the coordinator.
+                val effectiveAmount = request.amount
 
                 // S7-013: Preserve user-visible merchant; use normalized only for classifier/deduplication
                 val displayMerchant = request.merchant.trim()
