@@ -39,6 +39,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.first
 import com.yourname.expensetracker.domain.currency.CurrencyUnsetReason
 import com.yourname.expensetracker.ui.components.currency.CurrencyRegionUi
 import kotlinx.coroutines.awaitCancellation
@@ -743,5 +744,90 @@ class ReceiptScanViewModelHomeReadTest : ViewModelTestUtils() {
         runNow()
 
         assertEquals("a timeout null leaves the job active, so no restart", 1, subscriptions.get())
+    }
+
+    // ---- READ_ERROR during REVIEW with a USD proposal pending: opening review or tapping Save retries ----
+
+    private val failRead = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+
+    /** Review of a USD 50 receipt with home unknown; the read then fails (READ_ERROR) and its job ends. */
+    private fun reviewWithReadErrorAndUsdProposalPending() {
+        homeSignal.resetReplayCache()
+        subscriptions.set(0)
+        deps.store.putRate("USD", 0.9, mecDay(14))
+        newModel(flow {
+            if (subscriptions.incrementAndGet() == 1) {
+                emit(ReadHomeCurrencyState.Loading)
+                failRead.first()
+                throw IOException("synthetic private path /data/918")
+            }
+            emitAll(homeSignal)
+        })
+        runNow()
+        scanNow(mecReceipt(currency = "USD", total = 50.0, merchant = "Shop"))
+        assertEquals(ScanStep.REVIEW, st.step)
+        assertNull(st.editCurrency)
+        setState(st.copy(editMerchant = "Edited shop"))
+        failRead.tryEmit(Unit)
+        runNow()
+        assertEquals("the failed read ended its collection", 1, subscriptions.get())
+        assertEquals(0, homeSignal.subscriptionCount.value)
+    }
+
+    @Test
+    fun `N-01-3 Save after READ_ERROR during REVIEW retries once keeps edits and saves USD 50 once EUR arrives`() {
+        reviewWithReadErrorAndUsdProposalPending()
+
+        model.saveExpense()
+        model.saveExpense()
+        runNow()
+
+        assertEquals("the Save tap restarted the read once, no duplicate", 2, subscriptions.get())
+        assertEquals(1, homeSignal.subscriptionCount.value)
+        assertTrue("nothing saves while home is unknown", deps.requests.isEmpty())
+        assertNull(st.editCurrency)
+        assertEquals("Edited shop", st.editMerchant)
+
+        emitHome(avail("EUR"))
+        settle()
+
+        assertEquals("EUR", st.homeCurrency)
+        assertEquals("USD", st.editCurrency)
+        assertEquals("Edited shop", st.editMerchant)
+        model.saveExpense()
+        settle()
+        val request = deps.requests.single()
+        assertEquals("USD", request.currency)
+        assertEquals(50.0, request.amount, 0.0)
+        assertEquals(2, subscriptions.get())
+    }
+
+    @Test
+    fun `N-01-3 onReviewOpened after READ_ERROR during REVIEW restarts the read once and the proposal resolves`() {
+        reviewWithReadErrorAndUsdProposalPending()
+
+        model.onReviewOpened()
+        model.onReviewOpened()
+        runNow()
+        assertEquals(2, subscriptions.get())
+        assertEquals(1, homeSignal.subscriptionCount.value)
+        assertEquals("Edited shop", st.editMerchant)
+
+        emitHome(avail("EUR"))
+        settle()
+
+        assertEquals("USD", st.editCurrency)
+        model.saveExpense()
+        settle()
+        assertEquals("USD", deps.requests.single().currency)
+    }
+
+    @Test
+    fun `N-01-3 quick save reason says the currency is not loaded while home is unknown`() {
+        reviewWithReadErrorAndUsdProposalPending()
+        setState(st.copy(receiptQuickSaveEnabled = true))
+
+        assertNull(st.homeCurrency)
+        assertEquals("Currency is not loaded yet. Please wait.", model.quickSaveUnavailableReason())
     }
 }
