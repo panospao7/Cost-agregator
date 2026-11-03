@@ -1168,6 +1168,42 @@ class NotificationProcessingPipelineReliabilityTest {
     }
 
     @Test
+    fun `FIX-104 F AUTO_REJECT from financial package salvaged to review normalizes with autoCreate true`() = runBlocking {
+        val notification = testNotification("com.google.android.apps.walletnfcrel")
+        val parsed = ParsedTransaction(
+            amount = 4.08,
+            currency = "EUR",
+            merchant = "Salvaged Shop",
+            type = ParsedTransactionType.PURCHASE,
+            confidence = 0.90f,
+            date = notification.timestamp
+        )
+        coEvery {
+            parserRegistry.parseWithProvenance(
+                notification.title,
+                notification.text,
+                notification.bigText,
+                notification.subText,
+                notification.packageName
+            )
+        } returns ParseOutcome.Parsed(parsed, mockk(relaxed = true))
+        coEvery {
+            confidenceRouter.route(parsed, notification.packageName, any())
+        } returns RoutingResult(
+            decision = RoutingDecision.AUTO_REJECT,
+            adjustedConfidence = 0.45f,
+            reason = "low confidence"
+        )
+        coEvery { rawDao.insertOrIgnore(any()) } returns 63L
+
+        pipeline.process(notification)
+
+        // Salvaged to NEEDS_REVIEW, so the canonical merchant must be created (autoCreate = true).
+        coVerify(atLeast = 1) { merchantNormalizer.normalize("Salvaged Shop", true, any()) }
+        coVerify(exactly = 0) { merchantNormalizer.normalize(any(), false, any()) }
+    }
+
+    @Test
     fun `FIX-104 F AUTO_ACCEPT normalizes merchant with autoCreate true`() = runBlocking {
         val notification = testNotification("com.wallet")
         val parsed = ParsedTransaction(
