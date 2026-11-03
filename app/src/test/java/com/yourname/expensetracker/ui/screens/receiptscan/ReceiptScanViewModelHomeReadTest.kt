@@ -238,10 +238,11 @@ class ReceiptScanViewModelHomeReadTest : ViewModelTestUtils() {
 
         assertNull(st.homeCurrency)
         assertSaveBlocked()
-        assertEquals(1, warnings.size)
-        assertTrue(warnings.single(), warnings.single().endsWith("reason=READ_ERROR"))
-        assertFalse(warnings.single().contains("918"))
-        assertFalse(warnings.single().contains("private"))
+        // One line per read: the first at creation, the second from the retry when Save was tapped.
+        assertEquals(2, warnings.size)
+        assertTrue(warnings.toString(), warnings.all { it.endsWith("reason=READ_ERROR") })
+        assertFalse(warnings.any { it.contains("918") })
+        assertFalse(warnings.any { it.contains("private") })
         assertTrue("no throwable is logged", throwables.isEmpty())
     }
 
