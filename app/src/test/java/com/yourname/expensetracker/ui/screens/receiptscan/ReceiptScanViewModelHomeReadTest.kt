@@ -35,7 +35,12 @@ import io.mockk.mockk
 import java.io.IOException
 import java.util.Locale
 import java.util.TimeZone
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.emitAll
+import com.yourname.expensetracker.domain.currency.CurrencyUnsetReason
+import com.yourname.expensetracker.ui.components.currency.CurrencyRegionUi
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -309,5 +314,434 @@ class ReceiptScanViewModelHomeReadTest : ViewModelTestUtils() {
 
         assertNull(st.homeCurrency)
         assertTrue("cancellation is not a read error: $warnings", warnings.isEmpty())
+    }
+
+    // ---- F-entry: a null home is "home unknown" (never a resolution) and a dead collection restarts ----
+
+    private val homeSignal = MutableSharedFlow<ReadHomeCurrencyState>(replay = 1, extraBufferCapacity = 8)
+    private val subscriptions = AtomicInteger(0)
+
+    private fun emitHome(state: ReadHomeCurrencyState) {
+        homeSignal.tryEmit(state)
+        runNow()
+    }
+
+    private fun readFails() = emitHome(ReadHomeCurrencyState.Unavailable(ReadHomeFailure.READ_ERROR))
+
+    /** Scans without advancing virtual time (so a pending 5s home deadline is not fired by the helper). */
+    private fun scanNow(receipt: ScannedReceipt) {
+        val uri = stubReceipt(receipt)
+        model.processGalleryImage(uri)
+        runNow()
+    }
+
+    private fun stubReceipt(receipt: ScannedReceipt): Uri {
+        val uri = Uri.parse("content://synthetic/receipt-${receipt.id}.jpg")
+        coEvery { deps.coordinator.processReceiptInput(uri, any()) } returns kotlin.Result.success(
+            ReceiptLifecycleCoordinator.ReceiptProcessOutcome(receipt, true, null)
+        )
+        coEvery { deps.links.checkCanLinkReceipt(receipt.id) } returns true
+        return uri
+    }
+
+    /** A Ready merchant suggestion: with a blank merchant it is the one field quick save may fill. */
+    private fun withMerchantSuggestion() = setState(
+        st.copy(
+            receiptAssistState = AiLoadState.Ready(
+                ReceiptAssistSuggestion(merchant = SuggestedValue("Lidl"), total = SuggestedValue(50.0))
+            )
+        )
+    )
+
+    /**
+     * Home never emits before the 5s deadline. A USD 50 proposal arrives before (or after) the timeout null.
+     * While home is null: no currency, no quick save, no save.
+     */
+    private fun proposalAcrossTimeout(scanAfterNull: Boolean, merchant: String?) {
+        deps.store.putRate("USD", 0.9, mecDay(14))
+        newModel(homeSignal)
+        runNow()
+        if (!scanAfterNull) {
+            scanNow(mecReceipt(currency = "USD", total = 50.0, merchant = merchant))
+            assertEquals(ScanStep.REVIEW, st.step)
+            assertNull(st.editCurrency)
+        }
+        advance(5_000)
+        assertNull(st.homeCurrency)
+        if (scanAfterNull) {
+            scanNow(mecReceipt(currency = "USD", total = 50.0, merchant = merchant))
+            assertEquals(ScanStep.REVIEW, st.step)
+        }
+        assertNull("no currency is invented while home is null", st.editCurrency)
+        assertNull(st.homeCurrency)
+        if (merchant == null) {
+            withMerchantSuggestion()
+            assertFalse(model.canOfferReceiptQuickSave())
+            model.requestReceiptQuickSaveConfirmation()
+            assertNull(st.quickSavePreview)
+        } else {
+            model.saveExpense()
+            settle()
+            assertTrue("no save while home is null", deps.requests.isEmpty())
+        }
+    }
+
+    @Test
+    fun `N-01-3 USD 50 proposed before the timeout null then real EUR resolves as late home and saves USD 50`() {
+        proposalAcrossTimeout(scanAfterNull = false, merchant = "Shop")
+
+        emitHome(avail("EUR"))
+        settle()
+
+        assertEquals("EUR", st.homeCurrency)
+        assertEquals("USD", st.editCurrency)
+        assertFalse("an OCR-proposed currency is verified", st.currencyUnverified)
+        model.saveExpense()
+        settle()
+        val request = deps.requests.single()
+        assertEquals("USD", request.currency)
+        assertEquals(50.0, request.amount, 0.0)
+    }
+
+    @Test
+    fun `N-01-3 USD 50 proposed after the timeout null then real EUR resolves as late home and saves USD 50`() {
+        proposalAcrossTimeout(scanAfterNull = true, merchant = "Shop")
+
+        emitHome(avail("EUR"))
+        settle()
+
+        assertEquals("EUR", st.homeCurrency)
+        assertEquals("USD", st.editCurrency)
+        assertFalse(st.currencyUnverified)
+        model.saveExpense()
+        settle()
+        val request = deps.requests.single()
+        assertEquals("USD", request.currency)
+        assertEquals(50.0, request.amount, 0.0)
+    }
+
+    @Test
+    fun `N-01-3 quick save stays unavailable across the timeout null and previews USD 50 only once home is real`() {
+        proposalAcrossTimeout(scanAfterNull = false, merchant = null)
+
+        emitHome(avail("EUR"))
+        settle()
+        assertEquals("USD", st.editCurrency)
+        assertFalse(st.currencyUnverified)
+        assertTrue(model.canOfferReceiptQuickSave())
+        model.requestReceiptQuickSaveConfirmation()
+        assertEquals(50.0, st.quickSavePreview!!.amount, 0.0)
+        model.confirmReceiptQuickSave()
+        settle()
+
+        val request = deps.requests.single()
+        assertEquals("USD", request.currency)
+        assertEquals(50.0, request.amount, 0.0)
+    }
+
+    @Test
+    fun `N-01-3 quick save stays unavailable when the proposal arrives after the timeout null`() {
+        proposalAcrossTimeout(scanAfterNull = true, merchant = null)
+
+        emitHome(avail("EUR"))
+        settle()
+        assertEquals("USD", st.editCurrency)
+        assertTrue(model.canOfferReceiptQuickSave())
+        model.requestReceiptQuickSaveConfirmation()
+        model.confirmReceiptQuickSave()
+        settle()
+        assertEquals("USD", deps.requests.single().currency)
+    }
+
+    @Test
+    fun `N-01-3 R24c a blank-currency OCR token keeps its unverified flag across null then EUR`() {
+        newModel(homeSignal)
+        runNow()
+        scanNow(mecReceipt(currency = "", total = 50.0, merchant = "Shop"))
+        advance(5_000)
+        assertNull(st.homeCurrency)
+        assertNull(st.editCurrency)
+
+        emitHome(avail("EUR"))
+        settle()
+
+        assertEquals("EUR", st.homeCurrency)
+        assertEquals("EUR", st.editCurrency)
+        assertTrue("home is only assumed for a blank token (R24c)", st.currencyUnverified)
+        setState(st.copy(editAmount = "50.00", editMerchant = ""))
+        withMerchantSuggestion()
+        assertFalse("an unverified currency is never quick-saved", model.canOfferReceiptQuickSave())
+    }
+
+    @Test
+    fun `N-01-3 R24c a blank-currency token scanned after the null stays unverified when EUR arrives`() {
+        newModel(homeSignal)
+        runNow()
+        advance(5_000)
+        scanNow(mecReceipt(currency = "", total = 50.0, merchant = "Shop"))
+        assertNull(st.editCurrency)
+
+        emitHome(avail("EUR"))
+        settle()
+
+        assertEquals("EUR", st.editCurrency)
+        assertTrue(st.currencyUnverified)
+    }
+
+    private data class Outcome(
+        val editCurrency: String?,
+        val unverified: Boolean,
+        val region: CurrencyRegionUi,
+        val home: String?,
+        val options: List<String>,
+        val amount: String,
+        val merchant: String
+    )
+
+    private fun outcomeAfter(receiptCurrency: String, homes: List<ReadHomeCurrencyState>): Outcome {
+        homeSignal.resetReplayCache()
+        homeSignal.tryEmit(homes.first())
+        newModel(homeSignal)
+        settle()
+        scan(mecReceipt(currency = receiptCurrency, total = 50.0, merchant = "Shop"))
+        homes.drop(1).forEach { emitHome(it); settle() }
+        return Outcome(
+            st.editCurrency, st.currencyUnverified, st.currencyRegion, st.homeCurrency,
+            st.currencyOptions, st.editAmount, st.editMerchant
+        )
+    }
+
+    private val readError = ReadHomeCurrencyState.Unavailable(ReadHomeFailure.READ_ERROR)
+
+    @Test
+    fun `N-01-3 EUR then null then EUR leaves an assumed-home review identical to no null`() {
+        val baseline = outcomeAfter("", listOf(avail("EUR")))
+        val viaNull = outcomeAfter("", listOf(avail("EUR"), readError, avail("EUR")))
+
+        assertEquals("EUR", baseline.editCurrency)
+        assertTrue(baseline.unverified)
+        assertEquals(baseline, viaNull)
+    }
+
+    @Test
+    fun `N-01-3 EUR then null then EUR leaves an explicit USD proposal identical to no null`() {
+        val baseline = outcomeAfter("USD", listOf(avail("EUR")))
+        val viaNull = outcomeAfter("USD", listOf(avail("EUR"), readError, avail("EUR")))
+
+        assertEquals("USD", baseline.editCurrency)
+        assertEquals(baseline, viaNull)
+    }
+
+    @Test
+    fun `N-01-3 the home is null while the read is unavailable and the edit state is untouched`() {
+        newModel(homeSignal)
+        homeSignal.tryEmit(avail("EUR"))
+        settle()
+        scan(mecReceipt(currency = "", total = 50.0, merchant = "Shop"))
+        model.updateMerchant("Edited")
+        val before = st
+
+        readFails()
+
+        assertNull(st.homeCurrency)
+        assertEquals(before.editCurrency, st.editCurrency)
+        assertEquals(before.currencyUnverified, st.currencyUnverified)
+        assertEquals(before.editAmount, st.editAmount)
+        assertEquals("Edited", st.editMerchant)
+        assertEquals(ScanStep.REVIEW, st.step)
+    }
+
+    @Test
+    fun `N-01-3 EUR then null then USD follows the direct EUR to USD change for an assumed home including assumedHomeLost`() {
+        val direct = outcomeAfter("", listOf(avail("EUR"), avail("USD")))
+        val viaNull = outcomeAfter("", listOf(avail("EUR"), readError, avail("USD")))
+
+        assertNull("the assumed home cannot follow the change", direct.editCurrency)
+        assertEquals(CurrencyRegionUi.Unset(CurrencyUnsetReason.NONE_PROPOSED), direct.region)
+        assertFalse(direct.unverified)
+        assertEquals("USD", direct.home)
+        assertEquals(direct, viaNull)
+    }
+
+    @Test
+    fun `N-01-3 EUR then null then GBP keeps an explicit USD proposal exactly like the direct change`() {
+        val direct = outcomeAfter("USD", listOf(avail("EUR"), avail("GBP")))
+        val viaNull = outcomeAfter("USD", listOf(avail("EUR"), readError, avail("GBP")))
+
+        assertEquals("USD", direct.editCurrency)
+        assertEquals(direct, viaNull)
+    }
+
+    // ---- F-entry controls: real home behaviour is unchanged ----
+
+    @Test
+    fun `N-01-3 control a real home with a USD proposal resolves at once and saves USD 50`() {
+        deps.store.putRate("USD", 0.9, mecDay(14))
+        newModel(homeSignal)
+        homeSignal.tryEmit(avail("EUR"))
+        settle()
+
+        scan(mecReceipt(currency = "USD", total = 50.0, merchant = "Shop"))
+
+        assertEquals("EUR", st.homeCurrency)
+        assertEquals("USD", st.editCurrency)
+        assertFalse(st.currencyUnverified)
+        model.saveExpense()
+        settle()
+        assertEquals("USD", deps.requests.single().currency)
+        assertEquals(50.0, deps.requests.single().amount, 0.0)
+    }
+
+    @Test
+    fun `N-01-3 control a home change with an assumed-home review still clears the currency`() {
+        newModel(homeSignal)
+        homeSignal.tryEmit(avail("EUR"))
+        settle()
+        scan(mecReceipt(currency = "", total = 50.0, merchant = "Shop"))
+        assertEquals("EUR", st.editCurrency)
+
+        emitHome(avail("GBP"))
+        settle()
+
+        assertEquals("GBP", st.homeCurrency)
+        assertNull(st.editCurrency)
+        assertFalse(st.currencyUnverified)
+        assertEquals(CurrencyRegionUi.Unset(CurrencyUnsetReason.NONE_PROPOSED), st.currencyRegion)
+    }
+
+    @Test
+    fun `N-01-3 control a home change with an explicit USD proposal keeps USD`() {
+        newModel(homeSignal)
+        homeSignal.tryEmit(avail("EUR"))
+        settle()
+        scan(mecReceipt(currency = "USD", total = 50.0, merchant = "Shop"))
+
+        emitHome(avail("GBP"))
+        settle()
+
+        assertEquals("GBP", st.homeCurrency)
+        assertEquals("USD", st.editCurrency)
+    }
+
+    // ---- F-entry restart: a dead collection restarts once, never duplicated ----
+
+    /** First subscription fails (READ_ERROR ends the collection); later ones follow [homeSignal] (EUR). */
+    private fun newModelWithEndedRead() {
+        homeSignal.resetReplayCache()
+        homeSignal.tryEmit(avail("EUR"))
+        subscriptions.set(0)
+        newModel(flow {
+            if (subscriptions.incrementAndGet() == 1) throw IOException("synthetic private path /data/918")
+            emitAll(homeSignal)
+        })
+        settle()
+        assertNull(st.homeCurrency)
+        assertEquals(1, subscriptions.get())
+        assertEquals("the ended collection holds no subscriber", 0, homeSignal.subscriptionCount.value)
+    }
+
+    private fun assertRestartedOnce() {
+        assertEquals("EUR", st.homeCurrency)
+        assertEquals("one restart, one new subscription", 2, subscriptions.get())
+        assertEquals("exactly one live collector", 1, homeSignal.subscriptionCount.value)
+    }
+
+    @Test
+    fun `N-01-3 reset after READ_ERROR restarts the home collection once and home resolves`() {
+        newModelWithEndedRead()
+
+        model.reset()
+        settle()
+
+        assertRestartedOnce()
+        assertEquals("EUR", st.editCurrency)
+    }
+
+    @Test
+    fun `N-01-3 retry after READ_ERROR restarts the home collection once and home resolves`() {
+        newModelWithEndedRead()
+
+        model.retry()
+        settle()
+
+        assertRestartedOnce()
+        assertEquals("EUR", st.editCurrency)
+    }
+
+    @Test
+    fun `N-01-3 processImageUri after READ_ERROR restarts the home collection once and the proposal resolves`() {
+        newModelWithEndedRead()
+
+        model.processGalleryImage(stubReceipt(mecReceipt(currency = "USD", total = 50.0, merchant = "Shop")))
+        settle()
+
+        assertRestartedOnce()
+        assertEquals(ScanStep.REVIEW, st.step)
+        assertEquals("USD", st.editCurrency)
+        assertFalse(st.currencyUnverified)
+    }
+
+    @Test
+    fun `N-01-3 repeated reset retry and scan after READ_ERROR create no duplicate collector`() {
+        newModelWithEndedRead()
+
+        model.reset()
+        model.retry()
+        model.reset()
+        model.processGalleryImage(stubReceipt(mecReceipt(currency = "USD", total = 50.0, merchant = "Shop")))
+        model.reset()
+        settle()
+        assertRestartedOnce()
+
+        model.reset()
+        model.retry()
+        settle()
+        assertRestartedOnce()
+    }
+
+    @Test
+    fun `N-01-3 reset retry and scan do not restart when home is known`() {
+        subscriptions.set(0)
+        newModel(flow {
+            subscriptions.incrementAndGet()
+            emit(avail("EUR"))
+            awaitCancellation()
+        })
+        settle()
+        assertEquals("EUR", st.homeCurrency)
+
+        model.reset()
+        model.retry()
+        model.processGalleryImage(stubReceipt(mecReceipt(currency = "USD", total = 50.0, merchant = "Shop")))
+        settle()
+
+        assertEquals(1, subscriptions.get())
+        assertEquals("EUR", st.homeCurrency)
+    }
+
+    @Test
+    fun `N-01-3 reset retry and scan do not restart while the collection is still active`() {
+        subscriptions.set(0)
+        newModel(flow<ReadHomeCurrencyState> {
+            subscriptions.incrementAndGet()
+            emit(ReadHomeCurrencyState.Loading)
+            awaitCancellation()
+        })
+        runNow()
+
+        model.reset()
+        model.retry()
+        model.processGalleryImage(stubReceipt(mecReceipt(currency = "USD", total = 50.0, merchant = "Shop")))
+        runNow()
+        assertEquals("pending home, active job", 1, subscriptions.get())
+
+        advance(5_000)
+        assertNull(st.homeCurrency)
+        model.reset()
+        model.retry()
+        model.processGalleryImage(stubReceipt(mecReceipt(currency = "USD", total = 50.0, merchant = "Shop")))
+        runNow()
+
+        assertEquals("a timeout null leaves the job active, so no restart", 1, subscriptions.get())
     }
 }

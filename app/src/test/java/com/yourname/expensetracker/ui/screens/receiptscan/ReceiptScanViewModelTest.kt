@@ -469,6 +469,7 @@ class ReceiptScanViewModelTest : ViewModelTestUtils() {
     }
 
     @Test fun explicitCurrencyPickClearsUnverifiedAndAllowsQuickSave() = runTest(testDispatcher) {
+        advanceUntilIdle() // quick save also needs the home read to have finished
         setState(quickSaveReadyState(currencyUnverified = true))
         assertFalse(model.canOfferReceiptQuickSave())
 

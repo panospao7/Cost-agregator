@@ -31,7 +31,10 @@ import java.time.ZoneId
 import java.time.ZonedDateTime
 import java.util.Locale
 import java.util.TimeZone
+import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -287,7 +290,8 @@ class AddExpenseViewModelHomeReadTest : ViewModelTestUtils() {
         viewModel.updateAmount("5")
         saveWithMerchant()
         assertSaveBlockedWithError()
-        assertEquals(listOf("HOME_CURRENCY_READ_UNAVAILABLE reason=READ_ERROR"), warnings)
+        // One line per read: the first at creation, the second from the restart when the sheet opened.
+        assertEquals(List(2) { "HOME_CURRENCY_READ_UNAVAILABLE reason=READ_ERROR" }, warnings)
         assertTrue("no throwable is logged", throwables.isEmpty())
     }
 
@@ -484,5 +488,127 @@ class AddExpenseViewModelHomeReadTest : ViewModelTestUtils() {
         assertEquals("", st.amount)
         assertEquals("USD", st.homeCurrency)
         assertTrue(st.homeChangeClearedNote)
+    }
+
+    // ---- F-entry restart: onSheetOpened restarts a dead home collection once ----
+
+    private val subscriptions = AtomicInteger(0)
+    private val readEnds = CompletableDeferred<Unit>()
+
+    /**
+     * Subscription 1: home EUR, then (when [readEnds] completes) a throwing read, which ends the collection
+     * with a READ_ERROR. Later subscriptions follow [homeFlow].
+     */
+    private fun endableRead(): Flow<ReadHomeCurrencyState> = flow {
+        if (subscriptions.incrementAndGet() == 1) {
+            emit(avail("EUR"))
+            readEnds.await()
+            throw IOException("synthetic private path /data/918")
+        }
+        emitAll(homeFlow)
+    }
+
+    /** Opens the sheet on a known EUR home with a USD pick and a typed 5; the read has not failed yet. */
+    private fun openOnKnownHomeWithForeignDraft() {
+        subscriptions.set(0)
+        homeFlow.resetReplayCache()
+        homeFlow.tryEmit(avail("EUR"))
+        newViewModel(endableRead())
+        settle()
+        viewModel.onSheetOpened()
+        settle()
+        assertEquals("EUR", st.homeCurrency)
+        viewModel.selectCurrency("USD")
+        viewModel.updateAmount("5")
+        settle()
+    }
+
+    private fun endTheRead() {
+        readEnds.complete(Unit)
+        settle()
+        assertNull(st.homeCurrency)
+        assertEquals("the ended collection holds no subscriber", 0, homeFlow.subscriptionCount.value)
+    }
+
+    @Test
+    fun `N-01-3 after READ_ERROR the save is blocked and onSheetOpened restarts once, keeping the draft and pick, then save works`() {
+        openOnKnownHomeWithForeignDraft()
+        endTheRead()
+        saveWithMerchant()
+        assertSaveBlockedWithError()
+        assertEquals("5", st.amount)
+
+        viewModel.onSheetOpened()
+        settle()
+
+        assertEquals("EUR", st.homeCurrency)
+        assertEquals(2, subscriptions.get())
+        assertEquals(1, homeFlow.subscriptionCount.value)
+        assertEquals("5", st.amount)
+        assertEquals("USD", st.selectedCurrency)
+        assertFalse(st.homeChangeClearedNote)
+        viewModel.save()
+        settle()
+        coVerify(exactly = 1) { anySave() }
+        assertTrue(lastSaveArgs.contains("USD"))
+        assertTrue(lastSaveArgs.contains(5.0))
+    }
+
+    @Test
+    fun `N-01-3 onSheetOpened does not restart the collection when home is known`() {
+        openOnKnownHomeWithForeignDraft()
+
+        viewModel.onSheetOpened()
+        viewModel.onSheetOpened()
+        settle()
+
+        assertEquals(1, subscriptions.get())
+        assertEquals("EUR", st.homeCurrency)
+    }
+
+    @Test
+    fun `N-01-3 onSheetOpened does not restart the collection while the job is active, including after the timeout null`() {
+        subscriptions.set(0)
+        newViewModel(flow<ReadHomeCurrencyState> {
+            subscriptions.incrementAndGet()
+            emit(ReadHomeCurrencyState.Loading)
+            awaitCancellation()
+        })
+        runNow()
+
+        viewModel.onSheetOpened()
+        viewModel.onSheetOpened()
+        runNow()
+        assertEquals(1, subscriptions.get())
+
+        advance(5_000)
+        assertNull(st.homeCurrency)
+        viewModel.onSheetOpened()
+        viewModel.onSheetOpened()
+        runNow()
+
+        assertEquals("a timeout null leaves the job active", 1, subscriptions.get())
+    }
+
+    @Test
+    fun `N-01-3 repeated onSheetOpened after READ_ERROR creates exactly one collector`() {
+        openOnKnownHomeWithForeignDraft()
+        endTheRead()
+
+        viewModel.onSheetOpened()
+        viewModel.onSheetOpened()
+        viewModel.onSheetOpened()
+        settle()
+
+        assertEquals(2, subscriptions.get())
+        assertEquals(1, homeFlow.subscriptionCount.value)
+        assertEquals("EUR", st.homeCurrency)
+
+        viewModel.onSheetOpened()
+        settle()
+        assertEquals(2, subscriptions.get())
+        assertEquals(1, homeFlow.subscriptionCount.value)
+        assertEquals("USD", st.selectedCurrency)
+        assertEquals("5", st.amount)
     }
 }
