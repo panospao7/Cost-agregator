@@ -255,8 +255,8 @@ class BlockPartyReadFailureTest {
         assertBlockPartyHidden(result)
         assertRestOfDashboardCompiled(result)
         coVerify(atLeast = 1) { assemblerDao.getByDateRange(any(), any()) }
-        // The engine read did succeed: it is the warning, not the engine, that hid the card.
-        coVerify(atLeast = 1) { healthyDao.getByDateRange(any(), any()) }
+        // The engine read never runs: the assembler's warning alone hid the card.
+        coVerify(exactly = 0) { healthyDao.getByDateRange(any(), any()) }
     }
 
     /** Real chain, restore barrier on the assembler only. */
