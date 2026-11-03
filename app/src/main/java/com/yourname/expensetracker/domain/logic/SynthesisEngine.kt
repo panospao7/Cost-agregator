@@ -682,8 +682,8 @@ class SynthesisEngine @Inject constructor(
             else convertAmount(paid.amount, paid.currency, bpCurrency)
                 ?: run { bpConversionFailures++; 0.0 }
         }
-        val totalPlacedRecurring = recurringImpactByDay.values.sumOf { it.amount }
-        val totalMonthlyPlanned = plannedImpactByDay.values.sumOf { it.amount }
+        val totalPlacedRecurring = recurringImpactByDay.values.sumOf { it.convertedAmount }
+        val totalMonthlyPlanned = plannedImpactByDay.values.sumOf { it.convertedAmount }
 
             // Centralized Logic Gain: Factoring in Goal Reserves (Savings)
         val goalReserves = components.goalReserves
@@ -723,14 +723,14 @@ class SynthesisEngine @Inject constructor(
             // 1. Use pre-calculated recurring expenses for this day
             val recurringItemsOnDay = recurringByDay[day] ?: emptyList()
             val recurringDayAmount = recurringImpactByDay[day]
-            val recurringOnDay = recurringDayAmount?.amount ?: 0.0
+            val recurringOnDay = recurringDayAmount?.convertedAmount ?: 0.0
             dayConversionFailures += recurringDayAmount?.failures ?: 0
             val recurringNames = recurringItemsOnDay.map { it.merchantName }
 
             // 2. Identify Planned on this day (MUST=100%, LIKELY=70%, OPTIONAL=0%)
             val plannedItemsOnDay = plannedByDay[day] ?: emptyList()
             val plannedDayAmount = plannedImpactByDay[day]
-            val plannedOnDay = plannedDayAmount?.amount ?: 0.0
+            val plannedOnDay = plannedDayAmount?.convertedAmount ?: 0.0
             dayConversionFailures += plannedDayAmount?.failures ?: 0
             val plannedNames = plannedItemsOnDay.map { it.description }
 
@@ -1009,7 +1009,7 @@ class SynthesisEngine @Inject constructor(
     private class PaidRecurringBill(val amount: Double, val currency: String)
 
     /** BL-02: converted per-day sum plus the count of items excluded by conversion failure. */
-    private class BlockPartyDayAmount(val amount: Double, val failures: Int)
+    private class BlockPartyDayAmount(val convertedAmount: Double, val failures: Int)
 
     /**
      * Legacy fallback: builds [recurringByDay] using ad-hoc

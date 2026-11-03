@@ -699,12 +699,9 @@ class ForecastInputAssembler @Inject constructor(
         }
 
     /**
-     * BL-02: one dedupe rule for planned rows projected from a recurring occurrence
-     * (non-null sourceOccurrenceKey). Such a row is dropped when its occurrence is
-     * already represented elsewhere in the forecast input: [representedOccurrenceKeys]
-     * are the PLANNED occurrence keys ([assemble]); null means every linked row is
-     * represented by the recurring rule itself ([assembleNormalized], which has no
-     * confirmedOccurrences). Rows without a key are never dropped.
+     * [assemble] only: a planned row projected from a recurring occurrence (non-null
+     * sourceOccurrenceKey) is dropped when its key is in [representedOccurrenceKeys], the
+     * PLANNED occurrence keys. Rows without a key are never dropped.
      */
     private fun List<PlannedExpense>.withoutRepresentedOccurrences(
         representedOccurrenceKeys: Set<String>
