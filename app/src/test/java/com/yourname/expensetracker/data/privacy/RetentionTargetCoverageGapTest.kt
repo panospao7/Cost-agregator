@@ -360,7 +360,7 @@ class RetentionTargetCoverageGapTest {
     private fun importItem(
         runId: Long,
         index: Int,
-        merchantKey: String,
+        merchantKey: String?,
         createdAt: Long,
         merchant: String?,
         otherTimestamp: Long = createdAt,
@@ -391,25 +391,60 @@ class RetentionTargetCoverageGapTest {
         val result = targetNamed("bank_statement_import_items.merchant").purge(cutoffMs)
 
         assertTrue(result.success)
-        assertEquals("only the old row that HAS a merchant is counted", 1, result.rowsPurged)
+        assertEquals(
+            "both old rows are counted: the one with merchant+fingerprint and the fingerprint-only one",
+            2,
+            result.rowsPurged
+        )
 
         val rows = dao.getByRunId(runId).associateBy { it.itemIndex }
         assertEquals("rows are redacted, never deleted", 4, rows.size)
         val old = rows.getValue(0)
         assertNull("[1ms older] merchant", old.merchant)
-        // KNOWN DEFECT PF-1 — flip to assertNull/hash when fixed
-        // The retention target nulls only `merchant`; the plaintext merchant key survives in
-        // transactionFingerprint, so the merchant identity is still recoverable. Pinned as-is.
-        assertEquals(
-            "[1ms older] KNOWN DEFECT PF-1 — plaintext merchant key kept in transactionFingerprint",
-            "syntheticmerchantold",
-            old.transactionFingerprint
+        // P-08-4 (formerly KNOWN DEFECT PF-1): legacy rows hold the plaintext merchant key in
+        // transactionFingerprint, so the retention target must clean it together with `merchant`.
+        assertNull("[1ms older] transactionFingerprint (plaintext merchant key) must be cleaned", old.transactionFingerprint)
+        assertEquals("[at cutoff] fingerprint kept", "syntheticmerchantatcutoff", rows.getValue(1).transactionFingerprint)
+        assertEquals("[recent] fingerprint kept", "syntheticmerchantrecent", rows.getValue(2).transactionFingerprint)
+        assertNull(
+            "[1ms older, no merchant] fingerprint-only row is cleaned too",
+            rows.getValue(3).transactionFingerprint
         )
         assertEquals("[1ms older] amount kept", 9.99, old.amount!!, 0.0)
         assertEquals("[1ms older] status kept", BankStatementImportItem.STATUS_CREATED_REVIEW, old.status)
         assertEquals("[at cutoff] merchant kept", "Synthetic Merchant At Cutoff", rows.getValue(1).merchant)
         assertEquals("[recent] merchant kept", "Synthetic Merchant Recent", rows.getValue(2).merchant)
         assertNull("[no merchant] stays null", rows.getValue(3).merchant)
+    }
+
+    @Test
+    fun `bank_statement_import_items target counts only old rows that still carry a merchant or fingerprint`() = runTest {
+        val dao = database.bankStatementImportItemDao()
+        val runId = 2L
+        val stale = oneMsOlder - 1_000
+        dao.insert(importItem(runId, 0, "syntheticbothold", oneMsOlder, "Synthetic Both Old", otherTimestamp = now))
+        dao.insert(importItem(runId, 1, "syntheticfingerprintonly", oneMsOlder, null, otherTimestamp = now))
+        dao.insert(importItem(runId, 2, null, oneMsOlder, "Synthetic Merchant Only", otherTimestamp = now))
+        // Already clean (new-style ledger row): nothing to purge, must not be counted.
+        dao.insert(importItem(runId, 3, null, oneMsOlder, null, otherTimestamp = now))
+        // Newer than the cutoff: untouched even though it carries both values.
+        dao.insert(importItem(runId, 4, "syntheticrecentkey", atCutoff, "Synthetic Recent", otherTimestamp = stale))
+
+        val result = targetNamed("bank_statement_import_items.merchant").purge(cutoffMs)
+
+        assertTrue(result.success)
+        assertEquals("rows 0, 1 and 2 changed; the clean row and the newer row did not", 3, result.rowsPurged)
+        val rows = dao.getByRunId(runId).associateBy { it.itemIndex }
+        assertEquals(5, rows.size)
+        for (index in 0..3) {
+            assertNull("[row $index] merchant", rows.getValue(index).merchant)
+            assertNull("[row $index] fingerprint", rows.getValue(index).transactionFingerprint)
+        }
+        assertEquals("Synthetic Recent", rows.getValue(4).merchant)
+        assertEquals("syntheticrecentkey", rows.getValue(4).transactionFingerprint)
+
+        val second = targetNamed("bank_statement_import_items.merchant").purge(cutoffMs)
+        assertEquals("second pass is idempotent", 0, second.rowsPurged)
     }
 
     // ══ exact-at-cutoff: notification_intake (RetentionModule.kt:256-301) ═════

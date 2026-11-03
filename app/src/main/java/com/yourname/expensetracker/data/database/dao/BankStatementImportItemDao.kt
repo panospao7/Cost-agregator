@@ -23,6 +23,6 @@ interface BankStatementImportItemDao {
     @Query("SELECT * FROM bank_statement_import_items WHERE runId = :runId AND itemIndex = :itemIndex LIMIT 1")
     suspend fun getByRunAndIndex(runId: Long, itemIndex: Int): BankStatementImportItem?
 
-    @Query("UPDATE bank_statement_import_items SET merchant = NULL WHERE createdAt < :cutoffMs AND merchant IS NOT NULL")
+    @Query("UPDATE bank_statement_import_items SET merchant = NULL, transactionFingerprint = NULL WHERE createdAt < :cutoffMs AND (merchant IS NOT NULL OR transactionFingerprint IS NOT NULL)")
     suspend fun redactMerchantOlderThan(cutoffMs: Long): Int
 }

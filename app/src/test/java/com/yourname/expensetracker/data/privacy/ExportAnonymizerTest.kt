@@ -505,17 +505,57 @@ class ExportAnonymizerTest {
         val file = tempFolder.newFile("bank_items.db")
         val db = SQLiteDatabase.openOrCreateDatabase(file, null)
         db.execSQL("CREATE TABLE bank_statement_import_items (id INTEGER PRIMARY KEY, merchant TEXT, amount REAL, transactionFingerprint TEXT)")
-        db.execSQL("INSERT INTO bank_statement_import_items(id, merchant, amount, transactionFingerprint) VALUES (1, 'SECRET_MERCHANT', 42.5, 'KEEP_FP')")
-        db.execSQL("INSERT INTO bank_statement_import_items(id, merchant, amount, transactionFingerprint) VALUES (2, NULL, 10.0, 'KEEP_FP2')")
+        db.execSQL("INSERT INTO bank_statement_import_items(id, merchant, amount, transactionFingerprint) VALUES (1, 'SECRET_MERCHANT', 42.5, 'secretmerchantkey')")
+        db.execSQL("INSERT INTO bank_statement_import_items(id, merchant, amount, transactionFingerprint) VALUES (2, NULL, 10.0, 'secretfingerprintonly')")
         db.close()
 
         anonymizer.sanitizeExport(file)
 
         assertEquals("[REDACTED]", queryString(file, "SELECT merchant FROM bank_statement_import_items WHERE id=1"))
-        assertEquals("KEEP_FP", queryString(file, "SELECT transactionFingerprint FROM bank_statement_import_items WHERE id=1"))
-        // Row 2 merchant is null — should not be affected
+        // P-08-4: the legacy plaintext merchant key in transactionFingerprint is cleaned too.
+        assertEquals(null, queryString(file, "SELECT transactionFingerprint FROM bank_statement_import_items WHERE id=1"))
+        // Row 2 merchant is null: stays null (no [REDACTED] gained), but its fingerprint is cleaned.
         assertEquals(null, queryString(file, "SELECT merchant FROM bank_statement_import_items WHERE id=2"))
-        assertEquals("KEEP_FP2", queryString(file, "SELECT transactionFingerprint FROM bank_statement_import_items WHERE id=2"))
+        assertEquals(null, queryString(file, "SELECT transactionFingerprint FROM bank_statement_import_items WHERE id=2"))
+        // Structure preserved.
+        assertEquals(42.5, queryDouble(file, "SELECT amount FROM bank_statement_import_items WHERE id=1"), 0.0)
+        assertEquals(2.0, queryDouble(file, "SELECT COUNT(*) FROM bank_statement_import_items"), 0.0)
+    }
+
+    @Test
+    fun sanitizeExport_bank_items_null_merchant_with_fingerprint_is_counted_and_never_gains_redacted_marker() {
+        val file = tempFolder.newFile("bank_items_fp_only.db")
+        val db = SQLiteDatabase.openOrCreateDatabase(file, null)
+        db.execSQL("CREATE TABLE bank_statement_import_items (id INTEGER PRIMARY KEY, merchant TEXT, amount REAL, transactionFingerprint TEXT)")
+        db.execSQL("INSERT INTO bank_statement_import_items(id, merchant, amount, transactionFingerprint) VALUES (1, NULL, 10.0, 'secretfingerprintonly')")
+        // Already clean: not counted.
+        db.execSQL("INSERT INTO bank_statement_import_items(id, merchant, amount, transactionFingerprint) VALUES (2, NULL, 11.0, NULL)")
+        db.close()
+
+        val messages = captureTimber { anonymizer.sanitizeExport(file) }
+
+        assertEquals(null, queryString(file, "SELECT transactionFingerprint FROM bank_statement_import_items WHERE id=1"))
+        assertEquals(0.0, queryDouble(file, "SELECT COUNT(*) FROM bank_statement_import_items WHERE merchant IS NOT NULL"), 0.0)
+        assertTrue(
+            "fingerprint-only row must be counted exactly once, got $messages",
+            messages.any { it.contains("bankImportItems=1 ") }
+        )
+    }
+
+    @Test
+    fun sanitizeExport_bank_items_without_fingerprint_column_still_redacts_merchant() {
+        val file = tempFolder.newFile("bank_items_legacy_no_fp.db")
+        val db = SQLiteDatabase.openOrCreateDatabase(file, null)
+        db.execSQL("CREATE TABLE bank_statement_import_items (id INTEGER PRIMARY KEY, merchant TEXT, amount REAL)")
+        db.execSQL("INSERT INTO bank_statement_import_items(id, merchant, amount) VALUES (1, 'SECRET_MERCHANT', 42.5)")
+        db.execSQL("INSERT INTO bank_statement_import_items(id, merchant, amount) VALUES (2, NULL, 10.0)")
+        db.close()
+
+        anonymizer.sanitizeExport(file)
+
+        assertEquals("[REDACTED]", queryString(file, "SELECT merchant FROM bank_statement_import_items WHERE id=1"))
+        assertEquals(null, queryString(file, "SELECT merchant FROM bank_statement_import_items WHERE id=2"))
+        assertEquals(42.5, queryDouble(file, "SELECT amount FROM bank_statement_import_items WHERE id=1"), 0.0)
     }
 
     // ── S1: user_corrections and receipt_item_categorizations export scrub ────
