@@ -772,7 +772,7 @@ private fun GoalCard(
         return
     }
     val progress = (goal.currentAmount / goal.targetAmount).coerceIn(0.0, 1.0)
-    val isCompleted = goal.currentAmount >= goal.targetAmount
+    val isCompleted = SavingsQuickAdd.isCompleted(goal)
     
     Card(
         onClick = onClick,
@@ -814,7 +814,7 @@ private fun GoalCard(
                     val quickAddAmount = SavingsQuickAdd.amountOrNull(goal)
                     if (quickAddAmount != null) {
                         TextButton(onClick = onQuickAdd, enabled = canContribute) {
-                            Text(stringResource(R.string.savings_action_add_amount, quickAddAmount.toPlainString()))
+                            Text(stringResource(R.string.savings_action_add_amount, SavingsQuickAdd.labelAmount(quickAddAmount, goal.currency)))
                         }
                     }
                 }

@@ -2,8 +2,14 @@ package com.yourname.expensetracker.ui.screens.savings
 
 import com.yourname.expensetracker.domain.model.GoalProtectionLevel
 import com.yourname.expensetracker.domain.model.SavingsGoal
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
+import java.math.BigDecimal
+import java.util.Locale
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SavingsQuickAddTest {
@@ -60,6 +66,55 @@ class SavingsQuickAddTest {
     @Test
     fun `unknown fraction digits gives none`() {
         assertNull(SavingsQuickAdd.amountOrNull(100.0, 95.0, null))
+    }
+
+    @Test
+    fun `isCompleted treats floating point dust as complete`() {
+        assertTrue(SavingsQuickAdd.isCompleted(0.80, 0.7999999999999999, 2))
+        assertTrue(SavingsQuickAdd.isCompleted(goal(0.80, 0.7999999999999999, "EUR")))
+        assertTrue(SavingsQuickAdd.isCompleted(100.0, 100.0, 2))
+        assertTrue(SavingsQuickAdd.isCompleted(100.0, 120.0, 2))
+    }
+
+    @Test
+    fun `isCompleted is false while a minor unit remains`() {
+        assertFalse(SavingsQuickAdd.isCompleted(0.80, 0.79, 2))
+        assertFalse(SavingsQuickAdd.isCompleted(goal(0.80, 0.79, "EUR")))
+    }
+
+    @Test
+    fun `isCompleted JPY uses zero fraction digits`() {
+        assertTrue(SavingsQuickAdd.isCompleted(goal(1000.0, 999.9999999, "JPY")))
+        assertFalse(SavingsQuickAdd.isCompleted(goal(1000.0, 999.0, "JPY")))
+    }
+
+    @Test
+    fun `isCompleted with unknown digits keeps plain comparison`() {
+        assertFalse(SavingsQuickAdd.isCompleted(0.80, 0.7999999999999999, null))
+        assertTrue(SavingsQuickAdd.isCompleted(0.80, 0.80, null))
+    }
+
+    @Test
+    fun `isCompleted agrees with amountOrNull being absent`() {
+        assertNull(SavingsQuickAdd.amountOrNull(0.80, 0.7999999999999999, 2))
+        assertNotNull(SavingsQuickAdd.amountOrNull(0.80, 0.79, 2))
+    }
+
+    @Test
+    fun `label amount uses locale money formatting for EUR and JPY`() {
+        val original = Locale.getDefault()
+        try {
+            Locale.setDefault(Locale.forLanguageTag("el-GR"))
+            val eur = SavingsQuickAdd.labelAmount(BigDecimal("2.50"), "EUR")
+            assertEquals(CurrencyFormatter.formatMoney(2.5, "EUR"), eur)
+            assertTrue(eur, eur.contains("2,50"))
+            assertEquals(1, eur.count { it == '€' })
+            val jpy = SavingsQuickAdd.labelAmount(BigDecimal("5"), "JPY")
+            assertEquals(CurrencyFormatter.formatMoney(5.0, "JPY"), jpy)
+            assertFalse(jpy, jpy.contains(",") || jpy.contains("."))
+        } finally {
+            Locale.setDefault(original)
+        }
     }
 
     @Test

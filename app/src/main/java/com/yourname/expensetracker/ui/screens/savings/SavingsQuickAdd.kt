@@ -3,6 +3,7 @@ package com.yourname.expensetracker.ui.screens.savings
 import com.yourname.expensetracker.domain.currency.CurrencyAmountPolicy
 import com.yourname.expensetracker.domain.model.SavingsGoal
 import com.yourname.expensetracker.domain.savings.SavingsGoalCurrencyPolicy
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import java.math.BigDecimal
 import java.math.RoundingMode
 
@@ -32,6 +33,32 @@ internal object SavingsQuickAdd {
         if (remaining.signum() <= 0) return null
         return remaining.min(STEP.setScale(fractionDigits))
     }
+
+    /**
+     * Display-only completion: true when the remaining amount rounded HALF_UP to [fractionDigits]
+     * is not positive (so 0.7999999999999999 of 0.80 is complete). Unknown digits or non-finite
+     * inputs keep the plain `current >= target` comparison. Never changes stored values.
+     */
+    fun isCompleted(target: Double, current: Double, fractionDigits: Int?): Boolean {
+        if (fractionDigits == null || fractionDigits < 0 || !target.isFinite() || !current.isFinite()) {
+            return current >= target
+        }
+        return BigDecimal.valueOf(target)
+            .subtract(BigDecimal.valueOf(current))
+            .setScale(fractionDigits, RoundingMode.HALF_UP)
+            .signum() <= 0
+    }
+
+    /** Goal overload: unknown currency or unknown fraction digits keeps `current >= target`. */
+    fun isCompleted(goal: SavingsGoal): Boolean {
+        val currency = SavingsGoalCurrencyPolicy.knownCurrencyOrNull(goal)
+        val digits = currency?.let { CurrencyAmountPolicy.fractionDigits(it) }
+        return isCompleted(goal.targetAmount, goal.currentAmount, digits)
+    }
+
+    /** Button label amount, formatted by the same money formatter as the card amounts. */
+    fun labelAmount(amount: BigDecimal, currencyCode: String): String =
+        CurrencyFormatter.formatMoney(amount.toDouble(), currencyCode)
 
     /** Goal overload: unknown currency or unknown fraction digits gives null. */
     fun amountOrNull(goal: SavingsGoal): BigDecimal? {
