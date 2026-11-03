@@ -222,7 +222,7 @@ class NotificationIntakeEnqueueFailureRoomTest {
         assertNull(after.lockedBy)
         assertNull(after.terminalAt)
         verify(exactly = 1) {
-            workManager.enqueueUniqueWork("${after.id}", ExistingWorkPolicy.KEEP, any<OneTimeWorkRequest>())
+            workManager.enqueueUniqueWork("notification-intake-${after.id}", ExistingWorkPolicy.KEEP, any<OneTimeWorkRequest>())
         }
     }
 

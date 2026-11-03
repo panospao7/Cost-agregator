@@ -146,7 +146,29 @@ class NotificationIntakeCoordinator @Inject constructor(
                 title = title, text = text, bigText = combinedBody,
                 subText = subText, extrasJson = extrasJson
             )
-            val encrypted = crypto.encrypt(transientPayload)
+            // P-01-2: mirror captureForRetry — a failed encrypt persists no row and
+            // returns a controlled StorageFailure; cancellation is never swallowed.
+            val encrypted = try {
+                crypto.encrypt(transientPayload)
+            } catch (e: Exception) {
+                CancellationSafe.rethrowIfCancellation(e)
+                Timber.w("capture: transient encryption failed")
+                diagnostics.emit(DiagnosticEvent(
+                    pipeline = AppPipeline.NOTIFICATION,
+                    stage = "intake",
+                    outcome = EventOutcome.FAILED_FINAL,
+                    reasonCode = DiagnosticReasonCode.DEFERRED_TRANSIENT_ENCRYPT_FAILED,
+                    correlationId = correlationId,
+                    metadata = SafeEventMetadata.builder()
+                        .putHashed("packageName", packageName)
+                        .build(),
+                    isTerminal = true
+                ))
+                return NotificationIntakeCaptureResult.StorageFailure(
+                    correlationId,
+                    DEFERRED_TRANSIENT_ENCRYPT_FAILED
+                )
+            }
             ciphertext = encrypted.ciphertext
             nonce = encrypted.nonce
             version = encrypted.version
@@ -213,8 +235,12 @@ class NotificationIntakeCoordinator @Inject constructor(
         // FAILED_RETRYABLE with the shared backoff ladder or FAILED_FINAL at
         // maxAttempts, controlled code only, locks cleared, conditional on the
         // enqueue-attempt state.
+        // P-01-1: one name for every enqueue site. Legacy work enqueued under the
+        // bare `<id>` name by earlier builds is neither cancelled nor renamed; a
+        // duplicate worker for the same row is safe because NotificationIntakeWorker
+        // claims the row atomically and the loser is a no-op.
         val operation = workManager.enqueueUniqueWork(
-            "$intakeId",
+            NotificationIntakeWorkNames.uniqueWorkName(intakeId),
             ExistingWorkPolicy.KEEP,
             request
         )
@@ -485,7 +511,7 @@ class NotificationIntakeCoordinator @Inject constructor(
         // maxAttempts, controlled code only, locks cleared, conditional on the
         // enqueue-attempt state.
         val operation = workManager.enqueueUniqueWork(
-            "notification-intake-${outcome.intakeId}",
+            NotificationIntakeWorkNames.uniqueWorkName(outcome.intakeId),
             ExistingWorkPolicy.KEEP,
             request
         )
