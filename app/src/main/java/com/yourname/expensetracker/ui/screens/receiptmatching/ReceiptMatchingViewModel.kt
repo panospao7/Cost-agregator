@@ -355,7 +355,7 @@ class ReceiptMatchingViewModel @Inject constructor(
                         )
                         linkResult.onFailure { e ->
                             _state.update { it.copy(error = "Rerun link failed. Please try again.") }
-                            Timber.e(e, "Rerun link failed for receipt ${receipt.id}")
+                            Timber.e("Rerun link failed for receipt ${receipt.id} class=%s", e.javaClass.simpleName)
                         }
                     }
                     is MatchResult.Suggested -> {
@@ -368,7 +368,7 @@ class ReceiptMatchingViewModel @Inject constructor(
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e  // never swallow cancellation
             } catch (e: Exception) {
-                Timber.e(e, "ReceiptMatchingViewModel: rerunForReceipt failed")
+                Timber.e("ReceiptMatchingViewModel: rerunForReceipt failed class=%s", e.javaClass.simpleName)
                 _state.update { it.copy(error = "Rerun failed. Please try again.") }
             } finally {
                 _state.update { it.copy(mutatingReceiptIds = it.mutatingReceiptIds - receipt.id) }
