@@ -279,7 +279,9 @@ class AddExpenseViewModel @Inject constructor(
         // N-01-3: no typed home-currency emission within this deadline is reported as TIMEOUT
         // (same 5s as CurrencySettingsRepository.resolveHomeCurrency).
         const val HOME_READ_TIMEOUT_MS = 5_000L
-        const val LOG_HOME_READ_UNAVAILABLE = "HOME_CURRENCY_READ_UNAVAILABLE"
+        const val LOG_HOME_READ_ERROR = "HOME_CURRENCY_READ_UNAVAILABLE reason=READ_ERROR"
+        const val LOG_HOME_READ_TIMEOUT = "HOME_CURRENCY_READ_UNAVAILABLE reason=TIMEOUT"
+        const val LOG_HOME_READ_INVALID_CODE = "HOME_CURRENCY_READ_UNAVAILABLE reason=INVALID_CODE"
 
         // Bounded message tokens of the existing refresh failures (matched by equality, never displayed).
         const val REFRESH_HOME_QUOTE_UNAVAILABLE = "HOME_CURRENCY_QUOTE_UNAVAILABLE"
@@ -310,7 +312,7 @@ class AddExpenseViewModel @Inject constructor(
   kotlinx.coroutines.flow.channelFlow {
    val timeout = launch {
     delay(HOME_READ_TIMEOUT_MS)
-    Timber.w("%s reason=%s", LOG_HOME_READ_UNAVAILABLE, ReadHomeFailure.TIMEOUT.name)
+    Timber.w(LOG_HOME_READ_TIMEOUT)
     send(null)
    }
    currencySettingsRepository.observeReadHomeCurrency()
@@ -324,7 +326,11 @@ class AddExpenseViewModel @Inject constructor(
       is ReadHomeCurrencyState.Available -> send(homeState.code.code)
       is ReadHomeCurrencyState.Loading -> Unit
       is ReadHomeCurrencyState.Unavailable -> {
-       Timber.w("%s reason=%s", LOG_HOME_READ_UNAVAILABLE, homeState.reason.name)
+       when (homeState.reason) {
+        ReadHomeFailure.READ_ERROR -> Timber.w(LOG_HOME_READ_ERROR)
+        ReadHomeFailure.TIMEOUT -> Timber.w(LOG_HOME_READ_TIMEOUT)
+        ReadHomeFailure.INVALID_CODE -> Timber.w(LOG_HOME_READ_INVALID_CODE)
+       }
        send(null)
       }
      }

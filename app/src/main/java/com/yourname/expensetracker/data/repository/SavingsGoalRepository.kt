@@ -204,14 +204,15 @@ class SavingsGoalRepository @Inject constructor(
                 if (ledgerId <= 0L) throw ManualContributionRollback()
                 ManualContributionResult.Recorded
             }
-        } catch (error: CancellationException) {
-            throw error
-        } catch (error: DatabaseAccessBlockedException) {
-            throw error
-        } catch (_: ManualContributionRollback) {
-            ManualContributionResult.Rejected(MANUAL_CONTRIBUTION_IDEMPOTENCY_CONFLICT)
-        } catch (_: Exception) {
-            ManualContributionResult.Rejected(MANUAL_CONTRIBUTION_UNAVAILABLE)
+        } catch (error: Exception) {
+            if (error is CancellationException || error is DatabaseAccessBlockedException) throw error
+            ManualContributionResult.Rejected(
+                if (error is ManualContributionRollback) {
+                    MANUAL_CONTRIBUTION_IDEMPOTENCY_CONFLICT
+                } else {
+                    MANUAL_CONTRIBUTION_UNAVAILABLE
+                }
+            )
         }
     }
 
