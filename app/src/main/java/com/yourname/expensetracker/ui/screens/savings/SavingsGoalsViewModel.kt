@@ -32,6 +32,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.math.BigDecimal
+import java.util.UUID
 import javax.inject.Inject
 
 /** Quick-add step in the goal's own currency; capped at the remaining amount by [SavingsGoalsViewModel.quickAdd]. */
@@ -473,45 +474,26 @@ class SavingsGoalsViewModel @Inject constructor(
         if (savingsGoalRepository.observeSavingsGoals().first().firstOrNull { it.id == goalId } != goal) return
         if (recommendation != null && (recommendation.currency != currencySettingsRepository.homeCurrency().first() ||
                 recommendation.rateTimestamp != currencySettingsRepository.lastRateUpdate().first())) return
-        val wasAdded = guardedWrite(::emitWriteBlocked) {
-            savingsGoalRepository.incrementSavingsGoalAmount(goalId, amount)
-        } ?: return
-        if (wasAdded) {
-            val recorded = recordContributionHistory(
+        // One key and one timestamp per user action: two real taps each apply, a retry of this
+        // action applies once. Balance and the "manual" history row commit in one transaction, so a
+        // failed or rejected write leaves both untouched and nothing is left to block.
+        val idempotencyKey = "manual-v1:${UUID.randomUUID()}"
+        val result = guardedWrite(::emitWriteBlocked) {
+            savingsGoalRepository.recordManualContribution(
                 goalId = goalId,
-                amount = amount,
-                currency = goal.currency,
-                source = "manual"
+                delta = amount,
+                expectedSnapshot = ManualContributionSnapshot(
+                    currentAmount = goal.currentAmount,
+                    targetAmount = goal.targetAmount,
+                    currency = goal.currency
+                ),
+                idempotencyKey = idempotencyKey,
+                timestamp = timeProvider.now()
             )
-            if (!recorded) return
+        } ?: return
+        if (result == ManualContributionResult.Recorded || result == ManualContributionResult.AlreadyRecorded) {
             loadGamification()
         }
-    }
-
-    /**
-     * Balance/history are separate stores. A failed history write is not success;
-     * block subsequent retries in this session after observing a recording failure.
-     * Durable atomicity/idempotence requires the later owner-level persistence work.
-     */
-    private suspend fun recordContributionHistory(goalId: Long, amount: Double, currency: String, source: String): Boolean {
-        val failureCode = try {
-            if (savingsContributionHistoryRepository.recordContribution(
-                    goalId = goalId, amount = amount, currency = currency, source = source
-                )) null else "SAVINGS_HISTORY_WRITE_REJECTED"
-        } catch (error: CancellationException) {
-            throw error
-        } catch (_: Exception) {
-            "SAVINGS_HISTORY_WRITE_UNAVAILABLE"
-        }
-        if (failureCode == null) return true
-        _state.update { it.copy(
-            contributionHistoryWriteFailure = failureCode,
-            smartRecommendations = emptyList(),
-            sweepRecommendation = null,
-            streak = null,
-            achievements = emptyList()
-        ) }
-        return false
     }
 
     private fun MoneyAggregateResult.completeDisplayAmountOrNull(targetCurrency: String): Double? =
