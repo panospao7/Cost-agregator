@@ -16,10 +16,24 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.yourname.expensetracker.data.database.entity.Category
+import com.yourname.expensetracker.domain.ai.model.ReceiptItemPlaceholder
 import com.yourname.expensetracker.domain.dto.ReceiptItemCategorizationSnapshot
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
+
+/**
+ * Average confidence over the items that carry an AI result, or null when every item is a
+ * placeholder (or there are none), so the header shows no badge instead of a false 0%.
+ */
+internal fun averageAiConfidence(items: List<ReceiptItemCategorizationSnapshot>): Float? {
+    val aiItems = items.filterNot { ReceiptItemPlaceholder.isPlaceholder(it) }
+    if (aiItems.isEmpty()) return null
+    return aiItems.map { it.confidence }.average().toFloat()
+}
+
+/** The "why this category" button needs a non-blank rationale to show. */
+internal fun shouldShowRationaleInfo(aiRationale: String?): Boolean = !aiRationale.isNullOrBlank()
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -61,8 +75,11 @@ fun ReceiptItemBreakdownCard(
                 )
                 
                 // Average confidence badge
-                val avgConfidence = items.map { it.confidence }.average()
-                ConfidenceBadge(confidence = avgConfidence.toFloat())
+                // Placeholders (items the cloud call did not send) are not AI results: they
+                // are left out of the average, and with none left there is no badge.
+                averageAiConfidence(items)?.let { avgConfidence ->
+                    ConfidenceBadge(confidence = avgConfidence)
+                }
             }
             
             Divider()
@@ -187,7 +204,7 @@ private fun CategorizedItemRow(
             }
             
             // Info button
-            if (item.aiRationale != null) {
+            if (shouldShowRationaleInfo(item.aiRationale)) {
                 IconButton(
                     onClick = onShowRationale,
                     modifier = Modifier.size(24.dp)

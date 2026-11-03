@@ -132,9 +132,13 @@ class CloudReceiptItemCategorizationServiceTest {
         val body = JSONObject().put("candidates", JSONArray().put(
             JSONObject().put("content", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", modelText))))
         )).toString()
-        val method = service.javaClass.getDeclaredMethod("parseResponse", String::class.java, String::class.java, ReceiptItemCategorizationInput::class.java)
+        // parseResponse takes sentCount (items actually sent); these money tests send every item.
+        val method = service.javaClass.getDeclaredMethod(
+            "parseResponse", String::class.java, String::class.java,
+            ReceiptItemCategorizationInput::class.java, Int::class.javaPrimitiveType
+        )
         method.isAccessible = true
-        return method.invoke(service, body, "test", input) as? com.yourname.expensetracker.domain.ai.model.ReceiptItemCategorizationResult
+        return method.invoke(service, body, "test", input, input.lineItems.size) as? com.yourname.expensetracker.domain.ai.model.ReceiptItemCategorizationResult
     }
 
 
