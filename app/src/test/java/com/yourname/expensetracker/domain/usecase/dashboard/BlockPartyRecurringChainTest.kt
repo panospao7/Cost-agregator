@@ -78,9 +78,10 @@ class BlockPartyRecurringChainTest {
         override fun now(): Long = fixedNowMs
     }
 
-    /** What the occurrence DAO returns for any range (shared by the engine and the assembler). */
+    /** Occurrences the DAO mock holds; it returns those whose dueDate is inside the requested range. */
     private var storedOccurrences: List<RecurringOccurrence> = emptyList()
 
+    private lateinit var occurrenceDao: RecurringOccurrenceDao
     private lateinit var computeUseCase: ComputeDashboardWidgetsUseCase
     private lateinit var assembler: ForecastInputAssembler
     private lateinit var analyticsCurrencyNormalizer: AnalyticsCurrencyNormalizer
@@ -319,6 +320,149 @@ class BlockPartyRecurringChainTest {
         assertEquals(3000.0, days.sumOf { it.targetBudget }, TOL)
     }
 
+    // ------------------------------------------------ occurrence range, status, failure (m3)
+
+    /**
+     * Control: the rule's PLANNED occurrence is due this month, so the pattern (id = the row's
+     * sourceRecurringRuleId) places the bill and the keyed row is dropped. The pattern's
+     * nextExpectedDate is in July so only the occurrence read can cause the drop.
+     */
+    @Test
+    fun `BL-02 occurrence inside the current month places the bill and the keyed row is dropped`() = runTest {
+        fixedNowMs = at(15, 12)
+        val inJune = occurrence(1L, 20, 700.0, RecurrenceFrequency.MONTHLY, "Rent")
+        storedOccurrences = listOf(inJune)
+
+        val out = assembler.assembleNormalized(
+            normalizedInput(
+                listOf(projectedRow(30L, inJune), plannedRow(31L)),
+                listOf(pattern(1L, "Rent", 700.0, RecurrenceFrequency.MONTHLY, at(20, 0, month = 7)))
+            )
+        )
+
+        assertEquals(listOf(31L), out.plannedExpenses.map { it.id })
+    }
+
+    /**
+     * The DAO honours the requested range. The rule's only occurrence is due in July, outside the
+     * current month, so it does not place the bill this month and the June keyed row is kept.
+     */
+    @Test
+    fun `BL-02 occurrence outside the current month does not place the bill so the keyed row is kept`() = runTest {
+        fixedNowMs = at(15, 12)
+        val inJune = occurrence(1L, 20, 700.0, RecurrenceFrequency.MONTHLY, "Rent")
+        val inJuly = inJune.copy(dueDate = at(20, 0, month = 7))
+        storedOccurrences = listOf(inJuly)
+
+        val out = assembler.assembleNormalized(
+            normalizedInput(
+                listOf(projectedRow(30L, inJune)),
+                listOf(pattern(1L, "Rent", 700.0, RecurrenceFrequency.MONTHLY, at(20, 0, month = 7)))
+            )
+        )
+
+        assertEquals(listOf(30L), out.plannedExpenses.map { it.id })
+    }
+
+    /**
+     * A PAID occurrence (cash already out) with a stray PLANNED keyed row: the rule has an
+     * occurrence row this month, so the row is dropped. Bill 700 counts once, as PAID: pool
+     * 3000 - 700 = 2300, base 76.667 every day, nothing placed, targets sum to limit - PAID = 2300.
+     * If the row were kept it would be placed again on day 20 and the pool would be 1600.
+     */
+    @Test
+    fun `BL-02 PAID occurrence with a PLANNED keyed row drops the row and counts the bill once`() = runTest {
+        fixedNowMs = at(15, 12)
+        val paid = occurrence(3L, 20, 700.0, RecurrenceFrequency.MONTHLY, "Rent", status = "PAID")
+        storedOccurrences = listOf(paid)
+        val result = computeUseCase.compute(
+            data(
+                patterns = listOf(pattern(3L, "Rent", 700.0, RecurrenceFrequency.MONTHLY, at(1, 0, month = 7))),
+                planned = listOf(projectedRow(30L, paid)),
+                budgets = listOf(overallBudget(3000.0))
+            )
+        )
+
+        val days = blockDays(result)
+        assertEquals(30, days.size)
+        days.forEach {
+            assertEquals("base day ${it.dayOfMonth}", 2300.0 / 30.0, it.baseTarget, TOL)
+            assertEquals("planned day ${it.dayOfMonth}", 0.0, it.plannedImpact, TOL)
+        }
+        assertEquals(2300.0, days.sumOf { it.targetBudget }, TOL)
+    }
+
+    /**
+     * A SKIPPED occurrence is an explicit user removal; a stray PLANNED keyed row is dropped and
+     * the bill is neither placed nor subtracted: pool 3000, base 100, targets sum to 3000.
+     * If the row were kept it would be placed on day 20 and the pool would be 2300.
+     */
+    @Test
+    fun `BL-02 SKIPPED occurrence with a PLANNED keyed row drops the row and does not count the bill`() = runTest {
+        fixedNowMs = at(15, 12)
+        val skipped = occurrence(3L, 20, 700.0, RecurrenceFrequency.MONTHLY, "Rent", status = "SKIPPED")
+        storedOccurrences = listOf(skipped)
+        val result = computeUseCase.compute(
+            data(
+                patterns = listOf(pattern(3L, "Rent", 700.0, RecurrenceFrequency.MONTHLY, at(1, 0, month = 7))),
+                planned = listOf(projectedRow(30L, skipped)),
+                budgets = listOf(overallBudget(3000.0))
+            )
+        )
+
+        val days = blockDays(result)
+        assertEquals(30, days.size)
+        days.forEach {
+            assertEquals("base day ${it.dayOfMonth}", 100.0, it.baseTarget, TOL)
+            assertEquals("planned day ${it.dayOfMonth}", 0.0, it.plannedImpact, TOL)
+        }
+        assertEquals(3000.0, days.sumOf { it.targetBudget }, TOL)
+    }
+
+    /**
+     * The occurrence read fails: the row is kept (fail towards counting), so the bill counts once
+     * in the assembled planned list. The pattern's nextExpectedDate is in July, so the legacy
+     * month match cannot drop it either. Assembler level only: the engine shares the DAO and
+     * would also hit the failure.
+     */
+    @Test
+    fun `BL-02 occurrence DAO failure keeps the keyed row so the bill counts once`() = runTest {
+        fixedNowMs = at(15, 12)
+        val bill = occurrence(1L, 20, 700.0, RecurrenceFrequency.MONTHLY, "Rent")
+        coEvery { occurrenceDao.getByDateRange(any(), any()) } throws IllegalStateException("synthetic read failure")
+
+        val out = assembler.assembleNormalized(
+            normalizedInput(
+                listOf(projectedRow(30L, bill)),
+                listOf(pattern(1L, "Rent", 700.0, RecurrenceFrequency.MONTHLY, at(20, 0, month = 7)))
+            )
+        )
+
+        assertEquals(listOf(30L), out.plannedExpenses.map { it.id })
+    }
+
+    @Test
+    fun `BL-02 occurrence DAO cancellation is rethrown and not swallowed`() = runTest {
+        fixedNowMs = at(15, 12)
+        val bill = occurrence(1L, 20, 700.0, RecurrenceFrequency.MONTHLY, "Rent")
+        coEvery { occurrenceDao.getByDateRange(any(), any()) } throws
+            kotlinx.coroutines.CancellationException("synthetic cancellation")
+
+        var thrown: Throwable? = null
+        try {
+            assembler.assembleNormalized(
+                normalizedInput(
+                    listOf(projectedRow(30L, bill)),
+                    listOf(pattern(1L, "Rent", 700.0, RecurrenceFrequency.MONTHLY, at(20, 0, month = 7)))
+                )
+            )
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            thrown = e
+        }
+
+        assertTrue("CancellationException must propagate", thrown is kotlinx.coroutines.CancellationException)
+    }
+
     // ------------------------------------------------ assembleNormalized
 
     @Test
@@ -481,11 +625,14 @@ class BlockPartyRecurringChainTest {
         priority = PlannedExpensePriority.MUST, sourceOccurrenceKey = key, status = status
     )
 
-    private fun normalizedInput(planned: List<PlannedExpense>) = NormalizedForecastInput(
+    private fun normalizedInput(
+        planned: List<PlannedExpense>,
+        patterns: List<RecurringPattern> = emptyList()
+    ) = NormalizedForecastInput(
         homeCurrency = CurrencyCode("EUR"),
         normalizedExpenses = emptyList(),
         pastSumDaily = emptyList(),
-        recurringPatterns = emptyList(),
+        recurringPatterns = patterns,
         plannedExpenses = planned,
         savingsGoals = emptyList(),
         budgetStatuses = emptyList(),
@@ -549,8 +696,13 @@ class BlockPartyRecurringChainTest {
     @Before
     fun setup() {
         val currencyConverter = mockk<CurrencyConverter>(relaxed = true)
-        val occurrenceDao = mockk<RecurringOccurrenceDao>(relaxed = true)
-        coEvery { occurrenceDao.getByDateRange(any(), any()) } answers { storedOccurrences }
+        occurrenceDao = mockk<RecurringOccurrenceDao>(relaxed = true)
+        // Honours the requested range like the real query: dueDate >= start AND dueDate < end.
+        coEvery { occurrenceDao.getByDateRange(any(), any()) } answers {
+            val start = firstArg<Long>()
+            val end = secondArg<Long>()
+            storedOccurrences.filter { it.dueDate >= start && it.dueDate < end }
+        }
         val coordinator = mockk<RecurringLifecycleCoordinator>(relaxed = true)
         coEvery { coordinator.projectOccurrences(any(), any(), any()) } returns emptyList()
         analyticsCurrencyNormalizer = mockk(relaxed = true)

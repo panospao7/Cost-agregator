@@ -109,6 +109,145 @@ class DashboardContractsAdapterTest {
         assertEquals("RECURRING_RULE|1|1|MONTHLY", result.single { it.id == 3L }.sourceOccurrenceKey)
     }
 
+    /**
+     * BL-02 m3: the adapter must carry sourceRecurringRuleId. Deleting the mapping line restores the
+     * double count in production (assembleNormalized can no longer link a projected row to its rule).
+     */
+    @Test
+    fun `BL-02 observePlannedExpenses maps sourceRecurringRuleId and keeps null as null`() = runTest {
+        fun entity(id: Long, ruleId: Long?) =
+            com.yourname.expensetracker.data.database.entity.PlannedExpense(
+                id = id,
+                description = "Item $id",
+                amount = 100.0,
+                currency = "EUR",
+                date = 1_000L,
+                categoryId = null,
+                isRecurring = ruleId != null,
+                priority = com.yourname.expensetracker.data.database.entity.PlannedExpensePriority.MUST,
+                createdAt = 1L,
+                sourceOccurrenceKey = ruleId?.let { "RECURRING_RULE|$it|1|MONTHLY" },
+                sourceRecurringRuleId = ruleId
+            )
+        every { plannedExpenseRepository.getAllPlannedExpenses() } returns flowOf(
+            listOf(entity(1L, 7L), entity(2L, 42L), entity(3L, null))
+        )
+
+        val result = adapter.observePlannedExpenses().first()
+
+        assertEquals(listOf(1L to 7L, 2L to 42L, 3L to null), result.map { it.id to it.sourceRecurringRuleId })
+    }
+
+    /**
+     * BL-02 m3 (adapter into assembleNormalized): a real entity shaped as
+     * RecurringPlanProjectionService writes it (sourceOccurrenceKey = openSourceOccurrenceKey,
+     * sourceRecurringRuleId = rule, MUST, recurring) goes through the real adapter mapping and the
+     * real assembleNormalized. A manual pattern with id = sourceRecurringRuleId and an occurrence
+     * row this month places the bill, so the projected row is dropped and the bill counts once.
+     * The pattern's nextExpectedDate is in July, so only the mapped rule id can cause the drop.
+     */
+    @Test
+    fun `BL-02 adapter mapped rule id makes assembleNormalized drop the projected row so the bill counts once`() = runTest {
+        val zone = java.time.ZoneId.systemDefault()
+        fun epoch(date: java.time.LocalDateTime) = date.atZone(zone).toInstant().toEpochMilli()
+        val now = epoch(java.time.LocalDateTime.of(2026, 6, 15, 12, 0))
+        val due = epoch(java.time.LocalDateTime.of(2026, 6, 20, 0, 0))
+        val julyNext = epoch(java.time.LocalDateTime.of(2026, 7, 20, 0, 0))
+        val key = "RECURRING_RULE|7|$due|MONTHLY"
+        val projectedEntity = com.yourname.expensetracker.data.database.entity.PlannedExpense(
+            id = 10L,
+            description = "Rent",
+            amount = 700.0,
+            currency = "EUR",
+            date = due,
+            categoryId = null,
+            isRecurring = true,
+            priority = com.yourname.expensetracker.data.database.entity.PlannedExpensePriority.MUST,
+            createdAt = now,
+            sourceOccurrenceKey = key,
+            openSourceOccurrenceKey = key,
+            sourceRecurringRuleId = 7L,
+            merchantKey = "rent",
+            updatedAt = now
+        )
+        val unkeyedEntity = projectedEntity.copy(
+            id = 11L, description = "Dentist", isRecurring = false,
+            sourceOccurrenceKey = null, openSourceOccurrenceKey = null, sourceRecurringRuleId = null
+        )
+        every { plannedExpenseRepository.getAllPlannedExpenses() } returns flowOf(listOf(projectedEntity, unkeyedEntity))
+        val mappedRows = adapter.observePlannedExpenses().first()
+
+        val occurrence = com.yourname.expensetracker.data.database.entity.RecurringOccurrence(
+            sourceType = com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator.SOURCE_TYPE_RECURRING_RULE,
+            sourceId = 7L,
+            occurrenceKey = key,
+            dueDate = due,
+            status = "PLANNED",
+            expectedAmount = 700.0,
+            expectedCurrency = "EUR",
+            paidAmount = null,
+            paidCurrency = null,
+            frequency = "MONTHLY",
+            merchant = "Rent",
+            categoryId = null
+        )
+        val occurrenceDao = mockk<com.yourname.expensetracker.data.database.dao.RecurringOccurrenceDao>(relaxed = true)
+        coEvery { occurrenceDao.getByDateRange(any(), any()) } answers {
+            val start = firstArg<Long>()
+            val end = secondArg<Long>()
+            listOf(occurrence).filter { it.dueDate >= start && it.dueDate < end }
+        }
+        val assembler = ForecastInputAssembler(
+            object : TimeProvider {
+                override fun now(): Long = now
+            },
+            analyticsCurrencyNormalizer = mockk(relaxed = true),
+            currencySettingsRepository = mockk(relaxed = true),
+            currencyConverter = mockk(relaxed = true),
+            recurringLifecycleCoordinator = mockk(relaxed = true),
+            recurringOccurrenceDao = occurrenceDao,
+            databaseReadBarrier = mockk(relaxed = true)
+        )
+        fun input(patternId: Long) = NormalizedForecastInput(
+            homeCurrency = CurrencyCode("EUR"),
+            normalizedExpenses = emptyList(),
+            pastSumDaily = emptyList(),
+            recurringPatterns = listOf(
+                RecurringPattern(
+                    merchantName = "Rent",
+                    averageAmount = 700.0,
+                    currency = "EUR",
+                    frequency = RecurrenceFrequency.MONTHLY,
+                    periodVarianceDays = 0,
+                    amountVariancePercent = 0.0,
+                    nextExpectedDate = julyNext,
+                    confidence = 1.0f,
+                    previousDates = emptyList(),
+                    id = patternId
+                )
+            ),
+            plannedExpenses = mappedRows,
+            savingsGoals = emptyList(),
+            budgetStatuses = emptyList(),
+            spendingPace = SpendingPace(
+                currentMonthSpent = 0.0,
+                daysElapsed = 15,
+                daysInMonth = 30,
+                projectedTotal = 0.0,
+                previousMonthTotal = null,
+                averageMonthlyTotal = null,
+                pacePercentage = -1f,
+                paceStatus = PaceStatus.NO_BASELINE,
+                displayCurrency = "EUR"
+            )
+        )
+
+        // Linked pattern (id 7 = mapped sourceRecurringRuleId): the keyed row is dropped, unkeyed stays.
+        assertEquals(listOf(11L), assembler.assembleNormalized(input(7L)).plannedExpenses.map { it.id })
+        // Control: a pattern of another rule does not represent the row, so it is kept (counts once).
+        assertEquals(listOf(10L, 11L), assembler.assembleNormalized(input(8L)).plannedExpenses.map { it.id })
+    }
+
     @Test
     fun `observeRecurringPatterns uses confirmed recurring feed for dashboard forecast consumers`() = runTest {
         val confirmedPattern = recurringPattern("Confirmed Rent", 900.0)
