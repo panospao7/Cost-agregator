@@ -654,7 +654,7 @@ class DefaultCloudPayloadPolicyBankStatementTest {
 
         assertEquals(3, parsed.size)
         parsed.forEachIndexed { i, json ->
-            assertEquals(setOf("candidateId", "merchant", "amount", "currency", "date"), json.keySet())
+            assertEquals(setOf("candidateId", "merchant", "amount", "currency", "date"), json.keys().asSequence().toSet())
             assertEquals(i, json.getInt("candidateId"))
         }
         assertEquals(listOf("Coffee Shop", "O'Brien's Pub", "Taverna"), parsed.map { it.getString("merchant") })

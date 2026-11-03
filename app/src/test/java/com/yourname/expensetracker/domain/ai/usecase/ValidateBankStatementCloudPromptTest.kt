@@ -251,8 +251,8 @@ class ValidateBankStatementCloudPromptTest {
 
         // Exactly one audited cloud call, describing a redacted payload.
         val audit = wiring.auditContexts.single()
-        assertTrue(audit.redactionApplied)
-        assertFalse(audit.rawTextIncluded)
+        assertEquals(true, audit.redactionApplied)
+        assertEquals(false, audit.rawTextIncluded)
         verify(exactly = 1) { wiring.client.newCall(any()) }
     }
 
@@ -369,6 +369,71 @@ class ValidateBankStatementCloudPromptTest {
 
         verify(exactly = 0) { wiring.client.newCall(any()) }
         coVerify(exactly = 0) { wiring.audit.logCloudCall(any(), any(), any()) }
+    }
+
+    @Test
+    fun N053_aiMerchantWithARedactionMarkerKeepsTheCandidateMerchantAndIsNotACorrection() = runTest {
+        listOf("[REDACTED_PHONE]", "Cafe [REDACTED_EMAIL]").forEach { redacted ->
+            val tx = validateOneAcceptedCandidate(aiMerchant = redacted, aiAmount = 10.5)
+
+            assertEquals("'$redacted' must not replace the candidate merchant", "Shop A", tx.merchant)
+            assertEquals(
+                "a redacted merchant is not an AI correction",
+                StatementValidationContracts.SOURCE_AI_VALIDATED,
+                tx.source
+            )
+            assertEquals("other response fields still apply", 0.95f, tx.confidence, 0.0001f)
+        }
+    }
+
+    @Test
+    fun N053_aiMerchantWithARedactionMarkerStillAppliesTheOtherCorrectedFields() = runTest {
+        val tx = validateOneAcceptedCandidate(aiMerchant = "[REDACTED_PHONE]", aiAmount = 12.75)
+
+        assertEquals("Shop A", tx.merchant)
+        assertEquals(12.75, tx.amount, 0.0)
+        assertEquals(StatementValidationContracts.SOURCE_AI_CORRECTED, tx.source)
+        assertEquals(0.95f, tx.confidence, 0.0001f)
+    }
+
+    @Test
+    fun N053_cleanAiMerchantIsAppliedAsACorrectionAndAnUnchangedOneIsValidated() = runTest {
+        val renamed = validateOneAcceptedCandidate(aiMerchant = "Shop A Renamed", aiAmount = 10.5)
+        assertEquals("Shop A Renamed", renamed.merchant)
+        assertEquals(StatementValidationContracts.SOURCE_AI_CORRECTED, renamed.source)
+
+        val same = validateOneAcceptedCandidate(aiMerchant = "Shop A", aiAmount = 10.5)
+        assertEquals("Shop A", same.merchant)
+        assertEquals(StatementValidationContracts.SOURCE_AI_VALIDATED, same.source)
+    }
+
+    /**
+     * Real use case with an on-device stub that returns a contract-valid accepted response for
+     * candidate 0 ("Shop A", 10.5 EUR, 2024-03-09 in the default zone). The response date equals
+     * the candidate date, so only the merchant and amount decide AI_VALIDATED vs AI_CORRECTED.
+     */
+    private suspend fun validateOneAcceptedCandidate(aiMerchant: String, aiAmount: Double): CleanTransaction {
+        val candidateDate = java.time.LocalDate.of(2024, 3, 9)
+            .atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+        val response = JSONArray().put(
+            JSONObject().put("candidateId", 0).put("status", "accepted")
+                .put("merchant", aiMerchant).put("amount", aiAmount).put("currency", "EUR")
+                .put("date", "2024-03-09").put("confidence", 0.95)
+        ).toString()
+        val onDevice = mockk<OnDeviceReceiptAssistService>()
+        coEvery { onDevice.suggestFromText(any()) } returns AiServiceResult.Success(response)
+        val gate = mockk<PrivacyGate>()
+        coEvery { gate.check(any<PrivacyCapability>(), any()) } returns PrivacyDecision.Denied("test")
+        val useCase = ValidateBankStatementTransactionsUseCase(
+            mockk<SmartReceiptAssistService>(relaxed = true), onDevice, gate, currencyNormalizer
+        )
+
+        val outcome = useCase.validateTransactions(
+            "ocr", listOf(candidate(0, "Shop A", 10.5, "EUR", candidateDate)), "EUR"
+        )
+
+        assertTrue("expected Validated but was $outcome", outcome is StatementValidationOutcome.Validated)
+        return outcome.transactions.single()
     }
 
     @Test

@@ -618,7 +618,10 @@ class ValidateBankStatementTransactionsUseCase @Inject constructor(
                     continue
                 }
 
+                // Candidates reach the model redacted; an echoed redaction marker is not a
+                // real merchant correction, so keep the parser merchant (not AI-corrected).
                 val merchant = obj.optString("merchant", "").trim()
+                    .let { if (it.contains("[REDACTED", ignoreCase = true)) candidate.merchant else it }
                 val amount = obj.optDouble("amount", 0.0)
                 val dateStr = obj.optString("date", "").trim()
                 val confidence = obj.optDouble("confidence", 0.0).toFloat()

@@ -541,7 +541,7 @@ class TransactionClassifierTest {
 
     @Test
     fun `D4 DO_NOT_STORE and STORE_REDACTED skip training - state, predictions and model file unchanged`() = runBlocking<Unit> {
-        for (mode in listOf(RawStorageMode.DO_NOT_STORE, RawStorageMode.STORE_REDACTED)) {
+        for (mode in RawStorageMode.values().filter { it != RawStorageMode.STORE_RAW }) {
             val dir = createTempDir("classifier_d4_skip")
             val privacy = privacyRepoFor(mode)
             val (subject, _) = classifierFor(emptyList(), dir, passthroughCrypto(), privacy)
@@ -651,14 +651,17 @@ class TransactionClassifierTest {
         val unredacted = (0 until 22).map { unredactedCorrection(it, approved = it < 14) }
         val redacted = (0 until 8).map { redactedCorrection(it, approved = true) }
         val all = unredacted + redacted // getCount() == 30, usable == 22
-        val privacy = privacyRepoFor(RawStorageMode.DO_NOT_STORE)
+        var mode = RawStorageMode.STORE_RAW
+        val privacy = mockk<PrivacySettingsRepository>()
+        coEvery { privacy.getSettings() } answers { PrivacySettings(rawNotificationStorageMode = mode) }
 
         val (first, _) = classifierFor(all, dir, crypto, privacy)
-        first.initialize() // retrain (not gated, see pin below) sets lastTrainingCount = 30
+        first.initialize() // retrain under STORE_RAW (retrain is gated) sets lastTrainingCount = 30
         val before = first.getStats()
         assertEquals(14, before.totalPositive)
         assertEquals(8, before.totalNegative)
 
+        mode = RawStorageMode.DO_NOT_STORE
         first.train("Payment of 99.50 EUR at skippedcase", isTransaction = true)
         first.train("Your OTP code verify offer skippedcase", isTransaction = false)
 
@@ -683,7 +686,7 @@ class TransactionClassifierTest {
         // now checks the raw storage mode first. initialize() is the deterministic trigger (the
         // public retrainFromCorrections() is a 2-second debounce). Stored correction text must not
         // keep training the model under DO_NOT_STORE or STORE_REDACTED.
-        for (mode in listOf(RawStorageMode.DO_NOT_STORE, RawStorageMode.STORE_REDACTED)) {
+        for (mode in RawStorageMode.values().filter { it != RawStorageMode.STORE_RAW }) {
             val unredacted = (0 until 22).map { unredactedCorrection(it, approved = it < 14) }
             val (subject, repo) = classifierFor(unredacted, privacy = privacyRepoFor(mode))
 

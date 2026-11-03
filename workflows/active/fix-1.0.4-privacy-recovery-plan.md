@@ -112,3 +112,6 @@ With the lock on or unreadable and no working device prompt, the export does not
 - HW_UNAVAILABLE, UNKNOWN: a screen lock does not help; the user can retry and a later attempt may succeed.
 - UNSUPPORTED_API (API 26-29): no remedy on this screen until a newer app version opens the database. The denied message is misleading there (`strings.xml`, follow-up).
 - It also reaches a user who never set a lock if the settings store is corrupted, because the lock then reads as unreadable.
+
+## D4 router effect (reviewer-strict, 2026-11-03)
+Default users (`STORE_RAW`) are unchanged. In any other storage mode the classifier's stats freeze, and a new user stays parser-only. Because callers train positives only, the old model scored near 1 and lifted parser confidence, so routing changes for those users: parser 0.40 at ML weight 0.2 used to reach 0.52 (review) and now auto-rejects; parser 0.70 at weight 0.6 used to reach 0.88 (auto-accept) and now goes to review. Amounts are untouched. This is accepted as part of D4.
