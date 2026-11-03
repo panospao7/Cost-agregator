@@ -163,6 +163,9 @@ class NotificationCaptureService : NotificationListenerService() {
     private val serviceJob = SupervisorJob()
     private val serviceScope = CoroutineScope(serviceJob + Dispatchers.IO)
     private val workTracker = NotificationServiceWorkTracker()
+
+    // P-01-3: bounds concurrent capture pipelines. Waiters queue, nothing is dropped.
+    private val captureLimiter = NotificationCaptureConcurrencyLimiter()
     
     @Volatile
     private var pendingRefresh = false
@@ -458,6 +461,15 @@ class NotificationCaptureService : NotificationListenerService() {
         workTracker.launch(serviceScope) {
             // Emit RECEIVED first inside the work-tracked coroutine
             notificationDiagnosticEmitter.emit(receivedEvent)
+
+            // P-01-3: bound concurrent pipelines. Steps 1-6 run under a permit; excess
+            // notifications queue (never dropped). The body below is intentionally not
+            // re-indented to keep the diff minimal; `return@launch` still works because
+            // withPermit is inline.
+            var permitHeld = false
+            try {
+            captureLimiter.withPermit {
+            permitHeld = true
 
             // Step 1: Capture gate (suspend — no more runBlocking)
             val gateDecision = captureGate.decide(packageName, isShuttingDown)
@@ -793,6 +805,15 @@ class NotificationCaptureService : NotificationListenerService() {
                     // Remove dedupe key on error so notification can be re-processed
                     deduper.remove(dedupeKey)
                 }
+            }
+            } // end withPermit
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                if (!permitHeld) {
+                    // Cancelled while queued for a permit (service shutdown): nothing was
+                    // recorded in the deduper yet. Emit one bounded terminal diagnostic.
+                    emitDeferredCaptureCancellation(correlationId, packageName)
+                }
+                throw e
             }
         }
     }
