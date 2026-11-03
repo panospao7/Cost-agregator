@@ -161,18 +161,27 @@ class CurrencyRatesRepositoryImpl @Inject constructor(
         connection: HttpURLConnection,
         homeCurrency: String
     ): CurrencyRateRefreshOutcome {
-        connection.connect()
-        if (connection.responseCode !in 200..299) {
-            throw IllegalStateException("Rate provider returned HTTP ${connection.responseCode}")
+        try {
+            connection.connect()
+            if (connection.responseCode !in 200..299) {
+                throw IllegalStateException("Rate provider returned HTTP ${connection.responseCode}")
+            }
+            // Reject a declared length above the cap before reading (-1 = unknown).
+            if (connection.contentLengthLong > MAX_DAILY_BYTES) {
+                throw IllegalStateException("RATE_PAYLOAD_TOO_LARGE")
+            }
+            val storedPairs = connection.inputStream.use { stream ->
+                refreshFromStream(homeCurrency, stream)
+            }
+            return CurrencyRateRefreshOutcome.Refreshed(storedPairs)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // A cancelled refresh disconnects the socket, so the blocked read throws IOException; the
+            // cancellation must win. A non-cancelled failure is rethrown unchanged.
+            currentCoroutineContext().ensureActive()
+            throw e
         }
-        // Reject a declared length above the cap before reading (-1 = unknown).
-        if (connection.contentLengthLong > MAX_DAILY_BYTES) {
-            throw IllegalStateException("RATE_PAYLOAD_TOO_LARGE")
-        }
-        val storedPairs = connection.inputStream.use { stream ->
-            refreshFromStream(homeCurrency, stream)
-        }
-        return CurrencyRateRefreshOutcome.Refreshed(storedPairs)
     }
 
     override suspend fun downloadRecentHistory(homeCurrency: String): CurrencyRateHistoryOutcome =
