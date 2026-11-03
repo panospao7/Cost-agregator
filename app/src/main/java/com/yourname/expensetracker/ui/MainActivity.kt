@@ -452,13 +452,13 @@ fun MainScreen(
             val msg = buildString {
                 append("The database is in an unrecoverable state.")
                 if (state.reason != null) append("\n\nReason: ${state.reason}")
-                append("\n\nPlease restart the app. If the problem persists, contact support.")
+                append("\n\nRestarting the app is not expected to resolve this. Close the app and contact support.")
             }
             AppOperationalLockScreen(
                 title = "Critical Recovery Required",
                 message = msg,
-                actionLabel = "OK",
-                onAction = { /* no-op: user must intervene */ }
+                actionLabel = "Close app",
+                onAction = { context.findHostActivity()?.finishAffinity() }
             )
             return
         }

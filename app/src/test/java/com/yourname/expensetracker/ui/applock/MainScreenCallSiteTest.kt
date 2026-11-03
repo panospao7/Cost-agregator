@@ -350,6 +350,25 @@ class MainScreenCallSiteTest {
     }
 
     @Test
+    fun j20_1_criticalRecoveryBranchHasNoEmptyOnAction_andOnlyClosesTheApp() {
+        val text = sanitized(mainActivityFile)
+        val whenStart = text.indexOf("when (val state = operationalState)")
+        assertTrue("operational-lock when found", whenStart >= 0)
+        val branchAt = text.indexOf("is AppOperationalState.CriticalRecoveryRequired", whenStart)
+        assertTrue("CriticalRecoveryRequired branch found", branchAt > whenStart)
+        val returnAt = text.indexOf("return", branchAt)
+        assertTrue("CriticalRecoveryRequired branch must return", returnAt > branchAt)
+        val branch = text.substring(branchAt, returnAt)
+        assertTrue("the branch must pass an onAction", Regex("""onAction\s*=""").containsMatchIn(branch))
+        assertFalse(
+            "the CriticalRecoveryRequired onAction must not be empty",
+            Regex("""onAction\s*=\s*\{\s*\}""").containsMatchIn(branch)
+        )
+        assertTrue("the onAction must close the app", Regex("""finishAffinity\s*\(""").containsMatchIn(branch))
+        assertFalse("the branch must not restart the process", branch.contains("restartApp"))
+    }
+
+    @Test
     fun tech1_mainActivityExtendsFragmentActivity() {
         val text = sanitized(mainActivityFile)
         assertTrue(Regex("""class\s+MainActivity\s*:\s*FragmentActivity\s*\(\s*\)""").containsMatchIn(text))

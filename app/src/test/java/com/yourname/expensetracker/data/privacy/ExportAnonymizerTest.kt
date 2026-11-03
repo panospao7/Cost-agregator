@@ -1,6 +1,8 @@
 package com.yourname.expensetracker.data.privacy
 
 import android.database.sqlite.SQLiteDatabase
+import com.yourname.expensetracker.data.database.entity.PendingReview
+import timber.log.Timber
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -194,6 +196,205 @@ class ExportAnonymizerTest {
         assertEquals("KEEP_MERCHANT", queryString(file, "SELECT suggestedMerchant FROM pending_reviews WHERE id=1"))
         // Row 2 already null — should not be affected
         assertEquals("KEEP_MERCHANT2", queryString(file, "SELECT suggestedMerchant FROM pending_reviews WHERE id=2"))
+    }
+
+    // ── S7 (J-11-4 / D6): pending_reviews.explanation ────────────────────────
+
+    /** Mirrors the real Room table shape of PendingReview (all columns, real names). */
+    private fun createRealShapePendingReviews(db: SQLiteDatabase) {
+        db.execSQL(
+            """CREATE TABLE pending_reviews (
+                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                rawNotificationId INTEGER,
+                scannedReceiptId INTEGER,
+                suggestedAmount REAL,
+                suggestedCurrency TEXT NOT NULL,
+                suggestedMerchant TEXT NOT NULL,
+                suggestedMerchantKey TEXT,
+                suggestedType TEXT NOT NULL,
+                suggestedCategoryId INTEGER,
+                suggestedDate INTEGER,
+                confidence REAL NOT NULL,
+                matchType TEXT,
+                explanation TEXT,
+                packageName TEXT NOT NULL,
+                notificationTitle TEXT,
+                notificationText TEXT,
+                createdAt INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'PENDING',
+                suggestedDirection TEXT,
+                suggestedAccountName TEXT,
+                suggestedLatitude REAL,
+                suggestedLongitude REAL,
+                extractionState TEXT NOT NULL DEFAULT 'REAL_EXTRACTION',
+                bankReviewIdentity TEXT,
+                bankConnectionScopeHash TEXT
+            )"""
+        )
+    }
+
+    private fun insertRealShapePendingReview(
+        db: SQLiteDatabase,
+        id: Int,
+        merchant: String,
+        title: String?,
+        text: String?,
+        explanation: String?
+    ) {
+        db.execSQL(
+            "INSERT INTO pending_reviews(id, suggestedAmount, suggestedCurrency, suggestedMerchant, suggestedType, " +
+                "confidence, matchType, explanation, packageName, notificationTitle, notificationText, createdAt, status) " +
+                "VALUES (?, 12.5, 'EUR', ?, 'EXPENSE', 0.9, 'KEYWORD', ?, 'com.bank.app', ?, ?, 1700000000000, 'PENDING')",
+            arrayOf<Any?>(id, merchant, explanation, title, text)
+        )
+    }
+
+    /** Runs [block] while capturing every Timber message emitted by the anonymizer. */
+    private fun captureTimber(block: () -> Unit): List<String> {
+        val messages = mutableListOf<String>()
+        val tree = object : Timber.Tree() {
+            override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
+                messages += message
+            }
+        }
+        Timber.plant(tree)
+        try {
+            block()
+        } finally {
+            Timber.uproot(tree)
+        }
+        return messages
+    }
+
+    @Test
+    fun sanitizeExport_pending_reviews_explanation_column_name_matches_PendingReview_entity() {
+        // Guard against a typo in the anonymizer's guarded column name hiding a no-op:
+        // Room derives the column name from the field name (no @ColumnInfo(name=) on this field).
+        val field = PendingReview::class.java.getDeclaredField("explanation")
+        assertEquals(String::class.java, field.type)
+        assertEquals("explanation", field.name)
+
+        // The real-shape table (built from the entity's property names) must expose that column,
+        // and the anonymizer must act on it.
+        val file = tempFolder.newFile("pending_reviews_column_name.db")
+        val db = SQLiteDatabase.openOrCreateDatabase(file, null)
+        createRealShapePendingReviews(db)
+        insertRealShapePendingReview(db, 1, "KEEP_MERCHANT", "SECRET_TITLE", "SECRET_TEXT", "SECRET_EXPLANATION")
+        db.close()
+
+        anonymizer.sanitizeExport(file)
+
+        assertNull(queryString(file, "SELECT ${field.name} FROM pending_reviews WHERE id=1"))
+    }
+
+    @Test
+    fun sanitizeExport_nulls_pending_reviews_explanation_and_keeps_other_fields_and_rows() {
+        val file = tempFolder.newFile("pending_reviews_explanation.db")
+        val db = SQLiteDatabase.openOrCreateDatabase(file, null)
+        createRealShapePendingReviews(db)
+        insertRealShapePendingReview(db, 1, "KEEP_MERCHANT", "SECRET_TITLE", "SECRET_TEXT", "SECRET_EXPLANATION")
+        insertRealShapePendingReview(db, 2, "KEEP_MERCHANT2", null, null, null)
+        db.close()
+
+        anonymizer.sanitizeExport(file)
+
+        assertNull(queryString(file, "SELECT explanation FROM pending_reviews WHERE id=1"))
+        assertNull(queryString(file, "SELECT notificationText FROM pending_reviews WHERE id=1"))
+        assertNull(queryString(file, "SELECT notificationTitle FROM pending_reviews WHERE id=1"))
+        assertEquals(0.0, queryDouble(file, "SELECT COUNT(*) FROM pending_reviews WHERE explanation LIKE '%SECRET%'"), 0.0)
+        // Other fields follow the existing rule: structural fields preserved.
+        assertEquals("KEEP_MERCHANT", queryString(file, "SELECT suggestedMerchant FROM pending_reviews WHERE id=1"))
+        assertEquals("KEYWORD", queryString(file, "SELECT matchType FROM pending_reviews WHERE id=1"))
+        assertEquals("PENDING", queryString(file, "SELECT status FROM pending_reviews WHERE id=1"))
+        assertEquals("com.bank.app", queryString(file, "SELECT packageName FROM pending_reviews WHERE id=1"))
+        assertEquals("EUR", queryString(file, "SELECT suggestedCurrency FROM pending_reviews WHERE id=1"))
+        assertEquals(12.5, queryDouble(file, "SELECT suggestedAmount FROM pending_reviews WHERE id=1"), 0.0)
+        // Rows retained (no deletion), untouched row intact.
+        assertEquals(2.0, queryDouble(file, "SELECT COUNT(*) FROM pending_reviews"), 0.0)
+        assertEquals("KEEP_MERCHANT2", queryString(file, "SELECT suggestedMerchant FROM pending_reviews WHERE id=2"))
+    }
+
+    @Test
+    fun sanitizeExport_nulls_pending_review_explanation_when_notification_text_and_title_are_null() {
+        val file = tempFolder.newFile("pending_reviews_explanation_only.db")
+        val db = SQLiteDatabase.openOrCreateDatabase(file, null)
+        createRealShapePendingReviews(db)
+        // Row 1: only explanation is sensitive. Row 2: all three sensitive. Row 3: nothing sensitive.
+        insertRealShapePendingReview(db, 1, "KEEP_M1", null, null, "SECRET_EXPLANATION_ONLY")
+        insertRealShapePendingReview(db, 2, "KEEP_M2", "SECRET_TITLE", "SECRET_TEXT", "SECRET_EXPLANATION")
+        insertRealShapePendingReview(db, 3, "KEEP_M3", null, null, null)
+        db.close()
+
+        val messages = captureTimber { anonymizer.sanitizeExport(file) }
+
+        assertNull(queryString(file, "SELECT explanation FROM pending_reviews WHERE id=1"))
+        assertNull(queryString(file, "SELECT explanation FROM pending_reviews WHERE id=2"))
+        assertEquals(0.0, queryDouble(file, "SELECT COUNT(*) FROM pending_reviews WHERE explanation IS NOT NULL"), 0.0)
+        assertEquals(3.0, queryDouble(file, "SELECT COUNT(*) FROM pending_reviews"), 0.0)
+        assertEquals("KEEP_M1", queryString(file, "SELECT suggestedMerchant FROM pending_reviews WHERE id=1"))
+        assertEquals("KEEP_M3", queryString(file, "SELECT suggestedMerchant FROM pending_reviews WHERE id=3"))
+        // The sanitiser reports (via its bounded summary line) exactly the two rows it changed.
+        assertTrue(
+            "expected summary to report pendingReviews=2, got $messages",
+            messages.any { it.contains("pendingReviews=2 ") }
+        )
+    }
+
+    @Test
+    fun sanitizeExport_pending_reviews_explanation_only_row_is_counted_as_one() {
+        val file = tempFolder.newFile("pending_reviews_explanation_only_count.db")
+        val db = SQLiteDatabase.openOrCreateDatabase(file, null)
+        createRealShapePendingReviews(db)
+        insertRealShapePendingReview(db, 1, "KEEP_M1", null, null, "SECRET_EXPLANATION_ONLY")
+        db.close()
+
+        val messages = captureTimber { anonymizer.sanitizeExport(file) }
+
+        assertNull(queryString(file, "SELECT explanation FROM pending_reviews WHERE id=1"))
+        assertTrue(
+            "explanation-only row must be counted, got $messages",
+            messages.any { it.contains("pendingReviews=1 ") }
+        )
+    }
+
+    @Test
+    fun sanitizeExport_pending_reviews_second_pass_is_idempotent_and_counts_zero() {
+        val file = tempFolder.newFile("pending_reviews_idempotent.db")
+        val db = SQLiteDatabase.openOrCreateDatabase(file, null)
+        createRealShapePendingReviews(db)
+        insertRealShapePendingReview(db, 1, "KEEP_M1", "SECRET_TITLE", "SECRET_TEXT", "SECRET_EXPLANATION")
+        db.close()
+
+        anonymizer.sanitizeExport(file)
+        val messages = captureTimber { anonymizer.sanitizeExport(file) }
+
+        assertNull(queryString(file, "SELECT explanation FROM pending_reviews WHERE id=1"))
+        assertEquals(1.0, queryDouble(file, "SELECT COUNT(*) FROM pending_reviews"), 0.0)
+        assertEquals("KEEP_M1", queryString(file, "SELECT suggestedMerchant FROM pending_reviews WHERE id=1"))
+        assertTrue(
+            "second pass must report pendingReviews=0, got $messages",
+            messages.any { it.contains("pendingReviews=0 ") }
+        )
+    }
+
+    @Test
+    fun sanitizeExport_pending_reviews_without_explanation_column_still_counts_and_redacts() {
+        // Legacy shape (no explanation column): column guard must not break the other fields.
+        val file = tempFolder.newFile("pending_reviews_legacy_count.db")
+        val db = SQLiteDatabase.openOrCreateDatabase(file, null)
+        db.execSQL("CREATE TABLE pending_reviews (id INTEGER PRIMARY KEY, notificationText TEXT, notificationTitle TEXT, suggestedMerchant TEXT)")
+        db.execSQL("INSERT INTO pending_reviews(id, notificationText, notificationTitle, suggestedMerchant) VALUES (1, 'SECRET_TEXT', NULL, 'KEEP_M1')")
+        db.execSQL("INSERT INTO pending_reviews(id, notificationText, notificationTitle, suggestedMerchant) VALUES (2, NULL, NULL, 'KEEP_M2')")
+        db.close()
+
+        val messages = captureTimber { anonymizer.sanitizeExport(file) }
+
+        assertNull(queryString(file, "SELECT notificationText FROM pending_reviews WHERE id=1"))
+        assertEquals(2.0, queryDouble(file, "SELECT COUNT(*) FROM pending_reviews"), 0.0)
+        assertTrue(
+            "expected pendingReviews=1, got $messages",
+            messages.any { it.contains("pendingReviews=1 ") }
+        )
     }
 
     // ── S5: diagnostic free-text scrub (redacted mode only) ──────────────────
