@@ -866,7 +866,159 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
         coVerify(exactly = 1) { savingsContributionHistoryRepository.recordContribution(goal.id, 25.0, any(), "manual", "EUR") }
     }
 
-    private fun availableSmartResult(goal: SavingsGoal) = SmartSavingsComputationResult.Available(listOf(
+    private suspend fun kotlinx.coroutines.test.TestScope.quickAddOn(
+        target: Double,
+        current: Double,
+        currency: String = "EUR",
+    ): SavingsGoal {
+        val goal = SavingsGoal(
+            id = 1L,
+            name = "Quick",
+            targetAmount = target,
+            currentAmount = current,
+            targetDate = null,
+            protectionLevel = GoalProtectionLevel.WARNING,
+            currency = currency,
+            currencyAssumption = "EXPLICIT",
+            createdAt = timeProvider.now(),
+        )
+        configureRepositoryWithGoals(listOf(goal))
+        viewModel = createViewModel()
+        advanceUntilIdle()
+        viewModel.quickAdd(goal.id)
+        advanceUntilIdle()
+        return goal
+    }
+
+    @Test
+    fun `quickAdd 95 of 100 contributes exactly remaining 5 and never overshoots`() = runTest(testDispatcher) {
+        quickAddOn(target = 100.0, current = 95.0)
+
+        coVerify(exactly = 1) { savingsGoalRepository.incrementSavingsGoalAmount(1L, 5.0) }
+        coVerify(exactly = 0) { savingsGoalRepository.incrementSavingsGoalAmount(1L, 10.0) }
+        coVerify(exactly = 1) { savingsGoalRepository.incrementSavingsGoalAmount(any(), any()) }
+        coVerify(exactly = 1) {
+            savingsContributionHistoryRepository.recordContribution(1L, 5.0, timeProvider.now(), "manual", "EUR")
+        }
+        assertEquals(100.0, goalsFlow.value.single().currentAmount, 0.0)
+    }
+
+    @Test
+    fun `quickAdd 100 of 100 makes no contribution call`() = runTest(testDispatcher) {
+        quickAddOn(target = 100.0, current = 100.0)
+
+        coVerify(exactly = 0) { savingsGoalRepository.incrementSavingsGoalAmount(any(), any()) }
+        coVerify(exactly = 0) { savingsContributionHistoryRepository.recordContribution(any(), any(), any(), any(), any()) }
+        assertEquals(100.0, goalsFlow.value.single().currentAmount, 0.0)
+    }
+
+    @Test
+    fun `quickAdd 120 of 100 makes no contribution call`() = runTest(testDispatcher) {
+        quickAddOn(target = 100.0, current = 120.0)
+
+        coVerify(exactly = 0) { savingsGoalRepository.incrementSavingsGoalAmount(any(), any()) }
+        coVerify(exactly = 0) { savingsContributionHistoryRepository.recordContribution(any(), any(), any(), any(), any()) }
+        assertEquals(120.0, goalsFlow.value.single().currentAmount, 0.0)
+    }
+
+    @Test
+    fun `quickAdd 50 of 100 contributes exactly 10`() = runTest(testDispatcher) {
+        quickAddOn(target = 100.0, current = 50.0)
+
+        coVerify(exactly = 1) { savingsGoalRepository.incrementSavingsGoalAmount(1L, 10.0) }
+        coVerify(exactly = 1) { savingsGoalRepository.incrementSavingsGoalAmount(any(), any()) }
+        assertEquals(60.0, goalsFlow.value.single().currentAmount, 0.0)
+    }
+
+    @Test
+    fun `quickAdd 99_99 of 100 contributes exactly decimal 0_01`() = runTest(testDispatcher) {
+        quickAddOn(target = 100.0, current = 99.99)
+
+        // Exact equality: binary 100.0 - 99.99 is 0.010000000000005116, not 0.01.
+        coVerify(exactly = 1) { savingsGoalRepository.incrementSavingsGoalAmount(1L, 0.01) }
+        coVerify(exactly = 1) { savingsGoalRepository.incrementSavingsGoalAmount(any(), any()) }
+    }
+
+    @Test
+    fun `quickAdd passes the goal currency through unchanged`() = runTest(testDispatcher) {
+        // Home currency is EUR; the goal is USD, so a home-currency leak would show as EUR.
+        quickAddOn(target = 100.0, current = 95.0, currency = "USD")
+
+        coVerify(exactly = 1) { savingsGoalRepository.incrementSavingsGoalAmount(1L, 5.0) }
+        coVerify(exactly = 1) {
+            savingsContributionHistoryRepository.recordContribution(1L, 5.0, timeProvider.now(), "manual", "USD")
+        }
+        coVerify(exactly = 0) {
+            savingsContributionHistoryRepository.recordContribution(any(), any(), any(), any(), "EUR")
+        }
+    }
+
+    @Test
+    fun `quickAdd for a missing goal is a no-op and does not crash`() = runTest(testDispatcher) {
+        configureRepositoryWithGoals(listOf(createGoal(1L, "Other", 100.0, 50.0)))
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        viewModel.quickAdd(999L)
+        advanceUntilIdle()
+
+        coVerify(exactly = 0) { savingsGoalRepository.incrementSavingsGoalAmount(any(), any()) }
+        coVerify(exactly = 0) { savingsContributionHistoryRepository.recordContribution(any(), any(), any(), any(), any()) }
+        assertEquals(50.0, goalsFlow.value.single().currentAmount, 0.0)
+    }
+
+    private fun assertQuickAddNoOpForNonFinite(target: Double, current: Double) = runTest(testDispatcher) {
+        // SavingsGoal's constructor rejects non-finite amounts, so a stubbed goal models a corrupt read.
+        val corrupt = mockk<SavingsGoal>(relaxed = true)
+        every { corrupt.id } returns 1L
+        every { corrupt.targetAmount } returns target
+        every { corrupt.currentAmount } returns current
+        every { corrupt.currency } returns "EUR"
+        every { corrupt.currencyAssumption } returns "EXPLICIT"
+        configureRepositoryWithGoals(emptyList())
+        viewModel = createViewModel()
+        advanceUntilIdle()
+        every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(listOf(corrupt))
+
+        viewModel.quickAdd(1L)
+        advanceUntilIdle()
+
+        coVerify(exactly = 0) { savingsGoalRepository.incrementSavingsGoalAmount(any(), any()) }
+        coVerify(exactly = 0) { savingsContributionHistoryRepository.recordContribution(any(), any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `quickAdd with NaN target is a no-op`() = assertQuickAddNoOpForNonFinite(Double.NaN, 0.0)
+
+    @Test
+    fun `quickAdd with infinite target is a no-op`() = assertQuickAddNoOpForNonFinite(Double.POSITIVE_INFINITY, 0.0)
+
+    @Test
+    fun `quickAdd with NaN current balance is a no-op`() = assertQuickAddNoOpForNonFinite(100.0, Double.NaN)
+
+    @Test
+    fun `quickAdd with infinite current balance is a no-op`() = assertQuickAddNoOpForNonFinite(100.0, Double.POSITIVE_INFINITY)
+
+    // Expected to FAIL against the current production code: quickAdd computes the capped amount from
+    // its own snapshot and hands it to contributeToGoal, whose compare-and-set only compares against a
+    // snapshot re-read inside contributeToGoal. The second tap's amount (5.0) was computed before the
+    // first write landed, so it passes the CAS and the balance reaches 105.
+    @Test
+    fun `quickAdd rapid double tap on 95 of 100 contributes once and ends at 100`() = runTest(testDispatcher) {
+        val goal = createGoal(1L, "Quick", 100.0, 95.0)
+        configureRepositoryWithGoals(listOf(goal))
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        viewModel.quickAdd(goal.id)
+        viewModel.quickAdd(goal.id)
+        advanceUntilIdle()
+
+        assertEquals(100.0, goalsFlow.value.single().currentAmount, 0.0)
+        coVerify(exactly = 1) { savingsGoalRepository.incrementSavingsGoalAmount(any(), any()) }
+    }
+
+    private fun availableSmartResult(goal: SavingsGoal) =SmartSavingsComputationResult.Available(listOf(
         com.yourname.expensetracker.domain.savings.GoalSavingsRecommendation(
             goal, SavingsRecommendation(25.0, 0.9, "TEST", RecommendationSource.BUDGET_SURPLUS, goal.currency)
         )

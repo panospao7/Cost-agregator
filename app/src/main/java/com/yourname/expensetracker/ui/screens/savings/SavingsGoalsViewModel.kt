@@ -29,7 +29,13 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import java.math.BigDecimal
 import javax.inject.Inject
+
+/** Quick-add step in the goal's own currency; capped at the remaining amount by [SavingsGoalsViewModel.quickAdd]. */
+private const val QUICK_ADD_AMOUNT = 10.0
 
 data class SavingsGoalsState(
  val goals: List<SavingsGoal> = emptyList(),
@@ -402,53 +408,83 @@ class SavingsGoalsViewModel @Inject constructor(
         contributeToGoal(recommendation.goal.id, amount.amount, amount.currency.code, recommendation)
     }
 
+    /**
+     * Quick add of [QUICK_ADD_AMOUNT] capped at the goal's remaining amount (target minus current,
+     * exact decimal subtraction, no rounding). A goal with no remaining amount, or an unreadable
+     * balance, is a no-op. The cap uses the goal's own currency; the write goes through
+     * [contributeToGoal], which re-checks the goal snapshot and currency.
+     */
+    fun quickAdd(goalId: Long) {
+        viewModelScope.launch {
+            // Held across read, cap calculation and the full contribution (incl. history write)
+            // so a second tap reads the balance after the first write has landed.
+            quickAddMutex.withLock {
+                val goal = savingsGoalRepository.observeSavingsGoals().first()
+                    .firstOrNull { it.id == goalId }
+                    ?: return@withLock
+                if (!goal.targetAmount.isFinite() || !goal.currentAmount.isFinite()) return@withLock
+                val remaining = BigDecimal.valueOf(goal.targetAmount)
+                    .subtract(BigDecimal.valueOf(goal.currentAmount))
+                if (remaining.signum() <= 0) return@withLock
+                val amount = remaining.min(BigDecimal.valueOf(QUICK_ADD_AMOUNT)).toDouble()
+                performContribution(goalId, amount, goal.currency, null)
+            }
+        }
+    }
+
+    private val quickAddMutex = Mutex()
+
     fun contributeToGoal(goalId: Long, amount: Double, expectedCurrency: String? = null, recommendation: SmartRecommendation? = null) {
         viewModelScope.launch {
-            if (_state.value.contributionHistoryWriteFailure != null) return@launch
-            if (!amount.isFinite() || amount <= 0.0) return@launch
-            val goals = savingsGoalRepository.observeSavingsGoals().first()
-            val goal = goals
-                .firstOrNull { it.id == goalId }
-                ?: return@launch
-            if (SavingsGoalCurrencyPolicy.knownCurrencyOrNull(goal) == null) return@launch
-            if (recommendation != null && !SavingsGoalCurrencyPolicy.isUnfinished(goal)) return@launch
-            if (expectedCurrency != null && expectedCurrency != goal.currency) return@launch
-            if (recommendation != null && (recommendation !in _state.value.smartRecommendations ||
-                    recommendation.goal != goal ||
-                    recommendation.currency != currencySettingsRepository.homeCurrency().first() ||
-                    recommendation.rateTimestamp != currencySettingsRepository.lastRateUpdate().first())) return@launch
-            if (recommendation != null) {
-                val result = smartSavingsEngine.calculatePortfolioRecommendationsResult(
-                    goals, SmartSavingsEngine.TimeHorizon.MONTH, recommendation.currency
-                )
-                if (result !is SmartSavingsComputationResult.Available) {
-                    _state.update { it.copy(smartRecommendations = emptyList(), smartComputationResult = result) }
-                    return@launch
-                }
-                val current = result.recommendations.firstOrNull { it.goal.id == goalId } ?: return@launch
-                if (!current.recommendation.isAvailable || current.goal != goal ||
-                    SavingsGoalCurrencyPolicy.knownCurrencyOrNull(current.goal) == null ||
-                    current.recommendation.moneySafeAmount != recommendation.moneyRecommendedAmount ||
-                    recommendation !in _state.value.smartRecommendations ||
-                    recommendation.currency != currencySettingsRepository.homeCurrency().first() ||
-                    recommendation.rateTimestamp != currencySettingsRepository.lastRateUpdate().first()) return@launch
+            performContribution(goalId, amount, expectedCurrency, recommendation)
+        }
+    }
+
+    private suspend fun performContribution(goalId: Long, amount: Double, expectedCurrency: String?, recommendation: SmartRecommendation?) {
+        if (_state.value.contributionHistoryWriteFailure != null) return
+        if (!amount.isFinite() || amount <= 0.0) return
+        val goals = savingsGoalRepository.observeSavingsGoals().first()
+        val goal = goals
+            .firstOrNull { it.id == goalId }
+            ?: return
+        if (SavingsGoalCurrencyPolicy.knownCurrencyOrNull(goal) == null) return
+        if (recommendation != null && !SavingsGoalCurrencyPolicy.isUnfinished(goal)) return
+        if (expectedCurrency != null && expectedCurrency != goal.currency) return
+        if (recommendation != null && (recommendation !in _state.value.smartRecommendations ||
+                recommendation.goal != goal ||
+                recommendation.currency != currencySettingsRepository.homeCurrency().first() ||
+                recommendation.rateTimestamp != currencySettingsRepository.lastRateUpdate().first())) return
+        if (recommendation != null) {
+            val result = smartSavingsEngine.calculatePortfolioRecommendationsResult(
+                goals, SmartSavingsEngine.TimeHorizon.MONTH, recommendation.currency
+            )
+            if (result !is SmartSavingsComputationResult.Available) {
+                _state.update { it.copy(smartRecommendations = emptyList(), smartComputationResult = result) }
+                return
             }
-            if (savingsGoalRepository.observeSavingsGoals().first().firstOrNull { it.id == goalId } != goal) return@launch
-            if (recommendation != null && (recommendation.currency != currencySettingsRepository.homeCurrency().first() ||
-                    recommendation.rateTimestamp != currencySettingsRepository.lastRateUpdate().first())) return@launch
-            val wasAdded = guardedWrite(::emitWriteBlocked) {
-                savingsGoalRepository.incrementSavingsGoalAmount(goalId, amount)
-            } ?: return@launch
-            if (wasAdded) {
-                val recorded = recordContributionHistory(
-                    goalId = goalId,
-                    amount = amount,
-                    currency = goal.currency,
-                    source = "manual"
-                )
-                if (!recorded) return@launch
-                loadGamification()
-            }
+            val current = result.recommendations.firstOrNull { it.goal.id == goalId } ?: return
+            if (!current.recommendation.isAvailable || current.goal != goal ||
+                SavingsGoalCurrencyPolicy.knownCurrencyOrNull(current.goal) == null ||
+                current.recommendation.moneySafeAmount != recommendation.moneyRecommendedAmount ||
+                recommendation !in _state.value.smartRecommendations ||
+                recommendation.currency != currencySettingsRepository.homeCurrency().first() ||
+                recommendation.rateTimestamp != currencySettingsRepository.lastRateUpdate().first()) return
+        }
+        if (savingsGoalRepository.observeSavingsGoals().first().firstOrNull { it.id == goalId } != goal) return
+        if (recommendation != null && (recommendation.currency != currencySettingsRepository.homeCurrency().first() ||
+                recommendation.rateTimestamp != currencySettingsRepository.lastRateUpdate().first())) return
+        val wasAdded = guardedWrite(::emitWriteBlocked) {
+            savingsGoalRepository.incrementSavingsGoalAmount(goalId, amount)
+        } ?: return
+        if (wasAdded) {
+            val recorded = recordContributionHistory(
+                goalId = goalId,
+                amount = amount,
+                currency = goal.currency,
+                source = "manual"
+            )
+            if (!recorded) return
+            loadGamification()
         }
     }
 
