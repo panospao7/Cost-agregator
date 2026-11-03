@@ -1140,9 +1140,14 @@ private val AMOUNT_TOKEN_REGEX = Regex(
         // never create or link merchant rows (normalize with autoCreate = false is read-only).
         val shouldPrepareAcceptedOrReviewData = routingResult.decision != RoutingDecision.AUTO_REJECT
 
+        // An AUTO_REJECT from a financial package is salvaged to NEEDS_REVIEW in the DB phase
+        // (see the AUTO_REJECT branch of the routing `when`), so it must also create/link the
+        // canonical merchant. Only a notification that is really discarded stays read-only.
+        val willReachReviewOrAcceptance = shouldPrepareAcceptedOrReviewData ||
+            notification.packageName in FINANCIAL_PACKAGES
         val correctedMerchant = merchantNormalizer.normalize(
             parsed.merchant,
-            autoCreate = shouldPrepareAcceptedOrReviewData
+            autoCreate = willReachReviewOrAcceptance
         ).canonical.normalizedName
 
         val categoryId = if (shouldPrepareAcceptedOrReviewData) {
