@@ -88,8 +88,62 @@ class CloudReceiptItemCategorizationService @Inject constructor(
 
         val correlationId = CloudCorrelation.newCorrelationId()
         // PRIV-43B-03: Build full raw prompt, then prepare through policy — no empty-string probe
-        val rawPrompt = buildPrompt(input)
-        val prepared = cloudPayloadPolicy.prepareText(CloudPayloadPurpose.ITEM_CATEGORIZATION, rawPrompt)
+        // N-05-3: fixed instructions + output schema come first; only whole item lines that fit the
+        // redaction cap are sent, so the cap can never cut the schema.
+        // The cap applies only when the effective policy redacts (DefaultCloudPayloadPolicy.prepareText ->
+        // redactor 2000-char cap); that state is private to the policy, so it is read from the policy's own
+        // result (redactionApplied). Unredacted: send every item. Redacted: re-plan within the cap.
+        val fullPlan = buildPrompt(input, applyBudget = false)
+        if (fullPlan.sentCount == 0) {
+            Timber.w(
+                "CloudReceiptItemCategorizationService: PROMPT_BUDGET_NO_ITEMS total=%d correlationId=%s",
+                input.lineItems.size,
+                correlationId
+            )
+            return null
+        }
+        val firstPrepared = cloudPayloadPolicy.prepareText(CloudPayloadPurpose.ITEM_CATEGORIZATION, fullPlan.prompt)
+        var plan: PromptPlan
+        var prepared: com.yourname.expensetracker.domain.privacy.PreparedCloudPayload
+        if (!firstPrepared.redactionApplied) {
+            plan = fullPlan
+            prepared = firstPrepared
+        } else {
+            // Redaction (cap) applies, or state unclear -> fail closed to the budgeted prompt. The first
+            // result is discarded and never sent; only the payload prepared from the final plan is sent.
+            plan = buildPrompt(input, applyBudget = true)
+            prepared = if (plan.sentCount == 0) firstPrepared else {
+                cloudPayloadPolicy.prepareText(CloudPayloadPurpose.ITEM_CATEGORIZATION, plan.prompt)
+            }
+            // Verify against the real redacted output. Redactor order (CloudPiiSanitizer.sanitizeText):
+            // trim+take(cap) on raw, then PII marker replacement (can lengthen), then whitespace collapse
+            // (newlines -> single spaces), trim, take(cap) again. The budgeted raw prompt is <= cap minus
+            // margin, so only the final take can cut, and it always yields exactly cap chars. A redacted
+            // text of cap chars or more is therefore treated as cut (conservative), as is a missing last
+            // [sourceIndex=k] marker. Each retry drops the last item, so the loop runs at most
+            // lineItems.size times; prepareText writes no audit, so repeated calls are safe.
+            while (plan.sentCount > 0 && !isRedactedPromptComplete(prepared.text, plan.sentCount)) {
+                plan = buildPrompt(input, applyBudget = true, maxItems = plan.sentCount - 1)
+                if (plan.sentCount == 0) break
+                prepared = cloudPayloadPolicy.prepareText(CloudPayloadPurpose.ITEM_CATEGORIZATION, plan.prompt)
+            }
+            if (plan.sentCount == 0) {
+                Timber.w(
+                    "CloudReceiptItemCategorizationService: PROMPT_BUDGET_NO_ITEMS total=%d correlationId=%s",
+                    input.lineItems.size,
+                    correlationId
+                )
+                return null
+            }
+        }
+        if (plan.sentCount < input.lineItems.size) {
+            Timber.w(
+                "CloudReceiptItemCategorizationService: PROMPT_BUDGET_PARTIAL sent=%d total=%d correlationId=%s",
+                plan.sentCount,
+                input.lineItems.size,
+                correlationId
+            )
+        }
         // P8F-03: record cloud-call provenance
         auditLogger.logCloudCall(
             PrivacyCapability.CLOUD_AI_ITEM_CATEGORIZATION,
@@ -150,7 +204,7 @@ class CloudReceiptItemCategorizationService @Inject constructor(
                             return@use null
                         }
 
-                        parseResponse(body, correlationId, input)
+                        parseResponse(body, correlationId, input, plan.sentCount)
                     }
 
                     if (parsed != null) return@withContext parsed
@@ -198,6 +252,7 @@ class CloudReceiptItemCategorizationService @Inject constructor(
                         return@withContext null
                     }
                 } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
                     Timber.e(
                         e,
                         "CloudReceiptItemCategorizationService: Error calling cloud AI for receipt item categorization correlationId=%s",
@@ -215,25 +270,30 @@ class CloudReceiptItemCategorizationService @Inject constructor(
         }
     }
     
-    private fun buildPrompt(input: ReceiptItemCategorizationInput): String {
+    /** Prompt text plus the number of leading input items (indices 0 until [sentCount]) it contains. */
+    private class PromptPlan(val prompt: String, val sentCount: Int)
+
+    /** True when the redacted text was not cut by the cap and still holds the last sent item marker. */
+    private fun isRedactedPromptComplete(redactedText: String, sentCount: Int): Boolean =
+        redactedText.length < ITEM_CATEGORIZATION_PROMPT_MAX_CHARS &&
+            redactedText.contains("[sourceIndex=${sentCount - 1}]")
+
+    private fun buildPrompt(
+        input: ReceiptItemCategorizationInput,
+        applyBudget: Boolean,
+        maxItems: Int = Int.MAX_VALUE
+    ): PromptPlan {
         // PRIV-43B-03: Raw values — CloudPayloadPolicy will redact if required; no hashCode pseudonyms
         val safeMerchant = input.merchant ?: "Unknown"
 
         val categoriesList = input.userCategories.joinToString(", ") { "${it.name} (id: ${it.id})" }
-        
-        val itemsList = input.lineItems.mapIndexed { index, item ->
-            val safeDescription = item.description ?: "unknown item"
-            "- [sourceIndex=$index] $safeDescription: ${CurrencyFormatter.format(item.totalPrice, input.currency)}"
-        }.joinToString("\n")
-        
-        return """
+
+        // N-05-3: instructions and the output schema come FIRST so a cap cut can only remove items.
+        val fixedPart = """
 You are a receipt item categorization assistant. Categorize each item below.
 
 Store: $safeMerchant
 Available categories: $categoriesList
-
-Items:
-$itemsList
 
 For each item, provide:
 1. sourceIndex (the exact sourceIndex from the input item; do not reorder or invent indices)
@@ -273,7 +333,24 @@ Output JSON format:
   "suggestedNewCategories": ["Sportswear"],
   "taxDistribution": {"5": 0.25, "12": 1.75}
 }
+
+Items:
 """.trimIndent()
+
+        // Whole item lines are appended while the prompt stays within the redaction cap minus a margin
+        // (redaction can lengthen text, e.g. PII markers). Stop at the first line that does not fit so the
+        // sent items are always the contiguous prefix 0 until sentCount and no line is cut mid-item.
+        val budget = ITEM_CATEGORIZATION_PROMPT_MAX_CHARS - ITEM_PROMPT_SAFETY_MARGIN_CHARS
+        val prompt = StringBuilder(fixedPart)
+        var sentCount = 0
+        for ((index, item) in input.lineItems.withIndex()) {
+            val line = "\n- [sourceIndex=$index] ${item.description}: ${CurrencyFormatter.format(item.totalPrice, input.currency)}"
+            if (sentCount >= maxItems) break
+            if (applyBudget && prompt.length + line.length > budget) break
+            prompt.append(line)
+            sentCount++
+        }
+        return PromptPlan(prompt.toString(), sentCount)
     }
     
     private fun buildRequestBody(prompt: String): String {
@@ -294,7 +371,8 @@ Output JSON format:
     private fun parseResponse(
         body: String,
         correlationId: String,
-        input: ReceiptItemCategorizationInput
+        input: ReceiptItemCategorizationInput,
+        sentCount: Int
     ): ReceiptItemCategorizationResult? {
         return try {
             val effectiveCloudCategoryOptions = cloudCategoryOptionsForPrompt(input)
@@ -338,7 +416,7 @@ Output JSON format:
             for (i in 0 until itemsArray.length()) {
                 val item = itemsArray.getJSONObject(i)
                 val sourceIndex = item.optStrictLongStrictOrNull("sourceIndex")
-                    ?.takeIf { it in 0L until input.lineItems.size.toLong() }
+                    ?.takeIf { it in 0L until sentCount.toLong() }
                     ?.toInt()
                     ?: throw JSONException("Missing or invalid 'sourceIndex' in items[$i]")
                 if (indexedItems.containsKey(sourceIndex)) {
@@ -399,8 +477,23 @@ Output JSON format:
                 }
             }
             
-            if (indexedItems.size != input.lineItems.size) return null
+            // The response must cover exactly the items that were sent (indices 0 until sentCount).
+            if (indexedItems.size != sentCount) return null
             val sourceItems = input.lineItems.mapIndexed { index, lineItem ->
+                if (index >= sentCount) {
+                    // N-05-3: not sent to the cloud -> stays uncategorised (no category, zero confidence,
+                    // flagged for review) with the local description and amount; nothing is inferred.
+                    return@mapIndexed CategorizedReceiptItem(
+                        itemDescription = lineItem.description.ifBlank { "unknown item" },
+                        amount = lineItem.totalPrice,
+                        suggestedCategory = null,
+                        confidence = 0f,
+                        rationale = "",
+                        alternatives = emptyList(),
+                        needsReview = true,
+                        isAdjustment = lineItem.isAdjustment
+                    )
+                }
                 val item = indexedItems[index] ?: return null
                 item.copy(
                     amount = lineItem.totalPrice,
@@ -415,8 +508,9 @@ Output JSON format:
             val taxDistribution = (taxAllocation as? com.yourname.expensetracker.domain.ai.model.ReceiptTaxAllocation.Available)
                 ?.categoryAmounts?.mapValues { it.value.amount }.orEmpty()
 
-            val avgConfidence = if (sourceItems.isNotEmpty()) {
-                sourceItems.map { it.confidence }.average().toFloat()
+            // Average over the items the model actually categorised; unsent placeholders must not skew it.
+            val avgConfidence = if (sentCount > 0) {
+                sourceItems.take(sentCount).map { it.confidence }.average().toFloat()
             } else 0f
             
             ReceiptItemCategorizationResult(
@@ -584,6 +678,16 @@ Output JSON format:
     }
 
     private companion object {
+        /**
+         * Mirrors the redactor's per-purpose text cap for ITEM_CATEGORIZATION
+         * (DefaultCloudPayloadRedactor.MAX_TEXT_CHARS, currently private; cap deliberately NOT raised).
+         * A test must pin that a prompt built at this budget survives the real redactor with its schema.
+         */
+        private const val ITEM_CATEGORIZATION_PROMPT_MAX_CHARS = 2000
+
+        /** Headroom for redaction markers that are longer than the text they replace. */
+        private const val ITEM_PROMPT_SAFETY_MARGIN_CHARS = 50
+
         private val JSON_FENCE_REGEX = Regex("""```(?:json)?\s*([\s\S]*?)\s*```""", RegexOption.IGNORE_CASE)
         private val FALLBACK_REDACTED_CATEGORY_REGEX = Regex("""cat_(\d+)""", RegexOption.IGNORE_CASE)
         private val EMAIL_REGEX = Regex("""\b[\w._%+-]+@[\w.-]+\.[A-Za-z]{2,}\b""")
