@@ -105,9 +105,10 @@ class NaturalLanguageSearchEngine @Inject constructor(
 
     // Groups: 1 = over keyword, 2 = under keyword, 3 = prefix marker, 4 = number, 5 = suffix marker.
     // A marker binds to the number directly after it first: the suffix marker is only taken when it
-    // is not itself directly followed by a number ("route 66 $20" gives 20, not 66).
+    // is not itself directly followed by a digit ("route 66 $20" gives 20, not 66). A marker followed
+    // by a space and then another number ("20€ 15 march") still binds to the number before it.
     private val singleAmountPattern = Regex(
-        """(?:($overKeyword)\s*|($underKeyword)\s*)?($currencyMarker\s*)?($numberToken)(\s*$currencyMarker(?!\s*\d))?""",
+        """(?:($overKeyword)\s*|($underKeyword)\s*)?($currencyMarker\s*)?($numberToken)(\s*$currencyMarker(?!\d))?""",
         RegexOption.IGNORE_CASE
     )
 
@@ -587,7 +588,16 @@ class NaturalLanguageSearchEngine @Inject constructor(
                     else -> return null
                 }
             }
-            raw.count { it == '.' } > 1 -> return null
+            raw.count { it == '.' } > 1 -> {
+                // Repeated dots mirror the comma rule: every group after the first must be exactly
+                // three digits ("1.234.567"); anything else is ambiguous.
+                val parts = raw.split('.')
+                if (parts[0].isNotEmpty() && parts.drop(1).all { it.length == 3 }) {
+                    raw.replace(".", "")
+                } else {
+                    return null
+                }
+            }
             else -> {
                 // A single dot followed by exactly three digits ("1.500") is a thousands separator,
                 // like the comma rule; "1.50" and "0.500" stay decimals.
