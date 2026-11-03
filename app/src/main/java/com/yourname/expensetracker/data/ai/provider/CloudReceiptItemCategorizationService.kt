@@ -94,14 +94,6 @@ class CloudReceiptItemCategorizationService @Inject constructor(
         // redactor 2000-char cap); that state is private to the policy, so it is read from the policy's own
         // result (redactionApplied). Unredacted: send every item. Redacted: re-plan within the cap.
         val fullPlan = buildPrompt(input, applyBudget = false)
-        if (fullPlan.sentCount == 0) {
-            Timber.w(
-                "CloudReceiptItemCategorizationService: PROMPT_BUDGET_NO_ITEMS total=%d correlationId=%s",
-                input.lineItems.size,
-                correlationId
-            )
-            return null
-        }
         val firstPrepared = cloudPayloadPolicy.prepareText(CloudPayloadPurpose.ITEM_CATEGORIZATION, fullPlan.prompt)
         var plan: PromptPlan
         var prepared: com.yourname.expensetracker.domain.privacy.PreparedCloudPayload
@@ -127,7 +119,7 @@ class CloudReceiptItemCategorizationService @Inject constructor(
                 if (plan.sentCount == 0) break
                 prepared = cloudPayloadPolicy.prepareText(CloudPayloadPurpose.ITEM_CATEGORIZATION, plan.prompt)
             }
-            if (plan.sentCount == 0) {
+            if (plan.sentCount == 0 && input.lineItems.isNotEmpty()) {
                 Timber.w(
                     "CloudReceiptItemCategorizationService: PROMPT_BUDGET_NO_ITEMS total=%d correlationId=%s",
                     input.lineItems.size,
@@ -344,7 +336,7 @@ Items:
         val prompt = StringBuilder(fixedPart)
         var sentCount = 0
         for ((index, item) in input.lineItems.withIndex()) {
-            val line = "\n- [sourceIndex=$index] ${item.description}: ${CurrencyFormatter.format(item.totalPrice, input.currency)}"
+            val line = "\n- [sourceIndex=$index] ${item.description.ifBlank { "unknown item" }}: ${CurrencyFormatter.format(item.totalPrice, input.currency)}"
             if (sentCount >= maxItems) break
             if (applyBudget && prompt.length + line.length > budget) break
             prompt.append(line)

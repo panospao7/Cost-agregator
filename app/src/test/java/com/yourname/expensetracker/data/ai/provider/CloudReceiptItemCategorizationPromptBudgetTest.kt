@@ -465,7 +465,7 @@ class CloudReceiptItemCategorizationPromptBudgetTest {
 
     /** Empirical real cap of the redactor for ITEM_CATEGORIZATION text (not a mirrored constant). */
     private fun realRedactorCap(): Int =
-        redactor.redactText("word ".repeat(2000), CloudPayloadPurpose.ITEM_CATEGORIZATION).text.length
+        redactor.redactText("wordx".repeat(2000), CloudPayloadPurpose.ITEM_CATEGORIZATION).text.length
 
     /**
      * Asserts the sent text carries a contiguous prefix of whole item lines (index, redacted
