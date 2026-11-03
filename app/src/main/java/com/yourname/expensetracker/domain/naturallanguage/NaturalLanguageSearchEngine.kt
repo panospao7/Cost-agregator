@@ -104,8 +104,10 @@ class NaturalLanguageSearchEngine @Inject constructor(
     )
 
     // Groups: 1 = over keyword, 2 = under keyword, 3 = prefix marker, 4 = number, 5 = suffix marker.
+    // A marker binds to the number directly after it first: the suffix marker is only taken when it
+    // is not itself directly followed by a number ("route 66 $20" gives 20, not 66).
     private val singleAmountPattern = Regex(
-        """(?:($overKeyword)\s*|($underKeyword)\s*)?($currencyMarker\s*)?($numberToken)(\s*$currencyMarker)?""",
+        """(?:($overKeyword)\s*|($underKeyword)\s*)?($currencyMarker\s*)?($numberToken)(\s*$currencyMarker(?!\s*\d))?""",
         RegexOption.IGNORE_CASE
     )
 
@@ -407,11 +409,13 @@ class NaturalLanguageSearchEngine @Inject constructor(
         } else {
             val amountMatcher = buildAmountMatcher(extractedAmounts!!)
             preFiltered.filter { expense ->
+                // The filter compares the gross row amount: the figure the result card shows.
+                // Neutralised or shared rows are matched by what is displayed, not by their effective share.
                 val normalizedAmount: Double? = if (expense.currency == homeCurrency) {
-                    expense.effectiveAmount
+                    expense.amount
                 } else {
                     currencyConverter.convertAsOf(
-                        amount = expense.effectiveAmount,
+                        amount = expense.amount,
                         fromCurrency = expense.currency,
                         toCurrency = homeCurrency,
                         atMillis = expense.date
@@ -584,7 +588,16 @@ class NaturalLanguageSearchEngine @Inject constructor(
                 }
             }
             raw.count { it == '.' } > 1 -> return null
-            else -> raw
+            else -> {
+                // A single dot followed by exactly three digits ("1.500") is a thousands separator,
+                // like the comma rule; "1.50" and "0.500" stay decimals.
+                val parts = raw.split('.')
+                if (parts.size == 2 && parts[1].length == 3 && parts[0] != "0" && parts[0].isNotEmpty()) {
+                    raw.replace(".", "")
+                } else {
+                    raw
+                }
+            }
         }
         val value = canonical.toDoubleOrNull() ?: return null
         return if (value.isFinite() && value >= 0.0) value else null
@@ -597,6 +610,8 @@ class NaturalLanguageSearchEngine @Inject constructor(
     /**
      * Builds one predicate from the extracted amounts, once per search.
      * - OVER / UNDER / BETWEEN rules must all hold (so "over 10 and under 50" is a range).
+     *   Exception: when every UNDER bound is below every OVER bound ("under 10 or over 50") the AND
+     *   would be impossible, so the OVER and UNDER rules are alternatives (either side matches).
      * - EXACTLY values are alternatives: the row must equal one of them.
      * - BETWEEN values are consumed in pairs (min..max inclusive); a lone BETWEEN is the point range.
      * - Comparison is in cents (2 decimals, HALF_UP) on the home-currency amount.
@@ -606,14 +621,22 @@ class NaturalLanguageSearchEngine @Inject constructor(
         val exacts = mutableListOf<BigDecimal>()
         val rules = mutableListOf<(BigDecimal) -> Boolean>()
         val betweenValues = mutableListOf<BigDecimal>()
+        val overs = mutableListOf<BigDecimal>()
+        val unders = mutableListOf<BigDecimal>()
         for (amount in amounts) {
             val value = toMoney(amount.value) ?: return { false }
             when (amount.comparison) {
                 AmountComparison.EXACTLY -> exacts.add(value)
-                AmountComparison.OVER -> rules.add { it > value }
-                AmountComparison.UNDER -> rules.add { it < value }
+                AmountComparison.OVER -> overs.add(value)
+                AmountComparison.UNDER -> unders.add(value)
                 AmountComparison.BETWEEN -> betweenValues.add(value)
             }
+        }
+        if (overs.isNotEmpty() && unders.isNotEmpty() && unders.max() < overs.min()) {
+            rules.add { candidate -> overs.any { candidate > it } || unders.any { candidate < it } }
+        } else {
+            overs.forEach { bound -> rules.add { it > bound } }
+            unders.forEach { bound -> rules.add { it < bound } }
         }
         betweenValues.chunked(2).forEach { pair ->
             val low = pair.first().min(pair.last())

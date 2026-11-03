@@ -237,4 +237,83 @@ class NaturalLanguageSearchEngineAmountTest {
         val yesterday = today.minusDays(1)
         assertEquals(DateRange(yesterday, yesterday), result.dateRange)
     }
+
+    // ---- Marker binds to the number directly after it (fix104-g) ----
+
+    @Test
+    fun `route 66 with a trailing dollar amount gives 20 and not 66`() = runTest {
+        assertEquals(listOf(amount(20.0, AmountComparison.EXACTLY)), amounts("route 66 \$20"))
+    }
+
+    @Test
+    fun `march 15 with a euro amount gives 20 and not 15`() = runTest {
+        assertEquals(listOf(amount(20.0, AmountComparison.EXACTLY)), amounts("march 15 €20"))
+    }
+
+    @Test
+    fun `suffix marker is still taken when no number follows it`() = runTest {
+        // Control for the two cases above: the suffix rule must not disable suffix markers.
+        assertEquals(listOf(amount(20.0, AmountComparison.EXACTLY)), amounts("march 15 20€"))
+    }
+
+    @Test
+    fun `50 euro 20 euro keeps only the second amount (characterisation of a stated side effect)`() = runTest {
+        // CHARACTERISATION: the first suffix marker is not taken because a number follows it, so the
+        // bare 50 is dropped and the second token's marker binds to 20. Pinned as-is, not endorsed.
+        assertEquals(listOf(amount(20.0, AmountComparison.EXACTLY)), amounts("50€ 20€"))
+    }
+
+    // ---- Dot as thousands separator only for exactly three digits after a non-zero integer part ----
+
+    @Test
+    fun `over 1_500 is fifteen hundred`() = runTest {
+        assertEquals(listOf(amount(1500.0, AmountComparison.OVER)), amounts("over 1.500"))
+    }
+
+    @Test
+    fun `1_50 stays a decimal`() = runTest {
+        assertEquals(listOf(amount(1.5, AmountComparison.OVER)), amounts("over 1.50"))
+    }
+
+    @Test
+    fun `0_500 stays a decimal`() = runTest {
+        assertEquals(listOf(amount(0.5, AmountComparison.OVER)), amounts("over 0.500"))
+    }
+
+    // ---- Names, counts and durations that must stay free of amounts ----
+
+    @Test
+    fun `under armour is a brand and not an amount`() = runTest {
+        assertNull(amounts("Under Armour"))
+    }
+
+    @Test
+    fun `7 eleven is a brand and not an amount`() = runTest {
+        assertNull(amounts("7 Eleven"))
+    }
+
+    @Test
+    fun `under 5 minutes is a duration and not an amount`() = runTest {
+        assertNull(amounts("under 5 minutes"))
+    }
+
+    @Test
+    fun `over 3 weeks ago is a duration and not an amount`() = runTest {
+        assertNull(amounts("over 3 weeks ago"))
+    }
+
+    @Test
+    fun `coffee 15 and last 3 months stay free of amounts together`() = runTest {
+        assertNull(amounts("coffee 15 last 3 months"))
+    }
+
+    // ---- Alternatives versus range, extraction side ----
+
+    @Test
+    fun `under 10 or over 50 extracts both bounds in query order`() = runTest {
+        assertEquals(
+            listOf(amount(10.0, AmountComparison.UNDER), amount(50.0, AmountComparison.OVER)),
+            amounts("under 10 or over 50")
+        )
+    }
 }

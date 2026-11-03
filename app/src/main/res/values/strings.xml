@@ -1894,10 +1894,11 @@
     <string name="nlp_transactions_count_format">%1$d transactions</string>
     <string name="nlp_understood_label">I understood:</string>
     <string name="nlp_confidence_format">%1$d%% confidence</string>
-    <string name="nlp_amount_over_format">Over €%1$.0f</string>
-    <string name="nlp_amount_under_format">Under €%1$.0f</string>
-    <string name="nlp_amount_exactly_format">€%1$.0f</string>
-    <string name="nlp_amount_between_format">€%1$.0f+</string>
+    <!-- Amount chips: %1$s / %2$s are already formatted in the home currency (never a hard-coded symbol). -->
+    <string name="nlp_amount_over_format">Over %1$s</string>
+    <string name="nlp_amount_under_format">Under %1$s</string>
+    <string name="nlp_amount_exactly_format">%1$s</string>
+    <string name="nlp_amount_between_format">Between %1$s and %2$s</string>
     <string name="nlp_no_results">No transactions found</string>
     <string name="nlp_initial_title">Ask about your spending</string>
     <string name="nlp_initial_subtitle">Search using natural language\nlike "restaurants over €50 last month"</string>

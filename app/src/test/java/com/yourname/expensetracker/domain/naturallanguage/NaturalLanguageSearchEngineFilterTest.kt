@@ -89,11 +89,14 @@ class NaturalLanguageSearchEngineFilterTest {
         amount: Double,
         currency: String = "EUR",
         merchant: String = "Shop",
-        categoryId: Long? = null
+        categoryId: Long? = null,
+        // Deliberately different from the gross amount by default: a filter that read effectiveAmount
+        // instead of the gross (displayed) amount would fail every amount-boundary test in this class.
+        effectiveAmount: Double = amount * 0.5
     ) = NaturalLanguageExpense(
         id = id,
         amount = amount,
-        effectiveAmount = amount,
+        effectiveAmount = effectiveAmount,
         currency = currency,
         merchant = merchant,
         date = baseDate - id * 1_000L,
@@ -211,6 +214,62 @@ class NaturalLanguageSearchEngineFilterTest {
     fun `OVER and UNDER together form a range`() = runTest {
         val rows = listOf(row(1, 50.00), row(2, 50.01), row(3, 75.0), row(4, 99.99), row(5, 100.00))
         assertEquals(listOf(2L, 3L, 4L), idsFor("over \$50 under \$100", rows))
+    }
+
+    // ---- gross converted amount is what the filter compares (never the effective share) ----
+
+    @Test
+    fun `neutralised 1200 euro row with effective 0 is excluded by under 50 and included by over 50`() = runTest {
+        val neutralised = row(1, 1200.0, effectiveAmount = 0.0)
+
+        assertEquals(emptyList<Long>(), idsFor("under €50", listOf(neutralised)))
+        assertEquals(listOf(1L), idsFor("over €50", listOf(neutralised)))
+    }
+
+    @Test
+    fun `100 euro row with a 30 euro share is included by over 50 and excluded by under 50`() = runTest {
+        val shared = row(1, 100.0, effectiveAmount = 30.0)
+
+        assertEquals(listOf(1L), idsFor("over €50", listOf(shared)))
+        assertEquals(emptyList<Long>(), idsFor("under €50", listOf(shared)))
+    }
+
+    @Test
+    fun `10000 yen row converted to 60 euro is included by over 50 and excluded by under 50`() = runTest {
+        val yen = row(1, 10_000.0, currency = "JPY", effectiveAmount = 4_000.0)
+        val converter = mockk<CurrencyConverter>()
+        // Only the gross amount is stubbed: converting the effective share would find no stub and throw.
+        coEvery { converter.convertAsOf(10_000.0, "JPY", "EUR", yen.date) } returns conversion("JPY", 10_000.0, 60.0)
+
+        val over = engine(FakeRepo(listOf(listOf(yen))), converter)
+        assertEquals(listOf(1L), over.executeSearch(over.interpretQuery("over €50")).map { it.expense.id })
+
+        val under = engine(FakeRepo(listOf(listOf(yen))), converter)
+        assertEquals(emptyList<Long>(), under.executeSearch(under.interpretQuery("under €50")).map { it.expense.id })
+    }
+
+    @Test
+    fun `gross exactly 50_00 is not OVER even when the effective share is larger`() = runTest {
+        // gross 50.00 is not over 50; an effective-based filter (80.0) would wrongly include it.
+        assertEquals(emptyList<Long>(), idsFor("over €50", listOf(row(1, 50.00, effectiveAmount = 80.0))))
+        // and it is not UNDER either, although the effective share (20.0) is below 50.
+        assertEquals(emptyList<Long>(), idsFor("under €50", listOf(row(1, 50.00, effectiveAmount = 20.0))))
+    }
+
+    // ---- alternative and combined bounds (end to end through interpretQuery) ----
+
+    @Test
+    fun `under 10 or over 50 matches both outer rows and not the middle one`() = runTest {
+        val rows = listOf(row(1, 5.0), row(2, 60.0), row(3, 20.0))
+
+        assertEquals(listOf(1L, 2L), idsFor("under 10 or over 50", rows))
+    }
+
+    @Test
+    fun `over 10 under 50 matches only the middle row`() = runTest {
+        val rows = listOf(row(1, 5.0), row(2, 60.0), row(3, 20.0))
+
+        assertEquals(listOf(3L), idsFor("over 10 under 50", rows))
     }
 
     // ---- currency normalisation ----
