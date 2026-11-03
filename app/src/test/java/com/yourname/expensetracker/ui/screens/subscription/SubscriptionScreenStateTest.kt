@@ -25,4 +25,15 @@ class SubscriptionScreenStateTest {
     fun `subscriptions and candidates suppress the empty state`() {
         assertFalse(showEmptyState(listOf("sub"), listOf("candidate")))
     }
+
+    @Test
+    fun `total card is hidden with no active subscriptions even when candidates exist`() {
+        assertFalse(showTotalCostCard(activeCount = 0))
+    }
+
+    @Test
+    fun `total card shows with at least one active subscription so a conversion failure keeps its message`() {
+        assertTrue(showTotalCostCard(activeCount = 1))
+        assertTrue(showTotalCostCard(activeCount = 3))
+    }
 }

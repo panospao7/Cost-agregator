@@ -36,9 +36,6 @@ import java.math.BigDecimal
 import java.util.UUID
 import javax.inject.Inject
 
-/** Quick-add step in the goal's own currency; capped at the remaining amount by [SavingsGoalsViewModel.quickAdd]. */
-private const val QUICK_ADD_AMOUNT = 10.0
-
 data class SavingsGoalsState(
  val goals: List<SavingsGoal> = emptyList(),
  val smartRecommendations: List<SmartRecommendation> = emptyList(),
@@ -411,9 +408,9 @@ class SavingsGoalsViewModel @Inject constructor(
     }
 
     /**
-     * Quick add of [QUICK_ADD_AMOUNT] capped at the goal's remaining amount (target minus current,
-     * exact decimal subtraction, no rounding). A goal with no remaining amount, or an unreadable
-     * balance, is a no-op. The cap uses the goal's own currency; the write goes through
+     * Quick add of [SavingsQuickAdd.amountOrNull], the same amount the button label shows: the step
+     * capped at the remaining amount rounded to the goal currency's fraction digits. A goal with no
+     * remaining amount, an unreadable balance or unknown fraction digits is a no-op. The write goes through
      * [contributeToGoal], which re-checks the goal snapshot and currency.
      */
     fun quickAdd(goalId: Long) {
@@ -424,11 +421,7 @@ class SavingsGoalsViewModel @Inject constructor(
                 val goal = savingsGoalRepository.observeSavingsGoals().first()
                     .firstOrNull { it.id == goalId }
                     ?: return@withLock
-                if (!goal.targetAmount.isFinite() || !goal.currentAmount.isFinite()) return@withLock
-                val remaining = BigDecimal.valueOf(goal.targetAmount)
-                    .subtract(BigDecimal.valueOf(goal.currentAmount))
-                if (remaining.signum() <= 0) return@withLock
-                val amount = remaining.min(BigDecimal.valueOf(QUICK_ADD_AMOUNT)).toDouble()
+                val amount = SavingsQuickAdd.amountOrNull(goal)?.toDouble() ?: return@withLock
                 performContribution(goalId, amount, goal.currency, null)
             }
         }

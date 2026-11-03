@@ -809,8 +809,13 @@ private fun GoalCard(
                         Text(stringResource(R.string.savings_done))
                     }
                 } else {
-                    TextButton(onClick = onQuickAdd, enabled = canContribute) {
-                        Text(stringResource(R.string.savings_action_add_amount, "10"))
+                    // Same helper as the ViewModel write; no amount left to add (dust, unknown
+                    // fraction digits) hides the action instead of leaving a silent no-op.
+                    val quickAddAmount = SavingsQuickAdd.amountOrNull(goal)
+                    if (quickAddAmount != null) {
+                        TextButton(onClick = onQuickAdd, enabled = canContribute) {
+                            Text(stringResource(R.string.savings_action_add_amount, quickAddAmount.toPlainString()))
+                        }
                     }
                 }
 
