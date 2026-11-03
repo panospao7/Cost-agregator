@@ -16,7 +16,14 @@ import com.yourname.expensetracker.data.repository.SavingsContributionHistoryRep
 import com.yourname.expensetracker.data.repository.SavingsGoalRepository
 import com.yourname.expensetracker.data.repository.SavingsSweepAcceptanceCoordinator
 import com.yourname.expensetracker.data.repository.SavingsSweepAcceptanceResult
+import com.yourname.expensetracker.R
+import com.yourname.expensetracker.domain.model.UiText
+import com.yourname.expensetracker.domain.savings.ManualContributionResult
+import com.yourname.expensetracker.domain.savings.ManualContributionSnapshot
 import com.yourname.expensetracker.domain.savings.RecommendationSource
+import com.yourname.expensetracker.ui.util.blockedWriteException
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import com.yourname.expensetracker.domain.savings.SavingsAchievement
 import com.yourname.expensetracker.domain.savings.SavingsGamificationEngine
 import com.yourname.expensetracker.domain.savings.SavingsRecommendation
@@ -66,6 +73,20 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
     private val currencyFlow = MutableStateFlow("EUR")
     private val rateFlow = MutableStateFlow(0L)
     private lateinit var viewModel: SavingsGoalsViewModel
+
+    /** One entry per recordManualContribution call made by the view model. */
+    private class ManualCall(
+        val goalId: Long,
+        val delta: Double,
+        val snapshot: ManualContributionSnapshot,
+        val key: String,
+        val timestamp: Long
+    )
+
+    private val manualCalls = mutableListOf<ManualCall>()
+
+    /** When non-null the stub returns this and leaves the goals untouched. */
+    private var manualResultOverride: ManualContributionResult? = null
 
     @Before
     override fun setup() {
@@ -172,9 +193,13 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
 
         assertEquals(250.0, updatedGoal.currentAmount, 0.0001)
         assertEquals(250.0, requireNotNull(state.totalSaved), 0.0001)
-        coVerify(exactly = 1) {
-            savingsContributionHistoryRepository.recordContribution(1L, 150.0, timeProvider.now(), "manual", "EUR")
-        }
+        // Balance and history are one atomic repository call now; the VM no longer writes history itself.
+        val call = manualCalls.single()
+        assertEquals(1L, call.goalId)
+        assertEquals(150.0, call.delta, 0.0)
+        assertEquals(ManualContributionSnapshot(currentAmount = 100.0, targetAmount = 1000.0, currency = "EUR"), call.snapshot)
+        assertEquals(timeProvider.now(), call.timestamp)
+        coVerify(exactly = 0) { savingsContributionHistoryRepository.recordContribution(any(), any(), any(), any(), any()) }
     }
 
     @Test
@@ -197,8 +222,142 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
 
         // 100.0 + 50.0 + 75.0 = 225.0
         assertEquals(225.0, updatedGoal.currentAmount, 0.0001)
-        coVerify(exactly = 1) { savingsGoalRepository.incrementSavingsGoalAmount(1L, 50.0) }
-        coVerify(exactly = 1) { savingsGoalRepository.incrementSavingsGoalAmount(1L, 75.0) }
+        coVerify(exactly = 2) { savingsGoalRepository.recordManualContribution(any(), any(), any(), any(), any()) }
+        assertEquals(listOf(50.0, 75.0), manualCalls.map { it.delta })
+        // Each write is validated against the balance the previous one produced.
+        assertEquals(listOf(100.0, 150.0), manualCalls.map { it.snapshot.currentAmount })
+        coVerify(exactly = 0) { savingsGoalRepository.incrementSavingsGoalAmount(any(), any()) }
+    }
+
+    @Test
+    fun `contributeToGoal records one manual contribution and never the separate history call`() = runTest(testDispatcher) {
+        configureRepositoryWithGoals(listOf(createGoal(id = 1L, name = "Emergency", targetAmount = 1000.0, currentAmount = 100.0)))
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        viewModel.contributeToGoal(goalId = 1L, amount = 20.0)
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { savingsGoalRepository.recordManualContribution(any(), any(), any(), any(), any()) }
+        coVerify(exactly = 0) { savingsGoalRepository.incrementSavingsGoalAmount(any(), any()) }
+        coVerify(exactly = 0) { savingsContributionHistoryRepository.recordContribution(any(), any(), any(), any(), any()) }
+        assertEquals(120.0, goalsFlow.value.single().currentAmount, 0.0)
+    }
+
+    @Test
+    fun `two separate taps use two different idempotency keys`() = runTest(testDispatcher) {
+        configureRepositoryWithGoals(listOf(createGoal(id = 1L, name = "Emergency", targetAmount = 1000.0, currentAmount = 100.0)))
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        viewModel.contributeToGoal(goalId = 1L, amount = 10.0)
+        viewModel.contributeToGoal(goalId = 1L, amount = 10.0)
+        advanceUntilIdle()
+
+        assertEquals(2, manualCalls.size)
+        assertTrue(manualCalls.all { it.key.isNotBlank() })
+        assertEquals(2, manualCalls.map { it.key }.toSet().size)
+    }
+
+    @Test
+    fun `SnapshotMismatch leaves goals untouched, no gamification refresh, and emits the one not-added message`() = runTest(testDispatcher) {
+        assertNothingAddedFor(ManualContributionResult.SnapshotMismatch)
+    }
+
+    @Test
+    fun `Rejected leaves goals untouched, no gamification refresh, and emits the one not-added message`() = runTest(testDispatcher) {
+        assertNothingAddedFor(ManualContributionResult.Rejected("SAVINGS_MANUAL_CONTRIBUTION_UNAVAILABLE"))
+    }
+
+    @Test
+    fun `AlreadyRecorded changes nothing and emits no event`() = runTest(testDispatcher) {
+        configureRepositoryWithGoals(listOf(createGoal(1L, "Emergency", 1000.0, 100.0)))
+        manualResultOverride = ManualContributionResult.AlreadyRecorded
+        val events = mutableListOf<SavingsGoalsEvent>()
+        viewModel = createViewModel()
+        backgroundScope.launch(UnconfinedTestDispatcher(testDispatcher.scheduler)) { viewModel.events.collect { events += it } }
+        advanceUntilIdle()
+
+        viewModel.contributeToGoal(1L, 25.0, "EUR")
+        advanceUntilIdle()
+
+        assertEquals(1, manualCalls.size)
+        assertTrue("AlreadyRecorded must show nothing: $events", events.isEmpty())
+    }
+
+    @Test
+    fun `a Recorded result refreshes gamification as the control`() = runTest(testDispatcher) {
+        var streakCalls = 0
+        configureRepositoryWithGoals(listOf(createGoal(1L, "Emergency", 1000.0, 100.0)))
+        coEvery { gamificationEngine.calculateStreak() } coAnswers {
+            streakCalls++
+            SavingsStreak(0, 0, null, 0, 0.0)
+        }
+        viewModel = createViewModel()
+        advanceUntilIdle()
+        val before = streakCalls
+
+        viewModel.contributeToGoal(1L, 25.0, "EUR")
+        advanceUntilIdle()
+
+        assertEquals(125.0, goalsFlow.value.single().currentAmount, 0.0)
+        assertTrue("gamification must refresh after a recorded contribution", streakCalls > before)
+    }
+
+    @Test
+    fun `blocked manual contribution emits write blocked and no refresh and no crash`() = runTest(testDispatcher) {
+        var streakCalls = 0
+        configureRepositoryWithGoals(listOf(createGoal(1L, "Emergency", 1000.0, 100.0)))
+        coEvery { gamificationEngine.calculateStreak() } coAnswers {
+            streakCalls++
+            SavingsStreak(0, 0, null, 0, 0.0)
+        }
+        coEvery { savingsGoalRepository.recordManualContribution(any(), any(), any(), any(), any()) } throws blockedWriteException()
+        val events = mutableListOf<SavingsGoalsEvent>()
+        viewModel = createViewModel()
+        backgroundScope.launch(UnconfinedTestDispatcher(testDispatcher.scheduler)) { viewModel.events.collect { events += it } }
+        advanceUntilIdle()
+        val before = streakCalls
+
+        viewModel.contributeToGoal(1L, 25.0, "EUR")
+        advanceUntilIdle()
+
+        assertEquals(
+            listOf<SavingsGoalsEvent>(SavingsGoalsEvent.WriteBlocked(UiText.StringResource(R.string.ui_write_blocked_maintenance))),
+            events.toList()
+        )
+        assertEquals(before, streakCalls)
+        assertEquals(100.0, goalsFlow.value.single().currentAmount, 0.0)
+    }
+
+    private suspend fun kotlinx.coroutines.test.TestScope.assertNothingAddedFor(result: ManualContributionResult) {
+        var streakCalls = 0
+        configureRepositoryWithGoals(listOf(createGoal(1L, "Emergency", 1000.0, 100.0)))
+        coEvery { gamificationEngine.calculateStreak() } coAnswers {
+            streakCalls++
+            SavingsStreak(0, 0, null, 0, 0.0)
+        }
+        manualResultOverride = result
+        val events = mutableListOf<SavingsGoalsEvent>()
+        viewModel = createViewModel()
+        backgroundScope.launch(UnconfinedTestDispatcher(testDispatcher.scheduler)) { viewModel.events.collect { events += it } }
+        advanceUntilIdle()
+        val before = streakCalls
+
+        viewModel.contributeToGoal(1L, 25.0, "EUR")
+        advanceUntilIdle()
+
+        assertEquals(1, manualCalls.size)
+        assertEquals(100.0, goalsFlow.value.single().currentAmount, 0.0)
+        assertEquals("no gamification refresh for a result that added nothing", before, streakCalls)
+        assertEquals(
+            "exactly one bounded not-added message",
+            listOf<SavingsGoalsEvent>(SavingsGoalsEvent.WriteBlocked(UiText.StringResource(R.string.savings_contribution_not_added))),
+            events.toList()
+        )
+        assertNull(viewModel.state.value.contributionHistoryWriteFailure)
+        assertEquals(100.0, viewModel.state.value.goals.single().currentAmount, 0.0)
+        assertTrue(!viewModel.state.value.toString().contains("SECRET"))
     }
 
     @Test
@@ -307,6 +466,7 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
         viewModel.acceptSmartRecommendation(recommendation)
         advanceUntilIdle()
         coVerify(exactly = 0) { savingsGoalRepository.incrementSavingsGoalAmount(any(), any()) }
+        coVerify(exactly = 0) { savingsGoalRepository.recordManualContribution(any(), any(), any(), any(), any()) }
     }
 
     @Test
@@ -359,6 +519,7 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
         viewModel.acceptSmartRecommendation(held)
         advanceUntilIdle()
         coVerify(exactly = 0) { savingsGoalRepository.incrementSavingsGoalAmount(any(), any()) }
+        coVerify(exactly = 0) { savingsGoalRepository.recordManualContribution(any(), any(), any(), any(), any()) }
     }
 
     @Test
@@ -377,6 +538,7 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
         viewModel.acceptSmartRecommendation(held)
         advanceUntilIdle()
         coVerify(exactly = 0) { savingsGoalRepository.incrementSavingsGoalAmount(any(), any()) }
+        coVerify(exactly = 0) { savingsGoalRepository.recordManualContribution(any(), any(), any(), any(), any()) }
     }
 
     @Test
@@ -414,6 +576,7 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
         viewModel.acceptSweepRecommendation()
         advanceUntilIdle()
         coVerify(exactly = 0) { savingsGoalRepository.incrementSavingsGoalAmount(any(), any()) }
+        coVerify(exactly = 0) { savingsGoalRepository.recordManualContribution(any(), any(), any(), any(), any()) }
         coVerify(exactly = 0) { savingsContributionHistoryRepository.recordContribution(any(), any(), any(), any(), any()) }
         coVerify(exactly = 0) { savingsSweepAcceptanceCoordinator.accept(any()) }
         assertNull(viewModel.state.value.sweepRecommendation)
@@ -441,6 +604,7 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
         viewModel.acceptSmartRecommendation(SmartRecommendation(goal, 25.0, 0.9, "TEST", "TEST", "EUR"))
         advanceUntilIdle()
         coVerify(exactly = 0) { savingsGoalRepository.incrementSavingsGoalAmount(any(), any()) }
+        coVerify(exactly = 0) { savingsGoalRepository.recordManualContribution(any(), any(), any(), any(), any()) }
         coVerify(exactly = 0) { smartSavingsEngine.calculatePortfolioRecommendations(any(), any(), any()) }
     }
 
@@ -518,6 +682,7 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
 
         coVerify(exactly = 1) { savingsSweepAcceptanceCoordinator.accept(sweep) }
         coVerify(exactly = 0) { savingsGoalRepository.incrementSavingsGoalAmount(any(), any()) }
+        coVerify(exactly = 0) { savingsGoalRepository.recordManualContribution(any(), any(), any(), any(), any()) }
         coVerify(exactly = 0) { savingsContributionHistoryRepository.recordContribution(any(), any(), any(), any(), any()) }
     }
 
@@ -538,6 +703,7 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
         viewModel.acceptSmartRecommendation(held)
         advanceUntilIdle()
         coVerify(exactly = 0) { savingsGoalRepository.incrementSavingsGoalAmount(any(), any()) }
+        coVerify(exactly = 0) { savingsGoalRepository.recordManualContribution(any(), any(), any(), any(), any()) }
     }
 
     @Test
@@ -554,8 +720,12 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
         assertEquals(CurrencyCode.EUR, held.moneyRecommendedAmount?.currency)
         viewModel.acceptSmartRecommendation(held)
         advanceUntilIdle()
-        coVerify(exactly = 1) { savingsGoalRepository.incrementSavingsGoalAmount(goal.id, 25.0) }
-        coVerify(exactly = 1) { savingsContributionHistoryRepository.recordContribution(goal.id, 25.0, any(), "manual", "EUR") }
+        val call = manualCalls.single()
+        assertEquals(goal.id, call.goalId)
+        assertEquals(25.0, call.delta, 0.0)
+        assertEquals(ManualContributionSnapshot(200.0, 1000.0, "EUR"), call.snapshot)
+        coVerify(exactly = 0) { savingsGoalRepository.incrementSavingsGoalAmount(any(), any()) }
+        coVerify(exactly = 0) { savingsContributionHistoryRepository.recordContribution(any(), any(), any(), any(), any()) }
     }
 
     @Test
@@ -570,6 +740,7 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
         viewModel.contributeToGoal(legacy.id, 10.0, "EUR")
         advanceUntilIdle()
         coVerify(exactly = 0) { savingsGoalRepository.incrementSavingsGoalAmount(any(), any()) }
+        coVerify(exactly = 0) { savingsGoalRepository.recordManualContribution(any(), any(), any(), any(), any()) }
         coVerify(exactly = 0) { savingsContributionHistoryRepository.recordContribution(any(), any(), any(), any(), any()) }
     }
 
@@ -588,6 +759,7 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
         viewModel.acceptSmartRecommendation(held)
         advanceUntilIdle()
         coVerify(exactly = 0) { savingsGoalRepository.incrementSavingsGoalAmount(any(), any()) }
+        coVerify(exactly = 0) { savingsGoalRepository.recordManualContribution(any(), any(), any(), any(), any()) }
         coVerify(exactly = 0) { savingsContributionHistoryRepository.recordContribution(any(), any(), any(), any(), any()) }
     }
 
@@ -609,6 +781,7 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
         viewModel.acceptSmartRecommendation(held)
         advanceUntilIdle()
         coVerify(exactly = 0) { savingsGoalRepository.incrementSavingsGoalAmount(any(), any()) }
+        coVerify(exactly = 0) { savingsGoalRepository.recordManualContribution(any(), any(), any(), any(), any()) }
         coVerify(exactly = 0) { savingsContributionHistoryRepository.recordContribution(any(), any(), any(), any(), any()) }
     }
 
@@ -626,6 +799,7 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
         advanceUntilIdle()
         assertEquals("EUR", viewModel.state.value.homeCurrency)
         coVerify(exactly = 0) { savingsGoalRepository.incrementSavingsGoalAmount(any(), any()) }
+        coVerify(exactly = 0) { savingsGoalRepository.recordManualContribution(any(), any(), any(), any(), any()) }
         coVerify(exactly = 0) { savingsContributionHistoryRepository.recordContribution(any(), any(), any(), any(), any()) }
     }
 
@@ -656,6 +830,7 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
         advanceUntilIdle()
         coVerify(exactly = 0) { savingsSweepAcceptanceCoordinator.accept(any()) }
         coVerify(exactly = 0) { savingsGoalRepository.incrementSavingsGoalAmount(any(), any()) }
+        coVerify(exactly = 0) { savingsGoalRepository.recordManualContribution(any(), any(), any(), any(), any()) }
         coVerify(exactly = 0) { savingsContributionHistoryRepository.recordContribution(any(), any(), any(), any(), any()) }
     }
 
@@ -716,49 +891,60 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
         assertEquals(200.0, goalsFlow.value.single().currentAmount, 0.0)
         assertNull(viewModel.state.value.contributionHistoryWriteFailure)
         coVerify(exactly = 0) { savingsGoalRepository.incrementSavingsGoalAmount(any(), any()) }
+        coVerify(exactly = 0) { savingsGoalRepository.recordManualContribution(any(), any(), any(), any(), any()) }
         coVerify(exactly = 0) { savingsContributionHistoryRepository.recordContribution(any(), any(), any(), any(), any()) }
     }
 
     @Test
-    fun rejectedManualHistoryWriteIsVisibleAndCannotBeRetriedAsSuccess() = runTest(testDispatcher) {
+    fun rejectedManualContributionLeavesBalanceUnchangedAndEachRetryUsesItsOwnKey() = runTest(testDispatcher) {
+        // Balance and history now commit in one repository transaction, so a rejected write leaves BOTH
+        // untouched (balance stays 200, was 225 when the two writes were separate). The old
+        // SAVINGS_HISTORY_WRITE_REJECTED flag is no longer set by this path; a retry is a new user
+        // action with its own key and is never reported as the first one succeeding.
         val goal = createGoal(1L, "Known", 1000.0, 200.0)
         configureRepositoryWithGoals(listOf(goal))
-        coEvery { savingsContributionHistoryRepository.recordContribution(any(), any(), any(), any(), any()) } returns false
+        manualResultOverride = ManualContributionResult.Rejected("SAVINGS_MANUAL_CONTRIBUTION_UNAVAILABLE")
         viewModel = createViewModel()
         advanceUntilIdle()
         viewModel.contributeToGoal(goal.id, 25.0, "EUR")
         advanceUntilIdle()
-        assertEquals(225.0, goalsFlow.value.single().currentAmount, 0.0)
-        assertEquals("SAVINGS_HISTORY_WRITE_REJECTED", viewModel.state.value.contributionHistoryWriteFailure)
-        assertNull(viewModel.state.value.streak)
-        assertTrue(viewModel.state.value.achievements.isEmpty())
+        assertEquals(200.0, goalsFlow.value.single().currentAmount, 0.0)
+        assertNull(viewModel.state.value.contributionHistoryWriteFailure)
+        assertEquals(200.0, viewModel.state.value.goals.single().currentAmount, 0.0)
         viewModel.contributeToGoal(goal.id, 25.0, "EUR")
         advanceUntilIdle()
-        coVerify(exactly = 1) { savingsGoalRepository.incrementSavingsGoalAmount(goal.id, 25.0) }
-        coVerify(exactly = 1) { savingsContributionHistoryRepository.recordContribution(goal.id, 25.0, any(), "manual", "EUR") }
+        assertEquals(200.0, goalsFlow.value.single().currentAmount, 0.0)
+        assertEquals(2, manualCalls.size)
+        assertEquals(2, manualCalls.map { it.key }.toSet().size)
+        coVerify(exactly = 0) { savingsGoalRepository.incrementSavingsGoalAmount(any(), any()) }
+        coVerify(exactly = 0) { savingsContributionHistoryRepository.recordContribution(any(), any(), any(), any(), any()) }
     }
 
     @Test
-    fun failedSmartHistoryWriteSuppressesHeldAndRecomputedActions() = runTest(testDispatcher) {
+    fun rejectedSmartContributionKeepsHeldRecommendationActionableAndBalanceUnchanged() = runTest(testDispatcher) {
+        // A rejected atomic write changes nothing (no balance, no history row), so there is no
+        // partial state to suppress: the held recommendation stays actionable and the failure flag is
+        // not set. The balance is unchanged and every attempt goes through recordManualContribution.
         val goal = createGoal(1L, "Known", 1000.0, 200.0)
         configureRepositoryWithGoals(listOf(goal))
         coEvery { smartSavingsEngine.calculatePortfolioRecommendationsResult(any(), any(), any()) } returns
             availableSmartResult(goal)
-        coEvery { savingsContributionHistoryRepository.recordContribution(any(), any(), any(), any(), any()) } returns false
+        manualResultOverride = ManualContributionResult.Rejected("SAVINGS_MANUAL_CONTRIBUTION_UNAVAILABLE")
         viewModel = createViewModel()
         advanceUntilIdle()
         val held = viewModel.state.value.smartRecommendations.single()
         viewModel.acceptSmartRecommendation(held)
         advanceUntilIdle()
-        assertEquals("SAVINGS_HISTORY_WRITE_REJECTED", viewModel.state.value.contributionHistoryWriteFailure)
-        assertTrue(viewModel.state.value.smartRecommendations.isEmpty())
+        assertNull(viewModel.state.value.contributionHistoryWriteFailure)
+        assertEquals(200.0, goalsFlow.value.single().currentAmount, 0.0)
+        assertEquals(1, manualCalls.size)
+        assertEquals(25.0, manualCalls.single().delta, 0.0)
+        assertEquals(1, viewModel.state.value.smartRecommendations.size)
         viewModel.refresh()
         advanceUntilIdle()
-        assertTrue(viewModel.state.value.smartRecommendations.isEmpty())
-        viewModel.acceptSmartRecommendation(held)
-        advanceUntilIdle()
-        coVerify(exactly = 1) { savingsGoalRepository.incrementSavingsGoalAmount(goal.id, 25.0) }
-        coVerify(exactly = 1) { savingsContributionHistoryRepository.recordContribution(goal.id, 25.0, any(), "manual", "EUR") }
+        assertEquals(200.0, goalsFlow.value.single().currentAmount, 0.0)
+        coVerify(exactly = 0) { savingsGoalRepository.incrementSavingsGoalAmount(any(), any()) }
+        coVerify(exactly = 0) { savingsContributionHistoryRepository.recordContribution(any(), any(), any(), any(), any()) }
     }
 
     @Test
@@ -790,6 +976,7 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
         advanceUntilIdle()
         coVerify(exactly = 2) { savingsSweepAcceptanceCoordinator.accept(sweep) }
         coVerify(exactly = 0) { savingsGoalRepository.incrementSavingsGoalAmount(any(), any()) }
+        coVerify(exactly = 0) { savingsGoalRepository.recordManualContribution(any(), any(), any(), any(), any()) }
         coVerify(exactly = 0) { savingsContributionHistoryRepository.recordContribution(any(), any(), any(), any(), any()) }
     }
 
@@ -830,43 +1017,215 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
 
         coVerify(exactly = 1) { savingsSweepAcceptanceCoordinator.accept(sweep) }
         coVerify(exactly = 0) { savingsGoalRepository.incrementSavingsGoalAmount(any(), any()) }
+        coVerify(exactly = 0) { savingsGoalRepository.recordManualContribution(any(), any(), any(), any(), any()) }
         coVerify(exactly = 0) { savingsContributionHistoryRepository.recordContribution(any(), any(), any(), any(), any()) }
         assertEquals(200.0, goalsFlow.value.single().currentAmount, 0.0)
     }
 
     @Test
-    fun historyStorageFailureUsesOnlyControlledReasonWithoutPayload() = runTest(testDispatcher) {
+    fun rejectedManualContributionExposesNoPayloadInStateAndSetsNoHistoryFailureFlag() = runTest(testDispatcher) {
         val goal = createGoal(1L, "Known", 1000.0, 200.0)
         configureRepositoryWithGoals(listOf(goal))
-        coEvery { savingsContributionHistoryRepository.recordContribution(any(), any(), any(), any(), any()) } throws
-            IllegalStateException("SECRET /private/history financial payload")
+        // The repository converts storage failures into Rejected with a bounded code (its own tests
+        // pin that no exception text is carried); the view model must surface nothing but state.
+        manualResultOverride = ManualContributionResult.Rejected("SAVINGS_MANUAL_CONTRIBUTION_UNAVAILABLE")
         viewModel = createViewModel()
         advanceUntilIdle()
         viewModel.contributeToGoal(goal.id, 25.0, "EUR")
         advanceUntilIdle()
-        assertEquals("SAVINGS_HISTORY_WRITE_UNAVAILABLE", viewModel.state.value.contributionHistoryWriteFailure)
+        assertNull(viewModel.state.value.contributionHistoryWriteFailure)
         assertTrue(!viewModel.state.value.toString().contains("SECRET"))
-        assertNull(viewModel.state.value.streak)
+        assertEquals(200.0, goalsFlow.value.single().currentAmount, 0.0)
         viewModel.contributeToGoal(goal.id, 25.0, "EUR")
         advanceUntilIdle()
-        coVerify(exactly = 1) { savingsGoalRepository.incrementSavingsGoalAmount(goal.id, 25.0) }
+        assertEquals(2, manualCalls.size)
+        coVerify(exactly = 0) { savingsGoalRepository.incrementSavingsGoalAmount(any(), any()) }
     }
 
     @Test
-    fun historyWriteCancellationIsNotConvertedToOrdinaryFailure() = runTest(testDispatcher) {
+    fun manualContributionCancellationIsNotConvertedToOrdinaryFailureAndSetsNoFlag() = runTest(testDispatcher) {
         val goal = createGoal(1L, "Known", 1000.0, 200.0)
         configureRepositoryWithGoals(listOf(goal))
-        coEvery { savingsContributionHistoryRepository.recordContribution(any(), any(), any(), any(), any()) } throws
+        coEvery { savingsGoalRepository.recordManualContribution(any(), any(), any(), any(), any()) } throws
             kotlinx.coroutines.CancellationException("SECRET cancellation")
         viewModel = createViewModel()
         advanceUntilIdle()
         viewModel.contributeToGoal(goal.id, 25.0, "EUR")
         advanceUntilIdle()
         assertNull(viewModel.state.value.contributionHistoryWriteFailure)
-        coVerify(exactly = 1) { savingsContributionHistoryRepository.recordContribution(goal.id, 25.0, any(), "manual", "EUR") }
+        assertEquals(200.0, goalsFlow.value.single().currentAmount, 0.0)
+        coVerify(exactly = 1) { savingsGoalRepository.recordManualContribution(goal.id, 25.0, any(), any(), any()) }
     }
 
-    private fun availableSmartResult(goal: SavingsGoal) = SmartSavingsComputationResult.Available(listOf(
+    private suspend fun kotlinx.coroutines.test.TestScope.quickAddOn(
+        target: Double,
+        current: Double,
+        currency: String = "EUR",
+    ): SavingsGoal {
+        val goal = SavingsGoal(
+            id = 1L,
+            name = "Quick",
+            targetAmount = target,
+            currentAmount = current,
+            targetDate = null,
+            protectionLevel = GoalProtectionLevel.WARNING,
+            currency = currency,
+            currencyAssumption = "EXPLICIT",
+            createdAt = timeProvider.now(),
+        )
+        configureRepositoryWithGoals(listOf(goal))
+        viewModel = createViewModel()
+        advanceUntilIdle()
+        viewModel.quickAdd(goal.id)
+        advanceUntilIdle()
+        return goal
+    }
+
+    @Test
+    fun `quickAdd 95 of 100 contributes exactly remaining 5 and never overshoots`() = runTest(testDispatcher) {
+        quickAddOn(target = 100.0, current = 95.0)
+
+        assertEquals(listOf(5.0), manualCalls.map { it.delta })
+        assertEquals(1L, manualCalls.single().goalId)
+        assertEquals("EUR", manualCalls.single().snapshot.currency)
+        assertEquals(timeProvider.now(), manualCalls.single().timestamp)
+        coVerify(exactly = 1) { savingsGoalRepository.recordManualContribution(any(), any(), any(), any(), any()) }
+        coVerify(exactly = 0) { savingsGoalRepository.incrementSavingsGoalAmount(any(), any()) }
+        coVerify(exactly = 0) { savingsContributionHistoryRepository.recordContribution(any(), any(), any(), any(), any()) }
+        assertEquals(100.0, goalsFlow.value.single().currentAmount, 0.0)
+    }
+
+    @Test
+    fun `quickAdd 100 of 100 makes no contribution call`() = runTest(testDispatcher) {
+        quickAddOn(target = 100.0, current = 100.0)
+
+        coVerify(exactly = 0) { savingsGoalRepository.incrementSavingsGoalAmount(any(), any()) }
+        coVerify(exactly = 0) { savingsGoalRepository.recordManualContribution(any(), any(), any(), any(), any()) }
+        coVerify(exactly = 0) { savingsContributionHistoryRepository.recordContribution(any(), any(), any(), any(), any()) }
+        assertEquals(100.0, goalsFlow.value.single().currentAmount, 0.0)
+    }
+
+    @Test
+    fun `quickAdd 120 of 100 makes no contribution call`() = runTest(testDispatcher) {
+        quickAddOn(target = 100.0, current = 120.0)
+
+        coVerify(exactly = 0) { savingsGoalRepository.incrementSavingsGoalAmount(any(), any()) }
+        coVerify(exactly = 0) { savingsGoalRepository.recordManualContribution(any(), any(), any(), any(), any()) }
+        coVerify(exactly = 0) { savingsContributionHistoryRepository.recordContribution(any(), any(), any(), any(), any()) }
+        assertEquals(120.0, goalsFlow.value.single().currentAmount, 0.0)
+    }
+
+    @Test
+    fun `quickAdd 50 of 100 contributes exactly 10`() = runTest(testDispatcher) {
+        quickAddOn(target = 100.0, current = 50.0)
+
+        assertEquals(listOf(10.0), manualCalls.map { it.delta })
+        coVerify(exactly = 1) { savingsGoalRepository.recordManualContribution(any(), any(), any(), any(), any()) }
+        assertEquals(60.0, goalsFlow.value.single().currentAmount, 0.0)
+    }
+
+    @Test
+    fun `quickAdd 99_99 of 100 contributes exactly decimal 0_01`() = runTest(testDispatcher) {
+        quickAddOn(target = 100.0, current = 99.99)
+
+        // Exact equality: binary 100.0 - 99.99 is 0.010000000000005116, not 0.01.
+        assertEquals(listOf(0.01), manualCalls.map { it.delta })
+        coVerify(exactly = 1) { savingsGoalRepository.recordManualContribution(any(), any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `quickAdd passes the goal currency through unchanged`() = runTest(testDispatcher) {
+        // Home currency is EUR; the goal is USD, so a home-currency leak would show as EUR.
+        quickAddOn(target = 100.0, current = 95.0, currency = "USD")
+
+        assertEquals(listOf(5.0), manualCalls.map { it.delta })
+        coVerify(exactly = 1) { savingsGoalRepository.recordManualContribution(any(), any(), any(), any(), any()) }
+        // The snapshot currency is what the repository stores on the ledger row: the goal's, not home.
+        assertEquals("USD", manualCalls.single().snapshot.currency)
+        coVerify(exactly = 0) {
+            savingsContributionHistoryRepository.recordContribution(any(), any(), any(), any(), any())
+        }
+    }
+
+    @Test
+    fun `quickAdd for a missing goal is a no-op and does not crash`() = runTest(testDispatcher) {
+        configureRepositoryWithGoals(listOf(createGoal(1L, "Other", 100.0, 50.0)))
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        viewModel.quickAdd(999L)
+        advanceUntilIdle()
+
+        coVerify(exactly = 0) { savingsGoalRepository.incrementSavingsGoalAmount(any(), any()) }
+        coVerify(exactly = 0) { savingsGoalRepository.recordManualContribution(any(), any(), any(), any(), any()) }
+        coVerify(exactly = 0) { savingsContributionHistoryRepository.recordContribution(any(), any(), any(), any(), any()) }
+        assertEquals(50.0, goalsFlow.value.single().currentAmount, 0.0)
+    }
+
+    private fun assertQuickAddNoOpForNonFinite(target: Double, current: Double) = runTest(testDispatcher) {
+        // SavingsGoal's constructor rejects non-finite amounts, so a stubbed goal models a corrupt read.
+        val corrupt = mockk<SavingsGoal>(relaxed = true)
+        every { corrupt.id } returns 1L
+        every { corrupt.targetAmount } returns target
+        every { corrupt.currentAmount } returns current
+        every { corrupt.currency } returns "EUR"
+        every { corrupt.currencyAssumption } returns "EXPLICIT"
+        configureRepositoryWithGoals(emptyList())
+        viewModel = createViewModel()
+        advanceUntilIdle()
+        every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(listOf(corrupt))
+
+        viewModel.quickAdd(1L)
+        advanceUntilIdle()
+
+        coVerify(exactly = 0) { savingsGoalRepository.incrementSavingsGoalAmount(any(), any()) }
+        coVerify(exactly = 0) { savingsGoalRepository.recordManualContribution(any(), any(), any(), any(), any()) }
+        coVerify(exactly = 0) { savingsContributionHistoryRepository.recordContribution(any(), any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `quickAdd with NaN target is a no-op`() = assertQuickAddNoOpForNonFinite(Double.NaN, 0.0)
+
+    @Test
+    fun `quickAdd with infinite target is a no-op`() = assertQuickAddNoOpForNonFinite(Double.POSITIVE_INFINITY, 0.0)
+
+    @Test
+    fun `quickAdd with NaN current balance is a no-op`() = assertQuickAddNoOpForNonFinite(100.0, Double.NaN)
+
+    @Test
+    fun `quickAdd with infinite current balance is a no-op`() = assertQuickAddNoOpForNonFinite(100.0, Double.POSITIVE_INFINITY)
+
+    // The write suspends, as a real database write does, so without quickAddMutex the second tap reads
+    // 95 while the first write is in flight and the balance reaches 105.
+    @Test
+    fun `quickAdd rapid double tap on 95 of 100 contributes once and ends at 100`() = runTest(testDispatcher) {
+        val goal = createGoal(1L, "Quick", 100.0, 95.0)
+        configureRepositoryWithGoals(listOf(goal))
+        // Delayed write through the NEW call: keeps pinning quickAddMutex (see comment above).
+        coEvery { savingsGoalRepository.recordManualContribution(any(), any(), any(), any(), any()) } coAnswers {
+            val delta = invocation.args[1] as Double
+            manualCalls += ManualCall(
+                invocation.args[0] as Long, delta, invocation.args[2] as ManualContributionSnapshot,
+                invocation.args[3] as String, invocation.args[4] as Long
+            )
+            kotlinx.coroutines.delay(1)
+            goalsFlow.value = goalsFlow.value.map { it.copy(currentAmount = it.currentAmount + delta) }
+            ManualContributionResult.Recorded
+        }
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        viewModel.quickAdd(goal.id)
+        viewModel.quickAdd(goal.id)
+        advanceUntilIdle()
+
+        assertEquals(100.0, goalsFlow.value.single().currentAmount, 0.0)
+        coVerify(exactly = 1) { savingsGoalRepository.recordManualContribution(any(), any(), any(), any(), any()) }
+        assertEquals(listOf(5.0), manualCalls.map { it.delta })
+        coVerify(exactly = 0) { savingsGoalRepository.incrementSavingsGoalAmount(any(), any()) }
+    }
+
+    private fun availableSmartResult(goal: SavingsGoal) =SmartSavingsComputationResult.Available(listOf(
         com.yourname.expensetracker.domain.savings.GoalSavingsRecommendation(
             goal, SavingsRecommendation(25.0, 0.9, "TEST", RecommendationSource.BUDGET_SURPLUS, goal.currency)
         )
@@ -894,6 +1253,31 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
                 }
             }
             exists
+        }
+
+        // Atomic manual contribution: applies only while the snapshot still matches the stored goal,
+        // like the real repository (no write, typed SnapshotMismatch, otherwise).
+        coEvery { savingsGoalRepository.recordManualContribution(any(), any(), any(), any(), any()) } coAnswers {
+            val goalId = invocation.args[0] as Long
+            val delta = invocation.args[1] as Double
+            val snapshot = invocation.args[2] as ManualContributionSnapshot
+            manualCalls += ManualCall(goalId, delta, snapshot, invocation.args[3] as String, invocation.args[4] as Long)
+            val forced = manualResultOverride
+            if (forced != null) {
+                forced
+            } else {
+                val stored = goalsFlow.value.firstOrNull { it.id == goalId }
+                if (stored == null || stored.currentAmount != snapshot.currentAmount ||
+                    stored.targetAmount != snapshot.targetAmount || stored.currency != snapshot.currency
+                ) {
+                    ManualContributionResult.SnapshotMismatch
+                } else {
+                    goalsFlow.value = goalsFlow.value.map {
+                        if (it.id == goalId) it.copy(currentAmount = it.currentAmount + delta) else it
+                    }
+                    ManualContributionResult.Recorded
+                }
+            }
         }
     }
 

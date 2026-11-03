@@ -5,8 +5,12 @@ import com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.SavingsContributionLedgerDao
 import com.yourname.expensetracker.data.database.dao.SavingsGoalDao
+import com.yourname.expensetracker.data.database.entity.SavingsContributionLedgerEntry
 import com.yourname.expensetracker.data.database.entity.SavingsGoal
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.model.GoalProtectionLevel
+import com.yourname.expensetracker.domain.savings.ManualContributionResult
+import com.yourname.expensetracker.domain.savings.ManualContributionSnapshot
 import com.yourname.expensetracker.domain.savings.SAVINGS_GOAL_DELETE_UNAVAILABLE
 import com.yourname.expensetracker.domain.savings.SavingsGoalDeleteEligibility
 import com.yourname.expensetracker.domain.savings.SavingsGoalDeleteResult
@@ -139,6 +143,85 @@ class SavingsGoalRepository @Inject constructor(
     override suspend fun incrementSavingsGoalAmount(goalId: Long, delta: Double): Boolean {
         writeBarrier.checkWritesAllowed("SavingsGoalRepository.incrementSavingsGoalAmount")
         return savingsGoalDao.addToGoalAmount(goalId, delta) > 0
+    }
+
+    /**
+     * Balance and history in one Room transaction (same barrier and transaction pattern as
+     * SavingsSweepAcceptanceCoordinator.accept). A snapshot mismatch writes nothing; a failed ledger
+     * insert rolls the balance back. A repeated [idempotencyKey] is a typed no-op, never a second add.
+     */
+    override suspend fun recordManualContribution(
+        goalId: Long,
+        delta: Double,
+        expectedSnapshot: ManualContributionSnapshot,
+        idempotencyKey: String,
+        timestamp: Long
+    ): ManualContributionResult {
+        writeBarrier.checkWritesAllowed("SavingsGoalRepository.recordManualContribution")
+        val currency = expectedSnapshot.currency.trim().uppercase()
+        val currencyCode = CurrencyCode.parse(currency)
+        if (goalId <= 0L || !delta.isFinite() || delta <= 0.0 || timestamp <= 0L ||
+            idempotencyKey.isBlank() ||
+            !expectedSnapshot.currentAmount.isFinite() || !expectedSnapshot.targetAmount.isFinite() ||
+            currencyCode == null || currencyCode !in CurrencyCode.ALL_SUPPORTED
+        ) {
+            return ManualContributionResult.Rejected(MANUAL_CONTRIBUTION_INVALID)
+        }
+        return try {
+            database.withTransaction {
+                val existing: SavingsContributionLedgerEntry? =
+                    savingsContributionLedgerDao.getByIdempotencyKey(idempotencyKey)
+                if (existing != null) {
+                    return@withTransaction if (
+                        existing.goalId == goalId && existing.amount == delta &&
+                        existing.source == MANUAL_LEDGER_SOURCE
+                    ) {
+                        ManualContributionResult.AlreadyRecorded
+                    } else {
+                        ManualContributionResult.Rejected(MANUAL_CONTRIBUTION_IDEMPOTENCY_CONFLICT)
+                    }
+                }
+                val updatedGoals: Int = savingsGoalDao.addToGoalAmountIfSnapshot(
+                    goalId = goalId,
+                    expectedCurrentAmount = expectedSnapshot.currentAmount,
+                    expectedTargetAmount = expectedSnapshot.targetAmount,
+                    currency = expectedSnapshot.currency,
+                    delta = delta
+                )
+                if (updatedGoals != 1) return@withTransaction ManualContributionResult.SnapshotMismatch
+                val ledgerId: Long = savingsContributionLedgerDao.insert(
+                    SavingsContributionLedgerEntry(
+                        idempotencyKey = idempotencyKey,
+                        goalId = goalId,
+                        amount = delta,
+                        currency = currency,
+                        timestamp = timestamp,
+                        source = MANUAL_LEDGER_SOURCE,
+                        sweepPlanId = null
+                    )
+                )
+                // IGNORE returns -1 on a lost key race: throwing rolls the balance update back.
+                if (ledgerId <= 0L) throw ManualContributionRollback()
+                ManualContributionResult.Recorded
+            }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: DatabaseAccessBlockedException) {
+            throw error
+        } catch (_: ManualContributionRollback) {
+            ManualContributionResult.Rejected(MANUAL_CONTRIBUTION_IDEMPOTENCY_CONFLICT)
+        } catch (_: Exception) {
+            ManualContributionResult.Rejected(MANUAL_CONTRIBUTION_UNAVAILABLE)
+        }
+    }
+
+    private class ManualContributionRollback : RuntimeException()
+
+    private companion object {
+        const val MANUAL_LEDGER_SOURCE = "manual"
+        const val MANUAL_CONTRIBUTION_INVALID = "SAVINGS_MANUAL_CONTRIBUTION_INVALID"
+        const val MANUAL_CONTRIBUTION_IDEMPOTENCY_CONFLICT = "SAVINGS_MANUAL_CONTRIBUTION_IDEMPOTENCY_CONFLICT"
+        const val MANUAL_CONTRIBUTION_UNAVAILABLE = "SAVINGS_MANUAL_CONTRIBUTION_UNAVAILABLE"
     }
 
     @Deprecated("Use observeSavingsGoals() for domain-safe access")

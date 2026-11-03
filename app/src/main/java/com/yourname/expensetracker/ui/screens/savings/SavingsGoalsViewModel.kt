@@ -9,6 +9,7 @@ import com.yourname.expensetracker.data.repository.SavingsSweepAcceptanceCoordin
 import com.yourname.expensetracker.data.repository.SavingsSweepAcceptanceResult
 import com.yourname.expensetracker.domain.model.GoalProtectionLevel
 import com.yourname.expensetracker.domain.model.SavingsGoal
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.ui.util.guardedWrite
 import com.yourname.expensetracker.domain.savings.*
@@ -29,7 +30,14 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import java.math.BigDecimal
+import java.util.UUID
 import javax.inject.Inject
+
+/** Quick-add step in the goal's own currency; capped at the remaining amount by [SavingsGoalsViewModel.quickAdd]. */
+private const val QUICK_ADD_AMOUNT = 10.0
 
 data class SavingsGoalsState(
  val goals: List<SavingsGoal> = emptyList(),
@@ -402,80 +410,93 @@ class SavingsGoalsViewModel @Inject constructor(
         contributeToGoal(recommendation.goal.id, amount.amount, amount.currency.code, recommendation)
     }
 
-    fun contributeToGoal(goalId: Long, amount: Double, expectedCurrency: String? = null, recommendation: SmartRecommendation? = null) {
+    /**
+     * Quick add of [QUICK_ADD_AMOUNT] capped at the goal's remaining amount (target minus current,
+     * exact decimal subtraction, no rounding). A goal with no remaining amount, or an unreadable
+     * balance, is a no-op. The cap uses the goal's own currency; the write goes through
+     * [contributeToGoal], which re-checks the goal snapshot and currency.
+     */
+    fun quickAdd(goalId: Long) {
         viewModelScope.launch {
-            if (_state.value.contributionHistoryWriteFailure != null) return@launch
-            if (!amount.isFinite() || amount <= 0.0) return@launch
-            val goals = savingsGoalRepository.observeSavingsGoals().first()
-            val goal = goals
-                .firstOrNull { it.id == goalId }
-                ?: return@launch
-            if (SavingsGoalCurrencyPolicy.knownCurrencyOrNull(goal) == null) return@launch
-            if (recommendation != null && !SavingsGoalCurrencyPolicy.isUnfinished(goal)) return@launch
-            if (expectedCurrency != null && expectedCurrency != goal.currency) return@launch
-            if (recommendation != null && (recommendation !in _state.value.smartRecommendations ||
-                    recommendation.goal != goal ||
-                    recommendation.currency != currencySettingsRepository.homeCurrency().first() ||
-                    recommendation.rateTimestamp != currencySettingsRepository.lastRateUpdate().first())) return@launch
-            if (recommendation != null) {
-                val result = smartSavingsEngine.calculatePortfolioRecommendationsResult(
-                    goals, SmartSavingsEngine.TimeHorizon.MONTH, recommendation.currency
-                )
-                if (result !is SmartSavingsComputationResult.Available) {
-                    _state.update { it.copy(smartRecommendations = emptyList(), smartComputationResult = result) }
-                    return@launch
-                }
-                val current = result.recommendations.firstOrNull { it.goal.id == goalId } ?: return@launch
-                if (!current.recommendation.isAvailable || current.goal != goal ||
-                    SavingsGoalCurrencyPolicy.knownCurrencyOrNull(current.goal) == null ||
-                    current.recommendation.moneySafeAmount != recommendation.moneyRecommendedAmount ||
-                    recommendation !in _state.value.smartRecommendations ||
-                    recommendation.currency != currencySettingsRepository.homeCurrency().first() ||
-                    recommendation.rateTimestamp != currencySettingsRepository.lastRateUpdate().first()) return@launch
-            }
-            if (savingsGoalRepository.observeSavingsGoals().first().firstOrNull { it.id == goalId } != goal) return@launch
-            if (recommendation != null && (recommendation.currency != currencySettingsRepository.homeCurrency().first() ||
-                    recommendation.rateTimestamp != currencySettingsRepository.lastRateUpdate().first())) return@launch
-            val wasAdded = guardedWrite(::emitWriteBlocked) {
-                savingsGoalRepository.incrementSavingsGoalAmount(goalId, amount)
-            } ?: return@launch
-            if (wasAdded) {
-                val recorded = recordContributionHistory(
-                    goalId = goalId,
-                    amount = amount,
-                    currency = goal.currency,
-                    source = "manual"
-                )
-                if (!recorded) return@launch
-                loadGamification()
+            // Held across read, cap calculation and the full contribution (incl. history write)
+            // so a second tap reads the balance after the first write has landed.
+            quickAddMutex.withLock {
+                val goal = savingsGoalRepository.observeSavingsGoals().first()
+                    .firstOrNull { it.id == goalId }
+                    ?: return@withLock
+                if (!goal.targetAmount.isFinite() || !goal.currentAmount.isFinite()) return@withLock
+                val remaining = BigDecimal.valueOf(goal.targetAmount)
+                    .subtract(BigDecimal.valueOf(goal.currentAmount))
+                if (remaining.signum() <= 0) return@withLock
+                val amount = remaining.min(BigDecimal.valueOf(QUICK_ADD_AMOUNT)).toDouble()
+                performContribution(goalId, amount, goal.currency, null)
             }
         }
     }
 
-    /**
-     * Balance/history are separate stores. A failed history write is not success;
-     * block subsequent retries in this session after observing a recording failure.
-     * Durable atomicity/idempotence requires the later owner-level persistence work.
-     */
-    private suspend fun recordContributionHistory(goalId: Long, amount: Double, currency: String, source: String): Boolean {
-        val failureCode = try {
-            if (savingsContributionHistoryRepository.recordContribution(
-                    goalId = goalId, amount = amount, currency = currency, source = source
-                )) null else "SAVINGS_HISTORY_WRITE_REJECTED"
-        } catch (error: CancellationException) {
-            throw error
-        } catch (_: Exception) {
-            "SAVINGS_HISTORY_WRITE_UNAVAILABLE"
+    private val quickAddMutex = Mutex()
+
+    fun contributeToGoal(goalId: Long, amount: Double, expectedCurrency: String? = null, recommendation: SmartRecommendation? = null) {
+        viewModelScope.launch {
+            performContribution(goalId, amount, expectedCurrency, recommendation)
         }
-        if (failureCode == null) return true
-        _state.update { it.copy(
-            contributionHistoryWriteFailure = failureCode,
-            smartRecommendations = emptyList(),
-            sweepRecommendation = null,
-            streak = null,
-            achievements = emptyList()
-        ) }
-        return false
+    }
+
+    private suspend fun performContribution(goalId: Long, amount: Double, expectedCurrency: String?, recommendation: SmartRecommendation?) {
+        if (_state.value.contributionHistoryWriteFailure != null) return
+        if (!amount.isFinite() || amount <= 0.0) return
+        val goals = savingsGoalRepository.observeSavingsGoals().first()
+        val goal = goals
+            .firstOrNull { it.id == goalId }
+            ?: return
+        if (SavingsGoalCurrencyPolicy.knownCurrencyOrNull(goal) == null) return
+        if (recommendation != null && !SavingsGoalCurrencyPolicy.isUnfinished(goal)) return
+        if (expectedCurrency != null && expectedCurrency != goal.currency) return
+        if (recommendation != null && (recommendation !in _state.value.smartRecommendations ||
+                recommendation.goal != goal ||
+                recommendation.currency != currencySettingsRepository.homeCurrency().first() ||
+                recommendation.rateTimestamp != currencySettingsRepository.lastRateUpdate().first())) return
+        if (recommendation != null) {
+            val result = smartSavingsEngine.calculatePortfolioRecommendationsResult(
+                goals, SmartSavingsEngine.TimeHorizon.MONTH, recommendation.currency
+            )
+            if (result !is SmartSavingsComputationResult.Available) {
+                _state.update { it.copy(smartRecommendations = emptyList(), smartComputationResult = result) }
+                return
+            }
+            val current = result.recommendations.firstOrNull { it.goal.id == goalId } ?: return
+            if (!current.recommendation.isAvailable || current.goal != goal ||
+                SavingsGoalCurrencyPolicy.knownCurrencyOrNull(current.goal) == null ||
+                current.recommendation.moneySafeAmount != recommendation.moneyRecommendedAmount ||
+                recommendation !in _state.value.smartRecommendations ||
+                recommendation.currency != currencySettingsRepository.homeCurrency().first() ||
+                recommendation.rateTimestamp != currencySettingsRepository.lastRateUpdate().first()) return
+        }
+        if (savingsGoalRepository.observeSavingsGoals().first().firstOrNull { it.id == goalId } != goal) return
+        if (recommendation != null && (recommendation.currency != currencySettingsRepository.homeCurrency().first() ||
+                recommendation.rateTimestamp != currencySettingsRepository.lastRateUpdate().first())) return
+        // One key and one timestamp per user action: two real taps each apply, a retry of this
+        // action applies once. Balance and the "manual" history row commit in one transaction, so a
+        // failed or rejected write leaves both untouched and nothing is left to block.
+        val idempotencyKey = "manual-v1:${UUID.randomUUID()}"
+        val result = guardedWrite(::emitWriteBlocked) {
+            savingsGoalRepository.recordManualContribution(
+                goalId = goalId,
+                delta = amount,
+                expectedSnapshot = ManualContributionSnapshot(
+                    currentAmount = goal.currentAmount,
+                    targetAmount = goal.targetAmount,
+                    currency = goal.currency
+                ),
+                idempotencyKey = idempotencyKey,
+                timestamp = timeProvider.now()
+            )
+        } ?: return
+        when (result) {
+            ManualContributionResult.Recorded, ManualContributionResult.AlreadyRecorded -> loadGamification()
+            // Nothing was added: tell the user once, with a bounded message and no result detail.
+            else -> emitWriteBlocked(UiText.StringResource(R.string.savings_contribution_not_added))
+        }
     }
 
     private fun MoneyAggregateResult.completeDisplayAmountOrNull(targetCurrency: String): Double? =

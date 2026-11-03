@@ -54,6 +54,8 @@
     <string name="savings_recommendation_unavailable">Οι προτάσεις αποταμίευσης δεν είναι διαθέσιμες. Δεν ήταν δυνατό να επαληθευτούν ορισμένα οικονομικά δεδομένα. Ανανεώστε για να δοκιμάσετε ξανά.</string>
     <string name="savings_goal_currency_unavailable">Τα ποσά των στόχων δεν είναι διαθέσιμα επειδή δεν ήταν δυνατό να επαληθευτεί το νόμισμά τους.</string>
     <string name="savings_history_write_unavailable">Δεν ήταν δυνατό να επαληθευτεί το ιστορικό εισφορών. Το υπόλοιπο του στόχου ενδέχεται να έχει ήδη αλλάξει. Ελέγξτε το πριν δοκιμάσετε ξανά.</string>
+    <!-- savings-contribution-feedback: DRAFT: owner native sign-off pending -->
+    <string name="savings_contribution_not_added">Αυτή η εισφορά δεν προστέθηκε. Ελέγξτε τον στόχο και δοκιμάστε ξανά.</string>
     <string name="financial_runway_no_remaining_period">Δεν απομένει χρονικό διάστημα</string>
     <string name="backup_restore_info_unavailable">Οι πληροφορίες αντιγράφων ασφαλείας δεν είναι προσωρινά διαθέσιμες</string>
     <string name="debug_database_stats_unavailable">Τα στατιστικά της βάσης δεδομένων δεν είναι προσωρινά διαθέσιμα</string>

@@ -316,7 +316,7 @@ fun SavingsGoalsScreen(
                                 onClick = { viewModel.selectGoal(goal) },
                                 canContribute = state.contributionHistoryWriteFailure == null &&
                                     !deleteCheckInProgress,
-                                onQuickAdd = { viewModel.contributeToGoal(goal.id, 10.0, goal.currency) },
+                                onQuickAdd = { viewModel.quickAdd(goal.id) },
                                 canRequestDelete = deleteFlow == DeleteFlowState.Idle,
                                 onDelete = { viewModel.requestDeleteGoal(goal.id) },
                                 overflowFocusRequester = overflowFocusRequesters.getOrPut(goal.id) { FocusRequester() }

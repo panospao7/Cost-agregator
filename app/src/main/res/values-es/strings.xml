@@ -324,6 +324,8 @@
     <string name="savings_recommendation_unavailable">Las recomendaciones de ahorro no están disponibles. No se pudieron verificar algunos datos financieros. Actualiza para volver a intentarlo.</string>
     <string name="savings_goal_currency_unavailable">Los importes de los objetivos no están disponibles porque no se pudo verificar su moneda.</string>
     <string name="savings_history_write_unavailable">No se pudo verificar el historial de aportaciones. El saldo del objetivo puede haber cambiado ya. Compruébalo antes de volver a intentarlo.</string>
+    <!-- savings-contribution-feedback: DRAFT: owner native sign-off pending -->
+    <string name="savings_contribution_not_added">Esta aportación no se añadió. Comprueba el objetivo e inténtalo de nuevo.</string>
     <string name="financial_runway_no_remaining_period">No queda ningún período</string>
     <string name="backup_restore_info_unavailable">La información de las copias de seguridad no está disponible temporalmente</string>
     <string name="debug_database_stats_unavailable">Las estadísticas de la base de datos no están disponibles temporalmente</string>

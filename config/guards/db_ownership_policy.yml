@@ -2931,6 +2931,42 @@ entries:
     lost-update race; returns rows-affected > 0'
   owner: '@panospao7'
   linkedIssue: MIT-DB-08L
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/SavingsGoalRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.SavingsGoalRepository
+  kind: function
+  method: recordManualContribution
+  receiver: null
+  parameterTypes:
+  - Long
+  - Double
+  - com.yourname.expensetracker.domain.savings.ManualContributionSnapshot
+  - String
+  - Long
+  daoAccessor: savingsGoalDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SavingsGoalDao
+  operation: addToGoalAmountIfSnapshot
+  barrierMode: helper
+  reason: 'FIX-1.0.4 B2 EXACT_POLICY: owner-approved manual savings contribution; compare-and-set balance update runs only inside the repository Room transaction after the write barrier, together with the manual ledger row, so balance and history cannot diverge'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08L
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/SavingsGoalRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.SavingsGoalRepository
+  kind: function
+  method: recordManualContribution
+  receiver: null
+  parameterTypes:
+  - Long
+  - Double
+  - com.yourname.expensetracker.domain.savings.ManualContributionSnapshot
+  - String
+  - Long
+  daoAccessor: savingsContributionLedgerDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SavingsContributionLedgerDao
+  operation: insert
+  barrierMode: helper
+  reason: 'FIX-1.0.4 B2 EXACT_POLICY: owner-approved manual contribution ledger row (source manual, null sweepPlanId) is inserted inside the same repository Room transaction after the write barrier; a failed insert rolls the balance back and the idempotency key makes a retry a no-op'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08L
 - path: app/src/main/java/com/yourname/expensetracker/data/repository/SavingsSweepAcceptanceCoordinator.kt
   ownerFqcn: com.yourname.expensetracker.data.repository.SavingsSweepAcceptanceCoordinator
   kind: function

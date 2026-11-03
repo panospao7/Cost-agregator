@@ -45,6 +45,13 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
+/**
+ * The empty state shows only when there is nothing to display: no confirmed subscriptions AND no
+ * detected candidates. Detected candidates alone must reach the list so the user can confirm them.
+ */
+internal fun showEmptyState(subscriptions: List<*>, detectedCandidates: List<*>): Boolean =
+    subscriptions.isEmpty() && detectedCandidates.isEmpty()
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SubscriptionManagementScreen(
@@ -130,7 +137,7 @@ fun SubscriptionManagementScreen(
                         onRetry = { viewModel.refresh() }
                     )
                 }
-                uiState.subscriptions.isEmpty() -> {
+                showEmptyState(uiState.subscriptions, uiState.detectedCandidates) -> {
                     // Enhanced empty state with contextual actions
                     EnhancedEmptyState(
                         type = EmptyStateType.GENERIC,
