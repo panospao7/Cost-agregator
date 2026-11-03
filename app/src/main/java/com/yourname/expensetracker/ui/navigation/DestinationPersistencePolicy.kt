@@ -5,7 +5,8 @@ package com.yourname.expensetracker.ui.navigation
  *
  * - FULL: Restores exactly as saved (all params preserved)
  * - DEGRADED: Restores but loses entity payload (navigates back on null payload)
- * - EPHEMERAL: Not meaningfully restorable (returns to previous on restore)
+ * - EPHEMERAL: Not meaningfully restorable. Only Add Expense enforces a return to the previous screen
+ *   after process death (NavigationController); the others restore as saved.
  */
 enum class DestinationPersistencePolicy {
     FULL,
