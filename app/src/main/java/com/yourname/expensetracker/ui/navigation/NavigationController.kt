@@ -27,10 +27,71 @@ data class NavigationControllerSnapshot(
     val previousMainTab: Int?
 )
 
+/**
+ * J-01-1: enforces [DestinationPersistencePolicy.EPHEMERAL] on restore after process death only.
+ *
+ * [processToken] is a random value held in memory for the lifetime of this process and never
+ * persisted on its own. Every saved navigation state is stamped with it; a saved state carrying
+ * the same token was written by this very process (rotation / configuration change, or a normal
+ * background and resume) and is restored untouched, so the retained ViewModel draft and the open
+ * sheet stay together. Any other token (or none) means the process died and a fresh ViewModel
+ * would reopen an empty ephemeral screen, so the fallback below applies.
+ */
+internal object NavigationRestorePolicy {
+    val processToken: String = java.util.UUID.randomUUID().toString()
+
+    fun isRestoreAfterProcessDeath(savedProcessToken: String?): Boolean =
+        savedProcessToken != processToken
+}
+
+internal data class RestoredNavigation(
+    val destination: NavigationDestination,
+    val backStack: List<NavigationDestination>
+)
+
+/** Single owner of the tab index to destination mapping (also used by [NavigationController.navigateToTab]). */
+internal fun destinationForTab(tabIndex: Int?): NavigationDestination = when (tabIndex) {
+    0 -> NavigationDestination.Home
+    1 -> NavigationDestination.Transactions()
+    2 -> NavigationDestination.Review
+    3 -> NavigationDestination.Budget
+    4 -> NavigationDestination.Analytics()
+    5 -> NavigationDestination.SpendingMap()
+    else -> NavigationDestination.Home
+}
+
+/**
+ * Pure and idempotent. Callers pass a destination and back stack that already went through the
+ * availability gates (bank, deferred, installments), so the fallback never reintroduces a gated screen.
+ * Never touches the state unless [restoredAfterProcessDeath] is true. An EPHEMERAL current destination
+ * becomes the last non-ephemeral back-stack entry (removed from the stack so back does not land on the
+ * screen already shown), else the previous main tab, else Home. EPHEMERAL entries leave the stack.
+ */
+internal fun applyEphemeralRestorePolicy(
+    destination: NavigationDestination,
+    backStack: List<NavigationDestination>,
+    previousMainTab: Int?,
+    restoredAfterProcessDeath: Boolean
+): RestoredNavigation {
+    if (!restoredAfterProcessDeath) return RestoredNavigation(destination, backStack)
+    val stack = backStack.filterNot { it.isEphemeral() }
+    if (!destination.isEphemeral()) return RestoredNavigation(destination, stack)
+    val fallback = stack.lastOrNull()
+    return if (fallback != null) {
+        RestoredNavigation(fallback, stack.dropLast(1))
+    } else {
+        RestoredNavigation(destinationForTab(previousMainTab), stack)
+    }
+}
+
+private fun NavigationDestination.isEphemeral(): Boolean =
+    persistencePolicy() == DestinationPersistencePolicy.EPHEMERAL
+
 private data class PersistedNavigationState(
     val destinationToken: String,
     val backStackTokens: List<String>,
-    val previousMainTab: Int?
+    val previousMainTab: Int?,
+    val processToken: String? = null
 ) {
     companion object {
         val Saver: Saver<PersistedNavigationState, Any> = listSaver(
@@ -38,14 +99,17 @@ private data class PersistedNavigationState(
                 listOf(
                     it.destinationToken,
                     it.backStackTokens,
-                    it.previousMainTab
+                    it.previousMainTab,
+                    it.processToken
                 )
             },
             restore = { restored ->
                 PersistedNavigationState(
                     destinationToken = restored[0] as String,
                     backStackTokens = restored[1] as List<String>,
-                    previousMainTab = restored[2] as Int?
+                    previousMainTab = restored[2] as Int?,
+                    // Missing or foreign token is treated as process death (fail closed).
+                    processToken = restored.getOrNull(3) as? String
                 )
             }
         )
@@ -54,7 +118,8 @@ private data class PersistedNavigationState(
             return PersistedNavigationState(
                 destinationToken = destination.toSaveToken(),
                 backStackTokens = emptyList(),
-                previousMainTab = null
+                previousMainTab = null,
+                processToken = NavigationRestorePolicy.processToken
             )
         }
 
@@ -62,7 +127,8 @@ private data class PersistedNavigationState(
             return PersistedNavigationState(
                 destinationToken = snapshot.destination.toSaveToken(),
                 backStackTokens = snapshot.backStack.map { it.toSaveToken() },
-                previousMainTab = snapshot.previousMainTab
+                previousMainTab = snapshot.previousMainTab,
+                processToken = NavigationRestorePolicy.processToken
             )
         }
     }
@@ -375,15 +441,7 @@ class NavigationController(
      */
     fun navigateToTab(tabIndex: Int) {
         clearBackStack()
-        currentDestination.value = when (tabIndex) {
-            0 -> NavigationDestination.Home
-            1 -> NavigationDestination.Transactions()
-            2 -> NavigationDestination.Review
-            3 -> NavigationDestination.Budget
-            4 -> NavigationDestination.Analytics()
-            5 -> NavigationDestination.SpendingMap()
-            else -> NavigationDestination.Home
-        }
+        currentDestination.value = destinationForTab(tabIndex)
         _navigationEvents.tryEmit(NavigationEvent.NavigateTo(currentDestination.value))
         notifyStateChanged()
     }
@@ -506,22 +564,31 @@ fun ProvideNavigationController(
     // loan-installments S10a: the token layer stays ungated (round-trip contract); the restore into
     // the UI drops installment destinations if InstallmentsFeature.ENABLED is false (fall back
     // to Home / drop from the back stack).
-    val restoredDestination = destinationFromSaveToken(
+    val gatedDestination = destinationFromSaveToken(
         token = persistedState.destinationToken,
         bankSyncAvailable = bankSyncAvailable,
         deferredAvailable = DeferredFeatureGate.available
     )?.takeUnless { InstallmentsFeature.shouldRedirectHome(it) } ?: initialDestination
-    val restoredBackStack = persistedState.backStackTokens
+    val gatedBackStack = persistedState.backStackTokens
         .mapNotNull { destinationFromSaveToken(it, bankSyncAvailable, DeferredFeatureGate.available) }
         .filterNot { InstallmentsFeature.shouldRedirectHome(it) }
+    // J-01-1: ephemeral screens (Add Expense, Scan Receipt, Assistant, Debug) are not reopened after
+    // process death; a same-process restore (rotation, background/resume) is left untouched.
+    val restored = applyEphemeralRestorePolicy(
+        destination = gatedDestination,
+        backStack = gatedBackStack,
+        previousMainTab = persistedState.previousMainTab,
+        restoredAfterProcessDeath =
+            NavigationRestorePolicy.isRestoreAfterProcessDeath(persistedState.processToken)
+    )
 
     val currentDestination = remember {
-        mutableStateOf(restoredDestination)
+        mutableStateOf(restored.destination)
     }
     val navigationController = remember {
         NavigationController(
             currentDestination = currentDestination,
-            initialBackStack = restoredBackStack,
+            initialBackStack = restored.backStack,
             initialPreviousMainTab = persistedState.previousMainTab,
             onStateChanged = { snapshot ->
                 persistedState = PersistedNavigationState.fromSnapshot(snapshot)
