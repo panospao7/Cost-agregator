@@ -96,4 +96,21 @@ class BudgetForecastProjectionTest {
 
         assertEquals(42.0, projectedPeriodTotal(f), delta)
     }
+
+    @Test
+    fun `every forecast bound is shifted by the spend to date`() {
+        val without = fullPeriodForecastBounds(20.0, 0.8, spentToDate = 0.0)
+        val with = fullPeriodForecastBounds(20.0, 0.8, spentToDate = 90.0)
+
+        assertEquals(without.first + 90.0, with.first, 1e-9)
+        assertEquals(110.0, with.second, 1e-9)
+        assertEquals(without.third + 90.0, with.third, 1e-9)
+    }
+
+    @Test
+    fun `the low bound clamps before the shift so it never falls below the spend to date`() {
+        val bounds = fullPeriodForecastBounds(0.0, 0.0, spentToDate = 90.0)
+
+        assertEquals(90.0, bounds.first, 1e-9)
+    }
 }

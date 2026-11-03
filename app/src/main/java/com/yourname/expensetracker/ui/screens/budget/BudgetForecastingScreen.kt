@@ -244,13 +244,11 @@ private fun RiskLevelCard(forecast: BudgetForecast) {
 private fun ForecastDetailsCard(budget: Budget, forecast: BudgetForecast, homeCurrency: String, normalizedBudgetAmount: Double? = null) {
     val spentToDate = forecast.spentToDate
     val (lowForecast, baseForecast, highForecast) = remember(forecast.predictedSpending, forecast.confidenceScore, spentToDate) {
-        // predictedSpending is remaining-period spend; shift every bound by spentToDate
-        // so the range is full-period and comparable with the full-period limit.
-        val (low, base, high) = calculateForecastBounds(
+        fullPeriodForecastBounds(
             predictedSpending = forecast.predictedSpending,
-            confidenceScore = forecast.confidenceScore
+            confidenceScore = forecast.confidenceScore,
+            spentToDate = spentToDate
         )
-        Triple(low + spentToDate, base + spentToDate, high + spentToDate)
     }
     
     Card(
@@ -423,6 +421,19 @@ private fun RangeRow(
 /** Full-period projection: spent so far plus predicted remaining-period spend (home currency). */
 internal fun projectedPeriodTotal(forecast: BudgetForecast): Double =
     forecast.spentToDate + forecast.predictedSpending
+
+/**
+ * predictedSpending is remaining-period spend, so every bound is shifted by spentToDate.
+ * The range is then full-period and comparable with the full-period limit.
+ */
+internal fun fullPeriodForecastBounds(
+    predictedSpending: Double,
+    confidenceScore: Double,
+    spentToDate: Double
+): Triple<Double, Double, Double> {
+    val (low, base, high) = calculateForecastBounds(predictedSpending, confidenceScore)
+    return Triple(low + spentToDate, base + spentToDate, high + spentToDate)
+}
 
 private fun calculateForecastBounds(predictedSpending: Double, confidenceScore: Double): Triple<Double, Double, Double> {
     val uncertaintyRatio = ((1.0 - confidenceScore).coerceIn(0.0, 1.0) * 0.55) + 0.10
