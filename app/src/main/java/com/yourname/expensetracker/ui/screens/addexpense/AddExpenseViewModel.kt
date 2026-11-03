@@ -330,7 +330,7 @@ class AddExpenseViewModel @Inject constructor(
      }
     }
   }
- /** MEC 1b INV-1b-20: the previously observed home, to detect a change (null until first emission). */
+ /** MEC 1b INV-1b-20: a home change is detected against [lastKnownHome], the last home actually read. */
  // AE-50 (owner item 63): no String-typed VM field; the last KNOWN home is held in a non-inline wrapper.
  // A null emission (failed read, invalid code, timeout) means "home unknown", never "home changed".
  private data class KnownHome(val code: String)
