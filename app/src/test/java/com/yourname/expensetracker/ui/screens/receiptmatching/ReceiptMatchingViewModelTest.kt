@@ -156,7 +156,7 @@ class ReceiptMatchingViewModelTest : ViewModelTestUtils() {
         }
         coEvery { matcher.findBestMatch(receiptB) } returns MatchResult.Suggested(txB, 0.86)
         coEvery {
-            receiptLinkService.linkReceiptToExpense(31L, 901L, "AUTO_MATCH", "ReceiptMatchingViewModel", confidence = 0.98f)
+            receiptLinkService.linkReceiptToExpense(31L, 901L, "AUTO_MATCH", "ReceiptMatchingViewModel", confidence = 0.98f, requireUnmatchedClaim = true)
         } returns Result.success(link(31L, 901L, "AUTO_MATCH", 0.98f))
         coEvery { matchService.saveMatchSuggestion(32L, 902L, 0.86) } returns true
         viewModel = createViewModel()
@@ -178,11 +178,279 @@ class ReceiptMatchingViewModelTest : ViewModelTestUtils() {
         assertEquals(1, updated.pendingSuggestionCount)
         assertEquals(902L, updated.suggestedMatches.single().suggestedExpenseId)
         coVerify(exactly = 1) {
-            receiptLinkService.linkReceiptToExpense(31L, 901L, "AUTO_MATCH", "ReceiptMatchingViewModel", confidence = 0.98f)
+            receiptLinkService.linkReceiptToExpense(31L, 901L, "AUTO_MATCH", "ReceiptMatchingViewModel", confidence = 0.98f, requireUnmatchedClaim = true)
         }
         coVerify(exactly = 1) { matchService.saveMatchSuggestion(32L, 902L, 0.86) }
         coVerify(exactly = 0) { receiptRepository.linkReceiptToExpense(any(), any(), any()) }
         coVerify(exactly = 0) { receiptRepository.saveMatchSuggestion(any(), any(), any()) }
+    }
+
+    // ---- P-03-2: claim flag, claimed receipts, bounded error text, cancellation ----
+
+    private val rawSentinel = "SENTINEL_RAW_EXC_7f3a"
+
+    private suspend fun approveLink(receiptId: Long, expenseId: Long) =
+        receiptLinkService.linkReceiptToExpense(
+            receiptId = receiptId,
+            expenseId = expenseId,
+            linkType = "REVIEW_APPROVAL",
+            source = com.yourname.expensetracker.domain.transaction.ExpenseSource.REVIEW_APPROVAL.name,
+            matchStatus = MatchStatus.MANUALLY_MATCHED,
+            requireUnmatchedClaim = true
+        )
+
+    private suspend fun autoLink(receiptId: Long, expenseId: Long, confidence: Float) =
+        receiptLinkService.linkReceiptToExpense(
+            receiptId = receiptId,
+            expenseId = expenseId,
+            linkType = "AUTO_MATCH",
+            source = "ReceiptMatchingViewModel",
+            confidence = confidence,
+            requireUnmatchedClaim = true
+        )
+
+    private fun suggested(id: Long, expenseId: Long) = scannedReceipt(
+        id, "Shop", 10.0, suggestedExpenseId = expenseId, matchConfidence = 0.8f, matchStatus = MatchStatus.SUGGESTED
+    )
+
+    private fun assertBoundedError(error: String?) {
+        assertTrue("error must be set", error != null)
+        assertFalse("raw exception text leaked: $error", error!!.contains("SENTINEL"))
+    }
+
+    @Test
+    fun `INV_P032 approve passes the claim flag and succeeds without error`() = runTest(testDispatcher) {
+        coEvery { receiptRepository.getReceiptById(20L) } returns suggested(20L, 300L)
+        coEvery { approveLink(20L, 300L) } returns Result.success(link(20L, 300L, "REVIEW_APPROVAL", 0.8f))
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        viewModel.approveSuggestion(20L)
+        advanceUntilIdle()
+
+        assertNull(viewModel.state.value.error)
+        assertTrue(viewModel.state.value.mutatingReceiptIds.isEmpty())
+        coVerify(exactly = 1) { approveLink(20L, 300L) }
+    }
+
+    @Test
+    fun `INV_P032 approve of an already claimed receipt gives a bounded failure and no overwrite`() = runTest(testDispatcher) {
+        coEvery { receiptRepository.getReceiptById(20L) } returns suggested(20L, 300L)
+        coEvery { approveLink(20L, 300L) } returns Result.failure(
+            com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptAlreadyClaimedException(20L)
+        )
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        viewModel.approveSuggestion(20L)
+        advanceUntilIdle()
+
+        assertEquals("Failed to approve match. Please try again.", viewModel.state.value.error)
+        assertTrue(viewModel.state.value.mutatingReceiptIds.isEmpty())
+        coVerify(exactly = 1) { approveLink(20L, 300L) }
+        coVerify(exactly = 0) { matchService.rejectAllSuggestions(any()) }
+        coVerify(exactly = 0) { matchService.clearMatchForReceipt(any()) }
+        coVerify(exactly = 0) { matchService.saveMatchSuggestion(any(), any(), any()) }
+    }
+
+    @Test
+    fun `INV_P032 approve failure and thrown exception never expose raw exception text`() = runTest(testDispatcher) {
+        coEvery { receiptRepository.getReceiptById(20L) } returns suggested(20L, 300L)
+        coEvery { approveLink(20L, 300L) } returns Result.failure(IllegalStateException(rawSentinel))
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        viewModel.approveSuggestion(20L)
+        advanceUntilIdle()
+        assertBoundedError(viewModel.state.value.error)
+
+        viewModel.clearError()
+        coEvery { approveLink(20L, 300L) } throws RuntimeException(rawSentinel)
+        viewModel.approveSuggestion(20L)
+        advanceUntilIdle()
+        assertBoundedError(viewModel.state.value.error)
+    }
+
+    @Test
+    fun `INV_P032 approve rethrows cancellation instead of mapping it to an error`() = runTest(testDispatcher) {
+        coEvery { receiptRepository.getReceiptById(20L) } returns suggested(20L, 300L)
+        coEvery { approveLink(20L, 300L) } throws kotlinx.coroutines.CancellationException(rawSentinel)
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        viewModel.approveSuggestion(20L)
+        advanceUntilIdle()
+
+        assertNull("cancellation must not become a user-visible error", viewModel.state.value.error)
+        assertTrue(viewModel.state.value.mutatingReceiptIds.isEmpty())
+    }
+
+    @Test
+    fun `INV_P032 auto-match passes the claim flag and a claimed receipt is not counted`() = runTest(testDispatcher) {
+        val receipt = scannedReceipt(31L, "Shell", 45.0)
+        val tx = expense(901L, "SHELL", 45.0)
+        coEvery { receiptRepository.getUnmatchedReceipts() } returns listOf(receipt)
+        coEvery { matcher.findBestMatch(receipt) } returns MatchResult.AutoMatch(tx, 0.98)
+        coEvery { autoLink(31L, 901L, 0.98f) } returns Result.failure(
+            com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptAlreadyClaimedException(31L)
+        )
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        viewModel.runAutoMatching()
+        advanceUntilIdle()
+
+        assertEquals(0, viewModel.state.value.autoMatchedCount)
+        assertFalse(viewModel.state.value.isAutoMatching)
+        coVerify(exactly = 1) { autoLink(31L, 901L, 0.98f) }
+        coVerify(exactly = 0) { matchService.rejectAllSuggestions(any()) }
+        coVerify(exactly = 0) { matchService.clearMatchForReceipt(any()) }
+    }
+
+    @Test
+    fun `INV_P032 auto-match failure never exposes raw exception text`() = runTest(testDispatcher) {
+        coEvery { receiptRepository.getUnmatchedReceipts() } returns emptyList() andThenThrows RuntimeException(rawSentinel)
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        viewModel.runAutoMatching()
+        advanceUntilIdle()
+
+        assertBoundedError(viewModel.state.value.error)
+        assertFalse(viewModel.state.value.isAutoMatching)
+    }
+
+    @Test
+    fun `INV_P032 auto-match rethrows cancellation instead of mapping it to an error`() = runTest(testDispatcher) {
+        coEvery { receiptRepository.getUnmatchedReceipts() } returns emptyList() andThenThrows
+            kotlinx.coroutines.CancellationException(rawSentinel)
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        viewModel.runAutoMatching()
+        advanceUntilIdle()
+
+        assertNull("cancellation must not become a user-visible error", viewModel.state.value.error)
+    }
+
+    @Test
+    fun `INV_P032 rerun passes the claim flag`() = runTest(testDispatcher) {
+        val receipt = scannedReceipt(40L, "Shell", 45.0)
+        val tx = expense(940L, "SHELL", 45.0)
+        coEvery { receiptRepository.getReceiptById(40L) } returns receipt
+        coEvery { matchService.clearMatchForReceipt(40L) } returns Unit
+        coEvery { matcher.findBestMatch(receipt) } returns MatchResult.AutoMatch(tx, 0.97)
+        coEvery { autoLink(40L, 940L, 0.97f) } returns Result.success(link(40L, 940L, "AUTO_MATCH", 0.97f))
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        viewModel.rerunForReceipt(receipt)
+        advanceUntilIdle()
+
+        assertNull(viewModel.state.value.error)
+        assertTrue(viewModel.state.value.mutatingReceiptIds.isEmpty())
+        coVerify(exactly = 1) { autoLink(40L, 940L, 0.97f) }
+    }
+
+    @Test
+    fun `INV_P032 rerun of a claimed receipt gives a bounded failure and no overwrite`() = runTest(testDispatcher) {
+        val receipt = scannedReceipt(40L, "Shell", 45.0)
+        val tx = expense(940L, "SHELL", 45.0)
+        coEvery { receiptRepository.getReceiptById(40L) } returns receipt
+        coEvery { matchService.clearMatchForReceipt(40L) } returns Unit
+        coEvery { matcher.findBestMatch(receipt) } returns MatchResult.AutoMatch(tx, 0.97)
+        coEvery { autoLink(40L, 940L, 0.97f) } returns Result.failure(
+            com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptAlreadyClaimedException(40L)
+        )
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        viewModel.rerunForReceipt(receipt)
+        advanceUntilIdle()
+
+        assertEquals("Rerun link failed. Please try again.", viewModel.state.value.error)
+        assertTrue(viewModel.state.value.mutatingReceiptIds.isEmpty())
+        coVerify(exactly = 0) { matchService.saveMatchSuggestion(any(), any(), any()) }
+        coVerify(exactly = 0) { matchService.rejectAllSuggestions(any()) }
+    }
+
+    @Test
+    fun `INV_P032 rerun failure never exposes raw exception text`() = runTest(testDispatcher) {
+        val receipt = scannedReceipt(40L, "Shell", 45.0)
+        coEvery { receiptRepository.getReceiptById(40L) } returns receipt
+        coEvery { matchService.clearMatchForReceipt(40L) } returns Unit
+        coEvery { matcher.findBestMatch(receipt) } throws RuntimeException(rawSentinel)
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        viewModel.rerunForReceipt(receipt)
+        advanceUntilIdle()
+
+        assertBoundedError(viewModel.state.value.error)
+        assertTrue(viewModel.state.value.mutatingReceiptIds.isEmpty())
+    }
+
+    @Test
+    fun `INV_P032 rerun rethrows cancellation instead of mapping it to an error`() = runTest(testDispatcher) {
+        val receipt = scannedReceipt(40L, "Shell", 45.0)
+        coEvery { receiptRepository.getReceiptById(40L) } returns receipt
+        coEvery { matchService.clearMatchForReceipt(40L) } returns Unit
+        coEvery { matcher.findBestMatch(receipt) } throws kotlinx.coroutines.CancellationException(rawSentinel)
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        viewModel.rerunForReceipt(receipt)
+        advanceUntilIdle()
+
+        assertNull("cancellation must not become a user-visible error", viewModel.state.value.error)
+        assertTrue(viewModel.state.value.mutatingReceiptIds.isEmpty())
+    }
+
+    @Test
+    fun `INV_P032 reject rethrows cancellation instead of mapping it to an error`() = runTest(testDispatcher) {
+        coEvery { matchService.rejectAllSuggestions(50L) } throws kotlinx.coroutines.CancellationException(rawSentinel)
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        viewModel.rejectSuggestion(50L)
+        advanceUntilIdle()
+
+        assertNull("cancellation must not become a user-visible error", viewModel.state.value.error)
+        assertTrue(viewModel.state.value.mutatingReceiptIds.isEmpty())
+    }
+
+    @Test
+    fun `INV_P032 manual match rethrows cancellation instead of mapping it to an error`() = runTest(testDispatcher) {
+        coEvery {
+            receiptLinkService.linkReceiptToExpense(
+                receiptId = 51L,
+                expenseId = 301L,
+                linkType = "MANUAL_MATCH",
+                source = "ReceiptMatchingViewModel",
+                confidence = 1.0f
+            )
+        } throws kotlinx.coroutines.CancellationException(rawSentinel)
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        viewModel.manualMatch(51L, 301L)
+        advanceUntilIdle()
+
+        assertNull("cancellation must not become a user-visible error", viewModel.state.value.error)
+        assertTrue(viewModel.state.value.mutatingReceiptIds.isEmpty())
+    }
+
+    @Test
+    fun `INV_P032 skip rethrows cancellation instead of mapping it to an error`() = runTest(testDispatcher) {
+        coEvery { matchService.rejectAllSuggestions(52L) } throws kotlinx.coroutines.CancellationException(rawSentinel)
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        viewModel.skipReceipt(52L)
+        advanceUntilIdle()
+
+        assertNull("cancellation must not become a user-visible error", viewModel.state.value.error)
+        assertTrue(viewModel.state.value.mutatingReceiptIds.isEmpty())
     }
 
     @org.junit.After

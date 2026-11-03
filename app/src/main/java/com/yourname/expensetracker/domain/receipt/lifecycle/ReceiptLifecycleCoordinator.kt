@@ -1234,7 +1234,6 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
                         is com.yourname.expensetracker.domain.transaction.CreateExpenseResult.DuplicateSkipped -> {
                             val dupSkipped = mutation.value as com.yourname.expensetracker.domain.transaction.CreateExpenseResult.DuplicateSkipped
                             Timber.d("Email receipt %d matched existing expense %d", savedId, dupSkipped.existingExpenseId)
-                            linkedExistingExpenseIds.add(dupSkipped.existingExpenseId)
                             // No transaction action batch collected for duplicates — only reporting/linking
                             val linkResult = receiptLinkService.linkReceiptToExpense(
                                 savedId, dupSkipped.existingExpenseId, "EMAIL_RECEIPT",
@@ -1244,8 +1243,19 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
                                     categorySideEffectExpenseIds += expenseId
                                 }
                             )
-                            if (linkResult.isFailure) {
-                                throw IllegalStateException("Link failed: ${linkResult.exceptionOrNull()?.message}", linkResult.exceptionOrNull())
+                            val linkFailure: Throwable? = linkResult.exceptionOrNull()
+                            if (linkFailure is com.yourname.expensetracker.domain.receipt.lifecycle.ExpenseAlreadyLinkedException) {
+                                // P-03-1: a different receipt already owns this expense. Keep this
+                                // receipt saved and unlinked and flag it for review (PendingReview is
+                                // written below, inside this transaction). Nothing was written by the
+                                // refused link, and the expense is not reported as linked.
+                                emitEmailReceiptDiagnostic("expense_link", "FAILED_FINAL", "expense_already_linked", "ScannedReceipt", savedId, correlationId)
+                                Timber.w("Email receipt %d matched expense %d already linked to another receipt", savedId, dupSkipped.existingExpenseId)
+                                needsReviewReason = "expense_already_linked"
+                            } else if (linkResult.isFailure) {
+                                throw IllegalStateException("Link failed: ${linkFailure?.message}", linkFailure)
+                            } else {
+                                linkedExistingExpenseIds.add(dupSkipped.existingExpenseId)
                             }
                         }
                         is com.yourname.expensetracker.domain.transaction.CreateExpenseResult.ValidationFailed -> {

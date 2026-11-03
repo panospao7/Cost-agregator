@@ -95,7 +95,8 @@ class ReceiptLifecycleCoordinatorDiagnosticsPrivacyTest {
     private val fixedEmailReasons = setOf(
         "writes_blocked", "messageId_hash_duplicate", "fingerprint_duplicate",
         "validation_failed", "insert_conflict", "create_error",
-        "low_confidence", "currency_unknown", "home_currency_unavailable", "incomplete_parse"
+        "low_confidence", "currency_unknown", "home_currency_unavailable", "incomplete_parse",
+        "expense_already_linked"
     )
     private val dynamicEmailReasonPrefixes = listOf(
         "duplicate_detector_", "receipt_insert_duplicate_", "in_transaction_duplicate_"

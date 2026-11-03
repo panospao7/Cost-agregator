@@ -76,6 +76,9 @@ class ReceiptMatchLifecycleService @Inject constructor(
         val now = timeProvider.now()
         database.withTransaction {
             val receipt = scannedReceiptDao.getById(receiptId) ?: return@withTransaction
+            // P-03-2: a receipt that already carries an expense link is resolved;
+            // rejecting it would overwrite the link status. Skip the write and event.
+            if (receipt.expenseId != null) return@withTransaction
             // P3-004 (RP-12 12b): column-scoped write — no full-row update.
             scannedReceiptDao.updateMatchRejected(receiptId = receiptId, now = now)
             receiptEventDao.insert(ReceiptEvent(
@@ -95,6 +98,9 @@ class ReceiptMatchLifecycleService @Inject constructor(
         val now = timeProvider.now()
         database.withTransaction {
             val receipt = scannedReceiptDao.getById(receiptId) ?: return@withTransaction
+            // P-03-2: never clear a live link here; unlinking goes through
+            // ReceiptLinkService.unlinkReceiptFromExpense. Skip the write and event.
+            if (receipt.expenseId != null) return@withTransaction
             // P3-004 (RP-12 12b): column-scoped write — no full-row update.
             scannedReceiptDao.clearMatchFields(receiptId = receiptId, now = now)
             receiptEventDao.insert(ReceiptEvent(
