@@ -126,7 +126,10 @@ class DashboardContractsAdapter @Inject constructor(
                         com.yourname.expensetracker.data.database.entity.PlannedExpensePriority.LIKELY -> PlannedExpensePriority.LIKELY
                         com.yourname.expensetracker.data.database.entity.PlannedExpensePriority.OPTIONAL -> PlannedExpensePriority.OPTIONAL
                     },
-                    sourceOccurrenceKey = entity.sourceOccurrenceKey
+                    sourceOccurrenceKey = entity.sourceOccurrenceKey,
+                    // BL-02: carry status so FULFILLED/CANCELLED/SKIPPED rows are not read as PLANNED.
+                    status = entity.status,
+                    sourceRecurringRuleId = entity.sourceRecurringRuleId
                 )
             }
         }

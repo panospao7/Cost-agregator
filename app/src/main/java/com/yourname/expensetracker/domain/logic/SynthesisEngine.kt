@@ -80,7 +80,6 @@ class SynthesisEngine @Inject constructor(
         private const val TAG = "SynthesisEngine"
         private const val LIKELY_EXPENSE_WEIGHT = 0.7 // 70% weight for LIKELY planned expenses - middle ground
         private const val BIWEEKLY_CYCLE_DAYS = 14
-        private const val BIWEEKLY_TOLERANCE_DAYS = 2
 
         /**
          * Single source of the monthly budget limit: the OVERALL budget when it is
@@ -683,8 +682,8 @@ class SynthesisEngine @Inject constructor(
             else convertAmount(paid.amount, paid.currency, bpCurrency)
                 ?: run { bpConversionFailures++; 0.0 }
         }
-        val totalPlacedRecurring = recurringImpactByDay.values.sumOf { it.amount }
-        val totalMonthlyPlanned = plannedImpactByDay.values.sumOf { it.amount }
+        val totalPlacedRecurring = recurringImpactByDay.values.sumOf { it.convertedAmount }
+        val totalMonthlyPlanned = plannedImpactByDay.values.sumOf { it.convertedAmount }
 
             // Centralized Logic Gain: Factoring in Goal Reserves (Savings)
         val goalReserves = components.goalReserves
@@ -724,14 +723,14 @@ class SynthesisEngine @Inject constructor(
             // 1. Use pre-calculated recurring expenses for this day
             val recurringItemsOnDay = recurringByDay[day] ?: emptyList()
             val recurringDayAmount = recurringImpactByDay[day]
-            val recurringOnDay = recurringDayAmount?.amount ?: 0.0
+            val recurringOnDay = recurringDayAmount?.convertedAmount ?: 0.0
             dayConversionFailures += recurringDayAmount?.failures ?: 0
             val recurringNames = recurringItemsOnDay.map { it.merchantName }
 
             // 2. Identify Planned on this day (MUST=100%, LIKELY=70%, OPTIONAL=0%)
             val plannedItemsOnDay = plannedByDay[day] ?: emptyList()
             val plannedDayAmount = plannedImpactByDay[day]
-            val plannedOnDay = plannedDayAmount?.amount ?: 0.0
+            val plannedOnDay = plannedDayAmount?.convertedAmount ?: 0.0
             dayConversionFailures += plannedDayAmount?.failures ?: 0
             val plannedNames = plannedItemsOnDay.map { it.description }
 
@@ -825,6 +824,12 @@ class SynthesisEngine @Inject constructor(
      * BIWEEKLY day-difference check). The anchor fields are derived from
      * [pattern.nextExpectedDate] in the system default timezone — the same
      * field values the former `anchorCal` Calendar produced.
+     *
+     * Placement per frequency (BL-02), each cycle placing the bill exactly once:
+     * WEEKLY every date on the anchor's weekday; BIWEEKLY every 14th calendar day from
+     * the anchor (before and after it); MONTHLY the anchor day, clamped to month end;
+     * QUARTERLY / SEMI_ANNUALLY the anchor day in every 3rd / 6th month from the anchor
+     * month on; ANNUALLY the anchor day in the anchor month; anything else (IRREGULAR) never.
      */
     private fun isRecurringExpected(
         pattern: RecurringPattern,
@@ -840,10 +845,11 @@ class SynthesisEngine @Inject constructor(
                 targetDate.dayOfWeek == anchorDate.dayOfWeek
             }
             RecurrenceFrequency.BIWEEKLY -> {
+                // BL-02: exactly one day per 14-day cycle (the former +/-2 day window placed
+                // the same bill on about 5 days per cycle). daysBetween is calendar-day based,
+                // so DST does not shift it; floorMod also covers days before the anchor.
                 val daysDiff = TimePeriodUtils.daysBetween(anchor, targetMillis)
-                val mod = Math.floorMod(daysDiff, BIWEEKLY_CYCLE_DAYS)
-                val distanceToCycle = minOf(mod, BIWEEKLY_CYCLE_DAYS - mod)
-                distanceToCycle <= BIWEEKLY_TOLERANCE_DAYS
+                Math.floorMod(daysDiff, BIWEEKLY_CYCLE_DAYS) == 0
             }
             RecurrenceFrequency.MONTHLY -> {
                 val anchorDay = anchorDate.dayOfMonth
@@ -1003,7 +1009,7 @@ class SynthesisEngine @Inject constructor(
     private class PaidRecurringBill(val amount: Double, val currency: String)
 
     /** BL-02: converted per-day sum plus the count of items excluded by conversion failure. */
-    private class BlockPartyDayAmount(val amount: Double, val failures: Int)
+    private class BlockPartyDayAmount(val convertedAmount: Double, val failures: Int)
 
     /**
      * Legacy fallback: builds [recurringByDay] using ad-hoc

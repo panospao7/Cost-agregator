@@ -26,7 +26,9 @@ data class PlannedExpense(
     /** Key linking this planned expense to a recurring occurrence (occurrenceKey). */
     val sourceOccurrenceKey: String? = null,
     /** FCST-N4: Status of the planned expense. "PLANNED" by default. */
-    val status: String = "PLANNED"
+    val status: String = "PLANNED",
+    /** BL-02: id of the recurring rule that projected this row; null when not rule-linked. */
+    val sourceRecurringRuleId: Long? = null
 ) {
     init {
         require(description.isNotBlank()) { "description cannot be blank" }

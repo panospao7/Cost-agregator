@@ -195,7 +195,8 @@ class ForecastInputAssembler @Inject constructor(
                     EntityPlannedExpensePriority.OPTIONAL -> DomainPlannedExpensePriority.OPTIONAL
                 },
                 sourceOccurrenceKey = entity.sourceOccurrenceKey,
-                status = entity.status
+                status = entity.status,
+                sourceRecurringRuleId = entity.sourceRecurringRuleId
             )
         }
 
@@ -523,10 +524,7 @@ class ForecastInputAssembler @Inject constructor(
                 )
             }
 
-        val deduplicatedPlannedExpenses = plannedExpenses.filterNot { planned ->
-            planned.sourceOccurrenceKey != null &&
-                planned.sourceOccurrenceKey in plannedOccurrenceKeys
-        }
+        val deduplicatedPlannedExpenses = plannedExpenses.withoutRepresentedOccurrences(plannedOccurrenceKeys)
 
         // ── Planned expense quality tracking ──────────────────────────────────
         val plannedDedupExcluded = plannedExpenses.size - deduplicatedPlannedExpenses.size
@@ -701,6 +699,56 @@ class ForecastInputAssembler @Inject constructor(
         }
 
     /**
+     * [assemble] only: a planned row projected from a recurring occurrence (non-null
+     * sourceOccurrenceKey) is dropped when its key is in [representedOccurrenceKeys], the
+     * PLANNED occurrence keys. Rows without a key are never dropped.
+     */
+    private fun List<PlannedExpense>.withoutRepresentedOccurrences(
+        representedOccurrenceKeys: Set<String>
+    ): List<PlannedExpense> = filterNot { planned ->
+        planned.sourceOccurrenceKey != null && planned.sourceOccurrenceKey in representedOccurrenceKeys
+    }
+
+    /**
+     * BL-02 ([assembleNormalized] only): a keyed row is dropped only when the same bill is
+     * placed by a pattern in THIS input, so it counts once; otherwise it stays an ordinary
+     * planned row (fail towards counting). Link = row.sourceRecurringRuleId equals a manual
+     * pattern's id (detected patterns have a null id and never represent a row). The pattern
+     * places the bill when its rule has an occurrence row this month (occurrence path, any
+     * status) or, with none, when its nextExpectedDate is in the row's month (legacy path);
+     * a pattern placing nothing this month keeps the row. Read failures count the bill.
+     */
+    private suspend fun List<PlannedExpense>.withoutRowsPlacedByPatterns(
+        patterns: List<RecurringPattern>
+    ): List<PlannedExpense> {
+        if (none { it.sourceOccurrenceKey != null }) return this
+        val patternsByRuleId = patterns.mapNotNull { pattern -> pattern.id?.let { it to pattern } }.toMap()
+        if (patternsByRuleId.isEmpty()) return this
+        val now = timeProvider.now()
+        val ruleIdsWithOccurrenceRows: Set<Long> = try {
+            databaseReadBarrier.checkReadAllowed("ForecastInputAssembler.assembleNormalized.readOccurrences")
+            recurringOccurrenceDao
+                .getByDateRange(TimePeriodUtils.getStartOfMonth(now), TimePeriodUtils.getEndOfMonth(now))
+                .filter {
+                    it.sourceType == RecurringLifecycleCoordinator.SOURCE_TYPE_RECURRING_RULE &&
+                        it.sourceId in patternsByRuleId.keys
+                }
+                .mapTo(mutableSetOf()) { it.sourceId }
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            emptySet()
+        }
+        return filterNot { planned ->
+            val ruleId = planned.sourceRecurringRuleId
+            val pattern = ruleId?.let { patternsByRuleId[it] }
+            planned.sourceOccurrenceKey != null && ruleId != null && pattern != null &&
+                (ruleId in ruleIdsWithOccurrenceRows ||
+                    TimePeriodUtils.getStartOfMonth(pattern.nextExpectedDate) ==
+                    TimePeriodUtils.getStartOfMonth(planned.date))
+        }
+    }
+
+    /**
      * CURR-587-06: Assemble forecast input from pre-normalized data.
      *
      * This bypasses the AnalyticsCurrencyNormalizer step since the expenses
@@ -720,7 +768,14 @@ class ForecastInputAssembler @Inject constructor(
         var plannedConversionFailures = 0
         val plannedWarnings = mutableListOf<String>()
         val normalizedPlannedExpenses = mutableListOf<PlannedExpense>()
-        val byCurrency = input.plannedExpenses.groupBy { it.currency.uppercase() }
+        // BL-02: only open (PLANNED) rows count. A row projected from a recurring occurrence
+        // (non-null sourceOccurrenceKey, written only by RecurringPlanProjectionService) is
+        // dropped only when a pattern in THIS input places the same bill; otherwise it is an
+        // ordinary planned row and counts once (see withoutRowsPlacedByPatterns).
+        val openPlannedExpenses = input.plannedExpenses
+            .filter { it.status == "PLANNED" }
+            .withoutRowsPlacedByPatterns(input.recurringPatterns)
+        val byCurrency = openPlannedExpenses.groupBy { it.currency.uppercase() }
         for ((currency, expensesInCurrency) in byCurrency) {
             if (currency.equals(resolvedHomeCurrency, ignoreCase = true)) {
                 normalizedPlannedExpenses.addAll(

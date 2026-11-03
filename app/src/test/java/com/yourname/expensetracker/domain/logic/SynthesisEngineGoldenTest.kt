@@ -15,6 +15,7 @@ import com.yourname.expensetracker.domain.model.SavingsGoal
 import com.yourname.expensetracker.domain.model.dashboard.BudgetStatusSnapshot
 import io.mockk.every
 import io.mockk.mockk
+import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Test
 
@@ -54,7 +55,12 @@ class SynthesisEngineGoldenTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `biweekly recurrence matches on days 14 and 16 but not on day 17 with plus minus 2 tolerance`() = runTest {
+    fun `biweekly recurrence matches exactly 14 days from the anchor and not at 12 13 15 or 16 days`() = runTest {
+        // BL-02: the former plus minus 2 day tolerance was removed on purpose (it placed one
+        // bill on about 5 days per cycle). Anchor is Sunday 2026-03-01, so offset N is day 1 + N:
+        // offset 14 is day 15 (matches); offsets 12, 13, 15, 16 are days 13, 14, 16, 17 (do not).
+        // Offsets 0 and 28 (days 1 and 29) match too. Fails on 92346ad0's predecessor: it matched
+        // offsets 12 to 16, so days 13, 14, 16 and 17 carried 50.
         every { timeProvider.now() } returns atTime("2026-03-01", 12, 0, 0)
 
         val forecast = engine.synthesize(
@@ -80,13 +86,53 @@ class SynthesisEngineGoldenTest : AnalyticsEngineTestBase() {
             budgetLimit = 2000.0
         )
 
-        val day15 = blockParty.first { it.dayOfMonth == 15 }
-        val day17 = blockParty.first { it.dayOfMonth == 17 }
-        val day18 = blockParty.first { it.dayOfMonth == 18 }
+        assertApproxEquals(50.0, blockParty.first { it.dayOfMonth == 15 }.recurringImpact, 0.01)
+        listOf(13, 14, 16, 17).forEach { day ->
+            assertApproxEquals(0.0, blockParty.first { it.dayOfMonth == day }.recurringImpact, 0.01)
+        }
+        assertApproxEquals(0.0, blockParty.first { it.dayOfMonth == 18 }.recurringImpact, 0.01)
+        // Committed total counts the three remaining occurrences (days 1, 15, 29), unchanged.
+        assertApproxEquals(150.0, forecast.components.totalCommitted, 0.01)
+    }
 
-        assertApproxEquals(50.0, day15.recurringImpact, 0.01)
-        assertApproxEquals(50.0, day17.recurringImpact, 0.01)
-        assertApproxEquals(0.0, day18.recurringImpact, 0.01)
+    @Test
+    fun `biweekly 100 bill is placed once per 14 day cycle in a 31 day month`() = runTest {
+        every { timeProvider.now() } returns atTime("2026-03-01", 12, 0, 0)
+
+        val forecast = engine.synthesize(
+            pastSumDaily = emptyList(),
+            recurringPatterns = listOf(
+                recurring(
+                    amount = 100.0,
+                    confidence = 0.95f,
+                    date = atTime("2026-03-01", 0, 0, 0),
+                    frequency = RecurrenceFrequency.BIWEEKLY
+                )
+            ),
+            plannedExpenses = emptyList(),
+            savingsGoals = emptyList(),
+            budgetStatuses = listOf(overallBudget(2000.0)),
+            spendingPace = pace(averageMonthlyTotal = 1200.0)
+        )
+
+        val blockParty = engine.calculateBlockPartyData(
+            forecast = forecast,
+            expenses = emptyList(),
+            dailySpending = List(31) { 0f },
+            budgetLimit = 2000.0
+        )
+
+        // Exactly days 1, 15 and 29 carry the bill: 3 cycles x 100. With the tolerance it sat on
+        // 13 days (1300), leaving a pool of 700 instead of 1700.
+        assertEquals(listOf(1, 15, 29), blockParty.filter { it.recurringImpact > 0.0 }.map { it.dayOfMonth })
+        blockParty.filter { it.recurringImpact > 0.0 }.forEach {
+            assertApproxEquals(100.0, it.recurringImpact, 0.01)
+        }
+        assertApproxEquals(300.0, blockParty.sumOf { it.recurringImpact }, 0.01)
+        blockParty.forEach { assertApproxEquals(1700.0 / 31.0, it.baseTarget, 0.001) }
+        // Targets sum to limit (no reserves, no PAID occurrences).
+        assertApproxEquals(2000.0, blockParty.sumOf { it.targetBudget }, 0.01)
+        assertApproxEquals(300.0, forecast.components.totalCommitted, 0.01)
     }
 
     @Test
