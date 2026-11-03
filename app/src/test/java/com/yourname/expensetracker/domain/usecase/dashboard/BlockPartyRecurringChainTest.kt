@@ -463,6 +463,217 @@ class BlockPartyRecurringChainTest {
         assertTrue("CancellationException must propagate", thrown is kotlinx.coroutines.CancellationException)
     }
 
+    // ------------------------------------------------ m1: PAID occurrences read for any rule
+
+    /**
+     * m1, paid then paused: rent 800 PAID on day 1, then the rule is paused, so there is no
+     * pattern; the projected row is FULFILLED and the assembler filters it. The PAID occurrence
+     * is still read (any rule id) and leaves the pool: 3000 - 800 = 2200, base 73.333, nothing
+     * placed, targets sum to 2200. Before the fix the occurrence went unread and the base was 100.
+     */
+    @Test
+    fun `m1 paid then paused rule still subtracts the PAID occurrence`() = runTest {
+        fixedNowMs = at(15, 12)
+        val paid = occurrence(3L, 1, 800.0, RecurrenceFrequency.MONTHLY, "Rent", status = "PAID")
+        storedOccurrences = listOf(paid)
+        val result = computeUseCase.compute(
+            data(
+                patterns = emptyList(),
+                planned = listOf(projectedRow(30L, paid).copy(status = "FULFILLED")),
+                budgets = listOf(overallBudget(3000.0))
+            )
+        )
+
+        assertUniformBaseNothingPlaced(result, 2200.0)
+    }
+
+    /**
+     * m1, all rules paused with PAID rows: two paused rules each have a PAID occurrence this
+     * month (rent 800 with a cash amount 750 actually paid, gym 50 without a paid amount).
+     * Both are read with no active pattern: the cash paid 750 and the expected 50 are
+     * subtracted once each: 3000 - 750 - 50 = 2200, base 73.333.
+     */
+    @Test
+    fun `m1 all rules paused PAID occurrences are still read and subtracted once each`() = runTest {
+        fixedNowMs = at(15, 12)
+        val rent = occurrence(3L, 1, 800.0, RecurrenceFrequency.MONTHLY, "Rent", status = "PAID")
+            .copy(paidAmount = 750.0, paidCurrency = "EUR")
+        val gym = occurrence(4L, 5, 50.0, RecurrenceFrequency.MONTHLY, "Gym", status = "PAID")
+            .copy(paidAmount = null, paidCurrency = null)
+        storedOccurrences = listOf(rent, gym)
+        val result = computeUseCase.compute(
+            data(patterns = emptyList(), planned = emptyList(), budgets = listOf(overallBudget(3000.0)))
+        )
+
+        assertUniformBaseNothingPlaced(result, 2200.0)
+    }
+
+    /**
+     * m1, paused rule's PLANNED occurrence: rule 7 is paused (no pattern) with a PLANNED
+     * occurrence on day 20 (700) and its keyed PLANNED row. The occurrence is read but not
+     * placed and does not leave the pool; the keyed row is kept by the keep-the-row rule and is
+     * the only thing counting the bill. Active rule 2 (gym 100, day 25) is placed from its
+     * occurrence and its own keyed row is dropped. Real numbers: pool 3000 - 700 - 100 = 2200,
+     * base 73.333, day 20 = base + 700 as PLANNED impact (recurring impact 0), day 25 = base +
+     * 100 as recurring impact. The 700 bill counts exactly once; it is not counted again.
+     */
+    @Test
+    fun `m1 paused rule PLANNED occurrence is not placed and its keyed row counts the bill once`() = runTest {
+        fixedNowMs = at(15, 12)
+        val pausedBill = occurrence(7L, 20, 700.0, RecurrenceFrequency.MONTHLY, "Paused rent")
+        val gym = occurrence(2L, 25, 100.0, RecurrenceFrequency.MONTHLY, "Gym")
+        storedOccurrences = listOf(pausedBill, gym)
+        val result = computeUseCase.compute(
+            data(
+                patterns = listOf(pattern(2L, "Gym", 100.0, RecurrenceFrequency.MONTHLY, at(25, 0))),
+                planned = listOf(projectedRow(30L, pausedBill), projectedRow(31L, gym)),
+                budgets = listOf(overallBudget(3000.0))
+            )
+        )
+
+        val days = blockDays(result)
+        assertEquals(30, days.size)
+        val base = 2200.0 / 30.0
+        days.forEach { assertEquals("base day ${it.dayOfMonth}", base, it.baseTarget, TOL) }
+        val day20 = days.single { it.dayOfMonth == 20 }
+        assertEquals(0.0, day20.recurringImpact, TOL)
+        assertEquals(700.0, day20.plannedImpact, TOL)
+        assertEquals(base + 700.0, day20.targetBudget, TOL)
+        val day25 = days.single { it.dayOfMonth == 25 }
+        assertEquals(100.0, day25.recurringImpact, TOL)
+        assertEquals(0.0, day25.plannedImpact, TOL)
+        assertEquals(base + 100.0, day25.targetBudget, TOL)
+        assertEquals(3000.0, days.sumOf { it.targetBudget }, TOL)
+    }
+
+    /**
+     * m1, active rule with a PAID occurrence: the pattern is active (next date in July), the
+     * PAID rent 800 is subtracted exactly once (not once as a PAID row and again by any other
+     * path), never placed, and its FULFILLED keyed row adds nothing: 3000 - 800 = 2200, base
+     * 73.333, targets sum to 2200. A double subtraction would give pool 1400.
+     */
+    @Test
+    fun `m1 active rule PAID occurrence counts exactly once`() = runTest {
+        fixedNowMs = at(15, 12)
+        val paid = occurrence(3L, 1, 800.0, RecurrenceFrequency.MONTHLY, "Rent", status = "PAID")
+        storedOccurrences = listOf(paid)
+        val result = computeUseCase.compute(
+            data(
+                patterns = listOf(pattern(3L, "Rent", 800.0, RecurrenceFrequency.MONTHLY, at(1, 0, month = 7))),
+                planned = listOf(projectedRow(30L, paid).copy(status = "FULFILLED")),
+                budgets = listOf(overallBudget(3000.0))
+            )
+        )
+
+        assertUniformBaseNothingPlaced(result, 2200.0)
+    }
+
+    /**
+     * Recorded residual, known behaviour (not a goal): the rule was DELETED, so its occurrence
+     * rows were deleted with it (RecurringRuleLifecycleCoordinator.deleteRule) and its FULFILLED
+     * projected row is filtered. Nothing is read, so the paid 800 no longer leaves the pool and
+     * the base rises to 100 with limit 3000.
+     */
+    @Test
+    fun `m1 deleted rule with occurrences gone raises the base as a recorded residual`() = runTest {
+        fixedNowMs = at(15, 12)
+        val gone = occurrence(3L, 1, 800.0, RecurrenceFrequency.MONTHLY, "Rent", status = "PAID")
+        storedOccurrences = emptyList()
+        val result = computeUseCase.compute(
+            data(
+                patterns = emptyList(),
+                planned = listOf(projectedRow(30L, gone).copy(status = "FULFILLED")),
+                budgets = listOf(overallBudget(3000.0))
+            )
+        )
+
+        assertUniformBaseNothingPlaced(result, 3000.0)
+    }
+
+    /**
+     * The occurrence read now always runs, even with no active manual rule, so a cancellation
+     * thrown by the DAO must propagate out of the real engine (via the use case) and not be
+     * swallowed.
+     */
+    @Test
+    fun `m1 occurrence DAO cancellation propagates from the engine with no active rule`() = runTest {
+        fixedNowMs = at(15, 12)
+        coEvery { occurrenceDao.getByDateRange(any(), any()) } throws
+            kotlinx.coroutines.CancellationException("synthetic cancellation")
+
+        var thrown: Throwable? = null
+        try {
+            computeUseCase.compute(
+                data(patterns = emptyList(), planned = emptyList(), budgets = listOf(overallBudget(3000.0)))
+            )
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            thrown = e
+        }
+
+        assertTrue("CancellationException must propagate", thrown is kotlinx.coroutines.CancellationException)
+    }
+
+    private fun assertUniformBaseNothingPlaced(result: CompiledDashboardData, pool: Double) {
+        val days = blockDays(result)
+        assertEquals(30, days.size)
+        days.forEach {
+            assertEquals("base day ${it.dayOfMonth}", pool / 30.0, it.baseTarget, TOL)
+            assertEquals("target day ${it.dayOfMonth}", pool / 30.0, it.targetBudget, TOL)
+            assertEquals("recurring day ${it.dayOfMonth}", 0.0, it.recurringImpact, TOL)
+            assertEquals("planned day ${it.dayOfMonth}", 0.0, it.plannedImpact, TOL)
+        }
+        assertEquals(pool, days.sumOf { it.targetBudget }, TOL)
+    }
+
+    // ------------------------------------------------ m4: unavailable read is flagged
+
+    /**
+     * m4: the occurrence read throws. The keyed row is kept (existing behaviour) and now the
+     * input is flagged partial with a bounded RECURRING_OCCURRENCES_UNAVAILABLE warning that
+     * carries no exception text (the sentinel message must not appear anywhere).
+     */
+    @Test
+    fun `m4 occurrence read failure flags partial with a bounded warning and no exception text`() = runTest {
+        fixedNowMs = at(15, 12)
+        val sentinel = "SENTINEL_SQL_DETAIL_91827"
+        val bill = occurrence(1L, 20, 700.0, RecurrenceFrequency.MONTHLY, "Rent")
+        coEvery { occurrenceDao.getByDateRange(any(), any()) } throws IllegalStateException(sentinel)
+
+        val out = assembler.assembleNormalized(
+            normalizedInput(
+                listOf(projectedRow(30L, bill)),
+                listOf(pattern(1L, "Rent", 700.0, RecurrenceFrequency.MONTHLY, at(20, 0, month = 7)))
+            )
+        )
+
+        assertTrue("isPartial must be true", out.dataQuality.isPartial)
+        val warnings = out.dataQuality.conversionWarnings
+        assertTrue(
+            "warning must start with the reason code: $warnings",
+            warnings.any { it.startsWith("RECURRING_OCCURRENCES_UNAVAILABLE") }
+        )
+        assertTrue("no exception text in warnings", warnings.none { it.contains(sentinel) })
+        assertEquals(listOf(30L), out.plannedExpenses.map { it.id })
+    }
+
+    /** m4 control: a successful read leaves the input not partial and adds no warning. */
+    @Test
+    fun `m4 successful occurrence read is not flagged partial`() = runTest {
+        fixedNowMs = at(15, 12)
+        val bill = occurrence(1L, 20, 700.0, RecurrenceFrequency.MONTHLY, "Rent")
+        storedOccurrences = listOf(bill)
+
+        val out = assembler.assembleNormalized(
+            normalizedInput(
+                listOf(projectedRow(30L, bill)),
+                listOf(pattern(1L, "Rent", 700.0, RecurrenceFrequency.MONTHLY, at(20, 0, month = 7)))
+            )
+        )
+
+        assertEquals(false, out.dataQuality.isPartial)
+        assertTrue(out.dataQuality.conversionWarnings.none { it.startsWith("RECURRING_OCCURRENCES_UNAVAILABLE") })
+    }
+
     // ------------------------------------------------ assembleNormalized
 
     @Test

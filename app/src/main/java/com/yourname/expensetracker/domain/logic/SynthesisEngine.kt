@@ -917,7 +917,13 @@ class SynthesisEngine @Inject constructor(
         // Track which rule IDs had at least one occurrence row
         val ruleIdsWithOccurrences = mutableSetOf<Long>()
 
-        if (manualIds.isNotEmpty()) {
+        // m1: the read runs even with no active manual rule, because a bill PAID this month
+        // by a rule that has since been paused or ended must still leave the pool. PAID rows
+        // are counted for ANY rule id (each occurrence row once); PLANNED placement and the
+        // "has occurrences" marker stay limited to the active manual rules (manualIds), so a
+        // paused rule's unpaid bills still do not count. A deleted rule's occurrence rows are
+        // deleted with it (RecurringRuleLifecycleCoordinator.deleteRule), so nothing is read.
+        run {
             // DBG-04: do NOT exclude by status here. Any rule with ANY materialised
             // occurrence row in range (PLANNED, PAID, SKIPPED, CANCELLED, …) must be
             // marked as "has occurrences" so it does NOT fall back to legacy
@@ -928,8 +934,7 @@ class SynthesisEngine @Inject constructor(
             // skipped/cancelled. Single DB round trip; status filtering happens in-loop.
             val occurrences = occurrenceDao.getByDateRange(monthStart, monthEnd)
             .filter {
-                    it.sourceType == RecurringLifecycleCoordinator.SOURCE_TYPE_RECURRING_RULE &&
-                        it.sourceId in manualIds
+                    it.sourceType == RecurringLifecycleCoordinator.SOURCE_TYPE_RECURRING_RULE
                 }
             for (occ in occurrences) {
                 // P6-CURRENT-014: every materialised occurrence marks its rule as
@@ -939,7 +944,7 @@ class SynthesisEngine @Inject constructor(
                 // double-count against the matching actual expense), and SKIPPED/
                 // CANCELLED rows are explicit user removals (DBG-04) — neither must
                 // contribute to the bill-day map.
-                ruleIdsWithOccurrences.add(occ.sourceId)
+                if (occ.sourceId in manualIds) ruleIdsWithOccurrences.add(occ.sourceId)
                 if (occ.status == "PAID") {
                     // BL-02: cash amount actually paid (paidAmount + paidCurrency together),
                     // else the expected amount in its own currency. Never mixed across fields.
@@ -952,7 +957,7 @@ class SynthesisEngine @Inject constructor(
                     }
                     continue
                 }
-                if (occ.status != "PLANNED") continue
+                if (occ.status != "PLANNED" || occ.sourceId !in manualIds) continue
                 // G-TIME-01: java.time day-of-month derivation (was Calendar scratch instance).
                 val day = Instant.ofEpochMilli(occ.dueDate).atZone(ZoneId.systemDefault()).dayOfMonth
                 if (day in 1..daysInMonth) {
