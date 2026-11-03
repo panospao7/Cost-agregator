@@ -147,7 +147,7 @@ class CurrencyConverterTest {
         val dailyRepository = com.yourname.expensetracker.data.repository.CurrencyRatesRepositoryImpl(
             currencyConverter = CurrencyConverter(dailyStore, time),
             currencySettingsRepository = mockk(relaxed = true),
-            timeProvider = time,
+            timeProvider = object : TimeProvider { override fun now(): Long = java.time.Instant.parse("2026-10-29T12:00:00Z").toEpochMilli() },
             ioDispatcher = kotlinx.coroutines.Dispatchers.Unconfined,
             privacyGate = mockk(relaxed = true)
         )

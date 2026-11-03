@@ -1194,6 +1194,356 @@ class CurrencyRatesRepositoryImplTest {
 
     // ── MEC 1b: reviewer findings F3 / F4 (deadline, store failure, best-effort settings, opener) ──
 
+    // ── RA-FX-1 / N-07-1..4: daily refresh network phase (dailyConnectionOpener seam, never a real URL) ──
+
+    private var dailyConnectionsOpened = 0
+
+    private fun CurrencyRatesRepositoryImpl.serveDaily(connection: HttpURLConnection) {
+        dailyConnectionsOpened = 0
+        dailyConnectionOpener = {
+            dailyConnectionsOpened += 1
+            connection
+        }
+    }
+
+    /** An opener that must never be called; counts invocations and fails if reached. */
+    private fun CurrencyRatesRepositoryImpl.serveDailyNothing() {
+        dailyConnectionsOpened = 0
+        dailyConnectionOpener = {
+            dailyConnectionsOpened += 1
+            throw AssertionError("daily connection opener must not be called")
+        }
+    }
+
+    private fun okDailyConnection(timeAttribute: String? = "2026-09-25") =
+        fakeConnection(body = stream(ecbXml(timeAttribute = timeAttribute)))
+
+    private inline fun <T> withDefaultTimeZone(zoneId: String, block: () -> T): T {
+        val original = TimeZone.getDefault()
+        try {
+            TimeZone.setDefault(TimeZone.getTimeZone(zoneId))
+            return block()
+        } finally {
+            TimeZone.setDefault(original)
+        }
+    }
+
+    private fun utcMidnight(isoDate: String): Long =
+        LocalDate.parse(isoDate).atStartOfDay(java.time.ZoneOffset.UTC).toInstant().toEpochMilli()
+
+    @Test
+    fun `N-07-1 daily connection disables redirects and caches and sends no request headers`() = runTest {
+        val connection = okDailyConnection()
+        val fixture = fixture(now = fetchedNextDayMillis)
+        fixture.repository.serveDaily(connection)
+
+        val outcome = fixture.repository.refresh("USD")
+
+        assertTrue("Expected Refreshed but was $outcome", outcome is CurrencyRateRefreshOutcome.Refreshed)
+        assertTrue((outcome as CurrencyRateRefreshOutcome.Refreshed).storedPairs > 0)
+        assertEquals(1, dailyConnectionsOpened)
+        verify { connection.instanceFollowRedirects = false }
+        verify { connection.useCaches = false }
+        verify(exactly = 0) { connection.instanceFollowRedirects = true }
+        verify(exactly = 0) { connection.useCaches = true }
+        verify(exactly = 0) { connection.setRequestProperty(any(), any()) }
+        verify(exactly = 0) { connection.addRequestProperty(any(), any()) }
+        verify(exactly = 0) { connection.getHeaderField(any<String>()) }
+        verify(atLeast = 1) { connection.disconnect() }
+        assertTrue(fixture.store.rates.isNotEmpty())
+    }
+
+    @Test
+    fun `N-07-1 daily 3xx fails with the HTTP N message without following Location or reading the body`() = runTest {
+        listOf(300, 301, 302, 303, 307, 308).forEach { status ->
+            val connection = fakeConnection(status = status, body = stream(ecbXml()))
+            val fixture = fixture(now = fetchedNextDayMillis)
+            fixture.repository.serveDaily(connection)
+
+            try {
+                fixture.repository.refresh("USD")
+                fail("Expected a failed refresh for HTTP $status")
+            } catch (error: IllegalStateException) {
+                assertEquals("Rate provider returned HTTP $status", error.message)
+            }
+
+            assertEquals("status=$status", 1, dailyConnectionsOpened)
+            verify { connection.instanceFollowRedirects = false }
+            verify(exactly = 0) { connection.getHeaderField(any<String>()) }
+            verify(exactly = 0) { connection.inputStream }
+            verify(atLeast = 1) { connection.disconnect() }
+            assertTrue("status=$status", fixture.store.rates.isEmpty())
+            assertTrue("status=$status", fixture.settings.lastRateUpdates.isEmpty())
+        }
+    }
+
+    @Test
+    fun `N-07-1 daily 404 and 500 keep the HTTP N message and the 2xx boundary 299 still refreshes`() = runTest {
+        listOf(404, 500).forEach { status ->
+            val fixture = fixture(now = fetchedNextDayMillis)
+            fixture.repository.serveDaily(fakeConnection(status = status))
+            try {
+                fixture.repository.refresh("USD")
+                fail("Expected a failed refresh for HTTP $status")
+            } catch (error: IllegalStateException) {
+                assertEquals("Rate provider returned HTTP $status", error.message)
+            }
+            assertTrue(fixture.store.rates.isEmpty())
+        }
+
+        val fixture = fixture(now = fetchedNextDayMillis)
+        fixture.repository.serveDaily(fakeConnection(status = 299, body = stream(ecbXml())))
+        assertTrue(fixture.repository.refresh("USD") is CurrencyRateRefreshOutcome.Refreshed)
+    }
+
+    @Test
+    fun `N-07-2 daily declared Content-Length above 256 KiB is RATE_PAYLOAD_TOO_LARGE and the stream is never read`() = runTest {
+        val connection = fakeConnection(contentLength = dailyCapBytes.toLong() + 1L, body = stream(ecbXml()))
+        val fixture = fixture(now = fetchedNextDayMillis)
+        fixture.repository.serveDaily(connection)
+
+        try {
+            fixture.repository.refresh("USD")
+            fail("Expected RATE_PAYLOAD_TOO_LARGE")
+        } catch (error: IllegalStateException) {
+            assertEquals("RATE_PAYLOAD_TOO_LARGE", error.message)
+        }
+
+        verify(exactly = 0) { connection.inputStream }
+        verify(atLeast = 1) { connection.disconnect() }
+        assertTrue(fixture.store.rates.isEmpty())
+        assertTrue(fixture.settings.lastRateUpdates.isEmpty())
+    }
+
+    @Test
+    fun `N-07-2 daily declared Content-Length of exactly 256 KiB or unknown still refreshes`() = runTest {
+        listOf(dailyCapBytes.toLong(), -1L, 0L).forEach { declared ->
+            val fixture = fixture(now = fetchedNextDayMillis)
+            fixture.repository.serveDaily(fakeConnection(contentLength = declared, body = stream(ecbXml())))
+
+            val outcome = fixture.repository.refresh("USD")
+
+            assertTrue("declared=$declared outcome=$outcome", outcome is CurrencyRateRefreshOutcome.Refreshed)
+            assertTrue(fixture.store.rates.isNotEmpty())
+        }
+    }
+
+    @Test
+    fun `N-07-2 publication date of today plus 1 UTC passes and today plus 2 is OUT_OF_BOUNDS in any device time zone`() {
+        val justBeforeUtcMidnight = Instant.parse("2026-09-25T23:59:59Z").toEpochMilli()
+        val justAfterUtcMidnight = Instant.parse("2026-09-26T00:00:01Z").toEpochMilli()
+        // Far east (UTC+14), far west (UTC-11), US west coast and a mid east zone, plus UTC as control.
+        listOf("UTC", "Pacific/Kiritimati", "Pacific/Pago_Pago", "America/Los_Angeles", "Asia/Tokyo").forEach { zone ->
+            withDefaultTimeZone(zone) {
+                assertDailyDateBound(zone, justBeforeUtcMidnight, accepted = "2026-09-26", rejected = "2026-09-27")
+                assertDailyDateBound(zone, justAfterUtcMidnight, accepted = "2026-09-27", rejected = "2026-09-28")
+            }
+        }
+    }
+
+    private fun assertDailyDateBound(zone: String, nowMillis: Long, accepted: String, rejected: String) {
+        val parsed = fixture(now = nowMillis).repository.parseEcbDailyRates(stream(ecbXml(timeAttribute = accepted)))
+        assertEquals("zone=$zone accepted=$accepted", utcMidnight(accepted), parsed.publicationMillis)
+
+        try {
+            fixture(now = nowMillis).repository.parseEcbDailyRates(stream(ecbXml(timeAttribute = rejected)))
+            fail("zone=$zone: $rejected must be rejected as OUT_OF_BOUNDS")
+        } catch (error: EcbPublicationDateUnavailableException) {
+            assertEquals("zone=$zone rejected=$rejected", EcbPublicationDateFailureReason.OUT_OF_BOUNDS, error.reasonCode)
+            assertEquals("OUT_OF_BOUNDS", error.message)
+        }
+    }
+
+    @Test
+    fun `N-07-2 daily refresh with a publication date of today plus 2 fails OUT_OF_BOUNDS and stores nothing`() = runTest {
+        val now = Instant.parse("2026-09-25T12:00:00Z").toEpochMilli()
+        val connection = okDailyConnection(timeAttribute = "2026-09-27")
+        val fixture = fixture(now = now)
+        fixture.repository.serveDaily(connection)
+
+        try {
+            fixture.repository.refresh("USD")
+            fail("Expected OUT_OF_BOUNDS")
+        } catch (error: EcbPublicationDateUnavailableException) {
+            assertEquals(EcbPublicationDateFailureReason.OUT_OF_BOUNDS, error.reasonCode)
+        }
+
+        verify(atLeast = 1) { connection.disconnect() }
+        assertTrue(fixture.store.rates.isEmpty())
+        assertTrue(fixture.settings.lastRateUpdates.isEmpty())
+
+        // Control: the same file one day earlier (today + 1) refreshes.
+        val control = fixture(now = now)
+        control.repository.serveDaily(okDailyConnection(timeAttribute = "2026-09-26"))
+        assertTrue(control.repository.refresh("USD") is CurrencyRateRefreshOutcome.Refreshed)
+        assertTrue(control.store.rates.values.all { it.validDate == utcMidnight("2026-09-26") })
+    }
+
+    @Test
+    fun `KNOWN LIMIT device clock more than a day behind the ECB publication date fails the refresh as OUT_OF_BOUNDS`() = runTest {
+        // Documents today's behaviour only: a device clock set behind the publication date by more than one
+        // day makes the (valid) published file look future-dated, so the refresh fails and nothing is stored.
+        val clockThreeDaysBehind = Instant.parse("2026-09-22T12:00:00Z").toEpochMilli()
+        val connection = okDailyConnection(timeAttribute = "2026-09-25")
+        val behind = fixture(now = clockThreeDaysBehind)
+        behind.repository.serveDaily(connection)
+
+        try {
+            behind.repository.refresh("USD")
+            fail("Known limit: a clock more than a day behind is currently rejected")
+        } catch (error: EcbPublicationDateUnavailableException) {
+            assertEquals(EcbPublicationDateFailureReason.OUT_OF_BOUNDS, error.reasonCode)
+        }
+        verify(atLeast = 1) { connection.disconnect() }
+        assertTrue(behind.store.rates.isEmpty())
+        assertTrue(behind.settings.lastRateUpdates.isEmpty())
+
+        // Boundary: exactly one day behind (clock date + 1 == publication date) still refreshes.
+        val oneDayBehind = fixture(now = Instant.parse("2026-09-24T12:00:00Z").toEpochMilli())
+        oneDayBehind.repository.serveDaily(okDailyConnection(timeAttribute = "2026-09-25"))
+        assertTrue(oneDayBehind.repository.refresh("USD") is CurrencyRateRefreshOutcome.Refreshed)
+    }
+
+    @Test
+    fun `N-07-3 gate that throws fails closed as PrivacyCheckFailed PRIVACY_BLOCKED with no daily connection`() = runTest {
+        val throwingGate = object : PrivacyGate {
+            override suspend fun check(capability: PrivacyCapability, context: Map<String, String>): PrivacyDecision =
+                throw IllegalStateException("gate exploded")
+        }
+        val repository = repositoryWithGate(throwingGate)
+        repository.serveDailyNothing()
+
+        val outcome = repository.refresh("USD")
+
+        assertEquals(CurrencyRateRefreshOutcome.PrivacyCheckFailed(PrivacyGateReasonCodes.PRIVACY_BLOCKED), outcome)
+        assertEquals(0, dailyConnectionsOpened)
+    }
+
+    @Test
+    fun `N-07-3 CancellationException from the gate is rethrown and never mapped to an outcome`() = runTest {
+        val cancellingGate = object : PrivacyGate {
+            override suspend fun check(capability: PrivacyCapability, context: Map<String, String>): PrivacyDecision =
+                throw CancellationException("gate cancelled")
+        }
+        val repository = repositoryWithGate(cancellingGate)
+        repository.serveDailyNothing()
+        var thrown: Throwable? = null
+        var returned: CurrencyRateRefreshOutcome? = null
+
+        try {
+            returned = repository.refresh("USD")
+        } catch (e: CancellationException) {
+            thrown = e
+        }
+
+        assertTrue("CancellationException must propagate", thrown is CancellationException)
+        assertNull(returned)
+        assertEquals(0, dailyConnectionsOpened)
+    }
+
+    @Test
+    fun `N-07-4 two concurrent refreshes never hold two daily connections at once`() = runTest {
+        val firstReading = CountDownLatch(1)
+        val releaseFirst = CountDownLatch(1)
+        val secondPastGate = CountDownLatch(1)
+        val gateCalls = java.util.concurrent.atomic.AtomicInteger(0)
+        val gate = object : PrivacyGate {
+            override suspend fun check(capability: PrivacyCapability, context: Map<String, String>): PrivacyDecision {
+                if (gateCalls.incrementAndGet() == 2) secondPastGate.countDown()
+                return PrivacyDecision.Allowed
+            }
+        }
+        val gatedBody = object : InputStream() {
+            private val inner = ByteArrayInputStream(ecbXml().toByteArray(Charsets.UTF_8))
+            private var gated = true
+            override fun read(): Int = inner.read()
+            override fun read(b: ByteArray, off: Int, len: Int): Int {
+                if (gated) {
+                    gated = false
+                    firstReading.countDown()
+                    if (!releaseFirst.await(20, TimeUnit.SECONDS)) throw IOException("test gate never released")
+                }
+                return inner.read(b, off, len)
+            }
+        }
+        val openNow = java.util.concurrent.atomic.AtomicInteger(0)
+        val maxOpen = java.util.concurrent.atomic.AtomicInteger(0)
+        val opened = java.util.concurrent.atomic.AtomicInteger(0)
+        val connections = listOf(fakeConnection(body = gatedBody), okDailyConnection())
+        connections.forEach { connection ->
+            every { connection.disconnect() } answers { openNow.decrementAndGet() }
+        }
+        val store = PairDateRateStore()
+        val settings = RecordingCurrencySettingsRepository()
+        val time = MutableTimeProvider(fetchedNextDayMillis)
+        val repository = CurrencyRatesRepositoryImpl(
+            currencyConverter = CurrencyConverter(store, time),
+            currencySettingsRepository = settings,
+            timeProvider = time,
+            ioDispatcher = Dispatchers.IO,
+            privacyGate = gate
+        )
+        repository.dailyConnectionOpener = {
+            val index = opened.getAndIncrement()
+            maxOpen.accumulateAndGet(openNow.incrementAndGet()) { a, b -> maxOf(a, b) }
+            connections[index]
+        }
+
+        try {
+            val first = async(Dispatchers.Default) { repository.refresh("USD") }
+            assertTrue("first refresh never started reading", firstReading.await(10, TimeUnit.SECONDS))
+            val second = async(Dispatchers.Default) { repository.refresh("USD") }
+            assertTrue("second refresh never passed the gate", secondPastGate.await(10, TimeUnit.SECONDS))
+            releaseFirst.countDown()
+
+            val outcomes = listOf(first.await(), second.await())
+
+            assertTrue(outcomes.all { it is CurrencyRateRefreshOutcome.Refreshed })
+            assertEquals("connections were open at the same time", 1, maxOpen.get())
+            assertEquals(2, opened.get())
+            assertEquals(0, openNow.get())
+            assertEquals(2, settings.lastRateUpdates.size)
+            connections.forEach { verify(exactly = 1) { it.disconnect() } }
+        } finally {
+            releaseFirst.countDown()
+        }
+    }
+
+    @Test
+    fun `N-07-4 cancelling a refresh stuck in a read disconnects the connection and unblocks the read`() = runTest {
+        val readStarted = CountDownLatch(1)
+        val released = CountDownLatch(1)
+        val unblockedByDisconnect = java.util.concurrent.atomic.AtomicBoolean(false)
+        val stuckBody = object : InputStream() {
+            override fun read(): Int = -1
+            override fun read(b: ByteArray, off: Int, len: Int): Int {
+                readStarted.countDown()
+                unblockedByDisconnect.set(released.await(20, TimeUnit.SECONDS))
+                throw IOException("socket closed")
+            }
+        }
+        val connection = fakeConnection(body = stuckBody)
+        every { connection.disconnect() } answers { released.countDown() }
+        val store = PairDateRateStore()
+        val settings = RecordingCurrencySettingsRepository()
+        val repository = repositoryOf(store, settings, Dispatchers.IO)
+        repository.serveDaily(connection)
+
+        val job = async(Dispatchers.Default) { repository.refresh("USD") }
+        assertTrue("read never started", readStarted.await(10, TimeUnit.SECONDS))
+        verify(exactly = 0) { connection.disconnect() }
+
+        // Only disconnect() releases the stuck read; join() returns once the read has been unblocked.
+        job.cancel()
+        job.join()
+
+        assertTrue("refresh must end cancelled", job.isCancelled)
+        verify(atLeast = 1) { connection.disconnect() }
+        assertTrue("stuck read was not unblocked by disconnect()", unblockedByDisconnect.get())
+        assertTrue(store.rates.isEmpty())
+        assertTrue(settings.lastRateUpdates.isEmpty())
+    }
+
     /** Store whose bulk write always fails with [failure]; everything else delegates to a real fake. */
     private class FailingBulkStore(
         private val delegate: ExchangeRateStore,

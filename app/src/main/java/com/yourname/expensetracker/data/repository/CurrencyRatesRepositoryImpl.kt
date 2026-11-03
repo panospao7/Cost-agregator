@@ -22,6 +22,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.w3c.dom.Element
@@ -91,9 +92,31 @@ class CurrencyRatesRepositoryImpl @Inject constructor(
     internal var historyConnectionOpener: () -> HttpURLConnection =
         { URL(ECB_HISTORY_90D_URL).openConnection() as HttpURLConnection }
 
+    private val dailyMutex = Mutex()
+
+    /**
+     * Test seam (RA-FX-1): the only way the daily download opens a connection, invoked solely inside the
+     * attempt after the privacy gate. Production never sets it; the default targets the ECB daily file.
+     */
+    @VisibleForTesting
+    internal var dailyConnectionOpener: () -> HttpURLConnection =
+        { URL(ECB_DAILY_RATES_URL).openConnection() as HttpURLConnection }
+
     override suspend fun refresh(homeCurrency: String): CurrencyRateRefreshOutcome = withContext(ioDispatcher) {
         // PRIVACY GATE: exchange-rate download has its own capability (default OFF); check before any HTTP call.
-        val gateCheck = privacyGate.check(PrivacyCapability.EXCHANGE_RATE_DOWNLOAD)
+        // A gate that cannot answer fails closed (cancellation is rethrown first).
+        val gateCheck = try {
+            privacyGate.check(PrivacyCapability.EXCHANGE_RATE_DOWNLOAD)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            currentCoroutineContext().ensureActive()
+            null
+        }
+        if (gateCheck == null) {
+            Timber.w("CurrencyRatesRepository: refresh blocked by privacy gate (%s)", "PrivacyCheckFailed")
+            return@withContext CurrencyRateRefreshOutcome.PrivacyCheckFailed(PrivacyGateReasonCodes.PRIVACY_BLOCKED)
+        }
         if (gateCheck.blocksExecution()) {
             val blockedOutcome = when (gateCheck) {
                 is PrivacyDecision.Denied -> CurrencyRateRefreshOutcome.DisabledByPrivacy
@@ -108,25 +131,48 @@ class CurrencyRatesRepositoryImpl @Inject constructor(
             return@withContext blockedOutcome
         }
 
-        val connection = (URL(ECB_DAILY_RATES_URL).openConnection() as HttpURLConnection).apply {
+        // RA-FX-1: serialized per process. A caller that waited performs its own refresh (idempotent upsert).
+        dailyMutex.withLock { runDailyAttempt(homeCurrency) }
+    }
+
+    /**
+     * Opens the connection (never before the gate), reads, parses and stores. Failures keep throwing the
+     * same bounded messages callers already match; cancellation propagates. The connection is
+     * disconnected on completion and when the surrounding scope is cancelled, which also unblocks a stuck
+     * socket read. The blocking read runs on [ioDispatcher] (inherited from the enclosing withContext).
+     */
+    private suspend fun runDailyAttempt(homeCurrency: String): CurrencyRateRefreshOutcome = coroutineScope {
+        val connection = dailyConnectionOpener().apply {
             requestMethod = "GET"
             connectTimeout = TIMEOUT_MS
             readTimeout = TIMEOUT_MS
+            instanceFollowRedirects = false // a 3xx fails like any non-2xx; Location is never read.
+            useCaches = false // no cache; no request properties or conditional headers are set.
         }
-
+        val worker = async { fetchAndStoreDaily(connection, homeCurrency) }
         try {
-            connection.connect()
-            if (connection.responseCode !in 200..299) {
-                throw IllegalStateException("Rate provider returned HTTP ${connection.responseCode}")
-            }
-
-            val storedPairs = connection.inputStream.use { stream ->
-                refreshFromStream(homeCurrency, stream)
-            }
-            CurrencyRateRefreshOutcome.Refreshed(storedPairs)
+            worker.await()
         } finally {
             connection.disconnect()
         }
+    }
+
+    private suspend fun fetchAndStoreDaily(
+        connection: HttpURLConnection,
+        homeCurrency: String
+    ): CurrencyRateRefreshOutcome {
+        connection.connect()
+        if (connection.responseCode !in 200..299) {
+            throw IllegalStateException("Rate provider returned HTTP ${connection.responseCode}")
+        }
+        // Reject a declared length above the cap before reading (-1 = unknown).
+        if (connection.contentLengthLong > MAX_DAILY_BYTES) {
+            throw IllegalStateException("RATE_PAYLOAD_TOO_LARGE")
+        }
+        val storedPairs = connection.inputStream.use { stream ->
+            refreshFromStream(homeCurrency, stream)
+        }
+        return CurrencyRateRefreshOutcome.Refreshed(storedPairs)
     }
 
     override suspend fun downloadRecentHistory(homeCurrency: String): CurrencyRateHistoryOutcome =
@@ -550,6 +596,12 @@ class CurrencyRatesRepositoryImpl @Inject constructor(
         } catch (_: DateTimeParseException) {
             throw EcbPublicationDateUnavailableException(EcbPublicationDateFailureReason.MALFORMED)
         }
+        // Same bound as the history file: today + 1 in UTC (the date is parsed and stored as a UTC day, so the
+        // device time zone never matters; the extra day absorbs clock skew).
+        val todayUtc = java.time.Instant.ofEpochMilli(timeProvider.now()).atZone(ZoneOffset.UTC).toLocalDate()
+        if (publicationDate.isAfter(todayUtc.plusDays(1))) {
+            throw EcbPublicationDateUnavailableException(EcbPublicationDateFailureReason.OUT_OF_BOUNDS)
+        }
 
         val eurToCurrency = mutableMapOf("EUR" to 1.0)
         val rateNodes = datedNode.childNodes
@@ -655,7 +707,8 @@ internal enum class EcbPublicationDateFailureReason {
     MISSING,
     BLANK,
     MALFORMED,
-    CONFLICTING
+    CONFLICTING,
+    OUT_OF_BOUNDS
 }
 
 internal class EcbPublicationDateUnavailableException(
