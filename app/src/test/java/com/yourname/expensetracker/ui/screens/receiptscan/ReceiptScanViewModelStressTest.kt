@@ -682,6 +682,7 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
             receiptId = 7L,
             editMerchant = "",
             editAmount = "",
+            homeCurrency = "EUR",
             receiptQuickSaveEnabled = true
         )
 
