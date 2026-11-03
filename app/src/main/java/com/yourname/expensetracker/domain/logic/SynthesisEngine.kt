@@ -83,8 +83,8 @@ class SynthesisEngine @Inject constructor(
 
         /**
          * Single source of the monthly budget limit: the OVERALL budget when it is
-         * positive, otherwise the sum of the category budgets. Shared by
-         * [synthesizeInternal] and the Block Party caller so both read the same limit.
+         * positive, otherwise the sum of the category budgets. Used only by
+         * [synthesizeInternal]; Block Party no longer uses this shared limit.
          * Amounts are in the budget snapshots' own (home) currency; no rounding is applied.
          */
         internal fun resolveBudgetLimit(budgetStatuses: List<BudgetStatusSnapshot>): Double {
@@ -609,7 +609,7 @@ class SynthesisEngine @Inject constructor(
         // BL-02 (cash basis): the discretionary pool subtracts exactly the bills that
         // are PLACED on a day of this month (at their full cash amount, on their due
         // day), plus PAID occurrences due this month, so the sum of daily targets
-        // equals limit - reserves. The former 1/12 accrual (toMonthlyAmount) is no
+        // equals limit - reserves - PAID (when not clamped). The former 1/12 accrual (toMonthlyAmount) is no
         // longer used here; it double-counted annual/quarterly bills in the due month.
 
         // Filter planned expenses for this month only using timestamp range
