@@ -92,3 +92,8 @@ P-03-1 part 2; legacy duplicate receipt links; P-03-3; N-06-1 and N-06-2 (statem
 ## Fix pass, round 1
 - J-05-1: 9f4db9dc submits a transfer value only when it differs from the dialog's seed, so unedited rows, alone or in bulk, fall back to their own suggestion. A direction or account edit on one row now reaches the others in a bulk approve; at base such an edit was dropped for every row. Other types never submit hidden values. Targeted vr-20261103-091140-17904d82 PASS. Bulk approve is pinned at view model level with a mocked repository; the Compose call site is not pinned.
 - e7276d60: rerun failures log the exception class only.
+
+## reviewer-strict on c6c51b19: ACCEPT-WITH-MINORS (round 2 of 2)
+- m2, for the owner: with A OUTGOING and B OUTGOING, editing A to INCOMING makes B INCOMING in a bulk approve; at base A stayed wrong and B stayed right. Reviewer's judgement: keep propagation, but apply it only to rows whose suggestion equals A's seed. Orchestrator (item 116): take that recommendation in the follow-up lane.
+- Direction's effect on totals (`TransferDirectionAnalytics`) was not traced.
+- Follow-up outside this batch: raw `Timber.e(e, ...)` remains in `ReceiptMatchingViewModel.kt` at :140, :169, :188, :217, :247, :295, :303, :321 (pre-existing).

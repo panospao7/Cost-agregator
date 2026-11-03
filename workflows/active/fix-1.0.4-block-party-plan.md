@@ -77,3 +77,15 @@ Paths are relative to `app/src/main/java/com/yourname/expensetracker/`. (U) = no
 - A keyed planned row is dropped only when an active rule places that bill this month (`sourceRecurringRuleId` equals the manual pattern's id, and the rule has an occurrence row this month or `nextExpectedDate` is in the row's month). Otherwise it counts once, so a bill cannot vanish. Added after the test-author showed a 700 bill disappearing with no pattern.
 - Guard catch: static-guards on 92346ad0 (vr-20261103-085000-1875b34e) failed `raw_money_aggregates` G-MONEY-RAW-01 on `sumOf { it.amount }` at `SynthesisEngine.kt:685-686`. These values are already converted once, so the holder's field is now `convertedAmount`. Guard unchanged. 26 of 27 guards passed.
 - Lane targeted vr-20261103-091743-b353e692 PASS on ca0f71b8; later commit is a field rename and a comment.
+
+## reviewer-strict on c6c51b19: ACCEPT-WITH-MINORS (round 2 of 2)
+Round 1 findings closed; hand computations match (annual case base 60, sum 3000; mixed June base 18.33, sum 2050). To apply before merge: m3 tests, m6 comments.
+- m3: `DashboardContractsAdapterTest` does not pin `sourceRecurringRuleId`; deleting `DashboardContractsAdapter.kt:132` restores the double count in production and no test would fail. `BlockPartyRecurringChainTest` hand-builds rows and bypasses the adapter and service, and its DAO mock ignores the range. No test covers a non-PLANNED occurrence with a PLANNED keyed row, or a DAO throw.
+- m6: stale text at `SynthesisEngine.kt:86-87` (shared limit) and :610-612 (invariant omits PAID).
+Follow-up lane, not fixed before merge (production changes after the last review round):
+- m1, paid then paused: rent 800 PAID on day 1, rule paused on day 10. The PAID occurrence goes unread and the FULFILLED row is filtered, so with limit 3000 the base goes 73.33 to 100 and day 1 turns red. At 8de38722 the row still counted. Narrow regression.
+- m4: `ForecastInputAssembler.kt:737-740` swallows a blocked read with no partial flag or log, unlike DBG-06 at :487-493. During a restore the double count shows unflagged. Transient.
+- m5, orphan keyed row: no normal path creates one. Monthly rule with no occurrence rows and a rolled date next month: row kept and legacy also places it, counting twice. IRREGULAR rule: row dropped and never placed.
+- Plan line about `synthesizeInternal`: it never calls `isRecurringExpected`, so the biweekly change does not affect it.
+Not verified by the reviewer: `SynthesisEngine` receiving a non-null DAO under Hilt; which code marks occurrences MISSED.
+- m3, m6 applied: d48994e7, targeted vr-20261103-100224-a5ef6ebb PASS. Gates on c6c51b19: raw_money_aggregates vr-20261103-093152-72cd2b21 PASS, targeted vr-20261103-093209-61f3c955 PASS, static-guards vr-20261103-094246-67256b70 PASS. Later changes are tests and two comments, so app-check runs on the final commit.
