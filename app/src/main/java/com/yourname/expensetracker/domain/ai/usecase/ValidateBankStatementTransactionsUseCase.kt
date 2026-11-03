@@ -99,6 +99,16 @@ object StatementValidationContracts {
      * parser echo, exactly like an AI that gave no opinion. They are never dropped.
      */
     const val MAX_CHUNKS_PER_RUN = 5
+
+    /**
+     * Prompt section markers (each on a line of its own). The cloud payload policy splits the
+     * prompt on these: only the segment between them (the OCR text) is redacted and capped; the
+     * instructions before [PROMPT_OCR_MARKER] and the candidate block after
+     * [PROMPT_CANDIDATES_MARKER] are kept, the candidate block after strict per-field sanitizing.
+     * The candidate block is the LAST section of the prompt.
+     */
+    const val PROMPT_OCR_MARKER = "--- OCR TEXT ---"
+    const val PROMPT_CANDIDATES_MARKER = "--- CANDIDATE TRANSACTIONS ---"
 }
 
 /**
@@ -170,9 +180,11 @@ sealed interface StatementValidationOutcome {
  *
  * IMPLEMENTED (P8-P1-07): Redaction is handled at the service layer —
  * [CloudReceiptAssistService.suggestFromText] calls
- * [CloudPayloadPolicy.prepareBankStatementValidation] which always applies
- * [CloudPayloadRedactor.redactText] before sending to cloud. The raw prompt
- * never reaches the cloud API unredacted for bank statement validation.
+ * [CloudPayloadPolicy.prepareBankStatementValidation]. It redacts and caps only
+ * the OCR segment (between [StatementValidationContracts.PROMPT_OCR_MARKER] and
+ * [StatementValidationContracts.PROMPT_CANDIDATES_MARKER]), keeps the instructions,
+ * and sanitizes every candidate field; if the prompt cannot be sanitized it throws
+ * and nothing is sent (the call is then treated as cloud-unavailable).
  */
 @Singleton
 class ValidateBankStatementTransactionsUseCase @Inject constructor(
@@ -443,8 +455,12 @@ class ValidateBankStatementTransactionsUseCase @Inject constructor(
         appendLine("- Every object MUST contain \"status\": \"accepted\" for a real transaction, or \"rejected\" for a non-transaction (headers, bank info, etc). Never omit a candidate.")
         appendLine("- For \"accepted\" objects include merchant, amount (positive number), currency (ISO 4217 code; omit the value only if truly undeterminable), date (YYYY-MM-DD), confidence (0.0-1.0).")
         appendLine("- For \"rejected\" objects only candidateId and status are required.")
+        appendLine(
+            """Return example: [{"candidateId":0,"status":"accepted","merchant":"...",""" +
+                """"amount":0.0,"currency":"EUR","date":"YYYY-MM-DD","confidence":0.9}]"""
+        )
         appendLine()
-        appendLine("--- OCR TEXT ---")
+        appendLine(StatementValidationContracts.PROMPT_OCR_MARKER)
         if (rawOcrText.length > 4000) {
             appendLine(rawOcrText.take(4000))
             appendLine("… (OCR text truncated to 4000 characters)")
@@ -452,18 +468,15 @@ class ValidateBankStatementTransactionsUseCase @Inject constructor(
             appendLine(rawOcrText)
         }
         appendLine()
-        appendLine("--- CANDIDATE TRANSACTIONS ---")
+        // The candidate block MUST stay the last section: the cloud payload policy parses it
+        // line by line (one JSON-like object per line) and fails closed on anything else.
+        appendLine(StatementValidationContracts.PROMPT_CANDIDATES_MARKER)
         candidates.forEach { tx ->
             appendLine(
                 "{\"candidateId\":${tx.candidateId}, \"merchant\":\"${promptSafe(tx.merchant)}\", " +
                     "\"amount\":${tx.amount}, \"currency\":\"${promptSafe(tx.currency)}\", \"date\":${tx.date}}"
             )
         }
-        appendLine()
-        appendLine(
-            """Return example: [{"candidateId":0,"status":"accepted","merchant":"...",""" +
-                """"amount":0.0,"currency":"EUR","date":"YYYY-MM-DD","confidence":0.9}]"""
-        )
     }
 
     /** Internal parse result for one AI provider response. */
