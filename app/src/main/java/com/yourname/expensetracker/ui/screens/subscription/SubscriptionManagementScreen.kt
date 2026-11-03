@@ -52,6 +52,13 @@ import java.util.Locale
 internal fun showEmptyState(subscriptions: List<*>, detectedCandidates: List<*>): Boolean =
     subscriptions.isEmpty() && detectedCandidates.isEmpty()
 
+/**
+ * The total card needs at least one active subscription to total. With none (for example only
+ * detected candidates) there is nothing to convert, so the card is hidden instead of showing a
+ * "conversion unavailable" message that is not a conversion failure.
+ */
+internal fun showTotalCostCard(activeCount: Int): Boolean = activeCount > 0
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SubscriptionManagementScreen(
@@ -181,13 +188,15 @@ fun SubscriptionManagementScreen(
                         }
                         
                         // Total Cost Card
-                        item {
-                            TotalCostCard(
-                                monthlyTotal = uiState.totalMonthlyCost,
-                                annualTotal = uiState.totalAnnualCost,
-                                totalCurrency = uiState.totalCurrency,
-                                totalStatus = uiState.totalStatus
-                            )
+                        if (showTotalCostCard(uiState.activeCount)) {
+                            item {
+                                TotalCostCard(
+                                    monthlyTotal = uiState.totalMonthlyCost,
+                                    annualTotal = uiState.totalAnnualCost,
+                                    totalCurrency = uiState.totalCurrency,
+                                    totalStatus = uiState.totalStatus
+                                )
+                            }
                         }
                         
                         // Detected Candidates Section

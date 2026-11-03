@@ -1134,6 +1134,22 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
     }
 
     @Test
+    fun `quickAdd with floating point dust remaining writes no ledger row`() = runTest(testDispatcher) {
+        quickAddOn(target = 0.80, current = 0.7999999999999999)
+
+        coVerify(exactly = 0) { savingsGoalRepository.recordManualContribution(any(), any(), any(), any(), any()) }
+        assertEquals(emptyList<Double>(), manualCalls.map { it.delta })
+    }
+
+    @Test
+    fun `quickAdd JPY 995 of 1000 contributes exactly 5`() = runTest(testDispatcher) {
+        quickAddOn(target = 1000.0, current = 995.0, currency = "JPY")
+
+        assertEquals(listOf(5.0), manualCalls.map { it.delta })
+        assertEquals("JPY", manualCalls.single().snapshot.currency)
+    }
+
+    @Test
     fun `quickAdd passes the goal currency through unchanged`() = runTest(testDispatcher) {
         // Home currency is EUR; the goal is USD, so a home-currency leak would show as EUR.
         quickAddOn(target = 100.0, current = 95.0, currency = "USD")
