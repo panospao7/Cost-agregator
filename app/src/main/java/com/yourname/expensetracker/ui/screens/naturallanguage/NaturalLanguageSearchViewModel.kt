@@ -20,19 +20,10 @@ import javax.inject.Inject
 /**
  * ViewModel for the natural language search screen.
  *
- * ## M7-M10: Known search/report display issues
+ * ## M9-M10: Known search/report display issues
  *
- * ### M7: Amounts displayed without original currency context
- * When results include expenses in multiple currencies, the `TransactionResultCard`
- * in the screen always formats amounts using `homeCurrency` from settings.
- * This means a JPY-denominated expense would be shown as "€50" instead of "¥50"
- * if the home currency is EUR. A proper fix should display the expense's native
- * currency alongside or instead of the home-currency equivalent.
- *
- * ### M8: Interpretation card shows amounts without currency
- * The `InterpretationCard` displays extracted amounts (e.g. "over 50") without
- * any currency qualifier. If the user asked "over €50" vs "over $50", the
- * distinction is lost. The chip should include the detected currency symbol.
+ * M7 (amounts shown without the original currency) and M8 (interpretation card amounts
+ * without a currency qualifier) were closed in the fix104-g batch and are no longer open.
  *
  * ### M9: Category chip uses simple capitalization
  * Category names in `InterpretationCard` use a naive `capitalize()` that only

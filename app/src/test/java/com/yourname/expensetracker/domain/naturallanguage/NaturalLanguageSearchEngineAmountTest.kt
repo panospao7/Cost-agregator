@@ -257,10 +257,49 @@ class NaturalLanguageSearchEngineAmountTest {
     }
 
     @Test
-    fun `50 euro 20 euro keeps only the second amount (characterisation of a stated side effect)`() = runTest {
-        // CHARACTERISATION: the first suffix marker is not taken because a number follows it, so the
-        // bare 50 is dropped and the second token's marker binds to 20. Pinned as-is, not endorsed.
-        assertEquals(listOf(amount(20.0, AmountComparison.EXACTLY)), amounts("50€ 20€"))
+    fun `50 euro 20 euro yields both amounts in query order`() = runTest {
+        // A suffix marker binds to the number directly before it; only a digit right after it blocks that.
+        assertEquals(
+            listOf(amount(50.0, AmountComparison.EXACTLY), amount(20.0, AmountComparison.EXACTLY)),
+            amounts("50€ 20€")
+        )
+    }
+
+    @Test
+    fun `20 euro symbol before 15 march keeps 20 and drops the bare 15`() = runTest {
+        assertEquals(listOf(amount(20.0, AmountComparison.EXACTLY)), amounts("20€ 15 march"))
+    }
+
+    @Test
+    fun `over 20 eur before a bare year gives OVER 20 and no EXACTLY 2024`() = runTest {
+        assertEquals(listOf(amount(20.0, AmountComparison.OVER)), amounts("over 20 eur 2024"))
+    }
+
+    @Test
+    fun `coffee 50 euros before a relative period keeps the 50`() = runTest {
+        assertEquals(listOf(amount(50.0, AmountComparison.EXACTLY)), amounts("coffee 50 euros 3 months ago"))
+    }
+
+    // ---- Repeated dot groups of exactly three digits are thousands separators ----
+
+    @Test
+    fun `over 1_234_567 is one million two hundred thousand and more`() = runTest {
+        assertEquals(listOf(amount(1234567.0, AmountComparison.OVER)), amounts("over 1.234.567"))
+    }
+
+    @Test
+    fun `over 1_234_56 with a short group is ambiguous and not extracted`() = runTest {
+        assertNull(amounts("over 1.234.56"))
+    }
+
+    @Test
+    fun `over 10_000 comma 50 is ten thousand and a half`() = runTest {
+        assertEquals(listOf(amount(10000.5, AmountComparison.OVER)), amounts("over 10.000,50"))
+    }
+
+    @Test
+    fun `over 12_30 stays a decimal`() = runTest {
+        assertEquals(listOf(amount(12.3, AmountComparison.OVER)), amounts("over 12.30"))
     }
 
     // ---- Dot as thousands separator only for exactly three digits after a non-zero integer part ----
