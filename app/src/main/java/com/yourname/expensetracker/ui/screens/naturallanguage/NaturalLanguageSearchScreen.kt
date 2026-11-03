@@ -18,6 +18,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -37,9 +38,8 @@ import java.util.Locale
  *
  * ## M7-M10: Known display issues
  * - See [NaturalLanguageSearchViewModel] KDoc for a full list of display bugs.
- * - The [TransactionResultCard] always formats amounts in home currency
- *   regardless of the expense's original currency (M7).
- * - The [InterpretationCard] does not display currency on extracted amounts (M8).
+ * - The [TransactionResultCard] shows the gross amount in the row's own currency (M7 fixed).
+ * - The [InterpretationCard] amount chips show the exact amount in the home currency (M8 fixed).
  * - Category chips use naive single-word capitalization (M9).
  * - Mixed-currency total relies on [CurrencyConverter] with no stale-rate
  *   fallback (M10).
@@ -56,7 +56,7 @@ fun NaturalLanguageSearchScreen(
     val results by viewModel.results.collectAsState()
     val interpretation by viewModel.interpretation.collectAsState()
     val homeCurrency by viewModel.homeCurrency.collectAsState(initial = "")
-    val totalInHomeCurrency by viewModel.totalInHomeCurrency.collectAsState()
+    val total by viewModel.total.collectAsState()
     
     Scaffold(
         topBar = {
@@ -138,7 +138,7 @@ fun NaturalLanguageSearchScreen(
                         results = results,
                         onViewTransaction = onViewTransaction,
                         homeCurrency = homeCurrency,
-                        totalInHomeCurrency = totalInHomeCurrency
+                        total = total
                     )
                 }
                 is SearchState.Empty -> {
@@ -193,7 +193,7 @@ fun SearchResultsContent(
     results: List<SearchResult>,
     onViewTransaction: (Long, Long) -> Unit = { _, _ -> },
     homeCurrency: String,
-    totalInHomeCurrency: Double,
+    total: SearchTotal,
     modifier: Modifier = Modifier
 ) {
     
@@ -205,7 +205,7 @@ fun SearchResultsContent(
         // Interpretation summary
         interpretation?.let { interp ->
             item {
-                InterpretationCard(interpretation = interp)
+                InterpretationCard(interpretation = interp, homeCurrency = homeCurrency)
             }
             
             // Summary for totals
@@ -229,13 +229,37 @@ fun SearchResultsContent(
                                 color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
                             )
                             
-                            Text(
-                                text = CurrencyFormatter.formatMoney(totalInHomeCurrency, homeCurrency),
-                                style = MaterialTheme.typography.headlineLarge,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
-                            
+                            // INV-12/13: an unavailable total is never rendered as an amount (no zero),
+                            // and a partial total carries a left-out count instead of posing as complete.
+                            when (val t = total) {
+                                is SearchTotal.Available -> {
+                                    Text(
+                                        text = CurrencyFormatter.formatMoney(t.amount, homeCurrency),
+                                        style = MaterialTheme.typography.headlineLarge,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                                    )
+                                    if (t.leftOutCount > 0) {
+                                        Text(
+                                            text = pluralStringResource(
+                                                R.plurals.money_total_partial_notice,
+                                                t.leftOutCount,
+                                                t.leftOutCount
+                                            ),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                                        )
+                                    }
+                                }
+                                SearchTotal.Unavailable -> {
+                                    Text(
+                                        text = stringResource(R.string.groups_total_unavailable),
+                                        style = MaterialTheme.typography.headlineSmall,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                                    )
+                                }
+                            }
+
                             interp.dateRange?.let { range ->
                                 Text(
                                     text = "${range.start.format(DateTimeFormatter.ofPattern("MMM d"))} - ${range.end.format(DateTimeFormatter.ofPattern("MMM d, yyyy"))}",
@@ -262,7 +286,6 @@ fun SearchResultsContent(
             TransactionResultCard(
                 expense = searchResult.expense,
                 onClick = { onViewTransaction(searchResult.expense.id, searchResult.expense.date) },
-                homeCurrency = homeCurrency,
                 matchType = searchResult.matchType
             )
         }
@@ -270,7 +293,10 @@ fun SearchResultsContent(
 }
 
 @Composable
-fun InterpretationCard(interpretation: NaturalLanguageSearchEngine.QueryInterpretation) {
+fun InterpretationCard(
+    interpretation: NaturalLanguageSearchEngine.QueryInterpretation,
+    homeCurrency: String
+) {
     Card(
         modifier = Modifier.fillMaxWidth()
     ) {
@@ -310,17 +336,38 @@ fun InterpretationCard(interpretation: NaturalLanguageSearchEngine.QueryInterpre
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                interpretation.extractedAmounts?.let { amounts ->
-                    amounts.forEach { amount ->
-                        ExtractedChip(
-                            icon = Icons.Rounded.AttachMoney,
-                            label = when (amount.comparison) {
-                                NaturalLanguageSearchEngine.AmountComparison.OVER -> stringResource(R.string.nlp_amount_over_format, amount.value)
-                                NaturalLanguageSearchEngine.AmountComparison.UNDER -> stringResource(R.string.nlp_amount_under_format, amount.value)
-                                NaturalLanguageSearchEngine.AmountComparison.EXACTLY -> stringResource(R.string.nlp_amount_exactly_format, amount.value)
-                                NaturalLanguageSearchEngine.AmountComparison.BETWEEN -> stringResource(R.string.nlp_amount_between_format, amount.value)
+                // The number is applied in the home currency (plan decision 1), so the chip shows the
+                // exact amount formatted in the home currency; nothing is shown until it is known.
+                val extractedAmounts = interpretation.extractedAmounts
+                if (extractedAmounts != null && homeCurrency.isNotBlank()) {
+                    var index = 0
+                    while (index < extractedAmounts.size) {
+                        val amount = extractedAmounts[index]
+                        val formatted = CurrencyFormatter.formatMoney(amount.value, homeCurrency)
+                        val label = when (amount.comparison) {
+                            NaturalLanguageSearchEngine.AmountComparison.OVER ->
+                                stringResource(R.string.nlp_amount_over_format, formatted)
+                            NaturalLanguageSearchEngine.AmountComparison.UNDER ->
+                                stringResource(R.string.nlp_amount_under_format, formatted)
+                            NaturalLanguageSearchEngine.AmountComparison.EXACTLY ->
+                                stringResource(R.string.nlp_amount_exactly_format, formatted)
+                            NaturalLanguageSearchEngine.AmountComparison.BETWEEN -> {
+                                // The engine emits BETWEEN values in pairs (low, high); a lone one is a point.
+                                val next = extractedAmounts.getOrNull(index + 1)
+                                if (next != null && next.comparison == NaturalLanguageSearchEngine.AmountComparison.BETWEEN) {
+                                    index++
+                                    stringResource(
+                                        R.string.nlp_amount_between_format,
+                                        formatted,
+                                        CurrencyFormatter.formatMoney(next.value, homeCurrency)
+                                    )
+                                } else {
+                                    stringResource(R.string.nlp_amount_exactly_format, formatted)
+                                }
                             }
-                        )
+                        }
+                        ExtractedChip(icon = Icons.Rounded.AttachMoney, label = label)
+                        index++
                     }
                 }
                 
@@ -392,7 +439,6 @@ fun ExtractedChip(icon: androidx.compose.ui.graphics.vector.ImageVector, label: 
 fun TransactionResultCard(
     expense: NaturalLanguageExpense,
     onClick: () -> Unit,
-    homeCurrency: String,
     matchType: MatchType? = null
 ) {
     val dateFormatter = DateTimeFormatter.ofPattern("MMM d, yyyy", Locale.getDefault())
@@ -441,7 +487,8 @@ fun TransactionResultCard(
             }
             
             Text(
-                text = CurrencyFormatter.formatMoney(expense.amount, homeCurrency),
+                // Gross amount in the row's own currency: the same figure the amount filter compares.
+                text = CurrencyFormatter.formatMoney(expense.amount, expense.currency),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold
             )

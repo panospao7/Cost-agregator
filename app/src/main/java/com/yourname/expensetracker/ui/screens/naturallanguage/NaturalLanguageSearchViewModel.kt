@@ -2,6 +2,7 @@ package com.yourname.expensetracker.ui.screens.naturallanguage
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.yourname.expensetracker.domain.core.money.ConversionQuality
 import com.yourname.expensetracker.domain.core.money.MoneyAggregateBuilder
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
@@ -73,8 +74,9 @@ class NaturalLanguageSearchViewModel @Inject constructor(
         list.map { it.expense }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    private val _totalInHomeCurrency = MutableStateFlow(0.0)
-    val totalInHomeCurrency: StateFlow<Double> = _totalInHomeCurrency.asStateFlow()
+    private val _total = MutableStateFlow<SearchTotal>(SearchTotal.Unavailable)
+    /** Home-currency total of the current results; never a fabricated zero when it cannot be computed. */
+    val total: StateFlow<SearchTotal> = _total.asStateFlow()
     
     init {
         // Debounce search queries
@@ -109,7 +111,7 @@ class NaturalLanguageSearchViewModel @Inject constructor(
         _searchState.value = SearchState.Idle
         _interpretation.value = null
         _results.value = emptyList()
-        _totalInHomeCurrency.value = 0.0
+        _total.value = SearchTotal.Unavailable
     }
     
     private suspend fun performSearch(queryText: String) {
@@ -127,16 +129,26 @@ class NaturalLanguageSearchViewModel @Inject constructor(
             // Compute total in home currency using MoneyAggregateBuilder
             // (handles single-currency, single non-home, and mixed-currency results correctly)
             val home = homeCurrency.first()
-            val amounts = searchResults.groupBy { it.expense.currency }.map { (currency, expenseList) ->
+            val grouped = searchResults.groupBy { it.expense.currency }.entries.toList()
+            val amounts = grouped.map { (currency, expenseList) ->
                 // SAFE: grouping by native currency first, then converting — correct multi-currency handling
                 expenseList.sumOf { it.expense.effectiveAmount } to currency
             }
             val aggregate = MoneyAggregateBuilder.fromBuckets(
                 buckets = amounts,
                 homeCurrency = home,
-                converter = currencyConverter
+                converter = currencyConverter,
+                // Per-bucket row counts so a partial total can say how many rows it leaves out.
+                transactionCounts = grouped.map { it.value.size }
             )
-            _totalInHomeCurrency.value = aggregate.displayAmount
+            // INV-12/13: a total with failed conversions is never shown as complete, and a total with
+            // nothing convertible is never shown as an amount (no fabricated zero).
+            val leftOut = aggregate.failedTransactionCount
+            _total.value = when {
+                aggregate.conversionQuality == ConversionQuality.UNAVAILABLE -> SearchTotal.Unavailable
+                aggregate.isPartial && leftOut <= 0 -> SearchTotal.Unavailable
+                else -> SearchTotal.Available(aggregate.displayAmount, if (aggregate.isPartial) leftOut else 0)
+            }
 
             _searchState.value = if (searchResults.isEmpty()) {
                 SearchState.Empty
@@ -147,9 +159,19 @@ class NaturalLanguageSearchViewModel @Inject constructor(
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
+            _total.value = SearchTotal.Unavailable
             _searchState.value = SearchState.Error("SEARCH_FAILED")
         }
     }
+}
+
+/**
+ * Home-currency total of the search results. [Available.leftOutCount] is the number of rows left out
+ * because no rate was available (0 = complete); a positive count means the figure is understated.
+ */
+sealed interface SearchTotal {
+    object Unavailable : SearchTotal
+    data class Available(val amount: Double, val leftOutCount: Int = 0) : SearchTotal
 }
 
 sealed class SearchState {
