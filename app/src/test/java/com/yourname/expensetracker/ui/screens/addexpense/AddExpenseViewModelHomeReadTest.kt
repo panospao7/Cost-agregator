@@ -290,7 +290,8 @@ class AddExpenseViewModelHomeReadTest : ViewModelTestUtils() {
         viewModel.updateAmount("5")
         saveWithMerchant()
         assertSaveBlockedWithError()
-        assertEquals(listOf("HOME_CURRENCY_READ_UNAVAILABLE reason=READ_ERROR"), warnings)
+        // One line per read: the first at creation, the second from the restart when the sheet opened.
+        assertEquals(List(2) { "HOME_CURRENCY_READ_UNAVAILABLE reason=READ_ERROR" }, warnings)
         assertTrue("no throwable is logged", throwables.isEmpty())
     }
 
