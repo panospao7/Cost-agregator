@@ -286,7 +286,8 @@ class DashboardCurrencyIntegrationTest {
         date = date,
         categoryId = categoryId,
         isNotMine = isNotMine,
-        isManualEntry = isManualEntry
+        isManualEntry = isManualEntry,
+        spendingExclusionReason = spendingExclusionReason
     )
 
     private fun createProcessedData(

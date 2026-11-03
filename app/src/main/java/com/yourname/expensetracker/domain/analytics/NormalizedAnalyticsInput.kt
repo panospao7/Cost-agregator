@@ -36,7 +36,8 @@ data class NormalizedExpense(
     val rateLastUpdated: Long? = null,
     val rateSource: String? = null,
     val conversionPath: String? = null,
-    val qualityWarning: AnalyticsConversionWarningType? = null
+    val qualityWarning: AnalyticsConversionWarningType? = null,
+    val spendingExclusionReason: String? = null
 )
 
 /**
@@ -97,6 +98,7 @@ fun NormalizedExpense.toExpenseSnapshot(): com.yourname.expensetracker.domain.mo
         transactionType = txType,
         isNotMine = isNotMine,
         transferDirection = null,
-        notes = null
+        notes = null,
+        spendingExclusionReason = spendingExclusionReason
     )
 }

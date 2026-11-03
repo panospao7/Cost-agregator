@@ -65,6 +65,7 @@ object ComparableHomeValueFixture {
         isShared: Boolean = false,
         myShareAmount: Double? = null,
         sharePercentage: Int? = null,
+        spendingExclusionReason: String? = null,
         date: Long = BASE_DATE + id * 1_000L
     ): Expense = Expense(
         id = id,
@@ -79,7 +80,8 @@ object ComparableHomeValueFixture {
         mySharePercentage = sharePercentage,
         baseAmount = base.first,
         baseCurrency = base.second,
-        exchangeRateUsed = base.third
+        exchangeRateUsed = base.third,
+        spendingExclusionReason = spendingExclusionReason
     )
 
     private fun base(amount: Double, currency: String, rate: Double) = Triple(amount, currency, rate)
@@ -171,7 +173,15 @@ object ComparableHomeValueFixture {
         Case("lowercase snapshot currency is not home", USD, row(37, "EUR", 10.0, base(10.0, "usd", 1.0)),
             null, NoComparableValueReason.SNAPSHOT_OTHER_CURRENCY),
         // Foreign row snapshotted in USD.
-        Case("foreign row valid for USD", USD, row(38, "EUR", 100.0, base(108.0, "USD", 1.08)), 108.0)
+        Case("foreign row valid for USD", USD, row(38, "EUR", 100.0, base(108.0, "USD", 1.08)), 108.0),
+
+        // ── Neutralised rows (spendingExclusionReason != null) ────────────────
+        Case("neutralised foreign WITH snapshot ranks at 0", EUR,
+            row(39, "USD", 600.0, base(550.0, "EUR", 0.916667), spendingExclusionReason = "INSTALLMENT_PURCHASE"), 0.0),
+        Case("neutralised foreign WITHOUT snapshot ranks at 0", EUR,
+            row(40, "USD", 600.0, NO_SNAPSHOT_EUR, spendingExclusionReason = "INSTALLMENT_PURCHASE"), 0.0),
+        Case("neutralised home row WITH snapshot ranks at 0", EUR,
+            row(41, "EUR", 550.0, base(550.0, "EUR", 1.0), spendingExclusionReason = "INSTALLMENT_REVERSED"), 0.0)
     )
 
     /** AE-6 reversed: the same rows 32..34 evaluated against EUR again. */

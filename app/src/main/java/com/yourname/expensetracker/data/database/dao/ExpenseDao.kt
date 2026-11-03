@@ -98,6 +98,7 @@ interface ExpenseDao {
          * First matching branch wins; a row that matches none yields NULL (no comparable
          * value). A row is never compared by its raw amount unless its currency is the home
          * currency:
+         *  0. spendingExclusionReason IS NOT NULL              → 0.0
          *  1. isNotMine = 1                                   → 0.0
          *  2. e.currency = H                                  → [EFFECTIVE_AMOUNT_E_SQL] (snapshot ignored)
          *  3. valid snapshot for H (baseAmount > 0, baseCurrency = H, exchangeRateUsed > 0)
@@ -112,7 +113,8 @@ interface ExpenseDao {
          * `NULLS LAST` with it (SQLite 3.30+ only); order with `(CV IS NULL) ASC` instead.
          */
         const val COMPARABLE_HOME_VALUE_E_SQL: String =
-            "(CASE WHEN e.isNotMine = 1 THEN 0.0 " +
+            "(CASE WHEN e.spendingExclusionReason IS NOT NULL THEN 0.0 " +
+            "WHEN e.isNotMine = 1 THEN 0.0 " +
             "WHEN e.currency = ? THEN ($EFFECTIVE_AMOUNT_E_SQL) " +
             "WHEN e.baseAmount > 0 AND e.baseCurrency = ? AND e.exchangeRateUsed > 0 THEN (CASE " +
             "WHEN e.isSharedExpense = 1 AND e.myShareAmount IS NOT NULL THEN e.myShareAmount * e.exchangeRateUsed " +
@@ -1515,7 +1517,7 @@ AND LENGTH(:merchantKey) >= 8
     @Query("""
         SELECT * FROM expenses
         WHERE date >= :startDate AND date < :endDate
-        AND isNotMine = 0
+        AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         AND (:cursorDate IS NULL OR date < :cursorDate OR (date = :cursorDate AND id < :cursorId))
         AND (:transactionType IS NULL OR transactionType = :transactionType)
         AND (:merchantLike IS NULL OR merchant LIKE :merchantLike)
@@ -1942,6 +1944,7 @@ AND LENGTH(:merchantKey) >= 8
         WHERE ${SPENDING_TYPE_SQL} 
         AND date >= :startMs AND date < :endMs
         AND isNotMine = 0
+        AND spendingExclusionReason IS NULL
     """)
     suspend fun getCountForPeriod(startMs: Long, endMs: Long): Int
 
@@ -2169,29 +2172,27 @@ AND LENGTH(:merchantKey) >= 8
      * All expenses that have been resolved to coordinates, as a reactive Flow.
      * The ViewModel collects this so the map auto-updates whenever the DB changes.
      */
-    @Query("SELECT * FROM expenses WHERE latitude IS NOT NULL AND longitude IS NOT NULL ORDER BY date DESC")
+    @Query("SELECT * FROM expenses WHERE latitude IS NOT NULL AND longitude IS NOT NULL AND ${SpendingInclusionSql.SPENDING_PREDICATE} ORDER BY date DESC")
     fun getLocatedExpensesFlow(): Flow<List<Expense>>
 
     /** Suspend version for one-shot full reads (e.g., analytics). */
-    @Query("SELECT * FROM expenses WHERE latitude IS NOT NULL AND longitude IS NOT NULL ORDER BY date DESC")
+    @Query("SELECT * FROM expenses WHERE latitude IS NOT NULL AND longitude IS NOT NULL AND ${SpendingInclusionSql.SPENDING_PREDICATE} ORDER BY date DESC")
     suspend fun getLocatedExpenses(): List<Expense>
 
     /** Explicitly bounded batch read for map/backfill helpers. */
-    @Query("SELECT * FROM expenses WHERE latitude IS NOT NULL AND longitude IS NOT NULL ORDER BY date DESC LIMIT :limit")
+    @Query("SELECT * FROM expenses WHERE latitude IS NOT NULL AND longitude IS NOT NULL AND ${SpendingInclusionSql.SPENDING_PREDICATE} ORDER BY date DESC LIMIT :limit")
     suspend fun getLocatedExpensesBatch(limit: Int): List<Expense>
 
     /** All expenses that still lack coordinates (partial or missing). */
-    @Query("SELECT * FROM expenses WHERE latitude IS NULL OR longitude IS NULL ORDER BY date DESC LIMIT :limit")
+    @Query("SELECT * FROM expenses WHERE (latitude IS NULL OR longitude IS NULL) AND ${SpendingInclusionSql.SPENDING_PREDICATE} ORDER BY date DESC LIMIT :limit")
     suspend fun getUnlocatedExpenses(limit: Int): List<Expense>
 
     /** Count of located expenses — used for stats display. */
-    // spending-exempt: ROW_COUNT
-    @Query("SELECT COUNT(*) FROM expenses WHERE latitude IS NOT NULL AND longitude IS NOT NULL")
+    @Query("SELECT COUNT(*) FROM expenses WHERE latitude IS NOT NULL AND longitude IS NOT NULL AND ${SpendingInclusionSql.SPENDING_PREDICATE}")
     suspend fun countLocated(): Int
 
     /** Count of unlocated expenses (partial or missing coordinates). */
-    // spending-exempt: ROW_COUNT
-    @Query("SELECT COUNT(*) FROM expenses WHERE latitude IS NULL OR longitude IS NULL")
+    @Query("SELECT COUNT(*) FROM expenses WHERE (latitude IS NULL OR longitude IS NULL) AND ${SpendingInclusionSql.SPENDING_PREDICATE}")
     suspend fun countUnlocated(): Int
 
     /**
@@ -2279,7 +2280,7 @@ AND LENGTH(:merchantKey) >= 8
     suspend fun clearLocation(expenseId: Long)
 
     /** Reactive flow of unlocated expenses (partial or missing coordinates). */
-    @Query("SELECT * FROM expenses WHERE latitude IS NULL OR longitude IS NULL ORDER BY date DESC LIMIT :limit")
+    @Query("SELECT * FROM expenses WHERE (latitude IS NULL OR longitude IS NULL) AND ${SpendingInclusionSql.SPENDING_PREDICATE} ORDER BY date DESC LIMIT :limit")
     fun getUnlocatedExpensesFlow(limit: Int = 100): Flow<List<Expense>>
 
     /**
@@ -2309,11 +2310,7 @@ AND LENGTH(:merchantKey) >= 8
     @Query("""
         SELECT MIN(merchant) AS merchant,
                UPPER(COALESCE(currency, 'EUR')) AS currency,
-               SUM(COALESCE(CASE 
-                   WHEN isNotMine = 1 THEN 0.0
-                   WHEN isSharedExpense = 1 AND myShareAmount IS NOT NULL THEN myShareAmount
-                   WHEN isSharedExpense = 1 AND mySharePercentage IS NOT NULL THEN amount * mySharePercentage / 100.0
-                   ELSE amount END, 0)) AS total,
+               SUM(COALESCE(${EFFECTIVE_AMOUNT_SQL}, 0)) AS total,
                COUNT(*) AS txCount
         FROM expenses
         WHERE latitude IS NOT NULL
@@ -2336,6 +2333,7 @@ AND LENGTH(:merchantKey) >= 8
         WHERE latitude BETWEEN :minLat AND :maxLat
           AND longitude BETWEEN :minLon AND :maxLon
           AND latitude IS NOT NULL
+          AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         ORDER BY date DESC
     """)
     suspend fun getExpensesInBoundingBox(
@@ -2348,6 +2346,7 @@ AND LENGTH(:merchantKey) >= 8
         WHERE latitude BETWEEN :minLat AND :maxLat
           AND longitude BETWEEN :minLon AND :maxLon
           AND latitude IS NOT NULL
+          AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         ORDER BY date DESC
         LIMIT :limit
     """)

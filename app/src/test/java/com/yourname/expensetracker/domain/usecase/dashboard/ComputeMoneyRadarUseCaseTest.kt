@@ -14,6 +14,7 @@ import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.budget.BudgetStatus
 import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
+import com.yourname.expensetracker.domain.core.money.ConversionFailureType
 import com.yourname.expensetracker.domain.core.money.ConversionOutcome
 import com.yourname.expensetracker.domain.core.money.ConversionPath
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
@@ -197,6 +198,65 @@ class ComputeMoneyRadarUseCaseTest {
 
         assertNotNull(useCase.compute().budgetRisk)
         coVerify(exactly = 1) { monteCarloSimulator.simulate(300.0, 0.0, 1000.0, "USD") }
+    }
+
+    @Test
+    fun `neutralised foreign row with no exchange rate does not make radar unavailable`() = runTest {
+        stubHealthyRadarSignals()
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(overallBudgetStatus(1000.0)))
+        coEvery { expenseRepository.getExpensesSince(any()) } returns listOf(
+            expense(150.0, TransactionType.PURCHASE, now - dayMs),
+            expense(400.0, TransactionType.PURCHASE, now - 2 * dayMs).copy(
+                currency = "USD",
+                spendingExclusionReason = "INSTALLMENT_PURCHASE"
+            )
+        )
+        coEvery { currencyConverter.convertOutcome(any(), "USD", "EUR", any(), any(), any()) } returns
+            ConversionOutcome.Failed(
+                originalAmount = 0.0,
+                originalCurrency = "USD",
+                targetCurrency = "EUR",
+                rateBasis = RateBasis.TRANSACTION_DATE,
+                failureType = ConversionFailureType.MISSING_RATE,
+                message = "No USD->EUR rate available"
+            )
+        val simulation = monteCarloResult(probabilityUnderBudget = 0.7)
+        coEvery { monteCarloSimulator.simulate(150.0, 0.0, 1000.0, "EUR") } returns simulation
+        every { getMonteCarloBudgetImpact(1000.0, simulation) } returns Result.Success(
+            MonteCarloBudgetImpact(1000.0, 950.0, 0.0, 0.3, RiskTier.MEDIUM)
+        )
+
+        val result = useCase.compute()
+
+        assertTrue(result.urgencyLevel != UrgencyLevel.UNAVAILABLE)
+        assertNotNull(result.urgencyScore)
+        assertNotNull(result.budgetRisk)
+        coVerify(exactly = 1) { monteCarloSimulator.simulate(150.0, 0.0, 1000.0, "EUR") }
+    }
+
+    @Test
+    fun `non-neutralised foreign row with missing exchange rate still makes radar unavailable`() = runTest {
+        stubHealthyRadarSignals()
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(overallBudgetStatus(1000.0)))
+        coEvery { expenseRepository.getExpensesSince(any()) } returns listOf(
+            expense(150.0, TransactionType.PURCHASE, now - dayMs),
+            expense(400.0, TransactionType.PURCHASE, now - 2 * dayMs).copy(
+                currency = "USD",
+                spendingExclusionReason = null
+            )
+        )
+        coEvery { currencyConverter.convertOutcome(any(), "USD", "EUR", any(), any(), any()) } returns
+            ConversionOutcome.Failed(
+                originalAmount = 400.0,
+                originalCurrency = "USD",
+                targetCurrency = "EUR",
+                rateBasis = RateBasis.TRANSACTION_DATE,
+                failureType = ConversionFailureType.MISSING_RATE,
+                message = "No USD->EUR rate available"
+            )
+
+        assertRadarUnavailable(useCase.compute())
+        coVerify(exactly = 0) { monteCarloSimulator.simulate(any(), any(), any(), any()) }
     }
 
     private fun assertRadarUnavailable(result: MoneyRadarData) {

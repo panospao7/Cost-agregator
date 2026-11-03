@@ -2,7 +2,13 @@ package com.yourname.expensetracker.ui.screens.naturallanguage
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.yourname.expensetracker.domain.core.money.ConversionQuality
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.core.money.MoneyAggregateBuilder
+import com.yourname.expensetracker.domain.core.money.MoneyAggregateResult
+import com.yourname.expensetracker.domain.core.money.NormalizedMoneyQuality
+import com.yourname.expensetracker.domain.core.money.NormalizedMoneyRow
+import com.yourname.expensetracker.domain.core.money.RateBasis
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.naturallanguage.NaturalLanguageExpense
@@ -124,19 +130,44 @@ class NaturalLanguageSearchViewModel @Inject constructor(
             val searchResults = searchEngine.executeSearch(interpretation)
             _results.value = searchResults
 
-            // Compute total in home currency using MoneyAggregateBuilder
-            // (handles single-currency, single non-home, and mixed-currency results correctly)
+            // Compute total in home currency from already-normalized searchResults
+            // (preserves the engine's convertAsOf(date) basis and dataQuality)
             val home = homeCurrency.first()
-            val amounts = searchResults.groupBy { it.expense.currency }.map { (currency, expenseList) ->
-                // SAFE: grouping by native currency first, then converting — correct multi-currency handling
-                expenseList.sumOf { it.expense.effectiveAmount } to currency
+            val targetCurrency = CurrencyCode.parse(home) ?: CurrencyCode.EUR
+            val normalizedRows = searchResults.map { result ->
+                NormalizedMoneyRow(
+                    amount = result.normalizedAmount,
+                    normalizedCurrency = targetCurrency,
+                    sourceCurrency = CurrencyCode.parse(result.expense.currency),
+                    rateValidDate = result.expense.date,
+                    transactionId = result.expense.id
+                )
             }
-            val aggregate = MoneyAggregateBuilder.fromBuckets(
-                buckets = amounts,
-                homeCurrency = home,
-                converter = currencyConverter
+            val failedCount = interpretation.dataQuality.failedCurrencyConversions
+            val quality = NormalizedMoneyQuality(
+                excludedTransactionCount = failedCount,
+                missingRateCount = failedCount,
+                conversionQuality = when {
+                    failedCount == 0 -> ConversionQuality.COMPLETE
+                    normalizedRows.isEmpty() -> ConversionQuality.UNAVAILABLE
+                    else -> ConversionQuality.PARTIAL
+                }
             )
-            _totalInHomeCurrency.value = aggregate.displayAmount
+            val aggregateResult = MoneyAggregateBuilder.fromNormalizedRows(
+                rows = normalizedRows,
+                targetCurrency = targetCurrency,
+                quality = quality,
+                requestedRateBasis = RateBasis.TRANSACTION_DATE,
+                actualRateBasis = if (normalizedRows.isNotEmpty() && normalizedRows.all { it.sourceCurrency == targetCurrency }) {
+                    RateBasis.IDENTITY
+                } else {
+                    RateBasis.TRANSACTION_DATE
+                }
+            )
+            _totalInHomeCurrency.value = when (aggregateResult) {
+                is MoneyAggregateResult.Available -> aggregateResult.aggregate.displayAmount
+                is MoneyAggregateResult.Unavailable -> 0.0
+            }
 
             _searchState.value = if (searchResults.isEmpty()) {
                 SearchState.Empty

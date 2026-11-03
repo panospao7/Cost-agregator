@@ -67,7 +67,8 @@ fun Expense.toExpenseSnapshot(): ExpenseSnapshot = ExpenseSnapshot(
         TransferDirection.OUTGOING -> DomainTransferDirection.OUTGOING
         null -> null
     },
-    notes = notes
+    notes = notes,
+    spendingExclusionReason = spendingExclusionReason
 )
 
 fun List<Expense>.toExpenseSnapshots(): List<ExpenseSnapshot> = map(Expense::toExpenseSnapshot)

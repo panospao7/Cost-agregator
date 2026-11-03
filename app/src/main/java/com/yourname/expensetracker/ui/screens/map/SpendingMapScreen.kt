@@ -847,7 +847,7 @@ private fun UnlocatedExpensesPanel(
                                 )
                             }
                             Text(
-                                text = CurrencyFormatter.formatMoney(expense.amount, expense.currency),
+                                text = CurrencyFormatter.formatMoney(expense.effectiveAmount, expense.currency),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.primary
                             )
@@ -920,7 +920,7 @@ private fun PinExpenseSheet(
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = "${expense.merchant} · ${CurrencyFormatter.formatMoney(expense.amount, expense.currency)}",
+                text = "${expense.merchant} · ${CurrencyFormatter.formatMoney(expense.effectiveAmount, expense.currency)}",
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

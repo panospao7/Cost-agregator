@@ -28,7 +28,8 @@ class ComparableHomeValueTest {
         sharePercentage: Int? = null,
         baseAmount: Double = 0.0,
         baseCurrency: String = "",
-        rate: Double = 0.0
+        rate: Double = 0.0,
+        spendingExclusionReason: String? = null
     ) = Expense(
         id = id,
         amount = amount,
@@ -42,7 +43,8 @@ class ComparableHomeValueTest {
         mySharePercentage = sharePercentage,
         baseAmount = baseAmount,
         baseCurrency = baseCurrency,
-        exchangeRateUsed = rate
+        exchangeRateUsed = rate,
+        spendingExclusionReason = spendingExclusionReason
     )
 
     // ── Fixture rows ────────────────────────────────────────────────────────
@@ -67,6 +69,54 @@ class ComparableHomeValueTest {
     }
 
     // ── Branch order ────────────────────────────────────────────────────────
+
+    @Test
+    fun `neutralised foreign row with valid snapshot matches model effectiveAmount and normalizedEffectiveAmount at zero`() {
+        val neutralisedWithSnapshot = expense(
+            currency = "USD",
+            amount = 600.0,
+            baseAmount = 550.0,
+            baseCurrency = "EUR",
+            rate = 0.916667,
+            spendingExclusionReason = "INSTALLMENT_PURCHASE"
+        )
+        assertEquals(0.0, neutralisedWithSnapshot.effectiveAmount, 0.0)
+        assertEquals(0.0, neutralisedWithSnapshot.normalizedEffectiveAmount!!, 0.0)
+        assertEquals(
+            ComparableValue.Value(neutralisedWithSnapshot.effectiveAmount),
+            ComparableHomeValue.comparableValue(neutralisedWithSnapshot, EUR)
+        )
+        assertEquals(
+            ComparableValue.Value(neutralisedWithSnapshot.normalizedEffectiveAmount!!),
+            ComparableHomeValue.comparableValue(neutralisedWithSnapshot, EUR)
+        )
+        assertEquals(
+            neutralisedWithSnapshot.normalizedEffectiveAmount,
+            ComparableHomeValue.snapshotValue(neutralisedWithSnapshot)
+        )
+    }
+
+    @Test
+    fun `neutralised foreign row without snapshot matches model effectiveAmount at zero instead of None`() {
+        val neutralisedNoSnapshot = expense(
+            currency = "USD",
+            amount = 600.0,
+            baseAmount = 0.0,
+            baseCurrency = "EUR",
+            rate = 0.0,
+            spendingExclusionReason = "INSTALLMENT_PURCHASE"
+        )
+        assertEquals(0.0, neutralisedNoSnapshot.effectiveAmount, 0.0)
+        assertEquals(0.0, neutralisedNoSnapshot.normalizedEffectiveAmount!!, 0.0)
+        assertEquals(
+            ComparableValue.Value(neutralisedNoSnapshot.effectiveAmount),
+            ComparableHomeValue.comparableValue(neutralisedNoSnapshot, EUR)
+        )
+        assertEquals(
+            neutralisedNoSnapshot.normalizedEffectiveAmount,
+            ComparableHomeValue.snapshotValue(neutralisedNoSnapshot)
+        )
+    }
 
     @Test
     fun `branch 1 not-mine wins over a matching currency and a valid snapshot`() {

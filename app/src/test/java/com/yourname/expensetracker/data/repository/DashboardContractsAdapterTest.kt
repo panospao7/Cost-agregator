@@ -542,6 +542,60 @@ class DashboardContractsAdapterTest {
         )
     }
 
+    @Test
+    fun `spendingExclusionReason survives adapter to DashboardExpense to toExpenseEntity round trip without changing aggregates`() = runTest {
+        val zone = java.time.ZoneId.systemDefault()
+        fun epoch(date: java.time.LocalDateTime) = date.atZone(zone).toInstant().toEpochMilli()
+        val now = epoch(java.time.LocalDateTime.of(2024, 6, 15, 12, 0))
+        val txDate = epoch(java.time.LocalDateTime.of(2024, 6, 10, 9, 0))
+        every { timeBoundaryTicker.dayBoundaryTicks() } returns flowOf(now)
+
+        val installmentPurchase = com.yourname.expensetracker.data.database.entity.Expense(
+            id = 10L, amount = 1200.0, currency = "EUR", merchant = "Laptop Store",
+            transactionType = com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE,
+            date = txDate, categoryId = 1L, isNotMine = false,
+            isSharedExpense = false, isManualEntry = false,
+            spendingExclusionReason = "INSTALLMENT_PURCHASE"
+        )
+        val ordinaryPurchase = installmentPurchase.copy(
+            id = 11L, amount = 75.0, merchant = "Grocery Store",
+            spendingExclusionReason = null
+        )
+        assertEquals(0.0, installmentPurchase.effectiveAmount, 0.0)
+        assertEquals(75.0, ordinaryPurchase.effectiveAmount, 0.0)
+
+        every { expenseRepository.getExpensesWithCategoryInPeriod(any(), any()) } returns flowOf(
+            listOf(
+                com.yourname.expensetracker.data.database.model.ExpenseWithCategory(expense = installmentPurchase, category = null),
+                com.yourname.expensetracker.data.database.model.ExpenseWithCategory(expense = ordinaryPurchase, category = null)
+            )
+        )
+
+        // Leg 1: Expense -> DashboardContractsAdapter.toDomainDashboard() -> DashboardExpense
+        val dashboardExpenses = adapter.observeDashboardExpenses().first()
+        val dashboardById = dashboardExpenses.associateBy { it.id }
+        assertEquals("INSTALLMENT_PURCHASE", dashboardById.getValue(10L).spendingExclusionReason)
+        assertEquals(0.0, dashboardById.getValue(10L).effectiveAmount, 0.0)
+        assertEquals(null, dashboardById.getValue(11L).spendingExclusionReason)
+        assertEquals(75.0, dashboardById.getValue(11L).effectiveAmount, 0.0)
+
+        // Leg 2: DashboardExpense -> ComputeDashboardWidgetsUseCase.toExpenseEntity() -> normalizedExpenses
+        val compiled = windowTestComputeUseCase(now, mockk(relaxed = true)).compute(
+            windowProcessedData(dashboardExpenses)
+        )
+        val normalizedInput = (compiled.normalizedInput as com.yourname.expensetracker.domain.usecase.dashboard.DashboardNormalizedInputResult.Available).input
+        assertEquals(listOf(11L), normalizedInput.normalizedExpenses.map { it.id })
+        val normOrdinary = normalizedInput.normalizedExpenses.single()
+        assertEquals(null, normOrdinary.spendingExclusionReason)
+        assertEquals(75.0, normOrdinary.normalizedAmount, 0.0)
+
+        // Neutralised row is excluded from normalizedInput and aggregate transaction count (1 row).
+        assertEquals(75.0, compiled.totalSpent, 0.0001)
+        assertEquals(75.0, normalizedInput.monthAggregate.displayAmount, 0.0001)
+        assertEquals(1, normalizedInput.monthAggregate.metadata.includedTransactionCount)
+        assertEquals(0, normalizedInput.monthAggregate.metadata.excludedTransactionCount)
+    }
+
     /**
      * Full-compute harness shared by the RP-05 batch-2 window/baseline/category
      * tests — mirrors the round-trip test's construction with a swappable

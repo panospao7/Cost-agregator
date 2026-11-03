@@ -254,6 +254,127 @@ class AnalyticsInputAssemblerProvenanceTest {
         assertThat(missingRate.message).isNotNull()
     }
 
+    @Test
+    fun `assembler carries spendingExclusionReason to NormalizedExpense and round-trip ExpenseSnapshot`() = runTest {
+        val neutralised = expense(
+            id = 50L,
+            amount = 900.0,
+            currency = "EUR",
+            spendingExclusionReason = "INSTALLMENT_PURCHASE"
+        )
+        val ordinary = expense(
+            id = 51L,
+            amount = 45.0,
+            currency = "EUR",
+            spendingExclusionReason = null
+        )
+        assertThat(neutralised.effectiveAmount).isEqualTo(0.0)
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(neutralised, ordinary)
+
+        val input = assembler.build(period = widePeriod)
+
+        assertThat(input.includedExpenses).hasSize(1)
+        assertThat(input.excludedExpenses).isEmpty()
+        assertThat(input.dataQuality.excludedCount).isEqualTo(0)
+
+        val normOrdinary = input.includedExpenses.single()
+        assertThat(normOrdinary.id).isEqualTo(51L)
+        assertThat(normOrdinary.spendingExclusionReason).isNull()
+        assertThat(normOrdinary.normalizedAmount).isEqualTo(45.0)
+        assertThat(normOrdinary.toExpenseSnapshot().spendingExclusionReason).isNull()
+        assertThat(normOrdinary.toExpenseSnapshot().effectiveAmount).isEqualTo(45.0)
+
+        // Direct NormalizedExpense.toExpenseSnapshot() and SingleCurrencyAnalyticsInput round-trip preserve spendingExclusionReason
+        val normNeutralised = NormalizedExpense(
+            id = 50L,
+            originalAmount = 900.0,
+            originalEffectiveAmount = 0.0,
+            originalCurrency = "EUR",
+            normalizedAmount = 0.0,
+            normalizedCurrency = "EUR",
+            date = 1_700_000_000_000L,
+            merchant = "Merchant 50",
+            merchantKey = null,
+            categoryId = null,
+            categoryNameSnapshot = null,
+            transactionType = "PURCHASE",
+            isNotMine = false,
+            isSharedExpense = false,
+            ownershipMode = null,
+            source = null,
+            spendingExclusionReason = "INSTALLMENT_PURCHASE"
+        )
+        assertThat(normNeutralised.toExpenseSnapshot().spendingExclusionReason).isEqualTo("INSTALLMENT_PURCHASE")
+        assertThat(normNeutralised.toExpenseSnapshot().effectiveAmount).isEqualTo(0.0)
+
+        val singleCurrency = SingleCurrencyAnalyticsInput.from(
+            listOf(normNeutralised.toExpenseSnapshot(), normOrdinary.toExpenseSnapshot()),
+            displayCurrency = "EUR"
+        )
+        val singleById = singleCurrency.includedExpenses.associateBy { it.id }
+        assertThat(singleById.getValue(50L).spendingExclusionReason).isEqualTo("INSTALLMENT_PURCHASE")
+        assertThat(singleById.getValue(51L).spendingExclusionReason).isNull()
+    }
+
+    @Test
+    fun `assembler drops foreign neutralised row with no rate without marking period partial`() = runTest {
+        // FakeExchangeRateStore is empty — no USD->EUR rate exists.
+        val neutralisedForeign = expense(
+            id = 60L,
+            amount = 500.0,
+            currency = "USD",
+            spendingExclusionReason = "INSTALLMENT_PURCHASE"
+        )
+        val homeOrdinary = expense(
+            id = 61L,
+            amount = 40.0,
+            currency = "EUR",
+            spendingExclusionReason = null
+        )
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(neutralisedForeign, homeOrdinary)
+
+        val input = assembler.build(period = widePeriod)
+
+        assertThat(input.includedExpenses).hasSize(1)
+        assertThat(input.excludedExpenses).isEmpty()
+        assertThat(input.dataQuality.isPartial).isFalse()
+        assertThat(input.dataQuality.excludedCount).isEqualTo(0)
+        assertThat(input.dataQuality.missingRateCount).isEqualTo(0)
+        assertThat(input.dataQuality.warnings).isEmpty()
+
+        val normOrdinary = input.includedExpenses.single()
+        assertThat(normOrdinary.id).isEqualTo(61L)
+        assertThat(normOrdinary.normalizedAmount).isEqualTo(40.0)
+        assertThat(normOrdinary.normalizedCurrency).isEqualTo("EUR")
+        assertThat(normOrdinary.spendingExclusionReason).isNull()
+    }
+
+    @Test
+    fun `assembler negative control non-neutralised foreign row with no rate is excluded and marks period partial`() = runTest {
+        // FakeExchangeRateStore is empty — no USD->EUR rate exists.
+        val neutralisedForeign = expense(
+            id = 62L,
+            amount = 500.0,
+            currency = "USD",
+            spendingExclusionReason = "INSTALLMENT_PURCHASE"
+        )
+        val nonNeutralisedForeign = expense(
+            id = 63L,
+            amount = 75.0,
+            currency = "USD",
+            spendingExclusionReason = null
+        )
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(neutralisedForeign, nonNeutralisedForeign)
+
+        val input = assembler.build(period = widePeriod)
+
+        assertThat(input.includedExpenses).isEmpty()
+        assertThat(input.excludedExpenses.map { it.id }).containsExactly(63L)
+        assertThat(input.dataQuality.isPartial).isTrue()
+        assertThat(input.dataQuality.excludedCount).isEqualTo(1)
+        assertThat(input.dataQuality.missingRateCount).isEqualTo(1)
+    }
+
     // -----------------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------------
@@ -262,7 +383,8 @@ class AnalyticsInputAssemblerProvenanceTest {
         id: Long,
         amount: Double,
         currency: String,
-        date: Long = 1_700_000_000_000L
+        date: Long = 1_700_000_000_000L,
+        spendingExclusionReason: String? = null
     ) = Expense(
         id = id,
         amount = amount,
@@ -284,7 +406,8 @@ class AnalyticsInputAssemblerProvenanceTest {
         isSharedExpense = false,
         sharedWithName = null,
         mySharePercentage = null,
-        myShareAmount = null
+        myShareAmount = null,
+        spendingExclusionReason = spendingExclusionReason
     )
 
     private class FakeExchangeRateStore : ExchangeRateStore {

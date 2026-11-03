@@ -202,6 +202,26 @@ class ComparableHomeValueBuilderParityTest {
     }
 
     @Test
+    fun `neutralised foreign rows with and without snapshot rank at 0_0 below ordinary 10_0 row and countExpensesWithoutHomeValue is zero`() = runTest {
+        // Row 39: USD 600 with EUR 550.0 snapshot, neutralised
+        // Row 40: USD 600 without snapshot (baseAmount = 0.0), neutralised
+        // Row 11: EUR 10.0 ordinary
+        seed(rows(11, 39, 40))
+
+        // Requirement 6: countExpensesWithoutHomeValue is 0 for neutralised rows (including foreign without snapshot)
+        assertEquals(0, countNone(eur))
+
+        // Requirement 7: in AMOUNT_DESC, ordinary 10.0 (id 11) ranks above neutralised 550.0 (id 39) and neutralised unrated (id 40),
+        // with ties at 0.0 broken by date DESC (40 then 39).
+        assertEquals(listOf(11L, 40L, 39L), listIds(eur, SortOrder.AMOUNT_DESC))
+
+        // Min/max filter: min = 0.01 excludes both neutralised rows (39, 40) even though 39 has baseAmount = 550.0
+        assertEquals(listOf(11L), listIds(eur, SortOrder.AMOUNT_DESC, min = 0.01))
+        // max = 0.0 includes both neutralised rows (40, 39)
+        assertEquals(listOf(40L, 39L), listIds(eur, SortOrder.AMOUNT_DESC, max = 0.0))
+    }
+
+    @Test
     fun `AE-10 shared foreign rows compare by their share`() = runTest {
         seed(rows(14, 15, 16, 17))
         assertEquals(listOf(14L, 17L), listIds(eur, SortOrder.AMOUNT_DESC, max = 25.0))

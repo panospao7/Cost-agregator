@@ -441,7 +441,7 @@ fun TransactionResultCard(
             }
             
             Text(
-                text = CurrencyFormatter.formatMoney(expense.amount, homeCurrency),
+                text = CurrencyFormatter.formatMoney(expense.effectiveAmount, expense.currency),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold
             )

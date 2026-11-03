@@ -763,8 +763,7 @@ EXPECTED_EXEMPT = {
     ("ExpenseDao.kt", "countExpensesBetween", "ROW_COUNT"),
     ("ExpenseDao.kt", "getTotalCount", "ROW_COUNT"),
     ("ExpenseDao.kt", "getCountForPeriod", "ROW_COUNT"),
-    ("ExpenseDao.kt", "countLocated", "ROW_COUNT"),
-    ("ExpenseDao.kt", "countUnlocated", "ROW_COUNT"),
+    # 1.0.4 B2 S4: countLocated and countUnlocated now enforce SPENDING_PREDICATE directly (-2 ROW_COUNT exemptions, 34 -> 32)
     ("ExpenseDao.kt", "getDepositTotalsBetweenByCurrency", "NON_SPENDING_INCOME"),
     ("ExpenseDao.kt", "getTotalDepositsForPeriod", "NON_SPENDING_INCOME"),
     ("ExpenseDao.kt", "getMonthlyDeposits", "NON_SPENDING_INCOME"),
@@ -779,7 +778,7 @@ EXPECTED_EXEMPT = {
 EXPECTED_REASON_COUNTS = {
     "DEDUPE_BLOCKING": 11,
     "DEDUPE_RESOLVER": 7,
-    "ROW_COUNT": 7,
+    "ROW_COUNT": 5,
     "NON_SPENDING_INCOME": 4,
     "NON_MONEY": 2,
     "SUGGESTION": 1,
@@ -830,7 +829,7 @@ def test_real_tree_is_clean(real_tree_report):
 def test_real_tree_report_exemption_set_equals_recorded_a12_6_set(real_tree_report):
     _proc, rows = real_tree_report
     exempt = [(f, fn, cls.split(":", 1)[1]) for f, fn, cls in rows if cls.startswith("exempt:")]
-    assert len(exempt) == len(set(exempt)) == 34
+    assert len(exempt) == len(set(exempt)) == 32
     assert set(exempt) == EXPECTED_EXEMPT
 
 
@@ -843,7 +842,7 @@ def test_real_tree_report_reason_counts_and_no_unclassified(real_tree_report):
             counts[reason] = counts.get(reason, 0) + 1
     assert counts == EXPECTED_REASON_COUNTS
     assert not any(cls == "UNCLASSIFIED" for _f, _fn, cls in rows)
-    assert "SUMMARY: exempt=34 " in proc.stdout and "unclassified=0" in proc.stdout
+    assert "SUMMARY: exempt=32 " in proc.stdout and "unclassified=0" in proc.stdout
 
 
 def test_real_tree_converted_samples_are_classified_as_predicate(real_tree_report):

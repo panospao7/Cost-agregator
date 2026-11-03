@@ -71,7 +71,8 @@ class RecurringExpenseEngineTest {
             TransferDirection.OUTGOING -> DomainTransferDirection.OUTGOING
             null -> null
         },
-        notes = notes
+        notes = notes,
+        spendingExclusionReason = spendingExclusionReason
     )
 
     @Test

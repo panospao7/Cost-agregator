@@ -504,7 +504,8 @@ class DashboardBudgetProvenanceChainTest {
                     isNotMine = persisted.isNotMine,
                     isManualEntry = persisted.isManualEntry,
                     isSharedExpense = persisted.isSharedExpense,
-                    currency = persisted.currency
+                    currency = persisted.currency,
+                    spendingExclusionReason = persisted.spendingExclusionReason
                 )
             ),
             categories = emptyList(),

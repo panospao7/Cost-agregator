@@ -163,7 +163,8 @@ class ForecastInputAssembler @Inject constructor(
                 TransferDirection.OUTGOING -> DomainTransferDirection.OUTGOING
                 null -> null
             },
-            notes = expense.notes
+            notes = expense.notes,
+            spendingExclusionReason = expense.spendingExclusionReason
         )
     }
 

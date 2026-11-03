@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.naturallanguage
 
+import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
@@ -331,7 +332,7 @@ class NaturalLanguageSearchEngine @Inject constructor(
                 startMs = startMs, endMs = endMs,
                 categoryIds = categoryFilter,
                 merchants = merchants,
-                transactionType = null,
+                transactionType = TransactionType.PURCHASE.name,
                 keywordSearch = null,
                 limit = PAGE_SIZE_LARGE,
                 cursor = cursor
@@ -399,7 +400,7 @@ class NaturalLanguageSearchEngine @Inject constructor(
         val needsAmountMatch = hasAmountFilter && !hasCategoryFilter && !hasMerchantFilter
         val needsMerchantMatch = hasMerchantFilter
 
-        return matched.map { (expense, _) ->
+        return matched.map { (expense, normalizedAmount) ->
             val matchedMerchant = if (needsMerchantMatch) {
                 interpretation.merchants!!.any { expense.merchant.contains(it, ignoreCase = true) }
             } else {
@@ -427,7 +428,8 @@ class NaturalLanguageSearchEngine @Inject constructor(
             SearchResult(
                 expense = expense,
                 matchType = if (matchedMerchant && matchedAmount && matchedCategory)
-                    MatchType.EXACT else MatchType.PARTIAL
+                    MatchType.EXACT else MatchType.PARTIAL,
+                normalizedAmount = normalizedAmount
             )
         }.also {
             // W15+W16: Attach dataQuality to interpretation for caller consumption
