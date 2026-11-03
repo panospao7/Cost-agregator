@@ -217,6 +217,12 @@ open class TransactionClassifier @Inject constructor(
     }
 
     private suspend fun retrainFromCorrectionsInternal() {
+        // J-03-1 / D4: stored correction text is raw notification text, so it may only train the
+        // model under STORE_RAW. Checked before anything is read or cleared; on a skip the current
+        // model, stats, lastTrainingCount and save schedule are left untouched. The settings read
+        // takes no classifier lock, so it is safe under the caller's mutex.
+        if (!isTrainingAllowed()) return
+
         val allCorrections = userCorrectionRepository.getAll()
         // R-LEARN-1: retention redaction nulls notificationTitle/notificationText. Rows with no
         // notification text carry only the merchant name, so they must not train the model.

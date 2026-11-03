@@ -678,27 +678,34 @@ class TransactionClassifierTest {
     }
 
     @Test
-    fun `D4 pin - retrain from corrections is not gated by the raw storage mode`() = runBlocking<Unit> {
-        // PINS CURRENT BEHAVIOUR, NOT DESIRED POLICY: the plan
-        // (workflows/active/fix-1.0.4-privacy-recovery-plan.md, S5/D4) gates only train() and defers
-        // purging/gating of the stored model and of retrainFromCorrections(). Both
+    fun `D4 retrain from corrections is gated by the raw storage mode`() = runBlocking<Unit> {
         // retrainFromCorrections() and initialize() share retrainFromCorrectionsInternal(), which
-        // has no mode check. initialize() is the deterministic trigger (the public
-        // retrainFromCorrections() is a 2-second debounce). When the deferred item is implemented,
-        // update this test deliberately.
+        // now checks the raw storage mode first. initialize() is the deterministic trigger (the
+        // public retrainFromCorrections() is a 2-second debounce). Stored correction text must not
+        // keep training the model under DO_NOT_STORE or STORE_REDACTED.
         for (mode in listOf(RawStorageMode.DO_NOT_STORE, RawStorageMode.STORE_REDACTED)) {
             val unredacted = (0 until 22).map { unredactedCorrection(it, approved = it < 14) }
             val (subject, repo) = classifierFor(unredacted, privacy = privacyRepoFor(mode))
 
             subject.initialize()
 
-            coVerify(exactly = 1) { repo.getAll() }
-            val stats = subject.getStats()
-            assertEquals("$mode: retrain still learns from stored corrections", 14, stats.totalPositive)
-            assertEquals("$mode: retrain still learns from stored corrections", 8, stats.totalNegative)
-            assertTrue(stats.isReady)
+            coVerify(exactly = 0) { repo.getAll() }
+            assertEquals("$mode: stats must be unchanged", untrainedStats, subject.getStats())
+            assertEquals("$mode: stats flow must be unchanged", untrainedStats, subject.stats.value)
             subject.destroy()
         }
+
+        val unredacted = (0 until 22).map { unredactedCorrection(it, approved = it < 14) }
+        val (rawSubject, rawRepo) = classifierFor(unredacted, privacy = privacyRepoFor(RawStorageMode.STORE_RAW))
+
+        rawSubject.initialize()
+
+        coVerify(exactly = 1) { rawRepo.getAll() }
+        val stats = rawSubject.getStats()
+        assertEquals("STORE_RAW: retrain still learns from stored corrections", 14, stats.totalPositive)
+        assertEquals("STORE_RAW: retrain still learns from stored corrections", 8, stats.totalNegative)
+        assertTrue(stats.isReady)
+        rawSubject.destroy()
     }
 
     @Test
