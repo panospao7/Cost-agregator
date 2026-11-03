@@ -22,7 +22,8 @@ sealed class EmailReceiptProcessResult {
      *
      * @property receiptId The saved scanned-receipt id (the receipt IS persisted).
      * @property reason    Stable machine reason token (e.g. "validation_failed",
-     *                     "insert_conflict", "create_error", "low_confidence").
+     *                     "insert_conflict", "create_error", "low_confidence",
+     *                     "expense_already_linked").
      * @property confidence Parser confidence that led here, when relevant.
      */
     data class NeedsReview(

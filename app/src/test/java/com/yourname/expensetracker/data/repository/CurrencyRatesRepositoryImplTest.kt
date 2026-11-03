@@ -1863,8 +1863,14 @@ private class SwitchableGate(@Volatile var behavior: () -> PrivacyDecision) : Pr
         capability: PrivacyCapability,
         context: Map<String, String>
     ): PrivacyDecision {
-        onCall(calls.incrementAndGet())
-        return behavior()
+        // onCall runs after behavior() has read its decision, so a test released by onCall
+        // cannot flip the gate underneath the call that released it.
+        val callNumber = calls.incrementAndGet()
+        try {
+            return behavior()
+        } finally {
+            onCall(callNumber)
+        }
     }
 }
 

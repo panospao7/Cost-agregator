@@ -353,9 +353,10 @@ class RetentionTargetCoverageGapTest {
 
     // ══ bank_statement_import_items.merchant (RetentionModule.kt:425-459) ═════
 
-    // transactionFingerprint is the production merchantKey (BankStatementLifecycleProcessor stores
-    // MerchantKeyGenerator output: lowercase alphanumerics of the merchant name) - a realistic
-    // PLAINTEXT merchant key, not an opaque token. transactionDate/updatedAt are NOT the retention
+    // transactionFingerprint models a legacy row: BankStatementLifecycleProcessor used to store
+    // MerchantKeyGenerator output here (lowercase alphanumerics of the merchant name), a PLAINTEXT
+    // merchant key, not an opaque token. It no longer writes it (P-08-4), but restored and pre-change
+    // rows can still hold one. transactionDate/updatedAt are NOT the retention
     // column (the DAO predicate is createdAt); callers offset them via [otherTimestamp].
     private fun importItem(
         runId: Long,

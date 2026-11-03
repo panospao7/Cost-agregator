@@ -29,7 +29,8 @@ import javax.inject.Singleton
  * - `email_receipt_sources` raw email fields (`emailSender`, `emailSubject`,
  *   `emailMessageId` → NULL; dedup hashes/fingerprint preserved)
  * - `pending_reviews` notification text (`notificationText`, `notificationTitle` → NULL)
- * - `bank_statement_import_items` merchant names (`merchant` → '[REDACTED]')
+ * - `bank_statement_import_items` merchant names (`merchant` → '[REDACTED]',
+ *   `transactionFingerprint` → NULL)
  * - loan plan labels (`displayName` → '', `lenderLabel` → NULL; rows and structure retained)
  * - `pipeline_diagnostic_events` (`message`, `exceptionMessage`), `operation_run_events`
  *   (`exceptionMessage`), `operation_runs` (`errorSummary`), `background_job_runs`

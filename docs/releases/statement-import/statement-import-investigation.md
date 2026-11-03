@@ -120,7 +120,8 @@ Follow-ups (not part of this work):
 * N2: the 5-minute expense dedupe window versus midnight statement dates.
 * O11: ExportAnonymizer does not cover `expenses.merchant`, `expenses.transferAccountName`,
   `pending_reviews.suggestedMerchant/suggestedMerchantKey/suggestedAccountName`,
-  `bank_statement_import_items.transactionFingerprint`, or the merchant canonical/alias tables.
+  or the merchant canonical/alias tables. `bank_statement_import_items.transactionFingerprint` is
+  now covered (P-08-4).
 * O12: raw statement text cap (200,000 chars) and retention.
 * F-H1-g: a currency symbol before the amount is not captured.
 * Domestic account numbers under 12 digits in NBG descriptions are not masked.
@@ -128,8 +129,8 @@ Follow-ups (not part of this work):
 * A Revolut P2P row carrying a fee is unlabelled.
 * CSV/XLSX statement import is not implemented (owner decision).
 * Own-account transfer detection and netting.
-* MINOR fingerprint: `bank_statement_import_items.transactionFingerprint` equals the merchant key
-  (a transliteration, not a hash) and survives the 30-day merchant purge for transfer counterparty names.
+* Closed by P-08-4: `bank_statement_import_items.transactionFingerprint` used to equal the merchant
+  key and survive the 30-day merchant purge. It is no longer written, and retention and export null it.
 * Cloud payload: the 2,000-character truncation means the cloud never sees the candidate list
   (pre-existing; cloud validation of statements is effectively text-only).
 * Eurobank transfers: a wrapped non-GR IBAN leaves bank-name digits in the label.
