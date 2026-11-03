@@ -63,9 +63,11 @@ internal fun destinationForTab(tabIndex: Int?): NavigationDestination = when (ta
 /**
  * Pure and idempotent. Callers pass a destination and back stack that already went through the
  * availability gates (bank, deferred, installments), so the fallback never reintroduces a gated screen.
- * Never touches the state unless [restoredAfterProcessDeath] is true. An EPHEMERAL current destination
- * becomes the last non-ephemeral back-stack entry (removed from the stack so back does not land on the
- * screen already shown), else the previous main tab, else Home. EPHEMERAL entries leave the stack.
+ * Never touches the state unless [restoredAfterProcessDeath] is true. Only [fallsBackAfterProcessDeath]
+ * destinations (AddExpense) are affected: as current destination it becomes the last remaining
+ * back-stack entry (removed from the stack so back does not land on the screen already shown), else
+ * the previous main tab, else Home; as stack entries they leave the stack. Every other destination,
+ * including the other EPHEMERAL ones, restores unchanged.
  */
 internal fun applyEphemeralRestorePolicy(
     destination: NavigationDestination,
@@ -74,8 +76,8 @@ internal fun applyEphemeralRestorePolicy(
     restoredAfterProcessDeath: Boolean
 ): RestoredNavigation {
     if (!restoredAfterProcessDeath) return RestoredNavigation(destination, backStack)
-    val stack = backStack.filterNot { it.isEphemeral() }
-    if (!destination.isEphemeral()) return RestoredNavigation(destination, stack)
+    val stack = backStack.filterNot { it.fallsBackAfterProcessDeath() }
+    if (!destination.fallsBackAfterProcessDeath()) return RestoredNavigation(destination, stack)
     val fallback = stack.lastOrNull()
     return if (fallback != null) {
         RestoredNavigation(fallback, stack.dropLast(1))
@@ -84,10 +86,16 @@ internal fun applyEphemeralRestorePolicy(
     }
 }
 
-private fun NavigationDestination.isEphemeral(): Boolean =
-    persistencePolicy() == DestinationPersistencePolicy.EPHEMERAL
+/**
+ * The single place naming which destinations fall back after process death. AddExpense only: a fresh
+ * ViewModel would reopen an empty sheet. ScanReceipt must stay restorable: it restores `temp_uri` after
+ * a process kill in the camera and the restored screen's launcher processes the photo, so a fallback
+ * would lose the scan. Assistant and Debug restore as before. [persistencePolicy] is unchanged.
+ */
+internal fun NavigationDestination.fallsBackAfterProcessDeath(): Boolean =
+    this is NavigationDestination.AddExpense
 
-private data class PersistedNavigationState(
+internal data class PersistedNavigationState(
     val destinationToken: String,
     val backStackTokens: List<String>,
     val previousMainTab: Int?,
