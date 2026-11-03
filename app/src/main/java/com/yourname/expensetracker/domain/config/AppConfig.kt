@@ -171,7 +171,7 @@ object AppConfig {
         const val PROMPT_VERSION_REVIEW    = "v1"
         const val PROMPT_VERSION_QUERY     = "v1"
         const val PROMPT_VERSION_RECEIPT   = "v1"
-        const val PROMPT_VERSION_RECEIPT_ITEMS = "v1" // NEW: Receipt item categorization
+        const val PROMPT_VERSION_RECEIPT_ITEMS = "v2" // Receipt item categorization (shortened prompt, sent-count replies)
         const val PROMPT_VERSION_CATEGORIZATION = "v1"
         const val PROMPT_VERSION_DEDUPE    = "v1"
         const val DASHBOARD_BRIEFING_CLOUD_PROVIDER = "google-ai-studio"
@@ -204,7 +204,13 @@ object AppConfig {
         const val RECEIPT_ASSIST_MAX_OUTPUT_TOKENS = 384
         const val CATEGORIZATION_ASSIST_MAX_OUTPUT_TOKENS = 220
         const val DEDUPE_JUDGE_MAX_OUTPUT_TOKENS = 220
-        const val CLOUD_RECEIPT_ITEM_MAX_TOKENS = 300
+        /** Reply budget of one cloud receipt item call: a base plus a share per sent item. */
+        const val CLOUD_RECEIPT_ITEM_BASE_TOKENS = 256
+        const val CLOUD_RECEIPT_ITEM_TOKENS_PER_ITEM = 80
+
+        /** maxOutputTokens for a cloud receipt item call that sends [sentCount] items. */
+        fun cloudReceiptItemMaxTokens(sentCount: Int): Int =
+            CLOUD_RECEIPT_ITEM_BASE_TOKENS + CLOUD_RECEIPT_ITEM_TOKENS_PER_ITEM * sentCount.coerceAtLeast(0)
 
         // On-device (Gemini Nano) constants
         const val ON_DEVICE_CATEGORIZATION_TEMPERATURE = 0.1f

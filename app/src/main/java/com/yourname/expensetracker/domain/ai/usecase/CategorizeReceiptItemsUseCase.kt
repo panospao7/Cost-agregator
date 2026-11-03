@@ -11,6 +11,7 @@ import com.yourname.expensetracker.domain.ai.model.AiRoute
 import com.yourname.expensetracker.domain.ai.model.AiTargetType
 import com.yourname.expensetracker.domain.ai.model.CategorizationResult
 import com.yourname.expensetracker.domain.ai.model.ReceiptItemCategorizationResult
+import com.yourname.expensetracker.domain.ai.model.ReceiptItemPlaceholder
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
@@ -193,10 +194,16 @@ class CategorizeReceiptItemsUseCase @Inject constructor(
             // in-session result below is unaffected.
             val savedCount = if (persistItemTextAllowed) storeResults(receiptId, result) else 0
 
-            // 11. Receipt status: READY only when rows were actually persisted.
+            // 11. Receipt status: READY only when rows were actually persisted AND no
+            // placeholder (an item the cloud call did not send) remains; a partial result
+            // keeps the truthful PENDING status.
             if (persistItemTextAllowed) {
                 if (savedCount > 0) {
-                    receiptRepository.updateCategorizationStatus(receiptId, CategorizationStatus.READY)
+                    val hasPlaceholders = result.items.any { ReceiptItemPlaceholder.isPlaceholder(it) }
+                    receiptRepository.updateCategorizationStatus(
+                        receiptId,
+                        if (hasPlaceholders) CategorizationStatus.PENDING else CategorizationStatus.READY
+                    )
                 } else {
                     Timber.w("Categorization completed for receipt $receiptId but no rows were saved — reverting to PENDING")
                     receiptRepository.updateCategorizationStatus(receiptId, CategorizationStatus.PENDING)

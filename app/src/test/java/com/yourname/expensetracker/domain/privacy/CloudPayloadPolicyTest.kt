@@ -148,6 +148,20 @@ class CloudPayloadPolicyTest {
         assertTrue(purposes.contains(CloudPayloadPurpose.BANK_STATEMENT_VALIDATION))
         assertTrue(purposes.contains(CloudPayloadPurpose.BANK_TRANSACTION_CLASSIFICATION))
         assertTrue(purposes.contains(CloudPayloadPurpose.EXPORT_SUMMARY))
+        assertTrue(purposes.contains(CloudPayloadPurpose.RECEIPT_ITEM_CATEGORIZATION))
+    }
+
+    @Test
+    fun receipt_item_categorization_caps_at_4000_while_item_categorization_stays_2000() = runTest {
+        val policy = buildPolicy(privacyRedact = true)
+        val long = "a".repeat(5000)
+
+        val receiptItems = policy.prepareText(CloudPayloadPurpose.RECEIPT_ITEM_CATEGORIZATION, long)
+        val itemCategorization = policy.prepareText(CloudPayloadPurpose.ITEM_CATEGORIZATION, long)
+
+        assertEquals(CloudPayloadPurpose.RECEIPT_ITEM_CATEGORIZATION, receiptItems.purpose)
+        assertEquals(4000, receiptItems.text.length)
+        assertEquals(2000, itemCategorization.text.length)
     }
 
     // ── PreparedCloudPayload contract ─────────────────────────────────────────

@@ -25,6 +25,9 @@ interface CloudPayloadRedactor {
 enum class CloudPayloadPurpose {
     RECEIPT_ASSIST,
     ITEM_CATEGORIZATION,
+
+    /** Receipt line items sent for categorisation. Larger cap than ITEM_CATEGORIZATION (owner item 127). */
+    RECEIPT_ITEM_CATEGORIZATION,
     QUERY_INTERPRETATION,
     REVIEW_EXPLANATION,
     DASHBOARD_BRIEFING,
