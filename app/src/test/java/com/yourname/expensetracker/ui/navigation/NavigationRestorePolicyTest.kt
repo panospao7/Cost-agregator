@@ -1,19 +1,21 @@
 package com.yourname.expensetracker.ui.navigation
 
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.SaverScope
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * J-01-1: EPHEMERAL destinations are not reopened after process death, and are left alone on a
- * same-process restore (rotation, background and resume). Pure JVM.
+ * J-01-1: AddExpense is not reopened after process death (fallback); Scan Receipt, Assistant and
+ * Debug restore unchanged. Same-process restores are left alone (rotation, background and resume).
+ * Pure JVM.
  */
 class NavigationRestorePolicyTest {
 
-    private val ephemeral = listOf(
-        NavigationDestination.AddExpense,
+    private val restorable = listOf(
         NavigationDestination.ScanReceipt,
         NavigationDestination.Assistant,
         NavigationDestination.Debug
@@ -26,46 +28,84 @@ class NavigationRestorePolicyTest {
         processDied: Boolean = true
     ) = applyEphemeralRestorePolicy(destination, backStack, previousMainTab, processDied)
 
-    @Test
-    fun `ephemeral current falls back to last non-ephemeral back stack entry`() {
-        ephemeral.forEach { dest ->
-            val result = restore(
-                destination = dest,
-                backStack = listOf(NavigationDestination.SavingsGoals, NavigationDestination.RecurringExpenses),
-                previousMainTab = 3
-            )
-            assertEquals(NavigationDestination.RecurringExpenses, result.destination)
-            assertEquals(listOf(NavigationDestination.SavingsGoals), result.backStack)
-        }
+    private fun saveAndRestore(state: PersistedNavigationState): PersistedNavigationState {
+        val saver = PersistedNavigationState.Saver
+        val saved = with(saver) { SaverScope { true }.save(state) }
+        assertNotNull(saved)
+        return saver.restore(saved!!)!!
     }
 
     @Test
-    fun `ephemeral entries leave the restored back stack`() {
+    fun `add expense current falls back to last remaining back stack entry`() {
         val result = restore(
             destination = NavigationDestination.AddExpense,
-            backStack = listOf(
-                NavigationDestination.SavingsGoals,
-                NavigationDestination.Assistant,
-                NavigationDestination.RecurringExpenses,
-                NavigationDestination.Debug
-            )
+            backStack = listOf(NavigationDestination.SavingsGoals, NavigationDestination.RecurringExpenses),
+            previousMainTab = 3
         )
         assertEquals(NavigationDestination.RecurringExpenses, result.destination)
         assertEquals(listOf(NavigationDestination.SavingsGoals), result.backStack)
     }
 
     @Test
-    fun `non-ephemeral current keeps destination but drops ephemeral stack entries`() {
+    fun `add expense entries leave the restored back stack and other ephemeral entries stay`() {
         val result = restore(
-            destination = NavigationDestination.SavingsGoals,
-            backStack = listOf(NavigationDestination.ScanReceipt, NavigationDestination.RecurringExpenses)
+            destination = NavigationDestination.AddExpense,
+            backStack = listOf(
+                NavigationDestination.SavingsGoals,
+                NavigationDestination.AddExpense,
+                NavigationDestination.RecurringExpenses,
+                NavigationDestination.Debug
+            )
         )
-        assertEquals(NavigationDestination.SavingsGoals, result.destination)
-        assertEquals(listOf(NavigationDestination.RecurringExpenses), result.backStack)
+        assertEquals(NavigationDestination.Debug, result.destination)
+        assertEquals(
+            listOf(NavigationDestination.SavingsGoals, NavigationDestination.RecurringExpenses),
+            result.backStack
+        )
     }
 
     @Test
-    fun `empty or all-ephemeral stack falls back to previous main tab`() {
+    fun `scan receipt assistant and debug restore unchanged as current with their back stack`() {
+        val back = listOf(
+            NavigationDestination.SavingsGoals,
+            NavigationDestination.ScanReceipt,
+            NavigationDestination.Assistant,
+            NavigationDestination.Debug,
+            NavigationDestination.RecurringExpenses
+        )
+        restorable.forEach { dest ->
+            val result = restore(destination = dest, backStack = back, previousMainTab = 3)
+            assertEquals(dest, result.destination)
+            assertEquals(back, result.backStack)
+        }
+    }
+
+    @Test
+    fun `scan receipt current with empty back stack stays on scan receipt`() {
+        val result = restore(destination = NavigationDestination.ScanReceipt, previousMainTab = 2)
+        assertEquals(NavigationDestination.ScanReceipt, result.destination)
+        assertTrue(result.backStack.isEmpty())
+    }
+
+    @Test
+    fun `non-add-expense current keeps destination and ephemeral stack entries but drops add expense`() {
+        val result = restore(
+            destination = NavigationDestination.SavingsGoals,
+            backStack = listOf(
+                NavigationDestination.ScanReceipt,
+                NavigationDestination.AddExpense,
+                NavigationDestination.RecurringExpenses
+            )
+        )
+        assertEquals(NavigationDestination.SavingsGoals, result.destination)
+        assertEquals(
+            listOf(NavigationDestination.ScanReceipt, NavigationDestination.RecurringExpenses),
+            result.backStack
+        )
+    }
+
+    @Test
+    fun `add expense with empty stack falls back to previous main tab`() {
         val expected = mapOf(
             0 to NavigationDestination.Home,
             1 to NavigationDestination.Transactions(),
@@ -77,7 +117,7 @@ class NavigationRestorePolicyTest {
         expected.forEach { (tab, dest) ->
             val result = restore(
                 destination = NavigationDestination.AddExpense,
-                backStack = listOf(NavigationDestination.Assistant),
+                backStack = listOf(NavigationDestination.AddExpense),
                 previousMainTab = tab
             )
             assertEquals(dest, result.destination)
@@ -87,10 +127,7 @@ class NavigationRestorePolicyTest {
 
     @Test
     fun `no previous main tab falls back to Home never the initial destination`() {
-        ephemeral.forEach { dest ->
-            val result = restore(destination = dest, previousMainTab = null)
-            assertEquals(NavigationDestination.Home, result.destination)
-        }
+        assertEquals(NavigationDestination.Home, restore(NavigationDestination.AddExpense, previousMainTab = null).destination)
         assertEquals(NavigationDestination.Home, restore(NavigationDestination.AddExpense, previousMainTab = 99).destination)
     }
 
@@ -107,7 +144,7 @@ class NavigationRestorePolicyTest {
     fun `same-process restore keeps the Add Expense sheet open`() {
         // Rotation or background and resume without process death: saved token equals this process token.
         assertFalse(NavigationRestorePolicy.isRestoreAfterProcessDeath(NavigationRestorePolicy.processToken))
-        val back = listOf(NavigationDestination.SavingsGoals, NavigationDestination.Assistant)
+        val back = listOf(NavigationDestination.SavingsGoals, NavigationDestination.AddExpense)
         val result = restore(
             destination = NavigationDestination.AddExpense,
             backStack = back,
@@ -126,6 +163,61 @@ class NavigationRestorePolicyTest {
     }
 
     @Test
+    fun `fromDestination and fromSnapshot stamp the current process token`() {
+        val fromDestination = PersistedNavigationState.fromDestination(NavigationDestination.AddExpense)
+        assertEquals(NavigationRestorePolicy.processToken, fromDestination.processToken)
+
+        val fromSnapshot = PersistedNavigationState.fromSnapshot(
+            NavigationControllerSnapshot(
+                destination = NavigationDestination.AddExpense,
+                backStack = listOf(NavigationDestination.SavingsGoals),
+                previousMainTab = 2
+            )
+        )
+        assertEquals(NavigationRestorePolicy.processToken, fromSnapshot.processToken)
+        assertEquals(listOf("savings_goals"), fromSnapshot.backStackTokens)
+    }
+
+    @Test
+    fun `saver round trip keeps the process token so a rotation is not treated as process death`() {
+        val states = listOf(
+            PersistedNavigationState.fromDestination(NavigationDestination.AddExpense),
+            PersistedNavigationState.fromSnapshot(
+                NavigationControllerSnapshot(
+                    destination = NavigationDestination.ScanReceipt,
+                    backStack = listOf(NavigationDestination.SavingsGoals, NavigationDestination.AddExpense),
+                    previousMainTab = 3
+                )
+            )
+        )
+        states.forEach { state ->
+            val restored = saveAndRestore(state)
+            assertEquals(state, restored)
+            assertEquals(NavigationRestorePolicy.processToken, restored.processToken)
+            assertFalse(NavigationRestorePolicy.isRestoreAfterProcessDeath(restored.processToken))
+        }
+    }
+
+    @Test
+    fun `saver restore of a state without token or with a foreign token counts as process death`() {
+        val noToken = saveAndRestore(
+            PersistedNavigationState("add_expense", emptyList(), null, processToken = null)
+        )
+        assertEquals(null, noToken.processToken)
+        assertTrue(NavigationRestorePolicy.isRestoreAfterProcessDeath(noToken.processToken))
+
+        val foreign = saveAndRestore(
+            PersistedNavigationState("add_expense", emptyList(), null, processToken = "dead-process")
+        )
+        assertTrue(NavigationRestorePolicy.isRestoreAfterProcessDeath(foreign.processToken))
+
+        // Legacy three-element saved list (written before the token existed) fails closed.
+        val legacy = PersistedNavigationState.Saver.restore(listOf("add_expense", emptyList<String>(), null))!!
+        assertEquals(null, legacy.processToken)
+        assertTrue(NavigationRestorePolicy.isRestoreAfterProcessDeath(legacy.processToken))
+    }
+
+    @Test
     fun `fresh launch and normal navigation are unaffected`() {
         val controller = NavigationController(mutableStateOf(NavigationDestination.Home))
         controller.navigateTo(NavigationDestination.AddExpense)
@@ -139,7 +231,8 @@ class NavigationRestorePolicyTest {
         val inputs = listOf(
             NavigationDestination.AddExpense to listOf(NavigationDestination.SavingsGoals, NavigationDestination.Debug),
             NavigationDestination.Assistant to emptyList(),
-            NavigationDestination.SavingsGoals to listOf(NavigationDestination.ScanReceipt)
+            NavigationDestination.ScanReceipt to listOf(NavigationDestination.SavingsGoals),
+            NavigationDestination.SavingsGoals to listOf(NavigationDestination.ScanReceipt, NavigationDestination.AddExpense)
         )
         inputs.forEach { (dest, stack) ->
             val once = restore(dest, stack, previousMainTab = 4)
@@ -188,9 +281,16 @@ class NavigationRestorePolicyTest {
     }
 
     @Test
-    fun `ephemeral policy set is exactly the four documented destinations`() {
-        ephemeral.forEach {
+    fun `persistence policy still declares four ephemeral destinations but only add expense falls back`() {
+        listOf(
+            NavigationDestination.AddExpense,
+            NavigationDestination.ScanReceipt,
+            NavigationDestination.Assistant,
+            NavigationDestination.Debug
+        ).forEach {
             assertEquals(DestinationPersistencePolicy.EPHEMERAL, it.persistencePolicy())
         }
+        assertTrue(NavigationDestination.AddExpense.fallsBackAfterProcessDeath())
+        restorable.forEach { assertFalse(it.fallsBackAfterProcessDeath()) }
     }
 }
