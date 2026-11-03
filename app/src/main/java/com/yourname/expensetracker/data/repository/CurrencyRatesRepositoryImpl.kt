@@ -104,7 +104,23 @@ class CurrencyRatesRepositoryImpl @Inject constructor(
 
     override suspend fun refresh(homeCurrency: String): CurrencyRateRefreshOutcome = withContext(ioDispatcher) {
         // PRIVACY GATE: exchange-rate download has its own capability (default OFF); check before any HTTP call.
-        // A gate that cannot answer fails closed (cancellation is rethrown first).
+        dailyGateBlockedOutcome()?.let { return@withContext it }
+
+        // RA-FX-1: serialized per process. A caller that waited performs its own refresh (idempotent upsert).
+        dailyMutex.withLock {
+            // The gate is checked again after the wait: a caller that queued behind another refresh must not
+            // open a connection if the capability was turned off in the meantime.
+            dailyGateBlockedOutcome()?.let { return@withLock it }
+            runDailyAttempt(homeCurrency)
+        }
+    }
+
+    /**
+     * Single daily-refresh gate decision, used before and again inside the single-flight lock. Returns
+     * null when the download may proceed, otherwise the blocking outcome. A gate that cannot answer fails
+     * closed (cancellation is rethrown first).
+     */
+    private suspend fun dailyGateBlockedOutcome(): CurrencyRateRefreshOutcome? {
         val gateCheck = try {
             privacyGate.check(PrivacyCapability.EXCHANGE_RATE_DOWNLOAD)
         } catch (e: CancellationException) {
@@ -115,24 +131,20 @@ class CurrencyRatesRepositoryImpl @Inject constructor(
         }
         if (gateCheck == null) {
             Timber.w("CurrencyRatesRepository: refresh blocked by privacy gate (%s)", "PrivacyCheckFailed")
-            return@withContext CurrencyRateRefreshOutcome.PrivacyCheckFailed(PrivacyGateReasonCodes.PRIVACY_BLOCKED)
+            return CurrencyRateRefreshOutcome.PrivacyCheckFailed(PrivacyGateReasonCodes.PRIVACY_BLOCKED)
         }
-        if (gateCheck.blocksExecution()) {
-            val blockedOutcome = when (gateCheck) {
-                is PrivacyDecision.Denied -> CurrencyRateRefreshOutcome.DisabledByPrivacy
-                else -> {
-                    val reason = gateCheck.reason()
-                    CurrencyRateRefreshOutcome.PrivacyCheckFailed(
-                        if (reason in PrivacyGateReasonCodes.ALL) reason else PrivacyGateReasonCodes.PRIVACY_BLOCKED
-                    )
-                }
+        if (!gateCheck.blocksExecution()) return null
+        val blockedOutcome = when (gateCheck) {
+            is PrivacyDecision.Denied -> CurrencyRateRefreshOutcome.DisabledByPrivacy
+            else -> {
+                val reason = gateCheck.reason()
+                CurrencyRateRefreshOutcome.PrivacyCheckFailed(
+                    if (reason in PrivacyGateReasonCodes.ALL) reason else PrivacyGateReasonCodes.PRIVACY_BLOCKED
+                )
             }
-            Timber.w("CurrencyRatesRepository: refresh blocked by privacy gate (%s)", blockedOutcome::class.simpleName)
-            return@withContext blockedOutcome
         }
-
-        // RA-FX-1: serialized per process. A caller that waited performs its own refresh (idempotent upsert).
-        dailyMutex.withLock { runDailyAttempt(homeCurrency) }
+        Timber.w("CurrencyRatesRepository: refresh blocked by privacy gate (%s)", blockedOutcome::class.simpleName)
+        return blockedOutcome
     }
 
     /**

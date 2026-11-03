@@ -78,7 +78,8 @@ class NotificationCaptureServiceFallbackTest {
         coEvery { captureGate.decide(any(), any()) } returns NotificationCaptureDecision.Allowed
         coEvery { privacyGate.check(PrivacyCapability.NOTIFICATION_CAPTURE) } returns PrivacyDecision.Allowed
         coEvery { privacySettingsRepository.getSettings() } returns PrivacySettings(rawNotificationStorageMode = RawStorageMode.STORE_RAW)
-        every { deduper.tryStart(any(), any()) } returns false
+        every { deduper.markArrival() } returns 0L
+        every { deduper.tryStart(any(), any(), any()) } returns false
         every { timeProvider.now() } returns 1_700_000_000_000L
         coEvery { intakeCoordinator.capture(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns
             NotificationIntakeCaptureResult.Enqueued(1L, "test-correlation-id")

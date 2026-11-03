@@ -176,7 +176,8 @@ class NotificationCaptureServiceBlockedDecisionTest {
         coEvery { privacyGate.check(PrivacyCapability.NOTIFICATION_CAPTURE) } returns PrivacyDecision.Allowed
         coEvery { privacySettingsRepository.getSettings() } returns
             PrivacySettings(rawNotificationStorageMode = RawStorageMode.STORE_RAW)
-        every { deduper.tryStart(any(), any()) } answers {
+        every { deduper.markArrival() } returns 0L
+        every { deduper.tryStart(any(), any(), any()) } answers {
             startedKeys.add(firstArg<String>())
             false
         }
@@ -298,7 +299,7 @@ class NotificationCaptureServiceBlockedDecisionTest {
     private fun assertNothingPastTheGate() {
         verify(exactly = 0) { NotificationTextParts.extract(any()) }
         assertExtrasNeverRead()
-        verify(exactly = 0) { deduper.tryStart(any(), any()) }
+        verify(exactly = 0) { deduper.tryStart(any(), any(), any()) }
         verify(exactly = 0) { deduper.remove(any()) }
         coVerify(exactly = 0) { privacyGate.check(any(), any()) }
         coVerify(exactly = 0) { privacySettingsRepository.getSettings() }
@@ -343,12 +344,12 @@ class NotificationCaptureServiceBlockedDecisionTest {
         coVerifyOrder {
             captureGate.decide(PKG, false)
             NotificationTextParts.extract(sbn.notification.extras)
-            deduper.tryStart(any(), any())
+            deduper.tryStart(any(), any(), any())
             privacyGate.check(PrivacyCapability.NOTIFICATION_CAPTURE)
             intakeCoordinator.capture(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
         }
         verify(exactly = 1) { NotificationTextParts.extract(any()) }
-        verify(exactly = 1) { deduper.tryStart(any(), any()) }
+        verify(exactly = 1) { deduper.tryStart(any(), any(), any()) }
         coVerify(exactly = 1) {
             intakeCoordinator.capture(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
         }
@@ -454,7 +455,7 @@ class NotificationCaptureServiceBlockedDecisionTest {
         assertEveryCaptureJobCompleted(expectedJobs = 1)
         // The gate allowed capture, so extraction and the dedupe attempt did happen ...
         verify(exactly = 1) { NotificationTextParts.extract(any()) }
-        verify(exactly = 1) { deduper.tryStart(any(), any()) }
+        verify(exactly = 1) { deduper.tryStart(any(), any(), any()) }
         coVerify(exactly = 1) { privacyGate.check(PrivacyCapability.NOTIFICATION_CAPTURE) }
         // ... but the privacy re-check is final: nothing is stored, read back, or enqueued.
         assertNoIntakeHandoff()
@@ -502,7 +503,7 @@ class NotificationCaptureServiceBlockedDecisionTest {
         assertNoIntakeHandoff()
         coVerify(exactly = 0) { privacySettingsRepository.getSettings() }
         // Production's broad catch removes the dedupe key exactly once.
-        verify(exactly = 1) { deduper.tryStart(any(), any()) }
+        verify(exactly = 1) { deduper.tryStart(any(), any(), any()) }
         verify(exactly = 1) { deduper.remove(any()) }
         assertEquals("the started dedupe key must be the one released", startedKeys, removedKeys)
         val intake = emittedEvents.single { it.stage == "intake" }
