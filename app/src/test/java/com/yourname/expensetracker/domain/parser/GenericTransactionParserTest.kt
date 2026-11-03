@@ -1,7 +1,20 @@
 package com.yourname.expensetracker.domain.parser
 
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+import com.yourname.expensetracker.data.database.dao.UserCorrectionDao
+import com.yourname.expensetracker.data.repository.SourceStatsRepository
+import com.yourname.expensetracker.data.repository.UserCorrectionRepository
+import com.yourname.expensetracker.domain.intelligence.ClassifierStats
+import com.yourname.expensetracker.domain.intelligence.ConfidenceRouter
+import com.yourname.expensetracker.domain.intelligence.RoutingDecision
+import com.yourname.expensetracker.domain.intelligence.TransactionClassifier
 import com.yourname.expensetracker.domain.util.CurrencyNormalizer
 import com.yourname.expensetracker.domain.util.MerchantCleaner
+import com.yourname.expensetracker.domain.util.TimeProvider
+import io.mockk.coEvery
+import io.mockk.every
+import io.mockk.mockk
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
@@ -262,5 +275,125 @@ class GenericTransactionParserTest {
         assertNotNull("first parse must produce a result", a)
         assertNotNull("second parse must produce a result", b)
         assertEquals(a, b)
+    }
+
+    // === RB0-S2-1: Sticky ambiguity & ConfidenceRouter regressions ===
+
+    private fun buildRouter(previouslyApproved: Boolean = true): ConfidenceRouter {
+        val sourceStatsRepository = mockk<SourceStatsRepository>(relaxed = true)
+        val userCorrectionRepository = mockk<UserCorrectionRepository>(relaxed = true)
+        val classifier = mockk<TransactionClassifier>(relaxed = true)
+        val writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true)
+        val timeProvider = mockk<TimeProvider>(relaxed = true)
+        every { timeProvider.now() } returns 1_700_000_000_000L
+        coEvery { sourceStatsRepository.getByPackage(any()) } returns null
+        coEvery { userCorrectionRepository.getMerchantStats(any()) } returns
+            UserCorrectionDao.MerchantCorrectionStats(total = 0, rejections = 0)
+        coEvery { userCorrectionRepository.getPackageStats(any()) } returns
+            UserCorrectionDao.PackageCorrectionStats(total = 0, rejections = 0)
+        coEvery { userCorrectionRepository.hasPreviousApprovals(any(), any()) } returns previouslyApproved
+        coEvery { classifier.getStats() } returns ClassifierStats(100, 100, 200, true)
+        coEvery { classifier.predict(any()) } returns 0.99f
+        return ConfidenceRouter(
+            writeBarrier = writeBarrier,
+            sourceStatsRepository = sourceStatsRepository,
+            userCorrectionRepository = userCorrectionRepository,
+            classifier = classifier,
+            timeProvider = timeProvider
+        )
+    }
+
+    @Test
+    fun `balance plus purchase notification extracts purchase amount marks ambiguous and routes to NEEDS_REVIEW`() = runBlocking {
+        val text = "Available €1.245,00. You paid €25.00 at Starbucks"
+        val result = parseReal(text)
+        assertNotNull(result)
+        assertEquals(25.0, result!!.amount, 0.001)
+        assertTrue(result.isAmountAmbiguous)
+
+        val routed = buildRouter(previouslyApproved = true).route(result, "unknown.app", text)
+        assertEquals(RoutingDecision.NEEDS_REVIEW, routed.decision)
+        assertNotEquals(RoutingDecision.AUTO_ACCEPT, routed.decision)
+    }
+
+    @Test
+    fun `clause tie-break extracts purchase amount over trailing avail balance and marks ambiguous`() {
+        val result = parseReal("Paid €15.00 at Shop, avail €1000.00")
+        assertNotNull(result)
+        assertEquals(15.00, result!!.amount, 0.001)
+        assertTrue(result.isAmountAmbiguous)
+    }
+
+    @Test
+    fun `date and time tokens do not cause false amount ambiguity`() {
+        val cases = listOf(
+            "You paid €25.00 at Starbucks on 10/04",
+            "You paid €25.00 at Starbucks on 10.04.2026",
+            "You paid €25.00 at Starbucks at 14.30"
+        )
+        cases.forEach { text ->
+            val result = parseReal(text)
+            assertNotNull("should parse: $text", result)
+            assertEquals("amount for: $text", 25.0, result!!.amount, 0.001)
+            assertFalse("should not be ambiguous for: $text", result.isAmountAmbiguous)
+        }
+    }
+
+    @Test
+    fun `sentence-ending period after amount does not reject amount`() {
+        val midSentence = parseReal("You paid €25.00. Thank you")
+        assertNotNull(midSentence)
+        assertEquals(25.0, midSentence!!.amount, 0.001)
+
+        val endOfText = parseReal("You paid €25.00.")
+        assertNotNull(endOfText)
+        assertEquals(25.0, endOfText!!.amount, 0.001)
+    }
+
+    @Test
+    fun `BigTextStyle duplicate amount across text and bigText is not marked ambiguous`() {
+        val sameFormat = realParser.parse(
+            title = "Alert",
+            text = "Paid €25.00 at Shop",
+            bigText = "Paid €25.00 at Shop on 10/04",
+            subText = null,
+            packageName = "unknown.app"
+        )
+        assertNotNull(sameFormat)
+        assertEquals(25.0, sameFormat!!.amount, 0.001)
+        assertFalse(sameFormat.isAmountAmbiguous)
+
+        val normalizedCurrency = realParser.parse(
+            title = "Alert",
+            text = "Paid €25.00",
+            bigText = "Paid 25.00 EUR",
+            subText = null,
+            packageName = "unknown.app"
+        )
+        assertNotNull(normalizedCurrency)
+        assertEquals(25.0, normalizedCurrency!!.amount, 0.001)
+        assertFalse(normalizedCurrency.isAmountAmbiguous)
+    }
+
+    @Test
+    fun `cross-field balance in bigText marks transaction ambiguous`() {
+        val result = realParser.parse(
+            title = "Paid €25.00 at Shop",
+            text = null,
+            bigText = "Balance €1000.00",
+            subText = null,
+            packageName = "unknown.app"
+        )
+        assertNotNull(result)
+        assertEquals(25.0, result!!.amount, 0.001)
+        assertTrue(result.isAmountAmbiguous)
+    }
+
+    @Test
+    fun `Greek diathesimo balance before agora extracts purchase amount and marks ambiguous`() {
+        val result = parseReal("Διαθέσιμο υπόλοιπο 1.234,56 EUR. Αγορά 12,50 EUR στο COFFEE")
+        assertNotNull(result)
+        assertEquals(12.50, result!!.amount, 0.001)
+        assertTrue(result.isAmountAmbiguous)
     }
 }

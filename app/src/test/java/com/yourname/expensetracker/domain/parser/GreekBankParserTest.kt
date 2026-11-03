@@ -1,8 +1,21 @@
 package com.yourname.expensetracker.domain.parser
 
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+import com.yourname.expensetracker.data.database.dao.UserCorrectionDao
+import com.yourname.expensetracker.data.repository.SourceStatsRepository
+import com.yourname.expensetracker.data.repository.UserCorrectionRepository
+import com.yourname.expensetracker.domain.intelligence.ClassifierStats
+import com.yourname.expensetracker.domain.intelligence.ConfidenceRouter
+import com.yourname.expensetracker.domain.intelligence.RoutingDecision
+import com.yourname.expensetracker.domain.intelligence.TransactionClassifier
 import com.yourname.expensetracker.domain.parser.parsers.GreekBankParser
 import com.yourname.expensetracker.domain.util.CurrencyNormalizer
 import com.yourname.expensetracker.domain.util.MerchantCleaner
+import com.yourname.expensetracker.domain.util.TimeProvider
+import io.mockk.coEvery
+import io.mockk.every
+import io.mockk.mockk
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
@@ -241,5 +254,91 @@ class GreekBankParserTest {
         assertEquals(10.00, result!!.amount, 0.01)
         // Previously the merchant came out as "Paymonade Πληρώσατε €10,00 από την κάρτ" (over-matched).
         assertEquals("Paymonade", result.merchant)
+    }
+
+    // === RB0-S2-1: Sticky ambiguity & ConfidenceRouter regressions ===
+
+    private fun buildRouter(): ConfidenceRouter {
+        val sourceStatsRepository = mockk<SourceStatsRepository>(relaxed = true)
+        val userCorrectionRepository = mockk<UserCorrectionRepository>(relaxed = true)
+        val classifier = mockk<TransactionClassifier>(relaxed = true)
+        val writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true)
+        val timeProvider = mockk<TimeProvider>(relaxed = true)
+        every { timeProvider.now() } returns 1_700_000_000_000L
+        coEvery { sourceStatsRepository.getByPackage(any()) } returns null
+        coEvery { userCorrectionRepository.getMerchantStats(any()) } returns
+            UserCorrectionDao.MerchantCorrectionStats(total = 0, rejections = 0)
+        coEvery { userCorrectionRepository.getPackageStats(any()) } returns
+            UserCorrectionDao.PackageCorrectionStats(total = 0, rejections = 0)
+        coEvery { userCorrectionRepository.hasPreviousApprovals(any(), any()) } returns false
+        coEvery { classifier.getStats() } returns ClassifierStats(0, 0, 0, false)
+        coEvery { classifier.predict(any()) } returns 0.5f
+        return ConfidenceRouter(
+            writeBarrier = writeBarrier,
+            sourceStatsRepository = sourceStatsRepository,
+            userCorrectionRepository = userCorrectionRepository,
+            classifier = classifier,
+            timeProvider = timeProvider
+        )
+    }
+
+    @Test
+    fun `Greek diathesimo balance plus agora extracts purchase amount marks ambiguous and routes to NEEDS_REVIEW`() = runBlocking {
+        val text = "Διαθέσιμο υπόλοιπο 1.234,56 EUR. Αγορά 12,50 EUR στο COFFEE"
+        val result = parseReal(text)
+        assertNotNull(result)
+        assertEquals(12.50, result!!.amount, 0.001)
+        assertTrue(result.isAmountAmbiguous)
+
+        val routed = buildRouter().route(result, "com.eurobank.mobile", text)
+        assertEquals(RoutingDecision.NEEDS_REVIEW, routed.decision)
+        assertNotEquals(RoutingDecision.AUTO_ACCEPT, routed.decision)
+    }
+
+    @Test
+    fun `dot-separated date in Greek purchase notification does not cause false ambiguity`() {
+        val result = parseReal("Αγορά 12,50 EUR στο SHOP στις 10.04.2026")
+        assertNotNull(result)
+        assertEquals(12.50, result!!.amount, 0.001)
+        assertFalse(result.isAmountAmbiguous)
+    }
+
+    @Test
+    fun `BigTextStyle duplicate amount across text and bigText is not marked ambiguous in GreekBankParser`() {
+        val sameFormat = realParser.parse(
+            title = "Τράπεζα",
+            text = "Αγορά 12,50 EUR στο SHOP",
+            bigText = "Αγορά 12,50 EUR στο SHOP στις 10/04",
+            subText = null,
+            packageName = "com.eurobank.mobile"
+        )
+        assertNotNull(sameFormat)
+        assertEquals(12.50, sameFormat!!.amount, 0.001)
+        assertFalse(sameFormat.isAmountAmbiguous)
+
+        val differentCurrencyRepr = realParser.parse(
+            title = "Τράπεζα",
+            text = "Αγορά €12,50 στο SHOP",
+            bigText = "Αγορά 12,50 EUR στο SHOP",
+            subText = null,
+            packageName = "com.eurobank.mobile"
+        )
+        assertNotNull(differentCurrencyRepr)
+        assertEquals(12.50, differentCurrencyRepr!!.amount, 0.001)
+        assertFalse(differentCurrencyRepr.isAmountAmbiguous)
+    }
+
+    @Test
+    fun `cross-field balance in bigText marks GreekBankParser transaction ambiguous`() {
+        val result = realParser.parse(
+            title = "Αγορά €25.00 στο Shop",
+            text = null,
+            bigText = "Balance €1000.00",
+            subText = null,
+            packageName = "com.eurobank.mobile"
+        )
+        assertNotNull(result)
+        assertEquals(25.0, result!!.amount, 0.001)
+        assertTrue(result.isAmountAmbiguous)
     }
 }

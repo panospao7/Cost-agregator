@@ -9,6 +9,7 @@ import java.util.regex.Pattern
  * Returns results with lower confidence.
  */
 import com.yourname.expensetracker.domain.util.AmountUtils
+import com.yourname.expensetracker.domain.util.CommonPatterns
 import com.yourname.expensetracker.domain.util.CurrencyNormalizer
 import com.yourname.expensetracker.domain.util.MerchantCleaner
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -83,7 +84,7 @@ class GenericTransactionParser @Inject constructor(
 
     private val balanceStripPattern by lazy {
         Pattern.compile(
-            """(?m)^\s*(υπόλοιπ[οό]|balance)\s*:?\s*.*$""",
+            """(?m)^\s*(?:(?:avail(?:able)?|διαθέσιμο|διαθεσιμο|diathesimo)\s+)?(?:υπόλοιπ[οό]|υπολοιπο|διαθέσιμο|διαθεσιμο|ypoloipo|ipolipo|diathesimo|balance|avail(?:able)?|remaining|limit)\s*:?\s*.*$""",
             Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
         )
     }
@@ -93,7 +94,68 @@ class GenericTransactionParser @Inject constructor(
     }
 
     private val amountPattern by lazy {
-        com.yourname.expensetracker.domain.util.CommonPatterns.AMOUNT_REGEX
+        CommonPatterns.AMOUNT_REGEX
+    }
+
+    private val balanceContextRegex = Regex(
+        """(?<![\p{L}\p{N}])(balance|available|avail|remaining|limit|υπόλοιπ[οό]|υπολοιπο|διαθέσιμ[οό]|διαθεσιμο|ypoloipo|ipolipo|diathesimo)(?![\p{L}\p{N}])"""
+    )
+
+    private fun extractClauseBoundedContext(text: String, matchStart: Int, matchEnd: Int): String {
+        val prefixStart = (matchStart - 28).coerceAtLeast(0)
+        val prefix = text.substring(prefixStart, matchStart).lowercase()
+        val lastClause = prefix.substringAfterLast('.').substringAfterLast(';').substringAfterLast(',')
+            .substringAfterLast('\n')
+
+        val suffixEnd = (matchEnd + 28).coerceAtMost(text.length)
+        val suffix = text.substring(matchEnd, suffixEnd).lowercase()
+        val nextClause = suffix.substringBefore('.').substringBefore(';').substringBefore(',')
+            .substringBefore('\n')
+
+        return "$lastClause $nextClause"
+    }
+
+    private data class CurrencyTaggedCandidate(
+        val amount: Double,
+        val currency: String,
+        val isBalanceContext: Boolean
+    )
+
+    private fun extractCurrencyTaggedCandidates(text: String): List<CurrencyTaggedCandidate> {
+        val candidates = mutableListOf<CurrencyTaggedCandidate>()
+        val matcher = CommonPatterns.MONEY_AMOUNT_WITH_CURRENCY.matcher(text)
+        while (matcher.find()) {
+            val token = matcher.group(1) ?: matcher.group(2) ?: continue
+            val parsed = AmountUtils.parseAmount(token)
+            if (parsed != null && parsed >= AppConstants.Parser.MIN_VALID_AMOUNT && parsed <= AppConstants.Parser.MAX_GENERIC_PARSER_AMOUNT) {
+                val matchedSpan = matcher.group(0) ?: continue
+                val currencyRaw = matchedSpan.replace(token, "").trim()
+                val normalizedCurrency = if (
+                    currencyRaw.equals("ΕΥΡΩ", ignoreCase = true) ||
+                    currencyRaw.equals("ευρώ", ignoreCase = true)
+                ) {
+                    "EUR"
+                } else {
+                    currencyNormalizer.normalize(currencyRaw)
+                }
+                val context = extractClauseBoundedContext(text, matcher.start(), matcher.end())
+                candidates.add(
+                    CurrencyTaggedCandidate(
+                        amount = parsed,
+                        currency = normalizedCurrency,
+                        isBalanceContext = balanceContextRegex.containsMatchIn(context)
+                    )
+                )
+            }
+        }
+        return candidates
+    }
+
+    private fun hasMultipleMoneyCandidates(text: String): Boolean {
+        val candidates = extractCurrencyTaggedCandidates(text)
+        val hasBalance = candidates.any { it.isBalanceContext }
+        val hasNonBalance = candidates.any { !it.isBalanceContext }
+        return candidates.size > 1 || (hasBalance && hasNonBalance)
     }
 
     private val MERCHANT_PREFIXES = listOf(" at ", " to ", " σε ", " στον ", " στην ", " στο ", " για ", " sto ", " ston ", " stin ", " se ")
@@ -105,7 +167,12 @@ class GenericTransactionParser @Inject constructor(
         subText: String?,
         packageName: String
     ): ParsedTransaction? {
-        val rawFullText = listOfNotNull(title, text, bigText).joinToString(" ")
+        val fields = listOfNotNull(title, text, bigText)
+        val allCandidates = fields.flatMap { extractCurrencyTaggedCandidates(it) }
+        val isAmbiguous = fields.any { hasMultipleMoneyCandidates(it) } ||
+            allCandidates.map { it.amount to it.currency }.distinct().size > 1 ||
+            (allCandidates.any { it.isBalanceContext } && allCandidates.any { !it.isBalanceContext })
+        val rawFullText = fields.joinToString(" ")
         val fullText = stripBalanceLines(rawFullText)
         val lowerFull = fullText.lowercase()
 
@@ -122,7 +189,7 @@ class GenericTransactionParser @Inject constructor(
         }
 
         // 4. Extract amount
-        val amountResult = extractAmount(fullText) ?: return null
+        val amountResult = extractAmountWithAmbiguity(fullText, isAmbiguous) ?: return null
 
         // 5. Sanity check amount
         if (amountResult.first < AppConstants.Parser.MIN_VALID_AMOUNT || amountResult.first > AppConstants.Parser.MAX_GENERIC_PARSER_AMOUNT) return null
@@ -158,37 +225,45 @@ class GenericTransactionParser @Inject constructor(
                     ParsedTransferDirection.OUTGOING -> "To: $it"
                     else -> null
                 }
-            }
+            },
+            isAmountAmbiguous = amountResult.third
         )
     }
 
-    private fun extractAmount(text: String): Pair<Double, String>? {
+    private fun extractAmountWithAmbiguity(text: String, rawAmbiguous: Boolean): Triple<Double, String, Boolean>? {
         val matcher = amountPattern.matcher(text)
         data class AmountCandidate(
             val amount: Double,
             val currency: String,
             val score: Int,
+            val hasPurchaseContext: Boolean,
             val startIndex: Int
         )
         val candidates = mutableListOf<AmountCandidate>()
         while (matcher.find()) {
+            val matchStart = matcher.start()
+            val matchEnd = matcher.end()
+            if (matchStart > 0 && text[matchStart - 1] in listOf('/', '-', ':', '*', '.')) continue
+            if (matchEnd < text.length && (text[matchEnd] in listOf('/', '-', ':', '*') || (text[matchEnd] == '.' && matchEnd + 1 < text.length && text[matchEnd + 1].isDigit()))) continue
             val amountStr = matcher.group(2) ?: continue
             val amount = AmountUtils.parseAmount(amountStr) ?: continue
             val leadingCurrency = matcher.group(1)
             val trailingCurrency = matcher.group(3)
+            val hasCurrency = !leadingCurrency.isNullOrBlank() || !trailingCurrency.isNullOrBlank()
+            val hasSeparator = amountStr.contains(",") || amountStr.contains(".")
+            if (!hasCurrency && !hasSeparator) continue
+
             val rawCurrency = leadingCurrency ?: trailingCurrency ?: "€"
             var score = 0
-            if (!leadingCurrency.isNullOrBlank() || !trailingCurrency.isNullOrBlank()) score += 3
-            if (amountStr.contains(",") || amountStr.contains(".")) score += 2
-            if (matcher.start() > text.length / 2) score += 1
+            if (hasCurrency) score += 3
+            if (hasSeparator) score += 2
 
-            val ctxStart = (matcher.start() - 28).coerceAtLeast(0)
-            val ctxEnd = (matcher.end() + 28).coerceAtMost(text.length)
-            val context = text.substring(ctxStart, ctxEnd).lowercase()
-            if (Regex("""\b(paid|payment|charged|debit|purchase|transaction|καταθεση|πληρωμ|χρεωσ|αγορ|μεταφορ)\b""").containsMatchIn(context)) {
+            val context = extractClauseBoundedContext(text, matchStart, matchEnd)
+            val hasPurchaseContext = Regex("""\b(paid|payment|charged|debit|purchase|transaction|καταθεση|κατάθεση|πληρωμ|χρεωσ|χρέωσ|αγορ|μεταφορ|pliromi|xreosi|hreosi|agora)""").containsMatchIn(context)
+            if (hasPurchaseContext) {
                 score += 2
             }
-            if (Regex("""\b(balance|available|remaining|limit|υπόλοιπο)\b""").containsMatchIn(context)) {
+            if (balanceContextRegex.containsMatchIn(context)) {
                 score -= 2
             }
 
@@ -197,6 +272,7 @@ class GenericTransactionParser @Inject constructor(
                     amount = amount,
                     currency = currencyNormalizer.normalize(rawCurrency),
                     score = score,
+                    hasPurchaseContext = hasPurchaseContext,
                     startIndex = matcher.start()
                 )
             )
@@ -204,10 +280,10 @@ class GenericTransactionParser @Inject constructor(
         if (candidates.isEmpty()) return null
         val best = candidates.maxWithOrNull(
             compareBy<AmountCandidate> { it.score }
-                .thenBy { kotlin.math.abs(it.amount) }
-                .thenBy { it.startIndex }
+                .thenBy { it.hasPurchaseContext }
+                .thenBy { -it.startIndex }
         ) ?: return null
-        return best.amount to best.currency
+        return Triple(best.amount, best.currency, rawAmbiguous)
     }
 
     private fun extractMerchant(text: String, title: String?): String {

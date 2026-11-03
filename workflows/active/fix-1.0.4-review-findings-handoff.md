@@ -365,3 +365,21 @@ An earlier note said local `bug-fixes` had "diverged" from origin. That was WRON
 - `I-01-1` (barrier dominance, 115 groups) still deferred.
 - `DR-05` (refund type) still a separate plan.
 - Merge target for release still an owner decision.
+## RETRO PER-SLICE REVIEW + FIX (2026-11-03) - ALL GREEN
+
+### What the retroactive per-slice review found (RB0-S2-1, MAJOR)
+`GenericTransactionParser` and `GreekBankParser` feed the same `ConfidenceRouter.route()` pipeline as `SmsParser` but were never given
+the sticky-ambiguity treatment, so the FL-02 bug remained live on those two paths.
+
+### 4 rounds of review/fix/review until GREEN
+- Round 1 + 2 failed review (bare `AMOUNT_REGEX` matched dates/times; inverted tie-break `.thenByDescending { startIndex }`; bespoke
+  regex duplication).
+- Round 3 + 4 redesigned: single shared `CommonPatterns.MONEY_AMOUNT_WITH_CURRENCY` (currency-required, immune to dates/times/cards/refs);
+  clause-bounded -28-char context window (`. , ; \n`) with the trailing `start > len/2` bias removed; `.thenBy { -it.startIndex }` so
+  earliest wins; trailing `'.'` rejected only on `.\d`; cross-field `(amount, currency)` deduplication so Android `BigTextStyle`
+  notifications are not false-positived.
+- Strict review round 4: **GREEN**.
+- Architecture guardian: **PASS-WITH-FINDINGS** (0 violations).
+- Privacy-security guardian: **PASS-WITH-NITS** (0 leaks).
+- Validation `vr-20261103-125706-30480930`: **PASS** - 398 tests / 27 suites (including 11 new tests in
+  `GenericTransactionParserTest` and `GreekBankParserTest`).

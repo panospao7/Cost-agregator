@@ -29,6 +29,14 @@ object CommonPatterns {
     const val GROUPED_AMOUNT_TOKEN: String =
         """\d{1,3}(?:[.,]\d{3})*[.,]\d{1,2}|\d+[.,]\d{1,2}|\d{1,3}(?:[.,]\d{3})+"""
 
+    private const val CURRENCY_TOKEN_REGEX = """EUR|€|ΕΥΡΩ|ευρώ|EURO|USD|\$|GBP|£"""
+    private const val CURRENCY_TAGGED_AMOUNT_TOKEN = """$GROUPED_AMOUNT_TOKEN|\d+"""
+
+    val MONEY_AMOUNT_WITH_CURRENCY: Pattern = Pattern.compile(
+        """(?<![\d.,/*])($CURRENCY_TAGGED_AMOUNT_TOKEN)(?![\d,]|\.\d)\s*(?:$CURRENCY_TOKEN_REGEX)(?![\p{L}\p{N}])|(?<![\p{L}\p{N}])(?:$CURRENCY_TOKEN_REGEX)\s*(?<![\d.,/*])($CURRENCY_TAGGED_AMOUNT_TOKEN)(?![\d,]|\.\d)""",
+        Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
+    )
+
     // Common merchant noise prefixes (DUP-006 consolidation)
     val MERCHANT_PREFIXES = listOf(
         "VRP*", "SQ *", "PAYPAL *", "IZ *", "ZETTLE *", "SUMUP *", 

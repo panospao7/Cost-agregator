@@ -5,6 +5,7 @@ import com.yourname.expensetracker.domain.parser.ParsedTransaction
 import com.yourname.expensetracker.domain.parser.ParsedTransactionType
 import com.yourname.expensetracker.domain.parser.ParsedTransferDirection
 import com.yourname.expensetracker.domain.util.AmountUtils
+import com.yourname.expensetracker.domain.util.CommonPatterns
 import com.yourname.expensetracker.domain.util.CurrencyNormalizer
 import com.yourname.expensetracker.domain.util.MerchantCleaner
 import java.util.regex.Pattern
@@ -175,11 +176,41 @@ class GreekBankParser(
  )
 
  private val BALANCE_STRIP_PATTERNS = listOf(
- Regex("""(?m)^\s*υπόλοιπ[οό]\s*:?\s*.*$""", RegexOption.IGNORE_CASE),
- Regex("""(?m)^\s*balance\s*:?\s*.*$""", RegexOption.IGNORE_CASE),
- Regex("""υπόλοιπ[οό]\s*:?\s*[€$£]?\s*\d+([.,]\d{1,2})?""", RegexOption.IGNORE_CASE),
- Regex("""balance\s*:?\s*[€$£]?\s*\d+([.,]\d{1,2})?""", RegexOption.IGNORE_CASE)
+ Regex("""(?:(?:διαθέσιμο|διαθεσιμο|diathesimo)\s+)?(?:υπόλοιπ[οό]|υπολοιπο|ypoloipo|ipolipo|διαθέσιμο|διαθεσιμο|diathesimo)\s*(?:λογαριασμο[ύυ]\s*)?(?:ε[ίι]ναι\s*|:)?\s*(?:[€$£]|EUR|USD|GBP|ΕΥΡΩ|ευρώ)?\s*(?:${AMOUNT_NUM})\s*(?:[€$£]|EUR|USD|GBP|ΕΥΡΩ|ευρώ)?[.,;]?""", RegexOption.IGNORE_CASE),
+ Regex("""(?:avail(?:able)?\s+)?(?:balance|avail(?:able)?|remaining|limit)\s*(?:is\s*|:)?\s*(?:[€$£]|EUR|USD|GBP|ΕΥΡΩ|ευρώ)?\s*(?:${AMOUNT_NUM})\s*(?:[€$£]|EUR|USD|GBP|ΕΥΡΩ|ευρώ)?[.,;]?""", RegexOption.IGNORE_CASE),
+ Regex("""(?:[€$£]|EUR|USD|GBP|ΕΥΡΩ|ευρώ)?\s*(?:${AMOUNT_NUM})\s*(?:[€$£]|EUR|USD|GBP|ΕΥΡΩ|ευρώ)?\s*(?:in|of|for|:)?\s*(?:(?:avail(?:able)?|διαθέσιμο|διαθεσιμο|diathesimo)\s+)?(?:υπόλοιπ[οό]|υπολοιπο|ypoloipo|ipolipo|διαθέσιμο|διαθεσιμο|diathesimo|balance|avail(?:able)?|remaining|limit)(?![\p{L}\p{N}])[.,;]?""", RegexOption.IGNORE_CASE),
+ Regex("""(?m)^\s*(?:(?:διαθέσιμο|διαθεσιμο|diathesimo)\s+)?(?:υπόλοιπ[οό]|υπολοιπο|ypoloipo|ipolipo|διαθέσιμο|διαθεσιμο|diathesimo)\s*:?\s*[^.\n;]*$""", RegexOption.IGNORE_CASE),
+ Regex("""(?m)^\s*(?:avail(?:able)?\s+)?(?:balance|avail(?:able)?|remaining|limit)\s*:?\s*[^.\n;]*$""", RegexOption.IGNORE_CASE)
  )
+
+    private val balanceContextRegex = Regex(
+        """(?<![\p{L}\p{N}])(balance|available|avail|remaining|limit|υπόλοιπ[οό]|υπολοιπο|διαθέσιμ[οό]|διαθεσιμο|ypoloipo|ipolipo|diathesimo)(?![\p{L}\p{N}])"""
+    )
+
+    private data class CurrencyTaggedCandidate(val amount: Double, val isBalanceContext: Boolean)
+
+    private fun extractCurrencyTaggedCandidates(text: String): List<CurrencyTaggedCandidate> {
+        val candidates = mutableListOf<CurrencyTaggedCandidate>()
+        val matcher = CommonPatterns.MONEY_AMOUNT_WITH_CURRENCY.matcher(text)
+        while (matcher.find()) {
+            val token = matcher.group(1) ?: matcher.group(2) ?: continue
+            val parsed = if (GREEK_DOT_THOUSANDS.matches(token)) token.replace(".", "").toDouble() else AmountUtils.parseAmount(token)
+            if (parsed != null && parsed in 0.01..50000.0) {
+                val ctxStart = (matcher.start() - 28).coerceAtLeast(0)
+                val ctxEnd = (matcher.end() + 28).coerceAtMost(text.length)
+                val context = text.substring(ctxStart, ctxEnd).lowercase()
+                candidates.add(CurrencyTaggedCandidate(parsed, balanceContextRegex.containsMatchIn(context)))
+            }
+        }
+        return candidates
+    }
+
+    private fun hasMultipleCurrencyTaggedCandidates(text: String): Boolean {
+        val candidates = extractCurrencyTaggedCandidates(text)
+        val hasBalance = candidates.any { it.isBalanceContext }
+        val hasNonBalance = candidates.any { !it.isBalanceContext }
+        return candidates.size > 1 || (hasBalance && hasNonBalance)
+    }
 
     override fun parse(
         title: String?,
@@ -188,9 +219,14 @@ class GreekBankParser(
         @Suppress("UNUSED_PARAMETER") subText: String?,
         @Suppress("UNUSED_PARAMETER") packageName: String
     ): ParsedTransaction? {
- val fields = listOfNotNull(title, text, bigText)
+        val fields = listOfNotNull(title, text, bigText)
+        val allCandidates = fields.flatMap { extractCurrencyTaggedCandidates(it) }
+        val isCrossFieldAmbiguous = fields.any { hasMultipleCurrencyTaggedCandidates(it) } ||
+            allCandidates.map { it.amount }.distinct().size > 1 ||
+            (allCandidates.any { it.isBalanceContext } && allCandidates.any { !it.isBalanceContext })
 
         for (rawField in fields) {
+            val isAmbiguous = isCrossFieldAmbiguous
             val field = BALANCE_STRIP_PATTERNS.fold(rawField) { acc, regex -> regex.replace(acc, "") }.trim()
             if (field.isBlank()) continue
 
@@ -202,7 +238,7 @@ class GreekBankParser(
             for (spec in DEPOSIT_PATTERNS) {
                 val matcher = spec.pattern.matcher(field)
                 if (matcher.find()) {
-                    val result = tryExtractDeposit(matcher, spec, field)
+                    val result = tryExtractDeposit(matcher, spec, field, isAmbiguous)
                     if (result != null) return result
                 }
             }
@@ -211,7 +247,7 @@ class GreekBankParser(
             for (spec in PURCHASE_PATTERNS) {
                 val matcher = spec.pattern.matcher(field)
                 if (matcher.find()) {
-                    val result = tryExtract(matcher, spec)
+                    val result = tryExtract(matcher, spec, isAmbiguous)
                     if (result != null) return result
                 }
             }
@@ -220,7 +256,7 @@ class GreekBankParser(
             for (spec in TRANSFER_PATTERNS) {
                 val matcher = spec.pattern.matcher(field)
                 if (matcher.find()) {
-                    val result = tryExtractTransfer(matcher, spec, field)
+                    val result = tryExtractTransfer(matcher, spec, field, isAmbiguous)
                     if (result != null) return result
                 }
             }
@@ -229,7 +265,11 @@ class GreekBankParser(
         return null
     }
 
-    private fun tryExtract(matcher: java.util.regex.Matcher, spec: AmountPattern): ParsedTransaction? {
+    private fun tryExtract(
+        matcher: java.util.regex.Matcher,
+        spec: AmountPattern,
+        isAmbiguous: Boolean
+    ): ParsedTransaction? {
         // MONEY-02 H1: the amount comes only from the pattern's designated amount group.
         val amount = extractAmount(matcher, spec.amountGroup) ?: return null
         if (amount < 0.01 || amount > 50000) return null
@@ -249,14 +289,16 @@ class GreekBankParser(
             currency = currency,
             merchant = merchant,
             type = ParsedTransactionType.PURCHASE,
-            confidence = 0.92f
+            confidence = 0.92f,
+            isAmountAmbiguous = isAmbiguous
         )
     }
 
     private fun tryExtractDeposit(
         matcher: java.util.regex.Matcher,
         spec: AmountPattern,
-        fullText: String
+        fullText: String,
+        isAmbiguous: Boolean
     ): ParsedTransaction? {
         val amount = extractAmount(matcher, spec.amountGroup) ?: return null
         if (amount < 0.01 || amount > 50000) return null
@@ -305,14 +347,16 @@ class GreekBankParser(
                     ParsedTransferDirection.INCOMING -> "From: $merchant"
                     ParsedTransferDirection.OUTGOING -> "To: $merchant"
                 }
-            }
+            },
+            isAmountAmbiguous = isAmbiguous
         )
     }
 
     private fun tryExtractTransfer(
         matcher: java.util.regex.Matcher,
         spec: AmountPattern,
-        fullText: String
+        fullText: String,
+        isAmbiguous: Boolean
     ): ParsedTransaction? {
         // MONEY-02 H1: amount only from the designated group; the single-letter bank code
         // group (Χ/Π) is direction metadata and is never read as merchant or amount.
@@ -349,7 +393,8 @@ class GreekBankParser(
                     ParsedTransferDirection.INCOMING -> "From: $merchant"
                     ParsedTransferDirection.OUTGOING -> "To: $merchant"
                 }
-            }
+            },
+            isAmountAmbiguous = isAmbiguous
         )
     }
 
