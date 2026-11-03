@@ -11,6 +11,7 @@ import com.yourname.expensetracker.data.database.entity.BackgroundJobRun
 import com.yourname.expensetracker.data.database.entity.OperationRun
 import com.yourname.expensetracker.data.database.entity.OperationRunEvent
 import com.yourname.expensetracker.data.database.entity.PipelineDiagnosticEvent
+import com.yourname.expensetracker.domain.util.CancellationSafe.runCatchingCancellable
 import kotlinx.coroutines.flow.first
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -54,16 +55,16 @@ class DiagnosticsRepositoryImpl @Inject constructor(
 ) : DiagnosticsRepository {
 
     override suspend fun getTraceByCorrelationId(correlationId: String): DiagnosticTrace {
-        val pipelineEvents = runCatching { pipelineEventDao.getByCorrelationId(correlationId) }.getOrDefault(emptyList())
-        val operationRun = runCatching { operationRunDao.getByCorrelationId(correlationId) }.getOrNull()
+        val pipelineEvents = runCatchingCancellable { pipelineEventDao.getByCorrelationId(correlationId) }.getOrDefault(emptyList())
+        val operationRun = runCatchingCancellable { operationRunDao.getByCorrelationId(correlationId) }.getOrNull()
         val operationRuns = if (operationRun != null) listOf(operationRun) else emptyList()
-        val operationRunEvents = runCatching { operationRunEventDao.getByCorrelationId(correlationId) }.getOrDefault(emptyList())
-        val workerRuns = runCatching { backgroundJobRunDao.getByCorrelationId(correlationId) }.getOrDefault(emptyList())
-        val safeSinkEvents = runCatching {
+        val operationRunEvents = runCatchingCancellable { operationRunEventDao.getByCorrelationId(correlationId) }.getOrDefault(emptyList())
+        val workerRuns = runCatchingCancellable { backgroundJobRunDao.getByCorrelationId(correlationId) }.getOrDefault(emptyList())
+        val safeSinkEvents = runCatchingCancellable {
             safeSink.observeRecent().first().filter { it.correlationId == correlationId }
         }.getOrDefault(emptyList())
         // DDL-A8-19: read events from active, success, and failure journals
-        val journalEvents = runCatching {
+        val journalEvents = runCatchingCancellable {
             restoreJournal.getAllDiagnosticEventsByCorrelationId(correlationId)
         }.getOrDefault(emptyList())
 
@@ -82,7 +83,7 @@ class DiagnosticsRepositoryImpl @Inject constructor(
         val all = mutableListOf<DiagnosticFailureSummary>()
 
         // Pipeline diagnostics
-        runCatching {
+        runCatchingCancellable {
             pipelineEventDao.getRecentFailures(limit).forEach { e ->
                 all.add(DiagnosticFailureSummary(
                     source = "pipeline", correlationId = e.correlationId,
@@ -95,7 +96,7 @@ class DiagnosticsRepositoryImpl @Inject constructor(
         }
 
         // Operation run events
-        runCatching {
+        runCatchingCancellable {
             operationRunEventDao.getRecentFailures(limit).forEach { e ->
                 all.add(DiagnosticFailureSummary(
                     source = "operation_event", correlationId = e.correlationId,
@@ -108,7 +109,7 @@ class DiagnosticsRepositoryImpl @Inject constructor(
         }
 
         // Worker runs
-        runCatching {
+        runCatchingCancellable {
             backgroundJobRunDao.getRecentFailedRuns(limit).forEach { r ->
                 all.add(DiagnosticFailureSummary(
                     source = "worker", correlationId = r.correlationId,
@@ -121,7 +122,7 @@ class DiagnosticsRepositoryImpl @Inject constructor(
         }
 
         // Safe sink records
-        runCatching {
+        runCatchingCancellable {
             val failureOutcomes = setOf("FAILED_RETRYABLE", "FAILED_FINAL", "BLOCKED", "DROPPED", "CANCELLED", "SIDE_EFFECT_FAILED")
             val failureSeverities = setOf("WARNING", "ERROR", "CRITICAL")
             safeSink.observeRecent().first()
@@ -142,7 +143,7 @@ class DiagnosticsRepositoryImpl @Inject constructor(
         }
 
         // Restore journal (active + success + failure)
-        runCatching {
+        runCatchingCancellable {
             // DDL-512-10: read all three journal files instead of only success + blank-corrId active
             val failureLikeOutcomes = setOf(
                 "FAILED_FINAL", "FAILED_RETRYABLE", "BLOCKED", "DROPPED",
