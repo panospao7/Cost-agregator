@@ -555,8 +555,8 @@ class ReviewViewModel @Inject constructor(
                                      finalDate = finalDate,
                                      finalType = finalType,
                                      // S6-D5-005: Pass transfer metadata and location-clear to bulk approvals
-                                     finalTransferDirection = finalTransferDirection,
-                                     finalTransferAccountName = finalTransferAccountName,
+                                     finalTransferDirection = if (originalReview == null) null else bulkTransferDirectionOrNull(finalTransferDirection, originalReview.suggestedDirection, pending.suggestedDirection), // m2: seed-matched only
+                                     finalTransferAccountName = if (originalReview == null) null else bulkTransferAccountNameOrNull(finalTransferAccountName, originalReview.suggestedAccountName, pending.suggestedAccountName),
                                      locationCleared = locationCleared,
                                      finalLatitude = finalLatitude,
                                      finalLongitude = finalLongitude,
@@ -1307,6 +1307,35 @@ class ReviewViewModel @Inject constructor(
             message = "review quick approve preview opened for $reviewId"
         )
     }
+}
+
+/**
+ * Reviewer m2: an edited transfer direction reaches another bulk-approved row only when that
+ * row's suggested direction equals the suggestion the edited row started from (case-insensitive,
+ * like ReviewQueueRepository). Both blank/null match; one blank and one non-blank never match. Null means "keep the
+ * row's own suggestion" (the repository falls back to it).
+ */
+internal fun bulkTransferDirectionOrNull(
+    editedDirection: com.yourname.expensetracker.data.database.entity.TransferDirection?,
+    editedRowSuggestedDirection: String?,
+    otherRowSuggestedDirection: String?
+): com.yourname.expensetracker.data.database.entity.TransferDirection? {
+    if (editedDirection == null) return null
+    val seed = editedRowSuggestedDirection?.trim().takeUnless { it.isNullOrBlank() }
+    val other = otherRowSuggestedDirection?.trim().takeUnless { it.isNullOrBlank() }
+    return if (seed.equals(other, ignoreCase = true)) editedDirection else null // both blank/null also match (null.equals(null) is true)
+}
+
+/** Account twin of [bulkTransferDirectionOrNull]; trimmed, exact (case-sensitive) comparison. */
+internal fun bulkTransferAccountNameOrNull(
+    editedAccountName: String?,
+    editedRowSuggestedAccountName: String?,
+    otherRowSuggestedAccountName: String?
+): String? {
+    if (editedAccountName == null) return null
+    val seed = editedRowSuggestedAccountName?.trim().takeUnless { it.isNullOrBlank() }
+    val other = otherRowSuggestedAccountName?.trim().takeUnless { it.isNullOrBlank() }
+    return if (seed == other) editedAccountName else null
 }
 
 private fun ReceiptAssistSuggestion.toPrefill(): ReviewReceiptPrefill {
