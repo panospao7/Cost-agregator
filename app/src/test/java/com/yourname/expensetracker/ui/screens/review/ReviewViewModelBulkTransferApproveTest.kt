@@ -133,6 +133,54 @@ class ReviewViewModelBulkTransferApproveTest {
         Dispatchers.resetMain()
     }
 
+    /** Re-stubs rows A and B with the given suggestion seeds (null = the row has no suggestion). */
+    private fun stubRows(
+        aDirection: String?, aAccount: String?,
+        bDirection: String?, bAccount: String?
+    ) {
+        val rowA = mockk<PendingReview>(relaxed = true) {
+            every { id } returns rowAId
+            every { suggestedMerchant } returns merchant
+            every { suggestedDirection } returns aDirection
+            every { suggestedAccountName } returns aAccount
+        }
+        val rowB = mockk<PendingReview>(relaxed = true) {
+            every { id } returns rowBId
+            every { suggestedMerchant } returns merchant
+            every { suggestedDirection } returns bDirection
+            every { suggestedAccountName } returns bAccount
+        }
+        coEvery { reviewQueueRepository.getReviewById(rowAId) } returns rowA
+        coEvery { reviewQueueRepository.getPendingReviewsByMerchant(merchant) } returns listOf(rowA, rowB)
+    }
+
+    private fun approveAllRaw(direction: TransferDirection?, account: String?) {
+        viewModel.approveReviewWithEdits(
+            reviewId = rowAId,
+            finalAmount = null,
+            finalMerchant = null,
+            finalCategoryId = null,
+            finalDate = null,
+            finalType = null,
+            finalTransferDirection = direction,
+            finalTransferAccountName = account,
+            applyToAll = false,
+            approveAllPending = true
+        )
+    }
+
+    private fun verifyApproved(rowId: Long, direction: TransferDirection?, account: String?) {
+        coVerify(exactly = 1) {
+            reviewQueueRepository.approveReview(
+                reviewId = rowId, finalAmount = any(), finalCurrency = any(), finalMerchant = any(),
+                finalCategoryId = any(), finalDate = any(), finalType = any(),
+                finalTransferDirection = direction, finalTransferAccountName = account,
+                locationCleared = any(), finalLatitude = any(), finalLongitude = any(),
+                finalAddress = any(), finalPlaceId = any()
+            )
+        }
+    }
+
     /** Row A's dialog is seeded OUTGOING/"Synthetic Savings"; state is what the user left in it. */
     private fun submitFromRowA(direction: TransferDirection?, account: String): ReviewTransferSubmit =
         resolveTransferSubmit(
@@ -211,6 +259,8 @@ class ReviewViewModelBulkTransferApproveTest {
 
     @Test
     fun `direction edit on row A reaches row B and the account stays null`() = runTest {
+        // m2: B shares A's seeds (OUTGOING / Savings), so the edit reaches it.
+        stubRows("OUTGOING", "Synthetic Savings", "OUTGOING", "Synthetic Savings")
         approveAllFromRowA(submitFromRowA(TransferDirection.INCOMING, "Synthetic Savings"))
         advanceUntilIdle()
 
@@ -227,6 +277,8 @@ class ReviewViewModelBulkTransferApproveTest {
 
     @Test
     fun `account edit on row A reaches row B and the direction stays null`() = runTest {
+        // m2: B shares A's seeds (OUTGOING / Savings), so the edit reaches it.
+        stubRows("OUTGOING", "Synthetic Savings", "OUTGOING", "Synthetic Savings")
         approveAllFromRowA(submitFromRowA(TransferDirection.OUTGOING, "Synthetic Edited Account"))
         advanceUntilIdle()
 
@@ -239,5 +291,122 @@ class ReviewViewModelBulkTransferApproveTest {
                 finalAddress = any(), finalPlaceId = any()
             )
         }
+    }
+
+    @Test
+    fun `m2 account edit on row A does not reach row B whose seeded account differs`() = runTest {
+        // Default rows: A OUTGOING/Savings, B INCOMING/Main.
+        approveAllFromRowA(submitFromRowA(TransferDirection.OUTGOING, "Synthetic Joint"))
+        advanceUntilIdle()
+
+        verifyApproved(rowBId, direction = null, account = null)
+        verifyApproved(rowAId, direction = null, account = "Synthetic Joint")
+    }
+
+    @Test
+    fun `m2 direction edit on row A does not reach row B whose seeded direction differs`() = runTest {
+        // Default rows: A OUTGOING/Savings, B INCOMING/Main.
+        approveAllFromRowA(submitFromRowA(TransferDirection.INCOMING, "Synthetic Savings"))
+        advanceUntilIdle()
+
+        verifyApproved(rowBId, direction = null, account = null)
+        verifyApproved(rowAId, direction = TransferDirection.INCOMING, account = null)
+    }
+
+    @Test
+    fun `m2 lowercase seeded direction on row B still matches`() = runTest {
+        stubRows("OUTGOING", "Synthetic Savings", "outgoing", "Synthetic Savings")
+        approveAllFromRowA(submitFromRowA(TransferDirection.INCOMING, "Synthetic Savings"))
+        advanceUntilIdle()
+
+        verifyApproved(rowBId, direction = TransferDirection.INCOMING, account = null)
+    }
+
+    @Test
+    fun `m2 account comparison is case-sensitive so a differently cased account does not match`() = runTest {
+        stubRows("OUTGOING", "Synthetic Savings", "OUTGOING", "synthetic savings")
+        approveAllFromRowA(submitFromRowA(TransferDirection.OUTGOING, "Synthetic Joint"))
+        advanceUntilIdle()
+
+        verifyApproved(rowBId, direction = null, account = null)
+    }
+
+    @Test
+    fun `m2 both rows without suggestion receive the entered direction and account`() = runTest {
+        // Regression caught in review: both-blank seeds must match.
+        stubRows(null, null, null, null)
+        approveAllRaw(TransferDirection.INCOMING, "Synthetic Entered Account")
+        advanceUntilIdle()
+
+        verifyApproved(rowBId, TransferDirection.INCOMING, "Synthetic Entered Account")
+        verifyApproved(rowAId, TransferDirection.INCOMING, "Synthetic Entered Account")
+    }
+
+    @Test
+    fun `m2 blank-string seeds on both rows match like null seeds`() = runTest {
+        stubRows("  ", "", null, "   ")
+        approveAllRaw(TransferDirection.OUTGOING, "Synthetic Entered Account")
+        advanceUntilIdle()
+
+        verifyApproved(rowBId, TransferDirection.OUTGOING, "Synthetic Entered Account")
+    }
+
+    @Test
+    fun `m2 suggested account on row A and none on row B sends row B a null account`() = runTest {
+        stubRows("OUTGOING", "Synthetic Savings", "OUTGOING", null)
+        approveAllRaw(TransferDirection.INCOMING, "Synthetic Joint")
+        advanceUntilIdle()
+
+        // Direction seeds match, account seeds do not: only the direction reaches B.
+        verifyApproved(rowBId, TransferDirection.INCOMING, null)
+    }
+
+    @Test
+    fun `m2 no suggestion on row A and a suggestion on row B sends row B nulls`() = runTest {
+        stubRows(null, null, "OUTGOING", "Synthetic Savings")
+        approveAllRaw(TransferDirection.INCOMING, "Synthetic Joint")
+        advanceUntilIdle()
+
+        verifyApproved(rowBId, direction = null, account = null)
+        verifyApproved(rowAId, TransferDirection.INCOMING, "Synthetic Joint")
+    }
+
+    @Test
+    fun `m2 direction matches but account does not so only the direction reaches row B`() = runTest {
+        stubRows("OUTGOING", "Synthetic Savings", "OUTGOING", "Synthetic Main")
+        approveAllRaw(TransferDirection.INCOMING, "Synthetic Joint")
+        advanceUntilIdle()
+
+        verifyApproved(rowBId, TransferDirection.INCOMING, null)
+        verifyApproved(rowAId, TransferDirection.INCOMING, "Synthetic Joint")
+    }
+
+    @Test
+    fun `m2 account matches but direction does not so only the account reaches row B`() = runTest {
+        stubRows("OUTGOING", "Synthetic Savings", "INCOMING", "Synthetic Savings")
+        approveAllRaw(TransferDirection.INCOMING, "Synthetic Joint")
+        advanceUntilIdle()
+
+        verifyApproved(rowBId, null, "Synthetic Joint")
+    }
+
+    @Test
+    fun `m2 the edited row itself always receives its edit even when row B does not match`() = runTest {
+        stubRows("OUTGOING", "Synthetic Savings", "INCOMING", "Synthetic Main")
+        approveAllRaw(TransferDirection.INCOMING, "Synthetic Joint")
+        advanceUntilIdle()
+
+        verifyApproved(rowAId, TransferDirection.INCOMING, "Synthetic Joint")
+        verifyApproved(rowBId, null, null)
+    }
+
+    @Test
+    fun `m2 unedited approve-all hands every row null direction and account whatever the seeds`() = runTest {
+        stubRows("OUTGOING", "Synthetic Savings", "OUTGOING", "Synthetic Savings")
+        approveAllRaw(direction = null, account = null)
+        advanceUntilIdle()
+
+        verifyApproved(rowAId, null, null)
+        verifyApproved(rowBId, null, null)
     }
 }
