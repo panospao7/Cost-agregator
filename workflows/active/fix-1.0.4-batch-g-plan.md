@@ -42,3 +42,7 @@ Batch F review minors: `feature/fix104-g-receipt` (`Cost-agregator-we`), `featur
 - Restore fallback is AddExpense only; sfa 0e886c0b, targeted vr-20261103-201414-5c1fea88 PASS.
 - Search: filter compares gross converted amount (the figure the card shows); card shows the row's own currency; `SearchTotal.Unavailable` or `Available(amount, leftOutCount)` replaces the false zero; chips format the exact home amount; parsing minors fixed. rsv fd725ad4, targeted vr-20261103-202017-9bb4e1a0 PASS.
 - Recorded: totals still sum `effectiveAmount`, so a neutralised row shows on a card with its gross amount and adds 0 to the total; `nlp_*` strings have no el/es entries and fall back to English; "50€ 20€" loses the 50 (pinned characterisation); `InterpretationCard` and `TransactionResultCard` have no test seam.
+
+## reviewer-strict ACCEPT-WITH-MINORS on 646e7d19 (review 2 of 2)
+Issues 1-5 closed. Minors fixed before the gate, specified by the reviewer: suffix-marker lookahead, repeated dot thousands, stale comments.
+Recorded, not fixed: gross filter under "over 50" admits an excluded row, so card EUR 1,200 with Total EUR 0.00 and no explanation. The zero is real and pinned. Suggested follow-up: a row label.
