@@ -650,37 +650,12 @@ fun TransactionsScreen(
                         groupedTransactions.forEach { (dateString, items) ->
                             // Date header
                             stickyHeader {
-                                val currencies = items.map { it.expense.currency.uppercase() }.toSet()
-                                val groupCurrency = currencies.singleOrNull()
-                                val totalAmount: Double?
-                                val displayCurrency: String?
-                                if (groupCurrency != null) {
-                                    // S5-007: Same-currency group — use group currency
-                                    totalAmount = items.sumOf { it.expense.signedEffectiveAmount() }
-                                    displayCurrency = groupCurrency
-                                } else {
-                                    // S5-024R-A/B: Mixed — sum the snapshot values (owner: ComparableHomeValue.snapshotValue)
-                                    // with the common stored baseCurrency. A row without a usable snapshot gives no
-                                    // total (never a raw-amount fallback).
-                                    val baseCurrencies = items.map { it.expense.baseCurrency.uppercase() }.toSet()
-                                    val commonBase = baseCurrencies.singleOrNull()
-                                    val snapshotValues = items.mapNotNull { it.expense.normalizedEffectiveAmount }
-                                    if (commonBase != null &&
-                                        items.all { it.expense.baseAmount > 0 } &&
-                                        snapshotValues.size == items.size
-                                    ) {
-                                        totalAmount = snapshotValues.sum()
-                                        displayCurrency = commonBase // use stored baseCurrency, not current homeCurrency
-                                    } else {
-                                        totalAmount = null
-                                        displayCurrency = null
-                                    }
-                                }
+                                val headerTotal = dateHeaderTotal(items.map { it.expense })
                                 DateHeader(
                                     date = dateString,
-                                    totalAmount = totalAmount,
+                                    totalAmount = headerTotal?.amount,
                                     itemCount = items.size,
-                                    homeCurrency = displayCurrency
+                                    homeCurrency = headerTotal?.currency
                                 )
                             }
                             
@@ -1904,15 +1879,43 @@ private fun TransactionItem(
     }
 }
 
-private fun Expense.signedEffectiveAmount(): Double {
-    return when (transactionType.toDomainType()) {
-        DomainTransactionType.PURCHASE,
-        DomainTransactionType.WITHDRAWAL -> -effectiveAmount
-        DomainTransactionType.DEPOSIT -> effectiveAmount
-        DomainTransactionType.TRANSFER,
-        DomainTransactionType.UNKNOWN -> 0.0
+/** Date-header total: signed [amount] in [currency] (the group currency, or the common stored baseCurrency). */
+internal data class DateHeaderTotal(val amount: Double, val currency: String)
+
+/**
+ * Date-header total for one group. Same-currency groups sum [signedEffectiveAmount] in the group
+ * currency. Mixed groups sum [signedNormalizedEffectiveAmount] in the common stored baseCurrency;
+ * a missing snapshot, mixed baseCurrency or `baseAmount <= 0` gives null (no raw-amount fallback).
+ */
+internal fun dateHeaderTotal(expenses: List<Expense>): DateHeaderTotal? {
+    val groupCurrency = expenses.map { it.currency.uppercase() }.toSet().singleOrNull()
+    if (groupCurrency != null) {
+        // S5-007: Same-currency group — use group currency
+        return DateHeaderTotal(expenses.sumOf { it.signedEffectiveAmount() }, groupCurrency)
     }
+    // S5-024R-A/B: Mixed — sum the signed snapshot values (owner: ComparableHomeValue.snapshotValue)
+    // with the common stored baseCurrency.
+    val commonBase = expenses.map { it.baseCurrency.uppercase() }.toSet().singleOrNull() ?: return null
+    if (!expenses.all { it.baseAmount > 0 }) return null
+    val signed = expenses.mapNotNull { it.signedNormalizedEffectiveAmount() }
+    if (signed.size != expenses.size) return null
+    return DateHeaderTotal(signed.sum(), commonBase)
 }
+
+/** Single sign rule for the date header: spending is negative, deposits positive, TRANSFER/UNKNOWN zero. */
+private fun DomainTransactionType.headerSign(): Double = when (this) {
+    DomainTransactionType.PURCHASE,
+    DomainTransactionType.WITHDRAWAL -> -1.0
+    DomainTransactionType.DEPOSIT -> 1.0
+    DomainTransactionType.TRANSFER,
+    DomainTransactionType.UNKNOWN -> 0.0
+}
+
+private fun Expense.signedEffectiveAmount(): Double =
+    transactionType.toDomainType().headerSign() * effectiveAmount
+
+private fun Expense.signedNormalizedEffectiveAmount(): Double? =
+    normalizedEffectiveAmount?.let { transactionType.toDomainType().headerSign() * it }
 
 private fun TransactionType.toDomainType(): DomainTransactionType {
     return when (this) {
