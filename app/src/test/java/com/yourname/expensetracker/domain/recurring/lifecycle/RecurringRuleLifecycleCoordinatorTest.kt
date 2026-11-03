@@ -489,6 +489,235 @@ class RecurringRuleLifecycleCoordinatorTest {
     private suspend fun eventsOfType(type: String) =
         eventDao.getEventsByType(type)
 
+    // ── FIX-104 F: amount/currency validation (createRule + updateRule) ─────
+
+    private fun countRows(table: String): Int =
+        database.openHelper.readableDatabase.query("SELECT COUNT(*) FROM $table").use {
+            it.moveToFirst()
+            it.getInt(0)
+        }
+
+    private fun assertNoRuleStateWritten() {
+        assertEquals(0, countRows("manual_recurring_expenses"))
+        assertEquals(0, countRows("planned_expenses"))
+        assertEquals(0, countRows("recurring_occurrences"))
+        assertEquals(0, countRows("recurring_lifecycle_events"))
+    }
+
+    /** Wraps the rule DAO and counts every write, so "no DAO write" is asserted directly. */
+    private class WriteCountingRuleDao(
+        private val delegate: ManualRecurringExpenseDao
+    ) : ManualRecurringExpenseDao by delegate {
+        var insertCalls = 0
+        var updateCalls = 0
+        override suspend fun insert(expense: ManualRecurringExpense): Long {
+            insertCalls++
+            return delegate.insert(expense)
+        }
+        override suspend fun update(expense: ManualRecurringExpense) {
+            updateCalls++
+            delegate.update(expense)
+        }
+    }
+
+    private suspend fun assertCreateRejected(
+        expectedCode: String,
+        amount: Double,
+        currency: String
+    ) {
+        val rules = WriteCountingRuleDao(ruleDao)
+        val failure = runCatching {
+            coordinatorFactory(rules, expenseDao).createRule(
+                rule(id = 0L, merchant = "ZedMerchantQ", amount = amount, currency = currency)
+            )
+        }.exceptionOrNull()
+
+        assertTrue(
+            "Expected InvalidRecurringAmountException for amount/currency but got $failure",
+            failure is InvalidRecurringAmountException
+        )
+        val invalid = failure as InvalidRecurringAmountException
+        assertEquals(expectedCode, invalid.reasonCode)
+        assertEquals("no rule DAO insert", 0, rules.insertCalls)
+        assertEquals("no rule DAO update", 0, rules.updateCalls)
+        assertNoRuleStateWritten()
+    }
+
+    @Test
+    fun `FIX-104 F createRule rejects zero amount with NOT_POSITIVE and writes nothing`() = runTest(timeout = 60.seconds) {
+        assertCreateRejected(InvalidRecurringAmountException.NOT_POSITIVE, 0.0, "EUR")
+    }
+
+    @Test
+    fun `FIX-104 F createRule rejects negative amount with NOT_POSITIVE and writes nothing`() = runTest(timeout = 60.seconds) {
+        assertCreateRejected(InvalidRecurringAmountException.NOT_POSITIVE, -12.5, "EUR")
+    }
+
+    @Test
+    fun `FIX-104 F createRule rejects NaN amount and writes nothing`() = runTest(timeout = 60.seconds) {
+        assertCreateRejected(InvalidRecurringAmountException.NOT_POSITIVE, Double.NaN, "EUR")
+    }
+
+    @Test
+    fun `FIX-104 F createRule rejects positive infinity and writes nothing`() = runTest(timeout = 60.seconds) {
+        assertCreateRejected(InvalidRecurringAmountException.NOT_POSITIVE, Double.POSITIVE_INFINITY, "EUR")
+    }
+
+    @Test
+    fun `FIX-104 F createRule rejects negative infinity and writes nothing`() = runTest(timeout = 60.seconds) {
+        assertCreateRejected(InvalidRecurringAmountException.NOT_POSITIVE, Double.NEGATIVE_INFINITY, "EUR")
+    }
+
+    @Test
+    fun `FIX-104 F createRule rejects amount above currency cap and writes nothing`() = runTest(timeout = 60.seconds) {
+        assertCreateRejected(InvalidRecurringAmountException.ABOVE_CAP, 1_000_001.0, "EUR")
+    }
+
+    @Test
+    fun `FIX-104 F createRule rejects malformed currency and writes nothing`() = runTest(timeout = 60.seconds) {
+        assertCreateRejected(InvalidRecurringAmountException.CURRENCY_INVALID, 10.0, "EU")
+        assertCreateRejected(InvalidRecurringAmountException.CURRENCY_INVALID, 10.0, "")
+    }
+
+    @Test
+    fun `FIX-104 F createRule rejects currency with unknown digits and writes nothing`() = runTest(timeout = 60.seconds) {
+        assertCreateRejected(InvalidRecurringAmountException.DIGITS_UNAVAILABLE, 10.0, "ZZZ")
+    }
+
+    @Test
+    fun `FIX-104 F createRule accepts unrounded detected average 33_3333`() = runTest(timeout = 60.seconds) {
+        val id = coordinator.createRule(rule(id = 0L, amount = 33.3333))
+
+        assertTrue(id > 0L)
+        assertEquals(33.3333, ruleDao.getById(id)!!.amount, 0.0)
+        assertEquals(1, countRows("manual_recurring_expenses"))
+    }
+
+    @Test
+    fun `FIX-104 F createRule accepts amount exactly equal to cap and tiny positive amount`() = runTest(timeout = 60.seconds) {
+        val atCap = coordinator.createRule(rule(id = 0L, merchant = "CapShop", amount = 1_000_000.0))
+        val tiny = coordinator.createRule(rule(id = 0L, merchant = "TinyShop", amount = 0.01))
+
+        assertEquals(1_000_000.0, ruleDao.getById(atCap)!!.amount, 0.0)
+        assertEquals(0.01, ruleDao.getById(tiny)!!.amount, 0.0)
+    }
+
+    @Test
+    fun `FIX-104 F updateRule unchanged legacy zero amount still updates other fields`() = runTest(timeout = 60.seconds) {
+        seedRule(rule(id = 1L, merchant = "LegacyShop", amount = 0.0, isActive = false))
+
+        coordinator.updateRule(rule(id = 1L, merchant = "RenamedShop", amount = 0.0, isActive = false))
+
+        val stored = ruleDao.getById(1L)!!
+        assertEquals("RenamedShop", stored.merchant)
+        assertEquals(0.0, stored.amount, 0.0)
+    }
+
+    @Test
+    fun `FIX-104 F updateRule changing amount to zero throws and leaves row untouched`() = runTest(timeout = 60.seconds) {
+        seedRule(rule(id = 1L, amount = 15.99, isActive = false))
+        val rules = WriteCountingRuleDao(ruleDao)
+
+        val failure = runCatching {
+            coordinatorFactory(rules, expenseDao).updateRule(rule(id = 1L, amount = 0.0, isActive = false))
+        }.exceptionOrNull()
+
+        assertTrue("got $failure", failure is InvalidRecurringAmountException)
+        assertEquals(InvalidRecurringAmountException.NOT_POSITIVE, (failure as InvalidRecurringAmountException).reasonCode)
+        assertEquals(0, rules.updateCalls)
+        assertEquals(15.99, ruleDao.getById(1L)!!.amount, 0.0)
+        assertEquals(0, countRows("recurring_lifecycle_events"))
+    }
+
+    @Test
+    fun `FIX-104 F updateRule changing currency to invalid throws and leaves row untouched`() = runTest(timeout = 60.seconds) {
+        seedRule(rule(id = 1L, amount = 15.99, currency = "EUR", isActive = false))
+        val rules = WriteCountingRuleDao(ruleDao)
+
+        val failure = runCatching {
+            coordinatorFactory(rules, expenseDao).updateRule(
+                rule(id = 1L, amount = 15.99, currency = "EU", isActive = false)
+            )
+        }.exceptionOrNull()
+
+        assertTrue("got $failure", failure is InvalidRecurringAmountException)
+        assertEquals(InvalidRecurringAmountException.CURRENCY_INVALID, (failure as InvalidRecurringAmountException).reasonCode)
+        assertEquals(0, rules.updateCalls)
+        assertEquals("EUR", ruleDao.getById(1L)!!.currency)
+    }
+
+    @Test
+    fun `FIX-104 F updateRule changing currency to unknown digits throws`() = runTest(timeout = 60.seconds) {
+        seedRule(rule(id = 1L, amount = 15.99, currency = "EUR", isActive = false))
+
+        val failure = runCatching {
+            coordinator.updateRule(rule(id = 1L, amount = 15.99, currency = "ZZZ", isActive = false))
+        }.exceptionOrNull()
+
+        assertTrue("got $failure", failure is InvalidRecurringAmountException)
+        assertEquals(
+            InvalidRecurringAmountException.DIGITS_UNAVAILABLE,
+            (failure as InvalidRecurringAmountException).reasonCode
+        )
+        assertEquals("EUR", ruleDao.getById(1L)!!.currency)
+    }
+
+    @Test
+    fun `FIX-104 F updateRule changing amount above cap throws`() = runTest(timeout = 60.seconds) {
+        seedRule(rule(id = 1L, amount = 15.99, isActive = false))
+
+        val failure = runCatching {
+            coordinator.updateRule(rule(id = 1L, amount = 5_000_000.0, isActive = false))
+        }.exceptionOrNull()
+
+        assertTrue("got $failure", failure is InvalidRecurringAmountException)
+        assertEquals(InvalidRecurringAmountException.ABOVE_CAP, (failure as InvalidRecurringAmountException).reasonCode)
+        assertEquals(15.99, ruleDao.getById(1L)!!.amount, 0.0)
+    }
+
+    @Test
+    fun `FIX-104 F updateRule valid amount and currency change passes`() = runTest(timeout = 60.seconds) {
+        seedRule(rule(id = 1L, amount = 15.99, currency = "EUR", isActive = false))
+
+        coordinator.updateRule(rule(id = 1L, amount = 20.5, currency = "USD", isActive = false))
+
+        val stored = ruleDao.getById(1L)!!
+        assertEquals(20.5, stored.amount, 0.0)
+        assertEquals("USD", stored.currency)
+    }
+
+    @Test
+    fun `FIX-104 F exception message equals bounded code and carries no amount or merchant`() = runTest(timeout = 60.seconds) {
+        val bounded = setOf(
+            InvalidRecurringAmountException.NOT_POSITIVE,
+            InvalidRecurringAmountException.ABOVE_CAP,
+            InvalidRecurringAmountException.CURRENCY_INVALID,
+            InvalidRecurringAmountException.DIGITS_UNAVAILABLE
+        )
+        val inputs = listOf(
+            -987654.321 to "EUR",
+            7_654_321.0 to "EUR",
+            12.0 to "QQ",
+            12.0 to "ZZZ"
+        )
+        for ((amount, currency) in inputs) {
+            val failure = runCatching {
+                coordinator.createRule(
+                    rule(id = 0L, merchant = "ZedMerchantQ", amount = amount, currency = currency)
+                )
+            }.exceptionOrNull() as? InvalidRecurringAmountException
+            assertNotNull("expected InvalidRecurringAmountException for $currency", failure)
+            val message = failure!!.message
+            assertEquals(failure.reasonCode, message)
+            assertTrue("reason code must be a bounded constant: $message", message in bounded)
+            assertFalse(message!!.contains("ZedMerchantQ"))
+            assertFalse(message.contains("987654"))
+            assertFalse(message.contains("7654321"))
+            assertFalse(message.contains("QQ"))
+            assertFalse(message.contains("ZZZ"))
+        }
+    }
+
     // ── updateRule: logical reconciliation ──────────────────────────────────
 
     @Test

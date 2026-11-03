@@ -31,7 +31,7 @@ class CategorizeExpenseUseCaseTest : AnalyticsEngineTestBase() {
 
     @Test
     fun `expense categorized by engine`() = runTest {
-        coEvery { merchantNormalizer.normalize("Starbucks") } returns merchantLookup("Starbucks")
+        coEvery { merchantNormalizer.normalize("Starbucks", autoCreate = false) } returns merchantLookup("Starbucks")
         coEvery { categorizationEngine.categorize("Starbucks") } returns CategorizationResult(
             categoryId = 3L,
             categoryName = "Food & Dining",
@@ -50,7 +50,7 @@ class CategorizeExpenseUseCaseTest : AnalyticsEngineTestBase() {
 
     @Test
     fun `merchant normalized before categorization`() = runTest {
-        coEvery { merchantNormalizer.normalize("  STARBUCKS #123 ") } returns merchantLookup("Starbucks")
+        coEvery { merchantNormalizer.normalize("  STARBUCKS #123 ", autoCreate = false) } returns merchantLookup("Starbucks")
         coEvery { categorizationEngine.categorize("Starbucks") } returns CategorizationResult(
             categoryId = 2L,
             categoryName = "Groceries",
@@ -67,7 +67,7 @@ class CategorizeExpenseUseCaseTest : AnalyticsEngineTestBase() {
 
     @Test
     fun `engine failure unknown category assigned`() = runTest {
-        coEvery { merchantNormalizer.normalize("Unknown Merchant") } returns merchantLookup("Unknown Merchant")
+        coEvery { merchantNormalizer.normalize("Unknown Merchant", autoCreate = false) } returns merchantLookup("Unknown Merchant")
         coEvery { categorizationEngine.categorize("Unknown Merchant") } returns CategorizationResult(
             categoryId = null,
             categoryName = null,
@@ -85,7 +85,7 @@ class CategorizeExpenseUseCaseTest : AnalyticsEngineTestBase() {
 
     @Test
     fun `empty expense handled gracefully`() = runTest {
-        coEvery { merchantNormalizer.normalize("") } returns merchantLookup("Unknown")
+        coEvery { merchantNormalizer.normalize("", autoCreate = false) } returns merchantLookup("Unknown")
         coEvery { categorizationEngine.categorize("Unknown") } returns CategorizationResult(
             categoryId = null,
             categoryName = null,
@@ -99,6 +99,27 @@ class CategorizeExpenseUseCaseTest : AnalyticsEngineTestBase() {
         assertEquals("Unknown", result.merchantName)
         assertNull(result.categoryId)
         assertApproxEquals(0.0f, result.confidence, 0.0001f)
+    }
+
+    @Test
+    fun `FIX-104 F categorize normalizes read-only with autoCreate false and never with true`() = runTest {
+        coEvery { merchantNormalizer.normalize("Starbucks", autoCreate = false) } returns merchantLookup("Starbucks")
+        coEvery { categorizationEngine.categorize("Starbucks") } returns CategorizationResult(
+            categoryId = 3L,
+            categoryName = "Food & Dining",
+            confidence = 0.92,
+            matchType = com.yourname.expensetracker.domain.categorization.MatchType.EXACT,
+            explanation = "Exact match"
+        )
+
+        val result = useCase("Starbucks")
+
+        coVerify(exactly = 1) { merchantNormalizer.normalize("Starbucks", autoCreate = false) }
+        coVerify(exactly = 0) { merchantNormalizer.normalize(any(), autoCreate = true) }
+        assertEquals("Starbucks", result.merchantName)
+        assertEquals(3L, result.categoryId)
+        assertApproxEquals(0.92f, result.confidence, 0.0001f)
+        assertEquals("EXACT", result.matchType)
     }
 
     private fun merchantLookup(normalized: String): MerchantLookupResult {

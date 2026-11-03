@@ -96,10 +96,13 @@ class MerchantNormalizer @Inject constructor(
         // 3. Fuzzy matching - use result but don't auto-learn to avoid incorrect aliases
         val fuzzyResult = fuzzyMatch(cleaned, normalizedKey)
         if (fuzzyResult != null && fuzzyResult.confidence >= 0.95f) {
-            // Only auto-learn very high confidence fuzzy matches (95%+)
-            val linkResult = linkAliasToCanonical(rawName, fuzzyResult.canonical.id)
-            if (linkResult is AliasLinkResult.Conflict) {
-                Timber.w("C01: Alias link conflict for '$rawName' -> canon ${fuzzyResult.canonical.id}: ${linkResult.message}")
+            // Only auto-learn very high confidence fuzzy matches (95%+), and only when the caller
+            // allows writes (autoCreate = false must be side-effect free).
+            if (autoCreate) {
+                val linkResult = linkAliasToCanonical(rawName, fuzzyResult.canonical.id)
+                if (linkResult is AliasLinkResult.Conflict) {
+                    Timber.w("C01: Alias link conflict, canon=%d", fuzzyResult.canonical.id)
+                }
             }
             return@withContext fuzzyResult
         } else if (fuzzyResult != null) {

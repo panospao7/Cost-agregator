@@ -1136,9 +1136,14 @@ private val AMOUNT_TOKEN_REGEX = Regex(
             routingResult = routingResult.copy(decision = RoutingDecision.NEEDS_REVIEW)
         }
 
-        val correctedMerchant = merchantNormalizer.normalize(parsed.merchant).canonical.normalizedName
-
+        // Depends only on the routing decision above; computed first so AUTO_REJECT notifications
+        // never create or link merchant rows (normalize with autoCreate = false is read-only).
         val shouldPrepareAcceptedOrReviewData = routingResult.decision != RoutingDecision.AUTO_REJECT
+
+        val correctedMerchant = merchantNormalizer.normalize(
+            parsed.merchant,
+            autoCreate = shouldPrepareAcceptedOrReviewData
+        ).canonical.normalizedName
 
         val categoryId = if (shouldPrepareAcceptedOrReviewData) {
             val classification = hybridClassifier.classify(

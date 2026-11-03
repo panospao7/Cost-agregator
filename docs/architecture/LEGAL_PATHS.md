@@ -417,11 +417,14 @@ FORBIDDEN:
 ```
 CREATE rule:
   → RecurringRuleLifecycleCoordinator.createRule()
+  → Rejects a zero, negative, non-finite or above-cap amount and an invalid currency before any write
+    (InvalidRecurringAmountException, bounded reason code). Unrounded detected averages are accepted
   → Atomic: inserts rule + generates 12 months of occurrences + reminders + planned rows
   → DatabaseWriteBarrier check + durable lifecycle event
 
 UPDATE rule:
   → RecurringRuleLifecycleCoordinator.updateRule()
+  → Same amount and currency check, only when either one changes, so legacy rows stay editable
   → Atomic: updates rule + reconciles occurrences in single transaction
     (RP-04 A2 reconcileUpdateInCurrentTransaction; fixed-anchor semantics,
     golden no-double-count)
@@ -1424,12 +1427,11 @@ CATEGORIZE expense (auto):
     categorizeWithContext(merchant, amount, timestamp)
   → 6-layer cascade (Exact → Canonical → Greeklish → Fuzzy → Semantic → Context)
   → Returns CategorizationResult with MatchType + confidence
-  → NOT write-free: the cascade calls MerchantNormalizer.normalize(), which even with
-    autoCreate = false can INSERT or UPDATE a merchant_aliases row on a fuzzy match >= 0.95
-    (MerchantNormalizer.kt:98-103 → MerchantNormalizationRepository.linkAliasToCanonical →
-    DAO insertAlias / occurrenceCount update) and logs the raw name (Timber.w, :102). A
-    merchant_canonicals row is created only when autoCreate = true (createNewMerchant() /
-    repository.insertCanonical(), :111-114). Any caller
+  → Not a write-free contract: the cascade calls MerchantNormalizer.normalize(), which writes
+    only with autoCreate = true (merchant_aliases on a fuzzy match >= 0.95 via
+    MerchantNormalizationRepository.linkAliasToCanonical; merchant_canonicals on a miss via
+    createNewMerchant() / repository.insertCanonical()). With autoCreate = false it writes
+    nothing and a miss returns an unpersisted placeholder (id 0). Any caller
     that must be write-free (for example the quick-add Fill) must NOT call categorize*,
     CategorizationEngine.normalize(), MerchantCategoryRepository.getCategoryForMerchant()
     (it calls normalize()) or MerchantNormalizer.

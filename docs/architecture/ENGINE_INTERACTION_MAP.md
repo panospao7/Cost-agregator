@@ -13,7 +13,7 @@
 |--------|-------------------|------------|
 | **CurrencyConverter** | 5 (Dashboard), 6 (Budget/Forecast/Cashflow), 12 (Export), Groups, Investment, Tax, `RateEligibilityEvaluator` (user-present rate eligibility, via `convertOutcome`) | 🔴 CRITICAL |
 | **RateEligibilityEvaluator** (`domain/currency`) | Read-only rule owner for "does a stored rate qualify for a user-present save" (calendar date in an injected entry zone, age <= 7 days, older leg for via-EUR). Reads rates only through `CurrencyConverter.convertOutcome(TRANSACTION_DATE)`; no clock, network or logging. Follows the `CurrencyConverter` CRITICAL row: a converter or `ExchangeRateStore` lookup change affects its result. Siblings: `CurrencyAmountPolicy`, `CurrencySelectionPolicy`, `UserPresentRatePreview`. manual-entry-currency A1: no production consumer yet (A2 adds the coordinator consumer) | 🟡 HIGH |
-| **MerchantNormalizer** | 1 (Notification dedupe), 2 (Transaction dedupe), 3 (Receipt matching), 4 (Recurring matching), 11 (Email), Analytics. `normalize()` can WRITE even with `autoCreate = false` (fuzzy match >= 0.95 inserts/updates a merchant_aliases row via `linkAliasToCanonical`, and logs the raw name); a merchant_canonicals row (`createNewMerchant`) only with `autoCreate = true`, so write-free callers (quick-add Fill) must not reach it | 🔴 CRITICAL |
+| **MerchantNormalizer** | 1 (Notification dedupe), 2 (Transaction dedupe), 3 (Receipt matching), 4 (Recurring matching), 11 (Email), Analytics. `normalize()` writes only with `autoCreate = true` (the default): a fuzzy match >= 0.95 inserts/updates a merchant_aliases row via `linkAliasToCanonical`, and a miss creates a merchant_canonicals row (`createNewMerchant`). With `autoCreate = false` it writes nothing and a miss returns an unpersisted placeholder (id 0), so such callers must not use that id. Quick-add Fill still must not reach it | 🔴 CRITICAL |
 | **CategorizationEngine** | 1 (Auto-categorize), 3 (Receipt items), 11 (Email), Budget (category totals), Add-Expense quick-add Fill (read-only consumer of the pure `normalizedCanonicalNameForMerchant()` only) | 🟡 HIGH |
 | **ReceiptParser** | 3 (OCR), 11 (Email providers), 10 (Bank statement) | 🟡 HIGH |
 | **MoneyAggregate/Builder** | 5 (Dashboard), 6 (Budget), 12 (Export), Analytics | 🟡 HIGH |
@@ -127,13 +127,14 @@ MerchantNormalizer.normalize()
   ├── MerchantKeyBackfillWorker (backfill existing rows via MerchantKeyGenerator)
   └── MerchantInsightEngine (merchant grouping via merchantKey)
 
-NOTE: normalize() is NOT read-only, even with autoCreate = false. A fuzzy match with
-confidence >= 0.95 calls linkAliasToCanonical (MerchantNormalizer.kt:98-103 →
+NOTE: normalize() writes only with autoCreate = true (the default). A fuzzy match with
+confidence >= 0.95 then calls linkAliasToCanonical (MerchantNormalizer.kt →
 MerchantNormalizationRepository.linkAliasToCanonical → DAO insert of a merchant_aliases row or
-an occurrenceCount update on an existing one) and logs the raw name (Timber.w, :102, on a link
-conflict). A merchant_canonicals row (createNewMerchant → repository.insertCanonical) is created
-only when autoCreate = true (:111-114). The quick-add lookup (QuickAddLearnedCategoryLookup)
-therefore never calls it; see CategorizationEngine below.
+an occurrenceCount update on an existing one), and a miss creates a merchant_canonicals row
+(createNewMerchant → repository.insertCanonical). With autoCreate = false it writes nothing, and a
+miss returns an unpersisted placeholder with id 0. AI prompt building, CategorizeExpenseUseCase and
+AUTO_REJECT notifications use autoCreate = false. The quick-add lookup
+(QuickAddLearnedCategoryLookup) still never calls it; see CategorizationEngine below.
 ```
 
 ### CategorizationEngine changes affect:

@@ -62,7 +62,7 @@ class CategorizationAssistInputBuilderTest {
             Category(id = 1L, name = "Groceries", icon = "G", color = "#0000FF")
         )
         every { aiPolicy.shouldRedact(any(), AiCapability.CATEGORIZATION_FALLBACK) } returns false
-        coEvery { merchantNormalizer.normalize(any()) } returns MerchantLookupResult(
+        coEvery { merchantNormalizer.normalize(any(), autoCreate = false) } returns MerchantLookupResult(
             canonical = MerchantCanonical(id = 1L, normalizedName = "Lidl", searchKey = "lidl"),
             alias = null,
             confidence = 0.9f,
@@ -83,7 +83,7 @@ class CategorizationAssistInputBuilderTest {
     fun `build removes supporting text when redacted`() = runTest {
         coEvery { categoryRepository.getAll() } returns emptyList()
         every { aiPolicy.shouldRedact(any(), AiCapability.CATEGORIZATION_FALLBACK) } returns true
-        coEvery { merchantNormalizer.normalize(any()) } returns MerchantLookupResult(
+        coEvery { merchantNormalizer.normalize(any(), autoCreate = false) } returns MerchantLookupResult(
             canonical = MerchantCanonical(id = 1L, normalizedName = "Lidl", searchKey = "lidl"),
             alias = null,
             confidence = 0.9f,
@@ -122,7 +122,7 @@ class CategorizationAssistInputBuilderTest {
             Category(id = 1L, name = "Groceries", icon = "G", color = "#0000FF")
         )
         every { aiPolicy.shouldRedact(any(), AiCapability.CATEGORIZATION_FALLBACK) } returns false
-        coEvery { merchantNormalizer.normalize(any()) } returns MerchantLookupResult(
+        coEvery { merchantNormalizer.normalize(any(), autoCreate = false) } returns MerchantLookupResult(
             canonical = MerchantCanonical(id = 1L, normalizedName = "Lidl", searchKey = "lidl"),
             alias = null,
             confidence = 0.9f,
@@ -153,7 +153,7 @@ class CategorizationAssistInputBuilderTest {
     fun `build receipt input redacts merchant when redaction enabled`() = runTest {
         coEvery { categoryRepository.getAll() } returns emptyList()
         every { aiPolicy.shouldRedact(any(), AiCapability.CATEGORIZATION_FALLBACK) } returns true
-        coEvery { merchantNormalizer.normalize(any()) } returns MerchantLookupResult(
+        coEvery { merchantNormalizer.normalize(any(), autoCreate = false) } returns MerchantLookupResult(
             canonical = MerchantCanonical(id = 1L, normalizedName = "Lidl", searchKey = "lidl"),
             alias = null,
             confidence = 0.9f,
@@ -179,7 +179,7 @@ class CategorizationAssistInputBuilderTest {
     fun `build receipt input omits invalid non-positive amount`() = runTest {
         coEvery { categoryRepository.getAll() } returns emptyList()
         every { aiPolicy.shouldRedact(any(), AiCapability.CATEGORIZATION_FALLBACK) } returns false
-        coEvery { merchantNormalizer.normalize(any()) } returns MerchantLookupResult(
+        coEvery { merchantNormalizer.normalize(any(), autoCreate = false) } returns MerchantLookupResult(
             canonical = MerchantCanonical(id = 1L, normalizedName = "Lidl", searchKey = "lidl"),
             alias = null,
             confidence = 0.9f,
@@ -206,7 +206,7 @@ class CategorizationAssistInputBuilderTest {
             Category(id = 1L, name = "Groceries", icon = "G", color = "#0000FF")
         )
         every { aiPolicy.shouldRedact(any(), AiCapability.CATEGORIZATION_FALLBACK) } returns false
-        coEvery { merchantNormalizer.normalize(any()) } returns MerchantLookupResult(
+        coEvery { merchantNormalizer.normalize(any(), autoCreate = false) } returns MerchantLookupResult(
             canonical = MerchantCanonical(id = 1L, normalizedName = "Lidl", searchKey = "lidl"),
             alias = null,
             confidence = 0.9f,
@@ -236,7 +236,7 @@ class CategorizationAssistInputBuilderTest {
         coEvery { categoryRepository.getAll() } returns listOf(
             Category(id = 1L, name = "Private Groceries", icon = "G", color = "#0000FF")
         )
-        coEvery { merchantNormalizer.normalize(any()) } returns MerchantLookupResult(
+        coEvery { merchantNormalizer.normalize(any(), autoCreate = false) } returns MerchantLookupResult(
             canonical = MerchantCanonical(id = 1L, normalizedName = "Lidl", searchKey = "lidl"),
             alias = null,
             confidence = 0.9f,
@@ -252,6 +252,54 @@ class CategorizationAssistInputBuilderTest {
         assertNull(result.deterministicExplanation)
         assertTrue(result.candidateCategories.all { it.cloudLabel.startsWith("category_") })
         assertTrue(result.candidateCategories.none { it.cloudLabel.contains("Private Groceries") })
+    }
+
+    @Test
+    fun `FIX-104 F pending review build normalizes merchant read-only with autoCreate false`() = runTest {
+        coEvery { categoryRepository.getAll() } returns emptyList()
+        every { aiPolicy.shouldRedact(any(), AiCapability.CATEGORIZATION_FALLBACK) } returns false
+        coEvery { merchantNormalizer.normalize("Lidl", autoCreate = false) } returns MerchantLookupResult(
+            canonical = MerchantCanonical(id = 1L, normalizedName = "Lidl", searchKey = "lidl"),
+            alias = null,
+            confidence = 0.9f,
+            matchType = MatchType.EXACT_MATCH
+        )
+        coEvery { expenseRepository.getRecentTransactionsForMerchant("lidl", 5) } returns emptyList()
+
+        val result = builder.build(makeItem(), AiSettings())
+
+        io.mockk.coVerify(exactly = 1) { merchantNormalizer.normalize("Lidl", autoCreate = false) }
+        io.mockk.coVerify(exactly = 0) { merchantNormalizer.normalize(any(), autoCreate = true) }
+        io.mockk.coVerify(exactly = 1) { expenseRepository.getRecentTransactionsForMerchant("lidl", 5) }
+        assertEquals("Lidl", result.merchant)
+    }
+
+    @Test
+    fun `FIX-104 F receipt build normalizes merchant read-only with autoCreate false`() = runTest {
+        coEvery { categoryRepository.getAll() } returns emptyList()
+        every { aiPolicy.shouldRedact(any(), AiCapability.CATEGORIZATION_FALLBACK) } returns false
+        coEvery { merchantNormalizer.normalize("Lidl", autoCreate = false) } returns MerchantLookupResult(
+            canonical = MerchantCanonical(id = 1L, normalizedName = "Lidl", searchKey = "lidl"),
+            alias = null,
+            confidence = 0.9f,
+            matchType = MatchType.EXACT_MATCH
+        )
+        coEvery { expenseRepository.getRecentTransactionsForMerchant("lidl", 5) } returns emptyList()
+
+        val result = builder.build(
+            receipt = makeItem().receipt!!,
+            draftMerchant = "Lidl",
+            draftAmount = 22.5,
+            draftDate = 1234L,
+            currentCategoryId = null,
+            settings = AiSettings()
+        )
+
+        io.mockk.coVerify(exactly = 1) { merchantNormalizer.normalize("Lidl", autoCreate = false) }
+        io.mockk.coVerify(exactly = 0) { merchantNormalizer.normalize(any(), autoCreate = true) }
+        io.mockk.coVerify(exactly = 1) { expenseRepository.getRecentTransactionsForMerchant("lidl", 5) }
+        assertEquals("Lidl", result.merchant)
+        assertEquals(22.5, result.amount ?: 0.0, 0.0)
     }
 
     private fun makeItem(): PendingReviewWithReceipt {
