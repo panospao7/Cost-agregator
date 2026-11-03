@@ -874,6 +874,45 @@ class DatabaseBackupRepositoryImplTest {
     }
 
     @Test
+    fun `export sweeps only stale temp_export regular files with real files`() = runTest(testDispatcher) {
+        if (!BuildConfig.DEBUG) {
+            assertRawExportDeniedInRelease()
+            return@runTest
+        }
+        createFullSchemaDatabase(file = dbFile)
+        val exportDir = File(tempDir, "exports").apply { mkdirs() }
+        val oneHourMs = 60L * 60L * 1000L
+        // Whole-second timestamps; "now" is the repository's injected FakeTimeProvider(fixedTime).
+        fun seed(dir: File, name: String, lastModifiedMs: Long): File {
+            val f = File(dir, name)
+            f.writeText("x")
+            assertTrue(f.setLastModified(lastModifiedMs))
+            return f
+        }
+        val stale = seed(exportDir, "temp_export_x.db", fixedTime - 2 * oneHourMs)
+        val atBoundary = seed(exportDir, "temp_export_boundary.db", fixedTime - oneHourMs)
+        val justUnder = seed(exportDir, "temp_export_under.db", fixedTime - oneHourMs + 1_000L)
+        val fresh = seed(exportDir, "temp_export_fresh.db", fixedTime - 60_000L)
+        val oldBackupDb = seed(exportDir, "expense_tracker_backup_1.db", fixedTime - 2 * oneHourMs)
+        val oldBackupEnc = seed(exportDir, "expense_tracker_backup_1.enc", fixedTime - 2 * oneHourMs)
+        val tempNamedDir = File(exportDir, "temp_export_d").apply { mkdirs() }
+        val innerFile = seed(tempNamedDir, "temp_export_inner.db", fixedTime - 2 * oneHourMs)
+        tempNamedDir.setLastModified(fixedTime - 2 * oneHourMs)
+
+        val result = repository.exportDatabase()
+
+        assertTrue("sweep must not break the export: ${result.exceptionOrNull()}", result.isSuccess)
+        assertFalse("stale temp export is deleted", stale.exists())
+        assertFalse("exactly one hour old is deleted (>= boundary)", atBoundary.exists())
+        assertTrue("one second under the boundary is kept", justUnder.exists())
+        assertTrue("fresh temp export is kept", fresh.exists())
+        assertTrue("old backup .db never matches", oldBackupDb.exists())
+        assertTrue("old backup .enc never matches", oldBackupEnc.exists())
+        assertTrue("directory named with the prefix is kept", tempNamedDir.isDirectory)
+        assertTrue("no recursion into a directory", innerFile.exists())
+    }
+
+    @Test
     fun `restore from backup works`() = runTest(testDispatcher) {
         if (!BuildConfig.DEBUG) {
             assertLegacyImportDeniedInRelease()

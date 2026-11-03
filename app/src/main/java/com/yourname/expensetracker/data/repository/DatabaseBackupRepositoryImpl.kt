@@ -168,10 +168,39 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         this.liveImportVerifier = liveImportVerifier
     }
     
+    /**
+     * Best-effort removal of plaintext `temp_export_*` copies orphaned by a process kill during
+     * the encrypted export flow. Deletes only REGULAR files directly inside [exportDir] (no
+     * recursion) whose names start with [TEMP_EXPORT_PREFIX] and that are at least
+     * [TEMP_EXPORT_SWEEP_MIN_AGE_MS] old. Backups (`expense_tracker_backup_*`) never match.
+     * Failures are skipped; no paths or exception text are logged.
+     */
+    private fun sweepStaleTempExportFiles(exportDir: File, nowMs: Long) {
+        if (nowMs < 0) return
+        val entries = try {
+            exportDir.listFiles()
+        } catch (_: SecurityException) {
+            null
+        } ?: return
+        for (file in entries) {
+            try {
+                if (!file.isFile) continue
+                if (!file.name.startsWith(TEMP_EXPORT_PREFIX)) continue
+                if (nowMs - file.lastModified() >= TEMP_EXPORT_SWEEP_MIN_AGE_MS) {
+                    file.delete()
+                }
+            } catch (_: SecurityException) {
+                // best effort: skip this entry
+            }
+        }
+    }
+
     companion object {
         private const val BACKUP_PREFIX = "expense_tracker_backup_"
         private const val DATE_FORMAT = "yyyy-MM-dd_HH-mm-ss"
         private const val EXPORT_SUBDIR = "exports"
+        private const val TEMP_EXPORT_PREFIX = "temp_export_"
+        private const val TEMP_EXPORT_SWEEP_MIN_AGE_MS = 60L * 60L * 1000L
 
         /** RP-03A (P7-003): app-private home for legacy/test-delegate .costbackup files. */
         private const val COSTBACKUP_SUBDIR = "costbackups"
@@ -512,11 +541,12 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
 
             // Save to app-private storage by default
             val exportDir = File(context.filesDir, EXPORT_SUBDIR).apply { mkdirs() }
+            sweepStaleTempExportFiles(exportDir, timeProvider.now())
 
             if (encryptionEnabled) {
                 // --- Encrypted export flow ---
                 // 1. Copy DB to a temp file and sanitise
-                val tempCopy = File(exportDir, "temp_export_${UUID.randomUUID()}.db")
+                val tempCopy = File(exportDir, "${TEMP_EXPORT_PREFIX}${UUID.randomUUID()}.db")
                 try {
                     dbFile.inputStream().use { input ->
                         tempCopy.outputStream().use { output ->

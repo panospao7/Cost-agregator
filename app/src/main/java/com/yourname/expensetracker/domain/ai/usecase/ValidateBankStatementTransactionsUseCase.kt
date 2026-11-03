@@ -19,6 +19,12 @@ import java.time.format.DateTimeFormatter
 import javax.inject.Inject
 import javax.inject.Singleton
 
+/** Redaction marker prefix the cloud policy writes; may be cut mid-marker by the merchant cap. */
+private const val REDACTION_MARKER = "[REDACTED"
+
+/** Must equal DefaultCloudPayloadPolicy.MAX_BANK_CANDIDATE_MERCHANT_CHARS (the data-layer cap). */
+private const val SENT_MERCHANT_MAX_CHARS = 80
+
 /**
  * Represents a validated/corrected transaction produced by AI validation
  * of bank statement OCR output.
@@ -618,10 +624,11 @@ class ValidateBankStatementTransactionsUseCase @Inject constructor(
                     continue
                 }
 
-                // Candidates reach the model redacted; an echoed redaction marker is not a
-                // real merchant correction, so keep the parser merchant (not AI-corrected).
+                // Candidates reach the model redacted and capped; an echo of what was sent
+                // (redaction marker, marker cut by the cap, or the capped clean merchant) is not
+                // a real merchant correction, so keep the parser merchant (not AI-corrected).
                 val merchant = obj.optString("merchant", "").trim()
-                    .let { if (it.contains("[REDACTED", ignoreCase = true)) candidate.merchant else it }
+                    .let { if (echoesSentMerchant(it, candidate.merchant)) candidate.merchant else it }
                 val amount = obj.optDouble("amount", 0.0)
                 val dateStr = obj.optString("date", "").trim()
                 val confidence = obj.optDouble("confidence", 0.0).toFloat()
@@ -677,6 +684,26 @@ class ValidateBankStatementTransactionsUseCase @Inject constructor(
             Timber.w(e, "parseAiResponse: failed to parse AI JSON response")
             AiContractParseResult.InvalidResponse("MALFORMED_JSON")
         }
+    }
+
+    /**
+     * True when [aiMerchant] is an echo of the merchant the model was actually sent for a candidate
+     * (the cloud policy redacts, then caps it at [SENT_MERCHANT_MAX_CHARS] and swaps quotes and
+     * backslashes), not a rename: it contains a redaction marker, equals the capped form of
+     * [candidateMerchant], or sits at the cap boundary ending in a prefix of the marker.
+     * Domain code cannot call the data-layer (suspend) policy, so this mirrors only its cap rule.
+     */
+    private fun echoesSentMerchant(aiMerchant: String, candidateMerchant: String): Boolean {
+        if (aiMerchant.contains(REDACTION_MARKER, ignoreCase = true)) return true
+        val sentForm = candidateMerchant.trim().take(SENT_MERCHANT_MAX_CHARS)
+            .replace('"', '\'').replace('\\', '/').trim()
+        if (aiMerchant.isNotEmpty() && aiMerchant == sentForm) return true
+        if (aiMerchant.length == SENT_MERCHANT_MAX_CHARS) {
+            for (len in 1 until REDACTION_MARKER.length) {
+                if (aiMerchant.endsWith(REDACTION_MARKER.substring(0, len), ignoreCase = true)) return true
+            }
+        }
+        return false
     }
 
     /** Identity-proven rejection echo: parser fields remain authoritative. */

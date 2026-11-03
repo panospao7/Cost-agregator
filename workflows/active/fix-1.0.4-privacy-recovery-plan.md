@@ -114,4 +114,16 @@ With the lock on or unreadable and no working device prompt, the export does not
 - It also reaches a user who never set a lock if the settings store is corrupted, because the lock then reads as unreadable.
 
 ## D4 router effect (reviewer-strict, 2026-11-03)
-Default users (`STORE_RAW`) are unchanged. In any other storage mode the classifier's stats freeze, and a new user stays parser-only. Because callers train positives only, the old model scored near 1 and lifted parser confidence, so routing changes for those users: parser 0.40 at ML weight 0.2 used to reach 0.52 (review) and now auto-rejects; parser 0.70 at weight 0.6 used to reach 0.88 (auto-accept) and now goes to review. Amounts are untouched. This is accepted as part of D4.
+Default users (`STORE_RAW`) are unchanged. In any other storage mode the classifier's stats freeze, and a new user stays parser-only. Because callers train positives only, the old model scored near 1 and lifted parser confidence, so routing changes for those users: parser 0.40 at ML weight 0.2 used to reach 0.52 (review) and now auto-rejects; parser 0.70 at weight 0.6 used to reach 0.88 (auto-accept) and now goes to review. Amounts are untouched. This is accepted as part of D4. These "now" figures hold only for users whose model never became ready: `predict` and `isReady` are not gated, so a frozen model with 200+ samples still lifts parser 0.70 to 0.88, which is the unpurged-model residual already deferred.
+
+## Follow-ups after reviewer-strict Batch B round 2 (ACCEPT-WITH-MINORS on 9ee0048d)
+Not fixed before merge, so the running gates stay valid:
+- `ValidateBankStatementTransactionsUseCase.kt:624`: the marker check misses a marker cut by the 80-character limit (`[` to `[REDACTE`). Rare, no PII, debug-gated.
+- Clean merchants over 80 characters, when echoed, are stored truncated and marked AI_CORRECTED (debug-gated).
+- `TransactionClassifierTest.kt:675-678`: the restart `getAll()` check cannot fail because the mode stays DO_NOT_STORE; set STORE_RAW before `second.initialize()`.
+- `TransactionClassifierTest.kt:543,688`: names and comments omit STORE_METADATA_ONLY.
+
+## Follow-up lane feature/fix104-followups (from 9ee0048d, 2026-11-03)
+- F1 merchant echo, F2 stale `temp_export_*` sweep (debug `exportDatabase` only), F3 SMS package pin: implemented, tests in progress.
+- F4 not done: `isAmountAmbiguous` is not stored on `PendingReview`, so `ReviewScreen.kt:813` cannot see it without a new column, a schema bump and a migration. Stays open; ambiguous rows at 0.85 still show green.
+- F1 known gap: the use case mirrors only the policy's cap, so a clean merchant the redactor changes (for example collapsed whitespace) is not an exact match and may be marked corrected.

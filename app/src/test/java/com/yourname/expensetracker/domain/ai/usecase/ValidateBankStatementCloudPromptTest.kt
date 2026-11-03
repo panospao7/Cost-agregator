@@ -67,6 +67,16 @@ class ValidateBankStatementCloudPromptTest {
 
     private val currencyNormalizer = CurrencyNormalizer()
 
+    /** 100 chars, no digits, char 80 is a letter (not trimmed away by the 80-char cap). */
+    private val LONG_MERCHANT = "Merchant ".repeat(12).take(100)
+
+    /** 9 + 63 + 8 = 80 chars of capped form, then a tail; contains a quote pair. */
+    private val QUOTED_MERCHANT = "Bars \"X\" " + "Merchant ".repeat(7) + "Merchant Extra tail text"
+    private val QUOTED_MERCHANT_SENT = "Bars 'X' " + "Merchant ".repeat(7) + "Merchant"
+
+    /** Every proper prefix of the redaction marker "[REDACTED", from "[" to "[REDACTE". */
+    private val MARKER_PREFIXES = listOf("[", "[R", "[RE", "[RED", "[REDA", "[REDAC", "[REDACT", "[REDACTE")
+
     // ───────────────────────── on-device prompt shape ─────────────────────────
 
     @Test
@@ -412,7 +422,11 @@ class ValidateBankStatementCloudPromptTest {
      * candidate 0 ("Shop A", 10.5 EUR, 2024-03-09 in the default zone). The response date equals
      * the candidate date, so only the merchant and amount decide AI_VALIDATED vs AI_CORRECTED.
      */
-    private suspend fun validateOneAcceptedCandidate(aiMerchant: String, aiAmount: Double): CleanTransaction {
+    private suspend fun validateOneAcceptedCandidate(
+        aiMerchant: String,
+        aiAmount: Double,
+        candidateMerchant: String = "Shop A"
+    ): CleanTransaction {
         val candidateDate = java.time.LocalDate.of(2024, 3, 9)
             .atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
         val response = JSONArray().put(
@@ -429,11 +443,142 @@ class ValidateBankStatementCloudPromptTest {
         )
 
         val outcome = useCase.validateTransactions(
-            "ocr", listOf(candidate(0, "Shop A", 10.5, "EUR", candidateDate)), "EUR"
+            "ocr", listOf(candidate(0, candidateMerchant, 10.5, "EUR", candidateDate)), "EUR"
         )
 
         assertTrue("expected Validated but was $outcome", outcome is StatementValidationOutcome.Validated)
         return outcome.transactions.single()
+    }
+
+    @Test
+    fun FIX104_hundredCharMerchantEchoedAsItsFirst80CharsIsValidatedAndTheFullMerchantKept() = runTest {
+        assertEquals(100, LONG_MERCHANT.length)
+
+        val tx = validateOneAcceptedCandidate(
+            aiMerchant = LONG_MERCHANT.take(80), aiAmount = 10.5, candidateMerchant = LONG_MERCHANT
+        )
+
+        assertEquals(LONG_MERCHANT, tx.merchant)
+        assertEquals(StatementValidationContracts.SOURCE_AI_VALIDATED, tx.source)
+    }
+
+    @Test
+    fun FIX104_hundredCharMerchantEchoedAt79CharsIsARenameNotAnEcho() = runTest {
+        val tx = validateOneAcceptedCandidate(
+            aiMerchant = LONG_MERCHANT.take(79), aiAmount = 10.5, candidateMerchant = LONG_MERCHANT
+        )
+
+        assertEquals(LONG_MERCHANT.take(79), tx.merchant)
+        assertEquals(StatementValidationContracts.SOURCE_AI_CORRECTED, tx.source)
+    }
+
+    @Test
+    fun FIX104_echoWithOtherFieldsChangedKeepsTheMerchantButStillAppliesThemAsCorrected() = runTest {
+        val tx = validateOneAcceptedCandidate(
+            aiMerchant = LONG_MERCHANT.take(80), aiAmount = 12.75, candidateMerchant = LONG_MERCHANT
+        )
+
+        assertEquals(LONG_MERCHANT, tx.merchant)
+        assertEquals(12.75, tx.amount, 0.0)
+        assertEquals(StatementValidationContracts.SOURCE_AI_CORRECTED, tx.source)
+        assertEquals(0.95f, tx.confidence, 0.0001f)
+    }
+
+    @Test
+    fun FIX104_lengthEightyEchoEndingInAnyMarkerPrefixKeepsTheParserMerchantIncludingLowercase() = runTest {
+        MARKER_PREFIXES.forEach { prefix ->
+            listOf(prefix, prefix.lowercase()).forEach { ending ->
+                val echoed = "Z".repeat(80 - ending.length) + ending
+                assertEquals(80, echoed.length)
+
+                val tx = validateOneAcceptedCandidate(aiMerchant = echoed, aiAmount = 10.5)
+
+                assertEquals("'$ending' at length 80 is a cut marker", "Shop A", tx.merchant)
+                assertEquals(StatementValidationContracts.SOURCE_AI_VALIDATED, tx.source)
+            }
+        }
+    }
+
+    @Test
+    fun FIX104_markerPrefixEndingBelowTheCapIsARealRenameAndIsApplied() = runTest {
+        MARKER_PREFIXES.forEach { prefix ->
+            val renamed = "Z".repeat(79 - prefix.length) + prefix
+            assertEquals(79, renamed.length)
+
+            val tx = validateOneAcceptedCandidate(aiMerchant = renamed, aiAmount = 10.5)
+
+            assertEquals("'$prefix' at length 79 is not a cut marker", renamed, tx.merchant)
+            assertEquals(StatementValidationContracts.SOURCE_AI_CORRECTED, tx.source)
+        }
+    }
+
+    @Test
+    fun FIX104_shortRealRenameEndingInABracketIsAppliedAndNotTreatedAsAMarker() = runTest {
+        listOf("Shop A [", "Shop A [RE", "[").forEach { renamed ->
+            val tx = validateOneAcceptedCandidate(aiMerchant = renamed, aiAmount = 10.5)
+
+            assertEquals(renamed, tx.merchant)
+            assertEquals(StatementValidationContracts.SOURCE_AI_CORRECTED, tx.source)
+        }
+    }
+
+    @Test
+    fun FIX104_realRenameIsAppliedAsAnAiCorrection() = runTest {
+        val tx = validateOneAcceptedCandidate(aiMerchant = "Corner Bakery Ltd", aiAmount = 10.5)
+
+        assertEquals("Corner Bakery Ltd", tx.merchant)
+        assertEquals(StatementValidationContracts.SOURCE_AI_CORRECTED, tx.source)
+    }
+
+    @Test
+    fun FIX104_quoteAndBackslashSwappedEchoKeepsTheParserMerchantAndIsNotACorrection() = runTest {
+        listOf(
+            "Joe \"Big\" Bar" to "Joe 'Big' Bar",
+            "AC\\DC Shop" to "AC/DC Shop",
+            "A \"B\\C\" D" to "A 'B/C' D",
+            QUOTED_MERCHANT to QUOTED_MERCHANT_SENT
+        ).forEach { (parserMerchant, echoed) ->
+            val tx = validateOneAcceptedCandidate(
+                aiMerchant = echoed, aiAmount = 10.5, candidateMerchant = parserMerchant
+            )
+
+            assertEquals("echo '$echoed' must keep the parser merchant", parserMerchant, tx.merchant)
+            assertEquals(StatementValidationContracts.SOURCE_AI_VALIDATED, tx.source)
+        }
+    }
+
+    @Test
+    fun FIX104_quoteMerchantRenamedBeyondTheSwapIsStillACorrection() = runTest {
+        val tx = validateOneAcceptedCandidate(
+            aiMerchant = "Joe 'Big' Bar Ltd", aiAmount = 10.5, candidateMerchant = "Joe \"Big\" Bar"
+        )
+
+        assertEquals("Joe 'Big' Bar Ltd", tx.merchant)
+        assertEquals(StatementValidationContracts.SOURCE_AI_CORRECTED, tx.source)
+    }
+
+    @Test
+    fun FIX104_unquotedParserMerchantRenamedWithAnApostropheIsStillACorrection() = runTest {
+        val tx = validateOneAcceptedCandidate(
+            aiMerchant = "Joe's Bar", aiAmount = 10.5, candidateMerchant = "Joes Bar"
+        )
+
+        assertEquals("Joe's Bar", tx.merchant)
+        assertEquals(StatementValidationContracts.SOURCE_AI_CORRECTED, tx.source)
+    }
+
+    @Test
+    fun FIX104_theMerchantActuallySentThroughTheRealPolicyIsTheEightyCharCappedAndQuoteSwappedForm() = runTest {
+        val wiring = Wiring(realPolicy(), candidateCount = 2)
+
+        wiring.useCase.validateTransactions(
+            "ocr", listOf(candidate(0, LONG_MERCHANT), candidate(1, QUOTED_MERCHANT)), "EUR"
+        )
+
+        val sentMerchants = BankStatementPromptFixture.Sections(wiring.sentPromptText())
+            .candidateLines.map { JSONObject(it).getString("merchant") }
+        assertEquals(LONG_MERCHANT.take(80), sentMerchants[0])
+        assertEquals(QUOTED_MERCHANT_SENT, sentMerchants[1])
     }
 
     @Test

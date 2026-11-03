@@ -540,7 +540,7 @@ class TransactionClassifierTest {
     }
 
     @Test
-    fun `D4 DO_NOT_STORE and STORE_REDACTED skip training - state, predictions and model file unchanged`() = runBlocking<Unit> {
+    fun `D4 DO_NOT_STORE, STORE_REDACTED and STORE_METADATA_ONLY skip training - state, predictions and model file unchanged`() = runBlocking<Unit> {
         for (mode in RawStorageMode.values().filter { it != RawStorageMode.STORE_RAW }) {
             val dir = createTempDir("classifier_d4_skip")
             val privacy = privacyRepoFor(mode)
@@ -672,7 +672,9 @@ class TransactionClassifierTest {
         assertEquals(8, json.getInt("totalNegative"))
         assertFalse(raw.contains("skippedcase"))
 
-        // Restart: getCount() (30) is not > lastTrainingCount (30), so no retrain is triggered.
+        // Restart under STORE_RAW (so the mode gate cannot be what suppresses the retrain):
+        // getCount() (30) is not > lastTrainingCount (30), so no retrain is triggered.
+        mode = RawStorageMode.STORE_RAW
         val (second, secondRepo) = classifierFor(all, dir, crypto, privacy)
         second.initialize()
         coVerify(exactly = 0) { secondRepo.getAll() }
@@ -685,7 +687,8 @@ class TransactionClassifierTest {
         // retrainFromCorrections() and initialize() share retrainFromCorrectionsInternal(), which
         // now checks the raw storage mode first. initialize() is the deterministic trigger (the
         // public retrainFromCorrections() is a 2-second debounce). Stored correction text must not
-        // keep training the model under DO_NOT_STORE or STORE_REDACTED.
+        // keep training the model under any mode other than STORE_RAW (DO_NOT_STORE,
+        // STORE_REDACTED or STORE_METADATA_ONLY).
         for (mode in RawStorageMode.values().filter { it != RawStorageMode.STORE_RAW }) {
             val unredacted = (0 until 22).map { unredactedCorrection(it, approved = it < 14) }
             val (subject, repo) = classifierFor(unredacted, privacy = privacyRepoFor(mode))
