@@ -716,15 +716,18 @@ class ForecastInputAssembler @Inject constructor(
      * pattern's id (detected patterns have a null id and never represent a row). The pattern
      * places the bill when its rule has an occurrence row this month (occurrence path, any
      * status) or, with none, when its nextExpectedDate is in the row's month (legacy path);
-     * a pattern placing nothing this month keeps the row. Read failures count the bill.
+     * a pattern placing nothing this month keeps the row. Read failures count the bill and
+     * set [PlacedRowsFilterResult.readUnavailable] (DBG-06 pattern: the caller flags the
+     * forecast partial), because the bill may then show twice.
      */
     private suspend fun List<PlannedExpense>.withoutRowsPlacedByPatterns(
         patterns: List<RecurringPattern>
-    ): List<PlannedExpense> {
-        if (none { it.sourceOccurrenceKey != null }) return this
+    ): PlacedRowsFilterResult {
+        if (none { it.sourceOccurrenceKey != null }) return PlacedRowsFilterResult(this, false)
         val patternsByRuleId = patterns.mapNotNull { pattern -> pattern.id?.let { it to pattern } }.toMap()
-        if (patternsByRuleId.isEmpty()) return this
+        if (patternsByRuleId.isEmpty()) return PlacedRowsFilterResult(this, false)
         val now = timeProvider.now()
+        var readUnavailable = false
         val ruleIdsWithOccurrenceRows: Set<Long> = try {
             databaseReadBarrier.checkReadAllowed("ForecastInputAssembler.assembleNormalized.readOccurrences")
             recurringOccurrenceDao
@@ -736,9 +739,12 @@ class ForecastInputAssembler @Inject constructor(
                 .mapTo(mutableSetOf()) { it.sourceId }
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
+            // m4 / DBG-06: restore barrier block (DatabaseAccessBlockedException) or any other
+            // read failure. No exception text is kept; the caller emits a bounded reason code.
+            readUnavailable = true
             emptySet()
         }
-        return filterNot { planned ->
+        val rows = filterNot { planned ->
             val ruleId = planned.sourceRecurringRuleId
             val pattern = ruleId?.let { patternsByRuleId[it] }
             planned.sourceOccurrenceKey != null && ruleId != null && pattern != null &&
@@ -746,7 +752,14 @@ class ForecastInputAssembler @Inject constructor(
                     TimePeriodUtils.getStartOfMonth(pattern.nextExpectedDate) ==
                     TimePeriodUtils.getStartOfMonth(planned.date))
         }
+        return PlacedRowsFilterResult(rows, readUnavailable)
     }
+
+    /** m4: rows kept by [withoutRowsPlacedByPatterns] plus whether its occurrence read failed. */
+    private class PlacedRowsFilterResult(
+        val rows: List<PlannedExpense>,
+        val readUnavailable: Boolean
+    )
 
     /**
      * CURR-587-06: Assemble forecast input from pre-normalized data.
@@ -772,9 +785,10 @@ class ForecastInputAssembler @Inject constructor(
         // (non-null sourceOccurrenceKey, written only by RecurringPlanProjectionService) is
         // dropped only when a pattern in THIS input places the same bill; otherwise it is an
         // ordinary planned row and counts once (see withoutRowsPlacedByPatterns).
-        val openPlannedExpenses = input.plannedExpenses
+        val placedRowsFilter = input.plannedExpenses
             .filter { it.status == "PLANNED" }
             .withoutRowsPlacedByPatterns(input.recurringPatterns)
+        val openPlannedExpenses = placedRowsFilter.rows
         val byCurrency = openPlannedExpenses.groupBy { it.currency.uppercase() }
         for ((currency, expensesInCurrency) in byCurrency) {
             if (currency.equals(resolvedHomeCurrency, ignoreCase = true)) {
@@ -824,9 +838,14 @@ class ForecastInputAssembler @Inject constructor(
 
         val totalPlannedExcluded = plannedConversionFailures
         val mergedDataQuality = input.dataQuality.copy(
-            isPartial = input.dataQuality.isPartial || totalPlannedExcluded > 0,
+            isPartial = input.dataQuality.isPartial || totalPlannedExcluded > 0 ||
+                placedRowsFilter.readUnavailable,
             excludedPlannedCount = input.dataQuality.excludedPlannedCount + totalPlannedExcluded,
-            conversionWarnings = input.dataQuality.conversionWarnings + plannedWarnings
+            conversionWarnings = input.dataQuality.conversionWarnings + plannedWarnings + (
+                if (placedRowsFilter.readUnavailable) {
+                    listOf("RECURRING_OCCURRENCES_UNAVAILABLE: occurrence read unavailable — recurring bills may be counted twice")
+                } else emptyList()
+            )
         )
 
         return ForecastInput(
