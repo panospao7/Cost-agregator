@@ -68,8 +68,11 @@ class NotificationIntakeRecoveryScheduler @Inject constructor(
                 .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
                 .build()
 
+            // P-01-1: same name function as the coordinator. Legacy work named `<id>`
+            // is not cancelled; a second worker for the row is safe because the
+            // worker's atomic claim makes the loser a no-op.
             workManager.enqueueUniqueWork(
-                "notification-intake-${row.id}",
+                NotificationIntakeWorkNames.uniqueWorkName(row.id),
                 ExistingWorkPolicy.KEEP,
                 request
             )
