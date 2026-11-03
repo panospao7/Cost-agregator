@@ -921,6 +921,8 @@ class ReceiptScanViewModel @Inject constructor(
      */
     fun onReviewOpened() {
         if (_state.value.step != ScanStep.REVIEW) return
+        // A read error during REVIEW ends the home collection; reopening review retries it (no duplicate).
+        ensureHomeCollection()
         if (reviewZone == null) {
             reviewZone = ZoneId.systemDefault()
             // MEC INV-3: the captured zone may differ from the one used so far.
@@ -1096,6 +1098,10 @@ class ReceiptScanViewModel @Inject constructor(
             (receiptSuggestion?.total?.value?.let { it > 0 } == true)
 
         return when {
+            currentState.homeCurrency == null -> {
+                // Same text as R.string.receipt_error_save_currency (this VM uses literal messages).
+                "Currency is not loaded yet. Please wait."
+            }
             currentState.currencyUnverified -> {
                 "Quick save is off until you confirm the receipt currency."
             }
@@ -2073,6 +2079,8 @@ class ReceiptScanViewModel @Inject constructor(
         // S7-009/S7-021: Currency must be loaded
         val currency = currentState.editCurrency
         if (currency.isNullOrBlank()) {
+            // The Save tap retries a home read that ended (READ_ERROR) while the user stayed on review.
+            ensureHomeCollection()
             _state.update { it.copy(errorMessage = "Currency is not loaded yet. Please wait.") }
             return null
         }
