@@ -177,7 +177,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
      */
     private fun sweepStaleTempExportFiles(exportDir: File, nowMs: Long) {
         if (nowMs < 0) return
-        val entries = try {
+        val entries: Array<File> = try {
             exportDir.listFiles()
         } catch (_: SecurityException) {
             null
