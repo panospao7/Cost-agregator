@@ -64,37 +64,6 @@ class AppLockSettingsOperationsReviewSaveNoCredentialPinTest {
         assertTrue(rig.uncaught.isEmpty())
     }
 
-    /**
-     * Known state (reviewer-strict REJECT on 013b78be). The default fake stores the record as given, which hides the
-     * real store's fallback: the real repository ignores the record's lock mode and writes an ABSENT stored mode token as
-     * LockMode.DEFAULT (DEVICE_AUTH), pinned against a real DataStore in AppLockSettingsRepositoryImplTest
-     * (reviewSave_ignores_the_lock_mode_of_the_record_and_writes_DEVICE_AUTH_when_no_valid_token_is_stored). This test
-     * makes the fake match that behaviour through its existing result hook and asserts what the store holds. The harness
-     * cannot use the real repository (it needs a DataStore); the real-store chain to the export gate is in
-     * AppLockSettingsRepositoryImplTest.
-     */
-    @Test
-    fun `J-15-1 known state a lock-on review save leaves DEVICE_AUTH in the store for an absent mode token though the record says APP_PIN`() {
-        val rig = rig()
-        val repository = rig.h.repository
-        repository.reviewSaveResult = { record ->
-            val stored = record.copy(lockMode = LockMode.DEFAULT)
-            repository.loadState = AppLockSettingsLoadState.Loaded(stored)
-            AppLockSettingsWriteResult.Committed(stored)
-        }
-
-        assertEquals(ReviewSaveResult.COMMITTED, runBlocking { rig.ops.requestReviewSave(lockOnImmediate) })
-
-        assertEquals("the operation handed the record over with APP_PIN", listOf(lockOnImmediate), repository.reviewSaves)
-        val held = repository.loadState
-        assertTrue("the store is readable after the save: $held", held is AppLockSettingsLoadState.Loaded)
-        val settings = (held as AppLockSettingsLoadState.Loaded).settings
-        assertEquals("the store holds the fallback mode, not the record's", LockMode.DEVICE_AUTH, settings.lockMode)
-        assertEquals(lockOnImmediate.copy(lockMode = LockMode.DEVICE_AUTH), settings)
-        assertTrue(settings.appLockEnabled)
-        assertTrue(rig.uncaught.isEmpty())
-    }
-
     @Test
     fun `J-15-1 corrupted APP_PIN NO_CREDENTIAL a lock-off record is PIN_REQUIRED and writes nothing`() {
         val rig = rig()

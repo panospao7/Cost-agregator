@@ -216,7 +216,7 @@ class UnsupportedDatabaseActivity : FragmentActivity() {
                             exportState = ExportState.IDLE
                             launchPicker()
                         }
-                        // G-LOCK-1: the lock is on (or unknown) in a mode this screen cannot authenticate: no
+                        // G-LOCK-1: the lock is on (or unknown) and the device cannot authenticate: no
                         // prompt, no picker, the one existing constant denied message.
                         ExportAuthDecision.Denied -> exportState = ExportState.AUTH_DENIED
                     }

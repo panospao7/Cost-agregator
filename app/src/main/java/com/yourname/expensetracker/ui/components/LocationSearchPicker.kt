@@ -5,6 +5,7 @@ import android.preference.PreferenceManager
 import android.view.MotionEvent
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -319,7 +320,9 @@ fun LocationSearchPicker(
                 tileAccess.blocked?.let { blockedState ->
                     PrivacyBlockedCard(
                         state = blockedState,
-                        modifier = Modifier.align(Alignment.Center).padding(8.dp)
+                        // Top centre keeps a centred marker visible; the opaque surface keeps the 0.3-alpha card legible.
+                        modifier = Modifier.align(Alignment.TopCenter).padding(8.dp)
+                            .background(MaterialTheme.colorScheme.surface, MaterialTheme.shapes.medium)
                     )
                 }
             }

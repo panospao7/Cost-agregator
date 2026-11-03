@@ -226,7 +226,10 @@ class ExportOptionsViewModelStaleSweepTest {
     }
 
     // Review fix (reviewer-strict REJECT on 013b78be): the generate catch for CancellationException used to swallow it.
-    // The test above only proves no file was made; the two below prove the run ends cancelled and not stuck loading.
+    // The test above only proves no file was made. The first test below fails against the old swallow (a
+    // CancellationException thrown inside the body makes the job end normally, not cancelled). The second test below
+    // cancels the job from outside, so the job reads as cancelled whether or not the body rethrows: it proves only
+    // that cancelExport cancels the job and the screen is not left loading, not that the catch rethrows.
     // (The state flag is `isLoading`; the ViewModel has no `isGenerating`.)
 
     @Test
@@ -253,7 +256,7 @@ class ExportOptionsViewModelStaleSweepTest {
     }
 
     @Test
-    fun `cancelExport while the run is suspended ends the job cancelled and does not leave the screen loading`() {
+    fun `cancelExport while the run is suspended cancels the job from outside and does not leave the screen loading`() {
         val out = tmp.newFile("expenses_${nowMs}.csv")
         every { exportDataRepository.createExportFile(any(), any()) } returns out
         val launched = mutableListOf<Job>()

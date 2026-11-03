@@ -421,6 +421,8 @@ fun SpendingMapScreenContent(
                         modifier = Modifier
                             .align(Alignment.TopCenter)
                             .padding(8.dp)
+                            // Opaque surface: the card itself is 0.3-alpha and sits on the map.
+                            .background(MaterialTheme.colorScheme.surface, MaterialTheme.shapes.medium)
                     )
                 }
 

@@ -31,7 +31,7 @@ internal enum class ExportLockRead { ON, OFF, UNREADABLE }
 
 /**
  * The export gate's answer (G-LOCK-1, fix-1.0.4 D1). [Required]: the device prompt must pass before the picker opens.
- * [NotRequired]: the picker may open at once. [Denied]: the lock is on (or unknown) in a mode the device cannot
+ * [NotRequired]: the picker may open at once. [Denied]: the lock is on (or unknown) and the device cannot
  * authenticate in, so nothing can be asked and the export does not start; the activity shows its existing constant
  * denied message.
  */
@@ -64,7 +64,9 @@ interface UnsupportedDatabaseExportAuthEntryPoint {
  *    capability (UNSUPPORTED_API, NO_CREDENTIAL, HW_UNAVAILABLE, UNKNOWN) is [ExportAuthDecision.Denied].
  *
  * This screen has no PIN prompt and no PIN binding, so the device prompt stands in for the App PIN. A user with the
- * lock on and no working device prompt cannot export here until they set a screen lock; nothing is deleted.
+ * lock on, or with no lock set but an unreadable settings store, and no working device prompt cannot export here.
+ * NO_CREDENTIAL is fixed by setting a screen lock; HW_UNAVAILABLE and UNKNOWN are not (retry, a later attempt may
+ * succeed); UNSUPPORTED_API (API 26-29) has no remedy on this screen. Nothing is deleted.
  *
  * Every failure of a read maps to the stricter answer. Nothing here records a diagnostic and no exception
  * text, path, PIN or setting value leaves this object; the result is one of three enum values.

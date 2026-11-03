@@ -27,13 +27,13 @@ Paths are relative to `app/src/main/java/com/yourname/expensetracker/` unless th
 | J-11-4 rest | STILL-PRESENT | `data/privacy/ExportAnonymizer.kt:80-92,381-391,398-400` | `pending_reviews.explanation` stays; expenses, group members and mileage fields are untouched. |
 
 ## Decisions (orchestrator, owner item 116; all reversible)
-- **D1 G-LOCK-1: fail closed.** In APP_PIN or unknown mode with the lock ON or UNREADABLE, the export needs the device prompt; with no device credential it is denied with the existing constant message. Cost: a PIN-only user cannot use the rescue export until a PIN prompt exists on that screen. No data is deleted. PIN prompt deferred (it needs an extra binding).
+- **D1 G-LOCK-1: fail closed (revised after review).** With the lock ON or UNREADABLE and no working device prompt, the export is Denied in every mode, with the existing constant message; the stored mode is not read. With a working device prompt it needs that prompt. Cost: see "Rescue export cost" below. G-LOCK-1 is PARTIAL: a PIN prompt on that screen is deferred (it needs an extra binding).
 - **D2 J-20-1: S8 only.** A non-destructive "Close app" replaces the no-op. Export and reset would be a new legal path and a destructive action, so they are NOT done here.
 - **D3 J-11-3: no code change.** The user has a working restart button.
 - **D4 J-03-1: train only under `STORE_RAW`.** Read failure skips training. Learning continues for default users.
 - **D5 J-12-1: age-based sweep** when the export screen is used, minimum age 1 hour.
 - **D6 J-11-4 rest: only `pending_reviews.explanation`.** Blanking notes, owner names and group members would delete the user's own data on restore, because user backups are always redacted (J-11-1).
-- **D7 S19-2: gate tiles on `EXTERNAL_GEOCODING`.** Visible effect: the map background is blank unless the user turns on external geocoding, which is off by default. Markers remain, with the existing privacy card.
+- **D7 S19-2: gate tiles on `EXTERNAL_GEOCODING`.** Visible effect: the map background is blank unless the user turns on external geocoding, which is off by default. Markers remain, with the existing privacy card. In the location picker, long-press pinning and its hint are off while tiles are off, so with the default setting only Advanced coordinates remain there (search is already blocked by the same gate).
 
 ## Slices
 
@@ -41,10 +41,10 @@ Paths are relative to `app/src/main/java/com/yourname/expensetracker/` unless th
 **Lane 1 (`Cost-agregator-rsv`, `feature/fix104-pr-lock`)**
 
 **S3. G-LOCK-1. T3.** Write set: `ui/unsupported/UnsupportedDatabaseExportAuth.kt`, `ui/unsupported/UnsupportedDatabaseActivity.kt`, `docs/architecture/LEGAL_PATHS.md` (:733-749, :784-785).
-- Read the stored `lockMode` through the settings repository the entry point already exposes. No new binding, no second EntryPoint, no PIN UI.
-- If the lock is ON or UNREADABLE and the mode is APP_PIN or unknown: capability AVAILABLE, CHECK_FAILED or null gives the device prompt as today; anything else is denied.
+- The decision reads the lock state only, never the stored mode. No new binding, no second EntryPoint, no PIN UI.
+- Lock OFF is NotRequired. Lock ON or UNREADABLE: capability AVAILABLE, CHECK_FAILED or no answer is Required; anything else is Denied.
 - Tri-state result (`Required`, `NotRequired`, `Denied`). `Denied` uses the existing auth-denied message. No `strings.xml` edit.
-- Tests (separate test-author), extending the existing auth tests and parity test: APP_PIN + NO_CREDENTIAL + lock ON is Denied; UNREADABLE + NO_CREDENTIAL is Denied; DEVICE_AUTH + NO_CREDENTIAL stays NotRequired; APP_PIN with the lock OFF stays NotRequired; cancellation rethrown; no exception text or PIN in output; the entry point still exposes only its two bindings.
+- Tests (separate test-author), extending the existing auth tests and parity test: every table row for every `LockMode`, including stored DEVICE_AUTH with a PIN verifier present (a marker-only store through a lock-on review save, on a real DataStore); APP_PIN with the lock OFF stays NotRequired and reads no capability; cancellation rethrown; no exception text or PIN in output; the entry point still exposes only its two bindings.
 
 **S4. J-15-1. T2, test only.** Pins Unreadable(CORRUPTED) + effective APP_PIN + NO_CREDENTIAL: lock-on `IMMEDIATE` commits; lock-off returns `PIN_REQUIRED`; `requestReviewSaveWithPin` commits with the right PIN and writes nothing with a wrong one; the PIN `CharArray` is zeroed. If any case fails, stop: that is a real auth bug.
 
@@ -80,14 +80,35 @@ Export encryption toggle; CRITICAL-mode export and reset; PIN prompt on the unsu
 
 ## Residuals found during Batch A
 - `temp_export_<uuid>.db` (DatabaseBackupRepositoryImpl) is a plaintext temp in `files/exports/` that could outlive a process kill. S2 does not sweep it.
-- G-LOCK-1 reads the stored lock mode, which is advisory: a stored DEVICE_AUTH with a leftover PIN verifier is treated as device-credential.
+- G-LOCK-1 no longer reads the stored lock mode (revised D1), so its advisory nature no longer matters to this gate.
 - osmdroid may still render already cached tiles when denied (unconfirmed).
 - `hiltViewModel()` now runs inside the picker dialog and sheet. Not run yet; needs an emulator check.
 
 ## Status
 | Slice | State |
 |---|---|
-| S3, S4 | planned |
-| S1 | planned |
-| S2 | planned |
-| S5, S6, S7, S8 | planned, Batch B |
+| S3, S4 | validated at 7e35dd0c targeted; reviewer-strict ACCEPT-WITH-MINORS round 2; G-LOCK-1 PARTIAL |
+| S1 | reviewer-strict ACCEPT-WITH-MINORS round 2 |
+| S2 | reviewer-strict ACCEPT-WITH-MINORS round 2; J-12-1 PARTIAL (encryption deferred; files persist until the next screen visit) |
+| S5, S6, S7, S8 | implemented and tested on lanes; reviewer-strict pending at the combined candidate |
+
+## S6 note for reviewers (2026-11-03)
+The cloud path is debug-gated. The fix restores the designed prompt, so more of the candidate block reaches the provider than before: lines that used to fall past the 2000-character cut, and exact epoch-millis dates that the sanitizer used to mangle into `[REDACTED_CARD]`. Guardian must judge whether an exact date is acceptable or should be coarsened to a day.
+
+## S8 note (2026-11-03)
+The existing copy tells the user to "contact support", and the app has no support channel in it. Kept for now; the wording and a real contact route are a follow-up. The critical-recovery state stays a dead end until export and reset are approved (D2).
+
+## reviewer-strict REJECT on 013b78be, round 1 of 2 (2026-11-03)
+- **MAJOR, reachable:** the gate trusted stored `lockMode`. A corrupted store holds only the marker, and review-save then writes the absent token as DEVICE_AUTH while the PIN verifier stays PRESENT. So PIN lock on + NO_CREDENTIAL gave NotRequired, through the path S4 pins. This corrects the earlier "torn or restored store" wording.
+- **D1 revised (orchestrator, item 116):** lock ON or UNREADABLE with an inert capability is **Denied in every mode**; the stored mode is no longer read. No new binding.
+  - Cost: a DEVICE_AUTH user who removed their screen lock must set one again to use the rescue export. On API 26-29 (UNSUPPORTED_API) a user with the lock on has no remedy on this screen until a newer app version opens the database; the denied message is misleading there (`strings.xml`, follow-up). No data is deleted.
+- **MAJOR, not fixed here:** in PIN mode the device credential stands in for the App PIN, and on a phone with no screen lock anyone holding it can add one and pass. G-LOCK-1 is therefore **PARTIAL**. Closing it needs a PIN prompt on this screen, which needs an extra binding: separate item.
+- Pre-existing, fixed here: `ExportOptionsViewModel.kt:530-537` swallowed CancellationException.
+- Recorded, not fixed: J-15-1 is proven at Operations level only (the ViewModel route and `disablePin` are unpinned); `SpendingMapScreen` card wording and missing settings action (`strings.xml`); `sweepStaleTempFiles` has no production caller, kept because a merged test uses it.
+
+## Rescue export cost (revised D1)
+With the lock on or unreadable and no working device prompt, the export does not start. No data is deleted.
+- NO_CREDENTIAL: setting a screen lock fixes it.
+- HW_UNAVAILABLE, UNKNOWN: a screen lock does not help; the user can retry and a later attempt may succeed.
+- UNSUPPORTED_API (API 26-29): no remedy on this screen until a newer app version opens the database. The denied message is misleading there (`strings.xml`, follow-up).
+- It also reaches a user who never set a lock if the settings store is corrupted, because the lock then reads as unreadable.

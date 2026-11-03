@@ -738,8 +738,8 @@ DATABASE OPEN GATE (R25):
     NotRequired. Lock ON, or the store is unreadable / the read failed / timed out: with capability AVAILABLE,
     CHECK_FAILED or no answer (provider threw or entry point unresolved) device auth is Required; with
     UNSUPPORTED_API, NO_CREDENTIAL, HW_UNAVAILABLE or UNKNOWN the result is Denied in every mode (the export does
-    not start and the existing constant denied message is shown; no data is deleted). Cost: a user with the lock on
-    and no working device prompt cannot use this export until they set a screen lock; on API 26-29 they have no
+    not start and the existing constant denied message is shown; no data is deleted). Cost: a user with the lock on, or with no lock set but an unreadable (corrupted) settings store,
+    and no working device prompt cannot use this export. NO_CREDENTIAL is fixed by setting a screen lock; HW_UNAVAILABLE and UNKNOWN are not (retry, a later attempt may succeed); on API 26-29 they have no
     remedy on this screen. Known partial: in PIN mode the device credential stands in for the App PIN, and on a
     phone with no screen lock anyone holding it can add one and pass, so G-LOCK-1 is PARTIAL until a PIN prompt
     exists on this screen (it needs an extra binding: separate item). The prompt is a
