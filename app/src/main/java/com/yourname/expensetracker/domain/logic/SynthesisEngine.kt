@@ -81,6 +81,18 @@ class SynthesisEngine @Inject constructor(
         private const val LIKELY_EXPENSE_WEIGHT = 0.7 // 70% weight for LIKELY planned expenses - middle ground
         private const val BIWEEKLY_CYCLE_DAYS = 14
         private const val BIWEEKLY_TOLERANCE_DAYS = 2
+
+        /**
+         * Single source of the monthly budget limit: the OVERALL budget when it is
+         * positive, otherwise the sum of the category budgets. Shared by
+         * [synthesizeInternal] and the Block Party caller so both read the same limit.
+         * Amounts are in the budget snapshots' own (home) currency; no rounding is applied.
+         */
+        internal fun resolveBudgetLimit(budgetStatuses: List<BudgetStatusSnapshot>): Double {
+            val overallBudget = budgetStatuses.find { it.budgetCategoryId == null }?.budgetAmount ?: 0.0
+            val categoryBudgetsSum = budgetStatuses.filter { it.budgetCategoryId != null }.sumOf { it.budgetAmount }
+            return if (overallBudget > 0) overallBudget else categoryBudgetsSum
+        }
     }
 
     /**
@@ -492,9 +504,8 @@ class SynthesisEngine @Inject constructor(
         
         // 5. Calculate Discretionary (Available)
         val overallBudget = budgetStatuses.find { it.budgetCategoryId == null }?.budgetAmount ?: 0.0
-        val categoryBudgetsSum = budgetStatuses.filter { it.budgetCategoryId != null }.sumOf { it.budgetAmount }
-        val budgetLimit = if (overallBudget > 0) overallBudget else categoryBudgetsSum
-        
+        val budgetLimit = resolveBudgetLimit(budgetStatuses)
+
         val spentSoFar = spendingPace.currentMonthSpent
             ?: throw com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableException(
                 com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableReasonCode.DISPLAY_CONVERSION_UNAVAILABLE
@@ -586,7 +597,7 @@ class SynthesisEngine @Inject constructor(
         
         val components = forecast.components
         
-        // 1. Calculate Monthly Totals for pro-rating (frequency-adjusted)
+        // 1. Place this month's bills and planned items on their due days (cash basis, BL-02)
         //
         // RP-06 6b slice 2 (P5-CURRENT-009/U-MONEY-01): all raw-amount fallbacks
         // removed. On conversion failure the item is EXCLUDED (contributes 0) and
@@ -595,40 +606,93 @@ class SynthesisEngine @Inject constructor(
         // [convertAmount].
         val bpCurrency = forecast.displayCurrency
         var bpConversionFailures = 0
-        val totalMonthlyRecurring = components.recurringExpenses.sumOf { pattern ->
-            when (pattern.frequency) {
-                RecurrenceFrequency.IRREGULAR -> 0.0
-                else -> {
-                    val monthly = RecurrenceCalculator.toMonthlyAmount(pattern.averageAmount, pattern.frequency)
-                    if (bpCurrency.isBlank()) monthly
-                    else convertAmount(monthly, pattern.currency, bpCurrency)
-                        ?: run { bpConversionFailures++; 0.0 }
-                }
-            }
-        }
-        
+        //
+        // BL-02 (cash basis): the discretionary pool subtracts exactly the bills that
+        // are PLACED on a day of this month (at their full cash amount, on their due
+        // day), plus PAID occurrences due this month, so the sum of daily targets
+        // equals limit - reserves. The former 1/12 accrual (toMonthlyAmount) is no
+        // longer used here; it double-counted annual/quarterly bills in the due month.
+
         // Filter planned expenses for this month only using timestamp range
         // MUST at 100%, LIKELY at 70%, OPTIONAL ignored
         val thisMonthPlanned = components.plannedExpenses.filter { it.date >= startOfMonth && it.date < endOfMonthExclusive }
-        // Convert planned expenses to forecast display currency
-        val totalMonthlyPlanned = thisMonthPlanned
-            .filter { it.priority != PlannedExpensePriority.OPTIONAL }
-            .sumOf { expense ->
-                val raw = when (expense.priority) {
-                    PlannedExpensePriority.MUST -> expense.amount
-                    PlannedExpensePriority.LIKELY -> expense.amount * LIKELY_EXPENSE_WEIGHT
-                    PlannedExpensePriority.OPTIONAL -> 0.0
-                }
-                if (bpCurrency.isBlank()) raw
-                else convertAmount(raw, expense.currency, bpCurrency)
-                    ?: run { bpConversionFailures++; 0.0 }
+        // Optimization: Group planned expenses by day - use timestamp range filter
+        val plannedByDay = thisMonthPlanned.groupBy { expense ->
+            Instant.ofEpochMilli(expense.date).atZone(ZoneId.systemDefault()).dayOfMonth
+        }
+
+        // Pre-calculate which days have recurring expenses.
+        // When the occurrence DAO is available, use the canonical occurrence source
+        // (PLANNED rows are placed; PAID rows are returned separately, see
+        // [buildRecurringByDayFromOccurrences]) instead of ad-hoc date matching.
+        val recurringPlacement = if (recurringOccurrenceDao != null) {
+            buildRecurringByDayFromOccurrences(
+                components.recurringExpenses,
+                startOfMonth,
+                endOfMonthExclusive,
+                daysInMonth,
+                recurringOccurrenceDao
+            )
+        } else {
+            RecurringPlacement(
+                byDay = buildRecurringByDayLegacy(
+                    components.recurringExpenses,
+                    now,
+                    daysInMonth
+                ),
+                paidThisMonth = emptyList()
+            )
+        }
+        val recurringByDay = recurringPlacement.byDay
+
+        // Convert each placed item ONCE (failures counted once, excluded as 0.0 from
+        // both the day target and the pool, so a bill is never subtracted without being
+        // placed nor placed without being subtracted).
+        val recurringImpactByDay = recurringByDay.mapValues { (_, items) ->
+            var failures = 0
+            val amount = items.sumOf { pattern ->
+                if (bpCurrency.isBlank()) pattern.averageAmount
+                else convertAmount(pattern.averageAmount, pattern.currency, bpCurrency)
+                    ?: run { failures++; 0.0 }
             }
-        
+            bpConversionFailures += failures
+            BlockPartyDayAmount(amount, failures)
+        }
+        // Apply priority weighting: MUST=100%, LIKELY=70%, OPTIONAL=0%
+        val plannedImpactByDay = plannedByDay.mapValues { (_, items) ->
+            var failures = 0
+            val amount = items
+                .filter { it.priority != PlannedExpensePriority.OPTIONAL }
+                .sumOf { expense ->
+                    val raw = when (expense.priority) {
+                        PlannedExpensePriority.MUST -> expense.amount
+                        PlannedExpensePriority.LIKELY -> expense.amount * LIKELY_EXPENSE_WEIGHT
+                        PlannedExpensePriority.OPTIONAL -> 0.0
+                    }
+                    if (bpCurrency.isBlank()) raw
+                    else convertAmount(raw, expense.currency, bpCurrency)
+                        ?: run { failures++; 0.0 }
+                }
+            bpConversionFailures += failures
+            BlockPartyDayAmount(amount, failures)
+        }
+        // PAID occurrences due this month are not placed (P6-CURRENT-014) but their cash
+        // amount still leaves the pool, so a payment does not widen the discretionary pool.
+        val paidThisMonthTotal = recurringPlacement.paidThisMonth.sumOf { paid ->
+            if (bpCurrency.isBlank()) paid.amount
+            else convertAmount(paid.amount, paid.currency, bpCurrency)
+                ?: run { bpConversionFailures++; 0.0 }
+        }
+        val totalPlacedRecurring = recurringImpactByDay.values.sumOf { it.amount }
+        val totalMonthlyPlanned = plannedImpactByDay.values.sumOf { it.amount }
+
             // Centralized Logic Gain: Factoring in Goal Reserves (Savings)
         val goalReserves = components.goalReserves
-        
-        // LOG-021: Fix - Use Discretionary Pool Formula correctly
-        val discretionaryTotal = (budgetLimit - totalMonthlyRecurring - totalMonthlyPlanned - goalReserves).coerceAtLeast(0.0)
+
+        // LOG-021 / BL-02: Discretionary pool = limit - placed bills - PAID bills - planned
+        // - goal reserves, clamped at 0 (bills + planned above the limit leave base 0 and
+        // the daily targets sum to bills + planned).
+        val discretionaryTotal = (budgetLimit - totalPlacedRecurring - paidThisMonthTotal - totalMonthlyPlanned - goalReserves).coerceAtLeast(0.0)
         val baseDiscretionaryRate = if (budgetLimit > 0) discretionaryTotal / daysInMonth else 0.0
 
         // Optimization: Group raw expenses by day once O(N) - use timestamp range filter
@@ -644,31 +708,7 @@ class SynthesisEngine @Inject constructor(
                 dayExpenses.sortedByDescending { it.amount }
             }
 
-        // Optimization: Group planned expenses by day - use timestamp range filter
-        val plannedByDay = thisMonthPlanned.groupBy { expense ->
-            Instant.ofEpochMilli(expense.date).atZone(ZoneId.systemDefault()).dayOfMonth
-        }
-
         val nowDate = Instant.ofEpochMilli(now).atZone(ZoneId.systemDefault()).toLocalDate()
-
-        // Pre-calculate which days have recurring expenses.
-        // When the occurrence DAO is available, use the canonical occurrence source
-        // (PAID + PLANNED) instead of ad-hoc date matching.
-        val recurringByDay = if (recurringOccurrenceDao != null) {
-            buildRecurringByDayFromOccurrences(
-                components.recurringExpenses,
-                startOfMonth,
-                endOfMonthExclusive,
-                daysInMonth,
-                recurringOccurrenceDao
-            )
-        } else {
-            buildRecurringByDayLegacy(
-                components.recurringExpenses,
-                now,
-                daysInMonth
-            )
-        }
 
         val days = (1..daysInMonth).map { day ->
             // G-TIME-01: noon of each day derived from the injected TimeProvider instant.
@@ -677,32 +717,22 @@ class SynthesisEngine @Inject constructor(
             // RP-06 D6 (6b deferral resolution): per-day conversion-failure count,
             // surfaced on the returned BlockPartyDay (bounded count only — no
             // amounts, no currencies, no exception text).
+            // Seeded with the placed recurring + planned conversion failures for this day
+            // (counted once into bpConversionFailures when the pool was built).
             var dayConversionFailures = 0
 
             // 1. Use pre-calculated recurring expenses for this day
             val recurringItemsOnDay = recurringByDay[day] ?: emptyList()
-            val recurringOnDay = recurringItemsOnDay.sumOf { pattern ->
-                if (bpCurrency.isBlank()) pattern.averageAmount
-                else convertAmount(pattern.averageAmount, pattern.currency, bpCurrency)
-                    ?: run { bpConversionFailures++; dayConversionFailures++; 0.0 }
-            }
+            val recurringDayAmount = recurringImpactByDay[day]
+            val recurringOnDay = recurringDayAmount?.amount ?: 0.0
+            dayConversionFailures += recurringDayAmount?.failures ?: 0
             val recurringNames = recurringItemsOnDay.map { it.merchantName }
 
-            // 2. Identify Planned on this day
-            // Apply priority weighting: MUST=100%, LIKELY=70%, OPTIONAL=0%
+            // 2. Identify Planned on this day (MUST=100%, LIKELY=70%, OPTIONAL=0%)
             val plannedItemsOnDay = plannedByDay[day] ?: emptyList()
-            val plannedOnDay = plannedItemsOnDay
-                .filter { it.priority != PlannedExpensePriority.OPTIONAL }
-                .sumOf { expense ->
-                    val raw = when (expense.priority) {
-                        PlannedExpensePriority.MUST -> expense.amount
-                        PlannedExpensePriority.LIKELY -> expense.amount * LIKELY_EXPENSE_WEIGHT
-                        PlannedExpensePriority.OPTIONAL -> 0.0
-                    }
-                    if (bpCurrency.isBlank()) raw
-                    else convertAmount(raw, expense.currency, bpCurrency)
-                        ?: run { bpConversionFailures++; dayConversionFailures++; 0.0 }
-                }
+            val plannedDayAmount = plannedImpactByDay[day]
+            val plannedOnDay = plannedDayAmount?.amount ?: 0.0
+            dayConversionFailures += plannedDayAmount?.failures ?: 0
             val plannedNames = plannedItemsOnDay.map { it.description }
 
             val dailyTarget = baseDiscretionaryRate + recurringOnDay + plannedOnDay
@@ -868,8 +898,11 @@ class SynthesisEngine @Inject constructor(
         monthEnd: Long,
         daysInMonth: Int,
         occurrenceDao: RecurringOccurrenceDao
-    ): Map<Int, List<RecurringPattern>> {
+    ): RecurringPlacement {
         val result = mutableMapOf<Int, MutableList<RecurringPattern>>()
+        // BL-02: PAID occurrences due this month are NOT placed on the bill-day map
+        // (pin P6-CURRENT-014) but are returned so the pool can still subtract them.
+        val paidThisMonth = mutableListOf<PaidRecurringBill>()
 
         // ── Occurrence path for manual rules ────────────────────────────────
         val manualPatterns = recurringPatterns.filter { it.id != null }
@@ -901,6 +934,18 @@ class SynthesisEngine @Inject constructor(
                 // CANCELLED rows are explicit user removals (DBG-04) — neither must
                 // contribute to the bill-day map.
                 ruleIdsWithOccurrences.add(occ.sourceId)
+                if (occ.status == "PAID") {
+                    // BL-02: cash amount actually paid (paidAmount + paidCurrency together),
+                    // else the expected amount in its own currency. Never mixed across fields.
+                    val paidAmount = occ.paidAmount
+                    val paidCurrency = occ.paidCurrency
+                    paidThisMonth += if (paidAmount != null && !paidCurrency.isNullOrBlank()) {
+                        PaidRecurringBill(paidAmount, paidCurrency)
+                    } else {
+                        PaidRecurringBill(occ.expectedAmount, occ.expectedCurrency)
+                    }
+                    continue
+                }
                 if (occ.status != "PLANNED") continue
                 // G-TIME-01: java.time day-of-month derivation (was Calendar scratch instance).
                 val day = Instant.ofEpochMilli(occ.dueDate).atZone(ZoneId.systemDefault()).dayOfMonth
@@ -945,8 +990,20 @@ class SynthesisEngine @Inject constructor(
             }
         }
 
-        return result
+        return RecurringPlacement(byDay = result, paidThisMonth = paidThisMonth)
     }
+
+    /** BL-02: bill-day placement plus the PAID occurrences due this month (not placed). */
+    private class RecurringPlacement(
+        val byDay: Map<Int, List<RecurringPattern>>,
+        val paidThisMonth: List<PaidRecurringBill>
+    )
+
+    /** BL-02: cash amount of a PAID recurring occurrence, with its own currency. */
+    private class PaidRecurringBill(val amount: Double, val currency: String)
+
+    /** BL-02: converted per-day sum plus the count of items excluded by conversion failure. */
+    private class BlockPartyDayAmount(val amount: Double, val failures: Int)
 
     /**
      * Legacy fallback: builds [recurringByDay] using ad-hoc

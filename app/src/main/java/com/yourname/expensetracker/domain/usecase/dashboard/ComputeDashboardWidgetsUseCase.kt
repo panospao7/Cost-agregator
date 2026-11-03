@@ -861,6 +861,16 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
 
         val availableResult = runwayResult as RunwayResult.Available
 
+        // P-05-1: targets need a real, complete home-currency budget; never sum budgets
+        // in another currency or incomplete ones. The limit sources mirror resolveBudgetLimit.
+        val budgetStatuses = ctx.data.data.budgetStatuses
+        val limitSources = budgetStatuses.find { it.budgetCategoryId == null }
+            ?.takeIf { it.budgetAmount > 0 }?.let { listOf(it) } ?: budgetStatuses
+        if (limitSources.isEmpty() ||
+            limitSources.any { !it.hasCompleteAmountIn(normalized.input.homeCurrency.code) } ||
+            SynthesisEngine.resolveBudgetLimit(budgetStatuses) <= 0.0
+        ) return emptyList()
+
         // Use normalized daily aggregates instead of raw dailyHistory
         val dailySpending = normalized.input.normalizedExpenses
             .filter { it.transactionType == "PURCHASE" && !it.isNotMine }
@@ -898,9 +908,9 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             // display); block-party arithmetic now converts via the engine's
             // typed converter — no raw sum. (Tag kept on the flagged line below
             // for the static guard, which matches per-line.)
-            expenses = ctx.expenseEntities, // G-MONEY-ALLOW[CURR-587-05][G-MONEY-15]: metadata-only list; arithmetic converts via engine typed converter (RP-06 6b slice 3)
+            expenses = ctx.purchases.map { it.toTransactionSummary() }, // G-MONEY-ALLOW[CURR-587-05][G-MONEY-15]: metadata-only list; arithmetic converts via engine typed converter (RP-06 6b slice 3)
             dailySpending = dailyHistory,
-            budgetLimit = normalized.input.monthAggregate.displayAmount // Use normalized month total
+            budgetLimit = SynthesisEngine.resolveBudgetLimit(budgetStatuses) // P-05-1: fixed budget limit, not month spend
         )
 
         // Build a lookup map from categoryId → categoryName so we can populate

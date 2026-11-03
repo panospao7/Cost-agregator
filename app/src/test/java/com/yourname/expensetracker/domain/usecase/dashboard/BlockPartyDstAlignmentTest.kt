@@ -236,7 +236,9 @@ class BlockPartyDstAlignmentTest {
                 }
 
                 val result = computeUseCase.compute(
-                    createProcessedData(expenses = expenses, budgetStatuses = listOf(overallBudget(5000.0)))
+                    // P-05-1: the limit is now the real budget, so the fixture sets one that
+                    // the DST day exceeds (about 20 a day against 42.5 spent).
+                    createProcessedData(expenses = expenses, budgetStatuses = listOf(overallBudget(620.0)))
                 )
                 val blocks = result.allWidgets
                     .filterIsInstance<DashboardWidget.BudgetBlockParty>()
@@ -325,7 +327,9 @@ class BlockPartyDstAlignmentTest {
                 }
 
                 val result = computeUseCase.compute(
-                    createProcessedData(expenses = expenses, budgetStatuses = listOf(overallBudget(5000.0)))
+                    // P-05-1: the limit is now the real budget, so the fixture sets one that
+                    // the DST day exceeds (about 20 a day against 42.5 spent).
+                    createProcessedData(expenses = expenses, budgetStatuses = listOf(overallBudget(620.0)))
                 )
                 val blocks = result.allWidgets
                     .filterIsInstance<DashboardWidget.BudgetBlockParty>()
