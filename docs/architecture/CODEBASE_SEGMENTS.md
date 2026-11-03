@@ -178,7 +178,7 @@ Owns merchant-name normalization and category prediction for ordinary expenses.
 - `data/repository/CategoryRepository.kt`
 - `data/repository/MerchantCategoryRepository.kt`
 
-**Boundary note:** `domain/quickadd/QuickAddLearnedCategoryLookup.kt` (nl-quick-add C2, registered under Segment 9) is a read-only consumer of this segment: it calls only the pure `CategorizationEngine.normalizedCanonicalNameForMerchant()` and `MerchantCategoryRepository.getCategoryByNormalizedCanonical()`. It must never call `categorize*`, `normalize(`, `getCategoryForMerchant`, `MerchantNormalizer` or any write (`MerchantNormalizer.normalize` can insert/update a `merchant_aliases` row even with `autoCreate = false` on a fuzzy match >= 0.95 via `linkAliasToCanonical`, and logs the raw name; it creates a `merchant_canonicals` row only with `autoCreate = true`).
+**Boundary note:** `domain/quickadd/QuickAddLearnedCategoryLookup.kt` (nl-quick-add C2, registered under Segment 9) is a read-only consumer of this segment: it calls only the pure `CategorizationEngine.normalizedCanonicalNameForMerchant()` and `MerchantCategoryRepository.getCategoryByNormalizedCanonical()`. It must never call `categorize*`, `normalize(`, `getCategoryForMerchant`, `MerchantNormalizer` or any write (`MerchantNormalizer.normalize` writes with its default `autoCreate = true`: it can insert/update a `merchant_aliases` row on a fuzzy match >= 0.95 via `linkAliasToCanonical` and create a `merchant_canonicals` row on a miss; with `autoCreate = false` it writes nothing).
 
 ## SEGMENT 7: Recurring Expenses
 

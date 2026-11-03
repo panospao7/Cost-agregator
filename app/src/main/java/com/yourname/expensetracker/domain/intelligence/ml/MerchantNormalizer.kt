@@ -101,7 +101,7 @@ class MerchantNormalizer @Inject constructor(
             if (autoCreate) {
                 val linkResult = linkAliasToCanonical(rawName, fuzzyResult.canonical.id)
                 if (linkResult is AliasLinkResult.Conflict) {
-                    Timber.w("C01: Alias link conflict for '$rawName' -> canon ${fuzzyResult.canonical.id}: ${linkResult.message}")
+                    Timber.w("C01: Alias link conflict, canon=%d", fuzzyResult.canonical.id)
                 }
             }
             return@withContext fuzzyResult

@@ -417,11 +417,14 @@ FORBIDDEN:
 ```
 CREATE rule:
   → RecurringRuleLifecycleCoordinator.createRule()
+  → Rejects a zero, negative, non-finite or above-cap amount and an invalid currency before any write
+    (InvalidRecurringAmountException, bounded reason code). Unrounded detected averages are accepted
   → Atomic: inserts rule + generates 12 months of occurrences + reminders + planned rows
   → DatabaseWriteBarrier check + durable lifecycle event
 
 UPDATE rule:
   → RecurringRuleLifecycleCoordinator.updateRule()
+  → Same amount and currency check, only when either one changes, so legacy rows stay editable
   → Atomic: updates rule + reconciles occurrences in single transaction
     (RP-04 A2 reconcileUpdateInCurrentTransaction; fixed-anchor semantics,
     golden no-double-count)
