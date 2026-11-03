@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.logic
 
+import com.yourname.expensetracker.data.backup.DatabaseReadBarrier
 import com.yourname.expensetracker.data.database.dao.RecurringOccurrenceDao
 import com.yourname.expensetracker.data.database.entity.RecurringOccurrence
 import com.yourname.expensetracker.data.database.entity.toRecurringPattern
@@ -74,7 +75,9 @@ class SynthesisEngine @Inject constructor(
     private val timeProvider: TimeProvider,
     /** @suppress Optional — when present, occurrences replace ad-hoc recurrence expansion in block-party calendar. */
     private val recurringOccurrenceDao: RecurringOccurrenceDao? = null,
-    private val currencyConverter: CurrencyConverter
+    private val currencyConverter: CurrencyConverter,
+    /** @suppress Optional — when present, gates the block-party occurrence read during restore. */
+    private val databaseReadBarrier: DatabaseReadBarrier? = null
 ) {
     companion object {
         private const val TAG = "SynthesisEngine"
@@ -632,6 +635,9 @@ class SynthesisEngine @Inject constructor(
                 daysInMonth,
                 recurringOccurrenceDao
             )
+            // m1: a failed occurrence read hides the card. Targets are never computed from a
+            // failed read, because a missing PAID row would overstate the discretionary pool.
+                ?: return emptyList()
         } else {
             RecurringPlacement(
                 byDay = buildRecurringByDayLegacy(
@@ -897,6 +903,9 @@ class SynthesisEngine @Inject constructor(
      *
      * Detected-only patterns (id == null) are handled via the legacy ad-hoc
      * matcher so they still appear in the block-party calendar.
+     *
+     * Returns null when the occurrence read fails (restore barrier block or any other
+     * exception other than cancellation); the caller then hides the card.
      */
     private suspend fun buildRecurringByDayFromOccurrences(
         recurringPatterns: List<RecurringPattern>,
@@ -904,7 +913,7 @@ class SynthesisEngine @Inject constructor(
         monthEnd: Long,
         daysInMonth: Int,
         occurrenceDao: RecurringOccurrenceDao
-    ): RecurringPlacement {
+    ): RecurringPlacement? {
         val result = mutableMapOf<Int, MutableList<RecurringPattern>>()
         // BL-02: PAID occurrences due this month are NOT placed on the bill-day map
         // (pin P6-CURRENT-014) but are returned so the pool can still subtract them.
@@ -923,6 +932,8 @@ class SynthesisEngine @Inject constructor(
         // "has occurrences" marker stay limited to the active manual rules (manualIds), so a
         // paused rule's unpaid bills still do not count. A deleted rule's occurrence rows are
         // deleted with it (RecurringRuleLifecycleCoordinator.deleteRule), so nothing is read.
+        // A failed read (restore block or any other exception) returns null: the card is hidden,
+        // never computed from partial rows, since a missing PAID row would overstate the pool.
         run {
             // DBG-04: do NOT exclude by status here. Any rule with ANY materialised
             // occurrence row in range (PLANNED, PAID, SKIPPED, CANCELLED, …) must be
@@ -932,10 +943,19 @@ class SynthesisEngine @Inject constructor(
             // CANCELLED returned no rows → it landed in missingRuleIds → legacy matching
             // RE-ADDED it as a bill day, resurfacing a bill the user explicitly
             // skipped/cancelled. Single DB round trip; status filtering happens in-loop.
-            val occurrences = occurrenceDao.getByDateRange(monthStart, monthEnd)
-            .filter {
-                    it.sourceType == RecurringLifecycleCoordinator.SOURCE_TYPE_RECURRING_RULE
-                }
+            val occurrences = try {
+                databaseReadBarrier?.checkReadAllowed("SynthesisEngine.calculateBlockPartyData.readOccurrences")
+                occurrenceDao.getByDateRange(monthStart, monthEnd)
+                    .filter {
+                        it.sourceType == RecurringLifecycleCoordinator.SOURCE_TYPE_RECURRING_RULE
+                    }
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                // Restore barrier block or any other read failure: log the class name only
+                // (no throwable, no message) and signal failure so the caller hides the card.
+                Timber.w("%s: block-party occurrence read failed (%s)", TAG, e.javaClass.simpleName)
+                return null
+            }
             for (occ in occurrences) {
                 // P6-CURRENT-014: every materialised occurrence marks its rule as
                 // "has occurrences" so it does NOT fall back to legacy date matching

@@ -861,6 +861,14 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
 
         val availableResult = runwayResult as RunwayResult.Available
 
+        // m1/m4: when the assembler's own occurrence read failed, bill rows are kept AND
+        // occurrences would be placed (double count) with no mark on the card, so hide it.
+        // Keyed on the specific reason code only; unrelated partial states keep the card.
+        if (availableResult.forecast.qualityWarnings.any {
+                it.startsWith("${ForecastInputAssembler.RECURRING_OCCURRENCES_UNAVAILABLE_CODE}:")
+            }
+        ) return emptyList()
+
         // P-05-1 / BL-02: the card needs an OVERALL budget above 0 that is complete in the
         // home currency, and that budget is the limit. Category budgets are partial limits
         // (all purchases are compared with the limit), so a category-only setup hides the card.

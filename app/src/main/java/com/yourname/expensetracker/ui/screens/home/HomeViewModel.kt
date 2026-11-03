@@ -330,7 +330,7 @@ class HomeViewModel @Inject constructor(
                 mergedFlow
                     .map { compiled -> ProcessedDashboardUiState.Ready(compiled) }
                     .catch<ProcessedDashboardUiState> { e ->
-                        Timber.e(e, "Error processing dashboard data")
+                        Timber.e("Error processing dashboard data (%s)", e::class.java.simpleName)
                         emit(
                             ProcessedDashboardUiState.Error(
                                 UiText.StringResource(R.string.home_error_unable_to_load_dashboard)

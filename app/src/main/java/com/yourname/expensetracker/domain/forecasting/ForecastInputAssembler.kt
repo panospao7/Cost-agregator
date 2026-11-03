@@ -623,7 +623,7 @@ class ForecastInputAssembler @Inject constructor(
                     "${warning.type.name}: ${warning.message}"
                 } + plannedWarnings + (
                     if (materializedReadBlocked) {
-                        listOf("RECURRING_OCCURRENCES_UNAVAILABLE: materialized occurrence read blocked during restore — recurring section may omit user overrides")
+                        listOf("$RECURRING_OCCURRENCES_UNAVAILABLE_CODE: materialized occurrence read blocked during restore — recurring section may omit user overrides")
                     } else emptyList()
                 )
             )
@@ -843,7 +843,7 @@ class ForecastInputAssembler @Inject constructor(
             excludedPlannedCount = input.dataQuality.excludedPlannedCount + totalPlannedExcluded,
             conversionWarnings = input.dataQuality.conversionWarnings + plannedWarnings + (
                 if (placedRowsFilter.readUnavailable) {
-                    listOf("RECURRING_OCCURRENCES_UNAVAILABLE: occurrence read unavailable — recurring bills may be counted twice")
+                    listOf("$RECURRING_OCCURRENCES_UNAVAILABLE_CODE: occurrence read unavailable — recurring bills may be counted twice")
                 } else emptyList()
             )
         )
@@ -862,6 +862,12 @@ class ForecastInputAssembler @Inject constructor(
     }
 
     companion object {
+        /**
+         * Bounded reason code prefixed to the data-quality warning emitted when the
+         * materialised occurrence read is unavailable. Consumers match it with
+         * `startsWith("$CODE:")` (e.g. block-party hides its card on it).
+         */
+        const val RECURRING_OCCURRENCES_UNAVAILABLE_CODE: String = "RECURRING_OCCURRENCES_UNAVAILABLE"
         const val HIGH_CONFIDENCE_THRESHOLD: Float = 0.70f
         private const val PACE_UNDER_THRESHOLD = 90f
         private const val PACE_OVER_THRESHOLD = 110f
