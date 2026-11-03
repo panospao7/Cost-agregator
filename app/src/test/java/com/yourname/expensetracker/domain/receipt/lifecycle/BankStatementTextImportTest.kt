@@ -260,6 +260,50 @@ class BankStatementTextImportTest {
         assertEquals(BankStatementImportRun.STATUS_COMPLETED_WITH_SKIPS, harness.finalStatusOrNull())
     }
 
+    // ── P-08-4: the ledger never persists a plaintext merchant key ────────────────
+
+    @Test
+    fun createdReviewItemPersistsNullTransactionFingerprint() = runTest {
+        val harness = Harness(textPages = StatementTextFixtures.EUROBANK_CARD_PAGES, home = null)
+        harness.process().getOrThrow()
+
+        val created = harness.items.filter { it.status == BankStatementImportItem.STATUS_CREATED_REVIEW }
+        assertEquals(7, created.size)
+        assertTrue(created.all { it.transactionFingerprint == null })
+        // Control: the merchant key still exists on the review itself, so the null is deliberate.
+        assertTrue(harness.reviews.all { !it.suggestedMerchantKey.isNullOrBlank() })
+    }
+
+    @Test
+    fun duplicatePendingItemPersistsNullTransactionFingerprint() = runTest {
+        val seeded = pendingReview(
+            id = 500L, receiptId = 99L, merchant = "OTHER SHOP LTD", amount = 2.10,
+            date = StatementTextFixtures.day(2031, 11, 10)
+        )
+        val harness = Harness(
+            textPages = StatementTextFixtures.EUROBANK_CARD_PAGES, home = null, seededPending = listOf(seeded)
+        )
+        harness.process().getOrThrow()
+
+        val duplicate = harness.items.single { it.status == BankStatementImportItem.STATUS_DUPLICATE_PENDING_REVIEW }
+        assertEquals(500L, duplicate.pendingReviewId)
+        assertNull(duplicate.transactionFingerprint)
+    }
+
+    @Test
+    fun duplicateExpenseItemPersistsNullTransactionFingerprint() = runTest {
+        val harness = Harness(
+            textPages = StatementTextFixtures.EUROBANK_CARD_PAGES, home = null, expenseDuplicate = true
+        )
+        // An all-duplicate statement may legitimately end as a failed run; only the ledger rows matter here.
+        harness.process()
+
+        val duplicates = harness.items.filter { it.status == BankStatementImportItem.STATUS_DUPLICATE_EXPENSE }
+        assertEquals(7, duplicates.size)
+        assertTrue(harness.reviews.isEmpty())
+        assertTrue(duplicates.all { it.transactionFingerprint == null })
+    }
+
     @Test
     fun accountStatementKeepsDirectionsLabelsAndSkipsTheOrphanTail() = runTest {
         val harness = Harness(textPages = StatementTextFixtures.NBG_PAGES)
@@ -709,7 +753,8 @@ class BankStatementTextImportTest {
         textParser: TextStatementParser? = null,
         seededPending: List<PendingReview> = emptyList(),
         rawMode: RawStorageMode = RawStorageMode.DO_NOT_STORE,
-        extraFullText: String = ""
+        extraFullText: String = "",
+        expenseDuplicate: Boolean = false
     ) {
         // After every fixture date (2031) so the processor's own date sanity check passes.
         val clock = FakeTimeProvider.forDate(2032, 1, 15)
@@ -808,6 +853,14 @@ class BankStatementTextImportTest {
                 }.lastOrNull()
             }
 
+            // Relaxed Boolean returns false; only the existing-expense duplicate flag is configurable.
+            val expenseDaoMock = mockk<ExpenseDao>(relaxed = true)
+            coEvery {
+                expenseDaoMock.existsByMerchantKeyInRangeCurrencyAware(
+                    any(), any(), any(), any(), any(), any(), any()
+                )
+            } returns expenseDuplicate
+
             val writer = mockk<ReceiptRecordWriter>()
             coEvery { writer.insertOrResolve(any()) } answers {
                 val receipt = firstArg<ScannedReceipt>().copy(id = 7L)
@@ -851,7 +904,7 @@ class BankStatementTextImportTest {
                 receiptRepository = receiptRepository, scannedReceiptDao = mockk(relaxed = true),
                 receiptLifecycleEventWriter = mockk(relaxed = true), receiptLinkService = mockk(relaxed = true),
                 timeProvider = clock, bankStatementParser = genericParser, textStatementParser = parser,
-                pendingReviewDao = pendingDao, expenseDao = mockk<ExpenseDao>(relaxed = true),
+                pendingReviewDao = pendingDao, expenseDao = expenseDaoMock,
                 merchantNormalizer = normalizer, hybridClassifier = mockk(relaxed = true),
                 duplicateDetector = mockk(relaxed = true), assetStore = assetStore, transactionValidator = validator,
                 recurringExpenseRepository = mockk(relaxed = true), writeBarrier = barrier,

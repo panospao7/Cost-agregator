@@ -1044,7 +1044,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
                         ) { context ->
                             bankStatementImportItemDao.insert(
                                 BankStatementImportItem(
-                                    runId = importRunId, itemIndex = index, transactionFingerprint = merchantKey,
+                                    runId = importRunId, itemIndex = index, transactionFingerprint = null,
                                     status = BankStatementImportItem.STATUS_DUPLICATE_EXPENSE,
                                     duplicateReason = duplicateExpenseId?.let { "Duplicate expense ID $it" },
                                     expenseId = duplicateExpenseId,
@@ -1086,7 +1086,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
                         ) { context ->
                             bankStatementImportItemDao.insert(
                                 BankStatementImportItem(
-                                    runId = importRunId, itemIndex = index, transactionFingerprint = merchantKey,
+                                    runId = importRunId, itemIndex = index, transactionFingerprint = null,
                                     status = BankStatementImportItem.STATUS_DUPLICATE_PENDING_REVIEW,
                                     duplicateReason = "Duplicate pending review ID ${duplicateReview.id}",
                                     expenseId = null,
@@ -1141,7 +1141,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
                             BankStatementImportItem(
                                 runId = importRunId,
                                 itemIndex = index,
-                                transactionFingerprint = merchantKey,
+                                transactionFingerprint = null,
                                 status = BankStatementImportItem.STATUS_CREATED_REVIEW,
                                 duplicateReason = null,
                                 expenseId = null,

@@ -432,16 +432,23 @@ class ExportAnonymizer @Inject constructor() {
 
     /**
      * PR5: Redacts merchant names in `bank_statement_import_items` that carry
-     * raw bank transaction merchant text. Preserves structural fields (amount, status, fingerprint).
+     * raw bank transaction merchant text, and nulls `transactionFingerprint` (P-08-4: legacy rows
+     * hold the normalized merchant key). The fingerprint clean is guarded so a database copy without
+     * the column still sanitises the merchant. Preserves structural fields (amount, status).
      * @return number of rows updated
      */
     private fun sanitizeBankStatementImportItems(db: SQLiteDatabase): Int {
         if (!tableExists(db, "bank_statement_import_items")) return 0
-        val where = "merchant IS NOT NULL"
+        val hasFingerprint = columnExists(db, "bank_statement_import_items", "transactionFingerprint")
+        val where = "merchant IS NOT NULL" +
+            if (hasFingerprint) " OR transactionFingerprint IS NOT NULL" else ""
         val count = countWhere(db, "bank_statement_import_items", where)
         if (count == 0) return 0
+        val setFingerprint = if (hasFingerprint) ", transactionFingerprint = NULL" else ""
         db.execSQL(
-            "UPDATE bank_statement_import_items SET merchant = '[REDACTED]' WHERE $where"
+            "UPDATE bank_statement_import_items SET merchant = " +
+                "CASE WHEN merchant IS NOT NULL THEN '[REDACTED]' ELSE NULL END" +
+                "$setFingerprint WHERE $where"
         )
         Timber.d("$TAG: Redacted bank import item merchants in $count rows")
         return count
