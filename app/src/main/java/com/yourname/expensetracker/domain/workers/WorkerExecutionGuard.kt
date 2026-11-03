@@ -342,6 +342,21 @@ class WorkerExecutionGuard @Inject constructor(
             }
         }
 
+        // P-09-3: NORMAL-mode write barrier check BEFORE the lease is acquired, matching
+        // runGuarded. A denial returns here, so no lease and no run row exist and the
+        // denial diagnostic is emitted exactly once. startRunSafely keeps its own check
+        // to close the TOCTOU window between this check and workerRunLogger.start().
+        if (request.requiresDatabaseWrite) {
+            try {
+                writeBarrier.checkWritesAllowed(request.workerName)
+            } catch (e: Exception) {
+                CancellationSafe.rethrowIfCancellation(e)
+                diagnosticSink.recordBlockedOperation(request.workerName, mode, "P9",
+                    reason = com.yourname.expensetracker.data.backup.MaintenanceBlockedReason.WRITE_BARRIER_DENIED)
+                return applyBlockedPolicy(request, DiagnosticReasonCode.WORKER_WRITE_BARRIER_DENIED.name)
+            }
+        }
+
         val ctx = WorkerRunContext(checkpointDelegate = ::checkpoint)
         val lease = try {
             leaseRegistry.acquire(request.workerName)

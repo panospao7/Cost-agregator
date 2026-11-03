@@ -1127,7 +1127,9 @@ class WorkerExecutionGuardTest {
             // Let startRunSafely's barrier check pass, but block the checkpoint's barrier check
             every { writeBarrier.checkWritesAllowed(any<String>()) } answers {
                 val op = firstArg<String>()
-                if (op.startsWith("WorkerRunLogger.start:")) return@answers
+                // P-09-3: runGuardedWithContext now checks the barrier with the worker name before the
+                // lease, so both that first check and startRunSafely's must pass for the block to run.
+                if (op == "test_worker" || op.startsWith("WorkerRunLogger.start:")) return@answers
                 throw com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException(
                     accessType = com.yourname.expensetracker.data.backup.DatabaseAccessType.WRITE,
                     operation = com.yourname.expensetracker.data.backup.DatabaseAccessOperation(op),
@@ -1151,6 +1153,214 @@ class WorkerExecutionGuardTest {
             assertEquals("[${row.name}] reason", expectedReason, terminalReasonOf(row.name, result))
             assertTrue("[${row.name}] block starts and is stopped by the checkpoint", blockRan)
             verifyOnlyTerminal(row.name, row.expectedTerminal, expectedReason, checkpointError = true)
+        }
+    }
+
+    @Test
+    fun `P-09-3 runGuardedWithContext denied write acquires no lease and logs no run`() = runTest {
+        every { writeBarrier.checkWritesAllowed(any<String>()) } throws writeDenied("test_worker")
+        var blockRan = false
+
+        val result = guard.runGuardedWithContext(writeRequest()) { blockRan = true }
+
+        assertEquals(
+            WorkerGuardResult.BlockedRetry(
+                DiagnosticReasonCode.WORKER_WRITE_BARRIER_DENIED.name,
+                DiagnosticReasonCode.WORKER_WRITE_BARRIER_DENIED.name
+            ),
+            result
+        )
+        assertFalse("block must not run when the write barrier denies", blockRan)
+        coVerify(exactly = 0) { leaseRegistry.acquire(any()) }
+        coVerify(exactly = 0) { workerRunLogger.start(any(), any(), any(), any(), any(), any()) }
+        // The first check carries the worker name; startRunSafely's check must never be reached.
+        verify(exactly = 1) { writeBarrier.checkWritesAllowed("test_worker") }
+        verify(exactly = 0) { writeBarrier.checkWritesAllowed(match<String> { it.startsWith("WorkerRunLogger.start:") }) }
+        verifyExactlyOneBlockedDiagnostic(
+            com.yourname.expensetracker.data.backup.MaintenanceBlockedReason.WRITE_BARRIER_DENIED
+        )
+    }
+
+    @Test
+    fun `P-09-3 runGuardedWithContext denied write honors every blocked policy without lease`() = runTest {
+        val expectedReason = DiagnosticReasonCode.WORKER_WRITE_BARRIER_DENIED.name
+        for (policy in BlockedPolicy.values()) {
+            setup() // fresh mocks and guard per policy so verify counts cannot bleed between rows
+            every { writeBarrier.checkWritesAllowed(any<String>()) } throws writeDenied("test_worker")
+
+            val result = guard.runGuardedWithContext(writeRequest(policy)) { }
+
+            val expected: WorkerGuardResult<Nothing> = when (policy) {
+                BlockedPolicy.RETRY -> WorkerGuardResult.BlockedRetry(expectedReason, expectedReason)
+                BlockedPolicy.SKIP_SUCCESS -> WorkerGuardResult.Skipped(expectedReason)
+                BlockedPolicy.FAIL -> WorkerGuardResult.Failed(expectedReason)
+            }
+            assertEquals("[$policy] result", expected, result)
+            coVerify(exactly = 0) { leaseRegistry.acquire(any()) }
+            coVerify(exactly = 0) { workerRunLogger.start(any(), any(), any(), any(), any(), any()) }
+            verifyExactlyOneBlockedDiagnostic(
+                com.yourname.expensetracker.data.backup.MaintenanceBlockedReason.WRITE_BARRIER_DENIED
+            )
+        }
+    }
+
+    @Test
+    fun `P-09-3 runGuardedWithContext denial after first check passes records one diagnostic and releases lease`() = runTest {
+        // TOCTOU: the pre-lease check passes, then the barrier flips before workerRunLogger.start().
+        every { writeBarrier.checkWritesAllowed(any<String>()) } answers {
+            val op = firstArg<String>()
+            if (op != "test_worker") throw writeDenied(op)
+        }
+        var blockRan = false
+
+        val result = guard.runGuardedWithContext(writeRequest()) { blockRan = true }
+
+        assertEquals(
+            WorkerGuardResult.BlockedRetry(
+                DiagnosticReasonCode.WORKER_WRITE_BARRIER_DENIED.name,
+                DiagnosticReasonCode.WORKER_WRITE_BARRIER_DENIED.name
+            ),
+            result
+        )
+        assertFalse("block must not run when the later barrier check denies", blockRan)
+        verify(exactly = 1) { writeBarrier.checkWritesAllowed("test_worker") }
+        verify(exactly = 1) { writeBarrier.checkWritesAllowed("WorkerRunLogger.start:test_worker") }
+        coVerify(exactly = 1) { leaseRegistry.acquire("test_worker") }
+        verify(exactly = 1) { lease.close() }
+        coVerify(exactly = 0) { workerRunLogger.start(any(), any(), any(), any(), any(), any()) }
+        verifyExactlyOneBlockedDiagnostic(
+            com.yourname.expensetracker.data.backup.MaintenanceBlockedReason.WRITE_BARRIER_DENIED
+        )
+    }
+
+    @Test
+    fun `P-09-3 runGuardedWithContext requiresDatabaseWrite false makes no guard barrier check before the lease`() = runTest {
+        val events = mutableListOf<String>()
+        coEvery { leaseRegistry.acquire(any()) } coAnswers {
+            events += "acquire"
+            lease
+        }
+        // Deny only the worker-name check: if the guard made it, the run would be blocked.
+        every { writeBarrier.checkWritesAllowed(any<String>()) } answers {
+            val op = firstArg<String>()
+            events += "barrier:$op"
+            if (op == "test_worker") throw writeDenied(op)
+        }
+        var blockRan = false
+
+        val result = guard.runGuardedWithContext(writeRequest(requiresDatabaseWrite = false)) { blockRan = true }
+
+        assertTrue("read-only worker must not be denied by the pre-lease check, was $result", result is WorkerGuardResult.Success)
+        assertTrue("block must run", blockRan)
+        assertEquals("the lease must be the first interaction", "acquire", events.first())
+        assertFalse("no pre-lease barrier check by the guard", events.contains("barrier:test_worker"))
+        verify(exactly = 0) { writeBarrier.checkWritesAllowed("test_worker") }
+        coVerify(exactly = 0) {
+            diagnosticSink.recordBlockedOperation(any(), any(), any(), any(), any())
+        }
+    }
+
+    @Test
+    fun `P-09-3 runGuardedWithContext barrier CancellationException propagates with no diagnostic`() = runTest {
+        val ex = kotlinx.coroutines.CancellationException("cancelled at barrier")
+        every { writeBarrier.checkWritesAllowed(any<String>()) } throws ex
+
+        try {
+            guard.runGuardedWithContext(writeRequest()) { }
+            throw AssertionError("Expected CancellationException to propagate")
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            assertEquals(ex, e)
+        }
+        coVerify(exactly = 0) {
+            diagnosticSink.recordBlockedOperation(any(), any(), any(), any(), any())
+        }
+        coVerify(exactly = 0) { leaseRegistry.acquire(any()) }
+        coVerify(exactly = 0) { workerRunLogger.start(any(), any(), any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `P-09-3 runGuardedWithContext non-blocked barrier exception is a denial like runGuarded`() = runTest {
+        val failure = IllegalStateException("barrier backend unavailable")
+        every { writeBarrier.checkWritesAllowed(any<String>()) } throws failure
+        var blockRan = false
+
+        val result = guard.runGuardedWithContext(writeRequest()) { blockRan = true }
+
+        assertEquals(
+            WorkerGuardResult.BlockedRetry(
+                DiagnosticReasonCode.WORKER_WRITE_BARRIER_DENIED.name,
+                DiagnosticReasonCode.WORKER_WRITE_BARRIER_DENIED.name
+            ),
+            result
+        )
+        assertFalse("block must not run when the barrier check fails", blockRan)
+        coVerify(exactly = 0) { leaseRegistry.acquire(any()) }
+        coVerify(exactly = 0) { workerRunLogger.start(any(), any(), any(), any(), any(), any()) }
+        verifyExactlyOneBlockedDiagnostic(
+            com.yourname.expensetracker.data.backup.MaintenanceBlockedReason.WRITE_BARRIER_DENIED
+        )
+    }
+
+    @Test
+    fun `P-09-3 runGuarded and runGuardedWithContext agree on write barrier denial`() = runTest {
+        val expectedReason = DiagnosticReasonCode.WORKER_WRITE_BARRIER_DENIED.name
+        for (policy in BlockedPolicy.values()) {
+            setup() // fresh mocks and guard per policy so verify counts cannot bleed between rows
+            every { writeBarrier.checkWritesAllowed(any<String>()) } throws writeDenied("test_worker")
+
+            val plain = guard.runGuarded(writeRequest(policy)) { }
+            // Both calls share mocks, so the plain-path diagnostic is checked before the second call.
+            coVerify(exactly = 1) { diagnosticSink.recordBlockedOperation(any(), any(), any(), any(), any()) }
+            val withContext = guard.runGuardedWithContext(writeRequest(policy)) { }
+
+            assertEquals("[$policy] same result on denial", plain, withContext)
+            val expected: WorkerGuardResult<Nothing> = when (policy) {
+                BlockedPolicy.RETRY -> WorkerGuardResult.BlockedRetry(expectedReason, expectedReason)
+                BlockedPolicy.SKIP_SUCCESS -> WorkerGuardResult.Skipped(expectedReason)
+                BlockedPolicy.FAIL -> WorkerGuardResult.Failed(expectedReason)
+            }
+            assertEquals("[$policy] result", expected, withContext)
+            // Neither path may take a lease or open a run row for a denied write.
+            coVerify(exactly = 0) { leaseRegistry.acquire(any()) }
+            coVerify(exactly = 0) { workerRunLogger.start(any(), any(), any(), any(), any(), any()) }
+            // One diagnostic per call. The recorded MaintenanceBlockedReason is NOT compared across the
+            // two paths: runGuarded records RESTORE_IN_PROGRESS while runGuardedWithContext records
+            // WRITE_BARRIER_DENIED (plan decision 5 keeps the latter). Only the result is shared.
+            coVerify(exactly = 2) { diagnosticSink.recordBlockedOperation(any(), any(), any(), any(), any()) }
+            coVerify(atLeast = 1) {
+                diagnosticSink.recordBlockedOperation(
+                    "test_worker",
+                    RestoreMaintenanceMode.Mode.NORMAL,
+                    "P9",
+                    null,
+                    com.yourname.expensetracker.data.backup.MaintenanceBlockedReason.WRITE_BARRIER_DENIED
+                )
+            }
+        }
+    }
+
+    private fun writeRequest(
+        policy: BlockedPolicy = BlockedPolicy.RETRY,
+        requiresDatabaseWrite: Boolean = true
+    ) = WorkerGuardRequest(
+        workerName = "test_worker",
+        requiresNotificationPermission = false,
+        requiresDatabaseWrite = requiresDatabaseWrite,
+        blockedPolicy = policy
+    )
+
+    private fun writeDenied(op: String) = com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException(
+        accessType = com.yourname.expensetracker.data.backup.DatabaseAccessType.WRITE,
+        operation = com.yourname.expensetracker.data.backup.DatabaseAccessOperation(op),
+        mode = RestoreMaintenanceMode.Mode.NORMAL
+    )
+
+    private fun verifyExactlyOneBlockedDiagnostic(
+        reason: com.yourname.expensetracker.data.backup.MaintenanceBlockedReason
+    ) {
+        coVerify(exactly = 1) { diagnosticSink.recordBlockedOperation(any(), any(), any(), any(), any()) }
+        coVerify(exactly = 1) {
+            diagnosticSink.recordBlockedOperation("test_worker", RestoreMaintenanceMode.Mode.NORMAL, "P9", null, reason)
         }
     }
 
