@@ -1339,6 +1339,34 @@ internal fun parseTransactionTypeOrNull(raw: String?): TransactionType? {
     return TransactionType.entries.firstOrNull { it.name == normalized }
 }
 
+/** Transfer direction and account name that the review edit dialog submits. */
+internal data class ReviewTransferSubmit(
+    val direction: TransferDirection?,
+    val accountName: String?
+)
+
+/**
+ * J-05-1: keyed on the type the user has selected now, not on whether it differs from the
+ * suggestion. An unedited TRANSFER or DEPOSIT row submits the dialog state, which was seeded from
+ * the suggestion, so the repository fallback and the explicit value agree. Direction and account
+ * edits made without a type change are no longer dropped. Other types submit null (the repository
+ * ignores transfer metadata for them). A blank account is submitted as null so the repository
+ * falls back to the suggested account.
+ */
+internal fun resolveTransferSubmit(
+    selectedType: TransactionType,
+    transferDirection: TransferDirection?,
+    transferAccount: String
+): ReviewTransferSubmit {
+    val carriesTransferMetadata =
+        selectedType == TransactionType.TRANSFER || selectedType == TransactionType.DEPOSIT
+    if (!carriesTransferMetadata) return ReviewTransferSubmit(direction = null, accountName = null)
+    return ReviewTransferSubmit(
+        direction = transferDirection,
+        accountName = transferAccount.takeIf { it.isNotBlank() }
+    )
+}
+
 @Composable
 private fun ReviewCaptureAssistSection(
     item: PendingReviewWithReceipt,
@@ -1984,11 +2012,12 @@ fun EditReviewDialog(
                         val locLon = locationEditState.selectedLon
                         val locAddress = locationEditState.selectedAddress
                         val locPlaceId = locationEditState.selectedPlaceId
+                        val transferSubmit = resolveTransferSubmit(selectedType, transferDirection, transferAccount)
                         onSave(
                             editedAmount, editedMerchant, editedCategory, editedDate, editedType,
                             // S6-004: Pass transfer direction/account
-                            transferDirection.takeIf { editedType == TransactionType.TRANSFER || editedType == TransactionType.DEPOSIT },
-                            transferAccount.takeIf { (editedType == TransactionType.TRANSFER || editedType == TransactionType.DEPOSIT) && transferAccount.isNotBlank() },
+                            transferSubmit.direction,
+                            transferSubmit.accountName,
                             applyToAll, approveAllPending,
                             locLat.takeIf { it != review.suggestedLatitude },
                             locLon.takeIf { it != review.suggestedLongitude },

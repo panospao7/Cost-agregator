@@ -99,6 +99,11 @@ class NotificationCaptureServiceDeferredPolicyTest {
         ReflectionHelpers.setField(service, "privacySettingsRepository", privacySettingsRepository)
         ReflectionHelpers.setField(service, "blockedPackageDao", blockedPackageDao)
         ReflectionHelpers.setField(service, "intakeCoordinator", intakeCoordinator)
+        // The pipeline takes a dedupe arrival reading before the permit wait, so the
+        // (otherwise unused) deduper must be initialised; tests needing more override it.
+        val defaultDeduper = mockk<com.yourname.expensetracker.domain.notification.capture.NotificationCaptureDeduper>()
+        every { defaultDeduper.markArrival() } returns 0L
+        ReflectionHelpers.setField(service, "deduper", defaultDeduper)
 
         // Fast pre-checks pass; the gate defers every notification into the
         // TemporarilyUnavailable branch under test.
@@ -562,7 +567,8 @@ class NotificationCaptureServiceDeferredPolicyTest {
         val deduper = mockk<com.yourname.expensetracker.domain.notification.capture.NotificationCaptureDeduper>()
         val startedKey = slot<String>()
         val removedKey = slot<String>()
-        every { deduper.tryStart(capture(startedKey), any()) } returns false
+        every { deduper.markArrival() } returns 0L
+        every { deduper.tryStart(capture(startedKey), any(), any()) } returns false
         every { deduper.remove(capture(removedKey)) } returns Unit
         ReflectionHelpers.setField(service, "deduper", deduper)
         val timeProvider = mockk<com.yourname.expensetracker.domain.util.TimeProvider>()
@@ -599,7 +605,7 @@ class NotificationCaptureServiceDeferredPolicyTest {
         }
 
         // Key released exactly once, and it is the very key tryStart recorded.
-        verify(exactly = 1) { deduper.tryStart(any(), any()) }
+        verify(exactly = 1) { deduper.tryStart(any(), any(), any()) }
         verify(exactly = 1) { deduper.remove(any()) }
         assertEquals(startedKey.captured, removedKey.captured)
 

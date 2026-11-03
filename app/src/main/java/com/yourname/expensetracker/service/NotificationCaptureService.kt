@@ -467,6 +467,9 @@ class NotificationCaptureService : NotificationListenerService() {
             // re-indented to keep the diff minimal; `return@launch` still works because
             // withPermit is inline.
             var permitHeld = false
+            // Monotonic arrival reading taken BEFORE the permit wait so the dedupe window
+            // measures arrival gaps, not processing delay (same clock as the deduper).
+            val arrivedAt = deduper.markArrival()
             try {
             captureLimiter.withPermit {
             permitHeld = true
@@ -605,7 +608,7 @@ class NotificationCaptureService : NotificationListenerService() {
             val now = timeProvider.now()
             val contentFingerprint = computeNotificationContentFingerprint(parts.combinedBody)
             val dedupeKey = computeDedupeKey(packageName, notificationKey, contentFingerprint)
-            if (deduper.tryStart(dedupeKey, DEDUP_WINDOW_MS)) {
+            if (deduper.tryStart(dedupeKey, DEDUP_WINDOW_MS, arrivedAt)) {
                 notificationDiagnosticEmitter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
                     pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
                     stage = "dedupe",

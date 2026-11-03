@@ -31,15 +31,30 @@ class NotificationCaptureDeduper @Inject constructor(
      * [windowMs]. If not, inserts it and returns false (not a duplicate).
      * If already present and within window, returns true (duplicate).
      */
-    fun tryStart(key: String, windowMs: Long): Boolean {
-        val now = timeProvider.nowNanos()
+    fun tryStart(key: String, windowMs: Long): Boolean =
+        tryStart(key, windowMs, timeProvider.nowNanos())
+
+    /**
+     * Monotonic arrival reading ([MonotonicTimeProvider.nowNanos]) for callers
+     * that take the reading early (before a queue/permit wait) and pass it to
+     * [tryStart] so the window is measured from arrival, not from processing.
+     */
+    fun markArrival(): Long = timeProvider.nowNanos()
+
+    /**
+     * As [tryStart], but measures the window from [arrivedAtNanos], a reading
+     * previously obtained from [markArrival]. Arrivals can be evaluated out of
+     * order (permit waits), so the gap is absolute, and the stored start never
+     * moves backwards (the later of stored and new arrival is kept).
+     */
+    fun tryStart(key: String, windowMs: Long, arrivedAtNanos: Long): Boolean {
         val windowNanos = windowMs * 1_000_000L
         synchronized(lock) {
             val last = entries[key]
-            if (last != null && (now - last) < windowNanos) {
+            if (last != null && Math.abs(arrivedAtNanos - last) < windowNanos) {
                 return true // duplicate
             }
-            entries[key] = now
+            entries[key] = if (last != null && last > arrivedAtNanos) last else arrivedAtNanos
             if (entries.size > MAX_ENTRIES) {
                 // Remove oldest entry (access-order LinkedHashMap)
                 entries.remove(entries.keys.first())

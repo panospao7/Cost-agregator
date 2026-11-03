@@ -29,6 +29,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.InternalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestDispatcher
 import java.util.concurrent.CountDownLatch
@@ -1544,6 +1545,133 @@ class CurrencyRatesRepositoryImplTest {
         assertTrue(settings.lastRateUpdates.isEmpty())
     }
 
+    // ── RA-FX-1 / N-07-3: the gate is decided again after the single-flight wait (fix 1.0.4 S6) ──
+
+    private class HeldRefreshRun(
+        val first: CurrencyRateRefreshOutcome,
+        val second: CurrencyRateRefreshOutcome,
+        val openerCalls: Int,
+        val gateCallsWhileFirstHeldLock: Int,
+        val secondDoneWhileFirstHeldLock: Boolean,
+        val gateCallsAtEnd: Int
+    )
+
+    /**
+     * Refresh 1 is parked inside the daily opener, so it holds the single-flight lock. Refresh 2 is started
+     * only after refresh 1 is parked and is released to run only after its pre-lock gate check (gate call
+     * 3) has happened. Only then is the gate switched by [flipTo], and refresh 1 is released. Real IO
+     * threads; both refreshes are awaited before returning.
+     */
+    private suspend fun refreshWhileGateFlips(flipTo: () -> PrivacyDecision): HeldRefreshRun = coroutineScope {
+        val openerEntered = CountDownLatch(1)
+        val releaseOpener = CountDownLatch(1)
+        val secondPastPreLockGate = CountDownLatch(1)
+        val openerCalls = java.util.concurrent.atomic.AtomicInteger(0)
+        val gate = SwitchableGate { PrivacyDecision.Allowed }
+        gate.onCall = { callNumber -> if (callNumber == 3) secondPastPreLockGate.countDown() }
+        val time = MutableTimeProvider(fetchedNextDayMillis)
+        val repository = CurrencyRatesRepositoryImpl(
+            currencyConverter = CurrencyConverter(PairDateRateStore(), time),
+            currencySettingsRepository = RecordingCurrencySettingsRepository(),
+            timeProvider = time,
+            ioDispatcher = Dispatchers.IO,
+            privacyGate = gate
+        )
+        repository.dailyConnectionOpener = {
+            if (openerCalls.incrementAndGet() != 1) throw AssertionError("a second daily connection was opened")
+            openerEntered.countDown()
+            if (!releaseOpener.await(20, TimeUnit.SECONDS)) throw IOException("test gate never released")
+            okDailyConnection()
+        }
+
+        try {
+            val first = async(Dispatchers.Default) { repository.refresh("USD") }
+            assertTrue("refresh 1 never reached the opener", openerEntered.await(10, TimeUnit.SECONDS))
+            val second = async(Dispatchers.Default) { repository.refresh("USD") }
+            assertTrue("refresh 2 never passed the pre-lock gate", secondPastPreLockGate.await(10, TimeUnit.SECONDS))
+
+            gate.behavior = flipTo
+            // Refresh 1 still holds the lock: refresh 2 must be parked on it, not past it. Time only gives a
+            // wrong result a chance to show; it cannot make this fail on a correct implementation.
+            Thread.sleep(300)
+            val callsWhileHeld = gate.calls.get()
+            val secondDoneWhileHeld = second.isCompleted
+
+            releaseOpener.countDown()
+            HeldRefreshRun(
+                first = first.await(),
+                second = second.await(),
+                openerCalls = openerCalls.get(),
+                gateCallsWhileFirstHeldLock = callsWhileHeld,
+                secondDoneWhileFirstHeldLock = secondDoneWhileHeld,
+                gateCallsAtEnd = gate.calls.get()
+            )
+        } finally {
+            releaseOpener.countDown()
+        }
+    }
+
+    @Test
+    fun `RA-FX-1 a refresh queued behind another is DisabledByPrivacy when the gate is denied during the wait`() = runTest {
+        val run = refreshWhileGateFlips {
+            PrivacyDecision.Denied(PrivacyGateReasonCodes.EXCHANGE_RATE_DOWNLOAD_DISABLED)
+        }
+
+        // Control: refresh 1 passed both of its own checks before the flip and completed normally.
+        assertTrue("first was ${run.first}", run.first is CurrencyRateRefreshOutcome.Refreshed)
+        // Refresh 2 had passed its pre-lock check, and was parked on the lock while refresh 1 held it.
+        assertEquals(3, run.gateCallsWhileFirstHeldLock)
+        assertFalse("refresh 2 finished while refresh 1 held the lock", run.secondDoneWhileFirstHeldLock)
+        // The denial can only come from a gate check made after the wait (a fourth call).
+        assertEquals(CurrencyRateRefreshOutcome.DisabledByPrivacy, run.second)
+        assertEquals(4, run.gateCallsAtEnd)
+        assertEquals("only refresh 1 may open a connection", 1, run.openerCalls)
+    }
+
+    @Test
+    fun `RA-FX-1 a refresh queued behind another fails closed when the gate throws during the wait`() = runTest {
+        val run = refreshWhileGateFlips { throw IllegalStateException("gate exploded after the wait") }
+
+        assertTrue("first was ${run.first}", run.first is CurrencyRateRefreshOutcome.Refreshed)
+        assertEquals(3, run.gateCallsWhileFirstHeldLock)
+        assertFalse("refresh 2 finished while refresh 1 held the lock", run.secondDoneWhileFirstHeldLock)
+        assertEquals(
+            CurrencyRateRefreshOutcome.PrivacyCheckFailed(PrivacyGateReasonCodes.PRIVACY_BLOCKED),
+            run.second
+        )
+        assertEquals(4, run.gateCallsAtEnd)
+        assertEquals("only refresh 1 may open a connection", 1, run.openerCalls)
+    }
+
+    @Test
+    fun `RA-FX-1 CancellationException from the gate inside the lock is rethrown and never mapped`() = runTest {
+        val gate = SwitchableGate { PrivacyDecision.Allowed }
+        // Call 1 is the pre-lock check; call 2 is the check inside the single-flight lock.
+        gate.onCall = { callNumber ->
+            if (callNumber == 2) throw CancellationException("gate cancelled inside the lock")
+        }
+        val repository = repositoryWithGate(gate)
+        repository.serveDailyNothing()
+        var thrown: Throwable? = null
+        var returned: CurrencyRateRefreshOutcome? = null
+
+        try {
+            returned = repository.refresh("USD")
+        } catch (e: CancellationException) {
+            thrown = e
+        }
+
+        assertTrue("CancellationException must propagate", thrown is CancellationException)
+        assertNull(returned)
+        assertEquals(2, gate.calls.get())
+        assertEquals(0, dailyConnectionsOpened)
+
+        // The lock is not left held: a later refresh with an allowed gate runs to completion.
+        repository.serveDaily(okDailyConnection())
+        assertTrue(repository.refresh("USD") is CurrencyRateRefreshOutcome.Refreshed)
+        assertEquals(1, dailyConnectionsOpened)
+    }
+
     /** Store whose bulk write always fails with [failure]; everything else delegates to a real fake. */
     private class FailingBulkStore(
         private val delegate: ExchangeRateStore,
@@ -1722,6 +1850,22 @@ private class PairDateRateStore : ExchangeRateStore {
 
 private class MutableTimeProvider(var currentMillis: Long) : TimeProvider {
     override fun now(): Long = currentMillis
+}
+
+/** Thread-safe gate whose answer can change between calls; [onCall] runs first with the 1-based call number. */
+private class SwitchableGate(@Volatile var behavior: () -> PrivacyDecision) : PrivacyGate {
+    val calls = java.util.concurrent.atomic.AtomicInteger(0)
+
+    @Volatile
+    var onCall: (Int) -> Unit = {}
+
+    override suspend fun check(
+        capability: PrivacyCapability,
+        context: Map<String, String>
+    ): PrivacyDecision {
+        onCall(calls.incrementAndGet())
+        return behavior()
+    }
 }
 
 private class FixedPrivacyGate(private val decision: PrivacyDecision) : PrivacyGate {

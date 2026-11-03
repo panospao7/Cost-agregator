@@ -124,7 +124,8 @@ class NotificationCaptureServiceConcurrencyTest {
         coEvery { privacyGate.check(PrivacyCapability.NOTIFICATION_CAPTURE) } returns PrivacyDecision.Allowed
         coEvery { privacySettingsRepository.getSettings() } returns
             PrivacySettings(rawNotificationStorageMode = RawStorageMode.STORE_RAW)
-        every { deduper.tryStart(any(), any()) } answers {
+        every { deduper.markArrival() } returns 0L
+        every { deduper.tryStart(any(), any(), any()) } answers {
             if (duplicatesToReport > 0) {
                 duplicatesToReport--
                 true
@@ -278,6 +279,66 @@ class NotificationCaptureServiceConcurrencyTest {
         captureCalls(1)
         assertTrue(gateEntryJobs.all { it.isCompleted })
         assertEquals(PERMITS, availablePermits())
+    }
+
+    // -- dedupe window measured from arrival (S7) ---------------------------------------
+
+    @Test
+    fun `permit wait longer than the dedupe window still suppresses a duplicate`() {
+        val fakeClock = FakeMonotonicTimeProvider()
+        ReflectionHelpers.setField(service, "deduper", NotificationCaptureDeduper(fakeClock))
+        holdGate = true
+
+        // Fill every permit so later notifications queue; each filler is distinct.
+        postWithoutRunning(PERMITS)
+        scheduler.advanceUntilIdle()
+        assertEquals(PERMITS, gateEntryJobs.size)
+
+        // Two same-key posts arrive 1s apart (DEDUP_WINDOW_MS = 5s) and queue for permits.
+        service.onNotificationPosted(notificationWithId(9001)) // arrival t = 0
+        scheduler.advanceUntilIdle()
+        fakeClock.advanceMillis(1_000L)
+        service.onNotificationPosted(notificationWithId(9001)) // arrival t = 1s
+        scheduler.advanceUntilIdle()
+        assertEquals("both duplicates must still be queued for a permit", PERMITS, gateEntryJobs.size)
+
+        // Free one permit: the first duplicate enters the gate and is released -> recorded.
+        gateWaiters[0].complete(Unit)
+        scheduler.advanceUntilIdle()
+        assertEquals(PERMITS + 1, gateEntryJobs.size)
+        gateWaiters[PERMITS].complete(Unit)
+        scheduler.advanceUntilIdle()
+        assertEquals("first arrival is admitted", 0, dedupeDuplicateCount())
+
+        // The second duplicate now holds a permit after a wait far beyond the window.
+        assertEquals(PERMITS + 2, gateEntryJobs.size)
+        fakeClock.advanceMillis(20_000L)
+        gateWaiters[PERMITS + 1].complete(Unit)
+        scheduler.advanceUntilIdle()
+
+        assertEquals(
+            "arrival gap (1s) is inside the window even though processing gap (21s) is not",
+            1, dedupeDuplicateCount()
+        )
+        releaseAllGatesUntilDrained()
+        // PERMITS fillers + the first duplicate; the second duplicate was suppressed.
+        captureCalls(PERMITS + 1)
+        assertEquals(PERMITS, availablePermits())
+    }
+
+    private fun dedupeDuplicateCount() =
+        emittedEvents.count { it.stage == "dedupe" && it.reasonCode == DiagnosticReasonCode.DUPLICATE }
+
+    private fun notificationWithId(id: Int): StatusBarNotification {
+        val notification = Notification()
+        notification.extras.apply {
+            putCharSequence(Notification.EXTRA_TITLE, TITLE_TEXT)
+            putCharSequence(Notification.EXTRA_TEXT, PAYMENT_TEXT)
+        }
+        return StatusBarNotification(
+            PKG, OP_PKG, id, NOTIFICATION_TAG, 10042, 10042, 0,
+            notification, Process.myUserHandle(), 1_700_000_000_000L
+        )
     }
 
     // -- cancellation ----------------------------------------------------------------

@@ -111,12 +111,65 @@ class NotificationCaptureDeduperTest {
         fake.setNanos(10_000_000_000L) // now = 10_000 ms
         assertFalse(deduper.tryStart("k", 5000L)) // last = 10_000
 
-        fake.setNanos(5_000_000_000L) // impossible backward read -> now = 5_000
-        assertTrue(deduper.tryStart("k", 5000L)) // (5_000 - 10_000) < 5_000 -> fail-safe suppress
+        fake.setNanos(6_000_000_000L) // impossible backward read -> now = 6_000
+        assertTrue(deduper.tryStart("k", 5000L)) // |6_000 - 10_000| = 4_000 < 5_000 -> fail-safe suppress
         assertEquals(1, deduper.size) // suppressed call must not mutate state
 
         fake.setNanos(15_000_000_000L) // now = 15_000 -> (15_000 - 10_000) == window
         assertFalse(deduper.tryStart("k", 5000L)) // admitted again
+    }
+
+    // -- arrival-based window (S7): permit waits make arrivals evaluate late / out of order --
+
+    @Test
+    fun `arrivals inside the window dedupe even when processing is delayed beyond the window`() {
+        val first = deduper.markArrival() // t = 0ms
+        fake.advanceMillis(1000L)
+        val second = deduper.markArrival() // t = 1000ms
+        fake.advanceMillis(20_000L) // permit wait: processing now far beyond the window
+
+        assertFalse(deduper.tryStart("k", 5000L, first))
+        // Evaluated 20s after the first record, but only 1s after it by arrival.
+        assertTrue(deduper.tryStart("k", 5000L, second))
+        assertEquals(1, deduper.size)
+    }
+
+    @Test
+    fun `out-of-order arrival inside the window is a duplicate`() {
+        assertFalse(deduper.tryStart("k", 5000L, 10_000_000_000L)) // arrival at 10_000ms
+        // Earlier arrival evaluated later: |8_000 - 10_000| = 2_000 < 5_000
+        assertTrue(deduper.tryStart("k", 5000L, 8_000_000_000L))
+        assertEquals(1, deduper.size)
+    }
+
+    @Test
+    fun `out-of-order arrival beyond the window is admitted and does not move the stored start back`() {
+        assertFalse(deduper.tryStart("k", 5000L, 20_000_000_000L)) // stored start 20_000ms
+        // Earlier arrival 12_000ms before the stored start: not a duplicate.
+        assertFalse(deduper.tryStart("k", 5000L, 8_000_000_000L))
+        assertEquals(1, deduper.size)
+        // Stored start must still be 20_000ms: a repost at 22_000ms is a duplicate.
+        // (If the older arrival had overwritten it, 22_000 - 8_000 would admit it.)
+        assertTrue(deduper.tryStart("k", 5000L, 22_000_000_000L))
+        // And 25_000ms is exactly one window after the stored start: admitted.
+        assertFalse(deduper.tryStart("k", 5000L, 25_000_000_000L))
+    }
+
+    @Test
+    fun `two-argument tryStart uses the current monotonic reading like the three-argument form`() {
+        fake.setNanos(3_000_000_000L)
+        assertFalse(deduper.tryStart("k", 5000L)) // stored start 3_000ms
+        fake.setNanos(7_999_000_000L) // 4_999ms later
+        assertTrue(deduper.tryStart("k", 5000L))
+        assertTrue(deduper.tryStart("k", 5000L, deduper.markArrival()))
+        fake.setNanos(8_000_000_000L) // exactly one window
+        assertFalse(deduper.tryStart("k", 5000L))
+    }
+
+    @Test
+    fun `markArrival returns the monotonic reading`() {
+        fake.setNanos(123_456L)
+        assertEquals(123_456L, deduper.markArrival())
     }
 
     @Test
