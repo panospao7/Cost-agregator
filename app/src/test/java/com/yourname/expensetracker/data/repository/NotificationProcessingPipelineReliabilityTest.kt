@@ -1129,6 +1129,172 @@ class NotificationProcessingPipelineReliabilityTest {
         coVerify(exactly = 0) { pendingReviewDao.upsertByRawNotificationId(any()) }
     }
 
+    @Test
+    fun `FIX-104 F AUTO_REJECT normalizes merchant read-only with autoCreate false`() = runBlocking {
+        val notification = testNotification("com.some.random.app")
+        val parsed = ParsedTransaction(
+            amount = 4.08,
+            currency = "EUR",
+            merchant = "Rejected Shop",
+            type = ParsedTransactionType.PURCHASE,
+            confidence = 0.90f,
+            date = notification.timestamp
+        )
+        coEvery {
+            parserRegistry.parseWithProvenance(
+                notification.title,
+                notification.text,
+                notification.bigText,
+                notification.subText,
+                notification.packageName
+            )
+        } returns ParseOutcome.Parsed(parsed, mockk(relaxed = true))
+        coEvery {
+            confidenceRouter.route(parsed, notification.packageName, any())
+        } returns RoutingResult(
+            decision = RoutingDecision.AUTO_REJECT,
+            adjustedConfidence = 0.45f,
+            reason = "low confidence"
+        )
+        coEvery { rawDao.insertOrIgnore(any()) } returns 61L
+
+        val result = pipeline.process(notification)
+
+        assertTrue("Expected AutoRejected outcome, got $result", result is NotificationPipelineOutcome.AutoRejected)
+        coVerify(atLeast = 1) { merchantNormalizer.normalize("Rejected Shop", false, any()) }
+        coVerify(exactly = 0) { merchantNormalizer.normalize(any(), true, any()) }
+        coVerify(exactly = 0) { merchantNormalizer.linkAliasToCanonical(any(), any(), any()) }
+        coVerify(exactly = 0) { merchantNormalizer.learnMerchantAlias(any(), any()) }
+    }
+
+    @Test
+    fun `FIX-104 F AUTO_ACCEPT normalizes merchant with autoCreate true`() = runBlocking {
+        val notification = testNotification("com.wallet")
+        val parsed = ParsedTransaction(
+            amount = 50.0,
+            currency = "EUR",
+            merchant = "Shop",
+            type = ParsedTransactionType.PURCHASE,
+            confidence = 0.95f,
+            date = notification.timestamp
+        )
+        coEvery {
+            parserRegistry.parseWithProvenance(
+                notification.title,
+                notification.text,
+                notification.bigText,
+                notification.subText,
+                notification.packageName
+            )
+        } returns ParseOutcome.Parsed(parsed, mockk(relaxed = true))
+        coEvery {
+            confidenceRouter.route(parsed, notification.packageName, any())
+        } returns RoutingResult(
+            decision = RoutingDecision.AUTO_ACCEPT,
+            adjustedConfidence = 0.95f,
+            reason = "high confidence"
+        )
+        coEvery {
+            hybridClassifier.classify(
+                merchantName = "Shop",
+                amount = 50.0,
+                notificationTitle = notification.title,
+                notificationText = notification.text,
+                packageName = notification.packageName
+            )
+        } returns ClassificationResult(
+            categoryId = 0L,
+            categoryName = "Unknown",
+            confidence = 0f,
+            matchType = MatchType.FALLBACK
+        )
+        coEvery { rawDao.insertOrIgnore(any()) } returns 62L
+        coEvery {
+            expenseDao.isDuplicateCurrencyAware(
+                amount = 50.0,
+                merchant = "Shop",
+                date = notification.timestamp,
+                currency = "EUR",
+                transactionType = "PURCHASE",
+                windowMs = DuplicateDetectionPolicy.DUPLICATE_WINDOW_MS,
+                merchantKey = any(),
+                dedupeKey = any()
+            )
+        } returns false
+        coEvery { coordinator.createExpenseDbOnlyV2(any()) } returns MutationResult(
+            com.yourname.expensetracker.domain.transaction.CreateExpenseResult.Created(457L),
+            PostCommitActionBatch.empty("test")
+        )
+
+        val result = pipeline.process(notification)
+
+        assertTrue("Expected AutoAccepted outcome, got $result", result is NotificationPipelineOutcome.AutoAccepted)
+        coVerify(atLeast = 1) { merchantNormalizer.normalize("Shop", true, any()) }
+        coVerify(exactly = 0) { merchantNormalizer.normalize(any(), false, any()) }
+    }
+
+    @Test
+    fun `FIX-104 F NEEDS_REVIEW normalizes merchant with autoCreate true`() = runBlocking {
+        val notification = testNotification("com.wallet")
+        val parsed = ParsedTransaction(
+            amount = 50.0,
+            currency = "EUR",
+            merchant = "Review Shop",
+            type = ParsedTransactionType.PURCHASE,
+            confidence = 0.70f,
+            date = notification.timestamp
+        )
+        coEvery {
+            parserRegistry.parseWithProvenance(
+                notification.title,
+                notification.text,
+                notification.bigText,
+                notification.subText,
+                notification.packageName
+            )
+        } returns ParseOutcome.Parsed(parsed, mockk(relaxed = true))
+        coEvery {
+            confidenceRouter.route(parsed, notification.packageName, any())
+        } returns RoutingResult(
+            decision = RoutingDecision.NEEDS_REVIEW,
+            adjustedConfidence = 0.70f,
+            reason = "medium confidence"
+        )
+        coEvery {
+            hybridClassifier.classify(
+                merchantName = "Review Shop",
+                amount = 50.0,
+                notificationTitle = notification.title,
+                notificationText = notification.text,
+                packageName = notification.packageName
+            )
+        } returns ClassificationResult(
+            categoryId = 0L,
+            categoryName = "Unknown",
+            confidence = 0f,
+            matchType = MatchType.FALLBACK
+        )
+        coEvery { rawDao.insertOrIgnore(any()) } returns 63L
+        coEvery {
+            expenseDao.isDuplicateCurrencyAware(
+                amount = 50.0,
+                merchant = "Review Shop",
+                date = notification.timestamp,
+                currency = "EUR",
+                transactionType = TransactionType.PURCHASE.name,
+                windowMs = DuplicateDetectionPolicy.DUPLICATE_WINDOW_MS,
+                merchantKey = any(),
+                dedupeKey = any()
+            )
+        } returns false
+
+        val result = pipeline.process(notification)
+
+        assertTrue("Expected NeedsReview outcome, got $result", result is NotificationPipelineOutcome.NeedsReview)
+        coVerify(atLeast = 1) { merchantNormalizer.normalize("Review Shop", true, any()) }
+        coVerify(exactly = 0) { merchantNormalizer.normalize(any(), false, any()) }
+    }
+
     private fun unresolvedKrSignal(amount: Double) = MoneySignal(
         raw = "$amount kr",
         amount = amount,

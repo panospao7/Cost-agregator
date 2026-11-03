@@ -195,9 +195,16 @@ class RecurringExpensesViewModel @Inject constructor(
                 nextDate = pattern.nextExpectedDate,
                 note = "Detected and confirmed by user"
             )
-            guardedWrite(::emitWriteBlocked) {
-                recurringExpenseRepository.insert(manual)
-            } ?: return@launch
+            try {
+                guardedWrite(::emitWriteBlocked) {
+                    recurringExpenseRepository.insert(manual)
+                } ?: return@launch
+            } catch (e: com.yourname.expensetracker.domain.recurring.lifecycle.InvalidRecurringAmountException) {
+                // Legacy detected pattern with an unusable amount/currency: bounded reason code only.
+                Timber.w("Recurring confirm rejected reason=%s", e.reasonCode)
+                emitWriteBlocked(UiText.from(R.string.recurring_error_generic))
+                return@launch
+            }
             refreshTrigger.value += 1
         }
     }

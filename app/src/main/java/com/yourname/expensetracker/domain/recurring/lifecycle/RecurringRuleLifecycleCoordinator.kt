@@ -12,6 +12,9 @@ import com.yourname.expensetracker.data.database.dao.RecurringReminderDeliveryDa
 import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
 import com.yourname.expensetracker.data.database.entity.RecurringLifecycleEvent
 import com.yourname.expensetracker.data.database.entity.RecurringOccurrence
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.currency.AmountCheck
+import com.yourname.expensetracker.domain.currency.CurrencyAmountPolicy
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.recurring.RecurringOccurrenceExpander
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
@@ -163,6 +166,8 @@ class RecurringRuleLifecycleCoordinator @Inject constructor(
      */
     suspend fun createRule(expense: ManualRecurringExpense): Long {
         writeBarrier.checkWritesAllowed("RecurringRuleLifecycleCoordinator.createRule")
+        // Validate before any write or transaction (throws InvalidRecurringAmountException).
+        validateAmountAndCurrency(expense.amount, expense.currency)
         val now = timeProvider.now()
         val entity = if (expense.createdAt == 0L) expense.copy(createdAt = now) else expense
 
@@ -519,6 +524,12 @@ class RecurringRuleLifecycleCoordinator @Inject constructor(
         val old = manualRecurringExpenseDao.getById(updated.id)
             ?: throw IllegalArgumentException("Recurring rule not found: id=${updated.id}")
 
+        // Validate only when amount or currency changes, so legacy rows (zero/oversized amount)
+        // keep working on unrelated edits and repeated confirms. Before any write or transaction.
+        if (updated.amount != old.amount || !updated.currency.equals(old.currency, ignoreCase = true)) {
+            validateAmountAndCurrency(updated.amount, updated.currency)
+        }
+
         // Validate + normalize date-only values. createdAt sentinel inherited from the row.
         val normalized = (if (updated.createdAt == 0L) updated.copy(createdAt = old.createdAt) else updated)
             .copy(
@@ -535,6 +546,26 @@ class RecurringRuleLifecycleCoordinator @Inject constructor(
             database.withTransaction {
                 reconcileUpdateInCurrentTransaction(old, normalized, now)
             }
+        }
+    }
+
+    /**
+     * Pre-write amount/currency check via [CurrencyAmountPolicy.check]. Throws
+     * [InvalidRecurringAmountException] with a bounded reason code only (no amount, currency or
+     * merchant). [AmountCheck.PrecisionExceeded] is deliberately accepted: detected-pattern and
+     * candidate amounts are unrounded averages that must stay confirmable.
+     */
+    private fun validateAmountAndCurrency(amount: Double, currency: String) {
+        val code = CurrencyCode.parse(currency)
+            ?: throw InvalidRecurringAmountException(InvalidRecurringAmountException.CURRENCY_INVALID)
+        when (CurrencyAmountPolicy.check(amount, code)) {
+            AmountCheck.Ok, is AmountCheck.PrecisionExceeded -> Unit
+            AmountCheck.NotPositive ->
+                throw InvalidRecurringAmountException(InvalidRecurringAmountException.NOT_POSITIVE)
+            is AmountCheck.AboveCap ->
+                throw InvalidRecurringAmountException(InvalidRecurringAmountException.ABOVE_CAP)
+            AmountCheck.DigitsUnavailable ->
+                throw InvalidRecurringAmountException(InvalidRecurringAmountException.DIGITS_UNAVAILABLE)
         }
     }
 

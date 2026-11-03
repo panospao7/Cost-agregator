@@ -45,7 +45,7 @@ class CategorizationAssistInputBuilder @Inject constructor(
         } else {
             rawMerchant
         }
-        val merchantKey = merchantNormalizer.normalize(rawMerchant).canonical.searchKey
+        val merchantKey = merchantNormalizer.normalize(rawMerchant, autoCreate = false).canonical.searchKey
         val recentHints = fetchRecentTransactionHints(merchantKey, rawMerchant, shouldRedact)
         val amount = sanitizeAmount(review.suggestedAmount)
 
@@ -93,7 +93,7 @@ class CategorizationAssistInputBuilder @Inject constructor(
             trimmedMerchant
         }
         val amount = sanitizeAmount(draftAmount ?: receipt.parsedTotal)
-        val normalizedResult = merchantNormalizer.normalize(rawMerchant)
+        val normalizedResult = merchantNormalizer.normalize(rawMerchant, autoCreate = false)
         val recentHints = fetchRecentTransactionHints(normalizedResult.canonical.searchKey, rawMerchant, shouldRedact)
 
         return CategorizationAssistInput(

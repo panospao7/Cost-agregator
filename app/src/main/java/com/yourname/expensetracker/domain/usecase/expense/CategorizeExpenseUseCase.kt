@@ -10,7 +10,7 @@ class CategorizeExpenseUseCase @Inject constructor(
     private val merchantNormalizer: MerchantNormalizer
 ) {
     suspend operator fun invoke(merchantName: String): CategoryResult {
-        val normalized = merchantNormalizer.normalize(merchantName).canonical.normalizedName
+        val normalized = merchantNormalizer.normalize(merchantName, autoCreate = false).canonical.normalizedName
         
         val result = categorizationEngine.categorize(normalized)
         
