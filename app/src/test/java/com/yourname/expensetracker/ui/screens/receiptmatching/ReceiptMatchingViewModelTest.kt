@@ -453,6 +453,153 @@ class ReceiptMatchingViewModelTest : ViewModelTestUtils() {
         assertTrue(viewModel.state.value.mutatingReceiptIds.isEmpty())
     }
 
+    // ---- Review fixes: rerun reload rule and the expense-already-linked message ----
+
+    private fun stubRerunSetup(receipt: ScannedReceipt, tx: Expense) {
+        coEvery { receiptRepository.getReceiptById(receipt.id) } returns receipt
+        coEvery { matchService.clearMatchForReceipt(receipt.id) } returns Unit
+        coEvery { matcher.findBestMatch(receipt) } returns MatchResult.AutoMatch(tx, 0.97)
+    }
+
+    @Test
+    fun `INV_P032 failed rerun link keeps the error visible and does not reload`() = runTest(testDispatcher) {
+        val receipt = scannedReceipt(40L, "Shell", 45.0)
+        val tx = expense(940L, "SHELL", 45.0)
+        stubRerunSetup(receipt, tx)
+        coEvery { autoLink(40L, 940L, 0.97f) } returns Result.failure(
+            com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptAlreadyClaimedException(40L)
+        )
+        viewModel = createViewModel()
+        advanceUntilIdle()
+        coVerify(exactly = 1) { receiptRepository.getUnmatchedReceipts() }
+
+        viewModel.rerunForReceipt(receipt)
+        advanceUntilIdle()
+
+        assertEquals("Rerun link failed. Please try again.", viewModel.state.value.error)
+        coVerify(exactly = 1) { receiptRepository.getUnmatchedReceipts() }
+        coVerify(exactly = 1) { receiptRepository.getReceiptsWithSuggestions() }
+    }
+
+    @Test
+    fun `INV_P032 successful rerun reloads the receipts`() = runTest(testDispatcher) {
+        val receipt = scannedReceipt(40L, "Shell", 45.0)
+        val tx = expense(940L, "SHELL", 45.0)
+        stubRerunSetup(receipt, tx)
+        coEvery { autoLink(40L, 940L, 0.97f) } returns Result.success(link(40L, 940L, "AUTO_MATCH", 0.97f))
+        viewModel = createViewModel()
+        advanceUntilIdle()
+        coVerify(exactly = 1) { receiptRepository.getUnmatchedReceipts() }
+
+        viewModel.rerunForReceipt(receipt)
+        advanceUntilIdle()
+
+        assertNull(viewModel.state.value.error)
+        coVerify(exactly = 2) { receiptRepository.getUnmatchedReceipts() }
+        coVerify(exactly = 2) { receiptRepository.getReceiptsWithSuggestions() }
+    }
+
+    @Test
+    fun `INV_P032 an earlier rerun error does not block the reload of a later successful rerun`() = runTest(testDispatcher) {
+        val receipt = scannedReceipt(40L, "Shell", 45.0)
+        val tx = expense(940L, "SHELL", 45.0)
+        stubRerunSetup(receipt, tx)
+        coEvery { autoLink(40L, 940L, 0.97f) } returnsMany listOf(
+            Result.failure(com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptAlreadyClaimedException(40L)),
+            Result.success(link(40L, 940L, "AUTO_MATCH", 0.97f))
+        )
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        viewModel.rerunForReceipt(receipt)
+        advanceUntilIdle()
+        assertEquals("Rerun link failed. Please try again.", viewModel.state.value.error)
+        coVerify(exactly = 1) { receiptRepository.getUnmatchedReceipts() }
+
+        viewModel.rerunForReceipt(receipt)
+        advanceUntilIdle()
+
+        assertNull("a later successful rerun must clear the earlier error", viewModel.state.value.error)
+        coVerify(exactly = 2) { receiptRepository.getUnmatchedReceipts() }
+        assertTrue(viewModel.state.value.mutatingReceiptIds.isEmpty())
+    }
+
+    @Test
+    fun `approveSuggestion shows the expense already has a receipt text for ExpenseAlreadyLinkedException`() = runTest(testDispatcher) {
+        coEvery { receiptRepository.getReceiptById(20L) } returns suggested(20L, 300L)
+        coEvery { approveLink(20L, 300L) } returns Result.failure(
+            com.yourname.expensetracker.domain.receipt.lifecycle.ExpenseAlreadyLinkedException(300L)
+        )
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        viewModel.approveSuggestion(20L)
+        advanceUntilIdle()
+
+        assertEquals("This expense already has a receipt.", viewModel.state.value.error)
+        assertTrue(viewModel.state.value.mutatingReceiptIds.isEmpty())
+        coVerify(exactly = 1) { approveLink(20L, 300L) }
+        coVerify(exactly = 0) { matchService.rejectAllSuggestions(any()) }
+        coVerify(exactly = 0) { matchService.clearMatchForReceipt(any()) }
+    }
+
+    @Test
+    fun `approveSuggestion keeps its existing text for other failures`() = runTest(testDispatcher) {
+        coEvery { receiptRepository.getReceiptById(20L) } returns suggested(20L, 300L)
+        coEvery { approveLink(20L, 300L) } returns Result.failure(IllegalStateException(rawSentinel))
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        viewModel.approveSuggestion(20L)
+        advanceUntilIdle()
+
+        assertEquals("Failed to approve match. Please try again.", viewModel.state.value.error)
+    }
+
+    @Test
+    fun `manualMatch shows the expense already has a receipt text for ExpenseAlreadyLinkedException`() = runTest(testDispatcher) {
+        coEvery {
+            receiptLinkService.linkReceiptToExpense(
+                receiptId = 51L,
+                expenseId = 301L,
+                linkType = "MANUAL_MATCH",
+                source = "ReceiptMatchingViewModel",
+                confidence = 1.0f
+            )
+        } returns Result.failure(
+            com.yourname.expensetracker.domain.receipt.lifecycle.ExpenseAlreadyLinkedException(301L)
+        )
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        viewModel.manualMatch(51L, 301L)
+        advanceUntilIdle()
+
+        assertEquals("This expense already has a receipt.", viewModel.state.value.error)
+        assertTrue(viewModel.state.value.mutatingReceiptIds.isEmpty())
+        coVerify(exactly = 1) { receiptRepository.getUnmatchedReceipts() }
+    }
+
+    @Test
+    fun `manualMatch keeps its existing text for other failures`() = runTest(testDispatcher) {
+        coEvery {
+            receiptLinkService.linkReceiptToExpense(
+                receiptId = 51L,
+                expenseId = 301L,
+                linkType = "MANUAL_MATCH",
+                source = "ReceiptMatchingViewModel",
+                confidence = 1.0f
+            )
+        } returns Result.failure(IllegalStateException(rawSentinel))
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        viewModel.manualMatch(51L, 301L)
+        advanceUntilIdle()
+
+        assertEquals("Failed to link receipt. Please try again.", viewModel.state.value.error)
+    }
+
     @org.junit.After
     override fun tearDown() {
         try {

@@ -24,6 +24,7 @@ import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -296,6 +297,63 @@ class ReceiptLinkServiceExpenseUniquenessTest {
         assertTrue(link(receipt, e1).isSuccess)
 
         assertTrue(link(receipt, e2, allowRelink = true).isSuccess)
+    }
+
+    // ------------------------------------------- P-03-1 ownership read (matcher filter)
+
+    @Test
+    fun INV_P031_isExpenseLinkedToOtherReceipt_otherNonStatementReceiptOwns_returnsTrue() = runTest {
+        val expense = insertExpense()
+        val owner = insertReceipt()
+        val asker = insertReceipt()
+        assertTrue(link(owner, expense).isSuccess)
+
+        assertTrue(service.isExpenseLinkedToOtherReceipt(expense, asker))
+        // The refusal path still reports the typed failure for the same pair.
+        assertTrue(link(asker, expense).exceptionOrNull() is ExpenseAlreadyLinkedException)
+    }
+
+    @Test
+    fun INV_P031_isExpenseLinkedToOtherReceipt_sameReceiptOwns_returnsFalse() = runTest {
+        val expense = insertExpense()
+        val owner = insertReceipt()
+        assertTrue(link(owner, expense).isSuccess)
+
+        assertFalse(service.isExpenseLinkedToOtherReceipt(expense, owner))
+    }
+
+    @Test
+    fun INV_P031_isExpenseLinkedToOtherReceipt_statementOwner_returnsFalse() = runTest {
+        val expense = insertExpense()
+        val statementId = insertReceipt(documentType = statement)
+        val asker = insertReceipt()
+        assertTrue(link(statementId, expense).isSuccess)
+
+        assertFalse(service.isExpenseLinkedToOtherReceipt(expense, asker))
+        assertTrue("non-statement receipt must still link", link(asker, expense).isSuccess)
+    }
+
+    @Test
+    fun INV_P031_isExpenseLinkedToOtherReceipt_statementAndRetailOwners_returnsTrue() = runTest {
+        val expense = insertExpense()
+        val statementId = insertReceipt(documentType = statement)
+        val retailOwner = insertReceipt()
+        val asker = insertReceipt()
+        assertTrue(link(statementId, expense).isSuccess)
+        assertTrue(link(retailOwner, expense).isSuccess)
+
+        assertTrue(service.isExpenseLinkedToOtherReceipt(expense, asker))
+    }
+
+    @Test
+    fun INV_P031_isExpenseLinkedToOtherReceipt_noLink_returnsFalse() = runTest {
+        val expense = insertExpense()
+        val asker = insertReceipt()
+        val otherExpense = insertExpense()
+        val other = insertReceipt()
+        assertTrue(link(other, otherExpense).isSuccess)
+
+        assertFalse(service.isExpenseLinkedToOtherReceipt(expense, asker))
     }
 
     // ------------------------------------------------- S2 claim flag interplay
