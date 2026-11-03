@@ -49,6 +49,12 @@ data class GroupsUiState(
     val error: String? = null,
     /** True only when the last groups load failed; mutation failures never set it. */
     val loadFailed: Boolean = false,
+    /**
+     * Fixed message for a mutation failure that happened while [loadFailed] is true, so the
+     * load error and Retry stay intact while the snackbar still reports the failure.
+     * When [loadFailed] is false, mutation failures are reported through [error].
+     */
+    val mutationError: String? = null,
     val selectedGroup: GroupWithDetails? = null,
     val creatingGroup: Boolean = false,
     val addingMember: Boolean = false,
@@ -201,7 +207,9 @@ class SharedExpenseGroupsViewModel @Inject constructor(
                         _uiState.value = _uiState.value.copy(creatingGroup = false)
                     }
                     is GroupCreationResult.Error -> {
-                        postMutationError(result.message)
+                        // The coordinator embeds exception text in Error.message and offers no
+                        // typed safe/unsafe split, so the message is never displayed.
+                        postMutationError("Failed to create group")
                     }
                 }
             } catch (e: Exception) {
@@ -310,7 +318,9 @@ class SharedExpenseGroupsViewModel @Inject constructor(
                         _uiState.value = _uiState.value.copy(addingExpense = false)
                     }
                     is GroupExpenseCreationResult.Error -> {
-                        postMutationError(result.message)
+                        // Same as create group: Error.message may carry exception text and is
+                        // not typed, so only the fixed message is shown.
+                        postMutationError("Failed to add expense")
                     }
                 }
             } catch (e: Exception) {
@@ -388,12 +398,22 @@ class SharedExpenseGroupsViewModel @Inject constructor(
     }
     
     fun clearError() {
-        _uiState.value = _uiState.value.copy(error = null, loadFailed = false)
+        // Only a successful load clears loadFailed; dismissing a transient message must not
+        // turn the load-error screen into a false empty list.
+        _uiState.value = _uiState.value.let {
+            if (it.loadFailed) it.copy(mutationError = null) else it.copy(error = null, mutationError = null)
+        }
     }
 
-    /** A mutation failure is transient: it never marks the load as failed or drops the loaded list. */
+    /**
+     * A mutation failure is transient: it never changes [GroupsUiState.loadFailed] or drops the
+     * loaded list. While the load has failed, the load error stays and the message goes to
+     * [GroupsUiState.mutationError].
+     */
     private fun postMutationError(message: String) {
-        _uiState.value = _uiState.value.copy(error = message, loadFailed = false)
+        _uiState.value = _uiState.value.let {
+            if (it.loadFailed) it.copy(mutationError = message) else it.copy(error = message)
+        }
     }
 
     private suspend fun resolveGroupMembers(groupId: Long): List<GroupMember> {

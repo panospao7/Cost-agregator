@@ -11,6 +11,8 @@ import com.yourname.expensetracker.data.repository.ManualExpenseRepository
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
+import com.yourname.expensetracker.domain.groups.GroupCreationResult
+import com.yourname.expensetracker.domain.groups.GroupExpenseCreationResult
 import com.yourname.expensetracker.domain.groups.usecase.AddGroupExpenseUseCase
 import com.yourname.expensetracker.domain.groups.usecase.AddGroupMemberUseCase
 import com.yourname.expensetracker.domain.groups.usecase.DeleteGroupUseCase
@@ -194,8 +196,54 @@ class SharedExpenseGroupsViewModelErrorTest : ViewModelTestUtils() {
         viewModel.createGroup("g", null, "EUR")
         advanceUntilIdle()
 
-        assertEquals("Failed to create group", viewModel.uiState.value.error)
-        assertFalse(viewModel.uiState.value.loadFailed)
+        // Only a successful load clears loadFailed. The old pin (loadFailed == false after a
+        // mutation failure) turned the error screen into a false "no groups" and dropped Retry.
+        val state = viewModel.uiState.value
+        assertTrue(state.loadFailed)
+        assertEquals("Failed to load group balances", state.error)
+        assertEquals("Failed to create group", state.mutationError)
+
+        // Dismissing the snackbar must not clear the load failure either.
+        viewModel.clearError()
+        assertTrue(viewModel.uiState.value.loadFailed)
+        assertEquals("Failed to load group balances", viewModel.uiState.value.error)
+        assertNull(viewModel.uiState.value.mutationError)
+    }
+
+    @Test
+    fun `create group Error result message is never displayed or logged`() = runTest(testDispatcher) {
+        coEvery { groupsRepository.createGroup(any(), any(), any(), any()) } returns
+            GroupCreationResult.Error("Group creation failed: UNIQUE constraint failed $sentinel")
+        val viewModel = createViewModel()
+        advanceUntilIdle()
+
+        viewModel.createGroup("g", null, "EUR")
+        advanceUntilIdle()
+
+        assertSanitizedResultFailure(viewModel, "Failed to create group")
+    }
+
+    @Test
+    fun `add expense Error result message is never displayed or logged`() = runTest(testDispatcher) {
+        coEvery {
+            addGroupExpenseUseCase.invokeAtomic(any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+        } returns GroupExpenseCreationResult.Error("Failed to add expense: database $sentinel")
+        val viewModel = createViewModel()
+        advanceUntilIdle()
+
+        viewModel.addExpense(1L, "Dinner", 10.0, 11L, SplitType.EQUAL)
+        advanceUntilIdle()
+
+        assertSanitizedResultFailure(viewModel, "Failed to add expense")
+    }
+
+    private fun assertSanitizedResultFailure(viewModel: SharedExpenseGroupsViewModel, expected: String) {
+        val state = viewModel.uiState.value
+        assertEquals(expected, state.error)
+        assertFalse(state.loadFailed)
+        assertEquals(1, state.groups.size)
+        assertFalse(state.toString().contains(sentinel))
+        logLines.forEach { assertFalse(it.contains(sentinel)) }
     }
 
     @Test

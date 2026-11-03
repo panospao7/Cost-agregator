@@ -52,7 +52,7 @@ fun SharedExpenseGroupsScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     // Mutation failures are transient: shown once as a snackbar, then cleared. Only a failed
     // load replaces the screen with the full-screen error and retry.
-    val transientError = uiState.error.takeIf { !uiState.loadFailed }
+    val transientError = if (uiState.loadFailed) uiState.mutationError else uiState.error
     LaunchedEffect(transientError) {
         if (transientError != null) {
             snackbarHostState.showSnackbar(transientError)
