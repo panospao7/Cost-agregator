@@ -4,6 +4,8 @@ package com.yourname.expensetracker.domain.intelligence
 import android.content.Context
 import com.yourname.expensetracker.data.privacy.AtRestEncryptionService
 import com.yourname.expensetracker.data.repository.UserCorrectionRepository
+import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
+import com.yourname.expensetracker.domain.privacy.RawStorageMode
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
@@ -27,7 +29,8 @@ import timber.log.Timber
 open class TransactionClassifier @Inject constructor(
     @ApplicationContext private val context: Context,
     private val userCorrectionRepository: UserCorrectionRepository,
-    private val atRestEncryptionService: AtRestEncryptionService
+    private val atRestEncryptionService: AtRestEncryptionService,
+    private val privacySettingsRepository: PrivacySettingsRepository
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -165,7 +168,30 @@ open class TransactionClassifier @Inject constructor(
         }
     }
 
+    /**
+     * J-03-1 / D4: learning from notification text is allowed only under
+     * [RawStorageMode.STORE_RAW]. Any other mode, or any settings read failure, skips training
+     * (fail closed). A skip changes no model state, stats or save schedule, and never throws,
+     * so callers behave exactly as before. Cancellation is always rethrown.
+     */
+    private suspend fun isTrainingAllowed(): Boolean {
+        val mode = try {
+            privacySettingsRepository.getSettings().rawNotificationStorageMode
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Timber.w("Classifier training skipped: reason=settings_read_failed")
+            return false
+        }
+        if (mode != RawStorageMode.STORE_RAW) {
+            Timber.d("Classifier training skipped: reason=raw_storage_not_store_raw")
+            return false
+        }
+        return true
+    }
+
     suspend fun train(text: String, isTransaction: Boolean) {
+        if (!isTrainingAllowed()) return
         val newStats: ClassifierStats
         mutex.withLock {
             val features = extractFeatures(text)
@@ -191,6 +217,12 @@ open class TransactionClassifier @Inject constructor(
     }
 
     private suspend fun retrainFromCorrectionsInternal() {
+        // J-03-1 / D4: stored correction text is raw notification text, so it may only train the
+        // model under STORE_RAW. Checked before anything is read or cleared; on a skip the current
+        // model, stats, lastTrainingCount and save schedule are left untouched. The settings read
+        // takes no classifier lock, so it is safe under the caller's mutex.
+        if (!isTrainingAllowed()) return
+
         val allCorrections = userCorrectionRepository.getAll()
         // R-LEARN-1: retention redaction nulls notificationTitle/notificationText. Rows with no
         // notification text carry only the merchant name, so they must not train the model.
