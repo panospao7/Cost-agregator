@@ -221,7 +221,11 @@ class ComputeDashboardWidgetsUseCaseEffectiveBudgetTest {
         val result = computeUseCase.compute(data(listOf(unrated), emptyList()))
 
         val input = (result.normalizedInput as DashboardNormalizedInputResult.Available).input
-        assertTrue("setup: the unrated history row makes overall quality partial", input.dataQuality.isPartial)
+        assertEquals(
+            "setup: the only history row has no rate, so overall quality is unavailable",
+            com.yourname.expensetracker.domain.core.money.ConversionQuality.UNAVAILABLE,
+            input.dataQuality.conversionQuality
+        )
         val period = result.allWidgets.filterIsInstance<DashboardWidget.PeriodSummary>().single()
         assertEquals(0.0, period.todaySpent, 0.0)
         assertEquals(0.0, period.weekSpent, 0.0)
