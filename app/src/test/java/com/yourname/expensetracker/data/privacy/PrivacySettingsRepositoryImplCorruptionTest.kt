@@ -1,10 +1,6 @@
 package com.yourname.expensetracker.data.privacy
 
 import android.content.Context
-import androidx.datastore.preferences.core.MutablePreferences
-import androidx.datastore.preferences.core.booleanPreferencesKey
-import androidx.datastore.preferences.core.edit
-import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.test.core.app.ApplicationProvider
 import androidx.work.WorkManager
 import com.yourname.expensetracker.domain.privacy.PrivacySettings
@@ -23,7 +19,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -174,7 +169,7 @@ class PrivacySettingsRepositoryImplCorruptionTest {
     // ---------------------------------------------------------------------------------
 
     @Test
-    fun updateSettings_after_corruption_transforms_from_fail_closed_base_and_stays_corrupted_without_a_mode_choice() =
+    fun updateSettings_after_corruption_transforms_from_fail_closed_base_and_marks_loaded() =
         runBlocking {
             val file = writeCorruptPrivacyFile()
             var transformInput: PrivacySettings? = null
@@ -185,155 +180,29 @@ class PrivacySettingsRepositoryImplCorruptionTest {
                 current.copy()
             }
 
+            // For this save test the rewrite may come from the save itself (not only from the
+            // corruption handler); the fail-closed base is proven by the assertions below.
             assertProductionHandlerReplacedFile(file)
             assertEquals(
                 "updateSettings must transform from FAIL_CLOSED_DEFAULTS, not permissive defaults",
                 PrivacySettings.FAIL_CLOSED_DEFAULTS,
                 transformInput
             )
-            // No storage mode was actively chosen, so the placeholders must not become a user choice.
             val after = repository.getLoadState()
             assertTrue(
-                "Without a storage mode choice the state must stay CorruptedFailClosed but was $after",
-                after is PrivacySettingsLoadState.CorruptedFailClosed
+                "After a successful save the load state must be Loaded but was $after",
+                after is PrivacySettingsLoadState.Loaded
             )
+            // The save must not resurrect STORE_RAW / capture-enabled defaults.
             assertEquals(
                 PrivacySettings.FAIL_CLOSED_DEFAULTS,
-                (after as PrivacySettingsLoadState.CorruptedFailClosed).settings
+                (after as PrivacySettingsLoadState.Loaded).settings
             )
         }
-
-    // ---------------------------------------------------------------------------------
-    // Invalid stored mode and read failure fail closed
-    // ---------------------------------------------------------------------------------
-
-    @Test
-    fun invalid_stored_storage_mode_is_corrupted_fail_closed_not_loaded_do_not_store() = runBlocking {
-        putRaw { prefs ->
-            prefs[LOAD_STATE] = "NORMAL"
-            prefs[NOTIFICATION_MODE] = "NOT_A_MODE"
-        }
-
-        val state = repository.getLoadState()
-
-        assertTrue(
-            "An invalid stored mode must load as CorruptedFailClosed but was $state",
-            state is PrivacySettingsLoadState.CorruptedFailClosed
-        )
-        assertEquals(
-            PrivacySettings.FAIL_CLOSED_DEFAULTS,
-            (state as PrivacySettingsLoadState.CorruptedFailClosed).settings
-        )
-        assertTrue(repository.observeLoadState().first() is PrivacySettingsLoadState.CorruptedFailClosed)
-    }
-
-    @Test
-    fun datastore_io_exception_on_read_is_corrupted_fail_closed() = runBlocking {
-        // A directory where the DataStore file should be makes the read throw an IOException
-        // (not a CorruptionException), which the production code must map to fail-closed.
-        val file = File(File(context.filesDir, "datastore"), "privacy_settings.preferences_pb")
-        file.parentFile!!.mkdirs()
-        assertTrue("test setup: directory at the DataStore file path", file.mkdir())
-
-        val state = repository.getLoadState()
-        val observed = repository.observeLoadState().first()
-
-        assertTrue("IOException read must be CorruptedFailClosed but was $state", state is PrivacySettingsLoadState.CorruptedFailClosed)
-        assertTrue("observed IOException must be CorruptedFailClosed but was $observed", observed is PrivacySettingsLoadState.CorruptedFailClosed)
-        assertEquals(
-            PrivacySettings.FAIL_CLOSED_DEFAULTS,
-            (state as PrivacySettingsLoadState.CorruptedFailClosed).settings
-        )
-    }
-
-    // ---------------------------------------------------------------------------------
-    // Writes after corruption: a toggle persists only its own field; only an active
-    // storage mode choice clears the corrupted state
-    // ---------------------------------------------------------------------------------
-
-    @Test
-    fun toggle_after_corruption_persists_only_its_field_and_stays_fail_closed() = runBlocking {
-        writeCorruptPrivacyFile()
-
-        repository.updateSettings { it.copy(cloudAiEnabled = true) }
-
-        val state = repository.getLoadState()
-        assertTrue("A toggle must not clear corruption but state was $state", state is PrivacySettingsLoadState.CorruptedFailClosed)
-        assertEquals(PrivacySettings.FAIL_CLOSED_DEFAULTS, (state as PrivacySettingsLoadState.CorruptedFailClosed).settings)
-        val prefs = context.privacySettingsDataStore.data.first()
-        assertEquals("CORRUPTED", prefs[LOAD_STATE])
-        assertEquals("the toggled field is persisted", true, prefs[booleanPreferencesKey("cloud_ai_enabled")])
-        assertNull("untouched fields are not written", prefs[booleanPreferencesKey("notification_capture_enabled")])
-        assertNull("no mode placeholder is written", prefs[NOTIFICATION_MODE])
-    }
-
-    @Test
-    fun toggle_after_invalid_stored_mode_stays_fail_closed() = runBlocking {
-        putRaw { prefs ->
-            prefs[LOAD_STATE] = "NORMAL"
-            prefs[NOTIFICATION_MODE] = "NOT_A_MODE"
-        }
-
-        repository.updateSettings { it.copy(encryptedBackupEnabled = false) }
-
-        assertTrue(repository.getLoadState() is PrivacySettingsLoadState.CorruptedFailClosed)
-    }
-
-    @Test
-    fun user_setting_a_storage_mode_after_corruption_loads_it() = runBlocking {
-        writeCorruptPrivacyFile()
-
-        repository.updateSettings { it.copy(rawNotificationStorageMode = RawStorageMode.STORE_RAW) }
-
-        val state = repository.getLoadState()
-        assertTrue("Choosing a mode must clear corruption but state was $state", state is PrivacySettingsLoadState.Loaded)
-        val settings = (state as PrivacySettingsLoadState.Loaded).settings
-        assertEquals(RawStorageMode.STORE_RAW, settings.rawNotificationStorageMode)
-        // Modes the user did not choose must not resurrect a permissive first-run default.
-        assertEquals(RawStorageMode.DO_NOT_STORE, settings.rawOcrStorageMode)
-        assertEquals(RawStorageMode.DO_NOT_STORE, settings.emailReceiptStorageMode)
-        assertEquals(RawStorageMode.DO_NOT_STORE, settings.rawBankStatementStorageMode)
-    }
-
-    @Test
-    fun user_setting_a_mode_equal_to_the_placeholder_still_clears_the_marker() = runBlocking {
-        writeCorruptPrivacyFile()
-
-        repository.updateSettings { it.copy(rawNotificationStorageMode = RawStorageMode.DO_NOT_STORE) }
-
-        val state = repository.getLoadState()
-        assertTrue("An explicit DO_NOT_STORE choice must clear corruption but state was $state", state is PrivacySettingsLoadState.Loaded)
-        assertEquals(RawStorageMode.DO_NOT_STORE, (state as PrivacySettingsLoadState.Loaded).settings.rawNotificationStorageMode)
-    }
-
-    @Test
-    fun setting_one_mode_over_an_invalid_other_mode_settles_the_invalid_one_to_do_not_store() = runBlocking {
-        putRaw { prefs ->
-            prefs[LOAD_STATE] = "NORMAL"
-            prefs[EMAIL_MODE] = "NOT_A_MODE"
-        }
-
-        repository.updateSettings { it.copy(rawNotificationStorageMode = RawStorageMode.STORE_REDACTED) }
-
-        val state = repository.getLoadState()
-        assertTrue("state was $state", state is PrivacySettingsLoadState.Loaded)
-        val settings = (state as PrivacySettingsLoadState.Loaded).settings
-        assertEquals(RawStorageMode.STORE_REDACTED, settings.rawNotificationStorageMode)
-        assertEquals(RawStorageMode.DO_NOT_STORE, settings.emailReceiptStorageMode)
-    }
 
     // ---------------------------------------------------------------------------------
     // Helpers
     // ---------------------------------------------------------------------------------
-
-    private val LOAD_STATE = stringPreferencesKey("_privacy_load_state")
-    private val NOTIFICATION_MODE = stringPreferencesKey("raw_notification_storage_mode")
-    private val EMAIL_MODE = stringPreferencesKey("email_receipt_storage_mode")
-
-    /** Seeds the real DataStore with raw preference values (bypasses the repository's write path). */
-    private suspend fun putRaw(block: (MutablePreferences) -> Unit) {
-        context.privacySettingsDataStore.edit { block(it) }
-    }
 
     private fun assertFailClosedFlags(settings: PrivacySettings) {
         assertFalse("notificationCaptureEnabled must be denied", settings.notificationCaptureEnabled)

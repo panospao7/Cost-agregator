@@ -246,17 +246,6 @@ class DataRetentionWorker @AssistedInject constructor(
                     }
                 }
 
-                // A fail-closed load state carries the placeholder 30-day window, not the user's
-                // choice. A user with a longer window would lose rows that are still in their
-                // retention period, so the routes whose cutoff comes from the user's retention
-                // days are skipped for this run (no checkpoint record is written; the next run
-                // re-attempts them once settings are readable). Routes capped at 30 days or
-                // fixed by policy cannot over-delete and still run.
-                if (settingsFailClosed && target.name in USER_RETENTION_WINDOW_TARGETS) {
-                    Log.w(TAG, "Skipping retention target: reason=settings_load_fail_closed target=${target.name}")
-                    continue
-                }
-
                 ctx.checkpoint("retention_${target.name}")
 
                 val attempts = (record?.attempts ?: 0) + 1
@@ -541,17 +530,6 @@ class DataRetentionWorker @AssistedInject constructor(
 
         /** Targets whose purge requires a durable privacy audit. */
         internal val AUDIT_REQUIRED_TARGETS = setOf("raw_notifications", "scanned_receipts.rawOcrText")
-
-        /**
-         * Targets whose cutoff is the user's own retention window (which may exceed 30 days).
-         * Skipped while the settings load state is fail-closed. Every one still has an explicit
-         * route in cutoffFor and stays registered (RetentionPolicyContract pins unchanged).
-         */
-        internal val USER_RETENTION_WINDOW_TARGETS = setOf(
-            "raw_notifications",
-            "scanned_receipts.rawOcrText",
-            "notification_intake"
-        )
 
         internal const val AUDIT_CALLER = "DataRetentionWorker"
         private const val DAY_MS = 24L * 60L * 60L * 1000L
