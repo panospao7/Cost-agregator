@@ -49,9 +49,20 @@ fun SharedExpenseGroupsScreen(
     viewModel: SharedExpenseGroupsViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val snackbarHostState = remember { SnackbarHostState() }
+    // Mutation failures are transient: shown once as a snackbar, then cleared. Only a failed
+    // load replaces the screen with the full-screen error and retry.
+    val transientError = if (uiState.loadFailed) uiState.mutationError else uiState.error
+    LaunchedEffect(transientError) {
+        if (transientError != null) {
+            snackbarHostState.showSnackbar(transientError)
+            viewModel.clearError()
+        }
+    }
 
     Scaffold(
         containerColor = SemanticColors.BaseNavy,
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { 
@@ -138,7 +149,7 @@ fun SharedExpenseGroupsScreen(
                         CircularProgressIndicator(color = SemanticColors.PrimaryIndigo)
                     }
                 }
-                uiState.error != null -> {
+                uiState.loadFailed && uiState.error != null -> {
                     ErrorState(
                         message = uiState.error!!,
                         onRetry = { viewModel.refresh() }
@@ -556,6 +567,20 @@ internal fun roundedBalanceForDisplay(
     return BigDecimal.valueOf(balance)
         .setScale(fractionDigits.coerceAtLeast(0), RoundingMode.HALF_UP)
         .toDouble()
+}
+
+/**
+ * True only when [amount] is finite and at least one minor unit ([fractionDigits], default cents).
+ * Zero, negatives, NaN/Infinity and sub-minor-unit values are rejected, matching the use case's
+ * "positive finite" rule so the confirm button never enables for an amount that is then refused.
+ */
+internal fun isPositiveGroupExpenseAmount(
+    amount: Double?,
+    fractionDigits: Int = 2
+): Boolean {
+    if (amount == null || !amount.isFinite()) return false
+    val minimum = BigDecimal.ONE.movePointLeft(fractionDigits.coerceAtLeast(0))
+    return BigDecimal.valueOf(amount).compareTo(minimum) >= 0
 }
 
 internal fun isSettledBalance(
@@ -1110,7 +1135,7 @@ private fun AddExpenseDialog(
                         onAdd(description, amt, paidById, splitType, customSplits)
                     }
                 },
-                enabled = description.isNotBlank() && totalAmount != null && totalAmount >= 0.0 && isSplitValid
+                enabled = description.isNotBlank() && isPositiveGroupExpenseAmount(totalAmount) && isSplitValid
                     && members.isNotEmpty() && members.any { it.id == paidById }
             ) {
                 Text(stringResource(R.string.groups_add_expense_button))

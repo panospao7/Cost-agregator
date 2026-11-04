@@ -6,7 +6,14 @@ sealed class GroupValidationError {
     data class UserAlreadyMember(val userId: Long) : GroupValidationError()
     data class CurrentUserAlreadyExists(val userId: Long) : GroupValidationError()
     data object MaxMembersReached : GroupValidationError()
-    data class Unknown(val message: String? = null) : GroupValidationError()
+    /**
+     * Unclassified failure. Deliberately carries no wrapped exception or its text: [message] is
+     * always the fixed user-safe string, so raw exception/SQL text can never reach the UI.
+     */
+    data object Unknown : GroupValidationError() {
+        const val FIXED_MESSAGE: String = "Failed to add member"
+        val message: String get() = FIXED_MESSAGE
+    }
 }
 
 fun GroupValidationError.toUserMessage(): String {
@@ -16,6 +23,6 @@ fun GroupValidationError.toUserMessage(): String {
         is GroupValidationError.UserAlreadyMember -> "This member is already in the group"
         is GroupValidationError.CurrentUserAlreadyExists -> "A current user is already assigned to this group"
         GroupValidationError.MaxMembersReached -> "This group has reached its member limit"
-        is GroupValidationError.Unknown -> message ?: "Failed to add member"
+        GroupValidationError.Unknown -> GroupValidationError.Unknown.message
     }
 }

@@ -323,7 +323,8 @@ class SharedExpenseGroupsViewModelTest : ViewModelTestUtils() {
             advanceUntilIdle()
 
             val errorState = awaitItem()
-            assertTrue(errorState.error?.contains("Group not found or inactive") == true)
+            // Error.message can embed exception text and is not typed, so a fixed message is shown.
+            assertEquals("Failed to add expense", errorState.error)
 
             // B.4 Batch 2: Verify NO orphan cleanup is attempted (atomic path rolls back automatically)
             coVerify(exactly = 0) { expenseRepository.getExpenseById(any()) }
