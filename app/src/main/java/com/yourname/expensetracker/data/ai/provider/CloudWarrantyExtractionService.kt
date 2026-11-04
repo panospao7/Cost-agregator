@@ -228,7 +228,14 @@ class CloudWarrantyExtractionService @Inject constructor(
 
         // The receipt text is appended after trimIndent so its own line indentation cannot alter the header.
         val receiptBudget = (WARRANTY_PROMPT_MAX_CHARS - header.length).coerceAtLeast(0)
-        val receiptText = input.receiptText.take(minOf(AppConfig.Ai.MAX_RECEIPT_OCR_CHARS_FOR_AI, receiptBudget))
+        val cutLimit = minOf(AppConfig.Ai.MAX_RECEIPT_OCR_CHARS_FOR_AI, receiptBudget)
+        var receiptText = input.receiptText.take(cutLimit)
+        // If the cut lands mid-token (e.g. "john@exam"), back up to the previous whitespace so no
+        // partial value escapes the redaction regexes. Only when whitespace exists in the cut text.
+        if (input.receiptText.length > cutLimit && !input.receiptText[cutLimit].isWhitespace()) {
+            val lastWs = receiptText.indexOfLast { it.isWhitespace() }
+            if (lastWs >= 0) receiptText = receiptText.substring(0, lastWs)
+        }
         return header + receiptText
     }
 
@@ -284,8 +291,11 @@ class CloudWarrantyExtractionService @Inject constructor(
                 productName = warrantyJson.optString("productName", "Unknown Product"),
                 warrantyType = parseWarrantyType(warrantyJson.optString("warrantyType", "MANUFACTURER")),
                 warrantyMonths = warrantyMonths,
-                supportPhone = warrantyJson.optString("supportPhone").takeIf { it.isNotBlank() },
-                supportEmail = warrantyJson.optString("supportEmail").takeIf { it.isNotBlank() },
+                // A value starting with '<' is an echoed schema placeholder, not extracted data.
+                supportPhone = warrantyJson.optString("supportPhone").trim()
+                    .takeIf { it.isNotBlank() && !it.startsWith("<") },
+                supportEmail = warrantyJson.optString("supportEmail").trim()
+                    .takeIf { it.isNotBlank() && !it.startsWith("<") },
                 returnDays = returnDays,
                 returnConditions = returnConditions,
                 confidence = warrantyJson.optDouble("confidence", 0.0).toFloat()

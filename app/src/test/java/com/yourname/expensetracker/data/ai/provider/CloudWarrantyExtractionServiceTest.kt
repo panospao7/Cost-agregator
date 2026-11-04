@@ -256,13 +256,13 @@ class CloudWarrantyExtractionServiceTest {
         prefix + "\n" + "Item line 12.50 EUR\n".repeat(600) + "TAIL-MARKER-END"
 
     @Test
-    fun `oversize receipt prompt keeps full schema and instructions and stays under 3000 chars`() {
+    fun `oversize receipt prompt keeps full schema and instructions and stays at most 3000 chars`() {
         val captured = runAndCapture(
             WarrantyExtractionInput(oversizeReceipt(), "Test Store", 199.99, 1_700_000_000_000, "EUR")
         )
         val raw = requireNotNull(captured.rawPrompt)
 
-        org.junit.Assert.assertTrue("raw prompt length ${raw.length}", raw.length < 3000)
+        org.junit.Assert.assertTrue("raw prompt length ${raw.length}", raw.length <= 3000)
         listOf(
             "Analyze this receipt and extract warranty information.",
             "\"hasWarranty\": true/false,",
@@ -283,6 +283,55 @@ class CloudWarrantyExtractionServiceTest {
         // The receipt was actually truncated, not dropped.
         org.junit.Assert.assertFalse(raw.contains("TAIL-MARKER-END"))
         org.junit.Assert.assertTrue(raw.contains("RECEIPT-BODY-START"))
+    }
+
+    @Test
+    fun `email straddling the receipt cut leaves no fragment in the prepared text`() {
+        val probe = requireNotNull(
+            runAndCapture(WarrantyExtractionInput(oversizeReceipt(), "Test Store", 199.99, 1_700_000_000_000, "EUR")).rawPrompt
+        )
+        val budget = 3000 - (probe.indexOf("Receipt Text:\n") + "Receipt Text:\n".length)
+        val receipt = "a ".repeat(budget).take(budget - 8) + "john@example.com" + " tail".repeat(100)
+
+        val prepared = requireNotNull(
+            runAndCapture(WarrantyExtractionInput(receipt, "Test Store", 199.99, 1_700_000_000_000, "EUR")).preparedText
+        )
+
+        org.junit.Assert.assertFalse(prepared.contains("john@"))
+        org.junit.Assert.assertFalse(prepared.contains("@exam"))
+    }
+
+    @Test
+    fun `echoed schema placeholders for phone and email are not stored`() {
+        val body = """
+            {"candidates":[{"content":{"parts":[{"text":"{\"hasWarranty\":true,\"productName\":\"TV\",\"warrantyMonths\":12,\"supportPhone\":\"<phone number>\",\"supportEmail\":\"<email address>\",\"confidence\":0.9}"}]}}]}
+        """.trimIndent()
+        val client = OkHttpClient.Builder()
+            .addInterceptor { chain ->
+                Response.Builder()
+                    .request(chain.request())
+                    .protocol(Protocol.HTTP_1_1)
+                    .code(200)
+                    .message("OK")
+                    .body(body.toResponseBody("application/json".toMediaType()))
+                    .build()
+            }
+            .build()
+        val service = CloudWarrantyExtractionService(
+            secureKeyStorage = createMockKeyStorage(apiKey = "test-key"),
+            client = client,
+            privacyGate = mockk<PrivacyGate>(relaxed = true),
+            cloudPayloadPolicy = com.yourname.expensetracker.data.privacy.DefaultCloudPayloadPolicy(
+                com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver.failClosedNoAi(),
+                com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor()
+            )
+        )
+
+        val result = runBlocking { service.extractWarranty(sampleInput()) }
+
+        assertNotNull(result)
+        assertNull(result?.supportPhone)
+        assertNull(result?.supportEmail)
     }
 
     @Test
@@ -347,7 +396,14 @@ class CloudWarrantyExtractionServiceTest {
         org.junit.Assert.assertTrue(prepared.length <= 3000)
 
         // Schema is intact (redaction collapses whitespace, so compare single-spaced fragments) and untouched by markers.
-        val schemaPart = prepared.substringBefore("Receipt Text:")
+        // The header's Date value is a 13-digit epoch-ms number, which existing policy masks as a long number/card;
+        // only the schema and instructions region (before "Merchant:") must be marker-free.
+        val schemaPart = prepared.substringBefore("Merchant:")
+        val headerValues = prepared.substringAfter("Merchant:").substringBefore("Receipt Text:")
+        org.junit.Assert.assertTrue(headerValues.contains("Test Store"))
+        org.junit.Assert.assertTrue(headerValues.contains("199.99"))
+        org.junit.Assert.assertFalse(headerValues.contains("1700000000000"))
+        org.junit.Assert.assertTrue(headerValues.substringAfter("Date:").contains("[REDACTED_"))
         org.junit.Assert.assertTrue(schemaPart.contains("\"supportPhone\": \"<phone number>\" (or null),"))
         org.junit.Assert.assertTrue(schemaPart.contains("\"supportEmail\": \"<email address>\" (or null),"))
         org.junit.Assert.assertTrue(schemaPart.contains("\"confidence\": 0.95"))

@@ -95,6 +95,9 @@ class NotificationIntakeRecoveryScheduler @Inject constructor(
             afterCapturedAt = last.capturedAt
             afterId = last.id
         }
+        if (pages >= MAX_RECOVERY_PAGES) {
+            Timber.w("Intake recovery reached page cap; remaining rows deferred to next run")
+        }
         if (enqueued > 0) {
             Timber.d("IntakeRecovery: enqueued $enqueued pending intake rows in $pages page(s)")
         }
