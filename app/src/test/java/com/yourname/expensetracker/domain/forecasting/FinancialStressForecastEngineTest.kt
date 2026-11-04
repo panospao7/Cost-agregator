@@ -597,6 +597,48 @@ class FinancialStressForecastEngineTest {
     }
 
     @Test
+    fun `stress window starts at first non-installment purchase including recurring-merchant history not at the discretionary row`() = runTest {
+        coEvery { accountBalanceProvider.currentBalance(any()) } returns 0.0
+        // Recurring-merchant purchases reach back to the start of the 60 day lookback (+3h so the
+        // row stays inside the repository window across a DST shift). The only discretionary row
+        // is one 500 purchase 10 days ago. Recurring history shows the user is established, so the
+        // sample is the 61 lookback days (about 500/61 = 8.20 a day), not the 14 day floor
+        // (500/14 = 35.71 a day).
+        val hourMs = 60L * 60L * 1000L
+        val recurringRows = listOf(
+            expense(601L, 45.0, TransactionType.PURCHASE, now - 60 * dayMs + 3 * hourMs, merchant = "Netflix"),
+            expense(602L, 45.0, TransactionType.PURCHASE, now - 40 * dayMs, merchant = "NETFLIX"),
+            expense(603L, 45.0, TransactionType.PURCHASE, now - 20 * dayMs, merchant = "Netflix ")
+        )
+        val discretionary = expense(604L, 500.0, TransactionType.PURCHASE, now - 10 * dayMs, merchant = "Synthetic Gadget")
+        allExpenses = recurringRows + discretionary
+        allDeposits = emptyList()
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+            recurringPattern(
+                merchant = "Netflix",
+                amount = 45.0,
+                nextDate = now + dayMs,
+                frequency = RecurrenceFrequency.MONTHLY,
+                confidence = 0.95f
+            )
+        )
+
+        val result = engine.computeStressForecast()
+
+        val h30 = result.horizons.first { it.daysAhead == 30 }
+        val h90 = result.horizons.first { it.daysAhead == 90 }
+        // Balance and income are 0, so discretionary p50 / p90 = -projected / -min minus obligations.
+        val p50At90 = -h90.projectedBalance - h90.recurringObligations
+        val p90At90 = -h90.minProjectedBalance - h90.recurringObligations
+        val p90At30 = -h30.minProjectedBalance - h30.recurringObligations
+        // 61 day sample: 90 draws at 1/61 give mean about 738, median 1 purchase (500), p90 3 (1500).
+        // A 14 day sample would give mean about 3214, median 6 (3000), p90 about 10 (5000).
+        assertTrue("p50 at 90 days was $p50At90", p50At90 in 0.0..1_000.0)
+        assertTrue("p90 at 90 days was $p90At90", p90At90 in 500.0..2_000.0)
+        assertTrue("p90 at 30 days was $p90At30", p90At30 in 0.0..1_000.0)
+    }
+
+    @Test
     fun `computeStressForecast does not treat current month net cashflow as account balance`() = runTest {
         allExpenses = listOf(
             expense(500L, 3_000.0, TransactionType.DEPOSIT, now - 2 * dayMs, merchant = "Employer"),
