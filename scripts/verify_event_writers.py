@@ -16,6 +16,12 @@ Rules enforced:
   10. No direct transactionEventDao.insert outside TransactionLifecycleEventWriter/Coordinator or allowlist.
   11. No direct receiptEventDao.insert outside ReceiptLifecycleEventWriter/Coordinator/SideEffectDispatcher or allowlist.
 
+Exemptions (I-04-4): both the designated owners and ``scripts/event_writer_allowlist.txt``
+are per-rule and keyed on the exact repository-relative POSIX path of the file
+(no basename or substring matching).  Allowlist rows are
+``<rule> <relpath> # reason``; a legacy basename-only row, an unknown rule, a
+non-exact path or a missing reason exits 2.
+
 Scan scope (PR-GR-10B): every declared production Kotlin root of the
 checked-in manifest ``config/guards/production_source_roots.yml``,
 enumerated through the neutral fail-closed enumerator
@@ -61,36 +67,50 @@ if hasattr(sys.stdout, "reconfigure"):
 
 # ── Rules ─────────────────────────────────────────────────────────────────────
 
+# Designated owners are exact repository-relative POSIX paths (I-04-4): no
+# basename or substring matching, so a same-named or look-alike file in another
+# directory (for example ``FakeOperationRunRecorder.kt``) is never exempt.
+_PKG = "app/src/main/java/com/yourname/expensetracker/"
+_DIAGNOSTIC_WRITER = _PKG + "domain/diagnostics/DiagnosticEventWriter.kt"
+_OPERATION_RECORDER = _PKG + "domain/diagnostics/OperationRunRecorder.kt"
+_WORKER_RUN_LOGGER = _PKG + "domain/workers/WorkerRunLogger.kt"
+_WORKER_GUARD = _PKG + "domain/workers/WorkerExecutionGuard.kt"
+_TX_EVENT_WRITER = _PKG + "domain/transaction/lifecycle/TransactionLifecycleEventWriter.kt"
+_TX_COORDINATOR = _PKG + "domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt"
+_RECEIPT_EVENT_WRITER = _PKG + "domain/receipt/lifecycle/ReceiptLifecycleEventWriter.kt"
+_RECEIPT_COORDINATOR = _PKG + "domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt"
+_RECEIPT_DISPATCHER = _PKG + "domain/receipt/lifecycle/ReceiptSideEffectDispatcher.kt"
+
 ENTITY_RULES = [
     (
         "PipelineDiagnosticEvent",
         re.compile(r'\bPipelineDiagnosticEvent\s*\('),
-        ["DiagnosticEventWriter.kt"],
+        [_DIAGNOSTIC_WRITER],
     ),
     (
         "TransactionEvent",
         re.compile(r'\bTransactionEvent\s*\('),
-        ["TransactionLifecycleEventWriter.kt", "TransactionLifecycleCoordinator.kt"],
+        [_TX_EVENT_WRITER, _TX_COORDINATOR],
     ),
     (
         "ReceiptEvent",
         re.compile(r'\bReceiptEvent\s*\('),
-        ["ReceiptLifecycleEventWriter.kt", "ReceiptLifecycleCoordinator.kt", "ReceiptSideEffectDispatcher.kt"],
+        [_RECEIPT_EVENT_WRITER, _RECEIPT_COORDINATOR, _RECEIPT_DISPATCHER],
     ),
     (
         "BackgroundJobRun",
         re.compile(r'\bBackgroundJobRun\s*\('),
-        ["WorkerRunLogger.kt"],
+        [_WORKER_RUN_LOGGER],
     ),
     (
         "OperationRun",
         re.compile(r'\bOperationRun\s*\('),
-        ["OperationRunRecorder.kt"],
+        [_OPERATION_RECORDER],
     ),
     (
         "OperationRunEvent",
         re.compile(r'\bOperationRunEvent\s*\('),
-        ["OperationRunRecorder.kt"],
+        [_OPERATION_RECORDER],
     ),
 ]
 
@@ -98,34 +118,57 @@ DAO_RULES = [
     (
         "pipelineDiagnosticEventDao.insert",
         re.compile(r'\bpipelineDiagnosticEventDao\s*\.\s*(insert|update)\s*\('),
-        ["DiagnosticEventWriter.kt"],
+        [_DIAGNOSTIC_WRITER],
     ),
     (
         "operationRunDao.insert/update",
         re.compile(r'\boperationRunDao\s*\.\s*(insert|update|incrementCounters|finalizeIfRunning)\s*\('),
-        ["OperationRunRecorder.kt"],
+        [_OPERATION_RECORDER],
     ),
     (
         "operationRunEventDao.insert",
         re.compile(r'\boperationRunEventDao\s*\.\s*insert\s*\('),
-        ["OperationRunRecorder.kt"],
+        [_OPERATION_RECORDER],
     ),
     (
         "backgroundJobRunDao.insert/update",
         re.compile(r'\bbackgroundJobRunDao\s*\.\s*(insert|update)\s*\('),
-        ["WorkerRunLogger.kt", "WorkerExecutionGuard.kt"],
+        [_WORKER_RUN_LOGGER, _WORKER_GUARD],
     ),
     (
         "transactionEventDao.insert",
         re.compile(r'\btransactionEventDao\s*\.\s*insert\s*\('),
-        ["TransactionLifecycleEventWriter.kt", "TransactionLifecycleCoordinator.kt"],
+        [_TX_EVENT_WRITER, _TX_COORDINATOR],
     ),
     (
         "receiptEventDao.insert",
         re.compile(r'\breceiptEventDao\s*\.\s*insert\s*\('),
-        ["ReceiptLifecycleEventWriter.kt", "ReceiptLifecycleCoordinator.kt", "ReceiptSideEffectDispatcher.kt"],
+        [_RECEIPT_EVENT_WRITER, _RECEIPT_COORDINATOR, _RECEIPT_DISPATCHER],
     ),
 ]
+
+KNOWN_RULE_NAMES = frozenset(
+    [name for name, _pattern, _owners in ENTITY_RULES]
+    + [name for name, _pattern, _owners in DAO_RULES]
+)
+
+ALLOWLIST_FILE_NAME = "event_writer_allowlist.txt"
+
+# Bounded allowlist-format diagnostic codes (never echo file content).
+ALLOWLIST_UNREADABLE = "EVENT_WRITER_ALLOWLIST_UNREADABLE"
+ALLOWLIST_LEGACY_OR_MALFORMED = "EVENT_WRITER_ALLOWLIST_LEGACY_OR_MALFORMED"
+ALLOWLIST_UNKNOWN_RULE = "EVENT_WRITER_ALLOWLIST_UNKNOWN_RULE"
+ALLOWLIST_BAD_PATH = "EVENT_WRITER_ALLOWLIST_BAD_PATH"
+ALLOWLIST_MISSING_REASON = "EVENT_WRITER_ALLOWLIST_MISSING_REASON"
+ALLOWLIST_DUPLICATE = "EVENT_WRITER_ALLOWLIST_DUPLICATE"
+
+
+class AllowlistError(Exception):
+    """Controlled allowlist failure; carries only a bounded code."""
+
+    def __init__(self, code: str):
+        super().__init__(code)
+        self.code = code
 
 EXEMPT_PATH_FRAGMENTS = [
     os.sep + "test" + os.sep,
@@ -135,19 +178,50 @@ EXEMPT_PATH_FRAGMENTS = [
 ]
 
 
-def load_allowlist(script_dir: str) -> set:
-    allowlist_path = os.path.join(script_dir, "event_writer_allowlist.txt")
-    allowed = set()
+def load_allowlist(script_dir: str) -> dict:
+    """Parse ``event_writer_allowlist.txt`` into ``{rule name: {relpath, ...}}``.
+
+    Row format: ``<rule> <repo-relative POSIX path> # reason``.  A row exempts
+    exactly that one file from exactly that one rule.  Anything else (a legacy
+    basename-only row, an unknown rule, a non-exact path, a missing reason, a
+    duplicate row) raises ``AllowlistError`` and the guard exits 2.
+    """
+    allowlist_path = os.path.join(script_dir, ALLOWLIST_FILE_NAME)
+    allowed: dict = {}
     if not os.path.exists(allowlist_path):
         return allowed
-    with open(allowlist_path, encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-            filename = line.split("#")[0].strip()
-            if filename:
-                allowed.add(filename)
+    try:
+        with open(allowlist_path, encoding="utf-8") as f:
+            lines = f.readlines()
+    except (OSError, UnicodeError):
+        raise AllowlistError(ALLOWLIST_UNREADABLE) from None
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        entry, sep, reason = line.partition("#")
+        if not sep or not reason.strip():
+            raise AllowlistError(ALLOWLIST_MISSING_REASON)
+        tokens = entry.split()
+        if len(tokens) != 2:
+            raise AllowlistError(ALLOWLIST_LEGACY_OR_MALFORMED)
+        rule, relpath = tokens
+        if rule not in KNOWN_RULE_NAMES:
+            raise AllowlistError(ALLOWLIST_UNKNOWN_RULE)
+        parts = relpath.split("/")
+        if (
+            "\\" in relpath
+            or relpath.startswith("/")
+            or len(parts) < 2
+            or any(part in ("", ".", "..") for part in parts)
+            or any(ch in relpath for ch in "*?[]{}")
+            or not relpath.endswith(".kt")
+        ):
+            raise AllowlistError(ALLOWLIST_BAD_PATH)
+        rows = allowed.setdefault(rule, set())
+        if relpath in rows:
+            raise AllowlistError(ALLOWLIST_DUPLICATE)
+        rows.add(relpath)
     return allowed
 
 
@@ -158,17 +232,14 @@ def is_exempt(filepath: str) -> bool:
     return False
 
 
-def is_allowed(filepath: str, allowed_substrings: list, allowlist_filenames: set) -> bool:
-    basename = os.path.basename(filepath)
-    if basename in allowlist_filenames:
+def is_allowed(rule_name: str, relpath: str, owner_paths: list, allowlist: dict) -> bool:
+    """Exact-equality, per-rule exemption on the repo-relative POSIX path."""
+    if relpath in owner_paths:
         return True
-    for allowed in allowed_substrings:
-        if allowed in filepath or allowed in basename:
-            return True
-    return False
+    return relpath in allowlist.get(rule_name, ())
 
 
-def scan(source_files, allowlist_filenames: set) -> list:
+def scan(source_files, allowlist: dict) -> list:
     """Scan enumerated production Kotlin sources for event-writer violations.
 
     PR-GR-10B: ``source_files`` comes from the neutral fail-closed
@@ -198,8 +269,9 @@ def scan(source_files, allowlist_filenames: set) -> list:
             raise ProductionSourceScopeError(
                 PRODUCTION_SOURCE_SCOPE_UNREADABLE
             ) from None
-        for rule_name, pattern, allowed_substrings, rule_type in all_rules:
-            if is_allowed(filepath, allowed_substrings, allowlist_filenames):
+        relpath = source_file.repository_relative_path
+        for rule_name, pattern, owner_paths, rule_type in all_rules:
+            if is_allowed(rule_name, relpath, owner_paths, allowlist):
                 continue
             for lineno, line in enumerate(lines, start=1):
                 stripped = line.lstrip()
@@ -241,7 +313,14 @@ def main():
         )
         sys.exit(2)
 
-    allowlist = load_allowlist(script_dir)
+    try:
+        allowlist = load_allowlist(script_dir)
+    except AllowlistError as exc:
+        print(
+            f"[verify_event_writers] allowlist invalid: {exc.code}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
 
     # PR-GR-10B: every declared production root is enumerated once through
     # the neutral fail-closed enumerator.  An unreadable subtree/file or a
@@ -265,7 +344,10 @@ def main():
         )
         print(f"[verify_event_writers] Scanning: {scan_root}")
     violations = scan(source_files, allowlist)
-    print(f"[verify_event_writers] Allowlist: {len(allowlist)} file(s)")
+    print(
+        "[verify_event_writers] Allowlist: "
+        f"{sum(len(rows) for rows in allowlist.values())} row(s)"
+    )
 
     if not violations:
         print("[verify_event_writers] ✅ No violations found.")

@@ -174,10 +174,13 @@ Current format uses `reason` and `allowed_until` (descriptive strings). Migratio
 
 ### 2. `scripts/event_writer_allowlist.txt`
 
-Current format: plain-text with inline `# reason` comments.
+Current format: plain-text rows `<rule> <repo-relative POSIX path> # reason`.
+Each row exempts exactly one file from exactly one rule, by exact path equality
+(I-04-4). A legacy basename-only row, an unknown rule, a non-exact path or a
+missing reason makes `verify_event_writers.py` exit 2. The designated owners
+inside the script use the same exact-path, per-rule matching.
 - Migrate to YAML format
 - Add `owner`, `expires`, `linked_issue` fields
-- Non-breaking: old `.txt` format continues to work during transition
 
 ### 3. Inline allowlists (comment-based)
 

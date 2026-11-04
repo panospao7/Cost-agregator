@@ -62,10 +62,12 @@ classified query (every marked query, plus every in-scope query classified as
 line, so the exemption set can be compared with the recorded set.  Report mode
 does not change the exit code.
 
-Scope limits (documented, not silent): comma joins (``FROM a, expenses``) are
-not recognised as naming ``expenses``; ``@RawQuery`` builders and Kotlin-side
-readers are outside this guard (Kotlin readers use the Expense effectiveAmount
-member; raw builders are covered by the ComparableHomeValue parity tests).
+Scope limits (documented, not silent): a query names ``expenses`` through
+``FROM expenses``, ``JOIN expenses`` or a comma join (``FROM a, expenses``),
+including across line breaks; ``@RawQuery`` builders (SQL assembled in Kotlin
+code, not an ``@Query`` literal) and Kotlin-side readers are outside this guard
+(Kotlin readers use the Expense effectiveAmount member; raw builders are
+covered by the ComparableHomeValue parity tests).
 ``${CONST}`` templates are kept as text and never resolved, so an aggregate or
 a ``FROM expenses`` that lives only inside an interpolated constant, and an
 ``@Query(CONST)`` whose argument is a constant instead of a literal, are
@@ -218,8 +220,12 @@ _ASCII = re.ASCII
 
 _DAO_PATH_RE = re.compile(r"(?:^|/)data/database/dao/[^/]+\.kt$", _ASCII)
 
+# I-04-4/5: ``FROM|JOIN expenses`` and the comma join ``FROM a, expenses e``.
+# ``\s`` spans newlines, so multi-line SQL (triple-quoted or concatenated
+# literals, already flattened by the @Query parser) is read the same way.
 _TABLE_RE = re.compile(
-    r"\b(?:FROM|JOIN)\s+[`\"\[]?expenses(?![A-Za-z0-9_])", _ASCII | re.IGNORECASE
+    r"(?:\b(?:FROM|JOIN)\s+|,\s*)[`\"\[]?expenses(?![A-Za-z0-9_])",
+    _ASCII | re.IGNORECASE,
 )
 _SELECT_RE = re.compile(
     r"^\s*(?:WITH\b[\s\S]*?)?\bSELECT\b", _ASCII | re.IGNORECASE

@@ -1,17 +1,19 @@
-# Event writer allowlist
-# Format: filename # reason
-# Files listed here are exempt from the direct entity construction guard.
+# Event writer allowlist (I-04-4)
+# Format: <rule> <repo-relative POSIX path> # reason
+# One row exempts exactly one file from exactly one rule, by exact path equality.
+# Rule names are those printed by scripts/verify_event_writers.py.
+# A legacy basename-only row makes the guard exit 2.
 
-# Writers — these ARE the designated construction points
-DiagnosticEventWriter.kt # owns PipelineDiagnosticEvent construction
-OperationRunRecorder.kt # owns OperationRun and OperationRunEvent construction
-WorkerRunLogger.kt # owns BackgroundJobRun construction
-TransactionLifecycleEventWriter.kt # owns TransactionEvent construction
-ReceiptLifecycleEventWriter.kt # owns ReceiptEvent construction
-RecurringLifecycleEventWriter.kt # owns RecurringLifecycleEvent construction
+# Writers - these ARE the designated construction points
+PipelineDiagnosticEvent app/src/main/java/com/yourname/expensetracker/domain/diagnostics/DiagnosticEventWriter.kt # owns PipelineDiagnosticEvent construction
+OperationRun app/src/main/java/com/yourname/expensetracker/domain/diagnostics/OperationRunRecorder.kt # owns OperationRun construction
+OperationRunEvent app/src/main/java/com/yourname/expensetracker/domain/diagnostics/OperationRunRecorder.kt # owns OperationRunEvent construction
+BackgroundJobRun app/src/main/java/com/yourname/expensetracker/domain/workers/WorkerRunLogger.kt # owns BackgroundJobRun construction
+TransactionEvent app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleEventWriter.kt # owns TransactionEvent construction
+ReceiptEvent app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleEventWriter.kt # owns ReceiptEvent construction
 
-# Coordinators — own atomic transaction boundary with lifecycle events
-TransactionLifecycleCoordinator.kt # owns TransactionEvent in same DB transaction as mutation
-ReceiptLifecycleCoordinator.kt # owns ReceiptEvent in same DB transaction as mutation
-ReceiptSideEffectDispatcher.kt # owns ReceiptEvent for side-effect outcomes (writeReceiptEvent helper)
-BankStatementLifecycleProcessor.kt # uses ReceiptLifecycleEventWriter — allowlisted for transition period
+# Coordinators - own the atomic transaction boundary with lifecycle events
+TransactionEvent app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt # owns TransactionEvent in same DB transaction as mutation
+transactionEventDao.insert app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt # owns transactionEventDao.insert in same DB transaction as mutation
+ReceiptEvent app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt # owns ReceiptEvent in same DB transaction as mutation
+receiptEventDao.insert app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt # owns receiptEventDao.insert in same DB transaction as mutation

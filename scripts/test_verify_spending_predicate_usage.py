@@ -164,6 +164,53 @@ def test_join_expenses_with_aggregate_is_rule_01():
     assert _triples(_scan(text)) == [(R1, guard.CODE_UNCOVERED, "j")]
 
 
+def test_comma_join_expenses_with_aggregate_is_rule_01():
+    text = _dao_text(
+        _q("SELECT SUM(e.amount) FROM categories c, expenses e WHERE e.categoryId = c.id", name="cj")
+    )
+    assert _triples(_scan(text)) == [(R1, guard.CODE_UNCOVERED, "cj")]
+
+
+def test_comma_join_expenses_with_predicate_passes():
+    text = _dao_text(
+        _q(
+            "SELECT SUM(${SpendingInclusionSql.EFFECTIVE_AMOUNT_E}) "
+            "FROM categories c, expenses e WHERE ${SpendingInclusionSql.SPENDING_PREDICATE_E}",
+            name="cjp",
+        )
+    )
+    result = _scan(text)
+    assert result.violations == []
+    assert [c.classification for c in result.classified] == ["predicate"]
+
+
+def test_multiline_comma_join_expenses_is_rule_01():
+    text = _dao_text(
+        '    @Query("""\n'
+        "        SELECT COUNT(*)\n"
+        "        FROM categories c,\n"
+        "             expenses e\n"
+        "        WHERE e.categoryId = c.id\n"
+        '    """)\n'
+        "    fun cjm(): Int"
+    )
+    assert _triples(_scan(text)) == [(R1, guard.CODE_UNCOVERED, "cjm")]
+
+
+def test_concatenated_comma_join_expenses_is_rule_01():
+    text = _dao_text(
+        '    @Query("SELECT COUNT(*) FROM categories c, " +\n'
+        '        "expenses e WHERE e.categoryId = c.id")\n'
+        "    fun cjc(): Int"
+    )
+    assert _triples(_scan(text)) == [(R1, guard.CODE_UNCOVERED, "cjc")]
+
+
+def test_comma_before_expenses_prefixed_identifier_is_not_the_table():
+    text = _dao_text(_q("SELECT COUNT(*) FROM categories c, expenses_archive a", name="arch"))
+    assert _scan(text).violations == []
+
+
 def test_mutation_with_aggregate_subquery_over_expenses_is_rule_01_literal_reading():
     # A12.6 is literal: ANY @Query naming expenses in FROM/JOIN with an aggregate.
     text = _dao_text(

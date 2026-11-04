@@ -230,3 +230,194 @@ def test_violation_reporting_is_deterministic_canonical_order(tmp_path, monkeypa
     code2, out2 = _scope_run_main(tmp_path, monkeypatch, capsys, ["--fail-on-violation"])
     assert code2 == 1
     assert out2.out == out.out
+
+
+# ── I-04-4: exemptions are per-rule and keyed on the exact repo-relative path ─
+
+import json
+import types
+
+_PKG = "app/src/main/java/com/yourname/expensetracker/"
+_TX_WRITER_REL = _PKG + "domain/transaction/lifecycle/TransactionLifecycleEventWriter.kt"
+_OP_RECORDER_REL = _PKG + "domain/diagnostics/OperationRunRecorder.kt"
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _fake_source(root, rel):
+    return types.SimpleNamespace(
+        absolute_path=str(root / rel), repository_relative_path=rel
+    )
+
+
+def _write_script_dir(tmp_path, allowlist_text):
+    script_dir = tmp_path / "scripts_fixture"
+    script_dir.mkdir()
+    (script_dir / "event_writer_allowlist.txt").write_text(
+        allowlist_text, encoding="utf-8"
+    )
+    return script_dir
+
+
+def test_same_basename_in_another_directory_is_flagged(tmp_path, monkeypatch, capsys):
+    """The designated writer's basename in a different directory is not exempt;
+    the real path is."""
+    _write_scope_manifest(tmp_path)
+    wrong_rel = "app/src/main/java/com/example/TransactionLifecycleEventWriter.kt"
+    _write_declared(tmp_path, wrong_rel, _EVENT_VIOLATION_KT)
+    _write_declared(tmp_path, _TX_WRITER_REL, _EVENT_VIOLATION_KT)
+
+    code, out = _scope_run_main(tmp_path, monkeypatch, capsys, ["--fail-on-violation"])
+
+    assert code == 1
+    assert wrong_rel in out.out.replace("\\", "/")
+    assert _TX_WRITER_REL not in out.out.replace("\\", "/")
+
+
+def test_allowlisted_writer_violating_a_different_rule_is_flagged(tmp_path, monkeypatch, capsys):
+    """The designated TransactionEvent writer is exempt for TransactionEvent
+    only; constructing a ReceiptEvent there is still a violation."""
+    _write_scope_manifest(tmp_path)
+    _write_declared(
+        tmp_path,
+        _TX_WRITER_REL,
+        "package com.example\n"
+        "class W {\n"
+        "    fun a() = TransactionEvent(id = \"1\")\n"
+        "    fun b() = ReceiptEvent(id = \"2\")\n"
+        "}\n",
+    )
+
+    code, out = _scope_run_main(tmp_path, monkeypatch, capsys, ["--fail-on-violation"])
+
+    assert code == 1
+    assert "[ENTITY] ReceiptEvent" in out.out
+    assert "[ENTITY] TransactionEvent" not in out.out
+
+
+def test_allowlist_row_exempts_only_its_rule_and_its_exact_file(tmp_path):
+    rel = "app/src/main/java/com/example/Legit.kt"
+    other = "app/src/main/java/com/example/sub/Legit.kt"
+    body = "class L {\n    fun a() = TransactionEvent(id = 1)\n    fun b() = ReceiptEvent(id = 2)\n}\n"
+    for path in (rel, other):
+        _write_declared(tmp_path, path, body)
+    allowlist = {"TransactionEvent": {rel}}
+
+    violations = _mod.scan(
+        [_fake_source(tmp_path, rel), _fake_source(tmp_path, other)], allowlist
+    )
+
+    found = sorted((v["rule"], os.path.relpath(v["file"], tmp_path).replace("\\", "/")) for v in violations)
+    assert found == sorted(
+        [("ReceiptEvent", rel), ("ReceiptEvent", other), ("TransactionEvent", other)]
+    )
+
+
+def test_fake_operation_run_recorder_is_not_exempt(tmp_path, monkeypatch, capsys):
+    """The old substring match exempted any basename containing
+    OperationRunRecorder.kt; a look-alike must now be flagged."""
+    _write_scope_manifest(tmp_path)
+    fake_rel = _PKG + "domain/diagnostics/FakeOperationRunRecorder.kt"
+    _write_declared(
+        tmp_path,
+        fake_rel,
+        "package com.example\nclass FakeOperationRunRecorder {\n"
+        "    fun r() = OperationRun(id = 1)\n}\n",
+    )
+
+    code, out = _scope_run_main(tmp_path, monkeypatch, capsys, ["--fail-on-violation"])
+
+    assert code == 1
+    assert "[ENTITY] OperationRun" in out.out
+    assert "FakeOperationRunRecorder.kt" in out.out
+
+
+def test_real_operation_recorder_path_is_still_exempt(tmp_path, monkeypatch, capsys):
+    _write_scope_manifest(tmp_path)
+    _write_declared(tmp_path, _OP_RECORDER_REL, "class R { fun r() = OperationRun(id = 1) }\n")
+
+    code, out = _scope_run_main(tmp_path, monkeypatch, capsys, ["--fail-on-violation"])
+
+    assert code == 0, out.out
+
+
+@pytest.mark.parametrize(
+    "row, code",
+    [
+        ("TransactionLifecycleEventWriter.kt # legacy basename-only row\n", "LEGACY_OR_MALFORMED"),
+        ("TransactionLifecycleEventWriter.kt\n", "MISSING_REASON"),
+        ("NoSuchRule " + _TX_WRITER_REL + " # unknown rule name\n", "UNKNOWN_RULE"),
+        ("TransactionEvent TransactionLifecycleEventWriter.kt # basename as path\n", "BAD_PATH"),
+        ("TransactionEvent app\\src\\X.kt # backslash path form\n", "BAD_PATH"),
+        ("TransactionEvent app/src/**/X.kt # glob path form\n", "BAD_PATH"),
+        ("TransactionEvent ../app/src/X.kt # dot-dot path form\n", "BAD_PATH"),
+        ("TransactionEvent " + _TX_WRITER_REL + "\n", "MISSING_REASON"),
+        (
+            "TransactionEvent " + _TX_WRITER_REL + " # first\n"
+            "TransactionEvent " + _TX_WRITER_REL + " # again\n",
+            "DUPLICATE",
+        ),
+    ],
+)
+def test_legacy_or_malformed_allowlist_row_is_rejected(tmp_path, row, code):
+    script_dir = _write_script_dir(tmp_path, row)
+
+    with pytest.raises(_mod.AllowlistError) as excinfo:
+        _mod.load_allowlist(str(script_dir))
+
+    assert excinfo.value.code == "EVENT_WRITER_ALLOWLIST_" + code
+
+
+def test_legacy_allowlist_line_exits_2(tmp_path, monkeypatch, capsys):
+    root = tmp_path / "repo"
+    root.mkdir()
+    _write_scope_manifest(root)
+    _write_declared(root, "app/src/main/java/com/example/Clean.kt", _CLEAN_KT)
+    script_dir = _write_script_dir(
+        tmp_path, "DiagnosticEventWriter.kt # legacy basename-only row\n"
+    )
+    monkeypatch.setitem(
+        _mod.__dict__, "__file__", str(script_dir / "verify_event_writers.py")
+    )
+
+    code, out = _scope_run_main(root, monkeypatch, capsys, ["--fail-on-violation"])
+
+    assert code == 2
+    assert "EVENT_WRITER_ALLOWLIST_LEGACY_OR_MALFORMED" in out.err
+    assert "DiagnosticEventWriter" not in out.err
+
+
+def test_real_allowlist_parses_and_every_row_is_a_known_rule_and_existing_file():
+    allowlist = _mod.load_allowlist(os.path.dirname(os.path.abspath(_mod.__file__)))
+    assert allowlist, "real allowlist must not be empty"
+    for rule, rows in allowlist.items():
+        assert rule in _mod.KNOWN_RULE_NAMES
+        for rel in rows:
+            assert os.path.isfile(os.path.join(_REPO_ROOT, *rel.split("/"))), rel
+
+
+def test_real_tree_findings_do_not_exceed_baseline():
+    """The real tree passes under the strict guard: every finding is already in
+    the checked-in baseline (12 fingerprints) and no count grows."""
+    root_set, diagnostics = _mod.resolve_production_source_scope(_REPO_ROOT)
+    assert root_set is not None, diagnostics
+    files = list(_mod.iter_production_kotlin_files(_REPO_ROOT, root_set))
+    allowlist = _mod.load_allowlist(os.path.dirname(os.path.abspath(_mod.__file__)))
+    violations = _mod.scan(files, allowlist)
+
+    counts = {}
+    for v in violations:
+        rel = os.path.relpath(v["file"], _REPO_ROOT).replace("\\", "/")
+        key = f"{v['type'].upper()}:{v['rule']} {rel}"
+        counts[key] = counts.get(key, 0) + 1
+
+    with open(
+        os.path.join(_REPO_ROOT, "config", "baselines", "event_writers.json"),
+        encoding="utf-8",
+    ) as handle:
+        baseline = json.load(handle)
+    assert len(baseline["fingerprints"]) == 12
+    assert set(counts) <= set(baseline["fingerprints"]), sorted(
+        set(counts) - set(baseline["fingerprints"])
+    )
+    for key, count in counts.items():
+        assert count <= baseline["occurrence_counts"][key], key
