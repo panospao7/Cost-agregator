@@ -19,7 +19,9 @@ import javax.inject.Singleton
  * P-06-4: the estimate is computed in the home currency only. It returns null (unavailable,
  * never 0) when the requested currency differs from the home currency, when the home currency
  * cannot be resolved, when any read fails, or when any amount could not be converted.
- * The non-negative clamp on a computed net is unchanged.
+ * It is also null (never a clamped 0.0) when the net is negative, or when the window has no
+ * deposit, purchase or withdrawal row at all: the net is not a balance in those cases.
+ * Transfers are neutral and are not counted (DR-06).
  */
 @Singleton
 class NetCashflowBalanceProvider @Inject constructor(
@@ -63,11 +65,31 @@ class NetCashflowBalanceProvider @Inject constructor(
             return null
         }
 
-        return (deposits.displayAmount - purchases.displayAmount - withdrawals).coerceAtLeast(0.0)
+        // P-06-4: with no deposit, purchase or withdrawal row in the window there is no cashflow
+        // to read, so the net is not a balance.
+        if (deposits.totalTransactionCount + purchases.totalTransactionCount + withdrawals.second == 0) {
+            Timber.w("NET_CASHFLOW_BALANCE_UNAVAILABLE reason=NO_CASHFLOW_ROWS")
+            return null
+        }
+        val net = deposits.displayAmount - purchases.displayAmount - withdrawals.first
+        // P-06-4: a negative net is spending that exceeds the deposits seen, not a balance of 0;
+        // a clamped 0.0 would read as a real zero balance and show a crunch at every horizon.
+        if (net < 0.0) {
+            Timber.w("NET_CASHFLOW_BALANCE_UNAVAILABLE reason=NET_NEGATIVE")
+            return null
+        }
+        return net
     }
 
-    /** Home-currency withdrawal total, or null when the read fails or any row cannot be converted. */
-    private suspend fun withdrawalTotalOrNull(startDate: Long, endDate: Long, homeCurrency: String): Double? {
+    /**
+     * Home-currency withdrawal total and row count, or null when the read fails or any row
+     * cannot be converted.
+     */
+    private suspend fun withdrawalTotalOrNull(
+        startDate: Long,
+        endDate: Long,
+        homeCurrency: String
+    ): Pair<Double, Int>? {
         val normalized = CancellationSafe.runCatchingCancellable {
             analyticsCurrencyNormalizer.normalizeExpenses(
                 expenseRepository.getExpensesBetween(startDate, endDate),
@@ -75,8 +97,8 @@ class NetCashflowBalanceProvider @Inject constructor(
             )
         }.getOrNull() ?: return null
         if (normalized.severeWarnings.isNotEmpty() || normalized.excludedCount > 0) return null
-        return normalized.includedExpenses
+        val rows = normalized.includedExpenses
             .filter { it.transactionType == DomainTransactionType.WITHDRAWAL && !it.isNotMine }
-            .sumOf { it.effectiveAmount }
+        return rows.sumOf { it.effectiveAmount } to rows.size
     }
 }

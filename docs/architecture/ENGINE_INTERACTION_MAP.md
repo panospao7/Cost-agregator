@@ -80,7 +80,10 @@ CurrencyConverter.convert() / convertAsOf()
   │     ├── ForecastInputAssembler
   │     └── ComputeDashboardWidgetsUseCase (spending trend)
   ├── CashFlowCalculator (daily balance)
-  ├── FinancialStressForecastEngine (starting balance)
+  ├── FinancialStressForecastEngine (starting balance; P-06-4: NetCashflowBalanceProvider 90-day home-currency
+  │     deposits - purchases - withdrawals, null = BALANCE_UNAVAILABLE when currency != home, any read/conversion
+  │     failure, a negative net, or no cashflow rows; lowData when the discretionary baseline has < 5 purchases or
+  │     < 14 observed days, which suppresses HEALTHY_OUTLOOK/NO_IMMEDIATE_CONCERNS and neutralises the card's LOW badge)
   ├── BudgetForecastingEngine (limit conversion)
   ├── ExpenseExportMapper (conversion audit fields)
   ├── TransactionLifecycleCoordinator (create-time snapshot; update re-snapshots against current H;

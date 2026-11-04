@@ -22,6 +22,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.yourname.expensetracker.R
+import com.yourname.expensetracker.domain.forecasting.StressForecastFailure
 import com.yourname.expensetracker.domain.forecasting.StressForecastResult
 import com.yourname.expensetracker.domain.forecasting.StressHorizon
 import com.yourname.expensetracker.domain.forecasting.StressRecommendation
@@ -56,7 +57,14 @@ fun FinancialStressForecastCard(
                 Text("Stress Forecast", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    androidx.compose.ui.res.stringResource(com.yourname.expensetracker.R.string.stress_forecast_unavailable),
+                    // A balance that cannot be worked out in the home currency is persistent, not "temporary".
+                    androidx.compose.ui.res.stringResource(
+                        if (result.failure == StressForecastFailure.BALANCE_UNAVAILABLE) {
+                            com.yourname.expensetracker.R.string.stress_forecast_balance_unavailable
+                        } else {
+                            com.yourname.expensetracker.R.string.stress_forecast_unavailable
+                        }
+                    ),
                     style = MaterialTheme.typography.bodyMedium,
                     color = SemanticColors.TextSecondary
                 )
@@ -64,8 +72,16 @@ fun FinancialStressForecastCard(
         }
         return
     }
-    val (backgroundColor, accentColor, riskIcon) = getRiskColors(overallRisk)
-    
+    // P-06-4: on a thin baseline with no crunch date, a LOW read is not known to be low, so the
+    // green LOW badge/emoji and "0% risk" pill are neutralised (the low-data notice carries the message).
+    val neutralOverall = result.isLowData && result.earliestCrunchDate == null &&
+        overallRisk == StressRiskLevel.LOW
+    val (backgroundColor, accentColor, riskIcon) = if (neutralOverall) {
+        Triple(SemanticColors.TextMuted.copy(alpha = 0.08f), SemanticColors.TextSecondary, "")
+    } else {
+        getRiskColors(overallRisk)
+    }
+
     var selectedHorizon by remember(result.horizons) { mutableIntStateOf(0) }
     LaunchedEffect(result.horizons, selectedHorizon) {
         val clampedIndex = if (result.horizons.isEmpty()) {
@@ -101,22 +117,24 @@ fun FinancialStressForecastCard(
                     color = accentColor,
                     letterSpacing = 1.sp
                 )
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = accentColor.copy(alpha = 0.2f)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                if (!neutralOverall) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = accentColor.copy(alpha = 0.2f)
                     ) {
-                        Text(riskIcon, fontSize = 12.sp)
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            overallRisk.name,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = accentColor,
-                            fontWeight = FontWeight.SemiBold
-                        )
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(riskIcon, fontSize = 12.sp)
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                overallRisk.name,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = accentColor,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
                     }
                 }
             }
@@ -193,10 +211,12 @@ fun FinancialStressForecastCard(
                                 color = tabColor
                             )
                             Spacer(modifier = Modifier.height(2.dp))
-                            Text(
-                                text = getRiskEmoji(horizon.riskLevel),
-                                fontSize = 16.sp
-                            )
+                            if (!horizon.isNeutralLowData()) {
+                                Text(
+                                    text = getRiskEmoji(horizon.riskLevel),
+                                    fontSize = 16.sp
+                                )
+                            }
                         }
                     }
                 }
@@ -283,20 +303,23 @@ private fun HorizonDetailView(
                 else -> SemanticColors.DangerRed
             }
             
-            Surface(
-                shape = RoundedCornerShape(6.dp),
-                color = probColor.copy(alpha = 0.15f)
-            ) {
-                Text(
-                    text = stringResource(
-                        R.string.stress_forecast_risk_percent_format,
-                        String.format(Locale.getDefault(), "%.0f", horizon.probabilityOfCrunch * 100)
-                    ),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = probColor,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                )
+            // P-06-4: no "0% risk" pill on a thin baseline where the LOW read is not known.
+            if (!horizon.isNeutralLowData()) {
+                Surface(
+                    shape = RoundedCornerShape(6.dp),
+                    color = probColor.copy(alpha = 0.15f)
+                ) {
+                    Text(
+                        text = stringResource(
+                            R.string.stress_forecast_risk_percent_format,
+                            String.format(Locale.getDefault(), "%.0f", horizon.probabilityOfCrunch * 100)
+                        ),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = probColor,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
             }
         }
         
@@ -529,6 +552,10 @@ private fun getRiskColors(riskLevel: StressRiskLevel): Triple<androidx.compose.u
         )
     }
 }
+
+/** P-06-4: a LOW read on a thin discretionary baseline is not a known-low risk, so it is not shown as one. */
+private fun StressHorizon.isNeutralLowData(): Boolean =
+    lowData && riskLevel == StressRiskLevel.LOW
 
 private fun getRiskEmoji(riskLevel: StressRiskLevel): String {
     return when (riskLevel) {

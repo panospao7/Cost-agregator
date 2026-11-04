@@ -71,6 +71,8 @@
     <string name="notification_access_open_failed">Δεν ήταν δυνατό το άνοιγμα των ρυθμίσεων. Ανοίξτε τις Ρυθμίσεις και αναζητήστε \"Πρόσβαση ειδοποιήσεων\".</string>
     <string name="money_radar_unavailable">Το Money Radar δεν είναι προσωρινά διαθέσιμο. Δεν ήταν δυνατό να αξιολογηθούν ορισμένες οικονομικές ενδείξεις.</string>
     <string name="stress_forecast_unavailable">Η πρόβλεψη οικονομικής πίεσης δεν είναι προσωρινά διαθέσιμη. Δεν υπάρχει διαθέσιμη εκτίμηση κινδύνου.</string>
+    <!-- stress_forecast_balance_unavailable: DRAFT: owner native sign-off pending -->
+    <string name="stress_forecast_balance_unavailable">Η πρόβλεψη οικονομικής πίεσης χρειάζεται ένα υπόλοιπο λογαριασμού που η εφαρμογή μπορεί να υπολογίσει στο βασικό σας νόμισμα, και αυτό δεν είναι δυνατό αυτή τη στιγμή. Δεν εμφανίζεται εκτίμηση κινδύνου.</string>
     <!-- fix-1.0.4 B1-11: DRAFT: owner native sign-off pending -->
     <string name="stress_forecast_risk_percent_format">%1$s%% κίνδυνος</string>
     <!-- fix-1.0.4 P-06-4: DRAFT: owner native sign-off pending -->

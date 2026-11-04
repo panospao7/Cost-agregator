@@ -424,10 +424,11 @@ class FinancialStressForecastInstallmentTest {
     }
 
     @Test
-    fun `fully linked history with a projected entry gives a zero discretionary baseline and not the synthetic fallback`() = runTest {
-        // Every purchase in the 60 day window is installment-linked and one entry is projected:
-        // the history leaves the baseline, but it is still "history", so the synthetic
-        // 20 per day fallback (the no-history branch) must not kick in.
+    fun `no history and fully linked history both give a zero discretionary baseline flagged low data`() = runTest {
+        // Owner decision (P-06-4): the synthetic 20 per day baseline is removed. No history means
+        // zero discretionary spend, flagged low data. Every purchase in the 60 day window here is
+        // installment-linked and one entry is projected: the history leaves the baseline, so the
+        // discretionary baseline is also zero and low data.
         allExpenses = listOf(
             purchase(101L, 50.0, "Lender", daysAgo = 50),
             purchase(102L, 50.0, "Lender", daysAgo = 20)
@@ -437,14 +438,16 @@ class FinancialStressForecastInstallmentTest {
             eligibilityLinking(101L, 102L)
         ).computeStressForecast()
 
-        // Non-vacuity: with no history at all the engine does use the synthetic baseline.
+        // No history at all: zero spend, never the removed synthetic baseline.
         allExpenses = emptyList()
         val noHistory = engine(emptyInstallmentProjectionPort()).computeStressForecast()
 
         for (days in listOf(30, 60, 90)) {
             assertApproxEquals(0.0, aware.horizon(days).discretionaryP50(), 0.0001)
+            assertTrue("aware lowData ${days}d", aware.horizon(days).lowData)
+            assertApproxEquals(0.0, noHistory.horizon(days).discretionaryP50(), 0.0001)
+            assertTrue("noHistory lowData ${days}d", noHistory.horizon(days).lowData)
         }
-        assertTrue(noHistory.horizon(30).discretionaryP50() > 500.0)
         // The projected 50.00 is the only outflow.
         assertApproxEquals(50.0, aware.horizon(30).recurringObligations, 0.0001)
     }

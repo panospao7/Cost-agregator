@@ -93,6 +93,12 @@ class FinancialStressForecastEngine @Inject constructor(
         // Minimum number of days in the Monte Carlo daily-spend sample window.
         private const val MIN_SAMPLE_DAYS = 14
 
+        // P-06-4: the discretionary baseline is flagged low-data (outlook not reassuring, no
+        // "healthy" rows) when it rests on fewer than this many purchases ...
+        private const val LOW_DATA_MIN_PURCHASES = 5
+        // ... or fewer than this many observed days (first purchase in the 60-day window to today).
+        private const val LOW_DATA_MIN_OBSERVED_DAYS = 14
+
         // NEW-P6-010: Risk classification thresholds — extracted from hardcoded magic numbers.
         // TODO: Migrate these to AppConfig so they can be tuned without a code deployment.
         private const val RISK_THRESHOLD_LOW = 0.10
@@ -752,6 +758,19 @@ class FinancialStressForecastEngine @Inject constructor(
         )
         val floorStartDay = TimePeriodUtils.addDays(sampleEndDay, -(MIN_SAMPLE_DAYS - 1))
         val sampleStartDay = minOf(maxOf(lookbackStartDay, firstPurchaseDay), floorStartDay)
+        // P-06-4: thin baseline flag. Counts discretionary purchases inside the sampling lookback
+        // and the real observed span (not the MIN_SAMPLE_DAYS-floored sampling window).
+        val baselinePurchaseCount = discretionaryPurchases.count {
+            TimePeriodUtils.getStartOfDay(it.date) >= lookbackStartDay
+        }
+        val observedDays = java.time.temporal.ChronoUnit.DAYS.between(
+            java.time.Instant.ofEpochMilli(maxOf(lookbackStartDay, firstPurchaseDay))
+                .atZone(java.time.ZoneId.systemDefault()).toLocalDate(),
+            java.time.Instant.ofEpochMilli(sampleEndDay)
+                .atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+        ).toInt() + 1
+        val thinBaseline = baselinePurchaseCount < LOW_DATA_MIN_PURCHASES ||
+            observedDays < LOW_DATA_MIN_OBSERVED_DAYS
         val dailyTotals = mutableListOf<Double>()
         var cursorDay = sampleStartDay
 
@@ -787,7 +806,8 @@ class FinancialStressForecastEngine @Inject constructor(
             percentile75 = percentile(simulatedTotals, 0.75),
             percentile90 = percentile(simulatedTotals, 0.90),
             simulatedTotals = simulatedTotals.toList(),
-            displayCurrency = displayCurrency
+            displayCurrency = displayCurrency,
+            noPurchaseHistory = thinBaseline
         )
     }
 
@@ -1069,7 +1089,10 @@ data class StressHorizon(
      * as cash leaving. Withdrawals are not discretionary spending and are not in the Monte Carlo.
      */
     val projectedWithdrawals: Double = 0.0,
-    /** P-06-4: no purchase history; discretionary spend was projected as zero. */
+    /**
+     * P-06-4: thin discretionary baseline (no purchases, fewer than 5 purchases, or fewer than
+     * 14 observed days); with no purchases discretionary spend was projected as zero.
+     */
     val lowData: Boolean = false
 ) {
     val moneyProjectedBalance: MoneyAmount get() = MoneyAmount(projectedBalance, CurrencyCode(displayCurrency))
@@ -1101,7 +1124,11 @@ private data class MonteCarloHorizonResult(
     val percentile90: Double,
     val simulatedTotals: List<Double>,
     val displayCurrency: String = "",
-    /** P-06-4: there were no purchases at all, so the totals are zero by construction. */
+    /**
+     * P-06-4: the discretionary baseline is too thin to trust: no purchases at all (totals are
+     * zero by construction), fewer than [FinancialStressForecastEngine] LOW_DATA_MIN_PURCHASES
+     * purchases, or fewer than LOW_DATA_MIN_OBSERVED_DAYS observed days.
+     */
     val noPurchaseHistory: Boolean = false
 ) {
     val moneyPercentile10: MoneyAmount get() = MoneyAmount(percentile10, CurrencyCode(displayCurrency))

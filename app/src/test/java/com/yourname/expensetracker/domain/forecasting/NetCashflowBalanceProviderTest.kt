@@ -9,6 +9,7 @@ import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
 import com.yourname.expensetracker.domain.analytics.AnalyticsNormalizationResult
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.core.money.MoneyAggregate
+import com.yourname.expensetracker.domain.core.money.MoneyBucket
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
 import com.yourname.expensetracker.domain.model.ExpenseSnapshot
@@ -44,10 +45,15 @@ class NetCashflowBalanceProviderTest {
     private lateinit var currencySettingsRepository: CurrencySettingsRepository
     private lateinit var provider: NetCashflowBalanceProvider
 
-    private fun aggregate(amount: Double, partial: Boolean = false) = MoneyAggregate(
+    /** [rows] is the transaction count carried by the single EUR source bucket (0 means no rows). */
+    private fun aggregate(amount: Double, partial: Boolean = false, rows: Int = 1) = MoneyAggregate(
         displayAmount = amount,
         displayCurrency = CurrencyCode.EUR,
-        sourceBuckets = emptyList(),
+        sourceBuckets = if (rows > 0) {
+            listOf(MoneyBucket(CurrencyCode.EUR, amount, rows))
+        } else {
+            emptyList()
+        },
         conversionFailures = emptyList(),
         isPartial = partial
     )
@@ -125,14 +131,65 @@ class NetCashflowBalanceProviderTest {
     }
 
     @Test
-    fun `negative computed net cashflow is clamped to zero as a real figure`() = runTest {
-        coEvery { multiCurrencyRepository.getHomeCurrencyDepositTotal(ninetyDaysAgo, now) } returns aggregate(100.0)
-        coEvery { multiCurrencyRepository.getHomeCurrencyPurchaseTotal(ninetyDaysAgo, now) } returns aggregate(300.0)
+    fun `deposits 1000 and purchases 1500 is unavailable not a clamped zero`() = runTest {
+        // Owner-approved change: this test used to pin the clamp to 0.0 for a negative net.
+        coEvery { multiCurrencyRepository.getHomeCurrencyDepositTotal(ninetyDaysAgo, now) } returns aggregate(1000.0)
+        coEvery { multiCurrencyRepository.getHomeCurrencyPurchaseTotal(ninetyDaysAgo, now) } returns aggregate(1500.0)
+
+        assertNull(provider.currentBalance("EUR"))
+    }
+
+    @Test
+    fun `deposits 1500 and purchases 1000 returns 500`() = runTest {
+        coEvery { multiCurrencyRepository.getHomeCurrencyDepositTotal(ninetyDaysAgo, now) } returns aggregate(1500.0)
+        coEvery { multiCurrencyRepository.getHomeCurrencyPurchaseTotal(ninetyDaysAgo, now) } returns aggregate(1000.0)
+
+        assertEquals(500.0, provider.currentBalance("EUR")!!, 0.0)
+    }
+
+    @Test
+    fun `zero deposit purchase and withdrawal rows is unavailable not zero`() = runTest {
+        coEvery { multiCurrencyRepository.getHomeCurrencyDepositTotal(ninetyDaysAgo, now) } returns
+            aggregate(0.0, rows = 0)
+        coEvery { multiCurrencyRepository.getHomeCurrencyPurchaseTotal(ninetyDaysAgo, now) } returns
+            aggregate(0.0, rows = 0)
+
+        assertNull(provider.currentBalance("EUR"))
+    }
+
+    @Test
+    fun `net exactly zero with rows present is a real zero balance`() = runTest {
+        coEvery { multiCurrencyRepository.getHomeCurrencyDepositTotal(ninetyDaysAgo, now) } returns aggregate(500.0)
+        coEvery { multiCurrencyRepository.getHomeCurrencyPurchaseTotal(ninetyDaysAgo, now) } returns aggregate(500.0)
 
         val balance = provider.currentBalance("EUR")
 
         assertNotNull(balance)
         assertEquals(0.0, balance!!, 0.0)
+    }
+
+    @Test
+    fun `a withdrawal row alone counts as a cashflow row`() = runTest {
+        coEvery { multiCurrencyRepository.getHomeCurrencyDepositTotal(ninetyDaysAgo, now) } returns
+            aggregate(100.0, rows = 0)
+        coEvery { multiCurrencyRepository.getHomeCurrencyPurchaseTotal(ninetyDaysAgo, now) } returns
+            aggregate(0.0, rows = 0)
+        coEvery { normalizer.normalizeExpenses(any(), "EUR") } returns
+            cleanNormalization(listOf(withdrawal(1L, 100.0)))
+
+        val balance = provider.currentBalance("EUR")
+
+        assertNotNull(balance)
+        assertEquals(0.0, balance!!, 0.0)
+    }
+
+    @Test
+    fun `negative net caused by a withdrawal is unavailable`() = runTest {
+        coEvery { normalizer.normalizeExpenses(any(), "EUR") } returns
+            cleanNormalization(listOf(withdrawal(1L, 900.0)))
+
+        // 1000 - 250.5 - 900 < 0
+        assertNull(provider.currentBalance("EUR"))
     }
 
     // ── Unavailable (null), never 0 ─────────────────────────────────────────

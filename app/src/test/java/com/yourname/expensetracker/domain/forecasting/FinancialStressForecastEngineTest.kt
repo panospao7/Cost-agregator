@@ -144,28 +144,43 @@ class FinancialStressForecastEngineTest {
     // deposit/purchase fallback behind the provider, so a failing provider is "balance unavailable",
     // and the deposit/purchase cancellation guarantees now live in NetCashflowBalanceProviderTest.
     @Test
-    fun providerFailureDoesNotFallBackToInlineDepositTotals() = runTest {
-        coEvery { accountBalanceProvider.currentBalance(any()) } throws IllegalStateException("provider down")
-        coEvery { multiCurrencyRepository.getHomeCurrencyDepositTotal(any(), any()) } throws
-            kotlinx.coroutines.CancellationException("deposit cancellation")
+    fun accountBalanceProviderIOExceptionIsBalanceUnavailableWithNoInventedBalance() = runTest {
+        coEvery { accountBalanceProvider.currentBalance(any()) } throws java.io.IOException("provider down")
+        allExpenses = steadyDailyPurchases(10.0)
 
         val result = engine.computeStressForecast()
 
         assertEquals(StressForecastFailure.BALANCE_UNAVAILABLE, result.failure)
-        coVerify(exactly = 0) { multiCurrencyRepository.getHomeCurrencyDepositTotal(any(), any()) }
+        assertTrue(result.horizons.isEmpty())
+        assertNull(result.overallRiskLevel)
+        assertNull(result.earliestCrunchDate)
+        assertTrue(result.recommendations.isEmpty())
+        assertTrue(result.isPartial)
+        assertEquals(listOf("STRESS_FORECAST_BALANCE_UNAVAILABLE"), result.qualityWarnings)
+        coVerify(exactly = 1) { accountBalanceProvider.currentBalance("EUR") }
     }
 
-    // P-06-4 (was: purchaseTotalCancellationPropagatesUnchanged). See the note above.
+    // Control for the IOException case: the same fixture with a known balance does forecast.
     @Test
-    fun providerFailureDoesNotFallBackToInlinePurchaseTotals() = runTest {
-        coEvery { accountBalanceProvider.currentBalance(any()) } throws IllegalStateException("provider down")
-        coEvery { multiCurrencyRepository.getHomeCurrencyPurchaseTotal(any(), any()) } throws
-            kotlinx.coroutines.CancellationException("purchase cancellation")
+    fun accountBalanceProviderKnownBalanceControlForecastsSameFixture() = runTest {
+        coEvery { accountBalanceProvider.currentBalance(any()) } returns 0.0
+        allExpenses = steadyDailyPurchases(10.0)
 
         val result = engine.computeStressForecast()
 
-        assertEquals(StressForecastFailure.BALANCE_UNAVAILABLE, result.failure)
-        coVerify(exactly = 0) { multiCurrencyRepository.getHomeCurrencyPurchaseTotal(any(), any()) }
+        assertNull(result.failure)
+        assertEquals(listOf(30, 60, 90), result.horizons.map { it.daysAhead })
+    }
+
+    @Test
+    fun accountBalanceProviderCancellationEscapesComputeStressForecastNotBalanceUnavailable() = runTest {
+        val cancellation = kotlinx.coroutines.CancellationException("provider cancelled")
+        coEvery { accountBalanceProvider.currentBalance(any()) } throws cancellation
+
+        val thrown = runCatching { engine.computeStressForecast() }
+
+        org.junit.Assert.assertTrue("cancellation must propagate", thrown.isFailure)
+        org.junit.Assert.assertSame(cancellation, thrown.exceptionOrNull())
     }
 
     @Test
@@ -319,6 +334,96 @@ class FinancialStressForecastEngineTest {
 
         assertTrue(result.horizons.all { it.lowData })
         assertTrue(result.isLowData)
+    }
+
+    // ── P-06-4 low data: fewer than 5 purchases or fewer than 14 observed days ──
+
+    private fun purchasesDaysBack(vararg daysBack: Int): List<Expense> = daysBack.mapIndexed { index, back ->
+        expense(
+            3400L + index,
+            5.0,
+            TransactionType.PURCHASE,
+            millis(2026, Calendar.APRIL, 20 - back)
+        )
+    }
+
+    private suspend fun lowDataResult(vararg daysBack: Int): StressForecastResult {
+        coEvery { accountBalanceProvider.currentBalance(any()) } returns 5_000.0
+        allExpenses = purchasesDaysBack(*daysBack)
+        allDeposits = emptyList()
+        return engine.computeStressForecast()
+    }
+
+    private fun assertLowDataWithoutReassurance(result: StressForecastResult) {
+        assertNull(result.failure)
+        assertTrue(result.isLowData)
+        assertTrue(result.horizons.all { it.lowData })
+        val kinds = result.recommendations.map { it.kind }
+        assertTrue(StressRecommendationKind.HEALTHY_OUTLOOK !in kinds)
+        assertTrue(StressRecommendationKind.NO_IMMEDIATE_CONCERNS !in kinds)
+    }
+
+    @Test
+    fun lowDataOnePurchaseThirtyDaysAgoIsLowData() = runTest {
+        assertLowDataWithoutReassurance(lowDataResult(30))
+    }
+
+    @Test
+    fun lowDataFourPurchasesAcrossSixtyDaysIsLowData() = runTest {
+        assertLowDataWithoutReassurance(lowDataResult(60, 40, 20, 1))
+    }
+
+    @Test
+    fun lowDataFivePurchasesFirstTenDaysAgoIsLowData() = runTest {
+        assertLowDataWithoutReassurance(lowDataResult(10, 8, 6, 3, 1))
+    }
+
+    @Test
+    fun lowDataFivePurchasesFirstFourteenDaysAgoIsNotLowData() = runTest {
+        // Observed span: 14 days back through today = 15 observed days, five purchases.
+        val result = lowDataResult(14, 10, 7, 4, 1)
+
+        assertNull(result.failure)
+        assertEquals(false, result.isLowData)
+        assertTrue(result.horizons.none { it.lowData })
+        // Not-low control: with a large balance and tiny spend the reassuring row is allowed.
+        val kinds = result.recommendations.map { it.kind }
+        assertTrue(
+            StressRecommendationKind.HEALTHY_OUTLOOK in kinds ||
+                StressRecommendationKind.NO_IMMEDIATE_CONCERNS in kinds
+        )
+    }
+
+    @Test
+    fun lowDataFivePurchasesFirstThirteenDaysAgoIsNotLowDataBoundary() = runTest {
+        // 13 days back through today = 14 observed days: exactly at the threshold, not low.
+        val result = lowDataResult(13, 10, 7, 4, 1)
+
+        assertNull(result.failure)
+        assertEquals(false, result.isLowData)
+    }
+
+    @Test
+    fun lowDataFivePurchasesFirstTwelveDaysAgoIsLowDataBoundary() = runTest {
+        // 12 days back through today = 13 observed days: one under the threshold.
+        assertLowDataWithoutReassurance(lowDataResult(12, 10, 7, 4, 1))
+    }
+
+    @Test
+    fun lowDataThinHistoryWithRealCrunchStillShowsTheCrunchWarning() = runTest {
+        coEvery { accountBalanceProvider.currentBalance(any()) } returns 0.0
+        allExpenses = listOf(expense(3450L, 100.0, TransactionType.PURCHASE, now - 10 * dayMs))
+        allDeposits = emptyList()
+
+        val result = engine.computeStressForecast()
+
+        assertNull(result.failure)
+        assertTrue(result.isLowData)
+        assertTrue(result.overallRiskLevel != StressRiskLevel.LOW)
+        val kinds = result.recommendations.map { it.kind }
+        assertTrue(StressRecommendationKind.REDUCE_DISCRETIONARY_SPENDING in kinds)
+        assertTrue(StressRecommendationKind.HEALTHY_OUTLOOK !in kinds)
+        assertTrue(StressRecommendationKind.NO_IMMEDIATE_CONCERNS !in kinds)
     }
 
     /** Purchases of 10 on each of the 59 days before today; the first transaction is 59 days back. */

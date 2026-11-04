@@ -365,14 +365,6 @@ fun BackupRestoreScreen(
                                 color = MaterialTheme.colorScheme.onErrorContainer
                             )
                         }
-                        // J-11-2: static factual notice, shown after every successful restore. It carries
-                        // no counts and no notification content; captured notifications are protected
-                        // by a key tied to the phone that captured them.
-                        Text(
-                            text = stringResource(R.string.backup_restore_notification_unreadable_notice),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onErrorContainer
-                        )
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.End,
@@ -383,6 +375,29 @@ fun BackupRestoreScreen(
                             }
                         }
                     }
+                }
+            }
+
+            // J-11-2: static factual notice, shown after every successful restore (the restart
+            // banner above only appears then). It carries no counts and no notification content;
+            // captured notifications are protected by a key tied to the phone that captured them.
+            // Neutral (not the red restart-required card): the restore succeeded, so this is
+            // information, not an error.
+            if (uiState.restartRequired) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer
+                    )
+                ) {
+                    Text(
+                        text = stringResource(R.string.backup_restore_notification_unreadable_notice),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                    )
                 }
             }
 

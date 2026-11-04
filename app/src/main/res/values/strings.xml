@@ -2816,6 +2816,7 @@
     <string name="debug_database_stats_unavailable">Database statistics are temporarily unavailable</string>
     <string name="money_radar_unavailable">Money Radar is temporarily unavailable. Some financial signals could not be evaluated.</string>
     <string name="stress_forecast_unavailable">Stress forecast is temporarily unavailable. No risk estimate is available.</string>
+    <string name="stress_forecast_balance_unavailable">The stress forecast needs an account balance the app can work out in your home currency, and it cannot do that right now. No risk estimate is shown.</string>
     <string name="stress_forecast_risk_percent_format">%1$s%% risk</string>
     <string name="stress_forecast_low_data_notice">Not enough purchase history yet to estimate spending, so this outlook is not a confident forecast.</string>
     <!-- stress-forecast-actions: localized stress forecast recommendations -->
