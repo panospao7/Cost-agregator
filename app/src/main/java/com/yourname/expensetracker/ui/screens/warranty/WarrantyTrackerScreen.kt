@@ -33,6 +33,8 @@ import com.yourname.expensetracker.domain.usecase.warranty.WarrantyEditError
 import com.yourname.expensetracker.data.database.entity.Warranty
 import com.yourname.expensetracker.data.database.entity.WarrantyStatus
 import com.yourname.expensetracker.domain.usecase.warranty.WarrantyReviewState
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
+import com.yourname.expensetracker.ui.components.DataQualityWarningChip
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.ui.components.asString
@@ -224,11 +226,20 @@ fun WarrantyTrackerScreen(
                         text = stringResource(R.string.warranty_summary_protected_value),
                         style = MaterialTheme.typography.labelMedium
                     )
+                    val protectedValueDisplay = if (state.isProtectedValueAvailable) {
+                        CurrencyFormatter.formatMoney(state.totalProtectedValue, state.protectedValueCurrency)
+                    } else {
+                        stringResource(R.string.groups_total_unavailable)
+                    }
                     Text(
-                        text = stringResource(R.string.warranty_protected_value, String.format("%.2f", state.totalProtectedValue)),
+                        text = stringResource(R.string.warranty_protected_value, protectedValueDisplay),
                         style = MaterialTheme.typography.headlineMedium,
                         fontWeight = FontWeight.Bold
                     )
+                    if (state.isProtectedValuePartial) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        DataQualityWarningChip()
+                    }
                 }
             }
 

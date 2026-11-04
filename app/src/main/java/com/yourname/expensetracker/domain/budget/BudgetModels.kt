@@ -62,6 +62,23 @@ enum class BudgetHealthStatus {
     UNKNOWN     // Conversion failed — status cannot be determined
 }
 
+/**
+ * The single percent-to-health threshold rule for a known percent: at least 100% is
+ * [BudgetHealthStatus.EXCEEDED], then the per-budget critical and warning thresholds.
+ * Shared by the repository (gross percent) and the budget card (effective percent) so the
+ * thresholds exist in exactly one place. [BudgetHealthStatus.UNKNOWN] is not decided here.
+ */
+fun budgetHealthForPercent(
+    percent: Float,
+    notifyAtWarning: Float,
+    notifyAtCritical: Float
+): BudgetHealthStatus = when {
+    percent >= 1.0f -> BudgetHealthStatus.EXCEEDED
+    percent >= notifyAtCritical -> BudgetHealthStatus.CRITICAL
+    percent >= notifyAtWarning -> BudgetHealthStatus.WARNING
+    else -> BudgetHealthStatus.ON_TRACK
+}
+
 data class BudgetSuggestion(
     val categoryId: Long?,
     val categoryName: String,

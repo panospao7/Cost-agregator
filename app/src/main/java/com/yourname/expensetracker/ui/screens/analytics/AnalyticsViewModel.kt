@@ -22,6 +22,7 @@ import com.yourname.expensetracker.domain.core.money.MoneyAggregateResult
 import com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableException
 import com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableReasonCode
 import com.yourname.expensetracker.domain.core.money.aggregateOrNull
+import com.yourname.expensetracker.domain.core.money.warningOrNull
 import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.DomainTransferDirection
@@ -84,14 +85,28 @@ internal fun buildMerchantBreakdown(
     .mapNotNull { (_, expenses) ->
         val transactionIds = expenses.mapTo(mutableSetOf()) { it.id }
         val normalized = input.includedExpenses.filter { it.id in transactionIds }
-        val totalAmount = NormalizedAnalyticsMoneyAdapter.aggregateUnattributedSlice(
-            input, normalized, displayCurrency = displayCurrency
-        ).aggregateOrNull()?.displayAmount ?: return@mapNotNull null
+        val sliceInput = input.copy(
+            excludedExpenses = input.excludedExpenses.filter {
+                it.id in transactionIds && (it.date != null || input.period?.startInclusiveMillis == null)
+            }.map {
+                if (it.date == null) it.copy(date = input.period?.startInclusiveMillis ?: 0L) else it
+            }
+        )
+        val result = NormalizedAnalyticsMoneyAdapter.aggregateSelectedSlice(
+            input = sliceInput,
+            includedExpenses = normalized,
+            includeExcluded = { it.id in transactionIds },
+            displayCurrency = displayCurrency,
+            exclusionAttribution = ExclusionAttribution.TEMPORAL
+        )
+        val totalAmount = result.aggregateOrNull()?.displayAmount ?: return@mapNotNull null
         MerchantBreakdown(
             name = resolveMerchantDisplayName(expenses),
             totalSpent = totalAmount,
             transactionCount = expenses.size,
-            averageTransaction = totalAmount / expenses.size,
+            // The sum covers only rows that converted ([normalized]); rows excluded for a
+            // missing rate contributed nothing, so they must not dilute the average.
+            averageTransaction = totalAmount / normalized.size.coerceAtLeast(1),
             categoryId = expenses.firstOrNull()?.categoryId,
             displayCurrency = displayCurrency
         )
@@ -549,9 +564,19 @@ class AnalyticsViewModel @Inject constructor(
         )
 
         val totalForPercentage = currentTotal.coerceAtLeast(0.0)
-        val categoryBreakdown = currentExpenseSnapshots
-            .groupBy { it.categoryId }
-            .mapNotNull { (categoryId, snapshots) ->
+        val purchaseCategoryById = purchases.associate { it.id to it.categoryId }
+        val categoryIds = (
+            currentExpenseSnapshots.map { it.categoryId } +
+                currentInput.excludedExpenses.mapNotNull { exp ->
+                    exp.categoryId ?: if (exp.id in purchaseCategoryById) purchaseCategoryById[exp.id] else null
+                } +
+                if (currentInput.excludedExpenses.any { exp ->
+                        (exp.categoryId == null && exp.id in purchaseCategoryById && purchaseCategoryById[exp.id] == null)
+                    }) listOf<Long?>(null) else emptyList()
+            ).distinct()
+        val categoryBreakdown = categoryIds
+            .mapNotNull { categoryId ->
+                val snapshots = currentExpenseSnapshots.filter { it.categoryId == categoryId }
                 val category = categoryId
                     ?.let { id -> analyticsCategories.firstOrNull { it.id == id } }
                     ?: AnalyticsCategoryRef(
@@ -561,22 +586,52 @@ class AnalyticsViewModel @Inject constructor(
                     color = "#9E9E9E"
                 )
                 val normalized = currentInput.includedExpenses.filter { it.categoryId == categoryId }
-                val total = NormalizedAnalyticsMoneyAdapter.aggregateUnattributedSlice(
-                    currentInput, normalized, displayCurrency = homeCurrency
-                ).aggregateOrNull()?.displayAmount ?: return@mapNotNull null
+                val categoryExcludedIds = currentInput.excludedExpenses
+                    .filter { exp ->
+                        val excludedCategoryId = exp.categoryId ?: purchaseCategoryById[exp.id]
+                        excludedCategoryId == categoryId && (exp.categoryId != null || exp.id in purchaseCategoryById)
+                    }
+                    .mapTo(mutableSetOf()) { it.id }
+                if (normalized.isEmpty() && categoryExcludedIds.isEmpty()) return@mapNotNull null
+                val sliceExcluded = currentInput.excludedExpenses.filter { it.id in categoryExcludedIds }.map {
+                    if (it.date == null) it.copy(date = currentStart) else it
+                }
+                val sliceInput = currentInput.copy(
+                    excludedExpenses = sliceExcluded,
+                    dataQuality = currentInput.dataQuality.copy(
+                        isPartial = sliceExcluded.isNotEmpty(),
+                        excludedCount = sliceExcluded.size
+                    )
+                )
+                val result = NormalizedAnalyticsMoneyAdapter.aggregateSelectedSlice(
+                    input = sliceInput,
+                    includedExpenses = normalized,
+                    includeExcluded = { it.id in categoryExcludedIds },
+                    displayCurrency = homeCurrency,
+                    exclusionAttribution = ExclusionAttribution.TEMPORAL
+                )
+                val aggregate = result.aggregateOrNull()
+                val isUnavailable = aggregate == null || (normalized.isEmpty() && categoryExcludedIds.isNotEmpty())
+                if (isUnavailable && categoryExcludedIds.isEmpty()) return@mapNotNull null
+                val total = if (isUnavailable) 0.0 else (aggregate?.displayAmount ?: 0.0)
                 AnalyticsCategoryBreakdown(
                     category = category,
                     moneyTotal = MoneyAmount(total, CurrencyCode(homeCurrency)),
-                    count = snapshots.size,
-                    percentage = if (totalForPercentage > 0.0) ((total / totalForPercentage) * 100f).toFloat() else 0f,
-                    displayCurrency = homeCurrency
+                    count = snapshots.size + categoryExcludedIds.size,
+                    percentage = if (!isUnavailable && totalForPercentage > 0.0) ((total / totalForPercentage) * 100f).toFloat() else 0f,
+                    displayCurrency = homeCurrency,
+                    isPartial = (aggregate?.isPartial ?: false) && !isUnavailable,
+                    isUnavailable = isUnavailable,
+                    warningMessage = result.warningOrNull()
                 )
             }
-            .sortedByDescending { it.moneyTotal.amount }
+            .sortedWith(compareBy<AnalyticsCategoryBreakdown> { it.isUnavailable }.thenByDescending { it.moneyTotal.amount })
 
         // Merchant breakdown (Still manual for now, or move to Repo later)
+        val purchaseSnapshots = purchases.filter { !it.isNotMine }.map { it.toExpenseSnapshot() }
+        val merchantSnapshots = (currentExpenseSnapshots + purchaseSnapshots.filter { p -> currentExpenseSnapshots.none { it.id == p.id } })
         val merchantBreakdown = buildMerchantBreakdown(
-            currentExpenseSnapshots,
+            merchantSnapshots,
             currentInput,
             homeCurrency
         )

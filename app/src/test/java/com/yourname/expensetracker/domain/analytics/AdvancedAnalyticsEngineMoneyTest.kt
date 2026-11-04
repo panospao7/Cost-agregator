@@ -84,7 +84,7 @@ class AdvancedAnalyticsEngineMoneyTest {
     }
 
     @Test
-    fun `category exclusions cannot be assigned to an arbitrary category`() = runTest {
+    fun `an uncategorized exclusion is not assigned to another category and does not fail it`() = runTest {
         val current = input(
             listOf(expense(1L, 10.0, "USD", "2026-03-02")),
             listOf(excluded(2L, "2026-03-03"))
@@ -94,10 +94,10 @@ class AdvancedAnalyticsEngineMoneyTest {
             start = "2026-02-01", end = "2026-03-01"
         )
 
-        val failure = assertThrows(MoneyDisplayUnavailableException::class.java) {
-            kotlinx.coroutines.runBlocking { engine.getCategoryAnalytics(current, previous, categories, emptyList()) }
-        }
-        assertThat(failure.reasonCode).isEqualTo(MoneyDisplayUnavailableReasonCode.DISPLAY_CONVERSION_UNAVAILABLE)
+        // N-08-7: this row has no category, so it cannot lower or flag Food, and must not throw.
+        val food = engine.getCategoryAnalytics(current, previous, categories, emptyList()).first.single()
+        assertThat(food.totalSpent).isEqualTo(10.0)
+        assertThat(food.transactionCount).isEqualTo(1)
     }
 
     @Test

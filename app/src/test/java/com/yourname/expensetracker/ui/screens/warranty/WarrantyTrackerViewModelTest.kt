@@ -6,6 +6,13 @@ import com.yourname.expensetracker.data.database.entity.Warranty
 import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.data.database.entity.WarrantyStatus
 import com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
+import com.yourname.expensetracker.domain.core.money.ConversionFailure
+import com.yourname.expensetracker.domain.core.money.ConversionQuality
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.FailureReason
+import com.yourname.expensetracker.domain.core.money.MoneyAggregate
+import com.yourname.expensetracker.domain.core.money.MoneyAmount
+import com.yourname.expensetracker.domain.core.money.MoneyBucket
 import com.yourname.expensetracker.util.ViewModelTestUtils
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -588,6 +595,117 @@ class WarrantyTrackerViewModelTest : ViewModelTestUtils() {
         viewModel.clearMutationError()
 
         assertNull(viewModel.state.value.mutationError)
+    }
+
+    // ---- E-05-1: protected value currency, availability, and partial flags ----
+
+    @Test
+    fun `E-05-1 loadStats exposes non-EUR currency and availability from complete aggregate`() = runTest(testDispatcher) {
+        coEvery { warrantyRepository.getTotalProtectedValueAggregate() } returns
+            MoneyAggregate.singleCurrency(
+                amount = 1250.50,
+                currency = CurrencyCode("USD"),
+                transactionCount = 2
+            )
+
+        viewModel = WarrantyTrackerViewModel(warrantyRepository, timeProvider = mockk(relaxed = true))
+        advanceUntilIdle()
+
+        val state = viewModel.state.value
+        assertEquals(1250.50, state.totalProtectedValue, 0.01)
+        assertEquals("USD", state.protectedValueCurrency)
+        assertTrue(state.isProtectedValueAvailable)
+        assertFalse(state.isProtectedValuePartial)
+    }
+
+    @Test
+    fun `E-05-1 loadStats preserves EUR currency for complete EUR aggregate`() = runTest(testDispatcher) {
+        coEvery { warrantyRepository.getTotalProtectedValueAggregate() } returns
+            MoneyAggregate.singleCurrency(
+                amount = 800.0,
+                currency = CurrencyCode("EUR"),
+                transactionCount = 1
+            )
+
+        viewModel = WarrantyTrackerViewModel(warrantyRepository, timeProvider = mockk(relaxed = true))
+        advanceUntilIdle()
+
+        val state = viewModel.state.value
+        assertEquals(800.0, state.totalProtectedValue, 0.01)
+        assertEquals("EUR", state.protectedValueCurrency)
+        assertTrue(state.isProtectedValueAvailable)
+        assertFalse(state.isProtectedValuePartial)
+    }
+
+    @Test
+    fun `E-05-1 loadStats sets isProtectedValuePartial true when aggregate is partial`() = runTest(testDispatcher) {
+        val usd = CurrencyCode("USD")
+        val jpy = CurrencyCode("JPY")
+        coEvery { warrantyRepository.getTotalProtectedValueAggregate() } returns
+            MoneyAggregate.partial(
+                displayAmount = 500.0,
+                displayCurrency = usd,
+                sourceBuckets = listOf(MoneyBucket(usd, 500.0, 1), MoneyBucket(jpy, 10000.0, 1)),
+                failures = listOf(
+                    ConversionFailure(
+                        originalAmount = MoneyAmount(10000.0, jpy),
+                        targetCurrency = usd,
+                        reason = FailureReason.MISSING_RATE,
+                        transactionCount = 1
+                    )
+                )
+            )
+
+        viewModel = WarrantyTrackerViewModel(warrantyRepository, timeProvider = mockk(relaxed = true))
+        advanceUntilIdle()
+
+        val state = viewModel.state.value
+        assertEquals(500.0, state.totalProtectedValue, 0.01)
+        assertEquals("USD", state.protectedValueCurrency)
+        assertTrue(state.isProtectedValueAvailable)
+        assertTrue(state.isProtectedValuePartial)
+    }
+
+    @Test
+    fun `E-05-1 loadStats sets isProtectedValueAvailable false when conversionQuality is UNAVAILABLE or lookup fails`() = runTest(testDispatcher) {
+        val usd = CurrencyCode("USD")
+        coEvery { warrantyRepository.getTotalProtectedValueAggregate() } returns
+            MoneyAggregate(
+                displayAmount = 0.0,
+                displayCurrency = usd,
+                sourceBuckets = emptyList(),
+                conversionFailures = emptyList(),
+                isPartial = true,
+                conversionQuality = ConversionQuality.UNAVAILABLE
+            )
+
+        viewModel = WarrantyTrackerViewModel(warrantyRepository, timeProvider = mockk(relaxed = true))
+        advanceUntilIdle()
+
+        val unavailableState = viewModel.state.value
+        assertFalse(unavailableState.isProtectedValueAvailable)
+        assertFalse(unavailableState.isProtectedValuePartial)
+
+        coEvery { warrantyRepository.getTotalProtectedValueAggregate() } throws IllegalStateException("rate table missing")
+        viewModel.refresh()
+        advanceUntilIdle()
+
+        val exceptionState = viewModel.state.value
+        assertFalse(exceptionState.isProtectedValueAvailable)
+        assertFalse(exceptionState.isProtectedValuePartial)
+    }
+
+    @Test
+    fun `E-05-1 loadStats unavailable state when lookup fails has empty protectedValueCurrency and zero value`() = runTest(testDispatcher) {
+        coEvery { warrantyRepository.getTotalProtectedValueAggregate() } throws IllegalStateException("rate table missing")
+
+        viewModel = WarrantyTrackerViewModel(warrantyRepository, timeProvider = mockk(relaxed = true))
+        advanceUntilIdle()
+
+        val state = viewModel.state.value
+        assertFalse(state.isProtectedValueAvailable)
+        assertEquals("unavailable must not claim a currency", "", state.protectedValueCurrency)
+        assertEquals(0.0, state.totalProtectedValue, 0.0)
     }
 
     private fun warranty(

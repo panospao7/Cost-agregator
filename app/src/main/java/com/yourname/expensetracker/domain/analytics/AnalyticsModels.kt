@@ -246,6 +246,7 @@ data class AnalyticsCategoryBreakdown(
     val percentage: Float,          // 0-100
     val displayCurrency: String,
     val isPartial: Boolean = false,
+    val isUnavailable: Boolean = false,
     val warningMessage: String? = null
 ) {
     init {

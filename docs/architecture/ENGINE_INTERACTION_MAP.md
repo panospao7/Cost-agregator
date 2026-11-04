@@ -440,6 +440,11 @@ PrivacyGate.check(capability, context)
     providing consistent fail-closed behavior across all pipelines.
 ```
 
+### Budget, Home and export consistency notes:
+- Home SafeToSpend reads the budget snapshot's effective spend (`BudgetStatusSnapshot.effectiveSpend`) and period end, not gross remaining; null effective spend is Unavailable.
+- Budget health thresholds live in one function, `budgetHealthForPercent`.
+- Exports leave converted fields (`homeCurrency`, `baseCurrency`, `baseAmount`, `exchangeRateUsed`) blank/null where no rate exists.
+
 ---
 
 ## Safe vs Dangerous Changes

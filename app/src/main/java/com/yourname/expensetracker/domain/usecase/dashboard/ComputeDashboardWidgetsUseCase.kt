@@ -110,6 +110,11 @@ sealed class DashboardWidget {
         val monthSpent: Double,
         /** S4-006: true when any conversion failed for these totals */
         val isPartial: Boolean = false,
+        /** N-08-5: true when period totals are unavailable (not zero / not merely partial) */
+        val isUnavailable: Boolean = false,
+        val isTodayUnavailable: Boolean = false,
+        val isWeekUnavailable: Boolean = false,
+        val isMonthUnavailable: Boolean = false,
         val currencyQuality: CurrencyQualityUi? = null
     ) : DashboardWidget()
 
@@ -1314,18 +1319,37 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             add(
                 when (val normalized = ctx.normalizedInputResult) {
                     is DashboardNormalizedInputResult.Available -> {
-                        // Budget remaining not yet normalized — show unavailable. F-DEV-2: the
-                        // currency-quality flag mirrors the real conversion quality of the
+                        // F-DEV-2: the currency-quality flag mirrors the real conversion quality of the
                         // normalized input; it must not be hardcoded partial, otherwise every
                         // user sees a "could not be converted" warning with fully converted data.
                         val inputQuality = normalized.input.dataQuality
                         val conversionPartial = inputQuality.isPartial || inputQuality.excludedTransactionCount > 0
+                        // FL-06: the hero number comes from the SAME budget snapshot the Budget
+                        // screen renders (effective limit, effective spend and periodEnd already
+                        // honour the budget period, rollover and rolling windows). It is never
+                        // recomputed from calendar-month spend and never uses gross remaining.
+                        // A snapshot that is not complete in the home currency, whose limit is
+                        // not strictly positive, or whose effective spend is unavailable, is
+                        // Unavailable (matches the Budget card's remaining slot).
+                        val budgetSnapshot = ctx.overallBudget?.takeIf {
+                            it.hasCompleteAmountIn(normalized.input.homeCurrency.code) && it.budgetAmount > 0.0
+                        }
+                        val validBudget = budgetSnapshot?.budgetAmount
+                        val safeAmount = budgetSnapshot?.let { snapshot ->
+                            snapshot.effectiveSpend
+                                ?.takeIf { it.isFinite() }
+                                ?.let { (snapshot.budgetAmount - it).coerceAtLeast(0.0) }
+                        }
+                        // Days left in the BUDGET period (periodEnd is exclusive), not the calendar month.
+                        val budgetDaysRemaining = budgetSnapshot
+                            ?.let { (TimePeriodUtils.daysBetween(ctx.now, it.periodEnd) - 1).coerceAtLeast(0) }
+                            ?: ctx.daysRemaining
                         DashboardWidget.SafeToSpend(
-                            amount = null,
-                            totalBudget = ctx.overallBudget?.takeIf { it.hasCompleteAmountIn(normalized.input.homeCurrency.code) }?.budgetAmount,
-                            daysRemaining = ctx.daysRemaining,
+                            amount = safeAmount,
+                            totalBudget = validBudget,
+                            daysRemaining = budgetDaysRemaining,
                             isPartial = inputQuality.isPartial,
-                            isUnavailable = true,
+                            isUnavailable = safeAmount == null,
                             currencyQuality = CurrencyQualityUi(
                                 isPartial = conversionPartial,
                                 quality = inputQuality.conversionQuality,
@@ -1377,16 +1401,31 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             if (insightText != null) add(DashboardWidget.NaturalLanguageInsight(insightText.first, insightText.second))
             add(
                 when (val normalized = ctx.normalizedInputResult) {
-                    is DashboardNormalizedInputResult.Available -> DashboardWidget.PeriodSummary(
-                        todaySpent = normalized.input.todayAggregate.displayAmount,
-                        weekSpent = normalized.input.weekAggregate.displayAmount,
-                        monthSpent = normalized.input.monthAggregate.displayAmount,
-                        isPartial = normalized.input.dataQuality.isPartial,
-                        currencyQuality = CurrencyQualityUi.from(normalized.input.dataQuality)
-                    )
+                    is DashboardNormalizedInputResult.Available -> {
+                        val todayUnavailable = normalized.input.todayAggregate.conversionQuality == com.yourname.expensetracker.domain.core.money.ConversionQuality.UNAVAILABLE
+                        val weekUnavailable = normalized.input.weekAggregate.conversionQuality == com.yourname.expensetracker.domain.core.money.ConversionQuality.UNAVAILABLE
+                        val monthUnavailable = normalized.input.monthAggregate.conversionQuality == com.yourname.expensetracker.domain.core.money.ConversionQuality.UNAVAILABLE
+                        val allUnavailable = (todayUnavailable && weekUnavailable && monthUnavailable) ||
+                            normalized.input.dataQuality.conversionQuality == com.yourname.expensetracker.domain.core.money.ConversionQuality.UNAVAILABLE
+                        DashboardWidget.PeriodSummary(
+                            todaySpent = normalized.input.todayAggregate.displayAmount,
+                            weekSpent = normalized.input.weekAggregate.displayAmount,
+                            monthSpent = normalized.input.monthAggregate.displayAmount,
+                            isPartial = normalized.input.dataQuality.isPartial,
+                            isUnavailable = allUnavailable,
+                            isTodayUnavailable = todayUnavailable,
+                            isWeekUnavailable = weekUnavailable,
+                            isMonthUnavailable = monthUnavailable,
+                            currencyQuality = CurrencyQualityUi.from(normalized.input.dataQuality)
+                        )
+                    }
                     is DashboardNormalizedInputResult.Unavailable -> DashboardWidget.PeriodSummary(
-                        todaySpent = 0.0, weekSpent = 0.0, monthSpent = 0.0,
-                        isPartial = true,
+                        todaySpent = Double.NaN, weekSpent = Double.NaN, monthSpent = Double.NaN,
+                        isPartial = false,
+                        isUnavailable = true,
+                        isTodayUnavailable = true,
+                        isWeekUnavailable = true,
+                        isMonthUnavailable = true,
                         currencyQuality = CurrencyQualityUi.unavailable(normalized.reason)
                     )
                 }
