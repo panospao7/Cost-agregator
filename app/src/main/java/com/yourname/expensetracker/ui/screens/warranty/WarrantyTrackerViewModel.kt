@@ -15,6 +15,7 @@ import com.yourname.expensetracker.data.repository.WarrantyTrackerRepository.Edi
 import com.yourname.expensetracker.domain.usecase.warranty.WarrantyEditError
 import com.yourname.expensetracker.domain.usecase.warranty.WarrantyEditInput
 import com.yourname.expensetracker.domain.usecase.warranty.WarrantyEndDate
+import com.yourname.expensetracker.domain.core.money.ConversionQuality
 import com.yourname.expensetracker.domain.usecase.warranty.WarrantyReviewState
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
@@ -34,6 +35,9 @@ data class WarrantyTrackerState(
     val activeCount: Int = 0,
     val expiringSoonCount: Int = 0,
     val totalProtectedValue: Double = 0.0,
+    val protectedValueCurrency: String = "EUR",
+    val isProtectedValuePartial: Boolean = false,
+    val isProtectedValueAvailable: Boolean = false,
     val selectedFilter: WarrantyStatus? = null,
     /** ai-fixes INV-10: rows whose [WarrantyReviewState] is AWAITING_REVIEW (derived, not persisted). */
     val needsReviewCount: Int = 0,
@@ -162,12 +166,19 @@ class WarrantyTrackerViewModel @Inject constructor(
                 null
             }
             val protectedValue = protectedValueAggregate?.displayAmount ?: 0.0
+            val protectedValueCurrency = protectedValueAggregate?.displayCurrency?.code ?: "EUR"
+            val isProtectedValueAvailable = protectedValueAggregate != null &&
+                protectedValueAggregate.conversionQuality != ConversionQuality.UNAVAILABLE
+            val isProtectedValuePartial = isProtectedValueAvailable && protectedValueAggregate?.isPartial == true
             
             _state.update {
                 it.copy(
                     activeCount = activeCount,
                     expiringSoonCount = expiringSoon,
-                    totalProtectedValue = protectedValue
+                    totalProtectedValue = protectedValue,
+                    protectedValueCurrency = protectedValueCurrency,
+                    isProtectedValuePartial = isProtectedValuePartial,
+                    isProtectedValueAvailable = isProtectedValueAvailable
                 )
             }
         }

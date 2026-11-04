@@ -11,9 +11,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.model.PeriodStatus
 import com.yourname.expensetracker.domain.model.PeriodTotal
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
@@ -63,7 +65,11 @@ fun PeriodBlock(
             )
             Spacer(modifier = Modifier.height(2.dp))
             Text(
-                text = CurrencyFormatter.formatMoney(period.totalAmount, currency, showCents = false),
+                text = if (period.isUnavailable) {
+                    stringResource(R.string.groups_total_unavailable)
+                } else {
+                    CurrencyFormatter.formatMoney(period.totalAmount, currency, showCents = false)
+                },
                 style = MaterialTheme.typography.labelSmall,
                 color = Color.White,
                 fontWeight = FontWeight.ExtraBold,

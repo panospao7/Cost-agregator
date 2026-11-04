@@ -493,7 +493,7 @@ fun BudgetCard(
         }
     }
 
-    val cardDescription = remember(displaySpend, status.effectiveLimit, status.budget.amount, displayPercentUsed, displayHealthStatus) {
+    val cardDescription = remember(displaySpend, status.effectiveLimit, status.budget.amount, displayPercentUsed, displayHealthStatus, status.currency) {
         val statusText = if (status.budget.isActive) budgetActiveString else budgetInactiveString
         val categoryName = status.category?.name ?: "Overall Budget"
         if (displaySpend == null || displayPercentUsed == null || displayHealthStatus == null) {
@@ -504,8 +504,8 @@ fun BudgetCard(
                 R.string.budget_cd_format,
                 categoryName,
                 statusText,
-                displaySpend,
-                status.effectiveLimit,
+                CurrencyFormatter.formatMoney(displaySpend, status.currency),
+                CurrencyFormatter.formatMoney(status.effectiveLimit, status.currency),
                 (displayPercentUsed * 100).toInt(),
                 displayHealthStatus.name.lowercase().replaceFirstChar { it.titlecase() }
             )
@@ -612,7 +612,15 @@ fun BudgetCard(
                 // F11: Show adjusted spend if available
                 // INV-17: with no breakdown, effective spend is unavailable; gross spentAmount is never shown.
                 val spendText = if (displaySpend != null) {
-                    stringResource(R.string.budget_adjusted_spent_format, displaySpend)
+                    val spendFormatRes = if (hasPendingReimbursements) {
+                        R.string.budget_adjusted_spent_format
+                    } else {
+                        R.string.budget_spent_format
+                    }
+                    stringResource(
+                        spendFormatRes,
+                        CurrencyFormatter.formatMoney(displaySpend, status.currency)
+                    )
                 } else {
                     stringResource(R.string.budget_effective_spend_unavailable)
                 }
@@ -623,14 +631,17 @@ fun BudgetCard(
                     color = if (displaySpend != null) Color.Unspecified else neutralColor
                 )
                 Text(
-                    text = stringResource(R.string.budget_limit_format, status.effectiveLimit),
+                    text = stringResource(
+                        R.string.budget_limit_format,
+                        CurrencyFormatter.formatMoney(status.effectiveLimit, status.currency)
+                    ),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 // Show base limit reference when rollover has inflated effectiveLimit
                 if (status.effectiveLimit != status.budget.amount) {
                     Text(
-                        text = "(base: ${status.budget.amount})",
+                        text = "(base: ${CurrencyFormatter.formatMoney(status.budget.amount, status.currency)})",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -683,7 +694,7 @@ fun BudgetCard(
             // F11: Show adjusted spend breakdown if available
             if (adjustedSpend != null && adjustedSpend.pendingReimbursements > 0.01) {
                 Spacer(Modifier.height(8.dp))
-                AdjustedSpendBreakdownRow(adjustedSpend)
+                AdjustedSpendBreakdownRow(adjustedSpend, status.currency)
             }
 
             // S12b (B-2, INV-1): installment info line, one budget currency, never a combined total.
@@ -727,7 +738,10 @@ fun BudgetCard(
                 )
                 BudgetCardRemainingSlot.OVER_BUDGET -> display.overBudgetAmount?.let { overBy ->
                     Text(
-                        text = stringResource(R.string.budget_over_format, overBy),
+                        text = stringResource(
+                            R.string.budget_over_format,
+                            CurrencyFormatter.formatMoney(overBy, status.currency)
+                        ),
                         color = SemanticColors.DangerRed,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold,
@@ -736,7 +750,10 @@ fun BudgetCard(
                 }
                 BudgetCardRemainingSlot.REMAINING -> display.remaining?.let { remaining ->
                     Text(
-                        text = stringResource(R.string.budget_remaining_format, remaining),
+                        text = stringResource(
+                            R.string.budget_remaining_format,
+                            CurrencyFormatter.formatMoney(remaining, status.currency)
+                        ),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.secondary,
                         modifier = Modifier.padding(top = 4.dp)
@@ -797,7 +814,10 @@ fun BudgetCard(
  * F11: Display the adjusted spend breakdown with pending reimbursements info.
  */
 @Composable
-fun AdjustedSpendBreakdownRow(breakdown: com.yourname.expensetracker.domain.budget.AdjustedSpendBreakdown) {
+fun AdjustedSpendBreakdownRow(
+    breakdown: com.yourname.expensetracker.domain.budget.AdjustedSpendBreakdown,
+    currency: String = "EUR"
+) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.Start,
@@ -813,7 +833,7 @@ fun AdjustedSpendBreakdownRow(breakdown: com.yourname.expensetracker.domain.budg
         Text(
             text = stringResource(
                 R.string.budget_pending_reimbursement_format,
-                breakdown.pendingReimbursements
+                CurrencyFormatter.formatMoney(breakdown.pendingReimbursements, currency)
             ),
             style = MaterialTheme.typography.labelSmall,
             color = SemanticColors.PrimaryIndigo.copy(alpha = 0.8f),
@@ -834,11 +854,16 @@ fun SuggestionsBanner(
     var currentIndex by remember { mutableIntStateOf(0) }
     val suggestion = suggestions.getOrNull(currentIndex) ?: return
     val context = LocalContext.current
+    val formattedSuggestedAmount = CurrencyFormatter.formatMoney(
+        suggestion.suggestedAmount,
+        homeCurrency ?: "",
+        showCents = false
+    )
 
     val bannerDescription = stringResource(
         R.string.budget_suggestion_cd_format,
         suggestion.categoryName,
-        suggestion.suggestedAmount
+        formattedSuggestedAmount
     )
 
     Card(
@@ -866,7 +891,7 @@ fun SuggestionsBanner(
                 text = stringResource(
                     R.string.budget_suggestion_message_format,
                     suggestion.categoryName,
-                    suggestion.suggestedAmount
+                    formattedSuggestedAmount
                 ),
                 style = MaterialTheme.typography.bodyMedium
             )

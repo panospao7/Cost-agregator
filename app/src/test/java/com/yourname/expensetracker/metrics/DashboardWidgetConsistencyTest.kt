@@ -49,6 +49,7 @@ import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -253,9 +254,9 @@ class DashboardWidgetConsistencyTest {
         val result = computeUseCase.compute(processedData)
 
         val safeToSpend = result.allWidgets.filterIsInstance<DashboardWidget.SafeToSpend>().single()
-        // PR3: SafeToSpend amount is null when budget remaining is not yet normalized
-        assertNull("SafeToSpend amount should be null when budget not normalized", safeToSpend.amount)
-        assertTrue("SafeToSpend should be unavailable when budget not normalized", safeToSpend.isUnavailable)
+        // Budget is normalized (EUR, EXPLICIT), so SafeToSpend is computed as budget (1000.0) minus month spend (0.0)
+        assertFalse("SafeToSpend should be available when budget is normalized", safeToSpend.isUnavailable)
+        assertEquals("SafeToSpend amount should be budget minus month spend", 1000.0, safeToSpend.amount!!, 0.001)
     }
 
     @Test

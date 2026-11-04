@@ -92,9 +92,10 @@ class BudgetForecastingViewModel @Inject constructor(
                 val forecast = (result as BudgetForecastResult.Available).forecast
                 // S8-003: Use engine-provided spentToDate — correct for all currencies
                 val currentSpending = forecast.spentToDate.coerceAtLeast(0.0)
+                val normalizedBudgetAmount = forecast.normalizedBudgetAmount.takeIf { it > 0.0 } ?: budget.amount
 
                 val recommendations = recommendationEngine.generateRecommendations(
-                    budget = BudgetRecommendationBudget(amount = budget.amount),
+                    budget = BudgetRecommendationBudget(amount = normalizedBudgetAmount),
                     forecast = BudgetRecommendationForecast(
                         predictedSpending = forecast.predictedSpending,
                         predictedRemaining = forecast.predictedRemaining,
@@ -119,7 +120,7 @@ class BudgetForecastingViewModel @Inject constructor(
                         isLoading = false,
                         error = null,
                         // S8-013: Use engine-provided normalized amount for display
-                        normalizedBudgetAmount = forecast.normalizedBudgetAmount.takeIf { it > 0.0 } ?: budget.amount
+                        normalizedBudgetAmount = normalizedBudgetAmount
                     )
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {

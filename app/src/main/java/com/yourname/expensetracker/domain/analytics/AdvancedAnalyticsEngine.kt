@@ -308,19 +308,21 @@ class AdvancedAnalyticsEngine @Inject constructor(
         // Build analytics for each category with spending
         return currentByCategory.mapNotNull { (categoryId, expenses) ->
             val category = categoryMap[categoryId] ?: return@mapNotNull null
+            val categoryScopedContext = currentContext?.forCategory(categoryId)
+            val previousScopedContext = previousContext?.forCategory(categoryId)
             
-            val totalResult = aggregateMoney(expenses, displayCurrency, currentContext)
+            val totalResult = aggregateMoney(expenses, displayCurrency, categoryScopedContext)
             if (totalResult is MoneyAggregateResult.Unavailable) {
                 throwUnavailable(totalResult)
             }
             val total = availableAmount(totalResult)
-            val amounts = expenses.map { normalizedValue(it, displayCurrency, currentContext) }
+            val amounts = expenses.map { normalizedValue(it, displayCurrency, categoryScopedContext) }
             val sortedAmounts = amounts.sorted()
             
             // Previous period comparison
             val previousExpenses = previousByCategory[categoryId]
-            val previousResult = if (previousExpenses != null || previousContext?.scopedInput()?.excludedExpenses?.isNotEmpty() == true) {
-                aggregateMoney(previousExpenses.orEmpty(), displayCurrency, previousContext)
+            val previousResult = if (previousExpenses != null || previousScopedContext?.scopedInput()?.excludedExpenses?.isNotEmpty() == true) {
+                aggregateMoney(previousExpenses.orEmpty(), displayCurrency, previousScopedContext)
             } else null
             val previousTotal = (previousResult as? MoneyAggregateResult.Available)?.aggregate?.displayAmount
             val comparisonResult = if (comparisonCutoffMillisInclusive == null) {
@@ -329,8 +331,8 @@ class AdvancedAnalyticsEngine @Inject constructor(
                 aggregateMoney(
                     expenses.filter { it.date <= comparisonCutoffMillisInclusive },
                     displayCurrency,
-                    currentContext
-                )
+                    categoryScopedContext
+                ) { it.date == null || it.date <= comparisonCutoffMillisInclusive }
             }
             val changePercent = if (comparisonResult is MoneyAggregateResult.Available) {
                 calculateChangePercent(availableAmount(comparisonResult), previousTotal)
@@ -349,7 +351,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
             val p75 = getPercentile(sortedAmounts, 0.75)
             
             // Velocity (spending acceleration within period)
-            val velocityResult = calculateVelocityResult(expenses, displayCurrency, currentContext)
+            val velocityResult = calculateVelocityResult(expenses, displayCurrency, categoryScopedContext)
             val velocity = when (velocityResult) {
                 is MoneyAggregateResult.Available -> velocityResult.aggregate.displayAmount
                 is MoneyAggregateResult.Unavailable -> return@mapNotNull null
@@ -1015,12 +1017,13 @@ class AdvancedAnalyticsEngine @Inject constructor(
             periodDays
         }
 
-        return purchases.groupBy { it.categoryId }.mapValues { (_, categoryExpenses) ->
+        return purchases.groupBy { it.categoryId }.mapValues { (categoryId, categoryExpenses) ->
+            val categoryScopedContext = moneyContext?.forCategory(categoryId)
             (0 until daysPassed).map { dayIndex ->
                 val dayEnd = TimePeriodUtils.addDays(periodStartDay, dayIndex + 1)
                 val result = aggregateMoney(
-                    categoryExpenses.filter { it.date < dayEnd }, displayCurrency, moneyContext
-                )
+                    categoryExpenses.filter { it.date < dayEnd }, displayCurrency, categoryScopedContext
+                ) { it.date != null && it.date < dayEnd }
                 (result as? MoneyAggregateResult.Available)?.aggregate?.displayAmount
             }.takeIf { totals -> totals.all { it != null } }?.map { it!! }.orEmpty()
         }
@@ -1039,8 +1042,13 @@ class AdvancedAnalyticsEngine @Inject constructor(
         val firstHalf = sorted.subList(0, midpoint)
         val secondHalf = sorted.subList(midpoint, sorted.size)
         val velocity = if (expenses.size < 2) 0.0 else {
-            val secondResult = aggregateMoney(secondHalf, displayCurrency, moneyContext)
-            val firstResult = aggregateMoney(firstHalf, displayCurrency, moneyContext)
+            val splitDate = secondHalf.first().date
+            val secondResult = aggregateMoney(secondHalf, displayCurrency, moneyContext) {
+                it.date == null || it.date >= splitDate
+            }
+            val firstResult = aggregateMoney(firstHalf, displayCurrency, moneyContext) {
+                it.date == null || it.date < splitDate
+            }
             if (secondResult is MoneyAggregateResult.Unavailable) return secondResult
             if (firstResult is MoneyAggregateResult.Unavailable) return firstResult
             availableAmount(secondResult) - availableAmount(firstResult)
@@ -1372,13 +1380,39 @@ class AdvancedAnalyticsEngine @Inject constructor(
     
     private data class MoneySliceContext(
         val input: NormalizedAnalyticsInput,
-        val includedById: Map<Long, NormalizedExpense>
+        val includedById: Map<Long, NormalizedExpense>,
+        val categoryScoped: Boolean = false
     ) {
         fun scopedInput(): NormalizedAnalyticsInput = input.copy(
             excludedExpenses = input.excludedExpenses.filter {
                 it.date == null || input.period?.contains(it.date) != false
             }
         )
+
+        fun forCategory(categoryId: Long?): MoneySliceContext {
+            val scoped = scopedInput()
+            if (scoped.excludedExpenses.any { it.categoryId == null }) return this
+            val categoryExcluded = scoped.excludedExpenses.filter { it.categoryId == categoryId }
+            return copy(
+                input = scoped.copy(
+                    excludedExpenses = categoryExcluded,
+                    dataQuality = scoped.dataQuality.copy(
+                        isPartial = categoryExcluded.isNotEmpty(),
+                        excludedCount = categoryExcluded.size,
+                        staleRateCount = categoryExcluded.count {
+                            it.warningType == AnalyticsConversionWarningType.STALE_EXCHANGE_RATE
+                        },
+                        missingRateCount = categoryExcluded.count {
+                            it.warningType == AnalyticsConversionWarningType.MISSING_EXCHANGE_RATE
+                        },
+                        invalidCurrencyCount = categoryExcluded.count {
+                            it.warningType == AnalyticsConversionWarningType.INVALID_TRANSACTION_CURRENCY
+                        }
+                    )
+                ),
+                categoryScoped = true
+            )
+        }
     }
 
     private fun aggregateMoney(
@@ -1412,10 +1446,11 @@ class AdvancedAnalyticsEngine @Inject constructor(
             )
         }
         val input = moneyContext.scopedInput()
-        return if (includeExcluded == null) {
+        val effectiveIncludeExcluded = includeExcluded ?: if (moneyContext.categoryScoped) ({ true }) else null
+        return if (effectiveIncludeExcluded == null) {
             NormalizedAnalyticsMoneyAdapter.aggregateUnattributedSlice(input, rows, displayCurrency = displayCurrency)
         } else {
-            NormalizedAnalyticsMoneyAdapter.aggregateSelectedSlice(input, rows, includeExcluded, displayCurrency = displayCurrency, exclusionAttribution = ExclusionAttribution.TEMPORAL)
+            NormalizedAnalyticsMoneyAdapter.aggregateSelectedSlice(input, rows, effectiveIncludeExcluded, displayCurrency = displayCurrency, exclusionAttribution = ExclusionAttribution.TEMPORAL)
         }
     }
 

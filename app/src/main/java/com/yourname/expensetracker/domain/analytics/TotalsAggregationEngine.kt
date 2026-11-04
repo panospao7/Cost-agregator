@@ -103,21 +103,24 @@ class TotalsAggregationEngine @Inject constructor(
                 .toInstant()
                 .toEpochMilli()
             val monthEnd = TimePeriodUtils.getEndOfMonth(monthStart)
-            val periodKey = "%04d-%02d".format(year, month)
+            val periodKey = String.format(Locale.ROOT, "%04d-%02d", year, month)
             val monthly = totalsByKey[periodKey]
-            val total = monthly?.aggregate?.displayAmount ?: 0.0
+            val aggregate = monthly?.aggregate
+            val isUnavailable = aggregate?.conversionQuality == com.yourname.expensetracker.domain.core.money.ConversionQuality.UNAVAILABLE
+            val total = aggregate?.displayAmount ?: 0.0
             PeriodTotal(
                 periodLabel = MONTH_FORMAT.format(toLocalDate(monthStart)),
                 periodKey = periodKey,
                 totalAmount = total,
-                transactionCount = monthly?.aggregate?.totalTransactionCount ?: 0,
+                transactionCount = aggregate?.totalTransactionCount ?: 0,
                 periodType = PeriodType.MONTH,
                 startDateMs = monthStart,
                 endDateMs = monthEnd,
-                status = getPeriodStatus(monthly?.aggregate, average),
-                isPartial = monthly?.aggregate?.isPartial ?: false,
-                warningMessage = monthly?.aggregate?.warningMessage,
-                moneyResult = monthly?.aggregate?.let(MoneyAggregateResult::Available)
+                status = getPeriodStatus(aggregate, average),
+                isPartial = (aggregate?.isPartial ?: false) && !isUnavailable,
+                isUnavailable = isUnavailable,
+                warningMessage = aggregate?.warningMessage,
+                moneyResult = aggregate?.let(MoneyAggregateResult::Available)
             )
         }
     }
@@ -169,6 +172,7 @@ class TotalsAggregationEngine @Inject constructor(
                 "W${index + 1}"
             }
 
+            val isUnavailable = aggregate.conversionQuality == com.yourname.expensetracker.domain.core.money.ConversionQuality.UNAVAILABLE
             PeriodTotal(
                 periodLabel = weekLabel,
                 periodKey = periodKey,
@@ -178,7 +182,8 @@ class TotalsAggregationEngine @Inject constructor(
                 startDateMs = clippedStart,
                 endDateMs = clippedEnd,
                 status = getPeriodStatus(aggregate, average),
-                isPartial = aggregate.isPartial,
+                isPartial = aggregate.isPartial && !isUnavailable,
+                isUnavailable = isUnavailable,
                 warningMessage = aggregate.warningMessage,
                 moneyResult = MoneyAggregateResult.Available(aggregate)
             )
@@ -215,6 +220,7 @@ class TotalsAggregationEngine @Inject constructor(
                 val dayEnd = TimePeriodUtils.getEndOfDay(dayStart)
                 val date = toLocalDate(dayStart)
                 val aggregate = periodAgg.aggregate
+                val isUnavailable = aggregate.conversionQuality == com.yourname.expensetracker.domain.core.money.ConversionQuality.UNAVAILABLE
                 PeriodTotal(
                     periodLabel = DAY_FORMAT.format(date),
                     periodKey = periodAgg.periodKey,
@@ -224,7 +230,8 @@ class TotalsAggregationEngine @Inject constructor(
                     startDateMs = dayStart,
                     endDateMs = dayEnd,
                     status = getPeriodStatus(aggregate, average),
-                    isPartial = aggregate.isPartial,
+                    isPartial = aggregate.isPartial && !isUnavailable,
+                    isUnavailable = isUnavailable,
                     warningMessage = aggregate.warningMessage,
                     moneyResult = MoneyAggregateResult.Available(aggregate)
                 )
@@ -243,6 +250,7 @@ class TotalsAggregationEngine @Inject constructor(
             val dayEnd = TimePeriodUtils.getEndOfDay(dayStart)
             val date = toLocalDate(dayStart)
             val aggregate = periodAgg.aggregate
+            val isUnavailable = aggregate.conversionQuality == com.yourname.expensetracker.domain.core.money.ConversionQuality.UNAVAILABLE
             PeriodTotal(
                 periodLabel = DAY_FORMAT.format(date),
                 periodKey = periodAgg.periodKey,
@@ -252,7 +260,8 @@ class TotalsAggregationEngine @Inject constructor(
                 startDateMs = dayStart,
                 endDateMs = dayEnd,
                 status = getPeriodStatus(aggregate, average),
-                isPartial = aggregate.isPartial,
+                isPartial = aggregate.isPartial && !isUnavailable,
+                isUnavailable = isUnavailable,
                 warningMessage = aggregate.warningMessage,
                 moneyResult = MoneyAggregateResult.Available(aggregate)
             )
@@ -277,7 +286,10 @@ class TotalsAggregationEngine @Inject constructor(
         
         years.map { year ->
             val (startMs, endMs) = getYearRange(year)
-            val aggregate = purchaseTotalHistorical(startMs, endMs)
+            val result = multiCurrencyRepository.getHomeCurrencyPurchaseTotalHistoricalResult(startMs, endMs)
+            val aggregate = result.aggregateOrNull()
+            val isUnavailable = result is MoneyAggregateResult.Unavailable ||
+                aggregate?.conversionQuality == com.yourname.expensetracker.domain.core.money.ConversionQuality.UNAVAILABLE
             val total = aggregate?.displayAmount ?: 0.0
             
             PeriodTotal(
@@ -289,9 +301,10 @@ class TotalsAggregationEngine @Inject constructor(
                 startDateMs = startMs,
                 endDateMs = endMs,
                 status = getPeriodStatus(aggregate, average),
-                isPartial = aggregate?.isPartial ?: false,
+                isPartial = (aggregate?.isPartial ?: false) && !isUnavailable,
+                isUnavailable = isUnavailable,
                 warningMessage = aggregate?.warningMessage,
-                moneyResult = aggregate?.let(MoneyAggregateResult::Available)
+                moneyResult = result
             )
         }.filter { it.totalAmount > 0 || it.periodKey == currentYear.toString() }
     }
@@ -332,12 +345,13 @@ class TotalsAggregationEngine @Inject constructor(
         // dashboard totals and excludes deposits/transfers.
         val categoryAggregates = multiCurrencyRepository.getCategoryAggregatesHistorical(startMs, endMs)
         val currencies = categoryAggregates.values.map { it.displayCurrency }.distinct()
-        require(currencies.size <= 1 && categoryAggregates.values.none {
-            it.conversionQuality == com.yourname.expensetracker.domain.core.money.ConversionQuality.UNAVAILABLE
-        }) { "CATEGORY_MONEY_UNAVAILABLE" }
-        val grandTotal = currencies.singleOrNull()?.let { currency ->
+        require(currencies.size <= 1) { "CATEGORY_MONEY_UNAVAILABLE" }
+        val availableAggregates = categoryAggregates.values.filter {
+            it.conversionQuality != com.yourname.expensetracker.domain.core.money.ConversionQuality.UNAVAILABLE
+        }
+        val grandTotal = currencies.singleOrNull()?.takeIf { availableAggregates.isNotEmpty() }?.let { currency ->
             val result = MoneyAggregateBuilder.fromSourceCurrencyAmounts(
-                categoryAggregates.values.map { it.displayAmount }, currency.code
+                availableAggregates.map { it.displayAmount }, currency.code
             )
             (result as? MoneyAggregateResult.Available)?.aggregate?.displayAmount
                 ?: throw com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableException(
@@ -366,7 +380,8 @@ class TotalsAggregationEngine @Inject constructor(
                 )
             }
 
-            val percentage = if (grandTotal > 0) {
+            val isUnavailable = aggregate.conversionQuality == com.yourname.expensetracker.domain.core.money.ConversionQuality.UNAVAILABLE
+            val percentage = if (!isUnavailable && grandTotal > 0) {
                 aggregate.displayAmount / grandTotal * 100
             } else {
                 0.0
@@ -374,12 +389,14 @@ class TotalsAggregationEngine @Inject constructor(
 
             CategoryBreakdown(
                 category = category,
-                totalAmount = aggregate.displayAmount,
+                totalAmount = if (isUnavailable) 0.0 else aggregate.displayAmount,
                 transactionCount = aggregate.totalTransactionCount,
                 percentageOfTotal = percentage,
-                periodLabel = periodLabel
+                periodLabel = periodLabel,
+                isPartial = aggregate.isPartial && !isUnavailable,
+                isUnavailable = isUnavailable
             )
-        }.sortedByDescending { it.totalAmount }
+        }.sortedWith(compareBy<CategoryBreakdown> { it.isUnavailable }.thenByDescending { it.totalAmount })
     }
 
     /**
@@ -431,7 +448,7 @@ class TotalsAggregationEngine @Inject constructor(
                         // (format "YYYY-MM") against the current month's key.
                         val currentYear = TimePeriodUtils.getYear(now)
                         val currentMonth = TimePeriodUtils.getMonth(now) + 1
-                        val currentMonthKey = "%04d-%02d".format(currentYear, currentMonth)
+                        val currentMonthKey = String.format(Locale.ROOT, "%04d-%02d", currentYear, currentMonth)
                         averageMoney(months.filter { it.monthKey < currentMonthKey }.map { it.aggregate })
                     } else {
                         averageMoney(months.map { it.aggregate })
@@ -558,12 +575,12 @@ class TotalsAggregationEngine @Inject constructor(
     private fun weekKey(weekStart: Long): String {
         val year = TimePeriodUtils.getAppCalendarWeekYear(weekStart)
         val week = TimePeriodUtils.getAppCalendarWeekNumber(weekStart)
-        return "%04d-W%d".format(year, week)
+        return String.format(Locale.ROOT, "%04d-W%d", year, week)
     }
 
     private fun dayKey(dayStart: Long): String {
         val date = toLocalDate(dayStart)
-        return "%04d%02d%02d".format(date.year, date.monthValue, date.dayOfMonth)
+        return String.format(Locale.ROOT, "%04d%02d%02d", date.year, date.monthValue, date.dayOfMonth)
     }
 
     private fun toLocalDate(timestamp: Long): LocalDate =
@@ -609,7 +626,7 @@ class TotalsAggregationEngine @Inject constructor(
         // Group by day using the same dayKey format as [dayKey]
         val groupedByDay = expenses.groupBy { exp ->
             val date = Instant.ofEpochMilli(exp.date).atZone(systemZoneId()).toLocalDate()
-            "%04d%02d%02d".format(date.year, date.monthValue, date.dayOfMonth)
+            String.format(Locale.ROOT, "%04d%02d%02d", date.year, date.monthValue, date.dayOfMonth)
         }
 
         return groupedByDay.mapNotNull { (periodKey, group) ->
@@ -631,8 +648,10 @@ class TotalsAggregationEngine @Inject constructor(
                 excludedExpenses = dayExcluded + input.excludedExpenses.filter { it.date == null },
                 homeCurrency = input.homeCurrency
             )
-            val total = (moneyResult as? MoneyAggregateResult.Available)?.aggregate?.displayAmount
-                ?: return@mapNotNull null
+            val aggregate = moneyResult.aggregateOrNull()
+            val isUnavailable = moneyResult is MoneyAggregateResult.Unavailable ||
+                aggregate?.conversionQuality == com.yourname.expensetracker.domain.core.money.ConversionQuality.UNAVAILABLE
+            val total = if (isUnavailable) 0.0 else aggregate?.displayAmount ?: 0.0
 
             PeriodTotal(
                 periodLabel = DAY_FORMAT.format(firstDate),
@@ -642,14 +661,16 @@ class TotalsAggregationEngine @Inject constructor(
                 periodType = PeriodType.DAY,
                 startDateMs = dayStart,
                 endDateMs = dayEnd,
-                status = if (average > 0 && total > average) PeriodStatus.OVER_AVERAGE
+                status = if (isUnavailable) defaultStatus
+                         else if (average > 0 && total > average) PeriodStatus.OVER_AVERAGE
                          else if (average > 0) PeriodStatus.UNDER_AVERAGE
                          else defaultStatus,
                 dataQuality = sliceQuality(
                     excludedExpenses = dayExcluded,
                     unattributedExcludedCount = input.excludedExpenses.count { it.date == null }
                 ),
-                isPartial = isPartial(moneyResult),
+                isPartial = isPartial(moneyResult) && !isUnavailable,
+                isUnavailable = isUnavailable,
                 warningMessage = when (moneyResult) {
                     is MoneyAggregateResult.Available -> moneyResult.aggregate.warningMessage
                     is MoneyAggregateResult.Unavailable -> moneyResult.warningMessage

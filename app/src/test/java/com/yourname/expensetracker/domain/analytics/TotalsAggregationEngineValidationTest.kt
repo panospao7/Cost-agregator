@@ -31,11 +31,13 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import java.time.Instant
 import java.time.ZoneId
 import java.util.Calendar
+import java.util.Locale
 
 /**
  * Validation tests for TotalsAggregationEngine period totals.
@@ -542,5 +544,80 @@ class TotalsAggregationEngineValidationTest {
 
         // Rounded percentages should preserve the 100% invariant within small float tolerance.
         assertApproxEquals(100.0, roundedPercentSum, 0.05)
+    }
+
+    // ========== Standalone: E-01-4 locale-independent lookup keys ==========
+
+    @Test
+    fun `monthly totals and baseline average use ASCII month keys under Arabic locale`() = runTest {
+        val previousLocale = Locale.getDefault()
+        val arabicLocale = Locale.forLanguageTag("ar-EG")
+        val now = createDate(2026, 4, 15)
+
+        fun stubArabicFixture() {
+            resetMocks(now)
+            stubMonths(
+                Triple("2026-01", 150.0, 2),
+                Triple("2026-02", 250.0, 4),
+                Triple("2026-04", 50.0, 1)
+            )
+        }
+
+        val rootTotals: List<PeriodTotal>
+        val rootAverage: MoneyAmount?
+        val arabicTotals: List<PeriodTotal>
+        val arabicAverage: MoneyAmount?
+
+        try {
+            Locale.setDefault(Locale.ROOT)
+            stubArabicFixture()
+            rootTotals = engine.getMonthlyTotals(2026).first()
+            rootAverage = engine.getAverageForPeriodType(PeriodType.MONTH, excludeCurrent = true)
+
+            Locale.setDefault(arabicLocale)
+            stubArabicFixture()
+            arabicTotals = engine.getMonthlyTotals(2026).first()
+            arabicAverage = engine.getAverageForPeriodType(PeriodType.MONTH, excludeCurrent = true)
+        } finally {
+            Locale.setDefault(previousLocale)
+        }
+
+        // 1. Key shape: all 12 periodKeys are strictly ASCII YYYY-MM with no non-ASCII digits.
+        val asciiMonthKeyRegex = Regex("^[0-9]{4}-[0-9]{2}$")
+        assertEquals(12, arabicTotals.size)
+        arabicTotals.forEach { period ->
+            assertTrue(
+                "Expected ASCII YYYY-MM periodKey but got '${period.periodKey}'",
+                asciiMonthKeyRegex.matches(period.periodKey)
+            )
+            assertTrue(
+                "periodKey '${period.periodKey}' must not contain non-ASCII digits",
+                period.periodKey.none { it.isDigit() && it !in '0'..'9' }
+            )
+        }
+
+        // 2. Regression directly: month-keyed totals are found (non-zero) under Arabic locale.
+        val jan = arabicTotals.first { it.periodKey == "2026-01" }
+        val feb = arabicTotals.first { it.periodKey == "2026-02" }
+        val mar = arabicTotals.first { it.periodKey == "2026-03" }
+        val apr = arabicTotals.first { it.periodKey == "2026-04" }
+        assertEquals(150.0, jan.totalAmount, 0.0)
+        assertEquals(2, jan.transactionCount)
+        assertEquals(PeriodStatus.UNDER_AVERAGE, jan.status)
+        assertEquals(250.0, feb.totalAmount, 0.0)
+        assertEquals(4, feb.transactionCount)
+        assertEquals(PeriodStatus.OVER_AVERAGE, feb.status)
+        assertEquals(0.0, mar.totalAmount, 0.0)
+        assertEquals(50.0, apr.totalAmount, 0.0)
+        assertEquals(1, apr.transactionCount)
+        assertMoneyEquals(450.0, arabicTotals.sumOf { it.totalAmount }, "Arabic monthly sum")
+        assertMoneyEquals(200.0, requireNotNull(arabicAverage).amount, "Arabic exclude-current monthly average")
+
+        // 3. Control case: Locale.ROOT and Arabic locale produce identical keys, amounts, counts, statuses, and averages.
+        assertEquals(rootTotals.map { it.periodKey }, arabicTotals.map { it.periodKey })
+        assertEquals(rootTotals.map { it.totalAmount }, arabicTotals.map { it.totalAmount })
+        assertEquals(rootTotals.map { it.transactionCount }, arabicTotals.map { it.transactionCount })
+        assertEquals(rootTotals.map { it.status }, arabicTotals.map { it.status })
+        assertEquals(rootAverage, arabicAverage)
     }
 }

@@ -2332,21 +2332,21 @@
     <string name="budget_summary_cd_format">%1$d budgets %2$s</string>
     <string name="budget_icon_cd">Budget icon</string>
     <string name="budget_category_icon_cd">%1$s category icon</string>
-    <string name="budget_cd_format">%1$s budget, %2$s, €%3$.2f spent of €%4$.2f limit, %5$d%% used, Status: %6$s</string>
+    <string name="budget_cd_format">%1$s budget, %2$s, %3$s spent of %4$s limit, %5$d%% used, Status: %6$s</string>
     <string name="budget_status_active">active</string>
     <string name="budget_status_inactive">inactive</string>
     <string name="budget_period_date_format">%1$s • Starts %2$s</string>
     <string name="budget_toggle_cd_format">Budget %1$s, double tap to toggle</string>
     <string name="budget_toggle_enabled">enabled</string>
     <string name="budget_toggle_disabled">disabled</string>
-    <string name="budget_spent_format">€%.2f spent</string>
-    <string name="budget_limit_format">€%.2f limit</string>
-    <string name="budget_over_format">€%.2f over budget</string>
-    <string name="budget_remaining_format">€%.2f remaining</string>
+    <string name="budget_spent_format">%1$s spent</string>
+    <string name="budget_limit_format">%1$s limit</string>
+    <string name="budget_over_format">%1$s over budget</string>
+    <string name="budget_remaining_format">%1$s remaining</string>
     <string name="budget_suggestion_title">Smart Suggestion</string>
-    <string name="budget_suggestion_cd_format">Smart budget suggestion for %1$s: Suggested monthly budget of €%2$.0f</string>
+    <string name="budget_suggestion_cd_format">Smart budget suggestion for %1$s: Suggested monthly budget of %2$s</string>
     <string name="budget_suggestion_icon_cd">Suggestion</string>
-    <string name="budget_suggestion_message_format">You spend a lot on %1$s. How about a monthly budget of €%2$.0f?</string>
+    <string name="budget_suggestion_message_format">You spend a lot on %1$s. How about a monthly budget of %2$s?</string>
     <string name="budget_suggestion_skip_cd">Skip this suggestion</string>
     <string name="budget_suggestion_skip">Skip</string>
     <string name="budget_suggestion_create_cd_format">Create budget for %1$s</string>
@@ -2363,8 +2363,8 @@
     <string name="budget_period_label">Period</string>
     <string name="budget_rollover_label">Rollover unspent amount</string>
     <!-- F11: Shared Expenses Budget Offset -->
-    <string name="budget_adjusted_spent_format">€%.2f adjusted spent</string>
-    <string name="budget_pending_reimbursement_format">€%.2f pending reimbursement</string>
+    <string name="budget_adjusted_spent_format">%1$s adjusted spent</string>
+    <string name="budget_pending_reimbursement_format">%1$s pending reimbursement</string>
     <string name="budget_shared_expense_breakdown">Shared Expense Breakdown</string>
     <string name="budget_personal_spend">Personal Spend</string>
     <string name="budget_shared_liability">Shared Liability</string>
@@ -2815,6 +2815,7 @@
     <string name="debug_database_stats_unavailable">Database statistics are temporarily unavailable</string>
     <string name="money_radar_unavailable">Money Radar is temporarily unavailable. Some financial signals could not be evaluated.</string>
     <string name="stress_forecast_unavailable">Stress forecast is temporarily unavailable. No risk estimate is available.</string>
+    <string name="stress_forecast_risk_percent_format">%1$s%% risk</string>
     <!-- stress-forecast-actions: localized stress forecast recommendations -->
     <string name="stress_recs_header">Recommendations</string>
     <string name="stress_rec_review_recurring_obligations">Your recurring obligations are high. Consider canceling unused subscriptions.</string>

@@ -354,6 +354,53 @@ class BudgetForecastingViewModelTest : ViewModelTestUtils() {
         assertTrue(logs.isEmpty())
     }
 
+    @Test
+    fun `P-06-1 foreign currency budget uses normalized home currency amount for recommendation math`() = runTest(testDispatcher) {
+        // USD budget of 1000.0 with FX rate 0.85 -> normalized EUR budget of 850.0
+        val usdBudget = createBudget(id = 55L, amount = 1000.0).copy(currency = "USD")
+        val forecast = createForecast(
+            budgetId = usdBudget.id,
+            predictedSpending = 200.0,
+            predictedRemaining = -10.0,
+            confidenceScore = 0.90,
+            riskLevel = ForecastRiskLevel.CRITICAL,
+            overspendProbability = 0.95
+        ).also {
+            it.spentToDate = 660.0
+            it.normalizedBudgetAmount = 850.0
+        }
+        val realRecommendationEngine = BudgetRecommendationEngine()
+        val currencyRepo = mockk<CurrencySettingsRepository>(relaxed = true)
+        every { currencyRepo.homeCurrency() } returns flowOf("EUR")
+        coEvery { currencyRepo.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
+        coEvery { forecastingEngine.generateForecastResult(usdBudget, 30) } returns BudgetForecastResult.Available(forecast)
+
+        val vm = BudgetForecastingViewModel(
+            forecastingEngine = forecastingEngine,
+            recommendationEngine = realRecommendationEngine,
+            currencySettingsRepository = currencyRepo
+        )
+
+        vm.generateForecast(usdBudget, forecastPeriodDays = 30)
+        advanceUntilIdle()
+
+        val state = vm.uiState.value
+        assertFalse(state.isLoading)
+        assertNull(state.error)
+        assertEquals(850.0, state.normalizedBudgetAmount!!, 0.001)
+
+        // With normalized budget 850.0 EUR and currentSpending 660.0 EUR:
+        // remaining = 850.0 - 660.0 = 190.0 EUR (not 1000.0 - 660.0 = 340.0)
+        // potentialSavings = predictedSpending (200.0) - remaining (190.0) = 10.0 EUR (would be 0.0 if raw 1000.0 used)
+        // percentUsed = (660.0 / 850.0) * 100 = 77.65% (> 75%, so INCREASE_BUDGET is emitted; would be 66% <= 75% if raw 1000.0 used)
+        val reduceRec = state.recommendations.first { it.type == com.yourname.expensetracker.domain.budget.RecommendationType.REDUCE_SPENDING }
+        assertEquals(10.0, reduceRec.potentialSavings!!, 0.01)
+        assertTrue(
+            "INCREASE_BUDGET must be emitted because normalized percentUsed is 77.65% (> 75%)",
+            state.recommendations.any { it.type == com.yourname.expensetracker.domain.budget.RecommendationType.INCREASE_BUDGET }
+        )
+    }
+
     private fun createBudget(
         id: Long = 1L,
         amount: Double = 100.0

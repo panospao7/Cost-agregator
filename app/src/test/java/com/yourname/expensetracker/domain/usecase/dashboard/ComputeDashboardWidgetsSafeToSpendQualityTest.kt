@@ -161,7 +161,10 @@ class ComputeDashboardWidgetsSafeToSpendQualityTest {
         )
         val safeToSpend = computeSafeToSpend(emptyList(), listOf(budget))
 
-        assertTrue(safeToSpend.isUnavailable)
+        // Previously encoded the FL-06 bug (SafeToSpend hardcoded unavailable for every user);
+        // S3 now computes remaining discretionary amount when budget and spend are complete.
+        assertFalse(safeToSpend.isUnavailable)
+        org.junit.Assert.assertEquals(1234.5, requireNotNull(safeToSpend.amount), 0.0)
         assertTrue("R31: an existing budget must suppress the set-budget CTA", safeToSpend.hasBudget)
     }
 
@@ -181,17 +184,158 @@ class ComputeDashboardWidgetsSafeToSpendQualityTest {
     }
 
     @Test
-    fun `usd expense without a rate marks safe to spend quality partial`() = runTest {
+    fun `usd expense without a rate marks safe to spend quality unavailable`() = runTest {
         val monthStart = TimePeriodUtils.getStartOfMonth(timeProvider.now())
         val safeToSpend = computeSafeToSpend(
             listOf(createExpense(25.0, monthStart + 86_400_000L, "USD"))
         )
 
-        assertTrue("Missing rate must mark SafeToSpend partial", safeToSpend.isPartial)
+        // S3 distinguishes partial (some rows converted) from unavailable (0 of 1 rows converted):
+        // when all rows fail conversion, SafeToSpend is unavailable, not partial.
+        assertTrue("Missing rate on all rows must mark SafeToSpend unavailable", safeToSpend.isUnavailable)
+        assertFalse("When 0 of 1 rows convert, SafeToSpend is unavailable rather than partial", safeToSpend.isPartial)
         val quality = safeToSpend.currencyQuality
         assertNotNull(quality)
         assertTrue("Missing rate must mark currencyQuality partial", quality!!.isPartial)
         assertNotNull("R31: partial quality must carry a warning message", quality.warningMessage)
+    }
+
+    @Test
+    fun `FL-06 complete budget and spend computes remaining discretionary amount`() = runTest {
+        val now = timeProvider.now()
+        val monthStart = TimePeriodUtils.getStartOfMonth(now)
+        val budget = BudgetStatusSnapshot(
+            null, 1000.0, null, 300.0, 700.0, 30.0,
+            BudgetHealthStatus.ON_TRACK,
+            now, now + 86_400_000L, currency = "EUR", currencyAssumption = "USER_CONFIRMED"
+        )
+        val safeToSpend = computeSafeToSpend(
+            listOf(createExpense(300.0, monthStart + 86_400_000L, "EUR")),
+            listOf(budget)
+        )
+
+        assertFalse("Complete budget + spend must not be unavailable", safeToSpend.isUnavailable)
+        assertFalse("Complete budget + spend must not be partial", safeToSpend.isPartial)
+        org.junit.Assert.assertEquals(700.0, requireNotNull(safeToSpend.amount), 0.001)
+        org.junit.Assert.assertEquals(1000.0, requireNotNull(safeToSpend.totalBudget), 0.001)
+        assertTrue(safeToSpend.hasBudget)
+    }
+
+    @Test
+    fun `FL-06 safe to spend stays unavailable when budget missing or currency incomplete or input partial`() = runTest {
+        val now = timeProvider.now()
+        val monthStart = TimePeriodUtils.getStartOfMonth(now)
+        val eurExpense = createExpense(300.0, monthStart + 86_400_000L, "EUR")
+        val validBudget = BudgetStatusSnapshot(
+            null, 1000.0, null, 300.0, 700.0, 30.0,
+            BudgetHealthStatus.ON_TRACK,
+            now, now + 86_400_000L, currency = "EUR", currencyAssumption = "USER_CONFIRMED"
+        )
+
+        // 1. Missing budget -> unavailable
+        val missingBudgetResult = computeSafeToSpend(listOf(eurExpense), emptyList())
+        assertTrue("Missing budget must stay unavailable", missingBudgetResult.isUnavailable)
+        assertNull(missingBudgetResult.amount)
+        assertFalse(missingBudgetResult.hasBudget)
+
+        // 2. Budget fails currency completeness (mismatched currency, legacy assumption, partial budget)
+        for (incompleteBudget in listOf(
+            validBudget.copy(currency = "USD"),
+            validBudget.copy(currencyAssumption = "LEGACY_DEFAULT"),
+            validBudget.copy(isPartial = true)
+        )) {
+            val incompleteResult = computeSafeToSpend(listOf(eurExpense), listOf(incompleteBudget))
+            assertTrue("Incomplete budget must stay unavailable", incompleteResult.isUnavailable)
+            assertNull(incompleteResult.amount)
+            assertTrue(incompleteResult.hasBudget)
+        }
+
+        // 3. Partial spend input (unconvertible USD row) -> unavailable
+        val partialInputResult = computeSafeToSpend(
+            listOf(eurExpense, createExpense(50.0, monthStart + 86_400_000L, "USD")),
+            listOf(validBudget)
+        )
+        assertTrue("Partial spend input must keep SafeToSpend unavailable", partialInputResult.isUnavailable)
+        assertTrue("Partial spend input must mark SafeToSpend partial", partialInputResult.isPartial)
+        assertNull(partialInputResult.amount)
+    }
+
+    @Test
+    fun `FL-06 monthSpent greater than budget clamps safe to spend to zero`() = runTest {
+        val now = timeProvider.now()
+        val monthStart = TimePeriodUtils.getStartOfMonth(now)
+        val budget = BudgetStatusSnapshot(
+            null, 1000.0, null, 1250.0, 0.0, 125.0,
+            BudgetHealthStatus.EXCEEDED,
+            now, now + 86_400_000L, currency = "EUR", currencyAssumption = "USER_CONFIRMED"
+        )
+        val safeToSpend = computeSafeToSpend(
+            listOf(createExpense(1250.0, monthStart + 86_400_000L, "EUR")),
+            listOf(budget)
+        )
+
+        assertFalse("Exceeded complete budget is still available", safeToSpend.isUnavailable)
+        assertFalse(safeToSpend.isPartial)
+        org.junit.Assert.assertEquals(0.0, requireNotNull(safeToSpend.amount), 0.0)
+    }
+
+    @Test
+    fun `N-08-5 PeriodSummary distinguishes unavailable from zero and keeps isPartial separate`() = runTest {
+        val now = timeProvider.now()
+        val monthStart = TimePeriodUtils.getStartOfMonth(now)
+
+        // 1. Genuinely zero period: Available with 0.0 values, isUnavailable = false, isPartial = false
+        computeSafeToSpend(emptyList())
+        val zeroSummary = lastResult.allWidgets.filterIsInstance<DashboardWidget.PeriodSummary>().single()
+        assertFalse("Genuinely zero period must not be unavailable", zeroSummary.isUnavailable)
+        assertFalse("Genuinely zero period must not be partial", zeroSummary.isPartial)
+        org.junit.Assert.assertEquals(0.0, zeroSummary.todaySpent, 0.0)
+        org.junit.Assert.assertEquals(0.0, zeroSummary.weekSpent, 0.0)
+        org.junit.Assert.assertEquals(0.0, zeroSummary.monthSpent, 0.0)
+
+        // 2. All-unconvertible period (only USD row with no rate): isUnavailable = true, isPartial = false
+        computeSafeToSpend(listOf(createExpense(50.0, monthStart + 86_400_000L, "USD")))
+        val unconvertibleSummary = lastResult.allWidgets.filterIsInstance<DashboardWidget.PeriodSummary>().single()
+        assertTrue("Fully unconvertible period must be unavailable", unconvertibleSummary.isUnavailable)
+        assertFalse("Unavailable must not set isPartial (separate concepts)", unconvertibleSummary.isPartial)
+    }
+
+    @Test
+    fun `RB1-S3-2 PeriodSummary mixed-horizon case marks today unavailable while month stays available`() = runTest {
+        val now = timeProvider.now()
+        val monthStart = TimePeriodUtils.getStartOfMonth(now)
+        val todayStart = TimePeriodUtils.getStartOfDay(now)
+
+        // Today has 1 unconvertible USD row (0 included, 1 excluded -> todayAggregate UNAVAILABLE),
+        // while earlier in the month has 1 convertible EUR row (monthAggregate PARTIAL, not UNAVAILABLE).
+        computeSafeToSpend(
+            listOf(
+                createExpense(100.0, monthStart + 86_400_000L, "EUR"),
+                createExpense(40.0, todayStart + 1_000L, "USD")
+            )
+        )
+        val summary = lastResult.allWidgets.filterIsInstance<DashboardWidget.PeriodSummary>().single()
+
+        assertTrue("Today has 0 convertible rows so isTodayUnavailable must be true", summary.isTodayUnavailable)
+        assertFalse("Month has a converted EUR row so isMonthUnavailable must be false", summary.isMonthUnavailable)
+        assertFalse("Top-level isUnavailable must be false when month is available", summary.isUnavailable)
+        assertTrue("Mixed-horizon partial conversion must mark isPartial true", summary.isPartial)
+        org.junit.Assert.assertEquals(100.0, summary.monthSpent, 0.0)
+    }
+
+    @Test
+    fun `RB1-S3-2 PeriodSummary all-unavailable control marks all four flags true`() = runTest {
+        val now = timeProvider.now()
+        val todayStart = TimePeriodUtils.getStartOfDay(now)
+
+        // Single unconvertible USD row today (inside today, week, and month windows) with no EUR rows anywhere.
+        computeSafeToSpend(listOf(createExpense(50.0, todayStart + 1_000L, "USD")))
+        val summary = lastResult.allWidgets.filterIsInstance<DashboardWidget.PeriodSummary>().single()
+
+        assertTrue("isTodayUnavailable must be true when all three horizons fail", summary.isTodayUnavailable)
+        assertTrue("isWeekUnavailable must be true when all three horizons fail", summary.isWeekUnavailable)
+        assertTrue("isMonthUnavailable must be true when all three horizons fail", summary.isMonthUnavailable)
+        assertTrue("Top-level isUnavailable must be true when all three horizons are unavailable", summary.isUnavailable)
     }
 
     private lateinit var lastResult: CompiledDashboardData

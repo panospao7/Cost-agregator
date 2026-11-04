@@ -1242,7 +1242,11 @@ fun CategoryItem(item: AnalyticsCategoryBreakdown, homeCurrency: String = item.d
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(item.category.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
                 Text(
-                    CurrencyFormatter.formatMoney(item.moneyTotal.amount, item.moneyTotal.currency.code),
+                    if (item.isUnavailable) {
+                        stringResource(R.string.groups_total_unavailable)
+                    } else {
+                        CurrencyFormatter.formatMoney(item.moneyTotal.amount, item.moneyTotal.currency.code)
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.Bold
                 )
@@ -1259,7 +1263,11 @@ fun CategoryItem(item: AnalyticsCategoryBreakdown, homeCurrency: String = item.d
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                stringResource(R.string.analytics_percent_of_total_format, item.percentage.toInt(), item.count),
+                if (item.isUnavailable) {
+                    stringResource(R.string.analytics_transactions_format, item.count)
+                } else {
+                    stringResource(R.string.analytics_percent_of_total_format, item.percentage.toInt(), item.count)
+                },
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
             )

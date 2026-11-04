@@ -92,10 +92,20 @@ data class CurrencyDataQuality(
 
         fun fromAggregates(aggregates: Collection<MoneyAggregate>, requestedBasis: RateBasis = RateBasis.TRANSACTION_DATE): CurrencyDataQuality {
             if (aggregates.isEmpty()) return UNAVAILABLE
+            val totalIncluded = aggregates.sumOf { it.metadata.includedTransactionCount }
+            val totalExcluded = aggregates.sumOf { it.metadata.excludedTransactionCount }
+            val allUnavailable = totalIncluded == 0 && (
+                totalExcluded > 0 || aggregates.all { it.conversionQuality == ConversionQuality.UNAVAILABLE }
+                )
             return aggregates.map { fromAggregate(it, requestedBasis) }.reduce { a, b ->
+                val quality = when {
+                    a.conversionQuality == ConversionQuality.COMPLETE && b.conversionQuality == ConversionQuality.COMPLETE -> ConversionQuality.COMPLETE
+                    a.conversionQuality == ConversionQuality.UNAVAILABLE && b.conversionQuality == ConversionQuality.UNAVAILABLE -> ConversionQuality.UNAVAILABLE
+                    else -> ConversionQuality.PARTIAL
+                }
                 CurrencyDataQuality(
                     isPartial = a.isPartial || b.isPartial,
-                    conversionQuality = if (a.conversionQuality == ConversionQuality.COMPLETE && b.conversionQuality == ConversionQuality.COMPLETE) ConversionQuality.COMPLETE else ConversionQuality.PARTIAL,
+                    conversionQuality = quality,
                     missingRateCount = a.missingRateCount + b.missingRateCount,
                     staleRateCount = a.staleRateCount + b.staleRateCount,
                     invalidCurrencyCount = a.invalidCurrencyCount + b.invalidCurrencyCount,
@@ -104,6 +114,14 @@ data class CurrencyDataQuality(
                     requestedRateBasis = a.requestedRateBasis,
                     actualRateBasis = a.actualRateBasis
                 )
+            }.let { reduced ->
+                if (allUnavailable) {
+                    reduced.copy(isPartial = false, conversionQuality = ConversionQuality.UNAVAILABLE)
+                } else if (reduced.conversionQuality != ConversionQuality.COMPLETE && !allUnavailable) {
+                    reduced.copy(isPartial = true, conversionQuality = ConversionQuality.PARTIAL)
+                } else {
+                    reduced
+                }
             }
         }
 

@@ -199,6 +199,58 @@ class BudgetCardDisplayTest {
         }
     }
 
+    @Test
+    fun `J-08-1 six budget amount format strings use string placeholder and no hardcoded euro symbol`() {
+        val xml = readStringsXml("values")
+        val expectedFormats = mapOf(
+            "budget_spent_format" to "%1\$s spent",
+            "budget_limit_format" to "%1\$s limit",
+            "budget_over_format" to "%1\$s over budget",
+            "budget_remaining_format" to "%1\$s remaining",
+            "budget_adjusted_spent_format" to "%1\$s adjusted spent",
+            "budget_pending_reimbursement_format" to "%1\$s pending reimbursement"
+        )
+        for ((key, expectedValue) in expectedFormats) {
+            val value = stringValue(xml, key)
+            assertNotNull("values/strings.xml is missing $key", value)
+            assertFalse("$key must not contain a hardcoded euro symbol: $value", value!!.contains('€'))
+            assertFalse("$key must not contain a float placeholder: $value", value.contains("%.2f"))
+            assertTrue("$key must contain a %1\$s placeholder: $value", value.contains("%1\$s"))
+            assertEquals("Unexpected format string for $key", expectedValue, value)
+        }
+    }
+
+    @Test
+    fun `RB1-S2-1 budget_cd_format and suggestion format strings contain no euro symbol and use expected placeholder types`() {
+        val xml = readStringsXml("values")
+        val placeholderRegex = Regex("%(\\d+)\\$(?:\\.\\d+)?([a-z])")
+
+        val expectedPlaceholders = mapOf(
+            "budget_cd_format" to listOf(
+                "1" to "s",
+                "2" to "s",
+                "3" to "s",
+                "4" to "s",
+                "5" to "d",
+                "6" to "s"
+            ),
+            "budget_suggestion_cd_format" to listOf("1" to "s", "2" to "s"),
+            "budget_suggestion_message_format" to listOf("1" to "s", "2" to "s")
+        )
+
+        for ((key, expected) in expectedPlaceholders) {
+            val value = stringValue(xml, key)
+            assertNotNull("values/strings.xml is missing $key", value)
+            assertFalse("$key must not contain a hardcoded euro symbol: $value", value!!.contains('€'))
+            assertFalse("$key must not contain a float placeholder: $value", value.contains("%.2f"))
+            val actual = placeholderRegex.findAll(value)
+                .map { it.groupValues[1] to it.groupValues[2] }
+                .toList()
+                .sortedBy { it.first.toInt() }
+            assertEquals("Unexpected placeholders for $key: $value", expected, actual)
+        }
+    }
+
     private fun readStringsXml(folder: String): String {
         val candidates = listOf(
             File("src/main/res/$folder/strings.xml"),

@@ -748,10 +748,11 @@ class ExportOptionsViewModel @Inject constructor(
                         append(escapeCsv(tx.sourceAccountName)).append(',')
                         append(escapeCsv(tx.originalCurrency)).append(',')
                         append(tx.originalAmount?.let { formatCsvNumber(it) } ?: "").append(',')
+                        val isNoRateSentinel = tx.exchangeRateUsed <= 0.0 || tx.baseCurrency.isBlank()
                         append(escapeCsv(tx.homeCurrency)).append(',')
-                        append(tx.baseAmount).append(',')
-                        append(escapeCsv(tx.baseCurrency)).append(',')
-                        append(tx.exchangeRateUsed.let { rate ->
+                        append(if (isNoRateSentinel) "" else tx.baseAmount).append(',')
+                        append(if (isNoRateSentinel) "" else escapeCsv(tx.baseCurrency)).append(',')
+                        append(if (isNoRateSentinel) "" else tx.exchangeRateUsed.let { rate ->
                             // RP-19 (19-C): non-scientific FX-rate serialization
                             // (≤6 decimals); raw Double.toString could emit 1.0E-7.
                             try { FxRateFormatter.formatRate(rate) } catch (e: IllegalArgumentException) { "INVALID" }
@@ -813,12 +814,15 @@ class ExportOptionsViewModel @Inject constructor(
                 append("\"sourceAccountName\":\"").append(escapeJson(tx.sourceAccountName)).append("\",")
                 append("\"originalCurrency\":\"").append(escapeJson(tx.originalCurrency)).append("\",")
                 append("\"originalAmount\":").append(tx.originalAmount?.let { formatJsonNumber(it) } ?: "null").append(',')
+                val isNoRateSentinel = tx.exchangeRateUsed <= 0.0 || tx.baseCurrency.isBlank()
                 append("\"homeCurrency\":\"").append(escapeJson(tx.homeCurrency)).append("\",")
-                append("\"baseAmount\":").append(formatJsonNumber(tx.baseAmount)).append(',')
-                append("\"baseCurrency\":\"").append(escapeJson(tx.baseCurrency)).append("\",")
+                append("\"baseAmount\":").append(if (isNoRateSentinel) "null" else formatJsonNumber(tx.baseAmount)).append(',')
+                append("\"baseCurrency\":")
+                if (isNoRateSentinel) append("null,")
+                else append("\"").append(escapeJson(tx.baseCurrency)).append("\",")
                 // RP-19 (19-C): rates serialize non-scientifically (≤6 decimals);
                 // raw Double.toString could emit `1.0E-7` into the JSON stream.
-                append("\"exchangeRateUsed\":").append(formatRateOrInvalid(tx.exchangeRateUsed)).append(',')
+                append("\"exchangeRateUsed\":").append(if (isNoRateSentinel) "null" else formatRateOrInvalid(tx.exchangeRateUsed)).append(',')
                 append("\"conversionRateUsed\":").append(tx.conversionRateUsed?.let { formatRateOrInvalid(it) } ?: "null").append(',')
                 append("\"isBusinessExpense\":").append(if (tx.isBusinessExpense) "true" else "false").append(',')
                 append("\"businessPurpose\":")

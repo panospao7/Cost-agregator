@@ -2,6 +2,9 @@ package com.yourname.expensetracker.ui.screens.recurring
 
 import app.cash.turbine.test
 import com.yourname.expensetracker.R
+import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
+import com.yourname.expensetracker.data.database.entity.PlannedExpense as PlannedExpenseEntity
+import com.yourname.expensetracker.data.database.entity.PlannedExpensePriority as EntityPriority
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.FinancialWeatherRepository
 import com.yourname.expensetracker.data.repository.PlannedExpenseRepository
@@ -84,6 +87,78 @@ class RecurringExpensesViewModelWriteBlockedTest : ViewModelTestUtils() {
             viewModel.deleteManualRule(pattern.copy(id = 4L))
             advanceUntilIdle()
             assertEquals(blockedMessage, awaitItem())
+        }
+    }
+
+    @Test
+    fun `N-08-1 plannedExpenses and allPatterns preserve source currency independent of homeCurrency`() = runTest(testDispatcher) {
+        every { currencyRepository.homeCurrency() } returns flowOf("EUR")
+        every { recurringRepository.getAllFlow() } returns flowOf(
+            listOf(
+                ManualRecurringExpense(
+                    id = 10L,
+                    merchant = "Cloud Hosting",
+                    amount = 29.99,
+                    currency = "USD",
+                    frequency = RecurrenceFrequency.MONTHLY,
+                    nextDate = 1_710_000_000_000L
+                ),
+                ManualRecurringExpense(
+                    id = 11L,
+                    merchant = "Gym",
+                    amount = 45.0,
+                    currency = "EUR",
+                    frequency = RecurrenceFrequency.MONTHLY,
+                    nextDate = 1_710_000_000_000L
+                )
+            )
+        )
+        every { plannedRepository.getAllPlannedExpenses() } returns flowOf(
+            listOf(
+                PlannedExpenseEntity(
+                    id = 20L,
+                    description = "US Flight",
+                    amount = 650.0,
+                    currency = "USD",
+                    date = 1_710_000_000_000L,
+                    priority = EntityPriority.MUST
+                ),
+                PlannedExpenseEntity(
+                    id = 21L,
+                    description = "Local Train",
+                    amount = 35.0,
+                    currency = "EUR",
+                    date = 1_710_000_000_000L,
+                    priority = EntityPriority.LIKELY
+                )
+            )
+        )
+        val vm = RecurringExpensesViewModel(
+            repository = mockk<FinancialWeatherRepository>(relaxed = true),
+            recurringExpenseRepository = recurringRepository,
+            plannedExpenseRepository = plannedRepository,
+            recurringExpenseEngine = mockk<RecurringExpenseEngine>(relaxed = true),
+            expenseRepository = mockk<ExpenseRepository>(relaxed = true),
+            currencySettingsRepository = currencyRepository,
+            timeProvider = mockk<TimeProvider>(relaxed = true)
+        )
+
+        vm.plannedExpenses.test {
+            var items = awaitItem()
+            if (items.isEmpty()) items = awaitItem()
+            val byDesc = items.associateBy { it.description }
+            assertEquals("USD", byDesc.getValue("US Flight").currency)
+            assertEquals("EUR", byDesc.getValue("Local Train").currency)
+            cancelAndIgnoreRemainingEvents()
+        }
+
+        vm.allPatterns.test {
+            var patterns = awaitItem()
+            if (patterns.isEmpty()) patterns = awaitItem()
+            val byMerchant = patterns.associateBy { it.merchantName }
+            assertEquals("USD", byMerchant.getValue("Cloud Hosting").currency)
+            assertEquals("EUR", byMerchant.getValue("Gym").currency)
+            cancelAndIgnoreRemainingEvents()
         }
     }
 }
