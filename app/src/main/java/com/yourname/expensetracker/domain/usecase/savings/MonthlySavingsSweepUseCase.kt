@@ -221,7 +221,7 @@ class MonthlySavingsSweepUseCase @Inject constructor(
         // "Underspend X - Buffer Y" adds up to the sweep amount (and the acceptance
         // coordinator invariant safeSweep <= underspend - riskBuffer holds).
         // Month-to-date withdrawals are not budget spending, but that cash has already left
-        // the account: they must never make the sweep larger than when they counted as spend.
+        // the account, so they count against this month's sweep. History spread is purchases only.
         val riskBuffer = knownUpcoming + uncertaintyBuffer + withdrawnToDate
 
         // Calculate safe sweep amount
