@@ -19,6 +19,8 @@ import javax.xml.parsers.DocumentBuilderFactory
  */
 class MoneyDisplayFormatStringsTest {
 
+    // Positional placeholders such as %1$s contain a dollar sign, so they are removed before the check.
+    private val formatPlaceholder = Regex("%\\d+\\$")
     private val currencySymbol = Regex("\\p{Sc}")
 
     private val moneyWrapperKeys = listOf(
@@ -48,7 +50,7 @@ class MoneyDisplayFormatStringsTest {
         for (key in moneyWrapperKeys) {
             val value = stringElement(doc, key)?.textContent
             assertNotNull("values/strings.xml is missing $key", value)
-            assertFalse("$key must not contain a currency symbol: $value", currencySymbol.containsMatchIn(value!!))
+            assertFalse("$key must not contain a currency symbol: $value", currencySymbol.containsMatchIn(value!!.replace(formatPlaceholder, "")))
             assertFalse("$key must not use a float placeholder: $value", value.contains("%.2f") || value.contains("%.1f"))
         }
     }

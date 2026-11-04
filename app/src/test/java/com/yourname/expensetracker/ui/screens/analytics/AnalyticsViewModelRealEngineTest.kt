@@ -98,6 +98,26 @@ class AnalyticsViewModelRealEngineTest : ViewModelTestUtils() {
             lastUpdated = now
         )
 
+        // Location engines must return concrete values (as the other VM tests do): a relaxed mock
+        // of a data-class result is not a faithful stand-in and can abort the compute path.
+        val locationInsightsEngine = mockk<com.yourname.expensetracker.domain.location.LocationInsightsEngine>(relaxed = true)
+        every { locationInsightsEngine.computeNormalized(any()) } returns emptyList()
+        val areaSpendingEngine = mockk<com.yourname.expensetracker.domain.location.AreaSpendingEngine>(relaxed = true)
+        coEvery { areaSpendingEngine.computeNormalized(any(), any(), any()) } returns emptyList()
+        val travelDetectionEngine = mockk<com.yourname.expensetracker.domain.location.TravelDetectionEngine>(relaxed = true)
+        val emptyEur = com.yourname.expensetracker.domain.core.money.MoneyAggregate.empty(
+            com.yourname.expensetracker.domain.core.money.CurrencyCode.EUR
+        )
+        coEvery { travelDetectionEngine.computeNormalized(any(), any(), any()) } returns
+            com.yourname.expensetracker.domain.location.NormalizedTravelInsight(
+                homeLatitude = null,
+                homeLongitude = null,
+                homeAggregate = emptyEur,
+                localAggregate = emptyEur,
+                travelAggregate = emptyEur,
+                travelTrips = emptyList()
+            )
+
         return AnalyticsViewModel(
             expenseRepository,
             categoryRepository,
@@ -107,9 +127,9 @@ class AnalyticsViewModelRealEngineTest : ViewModelTestUtils() {
             mockk(relaxed = true),
             engine,
             normalizer,
-            mockk(relaxed = true),
-            mockk(relaxed = true),
-            mockk(relaxed = true),
+            locationInsightsEngine,
+            areaSpendingEngine,
+            travelDetectionEngine,
             classifier,
             timeProvider,
             assembler,
