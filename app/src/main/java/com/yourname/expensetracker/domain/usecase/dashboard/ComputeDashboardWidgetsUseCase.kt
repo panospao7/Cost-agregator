@@ -181,7 +181,12 @@ sealed class DashboardWidget {
 
     data class MonteCarloForecast(
         val result: MonteCarloResult,
-        val currencyQuality: CurrencyQualityUi? = null
+        val currencyQuality: CurrencyQualityUi? = null,
+        /**
+         * True when an overall budget exists but the forecast is not compared with it (non-month-scale
+         * period, or its limit is unavailable). Distinct from "no budget set".
+         */
+        val budgetNotComparable: Boolean = false
     ) : DashboardWidget()
 
     data object TotalsDashboard : DashboardWidget()
@@ -1037,8 +1042,15 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
                 displayCurrency = input.homeCurrency.code
             )
 
+            // A budget exists but no limit was passed: the card must not claim "No budget set".
+            val budgetNotComparable = ctx.overallBudget != null && budgetForMC == null
+
             mcResult?.let {
-                DashboardWidget.MonteCarloForecast(it, CurrencyQualityUi.from(input.dataQuality))
+                DashboardWidget.MonteCarloForecast(
+                    result = it,
+                    currencyQuality = CurrencyQualityUi.from(input.dataQuality),
+                    budgetNotComparable = budgetNotComparable
+                )
             }
         } catch (e: CancellationException) {
             throw e

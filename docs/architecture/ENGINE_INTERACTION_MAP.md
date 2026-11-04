@@ -442,7 +442,7 @@ PrivacyGate.check(capability, context)
 
 ### Budget, Home and export consistency notes:
 - Home SafeToSpend reads the budget snapshot's effective spend (`BudgetStatusSnapshot.effectiveSpend`) and period end, not gross remaining; null effective spend is Unavailable.
-- Budget health thresholds live in one function, `budgetHealthForPercent`.
+- In `BudgetRepository` and the Budget card, health thresholds live in one function, `budgetHealthForPercent` (per-budget warning/critical cutoffs). `AdvancedAnalyticsEngine.determineBudgetStatus` keeps its own fixed analytics cutoffs (0.75 / 0.9 / 1.0) and does not use per-budget notify levels.
 - Exports leave converted fields (`homeCurrency`, `baseCurrency`, `baseAmount`, `exchangeRateUsed`) blank/null where no rate exists.
 
 ---

@@ -173,9 +173,13 @@ class AllowlistError(Exception):
 EXEMPT_PATH_FRAGMENTS = [
     os.sep + "test" + os.sep,
     os.sep + "androidTest" + os.sep,
-    "AppDatabase.kt",
-    "entity" + os.sep,
 ]
+
+# Exact repo-relative POSIX exemptions (no substring matching): the Room database class and
+# the entity package that declares the event entities.
+_EXEMPT_PKG = "app/src/main/java/com/yourname/expensetracker/"
+EXEMPT_RELATIVE_FILES = frozenset([_EXEMPT_PKG + "data/database/AppDatabase.kt"])
+EXEMPT_RELATIVE_DIR_PREFIXES = (_EXEMPT_PKG + "data/database/entity/",)
 
 
 def load_allowlist(script_dir: str) -> dict:
@@ -225,11 +229,13 @@ def load_allowlist(script_dir: str) -> dict:
     return allowed
 
 
-def is_exempt(filepath: str) -> bool:
+def is_exempt(filepath: str, relpath: str = "") -> bool:
     for fragment in EXEMPT_PATH_FRAGMENTS:
         if fragment in filepath:
             return True
-    return False
+    if relpath in EXEMPT_RELATIVE_FILES:
+        return True
+    return relpath.startswith(EXEMPT_RELATIVE_DIR_PREFIXES)
 
 
 def is_allowed(rule_name: str, relpath: str, owner_paths: list, allowlist: dict) -> bool:
@@ -256,7 +262,7 @@ def scan(source_files, allowlist: dict) -> list:
 
     for source_file in source_files:
         filepath = source_file.absolute_path
-        if is_exempt(filepath):
+        if is_exempt(filepath, source_file.repository_relative_path):
             continue
         try:
             with open(filepath, encoding="utf-8", errors="replace") as f:

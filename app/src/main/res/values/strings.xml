@@ -1252,6 +1252,8 @@
     <string name="forecast_range_format">Range: %1$s – %2$s</string>
     <string name="forecast_under_budget">Under budget</string>
     <string name="forecast_no_budget_set">No budget set</string>
+    <string name="forecast_budget_not_compared">Forecast not compared to this budget</string>
+    <string name="forecast_budget_unavailable">Budget figure unavailable</string>
     <string name="forecast_spent">Spent</string>
     <string name="forecast_upcoming">Upcoming</string>
     <string name="forecast_budget_label">Budget</string>

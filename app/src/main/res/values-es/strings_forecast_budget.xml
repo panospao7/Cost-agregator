@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- FIX-104 AE-small: DRAFT translation, owner native sign-off pending. -->
+    <string name="forecast_budget_not_compared">La previsión no se compara con este presupuesto</string>
+    <string name="forecast_budget_unavailable">Cifra del presupuesto no disponible</string>
+</resources>
