@@ -163,7 +163,7 @@ class ComputeDashboardWidgetsPeriodSummaryUnratedTest {
 
     @Test
     fun `F5 control rated EUR purchase today is available and counted in every period`() = runTest {
-        val (result, period) = compute(listOf(expense(25.0, ts(2026, 4, 20), "EUR")))
+        val (result, period) = compute(listOf(expense(25.0, ts(2026, 4, 20) - 3_600_000L, "EUR")))
 
         assertFalse(result.isPartial)
         assertFalse(period.isTodayUnavailable)
