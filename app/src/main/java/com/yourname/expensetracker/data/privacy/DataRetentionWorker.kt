@@ -28,6 +28,7 @@ import com.yourname.expensetracker.domain.diagnostics.EventOutcome
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
 import com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
+import com.yourname.expensetracker.domain.privacy.PrivacySettingsLoadState
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
 import com.yourname.expensetracker.domain.privacy.RawStorageMode
 import com.yourname.expensetracker.domain.privacy.RetentionPurgeFailure
@@ -115,7 +116,15 @@ class DataRetentionWorker @AssistedInject constructor(
                 specVersion = WorkerSpec.DEFAULTS["data_retention"]?.version
             )
         ) { ctx ->
-            val settings = privacySettingsRepository.getSettings()
+            val loadState = privacySettingsRepository.getLoadState()
+            val settings = when (loadState) {
+                is PrivacySettingsLoadState.Loaded -> loadState.settings
+                is PrivacySettingsLoadState.FirstRunDefault -> loadState.settings
+                is PrivacySettingsLoadState.CorruptedFailClosed -> loadState.settings
+            }
+            // A fail-closed load state carries placeholder DO_NOT_STORE values, not a user
+            // choice. It must not trigger the immediate-blanking route for correction text.
+            val settingsFailClosed = loadState is PrivacySettingsLoadState.CorruptedFailClosed
             val now = timeProvider.now()
 
             val notificationCutoff = now - TimeUnit.DAYS.toMillis(settings.rawNotificationRetentionDays.toLong())
@@ -160,7 +169,9 @@ class DataRetentionWorker @AssistedInject constructor(
                 // P-08-1: correction text is only learnable under STORE_RAW; in any
                 // other mode existing rows are blanked at the next run (cutoff = now).
                 "user_corrections.notificationText" ->
-                    if (settings.rawNotificationStorageMode != RawStorageMode.STORE_RAW) now
+                    if (!settingsFailClosed &&
+                        settings.rawNotificationStorageMode != RawStorageMode.STORE_RAW
+                    ) now
                     else notificationTextCutoff
                 "background_job_runs.errorMessage" -> textRedactionCutoff
                 "bank_statement_import_items.merchant" -> textRedactionCutoff

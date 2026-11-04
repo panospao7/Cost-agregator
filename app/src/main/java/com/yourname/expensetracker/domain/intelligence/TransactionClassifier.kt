@@ -4,6 +4,7 @@ package com.yourname.expensetracker.domain.intelligence
 import android.content.Context
 import com.yourname.expensetracker.data.privacy.AtRestEncryptionService
 import com.yourname.expensetracker.data.repository.UserCorrectionRepository
+import com.yourname.expensetracker.domain.privacy.PrivacySettingsLoadState
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
 import com.yourname.expensetracker.domain.privacy.RawStorageMode
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -142,21 +143,26 @@ open class TransactionClassifier @Inject constructor(
             purgeModelState()
             return
         }
-        mutex.withLock {
-            if (!isLoaded.get()) {
+        // Switch to IO before taking the lock: the suspending reads below (correction count,
+        // settings) would otherwise resume on the caller's dispatcher, and a Main caller blocked
+        // in onBackground()'s runBlocking could never run the lock holder's continuation.
+        withContext(Dispatchers.IO) {
+            mutex.withLock {
+                if (!isLoaded.get()) {
 
-                if (loadFromDisk()) {
+                    if (loadFromDisk()) {
+                        isLoaded.set(true)
+                        _stats.value = getStatsInternal()
+                        Timber.d("Loaded ML model")
+                    }
+
+                    val correctionCount = userCorrectionRepository.getCount()
+                    if (correctionCount > lastTrainingCount && correctionCount >= MIN_TRAINING_SAMPLES) {
+                        retrainFromCorrectionsInternal()
+                    }
+
                     isLoaded.set(true)
-                    _stats.value = getStatsInternal()
-                    Timber.d("Loaded ML model")
                 }
-
-                val correctionCount = userCorrectionRepository.getCount()
-                if (correctionCount > lastTrainingCount && correctionCount >= MIN_TRAINING_SAMPLES) {
-                    retrainFromCorrectionsInternal()
-                }
-
-                isLoaded.set(true)
             }
         }
         // AIML-16: Re-save legacy plaintext model file as encrypted
@@ -210,7 +216,17 @@ open class TransactionClassifier @Inject constructor(
      * fail closed without purging). Takes no classifier lock. Cancellation is rethrown.
      */
     private suspend fun readRawStorageMode(): RawStorageMode? = try {
-        privacySettingsRepository.getSettings().rawNotificationStorageMode
+        // A fail-closed load state (DataStore IOException or corruption sentinel) carries
+        // placeholder DO_NOT_STORE settings, not a user choice. It is a read failure here:
+        // no purge, so a transient read error cannot destroy a learned STORE_RAW model.
+        when (val state = privacySettingsRepository.getLoadState()) {
+            is PrivacySettingsLoadState.CorruptedFailClosed -> {
+                Timber.w("Classifier training skipped: reason=settings_load_fail_closed")
+                null
+            }
+            is PrivacySettingsLoadState.Loaded -> state.settings.rawNotificationStorageMode
+            is PrivacySettingsLoadState.FirstRunDefault -> state.settings.rawNotificationStorageMode
+        }
     } catch (e: CancellationException) {
         throw e
     } catch (e: Exception) {
@@ -225,40 +241,46 @@ open class TransactionClassifier @Inject constructor(
      * purged, [persistenceBlocked] short-circuits repeated calls until STORE_RAW training resumes.
      */
     private suspend fun purgeModelState() {
-        // A failed delete must retry: the flag alone does not prove the file is gone.
-        if (persistenceBlocked && !File(context.filesDir, MODEL_FILE).exists()) return
-        val newStats: ClassifierStats
-        mutex.withLock {
-            positiveWordCounts.clear()
-            negativeWordCounts.clear()
-            positiveBigramCounts.clear()
-            negativeBigramCounts.clear()
-            vocabulary.clear()
-            totalPositive = 0
-            totalNegative = 0
-            vocabularySize = 0
-            lastTrainingCount = 0
-            legacyFileMigrated = false
-            persistenceBlocked = true
-            isLoaded.set(true)
-            synchronized(jobLock) {
-                saveJob?.cancel()
-                saveJob = null
-            }
-            try {
-                withContext(Dispatchers.IO) {
-                    val modelFile = File(context.filesDir, MODEL_FILE)
-                    if (modelFile.exists() && !modelFile.delete()) {
-                        Timber.w("Classifier model purge incomplete: reason=file_delete_returned_false")
+        // Deadlock guard: the dispatcher switch happens BEFORE the lock is taken, and nothing
+        // inside the lock suspends. A Main caller blocked in onBackground()'s runBlocking can
+        // therefore never wait on a lock holder that needs Main to resume.
+        val newStats: ClassifierStats? = withContext(Dispatchers.IO) {
+            // A failed delete must retry: the flag alone does not prove the file is gone.
+            if (persistenceBlocked && !File(context.filesDir, MODEL_FILE).exists()) {
+                null
+            } else {
+                mutex.withLock {
+                    positiveWordCounts.clear()
+                    negativeWordCounts.clear()
+                    positiveBigramCounts.clear()
+                    negativeBigramCounts.clear()
+                    vocabulary.clear()
+                    totalPositive = 0
+                    totalNegative = 0
+                    vocabularySize = 0
+                    lastTrainingCount = 0
+                    legacyFileMigrated = false
+                    persistenceBlocked = true
+                    isLoaded.set(true)
+                    synchronized(jobLock) {
+                        saveJob?.cancel()
+                        saveJob = null
                     }
+                    try {
+                        val modelFile = File(context.filesDir, MODEL_FILE)
+                        if (modelFile.exists() && !modelFile.delete()) {
+                            Timber.w("Classifier model purge incomplete: reason=file_delete_returned_false")
+                        }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Timber.w("Classifier model purge incomplete: reason=file_delete_failed")
+                    }
+                    getStatsInternal()
                 }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                Timber.w("Classifier model purge incomplete: reason=file_delete_failed")
             }
-            newStats = getStatsInternal()
         }
+        if (newStats == null) return
         _stats.value = newStats
         Timber.d("Classifier model purged: reason=raw_storage_not_store_raw")
     }

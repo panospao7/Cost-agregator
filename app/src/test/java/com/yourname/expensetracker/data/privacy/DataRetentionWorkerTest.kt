@@ -14,6 +14,7 @@ import com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
 import com.yourname.expensetracker.domain.diagnostics.EventOutcome
 import com.yourname.expensetracker.domain.privacy.PrivacySettings
+import com.yourname.expensetracker.domain.privacy.PrivacySettingsLoadState
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
 import com.yourname.expensetracker.domain.privacy.RawStorageMode
 import com.yourname.expensetracker.domain.privacy.RetentionPurgeFailure
@@ -96,7 +97,7 @@ class DataRetentionWorkerTest {
             .edit().clear().commit()
         purgeCalls.clear()
 
-        coEvery { privacySettingsRepository.getSettings() } returns PrivacySettings()
+        stubSettings(PrivacySettings())
         coEvery {
             executionGuard.runGuardedWithContext(any(), any<suspend (WorkerRunContext) -> Any>())
         } coAnswers {
@@ -113,6 +114,12 @@ class DataRetentionWorkerTest {
                 throw e
             }
         }
+    }
+
+    /** The worker reads the repository load state; a normally loaded state carries [settings]. */
+    private fun stubSettings(settings: PrivacySettings) {
+        coEvery { privacySettingsRepository.getLoadState() } returns
+            PrivacySettingsLoadState.Loaded(settings)
     }
 
     private fun buildWorker(): DataRetentionWorker =
@@ -445,8 +452,7 @@ class DataRetentionWorkerTest {
     @Test
     fun `pending review notification text cutoff follows a shorter raw notification window`() = runTest {
         val dayMs = 24L * 60 * 60 * 1000
-        coEvery { privacySettingsRepository.getSettings() } returns
-            PrivacySettings(rawNotificationRetentionDays = 7)
+        stubSettings(PrivacySettings(rawNotificationRetentionDays = 7))
         every { retentionRegistry.allTargets() } returns textRedactionTargets()
 
         assertEquals(Result.success(), buildWorker().doWork())
@@ -461,8 +467,7 @@ class DataRetentionWorkerTest {
     @Test
     fun `pending review notification text cutoff is never longer than 30 days`() = runTest {
         val dayMs = 24L * 60 * 60 * 1000
-        coEvery { privacySettingsRepository.getSettings() } returns
-            PrivacySettings(rawNotificationRetentionDays = 90)
+        stubSettings(PrivacySettings(rawNotificationRetentionDays = 90))
         every { retentionRegistry.allTargets() } returns textRedactionTargets()
 
         assertEquals(Result.success(), buildWorker().doWork())
@@ -499,9 +504,11 @@ class DataRetentionWorkerTest {
         )) {
             for ((days, pendingDays) in listOf(0 to 0, 7 to 7, 30 to 30, 90 to 30)) {
                 resetCheckpoints()
-                coEvery { privacySettingsRepository.getSettings() } returns PrivacySettings(
-                    rawNotificationStorageMode = mode,
-                    rawNotificationRetentionDays = days
+                stubSettings(
+                    PrivacySettings(
+                        rawNotificationStorageMode = mode,
+                        rawNotificationRetentionDays = days
+                    )
                 )
 
                 assertEquals(Result.success(), buildWorker().doWork())
@@ -523,6 +530,36 @@ class DataRetentionWorkerTest {
     }
 
     @Test
+    fun `P-08-1 fail-closed load state keeps the normal correction text cutoff and does not blank early`() = runTest {
+        val dayMs = 24L * 60 * 60 * 1000
+        every { retentionRegistry.allTargets() } returns correctionTextTargets()
+        // FAIL_CLOSED_DEFAULTS carries DO_NOT_STORE and a 30 day window, but as a fail-closed
+        // load state it is a read failure, not a user choice.
+        coEvery { privacySettingsRepository.getLoadState() } returns
+            PrivacySettingsLoadState.CorruptedFailClosed(PrivacySettings.FAIL_CLOSED_DEFAULTS, "IO error")
+
+        assertEquals(Result.success(), buildWorker().doWork())
+
+        assertEquals(
+            "fail-closed state must not blank correction rows early",
+            timeProvider.now() - 30 * dayMs,
+            purgeCalls.toMap()["user_corrections.notificationText"]
+        )
+    }
+
+    @Test
+    fun `P-08-1 definite stricter mode delivered as a loaded state still blanks corrections immediately`() = runTest {
+        every { retentionRegistry.allTargets() } returns correctionTextTargets()
+        // Same effective settings as the fail-closed defaults, but a real Loaded state.
+        coEvery { privacySettingsRepository.getLoadState() } returns
+            PrivacySettingsLoadState.Loaded(PrivacySettings.FAIL_CLOSED_DEFAULTS)
+
+        assertEquals(Result.success(), buildWorker().doWork())
+
+        assertEquals(timeProvider.now(), purgeCalls.toMap()["user_corrections.notificationText"])
+    }
+
+    @Test
     fun `P-08-1 user corrections notification text cutoff under STORE_RAW is the min of retention days and 30`() = runTest {
         val dayMs = 24L * 60 * 60 * 1000
         every { retentionRegistry.allTargets() } returns correctionTextTargets()
@@ -531,9 +568,11 @@ class DataRetentionWorkerTest {
         // 90 days: boundary where the 30-day cap wins over the user window.
         for ((days, effectiveDays) in listOf(0 to 0, 7 to 7, 30 to 30, 31 to 30, 90 to 30)) {
             resetCheckpoints()
-            coEvery { privacySettingsRepository.getSettings() } returns PrivacySettings(
-                rawNotificationStorageMode = RawStorageMode.STORE_RAW,
-                rawNotificationRetentionDays = days
+            stubSettings(
+                PrivacySettings(
+                    rawNotificationStorageMode = RawStorageMode.STORE_RAW,
+                    rawNotificationRetentionDays = days
+                )
             )
 
             assertEquals(Result.success(), buildWorker().doWork())
@@ -555,8 +594,7 @@ class DataRetentionWorkerTest {
             purgeCalls.clear()
             context.getSharedPreferences(DataRetentionWorker.PREFS_NAME, Context.MODE_PRIVATE)
                 .edit().clear().commit()
-            coEvery { privacySettingsRepository.getSettings() } returns
-                PrivacySettings(rawNotificationRetentionDays = days)
+            stubSettings(PrivacySettings(rawNotificationRetentionDays = days))
 
             assertEquals(Result.success(), buildWorker().doWork())
 
@@ -632,7 +670,7 @@ class DataRetentionWorkerTest {
             ctx = mockk(relaxed = true)
             context.getSharedPreferences(DataRetentionWorker.PREFS_NAME, Context.MODE_PRIVATE)
                 .edit().clear().commit()
-            coEvery { privacySettingsRepository.getSettings() } returns row.settings
+            stubSettings(row.settings)
             every { retentionRegistry.allTargets() } returns setOf(target(row.targetName, row.rows))
 
             val result = buildWorker().doWork()
