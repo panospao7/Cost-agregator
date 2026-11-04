@@ -76,8 +76,9 @@ class AnalyticsInputAssembler @Inject constructor(
         period: PeriodRange,
         options: AnalyticsInputOptions
     ): NormalizedAnalyticsInput {
-        // 1. Apply pre-filters (spending-only = PURCHASE only, not-mine exclusion)
+        // 1. Apply pre-filters (spending-only = PURCHASE only, not-mine & neutralisation exclusion)
         val filtered = expenses.filter { exp ->
+            if (exp.spendingExclusionReason != null) return@filter false
             if (options.spendingOnly && exp.transactionType != TransactionType.PURCHASE) return@filter false
             if (options.excludeNotMine && exp.isNotMine) return@filter false
             true
@@ -120,7 +121,8 @@ class AnalyticsInputAssembler @Inject constructor(
                 rateLastUpdated = normExp.rateLastUpdated,
                 rateSource = normExp.rateSource,
                 conversionPath = normExp.conversionPath,
-                qualityWarning = normExp.qualityWarning
+                qualityWarning = normExp.qualityWarning,
+                spendingExclusionReason = snap.spendingExclusionReason
             )
         }
 

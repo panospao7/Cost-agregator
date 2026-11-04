@@ -717,7 +717,8 @@ class ComputeDashboardWidgetsUseCasePaceWiringTest {
         date = date,
         categoryId = categoryId,
         isNotMine = isNotMine,
-        isManualEntry = isManualEntry
+        isManualEntry = isManualEntry,
+        spendingExclusionReason = spendingExclusionReason
     )
 
     private fun monthStartOf(nowMs: Long): Long =

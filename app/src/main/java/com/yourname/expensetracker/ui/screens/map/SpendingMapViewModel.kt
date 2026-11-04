@@ -186,7 +186,7 @@ class SpendingMapViewModel @Inject constructor(
         // Feature E: collect unlocated expenses for the bottom panel
  viewModelScope.launch(Dispatchers.IO) {
  expenseRepository.getUnlocatedExpensesFlow(100).collect { expenses ->
- _state.update { it.copy(unlocatedExpenses = expenses) }
+ _state.update { it.copy(unlocatedExpenses = expenses.filter { e -> e.countsAsSpending }) }
  }
  }
  viewModelScope.launch(Dispatchers.IO) {
@@ -584,7 +584,8 @@ class SpendingMapViewModel @Inject constructor(
         val currentState = _state.value
         // S10-002: Block computation until home currency is loaded — never compute with placeholder EUR
         val homeCurrency = currentState.homeCurrency ?: return
-        val filteredExpenses = locatedExpenses.filter { expense ->
+        val countingLocatedExpenses = locatedExpenses.filter { it.countsAsSpending }
+        val filteredExpenses = countingLocatedExpenses.filter { expense ->
             val dateInRange = (currentState.dateRangeStartMs == null || expense.date >= currentState.dateRangeStartMs) &&
                 (currentState.dateRangeEndMs == null || expense.date < currentState.dateRangeEndMs)
             val categoryMatch = currentState.selectedCategories.isEmpty() ||
@@ -655,7 +656,7 @@ class SpendingMapViewModel @Inject constructor(
         // Apply the same spending-only filter used for heatmap — non-spending
         // types (deposits, transfers, withdrawals) must not contribute to insights.
         val spendingDomainExpenses = filteredExpenses.filter { e ->
-            e.transactionType.toDomain().isSpending
+            e.transactionType.toDomain().isSpending && e.countsAsSpending
         }.mapNotNull { e ->
             val lat = e.latitude ?: return@mapNotNull null
             val lon = e.longitude ?: return@mapNotNull null
@@ -677,7 +678,7 @@ class SpendingMapViewModel @Inject constructor(
         // spending heatmap — they are kept in `markers` for UI display but
         // excluded from heatmap weight calculation.
         val spendingOnlyExpenses = filteredExpenses.filter { e ->
-            e.transactionType.toDomain().isSpending
+            e.transactionType.toDomain().isSpending && e.countsAsSpending
         }
         val heatmapExpenses = spendingOnlyExpenses.mapNotNull { e ->
             val lat = e.latitude ?: return@mapNotNull null
@@ -734,8 +735,8 @@ class SpendingMapViewModel @Inject constructor(
             categoryRepository.getAll().associateBy { it.id }
         }.getOrElse { emptyMap() }
 
-        val categoryIds = locatedExpenses.mapNotNull { it.categoryId?.toString() }.distinct().sorted()
-        val hasUncategorized = locatedExpenses.any { it.categoryId == null }
+        val categoryIds = countingLocatedExpenses.mapNotNull { it.categoryId?.toString() }.distinct().sorted()
+        val hasUncategorized = countingLocatedExpenses.any { it.categoryId == null }
         val availableCategories = buildList<MapCategoryFilterOption> {
             categoryIds.forEach { categoryId ->
                 val label = categoriesById[categoryId.toLongOrNull()]?.name ?: "Category $categoryId"

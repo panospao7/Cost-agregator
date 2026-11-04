@@ -204,7 +204,8 @@ class DashboardContractsAdapter @Inject constructor(
         // P5-004 (RP-05): carry shared-expense identity across the adapter
         // boundary so the deposit exclusion is no longer tautological.
         isSharedExpense = isSharedExpense,
-        currency = currency
+        currency = currency,
+        spendingExclusionReason = spendingExclusionReason
     )
 
     private fun TransactionType.toDashboardType(): DashboardTransactionType =

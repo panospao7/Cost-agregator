@@ -185,7 +185,8 @@ class DayOfWeekAnalyzerTest {
         categoryId = categoryId,
         isNotMine = isNotMine,
         transferDirection = null,
-        notes = notes
+        notes = notes,
+        spendingExclusionReason = spendingExclusionReason
     )
 
     private fun goldenMarchExpenses() = listOf(

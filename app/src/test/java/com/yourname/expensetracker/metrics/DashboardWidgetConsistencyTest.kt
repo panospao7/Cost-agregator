@@ -336,6 +336,7 @@ class DashboardWidgetConsistencyTest {
         date = date,
         categoryId = categoryId,
         isNotMine = isNotMine,
-        isManualEntry = isManualEntry
+        isManualEntry = isManualEntry,
+        spendingExclusionReason = spendingExclusionReason
     )
 }

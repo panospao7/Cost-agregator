@@ -106,6 +106,7 @@ class SharedExpenseBudgetOffsetEngine @Inject constructor(
         val personalExpenses = allPeriodExpenses.filter { expense ->
             !expense.isSharedExpense &&
                 !expense.isNotMine &&
+                !expense.isSpendingNeutralised &&
                 expense.transactionType == TransactionType.PURCHASE &&
                 expense.id !in linkedExpenseIds &&
                 (categoryId == null || expense.categoryId == categoryId)

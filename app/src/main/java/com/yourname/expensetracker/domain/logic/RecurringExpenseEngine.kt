@@ -311,7 +311,8 @@ class RecurringExpenseEngine @Inject constructor(
                 TransferDirection.OUTGOING -> DomainTransferDirection.OUTGOING
                 null -> null
             },
-            notes = notes
+            notes = notes,
+            spendingExclusionReason = spendingExclusionReason
         )
     }
 

@@ -104,29 +104,31 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
                 maxAmount = null
             )
             var failedConversions = 0
-            val filteredResults = results.mapNotNull { expenseWithCategory ->
-                val expense = expenseWithCategory.expense
-                val normalizedAmount = if (expense.currency.equals(homeCurrency, true)) {
-                    expense.effectiveAmount
-                } else {
-                    currencyConverter.convertAsOf(
-                        amount = expense.effectiveAmount,
-                        fromCurrency = expense.currency,
-                        toCurrency = homeCurrency,
-                        atMillis = expense.date
-                    )?.convertedAmount
+            val filteredResults = results
+                .filter { !it.expense.isSpendingNeutralised }
+                .mapNotNull { expenseWithCategory ->
+                    val expense = expenseWithCategory.expense
+                    val normalizedAmount = if (expense.currency.equals(homeCurrency, true)) {
+                        expense.effectiveAmount
+                    } else {
+                        currencyConverter.convertAsOf(
+                            amount = expense.effectiveAmount,
+                            fromCurrency = expense.currency,
+                            toCurrency = homeCurrency,
+                            atMillis = expense.date
+                        )?.convertedAmount
+                    }
+                    if (normalizedAmount == null) {
+                        failedConversions++
+                        null
+                    } else if (intent.filters.minAmount != null && normalizedAmount < intent.filters.minAmount) {
+                        null
+                    } else if (intent.filters.maxAmount != null && normalizedAmount > intent.filters.maxAmount) {
+                        null
+                    } else {
+                        expenseWithCategory
+                    }
                 }
-                if (normalizedAmount == null) {
-                    failedConversions++
-                    null
-                } else if (intent.filters.minAmount != null && normalizedAmount < intent.filters.minAmount) {
-                    null
-                } else if (intent.filters.maxAmount != null && normalizedAmount > intent.filters.maxAmount) {
-                    null
-                } else {
-                    expenseWithCategory
-                }
-            }
             return FinancialQueryResult.TransactionList(
                 title = buildListTitle(intent),
                 previewCount = filteredResults.size,
@@ -144,19 +146,13 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
             )
         }
 
-        val previewCount = expenseRepository.getAssistantExpenseCountFiltered(
-            startDate = period.start,
-            endDate = period.end,
-            transactionTypes = intent.filters.transactionTypes.map { it.toEntity() }.toSet(),
-            categoryIds = intent.filters.categoryIds,
-            merchantNames = intent.filters.merchants,
-            ownershipFilter = intent.filters.ownership.toRepositoryOwnershipFilter()
-        )
+        val (fetched, dataQuality) = assistantFilteredExpensesCurrencyAware(intent, period)
+        val filtered = fetched.filter { !it.expense.isSpendingNeutralised } // INV-1 (exclusion only; ownership scope stays with the query filter)
         return FinancialQueryResult.TransactionList(
             title = buildListTitle(intent),
-            previewCount = previewCount,
+            previewCount = filtered.size,
             drilldownIntent = intent,
-            dataQuality = FinancialQueryDataQuality()
+            dataQuality = dataQuality
         )
     }
 
@@ -168,7 +164,7 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
         val (filteredExpenses, amountFilterDataQuality) = assistantFilteredExpensesCurrencyAware(intent, period)
         val homeCurrency = currencySettingsRepository.homeCurrency().first() // S11-016: no EUR fallback
         val groups = filteredExpenses
-            .filter { it.expense.categoryId != null }
+            .filter { !it.expense.isSpendingNeutralised && it.expense.categoryId != null }
             .groupBy { it.expense.categoryId!! }
             .values
         var failedConversions = 0
@@ -236,6 +232,7 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
         val (filteredExpenses, amountFilterDataQuality) = assistantFilteredExpensesCurrencyAware(intent, period)
         val homeCurrency = currencySettingsRepository.homeCurrency().first() // S11-016: no EUR fallback
         val groups = filteredExpenses
+            .filter { !it.expense.isSpendingNeutralised }
             .groupBy { it.expense.merchantKey ?: it.expense.merchant }
             .values
         var failedConversions = 0
@@ -404,7 +401,7 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
         period: PeriodRange
     ): FinancialQueryResult {
         val (currentExpenses, dataQuality) = assistantFilteredExpensesCurrencyAware(intent, period)
-        val currentCurrencyTotals = currentExpenses.toCurrencyTotals()
+        val currentCurrencyTotals = currentExpenses.filter { !it.expense.isSpendingNeutralised }.toCurrencyTotals()
 
         val supporting = if (intent.comparison == QueryComparison.PREVIOUS_EQUIVALENT_PERIOD) {
             val previousPeriod = AssistantPeriodResolver.previousEquivalent(
@@ -414,7 +411,7 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
             )
             val previous = PeriodRange(previousPeriod.startMs, previousPeriod.endMs)
             val (prevExpenses, _) = assistantFilteredExpensesCurrencyAware(intent, previous)
-            "Previous period: ${formatCurrencyTotals(prevExpenses.toCurrencyTotals())}"
+            "Previous period: ${formatCurrencyTotals(prevExpenses.filter { !it.expense.isSpendingNeutralised }.toCurrencyTotals())}"
         } else {
             null
         }

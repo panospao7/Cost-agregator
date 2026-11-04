@@ -25,7 +25,8 @@ enum class MatchType {
  */
 data class SearchResult(
     val expense: NaturalLanguageExpense,
-    val matchType: MatchType
+    val matchType: MatchType,
+    val normalizedAmount: Double = expense.effectiveAmount
 )
 
 /**

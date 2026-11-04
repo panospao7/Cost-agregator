@@ -109,7 +109,8 @@ class AnalyticsRepositoryAggregateTest {
         categoryId = null,
         isNotMine = false,
         transferDirection = null,
-        notes = null
+        notes = null,
+        spendingExclusionReason = expense.spendingExclusionReason
     )
 
     /**

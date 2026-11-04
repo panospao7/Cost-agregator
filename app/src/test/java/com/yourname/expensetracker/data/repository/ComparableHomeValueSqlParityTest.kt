@@ -224,4 +224,199 @@ class ComparableHomeValueSqlParityTest {
         assertEquals(listOf(1_009L, 1_008L, 1_007L), desc.map { it.first })
         assertEquals(listOf(1_007L, 1_008L, 1_009L), asc.map { it.first })
     }
+
+    // ── Neutralisation parity against Expense model (slice S3) ──────────────
+
+    @Test
+    fun `neutralised foreign row WITH valid snapshot ranks at model effectiveAmount 0_0 not baseAmount 550_0 in both Kotlin and SQL`() = runTest {
+        val neutralisedForeignWithSnapshot = Expense(
+            id = 2_001L,
+            amount = 600.0,
+            currency = "USD",
+            merchant = "M2001",
+            transactionType = com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE,
+            date = ComparableHomeValueFixture.BASE_DATE + 2_001_000L,
+            baseAmount = 550.0,
+            baseCurrency = "EUR",
+            exchangeRateUsed = 0.916667,
+            spendingExclusionReason = "INSTALLMENT_PURCHASE"
+        )
+        assertTrue(database.expenseDao().insert(neutralisedForeignWithSnapshot) > 0L)
+
+        // Pin to model values (0.0)
+        assertEquals(0.0, neutralisedForeignWithSnapshot.effectiveAmount, 0.0)
+        assertEquals(0.0, neutralisedForeignWithSnapshot.normalizedEffectiveAmount!!, 0.0)
+
+        // 1. Kotlin matches model
+        val kotlinCv = ComparableHomeValue.comparableValue(neutralisedForeignWithSnapshot, ComparableHomeValueFixture.EUR)
+        assertEquals(ComparableValue.Value(neutralisedForeignWithSnapshot.effectiveAmount), kotlinCv)
+        assertEquals(ComparableValue.Value(neutralisedForeignWithSnapshot.normalizedEffectiveAmount!!), kotlinCv)
+
+        // 2 & 3. SQL matches model (0.0, NOT 550.0)
+        val sqlCv = query(
+            "SELECT e.id, $COMPARABLE_HOME_VALUE_E_SQL FROM expenses e WHERE e.id = 2001",
+            arrayOf("EUR", "EUR")
+        ).single().second
+        assertNotNull(sqlCv)
+        assertEquals(neutralisedForeignWithSnapshot.effectiveAmount, sqlCv!!, 0.0)
+        assertEquals(neutralisedForeignWithSnapshot.normalizedEffectiveAmount!!, sqlCv, 0.0)
+    }
+
+    @Test
+    fun `neutralised foreign row WITHOUT snapshot ranks at model effectiveAmount 0_0 not None in both Kotlin and SQL`() = runTest {
+        val neutralisedForeignNoSnapshot = Expense(
+            id = 2_002L,
+            amount = 600.0,
+            currency = "USD",
+            merchant = "M2002",
+            transactionType = com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE,
+            date = ComparableHomeValueFixture.BASE_DATE + 2_002_000L,
+            baseAmount = 0.0,
+            baseCurrency = "EUR",
+            exchangeRateUsed = 0.0,
+            spendingExclusionReason = "INSTALLMENT_PURCHASE"
+        )
+        assertTrue(database.expenseDao().insert(neutralisedForeignNoSnapshot) > 0L)
+
+        assertEquals(0.0, neutralisedForeignNoSnapshot.effectiveAmount, 0.0)
+        assertEquals(0.0, neutralisedForeignNoSnapshot.normalizedEffectiveAmount!!, 0.0)
+
+        // 1 & 4. Kotlin matches model (Value(0.0), NOT None)
+        val kotlinCv = ComparableHomeValue.comparableValue(neutralisedForeignNoSnapshot, ComparableHomeValueFixture.EUR)
+        assertEquals(ComparableValue.Value(neutralisedForeignNoSnapshot.effectiveAmount), kotlinCv)
+
+        // 2 & 4. SQL matches model (0.0, NOT NULL)
+        val sqlCv = query(
+            "SELECT e.id, $COMPARABLE_HOME_VALUE_E_SQL FROM expenses e WHERE e.id = 2002",
+            arrayOf("EUR", "EUR")
+        ).single().second
+        assertNotNull("neutralised foreign row without snapshot must not be NULL in SQL", sqlCv)
+        assertEquals(neutralisedForeignNoSnapshot.effectiveAmount, sqlCv!!, 0.0)
+    }
+
+    @Test
+    fun `negative controls preserve snapshot amount for ordinary foreign row, None for unrated foreign, effectiveAmount for home, and 0_0 for isNotMine`() = runTest {
+        val ordinaryForeignWithSnapshot = Expense(
+            id = 2_003L,
+            amount = 600.0,
+            currency = "USD",
+            merchant = "M2003",
+            transactionType = com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE,
+            date = ComparableHomeValueFixture.BASE_DATE + 2_003_000L,
+            baseAmount = 550.0,
+            baseCurrency = "EUR",
+            exchangeRateUsed = 0.916667
+        )
+        val ordinaryForeignWithoutSnapshot = Expense(
+            id = 2_004L,
+            amount = 600.0,
+            currency = "USD",
+            merchant = "M2004",
+            transactionType = com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE,
+            date = ComparableHomeValueFixture.BASE_DATE + 2_004_000L,
+            baseAmount = 0.0,
+            baseCurrency = "EUR",
+            exchangeRateUsed = 0.0
+        )
+        val ordinaryHomeRow = Expense(
+            id = 2_005L,
+            amount = 80.0,
+            currency = "EUR",
+            merchant = "M2005",
+            transactionType = com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE,
+            date = ComparableHomeValueFixture.BASE_DATE + 2_005_000L,
+            isSharedExpense = true,
+            mySharePercentage = 25
+        )
+        val notMineRow = Expense(
+            id = 2_006L,
+            amount = 600.0,
+            currency = "USD",
+            merchant = "M2006",
+            transactionType = com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE,
+            date = ComparableHomeValueFixture.BASE_DATE + 2_006_000L,
+            isNotMine = true,
+            baseAmount = 550.0,
+            baseCurrency = "EUR",
+            exchangeRateUsed = 0.916667
+        )
+
+        for (row in listOf(ordinaryForeignWithSnapshot, ordinaryForeignWithoutSnapshot, ordinaryHomeRow, notMineRow)) {
+            assertTrue(database.expenseDao().insert(row) > 0L)
+        }
+
+        val sqlMap = query(
+            "SELECT e.id, $COMPARABLE_HOME_VALUE_E_SQL FROM expenses e WHERE e.id IN (2003, 2004, 2005, 2006)",
+            arrayOf("EUR", "EUR")
+        ).toMap()
+
+        // Ordinary foreign WITH snapshot -> 550.0
+        assertEquals(
+            ComparableValue.Value(550.0),
+            ComparableHomeValue.comparableValue(ordinaryForeignWithSnapshot, ComparableHomeValueFixture.EUR)
+        )
+        assertEquals(550.0, sqlMap.getValue(2_003L)!!, 0.0)
+
+        // Ordinary foreign WITHOUT snapshot -> None / NULL
+        assertTrue(ComparableHomeValue.comparableValue(ordinaryForeignWithoutSnapshot, ComparableHomeValueFixture.EUR) is ComparableValue.None)
+        assertNull(sqlMap.getValue(2_004L))
+
+        // Ordinary home-currency row -> effectiveAmount (20.0)
+        assertEquals(
+            ComparableValue.Value(ordinaryHomeRow.effectiveAmount),
+            ComparableHomeValue.comparableValue(ordinaryHomeRow, ComparableHomeValueFixture.EUR)
+        )
+        assertEquals(ordinaryHomeRow.effectiveAmount, sqlMap.getValue(2_005L)!!, 0.0)
+
+        // isNotMine row -> 0.0
+        assertEquals(
+            ComparableValue.Value(notMineRow.effectiveAmount),
+            ComparableHomeValue.comparableValue(notMineRow, ComparableHomeValueFixture.EUR)
+        )
+        assertEquals(0.0, sqlMap.getValue(2_006L)!!, 0.0)
+    }
+
+    @Test
+    fun `neutralised 550_0 foreign snapshot row sorts at 0_0 below ordinary 10_0 row in DESC order`() = runTest {
+        val ordinary10 = Expense(
+            id = 2_010L,
+            amount = 10.0,
+            currency = "EUR",
+            merchant = "M2010",
+            transactionType = com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE,
+            date = ComparableHomeValueFixture.BASE_DATE + 10_000L,
+            baseAmount = 10.0,
+            baseCurrency = "EUR",
+            exchangeRateUsed = 1.0
+        )
+        val neutralised550 = Expense(
+            id = 2_011L,
+            amount = 600.0,
+            currency = "USD",
+            merchant = "M2011",
+            transactionType = com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE,
+            date = ComparableHomeValueFixture.BASE_DATE + 20_000L,
+            baseAmount = 550.0,
+            baseCurrency = "EUR",
+            exchangeRateUsed = 0.916667,
+            spendingExclusionReason = "INSTALLMENT_PURCHASE"
+        )
+        assertTrue(database.expenseDao().insert(ordinary10) > 0L)
+        assertTrue(database.expenseDao().insert(neutralised550) > 0L)
+
+        val sqlDescOrder = query(
+            "SELECT e.id FROM expenses e WHERE e.id IN (2010, 2011) " +
+                "ORDER BY ($COMPARABLE_HOME_VALUE_E_SQL IS NULL) ASC, " +
+                "$COMPARABLE_HOME_VALUE_E_SQL DESC, e.date DESC, e.id DESC",
+            arrayOf("EUR", "EUR", "EUR", "EUR")
+        ).map { it.first }
+
+        val kotlinDescOrder = listOf(ordinary10, neutralised550)
+            .sortedWith(ComparableHomeValue.comparator(ComparableHomeValueFixture.EUR, ComparableHomeValue.Direction.DESCENDING))
+            .map { it.id }
+
+        // 10.0 row (2010) must rank above neutralised 550.0 row (2011, which ranks at 0.0) in DESC
+        assertEquals(listOf(2_010L, 2_011L), kotlinDescOrder)
+        assertEquals(listOf(2_010L, 2_011L), sqlDescOrder)
+    }
 }

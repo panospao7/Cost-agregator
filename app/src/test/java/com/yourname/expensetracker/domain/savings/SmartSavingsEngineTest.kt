@@ -835,6 +835,44 @@ class SmartSavingsEngineTest : AnalyticsEngineTestBase() {
         }
     }
 
+    @Test
+    fun `neutralised foreign row with missing exchange rate does not fail complete money input in savings`() = runTest {
+        val dao = mockk<ExpenseDao>()
+        val converter = mockk<CurrencyConverter>()
+        val neutralisedForeign = com.yourname.expensetracker.data.database.entity.Expense(
+            id = 500L,
+            amount = 400.0,
+            currency = "USD",
+            merchant = "Installment Purchase",
+            transactionType = TransactionType.PURCHASE,
+            date = now - 5L * 24 * 60 * 60 * 1000,
+            spendingExclusionReason = "INSTALLMENT_PURCHASE"
+        ).toExpenseSnapshot()
+        coEvery { expenseRepository.getExpenseSnapshotsBetween(any(), any()) } returns listOf(neutralisedForeign)
+        coEvery { converter.convertOutcome(any(), "USD", "EUR", any(), any(), any()) } returns
+            ConversionOutcome.Failed(
+                originalAmount = 0.0,
+                originalCurrency = "USD",
+                targetCurrency = "EUR",
+                rateBasis = RateBasis.TRANSACTION_DATE,
+                failureType = ConversionFailureType.MISSING_RATE,
+                message = "No USD->EUR rate"
+            )
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(budgetStatus(300.0)))
+        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) } returns monteCarloResult(0.0)
+
+        val result = realCapEngine(converter, dao).calculatePortfolioRecommendationsResult(
+            listOf(typedGoal()),
+            timeHorizon = SmartSavingsEngine.TimeHorizon.MONTH,
+            homeCurrency = "EUR"
+        )
+
+        assertTrue(result is SmartSavingsComputationResult.Available)
+        val available = result as SmartSavingsComputationResult.Available
+        assertEquals(ConversionQuality.COMPLETE, available.metadata.conversionQuality)
+        assertEquals(0, available.metadata.excludedInputCount)
+    }
+
     private fun realCapEngine(converter: CurrencyConverter, dao: ExpenseDao) = SmartSavingsEngine(
         expenseRepository, categoryRepository, budgetRepository, budgetCalculator, monteCarloSimulator,
         timeProvider, AnalyticsCurrencyNormalizer(converter), cashFlowCalculator,

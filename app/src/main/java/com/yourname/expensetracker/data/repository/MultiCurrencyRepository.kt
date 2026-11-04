@@ -202,6 +202,18 @@ class MultiCurrencyRepository @Inject constructor(
             val result = mutableListOf<ConvertedExpense>()
 
             for (expense in expenses) {
+                if (expense.isSpendingNeutralised) {
+                    result.add(
+                        ConvertedExpense(
+                            expense = expense,
+                            homeCurrencyAmount = 0.0,
+                            conversionRate = 1.0,
+                            homeCurrency = homeCurrency,
+                            conversionWarning = null
+                        )
+                    )
+                    continue
+                }
                 // Convert effectiveAmount (ownership-adjusted) — the embedded Expense stays raw.
                 val conversion = currencyConverter.convert(
                     expense.effectiveAmount,
@@ -632,6 +644,7 @@ class MultiCurrencyRepository @Inject constructor(
     ): List<PeriodMoneyAggregate> {
         val homeCurrency = requireHomeCurrencyForMoneyMath().code
         val expenses = expenseDao.getExpensesBetweenUncapped(startDate, endDate)
+            .filter { !it.isSpendingNeutralised }
         if (expenses.isEmpty()) return emptyList()
 
         val byWeek = expenses.groupBy { TimePeriodUtils.getStartOfWeek(it.date) }
@@ -662,6 +675,7 @@ class MultiCurrencyRepository @Inject constructor(
     ): List<PeriodMoneyAggregate> {
         val homeCurrency = requireHomeCurrencyForMoneyMath().code
         val expenses = expenseDao.getExpensesBetweenUncapped(startDate, endDate)
+            .filter { !it.isSpendingNeutralised }
         if (expenses.isEmpty()) return emptyList()
 
         val byDay = expenses.groupBy { TimePeriodUtils.getStartOfDay(it.date) }
@@ -868,7 +882,7 @@ class MultiCurrencyRepository @Inject constructor(
         // Filtering before grouping guarantees no zero-value rows are emitted
         // for months/categories that contain only non-PURCHASE rows.
         val purchases = expenses.filter {
-            it.transactionType == TransactionType.PURCHASE
+            it.transactionType == TransactionType.PURCHASE && !it.isSpendingNeutralised
         }
         if (purchases.isEmpty()) return emptyList()
 
