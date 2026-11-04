@@ -45,9 +45,23 @@ object ReceiptItemPlaceholder {
      */
     fun isRetryable(item: ReceiptItemCategorizationSnapshot): Boolean =
         isPlaceholder(item) &&
-            item.userCorrectedCategoryId == null &&
-            item.userCorrectedCategoryName.isNullOrBlank() &&
-            item.userCorrectedAt == null
+            !isUserTouched(
+                correctedCategoryId = item.userCorrectedCategoryId,
+                correctedCategoryName = item.userCorrectedCategoryName,
+                correctedAt = item.userCorrectedAt
+            )
+
+    /**
+     * Primitive form of the user-correction rule, shared by the snapshot overload above and the
+     * entity-level check in the DAO transaction: a row is user-touched when any correction field is set.
+     */
+    fun isUserTouched(
+        correctedCategoryId: Long?,
+        correctedCategoryName: String?,
+        correctedAt: Long?
+    ): Boolean = correctedCategoryId != null ||
+        !correctedCategoryName.isNullOrBlank() ||
+        correctedAt != null
 
     /** Persisted alternatives are a JSON array; null, blank and "[]" mean none. */
     fun hasAlternativesJson(json: String?): Boolean {

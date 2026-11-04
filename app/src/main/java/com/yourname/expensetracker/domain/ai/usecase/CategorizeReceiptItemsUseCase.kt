@@ -171,6 +171,12 @@ class CategorizeReceiptItemsUseCase @Inject constructor(
             Timber.d("Router disabled receipt item categorization")
             return CategorizationResult.Disabled
         }
+        // A retry must never be answered by the keyword fallback: its default categories would
+        // fill the placeholder rows and end the retry for good. Nothing is written or changed.
+        if (isRetry && route.route != AiRoute.CLOUD && route.route != AiRoute.ON_DEVICE) {
+            Timber.d("Receipt item retry for %d skipped: route=%s", receiptId, route.route.name)
+            return CategorizationResult.Error
+        }
 
         // 7. Update receipt status to analyzing (not on a retry: the stored status stays truthful)
         if (!isRetry) {
@@ -341,6 +347,11 @@ class CategorizeReceiptItemsUseCase @Inject constructor(
         Timber.d("Receipt item retry for %d updated %d of %d rows", receiptId, updated, answered.size)
 
         val stored = receiptItemCategorizationRepository.getByReceiptIdAsSnapshots(receiptId)
+        if (stored.isEmpty()) {
+            // The receipt (and its rows) went away during the call: nothing to report or store.
+            Timber.w("Receipt item retry for %d found no stored rows", receiptId)
+            return CategorizationResult.Error
+        }
         val remaining = stored.count { ReceiptItemPlaceholder.isRetryable(it) }
         receiptRepository.updateCategorizationStatus(
             receiptId,

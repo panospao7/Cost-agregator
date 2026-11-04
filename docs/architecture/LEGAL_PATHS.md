@@ -329,12 +329,15 @@ COMPLETE a partial receipt item categorization (FIX-1.0.4 N-05-3 step 2, owner i
   → ReceiptScanViewModel.analyzeReceiptItems() (the user's Analyze tap; the ONLY caller that
     passes retryUncategorized = true) → CategorizeReceiptItemsUseCase
   → Sends ONLY the not-yet-categorised, user-untouched placeholder items, at most one service
-    call per tap, totalTax = null; same CloudReceiptItemCategorizationService /
-    RECEIPT_ITEM_CATEGORIZATION privacy path
+    call per tap, totalTax = null; routed by AiCapabilityRouter: CLOUD uses
+    CloudReceiptItemCategorizationService / RECEIPT_ITEM_CATEGORIZATION privacy path, ON_DEVICE
+    may run the on-device service; DETERMINISTIC_FALLBACK and DISABLED return Error / Disabled
+    with no write, so placeholder rows stay retryable (the keyword fallback never answers a retry)
   → ReceiptItemCategorizationRepository.updatePlaceholderRowsWithRetryResult() (write barrier)
     → ReceiptItemCategorizationDao.updatePlaceholderRowsIfStillUncategorized() — one Room
     @Transaction that re-reads each row and updates it only if it is STILL an unsent placeholder
-    with no user correction (ReceiptItemPlaceholder is the single definition)
+    with no user correction (ReceiptItemPlaceholder holds the placeholder rule and the
+    user-correction rule as primitive overloads shared by the DAO and the domain)
   → READY only when no retryable placeholder remains; a failed retry changes nothing
 
 FORBIDDEN:

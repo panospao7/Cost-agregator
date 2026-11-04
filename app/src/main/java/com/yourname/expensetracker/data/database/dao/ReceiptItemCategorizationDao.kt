@@ -133,9 +133,11 @@ interface ReceiptItemCategorizationDao {
                 rationale = current.aiRationale,
                 hasAlternatives = ReceiptItemPlaceholder.hasAlternativesJson(current.alternativeCategoriesJson)
             )
-            val userTouched = current.userCorrectedCategoryId != null ||
-                !current.userCorrectedCategoryName.isNullOrBlank() ||
-                current.userCorrectedAt != null
+            val userTouched = ReceiptItemPlaceholder.isUserTouched(
+                correctedCategoryId = current.userCorrectedCategoryId,
+                correctedCategoryName = current.userCorrectedCategoryName,
+                correctedAt = current.userCorrectedAt
+            )
             if (!stillPlaceholder || userTouched) continue
             update(
                 current.copy(

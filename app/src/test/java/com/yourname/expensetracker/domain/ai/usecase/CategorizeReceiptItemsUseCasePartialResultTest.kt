@@ -1,6 +1,10 @@
 package com.yourname.expensetracker.domain.ai.usecase
 
 import com.yourname.expensetracker.data.ai.provider.CloudReceiptItemCategorizationService
+import com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException
+import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
+import com.yourname.expensetracker.data.backup.DatabaseAccessType
+import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.entity.CategorizationStatus
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadPolicy
@@ -74,6 +78,13 @@ class CategorizeReceiptItemsUseCasePartialResultTest {
 
     private lateinit var categorizationRepository: ReceiptItemCategorizationRepository
     private lateinit var useCase: CategorizeReceiptItemsUseCase
+    private lateinit var router: AiCapabilityRouter
+
+    private fun routeTo(route: AiRoute) {
+        coEvery { router.decide(AiCapability.RECEIPT_ITEM_CATEGORIZATION, any(), any()) } returns AiRouteDecision(
+            route = route, reason = route.name, providerName = "gemini", modelName = "m"
+        )
+    }
 
     private fun name(index: Int) = "Product " + ('a' + index % 26) + ('a' + index / 26)
 
@@ -81,7 +92,8 @@ class CategorizeReceiptItemsUseCasePartialResultTest {
         itemCount: Int,
         blankDescriptionAt: Set<Int> = emptySet(),
         serviceOverride: ReceiptItemCategorizationService? = null,
-        totalTax: Double? = null
+        totalTax: Double? = null,
+        route: AiRoute = AiRoute.CLOUD
     ) {
         val categories = MerchantCategoryProvider.categoryBlueprints
             .mapIndexed { i, c -> CategoryRef(id = (i + 1).toLong(), name = c.name) }
@@ -112,10 +124,8 @@ class CategorizeReceiptItemsUseCasePartialResultTest {
         every { aiSettingsRepository.settings() } returns flowOf(
             AiSettings(aiEnabled = true, receiptItemCategorizationEnabled = true)
         )
-        val router = mockk<AiCapabilityRouter>()
-        coEvery { router.decide(AiCapability.RECEIPT_ITEM_CATEGORIZATION, any(), any()) } returns AiRouteDecision(
-            route = AiRoute.CLOUD, reason = "cloud", providerName = "gemini", modelName = "m"
-        )
+        router = mockk<AiCapabilityRouter>()
+        routeTo(route)
         val artifactRepository = mockk<AiArtifactRepository>(relaxed = true)
         coEvery { artifactRepository.upsert(capture(artifacts)) } returns 1L
         val receiptRepository = mockk<ReceiptRepository>(relaxed = true)
@@ -663,5 +673,104 @@ class CategorizeReceiptItemsUseCasePartialResultTest {
         assertTrue("was $result", result is CategorizationResult.AlreadyAnalyzed)
         assertEquals(0, transportCalls.get())
         verifyNothingWritten()
+    }
+
+    // ---- Retry route gating, storage mode, deleted receipt, write barrier ----
+
+    @Test
+    fun `retry on DETERMINISTIC_FALLBACK is an Error with no write and a later CLOUD retry works`() = runTest {
+        setUp(itemCount = 60, serviceOverride = answeringService(), route = AiRoute.DETERMINISTIC_FALLBACK)
+        val rows = (0 until 60).map { storedRow(it, real = it < 25) }
+        installStored(rows)
+
+        val result = useCase(receiptId, retryUncategorized = true)
+
+        assertEquals(CategorizationResult.Error, result)
+        assertTrue(sentInputs.isEmpty())
+        verifyNothingWritten()
+        assertEquals(rows, stored)
+        assertTrue(stored.drop(25).all { ReceiptItemPlaceholder.isRetryable(it) })
+
+        routeTo(AiRoute.CLOUD)
+        val later = useCase(receiptId, retryUncategorized = true)
+
+        assertTrue("was $later", later is CategorizationResult.Success)
+        assertEquals(35, sentInputs.single().lineItems.size)
+        assertEquals(listOf(CategorizationStatus.READY), statuses)
+        assertTrue(stored.none { ReceiptItemPlaceholder.isPlaceholder(it) })
+    }
+
+    @Test
+    fun `retry on DISABLED route is Disabled with no write and a later CLOUD retry works`() = runTest {
+        setUp(itemCount = 60, serviceOverride = answeringService(), route = AiRoute.DISABLED)
+        val rows = (0 until 60).map { storedRow(it, real = it < 25) }
+        installStored(rows)
+
+        val result = useCase(receiptId, retryUncategorized = true)
+
+        assertEquals(CategorizationResult.Disabled, result)
+        assertTrue(sentInputs.isEmpty())
+        verifyNothingWritten()
+        assertEquals(rows, stored)
+
+        routeTo(AiRoute.CLOUD)
+        val later = useCase(receiptId, retryUncategorized = true)
+
+        assertTrue("was $later", later is CategorizationResult.Success)
+        assertEquals(listOf(CategorizationStatus.READY), statuses)
+        assertTrue(stored.none { ReceiptItemPlaceholder.isPlaceholder(it) })
+    }
+
+    @Test
+    fun `retry with persistItemTextAllowed false stores no text and sends nothing`() = runTest {
+        setUp(itemCount = 5, serviceOverride = answeringService())
+        val rows = (0 until 5).map { storedRow(it, real = it < 2) }
+        installStored(rows)
+
+        val result = useCase(receiptId, retryUncategorized = true, persistItemTextAllowed = false)
+
+        assertTrue("was $result", result is CategorizationResult.AlreadyAnalyzed)
+        assertTrue(sentInputs.isEmpty())
+        assertTrue(retryWrittenItems.isEmpty())
+        verifyNothingWritten()
+        assertEquals(rows, stored)
+    }
+
+    @Test
+    fun `retry where the receipt rows vanish during the call is an Error with no artifact write`() = runTest {
+        setUp(itemCount = 5, serviceOverride = answeringService())
+        val rows = (0 until 5).map { storedRow(it, real = it < 2) }
+        // first read (before the call) sees the rows, the re-read after the write sees none
+        coEvery { categorizationRepository.getByReceiptIdAsSnapshots(receiptId) } returnsMany
+            listOf(rows, emptyList())
+        coEvery {
+            categorizationRepository.updatePlaceholderRowsWithRetryResult(receiptId, any(), any(), any())
+        } returns 0
+
+        val result = useCase(receiptId, retryUncategorized = true)
+
+        assertEquals(CategorizationResult.Error, result)
+        assertTrue(artifacts.isEmpty())
+        assertTrue(statuses.isEmpty())
+    }
+
+    @Test
+    fun `retry blocked by the database write barrier is an Error and writes no status or artifact`() = runTest {
+        setUp(itemCount = 5, serviceOverride = answeringService())
+        installStored((0 until 5).map { storedRow(it, real = it < 2) })
+        coEvery {
+            categorizationRepository.updatePlaceholderRowsWithRetryResult(receiptId, any(), any(), any())
+        } throws DatabaseAccessBlockedException(
+            DatabaseAccessType.WRITE,
+            DatabaseAccessOperation("ReceiptItemCategorizationRepository.updatePlaceholderRowsWithRetryResult"),
+            RestoreMaintenanceMode.Mode.RESTORE_PREPARING
+        )
+
+        val result = useCase(receiptId, retryUncategorized = true)
+
+        assertEquals(CategorizationResult.Error, result)
+        assertTrue(artifacts.isEmpty())
+        assertTrue(statuses.isEmpty())
+        coVerify(exactly = 0) { categorizationRepository.saveCategorizationResult(any(), any(), any()) }
     }
 }
