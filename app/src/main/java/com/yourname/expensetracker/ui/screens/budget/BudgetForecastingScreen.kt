@@ -317,7 +317,7 @@ private fun ForecastDetailsCard(budget: Budget, forecast: BudgetForecast, homeCu
             )
 
             // BL-06: a forecast that left rows out must say so.
-            if (forecast.isPartial || forecast.excludedExpenseCount > 0) {
+            if (shouldShowPartialForecastNotice(forecast)) {
                 Spacer(modifier = Modifier.height(12.dp))
                 Text(
                     text = stringResource(R.string.dashboard_partial_currency_warning),
@@ -450,6 +450,10 @@ internal const val FORECAST_LOW_CONFIDENCE_THRESHOLD = 0.6
  * confidence at or above [FORECAST_LOW_CONFIDENCE_THRESHOLD]. Below it the probability is
  * a near-50% prior, not a measurement, so nothing is rendered.
  */
+/** A forecast that left rows out must say so. */
+internal fun shouldShowPartialForecastNotice(forecast: BudgetForecast): Boolean =
+    forecast.isPartial || forecast.excludedExpenseCount > 0
+
 internal fun shouldShowOverspendProbability(forecast: BudgetForecast): Boolean =
     forecast.riskLevel != ForecastRiskLevel.UNKNOWN &&
         forecast.confidenceScore >= FORECAST_LOW_CONFIDENCE_THRESHOLD &&

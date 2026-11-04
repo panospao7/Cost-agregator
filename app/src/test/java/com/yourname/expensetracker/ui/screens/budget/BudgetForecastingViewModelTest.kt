@@ -391,7 +391,7 @@ class BudgetForecastingViewModelTest : ViewModelTestUtils() {
 
         // With normalized budget 850.0 EUR and currentSpending 660.0 EUR:
         // remaining = 850.0 - 660.0 = 190.0 EUR (not 1000.0 - 660.0 = 340.0)
-        // potentialSavings = predictedSpending (200.0) - remaining (190.0) = 10.0 EUR (would be 0.0 if raw 1000.0 used)
+        // potentialSavings = full-period total (660.0 + 200.0 = 860.0) - normalized limit (850.0) = 10.0 EUR (would be 0.0 if raw 1000.0 used)
         // percentUsed = (660.0 / 850.0) * 100 = 77.65% (> 75%, so INCREASE_BUDGET is emitted; would be 66% <= 75% if raw 1000.0 used)
         val reduceRec = state.recommendations.first { it.type == com.yourname.expensetracker.domain.budget.RecommendationType.REDUCE_SPENDING }
         assertEquals(10.0, reduceRec.potentialSavings!!, 0.01)
@@ -399,6 +399,77 @@ class BudgetForecastingViewModelTest : ViewModelTestUtils() {
             "INCREASE_BUDGET must be emitted because normalized percentUsed is 77.65% (> 75%)",
             state.recommendations.any { it.type == com.yourname.expensetracker.domain.budget.RecommendationType.INCREASE_BUDGET }
         )
+    }
+
+    private fun viewModelWithRealRecommendations(): BudgetForecastingViewModel {
+        val currencyRepo = mockk<CurrencySettingsRepository>(relaxed = true)
+        every { currencyRepo.homeCurrency() } returns flowOf("EUR")
+        coEvery { currencyRepo.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
+        return BudgetForecastingViewModel(
+            forecastingEngine = forecastingEngine,
+            recommendationEngine = BudgetRecommendationEngine(),
+            currencySettingsRepository = currencyRepo
+        )
+    }
+
+    private fun spentForecast(budgetId: Long, spent: Double, predicted: Double): BudgetForecast =
+        createForecast(
+            budgetId = budgetId,
+            predictedSpending = predicted,
+            predictedRemaining = 1_000.0 - spent - predicted,
+            confidenceScore = 0.9,
+            riskLevel = ForecastRiskLevel.HIGH,
+            overspendProbability = 0.5
+        ).also {
+            it.spentToDate = spent
+            it.normalizedBudgetAmount = 1_000.0
+        }
+
+    @Test
+    fun `BL-06 full-period projection under limit yields zero potential savings through the viewmodel`() = runTest(testDispatcher) {
+        val budget = createBudget(id = 60L, amount = 1_000.0)
+        coEvery { forecastingEngine.generateForecastResult(budget, 30) } returns
+            BudgetForecastResult.Available(spentForecast(budget.id, spent = 700.0, predicted = 200.0))
+        val vm = viewModelWithRealRecommendations()
+
+        vm.generateForecast(budget)
+        advanceUntilIdle()
+
+        val reduce = vm.uiState.value.recommendations.first {
+            it.type == com.yourname.expensetracker.domain.budget.RecommendationType.REDUCE_SPENDING
+        }
+        assertEquals(0.0, reduce.potentialSavings!!, 0.0)
+    }
+
+    @Test
+    fun `BL-06 full-period projection 1200 over limit 1000 yields potential savings 200 through the viewmodel`() = runTest(testDispatcher) {
+        val budget = createBudget(id = 61L, amount = 1_000.0)
+        coEvery { forecastingEngine.generateForecastResult(budget, 30) } returns
+            BudgetForecastResult.Available(spentForecast(budget.id, spent = 700.0, predicted = 500.0))
+        val vm = viewModelWithRealRecommendations()
+
+        vm.generateForecast(budget)
+        advanceUntilIdle()
+
+        val reduce = vm.uiState.value.recommendations.first {
+            it.type == com.yourname.expensetracker.domain.budget.RecommendationType.REDUCE_SPENDING
+        }
+        assertEquals(200.0, reduce.potentialSavings!!, 0.01)
+    }
+
+    @Test
+    fun `BL-06 viewmodel passes the forecast full-period total to the recommendation engine`() = runTest(testDispatcher) {
+        val budget = createBudget(id = 62L, amount = 1_000.0)
+        coEvery { forecastingEngine.generateForecastResult(budget, 30) } returns
+            BudgetForecastResult.Available(spentForecast(budget.id, spent = 700.0, predicted = 500.0))
+        val captured = io.mockk.slot<com.yourname.expensetracker.domain.budget.BudgetRecommendationForecast>()
+        every { recommendationEngine.generateRecommendations(any(), capture(captured), any()) } returns emptyList()
+
+        viewModel.generateForecast(budget)
+        advanceUntilIdle()
+
+        assertEquals(500.0, captured.captured.predictedSpending, 0.0)
+        assertEquals(1_200.0, captured.captured.predictedPeriodTotal, 0.0)
     }
 
     private fun createBudget(
