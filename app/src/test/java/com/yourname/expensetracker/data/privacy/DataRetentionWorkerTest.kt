@@ -559,6 +559,82 @@ class DataRetentionWorkerTest {
         assertEquals(timeProvider.now(), purgeCalls.toMap()["user_corrections.notificationText"])
     }
 
+    /** In-memory table: a row is purged (deleted or text blanked) when createdAt < cutoff. */
+    private class AgedRowsTarget(
+        override val name: String,
+        val rowAgesDays: MutableList<Long>,
+        private val nowMs: Long
+    ) : RetentionTarget {
+        val blanked = mutableListOf<Long>()
+        override suspend fun purge(cutoffMs: Long): RetentionPurgeResult {
+            val dayMs = 24L * 60 * 60 * 1000
+            val expired = rowAgesDays.filter { nowMs - it * dayMs < cutoffMs }
+            rowAgesDays.removeAll(expired)
+            blanked += expired
+            return RetentionPurgeResult(name, expired.size, true)
+        }
+    }
+
+    @Test
+    fun `fail-closed load state skips the user retention window raw routes and a 90 day user keeps older rows`() = runTest {
+        val now = timeProvider.now()
+        // The user really has a 90 day window, but the read failed and returned placeholder 30 days.
+        val notifications = AgedRowsTarget("raw_notifications", mutableListOf(10L, 45L, 80L), now)
+        val ocr = AgedRowsTarget("scanned_receipts.rawOcrText", mutableListOf(10L, 45L, 80L), now)
+        val intake = AgedRowsTarget("notification_intake", mutableListOf(10L, 45L, 80L), now)
+        val pending = target("pending_reviews.notificationText", 0)
+        val diagnostics = target("background_job_runs.errorMessage", 0)
+        every { retentionRegistry.allTargets() } returns
+            setOf(notifications, ocr, intake, pending, diagnostics)
+        coEvery { privacySettingsRepository.getLoadState() } returns
+            PrivacySettingsLoadState.CorruptedFailClosed(PrivacySettings.FAIL_CLOSED_DEFAULTS, "IO error")
+
+        assertEquals(Result.success(), buildWorker().doWork())
+
+        assertEquals(listOf(10L, 45L, 80L), notifications.rowAgesDays)
+        assertEquals(listOf(10L, 45L, 80L), ocr.rowAgesDays)
+        assertEquals(listOf(10L, 45L, 80L), intake.rowAgesDays)
+        // Routes capped at 30 days or fixed by policy cannot over-delete and still run.
+        val ran = purgeCalls.map { it.first }.toSet()
+        assertTrue("pending_reviews.notificationText" in ran)
+        assertTrue("background_job_runs.errorMessage" in ran)
+        // Skipped targets leave no checkpoint record, so the next run re-attempts them.
+        assertNull(checkpointStore().load("raw_notifications"))
+        assertNull(checkpointStore().load("scanned_receipts.rawOcrText"))
+        assertNull(checkpointStore().load("notification_intake"))
+    }
+
+    @Test
+    fun `readable 90 day settings purge only rows older than 90 days while the skip set targets stay routed`() = runTest {
+        val now = timeProvider.now()
+        val notifications = AgedRowsTarget("raw_notifications", mutableListOf(10L, 45L, 100L), now)
+        every { retentionRegistry.allTargets() } returns setOf(notifications)
+        stubSettings(PrivacySettings(rawNotificationRetentionDays = 90))
+
+        assertEquals(Result.success(), buildWorker().doWork())
+
+        assertEquals(listOf(10L, 45L), notifications.rowAgesDays)
+        assertEquals(listOf(100L), notifications.blanked)
+    }
+
+    @Test
+    fun `a real row is redacted immediately under a loaded stricter mode`() = runTest {
+        val now = timeProvider.now()
+        val corrections = AgedRowsTarget("user_corrections.notificationText", mutableListOf(1L, 3L), now)
+        every { retentionRegistry.allTargets() } returns setOf(corrections)
+        // A real Loaded state with the same placeholder-looking values is a user choice.
+        coEvery { privacySettingsRepository.getLoadState() } returns
+            PrivacySettingsLoadState.Loaded(
+                PrivacySettings(rawNotificationStorageMode = RawStorageMode.STORE_REDACTED)
+            )
+
+        assertEquals(Result.success(), buildWorker().doWork())
+
+        // Cutoff = now: both recent rows are blanked (a 30 day cutoff would keep them).
+        assertEquals(listOf(1L, 3L), corrections.blanked)
+        assertTrue(corrections.rowAgesDays.isEmpty())
+    }
+
     @Test
     fun `P-08-1 user corrections notification text cutoff under STORE_RAW is the min of retention days and 30`() = runTest {
         val dayMs = 24L * 60 * 60 * 1000

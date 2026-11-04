@@ -9,7 +9,10 @@ import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
 import com.yourname.expensetracker.domain.privacy.RawStorageMode
 import io.mockk.*
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Before
@@ -634,6 +637,62 @@ class TransactionClassifierTest {
     }
 
     @Test
+    fun `FirstRunDefault load state does not purge a learned model and training continues`() = runBlocking<Unit> {
+        val dir = createTempDir("classifier_firstrun")
+        val privacy = SwitchablePrivacy()
+        val subject = trainedAndPersisted(dir, passthroughCrypto(), privacy)
+        val trainedStats = subject.getStats()
+        val fileBefore = modelFileIn(dir).readBytes()
+
+        privacy.firstRun = true
+        assertTrue("predict still uses the model", subject.predict(probes[0]) > 0.5f)
+
+        assertEquals("totals kept", trainedStats, subject.getStats())
+        assertTrue("model file kept", modelFileIn(dir).exists())
+        assertArrayEquals("model file untouched", fileBefore, modelFileIn(dir).readBytes())
+
+        subject.train("Payment of 77.50 EUR at firstruncase", isTransaction = true)
+        assertEquals(trainedStats.totalPositive + 1, subject.getStats().totalPositive)
+        subject.destroy()
+    }
+
+    /**
+     * Liveness (not a pre-fix discriminator): the queue order between train() and the blocked
+     * onBackground() holder cannot be forced without sleeping or touching internals, so this proves
+     * the fixed code never deadlocks in either order, bounded by timeouts.
+     */
+    @Test
+    fun `train from a single thread dispatcher completes while a runBlocking holder on that thread waits`() = runBlocking<Unit> {
+        val dir = createTempDir("classifier_single_thread")
+        val reachedRead = java.util.concurrent.CountDownLatch(1)
+        val repo = mockk<PrivacySettingsRepository>()
+        coEvery { repo.getLoadState() } answers {
+            reachedRead.countDown()
+            PrivacySettingsLoadState.Loaded(PrivacySettings(rawNotificationStorageMode = RawStorageMode.STORE_RAW))
+        }
+        val (subject, _) = classifierFor(emptyList(), dir, passthroughCrypto(), repo)
+        val mutex = TransactionClassifier::class.java.getDeclaredField("mutex")
+            .apply { isAccessible = true }.get(subject) as kotlinx.coroutines.sync.Mutex
+        val executor = java.util.concurrent.Executors.newSingleThreadExecutor()
+        val single = executor.asCoroutineDispatcher()
+        try {
+            mutex.lock() // simulates a long lock holder (e.g. retrain)
+            val trainJob = async(single) { subject.train("Payment of 1.99 EUR at singlethread", isTransaction = true) }
+            assertTrue("train reached the settings read", reachedRead.await(10, java.util.concurrent.TimeUnit.SECONDS))
+            // Blocks the single thread in onBackground()'s runBlocking { saveToDisk() }.
+            val holder = executor.submit { subject.onBackground() }
+            mutex.unlock()
+            withTimeout(15_000) { trainJob.await() }
+            holder.get(15, java.util.concurrent.TimeUnit.SECONDS)
+            assertEquals(1, subject.getStats().totalPositive)
+        } finally {
+            if (mutex.isLocked) mutex.unlock()
+            executor.shutdownNow()
+            subject.destroy()
+        }
+    }
+
+    @Test
     fun `D4 definite DO_NOT_STORE delivered as a Loaded state with fail-closed defaults still purges`() = runBlocking<Unit> {
         val dir = createTempDir("classifier_d4_definite")
         val privacy = SwitchablePrivacy()
@@ -828,12 +887,16 @@ class TransactionClassifierTest {
         @Volatile var mode: RawStorageMode = RawStorageMode.STORE_RAW,
         @Volatile var failure: Throwable? = null,
         /** When true the repository reports the real fail-closed load state (IO error path). */
-        @Volatile var failClosed: Boolean = false
+        @Volatile var failClosed: Boolean = false,
+        /** When true the repository reports a genuine first run (normal defaults, STORE_RAW). */
+        @Volatile var firstRun: Boolean = false
     ) {
         val repo: PrivacySettingsRepository = mockk<PrivacySettingsRepository>().also { r ->
             coEvery { r.getLoadState() } answers {
                 failure?.let { throw it }
-                if (failClosed) {
+                if (firstRun) {
+                    PrivacySettingsLoadState.FirstRunDefault(PrivacySettings())
+                } else if (failClosed) {
                     PrivacySettingsLoadState.CorruptedFailClosed(
                         settings = PrivacySettings.FAIL_CLOSED_DEFAULTS,
                         reason = "IO error"

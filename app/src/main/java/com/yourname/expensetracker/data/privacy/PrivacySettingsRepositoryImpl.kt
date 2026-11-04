@@ -119,8 +119,13 @@ class PrivacySettingsRepositoryImpl @Inject constructor(
             context.privacySettingsDataStore.edit { prefs ->
                 // PRIV-6825-04: Use load-state settings as base so corruption cannot resurrect unsafe defaults.
                 // toLoadState().settings() returns FAIL_CLOSED_DEFAULTS on corruption, not normal defaults.
-                val current = prefs.toLoadState().settings()
+                val state = prefs.toLoadState()
+                val current = state.settings()
                 val updated = transform(current)
+                if (state is PrivacySettingsLoadState.CorruptedFailClosed) {
+                    persistFromCorrupted(prefs, current, updated, transform)
+                    return@edit
+                }
                 prefs[Keys.NOTIFICATION_CAPTURE_ENABLED] = updated.notificationCaptureEnabled
                 prefs[Keys.CLOUD_AI_ENABLED] = updated.cloudAiEnabled
                 prefs[Keys.REDACT_BEFORE_CLOUD] = updated.redactBeforeCloud
@@ -144,6 +149,92 @@ class PrivacySettingsRepositoryImpl @Inject constructor(
             val persisted = getSettings()
             applyPrivacyChange(old, persisted)
         }
+    }
+
+    /**
+     * Write path while the stored settings are corrupted. The corrupted placeholders are not
+     * user choices, so they must never be persisted as if they were:
+     *  - only fields the user actually changed are written (other toggles persist their own
+     *    field and leave everything else, including the corrupted marker, untouched);
+     *  - the corrupted state clears only when the user actively sets a storage mode. A mode
+     *    counts as set even when it equals the placeholder (probed with two different inputs,
+     *    so a transform that sets DO_NOT_STORE explicitly is still detected);
+     *  - when the marker clears, storage modes the user did not choose that are absent or
+     *    invalid are persisted as DO_NOT_STORE so clearing can never resurrect a permissive
+     *    first-run default.
+     */
+    private fun persistFromCorrupted(
+        prefs: androidx.datastore.preferences.core.MutablePreferences,
+        current: PrivacySettings,
+        updated: PrivacySettings,
+        transform: (PrivacySettings) -> PrivacySettings
+    ) {
+        fun <T> writeIfChanged(
+            key: Preferences.Key<T>,
+            before: T,
+            after: T
+        ) {
+            if (before != after) prefs[key] = after
+        }
+        writeIfChanged(Keys.NOTIFICATION_CAPTURE_ENABLED, current.notificationCaptureEnabled, updated.notificationCaptureEnabled)
+        writeIfChanged(Keys.CLOUD_AI_ENABLED, current.cloudAiEnabled, updated.cloudAiEnabled)
+        writeIfChanged(Keys.REDACT_BEFORE_CLOUD, current.redactBeforeCloud, updated.redactBeforeCloud)
+        writeIfChanged(Keys.RECEIPT_IMAGE_CLOUD_ENABLED, current.receiptImageCloudEnabled, updated.receiptImageCloudEnabled)
+        writeIfChanged(Keys.BANK_STATEMENT_AI_ENABLED, current.bankStatementAiEnabled, updated.bankStatementAiEnabled)
+        writeIfChanged(Keys.EXTERNAL_GEOCODING_ENABLED, current.externalGeocodingEnabled, updated.externalGeocodingEnabled)
+        writeIfChanged(Keys.BACKGROUND_LOCATION_BACKFILL_ENABLED, current.backgroundLocationBackfillEnabled, updated.backgroundLocationBackfillEnabled)
+        writeIfChanged(Keys.DEVICE_GPS_LOCATION_ENABLED, current.deviceGpsLocationEnabled, updated.deviceGpsLocationEnabled)
+        writeIfChanged(Keys.EXCHANGE_RATE_DOWNLOAD_ENABLED, current.exchangeRateDownloadEnabled, updated.exchangeRateDownloadEnabled)
+        writeIfChanged(Keys.ENCRYPTED_BACKUP_ENABLED, current.encryptedBackupEnabled, updated.encryptedBackupEnabled)
+        writeIfChanged(Keys.RAW_NOTIFICATION_RETENTION_DAYS, current.rawNotificationRetentionDays, updated.rawNotificationRetentionDays)
+        writeIfChanged(Keys.RAW_OCR_RETENTION_DAYS, current.rawOcrRetentionDays, updated.rawOcrRetentionDays)
+        writeIfChanged(Keys.DEBUG_DATA_PERSISTENCE_ENABLED, current.debugDataPersistenceEnabled, updated.debugDataPersistenceEnabled)
+
+        fun PrivacySettings.withAllModes(mode: RawStorageMode) = copy(
+            rawNotificationStorageMode = mode,
+            rawOcrStorageMode = mode,
+            emailReceiptStorageMode = mode,
+            rawBankStatementStorageMode = mode
+        )
+        val probeRaw = transform(current.withAllModes(RawStorageMode.STORE_RAW))
+        val probeNone = transform(current.withAllModes(RawStorageMode.DO_NOT_STORE))
+        val notificationSet = probeRaw.rawNotificationStorageMode != RawStorageMode.STORE_RAW ||
+            probeNone.rawNotificationStorageMode != RawStorageMode.DO_NOT_STORE
+        val ocrSet = probeRaw.rawOcrStorageMode != RawStorageMode.STORE_RAW ||
+            probeNone.rawOcrStorageMode != RawStorageMode.DO_NOT_STORE
+        val emailSet = probeRaw.emailReceiptStorageMode != RawStorageMode.STORE_RAW ||
+            probeNone.emailReceiptStorageMode != RawStorageMode.DO_NOT_STORE
+        val bankSet = probeRaw.rawBankStatementStorageMode != RawStorageMode.STORE_RAW ||
+            probeNone.rawBankStatementStorageMode != RawStorageMode.DO_NOT_STORE
+        if (!(notificationSet || ocrSet || emailSet || bankSet)) return
+
+        fun settleMode(
+            key: Preferences.Key<String>,
+            userSet: Boolean,
+            chosen: RawStorageMode
+        ) {
+            val stored = prefs[key]
+            val storedValid = stored != null && runCatching { RawStorageMode.valueOf(stored) }.isSuccess
+            when {
+                userSet -> prefs[key] = chosen.name
+                !storedValid -> prefs[key] = RawStorageMode.DO_NOT_STORE.name
+            }
+        }
+        settleMode(Keys.RAW_NOTIFICATION_STORAGE_MODE, notificationSet, updated.rawNotificationStorageMode)
+        settleMode(Keys.RAW_OCR_STORAGE_MODE, ocrSet, updated.rawOcrStorageMode)
+        settleMode(Keys.EMAIL_RECEIPT_STORAGE_MODE, emailSet, updated.emailReceiptStorageMode)
+        settleMode(Keys.RAW_BANK_STATEMENT_STORAGE_MODE, bankSet, updated.rawBankStatementStorageMode)
+        prefs[LOAD_STATE_KEY] = LOAD_STATE_NORMAL
+    }
+
+    private fun Preferences.hasInvalidStorageMode(): Boolean = listOf(
+        Keys.RAW_NOTIFICATION_STORAGE_MODE,
+        Keys.RAW_OCR_STORAGE_MODE,
+        Keys.EMAIL_RECEIPT_STORAGE_MODE,
+        Keys.RAW_BANK_STATEMENT_STORAGE_MODE
+    ).any { key ->
+        val stored = this[key]
+        stored != null && runCatching { RawStorageMode.valueOf(stored) }.isFailure
     }
 
     /**
@@ -200,6 +291,14 @@ class PrivacySettingsRepositoryImpl @Inject constructor(
                 PrivacySettingsLoadState.CorruptedFailClosed(
                     settings = PrivacySettings.FAIL_CLOSED_DEFAULTS,
                     reason = "DataStore corruption detected"
+                )
+            }
+            // An unreadable stored mode is a corruption signal, never a user choice.
+            hasInvalidStorageMode() -> {
+                Timber.w("Privacy settings: invalid stored storage mode — using fail-closed defaults")
+                PrivacySettingsLoadState.CorruptedFailClosed(
+                    settings = PrivacySettings.FAIL_CLOSED_DEFAULTS,
+                    reason = "invalid_storage_mode"
                 )
             }
             marker == null && this[Keys.NOTIFICATION_CAPTURE_ENABLED] == null &&

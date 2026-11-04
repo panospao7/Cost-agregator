@@ -191,8 +191,11 @@ open class TransactionClassifier @Inject constructor(
         }
 
         val features = extractFeatures(text)
-        return mutex.withLock {
-            calculateProbability(features)
+        // Switch to IO before queuing for the lock (see train); nothing inside the lock suspends.
+        return withContext(Dispatchers.IO) {
+            mutex.withLock {
+                calculateProbability(features)
+            }
         }
     }
 
@@ -292,12 +295,17 @@ open class TransactionClassifier @Inject constructor(
             purgeModelState()
             return
         }
-        val newStats: ClassifierStats
-        mutex.withLock {
-            val features = extractFeatures(text)
-            addTrainingSample(features, isTransaction)
-            newStats = getStatsInternal()
-            scheduleSave()
+        // Deadlock guard: switch to IO BEFORE queuing for the lock, and nothing inside the lock
+        // suspends. A Main caller queued here while retrain holds the lock would otherwise be
+        // granted the lock on Main after onBackground()'s runBlocking (also on Main) queued behind it.
+        val newStats: ClassifierStats = withContext(Dispatchers.IO) {
+            mutex.withLock {
+                val features = extractFeatures(text)
+                addTrainingSample(features, isTransaction)
+                val stats = getStatsInternal()
+                scheduleSave()
+                stats
+            }
         }
         // Emit outside lock to prevent potential deadlock
         _stats.value = newStats
@@ -398,8 +406,11 @@ open class TransactionClassifier @Inject constructor(
 
     // Public suspend version that acquires lock
     open suspend fun getStats(): ClassifierStats {
-        return mutex.withLock {
-            getStatsInternal()
+        // Switch to IO before queuing for the lock (see train); nothing inside the lock suspends.
+        return withContext(Dispatchers.IO) {
+            mutex.withLock {
+                getStatsInternal()
+            }
         }
     }
 
