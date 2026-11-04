@@ -242,7 +242,9 @@ class SharedExpenseGroupsViewModelErrorTest : ViewModelTestUtils() {
         assertEquals(expected, state.error)
         assertFalse(state.loadFailed)
         assertEquals(1, state.groups.size)
-        assertFalse(state.toString().contains(sentinel))
+        // The fixture group name carries the sentinel, so only the error fields are checked.
+        assertFalse(state.error.orEmpty().contains(sentinel))
+        assertFalse(state.mutationError.orEmpty().contains(sentinel))
         logLines.forEach { assertFalse(it.contains(sentinel)) }
     }
 
