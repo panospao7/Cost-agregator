@@ -89,6 +89,7 @@ class FinancialStressForecastEngine @Inject constructor(
         // Note: 500.0 is in home currency units
         private const val DEFAULT_EMERGENCY_BUFFER_FALLBACK = 500.0
         private const val SEED = 42L
+        private const val DAYS_PER_MONTH = 30.44
 
         // NEW-P6-010: Risk classification thresholds — extracted from hardcoded magic numbers.
         // TODO: Migrate these to AppConfig so they can be tuned without a code deployment.
@@ -597,11 +598,13 @@ class FinancialStressForecastEngine @Inject constructor(
         // Compute the actual number of months spanned by the deposit history.
         val minDate = normalizedDeposits.minOf { it.date }
         val maxDate = normalizedDeposits.maxOf { it.date }
+        // P-06-4: fractional months (span days / 30.44), never truncated; minimum 1 month.
         val monthCount = if (maxDate > minDate) {
-            java.time.temporal.ChronoUnit.MONTHS.between(
+            val spanDays = java.time.temporal.ChronoUnit.DAYS.between(
                 java.time.Instant.ofEpochMilli(minDate).atZone(java.time.ZoneId.systemDefault()).toLocalDate(),
                 java.time.Instant.ofEpochMilli(maxDate).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
-            ).toDouble().coerceAtLeast(1.0)
+            ).toDouble()
+            maxOf(1.0, spanDays / DAYS_PER_MONTH)
         } else 1.0
 
         val avgMonthlyIncome = totalDeposits / monthCount
@@ -680,9 +683,10 @@ class FinancialStressForecastEngine @Inject constructor(
                 ).displayAmount
             }
 
-        val sixtyDaysAgo = discretionaryPurchases.minOfOrNull { it.date }
-            ?: TimePeriodUtils.addDays(timeProvider.now(), -60)
+        // BL-09: anchor sampling to the lookback start (now - 60 days), not the first purchase,
+        // so quiet days before the first purchase stay in the empirical distribution.
         val now = timeProvider.now()
+        val sixtyDaysAgo = TimePeriodUtils.addDays(now, -60)
         val sampleStartDay = TimePeriodUtils.getStartOfDay(sixtyDaysAgo)
         val sampleEndDay = TimePeriodUtils.getStartOfDay(now)
         val dailyTotals = mutableListOf<Double>()
@@ -812,8 +816,10 @@ class FinancialStressForecastEngine @Inject constructor(
             // Check emergency buffer
             val (emergencyBuffer, bufferCurrency) = getEmergencyBuffer(displayCurrency)
             val bufferInDisplayCurrency = bufferCurrency.equals(displayCurrency, ignoreCase = true)
-            val minBuffer = horizons.minOf { it.discretionaryBuffer }
-            if ((bufferInDisplayCurrency && minBuffer < emergencyBuffer) ||
+            // BL-09: discretionaryBuffer already has the emergency buffer subtracted, so the
+            // buffer check compares the raw projected balance with the buffer (single subtraction).
+            val minProjectedBalance = horizons.minOf { it.projectedBalance }
+            if ((bufferInDisplayCurrency && minProjectedBalance < emergencyBuffer) ||
                 (!bufferInDisplayCurrency && horizons.any { it.projectedBalance <= 0.0 })) {
                 recommendations.add(
                     StressRecommendation(
