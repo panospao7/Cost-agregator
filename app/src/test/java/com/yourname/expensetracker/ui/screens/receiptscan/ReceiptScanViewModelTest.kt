@@ -52,6 +52,8 @@ class ReceiptScanViewModelTest : ViewModelTestUtils() {
     private val coordinator = mockk<ReceiptLifecycleCoordinator>()
     private val links = mockk<ReceiptLinkService>()
     private val parser = mockk<ReceiptParser>(relaxed = true)
+    private val categorizeUseCase = mockk<CategorizeReceiptItemsUseCase>(relaxed = true)
+    private val aiSettingsRepo = mockk<AiSettingsRepository>(relaxed = true)
     private val hostile = IllegalStateException("Duplicate merchant private receipt=/data/918")
     private val failureLogs = mutableListOf<Pair<Throwable?, String>>()
     private val logTree = object : Timber.Tree() {
@@ -78,7 +80,7 @@ class ReceiptScanViewModelTest : ViewModelTestUtils() {
                 com.yourname.expensetracker.domain.core.money.CurrencyCode("EUR"), firstRunDefault = false
             )
         )
-        val aiSettings = mockk<AiSettingsRepository>(relaxed = true)
+        val aiSettings = aiSettingsRepo
         every { aiSettings.settings() } returns flowOf(AiSettings(aiEnabled = false))
         val clock = mockk<TimeProvider>(relaxed = true)
         every { clock.now() } returns 1_700_000_000_000L
@@ -86,7 +88,7 @@ class ReceiptScanViewModelTest : ViewModelTestUtils() {
             mockk<ReceiptRepository>(relaxed = true), categories, currency, aiSettings,
             SavedStateHandle(), clock, mockk<SuggestReceiptExtractionUseCase>(relaxed = true),
             mockk<SuggestCategoryFallbackUseCase>(relaxed = true),
-            mockk<CategorizeReceiptItemsUseCase>(relaxed = true),
+            categorizeUseCase,
             mockk<ReceiptItemCategorizationRepository>(relaxed = true),
             mockk<AiArtifactRepository>(relaxed = true), mockk<AiRuntimeDiagnostics>(relaxed = true),
             coordinator, parser,
@@ -168,7 +170,38 @@ class ReceiptScanViewModelTest : ViewModelTestUtils() {
         assertTrue(failureLogs.isEmpty())
     }
 
-    @Test fun persistedPartialScanKeepsRecognizedDataAndShowsWarning() = runTest(testDispatcher) {
+    @Test fun analyzeReceiptItemsPassesRetryUncategorizedTrue() = runTest(testDispatcher) {
+        coEvery { categorizeUseCase(any(), any(), any(), any(), any()) } returns
+            com.yourname.expensetracker.domain.ai.model.CategorizationResult.Disabled
+        setState(ReceiptScanState(step = ScanStep.REVIEW, receiptId = 17L))
+
+        model.analyzeReceiptItems()
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { categorizeUseCase(17L, false, null, true, true) }
+        coVerify(exactly = 0) { categorizeUseCase(any(), any(), any(), any(), false) }
+    }
+
+    @Test fun initialScanItemAnalysisDoesNotRetryUncategorized() = runTest(testDispatcher) {
+        coEvery { categorizeUseCase(any(), any(), any(), any(), any()) } returns
+            com.yourname.expensetracker.domain.ai.model.CategorizationResult.Disabled
+        every { aiSettingsRepo.settings() } returns flowOf(
+            AiSettings(aiEnabled = true, receiptItemCategorizationEnabled = true)
+        )
+        every { parser.lineItemsFromJson(any()) } returns listOf(
+            ReceiptParser.LineItem(description = "milk", quantity = null, unitPrice = null, totalPrice = 3.5)
+        )
+        val uri = Uri.parse("content://test/items.jpg")
+        stubScan(uri, receipt().copy(parsedItems = "[{\"description\":\"milk\",\"totalPrice\":3.5}]"))
+
+        model.processGalleryImage(uri)
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { categorizeUseCase(17L, false, null, true, false) }
+        coVerify(exactly = 0) { categorizeUseCase(any(), any(), any(), any(), true) }
+    }
+
+    @Test fun persistedPartialScanKeepsRecognizedDataAndShowsWarning()= runTest(testDispatcher) {
         val uri = Uri.parse("content://test/partial.pdf")
         stubScan(uri, receipt(status = "OCR_PARTIAL"))
         model.processGalleryImage(uri)

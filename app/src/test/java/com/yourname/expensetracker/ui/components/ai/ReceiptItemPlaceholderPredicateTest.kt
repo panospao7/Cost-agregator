@@ -105,6 +105,56 @@ class ReceiptItemPlaceholderPredicateTest {
         assertFalse(ReceiptItemPlaceholder.isPlaceholder(realRow))
     }
 
+    // ---- isRetryable: an untouched stored placeholder only
+
+    private fun retryCandidate(
+        correctedId: Long? = null,
+        correctedName: String? = null,
+        correctedAt: Long? = null,
+        categoryName: String? = null,
+        confidence: Float = 0f
+    ) = snapshot(confidence = confidence, categoryName = categoryName).copy(
+        userCorrectedCategoryId = correctedId,
+        userCorrectedCategoryName = correctedName,
+        userCorrectedAt = correctedAt
+    )
+
+    @Test
+    fun `isRetryable is true for an untouched placeholder`() {
+        assertTrue(ReceiptItemPlaceholder.isRetryable(retryCandidate()))
+        assertTrue(ReceiptItemPlaceholder.isRetryable(retryCandidate(correctedName = "   ")))
+    }
+
+    @Test
+    fun `isRetryable is false for a placeholder the user corrected`() {
+        assertFalse(ReceiptItemPlaceholder.isRetryable(retryCandidate(correctedId = 4L)))
+        assertFalse(ReceiptItemPlaceholder.isRetryable(retryCandidate(correctedName = "Mine")))
+        assertFalse(ReceiptItemPlaceholder.isRetryable(retryCandidate(correctedAt = 10L)))
+    }
+
+    @Test
+    fun `isRetryable is false for a real row`() {
+        assertFalse(ReceiptItemPlaceholder.isRetryable(retryCandidate(categoryName = "Food")))
+        assertFalse(ReceiptItemPlaceholder.isRetryable(retryCandidate(confidence = 0.3f)))
+    }
+
+    // ---- hasAlternativesJson truth table
+
+    @Test
+    fun `hasAlternativesJson is false for null, blank and an empty array`() {
+        assertFalse(ReceiptItemPlaceholder.hasAlternativesJson(null))
+        assertFalse(ReceiptItemPlaceholder.hasAlternativesJson(""))
+        assertFalse(ReceiptItemPlaceholder.hasAlternativesJson("   "))
+        assertFalse(ReceiptItemPlaceholder.hasAlternativesJson("[]"))
+        assertFalse(ReceiptItemPlaceholder.hasAlternativesJson("  []  "))
+    }
+
+    @Test
+    fun `hasAlternativesJson is true for a non empty array`() {
+        assertTrue(ReceiptItemPlaceholder.hasAlternativesJson("""[{"id":1,"name":"Food","confidence":0.4}]"""))
+        assertTrue(ReceiptItemPlaceholder.hasAlternativesJson(" [{\"id\":1}] "))
+    }
+
     // ---- 13. UI helpers
 
     @Test
