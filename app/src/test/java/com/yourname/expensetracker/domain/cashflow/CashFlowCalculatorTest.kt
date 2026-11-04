@@ -6,6 +6,9 @@ import com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException
 import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
 import com.yourname.expensetracker.data.backup.DatabaseAccessType
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
+import com.yourname.expensetracker.data.database.dao.CurrentUserSettlementRow
+import com.yourname.expensetracker.data.database.dao.GroupExpenseDao
+import com.yourname.expensetracker.data.database.dao.GroupSettlementDao
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.entity.TransferDirection
@@ -67,6 +70,9 @@ class CashFlowCalculatorTest : AnalyticsEngineTestBase() {
     private lateinit var recurringLifecycleCoordinator: RecurringLifecycleCoordinator
     private lateinit var recurringOccurrenceDao: RecurringOccurrenceDao
     private lateinit var databaseReadBarrier: com.yourname.expensetracker.data.backup.DatabaseReadBarrier
+    private lateinit var currencyConverter: com.yourname.expensetracker.domain.currency.CurrencyConverter
+    private lateinit var groupExpenseDao: GroupExpenseDao
+    private lateinit var groupSettlementDao: GroupSettlementDao
     private lateinit var calculator: CashFlowCalculator
 
     @Before
@@ -79,6 +85,11 @@ class CashFlowCalculatorTest : AnalyticsEngineTestBase() {
         recurringLifecycleCoordinator = mockk<RecurringLifecycleCoordinator>(relaxed = true)
         recurringOccurrenceDao = mockk<RecurringOccurrenceDao>(relaxed = true)
         databaseReadBarrier = mockk(relaxed = true)
+        currencyConverter = mockk(relaxed = true)
+        groupExpenseDao = mockk(relaxed = true)
+        groupSettlementDao = mockk(relaxed = true)
+        coEvery { groupExpenseDao.getNonPayerLinkedExpenseIdsBetween(any(), any()) } returns emptyList()
+        coEvery { groupSettlementDao.getCurrentUserSettlementsBetween(any(), any()) } returns emptyList()
         val currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true).also {
             every { it.homeCurrency() } returns flowOf("EUR")
             coEvery { it.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
@@ -113,10 +124,12 @@ class CashFlowCalculatorTest : AnalyticsEngineTestBase() {
             recurringOccurrenceDao = recurringOccurrenceDao,
             analyticsCurrencyNormalizer = mockk(relaxed = true),
             currencySettingsRepository = currencySettingsRepository,
-            currencyConverter = mockk(relaxed = true),
+            currencyConverter = currencyConverter,
             databaseReadBarrier = databaseReadBarrier,
             normalizationEngine = normalizationEngine,
-            installmentProjectionPort = emptyInstallmentProjectionPort()
+            installmentProjectionPort = emptyInstallmentProjectionPort(),
+            groupExpenseDao = groupExpenseDao,
+            groupSettlementDao = groupSettlementDao
         )
     }
 
@@ -272,13 +285,12 @@ class CashFlowCalculatorTest : AnalyticsEngineTestBase() {
     // ============================================================================
 
     /**
-     * A.10 Batch 5: TRANSFER rows with transferDirection == INCOMING must be
-     * treated as inflow.  TRANSFER rows with transferDirection == OUTGOING must
-     * be treated as outflow.  UNKNOWN rows and transfers without a direction
-     * must NOT affect the cash-flow balance.
+     * DR-06 (supersedes A.10 Batch 5): TRANSFER rows move money between the user's own
+     * accounts, so they are cash-flow neutral in BOTH directions. UNKNOWN rows and transfers
+     * without a direction are neutral too.
      */
     @Test
-    fun `A10 Batch5 - incoming transfer is inflow and outgoing transfer is outflow`() = runTest {
+    fun `DR-06 - incoming and outgoing transfers are cash-flow neutral`() = runTest {
         val d1 = ms("2026-04-01")
 
         val tx = listOf(
@@ -298,14 +310,289 @@ class CashFlowCalculatorTest : AnalyticsEngineTestBase() {
         )
 
         assertEquals(1, result.size)
-        // Balance should be 0 + 100 (deposit) + 500 (incoming transfer)
-        //                      - 25 (purchase) - 200 (outgoing transfer) = 375
-        // Unknown (300) must NOT be subtracted
-        assertApproxEquals(375.0, result[0].endingBalance)
-        // income list has the deposit + incoming transfer
-        assertEquals(2, result[0].income.size)
-        // expense list has purchase + outgoing transfer
-        assertEquals(2, result[0].expenses.size)
+        // Balance is 0 + 100 (deposit) - 25 (purchase) = 75. The incoming (500) and outgoing
+        // (200) transfers and the unknown row (300) are neutral.
+        // (Before DR-06: ending 375, income list 2, expense list 2.)
+        assertApproxEquals(75.0, result[0].endingBalance)
+        assertEquals(1, result[0].income.size)
+        assertEquals(1, result[0].expenses.size)
+    }
+
+    @Test
+    fun `DR-06 - incoming transfer 100 and outgoing transfer 40 give income 0 and expense 0`() = runTest {
+        val d1 = ms("2026-04-01")
+        val tx = listOf(
+            expense(d1, 100.0, TransactionType.TRANSFER, transferDir = TransferDirection.INCOMING),
+            expense(d1, 40.0, TransactionType.TRANSFER, transferDir = TransferDirection.OUTGOING)
+        )
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns tx
+
+        val result = calculator.calculateDailyCashFlow(
+            Date(d1), Date(ms("2026-04-02")), startingBalance = MoneyAmount(200.0, CurrencyCode("EUR"))
+        )
+
+        assertEquals(1, result.size)
+        assertTrue(result[0].income.isEmpty())
+        assertTrue(result[0].expenses.isEmpty())
+        assertApproxEquals(0.0, result[0].incomeAggregate!!.displayAmount)
+        assertApproxEquals(0.0, result[0].expenseAggregate!!.displayAmount)
+        assertApproxEquals(200.0, result[0].endingBalance)
+        assertFalse(result[0].isPartial)
+    }
+
+    // ============================================================================
+    // DR-01 – group-paid expenses: settling up is the cash event
+    // ============================================================================
+
+    private val eur = CurrencyCode("EUR")
+
+    private fun linkedExpense(id: Long, date: Long, amount: Double) =
+        expense(date, amount, TransactionType.PURCHASE).copy(id = id)
+
+    private fun settlement(
+        id: Long,
+        amount: Double,
+        createdAt: Long,
+        paidByCurrentUser: Boolean,
+        currency: String = "EUR",
+        linkedExpenseId: Long? = null
+    ) = CurrentUserSettlementRow(
+        id = id,
+        amount = amount,
+        currency = currency,
+        createdAt = createdAt,
+        linkedExpenseId = linkedExpenseId,
+        paidByCurrentUser = paidByCurrentUser
+    )
+
+    private suspend fun cashFlowApr1To7(startingEur: Double = 100.0) = calculator.calculateDailyCashFlow(
+        Date(ms("2026-04-01")), Date(ms("2026-04-07")), startingBalance = MoneyAmount(startingEur, eur)
+    )
+
+    @Test
+    fun `DR-01 - dinner a friend paid is not an outflow on its day, the settlement is on day 5`() = runTest {
+        val d1 = ms("2026-04-01")
+        // Dinner 90 paid by a friend; the user's linked personal row is 30.
+        val share = linkedExpense(id = 501L, date = d1, amount = 30.0)
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(share)
+        coEvery { groupExpenseDao.getNonPayerLinkedExpenseIdsBetween(any(), any()) } returns listOf(501L)
+        coEvery { groupSettlementDao.getCurrentUserSettlementsBetween(any(), any()) } returns listOf(
+            settlement(id = 1L, amount = 30.0, createdAt = localDateTime("2026-04-05", 12, 0), paidByCurrentUser = true)
+        )
+
+        val result = cashFlowApr1To7()
+
+        assertEquals(6, result.size)
+        // Day 1: outflow 0 (was 30), balance untouched.
+        assertTrue(result[0].expenses.isEmpty())
+        assertApproxEquals(0.0, result[0].expenseAggregate!!.displayAmount)
+        assertApproxEquals(0.0, result[0].groupSettlementOutflow)
+        assertApproxEquals(100.0, result[0].endingBalance)
+        // Day 5: the settlement is the cash outflow and reduces the balance by 30.
+        assertApproxEquals(30.0, result[4].groupSettlementOutflow)
+        assertApproxEquals(0.0, result[4].groupSettlementIncome)
+        assertApproxEquals(100.0, result[4].startingBalance)
+        assertApproxEquals(70.0, result[4].endingBalance)
+        assertApproxEquals(70.0, result[5].endingBalance)
+        assertFalse(result.any { it.isPartial })
+    }
+
+    @Test
+    fun `DR-01 - payer own group row is still a full outflow on its day`() = runTest {
+        val d1 = ms("2026-04-01")
+        // The current user paid the 90 dinner: the payer lookup does not list the row.
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns
+            listOf(linkedExpense(id = 502L, date = d1, amount = 90.0))
+        coEvery { groupExpenseDao.getNonPayerLinkedExpenseIdsBetween(any(), any()) } returns emptyList()
+
+        val result = cashFlowApr1To7()
+
+        assertEquals(1, result[0].expenses.size)
+        assertApproxEquals(90.0, result[0].expenseAggregate!!.displayAmount)
+        assertApproxEquals(10.0, result[0].endingBalance)
+    }
+
+    @Test
+    fun `DR-01 - a friend settling 20 to the user is groupSettlementIncome 20`() = runTest {
+        coEvery { groupSettlementDao.getCurrentUserSettlementsBetween(any(), any()) } returns listOf(
+            settlement(id = 2L, amount = 20.0, createdAt = localDateTime("2026-04-03", 9, 30), paidByCurrentUser = false)
+        )
+
+        val result = cashFlowApr1To7()
+
+        assertApproxEquals(20.0, result[2].groupSettlementIncome)
+        assertApproxEquals(0.0, result[2].groupSettlementOutflow)
+        assertApproxEquals(120.0, result[2].endingBalance)
+        assertApproxEquals(0.0, result[1].groupSettlementIncome)
+        assertTrue(result[2].income.isEmpty())
+    }
+
+    @Test
+    fun `DR-01 - USD settlement with a failed conversion is not added and marks the day partial`() = runTest {
+        coEvery { groupSettlementDao.getCurrentUserSettlementsBetween(any(), any()) } returns listOf(
+            settlement(
+                id = 3L, amount = 10.0, createdAt = localDateTime("2026-04-02", 10, 0),
+                paidByCurrentUser = true, currency = "USD"
+            )
+        )
+        coEvery {
+            currencyConverter.convertOutcome(any(), any(), any(), any(), any(), any())
+        } answers {
+            com.yourname.expensetracker.domain.core.money.ConversionOutcome.Failed(
+                originalAmount = firstArg<Double>(),
+                originalCurrency = secondArg<String>(),
+                targetCurrency = thirdArg<String>(),
+                rateBasis = arg<com.yourname.expensetracker.domain.core.money.RateBasis>(3),
+                failureType = com.yourname.expensetracker.domain.core.money.ConversionFailureType.MISSING_RATE,
+                message = "MISSING_RATE"
+            )
+        }
+
+        val result = cashFlowApr1To7()
+
+        // Never added as 0 and never summed as a raw 10 USD.
+        assertApproxEquals(0.0, result[1].groupSettlementOutflow)
+        assertApproxEquals(100.0, result[1].endingBalance)
+        assertTrue(result[1].isPartial)
+        assertEquals(1, result[1].failedConversionCount)
+        // Control: a day without the settlement is exact.
+        assertFalse(result[0].isPartial)
+        assertEquals(0, result[0].failedConversionCount)
+    }
+
+    @Test
+    fun `DR-01 - USD settlement with a rate is converted to home currency at its date`() = runTest {
+        coEvery { groupSettlementDao.getCurrentUserSettlementsBetween(any(), any()) } returns listOf(
+            settlement(
+                id = 4L, amount = 10.0, createdAt = localDateTime("2026-04-02", 10, 0),
+                paidByCurrentUser = true, currency = "USD"
+            )
+        )
+        coEvery {
+            currencyConverter.convertOutcome(any(), any(), any(), any(), any(), any())
+        } answers {
+            com.yourname.expensetracker.domain.core.money.ConversionOutcome.Converted(
+                originalAmount = firstArg<Double>(),
+                originalCurrency = CurrencyCode(secondArg<String>()),
+                convertedAmount = 9.0,
+                targetCurrency = CurrencyCode(thirdArg<String>()),
+                rateUsed = 0.9,
+                rateBasis = arg<com.yourname.expensetracker.domain.core.money.RateBasis>(3),
+                rateValidDate = null,
+                rateLastUpdated = null,
+                rateSource = null,
+                conversionPath = com.yourname.expensetracker.domain.core.money.ConversionPath.DIRECT
+            )
+        }
+
+        val result = cashFlowApr1To7()
+
+        assertApproxEquals(9.0, result[1].groupSettlementOutflow)
+        assertApproxEquals(91.0, result[1].endingBalance)
+        assertFalse(result[1].isPartial)
+        assertEquals(0, result[1].failedConversionCount)
+    }
+
+    @Test
+    fun `DR-01 - settlement lookup failure marks every day partial and invents nothing`() = runTest {
+        coEvery { groupSettlementDao.getCurrentUserSettlementsBetween(any(), any()) } throws
+            IllegalStateException("synthetic failure")
+
+        val result = cashFlowApr1To7()
+
+        assertEquals(6, result.size)
+        assertTrue(result.all { it.isPartial })
+        assertTrue(result.all { it.groupSettlementOutflow == 0.0 && it.groupSettlementIncome == 0.0 })
+        assertApproxEquals(100.0, result.last().endingBalance)
+    }
+
+    @Test
+    fun `DR-01 - non-payer lookup failure keeps the linked row, marks every day partial`() = runTest {
+        val d1 = ms("2026-04-01")
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns
+            listOf(linkedExpense(id = 503L, date = d1, amount = 30.0))
+        coEvery { groupExpenseDao.getNonPayerLinkedExpenseIdsBetween(any(), any()) } throws
+            IllegalStateException("synthetic failure")
+
+        val result = cashFlowApr1To7()
+
+        // Rows that cannot be classified are kept, never dropped silently.
+        assertEquals(1, result[0].expenses.size)
+        assertApproxEquals(70.0, result[0].endingBalance)
+        assertTrue(result.all { it.isPartial })
+    }
+
+    @Test
+    fun `DR-01 - cancellation from the settlement lookup is rethrown`() = runTest {
+        coEvery { groupSettlementDao.getCurrentUserSettlementsBetween(any(), any()) } throws
+            kotlinx.coroutines.CancellationException("synthetic cancel")
+
+        kotlin.test.assertFailsWith<kotlinx.coroutines.CancellationException> { cashFlowApr1To7() }
+    }
+
+    @Test
+    fun `DR-01 - cancellation from the non-payer lookup is rethrown`() = runTest {
+        coEvery { groupExpenseDao.getNonPayerLinkedExpenseIdsBetween(any(), any()) } throws
+            kotlinx.coroutines.CancellationException("synthetic cancel")
+
+        kotlin.test.assertFailsWith<kotlinx.coroutines.CancellationException> { cashFlowApr1To7() }
+    }
+
+    @Test
+    fun `DR-01 - settlement linked to a counted expense id is skipped`() = runTest {
+        val d1 = ms("2026-04-01")
+        // The payer's own row 601 is counted (50 outflow); the settlement linked to it must not double count.
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns
+            listOf(linkedExpense(id = 601L, date = d1, amount = 50.0))
+        coEvery { groupSettlementDao.getCurrentUserSettlementsBetween(any(), any()) } returns listOf(
+            settlement(
+                id = 5L, amount = 50.0, createdAt = localDateTime("2026-04-01", 18, 0),
+                paidByCurrentUser = true, linkedExpenseId = 601L
+            )
+        )
+
+        val result = cashFlowApr1To7()
+
+        assertApproxEquals(0.0, result[0].groupSettlementOutflow)
+        assertApproxEquals(50.0, result[0].endingBalance)
+    }
+
+    @Test
+    fun `DR-01 - settlement linked to an id that is not counted is kept`() = runTest {
+        val d1 = ms("2026-04-01")
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns
+            listOf(linkedExpense(id = 601L, date = d1, amount = 50.0))
+        coEvery { groupSettlementDao.getCurrentUserSettlementsBetween(any(), any()) } returns listOf(
+            settlement(
+                id = 6L, amount = 50.0, createdAt = localDateTime("2026-04-01", 18, 0),
+                paidByCurrentUser = true, linkedExpenseId = 999L
+            )
+        )
+
+        val result = cashFlowApr1To7()
+
+        assertApproxEquals(50.0, result[0].groupSettlementOutflow)
+        assertApproxEquals(0.0, result[0].endingBalance)
+    }
+
+    @Test
+    fun `DR-01 - settlement linked to a non-payer row (excluded from the count) is kept`() = runTest {
+        val d1 = ms("2026-04-01")
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns
+            listOf(linkedExpense(id = 501L, date = d1, amount = 30.0))
+        coEvery { groupExpenseDao.getNonPayerLinkedExpenseIdsBetween(any(), any()) } returns listOf(501L)
+        coEvery { groupSettlementDao.getCurrentUserSettlementsBetween(any(), any()) } returns listOf(
+            settlement(
+                id = 7L, amount = 30.0, createdAt = localDateTime("2026-04-02", 8, 0),
+                paidByCurrentUser = true, linkedExpenseId = 501L
+            )
+        )
+
+        val result = cashFlowApr1To7()
+
+        assertApproxEquals(0.0, result[0].expenseAggregate!!.displayAmount)
+        assertApproxEquals(30.0, result[1].groupSettlementOutflow)
+        assertApproxEquals(70.0, result[1].endingBalance)
     }
 
     /**

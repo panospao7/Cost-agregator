@@ -36,7 +36,7 @@ interface GroupSettlementDao {
         INNER JOIN group_members tm ON tm.id = gs.toMemberId
         WHERE gs.status IN ('RECORDED', 'COMPLETED')
           AND gs.createdAt >= :startDate AND gs.createdAt < :endDate
-          AND (fm.isCurrentUser = 1 OR tm.isCurrentUser = 1)
+          AND ((fm.isCurrentUser = 1) <> (tm.isCurrentUser = 1))
         """
     )
     suspend fun getCurrentUserSettlementsBetween(startDate: Long, endDate: Long): List<CurrentUserSettlementRow>

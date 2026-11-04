@@ -1139,7 +1139,7 @@ class ExportOptionsViewModelTest {
     }
 
     @Test
-    fun `installment accounting pre-check mixed range validates only the unflagged sample`() = runBlocking {
+    fun `installment accounting pre-check mixed range validates only the unflagged rows`() = runBlocking {
         val out = stubAccountingFileOut("export_mixed_flagged_xero_")
         val expenses = listOf(
             createExpense(id = 1L, merchant = "Cafe", currency = "EUR"),
@@ -1147,7 +1147,9 @@ class ExportOptionsViewModelTest {
         )
         coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns 2
         coEvery { exportDataRepository.getExpensesBetween(any(), any(), any()) } returns expenses
-        stubPagedExpenses(expenses, emptyList())
+        // DR-08: the pre-check now scans through getExpensesPage and the stream reads it again,
+        // so the pages must be served once per pass (before: a single pass, streaming only).
+        stubRepeatingPages(expenses, emptyList())
 
         viewModel.selectFormat("xero")
         viewModel.generateExport()
@@ -1183,12 +1185,11 @@ class ExportOptionsViewModelTest {
     @Test
     fun `installment accounting pre-check large range counts unflagged rows across pages and refuses all-flagged`() = runBlocking {
         stubAccountingFileOut("export_large_all_flagged_")
-        // totalCount (10_001) exceeds the 10_000 validation sample, so the unflagged count is paged.
-        val sample = List(10_000) { flagged(id = it + 1L) }
+        // DR-08: every row is scanned page by page; there is no 10_000 validation sample any more
+        // (before: a 10_000-row getExpensesBetween sample was stubbed because 10_001 exceeded it).
         val page1 = listOf(flagged(id = 1L), flagged(id = 2L), flagged(id = 3L))
         val page2 = listOf(flagged(id = 4L), flagged(id = 5L))
         coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns 10_001
-        coEvery { exportDataRepository.getExpensesBetween(any(), any(), any()) } returns sample
         stubPagedExpenses(page1, page2, emptyList())
 
         viewModel.selectFormat("xero")
@@ -1212,12 +1213,11 @@ class ExportOptionsViewModelTest {
     @Test
     fun `installment accounting pre-check large range with unflagged rows on a later page is not refused`() = runBlocking {
         stubAccountingFileOut("export_large_some_unflagged_")
-        val sample = List(10_000) { flagged(id = it + 1L) }
         val page1 = listOf(flagged(id = 1L), flagged(id = 2L))
         val page2 = listOf(flagged(id = 3L), createExpense(id = 4L, merchant = "RealCafe", currency = "EUR"))
         coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns 10_001
-        coEvery { exportDataRepository.getExpensesBetween(any(), any(), any()) } returns sample
-        stubPagedExpenses(page1, page2, emptyList())
+        // DR-08: scan pass then stream pass (before: only the stream pass used the pages).
+        stubRepeatingPages(page1, page2, emptyList())
 
         viewModel.selectFormat("xero")
         viewModel.generateExport()
@@ -1226,15 +1226,17 @@ class ExportOptionsViewModelTest {
         assertFalse(state.error.orEmpty().contains("non-empty dataset"))
         assertEquals(null, state.error)
         assertTrue(state.exportSuccess)
+        val written = File(state.exportFilePath!!).readText()
+        assertTrue(written.contains("RealCafe"))
+        assertFalse(written.contains("Plan1"))
     }
 
     @Test
-    fun `installment accounting pre-check range at the sample limit uses the sample and does not page`() = runBlocking {
+    fun `installment accounting pre-check range of 10000 rows is fully scanned page by page`() = runBlocking {
         stubAccountingFileOut("export_limit_all_flagged_")
-        val sample = List(10_000) { flagged(id = it + 1L) }
+        val all = List(10_000) { flagged(id = it + 1L) }
         coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns 10_000
-        coEvery { exportDataRepository.getExpensesBetween(any(), any(), any()) } returns sample
-        stubPagedExpenses(sample.take(2), emptyList())
+        stubKeysetPages(all)
 
         viewModel.selectFormat("xero")
         viewModel.generateExport()
@@ -1242,9 +1244,106 @@ class ExportOptionsViewModelTest {
 
         assertTrue(!state.exportSuccess)
         assertTrue(state.error.orEmpty().contains("non-empty dataset"))
-        io.mockk.coVerify(exactly = 0) {
+        // Before DR-08: coVerify(exactly = 0) of getExpensesPage (a 10_000-row sample was used and
+        // nothing was paged). Now all 10_000 rows are read: at least 5 pages of at most 2000 rows.
+        io.mockk.coVerify(atLeast = 5) {
             exportDataRepository.getExpensesPage(any(), any(), any(), any(), any())
         }
+    }
+
+    // ── DR-08: effective amount, not-mine rows, and every-row validation ─────────
+
+    private fun notMine(id: Long, merchant: String = "Theirs$id", currency: String = "EUR"): Expense =
+        createExpense(id = id, merchant = merchant, currency = currency).copy(isNotMine = true)
+
+    @Test
+    fun `DR-08 scan - 10499 EUR rows then a USD row at position 10500 fails single currency`() = runBlocking {
+        stubAccountingFileOut("export_dr08_pos10500_")
+        val rows = List(10_499) { createExpense(id = it + 1L, merchant = "Eur$it", currency = "EUR") } +
+            createExpense(id = 10_500L, merchant = "UsdLast", currency = "USD")
+        coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns rows.size
+        stubKeysetPages(rows)
+
+        viewModel.selectFormat("xero")
+        viewModel.generateExport()
+        val state = viewModel.uiState.value
+
+        assertTrue(!state.exportSuccess)
+        assertEquals(null, state.exportFilePath)
+        assertTrue(state.error.orEmpty().contains("single-currency dataset"))
+    }
+
+    @Test
+    fun `DR-08 scan - 10500 EUR rows pass single currency validation`() = runBlocking {
+        stubAccountingFileOut("export_dr08_all_eur_")
+        val rows = List(10_500) { createExpense(id = it + 1L, merchant = "Eur$it", currency = "EUR") }
+        coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns rows.size
+        stubKeysetPages(rows)
+
+        viewModel.selectFormat("xero")
+        viewModel.generateExport()
+        val state = viewModel.uiState.value
+
+        assertEquals(null, state.error)
+        assertTrue(state.exportSuccess)
+    }
+
+    @Test
+    fun `DR-08 scan - a USD not-mine row in a EUR dataset does not throw and is not written`() = runBlocking {
+        stubAccountingFileOut("export_dr08_usd_notmine_")
+        val rows = listOf(
+            createExpense(id = 1L, merchant = "Cafe", currency = "EUR"),
+            notMine(id = 2L, merchant = "TheirUsdTaxi", currency = "USD")
+        )
+        coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns 2
+        stubRepeatingPages(rows, emptyList())
+
+        viewModel.selectFormat("xero")
+        viewModel.generateExport()
+        val state = viewModel.uiState.value
+
+        assertEquals(null, state.error)
+        assertTrue(state.exportSuccess)
+        val written = File(state.exportFilePath!!).readText()
+        assertTrue(written.contains("Cafe"))
+        assertFalse(written.contains("TheirUsdTaxi"))
+    }
+
+    @Test
+    fun `DR-08 scan - an all-not-mine range is refused with the empty-dataset error`() = runBlocking {
+        val out = stubAccountingFileOut("export_dr08_all_notmine_")
+        val rows = listOf(notMine(id = 1L), notMine(id = 2L))
+        coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns 2
+        stubRepeatingPages(rows, emptyList())
+
+        for (formatId in listOf("xero", "freshbooks", "quickbooks")) {
+            viewModel.selectFormat(formatId)
+            viewModel.generateExport()
+            val state = viewModel.uiState.value
+
+            assertTrue("$formatId must be refused", !state.exportSuccess)
+            assertEquals(null, state.exportFilePath)
+            assertTrue(state.error.orEmpty().contains("non-empty dataset"))
+        }
+        assertFalse("No accounting file may be left behind", out.exists())
+    }
+
+    @Test
+    fun `DR-08 scan - a row with amount 90 and my share 30 is written as 30_00`() = runBlocking {
+        stubAccountingFileOut("export_dr08_share_")
+        val shared = createExpense(id = 1L, merchant = "SharedDinner", currency = "EUR").copy(
+            amount = 90.0, isSharedExpense = true, myShareAmount = 30.0
+        )
+        coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns 1
+        stubRepeatingPages(listOf(shared), emptyList())
+
+        viewModel.selectFormat("xero")
+        viewModel.generateExport()
+        val state = viewModel.uiState.value
+
+        assertEquals(null, state.error)
+        val line = File(state.exportFilePath!!).readLines().first { it.contains("SharedDinner") }
+        assertEquals("30.00", line.split(",")[2])
     }
 
     @Test
@@ -1271,6 +1370,31 @@ class ExportOptionsViewModelTest {
             exportDataRepository.getExpensesPage(any(), any(), any(), any(), any())
         } coAnswers {
             if (remainingPages.isEmpty()) emptyList() else remainingPages.removeAt(0)
+        }
+    }
+
+    /** Serves [pages] in order and starts over after the last one, so a scan pass and a stream pass each see them all. */
+    private fun stubRepeatingPages(vararg pages: List<Expense>) {
+        var call = 0
+        coEvery {
+            exportDataRepository.getExpensesPage(any(), any(), any(), any(), any())
+        } coAnswers {
+            pages[call++ % pages.size]
+        }
+    }
+
+    /** Cursor-aware keyset paging over [rows] (ordered by date, id), the way the real repository pages. */
+    private fun stubKeysetPages(rows: List<Expense>) {
+        coEvery {
+            exportDataRepository.getExpensesPage(any(), any(), any(), any(), any())
+        } coAnswers {
+            val limit = arg<Int>(2)
+            val lastDate = arg<Long?>(3)
+            val lastId = arg<Long?>(4)
+            rows.asSequence()
+                .filter { lastDate == null || lastId == null || it.date > lastDate || (it.date == lastDate && it.id > lastId) }
+                .take(limit)
+                .toList()
         }
     }
 
