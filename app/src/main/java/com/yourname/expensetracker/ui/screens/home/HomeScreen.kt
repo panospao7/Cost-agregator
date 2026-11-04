@@ -671,8 +671,8 @@ fun HomeScreen(
                                         modifier = Modifier.fillMaxWidth(),
                                         horizontalArrangement = Arrangement.SpaceBetween
                                     ) {
-                    StatLabel(stringResource(R.string.widget_today), if (widget.isTodayUnavailable || widget.isUnavailable) unavailableText else com.yourname.expensetracker.ui.model.MoneyDisplayUi.from(widget.todaySpent, homeCurrency ?: "").formatted, modifier = Modifier.weight(1f))
-                    StatLabel(stringResource(R.string.widget_week), if (widget.isWeekUnavailable || widget.isUnavailable) unavailableText else com.yourname.expensetracker.ui.model.MoneyDisplayUi.from(widget.weekSpent, homeCurrency ?: "").formatted, modifier = Modifier.weight(1f))
+                    StatLabel(stringResource(R.string.widget_today), if (widget.isTodayUnavailable) unavailableText else com.yourname.expensetracker.ui.model.MoneyDisplayUi.from(widget.todaySpent, homeCurrency ?: "").formatted, modifier = Modifier.weight(1f))
+                    StatLabel(stringResource(R.string.widget_week), if (widget.isWeekUnavailable) unavailableText else com.yourname.expensetracker.ui.model.MoneyDisplayUi.from(widget.weekSpent, homeCurrency ?: "").formatted, modifier = Modifier.weight(1f))
                     StatLabel(stringResource(R.string.widget_month), if (widget.isMonthUnavailable || widget.isUnavailable) unavailableText else com.yourname.expensetracker.ui.model.MoneyDisplayUi.from(widget.monthSpent, homeCurrency ?: "").formatted, modifier = Modifier.weight(1f))
                                     }
                                     // S4-D914-007: Show partial-conversion warning
@@ -1031,6 +1031,7 @@ fun HomeScreen(
             AddPlannedExpenseDialog(
                 categories = categories,
                 referenceNowMillis = state.referenceNowMillis,
+                currency = homeCurrency,
                 onDismiss = { showAddPlannedExpenseDialog = false },
                 onConfirm = { desc, amount, date, catId, priority ->
                     viewModel.addPlannedExpense(desc, amount, date, catId, priority)
@@ -1235,7 +1236,10 @@ fun CategorySpendingRow(item: DomainCategorySpending) {
     val spendingDesc = stringResource(
         R.string.a11y_category_spending_format,
         item.category.name,
-        item.moneyTotal.displayAmount,
+        CurrencyFormatter.formatMoney(
+            item.moneyTotal.displayAmount,
+            item.moneyTotal.displayCurrency.code
+        ),
         item.percentage
     )
     Row(
@@ -1302,7 +1306,7 @@ fun RecentExpenseRow(expense: DashboardExpense, categoryColor: Color? = null) {
         R.string.a11y_expense_item_format,
         expense.merchant,
         if (expense.isManualEntry) manualEntryLabel else "",
-        expense.amount,
+        CurrencyFormatter.formatMoney(expense.amount, expense.currency),
         DateFormatterUtils.formatTimestampJavaTime(expense.date, "MMM dd")
     )
     Row(
@@ -1368,6 +1372,8 @@ fun AddPlannedExpenseDialog(
     // G-TIME-01: required — callers pass the ViewModel's TimeProvider-backed
     // referenceNowMillis (S12-008 pattern); no wall-clock default.
     referenceNowMillis: Long,
+    /** Home currency code the planned amount is entered in; null/blank shows an unlabelled field. */
+    currency: String? = null,
     onDismiss: () -> Unit,
     onConfirm: (String, Double, Long, Long?, PlannedExpensePriority) -> Unit
 ) {
@@ -1404,7 +1410,18 @@ fun AddPlannedExpenseDialog(
                     value = amount,
                     onValueChange = { amount = AmountInputSanitizer.sanitize(it) },
                     isError = amount.isNotBlank() && AmountInputSanitizer.parseOrNull(amount) == null,
-                    label = { Text(stringResource(R.string.dialog_plan_expense_amount_label)) },
+                    label = {
+                        Text(
+                            if (currency.isNullOrBlank()) {
+                                stringResource(R.string.label_amount)
+                            } else {
+                                stringResource(
+                                    R.string.dialog_plan_expense_amount_label,
+                                    CurrencyFormatter.getCurrencySymbol(currency)
+                                )
+                            }
+                        )
+                    },
                     modifier = Modifier.fillMaxWidth(),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = SemanticColors.PrimaryIndigo,

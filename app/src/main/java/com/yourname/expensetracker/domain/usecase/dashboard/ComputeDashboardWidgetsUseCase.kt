@@ -370,7 +370,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
 
         val normalizedInputPartial = ctx.normalizedInputResult.let {
             it is DashboardNormalizedInputResult.Unavailable ||
-                (it is DashboardNormalizedInputResult.Available && it.input.dataQuality.isPartial)
+                (it is DashboardNormalizedInputResult.Available && it.input.dataQuality.hasConversionGap())
         }
 
         return CompiledDashboardData(
@@ -558,7 +558,9 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         val weekSpent = normalizedIn?.weekAggregate?.displayAmount ?: 0.0
         val monthSpent = normalizedIn?.monthAggregate?.displayAmount ?: 0.0
         val previousMonthTotal = normalizedIn?.previousMonthAggregate?.displayAmount ?: 0.0
-        val periodIsPartial = normalizedIn?.dataQuality?.isPartial ?: true
+        // fromAggregates reports isPartial=false when every row is excluded (UNAVAILABLE), which
+        // would hide the banner although data was dropped; UNAVAILABLE quality counts as a gap.
+        val periodIsPartial = normalizedIn?.dataQuality?.hasConversionGap() ?: true
 
         val purchases = expenses.filter {
             it.transactionType == DashboardTransactionType.PURCHASE && !it.isNotMine && it.spendingExclusionReason == null
@@ -1571,6 +1573,11 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         return streak
     }
 
-
+    /**
+     * True when the normalized input dropped or could not convert data: either flagged partial,
+     * or UNAVAILABLE (every candidate row excluded, where fromAggregates clears isPartial).
+     */
+    private fun CurrencyDataQuality.hasConversionGap(): Boolean =
+        isPartial || conversionQuality == com.yourname.expensetracker.domain.core.money.ConversionQuality.UNAVAILABLE
 
 }

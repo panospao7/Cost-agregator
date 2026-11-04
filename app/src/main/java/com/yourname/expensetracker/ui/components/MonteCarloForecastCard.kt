@@ -148,7 +148,11 @@ fun MonteCarloForecastCard(
 
             // ── Percentile spread ────────────────────────────────────────
             Text(
-                text = stringResource(R.string.forecast_range_format, result.percentile10, result.percentile90),
+                text = stringResource(
+                    R.string.forecast_range_format,
+                    CurrencyFormatter.formatMoney(result.percentile10, currency, showCents = false),
+                    CurrencyFormatter.formatMoney(result.percentile90, currency, showCents = false)
+                ),
                 style = MaterialTheme.typography.bodyMedium,
                 color = SemanticColors.TextSecondary
             )

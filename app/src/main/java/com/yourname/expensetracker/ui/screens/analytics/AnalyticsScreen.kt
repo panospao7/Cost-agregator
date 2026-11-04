@@ -47,6 +47,7 @@ import com.yourname.expensetracker.domain.analytics.EnhancedMerchantAnalytics
 import com.yourname.expensetracker.domain.analytics.SpendingPatternAnalysis
 import com.yourname.expensetracker.domain.analytics.StatisticalInsights
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
+import com.yourname.expensetracker.domain.core.money.MoneyAggregateResult
 import com.yourname.expensetracker.ui.components.BentoCard
 import com.yourname.expensetracker.ui.components.analytics.*
 import com.yourname.expensetracker.ui.components.common.ListSkeleton
@@ -494,7 +495,10 @@ fun EnhancedCategoryItem(
             }
 
             // Budget bar if exists
-            item.budgetAmount?.let { budget ->
+            // Hidden when the category total is partial (unrated rows): a bar against an
+            // understated total would be fabricated.
+            val totalIsPartial = (item.totalMoneyResult as? MoneyAggregateResult.Available)?.aggregate?.isPartial == true
+            item.budgetAmount?.takeIf { !totalIsPartial }?.let { budget ->
                 Spacer(modifier = Modifier.height(12.dp))
                 val hasValidBudget = budget > 0.0
                 val budgetProgress = if (hasValidBudget) {

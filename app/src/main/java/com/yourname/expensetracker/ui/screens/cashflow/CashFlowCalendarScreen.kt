@@ -178,7 +178,19 @@ fun CashFlowCalendarScreen(
                 },
                 isError = startingBalanceText.isNotBlank() &&
                     parseStartingBalanceOrNull(startingBalanceText) == null,
-                label = { Text(stringResource(R.string.calendar_label_starting_balance)) },
+                label = {
+                    val balanceCurrency = state.homeCurrency
+                    Text(
+                        if (balanceCurrency.isNullOrBlank()) {
+                            stringResource(R.string.calendar_label_starting_balance_no_currency)
+                        } else {
+                            stringResource(
+                                R.string.calendar_label_starting_balance,
+                                CurrencyFormatter.getCurrencySymbol(balanceCurrency)
+                            )
+                        }
+                    )
+                },
                 modifier = Modifier.fillMaxWidth()
             )
             

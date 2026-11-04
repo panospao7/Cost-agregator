@@ -337,16 +337,23 @@ class AdvancedAnalyticsEngine @Inject constructor(
                     categoryScopedContext
                 ) { it.date == null || it.date <= comparisonCutoffMillisInclusive }
             }
-            val changePercent = if (comparisonResult is MoneyAggregateResult.Available) {
+            // A partial aggregate (some rows unrated) understates the real figure, so a percent
+            // computed from it would be fabricated. Either side partial -> no percent change.
+            val comparisonComplete = comparisonResult is MoneyAggregateResult.Available &&
+                !comparisonResult.aggregate.isPartial
+            val previousComplete = previousResult == null ||
+                (previousResult is MoneyAggregateResult.Available && !previousResult.aggregate.isPartial)
+            val changePercent = if (comparisonComplete && previousComplete) {
                 calculateChangePercent(availableAmount(comparisonResult), previousTotal)
             } else null
-            
-            // Budget context
+
+            // Budget context: only against a complete total (a partial total understates spend).
             val budget = budgetMap[categoryId]
-            val budgetUtilization = budget?.takeIf { totalResult is MoneyAggregateResult.Available }?.let { b ->
+            val totalComplete = totalResult is MoneyAggregateResult.Available && !totalResult.aggregate.isPartial
+            val budgetUtilization = budget?.takeIf { totalComplete }?.let { b ->
                 if (b.amount > 0) (total / b.amount * 100).toFloat() else null
             }
-            val budgetStatus = budget?.takeIf { totalResult is MoneyAggregateResult.Available }
+            val budgetStatus = budget?.takeIf { totalComplete }
                 ?.let { b -> determineBudgetStatus(total, b.amount) }
             
             // Percentiles
@@ -378,7 +385,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
                 trendDirection = determineTrendDirection(changePercent),
                 budgetAmount = budget?.amount,
                 budgetUtilizationPercent = budgetUtilization,
-                budgetRemaining = budget?.takeIf { totalResult is MoneyAggregateResult.Available }?.let { it.amount - total },
+                budgetRemaining = budget?.takeIf { totalComplete }?.let { it.amount - total },
                 budgetStatus = budgetStatus,
                 minTransaction = sortedAmounts.firstOrNull() ?: 0.0,
                 maxTransaction = sortedAmounts.lastOrNull() ?: 0.0,

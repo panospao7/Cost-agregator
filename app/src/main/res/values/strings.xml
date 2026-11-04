@@ -829,7 +829,7 @@
     <!-- Add Planned Expense Dialog -->
     <string name="dialog_plan_expense_title">PLAN AN EXPENSE</string>
     <string name="dialog_plan_expense_description_label">What are you planning?</string>
-    <string name="dialog_plan_expense_amount_label">Amount (€)</string>
+    <string name="dialog_plan_expense_amount_label">Amount (%s)</string>
     <string name="dialog_plan_expense_priority">PRIORITY</string>
     <string name="dialog_plan_expense_category">CATEGORY</string>
     <string name="dialog_plan_expense_none">None</string>
@@ -1154,9 +1154,9 @@
     <string name="a11y_no_category_selected">No category selected</string>
     <string name="a11y_category_icon_format">%1$s icon</string>
     <string name="a11y_category_format">%1$s category, %2$s</string>
-    <string name="a11y_category_spending_format">%1$s: €%2$.2f, %3$.0f%% of budget</string>
+    <string name="a11y_category_spending_format">%1$s: %2$s, %3$.0f%% of budget</string>
     <string name="a11y_expense_manual">manual entry</string>
-    <string name="a11y_expense_item_format">%1$s, %2$s €%3$.2f, %4$s</string>
+    <string name="a11y_expense_item_format">%1$s, %2$s %3$s, %4$s</string>
     <string name="recommendation_label">RECOMMENDATION</string>
     
     <!-- G05 Remaining Components -->
@@ -1249,7 +1249,7 @@
     <!-- Monte Carlo Forecast -->
     <string name="forecast_month_end_title">MONTH-END FORECAST</string>
     <string name="forecast_likely_total">Likely total</string>
-    <string name="forecast_range_format">Range: €%1$.0f – €%2$.0f</string>
+    <string name="forecast_range_format">Range: %1$s – %2$s</string>
     <string name="forecast_under_budget">Under budget</string>
     <string name="forecast_no_budget_set">No budget set</string>
     <string name="forecast_spent">Spent</string>
@@ -1749,7 +1749,8 @@
     <string name="calendar_weekday_fri">Fri</string>
     <string name="calendar_weekday_sat">Sat</string>
     <string name="calendar_alert_bills_due">⚠️ %1$d bills due this month</string>
-    <string name="calendar_label_starting_balance">Starting Balance (€)</string>
+    <string name="calendar_label_starting_balance">Starting Balance (%s)</string>
+    <string name="calendar_label_starting_balance_no_currency">Starting Balance</string>
     <string name="debug_quantity_format">%1$d items</string>
     <string name="debug_phase_">Phase: %1$s</string>
     <string name="debug_recent_ai_events">Recent AI Events</string>
