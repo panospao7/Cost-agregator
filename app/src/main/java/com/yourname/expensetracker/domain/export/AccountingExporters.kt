@@ -40,6 +40,13 @@ import java.util.Locale
  * offset-based paging which degrades on large datasets.
  */
 
+/**
+ * DR-08: true when the user bears nothing of this row (effectiveAmount == 0, which covers
+ * isNotMine rows). Accounting exporters skip such rows. A non-finite effectiveAmount is NOT
+ * treated as zero here; it falls through to the formatter and is written as INVALID.
+ */
+internal fun ExportTransaction.bearsNoAmount(): Boolean = effectiveAmount == 0.0
+
 class QuickBooksIIFExporter {
     private val dateFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("MM/dd/yyyy", Locale.US)
 
@@ -59,16 +66,19 @@ class QuickBooksIIFExporter {
     fun writeExpense(writer: Appendable, expense: ExportTransaction, categories: Map<Long, String>) {
         // Owner-approvals 42: installment-flagged rows are not exported to QuickBooks IIF.
         if (ExportInstallmentMarker.isInstallmentFlagged(expense)) return
+        // DR-08: rows the user bears nothing of (effectiveAmount == 0, e.g. not-mine) are not exported.
+        if (expense.bearsNoAmount()) return
         val date = Instant.ofEpochMilli(expense.date).atZone(ZoneId.systemDefault()).format(dateFormat)
         val fundingAccount = expense.sourceAccountName
         val categoryAccount = categories[expense.categoryId] ?: "Uncategorized"
+        // DR-08: export the amount the user actually bears (effectiveAmount), not the full amount.
         val amount = try {
-            CurrencyFormatter.formatForExport(expense.amount)
+            CurrencyFormatter.formatForExport(expense.effectiveAmount)
         } catch (e: IllegalArgumentException) {
             "INVALID"
         }
         val splitAmount = try {
-            CurrencyFormatter.formatForExport(-expense.amount)
+            CurrencyFormatter.formatForExport(-expense.effectiveAmount)
         } catch (e: IllegalArgumentException) {
             "INVALID"
         }
@@ -103,11 +113,13 @@ class XeroCSVExporter {
     fun writeExpense(writer: Appendable, expense: ExportTransaction, categories: Map<Long, String>) {
         // Owner-approvals 41(a): installment-flagged rows are not exported to Xero.
         if (ExportInstallmentMarker.isInstallmentFlagged(expense)) return
+        // DR-08: rows the user bears nothing of (effectiveAmount == 0, e.g. not-mine) are not exported.
+        if (expense.bearsNoAmount()) return
         val date = Instant.ofEpochMilli(expense.date).atZone(ZoneId.systemDefault()).format(dateFormat)
         val description = CsvCellSanitizer.sanitize(expense.merchant)
         val amount = CsvCellSanitizer.sanitize(
             try {
-                CurrencyFormatter.formatForExport(expense.amount)
+                CurrencyFormatter.formatForExport(expense.effectiveAmount)
             } catch (e: IllegalArgumentException) {
                 "INVALID"
             }
@@ -160,11 +172,13 @@ class FreshBooksExporter {
     fun writeExpense(writer: Appendable, expense: ExportTransaction, categories: Map<Long, String>) {
         // Owner-approvals 41(a): installment-flagged rows are not exported to FreshBooks.
         if (ExportInstallmentMarker.isInstallmentFlagged(expense)) return
+        // DR-08: rows the user bears nothing of (effectiveAmount == 0, e.g. not-mine) are not exported.
+        if (expense.bearsNoAmount()) return
         val date = Instant.ofEpochMilli(expense.date).atZone(ZoneId.systemDefault()).format(dateFormat)
         val description = CsvCellSanitizer.sanitize(expense.merchant)
         val amount = CsvCellSanitizer.sanitize(
             try {
-                CurrencyFormatter.formatForExport(expense.amount)
+                CurrencyFormatter.formatForExport(expense.effectiveAmount)
             } catch (e: IllegalArgumentException) {
                 "INVALID"
             }

@@ -30,10 +30,13 @@ class AccountingExportEmptyDatasetException(
 
 class AccountingExportPolicy @Inject constructor() {
 
-    companion object {
-        /** Default max rows for validation — prevents OOM on large datasets. */
-        const val DEFAULT_MAX_VALIDATION_ROWS: Int = 10_000
-    }
+    /**
+     * DR-08: every row that will be written is validated; there is no row cap. Rows the user
+     * bears nothing of ([bearsNoAmount], e.g. not-mine) are skipped by the exporters, so they
+     * are not validated either (a USD not-mine row cannot make an EUR export fail).
+     */
+    private fun exportedRows(transactions: List<ExportTransaction>): List<ExportTransaction> =
+        transactions.filterNot { it.bearsNoAmount() }
 
     data class GlobalDatasetValidation(
         val rowCount: Int,
@@ -50,17 +53,13 @@ class AccountingExportPolicy @Inject constructor() {
      *
      * @param transactions The transactions to validate.
      * @param exportName Display name of the export format (for error messages).
-     * @param maxValidationRows Maximum number of rows to examine (default [DEFAULT_MAX_VALIDATION_ROWS]).
-     *                          Prevents OOM on very large datasets by only checking the first N rows.
      */
     fun validateAccountingDataset(
         transactions: List<ExportTransaction>,
-        exportName: String,
-        maxValidationRows: Int = DEFAULT_MAX_VALIDATION_ROWS
+        exportName: String
     ) {
-        val subset = if (transactions.size <= maxValidationRows) transactions else transactions.take(maxValidationRows)
-        requireSingleCurrency(subset, exportName)
-        requirePurchaseTransactions(subset, exportName)
+        requireSingleCurrency(transactions, exportName)
+        requirePurchaseTransactions(transactions, exportName)
     }
 
     /**
@@ -68,14 +67,12 @@ class AccountingExportPolicy @Inject constructor() {
      *
      * @param transactions The transactions to validate.
      * @param exportName Display name of the export format (for error messages).
-     * @param maxValidationRows Maximum number of rows to examine (default [DEFAULT_MAX_VALIDATION_ROWS]).
      */
     fun validateGlobalDataset(
         transactions: List<ExportTransaction>,
-        exportName: String,
-        maxValidationRows: Int = DEFAULT_MAX_VALIDATION_ROWS
+        exportName: String
     ): GlobalDatasetValidation {
-        val subset = if (transactions.size <= maxValidationRows) transactions else transactions.take(maxValidationRows)
+        val subset = exportedRows(transactions)
         val currencies = subset
             .map { it.currency.trim().uppercase(Locale.ROOT) }
             .filter { it.isNotEmpty() }
@@ -115,16 +112,13 @@ class AccountingExportPolicy @Inject constructor() {
     }
 
     /**
-     * Requires all transactions in the dataset to share a single currency.
-     *
-     * @param maxValidationRows Maximum number of rows to examine (default [DEFAULT_MAX_VALIDATION_ROWS]).
+     * Requires all exported transactions in the dataset to share a single currency (every row).
      */
     fun requireSingleCurrency(
         transactions: List<ExportTransaction>,
-        exportName: String,
-        maxValidationRows: Int = DEFAULT_MAX_VALIDATION_ROWS
+        exportName: String
     ) {
-        val subset = if (transactions.size <= maxValidationRows) transactions else transactions.take(maxValidationRows)
+        val subset = exportedRows(transactions)
         val currencies = subset
             .map { it.currency.trim().uppercase(Locale.ROOT) }
             .filter { it.isNotEmpty() }
@@ -140,16 +134,13 @@ class AccountingExportPolicy @Inject constructor() {
     }
 
     /**
-     * Requires all transactions in the dataset to be of type PURCHASE.
-     *
-     * @param maxValidationRows Maximum number of rows to examine (default [DEFAULT_MAX_VALIDATION_ROWS]).
+     * Requires all exported transactions in the dataset to be of type PURCHASE (every row).
      */
     fun requirePurchaseTransactions(
         transactions: List<ExportTransaction>,
-        exportName: String,
-        maxValidationRows: Int = DEFAULT_MAX_VALIDATION_ROWS
+        exportName: String
     ) {
-        val subset = if (transactions.size <= maxValidationRows) transactions else transactions.take(maxValidationRows)
+        val subset = exportedRows(transactions)
         val unsupportedTypes = subset
             .map { it.transactionType }
             .filter { it != TransactionType.PURCHASE }

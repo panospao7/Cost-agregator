@@ -1,6 +1,8 @@
 package com.yourname.expensetracker.di
 
 import com.yourname.expensetracker.data.backup.DatabaseReadBarrier
+import com.yourname.expensetracker.data.database.dao.GroupExpenseDao
+import com.yourname.expensetracker.data.database.dao.GroupSettlementDao
 import com.yourname.expensetracker.data.database.dao.RecurringOccurrenceDao
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
@@ -43,7 +45,9 @@ object CashFlowModule {
         currencySettingsRepository: CurrencySettingsRepository,
         databaseReadBarrier: DatabaseReadBarrier,
         normalizationEngine: MoneyNormalizationEngine,
-        installmentProjectionPort: InstallmentProjectionPort
+        installmentProjectionPort: InstallmentProjectionPort,
+        groupExpenseDao: GroupExpenseDao,
+        groupSettlementDao: GroupSettlementDao
     ): CashFlowCalculator = CashFlowCalculator(
         expenseRepository,
         recurringPatternsProvider,
@@ -55,6 +59,8 @@ object CashFlowModule {
         currencyConverter,
         databaseReadBarrier,
         normalizationEngine,
-        installmentProjectionPort
+        installmentProjectionPort,
+        groupExpenseDao,
+        groupSettlementDao
     )
 }
