@@ -38,6 +38,7 @@ import com.yourname.expensetracker.domain.forecasting.SimulationMetadata
 import com.yourname.expensetracker.domain.forecasting.StressForecastResult
 import com.yourname.expensetracker.domain.forecasting.StressHorizon
 import com.yourname.expensetracker.domain.forecasting.StressRiskLevel
+import com.yourname.expensetracker.domain.groups.BudgetSpendBreakdown
 import com.yourname.expensetracker.domain.groups.SharedExpenseBudgetOffsetEngine
 import com.yourname.expensetracker.domain.health.FinancialHealthResult
 import com.yourname.expensetracker.domain.health.FinancialHealthScoreV2
@@ -165,9 +166,17 @@ class DashboardBudgetProvenanceChainTest {
             applicationScope = CoroutineScope(Dispatchers.Unconfined)
         )
         val offsetEngine = mockk<SharedExpenseBudgetOffsetEngine>(relaxed = true)
-        // Shared-expense offsets are out of scope; a failing offset engine degrades to gross spend (null breakdown).
-        coEvery { offsetEngine.calculateEffectiveBudgetSpend(any(), any(), any()) } throws
-            IllegalStateException("offset engine not under test")
+        // Shared-expense offsets are out of scope: no group rows, so the effective spend equals the seeded
+        // USD 100 personal purchase (the breakdown production supplies; a null breakdown would make the
+        // budget's effective spend unavailable and fail runway closed).
+        coEvery { offsetEngine.calculateEffectiveBudgetSpend(any(), any(), any()) } returns BudgetSpendBreakdown(
+            totalPersonalSpend = 100.0,
+            totalSharedSpend = 0.0,
+            totalReimbursed = 0.0,
+            netSharedLiability = 0.0,
+            effectiveBudgetSpend = 100.0,
+            displayCurrency = "USD"
+        )
 
         // REAL budget repository on REAL Room.
         budgetRepository = BudgetRepository(

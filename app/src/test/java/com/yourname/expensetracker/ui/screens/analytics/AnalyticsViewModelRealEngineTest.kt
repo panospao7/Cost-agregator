@@ -190,6 +190,48 @@ class AnalyticsViewModelRealEngineTest : ViewModelTestUtils() {
     }
 
     // ------------------------------------------------------------------------------------------
+    // F3: a spending-neutralised (flagged) purchase must not re-enter the merchant list.
+    // ------------------------------------------------------------------------------------------
+
+    @Test
+    fun `F3 the only purchase is flagged at 1200 so no merchant row is listed`() = runTest(testDispatcher) {
+        val flagged = purchase(1, 1_200.0, "EUR", 1L, merchant = "Flagged Gadgets", key = "flagged_gadgets")
+            .copy(spendingExclusionReason = "TEST_NEUTRALISED")
+        val viewModel = viewModelFor(listOf(flagged))
+
+        val job = launch { viewModel.state.collect { } }
+        testDispatcher.scheduler.advanceTimeBy(400)
+        awaitComputed(viewModel)
+
+        assertNull("compute must not fail", viewModel.state.value.error)
+        assertFalse("still loading", viewModel.state.value.isLoading)
+        assertTrue(
+            "a flagged purchase must not appear as a merchant row: ${viewModel.state.value.merchantBreakdown.map { it.name }}",
+            viewModel.state.value.merchantBreakdown.isEmpty()
+        )
+        job.cancel()
+    }
+
+    @Test
+    fun `F3 a normal purchase next to a flagged one is the only merchant listed`() = runTest(testDispatcher) {
+        val flagged = purchase(1, 1_200.0, "EUR", 1L, merchant = "Flagged Gadgets", key = "flagged_gadgets")
+            .copy(spendingExclusionReason = "TEST_NEUTRALISED")
+        val normal = purchase(2, 40.0, "EUR", 1L, merchant = "Corner Cafe", key = "corner_cafe")
+        val viewModel = viewModelFor(listOf(flagged, normal))
+
+        val job = launch { viewModel.state.collect { } }
+        testDispatcher.scheduler.advanceTimeBy(400)
+        awaitComputed(viewModel)
+
+        assertNull("compute must not fail", viewModel.state.value.error)
+        val merchants = viewModel.state.value.merchantBreakdown
+        assertEquals(1, merchants.size)
+        assertEquals("Corner Cafe", merchants.single().name)
+        assertEquals(40.0, merchants.single().totalSpent, 0.001)
+        job.cancel()
+    }
+
+    // ------------------------------------------------------------------------------------------
     // Merchant average (AnalyticsViewModel.buildMerchantBreakdown), real assembler + normalizer.
     // ------------------------------------------------------------------------------------------
 

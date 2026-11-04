@@ -57,6 +57,41 @@ class BudgetCardDisplayTest {
         percentKnown = percentKnown
     )
 
+    // ---- F6: zero / negative limit ----
+
+    @Test
+    fun `F6 zero limit with spend 50 is over budget by 50 and exceeded`() {
+        val display = BudgetCardDisplay.from(
+            status(spentAmount = 50.0, effectiveLimit = 0.0, percentUsed = 0f, adjusted = breakdown(50.0))
+        )
+
+        assertTrue(display.effectiveSpendAvailable)
+        assertEquals(BudgetCardRemainingSlot.OVER_BUDGET, display.remainingSlot)
+        assertEquals(50.0, display.overBudgetAmount!!, 1e-9)
+        assertEquals(BudgetHealthStatus.EXCEEDED, display.healthStatus)
+    }
+
+    @Test
+    fun `F6 negative rollover deficit limit minus 20 with zero spend is over budget by 20`() {
+        val display = BudgetCardDisplay.from(
+            status(spentAmount = 0.0, effectiveLimit = -20.0, percentUsed = 0f, adjusted = breakdown(0.0))
+        )
+
+        assertEquals(BudgetCardRemainingSlot.OVER_BUDGET, display.remainingSlot)
+        assertEquals(20.0, display.overBudgetAmount!!, 1e-9)
+    }
+
+    @Test
+    fun `F6 control zero limit with zero spend is not over budget`() {
+        val display = BudgetCardDisplay.from(
+            status(spentAmount = 0.0, effectiveLimit = 0.0, percentUsed = 0f, adjusted = breakdown(0.0))
+        )
+
+        assertTrue(display.effectiveSpendAvailable)
+        assertNull(display.overBudgetAmount)
+        assertEquals(BudgetCardRemainingSlot.REMAINING, display.remainingSlot)
+    }
+
     // ---- AE-17: null breakdown ----
 
     @Test

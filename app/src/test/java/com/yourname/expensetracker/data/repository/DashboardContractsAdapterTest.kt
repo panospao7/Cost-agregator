@@ -369,6 +369,54 @@ class DashboardContractsAdapterTest {
         org.junit.Assert.assertNull("must not default to spentAmount", result[0].effectiveSpend)
     }
 
+    private fun breakdownOf(effective: Double) = com.yourname.expensetracker.domain.budget.AdjustedSpendBreakdown(
+        personalSpend = effective, sharedSpend = 0.0, reimbursedAmount = 0.0,
+        netSharedLiability = 0.0, effectiveSpend = effective, pendingReimbursements = 0.0
+    )
+
+    @Test
+    fun `F4 effectiveHealthStatus follows effective spend 90 not gross 120 while healthStatus stays gross`() = runTest {
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(effectiveSpendStatus(breakdownOf(90.0))))
+
+        val snapshot = adapter.observeBudgetStatuses().first().single()
+
+        org.junit.Assert.assertNotNull(snapshot.effectiveHealthStatus)
+        org.junit.Assert.assertNotEquals(
+            com.yourname.expensetracker.domain.budget.BudgetHealthStatus.EXCEEDED,
+            snapshot.effectiveHealthStatus
+        )
+        assertEquals(
+            "healthStatus stays gross-based",
+            com.yourname.expensetracker.domain.budget.BudgetHealthStatus.EXCEEDED,
+            snapshot.healthStatus
+        )
+    }
+
+    @Test
+    fun `F4 effectiveHealthStatus is EXCEEDED when effective spend 120 passes the limit 100`() = runTest {
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(effectiveSpendStatus(breakdownOf(120.0))))
+
+        val snapshot = adapter.observeBudgetStatuses().first().single()
+
+        assertEquals(
+            com.yourname.expensetracker.domain.budget.BudgetHealthStatus.EXCEEDED,
+            snapshot.effectiveHealthStatus
+        )
+    }
+
+    @Test
+    fun `F4 effectiveHealthStatus is null when the adjusted breakdown is null and healthStatus stays gross`() = runTest {
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(effectiveSpendStatus(null)))
+
+        val snapshot = adapter.observeBudgetStatuses().first().single()
+
+        org.junit.Assert.assertNull(snapshot.effectiveHealthStatus)
+        assertEquals(
+            com.yourname.expensetracker.domain.budget.BudgetHealthStatus.EXCEEDED,
+            snapshot.healthStatus
+        )
+    }
+
     @Test
     fun `observeDashboardExpenses carries shared-expense identity across the boundary`() = runTest {
         // P5-004 (RP-05): the isSharedExpense flag must survive the adapter
