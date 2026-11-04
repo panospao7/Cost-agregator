@@ -2682,7 +2682,7 @@
     <string name="domain_weather_headline_cloudy_forecast">Cloudy Forecast</string>
     <string name="domain_weather_summary_cloudy_forecast_format">Spending is tight. You only have %1$s remaining for unpredicted expenses.</string>
     <string name="domain_weather_headline_clear_skies">Clear Skies</string>
-    <string name="domain_weather_summary_clear_skies_format">You have a comfortable buffer of %1$s for the rest of the month.</string>
+    <string name="domain_weather_summary_clear_skies_format">You have a comfortable buffer of %1$s for the rest of this budget period.</string>
     <string name="domain_weather_headline_partly_cloudy">Partly Cloudy</string>
     <string name="domain_weather_summary_partly_cloudy_format">Everything is on track, though discretionary buffer is moderate (%1$s).</string>
     <string name="domain_weather_headline_mixed_signals">Mixed Signals</string>

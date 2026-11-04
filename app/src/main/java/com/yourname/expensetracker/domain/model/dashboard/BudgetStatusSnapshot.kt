@@ -1,6 +1,10 @@
 package com.yourname.expensetracker.domain.model.dashboard
 
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
+import com.yourname.expensetracker.domain.budget.BudgetPeriodRemaining
+import com.yourname.expensetracker.domain.budget.BudgetStatus
+import com.yourname.expensetracker.domain.budget.budgetPeriodRemaining
+import com.yourname.expensetracker.domain.budget.effectiveHealthOrNull
 
 data class BudgetStatusSnapshot(
     val budgetCategoryId: Long?,
@@ -19,8 +23,27 @@ data class BudgetStatusSnapshot(
     /** Denomination of effectiveLimit/remainingAmount, not a guessed home currency. */
     val currency: String? = null,
     val currencyAssumption: String = "UNKNOWN",
-    val percentKnown: Boolean = true
+    val percentKnown: Boolean = true,
+    /**
+     * FL-06: shared-expense-adjusted spend in [currency] (the Budget card's effective spend),
+     * or null when the adjusted breakdown is unavailable. Never defaults to [spentAmount].
+     */
+    val effectiveSpend: Double? = null,
+    /**
+     * Health of [effectiveSpend] over the limit (the Budget card's health), from the shared domain
+     * derivation; null when effective spend is unavailable. [healthStatus] stays gross-based and
+     * keeps feeding the cloud payload unchanged.
+     */
+    val effectiveHealthStatus: BudgetHealthStatus? = null
 ) {
+    /**
+     * True when the budget period spans 28 to 31 days (rounded to whole days so a DST-shifted day
+     * cannot push a month out of range). Weekly, yearly and other periods are not month-scale, so
+     * calendar-month rate math must not read their limit.
+     */
+    val isMonthScalePeriod: Boolean
+        get() = Math.round((periodEnd - periodStart) / 86_400_000.0) in 28L..31L
+
     fun hasCompleteAmountIn(homeCurrency: String): Boolean {
         val target = com.yourname.expensetracker.domain.core.money.CurrencyCode.parse(homeCurrency)
             ?.takeIf { it in com.yourname.expensetracker.domain.core.money.CurrencyCode.ALL_SUPPORTED }
@@ -30,4 +53,42 @@ data class BudgetStatusSnapshot(
             !isPartial && conversionWarning == null && percentKnown &&
             budgetAmount.isFinite() && budgetAmount >= 0.0 && remainingAmount.isFinite()
     }
+
+    /**
+     * FL-06: the one shared "money left in the budget period" figure for this snapshot, read by the
+     * Home headline, Runway and Financial Weather. See [BudgetPeriodRemaining].
+     */
+    fun periodRemaining(nowMs: Long, homeCurrency: String): BudgetPeriodRemaining =
+        budgetPeriodRemaining(
+            limit = budgetAmount,
+            effectiveSpend = effectiveSpend,
+            complete = hasCompleteAmountIn(homeCurrency),
+            percentKnown = percentKnown,
+            periodEnd = periodEnd,
+            nowMs = nowMs
+        )
 }
+
+/**
+ * The single [BudgetStatus] to [BudgetStatusSnapshot] mapping, effective fields included. Used by
+ * the dashboard adapter and the forecast input assembler so no surface drops the effective spend.
+ */
+fun BudgetStatus.toBudgetStatusSnapshot(): BudgetStatusSnapshot =
+    BudgetStatusSnapshot(
+        budgetCategoryId = budget.categoryId,
+        budgetAmount = effectiveLimit,
+        categoryName = category?.name,
+        spentAmount = spentAmount,
+        remainingAmount = remainingAmount,
+        percentUsed = percentUsed.toDouble(),
+        healthStatus = healthStatus,
+        periodStart = periodStart,
+        periodEnd = periodEnd,
+        isPartial = isPartial,
+        conversionWarning = conversionWarning,
+        currency = currency,
+        currencyAssumption = currencyAssumption,
+        percentKnown = percentKnown,
+        effectiveSpend = adjustedSpendBreakdown?.effectiveSpend,
+        effectiveHealthStatus = effectiveHealthOrNull()
+    )

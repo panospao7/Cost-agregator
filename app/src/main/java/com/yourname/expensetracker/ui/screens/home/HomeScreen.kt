@@ -691,17 +691,24 @@ fun HomeScreen(
                                         color = SemanticColors.TextSecondary
                                     )
                                     Spacer(modifier = Modifier.height(8.dp))
-                                    val summaryText = widget.summary?.asString() ?: stringResource(R.string.widget_all_budgets_on_track)
-                                    // F8: colour follows the exceeded count (same health as the
-                                    // summary text), not summary presence: the summary is never null.
+                                    // FL-06: a null summary means the effective health is unavailable for at
+                                    // least one budget (never "all on track"): neutral unavailable text.
+                                    val summaryText = widget.summary?.asString()
+                                        ?: stringResource(R.string.budget_usage_unavailable)
+                                    // F8: colour follows the exceeded count (same effective health as the
+                                    // summary text); an unavailable summary is neutral.
                                     val hasExceededBudgets = widget.statuses.any {
-                                        it.healthStatus == com.yourname.expensetracker.domain.budget.BudgetHealthStatus.EXCEEDED
+                                        it.effectiveHealthStatus == com.yourname.expensetracker.domain.budget.BudgetHealthStatus.EXCEEDED
                                     }
                                     Text(
-                                        summaryText, 
-                                        style = MaterialTheme.typography.titleMedium, 
+                                        summaryText,
+                                        style = MaterialTheme.typography.titleMedium,
                                         fontWeight = FontWeight.Bold,
-                                        color = if (hasExceededBudgets) SemanticColors.DangerRed else SemanticColors.SuccessGreen
+                                        color = when {
+                                            hasExceededBudgets -> SemanticColors.DangerRed
+                                            widget.summary == null -> SemanticColors.TextSecondary
+                                            else -> SemanticColors.SuccessGreen
+                                        }
                                     )
                                 }
                             }

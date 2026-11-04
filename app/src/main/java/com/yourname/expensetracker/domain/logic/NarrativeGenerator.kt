@@ -9,6 +9,8 @@ import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.text.DomainTextKeys
 import com.yourname.expensetracker.domain.text.UiTextArg
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
+import com.yourname.expensetracker.domain.budget.BudgetPeriodRemaining
+import com.yourname.expensetracker.domain.budget.BudgetPeriodRemainingUnavailableReason
 import com.yourname.expensetracker.domain.model.dashboard.BudgetStatusSnapshot
 import com.yourname.expensetracker.domain.model.dashboard.WeatherState
 import javax.inject.Inject
@@ -25,6 +27,25 @@ class NarrativeGenerator @Inject constructor() {
         val components = forecast.components
         val risk = components.riskLevel
         val discretionary = components.discretionaryBudget
+
+        // FIN-WEATHER: an overall budget with a positive limit whose remainder is unavailable
+        // (conversion incomplete, or no effective spend) has no honest pool. Say so instead of
+        // reading the pace-only risk and a zero pool as a weather state. NO_POSITIVE_LIMIT and
+        // "no budget at all" keep the existing path.
+        val overallRemaining = budgetStatuses
+            .find { it.budgetCategoryId == null }
+            ?.periodRemaining(forecast.generatedAt.toEpochMilli(), homeCurrency)
+        if (overallRemaining is BudgetPeriodRemaining.Unavailable &&
+            overallRemaining.reason != BudgetPeriodRemainingUnavailableReason.NO_POSITIVE_LIMIT
+        ) {
+            return WeatherNarrative(
+                state = WeatherState.UNKNOWN,
+                icon = "❓",
+                headline = UiText.fromKey(DomainTextKeys.WEATHER_HEADLINE_UNAVAILABLE),
+                summary = UiText.fromKey(DomainTextKeys.WEATHER_SUMMARY_UNAVAILABLE),
+                details = buildDetails(forecast, budgetStatuses, homeCurrency)
+            )
+        }
 
         val basic = when {
             risk == RiskLevel.CRITICAL -> WeatherNarrative(
@@ -93,11 +114,19 @@ class NarrativeGenerator @Inject constructor() {
     ): List<NarrativeSection> {
         val sections = mutableListOf<NarrativeSection>()
         val components = forecast.components
+        // DSH-N3: green also needs the overall budget's periodRemaining Available (category-only
+        // users have no overall budget and are unchanged).
+        val overallBudgetComplete = budgetStatuses
+            .find { it.budgetCategoryId == null }
+            ?.periodRemaining(forecast.generatedAt.toEpochMilli(), homeCurrency)
+            .let { it == null || it is BudgetPeriodRemaining.Available }
 
         // 1. Budget Health Section (Momentum Engine)
-        val criticalBudgets = budgetStatuses.filter { 
-            it.healthStatus == BudgetHealthStatus.EXCEEDED ||
-            it.healthStatus == BudgetHealthStatus.CRITICAL 
+        // FL-06: health and printed spend are the effective ones (what the Budget card shows). A
+        // budget with no effective health (unavailable) is never listed and blocks "all on track".
+        val criticalBudgets = budgetStatuses.filter {
+            it.effectiveHealthStatus == BudgetHealthStatus.EXCEEDED ||
+            it.effectiveHealthStatus == BudgetHealthStatus.CRITICAL
         }
         if (criticalBudgets.isNotEmpty()) {
             sections.add(
@@ -105,43 +134,36 @@ class NarrativeGenerator @Inject constructor() {
                     title = UiText.fromKey(DomainTextKeys.NARRATIVE_BUDGET_ALERTS),
                     icon = "🚨",
                     items = criticalBudgets.mapNotNull {
-                        when (it.healthStatus) {
+                        val spend = it.effectiveSpend ?: return@mapNotNull null
+                        when (it.effectiveHealthStatus) {
                             BudgetHealthStatus.EXCEEDED -> it.categoryName?.let { name ->
                                 UiText.fromKey(
                                     DomainTextKeys.NARRATIVE_BUDGET_EXCEEDED_SPENT_FORMAT,
                                     name,
-                                    UiTextArg.Money(it.spentAmount, currency = homeCurrency, currencyAssumption = "ASSUMED_HOME_CURRENCY", showCents = false)
+                                    UiTextArg.Money(spend, currency = homeCurrency, currencyAssumption = "ASSUMED_HOME_CURRENCY", showCents = false)
                                 )
                             } ?: UiText.fromKey(
                                 DomainTextKeys.NARRATIVE_TOTAL_BUDGET_EXCEEDED_SPENT_FORMAT,
-                                UiTextArg.Money(it.spentAmount, currency = homeCurrency, currencyAssumption = "ASSUMED_HOME_CURRENCY", showCents = false)
+                                UiTextArg.Money(spend, currency = homeCurrency, currencyAssumption = "ASSUMED_HOME_CURRENCY", showCents = false)
                             )
                             BudgetHealthStatus.CRITICAL -> it.categoryName?.let { name ->
                                 UiText.fromKey(
                                     DomainTextKeys.NARRATIVE_BUDGET_CRITICAL_SPENT_FORMAT,
                                     name,
-                                    UiTextArg.Money(it.spentAmount, currency = homeCurrency, currencyAssumption = "ASSUMED_HOME_CURRENCY", showCents = false)
+                                    UiTextArg.Money(spend, currency = homeCurrency, currencyAssumption = "ASSUMED_HOME_CURRENCY", showCents = false)
                                 )
                             } ?: UiText.fromKey(
                                 DomainTextKeys.NARRATIVE_TOTAL_BUDGET_CRITICAL_SPENT_FORMAT,
-                                UiTextArg.Money(it.spentAmount, currency = homeCurrency, currencyAssumption = "ASSUMED_HOME_CURRENCY", showCents = false)
+                                UiTextArg.Money(spend, currency = homeCurrency, currencyAssumption = "ASSUMED_HOME_CURRENCY", showCents = false)
                             )
-                            BudgetHealthStatus.WARNING -> UiText.fromKey(
-                                DomainTextKeys.NARRATIVE_BUDGET_WARNING_SPENT_FORMAT,
-                                it.categoryName ?: UiTextArg.Money(it.spentAmount, currency = homeCurrency, currencyAssumption = "ASSUMED_HOME_CURRENCY", showCents = false),
-                                UiTextArg.Money(it.spentAmount, currency = homeCurrency, currencyAssumption = "ASSUMED_HOME_CURRENCY", showCents = false)
-                            )
-                            BudgetHealthStatus.ON_TRACK -> UiText.fromKey(
-                                DomainTextKeys.NARRATIVE_BUDGET_ON_TRACK_SPENT_FORMAT,
-                                it.categoryName ?: UiTextArg.Money(it.spentAmount, currency = homeCurrency, currencyAssumption = "ASSUMED_HOME_CURRENCY", showCents = false),
-                                UiTextArg.Money(it.spentAmount, currency = homeCurrency, currencyAssumption = "ASSUMED_HOME_CURRENCY", showCents = false)
-                            )
-                            BudgetHealthStatus.UNKNOWN -> null
+                            else -> null
                         }
                     }
                 )
             )
-        } else if (budgetStatuses.isNotEmpty()) {
+        } else if (budgetStatuses.isNotEmpty() && overallBudgetComplete && budgetStatuses.all {
+                it.effectiveHealthStatus != null && it.effectiveHealthStatus != BudgetHealthStatus.UNKNOWN
+            }) {
             sections.add(
                 NarrativeSection(
                     title = UiText.fromKey(DomainTextKeys.NARRATIVE_BUDGET_HEALTH),

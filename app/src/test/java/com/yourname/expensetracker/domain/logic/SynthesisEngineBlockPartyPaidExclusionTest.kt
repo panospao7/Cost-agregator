@@ -56,7 +56,11 @@ class SynthesisEngineBlockPartyPaidExclusionTest {
         percentUsed = 0.0,
         healthStatus = BudgetHealthStatus.ON_TRACK,
         periodStart = 0,
-        periodEnd = 0
+        periodEnd = 0,
+        currency = "EUR",
+        currencyAssumption = "USER_CONFIRMED",
+        effectiveSpend = 0.0,
+        effectiveHealthStatus = BudgetHealthStatus.ON_TRACK
     )
 
     private fun pace() = SpendingPace(

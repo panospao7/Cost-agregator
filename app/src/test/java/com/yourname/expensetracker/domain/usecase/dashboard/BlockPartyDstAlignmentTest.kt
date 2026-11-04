@@ -238,7 +238,7 @@ class BlockPartyDstAlignmentTest {
                 val result = computeUseCase.compute(
                     // P-05-1: the limit is now the real budget, so the fixture sets one that
                     // the DST day exceeds (about 20 a day against 42.5 spent).
-                    createProcessedData(expenses = expenses, budgetStatuses = listOf(overallBudget(620.0)))
+                    createProcessedData(expenses = expenses, budgetStatuses = listOf(overallBudget(620.0, spent = 68.5)))
                 )
                 val blocks = result.allWidgets
                     .filterIsInstance<DashboardWidget.BudgetBlockParty>()
@@ -329,7 +329,7 @@ class BlockPartyDstAlignmentTest {
                 val result = computeUseCase.compute(
                     // P-05-1: the limit is now the real budget, so the fixture sets one that
                     // the DST day exceeds (about 20 a day against 42.5 spent).
-                    createProcessedData(expenses = expenses, budgetStatuses = listOf(overallBudget(620.0)))
+                    createProcessedData(expenses = expenses, budgetStatuses = listOf(overallBudget(620.0, spent = 74.0)))
                 )
                 val blocks = result.allWidgets
                     .filterIsInstance<DashboardWidget.BudgetBlockParty>()
@@ -390,7 +390,7 @@ class BlockPartyDstAlignmentTest {
                 )
 
                 val result = computeUseCase.compute(
-                    createProcessedData(expenses = expenses, budgetStatuses = listOf(overallBudget(5000.0)))
+                    createProcessedData(expenses = expenses, budgetStatuses = listOf(overallBudget(5000.0, spent = 49.75)))
                 )
                 val blocks = result.allWidgets
                     .filterIsInstance<DashboardWidget.BudgetBlockParty>()
@@ -422,18 +422,28 @@ class BlockPartyDstAlignmentTest {
 
     // ── Harness helpers (mirrors FinancialRunwayNoBurnTest) ──────────────────
 
-    private fun overallBudget(amount: Double): BudgetStatusSnapshot = BudgetStatusSnapshot(
-        budgetCategoryId = null,
-        budgetAmount = amount,
-        categoryName = null,
-        spentAmount = 0.0,
-        remainingAmount = amount,
-        percentUsed = 0.0,
-        healthStatus = BudgetHealthStatus.ON_TRACK,
-        periodStart = fixedNowMs,
-        periodEnd = fixedNowMs + 86_400_000L,
-        currency = "EUR", currencyAssumption = "EXPLICIT"
-    )
+    /**
+     * fix-1.0.4 fixture: a month-scale overall budget (the month containing [fixedNowMs]) whose effective
+     * spend equals the gross [spent] the test intends. Block Party is gated on a month-scale period and a
+     * runway that is available, so the period must span the month and the effective spend must exist.
+     */
+    private fun overallBudget(amount: Double, spent: Double = 0.0): BudgetStatusSnapshot {
+        val (monthStart, monthEndExclusive) = TimePeriodUtils.getMonthRange(fixedNowMs)
+        return BudgetStatusSnapshot(
+            budgetCategoryId = null,
+            budgetAmount = amount,
+            categoryName = null,
+            spentAmount = spent,
+            remainingAmount = amount - spent,
+            percentUsed = if (amount > 0.0) spent / amount * 100.0 else 0.0,
+            healthStatus = BudgetHealthStatus.ON_TRACK,
+            periodStart = monthStart,
+            periodEnd = monthEndExclusive,
+            currency = "EUR", currencyAssumption = "EXPLICIT",
+            effectiveSpend = spent,
+            effectiveHealthStatus = BudgetHealthStatus.ON_TRACK
+        )
+    }
 
     private fun purchase(amount: Double, date: Long): DashboardExpense = DashboardExpense(
         id = date,

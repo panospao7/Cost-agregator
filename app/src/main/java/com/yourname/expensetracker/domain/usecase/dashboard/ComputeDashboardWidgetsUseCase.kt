@@ -8,6 +8,8 @@ import com.yourname.expensetracker.domain.analytics.SingleCurrencyAnalyticsInput
 import com.yourname.expensetracker.domain.analytics.SpendingPaceCalculator
 import com.yourname.expensetracker.domain.analytics.toExpenseSnapshot
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
+import com.yourname.expensetracker.domain.budget.BudgetPeriodRemaining
+import com.yourname.expensetracker.domain.budget.BudgetPeriodRemainingUnavailableReason
 import com.yourname.expensetracker.domain.core.money.MoneyAggregate
 import com.yourname.expensetracker.domain.core.money.MoneyAggregateBuilder
 import com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableException
@@ -674,7 +676,13 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             }
         }
 
-        if (ctx.overallBudget?.hasCompleteAmountIn(normalized.homeCurrency.code) == false) {
+        // FL-06: with an overall budget, runway's remaining money is the shared BudgetPeriodRemaining
+        // (the Home headline's figure). An incomplete conversion or no finite effective spend means
+        // no honest remainder. NO_POSITIVE_LIMIT keeps the income fallback below.
+        val budgetPeriodRemaining = ctx.overallBudget?.periodRemaining(ctx.now, normalized.homeCurrency.code)
+        if (budgetPeriodRemaining is BudgetPeriodRemaining.Unavailable &&
+            budgetPeriodRemaining.reason != BudgetPeriodRemainingUnavailableReason.NO_POSITIVE_LIMIT
+        ) {
             return RunwayResult.Unavailable(
                 reason = MoneyDisplayUnavailableReasonCode.DISPLAY_CONVERSION_UNAVAILABLE.name,
                 purchasesThisMonth = purchasesThisMonth,
@@ -800,8 +808,10 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         // P5-PR1 (NEW-P5-011): Compute totalRemaining from budget or income minus spent.
         // G-MONEY-ALLOW[CURR-587-05][G-MONEY-15]: legacy budget path until budget normalization
         // Uses monthly income as proxy when no explicit budget exists.
-        val remainingBeforeCommitments = if (ctx.totalBudgetAmount > 0) { // G-MONEY-ALLOW[CURR-587-05][G-MONEY-15]: budget is home-currency user value
-            (ctx.totalBudgetAmount - ctx.monthSpent).coerceAtLeast(0.0) // G-MONEY-ALLOW[CURR-587-05][G-MONEY-15]: budget is home-currency user value
+        val budgetAvailable = budgetPeriodRemaining as? BudgetPeriodRemaining.Available
+        val remainingBeforeCommitments = if (budgetAvailable != null) {
+            // FL-06: exactly the headline's remaining (shared BudgetPeriodRemaining).
+            budgetAvailable.remaining
         } else if (monthlyIncome > 0) {
             (monthlyIncome - ctx.monthSpent).coerceAtLeast(0.0)
         } else {
@@ -815,8 +825,9 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         // P5-010 (RP-07): honest runway edge cases — never Int.MAX_VALUE or sentinels.
         // NO_INCOME precedence preserved exactly (no deposits AND no explicit budget
         // basis) — checked before any runway number is fabricated.
-        val noIncomeBasis = monthlyIncome == 0.0 && ctx.totalBudgetAmount <= 0 // G-MONEY-ALLOW[CURR-587-05][G-MONEY-15]: budget is home-currency user value
-        val daysUntilPeriodEnd = ctx.daysInMonth - ctx.dayOfMonth
+        val noIncomeBasis = monthlyIncome == 0.0 && budgetAvailable == null
+        // Budget daysLeft when a budget basis exists (headline's formula); calendar month otherwise.
+        val daysUntilPeriodEnd = budgetAvailable?.daysLeft ?: (ctx.daysInMonth - ctx.dayOfMonth)
 
         val runwayDays: Int?
         val zeroBurnHorizonDays: Int?
@@ -897,6 +908,11 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             .find { it.budgetCategoryId == null }
             ?.takeIf { it.budgetAmount > 0.0 && it.hasCompleteAmountIn(normalized.input.homeCurrency.code) }
             ?: return emptyList()
+
+        // F1: the base rate compares the limit with calendar-month daily spend, so a budget whose
+        // period is not month-scale (yearly, weekly, ...) would give a meaningless per-day rate.
+        // Rounded to whole days so a DST-shifted 23h/25h day cannot push a month out of range.
+        if (!overallBudget.isMonthScalePeriod) return emptyList()
 
         // Use normalized daily aggregates instead of raw dailyHistory
         val dailySpending = normalized.input.normalizedExpenses
@@ -1007,7 +1023,12 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             // CURR-587-05: Use normalized month aggregate instead of raw repository call
             val spentToDate = input.periodAggregate.displayAmount
             val knownUpcoming = availableResult.totalCommitted + availableResult.totalLikely
-            val budgetForMC = if (ctx.totalBudgetAmount > 0) ctx.totalBudgetAmount else null // G-MONEY-ALLOW[CURR-587-05][G-MONEY-15]: legacy budget path until budget normalization
+            // FL-06: the limit is passed only for an Available overall budget whose period is month-scale
+            // (the simulation compares a calendar-month total with it); otherwise no budget is passed.
+            val budgetForMC = ctx.overallBudget
+                ?.takeIf { it.isMonthScalePeriod }
+                ?.let { it.periodRemaining(ctx.now, input.homeCurrency.code) as? BudgetPeriodRemaining.Available }
+                ?.limit
 
             val mcResult = monteCarloSimulator.simulate(
                 spentToDate = spentToDate,
@@ -1154,9 +1175,32 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
     private fun computeBudgetSummary(ctx: ComputeContext): UiText? {
         val budgetStatuses = ctx.data.data.budgetStatuses
         if (budgetStatuses.isEmpty()) return null
-        val exceeded = budgetStatuses.count { it.healthStatus == BudgetHealthStatus.EXCEEDED }
-        return if (exceeded > 0) UiText.fromKey(DashboardTextKeys.WIDGET_BUDGET_EXCEEDED_FORMAT, exceeded)
-        else UiText.fromKey(DashboardTextKeys.WIDGET_ALL_BUDGETS_ON_TRACK)
+        // F4: the same effective health the Budget card shows (domain effectiveBudgetHealth), so the
+        // count matches the hero. effectiveHealthStatus is null (unavailable) -> not counted as exceeded.
+        // healthStatus (gross) is unchanged and still feeds the cloud payload.
+        val exceeded = budgetStatuses.count { it.effectiveHealthStatus == BudgetHealthStatus.EXCEEDED }
+        if (exceeded > 0) return UiText.fromKey(DashboardTextKeys.WIDGET_BUDGET_EXCEEDED_FORMAT, exceeded)
+        // FL-06: "all on track" needs a known effective health for every budget. Otherwise the summary
+        // is null, which the Home widget renders as unavailable (never as green).
+        // An UNKNOWN effective health (percent not known) is non-null but is not "on track".
+        // DSH-N3: the overall budget is green only when its shared periodRemaining is Available (the
+        // same completeness the Home headline and Weather use); partial rollover history or an
+        // unstamped row is unavailable, never green. Category-only users are unchanged. With no
+        // normalized home currency, an overall budget cannot be proven complete.
+        val overallBudget = ctx.overallBudget
+        val overallComplete = overallBudget == null || run {
+            val home = (ctx.normalizedInputResult as? DashboardNormalizedInputResult.Available)
+                ?.input?.homeCurrency?.code
+            home != null &&
+                overallBudget.periodRemaining(ctx.now, home) is BudgetPeriodRemaining.Available
+        }
+        return if (overallComplete && budgetStatuses.all {
+                it.effectiveHealthStatus != null && it.effectiveHealthStatus != BudgetHealthStatus.UNKNOWN
+            }) {
+            UiText.fromKey(DashboardTextKeys.WIDGET_ALL_BUDGETS_ON_TRACK)
+        } else {
+            null
+        }
     }
 
     /**
@@ -1335,18 +1379,34 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             add(
                 when (val normalized = ctx.normalizedInputResult) {
                     is DashboardNormalizedInputResult.Available -> {
-                        // Budget remaining not yet normalized — show unavailable. F-DEV-2: the
-                        // currency-quality flag mirrors the real conversion quality of the
+                        // F-DEV-2: the currency-quality flag mirrors the real conversion quality of the
                         // normalized input; it must not be hardcoded partial, otherwise every
                         // user sees a "could not be converted" warning with fully converted data.
                         val inputQuality = normalized.input.dataQuality
                         val conversionPartial = inputQuality.isPartial || inputQuality.excludedTransactionCount > 0
+                        // FL-06: the hero number comes from the SAME budget snapshot the Budget
+                        // screen renders (effective limit, effective spend and periodEnd already
+                        // honour the budget period, rollover and rolling windows). It is never
+                        // recomputed from calendar-month spend and never uses gross remaining.
+                        // A snapshot that is not complete in the home currency, whose limit is
+                        // not strictly positive, or whose effective spend is unavailable, is
+                        // Unavailable. On a partial snapshot (isPartial) the Budget card shows the
+                        // effective spend (e.g. 700) plus a partial chip, while Home is Unavailable
+                        // because hasCompleteAmountIn is false. This is intended fail-closed.
+                        // The figure is the shared BudgetPeriodRemaining (also read by Runway and Weather).
+                        val budgetRemaining = ctx.overallBudget
+                            ?.periodRemaining(ctx.now, normalized.input.homeCurrency.code)
+                            as? BudgetPeriodRemaining.Available
+                        val validBudget = budgetRemaining?.limit
+                        val safeAmount = budgetRemaining?.remaining
+                        // Days left in the BUDGET period (periodEnd is exclusive), not the calendar month.
+                        val budgetDaysRemaining = budgetRemaining?.daysLeft ?: ctx.daysRemaining
                         DashboardWidget.SafeToSpend(
-                            amount = null,
-                            totalBudget = ctx.overallBudget?.takeIf { it.hasCompleteAmountIn(normalized.input.homeCurrency.code) }?.budgetAmount,
-                            daysRemaining = ctx.daysRemaining,
+                            amount = safeAmount,
+                            totalBudget = validBudget,
+                            daysRemaining = budgetDaysRemaining,
                             isPartial = inputQuality.isPartial,
-                            isUnavailable = true,
+                            isUnavailable = safeAmount == null,
                             currencyQuality = CurrencyQualityUi(
                                 isPartial = conversionPartial,
                                 quality = inputQuality.conversionQuality,

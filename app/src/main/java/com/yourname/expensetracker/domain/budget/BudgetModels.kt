@@ -35,8 +35,11 @@ data class BudgetStatus(
      * controlled [conversionWarning] explains the conversion failure.
      *
      * When only some spend rows were excluded (partial conversion) but the limit
-     * is known, this stays `true` while [isPartial] is `true` and threshold
-     * checks remain allowed.
+     * is known, this stays `true` while [isPartial] is `true`. The gross
+     * [percentUsed] and [healthStatus] stay computed, but an alert threshold
+     * comparison additionally needs an effective-spend [adjustedSpendBreakdown]
+     * (INV-18): with a null breakdown no alert fires. A partial status shows no
+     * remaining-money figure on Home, Runway or Weather (see [BudgetPeriodRemaining]).
      */
     val percentKnown: Boolean = true
 ) {
@@ -61,6 +64,69 @@ enum class BudgetHealthStatus {
     EXCEEDED,   // Spent >= 100%
     UNKNOWN     // Conversion failed — status cannot be determined
 }
+
+/**
+ * The single percent-to-health threshold rule for a known percent: at least 100% is
+ * [BudgetHealthStatus.EXCEEDED], then the per-budget critical and warning thresholds.
+ * Shared by the repository (gross percent) and the budget card (effective percent) so the
+ * thresholds exist in exactly one place. [BudgetHealthStatus.UNKNOWN] is not decided here.
+ */
+fun budgetHealthForPercent(
+    percent: Float,
+    notifyAtWarning: Float,
+    notifyAtCritical: Float
+): BudgetHealthStatus = when {
+    percent >= 1.0f -> BudgetHealthStatus.EXCEEDED
+    percent >= notifyAtCritical -> BudgetHealthStatus.CRITICAL
+    percent >= notifyAtWarning -> BudgetHealthStatus.WARNING
+    else -> BudgetHealthStatus.ON_TRACK
+}
+
+/** Half a minor unit (0.005): the smallest excess over a limit that still displays as a non-zero amount. */
+const val BUDGET_OVER_MIN_EXCESS: Double = 0.005
+
+/**
+ * True when [effectiveSpend] is at least half a minor unit above [effectiveLimit] and the limit is
+ * known. Also covers a zero or negative (rollover deficit) limit, where any spend is over budget.
+ */
+fun isEffectivelyOverBudget(
+    effectiveSpend: Double,
+    effectiveLimit: Double,
+    percentKnown: Boolean
+): Boolean = percentKnown && effectiveSpend - effectiveLimit >= BUDGET_OVER_MIN_EXCESS
+
+/**
+ * The single effective-spend health derivation shared by the budget card and the Home path.
+ * Positive limit: [budgetHealthForPercent] on effective spend / effective limit. Limit at or below
+ * zero: [BudgetHealthStatus.EXCEEDED] when spend is over it (see [isEffectivelyOverBudget]).
+ * Otherwise (percent unknown, or zero limit without spend) [fallback] is returned.
+ */
+fun effectiveBudgetHealth(
+    effectiveSpend: Double,
+    effectiveLimit: Double,
+    percentKnown: Boolean,
+    notifyAtWarning: Float,
+    notifyAtCritical: Float,
+    fallback: BudgetHealthStatus
+): BudgetHealthStatus = when {
+    percentKnown && effectiveLimit > 0.0 ->
+        budgetHealthForPercent((effectiveSpend / effectiveLimit).toFloat(), notifyAtWarning, notifyAtCritical)
+    isEffectivelyOverBudget(effectiveSpend, effectiveLimit, percentKnown) -> BudgetHealthStatus.EXCEEDED
+    else -> fallback
+}
+
+/** Effective-spend health of this status; null iff effective spend is unavailable (INV-16). */
+fun BudgetStatus.effectiveHealthOrNull(): BudgetHealthStatus? =
+    adjustedSpendBreakdown?.let {
+        effectiveBudgetHealth(
+            effectiveSpend = it.effectiveSpend,
+            effectiveLimit = effectiveLimit,
+            percentKnown = percentKnown,
+            notifyAtWarning = budget.notifyAtWarning,
+            notifyAtCritical = budget.notifyAtCritical,
+            fallback = healthStatus
+        )
+    }
 
 data class BudgetSuggestion(
     val categoryId: Long?,

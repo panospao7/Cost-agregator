@@ -204,7 +204,7 @@ class FinancialRunwayNoBurnTest {
         val result = computeUseCase.compute(
             createProcessedData(
                 expenses = expenses,
-                budgetStatuses = listOf(overallBudget(479.8))
+                budgetStatuses = listOf(overallBudget(479.8, spent = 200.0))
             )
         )
         val runway = result.allWidgets.filterIsInstance<DashboardWidget.FinancialRunway>().single()
@@ -232,7 +232,7 @@ class FinancialRunwayNoBurnTest {
         val result = computeUseCase.compute(
             createProcessedData(
                 expenses = expenses,
-                budgetStatuses = listOf(overallBudget(468.4))
+                budgetStatuses = listOf(overallBudget(468.4, spent = 200.0))
             )
         )
         val runway = result.allWidgets.filterIsInstance<DashboardWidget.FinancialRunway>().single()
@@ -264,7 +264,7 @@ class FinancialRunwayNoBurnTest {
         val result = computeUseCase.compute(
             createProcessedData(
                 expenses = expenses,
-                budgetStatuses = listOf(overallBudget(1000.0)),
+                budgetStatuses = listOf(overallBudget(1000.0, spent = 100.0)),
                 plannedExpenses = planned
             )
         )
@@ -309,7 +309,7 @@ class FinancialRunwayNoBurnTest {
         val result = computeUseCase.compute(
             createProcessedData(
                 expenses = expenses,
-                budgetStatuses = listOf(overallBudget(10000.0)),
+                budgetStatuses = listOf(overallBudget(10000.0, spent = 100.0)),
                 plannedExpenses = planned
             )
         )
@@ -393,7 +393,7 @@ class FinancialRunwayNoBurnTest {
                     purchase(100.0, dayOffsetMs(1)),
                     purchase(100.0, dayOffsetMs(2))
                 ),
-                budgetStatuses = listOf(overallBudget(500.0))
+                budgetStatuses = listOf(overallBudget(500.0, spent = 200.0))
             )
         )
         val runway = result.allWidgets.filterIsInstance<DashboardWidget.FinancialRunway>().single()
@@ -443,7 +443,7 @@ class FinancialRunwayNoBurnTest {
                     purchase(100.0, dayOffsetMs(1)),
                     purchase(100.0, dayOffsetMs(2))
                 ),
-                budgetStatuses = listOf(overallBudget(150.0))
+                budgetStatuses = listOf(overallBudget(150.0, spent = 200.0, health = BudgetHealthStatus.EXCEEDED))
             )
         )
         val runway = result.allWidgets.filterIsInstance<DashboardWidget.FinancialRunway>().single()
@@ -467,18 +467,32 @@ class FinancialRunwayNoBurnTest {
         isManualEntry = false
     )
 
-    private fun overallBudget(amount: Double): BudgetStatusSnapshot = BudgetStatusSnapshot(
-        budgetCategoryId = null,
-        budgetAmount = amount,
-        categoryName = null,
-        spentAmount = 0.0,
-        remainingAmount = amount,
-        percentUsed = 0.0,
-        healthStatus = BudgetHealthStatus.ON_TRACK,
-        periodStart = fixedNowMs,
-        periodEnd = fixedNowMs + 86_400_000L,
-        currency = "EUR", currencyAssumption = "EXPLICIT"
-    )
+    /**
+     * fix-1.0.4 fixture: a calendar-month overall budget whose effective spend equals the gross [spent]
+     * the test intends (no shared-expense offsets), with the matching [health]. The period is the
+     * month containing [fixedNowMs], so the shared budget's days-left equals the days to month end.
+     */
+    private fun overallBudget(
+        amount: Double,
+        spent: Double = 0.0,
+        health: BudgetHealthStatus = BudgetHealthStatus.ON_TRACK
+    ): BudgetStatusSnapshot {
+        val (monthStart, monthEndExclusive) = com.yourname.expensetracker.domain.util.TimePeriodUtils.getMonthRange(fixedNowMs)
+        return BudgetStatusSnapshot(
+            budgetCategoryId = null,
+            budgetAmount = amount,
+            categoryName = null,
+            spentAmount = spent,
+            remainingAmount = amount - spent,
+            percentUsed = if (amount > 0.0) spent / amount * 100.0 else 0.0,
+            healthStatus = health,
+            periodStart = monthStart,
+            periodEnd = monthEndExclusive,
+            currency = "EUR", currencyAssumption = "EXPLICIT",
+            effectiveSpend = spent,
+            effectiveHealthStatus = health
+        )
+    }
 
     private fun purchase(amount: Double, date: Long): DashboardExpense = DashboardExpense(
         id = date,

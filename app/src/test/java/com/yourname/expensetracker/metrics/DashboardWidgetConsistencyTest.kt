@@ -49,6 +49,7 @@ import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -200,7 +201,9 @@ class DashboardWidgetConsistencyTest {
             healthStatus = BudgetHealthStatus.ON_TRACK,
             periodStart = monthStart,
             periodEnd = monthStart + 30 * 86400000L,
-            currency = "EUR", currencyAssumption = "EXPLICIT"
+            currency = "EUR", currencyAssumption = "EXPLICIT",
+            effectiveSpend = 100.0,
+            effectiveHealthStatus = BudgetHealthStatus.ON_TRACK
         )
 
         val processedData = createProcessedData(
@@ -239,9 +242,11 @@ class DashboardWidgetConsistencyTest {
             remainingAmount = 500.0,
             percentUsed = 50.0,
             healthStatus = BudgetHealthStatus.ON_TRACK,
-            periodStart = 0,
-            periodEnd = 0,
-            currency = "EUR", currencyAssumption = "EXPLICIT"
+            periodStart = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfMonth(timeProvider.now()),
+            periodEnd = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfMonth(timeProvider.now()) + 30 * 86400000L,
+            currency = "EUR", currencyAssumption = "EXPLICIT",
+            effectiveSpend = 500.0,
+            effectiveHealthStatus = BudgetHealthStatus.ON_TRACK
         )
 
         val processedData = createProcessedData(
@@ -253,9 +258,10 @@ class DashboardWidgetConsistencyTest {
         val result = computeUseCase.compute(processedData)
 
         val safeToSpend = result.allWidgets.filterIsInstance<DashboardWidget.SafeToSpend>().single()
-        // PR3: SafeToSpend amount is null when budget remaining is not yet normalized
-        assertNull("SafeToSpend amount should be null when budget not normalized", safeToSpend.amount)
-        assertTrue("SafeToSpend should be unavailable when budget not normalized", safeToSpend.isUnavailable)
+        // FL-06: the hero amount is the snapshot's limit minus effectiveSpend (1000 limit - 500 spent in the
+        // budget period), not the limit minus calendar-month spend (which is 1000 here: no expenses).
+        assertFalse("SafeToSpend should be available when budget is normalized", safeToSpend.isUnavailable)
+        assertEquals("SafeToSpend amount should be limit minus the snapshot effectiveSpend", 500.0, safeToSpend.amount!!, 0.001)
     }
 
     @Test

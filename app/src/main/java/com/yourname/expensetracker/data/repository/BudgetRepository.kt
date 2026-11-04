@@ -15,6 +15,7 @@ import com.yourname.expensetracker.domain.budget.BudgetCalculator
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.budget.BudgetStatus
 import com.yourname.expensetracker.domain.budget.BudgetSuggestion
+import com.yourname.expensetracker.domain.budget.budgetHealthForPercent
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.core.money.ConversionQuality
 import com.yourname.expensetracker.domain.model.BudgetSnapshot
@@ -338,10 +339,7 @@ class BudgetRepository @Inject constructor(
             // isPartial and conversionWarning fields provide additional context for
             // the UI and gate monitor alerts.
             limitConversionUnavailable -> BudgetHealthStatus.UNKNOWN
-            percent >= 1.0f -> BudgetHealthStatus.EXCEEDED
-            percent >= budget.notifyAtCritical -> BudgetHealthStatus.CRITICAL
-            percent >= budget.notifyAtWarning -> BudgetHealthStatus.WARNING
-            else -> BudgetHealthStatus.ON_TRACK
+            else -> budgetHealthForPercent(percent, budget.notifyAtWarning, budget.notifyAtCritical)
         }
 
         return BudgetStatus(
@@ -391,6 +389,11 @@ class BudgetRepository @Inject constructor(
                 periodEnd = periodEnd,
                 categoryId = budget.categoryId
             )
+            // INV-16: a partial breakdown dropped rows with no usable rate, so its effective
+            // spend understates the truth. Unavailable (null) is the single fail-closed signal;
+            // this repository is the only producer, and no consumer (budget card, Home, Runway,
+            // Weather) recomputes or substitutes gross spend for it.
+            if (breakdown.isPartial) return null
             AdjustedSpendBreakdown(
                 personalSpend = breakdown.totalPersonalSpend,
                 sharedSpend = breakdown.totalSharedSpend,
@@ -401,7 +404,7 @@ class BudgetRepository @Inject constructor(
             )
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
-            Timber.w(e, "Failed to compute adjusted spend for budget ${budget.id}; monitor/UI fall back to gross spend")
+            Timber.w(e, "Failed to compute adjusted spend for budget ${budget.id}; effective spend is unavailable")
             null
         }
     }

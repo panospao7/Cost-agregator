@@ -80,8 +80,7 @@ class BudgetViewModelAutopilotQualityTest : ViewModelTestUtils() {
         viewModel = BudgetViewModel(
             budgetRepository = budgetRepository,
             categoryRepository = categoryRepository,
-            offsetEngine = offsetEngine,
-            autopilotEngine = autopilotEngine,
+                        autopilotEngine = autopilotEngine,
             timeProvider = timeProvider,
             currencySettingsRepository = currencySettingsRepository,
             database = mockk(),
@@ -282,8 +281,7 @@ class BudgetViewModelAutopilotQualityTest : ViewModelTestUtils() {
             viewModel = BudgetViewModel(
                 budgetRepository = budgetRepository,
                 categoryRepository = categoryRepository,
-                offsetEngine = offsetEngine,
-                autopilotEngine = autopilotEngine,
+                                autopilotEngine = autopilotEngine,
                 timeProvider = timeProvider,
                 currencySettingsRepository = currencySettingsRepository,
                 database = database,

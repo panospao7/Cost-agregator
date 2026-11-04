@@ -458,10 +458,36 @@ class ComputeDashboardWidgetsUseCasePaceWiringTest {
         assertEquals(1234.5, result.allWidgets.filterIsInstance<DashboardWidget.SafeToSpend>().single().totalBudget!!, 0.0)
     }
 
+    @Test
+    fun `N-08-5 PeriodSummary marks unavailable vs zero and keeps isPartial false on unavailable input`() = runTest {
+        fixedNowMs = toEpochMs(2026, 6, 15, 12, 0)
+
+        // Pair 1: Genuinely zero period -> isUnavailable = false, isPartial = false, 0.0 amounts
+        val zeroResult = computeUseCase.compute(createProcessedData(emptyList()))
+        val zeroSummary = zeroResult.allWidgets.filterIsInstance<DashboardWidget.PeriodSummary>().single()
+        org.junit.Assert.assertFalse(zeroSummary.isUnavailable)
+        org.junit.Assert.assertFalse(zeroSummary.isPartial)
+        assertEquals(0.0, zeroSummary.todaySpent, 0.0)
+        assertEquals(0.0, zeroSummary.weekSpent, 0.0)
+        assertEquals(0.0, zeroSummary.monthSpent, 0.0)
+
+        // Pair 2: Unavailable home currency -> isUnavailable = true, isPartial = false
+        coEvery { currencySettingsRepository.resolveHomeCurrency() } returns
+            HomeCurrencyResolution.Failed("HOME_CURRENCY_UNAVAILABLE")
+        val unavailResult = computeUseCase.compute(createProcessedData(emptyList()))
+        val unavailSummary = unavailResult.allWidgets.filterIsInstance<DashboardWidget.PeriodSummary>().single()
+        assertTrue(unavailSummary.isUnavailable)
+        org.junit.Assert.assertFalse("isPartial must not be set merely because input is unavailable", unavailSummary.isPartial)
+    }
+
     private fun budgetSnapshot(currency: String) = com.yourname.expensetracker.domain.model.dashboard.BudgetStatusSnapshot(
         null, 1234.5, null, 0.0, 1234.5, 0.0,
         com.yourname.expensetracker.domain.budget.BudgetHealthStatus.ON_TRACK,
-        fixedNowMs, fixedNowMs + DAY_MS, currency = currency, currencyAssumption = "USER_CONFIRMED"
+        // fix-1.0.4 fixture: a 30-day (month-scale) period so Monte Carlo still receives the limit.
+        fixedNowMs, fixedNowMs + 30 * DAY_MS, currency = currency, currencyAssumption = "USER_CONFIRMED",
+        // Runway with a positive limit needs the budget's effective spend (no spend recorded here).
+        effectiveSpend = 0.0,
+        effectiveHealthStatus = com.yourname.expensetracker.domain.budget.BudgetHealthStatus.ON_TRACK
     )
 
     private fun monteCarloResult(currency: String) = MonteCarloResult(

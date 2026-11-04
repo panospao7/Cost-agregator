@@ -38,6 +38,7 @@ import com.yourname.expensetracker.domain.forecasting.SimulationMetadata
 import com.yourname.expensetracker.domain.forecasting.StressForecastResult
 import com.yourname.expensetracker.domain.forecasting.StressHorizon
 import com.yourname.expensetracker.domain.forecasting.StressRiskLevel
+import com.yourname.expensetracker.domain.groups.BudgetSpendBreakdown
 import com.yourname.expensetracker.domain.groups.SharedExpenseBudgetOffsetEngine
 import com.yourname.expensetracker.domain.health.FinancialHealthResult
 import com.yourname.expensetracker.domain.health.FinancialHealthScoreV2
@@ -135,6 +136,9 @@ class DashboardBudgetProvenanceChainTest {
     private var assembledGoalIds: List<Long> = emptyList()
     private var assembledGoalAssumptions: List<String> = emptyList()
     private var seededExpenseId: Long = 0L
+    private lateinit var offsetEngine: SharedExpenseBudgetOffsetEngine
+    private var lastBudgetStatuses: List<com.yourname.expensetracker.domain.model.dashboard.BudgetStatusSnapshot> =
+        emptyList()
 
     @Before
     fun setUp() {
@@ -164,10 +168,18 @@ class DashboardBudgetProvenanceChainTest {
             currencySettingsRepository = currencySettingsRepository,
             applicationScope = CoroutineScope(Dispatchers.Unconfined)
         )
-        val offsetEngine = mockk<SharedExpenseBudgetOffsetEngine>(relaxed = true)
-        // Shared-expense offsets are out of scope; a failing offset engine degrades to gross spend (null breakdown).
-        coEvery { offsetEngine.calculateEffectiveBudgetSpend(any(), any(), any()) } throws
-            IllegalStateException("offset engine not under test")
+        offsetEngine = mockk<SharedExpenseBudgetOffsetEngine>(relaxed = true)
+        // Shared-expense offsets are out of scope: no group rows, so the effective spend equals the seeded
+        // USD 100 personal purchase (the breakdown production supplies; a null breakdown would make the
+        // budget's effective spend unavailable and fail runway closed).
+        coEvery { offsetEngine.calculateEffectiveBudgetSpend(any(), any(), any()) } returns BudgetSpendBreakdown(
+            totalPersonalSpend = 100.0,
+            totalSharedSpend = 0.0,
+            totalReimbursed = 0.0,
+            netSharedLiability = 0.0,
+            effectiveBudgetSpend = 100.0,
+            displayCurrency = "USD"
+        )
 
         // REAL budget repository on REAL Room.
         budgetRepository = BudgetRepository(
@@ -192,7 +204,6 @@ class DashboardBudgetProvenanceChainTest {
         budgetViewModel = BudgetViewModel(
             budgetRepository = budgetRepository,
             categoryRepository = categoryRepository,
-            offsetEngine = offsetEngine,
             autopilotEngine = mockk<BudgetAutopilotEngine>(relaxed = true),
             timeProvider = clock,
             currencySettingsRepository = currencySettingsRepository,
@@ -352,6 +363,62 @@ class DashboardBudgetProvenanceChainTest {
     }
 
     // ---------------------------------------------------------------------------------------
+    // FL-06: gross 100 but effective 60 (shared-expense offset) on limit 1000. The headline, Runway
+    // and Financial Weather all read the one shared figure 1000 - 60 = 940, through the real
+    // repository, adapter, use case and synthesis engine.
+    // ---------------------------------------------------------------------------------------
+    @Test
+    fun effective_60_not_gross_gives_940_on_headline_runway_and_weather() = runTest {
+        seedDayOnePurchase()
+        coEvery { offsetEngine.calculateEffectiveBudgetSpend(any(), any(), any()) } returns BudgetSpendBreakdown(
+            totalPersonalSpend = 100.0,
+            totalSharedSpend = 0.0,
+            totalReimbursed = 40.0,
+            netSharedLiability = 0.0,
+            effectiveBudgetSpend = 60.0,
+            displayCurrency = "USD"
+        )
+        database.budgetDao().insertAndActivateOverall(
+            screenBuiltOverallBudget().copy(currencyAssumption = "USER_CONFIRMED", createdAt = nowMs)
+        )
+
+        val result = computeDashboard()
+
+        val overall = lastBudgetStatuses.single()
+        assertEquals("setup: the snapshot carries the effective spend", 60.0, overall.effectiveSpend!!, 0.001)
+        assertTrue("setup: effective spend differs from gross", overall.spentAmount != overall.effectiveSpend)
+
+        val headline = result.allWidgets.filterIsInstance<DashboardWidget.SafeToSpend>().single()
+        assertFalse(headline.isUnavailable)
+        assertEquals("headline", 940.0, headline.amount!!, 0.001)
+
+        val runway = result.allWidgets.filterIsInstance<DashboardWidget.FinancialRunway>().single()
+        assertFalse(runway.isUnavailable)
+        assertEquals("runway remainder", 940.0, runway.discretionaryRemaining, 0.001)
+
+        val forecast = SynthesisEngine(clock, currencyConverter = mockk(relaxed = true)).synthesize(
+            pastSumDaily = emptyList(),
+            recurringPatterns = emptyList(),
+            plannedExpenses = emptyList(),
+            savingsGoals = emptyList(),
+            budgetStatuses = lastBudgetStatuses,
+            spendingPace = com.yourname.expensetracker.domain.analytics.SpendingPace(
+                currentMonthSpent = 100.0,
+                daysElapsed = 15,
+                daysInMonth = 30,
+                projectedTotal = 200.0,
+                previousMonthTotal = null,
+                averageMonthlyTotal = null,
+                pacePercentage = 100.0f,
+                paceStatus = com.yourname.expensetracker.domain.analytics.PaceStatus.ON_PACE,
+                displayCurrency = "USD"
+            ),
+            displayCurrency = "USD"
+        )
+        assertEquals("weather pool", 940.0, forecast.components.discretionaryBudget, 0.001)
+    }
+
+    // ---------------------------------------------------------------------------------------
     // Control B (guard against "fixing" by deleting the gate): a genuinely unconfirmed legacy
     // budget (LEGACY_DEFAULT row, never stamped) must stay gated before and after R3.
     // ---------------------------------------------------------------------------------------
@@ -491,6 +558,7 @@ class DashboardBudgetProvenanceChainTest {
         val budgetStatuses = withContext(Dispatchers.Default) {
             withTimeout(10_000L) { adapter.observeBudgetStatuses().first() }
         }
+        lastBudgetStatuses = budgetStatuses
         val data = DashboardData(
             expenses = listOf(
                 DashboardExpense(

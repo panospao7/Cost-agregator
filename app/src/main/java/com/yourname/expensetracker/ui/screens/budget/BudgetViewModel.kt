@@ -7,7 +7,6 @@ import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.CategoryRepository
-import com.yourname.expensetracker.domain.budget.AdjustedSpendBreakdown
 import com.yourname.expensetracker.domain.budget.BudgetAutopilotEngine
 import com.yourname.expensetracker.domain.budget.BudgetAutopilotRecommendations
 import com.yourname.expensetracker.domain.budget.BudgetStatus
@@ -16,7 +15,6 @@ import com.yourname.expensetracker.domain.budget.CategoryBudgetRecommendation
 import com.yourname.expensetracker.domain.core.money.CurrencyAssumption
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
-import com.yourname.expensetracker.domain.groups.SharedExpenseBudgetOffsetEngine
 import com.yourname.expensetracker.domain.installment.InstallmentPlanReadRepository
 import com.yourname.expensetracker.domain.installment.model.InstallmentCurrency
 import com.yourname.expensetracker.domain.installment.model.InstallmentMinorUnits
@@ -75,7 +73,6 @@ sealed interface BudgetInstallmentLine {
 class BudgetViewModel @Inject constructor(
     private val budgetRepository: BudgetRepository,
     private val categoryRepository: CategoryRepository,
-    private val offsetEngine: SharedExpenseBudgetOffsetEngine,
     private val autopilotEngine: BudgetAutopilotEngine,
     private val timeProvider: TimeProvider,
     private val currencySettingsRepository: CurrencySettingsRepository,
@@ -132,15 +129,9 @@ class BudgetViewModel @Inject constructor(
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     private val adjustedBudgetStatuses: Flow<List<BudgetStatus>> =
         _budgetsRefreshTrigger
+            // FL-06: BudgetRepository is the only producer of adjustedSpendBreakdown (null = effective
+            // spend unavailable, INV-16). The ViewModel never recomputes it, so null stays null.
             .flatMapLatest { budgetRepository.getBudgetStatuses() }
-            .mapLatest { statuses ->
-                statuses.map { status ->
-                    // P6-CURRENT-002: BudgetRepository now populates adjustedSpendBreakdown so the
-                    // monitor and UI agree. Reuse it when present; only compute as a fallback.
-                    status.adjustedSpendBreakdown?.let { return@map status }
-                    status.copy(adjustedSpendBreakdown = calculateAdjustedSpend(status))
-                }
-            }
 
     /** PE-C: the installment inputs of the Budget lines, loaded once per installment change. */
     internal sealed interface InstallmentInputsResult {
@@ -272,35 +263,6 @@ class BudgetViewModel @Inject constructor(
         started = SharingStarted.WhileSubscribed(5000),
         initialValue = BudgetUiState(isLoading = true)
     )
-
-    /**
-     * Calculate adjusted spend breakdown for a budget status.
-     * Uses the offset engine to compute net shared liability. Fallback only: mirrors
-     * [BudgetRepository]'s mapping (null = effective spend unavailable).
-     */
-    private suspend fun calculateAdjustedSpend(status: BudgetStatus): AdjustedSpendBreakdown? {
-        return try {
-            val breakdown = offsetEngine.calculateEffectiveBudgetSpend(
-                periodStart = status.periodStart,
-                periodEnd = status.periodEnd,
-                categoryId = status.budget.categoryId
-            )
-            
-            AdjustedSpendBreakdown(
-                personalSpend = breakdown.totalPersonalSpend,
-                sharedSpend = breakdown.totalSharedSpend,
-                reimbursedAmount = breakdown.totalReimbursed,
-                netSharedLiability = breakdown.netSharedLiability,
-                effectiveSpend = breakdown.effectiveBudgetSpend,
-                pendingReimbursements = breakdown.getPendingReimbursement()
-            )
-        } catch (e: Exception) {
-            // INV-16/INV-20: cancellation propagates; any other failure means
-            // "effective spend unavailable" (null), same mapping as BudgetRepository.
-            if (e is kotlinx.coroutines.CancellationException) throw e
-            null
-        }
-    }
 
     val categories = categoryRepository.allCategories.stateIn(
         scope = viewModelScope,

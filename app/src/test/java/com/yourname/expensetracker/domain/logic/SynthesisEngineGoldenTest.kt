@@ -45,7 +45,8 @@ class SynthesisEngineGoldenTest : AnalyticsEngineTestBase() {
             plannedExpenses = emptyList(),
             savingsGoals = emptyList(),
             budgetStatuses = listOf(overallBudget(2000.0)),
-            spendingPace = pace(averageMonthlyTotal = 1400.0)
+            spendingPace = pace(averageMonthlyTotal = 1400.0),
+            displayCurrency = "EUR"
         )
 
         assertApproxEquals(120.0, forecast.components.totalCommitted, 0.01)
@@ -221,7 +222,11 @@ class SynthesisEngineGoldenTest : AnalyticsEngineTestBase() {
             percentUsed = 0.0,
             healthStatus = BudgetHealthStatus.ON_TRACK,
             periodStart = 0L,
-            periodEnd = 0L
+            periodEnd = 0L,
+            currency = "EUR",
+            currencyAssumption = "USER_CONFIRMED",
+            effectiveSpend = 0.0,
+            effectiveHealthStatus = BudgetHealthStatus.ON_TRACK
         )
     }
 
