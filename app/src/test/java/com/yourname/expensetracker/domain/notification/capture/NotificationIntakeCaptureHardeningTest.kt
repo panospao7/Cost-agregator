@@ -208,7 +208,9 @@ class NotificationIntakeCaptureHardeningTest {
     @Test
     fun `P-01-1 recoverPending enqueues every ready row under the prefixed name with KEEP and cancels nothing`() = runTest {
         coEvery { intakeDao.releaseStaleProcessing(any(), any()) } returns 0
-        coEvery { intakeDao.getReadyForProcessing(any(), any()) } returns listOf(readyRow(33L), readyRow(34L))
+        coEvery {
+            intakeDao.getReadyForProcessingPage(any(), any(), any(), any())
+        } returns listOf(readyRow(33L), readyRow(34L))
         val names = mutableListOf<String>()
         val policies = mutableListOf<ExistingWorkPolicy>()
         coEvery {
@@ -228,7 +230,7 @@ class NotificationIntakeCaptureHardeningTest {
     @Test
     fun `P-01-1 recoverPending with no ready rows enqueues nothing`() = runTest {
         coEvery { intakeDao.releaseStaleProcessing(any(), any()) } returns 0
-        coEvery { intakeDao.getReadyForProcessing(any(), any()) } returns emptyList()
+        coEvery { intakeDao.getReadyForProcessingPage(any(), any(), any(), any()) } returns emptyList()
 
         scheduler().recoverPending()
 
@@ -246,7 +248,9 @@ class NotificationIntakeCaptureHardeningTest {
         coEvery { intakeDao.getByFingerprint(any()) } returns null
         coEvery { intakeDao.insertOrIgnore(any()) } returns 77L
         coEvery { intakeDao.releaseStaleProcessing(any(), any()) } returns 0
-        coEvery { intakeDao.getReadyForProcessing(any(), any()) } returns listOf(readyRow(77L))
+        coEvery {
+            intakeDao.getReadyForProcessingPage(any(), any(), any(), any())
+        } returns listOf(readyRow(77L))
 
         capture()
         captureForRetry()

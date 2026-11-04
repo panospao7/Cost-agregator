@@ -86,6 +86,26 @@ interface NotificationIntakeDao {
     """)
     suspend fun getReadyForProcessing(nowMs: Long, limit: Int = 100): List<NotificationIntakeEntity>
 
+    /**
+     * Keyset page of the same ready set as [getReadyForProcessing], ordered by (capturedAt, id) and
+     * strictly after the cursor ([afterCapturedAt], [afterId]). Start with Long.MIN_VALUE for both.
+     * Read-only; rows stay RECEIVED after enqueue, so a cursor (not OFFSET) is required.
+     */
+    @Query("""
+        SELECT * FROM notification_intake
+        WHERE status IN ('RECEIVED', 'FAILED_RETRYABLE')
+          AND (:nowMs >= COALESCE(nextAttemptAt, 0))
+          AND (capturedAt > :afterCapturedAt OR (capturedAt = :afterCapturedAt AND id > :afterId))
+        ORDER BY capturedAt ASC, id ASC
+        LIMIT :limit
+    """)
+    suspend fun getReadyForProcessingPage(
+        nowMs: Long,
+        afterCapturedAt: Long,
+        afterId: Long,
+        limit: Int
+    ): List<NotificationIntakeEntity>
+
     @Query("""
         UPDATE notification_intake
         SET status = 'PROCESSING',

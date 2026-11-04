@@ -559,6 +559,7 @@ class CurrencyRatesRepositoryImpl @Inject constructor(
             .filter { eurToCurrency.containsKey(it) }
         val rates = mutableListOf<Triple<String, String, Double>>()
         for (from in supported) {
+            currentCoroutineContext().ensureActive()
             val fromEur = eurToCurrency[from] ?: continue
             for (to in supported) {
                 if (from == to) continue

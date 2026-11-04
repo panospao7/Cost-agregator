@@ -416,6 +416,148 @@ class NotificationIntakeEnqueueFailureRoomTest {
         assertTrue(intakeDao.getReadyForProcessing(NOW + 7_200_000L, 100).none { it.id == id })
     }
 
+    // ── S1 (fix-1.0.4): keyset-paged recoverPending against real Room ───────
+
+    private fun recoveryScheduler(
+        mode: RestoreMaintenanceMode = normalMaintenanceMode()
+    ) = NotificationIntakeRecoveryScheduler(
+        intakeDao = intakeDao,
+        workManager = workManager,
+        timeProvider = timeProvider,
+        writeBarrier = DatabaseWriteBarrier(mode)
+    )
+
+    private fun captureEnqueuedNames(): MutableList<String> {
+        val names = mutableListOf<String>()
+        every {
+            workManager.enqueueUniqueWork(
+                capture(names),
+                any<ExistingWorkPolicy>(),
+                any<OneTimeWorkRequest>()
+            )
+        } returns mockk<Operation>(relaxed = true)
+        return names
+    }
+
+    private suspend fun insertReadyRows(count: Int, capturedAtOf: (Int) -> Long, prefix: String = "rp"): List<Long> =
+        (0 until count).map { i ->
+            insert(
+                intakeRow("$prefix-$i", NotificationIntakeStatus.RECEIVED.name, attempts = 0)
+                    .copy(capturedAt = capturedAtOf(i))
+            )
+        }
+
+    @Test(timeout = 120_000)
+    fun `recoverPending enqueues 250 ready rows beyond one page exactly once each`() = runBlocking {
+        val ids = insertReadyRows(250, { NOW - 1_000_000L + it })
+        val names = captureEnqueuedNames()
+
+        recoveryScheduler().recoverPending()
+
+        assertEquals(250, names.size)
+        assertEquals(ids.map { NotificationIntakeWorkNames.uniqueWorkName(it) }.toSet(), names.toSet())
+        // oldest first (capturedAt ASC)
+        assertEquals(ids.map { NotificationIntakeWorkNames.uniqueWorkName(it) }, names)
+    }
+
+    @Test(timeout = 120_000)
+    fun `recoverPending with identical capturedAt across a page boundary loses and repeats nothing`() = runBlocking {
+        // 150 rows share one capturedAt, so the 100/101 page boundary falls inside the tie group.
+        val tied = insertReadyRows(150, { NOW - 5_000L }, prefix = "tie")
+        val later = insertReadyRows(5, { NOW - 1_000L + it }, prefix = "later")
+        val names = captureEnqueuedNames()
+
+        recoveryScheduler().recoverPending()
+
+        val expected = (tied + later).map { NotificationIntakeWorkNames.uniqueWorkName(it) }
+        assertEquals(155, names.size)
+        assertEquals(expected.toSet(), names.toSet())
+        assertEquals("no id may be enqueued twice", names.size, names.toSet().size)
+        // ties are ordered by id ascending
+        assertEquals(expected, names)
+    }
+
+    @Test(timeout = 120_000)
+    fun `recoverPending stops at the 20 page cap and leaves the remainder for the next run`() = runBlocking {
+        val ids = insertReadyRows(250, { NOW - 1_000_000L + it })
+        val names = captureEnqueuedNames()
+
+        recoveryScheduler().recoverPending(limit = 10)
+
+        // 20 pages x 10 rows = 200 oldest rows; the newest 50 are untouched this run.
+        assertEquals(200, names.size)
+        assertEquals(ids.take(200).map { NotificationIntakeWorkNames.uniqueWorkName(it) }, names)
+        assertTrue(names.none { it == NotificationIntakeWorkNames.uniqueWorkName(ids[200]) })
+    }
+
+    @Test(timeout = 120_000)
+    fun `recoverPending with a short final page ends the loop and enqueues only that page`() = runBlocking {
+        val ids = insertReadyRows(30, { NOW - 100_000L + it })
+        val names = captureEnqueuedNames()
+
+        recoveryScheduler().recoverPending()
+
+        assertEquals(ids.map { NotificationIntakeWorkNames.uniqueWorkName(it) }, names)
+    }
+
+    @Test(timeout = 120_000)
+    fun `recoverPending with exactly one full page enqueues it once and terminates on the empty next page`() = runBlocking {
+        val ids = insertReadyRows(100, { NOW - 100_000L + it })
+        val names = captureEnqueuedNames()
+
+        recoveryScheduler().recoverPending()
+
+        assertEquals(ids.map { NotificationIntakeWorkNames.uniqueWorkName(it) }, names)
+    }
+
+    @Test(timeout = 120_000)
+    fun `recoverPending with a blocked write barrier enqueues nothing and touches no rows`() = runBlocking {
+        insertReadyRows(5, { NOW - 100_000L + it })
+        val stale = insert(
+            intakeRow("rp-stale-blocked", NotificationIntakeStatus.PROCESSING.name, attempts = 1, lockedAt = NOW - 3_600_000L, lockedBy = "w")
+        )
+        val blocked = mockk<RestoreMaintenanceMode>(relaxed = true)
+        every { blocked.currentMode() } returns RestoreMaintenanceMode.Mode.RESTORE_PREPARING
+        every { blocked.isWritesAllowed() } returns false
+        val names = captureEnqueuedNames()
+
+        recoveryScheduler(blocked).recoverPending()
+
+        assertTrue(names.isEmpty())
+        assertEquals(NotificationIntakeStatus.PROCESSING.name, intakeDao.getById(stale)!!.status)
+    }
+
+    @Test(timeout = 120_000)
+    fun `recoverPending releases stale PROCESSING rows and enqueues them but leaves fresh PROCESSING rows alone`() = runBlocking {
+        val stale = insert(
+            intakeRow("rp-stale", NotificationIntakeStatus.PROCESSING.name, attempts = 1, lockedAt = NOW - 11 * 60 * 1000L, lockedBy = "w")
+        )
+        val fresh = insert(
+            intakeRow("rp-fresh", NotificationIntakeStatus.PROCESSING.name, attempts = 1, lockedAt = NOW - 60 * 1000L, lockedBy = "w")
+        )
+        val names = captureEnqueuedNames()
+
+        recoveryScheduler().recoverPending()
+
+        assertEquals(NotificationIntakeStatus.FAILED_RETRYABLE.name, intakeDao.getById(stale)!!.status)
+        assertEquals(NotificationIntakeStatus.PROCESSING.name, intakeDao.getById(fresh)!!.status)
+        assertEquals(listOf(NotificationIntakeWorkNames.uniqueWorkName(stale)), names)
+    }
+
+    @Test(timeout = 120_000)
+    fun `recoverPending skips FAILED_FINAL and not-yet-due retryable rows`() = runBlocking {
+        val ready = insert(intakeRow("rp-ready", NotificationIntakeStatus.RECEIVED.name, attempts = 0))
+        insert(intakeRow("rp-final", NotificationIntakeStatus.FAILED_FINAL.name, attempts = MAX_ATTEMPTS, terminalAt = NOW))
+        insert(
+            intakeRow("rp-later", NotificationIntakeStatus.FAILED_RETRYABLE.name, attempts = 1, nextAttemptAt = NOW + 60_000L)
+        )
+        val names = captureEnqueuedNames()
+
+        recoveryScheduler().recoverPending()
+
+        assertEquals(listOf(NotificationIntakeWorkNames.uniqueWorkName(ready)), names)
+    }
+
     private companion object {
         const val NOW = 1_700_000_000_000L
         const val PACKAGE = "com.example.app"

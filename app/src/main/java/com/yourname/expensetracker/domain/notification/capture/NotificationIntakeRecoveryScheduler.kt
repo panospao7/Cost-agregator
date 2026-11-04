@@ -21,6 +21,9 @@ class NotificationIntakeRecoveryScheduler @Inject constructor(
 ) {
     companion object {
         private const val STALE_PROCESSING_MS = 10 * 60 * 1000L // 10 minutes
+
+        /** Hard cap on keyset pages per recovery run; any remainder is picked up by the next run. */
+        private const val MAX_RECOVERY_PAGES = 20
     }
 
     /**
@@ -58,27 +61,45 @@ class NotificationIntakeRecoveryScheduler @Inject constructor(
             Timber.d("IntakeRecovery: released $released stale PROCESSING rows")
         }
 
-        // Enqueue ready rows
-        val ready = intakeDao.getReadyForProcessing(now, limit)
-        ready.forEach { row ->
-            val request = OneTimeWorkRequestBuilder<NotificationIntakeWorker>()
-                .setInputData(workDataOf("intakeId" to row.id))
-                .addTag("notification-intake")
-                .addTag("notification-intake-${row.id}")
-                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
-                .build()
+        // Enqueue ready rows, one keyset page (capturedAt, id) at a time, bounded by MAX_RECOVERY_PAGES.
+        // Rows stay RECEIVED after enqueue, so a cursor (not a repeated first page) is required to
+        // reach the backlog beyond `limit`.
+        val pageSize = limit.coerceAtLeast(1)
+        var afterCapturedAt = Long.MIN_VALUE
+        var afterId = Long.MIN_VALUE
+        var enqueued = 0
+        var pages = 0
+        while (pages < MAX_RECOVERY_PAGES) {
+            val ready = intakeDao.getReadyForProcessingPage(now, afterCapturedAt, afterId, pageSize)
+            pages++
+            ready.forEach { row ->
+                val request = OneTimeWorkRequestBuilder<NotificationIntakeWorker>()
+                    .setInputData(workDataOf("intakeId" to row.id))
+                    .addTag("notification-intake")
+                    .addTag("notification-intake-${row.id}")
+                    .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
+                    .build()
 
-            // P-01-1: same name function as the coordinator. Legacy work named `<id>`
-            // is not cancelled; a second worker for the row is safe because the
-            // worker's atomic claim makes the loser a no-op.
-            workManager.enqueueUniqueWork(
-                NotificationIntakeWorkNames.uniqueWorkName(row.id),
-                ExistingWorkPolicy.KEEP,
-                request
-            )
+                // P-01-1: same name function as the coordinator. Legacy work named `<id>`
+                // is not cancelled; a second worker for the row is safe because the
+                // worker's atomic claim makes the loser a no-op.
+                workManager.enqueueUniqueWork(
+                    NotificationIntakeWorkNames.uniqueWorkName(row.id),
+                    ExistingWorkPolicy.KEEP,
+                    request
+                )
+            }
+            enqueued += ready.size
+            val last = ready.lastOrNull() ?: break
+            if (ready.size < pageSize) break
+            afterCapturedAt = last.capturedAt
+            afterId = last.id
         }
-        if (ready.isNotEmpty()) {
-            Timber.d("IntakeRecovery: enqueued ${ready.size} pending intake rows")
+        if (pages >= MAX_RECOVERY_PAGES) {
+            Timber.w("Intake recovery reached page cap; remaining rows deferred to next run")
+        }
+        if (enqueued > 0) {
+            Timber.d("IntakeRecovery: enqueued $enqueued pending intake rows in $pages page(s)")
         }
     }
 }

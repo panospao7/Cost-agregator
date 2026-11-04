@@ -449,16 +449,24 @@ fun MainScreen(
             return
         }
         is AppOperationalState.CriticalRecoveryRequired -> {
+            val clearDataWarning = stringResource(R.string.critical_recovery_clear_data_warning)
             val msg = buildString {
                 append("The database is in an unrecoverable state.")
                 if (state.reason != null) append("\n\nReason: ${state.reason}")
                 append("\n\nRestarting the app is not expected to resolve this. Close the app and contact support.")
+                append("\n\n")
+                append(clearDataWarning)
             }
             AppOperationalLockScreen(
                 title = "Critical Recovery Required",
                 message = msg,
                 actionLabel = "Close app",
-                onAction = { context.findHostActivity()?.finishAffinity() }
+                onAction = { context.findHostActivity()?.finishAffinity() },
+                secondaryActionLabel = stringResource(R.string.critical_recovery_open_app_settings),
+                // ActivityNotFoundException is handled inside openAppDetailsSettings (no crash).
+                onSecondaryAction = {
+                    com.yourname.expensetracker.ui.applock.openAppDetailsSettings(context)
+                }
             )
             return
         }
@@ -1255,7 +1263,9 @@ private fun AppOperationalLockScreen(
     title: String,
     message: String,
     actionLabel: String,
-    onAction: () -> Unit
+    onAction: () -> Unit,
+    secondaryActionLabel: String? = null,
+    onSecondaryAction: (() -> Unit)? = null
 ) {
     androidx.compose.foundation.layout.Box(
         modifier = Modifier.fillMaxSize(),
@@ -1267,6 +1277,11 @@ private fun AppOperationalLockScreen(
             text = { Text(message) },
             confirmButton = {
                 TextButton(onClick = onAction) { Text(actionLabel) }
+            },
+            dismissButton = if (secondaryActionLabel != null && onSecondaryAction != null) {
+                { TextButton(onClick = onSecondaryAction) { Text(secondaryActionLabel) } }
+            } else {
+                null
             }
         )
     }
