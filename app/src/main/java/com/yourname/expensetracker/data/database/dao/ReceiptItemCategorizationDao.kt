@@ -6,6 +6,7 @@ import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Update
 import com.yourname.expensetracker.data.database.entity.ReceiptItemCategorization
+import com.yourname.expensetracker.domain.ai.model.ReceiptItemPlaceholder
 
 @Dao
 interface ReceiptItemCategorizationDao {
@@ -105,6 +106,54 @@ interface ReceiptItemCategorizationDao {
         WHERE receiptId = :receiptId
     """)
     suspend fun clearExpenseId(receiptId: Long, timestamp: Long)
+
+    /**
+     * Fills stored placeholder rows (items a cloud call did not cover) with a retry result.
+     * Each replacement is applied to its row only if that row is STILL an unsent placeholder
+     * and has no user correction. The row is read and written in this one Room transaction, so
+     * a row that changed since the caller read it (a user correction, an earlier retry, a real
+     * result) is left untouched. Only the suggestion fields change; the row's description,
+     * amount, tax share, expense link and user-correction fields are kept as stored.
+     *
+     * @return the number of rows actually updated.
+     */
+    @androidx.room.Transaction
+    suspend fun updatePlaceholderRowsIfStillUncategorized(
+        receiptId: Long,
+        replacements: List<ReceiptItemCategorization>
+    ): Int {
+        var updated = 0
+        for (replacement in replacements) {
+            val current = getById(replacement.id) ?: continue
+            if (current.receiptId != receiptId) continue
+            val stillPlaceholder = ReceiptItemPlaceholder.isPlaceholder(
+                hasSuggestedCategory = current.suggestedCategoryId != null ||
+                    !current.suggestedCategoryName.isNullOrBlank(),
+                confidence = current.confidence,
+                rationale = current.aiRationale,
+                hasAlternatives = ReceiptItemPlaceholder.hasAlternativesJson(current.alternativeCategoriesJson)
+            )
+            val userTouched = ReceiptItemPlaceholder.isUserTouched(
+                correctedCategoryId = current.userCorrectedCategoryId,
+                correctedCategoryName = current.userCorrectedCategoryName,
+                correctedAt = current.userCorrectedAt
+            )
+            if (!stillPlaceholder || userTouched) continue
+            update(
+                current.copy(
+                    suggestedCategoryId = replacement.suggestedCategoryId,
+                    suggestedCategoryName = replacement.suggestedCategoryName,
+                    confidence = replacement.confidence,
+                    aiRationale = replacement.aiRationale,
+                    alternativeCategoriesJson = replacement.alternativeCategoriesJson,
+                    isNewCategorySuggestion = replacement.isNewCategorySuggestion,
+                    updatedAt = replacement.updatedAt
+                )
+            )
+            updated++
+        }
+        return updated
+    }
 
     @androidx.room.Transaction
     suspend fun redactForReceiptsOlderThan(cutoffMs: Long): Int =

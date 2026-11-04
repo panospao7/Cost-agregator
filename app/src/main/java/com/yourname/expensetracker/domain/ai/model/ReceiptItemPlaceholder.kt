@@ -39,8 +39,32 @@ object ReceiptItemPlaceholder {
         hasAlternatives = hasAlternativesJson(item.alternativeCategoriesJson)
     )
 
+    /**
+     * A stored placeholder the user has not categorised: the only kind of row a retry may fill.
+     * A placeholder the user already corrected keeps the user's choice and is never retried.
+     */
+    fun isRetryable(item: ReceiptItemCategorizationSnapshot): Boolean =
+        isPlaceholder(item) &&
+            !isUserTouched(
+                correctedCategoryId = item.userCorrectedCategoryId,
+                correctedCategoryName = item.userCorrectedCategoryName,
+                correctedAt = item.userCorrectedAt
+            )
+
+    /**
+     * Primitive form of the user-correction rule, shared by the snapshot overload above and the
+     * entity-level check in the DAO transaction: a row is user-touched when any correction field is set.
+     */
+    fun isUserTouched(
+        correctedCategoryId: Long?,
+        correctedCategoryName: String?,
+        correctedAt: Long?
+    ): Boolean = correctedCategoryId != null ||
+        !correctedCategoryName.isNullOrBlank() ||
+        correctedAt != null
+
     /** Persisted alternatives are a JSON array; null, blank and "[]" mean none. */
-    private fun hasAlternativesJson(json: String?): Boolean {
+    fun hasAlternativesJson(json: String?): Boolean {
         val trimmed = json?.trim().orEmpty()
         return trimmed.isNotEmpty() && trimmed != "[]"
     }

@@ -5639,7 +5639,10 @@ def test_checked_in_structural_only_manifest_contract_via_production_apis():
     # userCorrectionDao.redactNotificationTextOlderThan), yielding 456.
     # 1.0.4 Batch F E-02-1 (owner item 124): +2 exact recordManualContribution identities
     # (savingsGoalDao.addToGoalAmountIfSnapshot, savingsContributionLedgerDao.insert), yielding 458.
-    assert len(entries) == 458
+    # 1.0.4 N-05-3 step 2 (owner item 131): +1 exact identity
+    # (ReceiptItemCategorizationRepository.updatePlaceholderRowsWithRetryResult /
+    # dao.updatePlaceholderRowsIfStillUncategorized), yielding 459.
+    assert len(entries) == 459
     sweep_path = (
         "app/src/main/java/com/yourname/expensetracker/data/repository/"
         "SavingsSweepAcceptanceCoordinator.kt"
@@ -6127,8 +6130,11 @@ def test_current_db_gate_activated_policy_real_config_pipeline(tmp_path, monkeyp
     # userCorrectionDao.redactNotificationTextOlderThan), yielding 456.
     # 1.0.4 Batch F E-02-1 (owner item 124): +2 exact recordManualContribution identities
     # (savingsGoalDao.addToGoalAmountIfSnapshot, savingsContributionLedgerDao.insert), yielding 458.
+    # 1.0.4 N-05-3 step 2 (owner item 131): +1 exact identity
+    # (ReceiptItemCategorizationRepository.updatePlaceholderRowsWithRetryResult /
+    # dao.updatePlaceholderRowsIfStillUncategorized), yielding 459.
     # Re-derived per the checked-in-manifest contract pin above.
-    assert len(entries) == 458
+    assert len(entries) == 459
 
     # The structural gate really ran (post-activation it is no longer
     # short-circuited by a loader block) and stayed clean.

@@ -59,6 +59,7 @@ import coil.compose.AsyncImage
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.domain.ai.model.AiLoadState
+import com.yourname.expensetracker.domain.ai.model.ReceiptItemPlaceholder
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
 import com.yourname.expensetracker.ui.components.ai.CategoryAssistCard
@@ -1199,6 +1200,21 @@ private fun ReviewStep(
                 viewModel.showItemRationale(item)
             }
         )
+        // N-05-3 step 2: a partial result (items not yet categorised) can be completed with
+        // Analyze. Shown only in that one state; the existing Analyze label is reused.
+        if (!state.isAnalyzingItems && state.itemAnalysisAvailable &&
+            itemCategorizations.any { ReceiptItemPlaceholder.isRetryable(it) }
+        ) {
+            val analyzeItemsCd = stringResource(R.string.receipt_analyze_items_cd)
+            TextButton(
+                onClick = { viewModel.analyzeReceiptItems() },
+                modifier = Modifier.semantics { contentDescription = analyzeItemsCd }
+            ) {
+                Icon(imageVector = Icons.Default.Search, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(stringResource(R.string.receipt_analyze_button))
+            }
+        }
     } else if (parsed?.lineItems?.isNotEmpty() == true) {
         Spacer(modifier = Modifier.height(16.dp))
         Card(
