@@ -49,9 +49,20 @@ fun SharedExpenseGroupsScreen(
     viewModel: SharedExpenseGroupsViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val snackbarHostState = remember { SnackbarHostState() }
+    // Mutation failures are transient: shown once as a snackbar, then cleared. Only a failed
+    // load replaces the screen with the full-screen error and retry.
+    val transientError = if (uiState.loadFailed) uiState.mutationError else uiState.error
+    LaunchedEffect(transientError) {
+        if (transientError != null) {
+            snackbarHostState.showSnackbar(transientError)
+            viewModel.clearError()
+        }
+    }
 
     Scaffold(
         containerColor = SemanticColors.BaseNavy,
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { 
@@ -138,7 +149,7 @@ fun SharedExpenseGroupsScreen(
                         CircularProgressIndicator(color = SemanticColors.PrimaryIndigo)
                     }
                 }
-                uiState.error != null -> {
+                uiState.loadFailed && uiState.error != null -> {
                     ErrorState(
                         message = uiState.error!!,
                         onRetry = { viewModel.refresh() }
