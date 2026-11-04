@@ -1,9 +1,9 @@
 package com.yourname.expensetracker.ui.screens.naturallanguage
 
 import com.yourname.expensetracker.data.repository.MerchantNormalizationRepository
+import com.yourname.expensetracker.domain.currency.ConversionResult
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
-import com.yourname.expensetracker.domain.currency.FailedConversion
 import com.yourname.expensetracker.domain.currency.MultiConversionAggregate
 import com.yourname.expensetracker.domain.naturallanguage.NaturalLanguageExpense
 import com.yourname.expensetracker.domain.naturallanguage.NaturalLanguageExpenseQueryRepository
@@ -93,34 +93,59 @@ class NaturalLanguageSearchViewModelTest {
         }
     }
 
-    private fun row(id: Long, amount: Double, effective: Double, currency: String = "EUR") =
-        NaturalLanguageExpense(
-            id = id,
-            amount = amount,
-            effectiveAmount = effective,
-            currency = currency,
-            merchant = "Shop",
-            date = rowDate - id,
-            categoryId = null
-        )
+    /**
+     * [countsInTotal] defaults to true (an ordinary counted purchase). Deposits and flagged rows must set
+     * it to false, as the repository does; [neutralised] marks a flagged (spending-excluded) row.
+     */
+    private fun row(
+        id: Long,
+        amount: Double,
+        effective: Double,
+        currency: String = "EUR",
+        date: Long = rowDate - id,
+        countsInTotal: Boolean = true,
+        neutralised: Boolean = false
+    ) = NaturalLanguageExpense(
+        id = id,
+        amount = amount,
+        effectiveAmount = effective,
+        currency = currency,
+        merchant = "Shop",
+        date = date,
+        categoryId = null,
+        countsInTotal = countsInTotal,
+        isSpendingNeutralised = neutralised
+    )
 
-    /** Converter stub: only currencies in [rates] have a rate; EUR is home. Others come back as failed. */
-    private fun converter(rates: Map<String, Double> = emptyMap()): CurrencyConverter {
+    /** One recorded call to the per-date conversion. */
+    private data class AsOfCall(val amount: Double, val from: String, val to: String, val atMillis: Long)
+
+    /**
+     * Converter stub for the per-row, row-date conversion ([CurrencyConverter.convertAsOf]).
+     * A rate is looked up first by (currency, atMillis) in [ratesByDate], then by currency in [rates];
+     * no entry means no rate (null result). Every call is appended to [calls]. The latest-rate
+     * bucket path ([CurrencyConverter.convertMultiple]) answers with a sentinel total, so any use of it
+     * shows up as a wrong total instead of passing silently.
+     */
+    private fun converter(
+        rates: Map<String, Double> = emptyMap(),
+        ratesByDate: Map<Pair<String, Long>, Double> = emptyMap(),
+        calls: MutableList<AsOfCall> = mutableListOf()
+    ): CurrencyConverter {
         val converter = mockk<CurrencyConverter>()
-        coEvery { converter.convertMultiple(any(), "EUR") } answers {
-            val amounts = firstArg<List<Pair<Double, String>>>()
-            var total = 0.0
-            val failures = mutableListOf<FailedConversion>()
-            for ((amount, currency) in amounts) {
-                val rate = if (currency == "EUR") 1.0 else rates[currency]
-                if (rate == null) {
-                    failures += FailedConversion(amount, currency, "EUR", "no rate")
-                } else {
-                    total += amount * rate
-                }
-            }
-            MultiConversionAggregate(total, "EUR", failures)
+        coEvery {
+            converter.convertAsOf(any<Double>(), any<String>(), any<String>(), any<Long>())
+        } answers {
+            val amount = arg<Double>(0)
+            val from = arg<String>(1)
+            val to = arg<String>(2)
+            val at = arg<Long>(3)
+            calls += AsOfCall(amount, from, to, at)
+            val rate = if (from == to) 1.0 else ratesByDate[from to at] ?: rates[from]
+            rate?.let { ConversionResult(amount, from, amount * it, to, it, at) }
         }
+        coEvery { converter.convertMultiple(any(), any()) } returns
+            MultiConversionAggregate(LATEST_SENTINEL_TOTAL, "EUR", emptyList())
         return converter
     }
 
@@ -274,7 +299,7 @@ class NaturalLanguageSearchViewModelTest {
     }
 
     @Test
-    fun `foreign buckets are summed from effective amounts before conversion`() = runTest(dispatcher) {
+    fun `foreign rows are converted from their effective amounts and not their gross amounts`() = runTest(dispatcher) {
         val repo = FakeRepo().apply {
             rows = listOf(
                 row(1, 100.0, 30.0),
@@ -289,6 +314,165 @@ class NaturalLanguageSearchViewModelTest {
         // EUR 30 + THB (400 + 0) * 0.5 = 230. A gross-based total would be 100 + 1500 * 0.5 = 850.
         assertEquals(SearchTotal.Available(230.0, 0), vm.total.value)
         assertEquals(3, vm.results.value.size)
+    }
+
+    // ---- rows that do not count as spending (deposits, flagged rows) ----
+
+    @Test
+    fun `purchase 40 plus deposit 200 totals 40 and both rows stay in the results`() = runTest(dispatcher) {
+        val repo = FakeRepo().apply {
+            rows = listOf(
+                row(1, 40.0, 40.0),
+                row(2, 200.0, 200.0, countsInTotal = false)
+            )
+        }
+        val vm = viewModel(repo, converter())
+
+        search(vm, queryOne)
+
+        assertEquals(SearchTotal.Available(40.0, 0), vm.total.value)
+        assertEquals(setOf(1L, 2L), vm.results.value.map { it.expense.id }.toSet())
+        assertEquals(SearchState.Results, vm.searchState.value)
+    }
+
+    @Test
+    fun `flagged USD row with no rate does not make the total partial or unavailable`() = runTest(dispatcher) {
+        val calls = mutableListOf<AsOfCall>()
+        val repo = FakeRepo().apply {
+            rows = listOf(
+                row(1, 40.0, 40.0),
+                row(2, 300.0, 0.0, "USD", countsInTotal = false, neutralised = true),
+                row(3, 20.0, 20.0, "USD", countsInTotal = false)
+            )
+        }
+        val vm = viewModel(repo, converter(rates = emptyMap(), calls = calls))
+
+        search(vm, queryOne)
+
+        // The flagged USD row and the USD deposit are shown but never converted and never counted as left out.
+        assertEquals(SearchTotal.Available(40.0, 0), vm.total.value)
+        assertEquals(3, vm.results.value.size)
+        assertTrue("non-counted rows must not be converted", calls.isEmpty())
+    }
+
+    @Test
+    fun `counted USD row with no rate next to an EUR purchase is Available with the EUR sum and one left out`() =
+        runTest(dispatcher) {
+            val repo = FakeRepo().apply {
+                rows = listOf(
+                    row(1, 40.0, 40.0),
+                    row(2, 25.0, 25.0),
+                    row(3, 500.0, 500.0, "USD")
+                )
+            }
+            val vm = viewModel(repo, converter(rates = emptyMap()))
+
+            search(vm, queryOne)
+
+            // EUR 40 + 25 = 65; the unrated USD 500 is left out and never added raw.
+            assertEquals(SearchTotal.Available(65.0, 1), vm.total.value)
+            assertEquals(3, vm.results.value.size)
+        }
+
+    @Test
+    fun `only unconvertible counted rows is Unavailable even beside flagged and deposit rows`() = runTest(dispatcher) {
+        val repo = FakeRepo().apply {
+            rows = listOf(
+                row(1, 500.0, 500.0, "USD"),
+                row(2, 300.0, 0.0, "USD", countsInTotal = false, neutralised = true),
+                row(3, 200.0, 200.0, countsInTotal = false)
+            )
+        }
+        val vm = viewModel(repo, converter(rates = emptyMap()))
+
+        search(vm, queryOne)
+
+        // The EUR deposit must not turn the unrated counted row into a fabricated Available(0.0).
+        assertEquals(SearchTotal.Unavailable, vm.total.value)
+        assertEquals(3, vm.results.value.size)
+    }
+
+    @Test
+    fun `results with no counted row at all give a real zero total`() = runTest(dispatcher) {
+        val repo = FakeRepo().apply {
+            rows = listOf(
+                row(1, 200.0, 200.0, countsInTotal = false),
+                row(2, 300.0, 0.0, "USD", countsInTotal = false, neutralised = true)
+            )
+        }
+        val vm = viewModel(repo, converter())
+
+        search(vm, queryOne)
+
+        assertEquals(SearchTotal.Available(0.0, 0), vm.total.value)
+        assertEquals(2, vm.results.value.size)
+    }
+
+    // ---- per-row conversion at the row date ----
+
+    @Test
+    fun `each counted foreign row converts at its own date and not at the latest rate`() = runTest(dispatcher) {
+        val day1 = rowDate
+        val day2 = rowDate - 86_400_000L
+        val calls = mutableListOf<AsOfCall>()
+        val repo = FakeRepo().apply {
+            rows = listOf(
+                row(1, 100.0, 100.0, "USD", date = day1),
+                row(2, 100.0, 100.0, "USD", date = day2)
+            )
+        }
+        val vm = viewModel(
+            repo,
+            converter(ratesByDate = mapOf(("USD" to day1) to 0.5, ("USD" to day2) to 0.25), calls = calls)
+        )
+
+        search(vm, queryOne)
+
+        // 100 * 0.5 + 100 * 0.25 = 75. A single latest rate (either one) would give 100 or 50;
+        // the bucket path answers with a 9999 sentinel.
+        assertEquals(SearchTotal.Available(75.0, 0), vm.total.value)
+        assertEquals(
+            setOf(AsOfCall(100.0, "USD", "EUR", day1), AsOfCall(100.0, "USD", "EUR", day2)),
+            calls.toSet()
+        )
+        assertEquals("one conversion per counted foreign row", 2, calls.size)
+    }
+
+    @Test
+    fun `a counted foreign row with a rate only on another date is left out and not converted at a different date`() =
+        runTest(dispatcher) {
+            val rated = rowDate
+            val unrated = rowDate - 86_400_000L
+            val repo = FakeRepo().apply {
+                rows = listOf(
+                    row(1, 10.0, 10.0),
+                    row(2, 100.0, 100.0, "USD", date = rated),
+                    row(3, 100.0, 100.0, "USD", date = unrated)
+                )
+            }
+            val vm = viewModel(repo, converter(ratesByDate = mapOf(("USD" to rated) to 0.5)))
+
+            search(vm, queryOne)
+
+            // EUR 10 + USD 100 * 0.5 = 60; the USD row dated without a rate is left out.
+            assertEquals(SearchTotal.Available(60.0, 1), vm.total.value)
+        }
+
+    @Test
+    fun `a raw foreign amount is never added to the total`() = runTest(dispatcher) {
+        val repo = FakeRepo().apply {
+            rows = listOf(
+                row(1, 10.0, 10.0),
+                row(2, 200.0, 200.0, "USD"),
+                row(3, 7000.0, 7000.0, "JPY")
+            )
+        }
+        val vm = viewModel(repo, converter(rates = mapOf("USD" to 0.5)))
+
+        search(vm, queryOne)
+
+        // EUR 10 + USD 200 * 0.5 = 110; JPY has no rate and is left out. Raw sums would be 210 or 7210.
+        assertEquals(SearchTotal.Available(110.0, 1), vm.total.value)
     }
 
     // ---- error and cancellation ----
@@ -320,5 +504,10 @@ class NaturalLanguageSearchViewModelTest {
         // A swallowed CancellationException would land in the generic handler: Error + Unavailable.
         assertEquals(SearchState.Interpreting, vm.searchState.value)
         assertEquals(SearchTotal.Available(40.0, 0), vm.total.value)
+    }
+
+    private companion object {
+        /** Total returned by the latest-rate bucket path of the converter stub; no expected total equals it. */
+        const val LATEST_SENTINEL_TOTAL = 9999.0
     }
 }

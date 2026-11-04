@@ -12,5 +12,6 @@ data class ExpenseSnapshot(
     val categoryId: Long?,
     val isNotMine: Boolean,
     val transferDirection: DomainTransferDirection?,
-    val notes: String?
+    val notes: String?,
+    val spendingExclusionReason: String? = null
 )

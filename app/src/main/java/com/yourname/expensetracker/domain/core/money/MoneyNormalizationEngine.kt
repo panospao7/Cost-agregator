@@ -48,7 +48,7 @@ class MoneyNormalizationEngine @Inject constructor(
             )
         }
 
-        if (from == to) {
+        if (expense.isSpendingNeutralised || from == to) {
             return NormalizationResult.Included(expense.toNormalizedExpense(
                 homeCurrency = homeCurrency,
                 rateUsed = 1.0,
@@ -103,7 +103,7 @@ class MoneyNormalizationEngine @Inject constructor(
         rateBasis: RateBasis,
         transactionTypeFilter: TransactionTypeFilter = TransactionTypeFilter.PURCHASE_ONLY
     ): MoneyAggregate {
-        val filtered = expenses.filter { it.matchesFilter(transactionTypeFilter) }
+        val filtered = expenses.filter { it.matchesFilter(transactionTypeFilter) && !it.isSpendingNeutralised }
         if (filtered.isEmpty()) return MoneyAggregate.empty(homeCurrency, rateBasis)
 
         var total = 0.0
@@ -316,7 +316,8 @@ private fun Expense.toNormalizedExpense(
         rateUsed = rateUsed,
         rateValidDate = rateValidDate,
         rateLastUpdated = rateLastUpdated,
-        conversionPath = path.name
+        conversionPath = path.name,
+        spendingExclusionReason = spendingExclusionReason
     )
 }
 

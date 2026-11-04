@@ -199,14 +199,7 @@ NON_AGGREGATE_SELECT_ALLOWLIST: Dict[Tuple[str, str], str] = {
     ("ExpenseDao.kt", "getDepositsBetween"): "Deposit-only (non-spending income) row query.",
     ("ExpenseDao.kt", "getDepositsBetweenFlow"): "Deposit-only (non-spending income) reactive row query.",
     # Location / map / backfill row queries (coordinate resolution and map pin rendering).
-    ("ExpenseDao.kt", "getLocatedExpensesFlow"): "Map pin stream for all geocoded transactions.",
-    ("ExpenseDao.kt", "getLocatedExpenses"): "One-shot geocoded transaction list for map display.",
-    ("ExpenseDao.kt", "getLocatedExpensesBatch"): "Bounded batch of geocoded transactions for location helpers.",
-    ("ExpenseDao.kt", "getUnlocatedExpenses"): "Ungeocoded transaction batch for location resolution UI.",
     ("ExpenseDao.kt", "getUnlocatedExpensesForBackfill"): "Ungeocoded transaction batch for background geocoding backfill worker.",
-    ("ExpenseDao.kt", "getUnlocatedExpensesFlow"): "Reactive stream of ungeocoded transactions for map UI.",
-    ("ExpenseDao.kt", "getExpensesInBoundingBox"): "Geographic bounding-box row lookup for map viewport.",
-    ("ExpenseDao.kt", "getExpensesInBoundingBoxBatch"): "Bounded geographic bounding-box row lookup for map viewport.",
     # Merchant-key backfill / bulk rename maintenance queries (must update all rows sharing the merchant).
     ("ExpenseDao.kt", "getExpensesWithNullMerchantKey"): "Backfill worker query to populate missing merchantKey on all rows.",
     ("ExpenseDao.kt", "getExpensesByMerchantKey"): "Bulk merchant rename lookup that must re-key every row for that merchant.",

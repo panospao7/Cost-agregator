@@ -106,8 +106,10 @@ class ExpenseRepositoryAssistantSqlGoldenTest {
             "WHEN e.isSharedExpense = 1 AND e.mySharePercentage IS NOT NULL THEN e.amount * e.mySharePercentage / 100.0 " +
             "ELSE e.amount END"
 
+    // S3: neutralised rows must rank 0.0, so spendingExclusionReason is the first CASE branch
     private fun amountOrder(direction: String) =
-        "(CASE WHEN e.isNotMine = 1 THEN 0.0 " +
+        "(CASE WHEN e.spendingExclusionReason IS NOT NULL THEN 0.0 " +
+            "WHEN e.isNotMine = 1 THEN 0.0 " +
             "WHEN e.baseAmount > 0 AND e.isSharedExpense = 1 AND e.myShareAmount IS NOT NULL AND e.exchangeRateUsed > 0 " +
             "THEN e.myShareAmount * e.exchangeRateUsed " +
             "WHEN e.baseAmount > 0 AND e.isSharedExpense = 1 AND e.mySharePercentage IS NOT NULL " +

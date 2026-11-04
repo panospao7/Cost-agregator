@@ -308,6 +308,12 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         val dayOfMonth: Int,
         val daysRemaining: Int,
         val purchases: List<DashboardExpense>,
+        /**
+         * Recent Activity source only: [purchases] plus flagged (spending-neutralised) own purchases, so
+         * they stay listed and labelled (loan-installments spec Q2). Never use it for a total, chart,
+         * count or top-category computation; those stay on [purchases].
+         */
+        val recentPurchases: List<DashboardExpense>,
         val deposits: List<DashboardExpense>,
         val expenseEntities: List<TransactionSummary>,
         val totalSpent: Double,
@@ -412,7 +418,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         }
 
         val purchases = currentPeriodExpenses.filter {
-            it.transactionType == com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE && !it.isNotMine
+            it.transactionType == com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE && !it.isNotMine && !it.isSpendingNeutralised
         }
         // Week-to-date is independent of the current-month card. Keep the
         // widened source window for calendar weeks that began in the previous
@@ -420,7 +426,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         val weekPurchases = expenses.filter {
             it.date >= weekStart && it.date < periodEnd &&
                 it.transactionType == com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE &&
-                !it.isNotMine
+                !it.isNotMine && !it.isSpendingNeutralised
         }
         // NEW-P5-003: Exclude shared-expense deposits (isSharedExpense=true) so deposit
         // totals reflect only the user's own income, not shared-expense repayments.
@@ -442,7 +448,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         // day-arithmetic on the period start), aggregated from the previous-
         // month slice of the fetched window.
         val previousMonthPurchases = previousMonthExpenses.filter {
-            it.transactionType == com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE && !it.isNotMine
+            it.transactionType == com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE && !it.isNotMine && !it.isSpendingNeutralised
         }
         val previousMonthAggregate = if (previousMonthPurchases.isEmpty()) {
             null
@@ -460,7 +466,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             val bounds = TimePeriodUtils.getMonthRange(periodStart, -offset)
             val monthPurchases = expenses.filter {
                 it.date >= bounds.first && it.date < bounds.second &&
-                    it.transactionType == com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE && !it.isNotMine
+                    it.transactionType == com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE && !it.isNotMine && !it.isSpendingNeutralised
             }
             // P5-003: parallel observed-activity signal -- a completed month with
             // deposits (canonical predicate) but no purchases is RECORDED zero-spend
@@ -495,12 +501,14 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
                 engine.aggregateExpenses(group, homeCurrency, rateBasis, com.yourname.expensetracker.domain.core.money.TransactionTypeFilter.PURCHASE_ONLY)
             }
 
-        val normalizedExpenses = expenses.mapNotNull { expense ->
-            when (val result = engine.normalizeExpense(expense, homeCurrency, rateBasis)) {
-                is com.yourname.expensetracker.domain.core.money.NormalizationResult.Included -> result.value
-                is com.yourname.expensetracker.domain.core.money.NormalizationResult.Excluded -> null
+        val normalizedExpenses = expenses
+            .filter { !it.isSpendingNeutralised }
+            .mapNotNull { expense ->
+                when (val result = engine.normalizeExpense(expense, homeCurrency, rateBasis)) {
+                    is com.yourname.expensetracker.domain.core.money.NormalizationResult.Included -> result.value
+                    is com.yourname.expensetracker.domain.core.money.NormalizationResult.Excluded -> null
+                }
             }
-        }
 
         val dataQuality = CurrencyDataQuality.fromAggregates(
             listOf(periodAggregate, todayAggregate, weekAggregate, monthAggregate, depositAggregate) +
@@ -553,6 +561,10 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         val periodIsPartial = normalizedIn?.dataQuality?.isPartial ?: true
 
         val purchases = expenses.filter {
+            it.transactionType == DashboardTransactionType.PURCHASE && !it.isNotMine && it.spendingExclusionReason == null
+        }
+        // Recent Activity keeps flagged own purchases (shown with a label); not-mine rows stay out.
+        val recentPurchases = expenses.filter {
             it.transactionType == DashboardTransactionType.PURCHASE && !it.isNotMine
         }
         // P5-PR2 (NEW-P5-003)/P5-004 (RP-05): canonical deposit predicate --
@@ -579,8 +591,9 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             dayOfMonth = dayOfMonth,
             daysRemaining = daysInMonth - dayOfMonth,
             purchases = purchases,
+            recentPurchases = recentPurchases,
             deposits = deposits,
-            expenseEntities = expenses.map { it.toTransactionSummary() },
+            expenseEntities = expenses.filter { it.spendingExclusionReason == null }.map { it.toTransactionSummary() },
             totalSpent = monthSpent,
             monthSpent = monthSpent,
             txCount = summary.transactionCount,
@@ -616,7 +629,8 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             isManualEntry = isManualEntry,
             // P5-004 (RP-05): preserve shared-expense identity through the
             // boundary so downstream deposit exclusion is not tautological.
-            isSharedExpense = isSharedExpense
+            isSharedExpense = isSharedExpense,
+            spendingExclusionReason = spendingExclusionReason
         )
     }
 
@@ -1432,7 +1446,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             )
             if (budgetStatuses.isNotEmpty()) add(DashboardWidget.BudgetHealthWidget(budgetStatuses, budgetSummary))
             if (categoryTotals.isNotEmpty()) add(DashboardWidget.TopCategories(categoryTotals.take(5)))
-            if (ctx.purchases.isNotEmpty()) add(DashboardWidget.RecentTransactions(ctx.purchases.take(5)))
+            if (ctx.recentPurchases.isNotEmpty()) add(DashboardWidget.RecentTransactions(ctx.recentPurchases.take(5)))
         }
     }
 
@@ -1488,7 +1502,8 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         val purchaseDays = expenses
             .filter {
                 it.transactionType == DashboardTransactionType.PURCHASE &&
-                    !it.isNotMine
+                    !it.isNotMine &&
+                    it.spendingExclusionReason == null
             }
             .map { TimePeriodUtils.getStartOfDay(it.date) }
             .filter { it <= todayStart }
@@ -1552,6 +1567,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             .filter {
                 it.transactionType == DashboardTransactionType.PURCHASE &&
                     !it.isNotMine &&
+                    it.spendingExclusionReason == null &&
                     it.date >= periodStart &&
                     it.date < periodEnd
             }

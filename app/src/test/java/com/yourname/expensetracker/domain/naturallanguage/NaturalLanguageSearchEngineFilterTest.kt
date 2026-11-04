@@ -92,7 +92,9 @@ class NaturalLanguageSearchEngineFilterTest {
         categoryId: Long? = null,
         // Deliberately different from the gross amount by default: a filter that read effectiveAmount
         // instead of the gross (displayed) amount would fail every amount-boundary test in this class.
-        effectiveAmount: Double = amount * 0.5
+        effectiveAmount: Double = amount * 0.5,
+        // A flagged (spending-excluded) row is built as the repository maps it: not counted, marked.
+        flagged: Boolean = false
     ) = NaturalLanguageExpense(
         id = id,
         amount = amount,
@@ -100,7 +102,9 @@ class NaturalLanguageSearchEngineFilterTest {
         currency = currency,
         merchant = merchant,
         date = baseDate - id * 1_000L,
-        categoryId = categoryId
+        categoryId = categoryId,
+        countsInTotal = !flagged,
+        isSpendingNeutralised = flagged
     )
 
     private fun fullPage(firstId: Long, amount: Double = 1.0, merchant: String = "Shop") =
@@ -220,7 +224,7 @@ class NaturalLanguageSearchEngineFilterTest {
 
     @Test
     fun `neutralised 1200 euro row with effective 0 is excluded by under 50 and included by over 50`() = runTest {
-        val neutralised = row(1, 1200.0, effectiveAmount = 0.0)
+        val neutralised = row(1, 1200.0, effectiveAmount = 0.0, flagged = true)
 
         assertEquals(emptyList<Long>(), idsFor("under €50", listOf(neutralised)))
         assertEquals(listOf(1L), idsFor("over €50", listOf(neutralised)))

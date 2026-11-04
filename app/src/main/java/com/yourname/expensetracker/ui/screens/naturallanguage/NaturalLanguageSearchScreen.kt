@@ -484,8 +484,16 @@ fun TransactionResultCard(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                // A flagged installment purchase is listed but adds 0 to the total: say so.
+                if (expense.isSpendingNeutralised) {
+                    Text(
+                        text = stringResource(R.string.transactions_installment_chip_not_counted),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
             }
-            
+
             Text(
                 // Gross amount in the row's own currency: the same figure the amount filter compares.
                 text = CurrencyFormatter.formatMoney(expense.amount, expense.currency),

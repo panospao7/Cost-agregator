@@ -1890,7 +1890,7 @@
     <string name="nlp_example_groceries">Groceries in January</string>
     <string name="nlp_example_gas">Gas stations last month</string>
     <string name="nlp_understanding">Understanding your question…</string>
-    <string name="nlp_total_label">Total</string>
+    <string name="nlp_total_label">Spending total</string>
     <string name="nlp_transactions_count_format">%1$d transactions</string>
     <string name="nlp_understood_label">I understood:</string>
     <string name="nlp_confidence_format">%1$d%% confidence</string>

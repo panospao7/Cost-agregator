@@ -30,6 +30,7 @@ object ComparableHomeValue {
 
     /** Comparable value of [e] against the home currency [home] (branches 1-4, in order). */
     fun comparableValue(e: Expense, home: CurrencyCode): ComparableValue {
+        if (e.isSpendingNeutralised) return ComparableValue.Value(0.0)
         if (e.isNotMine) return ComparableValue.Value(0.0)
         if (e.currency == home.code) return ComparableValue.Value(normalizeZero(e.effectiveAmount))
         if (e.baseAmount > 0.0 && e.baseCurrency == home.code && e.exchangeRateUsed > 0.0) {
@@ -48,10 +49,11 @@ object ComparableHomeValue {
      * condition), for the mixed-currency date header, which sums a group that already
      * shares one base currency.
      *
-     * Returns 0.0 for a not-mine row, null when there is no usable snapshot
+     * Returns 0.0 for a neutralised or not-mine row, null when there is no usable snapshot
      * (`baseAmount <= 0` or `exchangeRateUsed <= 0`). Never falls back to the raw amount.
      */
     fun snapshotValue(e: Expense): Double? {
+        if (e.isSpendingNeutralised) return 0.0
         if (e.isNotMine) return 0.0
         if (!(e.baseAmount > 0.0) || !(e.exchangeRateUsed > 0.0)) return null
         return normalizeZero(snapshotAmount(e))

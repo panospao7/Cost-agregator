@@ -763,8 +763,7 @@ EXPECTED_EXEMPT = {
     ("ExpenseDao.kt", "countExpensesBetween", "ROW_COUNT"),
     ("ExpenseDao.kt", "getTotalCount", "ROW_COUNT"),
     ("ExpenseDao.kt", "getCountForPeriod", "ROW_COUNT"),
-    ("ExpenseDao.kt", "countLocated", "ROW_COUNT"),
-    ("ExpenseDao.kt", "countUnlocated", "ROW_COUNT"),
+    # 1.0.4 B2 S4: countLocated and countUnlocated now enforce SPENDING_PREDICATE directly (-2 ROW_COUNT exemptions, 34 -> 32)
     ("ExpenseDao.kt", "getDepositTotalsBetweenByCurrency", "NON_SPENDING_INCOME"),
     ("ExpenseDao.kt", "getTotalDepositsForPeriod", "NON_SPENDING_INCOME"),
     ("ExpenseDao.kt", "getMonthlyDeposits", "NON_SPENDING_INCOME"),
@@ -782,7 +781,7 @@ EXPECTED_EXEMPT = {
 EXPECTED_REASON_COUNTS = {
     "DEDUPE_BLOCKING": 11,
     "DEDUPE_RESOLVER": 7,
-    "ROW_COUNT": 7,
+    "ROW_COUNT": 5,
     "NON_SPENDING_INCOME": 4,
     "NON_MONEY": 2,
     # 1.0.4 S7b: +2 merchant-context readers in ExpenseDao marked as SUGGESTION-exempt (1 -> 3).
@@ -837,7 +836,8 @@ def test_real_tree_report_exemption_set_equals_recorded_a12_6_set(real_tree_repo
     exempt = [(f, fn, cls.split(":", 1)[1]) for f, fn, cls in rows if cls.startswith("exempt:")]
     # 1.0.4 S7b: +2 merchant-context readers in ExpenseDao marked as SUGGESTION-exempt (34 -> 36).
     # 1.0.4 closure: getRecentExpensesWithCategoryForMerchant now applies the predicate (36 -> 35)
-    assert len(exempt) == len(set(exempt)) == 35
+    # 1.0.4 N-02 neutralisation (other session's B2, item 129): two exemptions removed (35 -> 33).
+    assert len(exempt) == len(set(exempt)) == 33
     assert set(exempt) == EXPECTED_EXEMPT
 
 
@@ -852,7 +852,8 @@ def test_real_tree_report_reason_counts_and_no_unclassified(real_tree_report):
     assert not any(cls == "UNCLASSIFIED" for _f, _fn, cls in rows)
     # 1.0.4 S7b: +2 merchant-context readers in ExpenseDao marked as SUGGESTION-exempt (34 -> 36).
     # 1.0.4 closure: getRecentExpensesWithCategoryForMerchant now applies the predicate (36 -> 35)
-    assert "SUMMARY: exempt=35 " in proc.stdout and "unclassified=0" in proc.stdout
+    # 1.0.4 N-02 neutralisation (other session's B2, item 129): two exemptions removed (35 -> 33).
+    assert "SUMMARY: exempt=33 " in proc.stdout and "unclassified=0" in proc.stdout
 
 
 def test_real_tree_converted_samples_are_classified_as_predicate(real_tree_report):

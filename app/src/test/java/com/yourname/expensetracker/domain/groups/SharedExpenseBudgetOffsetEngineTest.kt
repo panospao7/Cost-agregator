@@ -617,6 +617,36 @@ class SharedExpenseBudgetOffsetEngineTest {
         }
     }
 
+    @Test
+    fun `neutralised foreign personal expense with no FX rate is excluded without marking breakdown partial`() = runTest {
+        val start = FIXED_NOW - 7L * DAY_MS
+        val neutralisedForeign = expense(id = 10L, amount = 600.0, categoryId = 1L, isShared = false).copy(
+            currency = "USD",
+            spendingExclusionReason = "INSTALLMENT_PURCHASE"
+        )
+        val normalPersonal = expense(id = 11L, amount = 45.0, categoryId = 1L, isShared = false).copy(
+            currency = "EUR",
+            spendingExclusionReason = null
+        )
+        coEvery { expenseRepository.getExpensesBetween(start, FIXED_NOW) } returns listOf(
+            neutralisedForeign,
+            normalPersonal
+        )
+        coEvery { groupsRepository.getActiveGroupsWithDetails() } returns emptyList()
+        coEvery { converter.convertAsOf(any<Double>(), "USD", "EUR", any<Long>()) } returns null
+
+        val result = engine.calculateEffectiveBudgetSpend(start, FIXED_NOW)
+
+        assertFalse(result.isPartial)
+        assertEquals(0, result.failedConversionCount)
+        assertTrue(result.conversionWarnings.isEmpty())
+        assertApproxEquals(45.0, result.totalPersonalSpend, 0.0001)
+        assertApproxEquals(45.0, result.effectiveBudgetSpend, 0.0001)
+        assertEquals(1, result.grossPersonalAggregate.totalTransactionCount)
+        assertEquals(1, result.adjustedSpendAggregate.totalTransactionCount)
+        coVerify(exactly = 0) { converter.convertAsOf(any<Double>(), "USD", "EUR", any<Long>()) }
+    }
+
     private fun groupAggregate(
         groupId: Long,
         members: List<GroupMember>,

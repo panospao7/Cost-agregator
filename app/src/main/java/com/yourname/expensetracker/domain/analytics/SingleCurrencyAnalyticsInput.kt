@@ -39,7 +39,8 @@ internal object SingleCurrencyAnalyticsInput {
                     isNotMine = expense.isNotMine,
                     isSharedExpense = false,
                     ownershipMode = null,
-                    source = null
+                    source = null,
+                    spendingExclusionReason = expense.spendingExclusionReason
                 )
             }
         )

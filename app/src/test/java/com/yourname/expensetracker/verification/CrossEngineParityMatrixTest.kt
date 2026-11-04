@@ -1497,6 +1497,7 @@ class CrossEngineParityMatrixTest : AnalyticsEngineTestBase() {
         date = date,
         categoryId = categoryId,
         isNotMine = isNotMine,
-        isManualEntry = isManualEntry
+        isManualEntry = isManualEntry,
+        spendingExclusionReason = spendingExclusionReason
     )
 }

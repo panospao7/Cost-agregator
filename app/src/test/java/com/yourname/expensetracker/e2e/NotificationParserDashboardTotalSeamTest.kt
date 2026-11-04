@@ -652,7 +652,8 @@ class NotificationParserDashboardTotalSeamTest : AnalyticsEngineTestBase() {
             categoryId = categoryId,
             isNotMine = isNotMine,
             isManualEntry = isManualEntry,
-            isSharedExpense = isSharedExpense
+            isSharedExpense = isSharedExpense,
+            spendingExclusionReason = spendingExclusionReason
         )
     }
 

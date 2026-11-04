@@ -141,7 +141,8 @@ class MerchantInsightEngineTest {
                 com.yourname.expensetracker.data.database.entity.TransferDirection.OUTGOING -> DomainTransferDirection.OUTGOING
                 null -> null
             },
-            notes = notes
+            notes = notes,
+            spendingExclusionReason = spendingExclusionReason
         )
     }
 }

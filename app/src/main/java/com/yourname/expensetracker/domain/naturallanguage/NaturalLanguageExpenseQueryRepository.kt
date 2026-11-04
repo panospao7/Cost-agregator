@@ -7,7 +7,15 @@ data class NaturalLanguageExpense(
     val currency: String,
     val merchant: String,
     val date: Long,
-    val categoryId: Long?
+    val categoryId: Long?,
+    /**
+     * True only for a PURCHASE row that counts as spending (`Expense.countsAsSpending`). The search
+     * total is built from these rows only; deposits, transfers and flagged rows stay in the results
+     * but add nothing to the total. Set by the repository, never recomputed by consumers.
+     */
+    val countsInTotal: Boolean,
+    /** True when a spending exclusion (flagged installment purchase) neutralises this row; drives the row label. */
+    val isSpendingNeutralised: Boolean = false
 )
 
 /**

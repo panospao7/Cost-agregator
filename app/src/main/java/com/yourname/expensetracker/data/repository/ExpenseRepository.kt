@@ -60,6 +60,7 @@ enum class SortOrder(val sql: String, val displayName: String) {
      * builder emits its own fixed ORDER BY templates and never reads this text.
      */
     AMOUNT_DESC("""(CASE
+        WHEN e.spendingExclusionReason IS NOT NULL THEN 0.0
         WHEN e.isNotMine = 1 THEN 0.0
         WHEN e.baseAmount > 0 AND e.isSharedExpense = 1 AND e.myShareAmount IS NOT NULL AND e.exchangeRateUsed > 0
             THEN e.myShareAmount * e.exchangeRateUsed
@@ -70,6 +71,7 @@ enum class SortOrder(val sql: String, val displayName: String) {
     END) DESC""", "Amount High to Low"),
     /** Assistant-only (RawEffective); see [AMOUNT_DESC]. */
     AMOUNT_ASC("""(CASE
+        WHEN e.spendingExclusionReason IS NOT NULL THEN 0.0
         WHEN e.isNotMine = 1 THEN 0.0
         WHEN e.baseAmount > 0 AND e.isSharedExpense = 1 AND e.myShareAmount IS NOT NULL AND e.exchangeRateUsed > 0
             THEN e.myShareAmount * e.exchangeRateUsed
@@ -1256,7 +1258,8 @@ class ExpenseRepository @Inject constructor(
             categoryId = categoryId,
             isNotMine = isNotMine,
             transferDirection = transferDirection?.toDomainTransferDirection(),
-            notes = notes
+            notes = notes,
+            spendingExclusionReason = spendingExclusionReason
         )
     }
 

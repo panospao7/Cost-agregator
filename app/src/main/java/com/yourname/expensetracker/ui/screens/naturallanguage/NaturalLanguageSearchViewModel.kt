@@ -2,7 +2,7 @@ package com.yourname.expensetracker.ui.screens.naturallanguage
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.yourname.expensetracker.domain.core.money.ConversionQuality
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.core.money.MoneyAggregateBuilder
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
@@ -117,29 +117,7 @@ class NaturalLanguageSearchViewModel @Inject constructor(
             val searchResults = searchEngine.executeSearch(interpretation)
             _results.value = searchResults
 
-            // Compute total in home currency using MoneyAggregateBuilder
-            // (handles single-currency, single non-home, and mixed-currency results correctly)
-            val home = homeCurrency.first()
-            val grouped = searchResults.groupBy { it.expense.currency }.entries.toList()
-            val amounts = grouped.map { (currency, expenseList) ->
-                // SAFE: grouping by native currency first, then converting — correct multi-currency handling
-                expenseList.sumOf { it.expense.effectiveAmount } to currency
-            }
-            val aggregate = MoneyAggregateBuilder.fromBuckets(
-                buckets = amounts,
-                homeCurrency = home,
-                converter = currencyConverter,
-                // Per-bucket row counts so a partial total can say how many rows it leaves out.
-                transactionCounts = grouped.map { it.value.size }
-            )
-            // INV-12/13: a total with failed conversions is never shown as complete, and a total with
-            // nothing convertible is never shown as an amount (no fabricated zero).
-            val leftOut = aggregate.failedTransactionCount
-            _total.value = when {
-                aggregate.conversionQuality == ConversionQuality.UNAVAILABLE -> SearchTotal.Unavailable
-                aggregate.isPartial && leftOut <= 0 -> SearchTotal.Unavailable
-                else -> SearchTotal.Available(aggregate.displayAmount, if (aggregate.isPartial) leftOut else 0)
-            }
+            _total.value = computeTotal(searchResults, homeCurrency.first())
 
             _searchState.value = if (searchResults.isEmpty()) {
                 SearchState.Empty
@@ -153,6 +131,47 @@ class NaturalLanguageSearchViewModel @Inject constructor(
             _total.value = SearchTotal.Unavailable
             _searchState.value = SearchState.Error("SEARCH_FAILED")
         }
+    }
+
+    /**
+     * Home-currency total of the rows that count as spending ([NaturalLanguageExpense.countsInTotal]).
+     * Deposits, transfers and flagged (spending-neutralised) rows are shown in the results but add
+     * nothing here and are never counted as left out.
+     *
+     * Each counted row is converted at its own transaction date ([CurrencyConverter.convertAsOf], the
+     * same basis the search engine uses for amount filtering). A row that cannot be converted is left
+     * out and counted in [SearchTotal.Available.leftOutCount]; a raw foreign amount is never added.
+     * Rounding: none is applied here; the converted amounts are summed unrounded and the display
+     * formatter rounds. No counted rows is a true zero; counted rows with none convertible is
+     * [SearchTotal.Unavailable] (INV-12/13: never a fabricated zero).
+     */
+    private suspend fun computeTotal(searchResults: List<SearchResult>, home: String): SearchTotal {
+        val counted = searchResults.map { it.expense }.filter { it.countsInTotal }
+        if (counted.isEmpty()) return SearchTotal.Available(0.0, 0)
+        if (CurrencyCode.parse(home)?.takeIf { it in CurrencyCode.ALL_SUPPORTED } == null) {
+            return SearchTotal.Unavailable
+        }
+
+        val homeAmounts = ArrayList<Double>(counted.size)
+        var leftOut = 0
+        for (expense in counted) {
+            val amount = expense.effectiveAmount
+            val converted: Double? = when {
+                !amount.isFinite() -> null
+                expense.currency.equals(home, ignoreCase = true) -> amount
+                else -> currencyConverter.convertAsOf(
+                    amount = amount,
+                    fromCurrency = expense.currency,
+                    toCurrency = home,
+                    atMillis = expense.date
+                )?.convertedAmount
+            }
+            if (converted != null && converted.isFinite()) homeAmounts += converted else leftOut++
+        }
+        if (homeAmounts.isEmpty()) return SearchTotal.Unavailable
+
+        val aggregate = MoneyAggregateBuilder.fromHomeCurrencyAmounts(homeAmounts, home)
+        return SearchTotal.Available(aggregate.displayAmount, leftOut)
     }
 }
 

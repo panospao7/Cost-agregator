@@ -53,7 +53,8 @@ class AnalyticsCurrencyNormalizer @Inject constructor(
                         com.yourname.expensetracker.data.database.entity.TransferDirection.OUTGOING -> DomainTransferDirection.OUTGOING
                         null -> null
                     },
-                    notes = it.notes
+                    notes = it.notes,
+                    spendingExclusionReason = it.spendingExclusionReason
                 )
             },
             homeCurrencyCode = homeCurrencyCode
@@ -78,7 +79,8 @@ class AnalyticsCurrencyNormalizer @Inject constructor(
                     categoryId = it.categoryId,
                     isNotMine = it.isNotMine,
                     transferDirection = it.transferDirection,
-                    notes = it.notes
+                    notes = it.notes,
+                    spendingExclusionReason = it.spendingExclusionReason
                 )
             },
             homeCurrencyCode = homeCurrencyCode
@@ -89,6 +91,7 @@ class AnalyticsCurrencyNormalizer @Inject constructor(
         expenses: List<NormalizableAnalyticsExpense>,
         homeCurrencyCode: String
     ): AnalyticsNormalizationResult {
+        val activeExpenses = expenses.filter { it.spendingExclusionReason == null }
         val homeCurrency = homeCurrencyCode.toCurrencyCodeOrNull()
         if (homeCurrency == null) {
             return AnalyticsNormalizationResult(
@@ -99,11 +102,11 @@ class AnalyticsCurrencyNormalizer @Inject constructor(
                     AnalyticsConversionWarning(
                         type = AnalyticsConversionWarningType.INVALID_HOME_CURRENCY,
                         message = "Analytics unavailable because home currency '$homeCurrencyCode' is invalid.",
-                        affectedTransactionCount = expenses.size
+                        affectedTransactionCount = activeExpenses.size
                     )
                 ),
                 latestRateTimestamp = null,
-                totalInputCount = expenses.size
+                totalInputCount = activeExpenses.size
             )
         }
 
@@ -111,7 +114,7 @@ class AnalyticsCurrencyNormalizer @Inject constructor(
         var latestRateTimestamp: Long? = null
         val excludedReasons = mutableMapOf<Long, Pair<AnalyticsConversionWarningType, String>>()
 
-        val normalizedExpenses = expenses.mapNotNull { expense ->
+        val normalizedExpenses = activeExpenses.mapNotNull { expense ->
             val sourceCurrency = expense.currency.toCurrencyCodeOrNull()
             if (sourceCurrency == null) {
                 accumulateWarning(
@@ -220,7 +223,7 @@ class AnalyticsCurrencyNormalizer @Inject constructor(
             )
         }
 
-        val failures = expenses.size - normalizedExpenses.size
+        val failures = activeExpenses.size - normalizedExpenses.size
         if (warnings.isNotEmpty() || failures > 0) {
             Timber.w(
                 "AnalyticsCurrencyNormalizer: ${warnings.size} warning(s), $failures transactions excluded"
@@ -233,7 +236,7 @@ class AnalyticsCurrencyNormalizer @Inject constructor(
             includedExpenses = normalizedExpenses.map { it.snapshot },
             warnings = warnings.values.map { it.toWarning() },
             latestRateTimestamp = latestRateTimestamp,
-            totalInputCount = expenses.size,
+            totalInputCount = activeExpenses.size,
             excludedReasons = excludedReasons
         )
     }
@@ -404,7 +407,8 @@ private data class NormalizableAnalyticsExpense(
     val categoryId: Long?,
     val isNotMine: Boolean,
     val transferDirection: DomainTransferDirection?,
-    val notes: String?
+    val notes: String?,
+    val spendingExclusionReason: String? = null
 )
 
 private fun NormalizableAnalyticsExpense.toExpenseSnapshot(
@@ -423,6 +427,7 @@ private fun NormalizableAnalyticsExpense.toExpenseSnapshot(
         categoryId = categoryId,
         isNotMine = isNotMine,
         transferDirection = transferDirection,
-        notes = notes
+        notes = notes,
+        spendingExclusionReason = spendingExclusionReason
     )
 }

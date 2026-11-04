@@ -78,14 +78,17 @@ class SpendingMapViewModelHeatmapTest : ViewModelTestUtils() {
         viewModel = newViewModel(heatmapEngine)
     }
 
-    private fun newViewModel(engine: SpendingHeatmapEngine): SpendingMapViewModel = SpendingMapViewModel(
+    private fun newViewModel(
+        engine: SpendingHeatmapEngine,
+        insights: LocationInsightsEngine = insightsEngine
+    ): SpendingMapViewModel = SpendingMapViewModel(
         expenseRepository,
         categoryRepository,
         locationResolver,
         locationProvider,
         merchantLocationRepository,
         engine,
-        insightsEngine,
+        insights,
         geocodingService,
         currencySettingsRepository = heatmapTestCurrencySettings(),
         currencyConverter = mockk(relaxed = true),
@@ -247,6 +250,117 @@ class SpendingMapViewModelHeatmapTest : ViewModelTestUtils() {
         }
         assertFalse(viewModel.state.value.isResolvingLocation)
         coVerify(exactly = 0) { expenseRepository.updateExpenseLocation(any(), any(), any(), any(), any(), any()) }
+    }
+
+    // -- S19-1: Neutralisation & ownership exclusion --------------------------
+
+    @Test
+    fun `S19-1 neutralised and isNotMine purchases are excluded from map pins, heatmap, insights, and unlocated list`() = runTest(testDispatcher) {
+        val locatedExpenses = listOf(
+            Expense(
+                id = 1L,
+                amount = 50.0,
+                currency = "EUR",
+                merchant = "Shop",
+                transactionType = TransactionType.PURCHASE,
+                date = FIXTURE_DATE,
+                latitude = 40.7128,
+                longitude = -74.0060,
+                locationSource = "test",
+                categoryId = 10L
+            ),
+            Expense(
+                id = 2L,
+                amount = 600.0,
+                currency = "EUR",
+                merchant = "Shop",
+                transactionType = TransactionType.PURCHASE,
+                date = FIXTURE_DATE,
+                latitude = 40.7128,
+                longitude = -74.0060,
+                locationSource = "test",
+                spendingExclusionReason = "INSTALLMENT_PURCHASE",
+                categoryId = 20L
+            ),
+            Expense(
+                id = 3L,
+                amount = 80.0,
+                currency = "EUR",
+                merchant = "Shop",
+                transactionType = TransactionType.PURCHASE,
+                date = FIXTURE_DATE,
+                latitude = 40.7128,
+                longitude = -74.0060,
+                locationSource = "test",
+                isNotMine = true,
+                categoryId = 30L
+            )
+        )
+        val unlocatedExpenses = listOf(
+            Expense(
+                id = 11L,
+                amount = 50.0,
+                currency = "EUR",
+                merchant = "Unlocated Normal",
+                transactionType = TransactionType.PURCHASE,
+                date = FIXTURE_DATE
+            ),
+            Expense(
+                id = 12L,
+                amount = 600.0,
+                currency = "EUR",
+                merchant = "Unlocated Neutralised",
+                transactionType = TransactionType.PURCHASE,
+                date = FIXTURE_DATE,
+                spendingExclusionReason = "INSTALLMENT_PURCHASE"
+            ),
+            Expense(
+                id = 13L,
+                amount = 80.0,
+                currency = "EUR",
+                merchant = "Unlocated NotMine",
+                transactionType = TransactionType.PURCHASE,
+                date = FIXTURE_DATE,
+                isNotMine = true
+            )
+        )
+
+        every { expenseRepository.getLocatedExpenses() } returns flowOf(locatedExpenses)
+        every { expenseRepository.getUnlocatedExpensesFlow(any()) } returns flowOf(unlocatedExpenses)
+
+        val vm = newViewModel(
+            engine = SpendingHeatmapEngine(),
+            insights = LocationInsightsEngine()
+        )
+        vm.state.test {
+            awaitUntil { !it.isLoading && it.unlocatedExpenses.isNotEmpty() }
+            cancelAndIgnoreRemainingEvents()
+        }
+
+        val state = vm.state.value
+
+        // 1. Only normal 50.0 EUR purchase appears as a map pin/marker
+        assertEquals("only normal purchase produces a marker", 1, state.markers.size)
+        assertEquals(1L, state.markers.single().expenseId)
+        assertEquals(50.0, state.markers.single().amount, 0.0)
+
+        // 2. Heatmap includes only the normal 50.0 purchase
+        assertEquals("heatmap point count", 1, state.heatmapPoints.size)
+        assertEquals(50.0, state.heatmapPoints.single().totalSpend, 0.0)
+        assertEquals(1, state.heatmapPoints.single().count)
+
+        // 3. LocationInsightsEngine reports transactionCount == 1 and avgTransaction == 50.0 (not 3, 43.33, or 25.0)
+        assertEquals("placeInsight count", 1, state.placeInsights.size)
+        val insight = state.placeInsights.single()
+        assertEquals("insight transactionCount", 1, insight.transactionCount)
+        assertEquals("insight totalSpend", 50.0, insight.totalSpend, 0.0)
+        assertEquals("insight avgTransaction", 50.0, insight.avgTransaction, 0.0)
+
+        // 4. Unlocated list excludes neutralised and isNotMine rows
+        assertEquals(listOf(11L), state.unlocatedExpenses.map { it.id })
+
+        // 5. Category filter options exclude categories from neutralised/isNotMine rows
+        assertEquals(listOf("10"), state.availableCategories.map { it.key })
     }
 
     // -- Helpers ---------------------------------------------------------------

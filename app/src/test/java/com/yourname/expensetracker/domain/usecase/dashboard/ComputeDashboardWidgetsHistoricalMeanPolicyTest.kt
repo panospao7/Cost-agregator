@@ -227,7 +227,8 @@ class ComputeDashboardWidgetsHistoricalMeanPolicyTest {
         categoryId = categoryId,
         isNotMine = isNotMine,
         isManualEntry = isManualEntry,
-        isSharedExpense = isSharedExpense
+        isSharedExpense = isSharedExpense,
+        spendingExclusionReason = spendingExclusionReason
     )
 
     private fun toEpochMs(year: Int, month: Int, day: Int, hour: Int = 0, minute: Int = 0): Long {

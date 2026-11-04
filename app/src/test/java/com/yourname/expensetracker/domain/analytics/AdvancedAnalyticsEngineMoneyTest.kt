@@ -223,6 +223,54 @@ class AdvancedAnalyticsEngineMoneyTest {
         assertThat(result.totalMoneyResult).isInstanceOf(MoneyAggregateResult.Available::class.java)
     }
 
+    @Test
+    fun `N-02-1 neutralised expense is excluded from category transactionCount and averagePerTransaction`() = runTest {
+        val assembler = AnalyticsInputAssembler(
+            expenseRepository = mockk(relaxed = true),
+            normalizer = testAnalyticsCurrencyNormalizer(),
+            currencySettingsRepository = TestCurrencySettingsRepository(),
+            timeProvider = timeProvider,
+            categoryRepository = mockk<CategoryRepository>(relaxed = true).also {
+                io.mockk.coEvery { it.getAll() } returns categories
+            }
+        )
+        val rawExpenses = listOf(
+            com.yourname.expensetracker.data.database.entity.Expense(
+                id = 100L,
+                amount = 600.0,
+                currency = "EUR",
+                merchant = "Merchant",
+                transactionType = com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE,
+                date = date("2026-03-02"),
+                categoryId = 1L,
+                spendingExclusionReason = "INSTALLMENT_PURCHASE"
+            ),
+            com.yourname.expensetracker.data.database.entity.Expense(
+                id = 101L,
+                amount = 50.0,
+                currency = "EUR",
+                merchant = "Merchant",
+                transactionType = com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE,
+                date = date("2026-03-03"),
+                categoryId = 1L,
+                spendingExclusionReason = null
+            )
+        )
+        val assembledInput = assembler.build(
+            expenses = rawExpenses,
+            homeCurrency = "EUR",
+            period = PeriodRange(PeriodKind.CUSTOM, date("2026-03-01"), date("2026-04-01"))
+        )
+
+        val categoryAnalytics = engine.getCategoryAnalytics(assembledInput, null, categories, emptyList()).first.single()
+        assertThat(categoryAnalytics.totalSpent).isEqualTo(50.0)
+        assertThat(categoryAnalytics.transactionCount).isEqualTo(1)
+        assertThat(categoryAnalytics.averagePerTransaction).isEqualTo(50.0)
+        val totalAgg = (categoryAnalytics.totalMoneyResult as MoneyAggregateResult.Available).aggregate
+        assertThat(totalAgg.displayAmount).isEqualTo(50.0)
+        assertThat(totalAgg.metadata.includedTransactionCount).isEqualTo(1)
+    }
+
     private fun input(
         expenses: List<NormalizedExpense>,
         excluded: List<ExcludedExpense> = emptyList(),

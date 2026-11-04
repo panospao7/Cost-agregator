@@ -228,7 +228,7 @@ class ExecuteFinancialQueryUseCaseTest {
     @Test
     fun `invoke returns transaction list for list metric`() = runTest {
         coEvery {
-            expenseRepository.getAssistantExpenseCountFiltered(
+            expenseRepository.getAssistantExpensesFiltered(
                 startDate = 100L,
                 endDate = 200L,
                 transactionTypes = emptySet(),
@@ -236,9 +236,10 @@ class ExecuteFinancialQueryUseCaseTest {
                 merchantNames = emptySet(),
                 ownershipFilter = OwnershipFilter.ALL,
                 minAmount = null,
-                maxAmount = null
+                maxAmount = null,
+                sortOrder = any()
             )
-        } returns 1200
+        } returns List(1200) { idx -> expenseWithCategory(id = idx.toLong() + 1L, amount = 10.0) }
 
         val intent = FinancialQueryIntent(
             rawQuery = "show groceries this month",
@@ -566,7 +567,7 @@ class ExecuteFinancialQueryUseCaseTest {
     @Test
     fun `AE-C27 INV-C17 LIST with a grouping still returns the transaction list`() = runTest(timeout = 30.seconds) {
         coEvery {
-            expenseRepository.getAssistantExpenseCountFiltered(
+            expenseRepository.getAssistantExpensesFiltered(
                 startDate = 100L,
                 endDate = 200L,
                 transactionTypes = emptySet(),
@@ -574,9 +575,10 @@ class ExecuteFinancialQueryUseCaseTest {
                 merchantNames = emptySet(),
                 ownershipFilter = OwnershipFilter.ALL,
                 minAmount = null,
-                maxAmount = null
+                maxAmount = null,
+                sortOrder = any()
             )
-        } returns 7
+        } returns List(7) { idx -> expenseWithCategory(id = idx.toLong() + 1L, amount = 10.0) }
 
         val result = useCase(minIntent(QueryGrouping.MERCHANT).copy(metric = QueryMetric.LIST))
 
@@ -1367,6 +1369,76 @@ class ExecuteFinancialQueryUseCaseTest {
                 result.dataQuality.warnings.any { it.contains("Gadget Shop") }
             )
         }
+    }
+
+    @Test
+    fun `INV-1 executeList without and with amount filter excludes neutralised rows`() = runTest(timeout = 30.seconds) {
+        stubNoRateForUsd(500.0)
+        stubRange(
+            100L,
+            200L,
+            listOf(
+                expenseWithCategory(id = 1L, amount = 500.0, currency = "USD", merchant = "Laptop Store", spendingExclusionReason = INSTALLMENT_EXCLUSION),
+                expenseWithCategory(id = 2L, amount = 45.0, currency = "EUR", merchant = "Lidl")
+            )
+        )
+
+        val unFilteredList = useCase(minIntent().copy(metric = QueryMetric.LIST))
+        assertTrue(unFilteredList is FinancialQueryResult.TransactionList)
+        unFilteredList as FinancialQueryResult.TransactionList
+        assertEquals(1, unFilteredList.previewCount)
+        assertFalse(unFilteredList.dataQuality.isPartial)
+        assertEquals(0, unFilteredList.dataQuality.excludedCount)
+
+        val maxAmountList = useCase(
+            FinancialQueryIntent(
+                rawQuery = "purchases under 100",
+                normalizedQuery = "purchases under 100",
+                filters = ExpenseQueryFilters(period = PeriodRange(100L, 200L), maxAmount = 100.0),
+                metric = QueryMetric.LIST
+            )
+        )
+        assertTrue(maxAmountList is FinancialQueryResult.TransactionList)
+        maxAmountList as FinancialQueryResult.TransactionList
+        assertEquals(1, maxAmountList.previewCount)
+        assertFalse(maxAmountList.dataQuality.isPartial)
+        assertEquals(0, maxAmountList.dataQuality.excludedCount)
+        assertEquals(0, maxAmountList.dataQuality.missingRateCount)
+    }
+
+    @Test
+    fun `INV-1 executeTotal and executeCategoryBreakdown exclude neutralised rows`() = runTest(timeout = 30.seconds) {
+        coEvery { categoryRepository.getAll() } returns listOf(
+            Category(1L, "Groceries", "G", "#00FF00"),
+            Category(2L, "Electronics", "E", "#0000FF")
+        )
+        stubRange(
+            100L,
+            200L,
+            listOf(
+                expenseWithCategory(id = 1L, amount = 600.0, currency = "USD", merchant = "Laptop Store", categoryId = 2L, spendingExclusionReason = INSTALLMENT_EXCLUSION),
+                expenseWithCategory(id = 2L, amount = 50.0, currency = "EUR", merchant = "Lidl", categoryId = 1L),
+                expenseWithCategory(id = 3L, amount = 30.0, currency = "EUR", merchant = "Supermarket", categoryId = 1L, spendingExclusionReason = INSTALLMENT_EXCLUSION)
+            )
+        )
+
+        val totalResult = useCase(minIntent().copy(metric = QueryMetric.TOTAL))
+        assertTrue(totalResult is FinancialQueryResult.Summary)
+        totalResult as FinancialQueryResult.Summary
+        assertEquals("50.00 EUR", totalResult.primaryText)
+        assertFalse(totalResult.dataQuality.isPartial)
+
+        val categoryBreakdown = useCase(minIntent(QueryGrouping.CATEGORY).copy(metric = QueryMetric.TOTAL))
+        assertTrue(categoryBreakdown is FinancialQueryResult.Breakdown)
+        categoryBreakdown as FinancialQueryResult.Breakdown
+        assertEquals(1, categoryBreakdown.rows.size)
+        val row = categoryBreakdown.rows.single()
+        assertEquals("Groceries", row.label)
+        assertEquals(1, row.count)
+        assertEquals(50.0, row.amount!!, 0.0)
+        assertEquals("50.00 EUR", row.valueText)
+        assertFalse(categoryBreakdown.dataQuality.isPartial)
+        assertEquals(0, categoryBreakdown.dataQuality.excludedCount)
     }
 
     private fun expenseWithCategory(

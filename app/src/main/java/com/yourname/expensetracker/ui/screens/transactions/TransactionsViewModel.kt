@@ -489,7 +489,8 @@ class TransactionsViewModel @Inject constructor(
                 TransactionTab.values().forEach { tab ->
                     if (tab != TransactionTab.ALL) {
                         val range = getTimeRangeForTab(tab)
-                        val count = expenseRepository.getCountForPeriod(range.first, range.second)
+                        // Badge matches the tab list: a flagged (marked) installment row is listed, so it is counted.
+                        val count = expenseRepository.countExpensesBetween(range.first, range.second)
                         counts[tab] = count
                     }
                 }
