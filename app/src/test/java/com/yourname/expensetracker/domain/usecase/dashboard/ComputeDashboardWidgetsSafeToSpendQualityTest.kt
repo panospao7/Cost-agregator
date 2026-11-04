@@ -187,7 +187,10 @@ class ComputeDashboardWidgetsSafeToSpendQualityTest {
             listOf(createExpense(25.0, monthStart + 86_400_000L, "USD"))
         )
 
-        assertTrue("Missing rate must mark SafeToSpend partial", safeToSpend.isPartial)
+        // S3 distinguishes partial (some rows converted) from unavailable (0 of 1 rows converted):
+        // when all rows fail conversion, SafeToSpend is unavailable, not partial.
+        assertTrue("Missing rate on all rows must mark SafeToSpend unavailable", safeToSpend.isUnavailable)
+        assertFalse("When 0 of 1 rows convert, SafeToSpend is unavailable rather than partial", safeToSpend.isPartial)
         val quality = safeToSpend.currencyQuality
         assertNotNull(quality)
         assertTrue("Missing rate must mark currencyQuality partial", quality!!.isPartial)
