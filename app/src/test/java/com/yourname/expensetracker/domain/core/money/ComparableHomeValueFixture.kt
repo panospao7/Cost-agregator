@@ -175,13 +175,15 @@ object ComparableHomeValueFixture {
         // Foreign row snapshotted in USD.
         Case("foreign row valid for USD", USD, row(38, "EUR", 100.0, base(108.0, "USD", 1.08)), 108.0),
 
-        // ── Neutralised rows (spendingExclusionReason != null) ────────────────
-        Case("neutralised foreign WITH snapshot ranks at 0", EUR,
-            row(39, "USD", 600.0, base(550.0, "EUR", 0.916667), spendingExclusionReason = "INSTALLMENT_PURCHASE"), 0.0),
-        Case("neutralised foreign WITHOUT snapshot ranks at 0", EUR,
-            row(40, "USD", 600.0, NO_SNAPSHOT_EUR, spendingExclusionReason = "INSTALLMENT_PURCHASE"), 0.0),
-        Case("neutralised home row WITH snapshot ranks at 0", EUR,
-            row(41, "EUR", 550.0, base(550.0, "EUR", 1.0), spendingExclusionReason = "INSTALLMENT_REVERSED"), 0.0)
+        // ── Flagged rows (spendingExclusionReason != null) ────────────────────
+        // Owner decision: the Transactions list compares and sorts a flagged row on its full amount.
+        Case("flagged foreign WITH snapshot ranks at its snapshot 550", EUR,
+            row(39, "USD", 600.0, base(550.0, "EUR", 0.916667), spendingExclusionReason = "INSTALLMENT_PURCHASE"), 550.0),
+        Case("flagged foreign WITHOUT snapshot has no comparable value", EUR,
+            row(40, "USD", 600.0, NO_SNAPSHOT_EUR, spendingExclusionReason = "INSTALLMENT_PURCHASE"),
+            null, NoComparableValueReason.NO_SNAPSHOT),
+        Case("flagged home row WITH snapshot ranks at its full amount 550", EUR,
+            row(41, "EUR", 550.0, base(550.0, "EUR", 1.0), spendingExclusionReason = "INSTALLMENT_REVERSED"), 550.0)
     )
 
     /** AE-6 reversed: the same rows 32..34 evaluated against EUR again. */

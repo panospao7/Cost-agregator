@@ -71,8 +71,8 @@ class ComparableHomeValueTest {
     // ── Branch order ────────────────────────────────────────────────────────
 
     @Test
-    fun `neutralised foreign row with valid snapshot matches model effectiveAmount and normalizedEffectiveAmount at zero`() {
-        val neutralisedWithSnapshot = expense(
+    fun `flagged foreign row with valid snapshot is compared on its snapshot while totals stay at zero`() {
+        val flaggedWithSnapshot = expense(
             currency = "USD",
             amount = 600.0,
             baseAmount = 550.0,
@@ -80,25 +80,17 @@ class ComparableHomeValueTest {
             rate = 0.916667,
             spendingExclusionReason = "INSTALLMENT_PURCHASE"
         )
-        assertEquals(0.0, neutralisedWithSnapshot.effectiveAmount, 0.0)
-        assertEquals(0.0, neutralisedWithSnapshot.normalizedEffectiveAmount!!, 0.0)
-        assertEquals(
-            ComparableValue.Value(neutralisedWithSnapshot.effectiveAmount),
-            ComparableHomeValue.comparableValue(neutralisedWithSnapshot, EUR)
-        )
-        assertEquals(
-            ComparableValue.Value(neutralisedWithSnapshot.normalizedEffectiveAmount!!),
-            ComparableHomeValue.comparableValue(neutralisedWithSnapshot, EUR)
-        )
-        assertEquals(
-            neutralisedWithSnapshot.normalizedEffectiveAmount,
-            ComparableHomeValue.snapshotValue(neutralisedWithSnapshot)
-        )
+        // List rule: full snapshot amount.
+        assertEquals(ComparableValue.Value(550.0), ComparableHomeValue.comparableValue(flaggedWithSnapshot, EUR))
+        // Totals keep the flagged row at zero (model amounts and the date-header snapshot value).
+        assertEquals(0.0, flaggedWithSnapshot.effectiveAmount, 0.0)
+        assertEquals(0.0, flaggedWithSnapshot.normalizedEffectiveAmount!!, 0.0)
+        assertEquals(0.0, ComparableHomeValue.snapshotValue(flaggedWithSnapshot)!!, 0.0)
     }
 
     @Test
-    fun `neutralised foreign row without snapshot matches model effectiveAmount at zero instead of None`() {
-        val neutralisedNoSnapshot = expense(
+    fun `flagged foreign row without snapshot has no comparable value and totals stay at zero`() {
+        val flaggedNoSnapshot = expense(
             currency = "USD",
             amount = 600.0,
             baseAmount = 0.0,
@@ -106,16 +98,97 @@ class ComparableHomeValueTest {
             rate = 0.0,
             spendingExclusionReason = "INSTALLMENT_PURCHASE"
         )
-        assertEquals(0.0, neutralisedNoSnapshot.effectiveAmount, 0.0)
-        assertEquals(0.0, neutralisedNoSnapshot.normalizedEffectiveAmount!!, 0.0)
         assertEquals(
-            ComparableValue.Value(neutralisedNoSnapshot.effectiveAmount),
-            ComparableHomeValue.comparableValue(neutralisedNoSnapshot, EUR)
+            ComparableValue.None(NoComparableValueReason.NO_SNAPSHOT),
+            ComparableHomeValue.comparableValue(flaggedNoSnapshot, EUR)
+        )
+        assertEquals(0.0, flaggedNoSnapshot.effectiveAmount, 0.0)
+        assertEquals(0.0, flaggedNoSnapshot.normalizedEffectiveAmount!!, 0.0)
+        assertEquals(0.0, ComparableHomeValue.snapshotValue(flaggedNoSnapshot)!!, 0.0)
+    }
+
+    @Test
+    fun `flagged home currency row is compared on its full amount`() {
+        val flagged = expense(currency = "EUR", amount = 1_200.0, spendingExclusionReason = "INSTALLMENT_PURCHASE")
+        assertEquals(ComparableValue.Value(1_200.0), ComparableHomeValue.comparableValue(flagged, EUR))
+        assertEquals(0.0, flagged.effectiveAmount, 0.0)
+    }
+
+    @Test
+    fun `flagged shared row is compared on my share amount`() {
+        val flagged = expense(
+            currency = "EUR", amount = 1_200.0, isShared = true, myShareAmount = 300.0,
+            spendingExclusionReason = "INSTALLMENT_PURCHASE"
+        )
+        assertEquals(ComparableValue.Value(300.0), ComparableHomeValue.comparableValue(flagged, EUR))
+    }
+
+    @Test
+    fun `flagged not-mine row stays at zero`() {
+        val flagged = expense(
+            currency = "EUR", amount = 1_200.0, isNotMine = true,
+            spendingExclusionReason = "INSTALLMENT_PURCHASE"
+        )
+        assertEquals(ComparableValue.Value(0.0), ComparableHomeValue.comparableValue(flagged, EUR))
+        assertEquals(0.0, ComparableHomeValue.snapshotValue(flagged)!!, 0.0)
+    }
+
+    @Test
+    fun `flagged 1200 passes min 1000 and is excluded by max 1000`() {
+        val flagged = expense(currency = "EUR", amount = 1_200.0, spendingExclusionReason = "INSTALLMENT_PURCHASE")
+        assertTrue(ComparableHomeValue.withinBounds(flagged, EUR, 1_000.0, null))
+        assertFalse(ComparableHomeValue.withinBounds(flagged, EUR, null, 1_000.0))
+        // Boundary: inclusive at the exact amount.
+        assertTrue(ComparableHomeValue.withinBounds(flagged, EUR, 1_200.0, 1_200.0))
+        assertFalse(ComparableHomeValue.withinBounds(flagged, EUR, 1_200.01, null))
+    }
+
+    @Test
+    fun `flagged foreign row without snapshot is excluded by any bound`() {
+        val flagged = expense(
+            currency = "USD", amount = 600.0, baseAmount = 0.0, baseCurrency = "EUR", rate = 0.0,
+            spendingExclusionReason = "INSTALLMENT_PURCHASE"
+        )
+        assertFalse(ComparableHomeValue.withinBounds(flagged, EUR, 0.0, null))
+        assertFalse(ComparableHomeValue.withinBounds(flagged, EUR, null, 1_000_000.0))
+        assertTrue(ComparableHomeValue.withinBounds(flagged, EUR, null, null))
+    }
+
+    @Test
+    fun `descending sort ranks flagged 1200 above unflagged 500 and ascending the reverse`() {
+        val flagged = expense(
+            id = 1, currency = "EUR", amount = 1_200.0, date = 2L,
+            spendingExclusionReason = "INSTALLMENT_PURCHASE"
+        )
+        val unflagged = expense(id = 2, currency = "EUR", amount = 500.0, date = 3L)
+        assertEquals(
+            listOf(1L, 2L),
+            listOf(unflagged, flagged)
+                .sortedWith(ComparableHomeValue.comparator(EUR, ComparableHomeValue.Direction.DESCENDING))
+                .map { it.id }
         )
         assertEquals(
-            neutralisedNoSnapshot.normalizedEffectiveAmount,
-            ComparableHomeValue.snapshotValue(neutralisedNoSnapshot)
+            listOf(2L, 1L),
+            listOf(flagged, unflagged)
+                .sortedWith(ComparableHomeValue.comparator(EUR, ComparableHomeValue.Direction.ASCENDING))
+                .map { it.id }
         )
+    }
+
+    @Test
+    fun `flagged foreign row without snapshot sorts last in both directions`() {
+        val flaggedNone = expense(
+            id = 1, currency = "USD", amount = 9_999.0, date = 9L, baseAmount = 0.0, baseCurrency = "EUR", rate = 0.0,
+            spendingExclusionReason = "INSTALLMENT_PURCHASE"
+        )
+        val ordinary = expense(id = 2, currency = "EUR", amount = 5.0, date = 1L)
+        for (direction in ComparableHomeValue.Direction.values()) {
+            assertEquals(
+                direction.name,
+                listOf(2L, 1L),
+                listOf(flaggedNone, ordinary).sortedWith(ComparableHomeValue.comparator(EUR, direction)).map { it.id }
+            )
+        }
     }
 
     @Test
