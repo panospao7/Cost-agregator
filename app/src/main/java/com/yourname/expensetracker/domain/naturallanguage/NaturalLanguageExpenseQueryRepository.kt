@@ -13,7 +13,7 @@ data class NaturalLanguageExpense(
      * total is built from these rows only; deposits, transfers and flagged rows stay in the results
      * but add nothing to the total. Set by the repository, never recomputed by consumers.
      */
-    val countsInTotal: Boolean = true,
+    val countsInTotal: Boolean,
     /** True when a spending exclusion (flagged installment purchase) neutralises this row; drives the row label. */
     val isSpendingNeutralised: Boolean = false
 )

@@ -57,7 +57,7 @@
 | **SubscriptionManagerEngine** | Subscriptions (validate/create, price history, usage, candidates, health, savings) | 🟡 HIGH |
 | **SynthesisEngine** | 6 (Month-end forecast, read-only) | 🟢 LOW |
 | **BudgetForecastingEngine** | 5/6 (Budget forecast generation + `BudgetForecastDao` persistence via `insertForecast`/`insertWithDeactivation`) | 🟢 LOW |
-| **NaturalLanguageSearchEngine** | NL query search (read-only; keyset `SearchCursor` pagination) | 🟢 LOW |
+| **NaturalLanguageSearchEngine** | NL query search (read-only; keyset `SearchCursor` pagination). Rows keep deposits and flagged purchases; the repository sets `countsInTotal` and `isSpendingNeutralised`, and the search total counts only `countsInTotal` rows, each converted at its own date | 🟢 LOW |
 | **BudgetAutopilotEngine** | 6 (Budget autopilot correctness — historical category monthly spend read once via `MultiCurrencyRepository.getHistoricalCategoryMonthlySpend()` as typed `domain/core/money/CategoryMonthlySpend` rows, RP-08; the engine only reads budgets via `BudgetRepository.getActiveBudgets()` — apply writes go through `BudgetViewModel.applyAutopilotRecommendation()`/apply-all → `BudgetRepository.updateBudget()`/`updateBudgetOrThrow()`) | 🟡 HIGH |
 | **SpendingPaceCalculator** | 5 (Dashboard spending pace via `ComputeDashboardWidgetsUseCase`, wired 0f1f587b), 6 (Analytics: canonical pace in `InsightsEngine`, `SpendingPersonalityClassifier`; consumed by `BudgetAutopilotEngine`) — read-only; expects caller-pre-normalized input via `AnalyticsCurrencyNormalizer` | 🟢 LOW |
 | **AssetCleanupCoordinator** | 3 (Receipt uncommitted-asset cleanup, RP-12 12c) | 🟢 LOW |
@@ -462,6 +462,8 @@ PrivacyGate.check(capability, context)
 - NetCashflowBalanceProvider — isolated forecast input
 - SynthesisEngine — read-only month-end forecast computation
 - NaturalLanguageSearchEngine — read-only NL query search
+- `ComputeDashboardWidgetsUseCase.recentPurchases` — feeds the Recent Activity list only and keeps flagged purchases; nothing may sum it. Totals, charts and top categories read `ctx.purchases`
+- Location queries in `ExpenseDao` (map and located counts) apply `SPENDING_PREDICATE`, so flagged and not-mine rows stay off the map
 
 ### DANGEROUS to change (shared engines):
 - CurrencyConverter — verify dashboard, budget, forecast, export, cashflow
