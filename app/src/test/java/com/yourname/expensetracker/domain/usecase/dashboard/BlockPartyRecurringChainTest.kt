@@ -767,7 +767,10 @@ class BlockPartyRecurringChainTest {
         periodStart = at(1, 0),
         periodEnd = at(30, 23),
         currency = "EUR",
-        currencyAssumption = "USER_CONFIRMED"
+        currencyAssumption = "USER_CONFIRMED",
+        // fix-1.0.4 fixture: effective spend and health equal the gross spentAmount / health above.
+        effectiveSpend = 0.0,
+        effectiveHealthStatus = BudgetHealthStatus.ON_TRACK
     )
 
     private fun pattern(

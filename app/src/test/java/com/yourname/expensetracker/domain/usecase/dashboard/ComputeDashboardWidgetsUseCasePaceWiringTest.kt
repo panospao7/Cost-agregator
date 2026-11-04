@@ -483,9 +483,11 @@ class ComputeDashboardWidgetsUseCasePaceWiringTest {
     private fun budgetSnapshot(currency: String) = com.yourname.expensetracker.domain.model.dashboard.BudgetStatusSnapshot(
         null, 1234.5, null, 0.0, 1234.5, 0.0,
         com.yourname.expensetracker.domain.budget.BudgetHealthStatus.ON_TRACK,
-        fixedNowMs, fixedNowMs + DAY_MS, currency = currency, currencyAssumption = "USER_CONFIRMED",
+        // fix-1.0.4 fixture: a 30-day (month-scale) period so Monte Carlo still receives the limit.
+        fixedNowMs, fixedNowMs + 30 * DAY_MS, currency = currency, currencyAssumption = "USER_CONFIRMED",
         // Runway with a positive limit needs the budget's effective spend (no spend recorded here).
-        effectiveSpend = 0.0
+        effectiveSpend = 0.0,
+        effectiveHealthStatus = com.yourname.expensetracker.domain.budget.BudgetHealthStatus.ON_TRACK
     )
 
     private fun monteCarloResult(currency: String) = MonteCarloResult(

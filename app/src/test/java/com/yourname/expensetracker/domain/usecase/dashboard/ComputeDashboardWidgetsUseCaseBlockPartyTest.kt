@@ -430,7 +430,8 @@ class ComputeDashboardWidgetsUseCaseBlockPartyTest {
         currency = currency,
         currencyAssumption = assumption,
         // Runway (which gates Block Party) needs the budget's effective spend when the limit is positive.
-        effectiveSpend = spent
+        effectiveSpend = spent,
+        effectiveHealthStatus = BudgetHealthStatus.ON_TRACK
     )
 
     private fun purchase(id: Long, amount: Double, date: Long) = Expense(

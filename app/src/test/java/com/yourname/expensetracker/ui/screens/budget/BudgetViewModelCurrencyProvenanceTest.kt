@@ -81,7 +81,6 @@ class BudgetViewModelCurrencyProvenanceTest : ViewModelTestUtils() {
         viewModel = BudgetViewModel(
             budgetRepository = budgetRepository,
             categoryRepository = categoryRepository,
-            offsetEngine = offsetEngine,
             autopilotEngine = autopilotEngine,
             timeProvider = timeProvider,
             currencySettingsRepository = currencySettingsRepository,
@@ -277,46 +276,23 @@ class BudgetViewModelCurrencyProvenanceTest : ViewModelTestUtils() {
         assertEquals("USER_CONFIRMED", written.captured.currencyAssumption)
     }
 
-    // ---- AE-16 (INV-16, INV-20): the VM fallback engine call mirrors the repository mapping ----
+    // ---- fix-1.0.4: the repository is the only producer of the adjusted breakdown; the VM never recomputes ----
 
     @Test
-    fun `AE-16 fallback maps non-cancellation engine failures to a null breakdown`() = runTest(testDispatcher) {
-        val failures = listOf<Throwable>(
-            java.io.IOException("settings read failed"),
-            RuntimeException("engine failed"),
-            MoneyDisplayUnavailableException(MoneyDisplayUnavailableReasonCode.HOME_CURRENCY_UNAVAILABLE)
-        )
-        for (failure in failures) {
-            coEvery { offsetEngine.calculateEffectiveBudgetSpend(any(), any(), any()) } throws failure
-            val vm = viewModelEmitting(listOf(statusWithoutBreakdown()))
-
-            val state = vm.uiState.first { it.budgets.isNotEmpty() }
-
-            assertEquals(1, state.budgets.size)
-            assertNull(state.budgets.single().adjustedSpendBreakdown)
-            assertNull(state.error)
-        }
-    }
-
-    @Test
-    fun `AE-16 fallback still populates the breakdown when the engine succeeds`() = runTest(testDispatcher) {
-        coEvery { offsetEngine.calculateEffectiveBudgetSpend(any(), any(), any()) } returns BudgetSpendBreakdown(
-            totalPersonalSpend = 60.0,
-            totalSharedSpend = 10.0,
-            totalReimbursed = 0.0,
-            netSharedLiability = 10.0,
-            effectiveBudgetSpend = 70.0,
-            displayCurrency = "USD"
-        )
+    fun `a null breakdown stays null on the card and the offset engine is not involved`() = runTest(testDispatcher) {
         val vm = viewModelEmitting(listOf(statusWithoutBreakdown()))
 
         val state = vm.uiState.first { it.budgets.isNotEmpty() }
 
-        assertEquals(70.0, state.budgets.single().adjustedSpendBreakdown!!.effectiveSpend, 0.0001)
+        assertEquals(1, state.budgets.size)
+        assertNull(state.budgets.single().adjustedSpendBreakdown)
+        assertNull(state.error)
+        // The offset engine is no longer a VM dependency, so it can never be consulted for a null breakdown.
+        coVerify(exactly = 0) { offsetEngine.calculateEffectiveBudgetSpend(any(), any(), any()) }
     }
 
     @Test
-    fun `AE-16 fallback does not call the engine when the repository already supplied a breakdown`() =
+    fun `a breakdown supplied by the repository is passed through unchanged`() =
         runTest(testDispatcher) {
             val supplied = AdjustedSpendBreakdown(
                 personalSpend = 10.0,
@@ -334,28 +310,11 @@ class BudgetViewModelCurrencyProvenanceTest : ViewModelTestUtils() {
             coVerify(exactly = 0) { offsetEngine.calculateEffectiveBudgetSpend(any(), any(), any()) }
         }
 
-    @Test
-    fun `AE-16 fallback engine cancellation propagates and never becomes a null-breakdown status`() =
-        runTest(testDispatcher) {
-            coEvery { offsetEngine.calculateEffectiveBudgetSpend(any(), any(), any()) } throws
-                CancellationException("cancelled")
-            val vm = viewModelEmitting(listOf(statusWithoutBreakdown()))
-            val observed = mutableListOf<BudgetUiState>()
-            backgroundScope.launch { vm.uiState.collect { observed += it } }
-
-            advanceUntilIdle()
-
-            // Before the fix the catch-all turned cancellation into a null breakdown (gross spend shown).
-            assertEquals(emptyList<BudgetStatus>(), observed.flatMap { it.budgets })
-            coVerify(atLeast = 1) { offsetEngine.calculateEffectiveBudgetSpend(any(), any(), any()) }
-        }
-
     private fun viewModelEmitting(statuses: List<BudgetStatus>): BudgetViewModel {
         every { budgetRepository.getBudgetStatuses() } returns flowOf(statuses)
         return BudgetViewModel(
             budgetRepository = budgetRepository,
             categoryRepository = categoryRepository,
-            offsetEngine = offsetEngine,
             autopilotEngine = autopilotEngine,
             timeProvider = timeProvider,
             currencySettingsRepository = currencySettingsRepository,

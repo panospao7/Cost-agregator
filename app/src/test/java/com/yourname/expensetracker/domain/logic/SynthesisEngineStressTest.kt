@@ -492,7 +492,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
     @Test
     fun `budget limit resolution - overall wins when positive otherwise category sum`() = runTest {
         val rows = listOf(
-            BudgetLimitRow("overall 1000 only", listOf(createBudgetStatus(limit = 1000.0)), 500.0),
+            BudgetLimitRow("overall 1000 only", listOf(createBudgetStatus(limit = 1000.0, spent = 500.0)), 500.0),
             BudgetLimitRow("overall row with zero amount only", listOf(createBudgetStatus(limit = 0.0)), 0.0),
             BudgetLimitRow(
                 "categories 500 + 300 only",
@@ -501,7 +501,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
             ),
             BudgetLimitRow(
                 "overall 1000 wins over categories 500",
-                listOf(createBudgetStatus(limit = 1000.0), createBudgetStatus(limit = 500.0, categoryId = 1)),
+                listOf(createBudgetStatus(limit = 1000.0, spent = 500.0), createBudgetStatus(limit = 500.0, categoryId = 1)),
                 500.0
             ),
             BudgetLimitRow(
@@ -523,7 +523,8 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
                 plannedExpenses = emptyList(),
                 savingsGoals = emptyList(),
                 budgetStatuses = row.budgets,
-                spendingPace = createPace()
+                spendingPace = createPace(),
+                displayCurrency = "EUR"
             )
             assertTrue("${row.label}: not fallback", forecast.components.projectedSpendingPoints.isNotEmpty())
             assertRowMoney(row.expectedDiscretionary, forecast.components.discretionaryBudget, "${row.label}: discretionaryBudget")
@@ -544,7 +545,8 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
                 currentSpent = 5000.0,
                 averageTotal = 1000.0,
                 paceStatus = PaceStatus.OVER_PACE
-            )
+            ),
+            displayCurrency = "EUR"
         )
 
         // Should show critical risk
@@ -572,9 +574,10 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
                 createSavingsGoal(target = 1000.0, current = 0.0)
             ),
             budgetStatuses = listOf(
-                createBudgetStatus(limit = 100.0) // Very low budget
+                createBudgetStatus(limit = 100.0, spent = 500.0) // Very low budget; spent matches the pace's 500
             ),
-            spendingPace = createPace()
+            spendingPace = createPace(),
+            displayCurrency = "EUR"
         )
         val c = forecast.components
 
@@ -597,8 +600,9 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
             recurringPatterns = listOf(createRecurringPattern(amount = 100.0, confidence = 0.95f)),
             plannedExpenses = listOf(createPlannedExpense(amount = 50.0, priority = PlannedExpensePriority.MUST)),
             savingsGoals = listOf(createSavingsGoal(target = 1000.0, current = 500.0, protection = GoalProtectionLevel.STRICT)),
-            budgetStatuses = listOf(createBudgetStatus(limit = 1000.0)),
-            spendingPace = createPace(currentSpent = 200.0)
+            budgetStatuses = listOf(createBudgetStatus(limit = 1000.0, spent = 200.0)),
+            spendingPace = createPace(currentSpent = 200.0),
+            displayCurrency = "EUR"
         )
         val c = forecast.components
 
@@ -623,9 +627,10 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
                 createSavingsGoal(target = Double.MAX_VALUE / 10, current = 0.0)
             ),
             budgetStatuses = listOf(
-                createBudgetStatus(limit = Double.MAX_VALUE / 100)
+                createBudgetStatus(limit = Double.MAX_VALUE / 100, spent = Double.MAX_VALUE / 1000)
             ),
-            spendingPace = createPace(currentSpent = Double.MAX_VALUE / 1000)
+            spendingPace = createPace(currentSpent = Double.MAX_VALUE / 1000),
+            displayCurrency = "EUR"
         )
         val c = forecast.components
 
@@ -654,9 +659,10 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
                 createSavingsGoal(target = 0.01, current = 0.0)
             ),
             budgetStatuses = listOf(
-                createBudgetStatus(limit = 0.01)
+                createBudgetStatus(limit = 0.01, spent = 0.01)
             ),
-            spendingPace = createPace(currentSpent = 0.01)
+            spendingPace = createPace(currentSpent = 0.01),
+            displayCurrency = "EUR"
         )
         val c = forecast.components
 
@@ -1022,8 +1028,9 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
                 recurringPatterns = emptyList(),
                 plannedExpenses = emptyList(),
                 savingsGoals = emptyList(),
-                budgetStatuses = listOf(createBudgetStatus(limit = 1000.0)),
-                spendingPace = createPace(paceStatus = row.paceStatus, currentSpent = row.spent)
+                budgetStatuses = listOf(createBudgetStatus(limit = 1000.0, spent = row.spent)),
+                spendingPace = createPace(paceStatus = row.paceStatus, currentSpent = row.spent),
+                displayCurrency = "EUR"
             )
             // 0.85 - 0.05 (no recurring) = 0.80; the fallback forecast is confidence 0.0 / MEDIUM.
             assertEquals("${row.label}: not the fallback forecast", 0.80, forecast.confidence, 1e-9)
@@ -1040,12 +1047,13 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
             recurringPatterns = listOf(createRecurringPattern(amount = 40.0, confidence = 0.95f)),
             plannedExpenses = listOf(createPlannedExpense(amount = 5.0, priority = PlannedExpensePriority.MUST)),
             savingsGoals = emptyList(),
-            budgetStatuses = listOf(createBudgetStatus(limit = 1000.0)),
+            budgetStatuses = listOf(createBudgetStatus(limit = 1000.0, spent = 900.0)),
             spendingPace = createPace(
                 paceStatus = PaceStatus.OVER_PACE,
                 currentSpent = 900.0,
                 averageTotal = 1000.0
-            )
+            ),
+            displayCurrency = "EUR"
         )
 
         assertMoneyEquals(55.00, forecast.components.discretionaryBudget, "discretionaryBudget")
@@ -1064,7 +1072,8 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
                 createBudgetStatus(limit = 100.0, spent = 150.0, health = BudgetHealthStatus.CRITICAL),
                 createBudgetStatus(limit = 100.0, spent = 120.0, health = BudgetHealthStatus.EXCEEDED)
             ),
-            spendingPace = createPace()
+            spendingPace = createPace(),
+            displayCurrency = "EUR"
         )
 
         // Multiple critical budgets = CRITICAL
@@ -1084,8 +1093,9 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
             recurringPatterns = emptyList(),
             plannedExpenses = emptyList(),
             savingsGoals = emptyList(),
-            budgetStatuses = listOf(createBudgetStatus(limit = 2000.0)),
-            spendingPace = createPace(daysElapsed = 1, daysInMonth = 31)
+            budgetStatuses = listOf(createBudgetStatus(limit = 2000.0, spent = 500.0)),
+            spendingPace = createPace(daysElapsed = 1, daysInMonth = 31),
+            displayCurrency = "EUR"
         )
         // 0.85 - 0.05 (no recurring) = 0.80; the fallback forecast is confidence 0.0.
         assertEquals("not the fallback forecast", 0.80, forecast.confidence, 1e-9)
@@ -1112,8 +1122,9 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
             recurringPatterns = emptyList(),
             plannedExpenses = emptyList(),
             savingsGoals = emptyList(),
-            budgetStatuses = listOf(createBudgetStatus(limit = 2000.0)),
-            spendingPace = createPace(daysElapsed = 31, daysInMonth = 31)
+            budgetStatuses = listOf(createBudgetStatus(limit = 2000.0, spent = 500.0)),
+            spendingPace = createPace(daysElapsed = 31, daysInMonth = 31),
+            displayCurrency = "EUR"
         )
         // 0.85 - 0.05 (no recurring) = 0.80; the fallback forecast is confidence 0.0.
         assertEquals("not the fallback forecast", 0.80, forecast.confidence, 1e-9)
@@ -1322,12 +1333,13 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
                 recurringPatterns = if (row.hasRecurring) listOf(createRecurringPattern(amount = 100.0)) else emptyList(),
                 plannedExpenses = listOf(createPlannedExpense(amount = 50.0)),
                 savingsGoals = listOf(createSavingsGoal(target = 1000.0, current = 100.0)),
-                budgetStatuses = if (row.hasBudget) listOf(createBudgetStatus(limit = 2000.0)) else emptyList(),
+                budgetStatuses = if (row.hasBudget) listOf(createBudgetStatus(limit = 2000.0, spent = 800.0)) else emptyList(),
                 spendingPace = createPace(
                     averageTotal = if (row.hasAverage) 1500.0 else null,
                     previousTotal = 1400.0,
                     currentSpent = 800.0
-                )
+                ),
+                displayCurrency = "EUR"
             )
             assertEquals("${row.label}: confidence", row.expectedConfidence, forecast.confidence, 1e-9)
         }
@@ -1348,7 +1360,8 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
             budgetStatuses = listOf(
                 createBudgetStatus(limit = 100.0, spent = 150.0, health = BudgetHealthStatus.EXCEEDED)
             ),
-            spendingPace = createPace(paceStatus = PaceStatus.OVER_PACE)
+            spendingPace = createPace(paceStatus = PaceStatus.OVER_PACE),
+            displayCurrency = "EUR"
         )
 
         assertEquals(
@@ -1372,7 +1385,8 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
             budgetStatuses = listOf(
                 createBudgetStatus(limit = 1000.0, spent = 200.0, health = BudgetHealthStatus.ON_TRACK)
             ),
-            spendingPace = createPace(paceStatus = PaceStatus.UNDER_PACE)
+            spendingPace = createPace(paceStatus = PaceStatus.UNDER_PACE),
+            displayCurrency = "EUR"
         )
 
         // The fallback forecast also has no insights. Exact non-fallback confidence:
@@ -1488,7 +1502,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
                 createSavingsGoal(target = 1000.0, current = 500.0, protection = GoalProtectionLevel.STRICT)
             ),
             budgetStatuses = listOf(
-                createBudgetStatus(limit = 1000.0),
+                createBudgetStatus(limit = 1000.0, spent = 200.0),
                 createBudgetStatus(limit = 5000.0),
                 createBudgetStatus(limit = 250.0),
                 createBudgetStatus(limit = 700.0, categoryId = 1)
@@ -1498,7 +1512,8 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
                 paceStatus = PaceStatus.UNDER_PACE,
                 averageTotal = 1000.0,
                 previousTotal = 1400.0
-            )
+            ),
+            displayCurrency = "EUR"
         )
         val c = forecast.components
 

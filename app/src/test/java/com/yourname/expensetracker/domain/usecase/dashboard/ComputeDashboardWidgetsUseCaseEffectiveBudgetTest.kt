@@ -197,7 +197,9 @@ class ComputeDashboardWidgetsUseCaseEffectiveBudgetTest {
 
         val summary = budgetSummary(computeUseCase.compute(data(emptyList(), listOf(budget))))
 
-        assertEquals(UiText.fromKey(DashboardTextKeys.WIDGET_ALL_BUDGETS_ON_TRACK), summary)
+        // fix-1.0.4 (FL-06): a null effective health is not counted as exceeded, but it is also never
+        // "all on track": the summary is null, which Home renders as unavailable (not green).
+        assertEquals(null, summary)
     }
 
     // ---------------------------------------------------------------- F5 Today / Week / Month

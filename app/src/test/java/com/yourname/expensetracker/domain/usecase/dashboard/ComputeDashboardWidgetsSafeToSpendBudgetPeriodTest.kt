@@ -152,7 +152,9 @@ class ComputeDashboardWidgetsSafeToSpendBudgetPeriodTest {
         periodEnd = periodEnd,
         currency = "EUR",
         currencyAssumption = "USER_CONFIRMED",
-        effectiveSpend = effectiveSpend
+        effectiveSpend = effectiveSpend,
+        // fix-1.0.4 fixture: effective health exists exactly when effective spend does (ON_TRACK like the gross).
+        effectiveHealthStatus = if (effectiveSpend != null) BudgetHealthStatus.ON_TRACK else null
     )
 
     private val thisMonthEur300 get() = listOf(expense(300.0, ts(2026, 4, 2, 12)))

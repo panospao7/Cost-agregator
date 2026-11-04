@@ -201,7 +201,6 @@ class DashboardBudgetProvenanceChainTest {
         budgetViewModel = BudgetViewModel(
             budgetRepository = budgetRepository,
             categoryRepository = categoryRepository,
-            offsetEngine = offsetEngine,
             autopilotEngine = mockk<BudgetAutopilotEngine>(relaxed = true),
             timeProvider = clock,
             currencySettingsRepository = currencySettingsRepository,

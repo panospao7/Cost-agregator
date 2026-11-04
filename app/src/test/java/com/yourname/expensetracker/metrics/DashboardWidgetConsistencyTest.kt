@@ -202,7 +202,8 @@ class DashboardWidgetConsistencyTest {
             periodStart = monthStart,
             periodEnd = monthStart + 30 * 86400000L,
             currency = "EUR", currencyAssumption = "EXPLICIT",
-            effectiveSpend = 100.0
+            effectiveSpend = 100.0,
+            effectiveHealthStatus = BudgetHealthStatus.ON_TRACK
         )
 
         val processedData = createProcessedData(
@@ -244,7 +245,8 @@ class DashboardWidgetConsistencyTest {
             periodStart = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfMonth(timeProvider.now()),
             periodEnd = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfMonth(timeProvider.now()) + 30 * 86400000L,
             currency = "EUR", currencyAssumption = "EXPLICIT",
-            effectiveSpend = 500.0
+            effectiveSpend = 500.0,
+            effectiveHealthStatus = BudgetHealthStatus.ON_TRACK
         )
 
         val processedData = createProcessedData(

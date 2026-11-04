@@ -158,7 +158,8 @@ class ComputeDashboardWidgetsSafeToSpendQualityTest {
             null, 1234.5, null, 0.0, 1234.5, 0.0,
             BudgetHealthStatus.ON_TRACK,
             now, now + 86_400_000L, currency = "EUR", currencyAssumption = "USER_CONFIRMED",
-            effectiveSpend = 0.0
+            effectiveSpend = 0.0,
+            effectiveHealthStatus = BudgetHealthStatus.ON_TRACK
         )
         val safeToSpend = computeSafeToSpend(emptyList(), listOf(budget))
 
@@ -209,7 +210,8 @@ class ComputeDashboardWidgetsSafeToSpendQualityTest {
             null, 1000.0, null, 300.0, 700.0, 30.0,
             BudgetHealthStatus.ON_TRACK,
             now, now + 86_400_000L, currency = "EUR", currencyAssumption = "USER_CONFIRMED",
-            effectiveSpend = 300.0
+            effectiveSpend = 300.0,
+            effectiveHealthStatus = BudgetHealthStatus.ON_TRACK
         )
         val safeToSpend = computeSafeToSpend(
             listOf(createExpense(300.0, monthStart + 86_400_000L, "EUR")),
@@ -232,7 +234,8 @@ class ComputeDashboardWidgetsSafeToSpendQualityTest {
             null, 1000.0, null, 300.0, 700.0, 30.0,
             BudgetHealthStatus.ON_TRACK,
             now, now + 86_400_000L, currency = "EUR", currencyAssumption = "USER_CONFIRMED",
-            effectiveSpend = 300.0
+            effectiveSpend = 300.0,
+            effectiveHealthStatus = BudgetHealthStatus.ON_TRACK
         )
 
         // 1. Missing budget -> unavailable
@@ -280,7 +283,8 @@ class ComputeDashboardWidgetsSafeToSpendQualityTest {
             null, 1000.0, null, 1250.0, 0.0, 125.0,
             BudgetHealthStatus.EXCEEDED,
             now, now + 86_400_000L, currency = "EUR", currencyAssumption = "USER_CONFIRMED",
-            effectiveSpend = 1250.0
+            effectiveSpend = 1250.0,
+            effectiveHealthStatus = BudgetHealthStatus.EXCEEDED
         )
         val safeToSpend = computeSafeToSpend(
             listOf(createExpense(1250.0, monthStart + 86_400_000L, "EUR")),
