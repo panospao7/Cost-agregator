@@ -130,6 +130,29 @@ fun PrivacySettingsScreen(
                 item { HorizontalDivider() }
             }
 
+            // -- Stored settings unreadable (fail-closed): text only, no write --
+            if (uiState.showCorruptionWarning) {
+                item {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = stringResource(R.string.privacy_settings_unreadable_banner),
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.weight(1f)
+                        )
+                        androidx.compose.material3.TextButton(onClick = viewModel::dismissCorruptionWarning) {
+                            Text(stringResource(R.string.action_dismiss))
+                        }
+                    }
+                }
+            }
+
             // -- Error message --
             if (uiState.errorMessage != null) {
                 item {

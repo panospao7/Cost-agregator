@@ -183,19 +183,15 @@ class CloudWarrantyExtractionService @Inject constructor(
     }
 
     private fun buildRawPrompt(input: WarrantyExtractionInput): String {
-        val receiptText = input.receiptText.take(AppConfig.Ai.MAX_RECEIPT_OCR_CHARS_FOR_AI)
-        val merchant = input.merchant ?: "Unknown"
+        // Instructions, JSON schema and metadata come first; the receipt text is last and budgeted so the
+        // whole prompt fits the DefaultCloudPayloadRedactor 3000-char limit (which truncates the tail, and
+        // would otherwise cut the schema off). The schema uses placeholders that the PII sanitizer leaves
+        // untouched, so redaction neither rewrites nor expands the instructions.
+        val merchant = input.merchant?.trim()?.take(WARRANTY_PROMPT_MERCHANT_MAX_CHARS) ?: "Unknown"
 
-        return """
+        val header = """
             Analyze this receipt and extract warranty information.
-            
-            Receipt Text:
-            $receiptText
-            
-            Merchant: $merchant
-            Total Amount: ${input.totalAmount ?: "Unknown"}
-            Date: ${input.purchaseDate ?: "Unknown"}
-            
+
             Extract the following warranty information:
             1. Product name (if multiple items, list the most expensive or main item)
             2. Warranty duration in months (or convert years to months)
@@ -211,8 +207,8 @@ class CloudWarrantyExtractionService @Inject constructor(
                 "productName": "Product Name",
                 "warrantyMonths": 24,
                 "warrantyType": "MANUFACTURER",
-                "supportPhone": "+1234567890" (or null),
-                "supportEmail": "support@company.com" (or null),
+                "supportPhone": "<phone number>" (or null),
+                "supportEmail": "<email address>" (or null),
                 "returnDays": 30,
                 "returnConditions": "Original packaging required" (or null),
                 "confidence": 0.95
@@ -222,7 +218,18 @@ class CloudWarrantyExtractionService @Inject constructor(
             {"hasWarranty": false, "confidence": 0.0}
             
             Be precise. If uncertain, use lower confidence scores.
-        """.trimIndent()
+
+            Merchant: $merchant
+            Total Amount: ${input.totalAmount ?: "Unknown"}
+            Date: ${input.purchaseDate ?: "Unknown"}
+
+            Receipt Text:
+        """.trimIndent() + "\n"
+
+        // The receipt text is appended after trimIndent so its own line indentation cannot alter the header.
+        val receiptBudget = (WARRANTY_PROMPT_MAX_CHARS - header.length).coerceAtLeast(0)
+        val receiptText = input.receiptText.take(minOf(AppConfig.Ai.MAX_RECEIPT_OCR_CHARS_FOR_AI, receiptBudget))
+        return header + receiptText
     }
 
     private fun parseResponse(responseBody: String?, correlationId: String): WarrantyExtractionResult? {
@@ -380,6 +387,9 @@ class CloudWarrantyExtractionService @Inject constructor(
     }
 
     private companion object {
+        /** Mirrors DefaultCloudPayloadRedactor.MAX_TEXT_CHARS_RECEIPT (WARRANTY_EXTRACTION); policy is unchanged. */
+        private const val WARRANTY_PROMPT_MAX_CHARS = 3000
+        private const val WARRANTY_PROMPT_MERCHANT_MAX_CHARS = 80
         private val JSON_FENCE_REGEX = Regex("""```(?:json)?\s*([\s\S]*?)\s*```""", RegexOption.IGNORE_CASE)
         private val EMAIL_REGEX = Regex("""\b[\w._%+-]+@[\w.-]+\.[A-Za-z]{2,}\b""")
         private val IBAN_REGEX = Regex("""\b[A-Z]{2}\d{2}[A-Z0-9]{10,30}\b""")

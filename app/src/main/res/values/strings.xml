@@ -934,6 +934,9 @@
     <string name="privacy_slider_notification_retention">Raw notification retention (days)</string>
     <string name="privacy_slider_ocr_retention">Raw OCR retention (days)</string>
     <string name="privacy_retention_immediately">Immediately (deleted at next cleanup)</string>
+    <string name="privacy_settings_unreadable_banner">Your saved privacy settings could not be read, so the strictest privacy settings are in use for now.</string>
+    <string name="critical_recovery_open_app_settings">Open app settings</string>
+    <string name="critical_recovery_clear_data_warning">Clear data in Android Settings erases ALL data this app stores on this phone.</string>
     <string name="privacy_raw_storage_notification_label">Notification raw text storage</string>
     <string name="privacy_raw_storage_ocr_label">OCR raw text storage</string>
     <string name="privacy_raw_storage_email_label">Email receipt storage</string>
