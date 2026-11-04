@@ -202,6 +202,123 @@ class ComputeDashboardWidgetsUseCaseEffectiveBudgetTest {
         assertEquals(null, summary)
     }
 
+    // ---------------------------------------------------------------- FL-06 Home summary
+
+    @Test
+    fun `FL-06 gross 1100 limit 1000 with null breakdown gives a null summary not green`() = runTest {
+        fixedNowMs = at(15, 12)
+        val budget = budget(
+            1_000.0, effective = null, start = at(1, 0), end = date(2026, 7, 1),
+            gross = 1_100.0, grossHealth = BudgetHealthStatus.EXCEEDED, effectiveHealth = null
+        )
+
+        val summary = budgetSummary(computeUseCase.compute(data(emptyList(), listOf(budget))))
+
+        assertEquals("unavailable, never the on-track text", null, summary)
+    }
+
+    @Test
+    fun `FL-06 exceeded count above zero gives the exceeded text even beside an unavailable budget`() = runTest {
+        fixedNowMs = at(15, 12)
+        val exceeded = budget(
+            100.0, effective = 120.0, start = at(1, 0), end = date(2026, 7, 1),
+            gross = 120.0, grossHealth = BudgetHealthStatus.EXCEEDED, effectiveHealth = BudgetHealthStatus.EXCEEDED
+        )
+        val unavailable = budget(
+            500.0, effective = null, start = at(1, 0), end = date(2026, 7, 1),
+            gross = 10.0, effectiveHealth = null
+        ).copy(budgetCategoryId = 5L, categoryName = "Food")
+
+        val summary = budgetSummary(computeUseCase.compute(data(emptyList(), listOf(exceeded, unavailable))))
+
+        assertEquals(UiText.fromKey(DashboardTextKeys.WIDGET_BUDGET_EXCEEDED_FORMAT, 1), summary)
+    }
+
+    @Test
+    fun `FL-06 two exceeded budgets are counted as 2`() = runTest {
+        fixedNowMs = at(15, 12)
+        val first = budget(
+            100.0, effective = 120.0, start = at(1, 0), end = date(2026, 7, 1),
+            gross = 120.0, grossHealth = BudgetHealthStatus.EXCEEDED, effectiveHealth = BudgetHealthStatus.EXCEEDED
+        )
+        val second = first.copy(budgetCategoryId = 5L, categoryName = "Food")
+
+        val summary = budgetSummary(computeUseCase.compute(data(emptyList(), listOf(first, second))))
+
+        assertEquals(UiText.fromKey(DashboardTextKeys.WIDGET_BUDGET_EXCEEDED_FORMAT, 2), summary)
+    }
+
+    @Test
+    fun `FL-06 all effective health known and none exceeded gives on track`() = runTest {
+        fixedNowMs = at(15, 12)
+        val critical = budget(
+            100.0, effective = 95.0, start = at(1, 0), end = date(2026, 7, 1),
+            gross = 95.0, grossHealth = BudgetHealthStatus.CRITICAL, effectiveHealth = BudgetHealthStatus.CRITICAL
+        )
+        val warning = budget(
+            200.0, effective = 160.0, start = at(1, 0), end = date(2026, 7, 1),
+            gross = 160.0, grossHealth = BudgetHealthStatus.WARNING, effectiveHealth = BudgetHealthStatus.WARNING
+        ).copy(budgetCategoryId = 5L, categoryName = "Food")
+
+        val summary = budgetSummary(computeUseCase.compute(data(emptyList(), listOf(critical, warning))))
+
+        assertEquals(UiText.fromKey(DashboardTextKeys.WIDGET_ALL_BUDGETS_ON_TRACK), summary)
+    }
+
+    @Test
+    fun `FL-06 one known budget beside one null effective health is still unavailable`() = runTest {
+        fixedNowMs = at(15, 12)
+        val known = budget(
+            100.0, effective = 40.0, start = at(1, 0), end = date(2026, 7, 1),
+            gross = 40.0, effectiveHealth = BudgetHealthStatus.ON_TRACK
+        )
+        val unknown = budget(
+            500.0, effective = null, start = at(1, 0), end = date(2026, 7, 1),
+            gross = 10.0, effectiveHealth = null
+        ).copy(budgetCategoryId = 5L, categoryName = "Food")
+
+        val summary = budgetSummary(computeUseCase.compute(data(emptyList(), listOf(known, unknown))))
+
+        assertEquals(null, summary)
+    }
+
+    // ---------------------------------------------------------------- FL-06 Runway income fallback
+
+    @Test
+    fun `FL-06 limit 0 with null effective spend keeps the income fallback for runway`() = runTest {
+        fixedNowMs = at(15, 12)
+        val budget = budget(0.0, effective = null, start = at(1, 0), end = date(2026, 7, 1))
+        val deposit = DashboardExpense(
+            id = 90L, amount = 2_000.0, effectiveAmount = 2_000.0, currency = "EUR", merchant = "Employer",
+            transactionType = DashboardTransactionType.DEPOSIT, date = at(2, 12),
+            categoryId = null, isNotMine = false, isManualEntry = false
+        )
+
+        val result = computeUseCase.compute(
+            data(listOf(purchase(1L, 50.0, at(3, 12))), listOf(budget), extraExpenses = listOf(deposit))
+        )
+
+        val runway = runway(result)
+        assertFalse("a zero limit is not a conversion problem: no Unavailable", runway.isUnavailable)
+        // Income 2000 - month spend 50 = 1950, no budget basis involved.
+        assertEquals(1_950.0, runway.discretionaryRemaining, 1e-6)
+        assertFalse(runway.status == DashboardWidget.RunwayStatus.NO_INCOME)
+        val headline = result.allWidgets.filterIsInstance<DashboardWidget.SafeToSpend>().single()
+        assertTrue("the headline stays unavailable (set-budget CTA)", headline.isUnavailable)
+        assertEquals(null, headline.amount)
+    }
+
+    @Test
+    fun `FL-06 control limit 0 with null effective spend and no income is NO_INCOME not unavailable`() = runTest {
+        fixedNowMs = at(15, 12)
+        val budget = budget(0.0, effective = null, start = at(1, 0), end = date(2026, 7, 1))
+
+        val runway = runway(computeUseCase.compute(data(listOf(purchase(1L, 50.0, at(3, 12))), listOf(budget))))
+
+        assertFalse(runway.isUnavailable)
+        assertEquals(DashboardWidget.RunwayStatus.NO_INCOME, runway.status)
+    }
+
     // ---------------------------------------------------------------- F5 Today / Week / Month
 
     /**
@@ -300,9 +417,13 @@ class ComputeDashboardWidgetsUseCaseEffectiveBudgetTest {
         isManualEntry = false
     )
 
-    private fun data(expenses: List<Expense>, budgets: List<BudgetStatusSnapshot>): ProcessedDashboardData {
+    private fun data(
+        expenses: List<Expense>,
+        budgets: List<BudgetStatusSnapshot>,
+        extraExpenses: List<DashboardExpense> = emptyList()
+    ): ProcessedDashboardData {
         val dashboardData = DashboardData(
-            expenses = expenses.map { it.toDashboardExpense() },
+            expenses = expenses.map { it.toDashboardExpense() } + extraExpenses,
             categories = emptyList(),
             budgetStatuses = budgets,
             pendingCount = 0,
