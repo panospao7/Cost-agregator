@@ -1310,6 +1310,15 @@ class CrossEngineParityMatrixTest : AnalyticsEngineTestBase() {
                 spentAmount = 270.0,
                 remainingAmount = 530.0,
                 percentUsed = 33.75f,
+                // fix-1.0.4: production budgets carry an effective spend; weather reads it.
+                adjustedSpendBreakdown = com.yourname.expensetracker.domain.budget.AdjustedSpendBreakdown(
+                    personalSpend = 270.0,
+                    sharedSpend = 0.0,
+                    reimbursedAmount = 0.0,
+                    netSharedLiability = 0.0,
+                    effectiveSpend = 270.0,
+                    pendingReimbursements = 0.0
+                ),
                 healthStatus = BudgetHealthStatus.ON_TRACK,
                 periodStart = utcMs(2026, 3, 1),
                 periodEnd = utcMs(2026, 4, 1),
