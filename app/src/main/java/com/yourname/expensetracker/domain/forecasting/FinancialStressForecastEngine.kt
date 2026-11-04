@@ -90,6 +90,8 @@ class FinancialStressForecastEngine @Inject constructor(
         private const val DEFAULT_EMERGENCY_BUFFER_FALLBACK = 500.0
         private const val SEED = 42L
         private const val DAYS_PER_MONTH = 30.44
+        // Minimum number of days in the Monte Carlo daily-spend sample window.
+        private const val MIN_SAMPLE_DAYS = 14
 
         // NEW-P6-010: Risk classification thresholds — extracted from hardcoded magic numbers.
         // TODO: Migrate these to AppConfig so they can be tuned without a code deployment.
@@ -599,12 +601,16 @@ class FinancialStressForecastEngine @Inject constructor(
         val minDate = normalizedDeposits.minOf { it.date }
         val maxDate = normalizedDeposits.maxOf { it.date }
         // P-06-4: fractional months (span days / 30.44), never truncated; minimum 1 month.
-        val monthCount = if (maxDate > minDate) {
+        // Fencepost: n deposits span n - 1 intervals, so the covered period is
+        // span * n / (n - 1). A single deposit (or all on one day) keeps a 1-month period.
+        val depositCount = normalizedDeposits.size
+        val monthCount = if (depositCount >= 2 && maxDate > minDate) {
             val spanDays = java.time.temporal.ChronoUnit.DAYS.between(
                 java.time.Instant.ofEpochMilli(minDate).atZone(java.time.ZoneId.systemDefault()).toLocalDate(),
                 java.time.Instant.ofEpochMilli(maxDate).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
             ).toDouble()
-            maxOf(1.0, spanDays / DAYS_PER_MONTH)
+            val coveredDays = spanDays * depositCount / (depositCount - 1)
+            maxOf(1.0, coveredDays / DAYS_PER_MONTH)
         } else 1.0
 
         val avgMonthlyIncome = totalDeposits / monthCount
@@ -683,12 +689,16 @@ class FinancialStressForecastEngine @Inject constructor(
                 ).displayAmount
             }
 
-        // BL-09: anchor sampling to the lookback start (now - 60 days), not the first purchase,
-        // so quiet days before the first purchase stay in the empirical distribution.
+        // Anchor sampling at the later of (now - 60 days) and the first-ever purchase, so days
+        // before the user had any history (pre-install) are not counted as quiet days. A
+        // MIN_SAMPLE_DAYS floor keeps a very new history from being dominated by one purchase.
         val now = timeProvider.now()
         val sixtyDaysAgo = TimePeriodUtils.addDays(now, -60)
-        val sampleStartDay = TimePeriodUtils.getStartOfDay(sixtyDaysAgo)
         val sampleEndDay = TimePeriodUtils.getStartOfDay(now)
+        val lookbackStartDay = TimePeriodUtils.getStartOfDay(sixtyDaysAgo)
+        val firstPurchaseDay = TimePeriodUtils.getStartOfDay(purchases.minOf { it.date })
+        val floorStartDay = TimePeriodUtils.addDays(sampleEndDay, -(MIN_SAMPLE_DAYS - 1))
+        val sampleStartDay = minOf(maxOf(lookbackStartDay, firstPurchaseDay), floorStartDay)
         val dailyTotals = mutableListOf<Double>()
         var cursorDay = sampleStartDay
 
