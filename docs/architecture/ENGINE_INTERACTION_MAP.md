@@ -79,10 +79,14 @@ CurrencyConverter.convert() / convertAsOf()
   │     ├── AdvancedAnalyticsEngine
   │     ├── ForecastInputAssembler
   │     └── ComputeDashboardWidgetsUseCase (spending trend)
-  ├── CashFlowCalculator (daily balance)
+  ├── CashFlowCalculator (daily balance; DR-01 group inputs: GroupExpenseDao non-payer and payer link probes
+  │     (non-payer rows leave cash flow; payer rows count at the full paid amount) and
+  │     GroupSettlementDao.getCurrentUserSettlementsBetween (settlement paid = outflow, received = income,
+  │     converted at TRANSACTION_DATE); a failed probe or conversion marks the day partial)
   ├── FinancialStressForecastEngine (starting balance)
   ├── BudgetForecastingEngine (limit conversion)
-  ├── ExpenseExportMapper (conversion audit fields)
+  ├── ExpenseExportMapper (conversion audit fields; DR-08: effectiveAmount is the user's share, non-finite
+  │     maps to 0.0, and zero-bearing rows are skipped by the accounting exporters)
   ├── TransactionLifecycleCoordinator (create-time snapshot; update re-snapshots against current H;
   │     converted amount rounded via roundSnapshot, rate stored unrounded, no-rate/rounding-Unavailable
   │     stores sentinel 0.0/""/0.0 + one best-effort MISSING_RATE)

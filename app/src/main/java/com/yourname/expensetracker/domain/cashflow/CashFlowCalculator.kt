@@ -1,10 +1,12 @@
 package com.yourname.expensetracker.domain.cashflow
 
 import com.yourname.expensetracker.data.backup.DatabaseReadBarrier
+import com.yourname.expensetracker.data.database.dao.GroupExpenseDao
+import com.yourname.expensetracker.data.database.dao.CurrentUserSettlementRow
+import com.yourname.expensetracker.data.database.dao.GroupSettlementDao
 import com.yourname.expensetracker.data.database.dao.RecurringOccurrenceDao
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.RecurringOccurrence
-import com.yourname.expensetracker.data.database.entity.TransferDirection
 import com.yourname.expensetracker.data.database.entity.toRecurringPattern
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.data.repository.ExpenseRepository
@@ -72,7 +74,15 @@ data class DailyCashFlow(
      * NOT listed and is never counted as zero: it raises [failedConversionCount] and [isPartial].
      * Empty when the plan store has nothing projected for the day.
      */
-    val projectedInstallments: List<InstallmentProjectedEntry> = emptyList()
+    val projectedInstallments: List<InstallmentProjectedEntry> = emptyList(),
+    /**
+     * DR-01: group settlements the current user RECEIVED on this day, in [currency]. Included in
+     * [endingBalance]; not part of [income] / [incomeAggregate] (they are not expense rows).
+     * A settlement whose conversion failed is excluded here and raises [failedConversionCount].
+     */
+    val groupSettlementIncome: Double = 0.0,
+    /** DR-01: group settlements the current user PAID on this day, in [currency]. Same rules as above. */
+    val groupSettlementOutflow: Double = 0.0
 )
 
 enum class CashFlowRiskLevel {
@@ -104,7 +114,11 @@ class CashFlowCalculator @Inject constructor(
      * [calculateDailyCashFlow] uses it; [getUpcomingBills] does not (health score and
      * SmartSavingsEngine read it, OD-12).
      */
-    private val installmentProjectionPort: InstallmentProjectionPort
+    private val installmentProjectionPort: InstallmentProjectionPort,
+    /** DR-01: read-only payer lookup for group-linked expenses (never written from here). */
+    private val groupExpenseDao: GroupExpenseDao,
+    /** DR-01: read-only lookup of the current user's group settlements (never written from here). */
+    private val groupSettlementDao: GroupSettlementDao
 ) {
 
     /**
@@ -292,6 +306,73 @@ class CashFlowCalculator @Inject constructor(
         // Get historical data for the period
         val historicalExpenses = expenseRepository.getExpensesBetween(startTime, endTime)
 
+        // DR-01: ids of personal rows linked to a group expense paid by someone else (read-only,
+        // barrier-guarded, same half-open range as the expense read). If the lookup fails the rows
+        // cannot be classified: they are kept (never dropped silently) and every day is flagged
+        // partial so the UI does not present the result as exact.
+        var groupPayerLookupFailed = false
+        val nonPayerGroupExpenseIds: Set<Long> = try {
+            databaseReadBarrier.checkReadAllowed("CashFlowCalculator.calculateDailyCashFlow.readGroupPayers")
+            groupExpenseDao.getNonPayerLinkedExpenseIdsBetween(startTime, endTime).toSet()
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            Timber.w("$TAG: group payer lookup failed (%s) — marking partial", e.javaClass.simpleName)
+            groupPayerLookupFailed = true
+            emptySet()
+        }
+
+        // DR-01: ids of personal rows linked to a group expense the current user PAID. The cash
+        // that left is the full paid amount (the share owed back arrives later as a received
+        // settlement), so these rows are counted at their full amount below. Same read-only,
+        // barrier-guarded, half-open range. On failure the rows are kept at their share amount and
+        // every day is flagged partial, exactly like the non-payer probe.
+        val payerGroupExpenseIds: Set<Long> = try {
+            databaseReadBarrier.checkReadAllowed("CashFlowCalculator.calculateDailyCashFlow.readGroupPayerRows")
+            groupExpenseDao.getPayerLinkedExpenseIdsBetween(startTime, endTime).toSet()
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            Timber.w("$TAG: group payer-row lookup failed (%s) — marking partial", e.javaClass.simpleName)
+            groupPayerLookupFailed = true
+            emptySet()
+        }
+
+        // DR-01: settling up is the cash event for group expenses someone else paid. Read the
+        // current user's settlements (read-only, barrier-guarded, same half-open range). A paid
+        // settlement is an outflow and a received one is income, on its createdAt day. A settlement
+        // linked to an expense that this window already counts is skipped (no double count). If
+        // the lookup fails the result cannot be exact: every day is flagged partial, nothing is
+        // invented.
+        var groupSettlementLookupFailed = false
+        val groupSettlements: List<CurrentUserSettlementRow> = try {
+            databaseReadBarrier.checkReadAllowed("CashFlowCalculator.calculateDailyCashFlow.readGroupSettlements")
+            groupSettlementDao.getCurrentUserSettlementsBetween(startTime, endTime)
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            Timber.w("$TAG: group settlement lookup failed (%s) — marking partial", e.javaClass.simpleName)
+            groupSettlementLookupFailed = true
+            emptyList()
+        }
+        // Defensive dedupe only: the current write path (SettlementCalculator.recordSettlement)
+        // never sets GroupSettlementEntity.linkedExpenseId, so it is null for every settlement
+        // created today. If a future path links a settlement to an expense that is counted here
+        // (a payer row at its full amount, or an unlinked row), the settlement is skipped so the
+        // same cash is not counted twice. Non-payer rows are not counted, so their settlement stays.
+        val countedExpenseIds: Set<Long> = historicalExpenses
+            .filter { it.id !in nonPayerGroupExpenseIds }
+            .filter {
+                when (it.transactionType.toDomain()) {
+                    DomainTransactionType.DEPOSIT,
+                    DomainTransactionType.PURCHASE,
+                    DomainTransactionType.WITHDRAWAL -> true
+                    else -> false
+                }
+            }
+            .map { it.id }
+            .toSet()
+        val settlementsByDay = groupSettlements
+            .filter { it.linkedExpenseId == null || it.linkedExpenseId !in countedExpenseIds }
+            .groupBy { formatDayKey(it.createdAt) }
+
         // Group historical expenses by day key (yyyy-MM-dd) to avoid cross-year collisions.
         // T4B-2: keys come from the canonical formatDayKey (TimePeriodUtils-derived)
         // instead of the inline Calendar read, keeping the same Locale.US zero-padded format.
@@ -317,24 +398,38 @@ class CashFlowCalculator @Inject constructor(
             val dayExpenses = expensesByDay[dayKey] ?: mutableListOf()
 
             // Split into inflow and outflow using explicit transaction-type classification.
-            // Inflow  = DEPOSIT, or TRANSFER with transferDirection == INCOMING.
-            // Outflow = PURCHASE, WITHDRAWAL, or TRANSFER with transferDirection == OUTGOING.
-            // TRANSFER rows without a transferDirection and UNKNOWN are excluded
-            // from both sides so they don't distort the cash-flow balance.
+            // Inflow  = DEPOSIT.
+            // Outflow = PURCHASE, WITHDRAWAL.
+            // DR-06: TRANSFER (any direction) and UNKNOWN are neutral — they move money
+            // between the user's own accounts, so they are excluded from both sides
+            // (matches the Transactions header, which nets transfers to 0).
+            // DR-01: a personal row linked to a group expense that someone else paid is the
+            // user's share, not a cash outflow; settling up is the cash event. Such rows are
+            // excluded here only (they stay in budget and spending).
+            // DR-01: a personal row linked to a group expense the current user PAID is counted at
+            // the full paid amount (the cash that left); the share owed back is a received
+            // settlement. Only this cash-flow copy drops the share fields; effectiveAmount and the
+            // stored row are unchanged everywhere else. spendingExclusionReason is kept (installment
+            // neutralisation stays owned by the installment engine).
             val incomeList = mutableListOf<Expense>()
             val expenseList = mutableListOf<Expense>()
-            for (expense in dayExpenses) {
+            for (storedExpense in dayExpenses) {
+                if (storedExpense.id in nonPayerGroupExpenseIds) continue
+                val expense = if (storedExpense.id in payerGroupExpenseIds) {
+                    storedExpense.copy(
+                        isNotMine = false,
+                        isSharedExpense = false,
+                        mySharePercentage = null,
+                        myShareAmount = null
+                    )
+                } else {
+                    storedExpense
+                }
                 when (expense.transactionType.toDomain()) {
                     DomainTransactionType.DEPOSIT -> incomeList.add(expense)
                     DomainTransactionType.PURCHASE,
                     DomainTransactionType.WITHDRAWAL -> expenseList.add(expense)
-                    DomainTransactionType.TRANSFER -> {
-                        when (expense.transferDirection) {
-                            TransferDirection.INCOMING -> incomeList.add(expense)
-                            TransferDirection.OUTGOING -> expenseList.add(expense)
-                            null -> { /* unclassified transfer – no cash-flow impact */ }
-                        }
-                    }
+                    DomainTransactionType.TRANSFER -> { /* DR-06: transfers are cash-flow neutral */ }
                     else -> { /* UNKNOWN – no cash-flow impact */ }
                 }
             }
@@ -484,12 +579,54 @@ class CashFlowCalculator @Inject constructor(
                 includedInstallments += entry
             }
 
+            // DR-01: the current user's group settlements dated this day, converted to the home
+            // currency at the settlement date (TRANSACTION_DATE, same policy as expense rows). A
+            // failed conversion is counted as a conversion failure (day becomes partial); it is
+            // never added as 0 and never summed as a raw foreign amount.
+            val settlementIncomeAmounts = mutableListOf<Double>()
+            val settlementOutflowAmounts = mutableListOf<Double>()
+            for (settlement in settlementsByDay[dayKey].orEmpty()) {
+                val convertedSettlement = if (settlement.currency.equals(homeCurrency, ignoreCase = true)) {
+                    settlement.amount
+                } else {
+                    val outcome = currencyConverter.convertOutcome(
+                        amount = settlement.amount,
+                        fromCurrency = settlement.currency,
+                        toCurrency = homeCurrency,
+                        rateBasis = RateBasis.TRANSACTION_DATE,
+                        atMillis = settlement.createdAt,
+                        stalePolicy = com.yourname.expensetracker.domain.core.money.StaleRatePolicy.forBasis(RateBasis.TRANSACTION_DATE)
+                    )
+                    when (outcome) {
+                        is com.yourname.expensetracker.domain.core.money.ConversionOutcome.Converted ->
+                            outcome.convertedAmount
+                        is com.yourname.expensetracker.domain.core.money.ConversionOutcome.Failed -> {
+                            conversionFailures++
+                            continue
+                        }
+                    }
+                }
+                if (settlement.paidByCurrentUser) {
+                    settlementOutflowAmounts += convertedSettlement
+                } else {
+                    settlementIncomeAmounts += convertedSettlement
+                }
+            }
+            val settlementIncomeTotal = MoneyAggregateBuilder.fromHomeCurrencyAmounts(
+                amounts = settlementIncomeAmounts,
+                homeCurrency = homeCurrency
+            ).displayAmount
+            val settlementOutflowTotal = MoneyAggregateBuilder.fromHomeCurrencyAmounts(
+                amounts = settlementOutflowAmounts,
+                homeCurrency = homeCurrency
+            ).displayAmount
+
             val dayIncome = MoneyAggregateBuilder.fromHomeCurrencyAmounts(
-                amounts = listOf(incomeAggregate.displayAmount) + recurringIncomeAmounts,
+                amounts = listOf(incomeAggregate.displayAmount, settlementIncomeTotal) + recurringIncomeAmounts,
                 homeCurrency = homeCurrency
             ).displayAmount
             val dayExpensesTotal = MoneyAggregateBuilder.fromHomeCurrencyAmounts(
-                amounts = listOf(expenseAggregate.displayAmount) + recurringExpenseAmounts,
+                amounts = listOf(expenseAggregate.displayAmount, settlementOutflowTotal) + recurringExpenseAmounts,
                 homeCurrency = homeCurrency
             ).displayAmount
             val recurringAggregate = MoneyAggregateBuilder.fromHomeCurrencyAmounts(
@@ -525,7 +662,8 @@ class CashFlowCalculator @Inject constructor(
                     // DBG-06: recurringSectionPartial also covers a restore-barrier-blocked
                     // materialized read (overrides may be missing), not just conversion
                     // failures / projection fallback.
-                    isPartial = conversionFailures > 0 || recurringSectionPartial,
+                    isPartial = conversionFailures > 0 || recurringSectionPartial ||
+                        groupPayerLookupFailed || groupSettlementLookupFailed,
                     failedConversionCount = conversionFailures,
                     // P6-CURRENT-018: Surface occurrence-projection failures so
                     // bills approximated via ad-hoc fallback are flagged, not hidden.
@@ -534,7 +672,9 @@ class CashFlowCalculator @Inject constructor(
                     incomeAggregate = incomeAggregate,
                     expenseAggregate = expenseAggregate,
                     recurringAggregate = recurringAggregate,
-                    projectedInstallments = includedInstallments
+                    projectedInstallments = includedInstallments,
+                    groupSettlementIncome = settlementIncomeTotal,
+                    groupSettlementOutflow = settlementOutflowTotal
                 )
             )
             

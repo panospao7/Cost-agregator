@@ -40,6 +40,19 @@ import java.util.Locale
  * offset-based paging which degrades on large datasets.
  */
 
+/**
+ * DR-08: true when the user bears nothing of this row: effectiveAmount is 0 (which covers
+ * isNotMine rows) or rounds to 0.00 at export precision (a 0.004 share would otherwise be written
+ * as a "0.00" row). Accounting exporters, the repository count and the ViewModel scan all use this
+ * one rule. A non-finite Expense.effectiveAmount is already mapped to 0.0 by ExpenseExportMapper,
+ * so such a row is skipped as well; it is never written as INVALID.
+ */
+internal fun ExportTransaction.bearsNoAmount(): Boolean = isZeroAtExportPrecision(effectiveAmount)
+
+/** True when [amount] is non-finite or formats to zero with [CurrencyFormatter.formatForExport]. */
+internal fun isZeroAtExportPrecision(amount: Double): Boolean =
+    !amount.isFinite() || CurrencyFormatter.formatForExport(amount).toDouble() == 0.0
+
 class QuickBooksIIFExporter {
     private val dateFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("MM/dd/yyyy", Locale.US)
 
@@ -59,16 +72,19 @@ class QuickBooksIIFExporter {
     fun writeExpense(writer: Appendable, expense: ExportTransaction, categories: Map<Long, String>) {
         // Owner-approvals 42: installment-flagged rows are not exported to QuickBooks IIF.
         if (ExportInstallmentMarker.isInstallmentFlagged(expense)) return
+        // DR-08: rows the user bears nothing of (effectiveAmount == 0, e.g. not-mine) are not exported.
+        if (expense.bearsNoAmount()) return
         val date = Instant.ofEpochMilli(expense.date).atZone(ZoneId.systemDefault()).format(dateFormat)
         val fundingAccount = expense.sourceAccountName
         val categoryAccount = categories[expense.categoryId] ?: "Uncategorized"
+        // DR-08: export the amount the user actually bears (effectiveAmount), not the full amount.
         val amount = try {
-            CurrencyFormatter.formatForExport(expense.amount)
+            CurrencyFormatter.formatForExport(expense.effectiveAmount)
         } catch (e: IllegalArgumentException) {
             "INVALID"
         }
         val splitAmount = try {
-            CurrencyFormatter.formatForExport(-expense.amount)
+            CurrencyFormatter.formatForExport(-expense.effectiveAmount)
         } catch (e: IllegalArgumentException) {
             "INVALID"
         }
@@ -103,11 +119,13 @@ class XeroCSVExporter {
     fun writeExpense(writer: Appendable, expense: ExportTransaction, categories: Map<Long, String>) {
         // Owner-approvals 41(a): installment-flagged rows are not exported to Xero.
         if (ExportInstallmentMarker.isInstallmentFlagged(expense)) return
+        // DR-08: rows the user bears nothing of (effectiveAmount == 0, e.g. not-mine) are not exported.
+        if (expense.bearsNoAmount()) return
         val date = Instant.ofEpochMilli(expense.date).atZone(ZoneId.systemDefault()).format(dateFormat)
         val description = CsvCellSanitizer.sanitize(expense.merchant)
         val amount = CsvCellSanitizer.sanitize(
             try {
-                CurrencyFormatter.formatForExport(expense.amount)
+                CurrencyFormatter.formatForExport(expense.effectiveAmount)
             } catch (e: IllegalArgumentException) {
                 "INVALID"
             }
@@ -160,11 +178,13 @@ class FreshBooksExporter {
     fun writeExpense(writer: Appendable, expense: ExportTransaction, categories: Map<Long, String>) {
         // Owner-approvals 41(a): installment-flagged rows are not exported to FreshBooks.
         if (ExportInstallmentMarker.isInstallmentFlagged(expense)) return
+        // DR-08: rows the user bears nothing of (effectiveAmount == 0, e.g. not-mine) are not exported.
+        if (expense.bearsNoAmount()) return
         val date = Instant.ofEpochMilli(expense.date).atZone(ZoneId.systemDefault()).format(dateFormat)
         val description = CsvCellSanitizer.sanitize(expense.merchant)
         val amount = CsvCellSanitizer.sanitize(
             try {
-                CurrencyFormatter.formatForExport(expense.amount)
+                CurrencyFormatter.formatForExport(expense.effectiveAmount)
             } catch (e: IllegalArgumentException) {
                 "INVALID"
             }

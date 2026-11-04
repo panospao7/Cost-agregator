@@ -26,6 +26,7 @@ import com.yourname.expensetracker.domain.cashflow.CashFlowRiskLevel
 import com.yourname.expensetracker.domain.cashflow.DailyCashFlow
 import com.yourname.expensetracker.domain.core.money.ConversionQuality
 import com.yourname.expensetracker.domain.core.money.MoneyAggregate
+import com.yourname.expensetracker.domain.core.money.MoneyAmount
 import com.yourname.expensetracker.domain.installment.model.InstallmentMinorUnits
 import com.yourname.expensetracker.domain.installment.projection.InstallmentProjectedEntry
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
@@ -367,14 +368,15 @@ private fun DayCellView(
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
-                    if (dayCell.cashFlow.income.isNotEmpty()) {
+                    // DR-01: settlement-only days still get a dot (settlements are not expense rows).
+                    if (dayCell.cashFlow.income.isNotEmpty() || dayCell.cashFlow.groupSettlementIncome > 0.0) {
                         Box(
                             modifier = Modifier
                                 .size(4.dp)
                                 .background(SemanticColors.StatusGreen, MaterialTheme.shapes.extraSmall)
                         )
                     }
-                    if (dayCell.cashFlow.expenses.isNotEmpty()) {
+                    if (dayCell.cashFlow.expenses.isNotEmpty() || dayCell.cashFlow.groupSettlementOutflow > 0.0) {
                         Box(
                             modifier = Modifier
                                 .size(4.dp)
@@ -448,8 +450,14 @@ private fun DailyCashFlowDetails(
             return
         }
 
-        val incomeTotal = formatCashFlowAggregate(cashFlow.incomeAggregate, cashFlow.isPartial)
-        val expensesTotal = formatCashFlowAggregate(cashFlow.expenseAggregate, cashFlow.isPartial)
+        // DR-01: the day's Income / Expenses include group settlements (received / paid) so the two
+        // lines reconcile with the ending balance, which already counts them.
+        val incomeTotal = formatCashFlowAggregate(
+            cashFlow.incomeAggregate, cashFlow.isPartial, cashFlow.groupSettlementIncome
+        )
+        val expensesTotal = formatCashFlowAggregate(
+            cashFlow.expenseAggregate, cashFlow.isPartial, cashFlow.groupSettlementOutflow
+        )
         val recurringTotal = formatCashFlowAggregate(cashFlow.recurringAggregate, cashFlow.isPartial)
 
         Text(
@@ -550,11 +558,20 @@ internal fun formatCashFlowInstallmentLines(
         "• $name: -$amount"
     }
 
-internal fun formatCashFlowAggregate(aggregate: MoneyAggregate?, isPartial: Boolean): String =
+/**
+ * [homeSettlementAmount] is an already-home-currency amount (DR-01 group settlements) folded into
+ * the displayed total only when the aggregate itself is complete; an incomplete aggregate still
+ * renders as unavailable, never as a partial number.
+ */
+internal fun formatCashFlowAggregate(
+    aggregate: MoneyAggregate?,
+    isPartial: Boolean,
+    homeSettlementAmount: Double = 0.0
+): String =
     aggregate?.takeIf {
         !isPartial && !it.isPartial &&
             it.conversionQuality == ConversionQuality.COMPLETE &&
             it.conversionFailures.isEmpty()
     }
-        ?.formatDisplay()
+        ?.let { MoneyAmount(it.displayAmount + homeSettlementAmount, it.displayCurrency).formatDisplay() }
         ?: if (isPartial) "Partial / unavailable" else "Unavailable"

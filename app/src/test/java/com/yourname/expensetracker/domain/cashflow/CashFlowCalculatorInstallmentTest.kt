@@ -136,7 +136,14 @@ class CashFlowCalculatorInstallmentTest : AnalyticsEngineTestBase() {
         currencyConverter = currencyConverter,
         databaseReadBarrier = mockk(relaxed = true),
         normalizationEngine = normalizationEngine,
-        installmentProjectionPort = port
+        installmentProjectionPort = port,
+        groupExpenseDao = mockk<com.yourname.expensetracker.data.database.dao.GroupExpenseDao>(relaxed = true).also {
+            coEvery { it.getNonPayerLinkedExpenseIdsBetween(any(), any()) } returns emptyList()
+            coEvery { it.getPayerLinkedExpenseIdsBetween(any(), any()) } returns emptyList()
+        },
+        groupSettlementDao = mockk<com.yourname.expensetracker.data.database.dao.GroupSettlementDao>(relaxed = true).also {
+            coEvery { it.getCurrentUserSettlementsBetween(any(), any()) } returns emptyList()
+        }
     )
 
     private fun ms(date: LocalDate): Long = date.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()

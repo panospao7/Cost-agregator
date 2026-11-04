@@ -832,6 +832,230 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
         assertEquals(0, result.recordCount)
     }
 
+    // ── DR-08: effective amount, not-mine rows, every-row validation ─────────
+
+    private fun drRow(
+        id: Long,
+        start: Long,
+        merchant: String,
+        currency: String = "EUR",
+        amount: Double = 90.0,
+        notMine: Boolean = false,
+        shareAmount: Double? = null
+    ): Expense = Expense(
+        id = id,
+        amount = amount,
+        currency = currency,
+        merchant = merchant,
+        transactionType = TransactionType.PURCHASE,
+        date = start + id * 1_000L,
+        categoryId = 1L,
+        isNotMine = notMine,
+        isSharedExpense = shareAmount != null,
+        myShareAmount = shareAmount
+    )
+
+    /** Cursor-aware keyset paging over [rows] (ordered by date, id), the way the real DAO pages. */
+    private fun stubKeysetPages(start: Long, end: Long, rows: List<Expense>) {
+        coEvery {
+            expenseRepository.getExpensesBetweenForExportKeyset(start, end, any(), any(), any())
+        } coAnswers {
+            val limit = arg<Int>(2)
+            val lastDate = arg<Long?>(3)
+            val lastId = arg<Long?>(4)
+            rows.asSequence()
+                .filter { lastDate == null || lastId == null || it.date > lastDate || (it.date == lastDate && it.id > lastId) }
+                .take(limit)
+                .toList()
+        }
+    }
+
+    @Test
+    fun `DR-08 amount 90 with my share 30 exports 30_00 in Xero FreshBooks and QuickBooks`() = runTest {
+        val start = ms("2026-03-01")
+        val end = ms("2026-04-01")
+        stubSinglePage(start, end, listOf(drRow(1L, start, "SharedDinner", shareAmount = 30.0)))
+
+        for (format in listOf(ExportFormat.XERO_CSV, ExportFormat.FRESHBOOKS_CSV, ExportFormat.QUICKBOOKS_IIF)) {
+            val result = repository.exportExpenses(fakeContext(), start, end, format)
+
+            assertTrue("$format must succeed", result.success)
+            assertEquals(1, result.recordCount)
+            val lines = File(result.filePath!!).readLines()
+            when (format) {
+                ExportFormat.XERO_CSV, ExportFormat.FRESHBOOKS_CSV -> {
+                    val row = lines.first { it.contains("SharedDinner") }
+                    val cells = row.split(",")
+                    assertEquals("$format amount column", "30.00", cells[2])
+                    // originalAmount (the last column) is the audit record of the purchase as made,
+                    // not a booked amount, so it keeps the full figure. No other column may carry it.
+                    assertEquals("$format originalAmount audit column", "90.00", cells.last())
+                    assertFalse(
+                        "$format must write the full 90.00 only in the audit column",
+                        cells.dropLast(1).any { it.contains("90.00") }
+                    )
+                }
+                else -> {
+                    assertEquals("30.00", lines.first { it.startsWith("TRNS\t") }.split("\t")[3])
+                    assertEquals("-30.00", lines.first { it.startsWith("SPL\t") }.split("\t")[3])
+                    assertFalse("$format must not write the full 90.00", lines.joinToString("\n").contains("90.00"))
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `DR-08 not-mine and effective zero rows produce no output in Xero FreshBooks and QuickBooks`() = runTest {
+        val start = ms("2026-03-01")
+        val end = ms("2026-04-01")
+        stubSinglePage(
+            start, end,
+            listOf(
+                drRow(1L, start, "KeptCafe", amount = 12.0),
+                drRow(2L, start, "NotMineRow", notMine = true),
+                drRow(3L, start, "ZeroShareRow", shareAmount = 0.0)
+            )
+        )
+
+        for (format in listOf(ExportFormat.XERO_CSV, ExportFormat.FRESHBOOKS_CSV, ExportFormat.QUICKBOOKS_IIF)) {
+            val result = repository.exportExpenses(fakeContext(), start, end, format)
+
+            assertTrue("$format must succeed", result.success)
+            assertEquals("$format recordCount counts only the exported row", 1, result.recordCount)
+            val content = File(result.filePath!!).readText()
+            assertTrue(content.contains("KeptCafe"))
+            assertFalse("$format must omit the not-mine row", content.contains("NotMineRow"))
+            assertFalse("$format must omit the zero-effective row", content.contains("ZeroShareRow"))
+        }
+    }
+
+    @Test
+    fun `DR-08 a 0_004 share and a NaN effective amount are skipped, 0_005 is kept, count equals rows written`() = runTest {
+        val start = ms("2026-03-01")
+        val end = ms("2026-04-01")
+        stubSinglePage(
+            start, end,
+            listOf(
+                drRow(1L, start, "SubCentShare", shareAmount = 0.004),
+                drRow(2L, start, "NanShareRow", shareAmount = Double.NaN),
+                drRow(3L, start, "HalfCentShare", shareAmount = 0.005),
+                drRow(4L, start, "KeptControl", amount = 12.0)
+            )
+        )
+
+        for (format in listOf(ExportFormat.XERO_CSV, ExportFormat.FRESHBOOKS_CSV, ExportFormat.QUICKBOOKS_IIF)) {
+            val result = repository.exportExpenses(fakeContext(), start, end, format)
+
+            assertTrue("$format must succeed", result.success)
+            val content = File(result.filePath!!).readText()
+            assertFalse("$format must skip the 0.004 share", content.contains("SubCentShare"))
+            assertFalse("$format must skip the NaN effective amount", content.contains("NanShareRow"))
+            assertTrue("$format must keep the 0.005 share", content.contains("HalfCentShare"))
+            assertTrue(content.contains("KeptControl"))
+            assertEquals("$format recordCount equals rows written", 2, result.recordCount)
+        }
+    }
+
+    @Test
+    fun `DR-08 range with only sub-cent and NaN rows is refused as empty, not exported with count`() = runTest {
+        val start = ms("2026-03-01")
+        val end = ms("2026-04-01")
+        stubSinglePage(
+            start, end,
+            listOf(
+                drRow(1L, start, "SubCentShare", shareAmount = 0.004),
+                drRow(2L, start, "NanShareRow", shareAmount = Double.NaN)
+            )
+        )
+
+        val result = repository.exportExpenses(fakeContext(), start, end, ExportFormat.XERO_CSV)
+
+        assertFalse(result.success)
+        assertTrue(result.errorMessage.orEmpty().contains("No expenses found"))
+        assertEquals(0, result.recordCount)
+    }
+
+    @Test
+    fun `DR-08 all-not-mine accounting range returns the empty-dataset error`() = runTest {
+        val start = ms("2026-03-01")
+        val end = ms("2026-04-01")
+        stubSinglePage(
+            start, end,
+            listOf(drRow(1L, start, "NotMineA", notMine = true), drRow(2L, start, "NotMineB", notMine = true))
+        )
+
+        for (format in listOf(ExportFormat.XERO_CSV, ExportFormat.FRESHBOOKS_CSV, ExportFormat.QUICKBOOKS_IIF)) {
+            val result = repository.exportExpenses(fakeContext(), start, end, format)
+
+            assertFalse("$format all-not-mine range must be refused", result.success)
+            assertTrue(result.errorMessage.orEmpty().contains("No expenses found"))
+            assertEquals(null, result.filePath)
+            assertEquals(0, result.recordCount)
+        }
+    }
+
+    @Test
+    fun `DR-08 USD not-mine row in a EUR dataset does not trip single currency validation`() = runTest {
+        val start = ms("2026-03-01")
+        val end = ms("2026-04-01")
+        stubSinglePage(
+            start, end,
+            listOf(
+                drRow(1L, start, "EuroCafe", amount = 12.0),
+                drRow(2L, start, "TheirUsdTaxi", currency = "USD", notMine = true)
+            )
+        )
+
+        val result = repository.exportExpenses(fakeContext(), start, end, ExportFormat.XERO_CSV)
+
+        assertTrue(result.success)
+        assertEquals(1, result.recordCount)
+        assertFalse(File(result.filePath!!).readText().contains("TheirUsdTaxi"))
+    }
+
+    @Test
+    fun `DR-08 10499 EUR rows then a USD row at position 10500 fail single currency`() = runTest {
+        val start = ms("2026-03-01")
+        val end = ms("2026-04-01")
+        val rows = (1..10_499).map { drRow(it.toLong(), start, "Eur$it", amount = 5.0) } +
+            drRow(10_500L, start, "UsdLast", currency = "USD", amount = 5.0)
+        stubKeysetPages(start, end, rows)
+
+        val result = repository.exportExpenses(fakeContext(), start, end, ExportFormat.XERO_CSV)
+
+        assertFalse("A USD row past the old 10_000-row cap must still be validated", result.success)
+        assertTrue(result.errorMessage.orEmpty().contains("single-currency dataset"))
+        assertTrue(result.errorMessage.orEmpty().contains("USD"))
+        assertEquals(0, result.recordCount)
+    }
+
+    @Test
+    fun `DR-08 10500 EUR rows pass validation and are all counted`() = runTest {
+        val start = ms("2026-03-01")
+        val end = ms("2026-04-01")
+        val rows = (1..10_500).map { drRow(it.toLong(), start, "Eur$it", amount = 5.0) }
+        stubKeysetPages(start, end, rows)
+
+        val result = repository.exportExpenses(fakeContext(), start, end, ExportFormat.XERO_CSV)
+
+        assertTrue(result.success)
+        assertEquals(10_500, result.recordCount)
+    }
+
+    @Test
+    fun `DR-08 USD not-mine row at position 10500 in a EUR dataset does not throw`() = runTest {
+        val start = ms("2026-03-01")
+        val end = ms("2026-04-01")
+        val rows = (1..10_499).map { drRow(it.toLong(), start, "Eur$it", amount = 5.0) } +
+            drRow(10_500L, start, "TheirUsd", currency = "USD", notMine = true)
+        stubKeysetPages(start, end, rows)
+
+        val result = repository.exportExpenses(fakeContext(), start, end, ExportFormat.XERO_CSV)
+
+        assertTrue(result.success)
+        assertEquals(10_499, result.recordCount)
+    }
+
     // ── P12-P1-05: Privacy gate ──────────────────────────────────────────────
 
     /**

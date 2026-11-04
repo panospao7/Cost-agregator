@@ -17,6 +17,7 @@ import com.yourname.expensetracker.domain.export.FxRateFormatter
 import com.yourname.expensetracker.domain.export.QuickBooksIIFExporter
 import com.yourname.expensetracker.domain.export.XeroCSVExporter
 import com.yourname.expensetracker.domain.export.ExportTransaction
+import com.yourname.expensetracker.domain.export.bearsNoAmount
 import com.yourname.expensetracker.domain.export.toExportTransaction
 import com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException
 import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
@@ -100,9 +101,6 @@ class ExportOptionsViewModel @Inject constructor(
 
     companion object {
         private const val PREVIEW_MAX_CHARS = 500
-        /** MAX_VALIDATION_ROWS: Maximum rows to load for pre-export validation.
-         *  Prevents OOM on very large datasets (see NEW-P12-005). */
-        private const val ACCOUNTING_VALIDATION_MAX_ROWS = 10_000
     }
 
     private val _uiState = MutableStateFlow(ExportOptionsUiState())
@@ -385,21 +383,15 @@ class ExportOptionsViewModel @Inject constructor(
                 }
                 // Owner-approvals 42: installment-flagged rows are not written by Xero, FreshBooks or
                 // QuickBooks IIF, so the empty check and the validation sample use only unflagged rows.
-                var accountingSample: List<Expense> = emptyList()
+                // DR-08: every row is scanned (bounded pages, no row cap). Rows the exporters skip
+                // (installment-flagged, or effectiveAmount == 0 such as not-mine) are neither counted
+                // nor validated.
+                var accountingValidationRows: List<ExportTransaction> = emptyList()
                 var expenseCount = totalCount
                 if (format.requiresAccountingPolicy() && totalCount > 0) {
-                    accountingSample = withContext(ioDispatcher) {
-                        exportDataRepository.getExpensesBetween(
-                            startDate, endDate,
-                            ACCOUNTING_VALIDATION_MAX_ROWS
-                        )
-                    }.filterNot { ExportInstallmentMarker.isInstallmentFlagged(it) }
-                    expenseCount = if (totalCount <= ACCOUNTING_VALIDATION_MAX_ROWS) {
-                        // The sample covered the whole range, so its filtered size is exact.
-                        accountingSample.size
-                    } else {
-                        countUnflaggedExpenses(startDate, endDate)
-                    }
+                    val scan = scanAccountingRows(startDate, endDate)
+                    accountingValidationRows = scan.representatives
+                    expenseCount = scan.exportedCount
                 }
                 // RP-19 (19-C): accounting formats reject empty datasets — a
                 // header-only accounting file is not importable by the target
@@ -417,24 +409,14 @@ class ExportOptionsViewModel @Inject constructor(
                     )
                 }
 
-                // Accounting format validation: validate a bounded sample before
-                // streaming to catch data quality issues while avoiding OOM on
-                // very large datasets (NEW-P12-005).
-                if (format.requiresAccountingPolicy()) {
-                    if (expenseCount > ACCOUNTING_VALIDATION_MAX_ROWS) {
-                        Timber.w(
-                            "Dataset size (%d) exceeds validation limit (%d); " +
-                                "validating first %d rows only",
-                            expenseCount, ACCOUNTING_VALIDATION_MAX_ROWS, ACCOUNTING_VALIDATION_MAX_ROWS
-                        )
-                    }
-                    if (accountingSample.isNotEmpty()) {
-                        accountingExportPolicy.validateAccountingDataset(
-                            accountingSample.map { it.toExportTransaction() },
-                            format.accountingExportDisplayName(),
-                            maxValidationRows = ACCOUNTING_VALIDATION_MAX_ROWS
-                        )
-                    }
+                // Accounting format validation (DR-08): the scan above covered every row. The policy
+                // outcome depends only on the distinct (currency, type) pairs, so one representative
+                // per pair is validated, which keeps memory bounded (NEW-P12-005).
+                if (format.requiresAccountingPolicy() && accountingValidationRows.isNotEmpty()) {
+                    accountingExportPolicy.validateAccountingDataset(
+                        accountingValidationRows,
+                        format.accountingExportDisplayName()
+                    )
                 }
 
                 // BAK-12: Warn when dataset is large enough to warrant streaming
@@ -919,29 +901,43 @@ class ExportOptionsViewModel @Inject constructor(
         }
     }
 
+    private class AccountingScan(
+        val exportedCount: Int,
+        val representatives: List<ExportTransaction>
+    )
+
     /**
-     * Counts rows that are not installment-flagged by streaming bounded pages (no full materialization).
-     * Used only for ranges larger than the validation sample, where the sample cannot give an exact count.
+     * DR-08: scans EVERY row of the range through bounded pages (no full materialization) and
+     * returns the number of rows the accounting exporters will write plus one representative
+     * [ExportTransaction] per distinct (currency, transaction type) pair, in first-seen order.
+     * Skipped rows (installment-flagged, or effectiveAmount == 0) are not counted or validated.
      * Cancellation is checked once per page and never swallowed.
      */
-    private suspend fun countUnflaggedExpenses(
+    private suspend fun scanAccountingRows(
         startDate: Long,
         endDate: Long,
         pageSize: Int = 2000
-    ): Int {
+    ): AccountingScan {
         var lastDate: Long? = null
         var lastId: Long? = null
         var count = 0
+        val representatives = LinkedHashMap<Pair<String, com.yourname.expensetracker.data.database.entity.TransactionType>, ExportTransaction>()
         while (true) {
             coroutineContext.ensureActive()
             val page = exportDataRepository.getExpensesPage(startDate, endDate, pageSize, lastDate, lastId)
             if (page.isEmpty()) break
-            count += page.count { !ExportInstallmentMarker.isInstallmentFlagged(it) }
+            for (expense in page) {
+                if (ExportInstallmentMarker.isInstallmentFlagged(expense)) continue
+                val tx = expense.toExportTransaction()
+                if (tx.bearsNoAmount()) continue
+                count++
+                representatives.getOrPut(tx.currency.trim().uppercase(java.util.Locale.ROOT) to tx.transactionType) { tx }
+            }
             val last = page.last()
             lastDate = last.date
             lastId = last.id
         }
-        return count
+        return AccountingScan(count, representatives.values.toList())
     }
 
     /**

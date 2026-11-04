@@ -108,7 +108,14 @@ class AccountingExportRepository @Inject constructor(
             // QuickBooks IIF. Filter BEFORE the empty check, policy validation and recordCount so all
             // three use the same set the exporters actually write. The PDF report keeps every row.
             val expenses = if (format.requiresAccountingPolicy()) {
-                fetchedExpenses.filterNot { ExportInstallmentMarker.isInstallmentFlagged(it) }
+                // DR-08: rows the user bears nothing of (mapped effectiveAmount is 0 or rounds to
+                // 0.00, e.g. not-mine or a non-finite value) are skipped by the exporters, so they
+                // leave the count, empty check and validation too. The filter uses the mapped
+                // export value (the exporters' own rule), not the raw Expense.effectiveAmount.
+                fetchedExpenses.filterNot {
+                    ExportInstallmentMarker.isInstallmentFlagged(it) ||
+                        it.toExportTransaction().bearsNoAmount()
+                }
             } else {
                 fetchedExpenses
             }
@@ -127,19 +134,10 @@ class AccountingExportRepository @Inject constructor(
             }
 
             if (format.requiresAccountingPolicy() && exportTransactions.isNotEmpty()) {
-                val totalCount = expenses.size
-                if (totalCount > AccountingExportPolicy.DEFAULT_MAX_VALIDATION_ROWS) {
-                    Timber.w(
-                        "Accounting export dataset size (%d) exceeds validation limit (%d); " +
-                            "validating first %d rows only",
-                        totalCount, AccountingExportPolicy.DEFAULT_MAX_VALIDATION_ROWS,
-                        AccountingExportPolicy.DEFAULT_MAX_VALIDATION_ROWS
-                    )
-                }
+                // DR-08: every row is validated (no row cap).
                 accountingExportPolicy.validateAccountingDataset(
                     exportTransactions,
-                    format.displayName(),
-                    maxValidationRows = AccountingExportPolicy.DEFAULT_MAX_VALIDATION_ROWS
+                    format.displayName()
                 )
             }
 

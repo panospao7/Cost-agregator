@@ -235,7 +235,14 @@ class P6BudgetCleanupTest : AnalyticsEngineTestBase() {
             currencyConverter = com.yourname.expensetracker.testCurrencyConverter(),
             databaseReadBarrier = mockk(relaxed = true),
             normalizationEngine = mockNormalizationEngine,
-            installmentProjectionPort = com.yourname.expensetracker.domain.installment.projection.emptyInstallmentProjectionPort()
+            installmentProjectionPort = com.yourname.expensetracker.domain.installment.projection.emptyInstallmentProjectionPort(),
+            groupExpenseDao = mockk<com.yourname.expensetracker.data.database.dao.GroupExpenseDao>(relaxed = true).also {
+                coEvery { it.getNonPayerLinkedExpenseIdsBetween(any(), any()) } returns emptyList()
+                coEvery { it.getPayerLinkedExpenseIdsBetween(any(), any()) } returns emptyList()
+            },
+            groupSettlementDao = mockk<com.yourname.expensetracker.data.database.dao.GroupSettlementDao>(relaxed = true).also {
+                coEvery { it.getCurrentUserSettlementsBetween(any(), any()) } returns emptyList()
+            }
         )
 
         val results = calculator.calculateDailyCashFlow(

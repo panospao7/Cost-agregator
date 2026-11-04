@@ -40,6 +40,45 @@ interface GroupExpenseDao {
     @Query("SELECT EXISTS(SELECT 1 FROM group_expenses WHERE expenseId = :expenseId)")
     suspend fun existsForExpense(expenseId: Long): Boolean
 
+    /**
+     * DR-01 read-only probe: ids of personal expenses in the half-open date range
+     * [startDate, endDate) that are linked to a group expense whose payer is NOT the current
+     * user. Those rows are the user's share of a bill someone else paid, so they are not a cash
+     * outflow for the user (settling up is the cash event). Payer-is-current-user links and
+     * unlinked expenses are never returned.
+     */
+    @Query(
+        """
+        SELECT ge.expenseId FROM group_expenses ge
+        INNER JOIN group_members gm ON gm.id = ge.paidById
+        INNER JOIN expenses e ON e.id = ge.expenseId
+        WHERE ge.expenseId IS NOT NULL
+          AND gm.isCurrentUser = 0
+          AND e.date >= :startDate AND e.date < :endDate
+        """
+    )
+    suspend fun getNonPayerLinkedExpenseIdsBetween(startDate: Long, endDate: Long): List<Long>
+
+    /**
+     * DR-01 read-only probe, the payer-side complement of [getNonPayerLinkedExpenseIdsBetween]:
+     * ids of personal expenses in the half-open date range [startDate, endDate) that are linked to
+     * a group expense the current user PAID. The user's cash outflow for such a bill is the full
+     * paid amount (the share owed back arrives later as a received settlement), so cash flow counts
+     * these rows at their full amount instead of the user's share. Non-payer links and unlinked
+     * expenses are never returned.
+     */
+    @Query(
+        """
+        SELECT ge.expenseId FROM group_expenses ge
+        INNER JOIN group_members gm ON gm.id = ge.paidById
+        INNER JOIN expenses e ON e.id = ge.expenseId
+        WHERE ge.expenseId IS NOT NULL
+          AND gm.isCurrentUser = 1
+          AND e.date >= :startDate AND e.date < :endDate
+        """
+    )
+    suspend fun getPayerLinkedExpenseIdsBetween(startDate: Long, endDate: Long): List<Long>
+
     @Query("SELECT * FROM group_expenses WHERE id = :id LIMIT 1")
     suspend fun getById(id: Long): GroupExpense?
     
