@@ -150,6 +150,7 @@ class SharedExpenseGroupsViewModel @Inject constructor(
                     groups = groupsWithDetails,
                     isLoading = false,
                     error = null,
+                    mutationError = null,
                     loadFailed = false,
                     selectedGroup = refreshedSelectedGroup,
                     homeCurrency = homeCurrency
@@ -194,6 +195,7 @@ class SharedExpenseGroupsViewModel @Inject constructor(
      * Create a new group with the current user as the first member.
      */
     fun createGroup(name: String, description: String?, currency: String) {
+        clearError()
         viewModelScope.launch {
             try {
                 when (val result = groupsRepository.createGroup(
@@ -224,6 +226,7 @@ class SharedExpenseGroupsViewModel @Inject constructor(
      * Add member to group through repository abstraction.
      */
     fun addMember(groupId: Long, name: String, email: String?) {
+        clearError()
         viewModelScope.launch {
             try {
                 when (val result = addGroupMemberUseCase(
@@ -268,6 +271,7 @@ class SharedExpenseGroupsViewModel @Inject constructor(
         splitType: SplitType,
         customSplits: Map<Long, Double>? = null
     ) {
+        clearError()
         viewModelScope.launch {
             try {
                 val group = groupsRepository.getGroupById(groupId)
@@ -348,6 +352,7 @@ class SharedExpenseGroupsViewModel @Inject constructor(
      *   transactionCoordinator.permanentlyDeleteGroup(groupId)
      */
     fun deleteGroup(groupId: Long) {
+        clearError()
         viewModelScope.launch {
             try {
                 val success = deleteGroupUseCase(groupId)

@@ -284,8 +284,10 @@ class GroupsRepositoryImpl @Inject constructor(
                     DeleteGroupMemberResult.Error("Failed to delete member")
                 }
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
-            DeleteGroupMemberResult.Error(e.message ?: "Failed to delete member")
+            DeleteGroupMemberResult.Error("Failed to delete member")
         }
         }
     }

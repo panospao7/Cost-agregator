@@ -183,7 +183,7 @@ class GroupTransactionCoordinator @Inject constructor(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            GroupCreationResult.Error("Group creation failed: ${e.message}")
+            GroupCreationResult.Error("Group creation failed")
         }
     }
     
@@ -245,7 +245,7 @@ class GroupTransactionCoordinator @Inject constructor(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            Result.Error(GroupValidationError.Unknown(e.message))
+            Result.Error(GroupValidationError.Unknown)
         }
     }
     
@@ -356,7 +356,7 @@ class GroupTransactionCoordinator @Inject constructor(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            GroupExpenseCreationResult.Error("Failed to add expense: ${e.message}")
+            GroupExpenseCreationResult.Error("Failed to add expense")
         }
     }
     
@@ -591,7 +591,7 @@ class GroupTransactionCoordinator @Inject constructor(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            GroupExpenseCreationResult.Error("Failed to add expense: ${e.message}")
+            GroupExpenseCreationResult.Error("Failed to add expense")
         }
     }
     
@@ -904,7 +904,7 @@ class GroupTransactionCoordinator @Inject constructor(
                     is CreateExpenseResult.Error ->
                         GroupMutationTxOutcome(
                             GroupExpenseCreationResult.Error(
-                                "Failed to create system expense: ${createResult.exception.message}"
+                                "Failed to create system expense"
                             ),
                             PostCommitActionBatch.empty(correlationId)
                         )
@@ -919,7 +919,7 @@ class GroupTransactionCoordinator @Inject constructor(
         } catch (e: GroupExpenseAtomicRollback) {
             e.publicResult
         } catch (e: Exception) {
-            GroupExpenseCreationResult.Error("Failed to create group expense atomically: ${e.message}")
+            GroupExpenseCreationResult.Error("Failed to create group expense atomically")
         }
     }
 
@@ -1167,7 +1167,7 @@ class GroupTransactionCoordinator @Inject constructor(
                 GroupValidationError.CurrentUserAlreadyExists(currentUserId)
             }
 
-            else -> GroupValidationError.Unknown(exception.message)
+            else -> GroupValidationError.Unknown
         }
     }
 }

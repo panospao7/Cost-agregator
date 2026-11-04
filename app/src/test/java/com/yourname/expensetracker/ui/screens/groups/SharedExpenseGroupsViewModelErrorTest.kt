@@ -13,6 +13,9 @@ import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
 import com.yourname.expensetracker.domain.groups.GroupCreationResult
 import com.yourname.expensetracker.domain.groups.GroupExpenseCreationResult
+import com.yourname.expensetracker.domain.groups.GroupValidationError
+import com.yourname.expensetracker.domain.groups.toUserMessage
+import com.yourname.expensetracker.domain.groups.Result as DomainResult
 import com.yourname.expensetracker.domain.groups.usecase.AddGroupExpenseUseCase
 import com.yourname.expensetracker.domain.groups.usecase.AddGroupMemberUseCase
 import com.yourname.expensetracker.domain.groups.usecase.DeleteGroupUseCase
@@ -26,6 +29,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -74,13 +78,15 @@ class SharedExpenseGroupsViewModelErrorTest : ViewModelTestUtils() {
         unmockkStatic(Log::class)
     }
 
-    private fun createViewModel(): SharedExpenseGroupsViewModel {
+    private fun createViewModel(
+        memberUseCase: AddGroupMemberUseCase = addGroupMemberUseCase
+    ): SharedExpenseGroupsViewModel {
         val currencyRepo = mockk<CurrencySettingsRepository>(relaxed = true)
         every { currencyRepo.homeCurrency() } returns flowOf("EUR")
         coEvery { currencyRepo.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
         return SharedExpenseGroupsViewModel(
             groupsRepository = groupsRepository,
-            addGroupMemberUseCase = addGroupMemberUseCase,
+            addGroupMemberUseCase = memberUseCase,
             addGroupExpenseUseCase = addGroupExpenseUseCase,
             deleteGroupUseCase = deleteGroupUseCase,
             manualExpenseRepository = mockk<ManualExpenseRepository>(relaxed = true),
@@ -246,6 +252,163 @@ class SharedExpenseGroupsViewModelErrorTest : ViewModelTestUtils() {
         assertFalse(state.error.orEmpty().contains(sentinel))
         assertFalse(state.mutationError.orEmpty().contains(sentinel))
         logLines.forEach { assertFalse(it.contains(sentinel)) }
+    }
+
+    @Test
+    fun `GroupValidationError Unknown has fixed text and no wrapped message`() {
+        assertEquals("Failed to add member", GroupValidationError.Unknown.message)
+        assertEquals("Failed to add member", GroupValidationError.Unknown.toUserMessage())
+        // The type has no constructor parameter, so exception text cannot be carried at all.
+        assertFalse(GroupValidationError.Unknown.toString().contains(sentinel))
+        listOf(
+            GroupValidationError.InvalidGroup,
+            GroupValidationError.BlankMemberName,
+            GroupValidationError.UserAlreadyMember(1L),
+            GroupValidationError.CurrentUserAlreadyExists(1L),
+            GroupValidationError.MaxMembersReached,
+            GroupValidationError.Unknown
+        ).forEach { assertFalse(it.toUserMessage().contains(sentinel)) }
+    }
+
+    @Test
+    fun `add member Unknown validation result shows the fixed message only`() = runTest(testDispatcher) {
+        // Route: coordinator catch-all / constraint mapping -> repository -> use case -> ViewModel.
+        coEvery { addGroupMemberUseCase.invoke(any(), any(), any(), any()) } returns
+            AddGroupMemberUseCase.Result.Error(GroupValidationError.Unknown)
+        val viewModel = createViewModel()
+        advanceUntilIdle()
+
+        viewModel.addMember(1L, "Bob", null)
+        advanceUntilIdle()
+
+        assertSanitizedResultFailure(viewModel, "Failed to add member")
+    }
+
+    @Test
+    fun `add member repository exception through the real use case is sanitized`() = runTest(testDispatcher) {
+        coEvery { groupsRepository.addMember(any(), any(), any(), any()) } throws IllegalStateException(sentinel)
+        val viewModel = createViewModel(AddGroupMemberUseCase(groupsRepository))
+        advanceUntilIdle()
+
+        viewModel.addMember(1L, "Bob", null)
+        advanceUntilIdle()
+
+        assertSanitizedResultFailure(viewModel, "Failed to add member")
+        assertTrue(logLines.any { it.contains("IllegalStateException") })
+    }
+
+    @Test
+    fun `add member repository Unknown result through the real use case is sanitized`() = runTest(testDispatcher) {
+        coEvery { groupsRepository.addMember(any(), any(), any(), any()) } returns
+            DomainResult.Error(GroupValidationError.Unknown)
+        val viewModel = createViewModel(AddGroupMemberUseCase(groupsRepository))
+        advanceUntilIdle()
+
+        viewModel.addMember(1L, "Bob", null)
+        advanceUntilIdle()
+
+        assertSanitizedResultFailure(viewModel, "Failed to add member")
+    }
+
+    @Test
+    fun `fixed validation messages stay as they are`() = runTest(testDispatcher) {
+        coEvery { addGroupMemberUseCase.invoke(any(), any(), any(), any()) } returns
+            AddGroupMemberUseCase.Result.Error(GroupValidationError.BlankMemberName)
+        val viewModel = createViewModel()
+        advanceUntilIdle()
+
+        viewModel.addMember(1L, " ", null)
+        advanceUntilIdle()
+
+        assertEquals("Member name cannot be blank", viewModel.uiState.value.error)
+    }
+
+    @Test
+    fun `new mutation clears a stale transient error`() = runTest(testDispatcher) {
+        coEvery { deleteGroupUseCase.invoke(1L) } throws IllegalStateException(sentinel)
+        val viewModel = createViewModel()
+        advanceUntilIdle()
+        viewModel.deleteGroup(1L)
+        advanceUntilIdle()
+        assertEquals("Failed to delete group", viewModel.uiState.value.error)
+
+        // The snackbar was never dismissed; a new mutation must not leave the old text behind.
+        coEvery { groupsRepository.createGroup(any(), any(), any(), any()) } coAnswers {
+            kotlinx.coroutines.awaitCancellation()
+        }
+        viewModel.createGroup("g", null, "EUR")
+        runCurrent()
+
+        assertNull(viewModel.uiState.value.error)
+        assertNull(viewModel.uiState.value.mutationError)
+    }
+
+    @Test
+    fun `new mutation clears a stale mutationError while the load error stays`() = runTest(testDispatcher) {
+        coEvery { groupsRepository.getActiveGroupsWithDetails() } throws IllegalStateException(sentinel)
+        coEvery { groupsRepository.createGroup(any(), any(), any(), any()) } throws IllegalStateException(sentinel)
+        val viewModel = createViewModel()
+        advanceUntilIdle()
+        viewModel.createGroup("g", null, "EUR")
+        advanceUntilIdle()
+        assertEquals("Failed to create group", viewModel.uiState.value.mutationError)
+
+        coEvery { groupsRepository.createGroup(any(), any(), any(), any()) } coAnswers {
+            kotlinx.coroutines.awaitCancellation()
+        }
+        viewModel.createGroup("g2", null, "EUR")
+        runCurrent()
+
+        assertNull(viewModel.uiState.value.mutationError)
+        assertTrue(viewModel.uiState.value.loadFailed)
+        assertEquals("Failed to load group balances", viewModel.uiState.value.error)
+    }
+
+    @Test
+    fun `successful reload clears a stale mutationError`() = runTest(testDispatcher) {
+        coEvery { groupsRepository.getActiveGroupsWithDetails() } throws IllegalStateException(sentinel)
+        coEvery { groupsRepository.createGroup(any(), any(), any(), any()) } throws IllegalStateException(sentinel)
+        val viewModel = createViewModel()
+        advanceUntilIdle()
+        viewModel.createGroup("g", null, "EUR")
+        advanceUntilIdle()
+        assertEquals("Failed to create group", viewModel.uiState.value.mutationError)
+
+        coEvery { groupsRepository.getActiveGroupsWithDetails() } returns listOf(aggregate)
+        viewModel.refresh()
+        advanceUntilIdle()
+
+        assertFalse(viewModel.uiState.value.loadFailed)
+        assertNull(viewModel.uiState.value.mutationError)
+        assertNull(viewModel.uiState.value.error)
+    }
+
+    @Test
+    fun `clearError after the message was shown clears mutationError`() = runTest(testDispatcher) {
+        coEvery { groupsRepository.getActiveGroupsWithDetails() } throws IllegalStateException(sentinel)
+        coEvery { groupsRepository.createGroup(any(), any(), any(), any()) } throws IllegalStateException(sentinel)
+        val viewModel = createViewModel()
+        advanceUntilIdle()
+        viewModel.createGroup("g", null, "EUR")
+        advanceUntilIdle()
+
+        viewModel.clearError()
+
+        assertNull(viewModel.uiState.value.mutationError)
+        assertTrue(viewModel.uiState.value.loadFailed)
+    }
+
+    @Test
+    fun `group expense amount must be a finite value of at least one minor unit`() {
+        assertFalse(isPositiveGroupExpenseAmount(null))
+        assertFalse(isPositiveGroupExpenseAmount(0.0))
+        assertFalse(isPositiveGroupExpenseAmount(-0.0))
+        assertFalse(isPositiveGroupExpenseAmount(-5.0))
+        assertFalse(isPositiveGroupExpenseAmount(0.004))
+        assertFalse(isPositiveGroupExpenseAmount(Double.NaN))
+        assertFalse(isPositiveGroupExpenseAmount(Double.POSITIVE_INFINITY))
+        assertTrue(isPositiveGroupExpenseAmount(0.01))
+        assertTrue(isPositiveGroupExpenseAmount(12.5))
     }
 
     @Test

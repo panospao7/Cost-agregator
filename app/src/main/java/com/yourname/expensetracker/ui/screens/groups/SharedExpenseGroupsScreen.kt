@@ -569,6 +569,20 @@ internal fun roundedBalanceForDisplay(
         .toDouble()
 }
 
+/**
+ * True only when [amount] is finite and at least one minor unit ([fractionDigits], default cents).
+ * Zero, negatives, NaN/Infinity and sub-minor-unit values are rejected, matching the use case's
+ * "positive finite" rule so the confirm button never enables for an amount that is then refused.
+ */
+internal fun isPositiveGroupExpenseAmount(
+    amount: Double?,
+    fractionDigits: Int = 2
+): Boolean {
+    if (amount == null || !amount.isFinite()) return false
+    val minimum = BigDecimal.ONE.movePointLeft(fractionDigits.coerceAtLeast(0))
+    return BigDecimal.valueOf(amount).compareTo(minimum) >= 0
+}
+
 internal fun isSettledBalance(
     balance: Double,
     fractionDigits: Int = 2
@@ -1121,7 +1135,7 @@ private fun AddExpenseDialog(
                         onAdd(description, amt, paidById, splitType, customSplits)
                     }
                 },
-                enabled = description.isNotBlank() && totalAmount != null && totalAmount >= 0.0 && isSplitValid
+                enabled = description.isNotBlank() && isPositiveGroupExpenseAmount(totalAmount) && isSplitValid
                     && members.isNotEmpty() && members.any { it.id == paidById }
             ) {
                 Text(stringResource(R.string.groups_add_expense_button))
