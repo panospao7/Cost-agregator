@@ -625,7 +625,7 @@ class GroupTransactionCoordinatorRollbackTest {
         )
 
         assertThat(result).isInstanceOf(GroupCreationResult.Error::class.java)
-        assertThat((result as GroupCreationResult.Error).message).startsWith("Group creation failed")
+        assertThat((result as GroupCreationResult.Error).message).isEqualTo("Group creation failed")
         assertThat(faulting.realInsertsCompleted).isEqualTo(2)
         assertThat(allGroups()).isEmpty()
         assertThat(allMembers()).isEmpty()
@@ -1007,7 +1007,7 @@ class GroupTransactionCoordinatorRollbackTest {
 
         assertThat(result).isInstanceOf(GroupExpenseCreationResult.Error::class.java)
         assertThat((result as GroupExpenseCreationResult.Error).message)
-            .startsWith("Failed to create group expense atomically")
+            .isEqualTo("Failed to create group expense atomically")
         // Preconditions: the system expense (real insertAtomic + CREATED event) and the group
         // expense row were really written inside the transaction before the fault fired.
         assertThat(systemExpensesInside).isEqualTo(1)
@@ -1197,7 +1197,7 @@ class GroupTransactionCoordinatorRollbackTest {
         )
 
         assertThat(result).isInstanceOf(GroupExpenseCreationResult.Error::class.java)
-        assertThat((result as GroupExpenseCreationResult.Error).message).startsWith("Failed to add expense")
+        assertThat((result as GroupExpenseCreationResult.Error).message).isEqualTo("Failed to add expense")
         // Preconditions, observed at fault time: the fault fired exactly once, the ownership
         // update was really applied (uncommitted) with its UPDATED event, and the group
         // expense row was really inserted.
@@ -1291,7 +1291,7 @@ class GroupTransactionCoordinatorRollbackTest {
         )
 
         assertThat(result).isInstanceOf(GroupExpenseCreationResult.Error::class.java)
-        assertThat((result as GroupExpenseCreationResult.Error).message).startsWith("Failed to add expense")
+        assertThat((result as GroupExpenseCreationResult.Error).message).isEqualTo("Failed to add expense")
         assertThat(faulting.realInsertsCompleted).isEqualTo(1)
         assertThat(groupExpensesInside).isEqualTo(1)
 

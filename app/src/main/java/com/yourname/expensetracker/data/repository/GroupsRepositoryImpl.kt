@@ -29,6 +29,7 @@ import com.yourname.expensetracker.domain.groups.SharedGroupSettlement
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
+import timber.log.Timber
 import javax.inject.Inject
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import javax.inject.Singleton
@@ -287,6 +288,7 @@ class GroupsRepositoryImpl @Inject constructor(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
+            Timber.w("Delete member failed: reason=delete_member_exception type=%s", e.javaClass.simpleName)
             DeleteGroupMemberResult.Error("Failed to delete member")
         }
         }

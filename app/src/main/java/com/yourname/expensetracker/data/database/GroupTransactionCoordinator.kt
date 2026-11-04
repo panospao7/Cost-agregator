@@ -183,6 +183,7 @@ class GroupTransactionCoordinator @Inject constructor(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
+            Timber.w("Group creation failed: reason=create_group_exception type=%s", e.javaClass.simpleName)
             GroupCreationResult.Error("Group creation failed")
         }
     }
@@ -245,10 +246,11 @@ class GroupTransactionCoordinator @Inject constructor(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
+            Timber.w("Add member failed: reason=add_member_exception type=%s", e.javaClass.simpleName)
             Result.Error(GroupValidationError.Unknown)
         }
     }
-    
+
     /**
      * Add an expense to a group.
      * This creates the group expense record without linking to a system expense.
@@ -356,6 +358,7 @@ class GroupTransactionCoordinator @Inject constructor(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
+            Timber.w("Add group expense failed: reason=add_expense_exception type=%s", e.javaClass.simpleName)
             GroupExpenseCreationResult.Error("Failed to add expense")
         }
     }
@@ -591,6 +594,7 @@ class GroupTransactionCoordinator @Inject constructor(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
+            Timber.w("Add group expense failed: reason=add_expense_tx_exception type=%s", e.javaClass.simpleName)
             GroupExpenseCreationResult.Error("Failed to add expense")
         }
     }
@@ -919,6 +923,7 @@ class GroupTransactionCoordinator @Inject constructor(
         } catch (e: GroupExpenseAtomicRollback) {
             e.publicResult
         } catch (e: Exception) {
+            Timber.w("Atomic group expense failed: reason=atomic_create_exception type=%s", e.javaClass.simpleName)
             GroupExpenseCreationResult.Error("Failed to create group expense atomically")
         }
     }
