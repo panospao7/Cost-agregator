@@ -15,6 +15,8 @@ import com.yourname.expensetracker.domain.intelligence.TransactionClassifier
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
 import com.yourname.expensetracker.domain.parser.AppParserRegistry
+import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
+import com.yourname.expensetracker.domain.privacy.RawStorageMode
 import com.yourname.expensetracker.domain.model.Result
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
@@ -63,8 +65,24 @@ class ReviewQueueRepository @Inject constructor(
     private val pendingReviewSourceLinkPromoter: PendingReviewSourceLinkPromoter,
     private val transactionRunner: DomainTransactionRunner,
     private val transactionLifecycleEventWriter: TransactionLifecycleEventWriter,
-    private val postCommitActionRunner: PostCommitActionRunner
+    private val postCommitActionRunner: PostCommitActionRunner,
+    private val privacySettingsRepository: PrivacySettingsRepository
 ) {
+    /**
+     * P-08-1: notification title/text may be copied into `user_corrections` only under
+     * [RawStorageMode.STORE_RAW]. Any other mode, or a failed settings read, returns false
+     * (fail closed). Must be called before the write scope, never inside a Room transaction.
+     * Cancellation is always rethrown.
+     */
+    private suspend fun isNotificationTextStorageAllowed(): Boolean = try {
+        privacySettingsRepository.getSettings().rawNotificationStorageMode == RawStorageMode.STORE_RAW
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        Timber.w("Correction notification text omitted: reason=settings_read_failed")
+        false
+    }
+
     /**
      * R24a: public, bounded approval error messages. [approveReview] only ever returns
      * one of [KNOWN_APPROVAL_ERRORS] as `Result.Error.message`; the UI may display a
@@ -255,6 +273,7 @@ class ReviewQueueRepository @Inject constructor(
         )
 
         var categorySideEffectExpenseId: Long? = null
+        val storeCorrectionText = isNotificationTextStorageAllowed()
         val txOutcome = try {
             // GR-14p-c: canonical direct scope — the mutations' proof is local
             // to the legal writer, independent of caller context.
@@ -382,8 +401,8 @@ class ReviewQueueRepository @Inject constructor(
                                 finalType.name else null,
                             wasRejected = false,
                             wasApproved = true,
-                            notificationTitle = review.notificationTitle,
-                            notificationText = review.notificationText,
+                            notificationTitle = if (storeCorrectionText) review.notificationTitle else null,
+                            notificationText = if (storeCorrectionText) review.notificationText else null,
                             createdAt = timeProvider.now()
                         )
                         userCorrectionDao.insert(correction)
@@ -505,6 +524,7 @@ class ReviewQueueRepository @Inject constructor(
 
         // GR-14p-c: canonical direct scope — the mutations' proof is local
         // to the legal writer, independent of caller context.
+        val storeCorrectionText = isNotificationTextStorageAllowed()
         val rejected = writeBarrier.runWrite(
             DatabaseAccessOperation("ReviewQueueRepository.rejectReview")
         ) {
@@ -534,8 +554,8 @@ class ReviewQueueRepository @Inject constructor(
                 correctedType = null,
                 wasRejected = true,
                 wasApproved = false,
-                notificationTitle = review.notificationTitle,
-                notificationText = review.notificationText,
+                notificationTitle = if (storeCorrectionText) review.notificationTitle else null,
+                notificationText = if (storeCorrectionText) review.notificationText else null,
                 createdAt = timeProvider.now()
             )
             userCorrectionDao.insert(correction)
@@ -695,6 +715,7 @@ class ReviewQueueRepository @Inject constructor(
 
         // GR-14p-c: canonical direct scope — the mutations' proof is local
         // to the legal writer, independent of caller context.
+        val storeCorrectionText = isNotificationTextStorageAllowed()
         val outcome = writeBarrier.runWrite(
             DatabaseAccessOperation("ReviewQueueRepository.markAsRelevant")
         ) {
@@ -713,8 +734,8 @@ class ReviewQueueRepository @Inject constructor(
                 correctedType = null,
                 wasRejected = !isRelevant,
                 wasApproved = isRelevant,
-                notificationTitle = notification.title,
-                notificationText = notification.text ?: notification.bigText,
+                notificationTitle = if (storeCorrectionText) notification.title else null,
+                notificationText = if (storeCorrectionText) (notification.text ?: notification.bigText) else null,
                 createdAt = timeProvider.now()
             )
 

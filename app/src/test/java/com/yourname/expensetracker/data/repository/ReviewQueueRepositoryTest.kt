@@ -13,6 +13,9 @@ import com.yourname.expensetracker.domain.intelligence.TransactionClassifier
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.domain.parser.AppParserRegistry
+import com.yourname.expensetracker.domain.privacy.PrivacySettings
+import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
+import com.yourname.expensetracker.domain.privacy.RawStorageMode
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService
 import com.yourname.expensetracker.domain.model.Result
 import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
@@ -53,10 +56,14 @@ class ReviewQueueRepositoryTest {
     private val confidenceRouter = mockk<ConfidenceRouter>(relaxed = true)
     private val transactionLifecycleCoordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true)
     private val writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true)
+    private val privacySettingsRepository = mockk<PrivacySettingsRepository>()
     private lateinit var repository: ReviewQueueRepository
 
     @Before
     fun setup() {
+        // Default STORE_RAW so the pre-existing tests keep asserting stored text unchanged.
+        coEvery { privacySettingsRepository.getSettings() } returns
+            PrivacySettings(rawNotificationStorageMode = RawStorageMode.STORE_RAW)
         // GR-14p: mutations are scoped in writeBarrier.runWrite
         // (ReviewQueueRepository.kt:219/433/610); a relaxed mock would neither
         // run the block nor return its value (the repository casts the result
@@ -116,6 +123,7 @@ class ReviewQueueRepositoryTest {
             transactionRunner = mockk(relaxed = true),
             transactionLifecycleEventWriter = mockk(relaxed = true),
             postCommitActionRunner = mockk(relaxed = true),
+            privacySettingsRepository = privacySettingsRepository,
         )
     }
 
@@ -939,6 +947,7 @@ class ReviewQueueRepositoryTest {
             transactionRunner = mockk(relaxed = true),
             transactionLifecycleEventWriter = mockk(relaxed = true),
             postCommitActionRunner = mockk(relaxed = true),
+            privacySettingsRepository = privacySettingsRepository,
         )
 
     @Test
@@ -1010,5 +1019,257 @@ class ReviewQueueRepositoryTest {
         coVerify(exactly = 1) { userCorrectionDao.insert(capture(correctionSlot)) }
         assertTrue(correctionSlot.captured.createdAt > 0L)
         assertEquals(fixedTime, correctionSlot.captured.createdAt)
+    }
+
+    // ── P-08-1: correction notification text only under STORE_RAW (fail closed) ──────────
+
+    private val nonRawModes = listOf(
+        RawStorageMode.STORE_REDACTED,
+        RawStorageMode.STORE_METADATA_ONLY,
+        RawStorageMode.DO_NOT_STORE
+    )
+
+    private fun stubMode(mode: RawStorageMode) {
+        coEvery { privacySettingsRepository.getSettings() } returns
+            PrivacySettings(rawNotificationStorageMode = mode)
+    }
+
+    private fun stubReadFailure() {
+        coEvery { privacySettingsRepository.getSettings() } throws
+            IllegalStateException("SYNTHETIC_SETTINGS_READ_FAILURE")
+    }
+
+    private fun stubReadCancelled() {
+        coEvery { privacySettingsRepository.getSettings() } throws
+            kotlinx.coroutines.CancellationException("synthetic cancel")
+    }
+
+    private fun privacyReview(reviewId: Long) = approvablePendingReview(reviewId).copy(
+        suggestedMerchant = "Synthetic Merchant",
+        notificationTitle = "Synthetic title 4711",
+        notificationText = "Synthetic body 4711"
+    )
+
+    private fun stubApprovable(reviewId: Long) {
+        coEvery { pendingReviewDao.getById(reviewId) } returns privacyReview(reviewId)
+        coEvery {
+            pendingReviewDao.transitionStatus(
+                reviewId, PendingReviewStatus.PENDING, PendingReviewStatus.PROCESSING
+            )
+        } returns 1
+        coEvery { transactionLifecycleCoordinator.createExpenseDbOnlyV2(any()) } returns
+            MutationResult(CreateExpenseResult.Created(555L), PostCommitActionBatch.empty(""))
+    }
+
+    private fun stubRejectable(reviewId: Long) {
+        coEvery { pendingReviewDao.getById(reviewId) } returns privacyReview(reviewId)
+        coEvery {
+            pendingReviewDao.transitionStatus(
+                reviewId, PendingReviewStatus.PENDING, PendingReviewStatus.REJECTED
+            )
+        } returns 1
+    }
+
+    private val markRelevantNotification = RawNotification(
+        id = 900L,
+        packageName = "com.bank.synthetic",
+        appName = "Bank",
+        title = "Synthetic notif title 4711",
+        text = "Synthetic notif body 4711",
+        timestamp = 1_700_000_000_000L,
+        capturedAt = 1_700_000_000_000L
+    )
+
+    private suspend fun approveAndCapture(reviewId: Long): UserCorrection {
+        stubApprovable(reviewId)
+        val result = repository.approveReview(reviewId)
+        assertTrue("approve must still succeed: $result", result is Result.Success)
+        val slot = slot<UserCorrection>()
+        coVerify(exactly = 1) { userCorrectionDao.insert(capture(slot)) }
+        return slot.captured
+    }
+
+    private suspend fun rejectAndCapture(reviewId: Long): UserCorrection {
+        stubRejectable(reviewId)
+        repository.rejectReview(reviewId)
+        val slot = slot<UserCorrection>()
+        coVerify(exactly = 1) { userCorrectionDao.insert(capture(slot)) }
+        return slot.captured
+    }
+
+    private suspend fun markRelevantAndCapture(isRelevant: Boolean): UserCorrection {
+        coEvery { rawNotificationDao.getById(900L) } returns markRelevantNotification
+        every { parserRegistry.parse(any(), any(), any(), any(), any()) } returns null
+        repository.markAsRelevant(900L, isRelevant)
+        val slot = slot<UserCorrection>()
+        coVerify(exactly = 1) { userCorrectionDao.insert(capture(slot)) }
+        return slot.captured
+    }
+
+    private fun assertTextOmitted(mode: String, c: UserCorrection) {
+        assertNull("title must be null for $mode", c.notificationTitle)
+        assertNull("text must be null for $mode", c.notificationText)
+    }
+
+    @Test
+    fun `P-08-1 approveReview STORE_RAW keeps original title and text`() = runTest {
+        stubMode(RawStorageMode.STORE_RAW)
+        val c = approveAndCapture(1001L)
+        assertEquals("Synthetic title 4711", c.notificationTitle)
+        assertEquals("Synthetic body 4711", c.notificationText)
+        assertEquals("Synthetic Merchant", c.originalMerchant)
+    }
+
+    @Test
+    fun `P-08-1 approveReview omits title and text in every non-raw mode and keeps originalMerchant`() = runTest {
+        for (mode in nonRawModes) {
+            clearMocks(userCorrectionDao)
+            stubMode(mode)
+            val c = approveAndCapture(1002L)
+            assertTextOmitted(mode.name, c)
+            assertEquals("originalMerchant unchanged for $mode", "Synthetic Merchant", c.originalMerchant)
+            assertTrue(c.wasApproved)
+        }
+    }
+
+    @Test
+    fun `P-08-1 approveReview omits title and text when settings read fails`() = runTest {
+        stubReadFailure()
+        val c = approveAndCapture(1003L)
+        assertTextOmitted("read failure", c)
+        assertEquals("Synthetic Merchant", c.originalMerchant)
+    }
+
+    @Test
+    fun `P-08-1 rejectReview STORE_RAW keeps original title and text`() = runTest {
+        stubMode(RawStorageMode.STORE_RAW)
+        val c = rejectAndCapture(1011L)
+        assertEquals("Synthetic title 4711", c.notificationTitle)
+        assertEquals("Synthetic body 4711", c.notificationText)
+        assertEquals("Synthetic Merchant", c.originalMerchant)
+        assertTrue(c.wasRejected)
+    }
+
+    @Test
+    fun `P-08-1 rejectReview omits title and text in every non-raw mode and keeps originalMerchant`() = runTest {
+        for (mode in nonRawModes) {
+            clearMocks(userCorrectionDao)
+            stubMode(mode)
+            val c = rejectAndCapture(1012L)
+            assertTextOmitted(mode.name, c)
+            assertEquals("originalMerchant unchanged for $mode", "Synthetic Merchant", c.originalMerchant)
+            assertTrue(c.wasRejected)
+        }
+    }
+
+    @Test
+    fun `P-08-1 rejectReview omits title and text when settings read fails`() = runTest {
+        stubReadFailure()
+        val c = rejectAndCapture(1013L)
+        assertTextOmitted("read failure", c)
+        assertEquals("Synthetic Merchant", c.originalMerchant)
+    }
+
+    @Test
+    fun `P-08-1 markAsRelevant STORE_RAW keeps notification title and text`() = runTest {
+        stubMode(RawStorageMode.STORE_RAW)
+        val c = markRelevantAndCapture(isRelevant = false)
+        assertEquals("Synthetic notif title 4711", c.notificationTitle)
+        assertEquals("Synthetic notif body 4711", c.notificationText)
+        assertEquals("Manual", c.originalMerchant)
+    }
+
+    @Test
+    fun `P-08-1 markAsRelevant omits title and text in every non-raw mode and keeps originalMerchant`() = runTest {
+        for (mode in nonRawModes) {
+            for (relevant in listOf(false, true)) {
+                clearMocks(userCorrectionDao)
+                stubMode(mode)
+                val c = markRelevantAndCapture(isRelevant = relevant)
+                assertTextOmitted("$mode relevant=$relevant", c)
+                assertEquals("Manual", c.originalMerchant)
+            }
+        }
+    }
+
+    @Test
+    fun `P-08-1 markAsRelevant omits title and text when settings read fails`() = runTest {
+        stubReadFailure()
+        val c = markRelevantAndCapture(isRelevant = false)
+        assertTextOmitted("read failure", c)
+        assertEquals("Manual", c.originalMerchant)
+    }
+
+    @Test
+    fun `P-08-1 approveReview rethrows cancelled settings read and writes nothing`() = runTest {
+        stubApprovable(1021L)
+        stubReadCancelled()
+        try {
+            repository.approveReview(1021L)
+            fail("CancellationException must propagate")
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // expected
+        }
+        coVerify(exactly = 0) { userCorrectionDao.insert(any()) }
+        coVerify(exactly = 0) { pendingReviewDao.transitionStatus(any(), any(), any()) }
+    }
+
+    @Test
+    fun `P-08-1 rejectReview rethrows cancelled settings read and writes nothing`() = runTest {
+        stubRejectable(1022L)
+        stubReadCancelled()
+        try {
+            repository.rejectReview(1022L)
+            fail("CancellationException must propagate")
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // expected
+        }
+        coVerify(exactly = 0) { userCorrectionDao.insert(any()) }
+        coVerify(exactly = 0) { pendingReviewDao.transitionStatus(any(), any(), any()) }
+    }
+
+    @Test
+    fun `P-08-1 markAsRelevant rethrows cancelled settings read and writes nothing`() = runTest {
+        coEvery { rawNotificationDao.getById(900L) } returns markRelevantNotification
+        every { parserRegistry.parse(any(), any(), any(), any(), any()) } returns null
+        stubReadCancelled()
+        try {
+            repository.markAsRelevant(900L, isRelevant = false)
+            fail("CancellationException must propagate")
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // expected
+        }
+        coVerify(exactly = 0) { userCorrectionDao.insert(any()) }
+        coVerify(exactly = 0) { rawNotificationDao.markRelevance(any(), any()) }
+    }
+
+    @Test
+    fun `P-08-1 settings are read before the write scope for approve reject and markAsRelevant`() = runTest {
+        val events = mutableListOf<String>()
+        coEvery { privacySettingsRepository.getSettings() } coAnswers {
+            events += "settings"
+            PrivacySettings(rawNotificationStorageMode = RawStorageMode.STORE_RAW)
+        }
+        coEvery {
+            writeBarrier.runWrite(any<DatabaseAccessOperation>(), any<suspend () -> Any?>())
+        } coAnswers {
+            events += "write"
+            secondArg<suspend () -> Any?>().invoke()
+        }
+
+        stubApprovable(1031L)
+        repository.approveReview(1031L)
+        assertEquals(listOf("settings", "write"), events.toList())
+
+        events.clear()
+        stubRejectable(1032L)
+        repository.rejectReview(1032L)
+        assertEquals(listOf("settings", "write"), events.toList())
+
+        events.clear()
+        coEvery { rawNotificationDao.getById(900L) } returns markRelevantNotification
+        every { parserRegistry.parse(any(), any(), any(), any(), any()) } returns null
+        repository.markAsRelevant(900L, isRelevant = false)
+        assertEquals(listOf("settings", "write"), events.toList())
     }
 }

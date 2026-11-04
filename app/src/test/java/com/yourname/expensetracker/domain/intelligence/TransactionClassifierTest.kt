@@ -4,11 +4,15 @@ import android.content.Context
 import com.yourname.expensetracker.data.database.entity.UserCorrection
 import com.yourname.expensetracker.data.repository.UserCorrectionRepository
 import com.yourname.expensetracker.domain.privacy.PrivacySettings
+import com.yourname.expensetracker.domain.privacy.PrivacySettingsLoadState
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
 import com.yourname.expensetracker.domain.privacy.RawStorageMode
 import io.mockk.*
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Before
@@ -48,7 +52,8 @@ class TransactionClassifierTest {
     /** Settings stub whose raw notification storage mode is read from [mode] on every call. */
     private fun privacyRepoFor(mode: RawStorageMode): PrivacySettingsRepository {
         val repo = mockk<PrivacySettingsRepository>()
-        coEvery { repo.getSettings() } returns PrivacySettings(rawNotificationStorageMode = mode)
+        coEvery { repo.getLoadState() } returns
+            PrivacySettingsLoadState.Loaded(PrivacySettings(rawNotificationStorageMode = mode))
         return repo
     }
 
@@ -531,7 +536,7 @@ class TransactionClassifierTest {
         assertEquals(stats, subject.stats.value)
         assertTrue("payment-like text must score above neutral", subject.predict(probes[0]) > 0.5f)
         assertTrue("otp-like text must score below neutral", subject.predict(probes[1]) < 0.5f)
-        coVerify(atLeast = 1) { privacy.getSettings() }
+        coVerify(atLeast = 1) { privacy.getLoadState() }
 
         val (raw, json) = persistAndRead(subject, dir)
         assertEquals(15, json.getInt("totalPositive"))
@@ -549,19 +554,18 @@ class TransactionClassifierTest {
             // 30 samples would make the model ready if they were learned.
             trainBaseline(subject)
 
-            coVerify(atLeast = 1) { privacy.getSettings() } // the gate was actually consulted
+            coVerify(atLeast = 1) { privacy.getLoadState() } // the gate was actually consulted
             assertEquals("$mode: stats must be unchanged", untrainedStats, subject.getStats())
             assertEquals("$mode: stats flow must be unchanged", untrainedStats, subject.stats.value)
             assertEquals("$mode: prediction must stay neutral", 0.5f, subject.predict(probes[0]), 0f)
 
-            val (raw, json) = persistAndRead(subject, dir)
-            assertEquals("$mode: no positives persisted", 0, json.getInt("totalPositive"))
-            assertEquals("$mode: no negatives persisted", 0, json.getInt("totalNegative"))
-            assertEquals("$mode: no words persisted", 0, json.getJSONObject("positiveWords").length())
-            assertEquals("$mode: no words persisted", 0, json.getJSONObject("negativeWords").length())
-            assertEquals("$mode: no bigrams persisted", 0, json.getJSONObject("positiveBigrams").length())
-            assertEquals("$mode: no bigrams persisted", 0, json.getJSONObject("negativeBigrams").length())
-            assertFalse("$mode: notification tokens must not reach the model file", raw.contains("baseline"))
+            // J-03-1: a definite non-STORE_RAW mode purges, so persisting afterwards must write
+            // no model file at all (stricter than the former "file holds zero counts").
+            subject.destroy()
+            assertFalse(
+                "$mode: no model file may exist after a purge, even after persisting",
+                File(dir, modelFileName).exists()
+            )
         }
     }
 
@@ -575,58 +579,164 @@ class TransactionClassifierTest {
         )
         for (failure in failures) {
             val dir = createTempDir("classifier_d4_throw")
-            val privacy = mockk<PrivacySettingsRepository>()
-            coEvery { privacy.getSettings() } throws failure
-            val (subject, _) = classifierFor(emptyList(), dir, passthroughCrypto(), privacy)
+            // Seed a real trained model and file first, so "nothing changed" proves something.
+            val privacy = SwitchablePrivacy()
+            val subject = trainedAndPersisted(dir, passthroughCrypto(), privacy)
+            val fileBefore = modelFileIn(dir).readBytes()
+            val trainedStats = subject.getStats()
 
+            privacy.failure = failure
             withCapturedLogs { logs ->
                 // Must not throw.
                 subject.train("Payment of 12.50 EUR at failurecase", isTransaction = true)
                 subject.train("Your OTP code verify offer failurecase", isTransaction = false)
+                assertEquals("predict neutral on read failure", 0.5f, subject.predict(probes[0]), 0f)
 
                 assertTrue("logs must not carry exception text", logs.none { it.second.contains(marker) })
                 assertTrue("logs must not carry a throwable", logs.all { it.first == null })
             }
 
-            coVerify(atLeast = 1) { privacy.getSettings() }
-            assertEquals(untrainedStats, subject.getStats())
-            assertEquals(untrainedStats, subject.stats.value)
+            assertEquals("totals kept", trainedStats, subject.getStats())
+            assertEquals("stats flow kept", trainedStats, subject.stats.value)
+            assertArrayEquals("model file untouched", fileBefore, modelFileIn(dir).readBytes())
 
             val (raw, json) = persistAndRead(subject, dir)
-            assertEquals(0, json.getInt("totalPositive"))
-            assertEquals(0, json.getInt("totalNegative"))
+            assertEquals(15, json.getInt("totalPositive"))
+            assertEquals(15, json.getInt("totalNegative"))
             assertFalse(raw.contains("failurecase"))
         }
     }
 
     @Test
-    fun `D4 FAIL_CLOSED_DEFAULTS from the repository skips training`() = runBlocking<Unit> {
-        // PrivacySettingsRepositoryImpl returns FAIL_CLOSED_DEFAULTS on corruption or IO errors.
+    fun `D4 CorruptedFailClosed load state skips training and keeps a seeded model, file and predictions neutral`() = runBlocking<Unit> {
+        // PrivacySettingsRepositoryImpl reports CorruptedFailClosed (with DO_NOT_STORE placeholder
+        // settings) on a DataStore IOException or the corruption sentinel. That is a read failure,
+        // not a user choice, so it must neither train nor purge a learned model.
         assertNotEquals(
-            "precondition: fail-closed defaults must not allow raw notification learning",
+            "precondition: the placeholder settings would purge if misread as a definite mode",
             RawStorageMode.STORE_RAW,
             PrivacySettings.FAIL_CLOSED_DEFAULTS.rawNotificationStorageMode
         )
         val dir = createTempDir("classifier_d4_failclosed")
-        val privacy = mockk<PrivacySettingsRepository>()
-        coEvery { privacy.getSettings() } returns PrivacySettings.FAIL_CLOSED_DEFAULTS
-        val (subject, _) = classifierFor(emptyList(), dir, passthroughCrypto(), privacy)
+        val privacy = SwitchablePrivacy()
+        val subject = trainedAndPersisted(dir, passthroughCrypto(), privacy)
+        val trainedStats = subject.getStats()
+        val fileBefore = modelFileIn(dir).readBytes()
 
-        trainBaseline(subject)
+        privacy.failClosed = true
+        subject.train("Payment of 12.50 EUR at failclosedcase", isTransaction = true)
+        assertEquals("predict neutral under a fail-closed state", 0.5f, subject.predict(probes[0]), 0f)
 
-        coVerify(atLeast = 1) { privacy.getSettings() }
-        assertEquals(untrainedStats, subject.getStats())
-        val (raw, json) = persistAndRead(subject, dir)
-        assertEquals(0, json.getInt("totalPositive"))
-        assertEquals(0, json.getInt("totalNegative"))
-        assertFalse(raw.contains("baseline"))
+        coVerify(atLeast = 1) { privacy.repo.getLoadState() }
+        assertEquals("totals kept", trainedStats, subject.getStats())
+        assertEquals("stats flow kept", trainedStats, subject.stats.value)
+        assertTrue("model file kept", modelFileIn(dir).exists())
+        assertArrayEquals("model file untouched", fileBefore, modelFileIn(dir).readBytes())
+        val (raw, _) = persistAndRead(subject, dir)
+        assertFalse("nothing trained under a fail-closed state", raw.contains("failclosedcase"))
+    }
+
+    @Test
+    fun `FirstRunDefault load state does not purge a learned model and training continues`() = runBlocking<Unit> {
+        val dir = createTempDir("classifier_firstrun")
+        val privacy = SwitchablePrivacy()
+        val subject = trainedAndPersisted(dir, passthroughCrypto(), privacy)
+        val trainedStats = subject.getStats()
+        val fileBefore = modelFileIn(dir).readBytes()
+
+        privacy.firstRun = true
+        assertTrue("predict still uses the model", subject.predict(probes[0]) > 0.5f)
+
+        assertEquals("totals kept", trainedStats, subject.getStats())
+        assertTrue("model file kept", modelFileIn(dir).exists())
+        assertArrayEquals("model file untouched", fileBefore, modelFileIn(dir).readBytes())
+
+        subject.train("Payment of 77.50 EUR at firstruncase", isTransaction = true)
+        assertEquals(trainedStats.totalPositive + 1, subject.getStats().totalPositive)
+        subject.destroy()
+    }
+
+    /**
+     * Liveness (not a pre-fix discriminator): the queue order between train() and the blocked
+     * onBackground() holder cannot be forced without sleeping or touching internals, so this proves
+     * the fixed code never deadlocks in either order, bounded by timeouts.
+     */
+    @Test
+    fun `train from a single thread dispatcher completes while a runBlocking holder on that thread waits`() = runBlocking<Unit> {
+        val dir = createTempDir("classifier_single_thread")
+        val reachedRead = java.util.concurrent.CountDownLatch(1)
+        val repo = mockk<PrivacySettingsRepository>()
+        coEvery { repo.getLoadState() } answers {
+            reachedRead.countDown()
+            PrivacySettingsLoadState.Loaded(PrivacySettings(rawNotificationStorageMode = RawStorageMode.STORE_RAW))
+        }
+        val (subject, _) = classifierFor(emptyList(), dir, passthroughCrypto(), repo)
+        val mutex = TransactionClassifier::class.java.getDeclaredField("mutex")
+            .apply { isAccessible = true }.get(subject) as kotlinx.coroutines.sync.Mutex
+        val executor = java.util.concurrent.Executors.newSingleThreadExecutor()
+        val single = executor.asCoroutineDispatcher()
+        try {
+            mutex.lock() // simulates a long lock holder (e.g. retrain)
+            val trainJob = async(single) { subject.train("Payment of 1.99 EUR at singlethread", isTransaction = true) }
+            assertTrue("train reached the settings read", reachedRead.await(10, java.util.concurrent.TimeUnit.SECONDS))
+            // Blocks the single thread in onBackground()'s runBlocking { saveToDisk() }.
+            val holder = executor.submit { subject.onBackground() }
+            mutex.unlock()
+            withTimeout(15_000) { trainJob.await() }
+            holder.get(15, java.util.concurrent.TimeUnit.SECONDS)
+            assertEquals(1, subject.getStats().totalPositive)
+        } finally {
+            if (mutex.isLocked) mutex.unlock()
+            executor.shutdownNow()
+            subject.destroy()
+        }
+    }
+
+    @Test
+    fun `D4 definite DO_NOT_STORE delivered as a Loaded state with fail-closed defaults still purges`() = runBlocking<Unit> {
+        val dir = createTempDir("classifier_d4_definite")
+        val privacy = SwitchablePrivacy()
+        val subject = trainedAndPersisted(dir, passthroughCrypto(), privacy)
+
+        privacy.mode = PrivacySettings.FAIL_CLOSED_DEFAULTS.rawNotificationStorageMode
+        assertEquals(0.5f, subject.predict(probes[0]), 0f)
+
+        assertPurged("definite DO_NOT_STORE", subject, dir)
+        subject.destroy()
+    }
+
+    @Test
+    fun `D4 fail-closed load state at initialize keeps the stored model and recovery to STORE_RAW keeps it`() = runBlocking<Unit> {
+        val dir = createTempDir("classifier_d4_failclosed_init")
+        val crypto = passthroughCrypto()
+        val privacy = SwitchablePrivacy()
+        trainedAndPersisted(dir, crypto, privacy).destroy()
+        val fileBefore = modelFileIn(dir).readBytes()
+
+        privacy.failClosed = true
+        val (restarted, _) = classifierFor(emptyList(), dir, crypto, privacy.repo)
+        restarted.initialize()
+
+        assertEquals(15, restarted.getStats().totalPositive)
+        assertEquals(15, restarted.getStats().totalNegative)
+        assertArrayEquals("model file untouched", fileBefore, modelFileIn(dir).readBytes())
+        assertEquals("predict neutral while fail-closed", 0.5f, restarted.predict(probes[0]), 0f)
+        assertEquals("still kept after predict", 15, restarted.getStats().totalPositive)
+
+        // Recovery: the read works again and reports STORE_RAW; the retained model is used.
+        privacy.failClosed = false
+        privacy.mode = RawStorageMode.STORE_RAW
+        assertTrue("retained model scores above neutral", restarted.predict(probes[0]) > 0.5f)
+        assertEquals(15, restarted.getStats().totalPositive)
+        assertTrue(modelFileIn(dir).exists())
+        restarted.destroy()
     }
 
     @Test
     fun `D4 CancellationException from the settings read propagates and trains nothing`() = runBlocking<Unit> {
         val dir = createTempDir("classifier_d4_cancel")
         val privacy = mockk<PrivacySettingsRepository>()
-        coEvery { privacy.getSettings() } throws CancellationException("synthetic cancellation")
+        coEvery { privacy.getLoadState() } throws CancellationException("synthetic cancellation")
         val (subject, _) = classifierFor(emptyList(), dir, passthroughCrypto(), privacy)
 
         var propagated: CancellationException? = null
@@ -645,15 +755,19 @@ class TransactionClassifierTest {
     }
 
     @Test
-    fun `D4 a skipped train does not change lastTrainingCount`() = runBlocking<Unit> {
+    fun `D4 a skipped train (settings read failure) does not change lastTrainingCount`() = runBlocking<Unit> {
         val dir = createTempDir("classifier_d4_lastcount")
         val crypto = passthroughCrypto()
         val unredacted = (0 until 22).map { unredactedCorrection(it, approved = it < 14) }
         val redacted = (0 until 8).map { redactedCorrection(it, approved = true) }
         val all = unredacted + redacted // getCount() == 30, usable == 22
         var mode = RawStorageMode.STORE_RAW
+        var failRead = false
         val privacy = mockk<PrivacySettingsRepository>()
-        coEvery { privacy.getSettings() } answers { PrivacySettings(rawNotificationStorageMode = mode) }
+        coEvery { privacy.getLoadState() } answers {
+            if (failRead) throw IllegalStateException("synthetic settings read failure")
+            PrivacySettingsLoadState.Loaded(PrivacySettings(rawNotificationStorageMode = mode))
+        }
 
         val (first, _) = classifierFor(all, dir, crypto, privacy)
         first.initialize() // retrain under STORE_RAW (retrain is gated) sets lastTrainingCount = 30
@@ -661,7 +775,9 @@ class TransactionClassifierTest {
         assertEquals(14, before.totalPositive)
         assertEquals(8, before.totalNegative)
 
-        mode = RawStorageMode.DO_NOT_STORE
+        // A read failure skips training WITHOUT purging (a definite non-STORE_RAW mode purges and
+        // resets lastTrainingCount; that path is covered by the J-03-1 tests).
+        failRead = true
         first.train("Payment of 99.50 EUR at skippedcase", isTransaction = true)
         first.train("Your OTP code verify offer skippedcase", isTransaction = false)
 
@@ -674,6 +790,7 @@ class TransactionClassifierTest {
 
         // Restart under STORE_RAW (so the mode gate cannot be what suppresses the retrain):
         // getCount() (30) is not > lastTrainingCount (30), so no retrain is triggered.
+        failRead = false
         mode = RawStorageMode.STORE_RAW
         val (second, secondRepo) = classifierFor(all, dir, crypto, privacy)
         second.initialize()
@@ -718,7 +835,9 @@ class TransactionClassifierTest {
     fun `D4 mode flip - STORE_RAW trains, DO_NOT_STORE skips, STORE_RAW trains again`() = runBlocking<Unit> {
         var mode = RawStorageMode.STORE_RAW
         val privacy = mockk<PrivacySettingsRepository>()
-        coEvery { privacy.getSettings() } answers { PrivacySettings(rawNotificationStorageMode = mode) }
+        coEvery { privacy.getLoadState() } answers {
+            PrivacySettingsLoadState.Loaded(PrivacySettings(rawNotificationStorageMode = mode))
+        }
         val dir = createTempDir("classifier_d4_flip")
         val (subject, _) = classifierFor(emptyList(), dir, passthroughCrypto(), privacy)
 
@@ -726,33 +845,306 @@ class TransactionClassifierTest {
         subject.train("Payment of 10.50 EUR at flipalpha", isTransaction = true)
         assertEquals(1, subject.getStats().totalPositive)
 
+        // J-03-1: a definite non-STORE_RAW mode purges the learned model, so training that
+        // resumes after a flip back to STORE_RAW starts again from zero.
         mode = RawStorageMode.DO_NOT_STORE
         subject.train("Payment of 11.50 EUR at flipbravo", isTransaction = true)
         subject.train("Your OTP code verify offer flipbravo", isTransaction = false)
-        assertEquals("skipped while DO_NOT_STORE", 1, subject.getStats().totalPositive)
-        assertEquals("skipped while DO_NOT_STORE", 0, subject.getStats().totalNegative)
+        assertEquals("purged while DO_NOT_STORE", untrainedStats, subject.getStats())
 
         mode = RawStorageMode.STORE_RAW
         subject.train("Payment of 12.50 EUR at flipcharlie", isTransaction = true)
-        assertEquals("training resumes after flip back", 2, subject.getStats().totalPositive)
+        assertEquals("training restarts from zero after flip back", 1, subject.getStats().totalPositive)
+        assertEquals(0, subject.getStats().totalNegative)
 
         mode = RawStorageMode.STORE_REDACTED
         subject.train("Payment of 13.50 EUR at flipdelta", isTransaction = true)
-        assertEquals("skipped while STORE_REDACTED", 2, subject.getStats().totalPositive)
+        assertEquals("purged while STORE_REDACTED", untrainedStats, subject.getStats())
 
         mode = RawStorageMode.STORE_RAW
         subject.train("Payment of 14.50 EUR at flipecho", isTransaction = true)
         val stats = subject.getStats()
-        assertEquals(3, stats.totalPositive)
+        assertEquals(1, stats.totalPositive)
         assertEquals(0, stats.totalNegative)
 
-        val (_, json) = persistAndRead(subject, dir)
+        val (raw, json) = persistAndRead(subject, dir)
         val positiveWords = json.getJSONObject("positiveWords")
-        assertTrue(positiveWords.has("flipalpha"))
-        assertTrue(positiveWords.has("flipcharlie"))
         assertTrue(positiveWords.has("flipecho"))
-        assertFalse("skipped under DO_NOT_STORE", positiveWords.has("flipbravo"))
-        assertFalse("skipped under STORE_REDACTED", positiveWords.has("flipdelta"))
-        assertFalse(json.getJSONObject("negativeWords").has("flipbravo"))
+        assertFalse("purged before the model was rebuilt", raw.contains("flipalpha"))
+        assertFalse("purged under DO_NOT_STORE", raw.contains("flipbravo"))
+        assertFalse("purged before the model was rebuilt", raw.contains("flipcharlie"))
+        assertFalse("purged under STORE_REDACTED", raw.contains("flipdelta"))
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // J-03-1: a definite non-STORE_RAW mode purges the learned model (memory, stats, file);
+    // a settings read failure purges nothing; STORE_RAW training afterwards starts from zero.
+    // The persisted model is created deterministically with onBackground() (awaited real save).
+    // ---------------------------------------------------------------------------------------
+
+    /** Privacy stub whose mode and read failure can be switched between calls. */
+    private class SwitchablePrivacy(
+        @Volatile var mode: RawStorageMode = RawStorageMode.STORE_RAW,
+        @Volatile var failure: Throwable? = null,
+        /** When true the repository reports the real fail-closed load state (IO error path). */
+        @Volatile var failClosed: Boolean = false,
+        /** When true the repository reports a genuine first run (normal defaults, STORE_RAW). */
+        @Volatile var firstRun: Boolean = false
+    ) {
+        val repo: PrivacySettingsRepository = mockk<PrivacySettingsRepository>().also { r ->
+            coEvery { r.getLoadState() } answers {
+                failure?.let { throw it }
+                if (firstRun) {
+                    PrivacySettingsLoadState.FirstRunDefault(PrivacySettings())
+                } else if (failClosed) {
+                    PrivacySettingsLoadState.CorruptedFailClosed(
+                        settings = PrivacySettings.FAIL_CLOSED_DEFAULTS,
+                        reason = "IO error"
+                    )
+                } else {
+                    PrivacySettingsLoadState.Loaded(PrivacySettings(rawNotificationStorageMode = mode))
+                }
+            }
+        }
+    }
+
+    private val nonRawModes = listOf(
+        RawStorageMode.STORE_REDACTED,
+        RawStorageMode.STORE_METADATA_ONLY,
+        RawStorageMode.DO_NOT_STORE
+    )
+
+    private fun modelFileIn(dir: File) = File(dir, modelFileName)
+
+    /** Trains 15+15 under STORE_RAW and persists the model, asserting the control state. */
+    private suspend fun trainedAndPersisted(
+        dir: File,
+        crypto: com.yourname.expensetracker.data.privacy.AtRestEncryptionService,
+        privacy: SwitchablePrivacy
+    ): TransactionClassifier {
+        val (subject, _) = classifierFor(emptyList(), dir, crypto, privacy.repo)
+        trainBaseline(subject)
+        subject.onBackground()
+        assertTrue("control: model file must exist", modelFileIn(dir).exists())
+        assertEquals(15, subject.getStats().totalPositive)
+        assertEquals(15, subject.getStats().totalNegative)
+        assertTrue("control: trained model must score above neutral", subject.predict(probes[0]) > 0.5f)
+        return subject
+    }
+
+    private suspend fun assertPurged(label: String, subject: TransactionClassifier, dir: File) {
+        assertEquals("$label: stats cleared", untrainedStats, subject.getStats())
+        assertEquals("$label: stats flow cleared", untrainedStats, subject.stats.value)
+        assertFalse("$label: model file deleted", modelFileIn(dir).exists())
+    }
+
+    @Test
+    fun `J-03-1 predict under a non-raw mode purges stats, totals and model file and returns neutral`() = runBlocking<Unit> {
+        for (mode in nonRawModes) {
+            val dir = createTempDir("classifier_j031_predict")
+            val privacy = SwitchablePrivacy()
+            val subject = trainedAndPersisted(dir, passthroughCrypto(), privacy)
+
+            privacy.mode = mode
+            assertEquals("$mode: predict neutral", 0.5f, subject.predict(probes[0]), 0f)
+
+            assertPurged("predict/$mode", subject, dir)
+            subject.destroy()
+        }
+    }
+
+    @Test
+    fun `J-03-1 train under a non-raw mode purges stats, totals and model file and predict is neutral`() = runBlocking<Unit> {
+        for (mode in nonRawModes) {
+            val dir = createTempDir("classifier_j031_train")
+            val privacy = SwitchablePrivacy()
+            val subject = trainedAndPersisted(dir, passthroughCrypto(), privacy)
+
+            privacy.mode = mode
+            subject.train("Payment of 77.50 EUR at purgetrain", isTransaction = true)
+
+            assertPurged("train/$mode", subject, dir)
+            assertEquals("$mode: predict neutral", 0.5f, subject.predict(probes[0]), 0f)
+            subject.destroy()
+        }
+    }
+
+    @Test
+    fun `J-03-1 initialize under a non-raw mode purges the stored model instead of loading it`() = runBlocking<Unit> {
+        for (mode in nonRawModes) {
+            val dir = createTempDir("classifier_j031_init")
+            val crypto = passthroughCrypto()
+            val privacy = SwitchablePrivacy()
+            val writer = trainedAndPersisted(dir, crypto, privacy)
+            writer.destroy()
+            assertTrue(modelFileIn(dir).exists())
+
+            // New process: the stored model exists, nothing is loaded yet.
+            privacy.mode = mode
+            val (restarted, _) = classifierFor(emptyList(), dir, crypto, privacy.repo)
+            restarted.initialize()
+
+            assertPurged("initialize/$mode", restarted, dir)
+            assertEquals("$mode: predict neutral", 0.5f, restarted.predict(probes[0]), 0f)
+            restarted.destroy()
+        }
+    }
+
+    @Test
+    fun `J-03-1 settings read failure keeps the model and the file and predict is neutral`() = runBlocking<Unit> {
+        val marker = "SYNTHETIC_READ_FAILURE_4711"
+        val dir = createTempDir("classifier_j031_failure")
+        val crypto = passthroughCrypto()
+        val privacy = SwitchablePrivacy()
+        val subject = trainedAndPersisted(dir, crypto, privacy)
+        val fileBefore = modelFileIn(dir).readBytes()
+
+        privacy.failure = java.io.IOException(marker)
+        assertEquals("predict neutral on read failure", 0.5f, subject.predict(probes[0]), 0f)
+        subject.train("Payment of 55.50 EUR at failuretrain", isTransaction = true)
+
+        assertEquals("model kept in memory", 15, subject.getStats().totalPositive)
+        assertEquals("model kept in memory", 15, subject.getStats().totalNegative)
+        assertTrue("model file kept", modelFileIn(dir).exists())
+        assertArrayEquals("model file untouched", fileBefore, modelFileIn(dir).readBytes())
+
+        // A restarted instance also keeps and loads the stored model on a read failure.
+        val (restarted, _) = classifierFor(emptyList(), dir, crypto, privacy.repo)
+        restarted.initialize()
+        assertEquals(15, restarted.getStats().totalPositive)
+        assertEquals(15, restarted.getStats().totalNegative)
+        assertEquals("predict neutral on read failure", 0.5f, restarted.predict(probes[0]), 0f)
+        assertTrue("model file kept after restart", modelFileIn(dir).exists())
+
+        // Once the read recovers the retained model is used again (nothing was purged).
+        privacy.failure = null
+        assertTrue(subject.predict(probes[0]) > 0.5f)
+        restarted.destroy()
+        subject.destroy()
+    }
+
+    @Test
+    fun `J-03-1 after switching back to STORE_RAW training starts from zero`() = runBlocking<Unit> {
+        val dir = createTempDir("classifier_j031_restart")
+        val privacy = SwitchablePrivacy()
+        val subject = trainedAndPersisted(dir, passthroughCrypto(), privacy)
+
+        privacy.mode = RawStorageMode.DO_NOT_STORE
+        assertEquals(0.5f, subject.predict(probes[0]), 0f)
+        assertPurged("after purge", subject, dir)
+
+        privacy.mode = RawStorageMode.STORE_RAW
+        assertEquals("still empty right after switching back", untrainedStats, subject.getStats())
+        subject.train("Payment of 31.50 EUR at restartcase", isTransaction = true)
+
+        val stats = subject.getStats()
+        assertEquals(1, stats.totalPositive)
+        assertEquals(0, stats.totalNegative)
+        assertFalse("below the minimum sample count", stats.isReady)
+        assertEquals("below the minimum sample count stays neutral", 0.5f, subject.predict(probes[0]), 0f)
+
+        val (raw, json) = persistAndRead(subject, dir)
+        assertEquals(1, json.getInt("totalPositive"))
+        assertEquals(0, json.getInt("totalNegative"))
+        assertTrue(raw.contains("restartcase"))
+        assertFalse("nothing survives from before the purge", raw.contains("baseline"))
+    }
+
+    @Test
+    fun `J-03-1 saveToDisk after a purge writes no file`() = runBlocking<Unit> {
+        val dir = createTempDir("classifier_j031_nosave")
+        val privacy = SwitchablePrivacy()
+        val subject = trainedAndPersisted(dir, passthroughCrypto(), privacy)
+
+        privacy.mode = RawStorageMode.STORE_METADATA_ONLY
+        subject.train("Payment of 41.50 EUR at nosavecase", isTransaction = true)
+        assertFalse("purged", modelFileIn(dir).exists())
+
+        subject.onBackground() // runs saveToDisk() synchronously
+        assertFalse("onBackground save must not recreate the file", modelFileIn(dir).exists())
+        subject.destroy() // second save attempt
+        assertFalse("destroy save must not recreate the file", modelFileIn(dir).exists())
+    }
+
+    private fun saveJobOf(target: TransactionClassifier): kotlinx.coroutines.Job? {
+        val field = TransactionClassifier::class.java.getDeclaredField("saveJob")
+        field.isAccessible = true
+        return field.get(target) as kotlinx.coroutines.Job?
+    }
+
+    @Test
+    fun `J-03-1 a pending save job is cancelled by the purge`() = runBlocking<Unit> {
+        val dir = createTempDir("classifier_j031_pending")
+        val privacy = SwitchablePrivacy()
+        val (subject, _) = classifierFor(emptyList(), dir, passthroughCrypto(), privacy.repo)
+
+        subject.train("Payment of 21.50 EUR at pendingcase", isTransaction = true)
+        val pending = saveJobOf(subject)
+        assertNotNull("control: train schedules a save", pending)
+        assertTrue("control: save is pending", pending!!.isActive)
+
+        privacy.mode = RawStorageMode.DO_NOT_STORE
+        subject.train("Payment of 22.50 EUR at pendingcase", isTransaction = true)
+
+        assertTrue("pending save must be cancelled by the purge", pending.isCancelled)
+        assertNull("no save job remains after the purge", saveJobOf(subject))
+        assertFalse(modelFileIn(dir).exists())
+        subject.destroy()
+    }
+
+    @Test
+    fun `J-03-1 a model file that survives the first purge is deleted by the next purge call`() = runBlocking<Unit> {
+        val dir = createTempDir("classifier_j031_retry")
+        val privacy = SwitchablePrivacy(mode = RawStorageMode.DO_NOT_STORE)
+        val (subject, _) = classifierFor(emptyList(), dir, passthroughCrypto(), privacy.repo)
+
+        // A non-empty directory at the model path makes File.delete() return false.
+        val modelPath = modelFileIn(dir)
+        assertTrue(modelPath.mkdir())
+        val obstacle = File(modelPath, "obstacle.tmp").also { it.writeText("x") }
+
+        assertEquals(0.5f, subject.predict(probes[0]), 0f) // first purge: delete fails
+        assertTrue("control: the first purge could not delete the path", modelPath.exists())
+
+        // Still undeletable: the next call must try again (the flag alone must not short-circuit).
+        subject.train("Payment of 61.50 EUR at retrycase", isTransaction = true)
+        assertTrue("still present while the obstacle remains", modelPath.exists())
+
+        assertTrue(obstacle.delete())
+        subject.train("Payment of 62.50 EUR at retrycase", isTransaction = true) // next purge call
+        assertFalse("the next purge call must delete the surviving file", modelPath.exists())
+        assertEquals(untrainedStats, subject.getStats())
+        subject.destroy()
+    }
+
+    @Test
+    fun `J-03-1 cancelled settings read is rethrown from predict, train and initialize and purges nothing`() = runBlocking<Unit> {
+        val dir = createTempDir("classifier_j031_cancel")
+        val crypto = passthroughCrypto()
+        val privacy = SwitchablePrivacy()
+        val subject = trainedAndPersisted(dir, crypto, privacy)
+        val (restarted, _) = classifierFor(emptyList(), dir, crypto, privacy.repo)
+
+        privacy.failure = CancellationException("synthetic cancellation")
+
+        suspend fun expectCancellation(name: String, call: suspend () -> Unit) {
+            var propagated: CancellationException? = null
+            try {
+                call()
+            } catch (e: CancellationException) {
+                propagated = e
+            }
+            assertNotNull("$name must rethrow CancellationException", propagated)
+        }
+        expectCancellation("predict") { subject.predict(probes[0]) }
+        expectCancellation("train") {
+            subject.train("Payment of 9.50 EUR at cancelcase", isTransaction = true)
+        }
+        expectCancellation("initialize") { restarted.initialize() }
+
+        assertEquals("model kept", 15, subject.getStats().totalPositive)
+        assertTrue("model file kept", modelFileIn(dir).exists())
+        restarted.destroy()
+        subject.destroy()
     }
 }
