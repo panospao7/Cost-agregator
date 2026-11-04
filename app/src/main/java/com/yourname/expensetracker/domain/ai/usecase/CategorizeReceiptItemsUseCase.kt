@@ -388,7 +388,7 @@ class CategorizeReceiptItemsUseCase @Inject constructor(
             add("${categorizedCountPhrase(result)} receipt items")
             if (result.needsReview) {
                 val uncertainCount = result.items.count { it.needsReview && !ReceiptItemPlaceholder.isPlaceholder(it) }
-                add("⚠️ $uncertainCount items need review (confidence < 70%)")
+                if (uncertainCount > 0) add("⚠️ $uncertainCount items need review (confidence < 70%)")
             }
             if (persistItemTextAllowed && result.suggestedNewCategories.isNotEmpty()) {
                 add("💡 Suggested new categories: ${result.suggestedNewCategories.joinToString()}")

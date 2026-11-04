@@ -296,9 +296,8 @@ class CategorizeReceiptItemsUseCasePartialResultTest {
 
         assertTrue("was $result", result is CategorizationResult.Success)
         val explanation = artifacts.last().explanationText.orEmpty()
-        assertTrue(explanation, explanation.contains("Categorized 25 of 60 items"))
-        assertFalse(explanation, explanation.contains("35 items need review"))
-        assertTrue(explanation, explanation.contains("0 items need review"))
+        assertTrue(explanation, explanation.contains("Categorized 25 of 60 receipt items"))
+        assertFalse(explanation, explanation.contains("items need review"))
     }
 
     @Test
