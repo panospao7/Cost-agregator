@@ -89,6 +89,7 @@ class CashFlowCalculatorTest : AnalyticsEngineTestBase() {
         groupExpenseDao = mockk(relaxed = true)
         groupSettlementDao = mockk(relaxed = true)
         coEvery { groupExpenseDao.getNonPayerLinkedExpenseIdsBetween(any(), any()) } returns emptyList()
+        coEvery { groupExpenseDao.getPayerLinkedExpenseIdsBetween(any(), any()) } returns emptyList()
         coEvery { groupSettlementDao.getCurrentUserSettlementsBetween(any(), any()) } returns emptyList()
         val currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true).also {
             every { it.homeCurrency() } returns flowOf("EUR")
@@ -410,6 +411,142 @@ class CashFlowCalculatorTest : AnalyticsEngineTestBase() {
         assertEquals(1, result[0].expenses.size)
         assertApproxEquals(90.0, result[0].expenseAggregate!!.displayAmount)
         assertApproxEquals(10.0, result[0].endingBalance)
+    }
+
+    // Production-shaped group-linked personal row: amount 90 paid, user's share 30.
+    private fun sharedGroupRow(
+        id: Long,
+        date: Long,
+        amount: Double = 90.0,
+        share: Double = 30.0,
+        currency: String = "EUR",
+        isNotMine: Boolean = false
+    ) = expense(date, amount, TransactionType.PURCHASE).copy(
+        id = id,
+        currency = currency,
+        isSharedExpense = true,
+        myShareAmount = share,
+        isNotMine = isNotMine
+    )
+
+    @Test
+    fun `DR-01 payer-linked shared row is a full 90 outflow not the 30 share`() = runTest {
+        val d1 = ms("2026-04-01")
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns
+            listOf(sharedGroupRow(id = 701L, date = d1))
+        coEvery { groupExpenseDao.getPayerLinkedExpenseIdsBetween(any(), any()) } returns listOf(701L)
+
+        val result = cashFlowApr1To7()
+
+        assertEquals(1, result[0].expenses.size)
+        assertApproxEquals(90.0, result[0].expenseAggregate!!.displayAmount)
+        assertApproxEquals(10.0, result[0].endingBalance)
+        assertFalse(result.any { it.isPartial })
+    }
+
+    @Test
+    fun `DR-01 payer-linked shared row plus received settlement 60 nets minus 30`() = runTest {
+        val d1 = ms("2026-04-01")
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns
+            listOf(sharedGroupRow(id = 702L, date = d1))
+        coEvery { groupExpenseDao.getPayerLinkedExpenseIdsBetween(any(), any()) } returns listOf(702L)
+        coEvery { groupSettlementDao.getCurrentUserSettlementsBetween(any(), any()) } returns listOf(
+            settlement(id = 20L, amount = 60.0, createdAt = localDateTime("2026-04-03", 10, 0), paidByCurrentUser = false)
+        )
+
+        val result = cashFlowApr1To7()
+
+        assertApproxEquals(10.0, result[0].endingBalance)
+        assertApproxEquals(60.0, result[2].groupSettlementIncome)
+        // Period net: 100 start -> 70 end = -30 (paid 90, got 60 back).
+        assertApproxEquals(70.0, result.last().endingBalance)
+        assertApproxEquals(-30.0, result.last().endingBalance - 100.0)
+    }
+
+    @Test
+    fun `DR-01 payer-linked row also marked isNotMine still counts the full 90 cash that moved`() = runTest {
+        val d1 = ms("2026-04-01")
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns
+            listOf(sharedGroupRow(id = 703L, date = d1, isNotMine = true))
+        coEvery { groupExpenseDao.getPayerLinkedExpenseIdsBetween(any(), any()) } returns listOf(703L)
+
+        val result = cashFlowApr1To7()
+
+        assertApproxEquals(90.0, result[0].expenseAggregate!!.displayAmount)
+        assertApproxEquals(10.0, result[0].endingBalance)
+    }
+
+    @Test
+    fun `DR-01 payer probe failure keeps the row at its share and marks every day partial`() = runTest {
+        val d1 = ms("2026-04-01")
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns
+            listOf(sharedGroupRow(id = 704L, date = d1))
+        coEvery { groupExpenseDao.getPayerLinkedExpenseIdsBetween(any(), any()) } throws
+            IllegalStateException("synthetic failure")
+
+        val result = cashFlowApr1To7()
+
+        assertEquals(1, result[0].expenses.size)
+        assertApproxEquals(30.0, result[0].expenseAggregate!!.displayAmount)
+        assertApproxEquals(70.0, result[0].endingBalance)
+        assertTrue(result.all { it.isPartial })
+    }
+
+    @Test
+    fun `DR-01 cancellation from the payer-row probe is rethrown`() = runTest {
+        coEvery { groupExpenseDao.getPayerLinkedExpenseIdsBetween(any(), any()) } throws
+            kotlinx.coroutines.CancellationException("synthetic cancel")
+
+        kotlin.test.assertFailsWith<kotlinx.coroutines.CancellationException> { cashFlowApr1To7() }
+    }
+
+    @Test
+    fun `DR-01 non-payer shared row counts 0 and the paid settlement is the only outflow`() = runTest {
+        val d1 = ms("2026-04-01")
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns
+            listOf(sharedGroupRow(id = 705L, date = d1))
+        coEvery { groupExpenseDao.getNonPayerLinkedExpenseIdsBetween(any(), any()) } returns listOf(705L)
+        coEvery { groupSettlementDao.getCurrentUserSettlementsBetween(any(), any()) } returns listOf(
+            settlement(id = 21L, amount = 30.0, createdAt = localDateTime("2026-04-04", 9, 0), paidByCurrentUser = true)
+        )
+
+        val result = cashFlowApr1To7()
+
+        assertTrue(result[0].expenses.isEmpty())
+        assertApproxEquals(0.0, result[0].expenseAggregate!!.displayAmount)
+        assertApproxEquals(100.0, result[0].endingBalance)
+        assertApproxEquals(30.0, result[3].groupSettlementOutflow)
+        assertApproxEquals(70.0, result.last().endingBalance)
+    }
+
+    @Test
+    fun `DR-01 plain shared row with no group link stays at its 30 share`() = runTest {
+        val d1 = ms("2026-04-01")
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns
+            listOf(sharedGroupRow(id = 706L, date = d1))
+        // Both probes empty (setUp defaults): no group link.
+
+        val result = cashFlowApr1To7()
+
+        assertApproxEquals(30.0, result[0].expenseAggregate!!.displayAmount)
+        assertApproxEquals(70.0, result[0].endingBalance)
+        assertFalse(result.any { it.isPartial })
+    }
+
+    @Test
+    fun `DR-01 foreign-currency payer row reaches conversion at the full amount in its own currency`() = runTest {
+        val d1 = ms("2026-04-01")
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns
+            listOf(sharedGroupRow(id = 707L, date = d1, currency = "USD"))
+        coEvery { groupExpenseDao.getPayerLinkedExpenseIdsBetween(any(), any()) } returns listOf(707L)
+
+        val result = cashFlowApr1To7()
+
+        assertEquals(1, result[0].expenses.size)
+        val row = result[0].expenses.single()
+        assertEquals("USD", row.currency)
+        assertApproxEquals(90.0, row.effectiveAmount)
+        assertApproxEquals(90.0, result[0].expenseAggregate!!.displayAmount)
     }
 
     @Test

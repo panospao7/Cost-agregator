@@ -74,6 +74,42 @@ class CashFlowCalendarViewModelTest : ViewModelTestUtils() {
     }
 
     @Test
+    fun `DR-01 empty aggregate with a settlement of 30 prints 30 point 00`() {
+        val empty = MoneyAggregate.empty(CurrencyCode.EUR)
+
+        assertThat(formatCashFlowAggregate(empty, isPartial = false, homeSettlementAmount = 30.0))
+            .endsWith("30.00")
+    }
+
+    @Test
+    fun `DR-01 incomplete aggregate with a settlement stays Unavailable`() {
+        val partial = MoneyAggregate.singleCurrency(42.0, CurrencyCode("EUR"), 1).copy(
+            isPartial = true,
+            conversionQuality = ConversionQuality.PARTIAL
+        )
+
+        assertThat(formatCashFlowAggregate(partial, isPartial = false, homeSettlementAmount = 30.0))
+            .isEqualTo("Unavailable")
+        assertThat(formatCashFlowAggregate(partial, isPartial = true, homeSettlementAmount = 30.0))
+            .isEqualTo("Partial / unavailable")
+        // Null aggregate never turns a settlement into a displayed total.
+        assertThat(formatCashFlowAggregate(null, isPartial = false, homeSettlementAmount = 30.0))
+            .isEqualTo("Unavailable")
+    }
+
+    @Test
+    fun `DR-01 no settlement matches the aggregate display as before`() {
+        val aggregate = MoneyAggregate.singleCurrency(42.0, CurrencyCode.EUR)
+
+        assertThat(formatCashFlowAggregate(aggregate, isPartial = false))
+            .isEqualTo(aggregate.formatDisplay())
+        assertThat(formatCashFlowAggregate(aggregate, isPartial = false, homeSettlementAmount = 0.0))
+            .isEqualTo(aggregate.formatDisplay())
+        assertThat(formatCashFlowAggregate(aggregate, isPartial = false, homeSettlementAmount = 8.0))
+            .endsWith("50.00")
+    }
+
+    @Test
     fun `initial state loads month cashflow and upcoming bills`() = runTest(UnconfinedTestDispatcher()) {
         val monthRange = TimePeriodUtils.getMonthRange(fixedNow.time)
 

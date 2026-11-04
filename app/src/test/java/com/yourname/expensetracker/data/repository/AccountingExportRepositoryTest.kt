@@ -930,6 +930,52 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
     }
 
     @Test
+    fun `DR-08 a 0_004 share and a NaN effective amount are skipped, 0_005 is kept, count equals rows written`() = runTest {
+        val start = ms("2026-03-01")
+        val end = ms("2026-04-01")
+        stubSinglePage(
+            start, end,
+            listOf(
+                drRow(1L, start, "SubCentShare", shareAmount = 0.004),
+                drRow(2L, start, "NanShareRow", shareAmount = Double.NaN),
+                drRow(3L, start, "HalfCentShare", shareAmount = 0.005),
+                drRow(4L, start, "KeptControl", amount = 12.0)
+            )
+        )
+
+        for (format in listOf(ExportFormat.XERO_CSV, ExportFormat.FRESHBOOKS_CSV, ExportFormat.QUICKBOOKS_IIF)) {
+            val result = repository.exportExpenses(fakeContext(), start, end, format)
+
+            assertTrue("$format must succeed", result.success)
+            val content = File(result.filePath!!).readText()
+            assertFalse("$format must skip the 0.004 share", content.contains("SubCentShare"))
+            assertFalse("$format must skip the NaN effective amount", content.contains("NanShareRow"))
+            assertTrue("$format must keep the 0.005 share", content.contains("HalfCentShare"))
+            assertTrue(content.contains("KeptControl"))
+            assertEquals("$format recordCount equals rows written", 2, result.recordCount)
+        }
+    }
+
+    @Test
+    fun `DR-08 range with only sub-cent and NaN rows is refused as empty, not exported with count`() = runTest {
+        val start = ms("2026-03-01")
+        val end = ms("2026-04-01")
+        stubSinglePage(
+            start, end,
+            listOf(
+                drRow(1L, start, "SubCentShare", shareAmount = 0.004),
+                drRow(2L, start, "NanShareRow", shareAmount = Double.NaN)
+            )
+        )
+
+        val result = repository.exportExpenses(fakeContext(), start, end, ExportFormat.XERO_CSV)
+
+        assertFalse(result.success)
+        assertTrue(result.errorMessage.orEmpty().contains("No expenses found"))
+        assertEquals(0, result.recordCount)
+    }
+
+    @Test
     fun `DR-08 all-not-mine accounting range returns the empty-dataset error`() = runTest {
         val start = ms("2026-03-01")
         val end = ms("2026-04-01")

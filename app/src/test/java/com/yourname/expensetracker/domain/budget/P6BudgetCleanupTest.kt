@@ -238,6 +238,7 @@ class P6BudgetCleanupTest : AnalyticsEngineTestBase() {
             installmentProjectionPort = com.yourname.expensetracker.domain.installment.projection.emptyInstallmentProjectionPort(),
             groupExpenseDao = mockk<com.yourname.expensetracker.data.database.dao.GroupExpenseDao>(relaxed = true).also {
                 coEvery { it.getNonPayerLinkedExpenseIdsBetween(any(), any()) } returns emptyList()
+                coEvery { it.getPayerLinkedExpenseIdsBetween(any(), any()) } returns emptyList()
             },
             groupSettlementDao = mockk<com.yourname.expensetracker.data.database.dao.GroupSettlementDao>(relaxed = true).also {
                 coEvery { it.getCurrentUserSettlementsBetween(any(), any()) } returns emptyList()

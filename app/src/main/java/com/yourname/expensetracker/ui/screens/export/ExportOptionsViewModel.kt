@@ -17,6 +17,7 @@ import com.yourname.expensetracker.domain.export.FxRateFormatter
 import com.yourname.expensetracker.domain.export.QuickBooksIIFExporter
 import com.yourname.expensetracker.domain.export.XeroCSVExporter
 import com.yourname.expensetracker.domain.export.ExportTransaction
+import com.yourname.expensetracker.domain.export.bearsNoAmount
 import com.yourname.expensetracker.domain.export.toExportTransaction
 import com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException
 import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
@@ -928,7 +929,7 @@ class ExportOptionsViewModel @Inject constructor(
             for (expense in page) {
                 if (ExportInstallmentMarker.isInstallmentFlagged(expense)) continue
                 val tx = expense.toExportTransaction()
-                if (tx.effectiveAmount == 0.0) continue
+                if (tx.bearsNoAmount()) continue
                 count++
                 representatives.getOrPut(tx.currency.trim().uppercase(java.util.Locale.ROOT) to tx.transactionType) { tx }
             }

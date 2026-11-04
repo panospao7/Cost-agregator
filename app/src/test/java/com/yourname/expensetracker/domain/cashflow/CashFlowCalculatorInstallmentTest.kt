@@ -139,6 +139,7 @@ class CashFlowCalculatorInstallmentTest : AnalyticsEngineTestBase() {
         installmentProjectionPort = port,
         groupExpenseDao = mockk<com.yourname.expensetracker.data.database.dao.GroupExpenseDao>(relaxed = true).also {
             coEvery { it.getNonPayerLinkedExpenseIdsBetween(any(), any()) } returns emptyList()
+            coEvery { it.getPayerLinkedExpenseIdsBetween(any(), any()) } returns emptyList()
         },
         groupSettlementDao = mockk<com.yourname.expensetracker.data.database.dao.GroupSettlementDao>(relaxed = true).also {
             coEvery { it.getCurrentUserSettlementsBetween(any(), any()) } returns emptyList()

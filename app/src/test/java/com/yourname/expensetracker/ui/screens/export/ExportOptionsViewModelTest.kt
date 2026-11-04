@@ -1347,6 +1347,53 @@ class ExportOptionsViewModelTest {
     }
 
     @Test
+    fun `DR-08 scan - a 0_004 share and a NaN effective amount are not written, 0_005 is, and the scan agrees with the writer`() = runBlocking {
+        stubAccountingFileOut("export_dr08_subcent_")
+        val rows = listOf(
+            createExpense(id = 1L, merchant = "SubCentShare").copy(isSharedExpense = true, myShareAmount = 0.004),
+            createExpense(id = 2L, merchant = "NanShareRow").copy(isSharedExpense = true, myShareAmount = Double.NaN),
+            createExpense(id = 3L, merchant = "HalfCentShare").copy(isSharedExpense = true, myShareAmount = 0.005),
+            createExpense(id = 4L, merchant = "KeptControl")
+        )
+        coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns rows.size
+        stubRepeatingPages(rows, emptyList())
+
+        for (formatId in listOf("xero", "freshbooks", "quickbooks")) {
+            viewModel.selectFormat(formatId)
+            viewModel.generateExport()
+            val state = viewModel.uiState.value
+
+            assertEquals("$formatId must not error", null, state.error)
+            assertTrue("$formatId must succeed", state.exportSuccess)
+            val written = File(state.exportFilePath!!).readText()
+            assertFalse("$formatId must skip the 0.004 share", written.contains("SubCentShare"))
+            assertFalse("$formatId must skip the NaN effective amount", written.contains("NanShareRow"))
+            assertTrue("$formatId must keep the 0.005 share", written.contains("HalfCentShare"))
+            assertTrue("$formatId must keep the control row", written.contains("KeptControl"))
+        }
+    }
+
+    @Test
+    fun `DR-08 scan - a range of only sub-cent and NaN rows is refused as empty`() = runBlocking {
+        val out = stubAccountingFileOut("export_dr08_subcent_only_")
+        val rows = listOf(
+            createExpense(id = 1L, merchant = "SubCentShare").copy(isSharedExpense = true, myShareAmount = 0.004),
+            createExpense(id = 2L, merchant = "NanShareRow").copy(isSharedExpense = true, myShareAmount = Double.NaN)
+        )
+        coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns 2
+        stubRepeatingPages(rows, emptyList())
+
+        viewModel.selectFormat("xero")
+        viewModel.generateExport()
+        val state = viewModel.uiState.value
+
+        assertTrue(!state.exportSuccess)
+        assertEquals(null, state.exportFilePath)
+        assertTrue(state.error.orEmpty().contains("non-empty dataset"))
+        assertFalse("No accounting file may be left behind", out.exists())
+    }
+
+    @Test
     fun `installment generic csv keeps flagged rows and does not apply the accounting filter`() = runBlocking {
         val out = stubAccountingFileOut("export_generic_flagged_")
         val expenses = listOf(flagged(id = 1L, merchant = "PlanRow"))

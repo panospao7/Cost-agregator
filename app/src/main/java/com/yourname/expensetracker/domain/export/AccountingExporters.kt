@@ -41,11 +41,17 @@ import java.util.Locale
  */
 
 /**
- * DR-08: true when the user bears nothing of this row (effectiveAmount == 0, which covers
- * isNotMine rows). Accounting exporters skip such rows. A non-finite effectiveAmount is NOT
- * treated as zero here; it falls through to the formatter and is written as INVALID.
+ * DR-08: true when the user bears nothing of this row: effectiveAmount is 0 (which covers
+ * isNotMine rows) or rounds to 0.00 at export precision (a 0.004 share would otherwise be written
+ * as a "0.00" row). Accounting exporters, the repository count and the ViewModel scan all use this
+ * one rule. A non-finite Expense.effectiveAmount is already mapped to 0.0 by ExpenseExportMapper,
+ * so such a row is skipped as well; it is never written as INVALID.
  */
-internal fun ExportTransaction.bearsNoAmount(): Boolean = effectiveAmount == 0.0
+internal fun ExportTransaction.bearsNoAmount(): Boolean = isZeroAtExportPrecision(effectiveAmount)
+
+/** True when [amount] is non-finite or formats to zero with [CurrencyFormatter.formatForExport]. */
+internal fun isZeroAtExportPrecision(amount: Double): Boolean =
+    !amount.isFinite() || CurrencyFormatter.formatForExport(amount).toDouble() == 0.0
 
 class QuickBooksIIFExporter {
     private val dateFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("MM/dd/yyyy", Locale.US)

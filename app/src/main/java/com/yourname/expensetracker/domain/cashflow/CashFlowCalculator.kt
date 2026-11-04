@@ -321,6 +321,21 @@ class CashFlowCalculator @Inject constructor(
             emptySet()
         }
 
+        // DR-01: ids of personal rows linked to a group expense the current user PAID. The cash
+        // that left is the full paid amount (the share owed back arrives later as a received
+        // settlement), so these rows are counted at their full amount below. Same read-only,
+        // barrier-guarded, half-open range. On failure the rows are kept at their share amount and
+        // every day is flagged partial, exactly like the non-payer probe.
+        val payerGroupExpenseIds: Set<Long> = try {
+            databaseReadBarrier.checkReadAllowed("CashFlowCalculator.calculateDailyCashFlow.readGroupPayerRows")
+            groupExpenseDao.getPayerLinkedExpenseIdsBetween(startTime, endTime).toSet()
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            Timber.w("$TAG: group payer-row lookup failed (%s) — marking partial", e.javaClass.simpleName)
+            groupPayerLookupFailed = true
+            emptySet()
+        }
+
         // DR-01: settling up is the cash event for group expenses someone else paid. Read the
         // current user's settlements (read-only, barrier-guarded, same half-open range). A paid
         // settlement is an outflow and a received one is income, on its createdAt day. A settlement
@@ -337,6 +352,11 @@ class CashFlowCalculator @Inject constructor(
             groupSettlementLookupFailed = true
             emptyList()
         }
+        // Defensive dedupe only: the current write path (SettlementCalculator.recordSettlement)
+        // never sets GroupSettlementEntity.linkedExpenseId, so it is null for every settlement
+        // created today. If a future path links a settlement to an expense that is counted here
+        // (a payer row at its full amount, or an unlinked row), the settlement is skipped so the
+        // same cash is not counted twice. Non-payer rows are not counted, so their settlement stays.
         val countedExpenseIds: Set<Long> = historicalExpenses
             .filter { it.id !in nonPayerGroupExpenseIds }
             .filter {
@@ -386,10 +406,25 @@ class CashFlowCalculator @Inject constructor(
             // DR-01: a personal row linked to a group expense that someone else paid is the
             // user's share, not a cash outflow; settling up is the cash event. Such rows are
             // excluded here only (they stay in budget and spending).
+            // DR-01: a personal row linked to a group expense the current user PAID is counted at
+            // the full paid amount (the cash that left); the share owed back is a received
+            // settlement. Only this cash-flow copy drops the share fields; effectiveAmount and the
+            // stored row are unchanged everywhere else. spendingExclusionReason is kept (installment
+            // neutralisation stays owned by the installment engine).
             val incomeList = mutableListOf<Expense>()
             val expenseList = mutableListOf<Expense>()
-            for (expense in dayExpenses) {
-                if (expense.id in nonPayerGroupExpenseIds) continue
+            for (storedExpense in dayExpenses) {
+                if (storedExpense.id in nonPayerGroupExpenseIds) continue
+                val expense = if (storedExpense.id in payerGroupExpenseIds) {
+                    storedExpense.copy(
+                        isNotMine = false,
+                        isSharedExpense = false,
+                        mySharePercentage = null,
+                        myShareAmount = null
+                    )
+                } else {
+                    storedExpense
+                }
                 when (expense.transactionType.toDomain()) {
                     DomainTransactionType.DEPOSIT -> incomeList.add(expense)
                     DomainTransactionType.PURCHASE,

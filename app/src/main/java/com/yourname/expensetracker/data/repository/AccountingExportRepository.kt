@@ -108,10 +108,13 @@ class AccountingExportRepository @Inject constructor(
             // QuickBooks IIF. Filter BEFORE the empty check, policy validation and recordCount so all
             // three use the same set the exporters actually write. The PDF report keeps every row.
             val expenses = if (format.requiresAccountingPolicy()) {
-                // DR-08: rows the user bears nothing of (effectiveAmount == 0, e.g. not-mine) are
-                // skipped by the exporters, so they leave the count, empty check and validation too.
+                // DR-08: rows the user bears nothing of (mapped effectiveAmount is 0 or rounds to
+                // 0.00, e.g. not-mine or a non-finite value) are skipped by the exporters, so they
+                // leave the count, empty check and validation too. The filter uses the mapped
+                // export value (the exporters' own rule), not the raw Expense.effectiveAmount.
                 fetchedExpenses.filterNot {
-                    ExportInstallmentMarker.isInstallmentFlagged(it) || it.effectiveAmount == 0.0
+                    ExportInstallmentMarker.isInstallmentFlagged(it) ||
+                        it.toExportTransaction().bearsNoAmount()
                 }
             } else {
                 fetchedExpenses

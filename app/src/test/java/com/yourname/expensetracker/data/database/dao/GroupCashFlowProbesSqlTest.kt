@@ -181,6 +181,64 @@ class GroupCashFlowProbesSqlTest {
         assertTrue(groupExpenseDao.getNonPayerLinkedExpenseIdsBetween(start, end).isEmpty())
     }
 
+    // ── getPayerLinkedExpenseIdsBetween ───────────────────────────────────────
+
+    @Test
+    fun `payer probe includes an expense linked to a group expense the current user paid`() = runTest {
+        val id = linkedExpense("DinnerIPaidPayer", inRange, paidById = meId)
+
+        assertEquals(listOf(id), groupExpenseDao.getPayerLinkedExpenseIdsBetween(start, end))
+    }
+
+    @Test
+    fun `payer probe excludes a row another member paid`() = runTest {
+        linkedExpense("PaidByFriendA", inRange, paidById = friendAId)
+        linkedExpense("PaidByFriendB", inRange + 1_000L, paidById = friendBId)
+
+        assertTrue(groupExpenseDao.getPayerLinkedExpenseIdsBetween(start, end).isEmpty())
+    }
+
+    @Test
+    fun `payer probe and non-payer probe partition linked rows with no overlap`() = runTest {
+        val mine = linkedExpense("PaidByMePartition", inRange, paidById = meId)
+        val theirs = linkedExpense("PaidByAPartition", inRange + 1_000L, paidById = friendAId)
+
+        assertEquals(listOf(mine), groupExpenseDao.getPayerLinkedExpenseIdsBetween(start, end))
+        assertEquals(listOf(theirs), groupExpenseDao.getNonPayerLinkedExpenseIdsBetween(start, end))
+    }
+
+    @Test
+    fun `payer probe never returns an unlinked personal expense`() = runTest {
+        expenseDao.insert(
+            Expense(
+                amount = 12.0, currency = "EUR", merchant = "UnlinkedPayer", merchantKey = "unlinkedpayer",
+                transactionType = TransactionType.PURCHASE, date = inRange
+            )
+        )
+
+        assertTrue(groupExpenseDao.getPayerLinkedExpenseIdsBetween(start, end).isEmpty())
+    }
+
+    @Test
+    fun `payer probe excludes expenses outside the range`() = runTest {
+        linkedExpense("TooEarlyPayer", start - 1L, paidById = meId)
+        linkedExpense("TooLatePayer", end + 1L, paidById = meId)
+
+        assertTrue(groupExpenseDao.getPayerLinkedExpenseIdsBetween(start, end).isEmpty())
+    }
+
+    @Test
+    fun `payer probe range is half-open - start included, end excluded`() = runTest {
+        val atStart = linkedExpense("AtStartPayer", start, paidById = meId)
+        val lastMs = linkedExpense("LastMsPayer", end - 1L, paidById = meId)
+        linkedExpense("AtEndPayer", end, paidById = meId)
+
+        assertEquals(
+            setOf(atStart, lastMs),
+            groupExpenseDao.getPayerLinkedExpenseIdsBetween(start, end).toSet()
+        )
+    }
+
     // ── getCurrentUserSettlementsBetween ──────────────────────────────────────
 
     @Test

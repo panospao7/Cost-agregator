@@ -95,6 +95,31 @@ class AccountingExportersEffectiveAmountTest {
     }
 
     @Test
+    fun `DR-08 a 0_004 share and a NaN effective amount are skipped, 0_005 is kept`() {
+        val subCent = row(5L, "SubCentRow", shareAmount = 0.004)
+        val nan = row(6L, "NanRow", shareAmount = Double.NaN)
+        val halfCent = row(7L, "HalfCentRow", shareAmount = 0.005)
+        val rows = listOf(subCent, nan, halfCent, control)
+
+        val xero = dataLines(XeroCSVExporter().export(rows, categories), headerLines = 1)
+        val freshBooks = dataLines(FreshBooksExporter().export(rows, categories), headerLines = 1)
+        val iif = QuickBooksIIFExporter().export(rows, categories)
+
+        assertThat(xero).hasSize(2)
+        assertThat(freshBooks).hasSize(2)
+        assertThat(iif.lines().filter { it.startsWith("TRNS\t") }).hasSize(2)
+        for (content in listOf(xero.joinToString("\n"), freshBooks.joinToString("\n"), iif)) {
+            assertThat(content).doesNotContain("SubCentRow")
+            assertThat(content).doesNotContain("NanRow")
+            assertThat(content).contains("HalfCentRow")
+            assertThat(content).contains("ControlCafe")
+        }
+        // The shared "bears nothing" rule agrees with what the exporters wrote.
+        assertThat(listOf(subCent, nan, halfCent, control).map { it.bearsNoAmount() })
+            .containsExactly(true, true, false, false).inOrder()
+    }
+
+    @Test
     fun `a row with the full amount as its effective amount is written unchanged`() {
         val lines = dataLines(XeroCSVExporter().export(listOf(control), categories), headerLines = 1)
 
