@@ -1302,7 +1302,7 @@ class CrossEngineParityMatrixTest : AnalyticsEngineTestBase() {
         )
         val rig = rigFor(Scenario("weather", categories, expenses, now))
 
-        val overallBudget = Budget(categoryId = null, amount = 800.0, period = BudgetPeriod.MONTHLY, startDate = utcMs(2026, 3, 1), createdAt = CREATED_AT)
+        val overallBudget = Budget(categoryId = null, amount = 800.0, period = BudgetPeriod.MONTHLY, startDate = utcMs(2026, 3, 1), createdAt = CREATED_AT, currency = "EUR", currencyAssumption = "USER_CONFIRMED")
         val budgetStatuses = listOf(
             BudgetStatus(
                 budget = overallBudget,
@@ -1322,7 +1322,7 @@ class CrossEngineParityMatrixTest : AnalyticsEngineTestBase() {
                 healthStatus = BudgetHealthStatus.ON_TRACK,
                 periodStart = utcMs(2026, 3, 1),
                 periodEnd = utcMs(2026, 4, 1),
-                effectiveLimit = 0.0
+                effectiveLimit = 800.0
             )
         )
         val budgetRepository = mockk<BudgetRepository>(relaxed = true)
