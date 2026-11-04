@@ -343,6 +343,8 @@
     <string name="stress_forecast_unavailable">La previsión de estrés financiero no está disponible temporalmente. No hay ninguna estimación de riesgo disponible.</string>
     <!-- fix-1.0.4 B1-11: DRAFT: owner native sign-off pending -->
     <string name="stress_forecast_risk_percent_format">%1$s%% de riesgo</string>
+    <!-- fix-1.0.4 P-06-4: DRAFT: owner native sign-off pending -->
+    <string name="stress_forecast_low_data_notice">Todavía no hay suficiente historial de compras para estimar los gastos, así que este panorama no es una previsión fiable.</string>
     <!-- stress-forecast-actions: localized stress forecast recommendations (es draft, sign-off at release gate) -->
     <string name="stress_recs_header">Recomendaciones</string>
     <string name="stress_rec_review_recurring_obligations">Tus obligaciones recurrentes son altas. Considera cancelar las suscripciones que no uses.</string>
@@ -382,6 +384,8 @@
     <string name="budget_cd_spend_unavailable_format">Presupuesto %1$s, %2$s, gasto no disponible</string>
     <string name="financial_runway_review_budget">Revisar presupuesto</string>
     <string name="backup_restore_receipt_images_skipped_format">No se pudieron restaurar %1$d imágenes de recibos.</string>
+    <!-- fix-1.0.4 J-11-2: DRAFT: owner native sign-off pending -->
+    <string name="backup_restore_notification_unreadable_notice">Si restauraste en un teléfono nuevo, es posible que las notificaciones capturadas en tu teléfono anterior no se puedan leer.</string>
     <string name="restart_required_database_operation">La aplicación debe reiniciarse para terminar una operación de la base de datos. Los cambios están en pausa hasta que se reinicie.</string>
     <!-- R18b: user-started write attempted while backup/restore/reset holds the write barrier -->
     <string name="ui_write_blocked_maintenance">Los cambios están en pausa mientras se realiza una copia de seguridad o una restauración. Inténtalo de nuevo en un momento.</string>

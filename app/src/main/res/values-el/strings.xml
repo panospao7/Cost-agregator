@@ -73,6 +73,8 @@
     <string name="stress_forecast_unavailable">Η πρόβλεψη οικονομικής πίεσης δεν είναι προσωρινά διαθέσιμη. Δεν υπάρχει διαθέσιμη εκτίμηση κινδύνου.</string>
     <!-- fix-1.0.4 B1-11: DRAFT: owner native sign-off pending -->
     <string name="stress_forecast_risk_percent_format">%1$s%% κίνδυνος</string>
+    <!-- fix-1.0.4 P-06-4: DRAFT: owner native sign-off pending -->
+    <string name="stress_forecast_low_data_notice">Δεν υπάρχει ακόμη αρκετό ιστορικό αγορών για να εκτιμηθούν οι δαπάνες, επομένως αυτή η εικόνα δεν είναι βέβαιη πρόβλεψη.</string>
     <!-- stress-forecast-actions: localized stress forecast recommendations (el draft, sign-off at release gate) -->
     <string name="stress_recs_header">Συστάσεις</string>
     <string name="stress_rec_review_recurring_obligations">Οι επαναλαμβανόμενες υποχρεώσεις σας είναι υψηλές. Σκεφτείτε να ακυρώσετε συνδρομές που δεν χρησιμοποιείτε.</string>
@@ -111,6 +113,8 @@
     <string name="budget_cd_spend_unavailable_format">Προϋπολογισμός %1$s, %2$s, η δαπάνη δεν είναι διαθέσιμη</string>
     <string name="financial_runway_review_budget">Έλεγχος προϋπολογισμού</string>
     <string name="backup_restore_receipt_images_skipped_format">Δεν ήταν δυνατή η επαναφορά %1$d εικόνων αποδείξεων.</string>
+    <!-- fix-1.0.4 J-11-2: DRAFT: owner native sign-off pending -->
+    <string name="backup_restore_notification_unreadable_notice">Αν κάνατε επαναφορά σε νέο τηλέφωνο, οι ειδοποιήσεις που καταγράφηκαν στο παλιό σας τηλέφωνο ίσως δεν είναι αναγνώσιμες.</string>
     <string name="restart_required_database_operation">Η εφαρμογή πρέπει να επανεκκινηθεί για να ολοκληρωθεί μια λειτουργία της βάσης δεδομένων. Οι αλλαγές είναι σε παύση μέχρι την επανεκκίνηση.</string>
     <!-- R18b: user-started write attempted while backup/restore/reset holds the write barrier -->
     <string name="ui_write_blocked_maintenance">Οι αλλαγές είναι σε παύση όσο εκτελείται αντίγραφο ασφαλείας ή επαναφορά. Δοκιμάστε ξανά σε λίγο.</string>

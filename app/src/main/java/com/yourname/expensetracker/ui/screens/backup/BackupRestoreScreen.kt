@@ -365,6 +365,14 @@ fun BackupRestoreScreen(
                                 color = MaterialTheme.colorScheme.onErrorContainer
                             )
                         }
+                        // J-11-2: static factual notice, shown after every successful restore. It carries
+                        // no counts and no notification content; captured notifications are protected
+                        // by a key tied to the phone that captured them.
+                        Text(
+                            text = stringResource(R.string.backup_restore_notification_unreadable_notice),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.End,

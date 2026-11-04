@@ -124,9 +124,14 @@ fun FinancialStressForecastCard(
             Spacer(modifier = Modifier.height(8.dp))
             
             // Subtitle
+            // P-06-4: with no purchase history the outcome is not a confident read, so the
+            // "healthy" claim is replaced by the low-data notice (a crunch date from known
+            // outflows, if any, is still shown).
             val subtitle = if (result.earliestCrunchDate != null) {
                 val dateStr = formatDate(result.earliestCrunchDate)
                 "Potential crunch: $dateStr"
+            } else if (result.isLowData) {
+                stringResource(R.string.stress_forecast_low_data_notice)
             } else {
                 "Cash flow looks healthy"
             }
@@ -135,6 +140,14 @@ fun FinancialStressForecastCard(
                 style = MaterialTheme.typography.bodyMedium,
                 color = SemanticColors.TextSecondary
             )
+            if (result.isLowData && result.earliestCrunchDate != null) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = stringResource(R.string.stress_forecast_low_data_notice),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = SemanticColors.TextSecondary
+                )
+            }
 
             // HZ01-B: recurring obligations (or other inputs) were excluded because their
             // currency could not be converted — the figures below are incomplete.
