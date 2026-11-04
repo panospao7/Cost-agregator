@@ -885,14 +885,22 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
             when (format) {
                 ExportFormat.XERO_CSV, ExportFormat.FRESHBOOKS_CSV -> {
                     val row = lines.first { it.contains("SharedDinner") }
-                    assertEquals("$format amount column", "30.00", row.split(",")[2])
+                    val cells = row.split(",")
+                    assertEquals("$format amount column", "30.00", cells[2])
+                    // originalAmount (the last column) is the audit record of the purchase as made,
+                    // not a booked amount, so it keeps the full figure. No other column may carry it.
+                    assertEquals("$format originalAmount audit column", "90.00", cells.last())
+                    assertFalse(
+                        "$format must write the full 90.00 only in the audit column",
+                        cells.dropLast(1).any { it.contains("90.00") }
+                    )
                 }
                 else -> {
                     assertEquals("30.00", lines.first { it.startsWith("TRNS\t") }.split("\t")[3])
                     assertEquals("-30.00", lines.first { it.startsWith("SPL\t") }.split("\t")[3])
+                    assertFalse("$format must not write the full 90.00", lines.joinToString("\n").contains("90.00"))
                 }
             }
-            assertFalse("$format must not write the full 90.00", lines.joinToString("\n").contains("90.00"))
         }
     }
 
