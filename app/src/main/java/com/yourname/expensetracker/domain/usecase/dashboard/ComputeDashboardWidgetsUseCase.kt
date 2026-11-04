@@ -681,8 +681,8 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         }
 
         // F1: with a positive budget limit, runway's remaining money is the Home hero's
-        // (snapshot limit minus effective spend). No effective spend means no honest remainder.
-        val budgetEffectiveSpend = ctx.overallBudget?.effectiveSpend
+        // (snapshot limit minus effective spend). No finite effective spend means no honest remainder.
+        val budgetEffectiveSpend = ctx.overallBudget?.effectiveSpend?.takeIf { it.isFinite() }
         if (ctx.overallBudget != null && ctx.totalBudgetAmount > 0 && budgetEffectiveSpend == null) { // G-MONEY-ALLOW[CURR-587-05][G-MONEY-15]: budget is home-currency user value
             return RunwayResult.Unavailable(
                 reason = MoneyDisplayUnavailableReasonCode.DISPLAY_CONVERSION_UNAVAILABLE.name,
