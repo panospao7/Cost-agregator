@@ -88,6 +88,7 @@ class TransactionsViewModelTest : ViewModelTestUtils() {
     @Test fun `el_GR comma share amount is saved as 12_50 by updateOwnership`() = runTest(testDispatcher) {
         java.util.Locale.setDefault(java.util.Locale("el", "GR"))
         val expense = mockk<Expense>(relaxed = true)
+        every { expense.amount } returns 100.0 // N-01-2: share must not exceed the total
         model.updateOwnership(expense, false, "", true, "Anna", "", "12,50")
         advanceUntilIdle()
         io.mockk.coVerify(exactly = 1) {
@@ -113,10 +114,41 @@ class TransactionsViewModelTest : ViewModelTestUtils() {
     @Test fun `en_US comma grouping share amount 1,234 is saved as 1234`() = runTest(testDispatcher) {
         java.util.Locale.setDefault(java.util.Locale.US)
         val expense = mockk<Expense>(relaxed = true)
+        every { expense.amount } returns 5000.0 // N-01-2: share must not exceed the total
         model.updateOwnership(expense, false, "", true, "Anna", "", "1,234")
         advanceUntilIdle()
         io.mockk.coVerify(exactly = 1) {
             expenses.updateOwnership(expense, false, null, true, "Anna", null, 1234.0)
+        }
+    }
+
+    @Test fun `N-01-2 over total share shows the error and writes nothing`() = runTest(testDispatcher) {
+        java.util.Locale.setDefault(java.util.Locale.US)
+        val expense = mockk<Expense>(relaxed = true)
+        every { expense.amount } returns 10.0
+        val received = mutableListOf<UiText>()
+        val collection = backgroundScope.launch { model.error.collect { received += it } }
+        runCurrent()
+        model.updateOwnership(expense, false, "", true, "Anna", "", "10.01")
+        advanceUntilIdle()
+        assertEquals(
+            "Share amount cannot exceed the transaction total",
+            (received.single() as UiText.DynamicString).value
+        )
+        io.mockk.coVerify(exactly = 0) {
+            expenses.updateOwnership(any(), any(), any(), any(), any(), any(), any())
+        }
+        collection.cancel()
+    }
+
+    @Test fun `N-01-2 share equal to total is saved`() = runTest(testDispatcher) {
+        java.util.Locale.setDefault(java.util.Locale.US)
+        val expense = mockk<Expense>(relaxed = true)
+        every { expense.amount } returns 10.0
+        model.updateOwnership(expense, false, "", true, "Anna", "", "10.00")
+        advanceUntilIdle()
+        io.mockk.coVerify(exactly = 1) {
+            expenses.updateOwnership(expense, false, null, true, "Anna", null, 10.0)
         }
     }
 

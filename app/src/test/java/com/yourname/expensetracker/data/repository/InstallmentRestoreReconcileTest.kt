@@ -377,7 +377,8 @@ class InstallmentRestoreReconcileTest {
                 sourceLinkWriter = mockk(relaxed = true),
                 transactionValidator = mockk(relaxed = true),
                 diagnosticEventWriter = mockk(relaxed = true),
-                rateEligibilityEvaluator = mockk<RateEligibilityEvaluator>()
+                rateEligibilityEvaluator = mockk<RateEligibilityEvaluator>(),
+                receiptLinkService = com.yourname.expensetracker.testfixtures.noLinkedReceiptsLinkService()
             )
         } else {
             mockk<TransactionLifecycleCoordinator>(relaxed = true)

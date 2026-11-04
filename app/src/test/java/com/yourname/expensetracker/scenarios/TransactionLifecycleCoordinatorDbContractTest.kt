@@ -107,7 +107,8 @@ class TransactionLifecycleCoordinatorDbContractTest {
             currencySettingsRepository = currencySettingsRepository,
             sourceLinkWriter = mockk(relaxed = true),
             transactionValidator = mockk(relaxed = true),
-            diagnosticEventWriter = mockk(relaxed = true)
+            diagnosticEventWriter = mockk(relaxed = true),
+            receiptLinkService = com.yourname.expensetracker.testfixtures.noLinkedReceiptsLinkService()
         )
     }
 
@@ -521,7 +522,8 @@ class TransactionLifecycleCoordinatorDbContractTest {
             sourceLinkWriter = mockk(relaxed = true),
             transactionValidator = mockk(relaxed = true),
             diagnosticEventWriter = diagnosticWriter,
-            rateEligibilityEvaluator = evaluator
+            rateEligibilityEvaluator = evaluator,
+            receiptLinkService = com.yourname.expensetracker.testfixtures.noLinkedReceiptsLinkService()
         )
         val request = CreateExpenseRequest(
             merchant = "SKLAVENITIS",

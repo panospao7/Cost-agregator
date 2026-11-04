@@ -222,7 +222,8 @@ class ReceiptLinkServiceNestedFailureTest {
             currencySettingsRepository = currencySettingsRepository,
             sourceLinkWriter = sourceLinkWriter,
             transactionValidator = mockk(relaxed = true),
-            diagnosticEventWriter = mockk(relaxed = true)
+            diagnosticEventWriter = mockk(relaxed = true),
+            receiptLinkService = com.yourname.expensetracker.testfixtures.noLinkedReceiptsLinkService()
         )
         return ReceiptLifecycleCoordinator(
             database = database,

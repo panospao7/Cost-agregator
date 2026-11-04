@@ -142,7 +142,8 @@ class TransactionLifecycleCoordinatorTest {
             currencySettingsRepository = currencySettingsRepository,
             sourceLinkWriter = mockk(relaxed = true),
             transactionValidator = transactionValidator,
-            diagnosticEventWriter = diagnosticEventWriter
+            diagnosticEventWriter = diagnosticEventWriter,
+            receiptLinkService = com.yourname.expensetracker.testfixtures.noLinkedReceiptsLinkService()
         )
     }
 
@@ -574,7 +575,8 @@ class TransactionLifecycleCoordinatorTest {
                 currencySettingsRepository = NeverEmittingHomeCurrencySettingsRepository(),
                 sourceLinkWriter = mockk(relaxed = true),
                 transactionValidator = transactionValidator,
-                diagnosticEventWriter = diagnosticEventWriter
+                diagnosticEventWriter = diagnosticEventWriter,
+                receiptLinkService = com.yourname.expensetracker.testfixtures.noLinkedReceiptsLinkService()
             )
             val insertedSlot = slot<Expense>()
             coEvery { expenseDao.insertAtomic(capture(insertedSlot)) } returns 42L
@@ -872,7 +874,8 @@ class TransactionLifecycleCoordinatorTest {
             sourceLinkWriter = mockk(relaxed = true),
             transactionValidator = transactionValidator,
             diagnosticEventWriter = diagnosticEventWriter,
-            rateEligibilityEvaluator = evaluator
+            rateEligibilityEvaluator = evaluator,
+            receiptLinkService = com.yourname.expensetracker.testfixtures.noLinkedReceiptsLinkService()
         )
 
     private fun eligible(rate: Double) = com.yourname.expensetracker.domain.currency.RateEligibility.Eligible(

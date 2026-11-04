@@ -366,7 +366,8 @@ class GroupTransactionCoordinatorRollbackTest {
             currencySettingsRepository = currencySettings,
             sourceLinkWriter = mockk<SourceLinkWriter>(relaxed = true),
             transactionValidator = transactionValidator,
-            diagnosticEventWriter = mockk<DiagnosticEventWriter>(relaxed = true)
+            diagnosticEventWriter = mockk<DiagnosticEventWriter>(relaxed = true),
+            receiptLinkService = com.yourname.expensetracker.testfixtures.noLinkedReceiptsLinkService()
         )
     }
 

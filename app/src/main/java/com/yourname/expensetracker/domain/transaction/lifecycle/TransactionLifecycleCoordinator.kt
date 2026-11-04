@@ -38,6 +38,7 @@ import com.yourname.expensetracker.domain.provenance.SourceLinkWriteResult
 import com.yourname.expensetracker.domain.provenance.SourceLinkWriteException
 import com.yourname.expensetracker.domain.provenance.SourceLinkWriter
 import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
+import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
 import com.yourname.expensetracker.domain.sideeffect.MutationResult
 import com.yourname.expensetracker.domain.sideeffect.PostCommitActionBatch
@@ -106,7 +107,12 @@ class TransactionLifecycleCoordinator @Inject constructor(
     private val diagnosticEventWriter: DiagnosticEventWriter,
     // MEC INV-1: the single eligibility decision point. Built from the existing converter by
     // default so direct constructions keep compiling; Dagger injects the @Inject class.
-    private val rateEligibilityEvaluator: RateEligibilityEvaluator = RateEligibilityEvaluator(currencyConverter)
+    private val rateEligibilityEvaluator: RateEligibilityEvaluator = RateEligibilityEvaluator(currencyConverter),
+    // P-03-1 part 2: lazy because ReceiptLinkService -> ExpenseCategoryAssignmentPort
+    // (DefaultExpenseCategoryAssignmentService) -> this coordinator would be a Dagger cycle.
+    // Required and non-null: Dagger rejects a @Nullable Lazy, and a missing unlink owner must
+    // never silently skip the unlink.
+    private val receiptLinkService: dagger.Lazy<ReceiptLinkService>
 ) {
     // ---- Write-barrier guard ----
 
@@ -2458,6 +2464,21 @@ class TransactionLifecycleCoordinator @Inject constructor(
             if (ownershipChanged) {
                 failIfGroupLinkedForEdit(expenseId)
             }
+            // N-01-2: validate the share against the stored total, only when share fields change.
+            val shareChanged = current.isSharedExpense != normalized.isSharedExpense ||
+                current.mySharePercentage != normalized.mySharePercentage ||
+                current.myShareAmount != normalized.myShareAmount
+            if (shareChanged) {
+                val shareErrors = transactionValidator.validateOwnershipShare(
+                    isSharedExpense = normalized.isSharedExpense,
+                    myShareAmount = normalized.myShareAmount,
+                    totalAmount = current.amount
+                )
+                if (shareErrors.isNotEmpty()) {
+                    // Bounded code only; no amounts or user text in the exception.
+                    throw IllegalArgumentException(shareErrors.first().code)
+                }
+            }
         }
         val mutation = updateOwnershipDbOnlyV2(
             expenseId = expenseId,
@@ -3037,6 +3058,26 @@ class TransactionLifecycleCoordinator @Inject constructor(
                     return@withTransaction
                 }
                 val snapshot = expenseToSnapshot(fresh)
+
+                // P-03-1 part 2: unlink every linked receipt through the receipt link
+                // owner inside this transaction (its own transaction nests re-entrantly),
+                // so receipt match state, warranty / return window / item expenseId are
+                // cleared with the delete. A failed unlink aborts and rolls back the delete.
+                // Failure text is a bounded code only (no cause, no SQL text).
+                val linkService = receiptLinkService.get()
+                for (link in linkService.getLinksForExpense(fresh.id)) {
+                    val unlinked = linkService.unlinkReceiptFromExpense(
+                        receiptId = link.receiptId,
+                        expenseId = fresh.id
+                    )
+                    if (unlinked.isFailure) {
+                        Timber.w(
+                            "deleteExpense: receipt unlink failed for expense %d; rolling back",
+                            fresh.id
+                        )
+                        throw IllegalStateException("RECEIPT_UNLINK_FAILED")
+                    }
+                }
 
                 transactionEventDao.insert(
                     TransactionEvent(

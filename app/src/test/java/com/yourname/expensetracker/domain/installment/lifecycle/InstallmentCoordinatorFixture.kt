@@ -398,7 +398,8 @@ class InstallmentCoordinatorFixture private constructor(
                 sourceLinkWriter = mockk(relaxed = true),
                 transactionValidator = mockk(relaxed = true),
                 diagnosticEventWriter = mockk(relaxed = true),
-                rateEligibilityEvaluator = evaluator
+                rateEligibilityEvaluator = evaluator,
+                receiptLinkService = com.yourname.expensetracker.testfixtures.noLinkedReceiptsLinkService()
             )
             val facts = InstallmentExpenseFactsReaderImpl(db.expenseDao(), db.recurringOccurrenceDao(), db.categoryDao())
             return InstallmentCoordinatorFixture(db, time, planner, evaluator, tlc, barrier, facts, categoryId, modeRef)

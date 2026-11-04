@@ -12,7 +12,9 @@ import com.yourname.expensetracker.domain.naturallanguage.SearchCursor
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.every
+import io.mockk.coVerify
 import io.mockk.mockk
+import io.mockk.spyk
 import java.util.concurrent.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -149,7 +151,11 @@ class NaturalLanguageSearchViewModelTest {
         return converter
     }
 
-    private fun viewModel(repo: FakeRepo, converter: CurrencyConverter): NaturalLanguageSearchViewModel {
+    private fun viewModel(
+        repo: FakeRepo,
+        converter: CurrencyConverter,
+        wrapEngine: (NaturalLanguageSearchEngine) -> NaturalLanguageSearchEngine = { it }
+    ): NaturalLanguageSearchViewModel {
         val timeProvider = mockk<TimeProvider>()
         every { timeProvider.now() } returns nowMs
         val settings = mockk<CurrencySettingsRepository>()
@@ -167,7 +173,14 @@ class NaturalLanguageSearchViewModelTest {
             categoryRepository = mockk(relaxed = true),
             merchantNormalizationRepository = merchants
         )
-        return NaturalLanguageSearchViewModel(engine, settings, converter, mockk(relaxed = true))
+        return NaturalLanguageSearchViewModel(wrapEngine(engine), settings, converter, mockk(relaxed = true))
+    }
+
+    /** View model over a spied real engine so the number of interpretQuery calls can be verified. */
+    private fun spiedViewModel(repo: FakeRepo): Pair<NaturalLanguageSearchViewModel, NaturalLanguageSearchEngine> {
+        lateinit var spy: NaturalLanguageSearchEngine
+        val vm = viewModel(repo, converter()) { real -> spyk(real).also { spy = it } }
+        return vm to spy
     }
 
     /** Types the query and lets the 300 ms debounce and the search finish in virtual time. */
@@ -504,6 +517,70 @@ class NaturalLanguageSearchViewModelTest {
         // A swallowed CancellationException would land in the generic handler: Error + Unavailable.
         assertEquals(SearchState.Interpreting, vm.searchState.value)
         assertEquals(SearchTotal.Available(40.0, 0), vm.total.value)
+    }
+
+    // ---- retry and short-query behaviour ----
+
+    @Test
+    fun `retrySearch after an Error interprets the same query again and can succeed`() = runTest(dispatcher) {
+        val repo = FakeRepo().apply {
+            rows = listOf(row(1, 40.0, 40.0))
+            failure = IllegalStateException("synthetic")
+        }
+        val (vm, engine) = spiedViewModel(repo)
+        search(vm, "abc")
+        assertEquals(SearchState.Error("SEARCH_FAILED"), vm.searchState.value)
+
+        repo.failure = null
+        vm.retrySearch()
+        runCurrent()
+
+        coVerify(exactly = 2) { engine.interpretQuery("abc") }
+        assertEquals(SearchState.Results, vm.searchState.value)
+        assertEquals(SearchTotal.Available(40.0, 0), vm.total.value)
+    }
+
+    @Test
+    fun `updateQuery with fewer than 3 characters after an Error returns to Idle`() = runTest(dispatcher) {
+        val repo = FakeRepo().apply { failure = IllegalStateException("synthetic") }
+        val vm = viewModel(repo, converter())
+        search(vm, "abc")
+        assertEquals(SearchState.Error("SEARCH_FAILED"), vm.searchState.value)
+
+        vm.updateQuery("ab")
+
+        assertEquals(SearchState.Idle, vm.searchState.value)
+        assertEquals(SearchTotal.Unavailable, vm.total.value)
+        assertTrue(vm.results.value.isEmpty())
+    }
+
+    @Test
+    fun `typing abc then ab then abc searches again for the second abc`() = runTest(dispatcher) {
+        val repo = FakeRepo().apply { rows = listOf(row(1, 40.0, 40.0)) }
+        val (vm, engine) = spiedViewModel(repo)
+
+        search(vm, "abc")
+        search(vm, "ab")
+        assertEquals(SearchState.Idle, vm.searchState.value)
+        search(vm, "abc")
+
+        coVerify(exactly = 2) { engine.interpretQuery("abc") }
+        assertEquals(SearchState.Results, vm.searchState.value)
+    }
+
+    @Test
+    fun `retrySearch with fewer than 3 characters does nothing`() = runTest(dispatcher) {
+        val repo = FakeRepo().apply { rows = listOf(row(1, 40.0, 40.0)) }
+        val (vm, engine) = spiedViewModel(repo)
+        vm.updateQuery("ab")
+
+        vm.retrySearch()
+        runCurrent()
+        advanceTimeBy(301)
+        runCurrent()
+
+        coVerify(exactly = 0) { engine.interpretQuery(any()) }
+        assertEquals(SearchState.Idle, vm.searchState.value)
     }
 
     private companion object {

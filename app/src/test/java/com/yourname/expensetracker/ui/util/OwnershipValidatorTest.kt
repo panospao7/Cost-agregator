@@ -74,4 +74,51 @@ class OwnershipValidatorTest {
         val result = OwnershipValidator.validate(false, false, "", "", "garbage")
         assertTrue(result is OwnershipValidator.ValidationResult.Valid)
     }
+
+    private fun shareAmountWithTotal(text: String, total: Double?): OwnershipValidator.ValidationResult {
+        Locale.setDefault(Locale.US)
+        return OwnershipValidator.validate(
+            isNotMine = false,
+            isSharedExpense = true,
+            sharedWithName = "Anna",
+            sharePercentageText = "",
+            shareAmountText = text,
+            totalAmount = total
+        )
+    }
+
+    @Test
+    fun `N-01-2 share amount over total is rejected`() {
+        assertEquals(
+            OwnershipValidator.ValidationResult.Invalid("Share amount cannot exceed the transaction total"),
+            shareAmountWithTotal("10.01", 10.0)
+        )
+    }
+
+    @Test
+    fun `N-01-2 share amount equal to total and below total are valid`() {
+        assertEquals(OwnershipValidator.ValidationResult.Valid, shareAmountWithTotal("10.00", 10.0))
+        assertEquals(OwnershipValidator.ValidationResult.Valid, shareAmountWithTotal("9.99", 10.0))
+    }
+
+    @Test
+    fun `N-01-2 no total keeps the previous behaviour for large share amounts`() {
+        assertEquals(OwnershipValidator.ValidationResult.Valid, shareAmountWithTotal("1000000", null))
+        assertEquals(
+            OwnershipValidator.ValidationResult.Valid,
+            OwnershipValidator.validate(false, true, "Anna", "", "1000000")
+        )
+    }
+
+    @Test
+    fun `N-01-2 total does not affect percentage shares or non shared expenses`() {
+        assertEquals(
+            OwnershipValidator.ValidationResult.Valid,
+            OwnershipValidator.validate(false, true, "Anna", "50", "", totalAmount = 1.0)
+        )
+        assertEquals(
+            OwnershipValidator.ValidationResult.Valid,
+            OwnershipValidator.validate(false, false, "", "", "99999", totalAmount = 1.0)
+        )
+    }
 }
