@@ -289,8 +289,12 @@ class FinancialStressForecastEngine @Inject constructor(
         val riskLevel = classifyRiskLevel(crunchProbability)
         
         // 7. Calculate discretionary buffer
-        val emergencyBuffer = getEmergencyBuffer()
-        val discretionaryBuffer = (projectedBalance - emergencyBuffer).coerceAtLeast(0.0)
+        val (emergencyBuffer, bufferCurrency) = getEmergencyBuffer(displayCurrency)
+        val discretionaryBuffer = if (bufferCurrency.equals(displayCurrency, ignoreCase = true)) {
+            (projectedBalance - emergencyBuffer).coerceAtLeast(0.0)
+        } else {
+            projectedBalance.coerceAtLeast(0.0)
+        }
         
         return StressHorizon(
             daysAhead = daysAhead,
@@ -806,14 +810,16 @@ class FinancialStressForecastEngine @Inject constructor(
             }
             
             // Check emergency buffer
-            val emergencyBuffer = getEmergencyBuffer()
+            val (emergencyBuffer, bufferCurrency) = getEmergencyBuffer(displayCurrency)
+            val bufferInDisplayCurrency = bufferCurrency.equals(displayCurrency, ignoreCase = true)
             val minBuffer = horizons.minOf { it.discretionaryBuffer }
-            if (minBuffer < emergencyBuffer) {
+            if ((bufferInDisplayCurrency && minBuffer < emergencyBuffer) ||
+                (!bufferInDisplayCurrency && horizons.any { it.projectedBalance <= 0.0 })) {
                 recommendations.add(
                     StressRecommendation(
                         kind = StressRecommendationKind.BUILD_EMERGENCY_BUFFER,
                         bufferTarget = emergencyBuffer,
-                        bufferCurrency = displayCurrency
+                        bufferCurrency = bufferCurrency
                     )
                 )
             }
@@ -824,8 +830,9 @@ class FinancialStressForecastEngine @Inject constructor(
         }
         
         // Add positive reinforcement when healthy
-        val emergencyBuffer = getEmergencyBuffer()
-        if (!anyRisk && horizons.all { it.projectedBalance > emergencyBuffer }) {
+        val (emergencyBuffer, bufferCurrency) = getEmergencyBuffer(displayCurrency)
+        if (!anyRisk && bufferCurrency.equals(displayCurrency, ignoreCase = true) &&
+            horizons.all { it.projectedBalance > emergencyBuffer }) {
             recommendations.add(StressRecommendation(StressRecommendationKind.HEALTHY_OUTLOOK))
         }
 
@@ -869,9 +876,21 @@ class FinancialStressForecastEngine @Inject constructor(
      * Resolve the emergency buffer amount in the home/display currency.
      * Defaults to [DEFAULT_EMERGENCY_BUFFER_FALLBACK] if the setting is unavailable.
      */
-    private suspend fun getEmergencyBuffer(): Double {
-        return CancellationSafe.runCatchingCancellable { currencySettingsRepository.emergencyBuffer().first() }
+    private suspend fun getEmergencyBuffer(displayCurrency: String): Pair<Double, String> {
+        val rawBuffer = CancellationSafe.runCatchingCancellable { currencySettingsRepository.emergencyBuffer().first() }
             .getOrElse { DEFAULT_EMERGENCY_BUFFER_FALLBACK }
+        val homeCurrency = CancellationSafe.runCatchingCancellable { currencySettingsRepository.resolveHomeCurrency() }
+            .getOrNull()?.currencyOrNull?.code
+            ?: return rawBuffer to ""
+        if (homeCurrency.equals(displayCurrency, ignoreCase = true)) {
+            return rawBuffer to displayCurrency
+        }
+        val converted = convertToDisplayOrNull(rawBuffer, homeCurrency, displayCurrency)
+        return if (converted != null) {
+            converted to displayCurrency
+        } else {
+            rawBuffer to homeCurrency
+        }
     }
 
     /**

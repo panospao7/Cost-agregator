@@ -275,7 +275,10 @@ private fun HorizonDetailView(
                 color = probColor.copy(alpha = 0.15f)
             ) {
                 Text(
-                    text = "${String.format("%.0f", horizon.probabilityOfCrunch * 100)}% risk",
+                    text = stringResource(
+                        R.string.stress_forecast_risk_percent_format,
+                        String.format(Locale.getDefault(), "%.0f", horizon.probabilityOfCrunch * 100)
+                    ),
                     style = MaterialTheme.typography.labelSmall,
                     color = probColor,
                     fontWeight = FontWeight.SemiBold,

@@ -50,7 +50,8 @@ data class ExcludedExpense(
     val reason: ExclusionReason,
     val date: Long? = null,
     val warningType: AnalyticsConversionWarningType? = null,
-    val message: String? = null
+    val message: String? = null,
+    val categoryId: Long? = null
 )
 
 enum class ExclusionReason {

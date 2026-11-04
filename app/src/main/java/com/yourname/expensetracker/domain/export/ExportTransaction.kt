@@ -72,4 +72,21 @@ data class ExportTransaction(
      * never written to any output column.
      */
     val spendingExclusionReason: String? = null
-)
+) {
+    /**
+     * True when this row carries no usable conversion (see [isNoRateConversionSentinel]).
+     * Exporters write a blank (CSV) / null (JSON) for the conversion columns in that case,
+     * never a numeric 0.
+     */
+    val hasNoRateConversion: Boolean
+        get() = isNoRateConversionSentinel(exchangeRateUsed, baseCurrency)
+}
+
+/**
+ * The single "no usable conversion recorded" rule for exports. A row has no conversion when
+ * the stored rate is not finite, is not positive, or the base currency is blank. Owner
+ * decision: exports leave such conversion fields blank (CSV) / null (JSON) and never emit
+ * 0 in their place. Used by [ExpenseExportMapper] and by every serializer.
+ */
+internal fun isNoRateConversionSentinel(exchangeRateUsed: Double, baseCurrency: String): Boolean =
+    !exchangeRateUsed.isFinite() || exchangeRateUsed <= 0.0 || baseCurrency.isBlank()

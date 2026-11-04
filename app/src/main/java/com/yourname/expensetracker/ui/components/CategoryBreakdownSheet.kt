@@ -30,7 +30,8 @@ data class CategorySpending(
     val icon: String,
     val color: Color,
     val amount: Double,
-    val percentage: Float
+    val percentage: Float,
+    val isUnavailable: Boolean = false
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -44,8 +45,11 @@ fun CategoryBreakdownSheet(
     currency: String = "EUR"
 ) {
     var expanded by remember { mutableStateOf(false) }
-    val displayCategories = if (expanded) categories else categories.take(5)
-    val hasMore = !expanded && categories.size > 5
+    val sortedCategories = remember(categories) {
+        categories.sortedWith(compareBy<CategoryBreakdown> { it.isUnavailable }.thenByDescending { it.totalAmount })
+    }
+    val displayCategories = if (expanded) sortedCategories else sortedCategories.take(5)
+    val hasMore = !expanded && sortedCategories.size > 5
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -93,7 +97,8 @@ fun CategoryBreakdownSheet(
                     icon = breakdown.category.icon,
                     color = color,
                     amount = breakdown.totalAmount,
-                    percentage = (breakdown.percentageOfTotal / 100.0).toFloat()
+                    percentage = (breakdown.percentageOfTotal / 100.0).toFloat(),
+                    isUnavailable = breakdown.isUnavailable
                 ),
                 currency = currency
             )
@@ -178,7 +183,11 @@ private fun CategoryRow(category: CategorySpending, /** Placeholder default. Pro
                 }
 
                 Text(
-                    text = CurrencyFormatter.formatMoney(category.amount, currency),
+                    text = if (category.isUnavailable) {
+                        stringResource(R.string.groups_total_unavailable)
+                    } else {
+                        CurrencyFormatter.formatMoney(category.amount, currency)
+                    },
                     style = MaterialTheme.typography.bodyMedium.copy(
                         fontWeight = FontWeight.Bold,
                         fontFeatureSettings = "tnum"

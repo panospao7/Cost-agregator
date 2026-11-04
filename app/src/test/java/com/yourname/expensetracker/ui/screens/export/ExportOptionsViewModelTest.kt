@@ -637,8 +637,9 @@ class ExportOptionsViewModelTest {
 
         viewModel.generateExport()
         val csvRow = csvOut.readLines().single { it.contains("NoRateCafe") }
-        // originalAmount, homeCurrency (empty), baseAmount, baseCurrency (empty)
-        assertTrue(csvRow, csvRow.contains(",,0.0,,"))
+        // Previously encoded the P-12-1 bug (`,,0.0,,` for sentinel baseAmount);
+        // originalAmount (12.34), homeCurrency (empty), baseAmount (empty), baseCurrency (empty), exchangeRateUsed (empty), conversionRateUsed (empty)
+        assertTrue(csvRow, csvRow.contains(",USD,12.34,,,,,,false,"))
         assertFalse(csvRow, csvRow.contains("EUR"))
 
         stubPagedExpenses(listOf(expense), emptyList())
@@ -648,9 +649,203 @@ class ExportOptionsViewModelTest {
         viewModel.selectFormat("json")
         viewModel.generateExport()
         val jsonText = jsonOut.readText()
-        assertTrue(jsonText.contains("\"homeCurrency\":\"\""))
-        assertTrue(jsonText.contains("\"baseCurrency\":\"\""))
+        assertTrue("no-rate row writes homeCurrency as JSON null", jsonText.contains("\"homeCurrency\":null"))
+        assertFalse("no-rate row must not write an empty-string homeCurrency", jsonText.contains("\"homeCurrency\":\"\""))
+        assertTrue(jsonText.contains("\"baseCurrency\":null"))
         assertFalse(jsonText.contains("\"EUR\""))
+    }
+
+    @Test
+    fun `P-12-1 csv sentinel row emits blank baseAmount baseCurrency exchangeRateUsed and preserves column count`() = runBlocking {
+        val sentinel = createExpense(id = 10L, merchant = "SentinelRow", currency = "USD").copy(
+            amount = 50.0,
+            baseAmount = 0.0,
+            baseCurrency = "",
+            exchangeRateUsed = 0.0
+        )
+        val converted = createExpense(id = 11L, merchant = "ConvertedRow", currency = "USD").copy(
+            amount = 50.0,
+            baseAmount = 42.5,
+            baseCurrency = "EUR",
+            exchangeRateUsed = 0.85
+        )
+        val expenses = listOf(sentinel, converted)
+        coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns expenses.size
+        coEvery { exportDataRepository.getExpensesBetween(any(), any()) } returns expenses
+        stubPagedExpenses(expenses, emptyList())
+        val csvOut = createTempFile(prefix = "export_p12_1_csv_", suffix = ".csv")
+        every { exportDataRepository.createExportFile(any(), any()) } returns csvOut
+
+        viewModel.selectFormat("csv")
+        viewModel.generateExport()
+        val lines = csvOut.readLines()
+        val headerCells = lines.single { it.startsWith("ID,Date") }.split(",")
+        val sentinelCells = lines.single { it.contains("SentinelRow") }.split(",")
+        val convertedCells = lines.single { it.contains("ConvertedRow") }.split(",")
+
+        // Column count invariant: header, sentinel row, and non-sentinel row must have identical field counts
+        assertEquals(headerCells.size, sentinelCells.size)
+        assertEquals(convertedCells.size, sentinelCells.size)
+
+        val baseAmountIdx = headerCells.indexOf("BaseAmount")
+        val baseCurrencyIdx = headerCells.indexOf("BaseCurrency")
+        val exchangeRateIdx = headerCells.indexOf("ExchangeRateUsed")
+        assertTrue(baseAmountIdx >= 0 && baseCurrencyIdx >= 0 && exchangeRateIdx >= 0)
+
+        // Sentinel row produces empty cells for all three fields
+        assertEquals("", sentinelCells[baseAmountIdx])
+        assertEquals("", sentinelCells[baseCurrencyIdx])
+        assertEquals("", sentinelCells[exchangeRateIdx])
+
+        // Non-sentinel negative control keeps its real values unchanged
+        assertEquals("42.5", convertedCells[baseAmountIdx])
+        assertEquals("EUR", convertedCells[baseCurrencyIdx])
+        assertEquals("0.85", convertedCells[exchangeRateIdx])
+    }
+
+    @Test
+    fun `P-12-1 json sentinel row emits literal null tokens for baseAmount baseCurrency exchangeRateUsed and remains parseable`() = runBlocking {
+        val sentinel = createExpense(id = 20L, merchant = "SentinelJson", currency = "USD").copy(
+            amount = 50.0,
+            baseAmount = 0.0,
+            baseCurrency = "",
+            exchangeRateUsed = 0.0
+        )
+        val converted = createExpense(id = 21L, merchant = "ConvertedJson", currency = "USD").copy(
+            amount = 50.0,
+            baseAmount = 42.5,
+            baseCurrency = "EUR",
+            exchangeRateUsed = 0.85
+        )
+        val expenses = listOf(sentinel, converted)
+        coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns expenses.size
+        coEvery { exportDataRepository.getExpensesBetween(any(), any()) } returns expenses
+        stubPagedExpenses(expenses, emptyList())
+        val jsonOut = createTempFile(prefix = "export_p12_1_json_", suffix = ".json")
+        every { exportDataRepository.createExportFile(any(), any()) } returns jsonOut
+
+        viewModel.selectFormat("json")
+        viewModel.generateExport()
+        val jsonText = jsonOut.readText()
+
+        // Assert literal JSON null token (not string "null") in raw text
+        assertTrue(jsonText.contains("\"baseAmount\":null"))
+        assertTrue(jsonText.contains("\"baseCurrency\":null"))
+        assertTrue(jsonText.contains("\"exchangeRateUsed\":null"))
+        assertFalse(jsonText.contains("\"baseAmount\":\"null\""))
+        assertFalse(jsonText.contains("\"baseCurrency\":\"null\""))
+        assertFalse(jsonText.contains("\"exchangeRateUsed\":\"null\""))
+
+        // Assert JSON is parseable and inspect parsed rows
+        val root = org.json.JSONObject(jsonText)
+        val rows = root.getJSONArray("rows")
+        assertEquals(2, rows.length())
+
+        val sentinelObj = rows.getJSONObject(0)
+        assertEquals("SentinelJson", sentinelObj.getString("merchant"))
+        assertTrue(sentinelObj.isNull("baseAmount"))
+        assertTrue(sentinelObj.isNull("baseCurrency"))
+        assertTrue(sentinelObj.isNull("exchangeRateUsed"))
+
+        // Non-sentinel negative control keeps its real values unchanged
+        val convertedObj = rows.getJSONObject(1)
+        assertEquals("ConvertedJson", convertedObj.getString("merchant"))
+        assertFalse(convertedObj.isNull("baseAmount"))
+        assertFalse(convertedObj.isNull("baseCurrency"))
+        assertFalse(convertedObj.isNull("exchangeRateUsed"))
+        assertEquals(42.5, convertedObj.getDouble("baseAmount"), 0.0001)
+        assertEquals("EUR", convertedObj.getString("baseCurrency"))
+        assertEquals(0.85, convertedObj.getDouble("exchangeRateUsed"), 0.0001)
+    }
+
+    private fun noConversionRows(): List<Expense> = listOf(
+        Triple(30L, "RowNotFinite", Double.NaN),
+        Triple(31L, "RowPosInf", Double.POSITIVE_INFINITY),
+        Triple(32L, "RowNegInf", Double.NEGATIVE_INFINITY),
+        Triple(33L, "RowNegative", -0.5)
+    ).map { (id, merchant, rate) ->
+        createExpense(id = id, merchant = merchant, currency = "USD").copy(
+            amount = 50.0,
+            baseAmount = 42.5,
+            baseCurrency = "EUR",
+            exchangeRateUsed = rate
+        )
+    } + createExpense(id = 34L, merchant = "RowBlankBase", currency = "USD").copy(
+        amount = 50.0,
+        baseAmount = 42.5,
+        baseCurrency = "",
+        exchangeRateUsed = 0.85
+    ) + createExpense(id = 35L, merchant = "RowConverted", currency = "USD").copy(
+        amount = 50.0,
+        baseAmount = 42.5,
+        baseCurrency = "EUR",
+        exchangeRateUsed = 0.85
+    )
+
+    @Test
+    fun `no-conversion rows with non-finite negative or blank-base values export blank csv cells never 0`() = runBlocking {
+        val expenses = noConversionRows()
+        coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns expenses.size
+        coEvery { exportDataRepository.getExpensesBetween(any(), any()) } returns expenses
+        stubPagedExpenses(expenses, emptyList())
+        val csvOut = createTempFile(prefix = "export_noconv_csv_", suffix = ".csv")
+        every { exportDataRepository.createExportFile(any(), any()) } returns csvOut
+
+        viewModel.selectFormat("csv")
+        viewModel.generateExport()
+        val csvText = csvOut.readText()
+        val lines = csvText.lines()
+        val headerCells = lines.single { it.startsWith("ID,Date") }.split(",")
+        val baseAmountIdx = headerCells.indexOf("BaseAmount")
+        val baseCurrencyIdx = headerCells.indexOf("BaseCurrency")
+        val exchangeRateIdx = headerCells.indexOf("ExchangeRateUsed")
+        assertTrue(baseAmountIdx >= 0 && baseCurrencyIdx >= 0 && exchangeRateIdx >= 0)
+
+        for (merchant in listOf("RowNotFinite", "RowPosInf", "RowNegInf", "RowNegative", "RowBlankBase")) {
+            val cells = lines.single { it.contains(merchant) }.split(",")
+            assertEquals("$merchant column count", headerCells.size, cells.size)
+            assertEquals("$merchant baseAmount must be blank, not 0 or the stored 42.5", "", cells[baseAmountIdx])
+            assertEquals("$merchant baseCurrency must be blank", "", cells[baseCurrencyIdx])
+            assertEquals("$merchant exchangeRateUsed must be blank", "", cells[exchangeRateIdx])
+        }
+        assertFalse("no NaN may reach the file", csvText.contains("NaN"))
+        assertFalse("no Infinity may reach the file", csvText.contains("Infinity"))
+
+        val converted = lines.single { it.contains("RowConverted") }.split(",")
+        assertEquals("42.5", converted[baseAmountIdx])
+        assertEquals("EUR", converted[baseCurrencyIdx])
+        assertEquals("0.85", converted[exchangeRateIdx])
+    }
+
+    @Test
+    fun `no-conversion rows with non-finite negative or blank-base values export null json fields never 0`() = runBlocking {
+        val expenses = noConversionRows()
+        coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns expenses.size
+        coEvery { exportDataRepository.getExpensesBetween(any(), any()) } returns expenses
+        stubPagedExpenses(expenses, emptyList())
+        val jsonOut = createTempFile(prefix = "export_noconv_json_", suffix = ".json")
+        every { exportDataRepository.createExportFile(any(), any()) } returns jsonOut
+
+        viewModel.selectFormat("json")
+        viewModel.generateExport()
+        val jsonText = jsonOut.readText()
+        assertFalse("no NaN may reach the file", jsonText.contains("NaN"))
+        assertFalse("no Infinity may reach the file", jsonText.contains("Infinity"))
+
+        val rows = org.json.JSONObject(jsonText).getJSONArray("rows")
+        assertEquals(expenses.size, rows.length())
+        val byMerchant = (0 until rows.length()).map { rows.getJSONObject(it) }.associateBy { it.getString("merchant") }
+
+        for (merchant in listOf("RowNotFinite", "RowPosInf", "RowNegInf", "RowNegative", "RowBlankBase")) {
+            val row = byMerchant.getValue(merchant)
+            assertTrue("$merchant baseAmount must be JSON null, not 0", row.isNull("baseAmount"))
+            assertTrue("$merchant baseCurrency must be JSON null", row.isNull("baseCurrency"))
+            assertTrue("$merchant exchangeRateUsed must be JSON null", row.isNull("exchangeRateUsed"))
+        }
+        val converted = byMerchant.getValue("RowConverted")
+        assertEquals(42.5, converted.getDouble("baseAmount"), 0.0001)
+        assertEquals("EUR", converted.getString("baseCurrency"))
+        assertEquals(0.85, converted.getDouble("exchangeRateUsed"), 0.0001)
     }
 
     @Test

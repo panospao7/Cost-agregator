@@ -259,6 +259,14 @@ fun AnalyticsScreen(
                             }
                         )
                     }
+                    // N-08-7: a category whose spend cannot be converted (e.g. USD-only with no
+                    // rate) has no enhanced card. It must stay visible as unavailable rather
+                    // than disappearing next to the categories that did convert.
+                    val enhancedCategoryIds = state.enhancedCategories.mapTo(mutableSetOf()) { it.category.id }
+                    val unavailableCategories = state.categoryBreakdown.filter {
+                        it.isUnavailable && it.category.id !in enhancedCategoryIds
+                    }
+                    items(unavailableCategories) { CategoryItem(it, homeCurrency = currency) }
                 } else if (state.categoryBreakdown.isNotEmpty()) {
                     item { SectionHeader(stringResource(R.string.analytics_section_breakdown_category)) }
                     item {
@@ -1242,7 +1250,11 @@ fun CategoryItem(item: AnalyticsCategoryBreakdown, homeCurrency: String = item.d
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(item.category.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
                 Text(
-                    CurrencyFormatter.formatMoney(item.moneyTotal.amount, item.moneyTotal.currency.code),
+                    if (item.isUnavailable) {
+                        stringResource(R.string.groups_total_unavailable)
+                    } else {
+                        CurrencyFormatter.formatMoney(item.moneyTotal.amount, item.moneyTotal.currency.code)
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.Bold
                 )
@@ -1259,7 +1271,11 @@ fun CategoryItem(item: AnalyticsCategoryBreakdown, homeCurrency: String = item.d
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                stringResource(R.string.analytics_percent_of_total_format, item.percentage.toInt(), item.count),
+                if (item.isUnavailable) {
+                    stringResource(R.string.analytics_transactions_format, item.count)
+                } else {
+                    stringResource(R.string.analytics_percent_of_total_format, item.percentage.toInt(), item.count)
+                },
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
             )

@@ -101,7 +101,8 @@ fun TotalsDashboardCard(
             CurrentPeriodSummary(
                 label = period.periodLabel,
                 money = (period.moneyResult as? MoneyAggregateResult.Available)?.aggregate,
-                status = period.status
+                status = period.status,
+                isUnavailable = period.isUnavailable
             )
             Spacer(modifier = Modifier.height(16.dp))
         }
@@ -141,7 +142,8 @@ fun TotalsDashboardCard(
 private fun CurrentPeriodSummary(
     label: String,
     money: MoneyAggregate?,
-    status: PeriodStatus
+    status: PeriodStatus,
+    isUnavailable: Boolean = false
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val statusColor = when (status) {
@@ -151,11 +153,12 @@ private fun CurrentPeriodSummary(
         PeriodStatus.NO_DATA -> SemanticColors.TextSecondary
     }
     
-    val statusText = when (status) {
-        PeriodStatus.UNDER_AVERAGE -> stringResource(R.string.totals_status_under_average)
-        PeriodStatus.OVER_AVERAGE -> stringResource(R.string.totals_status_over_average)
-        PeriodStatus.CURRENT -> stringResource(R.string.totals_status_current)
-        PeriodStatus.NO_DATA -> stringResource(R.string.totals_status_no_data)
+    val statusText = when {
+        isUnavailable -> stringResource(R.string.groups_total_unavailable)
+        status == PeriodStatus.UNDER_AVERAGE -> stringResource(R.string.totals_status_under_average)
+        status == PeriodStatus.OVER_AVERAGE -> stringResource(R.string.totals_status_over_average)
+        status == PeriodStatus.CURRENT -> stringResource(R.string.totals_status_current)
+        else -> stringResource(R.string.totals_status_no_data)
     }
 
     Surface(
@@ -177,7 +180,11 @@ private fun CurrentPeriodSummary(
                     color = SemanticColors.TextSecondary
                 )
                 Text(
-                    text = money?.formatDisplay() ?: stringResource(R.string.totals_status_no_data),
+                    text = if (isUnavailable) {
+                        stringResource(R.string.groups_total_unavailable)
+                    } else {
+                        money?.formatDisplay() ?: stringResource(R.string.totals_status_no_data)
+                    },
                     style = MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.ExtraBold,
                     color = statusColor

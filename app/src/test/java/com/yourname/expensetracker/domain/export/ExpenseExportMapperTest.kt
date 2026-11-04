@@ -66,4 +66,40 @@ class ExpenseExportMapperTest {
             ).toExportTransaction().sourceAccountName
         ).isEqualTo("Unknown Funding Source")
     }
+
+    @Test
+    fun `toExportTransaction normalizes sentinel conversion snapshot and preserves non-sentinel snapshot`() {
+        val sentinelExpense = Expense(
+            id = 50L,
+            amount = 80.0,
+            currency = "USD",
+            merchant = "NoRateHotel",
+            transactionType = TransactionType.PURCHASE,
+            date = 1_700_000_000_000L,
+            baseAmount = 0.0,
+            baseCurrency = "",
+            exchangeRateUsed = 0.0
+        )
+        val convertedExpense = sentinelExpense.copy(
+            id = 51L,
+            merchant = "ConvertedHotel",
+            baseAmount = 68.0,
+            baseCurrency = "EUR",
+            exchangeRateUsed = 0.85
+        )
+
+        val sentinelMapped = sentinelExpense.toExportTransaction()
+        assertThat(sentinelMapped.baseAmount).isEqualTo(0.0)
+        assertThat(sentinelMapped.baseCurrency).isEmpty()
+        assertThat(sentinelMapped.homeCurrency).isEmpty()
+        assertThat(sentinelMapped.exchangeRateUsed).isEqualTo(0.0)
+        assertThat(sentinelMapped.conversionRateUsed).isNull()
+
+        val convertedMapped = convertedExpense.toExportTransaction()
+        assertThat(convertedMapped.baseAmount).isEqualTo(68.0)
+        assertThat(convertedMapped.baseCurrency).isEqualTo("EUR")
+        assertThat(convertedMapped.homeCurrency).isEqualTo("EUR")
+        assertThat(convertedMapped.exchangeRateUsed).isEqualTo(0.85)
+        assertThat(convertedMapped.conversionRateUsed).isEqualTo(0.85)
+    }
 }

@@ -72,26 +72,38 @@ class BudgetRecommendationEngineTest {
 
     @Test
     fun `budget health summary includes formatted spending and forecast metrics`() {
-        val summary = engine.getBudgetHealthSummary(
-            budget = BudgetRecommendationBudget(amount = 1000.0),
-            forecast = BudgetRecommendationForecast(
-                predictedSpending = 1120.45,
-                predictedRemaining = -120.45,
-                confidenceScore = 0.82,
-                riskLevel = BudgetRecommendationRiskLevel.HIGH,
-                overspendProbability = 0.67
-            ),
-            currentSpending = 700.0
-        )
+        val originalLocale = java.util.Locale.getDefault()
+        val originalFormatLocale = java.util.Locale.getDefault(java.util.Locale.Category.FORMAT)
+        val originalDisplayLocale = java.util.Locale.getDefault(java.util.Locale.Category.DISPLAY)
+        try {
+            java.util.Locale.setDefault(java.util.Locale.US)
+            val summary = engine.getBudgetHealthSummary(
+                budget = BudgetRecommendationBudget(amount = 1000.0),
+                forecast = BudgetRecommendationForecast(
+                    predictedSpending = 1120.45,
+                    predictedRemaining = -120.45,
+                    confidenceScore = 0.82,
+                    riskLevel = BudgetRecommendationRiskLevel.HIGH,
+                    overspendProbability = 0.67
+                ),
+                currentSpending = 700.0
+            )
 
-        assertTrue(Regex("Budget: €1000[.,]00").containsMatchIn(summary))
-        assertTrue(Regex("Spent: €700[.,]00 \\(70[.,]0%\\)").containsMatchIn(summary))
-        assertTrue(Regex("Remaining: €300[.,]00").containsMatchIn(summary))
-        assertTrue(Regex("- Predicted spending: €1120[.,]45").containsMatchIn(summary))
-        assertTrue(Regex("- Predicted remaining: €-120[.,]45").containsMatchIn(summary))
-        assertTrue(summary.contains("- Risk level: HIGH"))
-        assertTrue(summary.contains("- Confidence: 82%"))
-        assertTrue(summary.contains("- Overspend probability: 67%"))
+            // Previously encoded the hardcoded-euro bug (`€1000.00`, `€-120.45`);
+            // now formatted via CurrencyFormatter.formatMoney (NumberFormat.getCurrencyInstance).
+            assertTrue(Regex("Budget: €1,000\\.00").containsMatchIn(summary))
+            assertTrue(Regex("Spent: €700\\.00 \\(70\\.0%\\)").containsMatchIn(summary))
+            assertTrue(Regex("Remaining: €300\\.00").containsMatchIn(summary))
+            assertTrue(Regex("- Predicted spending: €1,120\\.45").containsMatchIn(summary))
+            assertTrue(Regex("- Predicted remaining: -€120\\.45").containsMatchIn(summary))
+            assertTrue(summary.contains("- Risk level: HIGH"))
+            assertTrue(summary.contains("- Confidence: 82%"))
+            assertTrue(summary.contains("- Overspend probability: 67%"))
+        } finally {
+            java.util.Locale.setDefault(originalLocale)
+            java.util.Locale.setDefault(java.util.Locale.Category.FORMAT, originalFormatLocale)
+            java.util.Locale.setDefault(java.util.Locale.Category.DISPLAY, originalDisplayLocale)
+        }
     }
 
     @Test
@@ -117,5 +129,26 @@ class BudgetRecommendationEngineTest {
         )
 
         assertEquals(0.0, recommendations.first { it.type == RecommendationType.REDUCE_SPENDING }.potentialSavings ?: 0.0, 0.0)
+    }
+
+    @Test
+    fun `P-06-1 budget health summary formats with real currency and does not contain hardcoded euro sign for non-EUR currency`() {
+        val summary = engine.getBudgetHealthSummary(
+            budget = BudgetRecommendationBudget(amount = 850.0),
+            forecast = BudgetRecommendationForecast(
+                predictedSpending = 200.0,
+                predictedRemaining = -10.0,
+                confidenceScore = 0.90,
+                riskLevel = BudgetRecommendationRiskLevel.CRITICAL,
+                overspendProbability = 0.95
+            ),
+            currentSpending = 660.0,
+            currency = "USD"
+        )
+
+        org.junit.Assert.assertFalse("Health summary must not contain hardcoded euro sign for USD", summary.contains("€"))
+        assertTrue(summary.contains("$") || summary.contains("USD"))
+        assertTrue(Regex("77[.,]6%").containsMatchIn(summary))
+        assertTrue(Regex("190[.,]00").containsMatchIn(summary))
     }
 }

@@ -380,7 +380,7 @@ fun PlannedExpenseItem(
     val cardDesc = stringResource(
         R.string.recurring_planned_item_cd_format,
         expense.description,
-        expense.amount,
+        CurrencyFormatter.formatMoney(expense.amount, expense.currency),
         priorityText
     )
     Card(
@@ -400,8 +400,8 @@ fun PlannedExpenseItem(
                     fontWeight = FontWeight.Bold
                 )
                 // Remember expensive string calculations
-        val amountAndPriority = remember(expense.amount, expense.priority, homeCurrency) {
-                "${CurrencyFormatter.formatMoney(expense.amount, homeCurrency)} • ${expense.priority.name.lowercase().replaceFirstChar { it.uppercase() }}"
+        val amountAndPriority = remember(expense.amount, expense.priority, expense.currency) {
+                "${CurrencyFormatter.formatMoney(expense.amount, expense.currency)} • ${expense.priority.name.lowercase().replaceFirstChar { it.uppercase() }}"
                 }
                 Text(
                     text = amountAndPriority,
@@ -453,7 +453,7 @@ fun RecurringExpenseItem(
     val cardDescription = remember(pattern, isManual, confirmedText, suggestedText) {
         buildString {
             append("${pattern.merchantName}, ")
-            append("${String.format("%.2f", pattern.averageAmount)} ${pattern.currency}, ")
+            append("${CurrencyFormatter.formatMoney(pattern.averageAmount, pattern.currency)}, ")
             append("${pattern.frequency.name.lowercase().replaceFirstChar { it.uppercase() }}")
             if (isManual) {
                 append(", $confirmedText")
@@ -464,7 +464,7 @@ fun RecurringExpenseItem(
     }
     
     val amountAndCurrency = remember(pattern.averageAmount, pattern.currency) {
-        "${String.format("%.2f", pattern.averageAmount)} ${pattern.currency}"
+        CurrencyFormatter.formatMoney(pattern.averageAmount, pattern.currency)
     }
     
     val frequencyText = remember(pattern.frequency) {

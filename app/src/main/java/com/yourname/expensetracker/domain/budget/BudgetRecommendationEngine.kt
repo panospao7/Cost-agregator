@@ -2,6 +2,7 @@ package com.yourname.expensetracker.domain.budget
 
 import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.text.DomainTextKeys
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -146,7 +147,8 @@ class BudgetRecommendationEngine @Inject constructor() {
     fun getBudgetHealthSummary(
         budget: BudgetRecommendationBudget,
         forecast: BudgetRecommendationForecast,
-        currentSpending: Double
+        currentSpending: Double,
+        currency: String = "EUR"
     ): String {
         val remaining = budget.amount - currentSpending
         val percentUsed = if (budget.amount > 0) (currentSpending / budget.amount) * 100 else 0.0
@@ -154,12 +156,12 @@ class BudgetRecommendationEngine @Inject constructor() {
         return buildString {
             append("Budget Health Summary\n")
             append("====================\n\n")
-            append("Budget: €${String.format("%.2f", budget.amount)}\n")
-            append("Spent: €${String.format("%.2f", currentSpending)} (${String.format("%.1f", percentUsed)}%)\n")
-            append("Remaining: €${String.format("%.2f", remaining)}\n\n")
+            append("Budget: ${CurrencyFormatter.formatMoney(budget.amount, currency)}\n")
+            append("Spent: ${CurrencyFormatter.formatMoney(currentSpending, currency)} (${String.format("%.1f", percentUsed)}%)\n")
+            append("Remaining: ${CurrencyFormatter.formatMoney(remaining, currency)}\n\n")
             append("AI Forecast:\n")
-            append("- Predicted spending: €${String.format("%.2f", forecast.predictedSpending)}\n")
-            append("- Predicted remaining: €${String.format("%.2f", forecast.predictedRemaining)}\n")
+            append("- Predicted spending: ${CurrencyFormatter.formatMoney(forecast.predictedSpending, currency)}\n")
+            append("- Predicted remaining: ${CurrencyFormatter.formatMoney(forecast.predictedRemaining, currency)}\n")
             append("- Risk level: ${forecast.riskLevel.name}\n")
             append("- Confidence: ${String.format("%.0f", forecast.confidenceScore * 100)}%\n")
             append("- Overspend probability: ${String.format("%.0f", forecast.overspendProbability * 100)}%\n")
