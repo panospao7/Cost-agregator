@@ -333,7 +333,12 @@ class CategorizeReceiptItemsUseCase @Inject constructor(
         retryIndices: List<Int>,
         result: ReceiptItemCategorizationResult
     ): CategorizationResult {
-        val answered = result.items.indices.filter { !ReceiptItemPlaceholder.isPlaceholder(result.items[it]) }
+        // An item counts as answered only when it carries a category: the keyword-only on-device
+        // service returns a non-placeholder "uncertain" item with no category on a no-match, and
+        // writing that over a placeholder would end the retry for good.
+        val answered = result.items.indices.filter {
+            !ReceiptItemPlaceholder.isPlaceholder(result.items[it]) && result.items[it].suggestedCategory != null
+        }
         if (answered.isEmpty()) {
             Timber.w("Receipt item retry for %d made no progress", receiptId)
             return CategorizationResult.Error

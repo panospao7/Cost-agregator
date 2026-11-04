@@ -93,7 +93,8 @@ class CategorizeReceiptItemsUseCasePartialResultTest {
         blankDescriptionAt: Set<Int> = emptySet(),
         serviceOverride: ReceiptItemCategorizationService? = null,
         totalTax: Double? = null,
-        route: AiRoute = AiRoute.CLOUD
+        route: AiRoute = AiRoute.CLOUD,
+        onDeviceOverride: ReceiptItemCategorizationService? = null
     ) {
         val categories = MerchantCategoryProvider.categoryBlueprints
             .mapIndexed { i, c -> CategoryRef(id = (i + 1).toLong(), name = c.name) }
@@ -146,7 +147,7 @@ class CategorizeReceiptItemsUseCasePartialResultTest {
             receiptRepository = receiptRepository,
             receiptItemCategorizationRepository = categorizationRepository,
             inputBuilder = inputBuilder,
-            onDeviceService = mockk<ReceiptItemCategorizationService>(),
+            onDeviceService = onDeviceOverride ?: mockk<ReceiptItemCategorizationService>(),
             cloudService = serviceOverride ?: realCloudService(blankDescriptionAt),
             timeProvider = FakeTimeProvider(1_000L)
         )
@@ -590,6 +591,95 @@ class CategorizeReceiptItemsUseCasePartialResultTest {
         assertEquals(CategorizationResult.Error, result)
         verifyNothingWritten()
         assertEquals(rows, stored)
+    }
+
+    /**
+     * Stand-in for the keyword-only on-device service: the first [matchCount] sent items get a
+     * category; the rest get the "Uncertain match" shape (null category, confidence 0, a rationale
+     * that is NOT the placeholder rationale, so isPlaceholder is false).
+     */
+    private fun keywordOnlyService(matchCount: Int): ReceiptItemCategorizationService {
+        val service = mockk<ReceiptItemCategorizationService>()
+        coEvery { service.categorizeItems(any()) } coAnswers {
+            val input = firstArg<ReceiptItemCategorizationInput>()
+            sentInputs.add(input)
+            ReceiptItemCategorizationResult(
+                items = input.lineItems.mapIndexed { i, line ->
+                    val matched = i < matchCount
+                    CategorizedReceiptItem(
+                        itemDescription = line.description,
+                        amount = line.totalPrice,
+                        suggestedCategory = if (matched) {
+                            CategorySuggestion(categoryId = 1L, categoryName = "Groceries", confidence = 0.8f)
+                        } else {
+                            null
+                        },
+                        confidence = if (matched) 0.8f else 0f,
+                        rationale = if (matched) "keyword" else "Uncertain match - please review",
+                        alternatives = listOf(
+                            CategorySuggestion(categoryId = 2L, categoryName = "Other", confidence = 0.1f)
+                        ),
+                        needsReview = true
+                    )
+                },
+                totalConfidence = 0.4f,
+                needsReview = true,
+                suggestedNewCategories = emptyList(),
+                taxDistribution = emptyMap()
+            )
+        }
+        return service
+    }
+
+    private fun setUpOnDeviceRetry(matchCount: Int, rows: List<ReceiptItemCategorizationSnapshot>) {
+        setUp(
+            itemCount = rows.size,
+            route = AiRoute.ON_DEVICE,
+            onDeviceOverride = keywordOnlyService(matchCount)
+        )
+        installStored(rows)
+    }
+
+    @Test
+    fun `on-device retry with no keyword match on any row is an Error and writes nothing`() = runTest {
+        val rows = (0 until 5).map { storedRow(it, real = it < 2) }
+        setUpOnDeviceRetry(matchCount = 0, rows = rows)
+
+        val result = useCase(receiptId, retryUncategorized = true)
+
+        assertEquals(CategorizationResult.Error, result)
+        assertEquals(1, sentInputs.size)
+        verifyNothingWritten()
+        assertEquals(rows, stored)
+        assertTrue(stored.drop(2).all { ReceiptItemPlaceholder.isRetryable(it) })
+    }
+
+    @Test
+    fun `on-device retry with some matches writes only matched rows and stays PENDING then CLOUD completes`() = runTest {
+        val rows = (0 until 6).map { storedRow(it, real = it == 0) }
+        setUpOnDeviceRetry(matchCount = 2, rows = rows)
+
+        val result = useCase(receiptId, retryUncategorized = true)
+
+        assertTrue("was $result", result is CategorizationResult.Success)
+        assertEquals(listOf(2L, 3L), retryWrites.single())
+        assertEquals(listOf(CategorizationStatus.PENDING), statuses)
+        assertEquals(AiArtifactStatus.READY, artifacts.last().status)
+        assertEquals("Categorized 3 of 6 items", artifacts.last().summaryText)
+        assertEquals(1L, stored[1].suggestedCategoryId)
+        assertEquals(1L, stored[2].suggestedCategoryId)
+        // unmatched rows are still untouched, retryable placeholders
+        assertTrue(stored.drop(3).all { ReceiptItemPlaceholder.isRetryable(it) })
+        assertEquals(rows.drop(3), stored.drop(3))
+
+        routeTo(AiRoute.CLOUD)
+        val later = useCase(receiptId, retryUncategorized = true)
+
+        assertTrue("was $later", later is CategorizationResult.Success)
+        assertEquals(listOf(CategorizationStatus.PENDING, CategorizationStatus.READY), statuses)
+        assertEquals(AiArtifactStatus.READY, artifacts.last().status)
+        assertEquals("Categorized 6 items", artifacts.last().summaryText)
+        assertTrue(stored.none { ReceiptItemPlaceholder.isPlaceholder(it) })
     }
 
     @Test
