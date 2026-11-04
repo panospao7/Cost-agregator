@@ -160,4 +160,53 @@ class TransactionValidatorTest {
         )
         assertEquals(emptyList<String>(), errors.map { it.code })
     }
+
+    // ── N-01-2 ownership share vs total ──────────────────────────────────────
+
+    @Test
+    fun `N-01-2 share over total is rejected with the bounded code`() {
+        val errors = validator.validateOwnershipShare(
+            isSharedExpense = true,
+            myShareAmount = 10.01,
+            totalAmount = 10.0
+        )
+        assertEquals(
+            listOf(TransactionValidator.OWNERSHIP_SHARE_EXCEEDS_TOTAL),
+            errors.map { it.code }
+        )
+        assertEquals("myShareAmount", errors.single().field)
+    }
+
+    @Test
+    fun `N-01-2 share equal to or below total is valid`() {
+        assertEquals(
+            emptyList<String>(),
+            validator.validateOwnershipShare(true, 10.0, 10.0).map { it.code }
+        )
+        assertEquals(
+            emptyList<String>(),
+            validator.validateOwnershipShare(true, 9.99, 10.0).map { it.code }
+        )
+    }
+
+    @Test
+    fun `N-01-2 non finite share or total is rejected`() {
+        for (share in listOf(Double.NaN, Double.POSITIVE_INFINITY)) {
+            assertEquals(
+                "share=$share",
+                listOf(TransactionValidator.OWNERSHIP_SHARE_EXCEEDS_TOTAL),
+                validator.validateOwnershipShare(true, share, 10.0).map { it.code }
+            )
+        }
+        assertEquals(
+            listOf(TransactionValidator.OWNERSHIP_SHARE_EXCEEDS_TOTAL),
+            validator.validateOwnershipShare(true, 5.0, Double.NaN).map { it.code }
+        )
+    }
+
+    @Test
+    fun `N-01-2 null share or non shared expense is not validated against total`() {
+        assertEquals(emptyList<String>(), validator.validateOwnershipShare(true, null, 10.0).map { it.code })
+        assertEquals(emptyList<String>(), validator.validateOwnershipShare(false, 999.0, 10.0).map { it.code })
+    }
 }
