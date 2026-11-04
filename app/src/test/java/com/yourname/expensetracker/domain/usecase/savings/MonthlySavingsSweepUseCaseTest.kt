@@ -792,6 +792,123 @@ class MonthlySavingsSweepUseCaseTest {
         }
     }
 
+    private fun sweepSnapshot(
+        id: Long,
+        amount: Double,
+        type: com.yourname.expensetracker.domain.model.DomainTransactionType
+    ) = com.yourname.expensetracker.domain.model.ExpenseSnapshot(
+        id = id,
+        amount = amount,
+        effectiveAmount = amount,
+        currency = "EUR",
+        merchant = "Synthetic",
+        merchantKey = null,
+        transactionType = type,
+        date = withinWindowNow - dayMs,
+        categoryId = null,
+        isNotMine = false,
+        transferDirection = null,
+        notes = null
+    )
+
+    private fun stubNormalizedRows(rows: List<com.yourname.expensetracker.domain.model.ExpenseSnapshot>) {
+        coEvery { analyticsCurrencyNormalizer.normalizeSnapshots(any(), any()) } returns AnalyticsNormalizationResult(
+            homeCurrency = "EUR",
+            normalizedExpenses = rows.map {
+                com.yourname.expensetracker.domain.analytics.NormalizedExpenseSnapshot(
+                    it, it.currency, it.effectiveAmount, it.effectiveAmount
+                )
+            },
+            includedExpenses = rows,
+            warnings = emptyList(),
+            latestRateTimestamp = null,
+            totalInputCount = rows.size
+        )
+    }
+
+    @Test
+    fun `withdrawal is excluded from sweep spent to date while purchases count`() = runTest {
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(budgetStatus(1L, null, 1000.0, 400.0)))
+        val spentSlot = io.mockk.slot<Double>()
+        coEvery { monteCarloSimulator.simulate(capture(spentSlot), any(), any(), any(), any()) } returns
+            monteCarlo(p50 = 100.0, p75 = 120.0, confidence = 0.9)
+        val purchase = com.yourname.expensetracker.domain.model.DomainTransactionType.PURCHASE
+        val withdrawal = com.yourname.expensetracker.domain.model.DomainTransactionType.WITHDRAWAL
+        stubNormalizedRows(
+            listOf(
+                sweepSnapshot(1L, 150.0, purchase),
+                sweepSnapshot(2L, 250.0, purchase),
+                sweepSnapshot(3L, 100.0, withdrawal)
+            )
+        )
+
+        useCase.computeSweepRecommendationResult()
+
+        assertApproxEquals(400.0, spentSlot.captured, 0.001)
+    }
+
+    @Test
+    fun `withdrawal alone yields zero sweep spent to date not the withdrawn amount`() = runTest {
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(budgetStatus(1L, null, 1000.0, 0.0)))
+        val spentSlot = io.mockk.slot<Double>()
+        coEvery { monteCarloSimulator.simulate(capture(spentSlot), any(), any(), any(), any()) } returns
+            monteCarlo(p50 = 100.0, p75 = 120.0, confidence = 0.9)
+        stubNormalizedRows(
+            listOf(sweepSnapshot(1L, 100.0, com.yourname.expensetracker.domain.model.DomainTransactionType.WITHDRAWAL))
+        )
+
+        useCase.computeSweepRecommendationResult()
+
+        assertApproxEquals(0.0, spentSlot.captured, 0.001)
+    }
+
+    private fun stageWithdrawalSweep(withdrawn: Double?) {
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(
+            listOf(budgetStatus(1L, null, 1000.0, 100.0)) // underspend 900 (purchases only)
+        )
+        every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(listOf(goal(1L, "Emergency", 5000.0, 100.0)))
+        // Forecast spread p75 - p50 = 150 (exactly the 30% cap of p50 = 500).
+        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) } returns
+            monteCarlo(p50 = 500.0, p75 = 650.0, confidence = 0.9)
+        val rows = buildList {
+            add(sweepSnapshot(1L, 100.0, com.yourname.expensetracker.domain.model.DomainTransactionType.PURCHASE))
+            if (withdrawn != null) {
+                add(sweepSnapshot(2L, withdrawn, com.yourname.expensetracker.domain.model.DomainTransactionType.WITHDRAWAL))
+            }
+        }
+        stubNormalizedRows(rows)
+    }
+
+    @Test
+    fun `no withdrawals leaves the sweep unchanged at underspend minus spread`() = runTest {
+        stageWithdrawalSweep(withdrawn = null)
+
+        val result = useCase.computeSweepRecommendation()
+
+        assertNotNull(result)
+        assertApproxEquals(150.0, result!!.riskBuffer, 0.01)
+        assertApproxEquals(750.0, result.safeSweepAmount, 0.01)
+    }
+
+    @Test
+    fun `month to date withdrawals reduce the sweep and never enlarge it`() = runTest {
+        stageWithdrawalSweep(withdrawn = 300.0)
+
+        val result = useCase.computeSweepRecommendation()
+
+        assertNotNull(result)
+        assertApproxEquals(450.0, result!!.riskBuffer, 0.01) // 150 spread + 300 withdrawn
+        assertApproxEquals(450.0, result.safeSweepAmount, 0.01)
+        assertTrue(result.safeSweepAmount < 750.0)
+    }
+
+    @Test
+    fun `withdrawals that already consumed the underspend decline the sweep`() = runTest {
+        stageWithdrawalSweep(withdrawn = 800.0) // 900 left the account; underspend 900 - 150 - 800 < 0
+
+        assertNull(useCase.computeSweepRecommendation())
+    }
+
     private fun budgetStatus(
         budgetId: Long,
         categoryId: Long?,

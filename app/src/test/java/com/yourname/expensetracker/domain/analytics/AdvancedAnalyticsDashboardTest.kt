@@ -66,8 +66,10 @@ class AdvancedAnalyticsDashboardTest : AnalyticsEngineTestBase() {
 
         val result = dashboard.generateDashboardData(start, end)
 
-        assertApproxEquals(450.0, result.totalSpent) // purchases + withdrawals
+        // Purchases only (100 + 200 + 100); the 50.0 ATM withdrawal is not spending.
+        assertApproxEquals(400.0, result.totalSpent)
         assertApproxEquals(800.0, result.totalIncome)
+        // 800 income - 400 purchases - 50 withdrawn: cash that left the account counts in Net.
         assertApproxEquals(350.0, result.netCashflow)
 
         assertEquals(2, result.topCategories.size)
@@ -81,11 +83,61 @@ class AdvancedAnalyticsDashboardTest : AnalyticsEngineTestBase() {
         // Half-open [2026-03-01, 2026-05-01) covers only March and April — May bucket must NOT appear
         assertEquals(2, result.monthlyTrend.size)
         assertEquals("2026-03", result.monthlyTrend[0].month)
-        assertApproxEquals(150.0, result.monthlyTrend[0].spending)
+        // March purchase 100 only; the 50.0 withdrawal is excluded from monthly spending.
+        assertApproxEquals(100.0, result.monthlyTrend[0].spending)
         assertApproxEquals(300.0, result.monthlyTrend[0].income)
         assertEquals("2026-04", result.monthlyTrend[1].month)
+        assertApproxEquals(300.0, result.monthlyTrend[1].spending)
 
         assertEquals(3, result.weeklyPattern.sumOf { it.transactionCount })
+    }
+
+    @Test
+    fun `withdrawal is excluded from totalSpent and monthly spending while purchase control counts`() = runTest {
+        val start = ms("2026-03-01")
+        val end = ms("2026-04-01")
+        val data = listOf(
+            exp("2026-03-03", 100.0, TransactionType.PURCHASE, merchant = "Shop"),
+            exp("2026-03-05", 200.0, TransactionType.WITHDRAWAL, merchant = "ATM")
+        )
+        coEvery { expenseRepository.getExpenseSnapshotsBetween(any(), any()) } answers {
+            val rangeStart = firstArg<Long>()
+            val rangeEnd = secondArg<Long>()
+            data.filter { it.date >= rangeStart && it.date < rangeEnd }.toExpenseSnapshots()
+        }
+
+        val result = dashboard.generateDashboardData(start, end)
+
+        assertApproxEquals(100.0, result.totalSpent)
+        assertApproxEquals(100.0, result.monthlyTrend.single().spending)
+        // 0 income - 100 purchases - 200 withdrawn.
+        assertApproxEquals(-300.0, result.netCashflow)
+
+        // Boundary: a withdrawal alone yields zero spending, not the withdrawn amount.
+        val onlyWithdrawal = listOf(exp("2026-03-05", 200.0, TransactionType.WITHDRAWAL, merchant = "ATM"))
+        coEvery { expenseRepository.getExpenseSnapshotsBetween(any(), any()) } returns
+            onlyWithdrawal.toExpenseSnapshots()
+        val withdrawalOnly = dashboard.generateDashboardData(start, end)
+        assertApproxEquals(0.0, withdrawalOnly.totalSpent)
+        assertApproxEquals(0.0, withdrawalOnly.monthlyTrend.single().spending)
+    }
+
+    @Test
+    fun `net cashflow deducts withdrawals while spent stays purchases only`() = runTest {
+        val start = ms("2026-03-01")
+        val end = ms("2026-04-01")
+        val data = listOf(
+            exp("2026-03-01", 2000.0, TransactionType.DEPOSIT, merchant = "Salary"),
+            exp("2026-03-02", 1700.0, TransactionType.WITHDRAWAL, merchant = "ATM"),
+            exp("2026-03-03", 200.0, TransactionType.PURCHASE, merchant = "Shop")
+        )
+        coEvery { expenseRepository.getExpenseSnapshotsBetween(any(), any()) } returns data.toExpenseSnapshots()
+
+        val result = dashboard.generateDashboardData(start, end)
+
+        assertApproxEquals(200.0, result.totalSpent)
+        assertApproxEquals(2000.0, result.totalIncome)
+        assertApproxEquals(100.0, result.netCashflow)
     }
 
     @Test

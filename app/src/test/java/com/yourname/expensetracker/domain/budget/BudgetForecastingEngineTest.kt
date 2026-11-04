@@ -1053,6 +1053,122 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
         assertTrue("elapsed window end must be clamped inside the period",
             capturedElapsed.single() <= capturedEnds.single())
     }
+
+    // =========================================================================
+    // Withdrawals are not spending: the historical baseline counts purchases only.
+    // =========================================================================
+
+    private fun typedSnapshot(monthKey: String, total: Double, type: DomainTransactionType): ExpenseSnapshot =
+        snapshot(monthKey, total, 1L).copy(transactionType = type)
+
+    @Test
+    fun `withdrawals are excluded from the forecast baseline while purchases count`() = runTest {
+        // now = Apr 1 00:00: the April period has exactly 30 days remaining, so the
+        // predicted spending equals the monthly baseline; Jan-Mar are three complete months.
+        val aprilFirst = LocalDate.of(2026, 4, 1)
+            .atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+        every { timeProvider.now() } returns aprilFirst
+        val budget = Budget(categoryId = 1L, amount = 1000.0, period = BudgetPeriod.MONTHLY, startDate = aprilFirst)
+        coEvery { mockExpenseRepo.getExpenseSnapshotsBetween(any(), any()) } returns listOf(
+            typedSnapshot("2026-01", 600.0, DomainTransactionType.PURCHASE),
+            typedSnapshot("2026-01", 200.0, DomainTransactionType.WITHDRAWAL),
+            typedSnapshot("2026-02", 600.0, DomainTransactionType.PURCHASE),
+            typedSnapshot("2026-02", 200.0, DomainTransactionType.WITHDRAWAL),
+            typedSnapshot("2026-03", 600.0, DomainTransactionType.PURCHASE),
+            typedSnapshot("2026-03", 200.0, DomainTransactionType.WITHDRAWAL)
+        )
+
+        val forecast = engine.generateForecast(budget, forecastPeriodDays = 30)
+
+        // Purchases only: 600 a month, stable trend. A counted withdrawal would give 800.
+        assertApproxEquals(600.0, forecast.predictedSpending, 0.01)
+    }
+
+    @Test
+    fun `withdrawal-only history yields zero baseline not the withdrawn amount`() = runTest {
+        val budget = Budget(categoryId = 1L, amount = 1000.0, period = BudgetPeriod.MONTHLY, startDate = now)
+        coEvery { mockExpenseRepo.getExpenseSnapshotsBetween(any(), any()) } returns listOf(
+            typedSnapshot("2026-02", 200.0, DomainTransactionType.WITHDRAWAL),
+            typedSnapshot("2026-03", 200.0, DomainTransactionType.WITHDRAWAL)
+        )
+
+        val forecast = engine.generateForecast(budget, forecastPeriodDays = 30)
+
+        assertApproxEquals(0.0, forecast.predictedSpending, 0.001)
+    }
+
+    // =========================================================================
+    // BL-07: low confidence pulls the overspend probability toward 0.5.
+    // probability' = 0.5 + (probability - 0.5) * confidence
+    // =========================================================================
+
+    @Test
+    fun `overspend probability with confidence 0_2 and base 0_05 is 0_41`() = runTest {
+        val budget = Budget(categoryId = 1L, amount = 1000.0, period = BudgetPeriod.MONTHLY, startDate = now)
+        coEvery { mockConverter.convertOutcome(any(), any(), any(), any(), any(), any()) } returns convertedLimit(1000.0)
+        // No history => zero observed months and zero spend: confidence 0.2, buffer == limit => base 0.05.
+        coEvery { mockExpenseRepo.getExpenseSnapshotsBetween(any(), any()) } returns emptyList()
+
+        val forecast = engine.generateForecast(budget, forecastPeriodDays = 30)
+
+        assertApproxEquals(0.2, forecast.confidenceScore, 0.0001)
+        assertApproxEquals(0.41, forecast.overspendProbability, 0.0001)
+    }
+
+    @Test
+    fun `overspend probability with confidence 0_2 and base 0_8 is 0_56`() = runTest {
+        val budget = Budget(categoryId = 1L, amount = 1000.0, period = BudgetPeriod.MONTHLY, startDate = now)
+        coEvery { mockConverter.convertOutcome(any(), any(), any(), any(), any(), any()) } returns convertedLimit(1000.0)
+        coEvery { mockExpenseRepo.getExpenseSnapshotsBetween(any(), any()) } returns emptyList()
+        // 950 spent of 1000, nothing predicted: buffer 50 < 10% of limit => base 0.8.
+        stubPeriodSpend(MoneyAggregate.singleCurrency(950.0, CurrencyCode("EUR")))
+
+        val forecast = engine.generateForecast(budget, forecastPeriodDays = 30)
+
+        assertApproxEquals(0.2, forecast.confidenceScore, 0.0001)
+        assertApproxEquals(0.56, forecast.overspendProbability, 0.0001)
+    }
+
+    @Test
+    fun `overspend probability with confidence 1 leaves the base probability unchanged`() = runTest {
+        val mayFirst = LocalDate.of(2026, 5, 1)
+            .atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+        every { timeProvider.now() } returns mayFirst
+        val budget = Budget(categoryId = 1L, amount = 1000.0, period = BudgetPeriod.MONTHLY, startDate = mayFirst)
+        coEvery { mockConverter.convertOutcome(any(), any(), any(), any(), any(), any()) } returns convertedLimit(1000.0)
+        // Three complete months with identical totals: 3/3 * 0.8 + 0.2 => confidence 1.0.
+        coEvery { mockExpenseRepo.getExpenseSnapshotsBetween(any(), any()) } returns listOf(
+            snapshot("2026-02", 100.0, 1L),
+            snapshot("2026-03", 100.0, 1L),
+            snapshot("2026-04", 100.0, 1L)
+        )
+
+        val forecast = engine.generateForecast(budget, forecastPeriodDays = 30)
+
+        assertApproxEquals(1.0, forecast.confidenceScore, 0.0001)
+        // Projected total ~103 of 1000 => very comfortable buffer => base 0.05, untouched.
+        assertApproxEquals(0.05, forecast.overspendProbability, 0.0001)
+    }
+
+    @Test
+    fun `overspend probability with confidence 0 collapses to the uninformative 0_5 prior`() {
+        // Confidence 0 is unreachable through the public path (the confidence formula is
+        // floored by retention factors), so probe the boundary of the private formula directly.
+        val method = BudgetForecastingEngine::class.java.getDeclaredMethod(
+            "calculateOverspendProbability",
+            Double::class.javaPrimitiveType,
+            Double::class.javaPrimitiveType,
+            Double::class.javaPrimitiveType,
+            Double::class.javaPrimitiveType
+        ).apply { isAccessible = true }
+
+        // Base 0.05 (nothing spent, nothing predicted) and base 0.8 (950 of 1000 spent).
+        val lowBase = method.invoke(engine, 1000.0, 0.0, 0.0, 0.0) as Double
+        val highBase = method.invoke(engine, 1000.0, 0.0, 950.0, 0.0) as Double
+
+        assertApproxEquals(0.5, lowBase, 0.0001)
+        assertApproxEquals(0.5, highBase, 0.0001)
+    }
 }
 
 private class MessagePreservingSQLiteConstraintException(
