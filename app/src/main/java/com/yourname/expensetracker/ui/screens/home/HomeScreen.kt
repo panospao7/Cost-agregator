@@ -692,10 +692,10 @@ fun HomeScreen(
                                     )
                                     Spacer(modifier = Modifier.height(8.dp))
                                     val summaryText = widget.summary?.asString() ?: stringResource(R.string.widget_all_budgets_on_track)
-                                    // F8: colour follows the exceeded count (same effective health as the
+                                    // F8: colour follows the exceeded count (same health as the
                                     // summary text), not summary presence: the summary is never null.
                                     val hasExceededBudgets = widget.statuses.any {
-                                        it.effectiveHealthStatus == com.yourname.expensetracker.domain.budget.BudgetHealthStatus.EXCEEDED
+                                        it.healthStatus == com.yourname.expensetracker.domain.budget.BudgetHealthStatus.EXCEEDED
                                     }
                                     Text(
                                         summaryText, 
