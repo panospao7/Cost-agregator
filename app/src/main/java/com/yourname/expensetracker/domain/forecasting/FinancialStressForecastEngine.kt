@@ -696,7 +696,10 @@ class FinancialStressForecastEngine @Inject constructor(
         val sixtyDaysAgo = TimePeriodUtils.addDays(now, -60)
         val sampleEndDay = TimePeriodUtils.getStartOfDay(now)
         val lookbackStartDay = TimePeriodUtils.getStartOfDay(sixtyDaysAgo)
-        val firstPurchaseDay = TimePeriodUtils.getStartOfDay(purchases.minOf { it.date })
+        // The window starts at the first row that stays in the baseline: rows excluded from it
+        // (installment-linked history) must not stretch the sample.
+        val firstPurchaseDay = discretionaryTotalsByDay.keys.minOrNull()
+            ?: TimePeriodUtils.getStartOfDay(purchases.minOf { it.date })
         val floorStartDay = TimePeriodUtils.addDays(sampleEndDay, -(MIN_SAMPLE_DAYS - 1))
         val sampleStartDay = minOf(maxOf(lookbackStartDay, firstPurchaseDay), floorStartDay)
         val dailyTotals = mutableListOf<Double>()

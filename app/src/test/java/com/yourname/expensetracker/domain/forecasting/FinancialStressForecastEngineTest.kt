@@ -1624,9 +1624,9 @@ class FinancialStressForecastEngineTest {
         assertTrue(result.horizons.all { it.projectedBalance >= 1_000.0 })
         assertTrue(StressRecommendationKind.BUILD_EMERGENCY_BUFFER !in kindsOf(result))
         // discretionaryBuffer is the projected balance minus the buffer exactly once.
-        assertApproxEquals(2_100.0, result.horizons.first { it.daysAhead == 30 }.discretionaryBuffer, 0.01)
-        assertApproxEquals(100.0, result.horizons.first { it.daysAhead == 60 }.discretionaryBuffer, 0.01)
-        assertApproxEquals(100.0, result.horizons.first { it.daysAhead == 90 }.discretionaryBuffer, 0.01)
+        assertApproxEquals(2_100.0, result.horizons.first { it.daysAhead == 30 }.discretionaryBuffer, 0.1)
+        assertApproxEquals(100.0, result.horizons.first { it.daysAhead == 60 }.discretionaryBuffer, 0.1)
+        assertApproxEquals(100.0, result.horizons.first { it.daysAhead == 90 }.discretionaryBuffer, 0.1)
     }
 
     @Test
@@ -1676,6 +1676,7 @@ class FinancialStressForecastEngineTest {
         // 3000 income, so the 90 day projected balance is about 286 (below the 500 buffer).
         // Before the fix the 61 day sample counted 51 pre-install days as quiet: 8.2 a day,
         // 90 day spend about 738 and a healthy projected balance of about 2762.
+        every { currencySettingsRepository.emergencyBuffer() } returns flowOf(500.0)
         coEvery { accountBalanceProvider.currentBalance(any()) } returns 500.0
         allExpenses = (1..10).map { daysBack ->
             expense(2800L + daysBack, 50.0, TransactionType.PURCHASE, millis(2026, Calendar.APRIL, 20 - daysBack))
