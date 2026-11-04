@@ -39,8 +39,18 @@ object ReceiptItemPlaceholder {
         hasAlternatives = hasAlternativesJson(item.alternativeCategoriesJson)
     )
 
+    /**
+     * A stored placeholder the user has not categorised: the only kind of row a retry may fill.
+     * A placeholder the user already corrected keeps the user's choice and is never retried.
+     */
+    fun isRetryable(item: ReceiptItemCategorizationSnapshot): Boolean =
+        isPlaceholder(item) &&
+            item.userCorrectedCategoryId == null &&
+            item.userCorrectedCategoryName.isNullOrBlank() &&
+            item.userCorrectedAt == null
+
     /** Persisted alternatives are a JSON array; null, blank and "[]" mean none. */
-    private fun hasAlternativesJson(json: String?): Boolean {
+    fun hasAlternativesJson(json: String?): Boolean {
         val trimmed = json?.trim().orEmpty()
         return trimmed.isNotEmpty() && trimmed != "[]"
     }

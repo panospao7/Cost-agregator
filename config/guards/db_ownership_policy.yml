@@ -2245,6 +2245,23 @@ entries:
 - path: app/src/main/java/com/yourname/expensetracker/data/repository/ReceiptItemCategorizationRepository.kt
   ownerFqcn: com.yourname.expensetracker.data.repository.ReceiptItemCategorizationRepository
   kind: function
+  method: updatePlaceholderRowsWithRetryResult
+  receiver: null
+  parameterTypes:
+  - Long
+  - List<Long>
+  - List<com.yourname.expensetracker.domain.ai.model.CategorizedReceiptItem>
+  - Long
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ReceiptItemCategorizationDao
+  operation: updatePlaceholderRowsIfStillUncategorized
+  barrierMode: helper
+  reason: 'FIX-1.0.4 N-05-3 step 2 EXACT_POLICY: owner-approved (item 131) partial-categorization retry; fills only stored placeholder rows (items a cloud call did not cover) after the write barrier, in one Room @Transaction DAO method that re-reads each row and skips any row that is no longer an unsent placeholder or carries a user correction, so a real result or a user correction is never overwritten; tax and row identity fields are untouched'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08O
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/ReceiptItemCategorizationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.ReceiptItemCategorizationRepository
+  kind: function
   method: updateUserCorrection
   receiver: null
   parameterTypes:

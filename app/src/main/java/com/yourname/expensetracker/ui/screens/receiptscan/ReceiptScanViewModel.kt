@@ -2402,11 +2402,12 @@ class ReceiptScanViewModel @Inject constructor(
         val receiptId = _state.value.receiptId ?: return
         itemAnalysisJob?.cancel()
         itemAnalysisJob = viewModelScope.launch {
-            analyzeReceiptItemsInternal(receiptId)
+            // The user's Analyze tap also completes a partial result (items not yet categorised).
+            analyzeReceiptItemsInternal(receiptId, retryUncategorized = true)
         }
     }
 
-    private suspend fun analyzeReceiptItemsInternal(receiptId: Long) {
+    private suspend fun analyzeReceiptItemsInternal(receiptId: Long, retryUncategorized: Boolean = false) {
         if (!_state.value.matchesReceiptForAnalysis(receiptId)) return
 
         _state.update { current ->
@@ -2415,7 +2416,7 @@ class ReceiptScanViewModel @Inject constructor(
         }
 
         try {
-            val result = categorizeReceiptItemsUseCase(receiptId)
+            val result = categorizeReceiptItemsUseCase(receiptId, retryUncategorized = retryUncategorized)
             if (!_state.value.matchesReceiptForAnalysis(receiptId)) return
 
             when (result) {

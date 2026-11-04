@@ -2,6 +2,7 @@ package com.yourname.expensetracker.data.repository
 
 import com.yourname.expensetracker.data.database.dao.ReceiptItemCategorizationDao
 import com.yourname.expensetracker.data.database.entity.ReceiptItemCategorization
+import com.yourname.expensetracker.domain.ai.model.CategorizedReceiptItem
 import com.yourname.expensetracker.domain.ai.model.ReceiptItemCategorizationResult
 import com.yourname.expensetracker.domain.dto.ReceiptItemCategorizationSnapshot
 import org.json.JSONArray
@@ -113,15 +114,7 @@ class ReceiptItemCategorizationRepository @Inject constructor(
             ) { "RECEIPT_ITEM_TAX_CATEGORY_MISMATCH" }
         }
         result.items.forEachIndexed { index, item ->
-            val alternativesJson = JSONArray().apply {
-                item.alternatives.forEach { alt ->
-                    put(JSONObject().apply {
-                        put("id", alt.categoryId)
-                        put("name", alt.categoryName)
-                        put("confidence", alt.confidence)
-                    })
-                }
-            }.toString()
+            val alternativesJson = alternativesToJson(item)
 
             val categorization = ReceiptItemCategorization(
                 receiptId = receiptId,
@@ -147,6 +140,58 @@ class ReceiptItemCategorizationRepository @Inject constructor(
         }
         return insertedCount
     }
+
+    /**
+     * Fills stored placeholder rows with the results of a retry for the items that were not
+     * categorised yet. [rowIds] and [items] are parallel (row i receives item i). A row is
+     * updated only if, inside the DAO transaction, it is still an unsent placeholder with no
+     * user correction; a real result or a user correction is never overwritten. Tax is not
+     * touched (a retry carries no tax figure).
+     *
+     * @return the number of rows actually updated (0 if every row had changed meanwhile).
+     */
+    suspend fun updatePlaceholderRowsWithRetryResult(
+        receiptId: Long,
+        rowIds: List<Long>,
+        items: List<CategorizedReceiptItem>,
+        now: Long
+    ): Int {
+        writeBarrier.checkWritesAllowed("ReceiptItemCategorizationRepository.updatePlaceholderRowsWithRetryResult")
+        require(rowIds.size == items.size) { "RECEIPT_ITEM_RETRY_COUNT_MISMATCH" }
+        val replacements = rowIds.mapIndexed { index, rowId ->
+            val item = items[index]
+            ReceiptItemCategorization(
+                id = rowId,
+                receiptId = receiptId,
+                itemDescription = item.itemDescription,
+                itemAmount = item.amount,
+                suggestedCategoryId = item.suggestedCategory?.categoryId,
+                suggestedCategoryName = item.suggestedCategory?.categoryName,
+                confidence = item.confidence,
+                aiRationale = item.rationale,
+                alternativeCategoriesJson = alternativesToJson(item),
+                userCorrectedCategoryId = null,
+                userCorrectedCategoryName = null,
+                userCorrectedAt = null,
+                taxAmount = null,
+                isNewCategorySuggestion = item.suggestedCategory?.isNewCategorySuggestion ?: false,
+                createdAt = now,
+                updatedAt = now
+            )
+        }
+        return dao.updatePlaceholderRowsIfStillUncategorized(receiptId, replacements)
+    }
+
+    private fun alternativesToJson(item: CategorizedReceiptItem): String =
+        JSONArray().apply {
+            item.alternatives.forEach { alt ->
+                put(JSONObject().apply {
+                    put("id", alt.categoryId)
+                    put("name", alt.categoryName)
+                    put("confidence", alt.confidence)
+                })
+            }
+        }.toString()
 
     suspend fun updateUserCorrection(
         itemId: Long,

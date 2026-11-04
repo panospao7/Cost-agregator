@@ -1068,7 +1068,7 @@ class DbGuardPolicyFixtureTest {
     // ══════════════════════════════════════════════════════════════════
 
     @Test
-    fun `manifest — ownership policy has exactly 458 entries`() {
+    fun `manifest — ownership policy has exactly 459 entries`() {
         // Release 1.0 G3 S4 (owner pre-approved shrink): the two direct transactionEventDao.insert
         // identities (NotificationRepository, ReviewQueueRepository) were removed: 429 -> 427.
         // Release 1.0 R21 S1 adds one approved exact identity
@@ -1097,8 +1097,11 @@ class DbGuardPolicyFixtureTest {
         // userCorrectionDao.redactNotificationTextOlderThan), so the policy has 456 entries.
         // 1.0.4 Batch F E-02-1 (owner item 124): +2 exact recordManualContribution identities
         // (savingsGoalDao.addToGoalAmountIfSnapshot, savingsContributionLedgerDao.insert), so 458.
+        // 1.0.4 N-05-3 step 2 (owner item 131): +1 exact identity
+        // (ReceiptItemCategorizationRepository.updatePlaceholderRowsWithRetryResult /
+        // dao.updatePlaceholderRowsIfStillUncategorized), so 459.
         val entries = parseEntries(ownershipPolicyFile)
-        assertEquals("Ownership policy must have exactly 458 entries", 458, entries.size)
+        assertEquals("Ownership policy must have exactly 459 entries", 459, entries.size)
     }
 
     @Test

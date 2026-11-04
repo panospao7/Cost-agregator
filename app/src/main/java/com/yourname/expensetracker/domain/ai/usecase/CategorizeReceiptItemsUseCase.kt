@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.ai.usecase
 
 import com.yourname.expensetracker.domain.dto.AiArtifactRecord
+import com.yourname.expensetracker.domain.dto.ReceiptItemCategorizationSnapshot
 import com.yourname.expensetracker.data.database.entity.CategorizationStatus
 import com.yourname.expensetracker.data.repository.ReceiptItemCategorizationRepository
 import com.yourname.expensetracker.data.repository.ReceiptRepository
@@ -74,12 +75,22 @@ class CategorizeReceiptItemsUseCase @Inject constructor(
      * Defaults to true so every pre-existing caller keeps byte-identical
      * persistence behavior (STORE_RAW full output). The artifact sourceHash
      * stays a one-way SHA-256 digest in every mode.
+     *
+     * N-05-3 step 2: [retryUncategorized] (only the user's Analyze tap passes true) completes a
+     * PARTIAL result. When stored rows exist and some are still unsent placeholders that the
+     * user has not categorised, only those items are sent (at most one service call, no tax
+     * figure because the tax would be attributed to a subset) and only those rows are filled,
+     * by the repository in one transaction that skips any row that changed meanwhile. READY is
+     * set only when no such placeholder remains. A failed retry changes nothing: stored rows,
+     * the artifact and the receipt status stay as they were. With the default false, stored
+     * rows always return [CategorizationResult.AlreadyAnalyzed] as before.
      */
     suspend operator fun invoke(
         receiptId: Long,
         force: Boolean = false,
         ephemeralItems: List<ReceiptParser.LineItem>? = null,
-        persistItemTextAllowed: Boolean = true
+        persistItemTextAllowed: Boolean = true,
+        retryUncategorized: Boolean = false
     ): CategorizationResult {
         // 1. Check AI enabled
         val settings = aiSettingsRepository.settings().first()
@@ -89,11 +100,17 @@ class CategorizeReceiptItemsUseCase @Inject constructor(
         }
 
         // 2. Check if already analyzed (unless forced)
+        var retryRows: List<ReceiptItemCategorizationSnapshot>? = null
         if (!force) {
             val existing = receiptItemCategorizationRepository.getByReceiptIdAsSnapshots(receiptId)
             if (existing.isNotEmpty()) {
-                Timber.d("Receipt $receiptId already analyzed, returning cached results")
-                return CategorizationResult.AlreadyAnalyzed(existing)
+                val canRetry = retryUncategorized && persistItemTextAllowed &&
+                    existing.any { ReceiptItemPlaceholder.isRetryable(it) }
+                if (!canRetry) {
+                    Timber.d("Receipt $receiptId already analyzed, returning cached results")
+                    return CategorizationResult.AlreadyAnalyzed(existing)
+                }
+                retryRows = existing
             }
         } else {
             // Clear previous results if forcing re-analysis
@@ -131,6 +148,23 @@ class CategorizeReceiptItemsUseCase @Inject constructor(
             return CategorizationResult.Error
         }
 
+        // 5b. Retry only: the stored rows must line up one-to-one with the input items
+        // (same count, same amounts), else nothing is sent and the stored rows are returned.
+        val retryStored: List<ReceiptItemCategorizationSnapshot>? = retryRows
+        val isRetry = retryStored != null
+        val retryIndices: List<Int> = if (retryStored != null) {
+            retryIndicesOrNull(retryStored, input)
+                ?: return CategorizationResult.AlreadyAnalyzed(retryStored)
+        } else {
+            emptyList()
+        }
+        // A retry sends the not-yet-categorised subset only, and never a tax figure.
+        val serviceInput = if (isRetry) {
+            input.copy(lineItems = retryIndices.map { input.lineItems[it] }, totalTax = null)
+        } else {
+            input
+        }
+
         // 6. Route to AI
         val route = aiCapabilityRouter.decide(AiCapability.RECEIPT_ITEM_CATEGORIZATION, settings)
         if (route.route == AiRoute.DISABLED) {
@@ -138,8 +172,10 @@ class CategorizeReceiptItemsUseCase @Inject constructor(
             return CategorizationResult.Disabled
         }
 
-        // 7. Update receipt status to analyzing
-        receiptRepository.updateCategorizationStatus(receiptId, CategorizationStatus.ANALYZING)
+        // 7. Update receipt status to analyzing (not on a retry: the stored status stays truthful)
+        if (!isRetry) {
+            receiptRepository.updateCategorizationStatus(receiptId, CategorizationStatus.ANALYZING)
+        }
 
         // 8. Create artifact (RUNNING)
         val targetKey = "receipt_items:$receiptId"
@@ -163,26 +199,34 @@ class CategorizeReceiptItemsUseCase @Inject constructor(
             updatedAt = now,
             expiresAt = now + AppConfig.Ai.RECEIPT_ITEMS_TTL_MS
         )
-        aiArtifactRepository.upsert(baseEntity)
+        // A retry never replaces the stored artifact with a RUNNING one: a failed retry must
+        // leave the earlier artifact as it was.
+        if (!isRetry) {
+            aiArtifactRepository.upsert(baseEntity)
+        }
 
         // 9. Call AI service
         return try {
             val result = when (route.route) {
-                AiRoute.ON_DEVICE -> onDeviceService.categorizeItems(input)
-                AiRoute.CLOUD -> cloudService.categorizeItems(input)
+                AiRoute.ON_DEVICE -> onDeviceService.categorizeItems(serviceInput)
+                AiRoute.CLOUD -> cloudService.categorizeItems(serviceInput)
                 AiRoute.DETERMINISTIC_FALLBACK -> {
                     // Use simple keyword matching as fallback
-                    createFallbackResult(input)
+                    createFallbackResult(serviceInput)
                 }
-                else -> return failCategorization(receiptId, baseEntity, "Invalid route")
+                else -> return failCategorization(receiptId, baseEntity, "Invalid route", isRetry)
             }
 
             if (result == null) {
-                return failCategorization(receiptId, baseEntity, "Service returned null")
+                return failCategorization(receiptId, baseEntity, "Service returned null", isRetry)
             }
 
-            validateResult(input, result)?.let { reason ->
-                return failCategorization(receiptId, baseEntity, reason)
+            validateResult(serviceInput, result)?.let { reason ->
+                return failCategorization(receiptId, baseEntity, reason, isRetry)
+            }
+
+            if (retryStored != null) {
+                return completeRetry(receiptId, baseEntity, retryStored, retryIndices, result)
             }
 
             // 10. Store results and check count.
@@ -226,11 +270,14 @@ class CategorizeReceiptItemsUseCase @Inject constructor(
             // propagating. Cancellation is never swallowed.
             // N1: a failing reset must never replace the original
             // CancellationException (class name only in the log).
-            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
-                try {
-                    receiptRepository.updateCategorizationStatus(receiptId, CategorizationStatus.PENDING)
-                } catch (resetError: Exception) {
-                    Timber.w("CategorizeReceiptItems: CANCEL_STATUS_RESET_FAILED class=%s", resetError::class.java.simpleName)
+            // A retry never set ANALYZING, so it has nothing to reset.
+            if (!isRetry) {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                    try {
+                        receiptRepository.updateCategorizationStatus(receiptId, CategorizationStatus.PENDING)
+                    } catch (resetError: Exception) {
+                        Timber.w("CategorizeReceiptItems: CANCEL_STATUS_RESET_FAILED class=%s", resetError::class.java.simpleName)
+                    }
                 }
             }
             throw e
@@ -245,8 +292,131 @@ class CategorizeReceiptItemsUseCase @Inject constructor(
             failCategorization(
                 receiptId,
                 baseEntity,
-                e::class.java.simpleName
+                e::class.java.simpleName,
+                isRetry
             )
+        }
+    }
+
+    /**
+     * Retry only: the indices (into [input]'s items) of the stored rows that are still
+     * uncategorised placeholders, or null when the stored rows do not line up with the input
+     * (different count or amount at any position) or nothing is left to retry. Row i of the
+     * stored rows (ordered by id, as inserted) belongs to item i of the input.
+     */
+    private fun retryIndicesOrNull(
+        rows: List<ReceiptItemCategorizationSnapshot>,
+        input: ReceiptItemCategorizationInput
+    ): List<Int>? {
+        if (rows.size != input.lineItems.size) return null
+        if (rows.indices.any { rows[it].itemAmount != input.lineItems[it].totalPrice }) return null
+        return rows.indices.filter { ReceiptItemPlaceholder.isRetryable(rows[it]) }.ifEmpty { null }
+    }
+
+    /**
+     * Retry only: writes the real answers into their placeholder rows (the repository skips
+     * any row that is no longer an untouched placeholder), then re-reads the stored rows and
+     * sets READY only when no uncategorised placeholder remains. The artifact is rebuilt from
+     * the stored rows so earlier results are kept. If the service answered nothing real, no
+     * progress was made and nothing is changed.
+     */
+    private suspend fun completeRetry(
+        receiptId: Long,
+        baseEntity: AiArtifactRecord,
+        rows: List<ReceiptItemCategorizationSnapshot>,
+        retryIndices: List<Int>,
+        result: ReceiptItemCategorizationResult
+    ): CategorizationResult {
+        val answered = result.items.indices.filter { !ReceiptItemPlaceholder.isPlaceholder(result.items[it]) }
+        if (answered.isEmpty()) {
+            Timber.w("Receipt item retry for %d made no progress", receiptId)
+            return CategorizationResult.Error
+        }
+        val updated = receiptItemCategorizationRepository.updatePlaceholderRowsWithRetryResult(
+            receiptId = receiptId,
+            rowIds = answered.map { rows[retryIndices[it]].id },
+            items = answered.map { result.items[it] },
+            now = timeProvider.now()
+        )
+        Timber.d("Receipt item retry for %d updated %d of %d rows", receiptId, updated, answered.size)
+
+        val stored = receiptItemCategorizationRepository.getByReceiptIdAsSnapshots(receiptId)
+        val remaining = stored.count { ReceiptItemPlaceholder.isRetryable(it) }
+        receiptRepository.updateCategorizationStatus(
+            receiptId,
+            if (remaining == 0) CategorizationStatus.READY else CategorizationStatus.PENDING
+        )
+        val merged = mergedResultFromStoredRows(stored)
+        updateArtifactReady(baseEntity, merged, persistItemTextAllowed = true)
+        return CategorizationResult.Success(merged)
+    }
+
+    /**
+     * Rebuilds the AI result from the stored rows (suggestions only; user corrections are not
+     * part of the AI artifact). The tax distribution is the stored per-item tax share summed
+     * by suggested category.
+     */
+    private fun mergedResultFromStoredRows(
+        stored: List<ReceiptItemCategorizationSnapshot>
+    ): ReceiptItemCategorizationResult {
+        val items = stored.map { row ->
+            val categoryName = row.suggestedCategoryName
+            val suggestion = if (row.suggestedCategoryId != null || !categoryName.isNullOrBlank()) {
+                com.yourname.expensetracker.domain.ai.model.CategorySuggestion(
+                    categoryId = row.suggestedCategoryId,
+                    categoryName = categoryName.orEmpty(),
+                    confidence = row.confidence,
+                    isNewCategorySuggestion = row.isNewCategorySuggestion
+                )
+            } else {
+                null
+            }
+            com.yourname.expensetracker.domain.ai.model.CategorizedReceiptItem(
+                itemDescription = row.itemDescription,
+                amount = row.itemAmount,
+                suggestedCategory = suggestion,
+                confidence = row.confidence,
+                rationale = row.aiRationale.orEmpty(),
+                alternatives = alternativesFromJson(row.alternativeCategoriesJson),
+                needsReview = row.confidence < 0.7f || ReceiptItemPlaceholder.isPlaceholder(row)
+            )
+        }
+        val answered = stored.filter { !ReceiptItemPlaceholder.isPlaceholder(it) }
+        val taxByCategory = linkedMapOf<Long, java.math.BigDecimal>()
+        stored.forEach { row ->
+            val categoryId = row.suggestedCategoryId?.takeIf { it > 0 }
+            val tax = row.taxAmount
+            if (categoryId != null && tax != null && tax.isFinite()) {
+                taxByCategory[categoryId] = (taxByCategory[categoryId] ?: java.math.BigDecimal.ZERO)
+                    .add(java.math.BigDecimal.valueOf(tax))
+            }
+        }
+        return ReceiptItemCategorizationResult(
+            items = items,
+            totalConfidence = if (answered.isEmpty()) 0f else answered.map { it.confidence }.average().toFloat(),
+            needsReview = items.any { it.needsReview },
+            suggestedNewCategories = stored
+                .filter { it.isNewCategorySuggestion && !it.suggestedCategoryName.isNullOrBlank() }
+                .mapNotNull { it.suggestedCategoryName }
+                .distinct(),
+            taxDistribution = taxByCategory.mapValues { it.value.toDouble() }
+        )
+    }
+
+    private fun alternativesFromJson(json: String?): List<com.yourname.expensetracker.domain.ai.model.CategorySuggestion> {
+        if (json.isNullOrBlank()) return emptyList()
+        return try {
+            val array = JSONArray(json)
+            (0 until array.length()).mapNotNull { index ->
+                val alt = array.optJSONObject(index) ?: return@mapNotNull null
+                com.yourname.expensetracker.domain.ai.model.CategorySuggestion(
+                    categoryId = if (alt.isNull("id")) null else alt.optLong("id"),
+                    categoryName = alt.optString("name", ""),
+                    confidence = alt.optDouble("confidence", 0.0).toFloat()
+                )
+            }
+        } catch (e: org.json.JSONException) {
+            emptyList()
         }
     }
 
@@ -474,8 +644,16 @@ class CategorizeReceiptItemsUseCase @Inject constructor(
     private suspend fun failCategorization(
         receiptId: Long,
         baseEntity: AiArtifactRecord,
-        reason: String
+        reason: String,
+        isRetry: Boolean = false
     ): CategorizationResult {
+        if (isRetry) {
+            // A failed retry leaves the stored rows, the READY/partial artifact and the receipt
+            // status exactly as they were. Only the id is logged: reasons can carry item or
+            // category text and are not persisted for a retry.
+            Timber.w("Receipt item retry failed for %d", receiptId)
+            return CategorizationResult.Error
+        }
         updateArtifactFailed(baseEntity, reason)
         receiptRepository.updateCategorizationStatus(receiptId, CategorizationStatus.PENDING)
         return CategorizationResult.Error
