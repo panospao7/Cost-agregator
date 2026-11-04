@@ -72,6 +72,15 @@ interface MerchantCategoryDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertAll(merchantCategories: List<MerchantCategory>): List<Long>
     
+    /**
+     * DR-04: genuine user category correction. Replaces the row with the same
+     * merchantPattern (primary key) so a seeded or auto-learned mapping cannot
+     * keep overriding what the user chose. Only the repository-level
+     * upsertUserCorrection may call this; seeding and auto-learning stay IGNORE.
+     */
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertUserCorrection(merchantCategory: MerchantCategory)
+
     @Query("SELECT * FROM merchant_categories")
     suspend fun getAll(): List<MerchantCategory>
 

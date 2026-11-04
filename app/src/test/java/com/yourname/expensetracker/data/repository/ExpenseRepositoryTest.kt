@@ -98,7 +98,58 @@ class ExpenseRepositoryTest {
         
         // Assert: now delegated to TransactionLifecycleCoordinator
         coVerify { transactionLifecycleCoordinator.updateCategory(eq(expenseId), eq(newCategoryId), any(), eq("USER_EDIT")) }
-        coVerify { merchantCategoryRepository.learnPattern("Test Merchant", newCategoryId) }
+        // DR-04: the user edit path records a correction (replace), never an auto-learn (ignore).
+        coVerify(exactly = 1) { merchantCategoryRepository.correctPattern("Test Merchant", newCategoryId) }
+        coVerify(exactly = 0) { merchantCategoryRepository.learnPattern(any(), any()) }
+    }
+
+    @Test
+    fun `DR-04 updateExpenseCategory with null category does not record a correction`() = runTest {
+        val expense = Expense(
+            id = 104L,
+            amount = 5.0,
+            merchant = "Test Merchant",
+            categoryId = 1L,
+            transactionType = TransactionType.PURCHASE,
+            date = 1_700_000_000_000L
+        )
+
+        repository.updateExpenseCategory(expense, null)
+
+        coVerify(exactly = 0) { merchantCategoryRepository.correctPattern(any(), any()) }
+        coVerify(exactly = 0) { merchantCategoryRepository.learnPattern(any(), any()) }
+    }
+
+    @Test
+    fun `DR-04 updateExpenseCategoryBulk records exactly one correction for the merchant key`() = runTest {
+        repository.updateExpenseCategoryBulk("LIDL #123 ATHENS", 7L)
+
+        coVerify(exactly = 1) { merchantCategoryRepository.correctPattern("LIDL #123 ATHENS", 7L) }
+        coVerify(exactly = 0) { merchantCategoryRepository.learnPattern(any(), any()) }
+        coVerify(exactly = 1) { transactionLifecycleCoordinator.bulkUpdateCategory(eq("LIDL #123 ATHENS"), eq(7L), eq("USER_EDIT"), any(), any()) }
+    }
+
+    @Test
+    fun `DR-04 updateExpenseCategory propagates CancellationException from the correction`() = runTest {
+        coEvery { merchantCategoryRepository.correctPattern(any(), any()) } throws
+            kotlinx.coroutines.CancellationException("cancelled")
+        val expense = Expense(
+            id = 105L,
+            amount = 5.0,
+            merchant = "Test Merchant",
+            categoryId = 1L,
+            transactionType = TransactionType.PURCHASE,
+            date = 1_700_000_000_000L
+        )
+
+        var rethrown = false
+        try {
+            repository.updateExpenseCategory(expense, 2L)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            rethrown = true
+        }
+
+        assertTrue(rethrown)
     }
 
     @Test

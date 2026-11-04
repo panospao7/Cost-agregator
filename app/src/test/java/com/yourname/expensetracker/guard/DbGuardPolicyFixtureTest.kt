@@ -25,7 +25,7 @@ import java.io.File
  *   BOTH sections (a cross-section duplicate fails closed), and no
  *   duplicate/wildcard/raw/write tuples.
      * - **Ownership policy:** The active `db_ownership_policy.yml` is the
-     *   activated v2 document (`schemaVersion: 2`, 456 entries — one entry per
+     *   activated v2 document (`schemaVersion: 2`, 460 entries — one entry per
      *   canonical mutation key, with `ownerFqcn` / `daoAccessor` / `barrierMode`
      *   fields). The fixture parser accepts the v2 document header and entry
      *   schema and maps v2 fields onto the shared [ParsedEntry] model; legacy
@@ -1068,7 +1068,7 @@ class DbGuardPolicyFixtureTest {
     // ══════════════════════════════════════════════════════════════════
 
     @Test
-    fun `manifest — ownership policy has exactly 459 entries`() {
+    fun `manifest — ownership policy has exactly 460 entries`() {
         // Release 1.0 G3 S4 (owner pre-approved shrink): the two direct transactionEventDao.insert
         // identities (NotificationRepository, ReviewQueueRepository) were removed: 429 -> 427.
         // Release 1.0 R21 S1 adds one approved exact identity
@@ -1100,8 +1100,10 @@ class DbGuardPolicyFixtureTest {
         // 1.0.4 N-05-3 step 2 (owner item 131): +1 exact identity
         // (ReceiptItemCategorizationRepository.updatePlaceholderRowsWithRetryResult /
         // dao.updatePlaceholderRowsIfStillUncategorized), so 459.
+        // 1.0.4 Batch 3 DR-04 (owner item 138): +1 exact identity
+        // (MerchantCategoryRepository.upsertUserCorrection / dao.upsertUserCorrection), so 460.
         val entries = parseEntries(ownershipPolicyFile)
-        assertEquals("Ownership policy must have exactly 459 entries", 459, entries.size)
+        assertEquals("Ownership policy must have exactly 460 entries", 460, entries.size)
     }
 
     @Test

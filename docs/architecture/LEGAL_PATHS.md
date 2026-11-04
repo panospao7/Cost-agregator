@@ -1479,6 +1479,16 @@ LEARN merchant category (user feedback):
   → DatabaseWriteBarrier check
   → MerchantCategoryRepository.insert(merchantName → categoryId)
   → Invalidates all caches
+  → Auto-learning, seeding and Debug stay OnConflictStrategy.IGNORE (an existing row is never changed)
+
+CORRECT merchant category (DR-04, genuine user category edit only):
+  → ExpenseRepository.updateExpenseCategory / updateExpenseCategoryBulk
+  → MerchantCategoryRepository.correctPattern → CategorizationEngine.correctMerchantCategory(merchantName, categoryId)
+  → Same merchantPattern key as learnMerchantCategory (merchantNormalizer canonical name)
+  → MerchantCategoryRepository.upsertUserCorrection (DatabaseWriteBarrier check, MerchantCategoryDao @Upsert,
+    invalidates all caches) REPLACES a seeded or auto-learned row for that key
+  → Bulk edit corrects the one merchant key once, not once per row
+  → NOT called from TransactionSideEffectPlanner (fires on any trusted edit even if the category is unchanged)
 
 DEBUG categorize:
   → CategorizationEngine.debugCategorize(merchantName, amount)
@@ -1487,6 +1497,8 @@ DEBUG categorize:
 
 FORBIDDEN:
   ❌ MerchantCategoryRepository.insert() outside CategorizationEngine.learnMerchantCategory()
+  ❌ MerchantCategoryRepository.upsertUserCorrection / CategorizationEngine.correctMerchantCategory from seeding,
+     auto-learning, Debug or TransactionSideEffectPlanner (user category edit paths only)
   ❌ MerchantCanonicalizer.canonicalize() used for writes (read-only normalization)
   ❌ Direct cache map mutation (must go through invalidateAllCaches)
   ❌ Skipping layers in the cascade (must respect 6-layer priority order)

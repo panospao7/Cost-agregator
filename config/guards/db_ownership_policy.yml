@@ -1210,6 +1210,25 @@ entries:
     method)'
   owner: '@panospao7'
   linkedIssue: MIT-DB-08O
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/MerchantCategoryRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.MerchantCategoryRepository
+  kind: function
+  method: upsertUserCorrection
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.MerchantCategory
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.MerchantCategoryDao
+  operation: upsertUserCorrection
+  barrierMode: helper
+  reason: 'DR-04 EXACT_POLICY (owner item 138): barrier-checked genuine user category
+    correction -- @Upsert replaces the existing merchantPattern row so a seeded or
+    auto-learned mapping cannot override the user''s choice, then invalidates the
+    categorization caches; reached only via CategorizationEngine.correctMerchantCategory
+    from the ExpenseRepository user category edit paths (seeding and auto-learning
+    stay OnConflictStrategy.IGNORE)'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08O
 - path: app/src/main/java/com/yourname/expensetracker/data/repository/MerchantLocationRepository.kt
   ownerFqcn: com.yourname.expensetracker.data.repository.MerchantLocationRepository
   kind: function
