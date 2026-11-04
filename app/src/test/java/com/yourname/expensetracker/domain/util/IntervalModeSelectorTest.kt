@@ -37,8 +37,15 @@ class IntervalModeSelectorTest {
     }
 
     @Test
-    fun `full tie falls back to the smaller value deterministically`() {
-        assertEquals(10, IntervalModeSelector.selectMode(listOf(10, 20), { 1.0 }))
-        assertEquals(10, IntervalModeSelector.selectMode(listOf(20, 10), { 1.0 }))
+    fun `full tie falls back to the larger value deterministically`() {
+        assertEquals(20, IntervalModeSelector.selectMode(listOf(10, 20), { 1.0 }))
+        assertEquals(20, IntervalModeSelector.selectMode(listOf(20, 10), { 1.0 }))
+    }
+
+    @Test
+    fun `two gaps 40 and 8 resolve to the longer interval`() {
+        // Median is the midpoint (24), equidistant from both; the larger value wins.
+        assertEquals(40, IntervalModeSelector.selectMode(listOf(40, 8), monthTolerance))
+        assertEquals(40, IntervalModeSelector.selectMode(listOf(8, 40), monthTolerance))
     }
 }

@@ -222,12 +222,6 @@ class NotificationSubscriptionDetector @Inject constructor(
         )
     }
 
-    /**
-     * Analyze intervals between transaction dates to determine:
-     * 1. The most likely recurrence interval (weekly, monthly, etc.)
-     * 2. The consistency score (0-1, higher = more regular)
-     * 3. Days since the last transaction
-     */
     private fun intervalTypeForMode(mode: Int): String? = when (mode) {
         in 5..11 -> "weekly"          // ~7 days
         in 12..18 -> "biweekly"      // ~14 days
@@ -247,6 +241,12 @@ class NotificationSubscriptionDetector @Inject constructor(
         else -> (mode * 0.1).toInt().coerceAtLeast(1)
     }
 
+    /**
+     * Analyze intervals between transaction dates to determine:
+     * 1. The most likely recurrence interval (weekly, monthly, etc.)
+     * 2. The consistency score (0-1, higher = more regular)
+     * 3. Days since the last transaction
+     */
     private fun analyzeIntervals(
         dates: List<Long>,
         now: Long

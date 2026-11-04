@@ -16,7 +16,9 @@ object IntervalModeSelector {
      * Rule: take the interval value(s) with the highest exact count. If several
      * values tie, prefer the candidate with the most intervals within its own
      * tolerance ([toleranceFor]); if still tied, prefer the one closest to the
-     * median of all intervals; if still tied, the smaller value (deterministic).
+     * median of all intervals; if still tied, the larger value (deterministic; with two
+     * gaps the median is their midpoint, so the larger/longer interval avoids
+     * over-estimating the annual cost).
      *
      * @return the selected mode, or null when [intervalsDays] is empty.
      */
@@ -41,7 +43,7 @@ object IntervalModeSelector {
                 intervalsDays.count { abs(it - candidate) <= tolerance }
             }
                 .thenBy { abs(it - median) }
-                .thenBy { it }
+                .thenByDescending { it }
         ).first()
     }
 }
