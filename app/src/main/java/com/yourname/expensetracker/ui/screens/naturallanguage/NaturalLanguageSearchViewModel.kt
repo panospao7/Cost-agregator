@@ -13,6 +13,7 @@ import com.yourname.expensetracker.domain.naturallanguage.SpeechInputGateway
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.flow.Flow
 import javax.inject.Inject
@@ -73,8 +74,8 @@ class NaturalLanguageSearchViewModel @Inject constructor(
         // Debounce search queries
         _query
             .debounce(300)
-            .filter { it.length >= 3 }
             .distinctUntilChanged()
+            .filter { it.length >= 3 }
             .onEach { queryText ->
                 performSearch(queryText)
             }
@@ -88,9 +89,17 @@ class NaturalLanguageSearchViewModel @Inject constructor(
     
     fun updateQuery(newQuery: String) {
         _query.value = newQuery
-        if (newQuery.isEmpty()) {
+        if (newQuery.length < 3) {
+            // Below the search threshold no search runs, so drop any stale results/error.
             clearResults()
         }
+    }
+
+    /** Re-runs the current query (identical text is otherwise swallowed by distinctUntilChanged). */
+    fun retrySearch() {
+        val current = _query.value
+        if (current.length < 3) return
+        viewModelScope.launch { performSearch(current) }
     }
     
     fun clearQuery() {

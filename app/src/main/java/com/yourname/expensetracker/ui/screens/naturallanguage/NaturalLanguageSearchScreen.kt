@@ -145,7 +145,7 @@ fun NaturalLanguageSearchScreen(
                     EmptySearchState()
                 }
                 is SearchState.Error -> {
-                    SearchErrorState()
+                    SearchErrorState(onRetry = { viewModel.retrySearch() })
                 }
                 else -> {
                     InitialSearchState()
@@ -156,16 +156,22 @@ fun NaturalLanguageSearchScreen(
 }
 
 @Composable
-fun SearchErrorState() {
+fun SearchErrorState(onRetry: () -> Unit) {
     Box(
         modifier = Modifier.fillMaxSize(),
         contentAlignment = Alignment.Center
     ) {
-        Text(
-            text = stringResource(R.string.nlp_search_failed),
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.error
-        )
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                text = stringResource(R.string.nlp_search_failed),
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.error
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            TextButton(onClick = onRetry) {
+                Text(stringResource(R.string.retry))
+            }
+        }
     }
 }
 

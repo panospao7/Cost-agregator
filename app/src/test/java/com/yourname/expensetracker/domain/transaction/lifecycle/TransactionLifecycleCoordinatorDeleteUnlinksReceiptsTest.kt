@@ -222,7 +222,14 @@ class TransactionLifecycleCoordinatorDeleteUnlinksReceiptsTest {
     }
 
     /** Links receipt to expense with matched state, a warranty, a return window and one item. */
-    private suspend fun linkWithDependents(receiptId: Long, expenseId: Long) {
+    // Root cause of the earlier setup failure: return_windows has a UNIQUE index on expenseId
+    // (ReturnWindow), so two receipts cannot both own a return window for one expense. The
+    // second receipt of a shared expense therefore gets no return window (withReturnWindow = false).
+    private suspend fun linkWithDependents(
+        receiptId: Long,
+        expenseId: Long,
+        withReturnWindow: Boolean = true
+    ) {
         database.receiptExpenseLinkDao().insert(
             ReceiptExpenseLink(
                 receiptId = receiptId,
@@ -255,19 +262,21 @@ class TransactionLifecycleCoordinatorDeleteUnlinksReceiptsTest {
                 updatedAt = now
             )
         )
-        database.returnWindowDao().insertReturnWindow(
-            ReturnWindow(
-                receiptId = receiptId,
-                expenseId = expenseId,
-                productName = "Synthetic Product",
-                merchantName = "Synthetic Shop",
-                purchaseDate = now,
-                returnDays = 30,
-                returnDeadline = now + 2_000_000L,
-                createdAt = now,
-                updatedAt = now
+        if (withReturnWindow) {
+            database.returnWindowDao().insertReturnWindow(
+                ReturnWindow(
+                    receiptId = receiptId,
+                    expenseId = expenseId,
+                    productName = "Synthetic Product",
+                    merchantName = "Synthetic Shop",
+                    purchaseDate = now,
+                    returnDays = 30,
+                    returnDeadline = now + 2_000_000L,
+                    createdAt = now,
+                    updatedAt = now
+                )
             )
-        )
+        }
         database.receiptItemCategorizationDao().insert(
             ReceiptItemCategorization(
                 receiptId = receiptId,
@@ -294,7 +303,7 @@ class TransactionLifecycleCoordinatorDeleteUnlinksReceiptsTest {
         assertEquals(expenseId, database.warrantyDao().getWarrantyByReceiptId(receiptId)!!.expenseId)
     }
 
-    private suspend fun assertReceiptStateReset(receiptId: Long) {
+    private suspend fun assertReceiptStateReset(receiptId: Long, hasReturnWindow: Boolean = true) {
         val receipt = database.scannedReceiptDao().getById(receiptId)!!
         assertEquals("receipt match status reset", MatchStatus.UNMATCHED, receipt.matchStatus)
         assertNull("receipt expenseId cleared", receipt.expenseId)
@@ -302,10 +311,14 @@ class TransactionLifecycleCoordinatorDeleteUnlinksReceiptsTest {
             "warranty expenseId cleared",
             database.warrantyDao().getWarrantyByReceiptId(receiptId)!!.expenseId
         )
-        assertNull(
-            "return window expenseId cleared",
-            database.returnWindowDao().getReturnWindowByReceiptId(receiptId)!!.expenseId
-        )
+        if (hasReturnWindow) {
+            assertNull(
+                "return window expenseId cleared",
+                database.returnWindowDao().getReturnWindowByReceiptId(receiptId)!!.expenseId
+            )
+        } else {
+            assertNull(database.returnWindowDao().getReturnWindowByReceiptId(receiptId))
+        }
         val items = database.receiptItemCategorizationDao().getByReceiptId(receiptId)
         assertEquals(1, items.size)
         assertNull("item expenseId cleared", items.single().expenseId)
@@ -337,14 +350,49 @@ class TransactionLifecycleCoordinatorDeleteUnlinksReceiptsTest {
         val receiptA = insertReceipt()
         val receiptB = insertReceipt()
         linkWithDependents(receiptA, expense.id)
-        linkWithDependents(receiptB, expense.id)
+        linkWithDependents(receiptB, expense.id, withReturnWindow = false)
 
         val result = newCoordinator(realLinkService).deleteExpense(expense)
 
         assertTrue("delete must succeed: ${result.exceptionOrNull()}", result.isSuccess)
         assertNull("expense gone", database.expenseDao().getById(expense.id))
         assertReceiptStateReset(receiptA)
-        assertReceiptStateReset(receiptB)
+        assertReceiptStateReset(receiptB, hasReturnWindow = false)
+    }
+
+    @Test
+    fun deleteExpense_sharedReceiptLinkedToTwoExpenses_leavesWarrantyAndLinkOnTheOtherExpense() = runTest {
+        val expenseX = insertExpense()
+        val expenseY = insertExpense()
+        val receipt = insertReceipt()
+        linkWithDependents(receipt, expenseX.id)
+        database.receiptExpenseLinkDao().insert(
+            ReceiptExpenseLink(
+                receiptId = receipt,
+                expenseId = expenseY.id,
+                linkType = "DIRECT_SAVE",
+                confidence = 0.9f,
+                source = "TEST",
+                createdAt = now,
+                createdBy = "test"
+            )
+        )
+
+        val result = newCoordinator(realLinkService).deleteExpense(expenseX)
+
+        assertTrue("delete must succeed: ${result.exceptionOrNull()}", result.isSuccess)
+        assertNull("X gone", database.expenseDao().getById(expenseX.id))
+        assertNotNull("Y stays", database.expenseDao().getById(expenseY.id))
+        assertEquals(
+            "warranty follows the remaining link to Y",
+            expenseY.id,
+            database.warrantyDao().getWarrantyByReceiptId(receipt)!!.expenseId
+        )
+        assertEquals(
+            listOf(expenseY.id),
+            database.receiptExpenseLinkDao().getLinksForReceipt(receipt).map { it.expenseId }
+        )
+        assertEquals(expenseY.id, database.scannedReceiptDao().getById(receipt)!!.expenseId)
     }
 
     @Test
@@ -381,10 +429,13 @@ class TransactionLifecycleCoordinatorDeleteUnlinksReceiptsTest {
         val receiptA = insertReceipt()
         val receiptB = insertReceipt()
         linkWithDependents(receiptA, expense.id)
-        linkWithDependents(receiptB, expense.id)
+        linkWithDependents(receiptB, expense.id, withReturnWindow = false)
         val spy = spyk(realLinkService)
-        // Fails for B only: whichever receipt is processed first, A's real unlink (if it ran)
-        // must be rolled back with the delete.
+        // Explicit processing order: A first (real unlink runs and mutates), then B fails.
+        // A's real unlink must therefore be rolled back together with the delete.
+        val linkA = database.receiptExpenseLinkDao().getLinksForReceipt(receiptA).single()
+        val linkB = database.receiptExpenseLinkDao().getLinksForReceipt(receiptB).single()
+        coEvery { spy.getLinksForExpense(expense.id) } returns listOf(linkA, linkB)
         coEvery { spy.unlinkReceiptFromExpense(receiptB, expense.id) } returns
             Result.failure(RuntimeException("synthetic unlink failure"))
 

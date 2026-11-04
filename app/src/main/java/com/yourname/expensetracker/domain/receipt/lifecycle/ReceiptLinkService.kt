@@ -577,6 +577,9 @@ class ReceiptLinkService @Inject constructor(
                 // 2. Determine correct ScannedReceipt.expenseId after unlinking
                 //    P3-004 (RP-12 12b): column-scoped writes — only link/status
                 //    fields and timestamps, never raw OCR / parsed columns.
+                // Warranty / return-window target: the remaining primary link's expense
+                // (same one the receipt is repointed to), or null when none remains.
+                var remainingPrimaryExpenseId: Long? = null
                 if (!isBankStatement && receipt != null) {
                     val remainingLinks = receiptExpenseLinkDao.getLinksForReceipt(receiptId)
                     val primaryLinks = remainingLinks.filter { it.isPrimary }
@@ -584,23 +587,31 @@ class ReceiptLinkService @Inject constructor(
                     if (primaryLinks.isEmpty()) {
                         scannedReceiptDao.clearMatchFields(receiptId = receiptId, now = now)
                     } else {
+                        remainingPrimaryExpenseId = primaryLinks.first().expenseId
                         scannedReceiptDao.updatePrimaryExpenseId(
                             receiptId = receiptId,
-                            expenseId = primaryLinks.first().expenseId,
+                            expenseId = remainingPrimaryExpenseId,
                             now = now
                         )
                     }
                 }
 
-                // Clear expenseId on warranties and return windows
+                // Repoint (or clear when no primary link remains) expenseId on warranties
+                // and return windows, so a shared receipt keeps them on the remaining expense.
                 warrantyDao.updateExpenseIdByReceiptId(
                     receiptId = receiptId,
-                    expenseId = null,
+                    expenseId = remainingPrimaryExpenseId,
                     updatedAt = now
                 )
+                // ReturnWindow.expenseId is UNIQUE: if the remaining expense already has another
+                // receipt's window, repointing would violate the index and block the unlink.
+                val returnWindowTargetExpenseId = remainingPrimaryExpenseId?.takeUnless { remainingId ->
+                    returnWindowDao.getReturnWindowByExpenseId(remainingId)
+                        ?.let { it.receiptId != receiptId } == true
+                }
                 returnWindowDao.updateExpenseIdByReceiptId(
                     receiptId = receiptId,
-                    expenseId = null,
+                    expenseId = returnWindowTargetExpenseId,
                     updatedAt = now
                 )
 

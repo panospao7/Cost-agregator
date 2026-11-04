@@ -168,6 +168,8 @@ DELETE expense:
   → Loads snapshot INSIDE transaction
   → TransactionEvent with LifecycleEventType.DELETED
   → Post-delete side effects via TransactionSideEffectPlanner.planDeleted()
+  → Linked receipts are unlinked through ReceiptLinkService in the same transaction;
+    a failed unlink rolls the delete back
 
 FORBIDDEN:
   ❌ ExpenseDao.delete() from repositories directly
