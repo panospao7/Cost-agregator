@@ -524,8 +524,7 @@ class CategorizationEngine @Inject constructor(
         // Store the correction with maximum confidence and a timesUsed that is above every
         // other row of the same canonical name, so it wins every lookup. Nothing displays
         // timesUsed; it is only a ranking tie-breaker.
-        val canonical = base.normalizedCanonicalName
-        val rival = if (canonical.isNullOrBlank()) null else merchantCategoryRepository.getCategoryByNormalizedCanonical(canonical)
+        val rival = bestMappingForCanonical(base.normalizedCanonicalName)
         val timesUsed = if (rival != null && rival.merchantPattern != base.merchantPattern) {
             maxOf(USER_CORRECTION_TIMES_USED.toLong(), rival.timesUsed.toLong() + 1L)
                 .coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
@@ -537,6 +536,11 @@ class CategorizationEngine @Inject constructor(
         val categoryName = getCategoryMap()[categoryId] ?: "unknown"
         traceDecision(merchantName, categoryName, "correctMerchantCategory")
         Timber.d("Recorded user merchant category correction")
+    }
+
+    private suspend fun bestMappingForCanonical(canonical: String?): MerchantCategory? {
+        if (canonical.isNullOrBlank()) return null
+        return merchantCategoryRepository.getCategoryByNormalizedCanonical(canonical)
     }
 
     suspend fun createMerchantCategoryMapping(merchantName: String, categoryId: Long): MerchantCategory {
