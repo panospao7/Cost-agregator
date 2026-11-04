@@ -132,16 +132,6 @@ class AnalyticsCurrencyNormalizer @Inject constructor(
             }
 
             val conversionResult = when {
-                expense.spendingExclusionReason != null -> ConversionResult(
-                    amount = 0.0,
-                    rateBasis = "IDENTITY",
-                    rateUsed = 1.0,
-                    rateValidDate = expense.date,
-                    rateLastUpdated = null,
-                    rateSource = null,
-                    conversionPath = "IDENTITY",
-                    qualityWarning = null
-                )
                 sourceCurrency == homeCurrency -> ConversionResult(
                     amount = expense.effectiveAmount,
                     rateBasis = "IDENTITY",

@@ -712,6 +712,8 @@ fun HomeScreen(
                                             .filterIsInstance<DashboardWidget.RecentTransactions>()
                                             .firstOrNull()
                                             ?.expenses
+                                            // Category dialog rows must match the category totals: no flagged rows.
+                                            ?.filter { it.spendingExclusionReason == null }
                                             ?: emptyList()
                                     }
                                     
@@ -1338,6 +1340,14 @@ fun RecentExpenseRow(expense: DashboardExpense, categoryColor: Color? = null) {
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                // A flagged installment purchase is listed but adds 0 to every total: say so.
+                if (expense.spendingExclusionReason != null) {
+                    Text(
+                        stringResource(R.string.transactions_installment_chip_not_counted),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
             }
         }
     Text(

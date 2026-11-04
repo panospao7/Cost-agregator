@@ -23,6 +23,7 @@ import com.yourname.expensetracker.domain.health.HealthTrend
 import com.yourname.expensetracker.domain.logic.SynthesisEngine
 import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.model.dashboard.BudgetStatusSnapshot
+import com.yourname.expensetracker.domain.model.dashboard.DashboardCategory
 import com.yourname.expensetracker.domain.model.dashboard.DashboardExpense
 import com.yourname.expensetracker.domain.model.dashboard.DashboardTransactionType
 import com.yourname.expensetracker.domain.model.dashboard.DomainBlockStatus
@@ -320,13 +321,12 @@ class ComputeDashboardWidgetsUseCaseBlockPartyTest {
     }
 
     /**
-     * Known residual (plan S2): a neutralised row (spendingExclusionReason set, so
-     * effectiveAmount is 0) is still a PURCHASE and not-mine=false, so it is not filtered
-     * from the list. Only its contribution to actual is pinned here: 0. topTransactions
-     * membership for it is deliberately not asserted.
+     * A neutralised row (spendingExclusionReason set, so effectiveAmount is 0) adds nothing to
+     * actual and is absent from topTransactions. The fixture helper forwards the exclusion reason,
+     * so the use case sees the same flagged row production does.
      */
     @Test
-    fun `P-05-6 neutralised row contributes zero to actual`() = runTest {
+    fun `P-05-6 neutralised row contributes zero to actual and is absent from topTransactions`() = runTest {
         fixedNowMs = at(15, 12)
         val expenses = listOf(
             purchase(1L, 20.0, at(3, 12)),
@@ -339,6 +339,68 @@ class ComputeDashboardWidgetsUseCaseBlockPartyTest {
         assertEquals(20.0, day3.actualSpent, TOL)
         assertEquals(DomainBlockStatus.UNDER_BUDGET, day3.status)
         assertTrue(day3.topTransactions.any { it.id == 1L })
+        assertTrue(day3.topTransactions.none { it.id == 2L })
+    }
+
+    // ---------------------------------------------------------------- Recent Activity vs totals
+
+    /**
+     * A flagged own purchase stays in Recent Activity (shown with a label) but is out of the month
+     * total, the trend chart values and the top categories. A deposit and a not-mine purchase are
+     * not in Recent Activity at all.
+     */
+    @Test
+    fun `Recent Activity lists a flagged purchase while totals chart and top categories ignore it`() = runTest {
+        fixedNowMs = at(15, 12)
+        val expenses = listOf(
+            purchase(1L, 20.0, at(3, 12)),
+            purchase(2L, 300.0, at(3, 9)).copy(spendingExclusionReason = "TEST_NEUTRALISED"),
+            purchase(3L, 150.0, at(4, 12)).copy(transactionType = TransactionType.DEPOSIT),
+            purchase(4L, 500.0, at(5, 12)).copy(isNotMine = true)
+        )
+
+        val result = computeUseCase.compute(
+            data(expenses, emptyList(), categories = listOf(DashboardCategory(7L, "Food", "F", "#112233")))
+        )
+
+        val recentIds = result.allWidgets.filterIsInstance<DashboardWidget.RecentTransactions>()
+            .single().expenses.map { it.id }
+        assertTrue("flagged purchase is listed", 2L in recentIds)
+        assertTrue("normal purchase is listed", 1L in recentIds)
+        assertTrue("deposit is not listed", 3L !in recentIds)
+        assertTrue("not-mine purchase is not listed", 4L !in recentIds)
+
+        val period = result.allWidgets.filterIsInstance<DashboardWidget.PeriodSummary>().single()
+        assertEquals("month total", 20.0, period.monthSpent, TOL)
+
+        val currentMonth = result.allWidgets.filterIsInstance<DashboardWidget.SpendingTrend>()
+            .single().series.single { it.isCurrentMonth }
+        assertEquals("chart end value", 20.0f, currentMonth.data.last(), 0.0001f)
+
+        val top = result.allWidgets.filterIsInstance<DashboardWidget.TopCategories>().single().categories
+        assertEquals(1, top.size)
+        assertEquals("top category amount", 20.0, top.single().moneyTotal.displayAmount, TOL)
+    }
+
+    /** Control: with no flagged row the same Recent Activity list and totals hold, so the flag is the only difference. */
+    @Test
+    fun `Recent Activity control without a flagged purchase`() = runTest {
+        fixedNowMs = at(15, 12)
+        val expenses = listOf(purchase(1L, 20.0, at(3, 12)), purchase(2L, 300.0, at(3, 9)))
+
+        val result = computeUseCase.compute(
+            data(expenses, emptyList(), categories = listOf(DashboardCategory(7L, "Food", "F", "#112233")))
+        )
+
+        assertEquals(
+            setOf(1L, 2L),
+            result.allWidgets.filterIsInstance<DashboardWidget.RecentTransactions>().single().expenses.map { it.id }.toSet()
+        )
+        assertEquals(
+            320.0,
+            result.allWidgets.filterIsInstance<DashboardWidget.PeriodSummary>().single().monthSpent,
+            TOL
+        )
     }
 
     // ---------------------------------------------------------------- harness
@@ -375,10 +437,14 @@ class ComputeDashboardWidgetsUseCaseBlockPartyTest {
         isManualEntry = false
     )
 
-    private fun data(expenses: List<Expense>, budgets: List<BudgetStatusSnapshot>): ProcessedDashboardData {
+    private fun data(
+        expenses: List<Expense>,
+        budgets: List<BudgetStatusSnapshot>,
+        categories: List<DashboardCategory> = emptyList()
+    ): ProcessedDashboardData {
         val dashboardData = DashboardData(
             expenses = expenses.map { it.toDashboardExpense() },
-            categories = emptyList(),
+            categories = categories,
             budgetStatuses = budgets,
             pendingCount = 0,
             weather = FinancialWeather(
@@ -423,7 +489,8 @@ class ComputeDashboardWidgetsUseCaseBlockPartyTest {
         date = date,
         categoryId = categoryId,
         isNotMine = isNotMine,
-        isManualEntry = isManualEntry
+        isManualEntry = isManualEntry,
+        spendingExclusionReason = spendingExclusionReason
     )
 
     /** Epoch millis of June [day] 2026 at [hour]:00 in the JVM default zone (same zone the engine uses). */

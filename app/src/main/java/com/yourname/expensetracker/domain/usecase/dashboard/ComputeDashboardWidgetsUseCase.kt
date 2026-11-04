@@ -303,6 +303,12 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         val dayOfMonth: Int,
         val daysRemaining: Int,
         val purchases: List<DashboardExpense>,
+        /**
+         * Recent Activity source only: [purchases] plus flagged (spending-neutralised) own purchases, so
+         * they stay listed and labelled (loan-installments spec Q2). Never use it for a total, chart,
+         * count or top-category computation; those stay on [purchases].
+         */
+        val recentPurchases: List<DashboardExpense>,
         val deposits: List<DashboardExpense>,
         val expenseEntities: List<TransactionSummary>,
         val totalSpent: Double,
@@ -552,6 +558,10 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         val purchases = expenses.filter {
             it.transactionType == DashboardTransactionType.PURCHASE && !it.isNotMine && it.spendingExclusionReason == null
         }
+        // Recent Activity keeps flagged own purchases (shown with a label); not-mine rows stay out.
+        val recentPurchases = expenses.filter {
+            it.transactionType == DashboardTransactionType.PURCHASE && !it.isNotMine
+        }
         // P5-PR2 (NEW-P5-003)/P5-004 (RP-05): canonical deposit predicate --
         // not-mine and shared-expense deposits are excluded, matching every other
         // deposit list in this pipeline.
@@ -576,6 +586,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             dayOfMonth = dayOfMonth,
             daysRemaining = daysInMonth - dayOfMonth,
             purchases = purchases,
+            recentPurchases = recentPurchases,
             deposits = deposits,
             expenseEntities = expenses.filter { it.spendingExclusionReason == null }.map { it.toTransactionSummary() },
             totalSpent = monthSpent,
@@ -1396,7 +1407,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             )
             if (budgetStatuses.isNotEmpty()) add(DashboardWidget.BudgetHealthWidget(budgetStatuses, budgetSummary))
             if (categoryTotals.isNotEmpty()) add(DashboardWidget.TopCategories(categoryTotals.take(5)))
-            if (ctx.purchases.isNotEmpty()) add(DashboardWidget.RecentTransactions(ctx.purchases.take(5)))
+            if (ctx.recentPurchases.isNotEmpty()) add(DashboardWidget.RecentTransactions(ctx.recentPurchases.take(5)))
         }
     }
 

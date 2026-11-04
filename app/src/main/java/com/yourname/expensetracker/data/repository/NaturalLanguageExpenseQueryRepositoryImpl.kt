@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.data.repository
 
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
+import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.naturallanguage.NaturalLanguageExpense
 import com.yourname.expensetracker.domain.naturallanguage.NaturalLanguageExpenseQueryRepository
 import com.yourname.expensetracker.domain.naturallanguage.SearchCursor
@@ -143,7 +144,9 @@ class NaturalLanguageExpenseQueryRepositoryImpl @Inject constructor(
                 currency = expense.currency,
                 merchant = expense.merchant,
                 date = expense.date,
-                categoryId = expense.categoryId
+                categoryId = expense.categoryId,
+                countsInTotal = expense.transactionType == TransactionType.PURCHASE && expense.countsAsSpending,
+                isSpendingNeutralised = expense.isSpendingNeutralised
             )
         }
 }

@@ -1504,6 +1504,9 @@ AND LENGTH(:merchantKey) >= 8
      * to avoid loading all expenses in memory. Keyset pagination is immune to
      * insertions/deletions between pages.
      *
+     * Ownership only (`isNotMine = 0`): flagged (spending-excluded) installment rows stay in search
+     * results, marked by the caller (loan-installments spec Q2); totals are the caller's job.
+     *
      * @param startDate    Start of date range (inclusive).
      * @param endDate      End of date range (exclusive).
      * @param categoryIds  Category IDs to filter by (ignored when categoryFilterEnabled = false).
@@ -1518,7 +1521,7 @@ AND LENGTH(:merchantKey) >= 8
     @Query("""
         SELECT * FROM expenses
         WHERE date >= :startDate AND date < :endDate
-        AND ${SpendingInclusionSql.SPENDING_PREDICATE}
+        AND isNotMine = 0
         AND (:cursorDate IS NULL OR date < :cursorDate OR (date = :cursorDate AND id < :cursorId))
         AND (:transactionType IS NULL OR transactionType = :transactionType)
         AND (:merchantLike IS NULL OR merchant LIKE :merchantLike)
