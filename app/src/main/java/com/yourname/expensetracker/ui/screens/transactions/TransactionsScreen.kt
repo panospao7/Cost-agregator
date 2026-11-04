@@ -1721,6 +1721,15 @@ private fun TransactionItem(
                     ),
                     color = SemanticColors.TextPrimary
                 )
+                // The plan chip says "Not counted" when plan data loaded. Without it the row must still
+                // say so, because this amount adds 0 to the header total.
+                if (transaction.expense.isSpendingNeutralised && installmentRow?.mark !is InstallmentRowMark.PurchaseRecord) {
+                    Text(
+                        text = stringResource(R.string.transactions_installment_chip_not_counted),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
                 
 
                 

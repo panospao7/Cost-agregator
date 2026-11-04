@@ -127,6 +127,18 @@ class DateHeaderTotalTest {
     }
 
     @Test
+    fun singleCurrency_flaggedFullAmountRowAddsZeroToSpendingTotal() {
+        // The flagged row prints its full amount, but the header total stays spending-only.
+        val total = dateHeaderTotal(
+            listOf(
+                row(1200.0, "EUR", TransactionType.PURCHASE, exclusion = "INSTALLMENT_PURCHASE"),
+                row(500.0, "EUR", TransactionType.PURCHASE),
+            ),
+        )
+        assertEquals(-500.0, total!!.amount, delta)
+    }
+
+    @Test
     fun mixedGroup_notMineRowAddsZero() {
         val total = dateHeaderTotal(
             listOf(
