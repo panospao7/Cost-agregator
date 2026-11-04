@@ -1821,10 +1821,12 @@ class FinancialStressForecastEngineTest {
 
     @Test
     fun `AE-5 INV-2 all low with ample balances emits exactly healthy outlook and no R6`() = runTest {
-        // P-06-4: a healthy outlook needs a real purchase history; one small purchase provides it.
+        // P-06-4: a healthy outlook needs a real purchase history: at least 5 purchases over 14 days.
         val hugeDeposit = expense(100L, 1_000_000.0, TransactionType.DEPOSIT, now - dayMs)
-        val smallPurchase = expense(101L, 50.0, TransactionType.PURCHASE, now - 3 * dayMs)
-        allExpenses = listOf(hugeDeposit, smallPurchase)
+        val purchases = listOf(15, 12, 9, 6, 3).mapIndexed { index, daysAgo ->
+            expense(101L + index, 50.0, TransactionType.PURCHASE, now - daysAgo * dayMs)
+        }
+        allExpenses = listOf(hugeDeposit) + purchases
         allDeposits = listOf(hugeDeposit)
 
         val result = engine.computeStressForecast()
