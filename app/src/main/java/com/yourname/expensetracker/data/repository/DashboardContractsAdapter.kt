@@ -2,7 +2,6 @@ package com.yourname.expensetracker.data.repository
 
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.analytics.PeriodComparisonWindows
-import com.yourname.expensetracker.domain.budget.effectiveHealthOrNull
 import com.yourname.expensetracker.domain.model.PlannedExpense
 import com.yourname.expensetracker.domain.model.PlannedExpensePriority
 import com.yourname.expensetracker.domain.model.RecurringPattern
@@ -97,9 +96,7 @@ class DashboardContractsAdapter @Inject constructor(
                     conversionWarning = status.conversionWarning,
                     currency = status.currency,
                     currencyAssumption = status.currencyAssumption,
-                    percentKnown = status.percentKnown,
-                    effectiveSpend = status.adjustedSpendBreakdown?.effectiveSpend,
-                    effectiveHealthStatus = status.effectiveHealthOrNull()
+                    percentKnown = status.percentKnown
                 )
             }
         }

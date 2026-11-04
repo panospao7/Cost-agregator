@@ -423,14 +423,11 @@ class ComputeDashboardWidgetsUseCaseBlockPartyTest {
         remainingAmount = amount - spent,
         percentUsed = 0.0,
         healthStatus = BudgetHealthStatus.ON_TRACK,
-        // Real 30-day June period (half-open [Jun 1, Jul 1)): month-scale, so Block Party reads the limit.
         periodStart = at(1, 0),
-        periodEnd = LocalDateTime.of(2026, 7, 1, 0, 0, 0).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli(),
+        periodEnd = at(30, 23),
         isPartial = isPartial,
         currency = currency,
-        currencyAssumption = assumption,
-        // Runway (which gates Block Party) needs the budget's effective spend when the limit is positive.
-        effectiveSpend = spent
+        currencyAssumption = assumption
     )
 
     private fun purchase(id: Long, amount: Double, date: Long) = Expense(

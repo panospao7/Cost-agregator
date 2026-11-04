@@ -505,14 +505,8 @@ class SynthesisEngine @Inject constructor(
         }
         
         // 5. Calculate Discretionary (Available)
-        // F1: the discretionary pool compares the limit with calendar-month spend and obligations,
-        // so a budget whose period is clearly not month-scale (yearly, weekly) is skipped: the
-        // existing "no budget" path (limit 0, NO_BUDGET risk, confidence penalty) applies instead.
-        // A degenerate period (end <= start) is unknown and keeps the legacy behaviour. Only the
-        // limit read changes; no payload field is added.
-        val monthScaleBudgets = budgetStatuses.filter { it.periodEnd <= it.periodStart || it.isMonthScalePeriod }
-        val overallBudget = monthScaleBudgets.find { it.budgetCategoryId == null }?.budgetAmount ?: 0.0
-        val budgetLimit = resolveBudgetLimit(monthScaleBudgets)
+        val overallBudget = budgetStatuses.find { it.budgetCategoryId == null }?.budgetAmount ?: 0.0
+        val budgetLimit = resolveBudgetLimit(budgetStatuses)
 
         val spentSoFar = spendingPace.currentMonthSpent
             ?: throw com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableException(

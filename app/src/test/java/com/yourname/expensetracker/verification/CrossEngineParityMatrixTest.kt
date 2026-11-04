@@ -1435,8 +1435,7 @@ class CrossEngineParityMatrixTest : AnalyticsEngineTestBase() {
                             periodStart = it.periodStart,
                             periodEnd = it.periodEnd,
                             currency = it.currency, currencyAssumption = it.currencyAssumption,
-                            isPartial = it.isPartial, conversionWarning = it.conversionWarning, percentKnown = it.percentKnown,
-                            effectiveSpend = it.adjustedSpendBreakdown?.effectiveSpend
+                            isPartial = it.isPartial, conversionWarning = it.conversionWarning, percentKnown = it.percentKnown
                         )
                     },
                     pendingCount = 0,
