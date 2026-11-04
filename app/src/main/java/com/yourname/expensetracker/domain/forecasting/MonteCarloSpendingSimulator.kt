@@ -62,9 +62,11 @@ class MonteCarloSpendingSimulator @Inject constructor(
      * the sampled weekly amount so the stochastic component represents only truly
      * discretionary spending.
      *
-     * @param spentToDate     Total spending so far this month (PURCHASE + WITHDRAWAL, isNotMine=false)
+     * @param spentToDate     Total spending so far this month, in [displayCurrency] (the caller's
+     *   normalized month aggregate; the simulator does not filter transaction types itself)
      * @param knownUpcoming   Deterministic upcoming expenses (committed + likely from SynthesisEngine)
-     * @param budgetAmount    Monthly budget (null if no budget set)
+     * @param budgetAmount    Month-scale budget limit in [displayCurrency], or null when no limit is
+     *   compared (no budget set, a non-month-scale period, or an unavailable limit)
      * @param estimatedWeeklyRecurring Estimated weekly recurring spend (default 0.0).
      *   Callers with access to recurring pattern data SHOULD provide this value.
      * @return [MonteCarloResult], or null if there's absolutely no data to work with

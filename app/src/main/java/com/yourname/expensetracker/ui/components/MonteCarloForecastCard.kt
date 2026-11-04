@@ -34,7 +34,9 @@ fun MonteCarloForecastCard(
     result: MonteCarloResult,
     modifier: Modifier = Modifier,
     /** Placeholder default. Production callers should pass explicit currency. */
-    currency: String = "EUR"
+    currency: String = "EUR",
+    /** True when a budget exists but this forecast is not compared with it (not "no budget"). */
+    budgetNotComparable: Boolean = false
 ) {
     // S4-D914-017: Unavailable state — displayCurrency is null when Monte Carlo
     // result could not be computed (e.g. insufficient data for simulation).
@@ -193,7 +195,10 @@ fun MonteCarloForecastCard(
                 } else {
                     Column {
                         Text(
-                            stringResource(R.string.forecast_no_budget_set),
+                            stringResource(
+                                if (budgetNotComparable) R.string.forecast_budget_not_compared
+                                else R.string.forecast_no_budget_set
+                            ),
                             style = MaterialTheme.typography.labelSmall,
                             color = SemanticColors.TextMuted
                         )

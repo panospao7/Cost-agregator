@@ -447,7 +447,7 @@ internal const val FORECAST_LOW_CONFIDENCE_THRESHOLD = 0.6
 
 /**
  * BL-06: a confident overspend percent is shown only for a real, known-risk forecast with
- * confidence at or above [FORECAST_LOW_CONFIDENCE_THRESHOLD]. Below it the probability is
+ * confidence strictly above [FORECAST_LOW_CONFIDENCE_THRESHOLD]. At or below it the probability is
  * a near-50% prior, not a measurement, so nothing is rendered.
  */
 /** A forecast that left rows out must say so. */

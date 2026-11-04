@@ -744,8 +744,9 @@ class FinancialStressForecastEngine @Inject constructor(
                 ).displayAmount
             }
 
-        // Anchor sampling at the later of (now - 60 days) and the first-ever purchase, so days
-        // before the user had any history (pre-install) are not counted as quiet days. A
+        // Anchor sampling at the later of (now - 60 days) and the earliest purchase in the fetched
+        // 60-day window (not the first purchase ever), so days before the user had any history in
+        // that window are not counted as quiet days. A
         // MIN_SAMPLE_DAYS floor keeps a very new history from being dominated by one purchase.
         val now = timeProvider.now()
         val sixtyDaysAgo = TimePeriodUtils.addDays(now, -60)

@@ -870,10 +870,11 @@ fun HomeScreen(
                             is DashboardWidget.MonteCarloForecast -> {
             MonteCarloForecastCard(
                 result = widget.result,
-                currency = homeCurrency ?: ""
+                currency = homeCurrency ?: "",
+                budgetNotComparable = widget.budgetNotComparable
             )
                             }
-                            
+
                             is DashboardWidget.NoSpendStreak -> {
                                 NoSpendStreakWidget(
                                     currentStreak = widget.currentStreak,

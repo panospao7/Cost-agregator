@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- FIX-104 AE-small: DRAFT translation, owner native sign-off pending. -->
+    <string name="forecast_budget_not_compared">Η πρόβλεψη δεν συγκρίνεται με αυτόν τον προϋπολογισμό</string>
+    <string name="forecast_budget_unavailable">Το ποσό του προϋπολογισμού δεν είναι διαθέσιμο</string>
+</resources>

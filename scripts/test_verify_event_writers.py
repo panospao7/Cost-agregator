@@ -340,6 +340,25 @@ def test_real_operation_recorder_path_is_still_exempt(tmp_path, monkeypatch, cap
     assert code == 0, out.out
 
 
+def test_real_database_and_entity_paths_are_exempt():
+    assert _mod.is_exempt("x", _PKG + "data/database/AppDatabase.kt")
+    assert _mod.is_exempt("x", _PKG + "data/database/entity/Foo.kt")
+
+
+@pytest.mark.parametrize(
+    "rel",
+    [
+        _PKG + "data/database/FakeAppDatabase.kt",
+        _PKG + "other/AppDatabase.kt",
+        _PKG + "other/fooentity/Foo.kt",
+        _PKG + "other/entity/Foo.kt",
+        _PKG + "data/database/entityextra/Foo.kt",
+    ],
+)
+def test_lookalike_database_and_entity_paths_are_not_exempt(rel):
+    assert not _mod.is_exempt("x", rel)
+
+
 @pytest.mark.parametrize(
     "row, code",
     [

@@ -35,7 +35,9 @@ fun ForecastTimeline(
  budgetLimit: Double,
  modifier: Modifier = Modifier,
  /** Placeholder default. Production callers should pass explicit currency. */
- currency: String = "EUR"
+ currency: String = "EUR",
+ /** True when a budget exists but its figure is unavailable (not the same as "no budget set"). */
+ budgetUnavailable: Boolean = false
 ) {
     Column(modifier = modifier) {
         Text(
@@ -55,7 +57,10 @@ fun ForecastTimeline(
         }
 
         val hasValidBudget = budgetLimit > 0.0
-        val noBudgetSetText = stringResource(R.string.forecast_no_budget_set)
+        val noBudgetSetText = stringResource(
+            if (budgetUnavailable) R.string.forecast_budget_unavailable
+            else R.string.forecast_no_budget_set
+        )
 
         // Vico model creation - Connect past to projected (no gap)
         val chartEntryModel: ChartEntryModel = remember(pastPoints, projectedPoints, budgetLimit, hasValidBudget) {

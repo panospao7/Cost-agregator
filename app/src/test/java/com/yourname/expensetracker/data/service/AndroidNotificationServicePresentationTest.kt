@@ -168,9 +168,15 @@ object PresentationFixtures {
             is CharSequence -> out += value.toString()
             is Array<*> -> value.forEach { flattenInto(out, it) }
             is Iterable<*> -> value.forEach { flattenInto(out, it) }
-            else -> out += value.toString()
+            // Non-text objects (e.g. ApplicationInfo{36cb4242 ...}, Foo@1a2b4242) print their identity
+            // hash, which can contain a sentinel such as "4242" by chance. Mask the identity token only;
+            // CharSequence and String values above are never altered, so user-text leak checks stay strict.
+            else -> out += value.toString().replace(OBJECT_IDENTITY_HASH, "<id>")
         }
     }
+
+    /** A hexadecimal identity hash directly after '{' or '@', as printed by default object toString forms. */
+    private val OBJECT_IDENTITY_HASH = Regex("(?<=[{@])[0-9a-fA-F]{5,8}\\b")
 
     const val BRIEFING_KEY = "dashboard_home:2026-10-23"
 

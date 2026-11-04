@@ -36,7 +36,12 @@ import com.yourname.expensetracker.domain.usecase.savings.LifestyleSavingsPrompt
 import com.yourname.expensetracker.domain.usecase.savings.MonthlySavingsSweepUseCase
 import com.yourname.expensetracker.domain.usecase.savings.SavingsSweepComputationResult
 import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.domain.forecasting.ConfidenceLevel
+import com.yourname.expensetracker.domain.forecasting.MonteCarloResult
+import com.yourname.expensetracker.domain.forecasting.SimulationConfidence
+import com.yourname.expensetracker.domain.forecasting.SimulationMetadata
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -69,6 +74,106 @@ class ComputeDashboardWidgetsUseCaseEffectiveBudgetTest {
     }
     private lateinit var computeUseCase: ComputeDashboardWidgetsUseCase
     private lateinit var currencyConverter: CurrencyConverter
+    private lateinit var monteCarloSimulator: MonteCarloSpendingSimulator
+
+    // ---------------------------------------------------------------- Monte Carlo budgetNotComparable
+
+    @Test
+    fun `MC no budget is not flagged not comparable`() = runTest {
+        fixedNowMs = at(15, 12)
+        stubSimulation()
+
+        val card = monteCarlo(computeUseCase.compute(data(listOf(purchase(1L, 300.0, at(2, 12))), emptyList(), listOf(deposit()))))
+
+        assertFalse("no budget means 'No budget set', not 'not compared'", card.budgetNotComparable)
+    }
+
+    @Test
+    fun `MC available month-scale budget is comparable and passes its limit`() = runTest {
+        fixedNowMs = at(15, 12)
+        stubSimulation()
+        val budget = budget(1_000.0, effective = 300.0, start = at(1, 0), end = date(2026, 7, 1))
+
+        val card = monteCarlo(computeUseCase.compute(data(listOf(purchase(1L, 300.0, at(2, 12))), listOf(budget), listOf(deposit()))))
+
+        assertFalse(card.budgetNotComparable)
+        coVerify { monteCarloSimulator.simulate(any(), any(), 1_000.0, any(), any()) }
+    }
+
+    @Test
+    fun `MC weekly budget is not comparable and passes no limit`() = runTest {
+        fixedNowMs = at(15, 12)
+        stubSimulation()
+        val budget = budget(100.0, effective = 50.0, start = at(15, 0), end = at(22, 0))
+
+        val card = monteCarlo(computeUseCase.compute(data(listOf(purchase(1L, 300.0, at(2, 12))), listOf(budget), listOf(deposit()))))
+
+        assertTrue(card.budgetNotComparable)
+        coVerify { monteCarloSimulator.simulate(any(), any(), null, any(), any()) }
+    }
+
+    @Test
+    fun `MC yearly budget is not comparable and passes no limit`() = runTest {
+        fixedNowMs = at(15, 12)
+        stubSimulation()
+        val budget = budget(12_000.0, effective = 9_300.0, start = date(2026, 1, 1), end = date(2027, 1, 1))
+
+        val card = monteCarlo(computeUseCase.compute(data(listOf(purchase(1L, 300.0, at(2, 12))), listOf(budget), listOf(deposit()))))
+
+        assertTrue(card.budgetNotComparable)
+        coVerify { monteCarloSimulator.simulate(any(), any(), null, any(), any()) }
+    }
+
+    /**
+     * A month-scale budget whose figure is unavailable while the forecast still runs: a zero limit
+     * (NO_POSITIVE_LIMIT keeps the Runway income fallback). A positive limit with no effective spend
+     * makes Runway unavailable, which is covered by the next test.
+     */
+    @Test
+    fun `MC month-scale budget with an unavailable figure is not comparable`() = runTest {
+        fixedNowMs = at(15, 12)
+        stubSimulation()
+        val budget = budget(0.0, effective = null, start = at(1, 0), end = date(2026, 7, 1))
+
+        val card = monteCarlo(computeUseCase.compute(data(listOf(purchase(1L, 50.0, at(2, 12))), listOf(budget), listOf(deposit()))))
+
+        assertTrue(card.budgetNotComparable)
+        coVerify { monteCarloSimulator.simulate(any(), any(), null, any(), any()) }
+    }
+
+    /** Positive limit, no effective spend: Runway is unavailable, so the card is the unavailable placeholder. */
+    @Test
+    fun `MC month-scale budget with null effective spend yields the unavailable placeholder not a money claim`() = runTest {
+        fixedNowMs = at(15, 12)
+        stubSimulation()
+        val budget = budget(1_000.0, effective = null, start = at(1, 0), end = date(2026, 7, 1))
+
+        val card = monteCarlo(computeUseCase.compute(data(listOf(purchase(1L, 300.0, at(2, 12))), listOf(budget), listOf(deposit()))))
+
+        assertEquals(null, card.result.displayCurrency)
+        coVerify(exactly = 0) { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) }
+    }
+
+    private fun stubSimulation() {
+        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) } returns MonteCarloResult(
+            percentile10 = 100.0, percentile25 = 150.0, percentile50 = 200.0,
+            percentile75 = 250.0, percentile90 = 300.0,
+            probabilityUnderBudget = null, budgetAmount = null,
+            spentToDate = 300.0, knownUpcoming = 0.0,
+            confidence = SimulationConfidence(0.8, ConfidenceLevel.HIGH, "TEST"),
+            metadata = SimulationMetadata(8, 8, 1000, 0.0, 1.0, 15, 0L),
+            displayCurrency = "EUR"
+        )
+    }
+
+    private fun monteCarlo(result: CompiledDashboardData): DashboardWidget.MonteCarloForecast =
+        result.allWidgets.filterIsInstance<DashboardWidget.MonteCarloForecast>().single()
+
+    private fun deposit() = DashboardExpense(
+        id = 90L, amount = 2_000.0, effectiveAmount = 2_000.0, currency = "EUR", merchant = "Employer",
+        transactionType = DashboardTransactionType.DEPOSIT, date = at(2, 12),
+        categoryId = null, isNotMine = false, isManualEntry = false
+    )
 
     // ---------------------------------------------------------------- F1 Runway remaining
 
@@ -525,7 +630,7 @@ class ComputeDashboardWidgetsUseCaseEffectiveBudgetTest {
     fun setup() {
         currencyConverter = mockk(relaxed = true)
         val insightsEngine = mockk<com.yourname.expensetracker.domain.analytics.InsightsEngine>(relaxed = true)
-        val monteCarloSimulator = mockk<MonteCarloSpendingSimulator>(relaxed = true)
+        monteCarloSimulator = mockk<MonteCarloSpendingSimulator>(relaxed = true)
         coEvery { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) } returns null
         val healthScoreV2 = mockk<FinancialHealthScoreV2>(relaxed = true)
         coEvery { healthScoreV2.calculateHealthScore(any(), any()) } returns HealthScoreOutcome.Available(
