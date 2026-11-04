@@ -559,9 +559,17 @@ class AnalyticsViewModel @Inject constructor(
                 displayCurrency = homeCurrency
             ).aggregateOrNull()?.displayAmount
         }
-        val changePercent = AnalyticsComparisonWindows.changePercent(
-            period, comparableCurrentAmount, previousAvailableAmount
-        )
+        // A partial aggregate (rows excluded from conversion) understates its side, so a percent
+        // from it would be fabricated. Either side partial -> no percent (the banner explains why).
+        val comparisonPartial = currentTotalResult.aggregateOrNull()?.isPartial == true ||
+            previousTotalResult.aggregateOrNull()?.isPartial == true
+        val changePercent = if (comparisonPartial) {
+            null
+        } else {
+            AnalyticsComparisonWindows.changePercent(
+                period, comparableCurrentAmount, previousAvailableAmount
+            )
+        }
 
         val totalForPercentage = currentTotal.coerceAtLeast(0.0)
         val purchaseCategoryById = purchases.associate { it.id to it.categoryId }

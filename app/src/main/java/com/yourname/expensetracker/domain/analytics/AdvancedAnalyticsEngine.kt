@@ -272,9 +272,31 @@ class AdvancedAnalyticsEngine @Inject constructor(
         val previousPurchases = previousNorm.includedExpenses
             .filter { it.transactionType == DomainTransactionType.PURCHASE && !it.isNotMine }
 
-        computeCategoryAnalyticsCore(
+        val core = computeCategoryAnalyticsCore(
             currentPurchases, previousPurchases, categories, budgets, period, displayCurrency, allWarnings
         )
+        // This overload carries no money contexts, so isPartial never fires. A category with a row
+        // excluded from conversion (either period) would otherwise show a comparison against an
+        // understated figure: publish no comparison for it. Other categories keep their numbers.
+        val excludedIds = currentNorm.excludedReasons.keys + previousNorm.excludedReasons.keys
+        val categoriesWithExclusions = (currentExpenses + previousExpenses)
+            .filter { it.id in excludedIds }
+            .map { it.categoryId }
+            .toSet()
+        if (categoriesWithExclusions.isEmpty()) {
+            core
+        } else {
+            val adjusted = core.first.map { analytic ->
+                if (analytic.category.id in categoriesWithExclusions) {
+                    analytic.copy(
+                        previousPeriodTotal = null,
+                        changePercent = null,
+                        trendDirection = determineTrendDirection(null)
+                    )
+                } else analytic
+            }
+            adjusted to core.second
+        }
     }
 }
 

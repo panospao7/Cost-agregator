@@ -190,6 +190,68 @@ class AnalyticsViewModelRealEngineTest : ViewModelTestUtils() {
     }
 
     // ------------------------------------------------------------------------------------------
+    // Hero percent: a partial aggregate on either side must not produce a fabricated percent.
+    // ------------------------------------------------------------------------------------------
+
+    private val prevDate = 1_715_342_400_000L // 2024-05-10 12:00 UTC (previous calendar month)
+
+    @Test
+    fun `hero percent control complete both sides shows 150 percent`() = runTest(testDispatcher) {
+        val viewModel = viewModelFor(
+            listOf(
+                purchase(1, 250.0, "EUR", 1L),
+                purchase(2, 100.0, "EUR", 1L).copy(date = prevDate)
+            )
+        )
+
+        val job = launch { viewModel.state.collect { } }
+        testDispatcher.scheduler.advanceTimeBy(400)
+        awaitComputed(viewModel)
+
+        val change = viewModel.state.value.changePercent
+        assertTrue("complete comparison keeps its percent, was $change", change != null)
+        assertEquals(150f, change!!, 0.01f)
+        job.cancel()
+    }
+
+    @Test
+    fun `hero percent is null when the previous period has an unrated row`() = runTest(testDispatcher) {
+        val viewModel = viewModelFor(
+            listOf(
+                purchase(1, 250.0, "EUR", 1L),
+                purchase(2, 100.0, "EUR", 1L).copy(date = prevDate),
+                purchase(3, 50_000.0, "JPY", 1L).copy(date = prevDate)
+            )
+        )
+
+        val job = launch { viewModel.state.collect { } }
+        testDispatcher.scheduler.advanceTimeBy(400)
+        awaitComputed(viewModel)
+
+        assertNull("error: ${viewModel.state.value.error}", viewModel.state.value.error)
+        assertNull("a partial previous aggregate must not yield a percent", viewModel.state.value.changePercent)
+        job.cancel()
+    }
+
+    @Test
+    fun `hero percent is null when the current period has an unrated row`() = runTest(testDispatcher) {
+        val viewModel = viewModelFor(
+            listOf(
+                purchase(1, 250.0, "EUR", 1L),
+                purchase(3, 50_000.0, "JPY", 1L),
+                purchase(2, 100.0, "EUR", 1L).copy(date = prevDate)
+            )
+        )
+
+        val job = launch { viewModel.state.collect { } }
+        testDispatcher.scheduler.advanceTimeBy(400)
+        awaitComputed(viewModel)
+
+        assertNull(viewModel.state.value.changePercent)
+        job.cancel()
+    }
+
+    // ------------------------------------------------------------------------------------------
     // F3: a spending-neutralised (flagged) purchase must not re-enter the merchant list.
     // ------------------------------------------------------------------------------------------
 

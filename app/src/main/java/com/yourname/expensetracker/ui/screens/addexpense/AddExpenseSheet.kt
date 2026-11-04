@@ -977,7 +977,7 @@ fun MerchantFieldWithSuggestions(
                                 }
 
                                 Text(
-                                    stringResource(com.yourname.expensetracker.R.string.avg_amount_format, suggestion.avgAmount),
+                                    stringResource(com.yourname.expensetracker.R.string.avg_amount_format, String.format(java.util.Locale.getDefault(), "%.2f", suggestion.avgAmount)),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     fontWeight = FontWeight.Medium

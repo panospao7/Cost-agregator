@@ -109,7 +109,7 @@
     <string name="repeat_transaction_label">Repeat Transaction?</string>
     <string name="frequency_label">Frequency</string>
     <string name="visits_suffix_format">%d visits</string>
-    <string name="avg_amount_format">~€%.2f</string>
+    <string name="avg_amount_format">~%s</string>
     <string name="ok_button">OK</string>
     <string name="cancel_button">Cancel</string>
     <string name="save_button">Save</string>
@@ -168,7 +168,7 @@
     <!-- Labels and Badges -->
     <string name="label_close">Close</string>
     <string name="label_approve_all">Approve All</string>
-    <string name="label_add_amount_format">Add €%s</string>
+    <string name="label_add_amount_format">Add %s</string>
     
     <!-- Add Expense -->
     <string name="add_expense_title">Add Expense</string>

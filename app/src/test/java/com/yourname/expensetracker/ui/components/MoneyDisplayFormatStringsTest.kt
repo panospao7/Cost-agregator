@@ -31,7 +31,9 @@ class MoneyDisplayFormatStringsTest {
         "a11y_category_spending_format",
         "a11y_expense_item_format",
         "dialog_plan_expense_amount_label",
-        "calendar_label_starting_balance"
+        "calendar_label_starting_balance",
+        "avg_amount_format",
+        "label_add_amount_format"
     )
 
     private fun parse(folder: String): Document {
