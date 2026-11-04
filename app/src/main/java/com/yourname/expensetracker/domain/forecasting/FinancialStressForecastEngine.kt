@@ -89,6 +89,9 @@ class FinancialStressForecastEngine @Inject constructor(
         // Note: 500.0 is in home currency units
         private const val DEFAULT_EMERGENCY_BUFFER_FALLBACK = 500.0
         private const val SEED = 42L
+        private const val DAYS_PER_MONTH = 30.44
+        // Minimum number of days in the Monte Carlo daily-spend sample window.
+        private const val MIN_SAMPLE_DAYS = 14
 
         // NEW-P6-010: Risk classification thresholds — extracted from hardcoded magic numbers.
         // TODO: Migrate these to AppConfig so they can be tuned without a code deployment.
@@ -597,11 +600,17 @@ class FinancialStressForecastEngine @Inject constructor(
         // Compute the actual number of months spanned by the deposit history.
         val minDate = normalizedDeposits.minOf { it.date }
         val maxDate = normalizedDeposits.maxOf { it.date }
-        val monthCount = if (maxDate > minDate) {
-            java.time.temporal.ChronoUnit.MONTHS.between(
+        // P-06-4: fractional months (span days / 30.44), never truncated; minimum 1 month.
+        // Fencepost: n deposits span n - 1 intervals, so the covered period is
+        // span * n / (n - 1). A single deposit (or all on one day) keeps a 1-month period.
+        val depositCount = normalizedDeposits.size
+        val monthCount = if (depositCount >= 2 && maxDate > minDate) {
+            val spanDays = java.time.temporal.ChronoUnit.DAYS.between(
                 java.time.Instant.ofEpochMilli(minDate).atZone(java.time.ZoneId.systemDefault()).toLocalDate(),
                 java.time.Instant.ofEpochMilli(maxDate).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
-            ).toDouble().coerceAtLeast(1.0)
+            ).toDouble()
+            val coveredDays = spanDays * depositCount / (depositCount - 1)
+            maxOf(1.0, coveredDays / DAYS_PER_MONTH)
         } else 1.0
 
         val avgMonthlyIncome = totalDeposits / monthCount
@@ -680,11 +689,20 @@ class FinancialStressForecastEngine @Inject constructor(
                 ).displayAmount
             }
 
-        val sixtyDaysAgo = discretionaryPurchases.minOfOrNull { it.date }
-            ?: TimePeriodUtils.addDays(timeProvider.now(), -60)
+        // Anchor sampling at the later of (now - 60 days) and the first-ever purchase, so days
+        // before the user had any history (pre-install) are not counted as quiet days. A
+        // MIN_SAMPLE_DAYS floor keeps a very new history from being dominated by one purchase.
         val now = timeProvider.now()
-        val sampleStartDay = TimePeriodUtils.getStartOfDay(sixtyDaysAgo)
+        val sixtyDaysAgo = TimePeriodUtils.addDays(now, -60)
         val sampleEndDay = TimePeriodUtils.getStartOfDay(now)
+        val lookbackStartDay = TimePeriodUtils.getStartOfDay(sixtyDaysAgo)
+        // Installment-linked rows do not stretch the window; recurring merchants do, because they
+        // show the user has history even though they leave the discretionary baseline.
+        val firstPurchaseDay = TimePeriodUtils.getStartOfDay(
+            purchasesWithoutInstallments.minOfOrNull { it.date } ?: purchases.minOf { it.date }
+        )
+        val floorStartDay = TimePeriodUtils.addDays(sampleEndDay, -(MIN_SAMPLE_DAYS - 1))
+        val sampleStartDay = minOf(maxOf(lookbackStartDay, firstPurchaseDay), floorStartDay)
         val dailyTotals = mutableListOf<Double>()
         var cursorDay = sampleStartDay
 
@@ -812,8 +830,10 @@ class FinancialStressForecastEngine @Inject constructor(
             // Check emergency buffer
             val (emergencyBuffer, bufferCurrency) = getEmergencyBuffer(displayCurrency)
             val bufferInDisplayCurrency = bufferCurrency.equals(displayCurrency, ignoreCase = true)
-            val minBuffer = horizons.minOf { it.discretionaryBuffer }
-            if ((bufferInDisplayCurrency && minBuffer < emergencyBuffer) ||
+            // BL-09: discretionaryBuffer already has the emergency buffer subtracted, so the
+            // buffer check compares the raw projected balance with the buffer (single subtraction).
+            val minProjectedBalance = horizons.minOf { it.projectedBalance }
+            if ((bufferInDisplayCurrency && minProjectedBalance < emergencyBuffer) ||
                 (!bufferInDisplayCurrency && horizons.any { it.projectedBalance <= 0.0 })) {
                 recommendations.add(
                     StressRecommendation(

@@ -585,12 +585,57 @@ class FinancialStressForecastEngineTest {
         val horizon30 = result.horizons.first { it.daysAhead == 30 }
 
         assertApproxEquals(0.0, horizon30.expectedIncome, 0.0001)
-        // One spend day plus ten zero-spend days should produce a sparse,
-        // non-zero bootstrap estimate rather than the old exact-zero assumption.
-        assertTrue(horizon30.projectedBalance < 0.0)
+        // The sample starts at the first purchase (10 days ago) but is floored at 14 days (zero-spend
+        // days included): each simulated day has a 1/14 chance of spending 100. Over 30 days the
+        // spend count is Binomial(30, 1/14): median 2 (projected -200), p90 about 4 (-400), so the
+        // projected balance is non-positive and the minimum is strictly negative.
+        assertTrue(horizon30.projectedBalance <= 0.0)
         assertTrue(horizon30.projectedBalance > -1_000.0)
+        assertTrue(horizon30.minProjectedBalance < 0.0)
         assertTrue(horizon30.minProjectedBalance <= horizon30.projectedBalance)
         assertTrue(horizon30.minProjectedBalance > -1_500.0)
+    }
+
+    @Test
+    fun `stress window starts at first non-installment purchase including recurring-merchant history not at the discretionary row`() = runTest {
+        coEvery { accountBalanceProvider.currentBalance(any()) } returns 0.0
+        // Recurring-merchant purchases reach back to the start of the 60 day lookback (+3h so the
+        // row stays inside the repository window across a DST shift). The only discretionary row
+        // is one 500 purchase 10 days ago. Recurring history shows the user is established, so the
+        // sample is the 61 lookback days (about 500/61 = 8.20 a day), not the 14 day floor
+        // (500/14 = 35.71 a day).
+        val hourMs = 60L * 60L * 1000L
+        val recurringRows = listOf(
+            expense(601L, 45.0, TransactionType.PURCHASE, now - 60 * dayMs + 3 * hourMs, merchant = "Netflix"),
+            expense(602L, 45.0, TransactionType.PURCHASE, now - 40 * dayMs, merchant = "NETFLIX"),
+            expense(603L, 45.0, TransactionType.PURCHASE, now - 20 * dayMs, merchant = "Netflix ")
+        )
+        val discretionary = expense(604L, 500.0, TransactionType.PURCHASE, now - 10 * dayMs, merchant = "Synthetic Gadget")
+        allExpenses = recurringRows + discretionary
+        allDeposits = emptyList()
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+            recurringPattern(
+                merchant = "Netflix",
+                amount = 45.0,
+                nextDate = now + dayMs,
+                frequency = RecurrenceFrequency.MONTHLY,
+                confidence = 0.95f
+            )
+        )
+
+        val result = engine.computeStressForecast()
+
+        val h30 = result.horizons.first { it.daysAhead == 30 }
+        val h90 = result.horizons.first { it.daysAhead == 90 }
+        // Balance and income are 0, so discretionary p50 / p90 = -projected / -min minus obligations.
+        val p50At90 = -h90.projectedBalance - h90.recurringObligations
+        val p90At90 = -h90.minProjectedBalance - h90.recurringObligations
+        val p90At30 = -h30.minProjectedBalance - h30.recurringObligations
+        // 61 day sample: 90 draws at 1/61 give mean about 738, median 1 purchase (500), p90 3 (1500).
+        // A 14 day sample would give mean about 3214, median 6 (3000), p90 about 10 (5000).
+        assertTrue("p50 at 90 days was $p50At90", p50At90 in 0.0..1_000.0)
+        assertTrue("p90 at 90 days was $p90At90", p90At90 in 500.0..2_000.0)
+        assertTrue("p90 at 30 days was $p90At30", p90At30 in 0.0..1_000.0)
     }
 
     @Test
@@ -748,8 +793,10 @@ class FinancialStressForecastEngineTest {
     @Test
     fun `NEW-P6-014 expected income divides deposits by the actual month span of the history`() = runTest {
         allExpenses = emptyList()
-        // Feb 19 -> Apr 19 spans exactly 2 months: 2000 / 2 = 1000 per month.
-        // The retired hardcoded divisor of 3 would give 666.67 per month.
+        // Feb 19 -> Apr 19 spans 59 days; two deposits cover 59 * 2 = 118 days = 3.8764 fractional
+        // months (P-06-4 plus the n / (n - 1) fencepost): 2000 / 3.8764 = 515.932 per month
+        // (hand-derived 60880 / 118). Before the fencepost fix this was 1031.864; the retired
+        // hardcoded divisor of 3 would give 666.67 per month.
         allDeposits = listOf(
             expense(600L, 1000.0, TransactionType.DEPOSIT, millis(2026, Calendar.FEBRUARY, 19), merchant = "Employer"),
             expense(601L, 1000.0, TransactionType.DEPOSIT, millis(2026, Calendar.APRIL, 19), merchant = "Employer")
@@ -757,15 +804,16 @@ class FinancialStressForecastEngineTest {
 
         val result = engine.computeStressForecast()
 
-        assertEquals(1000.0, result.horizons.first { it.daysAhead == 30 }.expectedIncome, 0.0)
-        assertEquals(2000.0, result.horizons.first { it.daysAhead == 60 }.expectedIncome, 0.0)
-        assertEquals(3000.0, result.horizons.first { it.daysAhead == 90 }.expectedIncome, 0.0)
+        assertEquals(515.932, result.horizons.first { it.daysAhead == 30 }.expectedIncome, 0.001)
+        assertEquals(1031.864, result.horizons.first { it.daysAhead == 60 }.expectedIncome, 0.001)
+        assertEquals(1547.797, result.horizons.first { it.daysAhead == 90 }.expectedIncome, 0.001)
     }
 
     @Test
-    fun `NEW-P6-014 deposits within one calendar month use a minimum divisor of one month`() = runTest {
+    fun `NEW-P6-014 deposits within one calendar month use the fencepost corrected fractional period`() = runTest {
         allExpenses = emptyList()
-        // Apr 2 -> Apr 19 spans 0 whole months; the divisor floors at 1, never 0.
+        // Apr 2 -> Apr 19 spans 17 days; two deposits cover 34 days = 1.1169 months (above the
+        // 1 month floor): 1500 / 1.1169 = 1342.941 a month (before the fencepost fix 1500.0).
         allDeposits = listOf(
             expense(610L, 1000.0, TransactionType.DEPOSIT, millis(2026, Calendar.APRIL, 2), merchant = "Employer"),
             expense(611L, 500.0, TransactionType.DEPOSIT, millis(2026, Calendar.APRIL, 19), merchant = "Bonus")
@@ -773,7 +821,7 @@ class FinancialStressForecastEngineTest {
 
         val result = engine.computeStressForecast()
 
-        assertEquals(1500.0, result.horizons.first { it.daysAhead == 30 }.expectedIncome, 0.0)
+        assertEquals(1342.941, result.horizons.first { it.daysAhead == 30 }.expectedIncome, 0.001)
     }
 
     // ── HZ01-B: failed conversions are excluded, counted and flagged partial ──
@@ -1544,6 +1592,223 @@ class FinancialStressForecastEngineTest {
         ).readText()
 
         assertTrue(!source.contains("CurrencyFormatter"))
+    }
+
+    // ── Stress forecast formula fixes: buffer subtracted once, 61-day sample anchor, fractional months ──
+
+    /** One purchase per civil day for the 60 days before today (noon each, DST-proof), none today. */
+    private fun steadyDailyPurchases(amount: Double): List<Expense> =
+        (1..60).map { daysBack ->
+            expense(
+                2000L + daysBack,
+                amount,
+                TransactionType.PURCHASE,
+                millis(2026, Calendar.APRIL, 20 - daysBack)
+            )
+        }
+
+    @Test
+    fun `buffer check balance 1500 with buffer 1000 and steady spend does not recommend building the buffer`() = runTest {
+        every { currencySettingsRepository.emergencyBuffer() } returns flowOf(1_000.0)
+        coEvery { accountBalanceProvider.currentBalance(any()) } returns 1_500.0
+        allExpenses = steadyDailyPurchases(10.0)
+        allDeposits = emptyList()
+
+        val result = engine.computeStressForecast()
+
+        assertNull(result.failure)
+        // 60 of the 61 sample days spend 10, so the 90 day total is at most 900 < 1500: no crunch.
+        assertEquals(StressRiskLevel.LOW, result.overallRiskLevel)
+        assertTrue(StressRecommendationKind.BUILD_EMERGENCY_BUFFER !in kindsOf(result))
+        // 30 day median is exactly 30 x 10 = 300 -> projected 1200; the 1000 buffer is subtracted
+        // once for discretionaryBuffer (1200 - 1000 = 200). Subtracting it twice would give 0.
+        val h30 = result.horizons.first { it.daysAhead == 30 }
+        assertApproxEquals(1_200.0, h30.projectedBalance, 0.01)
+        assertApproxEquals(200.0, h30.discretionaryBuffer, 0.01)
+    }
+
+    @Test
+    fun `buffer check control balance 800 with buffer 1000 and steady spend recommends building the buffer`() = runTest {
+        every { currencySettingsRepository.emergencyBuffer() } returns flowOf(1_000.0)
+        coEvery { accountBalanceProvider.currentBalance(any()) } returns 800.0
+        allExpenses = steadyDailyPurchases(10.0)
+        allDeposits = emptyList()
+
+        val result = engine.computeStressForecast()
+
+        // 90 day spend is about 890 > 800, so the 90 day horizon has a crunch and a projected
+        // balance below the 1000 buffer.
+        val r3 = result.recommendations.single { it.kind == StressRecommendationKind.BUILD_EMERGENCY_BUFFER }
+        assertEquals(1_000.0, r3.bufferTarget!!, 0.0)
+        assertEquals("EUR", r3.bufferCurrency)
+    }
+
+    @Test
+    fun `buffer check at risk but every projected balance at or above the buffer does not recommend building it`() = runTest {
+        // One 2000 purchase yesterday among 61 sample days: each simulated day has a 1/61 chance of
+        // spending 2000. Hand-derived binomial figures: the 60 and 90 day medians are exactly one
+        // spend (2000), and P(two or more spends) is about 0.26 (60 days) and 0.43 (90 days), so
+        // risk is at least MODERATE while the balance 3100 keeps every projected balance
+        // (3100, 1100, 1100) at or above the 1000 buffer. A 0.01 purchase 60 days ago anchors the
+        // sample at the full 61 day lookback (the sample starts at the first purchase), keeping
+        // the 1/61 daily chance.
+        every { currencySettingsRepository.emergencyBuffer() } returns flowOf(1_000.0)
+        coEvery { accountBalanceProvider.currentBalance(any()) } returns 3_100.0
+        allExpenses = listOf(
+            expense(2501L, 0.01, TransactionType.PURCHASE, millis(2026, Calendar.APRIL, 20 - 60)),
+            expense(2500L, 2_000.0, TransactionType.PURCHASE, millis(2026, Calendar.APRIL, 19))
+        )
+        allDeposits = emptyList()
+
+        val result = engine.computeStressForecast()
+
+        assertTrue(result.horizons.any { it.riskLevel >= StressRiskLevel.MODERATE })
+        assertTrue(result.horizons.all { it.projectedBalance >= 1_000.0 })
+        assertTrue(StressRecommendationKind.BUILD_EMERGENCY_BUFFER !in kindsOf(result))
+        // discretionaryBuffer is the projected balance minus the buffer exactly once.
+        assertApproxEquals(2_100.0, result.horizons.first { it.daysAhead == 30 }.discretionaryBuffer, 0.1)
+        assertApproxEquals(100.0, result.horizons.first { it.daysAhead == 60 }.discretionaryBuffer, 0.1)
+        assertApproxEquals(100.0, result.horizons.first { it.daysAhead == 90 }.discretionaryBuffer, 0.1)
+    }
+
+    @Test
+    fun `buffer check control at risk and projected balance below the buffer recommends building it`() = runTest {
+        // Same history as above with balance 2500: projected 60/90 day balance is 500 < 1000.
+        every { currencySettingsRepository.emergencyBuffer() } returns flowOf(1_000.0)
+        coEvery { accountBalanceProvider.currentBalance(any()) } returns 2_500.0
+        allExpenses = listOf(
+            expense(2501L, 0.01, TransactionType.PURCHASE, millis(2026, Calendar.APRIL, 20 - 60)),
+            expense(2500L, 2_000.0, TransactionType.PURCHASE, millis(2026, Calendar.APRIL, 19))
+        )
+        allDeposits = emptyList()
+
+        val result = engine.computeStressForecast()
+
+        assertTrue(result.horizons.any { it.riskLevel >= StressRiskLevel.MODERATE })
+        assertTrue(StressRecommendationKind.BUILD_EMERGENCY_BUFFER in kindsOf(result))
+    }
+
+    @Test
+    fun `sample anchor one purchase yesterday uses the 14 day floor and reads 7_14 a day`() = runTest {
+        // Balance 50: a crunch happens exactly when at least one simulated day is the 100 purchase.
+        // The sample starts at the later of (now - 60 days) and the first purchase, floored at 14
+        // days (days -13 .. today), so one 100 purchase yesterday reads 100 / 14 = 7.14 a day and
+        // P(crunch) = 1 - (13/14)^days = 0.892 / 0.988 / 0.999 for 30 / 60 / 90 days. The pre-fix
+        // 61 day sample treated pre-history days as quiet (1 in 61, 0.391 / 0.629 / 0.774).
+        coEvery { accountBalanceProvider.currentBalance(any()) } returns 50.0
+        allExpenses = listOf(expense(2600L, 100.0, TransactionType.PURCHASE, millis(2026, Calendar.APRIL, 19)))
+        allDeposits = emptyList()
+
+        val result = engine.computeStressForecast()
+
+        assertApproxEquals(0.892, result.horizons.first { it.daysAhead == 30 }.probabilityOfCrunch, 0.05)
+        assertApproxEquals(0.988, result.horizons.first { it.daysAhead == 60 }.probabilityOfCrunch, 0.05)
+        assertApproxEquals(0.999, result.horizons.first { it.daysAhead == 90 }.probabilityOfCrunch, 0.05)
+        // Medians are whole purchases (binomial medians 2 / 4 / 6 of 100), so the daily rate is
+        // 6.67..7.14, within 1.0 of the 7.14 mean.
+        result.horizons.forEach { horizon ->
+            assertApproxEquals(7.14, (50.0 - horizon.projectedBalance) / horizon.daysAhead, 1.0)
+        }
+    }
+
+    @Test
+    fun `sample anchor pre-install days are not quiet days so a 10 day spender alarms`() = runTest {
+        // Deposit 1000 eleven days ago, 50 a day for the 10 days since, balance 500. Sample = the
+        // 14 day floor (10 spend days of 50): 35.71 a day, 90 day spend about 3214 against 500 +
+        // 3000 income, so the 90 day projected balance is about 286 (below the 500 buffer).
+        // Before the fix the 61 day sample counted 51 pre-install days as quiet: 8.2 a day,
+        // 90 day spend about 738 and a healthy projected balance of about 2762.
+        every { currencySettingsRepository.emergencyBuffer() } returns flowOf(500.0)
+        coEvery { accountBalanceProvider.currentBalance(any()) } returns 500.0
+        allExpenses = (1..10).map { daysBack ->
+            expense(2800L + daysBack, 50.0, TransactionType.PURCHASE, millis(2026, Calendar.APRIL, 20 - daysBack))
+        }
+        allDeposits = listOf(
+            expense(2811L, 1_000.0, TransactionType.DEPOSIT, millis(2026, Calendar.APRIL, 9), merchant = "Employer")
+        )
+
+        val result = engine.computeStressForecast()
+
+        val h90 = result.horizons.first { it.daysAhead == 90 }
+        assertApproxEquals(286.0, h90.projectedBalance, 150.0)
+        assertTrue(h90.projectedBalance < 1_000.0)
+        assertEquals(0.0, h90.discretionaryBuffer, 0.0)
+    }
+
+    @Test
+    fun `sample anchor steady 10 a day stays about 10 a day`() = runTest {
+        // 60 spend days of 10 and one empty day (today): mean 9.84 a day, medians 300 / 590 / 890.
+        coEvery { accountBalanceProvider.currentBalance(any()) } returns 0.0
+        allExpenses = steadyDailyPurchases(10.0)
+        allDeposits = emptyList()
+
+        val result = engine.computeStressForecast()
+
+        result.horizons.forEach { horizon ->
+            assertApproxEquals(10.0, -horizon.projectedBalance / horizon.daysAhead, 0.5)
+        }
+        assertApproxEquals(-300.0, result.horizons.first { it.daysAhead == 30 }.projectedBalance, 0.01)
+    }
+
+    @Test
+    fun `income three monthly deposits of 3000 spanning 59 days average about 3095 a month`() = runTest {
+        // Fencepost: 3 deposits span 2 intervals, so the covered period is 59 * 3 / 2 = 88.5 days =
+        // 2.9074 months; 9000 / 2.9074 = 3095.593 a month. Before the fix the divisor was the raw
+        // span (1.9382 months), which over-stated income as 4643.4 a month.
+        allExpenses = emptyList()
+        allDeposits = listOf(
+            expense(2700L, 3_000.0, TransactionType.DEPOSIT, millis(2026, Calendar.FEBRUARY, 20), merchant = "Employer"),
+            expense(2702L, 3_000.0, TransactionType.DEPOSIT, millis(2026, Calendar.MARCH, 21), merchant = "Employer"),
+            expense(2701L, 3_000.0, TransactionType.DEPOSIT, millis(2026, Calendar.APRIL, 20), merchant = "Employer")
+        )
+
+        val result = engine.computeStressForecast()
+
+        assertEquals(3095.593, result.horizons.first { it.daysAhead == 30 }.expectedIncome, 0.01)
+        assertEquals(6191.186, result.horizons.first { it.daysAhead == 60 }.expectedIncome, 0.02)
+        assertEquals(9286.780, result.horizons.first { it.daysAhead == 90 }.expectedIncome, 0.03)
+    }
+
+    @Test
+    fun `income a single deposit counts as one month and is never inflated`() = runTest {
+        allExpenses = emptyList()
+        allDeposits = listOf(
+            expense(2710L, 3_000.0, TransactionType.DEPOSIT, millis(2026, Calendar.APRIL, 10), merchant = "Employer")
+        )
+
+        val result = engine.computeStressForecast()
+
+        assertEquals(3_000.0, result.horizons.first { it.daysAhead == 30 }.expectedIncome, 0.0001)
+        assertEquals(6_000.0, result.horizons.first { it.daysAhead == 60 }.expectedIncome, 0.0001)
+        assertEquals(9_000.0, result.horizons.first { it.daysAhead == 90 }.expectedIncome, 0.0001)
+    }
+
+    @Test
+    fun `income two deposits on the same day count as one month`() = runTest {
+        allExpenses = emptyList()
+        allDeposits = listOf(
+            expense(2720L, 1_000.0, TransactionType.DEPOSIT, millis(2026, Calendar.APRIL, 10), merchant = "Employer"),
+            expense(2721L, 500.0, TransactionType.DEPOSIT, millis(2026, Calendar.APRIL, 10), merchant = "Bonus")
+        )
+
+        val result = engine.computeStressForecast()
+
+        assertEquals(1_500.0, result.horizons.first { it.daysAhead == 30 }.expectedIncome, 0.0001)
+    }
+
+    @Test
+    fun `income span just over one month is fractional not truncated to one month`() = runTest {
+        // Mar 20 -> Apr 20 is 31 days; two deposits cover 31 * 2 = 62 days = 2.0368 months:
+        // 2000 / 2.0368 = 981.935 a month (before the fencepost fix 1963.871, and 2000 if truncated).
+        allExpenses = emptyList()
+        allDeposits = listOf(
+            expense(2730L, 1_000.0, TransactionType.DEPOSIT, millis(2026, Calendar.MARCH, 20), merchant = "Employer"),
+            expense(2731L, 1_000.0, TransactionType.DEPOSIT, millis(2026, Calendar.APRIL, 20), merchant = "Employer")
+        )
+
+        val result = engine.computeStressForecast()
+
+        assertEquals(981.935, result.horizons.first { it.daysAhead == 30 }.expectedIncome, 0.001)
     }
 
     private fun millis(year: Int, month: Int, day: Int, hourOfDay: Int = 12): Long {

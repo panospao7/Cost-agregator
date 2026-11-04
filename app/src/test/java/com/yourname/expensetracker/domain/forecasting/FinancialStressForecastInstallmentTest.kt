@@ -303,6 +303,26 @@ class FinancialStressForecastInstallmentTest {
         assertApproxEquals(50.0, result.horizon(90).recurringObligations, 0.0001)
     }
 
+    @Test
+    fun `installment-linked row at 50 days does not stretch the stress sample window`() = runTest {
+        // The linked 50 day old row leaves the baseline while an entry is projected, so the window
+        // starts at the 500 purchase 10 days ago and floors at 14 days (1/14 per day, median 6
+        // purchases = 3000 over 90 days). If the linked row stretched the window to about 51 days,
+        // the median would be 1 to 2 purchases (at most 1000).
+        allExpenses = listOf(
+            purchase(10L, 80.0, "Synthetic Lender", daysAgo = 50),
+            purchase(11L, 500.0, "Synthetic Gadget", daysAgo = 10)
+        )
+
+        val result = engine(
+            portOf(plan(1L, listOf(entry(1L, 5)))),
+            eligibilityLinking(10L)
+        ).computeStressForecast()
+
+        val p50At90 = result.horizon(90).discretionaryP50()
+        org.junit.Assert.assertTrue("p50 at 90 days was $p50At90", p50At90 > 2_000.0)
+    }
+
     // ── Currency (INV-16) ─────────────────────────────────────────────────────
 
     @Test
