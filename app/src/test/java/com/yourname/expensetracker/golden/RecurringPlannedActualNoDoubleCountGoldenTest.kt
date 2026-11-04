@@ -285,6 +285,7 @@ class RecurringPlannedActualNoDoubleCountGoldenTest : GoldenTestBase() {
             }
         )
 
+        lateinit var ruleCoordinatorRef: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringRuleLifecycleCoordinator
         val lifecycleCoordinator = com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator(
             database = database,
             expander = com.yourname.expensetracker.domain.recurring.RecurringOccurrenceExpander(),
@@ -326,7 +327,8 @@ class RecurringPlannedActualNoDoubleCountGoldenTest : GoldenTestBase() {
                 )
             },
             eventWriter = eventWriter,
-            installmentEligibility = installmentEligibility
+            installmentEligibility = installmentEligibility,
+            ruleCoordinator = dagger.Lazy { ruleCoordinatorRef }
         )
 
         val projectionService = com.yourname.expensetracker.domain.recurring.RecurringPlanProjectionService(
@@ -359,7 +361,7 @@ class RecurringPlannedActualNoDoubleCountGoldenTest : GoldenTestBase() {
             expenseDao = expenseDao,
             eventWriter = eventWriter,
             planProjectionService = dagger.Lazy { projectionService }
-        )
+        ).also { ruleCoordinatorRef = it }
     }
 
     // ── Seed helpers ──

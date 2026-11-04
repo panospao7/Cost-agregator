@@ -448,6 +448,34 @@ class MarkRecurringBillPaidUseCaseTest {
     }
 
     @Test
+    fun `DR-03 mark paid after an auto-link already advanced the rule is AlreadyHandled and creates nothing`() =
+        runTest {
+            // The automatic link paid the occurrence due on the seen day and moved the rule on.
+            replace(1L) { it.copy(status = "PAID", linkedExpenseId = 900L) }
+            ruleNextDate = d2
+
+            val result = useCase.invoke(RULE_ID, d1)
+
+            assertEquals(MarkPaidResult.AlreadyHandled, result)
+            assertTrue(createRequests.isEmpty())
+            assertTrue(advanceCalls.isEmpty())
+            assertEquals(d2, ruleNextDate)
+            assertEquals("PAID", store.first { it.id == 1L }.status)
+            assertEquals(900L, store.first { it.id == 1L }.linkedExpenseId)
+        }
+
+    @Test
+    fun `DR-03 skip after an auto-link already advanced the rule is AlreadyHandled`() = runTest {
+        replace(1L) { it.copy(status = "PAID", linkedExpenseId = 900L) }
+        ruleNextDate = d2
+
+        assertEquals(MarkPaidResult.AlreadyHandled, useCase.skip(RULE_ID, d1))
+
+        assertTrue(advanceCalls.isEmpty())
+        assertEquals("PAID", store.first { it.id == 1L }.status)
+    }
+
+    @Test
     fun `created expense runs the planned post commit batch once after the link`() = runTest {
         val result = useCase.invoke(RULE_ID, d1)
 

@@ -167,7 +167,10 @@ class RecurringLifecycleCoordinatorInstallmentLinkPolicyTest {
             plannedExpenseDao = database.plannedExpenseDao(),
             transactionRunner = io.mockk.mockk(relaxed = true),
             eventWriter = eventWriter,
-            installmentEligibility = installmentEligibility
+            installmentEligibility = installmentEligibility,
+            // DR-03: these link-policy tests do not assert rule advancement. The advance is best
+            // effort, so an unwired coordinator here is absorbed and cannot change a link outcome.
+            ruleCoordinator = dagger.Lazy { error("rule coordinator is not wired in this harness") }
         )
     }
 

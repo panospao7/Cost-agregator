@@ -117,7 +117,8 @@ class RecurringLifecycleCoordinatorTest {
                         override suspend fun planPurchaseExpenseIds(): Set<Long> = emptySet()
                     }
                 }
-            )
+            ),
+            ruleCoordinator = dagger.Lazy { mockk<RecurringRuleLifecycleCoordinator>(relaxed = true) }
         )
     }
 

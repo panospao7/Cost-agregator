@@ -166,7 +166,8 @@ class RecurringGenerationInstallmentExclusionTest {
             plannedExpenseDao = plannedDao,
             transactionRunner = io.mockk.mockk(relaxed = true),
             eventWriter = eventWriter,
-            installmentEligibility = installmentEligibility
+            installmentEligibility = installmentEligibility,
+            ruleCoordinator = dagger.Lazy { ruleCoordinator }
         )
         val projection = RecurringPlanProjectionService(
             plannedExpenseDao = plannedDao,

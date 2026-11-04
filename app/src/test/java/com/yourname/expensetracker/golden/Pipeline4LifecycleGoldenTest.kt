@@ -145,6 +145,7 @@ class Pipeline4LifecycleGoldenTest : GoldenTestBase() {
             }
         )
 
+        lateinit var ruleCoordinatorRef: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringRuleLifecycleCoordinator
         val lifecycleCoordinator = com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator(
             database = database,
             expander = com.yourname.expensetracker.domain.recurring.RecurringOccurrenceExpander(),
@@ -169,7 +170,8 @@ class Pipeline4LifecycleGoldenTest : GoldenTestBase() {
             plannedExpenseDao = plannedDao,
             transactionRunner = RoomDomainTransactionRunner(database, timeProvider),
             eventWriter = eventWriter,
-            installmentEligibility = installmentEligibility
+            installmentEligibility = installmentEligibility,
+            ruleCoordinator = dagger.Lazy { ruleCoordinatorRef }
         )
 
         val projectionService = com.yourname.expensetracker.domain.recurring.RecurringPlanProjectionService(
@@ -202,7 +204,7 @@ class Pipeline4LifecycleGoldenTest : GoldenTestBase() {
             expenseDao = expenseDao,
             eventWriter = eventWriter,
             planProjectionService = dagger.Lazy { projectionService }
-        )
+        ).also { ruleCoordinatorRef = it }
     }
 
 }
