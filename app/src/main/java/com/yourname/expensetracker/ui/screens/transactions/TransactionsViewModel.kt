@@ -830,7 +830,8 @@ class TransactionsViewModel @Inject constructor(
             isSharedExpense = isSharedExpense,
             sharedWithName = sharedWithName,
             sharePercentageText = mySharePercentage.trim(),
-            shareAmountText = myShareAmount.trim()
+            shareAmountText = myShareAmount.trim(),
+            totalAmount = expense.amount
         )
         if (validationResult is com.yourname.expensetracker.ui.util.OwnershipValidator.ValidationResult.Invalid) {
             viewModelScope.launch { _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString(validationResult.message)) }

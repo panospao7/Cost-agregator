@@ -135,7 +135,8 @@ class ExpenseDaoSpendingPredicateFixture private constructor(
                 currencySettingsRepository = currencySettingsRepository,
                 sourceLinkWriter = mockk(relaxed = true),
                 transactionValidator = mockk(relaxed = true),
-                diagnosticEventWriter = mockk(relaxed = true)
+                diagnosticEventWriter = mockk(relaxed = true),
+                receiptLinkService = com.yourname.expensetracker.testfixtures.noLinkedReceiptsLinkService()
             )
             return ExpenseDaoSpendingPredicateFixture(db, coordinator, cat1, cat2)
         }

@@ -144,7 +144,8 @@ class GroupTransactionCoordinatorTest {
             currencySettingsRepository,
             mockk(relaxed = true),
             mockk(relaxed = true),
-            mockk(relaxed = true)
+            mockk(relaxed = true),
+            receiptLinkService = com.yourname.expensetracker.testfixtures.noLinkedReceiptsLinkService()
         )
         coordinator = GroupTransactionCoordinator(
             database, groupDao, memberDao, groupExpenseDao, expenseDao,

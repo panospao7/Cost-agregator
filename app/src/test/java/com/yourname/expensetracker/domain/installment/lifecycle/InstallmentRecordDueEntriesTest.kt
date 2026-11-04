@@ -510,7 +510,8 @@ class InstallmentRecordDueEntriesTest {
             sourceLinkWriter = mockk(relaxed = true),
             transactionValidator = mockk(relaxed = true),
             diagnosticEventWriter = diagnostics,
-            rateEligibilityEvaluator = fx.evaluator
+            rateEligibilityEvaluator = fx.evaluator,
+            receiptLinkService = com.yourname.expensetracker.testfixtures.noLinkedReceiptsLinkService()
         )
 
         val done = runDue(day(2027, 4, 12), fx.coordinator(lifecycle = tlc))

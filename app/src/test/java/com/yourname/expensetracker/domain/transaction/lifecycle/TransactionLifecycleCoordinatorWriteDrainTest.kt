@@ -79,7 +79,8 @@ class TransactionLifecycleCoordinatorWriteDrainTest {
             currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true),
             sourceLinkWriter = mockk(relaxed = true),
             transactionValidator = mockk(relaxed = true),
-            diagnosticEventWriter = mockk(relaxed = true)
+            diagnosticEventWriter = mockk(relaxed = true),
+            receiptLinkService = com.yourname.expensetracker.testfixtures.noLinkedReceiptsLinkService()
         )
     }
 

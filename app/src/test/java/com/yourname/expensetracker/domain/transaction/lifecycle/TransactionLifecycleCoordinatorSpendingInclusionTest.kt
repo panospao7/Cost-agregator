@@ -93,7 +93,8 @@ class TransactionLifecycleCoordinatorSpendingInclusionTest {
             currencySettingsRepository = currencySettingsRepository,
             sourceLinkWriter = mockk(relaxed = true),
             transactionValidator = mockk(relaxed = true),
-            diagnosticEventWriter = mockk(relaxed = true)
+            diagnosticEventWriter = mockk(relaxed = true),
+            receiptLinkService = com.yourname.expensetracker.testfixtures.noLinkedReceiptsLinkService()
         )
     }
 
@@ -335,7 +336,8 @@ class TransactionLifecycleCoordinatorSpendingInclusionTest {
             currencySettingsRepository = mockk(relaxed = true),
             sourceLinkWriter = mockk(relaxed = true),
             transactionValidator = mockk(relaxed = true),
-            diagnosticEventWriter = mockk(relaxed = true)
+            diagnosticEventWriter = mockk(relaxed = true),
+            receiptLinkService = com.yourname.expensetracker.testfixtures.noLinkedReceiptsLinkService()
         )
 
         val mutation = realBarrier.runWrite(DatabaseAccessOperation("SpendingInclusionTest.outer")) {

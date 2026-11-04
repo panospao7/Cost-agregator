@@ -1883,6 +1883,7 @@
     
     <!-- Natural Language Search Screen -->
     <string name="nlp_search_title">Smart Search</string>
+    <string name="nlp_search_failed">Search failed. Please try again.</string>
     <string name="nlp_search_label">Ask about your spending…</string>
     <string name="nlp_search_placeholder">e.g., "How much did I spend at restaurants last month?"</string>
     <string name="nlp_try_asking">Try asking:</string>

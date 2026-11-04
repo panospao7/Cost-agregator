@@ -64,6 +64,29 @@ class TransactionValidator @Inject constructor(
         )
     }
 
+    /**
+     * N-01-2: ownership share must not exceed the expense total. Both values are in the
+     * expense's own currency; comparison is exact (no rounding). A null or non-shared
+     * share is valid here (other ownership rules live in OwnershipValidator).
+     */
+    fun validateOwnershipShare(
+        isSharedExpense: Boolean,
+        myShareAmount: Double?,
+        totalAmount: Double
+    ): List<TransactionValidationError> {
+        if (!isSharedExpense || myShareAmount == null) return emptyList()
+        if (!myShareAmount.isFinite() || !totalAmount.isFinite() || myShareAmount > totalAmount) {
+            return listOf(
+                TransactionValidationError(
+                    code = OWNERSHIP_SHARE_EXCEEDS_TOTAL,
+                    field = "myShareAmount",
+                    message = "Share amount cannot exceed the transaction total"
+                )
+            )
+        }
+        return emptyList()
+    }
+
     private fun validateFields(
         amount: Double,
         merchant: String,
@@ -231,6 +254,7 @@ class TransactionValidator @Inject constructor(
     }
 
     companion object {
+        const val OWNERSHIP_SHARE_EXCEEDS_TOTAL = "OWNERSHIP_SHARE_EXCEEDS_TOTAL"
         private val CURRENCY_ISO_PATTERN = Regex("^[A-Z]{3}$")
     }
 }

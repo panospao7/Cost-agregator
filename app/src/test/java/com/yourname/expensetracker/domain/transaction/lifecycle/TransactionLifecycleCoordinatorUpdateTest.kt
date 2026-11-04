@@ -142,7 +142,8 @@ class TransactionLifecycleCoordinatorUpdateTest {
             currencySettingsRepository = currencySettingsRepository,
             sourceLinkWriter = mockk(relaxed = true),
             transactionValidator = mockk(relaxed = true),
-            diagnosticEventWriter = diagnosticEventWriter
+            diagnosticEventWriter = diagnosticEventWriter,
+            receiptLinkService = com.yourname.expensetracker.testfixtures.noLinkedReceiptsLinkService()
         )
     }
 

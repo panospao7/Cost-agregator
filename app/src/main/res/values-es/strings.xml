@@ -5,6 +5,9 @@
     This establishes the pattern for other languages
 -->
 <resources>
+    <!-- nlp_search_failed: DRAFT: owner native sign-off pending -->
+    <string name="nlp_search_failed">La búsqueda ha fallado. Inténtalo de nuevo.</string>
+
     <!-- App Name -->
     <string name="app_name">ExpenseTracker</string>
 

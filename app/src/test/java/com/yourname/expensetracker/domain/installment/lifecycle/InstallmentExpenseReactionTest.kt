@@ -130,7 +130,8 @@ class InstallmentExpenseReactionTest {
             sourceLinkWriter = mockk(relaxed = true),
             transactionValidator = mockk(relaxed = true),
             diagnosticEventWriter = mockk(relaxed = true),
-            rateEligibilityEvaluator = fx.evaluator
+            rateEligibilityEvaluator = fx.evaluator,
+            receiptLinkService = com.yourname.expensetracker.testfixtures.noLinkedReceiptsLinkService()
         )
         coordinator = fx.coordinator(lifecycle = tlc)
     }

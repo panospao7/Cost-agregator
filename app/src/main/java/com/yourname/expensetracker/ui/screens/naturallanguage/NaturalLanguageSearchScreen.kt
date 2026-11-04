@@ -144,11 +144,28 @@ fun NaturalLanguageSearchScreen(
                 is SearchState.Empty -> {
                     EmptySearchState()
                 }
+                is SearchState.Error -> {
+                    SearchErrorState()
+                }
                 else -> {
                     InitialSearchState()
                 }
             }
         }
+    }
+}
+
+@Composable
+fun SearchErrorState() {
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = stringResource(R.string.nlp_search_failed),
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.error
+        )
     }
 }
 

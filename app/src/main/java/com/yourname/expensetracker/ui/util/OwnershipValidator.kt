@@ -22,7 +22,8 @@ object OwnershipValidator {
         isSharedExpense: Boolean,
         sharedWithName: String,
         sharePercentageText: String,
-        shareAmountText: String
+        shareAmountText: String,
+        totalAmount: Double? = null
     ): ValidationResult {
         if (isNotMine && isSharedExpense) {
             return ValidationResult.Invalid("Expense cannot be both not-mine and shared")
@@ -53,6 +54,10 @@ object OwnershipValidator {
             val amt = AmountInputSanitizer.parseOrNull(shareAmountText)
             if (amt == null || amt <= 0) {
                 return ValidationResult.Invalid("Share amount must be greater than 0")
+            }
+            // N-01-2: optional total; callers without one keep the previous behaviour.
+            if (totalAmount != null && amt > totalAmount) {
+                return ValidationResult.Invalid("Share amount cannot exceed the transaction total")
             }
         }
 
