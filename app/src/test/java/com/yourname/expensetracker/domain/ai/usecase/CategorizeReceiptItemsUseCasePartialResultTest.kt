@@ -289,6 +289,19 @@ class CategorizeReceiptItemsUseCasePartialResultTest {
     }
 
     @Test
+    fun `needs-review count excludes placeholders - 25 clean items and 35 placeholders`() = runTest {
+        setUp(itemCount = 60, serviceOverride = serviceReturning(realCount = 25, total = 60))
+
+        val result = useCase(receiptId)
+
+        assertTrue("was $result", result is CategorizationResult.Success)
+        val explanation = artifacts.last().explanationText.orEmpty()
+        assertTrue(explanation, explanation.contains("Categorized 25 of 60 items"))
+        assertFalse(explanation, explanation.contains("35 items need review"))
+        assertTrue(explanation, explanation.contains("0 items need review"))
+    }
+
+    @Test
     fun `summary of a full result is Categorized 5 items`() = runTest {
         setUp(itemCount = 5, serviceOverride = serviceReturning(realCount = 5, total = 5))
 

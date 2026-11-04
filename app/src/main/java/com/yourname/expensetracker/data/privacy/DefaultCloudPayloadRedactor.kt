@@ -15,7 +15,7 @@ import javax.inject.Singleton
  * Max characters of a redacted RECEIPT_ITEM_CATEGORIZATION prompt (owner item 127; no other purpose). Shared with
  * CloudReceiptItemCategorizationService, which budgets its item lines against this value.
  */
-internal const val ITEM_CATEGORIZATION_MAX_TEXT_CHARS = 4000
+internal const val RECEIPT_ITEM_CATEGORIZATION_MAX_TEXT_CHARS = 4000
 
 /**
  * Wraps [CloudPiiSanitizer] behind the [CloudPayloadRedactor] interface.
@@ -49,7 +49,7 @@ class DefaultCloudPayloadRedactor @Inject constructor(
             CloudPayloadPurpose.RECEIPT_ASSIST,
             CloudPayloadPurpose.WARRANTY_EXTRACTION -> MAX_TEXT_CHARS_RECEIPT
             CloudPayloadPurpose.DASHBOARD_BRIEFING -> MAX_TEXT_CHARS_BRIEFING
-            CloudPayloadPurpose.RECEIPT_ITEM_CATEGORIZATION -> ITEM_CATEGORIZATION_MAX_TEXT_CHARS
+            CloudPayloadPurpose.RECEIPT_ITEM_CATEGORIZATION -> RECEIPT_ITEM_CATEGORIZATION_MAX_TEXT_CHARS
             else -> MAX_TEXT_CHARS
         }
 

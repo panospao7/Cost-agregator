@@ -5,7 +5,7 @@ import com.yourname.expensetracker.data.ai.provider.internal.CloudCorrelation
 import com.yourname.expensetracker.data.ai.provider.internal.CloudRetryPolicy
 import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadPolicy
 import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor
-import com.yourname.expensetracker.data.privacy.ITEM_CATEGORIZATION_MAX_TEXT_CHARS
+import com.yourname.expensetracker.data.privacy.RECEIPT_ITEM_CATEGORIZATION_MAX_TEXT_CHARS
 import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.data.security.getGeminiKey
 import com.yourname.expensetracker.di.CloudAiHttpClient
@@ -260,7 +260,7 @@ class CloudReceiptItemCategorizationService @Inject constructor(
                 buildPrompt(input, sentCount)
             )
             val leadingMarkers = leadingMarkersPresent(prepared.text, sentCount)
-            val mayBeCut = prepared.text.length >= ITEM_CATEGORIZATION_MAX_TEXT_CHARS
+            val mayBeCut = prepared.text.length >= RECEIPT_ITEM_CATEGORIZATION_MAX_TEXT_CHARS
             if (leadingMarkers == sentCount && !mayBeCut) {
                 return sentCount
             }
@@ -317,7 +317,7 @@ class CloudReceiptItemCategorizationService @Inject constructor(
     /** All [sentCount] markers present and the text clear of the redactor cap (not cut). */
     private fun promptIsComplete(text: String, sentCount: Int): Boolean =
         leadingMarkersPresent(text, sentCount) == sentCount &&
-            text.length < ITEM_CATEGORIZATION_MAX_TEXT_CHARS
+            text.length < RECEIPT_ITEM_CATEGORIZATION_MAX_TEXT_CHARS
 
     private fun buildHeader(input: ReceiptItemCategorizationInput): String {
         // PRIV-43B-03: Raw values — CloudPayloadPolicy will redact if required; no hashCode pseudonyms
@@ -682,7 +682,7 @@ class CloudReceiptItemCategorizationService @Inject constructor(
         private const val MAX_ITEMS_PER_CALL = AppConfig.Ai.CLOUD_RECEIPT_ITEM_MAX_ITEMS_PER_CALL
         /** Kept clear below the redactor cap so redaction growth rarely needs a second pass. */
         private const val PROMPT_BUDGET_MARGIN_CHARS = 100
-        private const val MAX_PROMPT_CHARS = ITEM_CATEGORIZATION_MAX_TEXT_CHARS - PROMPT_BUDGET_MARGIN_CHARS
+        private const val MAX_PROMPT_CHARS = RECEIPT_ITEM_CATEGORIZATION_MAX_TEXT_CHARS - PROMPT_BUDGET_MARGIN_CHARS
         private const val MAX_PROMPT_MERCHANT_CHARS = 80
         private const val UNKNOWN_ITEM = "unknown item"
         // No digit run in the fixed text is 8 or more characters long, so the redactor's
