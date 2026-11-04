@@ -1690,7 +1690,7 @@ class FinancialStressForecastEngineTest {
         val h90 = result.horizons.first { it.daysAhead == 90 }
         assertApproxEquals(286.0, h90.projectedBalance, 150.0)
         assertTrue(h90.projectedBalance < 1_000.0)
-        assertTrue(h90.discretionaryBuffer < 0.0)
+        assertEquals(0.0, h90.discretionaryBuffer, 0.0)
     }
 
     @Test
