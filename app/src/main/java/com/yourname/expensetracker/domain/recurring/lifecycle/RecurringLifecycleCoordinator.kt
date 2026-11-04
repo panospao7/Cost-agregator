@@ -18,6 +18,7 @@ import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.recurring.OccurrenceConflictResolver
 import com.yourname.expensetracker.domain.recurring.RecurringInstallmentEligibility
 import com.yourname.expensetracker.domain.recurring.RecurringLinkTypeEligibility
+import com.yourname.expensetracker.domain.recurring.RecurringNextDatePolicy
 import com.yourname.expensetracker.domain.recurring.RecurringOccurrenceExpander
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringOccurrenceMaterializer.MaterializationResult
 import com.yourname.expensetracker.domain.transaction.DomainTransactionRunner
@@ -79,7 +80,10 @@ class RecurringLifecycleCoordinator @Inject constructor(
     private val transactionRunner: DomainTransactionRunner,
     // The installment half of the link gate (INV-5). It holds the plan reader as a Lazy, so
     // constructing this coordinator never builds the reader (A13 common rule).
-    private val installmentEligibility: RecurringInstallmentEligibility
+    private val installmentEligibility: RecurringInstallmentEligibility,
+    // DR-03: the auto-link advances the rule through its single writer. Lazy breaks the cycle with
+    // RecurringRuleLifecycleCoordinator, which already holds this coordinator as a Lazy.
+    private val ruleCoordinator: dagger.Lazy<RecurringRuleLifecycleCoordinator>
 ) {
     companion object {
         /** Source type used for manual recurring rules. */
@@ -395,7 +399,41 @@ class RecurringLifecycleCoordinator @Inject constructor(
             "Recurring: expense %d linked to occurrence %d (occurrenceKey=%s) — PAID, planned fulfilled, reminders suppressed",
             expenseId, result.occurrenceId, result.occurrenceKey
         )
+        advanceRuleAfterAutoLink(result.occurrenceId)
         return true
+    }
+
+    /**
+     * DR-03: an automatic link just made the occurrence due on the rule's current `nextDate` day
+     * PAID, so the rule must move on (otherwise "Mark paid" is offered again and the savings sweep
+     * drops the following bill). Runs AFTER the claim transaction committed, through the rule
+     * coordinator's forward-only [RecurringRuleLifecycleCoordinator.advanceNextDate]; the candidate
+     * comes from the shared [RecurringNextDatePolicy]. Auto-link only: the explicit
+     * [linkExpenseToSpecificOccurrence] path leaves the advance to its caller.
+     *
+     * Best effort: the link already committed, so a non-cancellation failure here is logged with a
+     * bounded code and never turns the link into a failure.
+     */
+    private suspend fun advanceRuleAfterAutoLink(occurrenceId: Long) {
+        try {
+            val occurrence = occurrenceDao.getById(occurrenceId) ?: return
+            if (occurrence.sourceType != SOURCE_TYPE_RECURRING_RULE) return
+            val rule = manualRecurringExpenseDao.getById(occurrence.sourceId) ?: return
+            if (!rule.isActive) return
+            if (TimePeriodUtils.getStartOfDay(occurrence.dueDate) != TimePeriodUtils.getStartOfDay(rule.nextDate)) return
+
+            val threshold = RecurringNextDatePolicy.threshold(rule.nextDate)
+            val earliestOpen = RecurringNextDatePolicy.earliestOpenFrom(
+                occurrenceDao.getBySource(SOURCE_TYPE_RECURRING_RULE, rule.id),
+                threshold
+            )
+            val candidate = RecurringNextDatePolicy.candidate(earliestOpen, rule.nextDate, rule.frequency)
+                ?: return
+            ruleCoordinator.get().advanceNextDate(rule.id, candidate)
+        } catch (e: Exception) {
+            CancellationSafe.rethrowIfCancellation(e)
+            Timber.w("Recurring: next-date advance after auto-link failed (code=AUTO_LINK_ADVANCE_FAILED)")
+        }
     }
 
     /**

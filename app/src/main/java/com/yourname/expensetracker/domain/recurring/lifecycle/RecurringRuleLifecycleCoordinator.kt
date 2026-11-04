@@ -291,6 +291,10 @@ class RecurringRuleLifecycleCoordinator @Inject constructor(
 
     /**
      * Advances the nextDate for a rule and writes a lifecycle event.
+     *
+     * Forward-only: a value that is not strictly greater than the stored `nextDate` (or a missing
+     * rule) is a no-op - no update and no event - so a second advance (for example mark-paid after
+     * an auto-link already advanced the rule) can never write a duplicate event or move backward.
      */
     suspend fun advanceNextDate(ruleId: Long, nextDate: Long) {
         writeBarrier.checkWritesAllowed("RecurringRuleLifecycleCoordinator.advanceNextDate")
@@ -300,6 +304,8 @@ class RecurringRuleLifecycleCoordinator @Inject constructor(
             DatabaseAccessOperation("RecurringRuleLifecycleCoordinator.advanceNextDate")
         ) {
             database.withTransaction {
+                val stored = manualRecurringExpenseDao.getById(ruleId) ?: return@withTransaction
+                if (nextDate <= stored.nextDate) return@withTransaction
                 manualRecurringExpenseDao.updateNextDate(ruleId, nextDate)
                 lifecycleEventDao.insert(
                     RecurringLifecycleEvent(
