@@ -90,6 +90,21 @@ class ReceiptItemPlaceholderPredicateTest {
         assertFalse(ReceiptItemPlaceholder.isPlaceholder(snapshot(alternativesJson = "[{\"id\":1}]")))
     }
 
+    // ---- card badge: ReceiptItemBreakdownCard shows the confidence badge only when
+    // !isUserCorrected && !ReceiptItemPlaceholder.isPlaceholder(item) on the stored snapshot.
+
+    @Test
+    fun `card badge predicate - a stored placeholder row is a placeholder so the badge is hidden`() {
+        val placeholderRow = snapshot(confidence = 0f, categoryId = null, categoryName = null, rationale = "", alternativesJson = null)
+        assertTrue(ReceiptItemPlaceholder.isPlaceholder(placeholderRow))
+    }
+
+    @Test
+    fun `card badge predicate - a real stored row with confidence 0 and a category is not a placeholder so the badge is shown`() {
+        val realRow = snapshot(confidence = 0f, categoryId = 3L, categoryName = "Food", rationale = "", alternativesJson = null)
+        assertFalse(ReceiptItemPlaceholder.isPlaceholder(realRow))
+    }
+
     // ---- 13. UI helpers
 
     @Test

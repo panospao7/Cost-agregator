@@ -15,6 +15,8 @@ import com.yourname.expensetracker.domain.ai.model.AiRoute
 import com.yourname.expensetracker.domain.ai.model.AiRouteDecision
 import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.ai.model.CategorizationResult
+import com.yourname.expensetracker.domain.ai.model.CategorizedReceiptItem
+import com.yourname.expensetracker.domain.ai.model.CategorySuggestion
 import com.yourname.expensetracker.domain.ai.model.ReceiptItemCategorizationInput
 import com.yourname.expensetracker.domain.ai.model.ReceiptItemCategorizationResult
 import com.yourname.expensetracker.domain.ai.model.ReceiptItemPlaceholder
@@ -72,7 +74,11 @@ class CategorizeReceiptItemsUseCasePartialResultTest {
 
     private fun name(index: Int) = "Product " + ('a' + index % 26) + ('a' + index / 26)
 
-    private fun setUp(itemCount: Int, blankDescriptionAt: Set<Int> = emptySet()) {
+    private fun setUp(
+        itemCount: Int,
+        blankDescriptionAt: Set<Int> = emptySet(),
+        serviceOverride: ReceiptItemCategorizationService? = null
+    ) {
         val categories = MerchantCategoryProvider.categoryBlueprints
             .mapIndexed { i, c -> CategoryRef(id = (i + 1).toLong(), name = c.name) }
         val input = ReceiptItemCategorizationInput(
@@ -127,7 +133,7 @@ class CategorizeReceiptItemsUseCasePartialResultTest {
             receiptItemCategorizationRepository = categorizationRepository,
             inputBuilder = inputBuilder,
             onDeviceService = mockk<ReceiptItemCategorizationService>(),
-            cloudService = realCloudService(blankDescriptionAt),
+            cloudService = serviceOverride ?: realCloudService(blankDescriptionAt),
             timeProvider = FakeTimeProvider(1_000L)
         )
     }
@@ -237,6 +243,86 @@ class CategorizeReceiptItemsUseCasePartialResultTest {
 
         assertTrue("was $second", second is CategorizationResult.AlreadyAnalyzed)
         assertEquals(1, transportCalls.get())
+    }
+
+    private fun realItem(index: Int) = CategorizedReceiptItem(
+        itemDescription = name(index),
+        amount = 1.0,
+        suggestedCategory = CategorySuggestion(categoryId = 1L, categoryName = "Groceries", confidence = 0.9f),
+        confidence = 0.9f,
+        rationale = "matches",
+        alternatives = emptyList(),
+        needsReview = false
+    )
+
+    private fun placeholderItem(index: Int) = CategorizedReceiptItem(
+        itemDescription = name(index),
+        amount = 1.0,
+        suggestedCategory = null,
+        confidence = 0f,
+        rationale = ReceiptItemPlaceholder.PLACEHOLDER_RATIONALE,
+        alternatives = emptyList(),
+        needsReview = true
+    )
+
+    private fun serviceReturning(realCount: Int, total: Int): ReceiptItemCategorizationService {
+        val service = mockk<ReceiptItemCategorizationService>()
+        coEvery { service.categorizeItems(any()) } returns ReceiptItemCategorizationResult(
+            items = (0 until total).map { if (it < realCount) realItem(it) else placeholderItem(it) },
+            totalConfidence = 0.9f,
+            needsReview = realCount < total,
+            suggestedNewCategories = emptyList(),
+            taxDistribution = emptyMap()
+        )
+        return service
+    }
+
+    @Test
+    fun `summary counts only real results on a partial result - 2 real and 3 placeholders`() = runTest {
+        setUp(itemCount = 5, serviceOverride = serviceReturning(realCount = 2, total = 5))
+
+        val result = useCase(receiptId)
+
+        assertTrue("was $result", result is CategorizationResult.Success)
+        assertEquals(AiArtifactStatus.READY, artifacts.last().status)
+        assertEquals("Categorized 2 of 5 items", artifacts.last().summaryText)
+    }
+
+    @Test
+    fun `summary of a full result is Categorized 5 items`() = runTest {
+        setUp(itemCount = 5, serviceOverride = serviceReturning(realCount = 5, total = 5))
+
+        val result = useCase(receiptId)
+
+        assertTrue("was $result", result is CategorizationResult.Success)
+        assertEquals(AiArtifactStatus.READY, artifacts.last().status)
+        assertEquals("Categorized 5 items", artifacts.last().summaryText)
+    }
+
+    @Test
+    fun `summary of the not persisted variant keeps the counts and the storage mode suffix`() = runTest {
+        setUp(itemCount = 5, serviceOverride = serviceReturning(realCount = 2, total = 5))
+
+        val partial = useCase(receiptId, persistItemTextAllowed = false)
+
+        assertTrue("was $partial", partial is CategorizationResult.Success)
+        assertEquals(
+            "Categorized 2 of 5 items (not persisted for storage mode)",
+            artifacts.last().summaryText
+        )
+    }
+
+    @Test
+    fun `summary of a full result in the not persisted variant has no of-total wording`() = runTest {
+        setUp(itemCount = 5, serviceOverride = serviceReturning(realCount = 5, total = 5))
+
+        val full = useCase(receiptId, persistItemTextAllowed = false)
+
+        assertTrue("was $full", full is CategorizationResult.Success)
+        assertEquals(
+            "Categorized 5 items (not persisted for storage mode)",
+            artifacts.last().summaryText
+        )
     }
 
     @Test

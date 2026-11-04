@@ -198,8 +198,8 @@ private fun CategorizedItemRow(
                 }
             }
             
-            // Confidence badge
-            if (!isUserCorrected) {
+            // Confidence badge (a placeholder row has no AI result, so no 0% to show)
+            if (!isUserCorrected && !ReceiptItemPlaceholder.isPlaceholder(item)) {
                 ConfidenceBadge(confidence = item.confidence)
             }
             

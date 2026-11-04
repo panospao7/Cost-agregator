@@ -13,6 +13,8 @@ import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.dto.CategoryRef
 import com.yourname.expensetracker.domain.privacy.CloudPayloadPolicy
 import com.yourname.expensetracker.domain.privacy.CloudPayloadPurpose
+import com.yourname.expensetracker.domain.privacy.PreparedCloudPayload
+import com.yourname.expensetracker.domain.privacy.SafePrivacyMetadata
 import com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDecision
@@ -142,14 +144,14 @@ class CloudReceiptItemCategorizationPromptTest {
         assertTrue(unredacted.sentText.length <= 3900)
         assertTrue(unredacted.sentText.length + 1 + nextLineLength(firstLine, n) > 3900)
         assertWholeLines(unredacted.sentText, n, price) { productName(it) }
-        assertEquals(256 + 80 * n, unredacted.maxTokens)
+        assertEquals(CONSTANT_MAX_OUTPUT_TOKENS, unredacted.maxTokens)
 
         // Redacted mode is budgeted the same way.
         val redacted = Rig(true)
         redacted.categorize(input(items(60), cats, redact = true))
         assertEquals(markersIn(unredacted.sentText), markersIn(redacted.sentText))
         assertEquals(unredacted.sentText.replace(Regex("\\s+"), " "), redacted.sentText)
-        assertEquals(256 + 80 * n, redacted.maxTokens)
+        assertEquals(CONSTANT_MAX_OUTPUT_TOKENS, redacted.maxTokens)
     }
 
     // ---------------------------------------------------------------- 3. exhausting / lengthening
@@ -210,7 +212,7 @@ class CloudReceiptItemCategorizationPromptTest {
         assertFalse(redacted.sentText.contains("a@b.co"))
         assertFalse("no truncated marker", Regex("\\[REDACTED_(?!EMAIL])").containsMatchIn(redacted.sentText))
         assertTrue("ends in a whole line", redacted.sentText.endsWith("z".repeat(pad) + ": " + price))
-        assertEquals(256 + 80 * n, redacted.maxTokens)
+        assertEquals(CONSTANT_MAX_OUTPUT_TOKENS, redacted.maxTokens)
         assertEquals(25, result!!.items.size)
         assertEquals(n, result.items.count { !ReceiptItemPlaceholder.isPlaceholder(it) })
     }
@@ -233,7 +235,7 @@ class CloudReceiptItemCategorizationPromptTest {
                 assertEquals((0 until 10).toList(), markersIn(text))
                 if (redact) assertTrue(text.substringAfter("Items:").contains("[REDACTED_"))
                 // A numeric description cannot be mistaken for a cut: all 10 are sent.
-                assertEquals(1056, rig.maxTokens)
+                assertEquals(CONSTANT_MAX_OUTPUT_TOKENS, rig.maxTokens)
                 assertEquals(10, result!!.items.count { !ReceiptItemPlaceholder.isPlaceholder(it) })
             }
         }
@@ -272,26 +274,82 @@ class CloudReceiptItemCategorizationPromptTest {
         }
         assertTrue(markersIn(rig.sentText).isEmpty())
         assertTrue(rig.sentText.contains("Items:"))
-        assertEquals(256, rig.maxTokens)
+        assertEquals(CONSTANT_MAX_OUTPUT_TOKENS, rig.maxTokens)
     }
 
     // ---------------------------------------------------------------- 7. reply tokens
 
     @Test
-    fun `maxOutputTokens is 256 plus 80 per sent item`() {
-        for ((count, expected) in mapOf(1 to 336, 10 to 1056, 25 to 2256)) {
-            val rig = Rig(true)
-            rig.categorize(input(items(count), redact = true))
-            assertEquals("items=$count", expected, rig.maxTokens)
+    fun `maxOutputTokens is the constant 4256 for 1, 10 and 25 items in both modes`() {
+        for (redact in listOf(true, false)) {
+            for (count in listOf(1, 10, 25)) {
+                val rig = Rig(redact)
+                rig.categorize(input(items(count), redact = redact))
+                assertEquals("items=$count redact=$redact", 4256, rig.maxTokens)
+            }
         }
     }
 
     @Test
-    fun `maxOutputTokens counts the sent items not the total for 60 items`() {
+    fun `maxOutputTokens is the same constant 4256 for 60 items of which 25 are sent`() {
         val rig = Rig(false)
         rig.categorize(input(items(60)))
-        assertEquals(2256, rig.maxTokens)
-        assertTrue(rig.maxTokens != 256 + 80 * 60)
+        assertEquals(25, markersIn(rig.sentText).size)
+        assertEquals(4256, rig.maxTokens)
+    }
+
+    @Test
+    fun `thinking is off and the prompt asks for brief rationales`() {
+        for (redact in listOf(true, false)) {
+            val rig = Rig(redact)
+            rig.categorize(input(items(10), redact = redact))
+            assertEquals("redact=$redact", 0, rig.thinkingBudget)
+            assertTrue("redact=$redact", rig.sentText.contains("brief"))
+        }
+    }
+
+    @Test
+    fun `the request carries exactly the prepared text with every marker`() {
+        for ((count, redact) in listOf(1 to true, 10 to false, 25 to true, 60 to false)) {
+            val prepared = mutableListOf<String>()
+            val rig = Rig(redact, policyWrap = { recordingPolicy(it, prepared) })
+            rig.categorize(input(items(count), redact = redact))
+
+            val sentCount = minOf(count, 25)
+            assertEquals("items=$count", 1, rig.transportCalls.get())
+            assertEquals("items=$count", prepared.last(), rig.sentText)
+            assertEquals("items=$count", (0 until sentCount).toList(), markersIn(rig.sentText))
+        }
+    }
+
+    @Test
+    fun `a final prepared text with a missing marker causes no transport call`() {
+        // The first preparation decides the count; the one that would be sent loses a marker.
+        val rig = Rig(false, policyWrap = { degradingPolicy(it) { text -> text.replace("[sourceIndex=2]", "[x]") } })
+        val result = rig.categorize(input(items(3)))
+
+        assertNull(result)
+        assertEquals(0, rig.transportCalls.get())
+    }
+
+    @Test
+    fun `a final prepared text at the redaction cap causes no transport call`() {
+        // A text as long as the cap may have been cut, even if all markers are present.
+        val rig = Rig(false, policyWrap = { degradingPolicy(it) { text -> text.padEnd(4000, ' ') } })
+        val result = rig.categorize(input(items(3)))
+
+        assertNull(result)
+        assertEquals(0, rig.transportCalls.get())
+    }
+
+    @Test
+    fun `a final prepared text just under the cap with all markers is sent`() {
+        val rig = Rig(false, policyWrap = { degradingPolicy(it) { text -> text.padEnd(3999, ' ') } })
+        val result = rig.categorize(input(items(3)))
+
+        assertNotNull(result)
+        assertEquals(1, rig.transportCalls.get())
+        assertEquals(3999, rig.sentText.length)
     }
 
     // ---------------------------------------------------------------- 8. purpose separation
@@ -465,6 +523,37 @@ class CloudReceiptItemCategorizationPromptTest {
 
 private val MARKER = Regex("""\[sourceIndex=(\d+)]""")
 
+/** The reply limit is one constant for every call, whatever the number of items sent. */
+private const val CONSTANT_MAX_OUTPUT_TOKENS = 4256
+
+/** Delegates to [base] and records every text it prepares, in call order. */
+private fun recordingPolicy(base: CloudPayloadPolicy, into: MutableList<String>): CloudPayloadPolicy =
+    object : CloudPayloadPolicy by base {
+        override suspend fun prepareText(
+            purpose: CloudPayloadPurpose,
+            rawText: String,
+            context: SafePrivacyMetadata
+        ): PreparedCloudPayload = base.prepareText(purpose, rawText, context).also { into += it.text }
+    }
+
+/**
+ * Delegates to [base], but from the second preparation on (the one that is sent) the text is
+ * changed by [change]. The first preparation, which decides the item count, is untouched.
+ */
+private fun degradingPolicy(base: CloudPayloadPolicy, change: (String) -> String): CloudPayloadPolicy =
+    object : CloudPayloadPolicy by base {
+        private val calls = AtomicInteger(0)
+
+        override suspend fun prepareText(
+            purpose: CloudPayloadPurpose,
+            rawText: String,
+            context: SafePrivacyMetadata
+        ): PreparedCloudPayload {
+            val prepared = base.prepareText(purpose, rawText, context)
+            return if (calls.incrementAndGet() >= 2) prepared.copy(text = change(prepared.text)) else prepared
+        }
+    }
+
 private val allowGate = object : PrivacyGate {
     override suspend fun check(capability: PrivacyCapability, context: Map<String, String>): PrivacyDecision =
         PrivacyDecision.Allowed
@@ -584,6 +673,9 @@ private class Rig(
     val sentText: String get() = promptOf(bodies.last())
 
     val maxTokens: Int get() = bodies.last().getJSONObject("generationConfig").getInt("maxOutputTokens")
+
+    val thinkingBudget: Int
+        get() = bodies.last().getJSONObject("generationConfig").getJSONObject("thinkingConfig").getInt("thinkingBudget")
 
     fun categorize(input: ReceiptItemCategorizationInput): ReceiptItemCategorizationResult? =
         runBlocking { service.categorizeItems(input) }

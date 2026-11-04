@@ -358,10 +358,10 @@ class CategorizeReceiptItemsUseCase @Inject constructor(
             baseEntity.copy(
                 status = AiArtifactStatus.READY,
                 summaryText = if (persistItemTextAllowed) {
-                    "Categorized ${result.items.size} items"
+                    "${categorizedCountPhrase(result)} items"
                 } else {
                     // Controlled constants + counts only — never item content.
-                    "Categorized ${result.items.size} items (not persisted for storage mode)"
+                    "${categorizedCountPhrase(result)} items (not persisted for storage mode)"
                 },
                 explanationText = buildExplanation(result, persistItemTextAllowed),
                 payloadJson = payload.toString(),
@@ -370,12 +370,22 @@ class CategorizeReceiptItemsUseCase @Inject constructor(
         )
     }
 
+    /**
+     * "Categorized N" when every item has a result, "Categorized X of Y" on a partial result.
+     * X counts real results only; placeholders (items not sent) are not counted. Counts only.
+     */
+    private fun categorizedCountPhrase(result: ReceiptItemCategorizationResult): String {
+        val total = result.items.size
+        val categorized = result.items.count { !ReceiptItemPlaceholder.isPlaceholder(it) }
+        return if (categorized == total) "Categorized $total" else "Categorized $categorized of $total"
+    }
+
     private fun buildExplanation(
         result: ReceiptItemCategorizationResult,
         persistItemTextAllowed: Boolean
     ): String {
         val lines = buildList {
-            add("Categorized ${result.items.size} receipt items")
+            add("${categorizedCountPhrase(result)} receipt items")
             if (result.needsReview) {
                 val uncertainCount = result.items.count { it.needsReview }
                 add("⚠️ $uncertainCount items need review (confidence < 70%)")

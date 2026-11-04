@@ -20,7 +20,6 @@ import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.privacy.CloudPayloadPolicy
 import com.yourname.expensetracker.domain.privacy.CloudPayloadPurpose
 import com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver
-import com.yourname.expensetracker.domain.privacy.PreparedCloudPayload
 import com.yourname.expensetracker.domain.privacy.PrivacyAuditContext
 import com.yourname.expensetracker.domain.privacy.PrivacyAuditLogger
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
@@ -92,9 +91,22 @@ class CloudReceiptItemCategorizationService @Inject constructor(
 
         val correlationId = CloudCorrelation.newCorrelationId()
         // PRIV-43B-03: Build full raw prompt, then prepare through policy — no empty-string probe.
-        // The prompt carries whole item lines that fit the reply/text budget; sentCount is the
-        // number of leading items actually sent and drives the token budget and the parse.
-        val (prepared, sentCount) = prepareWithinBudget(input, correlationId) ?: return null
+        // The prompt carries whole item lines that fit the text budget; sentCount is the number
+        // of leading items actually sent and drives the parse. The payload that is sent is the
+        // one prepared here, in the scope of the request, and it is checked once more.
+        val sentCount = fitItemCount(input, correlationId) ?: return null
+        val prepared = cloudPayloadPolicy.prepareText(
+            CloudPayloadPurpose.RECEIPT_ITEM_CATEGORIZATION,
+            buildPrompt(input, sentCount)
+        )
+        if (sentCount > 0 && !promptIsComplete(prepared.text, sentCount)) {
+            Timber.w(
+                "CloudReceiptItemCategorizationService: PROMPT_NOT_COMPLETE sent=%d correlationId=%s",
+                sentCount,
+                correlationId
+            )
+            return null
+        }
         // P8F-03: record cloud-call provenance
         auditLogger.logCloudCall(
             PrivacyCapability.CLOUD_AI_ITEM_CATEGORIZATION,
@@ -109,7 +121,7 @@ class CloudReceiptItemCategorizationService @Inject constructor(
         )
 
         return withContext(Dispatchers.IO) {
-            val requestBody = buildRequestBody(prepared.text, sentCount)
+            val requestBody = buildRequestBody(prepared.text)
 
             val request = Request.Builder()
                 .url("${AppConfig.Ai.GEMINI_BASE_URL}/v1beta/models/${AppConfig.Ai.RECEIPT_ITEM_CATEGORIZATION_CLOUD_MODEL}:generateContent")
@@ -221,34 +233,25 @@ class CloudReceiptItemCategorizationService @Inject constructor(
         }
     }
 
-    /** The prepared payload and how many leading items of the receipt it carries. */
-    private data class PreparedItems(val prepared: PreparedCloudPayload, val sentCount: Int)
-
     /**
-     * Prepares the prompt through [cloudPayloadPolicy] with as many whole leading item lines as
-     * fit. An empty item list is prepared as before (header only, sentCount 0). A non-empty
-     * receipt of which no item fits returns null: nothing is prepared for sending and no
-     * transport call is made.
+     * How many whole leading item lines can be sent. An empty item list sends none (header
+     * only, 0). A non-empty receipt of which no item fits returns null: nothing is prepared for
+     * sending and no transport call is made. The text prepared here only decides the count; the
+     * payload that is sent is prepared by the caller.
      *
      * The fit is decided on the raw prompt length (redacted or not: the reply limit applies to
      * both), within [MAX_PROMPT_CHARS] and at most [MAX_ITEMS_PER_CALL] items. Redaction can
-     * lengthen a text, so the prepared text is verified once: every marker present and the
-     * text shorter than the redactor cap (a text at the cap may have been cut). On failure the
-     * count shrinks (strictly, so the loop runs at most [MAX_ITEMS_PER_CALL] times) and the
-     * prompt is prepared again. Logs carry counts and the correlation id only.
+     * lengthen a text, so the prepared text is verified: every marker present and the text
+     * shorter than the redactor cap (a text at the cap may have been cut). On failure the count
+     * shrinks (strictly, so the loop runs at most [MAX_ITEMS_PER_CALL] times) and the prompt is
+     * prepared again. Logs carry counts and the correlation id only.
      */
-    private suspend fun prepareWithinBudget(
+    private suspend fun fitItemCount(
         input: ReceiptItemCategorizationInput,
         correlationId: String
-    ): PreparedItems? {
+    ): Int? {
         val totalItems = input.lineItems.size
-        if (totalItems == 0) {
-            val prepared = cloudPayloadPolicy.prepareText(
-                CloudPayloadPurpose.RECEIPT_ITEM_CATEGORIZATION,
-                buildPrompt(input, 0)
-            )
-            return PreparedItems(prepared, 0)
-        }
+        if (totalItems == 0) return 0
 
         var sentCount = countItemsThatFit(input)
         while (sentCount > 0) {
@@ -259,7 +262,7 @@ class CloudReceiptItemCategorizationService @Inject constructor(
             val leadingMarkers = leadingMarkersPresent(prepared.text, sentCount)
             val mayBeCut = prepared.text.length >= ITEM_CATEGORIZATION_MAX_TEXT_CHARS
             if (leadingMarkers == sentCount && !mayBeCut) {
-                return PreparedItems(prepared, sentCount)
+                return sentCount
             }
             // Drop the last present line too when the text may be cut inside it.
             val next = minOf(sentCount - 1, if (mayBeCut) leadingMarkers - 1 else leadingMarkers)
@@ -311,6 +314,11 @@ class CloudReceiptItemCategorizationService @Inject constructor(
         return present
     }
 
+    /** All [sentCount] markers present and the text clear of the redactor cap (not cut). */
+    private fun promptIsComplete(text: String, sentCount: Int): Boolean =
+        leadingMarkersPresent(text, sentCount) == sentCount &&
+            text.length < ITEM_CATEGORIZATION_MAX_TEXT_CHARS
+
     private fun buildHeader(input: ReceiptItemCategorizationInput): String {
         // PRIV-43B-03: Raw values — CloudPayloadPolicy will redact if required; no hashCode pseudonyms
         val merchant = input.merchant.trim().ifBlank { "Unknown" }.take(MAX_PROMPT_MERCHANT_CHARS)
@@ -340,17 +348,16 @@ class CloudReceiptItemCategorizationService @Inject constructor(
         return prompt.toString()
     }
 
-    private fun buildRequestBody(prompt: String, sentCount: Int): String {
-        val parts = JSONArray().put(JSONObject().put("text", prompt))
-
+    private fun buildRequestBody(promptText: String): String {
+        // The caller supplies only text prepared by CloudPayloadPolicy. Thinking is off so that
+        // thought tokens do not use up the reply budget (same as the sibling Gemini services).
         return JSONObject().apply {
-            put("contents", JSONArray().put(
-                JSONObject().put("role", "user").put("parts", parts)
-            ))
+            put("contents", JSONArray().put(JSONObject().put("role", "user").put("parts", JSONArray().put(JSONObject().put("text", promptText)))))
             put("generationConfig", JSONObject().apply {
                 put("temperature", 0.1)
-                put("maxOutputTokens", AppConfig.Ai.cloudReceiptItemMaxTokens(sentCount))
+                put("maxOutputTokens", AppConfig.Ai.CLOUD_RECEIPT_ITEM_MAX_OUTPUT_TOKENS)
                 put("responseMimeType", "application/json")
+                put("thinkingConfig", JSONObject().put("thinkingBudget", 0))
             })
         }.toString()
     }
@@ -672,7 +679,7 @@ class CloudReceiptItemCategorizationService @Inject constructor(
 
     private companion object {
         /** At most this many items go into one call (reply size grows with the sent count). */
-        private const val MAX_ITEMS_PER_CALL = 25
+        private const val MAX_ITEMS_PER_CALL = AppConfig.Ai.CLOUD_RECEIPT_ITEM_MAX_ITEMS_PER_CALL
         /** Kept clear below the redactor cap so redaction growth rarely needs a second pass. */
         private const val PROMPT_BUDGET_MARGIN_CHARS = 100
         private const val MAX_PROMPT_CHARS = ITEM_CATEGORIZATION_MAX_TEXT_CHARS - PROMPT_BUDGET_MARGIN_CHARS
@@ -684,7 +691,7 @@ class CloudReceiptItemCategorizationService @Inject constructor(
             "Use the exact sourceIndex of each item. Use a listed category (categoryId and exact " +
                 "categoryName), or set isNewCategorySuggestion true with categoryId null and a new " +
                 "categoryName. Give confidence from 0 to 1 (0.9 or more: clear match, 0.7 or more: " +
-                "good, under 0.7: unsure, then add up to 2 alternatives)."
+                "good, under 0.7: unsure, then add up to 2 alternatives). Keep each rationale brief."
         private const val FORMAT_LINE =
             """Format: {"items":[{"sourceIndex":0,"description":"","amount":0,"categoryId":""" +
                 """1,"categoryName":"","confidence":0,"rationale":"","isNewCategorySuggestion":""" +
