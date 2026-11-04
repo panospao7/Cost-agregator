@@ -98,8 +98,9 @@ interface ExpenseDao {
          * First matching branch wins; a row that matches none yields NULL (no comparable
          * value). A row is never compared by its raw amount unless its currency is the home
          * currency:
-         *  0. spendingExclusionReason IS NOT NULL              → 0.0
          *  1. isNotMine = 1                                   → 0.0
+         *     (spendingExclusionReason is deliberately ignored: list-only, owner decision 131;
+         *     spending totals use SpendingInclusionSql, never this expression)
          *  2. e.currency = H                                  → [EFFECTIVE_AMOUNT_E_SQL] (snapshot ignored)
          *  3. valid snapshot for H (baseAmount > 0, baseCurrency = H, exchangeRateUsed > 0)
          *     shared + myShareAmount                          → myShareAmount * exchangeRateUsed
@@ -113,8 +114,7 @@ interface ExpenseDao {
          * `NULLS LAST` with it (SQLite 3.30+ only); order with `(CV IS NULL) ASC` instead.
          */
         const val COMPARABLE_HOME_VALUE_E_SQL: String =
-            "(CASE WHEN e.spendingExclusionReason IS NOT NULL THEN 0.0 " +
-            "WHEN e.isNotMine = 1 THEN 0.0 " +
+            "(CASE WHEN e.isNotMine = 1 THEN 0.0 " +
             "WHEN e.currency = ? THEN ($EFFECTIVE_AMOUNT_E_SQL) " +
             "WHEN e.baseAmount > 0 AND e.baseCurrency = ? AND e.exchangeRateUsed > 0 THEN (CASE " +
             "WHEN e.isSharedExpense = 1 AND e.myShareAmount IS NOT NULL THEN e.myShareAmount * e.exchangeRateUsed " +

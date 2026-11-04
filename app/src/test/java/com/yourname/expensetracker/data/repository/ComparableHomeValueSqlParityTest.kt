@@ -228,7 +228,7 @@ class ComparableHomeValueSqlParityTest {
     // ── Neutralisation parity against Expense model (slice S3) ──────────────
 
     @Test
-    fun `neutralised foreign row WITH valid snapshot ranks at model effectiveAmount 0_0 not baseAmount 550_0 in both Kotlin and SQL`() = runTest {
+    fun `flagged foreign row WITH valid snapshot ranks at its snapshot 550_0 not the model effectiveAmount 0_0 in both Kotlin and SQL`() = runTest {
         val neutralisedForeignWithSnapshot = Expense(
             id = 2_001L,
             amount = 600.0,
@@ -243,27 +243,25 @@ class ComparableHomeValueSqlParityTest {
         )
         assertTrue(database.expenseDao().insert(neutralisedForeignWithSnapshot) > 0L)
 
-        // Pin to model values (0.0)
+        // The totals-side model value stays 0.0 (list rule differs from the totals rule).
         assertEquals(0.0, neutralisedForeignWithSnapshot.effectiveAmount, 0.0)
         assertEquals(0.0, neutralisedForeignWithSnapshot.normalizedEffectiveAmount!!, 0.0)
 
-        // 1. Kotlin matches model
+        // Kotlin: full snapshot amount.
         val kotlinCv = ComparableHomeValue.comparableValue(neutralisedForeignWithSnapshot, ComparableHomeValueFixture.EUR)
-        assertEquals(ComparableValue.Value(neutralisedForeignWithSnapshot.effectiveAmount), kotlinCv)
-        assertEquals(ComparableValue.Value(neutralisedForeignWithSnapshot.normalizedEffectiveAmount!!), kotlinCv)
+        assertEquals(ComparableValue.Value(550.0), kotlinCv)
 
-        // 2 & 3. SQL matches model (0.0, NOT 550.0)
+        // SQL: 550.0, same as Kotlin.
         val sqlCv = query(
             "SELECT e.id, $COMPARABLE_HOME_VALUE_E_SQL FROM expenses e WHERE e.id = 2001",
             arrayOf("EUR", "EUR")
         ).single().second
         assertNotNull(sqlCv)
-        assertEquals(neutralisedForeignWithSnapshot.effectiveAmount, sqlCv!!, 0.0)
-        assertEquals(neutralisedForeignWithSnapshot.normalizedEffectiveAmount!!, sqlCv, 0.0)
+        assertEquals(550.0, sqlCv!!, 0.0)
     }
 
     @Test
-    fun `neutralised foreign row WITHOUT snapshot ranks at model effectiveAmount 0_0 not None in both Kotlin and SQL`() = runTest {
+    fun `flagged foreign row WITHOUT snapshot has no comparable value in both Kotlin and SQL`() = runTest {
         val neutralisedForeignNoSnapshot = Expense(
             id = 2_002L,
             amount = 600.0,
@@ -279,19 +277,17 @@ class ComparableHomeValueSqlParityTest {
         assertTrue(database.expenseDao().insert(neutralisedForeignNoSnapshot) > 0L)
 
         assertEquals(0.0, neutralisedForeignNoSnapshot.effectiveAmount, 0.0)
-        assertEquals(0.0, neutralisedForeignNoSnapshot.normalizedEffectiveAmount!!, 0.0)
 
-        // 1 & 4. Kotlin matches model (Value(0.0), NOT None)
+        // Kotlin: None(NO_SNAPSHOT), not a zero value.
         val kotlinCv = ComparableHomeValue.comparableValue(neutralisedForeignNoSnapshot, ComparableHomeValueFixture.EUR)
-        assertEquals(ComparableValue.Value(neutralisedForeignNoSnapshot.effectiveAmount), kotlinCv)
+        assertEquals(ComparableValue.None(com.yourname.expensetracker.domain.core.money.NoComparableValueReason.NO_SNAPSHOT), kotlinCv)
 
-        // 2 & 4. SQL matches model (0.0, NOT NULL)
+        // SQL: NULL.
         val sqlCv = query(
             "SELECT e.id, $COMPARABLE_HOME_VALUE_E_SQL FROM expenses e WHERE e.id = 2002",
             arrayOf("EUR", "EUR")
         ).single().second
-        assertNotNull("neutralised foreign row without snapshot must not be NULL in SQL", sqlCv)
-        assertEquals(neutralisedForeignNoSnapshot.effectiveAmount, sqlCv!!, 0.0)
+        assertNull("flagged foreign row without snapshot must be NULL in SQL", sqlCv)
     }
 
     @Test
@@ -377,7 +373,7 @@ class ComparableHomeValueSqlParityTest {
     }
 
     @Test
-    fun `neutralised 550_0 foreign snapshot row sorts at 0_0 below ordinary 10_0 row in DESC order`() = runTest {
+    fun `flagged 550_0 foreign snapshot row sorts at 550_0 above ordinary 10_0 row in DESC order`() = runTest {
         val ordinary10 = Expense(
             id = 2_010L,
             amount = 10.0,
@@ -415,8 +411,133 @@ class ComparableHomeValueSqlParityTest {
             .sortedWith(ComparableHomeValue.comparator(ComparableHomeValueFixture.EUR, ComparableHomeValue.Direction.DESCENDING))
             .map { it.id }
 
-        // 10.0 row (2010) must rank above neutralised 550.0 row (2011, which ranks at 0.0) in DESC
-        assertEquals(listOf(2_010L, 2_011L), kotlinDescOrder)
-        assertEquals(listOf(2_010L, 2_011L), sqlDescOrder)
+        // The flagged 550.0 row (2011) ranks above the ordinary 10.0 row (2010) in DESC
+        assertEquals(listOf(2_011L, 2_010L), kotlinDescOrder)
+        assertEquals(listOf(2_011L, 2_010L), sqlDescOrder)
+    }
+
+    // ── Flagged rows compared on their full amount (owner decision) ─────────
+
+    private fun flaggedRow(
+        id: Long,
+        amount: Double,
+        currency: String = "EUR",
+        isNotMine: Boolean = false,
+        isShared: Boolean = false,
+        myShareAmount: Double? = null,
+        baseAmount: Double = 0.0,
+        rate: Double = 0.0
+    ) = Expense(
+        id = id,
+        amount = amount,
+        currency = currency,
+        merchant = "M$id",
+        transactionType = com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE,
+        date = ComparableHomeValueFixture.BASE_DATE + id * 1_000L,
+        isNotMine = isNotMine,
+        isSharedExpense = isShared,
+        myShareAmount = myShareAmount,
+        baseAmount = baseAmount,
+        baseCurrency = "EUR",
+        exchangeRateUsed = rate,
+        spendingExclusionReason = "INSTALLMENT_PURCHASE"
+    )
+
+    private fun boundIds(clause: String, bound: Double): Set<Long> =
+        query(
+            "SELECT e.id FROM expenses e WHERE $COMPARABLE_HOME_VALUE_E_SQL $clause ?",
+            arrayOf("EUR", "EUR", bound)
+        ).map { it.first }.toSet()
+
+    @Test
+    fun `flagged EUR 1200 passes min 1000 and is excluded by max 1000 in SQL and Kotlin`() = runTest {
+        val flagged = flaggedRow(id = 3_001L, amount = 1_200.0)
+        assertTrue(database.expenseDao().insert(flagged) > 0L)
+
+        assertTrue(boundIds(">=", 1_000.0).contains(3_001L))
+        assertFalse(boundIds("<=", 1_000.0).contains(3_001L))
+        assertTrue(ComparableHomeValue.withinBounds(flagged, ComparableHomeValueFixture.EUR, 1_000.0, null))
+        assertFalse(ComparableHomeValue.withinBounds(flagged, ComparableHomeValueFixture.EUR, null, 1_000.0))
+        // Inclusive at the exact amount, in both mirrors.
+        assertTrue(boundIds(">=", 1_200.0).contains(3_001L))
+        assertTrue(boundIds("<=", 1_200.0).contains(3_001L))
+        assertFalse(boundIds(">=", 1_200.01).contains(3_001L))
+    }
+
+    @Test
+    fun `flagged 1200 ranks above unflagged 500 in DESC and below in ASC in SQL and Kotlin`() = runTest {
+        val flagged = flaggedRow(id = 3_002L, amount = 1_200.0)
+        val unflagged = flaggedRow(id = 3_003L, amount = 500.0).copy(spendingExclusionReason = null)
+        assertTrue(database.expenseDao().insert(flagged) > 0L)
+        assertTrue(database.expenseDao().insert(unflagged) > 0L)
+
+        for (direction in ComparableHomeValue.Direction.values()) {
+            val keyword = if (direction == ComparableHomeValue.Direction.DESCENDING) "DESC" else "ASC"
+            val sqlOrder = query(
+                "SELECT e.id FROM expenses e WHERE e.id IN (3002, 3003) " +
+                    "ORDER BY ($COMPARABLE_HOME_VALUE_E_SQL IS NULL) ASC, " +
+                    "$COMPARABLE_HOME_VALUE_E_SQL $keyword, e.date DESC, e.id DESC",
+                arrayOf("EUR", "EUR", "EUR", "EUR")
+            ).map { it.first }
+            val kotlinOrder = listOf(flagged, unflagged)
+                .sortedWith(ComparableHomeValue.comparator(ComparableHomeValueFixture.EUR, direction))
+                .map { it.id }
+            val expected = if (direction == ComparableHomeValue.Direction.DESCENDING) {
+                listOf(3_002L, 3_003L)
+            } else {
+                listOf(3_003L, 3_002L)
+            }
+            assertEquals("kotlin $keyword", expected, kotlinOrder)
+            assertEquals("sql $keyword", expected, sqlOrder)
+        }
+    }
+
+    @Test
+    fun `flagged shared row with my share 300 of 1200 gives 300 in SQL and Kotlin`() = runTest {
+        val flagged = flaggedRow(id = 3_004L, amount = 1_200.0, isShared = true, myShareAmount = 300.0)
+        assertTrue(database.expenseDao().insert(flagged) > 0L)
+
+        assertEquals(
+            ComparableValue.Value(300.0),
+            ComparableHomeValue.comparableValue(flagged, ComparableHomeValueFixture.EUR)
+        )
+        val sqlCv = query(
+            "SELECT e.id, $COMPARABLE_HOME_VALUE_E_SQL FROM expenses e WHERE e.id = 3004",
+            arrayOf("EUR", "EUR")
+        ).single().second
+        assertNotNull(sqlCv)
+        assertEquals(300.0, sqlCv!!, 0.0)
+    }
+
+    @Test
+    fun `flagged not-mine row stays at 0_0 in SQL and Kotlin`() = runTest {
+        val flagged = flaggedRow(id = 3_005L, amount = 1_200.0, isNotMine = true)
+        assertTrue(database.expenseDao().insert(flagged) > 0L)
+
+        assertEquals(
+            ComparableValue.Value(0.0),
+            ComparableHomeValue.comparableValue(flagged, ComparableHomeValueFixture.EUR)
+        )
+        val sqlCv = query(
+            "SELECT e.id, $COMPARABLE_HOME_VALUE_E_SQL FROM expenses e WHERE e.id = 3005",
+            arrayOf("EUR", "EUR")
+        ).single().second
+        assertNotNull(sqlCv)
+        assertEquals(0.0, sqlCv!!, 0.0)
+    }
+
+    @Test
+    fun `flagged foreign row with no snapshot is NULL in SQL so a bound excludes it`() = runTest {
+        val flagged = flaggedRow(id = 3_006L, amount = 600.0, currency = "USD")
+        assertTrue(database.expenseDao().insert(flagged) > 0L)
+
+        assertFalse(boundIds(">=", 0.0).contains(3_006L))
+        assertFalse(boundIds("<=", 1_000_000.0).contains(3_006L))
+        assertTrue(
+            query(
+                "SELECT e.id FROM expenses e WHERE e.id = 3006 AND $COMPARABLE_HOME_VALUE_E_SQL IS NULL",
+                arrayOf("EUR", "EUR")
+            ).isNotEmpty()
+        )
     }
 }

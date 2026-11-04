@@ -204,23 +204,73 @@ class ComparableHomeValueBuilderParityTest {
     }
 
     @Test
-    fun `neutralised foreign rows with and without snapshot rank at 0_0 below ordinary 10_0 row and countExpensesWithoutHomeValue is zero`() = runTest {
-        // Row 39: USD 600 with EUR 550.0 snapshot, neutralised
-        // Row 40: USD 600 without snapshot (baseAmount = 0.0), neutralised
+    fun `flagged foreign row with snapshot ranks at 550 above ordinary 10 and the flagged unrated row counts as without home value`() = runTest {
+        // Row 39: USD 600 with EUR 550.0 snapshot, flagged
+        // Row 40: USD 600 without snapshot (baseAmount = 0.0), flagged
         // Row 11: EUR 10.0 ordinary
         seed(rows(11, 39, 40))
 
-        // Requirement 6: countExpensesWithoutHomeValue is 0 for neutralised rows (including foreign without snapshot)
-        assertEquals(0, countNone(eur))
+        // The flagged foreign row with no snapshot has no comparable value and is counted.
+        assertEquals(1, countNone(eur))
 
-        // Requirement 7: in AMOUNT_DESC, ordinary 10.0 (id 11) ranks above neutralised 550.0 (id 39) and neutralised unrated (id 40),
-        // with ties at 0.0 broken by date DESC (40 then 39).
-        assertEquals(listOf(11L, 40L, 39L), listIds(eur, SortOrder.AMOUNT_DESC))
+        // AMOUNT_DESC: flagged 550 (id 39), ordinary 10 (id 11), then the None row (id 40) last.
+        assertEquals(listOf(39L, 11L, 40L), listIds(eur, SortOrder.AMOUNT_DESC))
+        // AMOUNT_ASC: ordinary 10, flagged 550, None row still last.
+        assertEquals(listOf(11L, 39L, 40L), listIds(eur, SortOrder.AMOUNT_ASC))
 
-        // Min/max filter: min = 0.01 excludes both neutralised rows (39, 40) even though 39 has baseAmount = 550.0
-        assertEquals(listOf(11L), listIds(eur, SortOrder.AMOUNT_DESC, min = 0.01))
-        // max = 0.0 includes both neutralised rows (40, 39)
-        assertEquals(listOf(40L, 39L), listIds(eur, SortOrder.AMOUNT_DESC, max = 0.0))
+        // Bounds: the None row (40) is excluded by any bound; 39 is judged by its snapshot 550.
+        assertEquals(listOf(39L, 11L), listIds(eur, SortOrder.AMOUNT_DESC, min = 0.01))
+        assertEquals(listOf(39L), listIds(eur, SortOrder.AMOUNT_DESC, min = 550.0))
+        assertEquals(listOf(11L), listIds(eur, SortOrder.AMOUNT_DESC, max = 549.99))
+        assertEquals(emptyList<Long>(), listIds(eur, SortOrder.AMOUNT_DESC, max = 0.0))
+    }
+
+    private fun flaggedOrdinary(
+        id: Long,
+        merchant: String,
+        amount: Double,
+        flagged: Boolean
+    ) = Expense(
+        id = id,
+        amount = amount,
+        currency = "EUR",
+        merchant = merchant,
+        transactionType = TransactionType.PURCHASE,
+        date = ComparableHomeValueFixture.BASE_DATE + id * 1_000L,
+        spendingExclusionReason = if (flagged) "INSTALLMENT_PURCHASE" else null
+    )
+
+    @Test
+    fun `search term plus bound filters flagged and unflagged rows on their full amount`() = runTest {
+        // Matching merchant "Laptop": flagged 1200, unflagged 500; non-matching "Phone" 1500.
+        seed(
+            listOf(
+                flaggedOrdinary(5_001, "Laptop store", 1_200.0, flagged = true),
+                flaggedOrdinary(5_002, "Laptop shop", 500.0, flagged = false),
+                flaggedOrdinary(5_003, "Phone", 1_500.0, flagged = false)
+            )
+        )
+        suspend fun ids(search: String, min: Double?, max: Double?, sort: SortOrder = SortOrder.AMOUNT_DESC) =
+            repository.getExpensesPagedDynamic(
+                limit = 100,
+                offset = 0,
+                searchQuery = search,
+                minAmount = min,
+                maxAmount = max,
+                sortOrder = sort,
+                amountSemantics = AmountSemantics.HomeComparable(eur)
+            ).map { it.expense.id }
+
+        // min 1000: flagged 1200 passes, unflagged 500 does not, "Phone" does not match the search.
+        assertEquals(listOf(5_001L), ids("laptop", 1_000.0, null))
+        // max 1000: flagged 1200 is excluded, unflagged 500 remains.
+        assertEquals(listOf(5_002L), ids("laptop", null, 1_000.0))
+        // Search alone, DESC: flagged 1200 above unflagged 500.
+        assertEquals(listOf(5_001L, 5_002L), ids("laptop", null, null))
+        assertEquals(listOf(5_002L, 5_001L), ids("laptop", null, null, SortOrder.AMOUNT_ASC))
+        // Both bounds around the flagged amount.
+        assertEquals(listOf(5_001L), ids("laptop", 1_200.0, 1_200.0))
+        assertEquals(emptyList<Long>(), ids("laptop", 1_200.01, null))
     }
 
     @Test

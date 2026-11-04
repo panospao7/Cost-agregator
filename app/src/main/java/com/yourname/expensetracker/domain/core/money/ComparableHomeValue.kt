@@ -22,6 +22,11 @@ import com.yourname.expensetracker.data.database.entity.Expense
  *
  * A row is never compared by its raw amount unless branch 2 holds. Currency
  * equality is exact and case-sensitive, like the SQL `=`.
+ *
+ * Spending exclusion (owner decision 131): a spending-neutralised ("flagged") row is NOT
+ * zeroed here; it is compared and sorted on its full amount. This rule is list-only (filter,
+ * sort, without-home-value count). Totals, charts, budgets, forecasts and exports must use
+ * `Expense.effectiveAmount` / [snapshotValue], which keep neutralised rows at 0.0.
  */
 object ComparableHomeValue {
 
@@ -30,9 +35,8 @@ object ComparableHomeValue {
 
     /** Comparable value of [e] against the home currency [home] (branches 1-4, in order). */
     fun comparableValue(e: Expense, home: CurrencyCode): ComparableValue {
-        if (e.isSpendingNeutralised) return ComparableValue.Value(0.0)
         if (e.isNotMine) return ComparableValue.Value(0.0)
-        if (e.currency == home.code) return ComparableValue.Value(normalizeZero(e.effectiveAmount))
+        if (e.currency == home.code) return ComparableValue.Value(normalizeZero(listAmount(e)))
         if (e.baseAmount > 0.0 && e.baseCurrency == home.code && e.exchangeRateUsed > 0.0) {
             return ComparableValue.Value(normalizeZero(snapshotAmount(e)))
         }
@@ -100,6 +104,18 @@ object ComparableHomeValue {
     /** Convenience over [withinBounds] for an [Expense] and home currency [home]. */
     fun withinBounds(e: Expense, home: CurrencyCode, min: Double?, max: Double?): Boolean =
         withinBounds(comparableValue(e, home), min, max)
+
+    /**
+     * Branch-2 amount: ownership-adjusted like [Expense.effectiveAmount] but WITHOUT the
+     * spending-exclusion zero (owner decision 131: the Transactions list compares and sorts a
+     * flagged row on its full amount). SQL mirror: `EFFECTIVE_AMOUNT_E_SQL`. Not for totals.
+     */
+    private fun listAmount(e: Expense): Double = when {
+        e.isNotMine -> 0.0
+        e.isSharedExpense && e.myShareAmount != null -> e.myShareAmount
+        e.isSharedExpense && e.mySharePercentage != null -> e.amount * e.mySharePercentage / 100.0
+        else -> e.amount
+    }
 
     /** Branch-3 value; caller has already checked the snapshot is usable. */
     private fun snapshotAmount(e: Expense): Double = when {
