@@ -140,20 +140,32 @@ class FinancialStressForecastEngineTest {
         org.junit.Assert.assertSame(cancellation, runCatching { engine.computeStressForecast() }.exceptionOrNull())
     }
 
+    // P-06-4 (was: depositTotalCancellationPropagatesUnchanged). The engine no longer has an inline
+    // deposit/purchase fallback behind the provider, so a failing provider is "balance unavailable",
+    // and the deposit/purchase cancellation guarantees now live in NetCashflowBalanceProviderTest.
     @Test
-    fun depositTotalCancellationPropagatesUnchanged() = runTest {
-        val cancellation = kotlinx.coroutines.CancellationException("deposit cancellation")
+    fun providerFailureDoesNotFallBackToInlineDepositTotals() = runTest {
         coEvery { accountBalanceProvider.currentBalance(any()) } throws IllegalStateException("provider down")
-        coEvery { multiCurrencyRepository.getHomeCurrencyDepositTotal(any(), any()) } throws cancellation
-        org.junit.Assert.assertSame(cancellation, runCatching { engine.computeStressForecast() }.exceptionOrNull())
+        coEvery { multiCurrencyRepository.getHomeCurrencyDepositTotal(any(), any()) } throws
+            kotlinx.coroutines.CancellationException("deposit cancellation")
+
+        val result = engine.computeStressForecast()
+
+        assertEquals(StressForecastFailure.BALANCE_UNAVAILABLE, result.failure)
+        coVerify(exactly = 0) { multiCurrencyRepository.getHomeCurrencyDepositTotal(any(), any()) }
     }
 
+    // P-06-4 (was: purchaseTotalCancellationPropagatesUnchanged). See the note above.
     @Test
-    fun purchaseTotalCancellationPropagatesUnchanged() = runTest {
-        val cancellation = kotlinx.coroutines.CancellationException("purchase cancellation")
+    fun providerFailureDoesNotFallBackToInlinePurchaseTotals() = runTest {
         coEvery { accountBalanceProvider.currentBalance(any()) } throws IllegalStateException("provider down")
-        coEvery { multiCurrencyRepository.getHomeCurrencyPurchaseTotal(any(), any()) } throws cancellation
-        org.junit.Assert.assertSame(cancellation, runCatching { engine.computeStressForecast() }.exceptionOrNull())
+        coEvery { multiCurrencyRepository.getHomeCurrencyPurchaseTotal(any(), any()) } throws
+            kotlinx.coroutines.CancellationException("purchase cancellation")
+
+        val result = engine.computeStressForecast()
+
+        assertEquals(StressForecastFailure.BALANCE_UNAVAILABLE, result.failure)
+        coVerify(exactly = 0) { multiCurrencyRepository.getHomeCurrencyPurchaseTotal(any(), any()) }
     }
 
     @Test
@@ -163,11 +175,27 @@ class FinancialStressForecastEngineTest {
         org.junit.Assert.assertSame(cancellation, runCatching { engine.computeStressForecast() }.exceptionOrNull())
     }
 
+    // P-06-4 (was: nonCancellationFailuresStillFallBackInStartingBalanceAndBuffer, which pinned a
+    // failed provider turning into a 0 starting balance with horizons). A failed provider is now
+    // BALANCE_UNAVAILABLE; only the emergency buffer keeps its 500 fallback.
     @Test
-    fun nonCancellationFailuresStillFallBackInStartingBalanceAndBuffer() = runTest {
+    fun nonCancellationProviderFailureIsBalanceUnavailableNotZeroBalance() = runTest {
         coEvery { accountBalanceProvider.currentBalance(any()) } throws IllegalStateException("provider down")
-        coEvery { multiCurrencyRepository.getHomeCurrencyDepositTotal(any(), any()) } throws IllegalStateException("deposit down")
-        coEvery { multiCurrencyRepository.getHomeCurrencyPurchaseTotal(any(), any()) } throws IllegalStateException("purchase down")
+        every { currencySettingsRepository.emergencyBuffer() } returns kotlinx.coroutines.flow.flow {
+            throw IllegalStateException("buffer down")
+        }
+
+        val result = engine.computeStressForecast()
+
+        assertEquals(StressForecastFailure.BALANCE_UNAVAILABLE, result.failure)
+        assertTrue(result.horizons.isEmpty())
+        assertNull(result.overallRiskLevel)
+        assertTrue(result.isPartial)
+    }
+
+    @Test
+    fun nonCancellationBufferFailureStillFallsBackWhenBalanceIsAvailable() = runTest {
+        coEvery { accountBalanceProvider.currentBalance(any()) } returns 0.0
         every { currencySettingsRepository.emergencyBuffer() } returns kotlinx.coroutines.flow.flow {
             throw IllegalStateException("buffer down")
         }
@@ -176,6 +204,200 @@ class FinancialStressForecastEngineTest {
 
         assertNull(result.failure)
         assertEquals(listOf(30, 60, 90), result.horizons.map { it.daysAhead })
+    }
+
+    // ── P-06-4: unavailable balance, low data, withdrawals ──────────────────
+
+    @Test
+    fun nullBalanceWithholdsTheForecastInsteadOfProjectingZero() = runTest {
+        coEvery { accountBalanceProvider.currentBalance(any()) } returns null
+        allExpenses = steadyDailyPurchases(10.0)
+
+        val result = engine.computeStressForecast()
+
+        assertEquals(StressForecastFailure.BALANCE_UNAVAILABLE, result.failure)
+        assertTrue(result.horizons.isEmpty())
+        assertNull(result.overallRiskLevel)
+        assertNull(result.earliestCrunchDate)
+        assertTrue(result.recommendations.isEmpty())
+        assertTrue(result.isPartial)
+        assertEquals(listOf("STRESS_FORECAST_BALANCE_UNAVAILABLE"), result.qualityWarnings)
+        assertEquals(StressForecastMode.ESTIMATED_INDEX, result.mode)
+        assertEquals("EUR", result.displayCurrency)
+        // Nothing downstream of the balance is read once it is known to be unavailable.
+        coVerify(exactly = 0) { expenseRepository.getDepositsBetween(any(), any()) }
+        coVerify(exactly = 0) { expenseRepository.getExpensesBetween(any(), any()) }
+    }
+
+    @Test
+    fun zeroBalanceControlStillProducesHorizons() = runTest {
+        coEvery { accountBalanceProvider.currentBalance(any()) } returns 0.0
+        allExpenses = steadyDailyPurchases(10.0)
+
+        val result = engine.computeStressForecast()
+
+        assertNull(result.failure)
+        assertEquals(listOf(30, 60, 90), result.horizons.map { it.daysAhead })
+        assertNotNull(result.overallRiskLevel)
+    }
+
+    @Test
+    fun nullBalanceForExplicitNonHomeCurrencyIsUnavailable() = runTest {
+        coEvery { accountBalanceProvider.currentBalance("USD") } returns null
+
+        val result = engine.computeStressForecast("USD")
+
+        assertEquals(StressForecastFailure.BALANCE_UNAVAILABLE, result.failure)
+        assertEquals("USD", result.displayCurrency)
+        assertTrue(result.horizons.isEmpty())
+    }
+
+    @Test
+    fun noPurchaseHistoryProjectsBalanceUnchangedAndIsLowData() = runTest {
+        coEvery { accountBalanceProvider.currentBalance(any()) } returns 400.0
+        allExpenses = emptyList()
+        allDeposits = emptyList()
+
+        val result = engine.computeStressForecast()
+
+        assertNull(result.failure)
+        assertEquals(listOf(30, 60, 90), result.horizons.map { it.daysAhead })
+        result.horizons.forEach { horizon ->
+            assertEquals("projected ${horizon.daysAhead}d", 400.0, horizon.projectedBalance, 0.0)
+            assertEquals("min ${horizon.daysAhead}d", 400.0, horizon.minProjectedBalance, 0.0)
+            assertEquals(0.0, horizon.probabilityOfCrunch, 0.0)
+            assertEquals(StressRiskLevel.LOW, horizon.riskLevel)
+            assertTrue("lowData ${horizon.daysAhead}d", horizon.lowData)
+        }
+        assertTrue(result.isLowData)
+        assertEquals(StressRiskLevel.LOW, result.overallRiskLevel)
+        assertNull(result.earliestCrunchDate)
+        val kinds = result.recommendations.map { it.kind }
+        assertTrue(StressRecommendationKind.HEALTHY_OUTLOOK !in kinds)
+        assertTrue(StressRecommendationKind.NO_IMMEDIATE_CONCERNS !in kinds)
+    }
+
+    @Test
+    fun realPurchaseHistoryIsNotLowData() = runTest {
+        coEvery { accountBalanceProvider.currentBalance(any()) } returns 400.0
+        allExpenses = steadyDailyPurchases(10.0)
+        allDeposits = emptyList()
+
+        val result = engine.computeStressForecast()
+
+        assertNull(result.failure)
+        assertEquals(3, result.horizons.size)
+        assertTrue(result.horizons.none { it.lowData })
+        assertEquals(false, result.isLowData)
+        // Real spend moves the projection away from the untouched 400.
+        assertTrue(result.horizons.all { it.projectedBalance < 400.0 })
+    }
+
+    @Test
+    fun depositsAndWithdrawalsAloneAreStillLowData() = runTest {
+        coEvery { accountBalanceProvider.currentBalance(any()) } returns 400.0
+        val salary = expense(3001L, 1_000.0, TransactionType.DEPOSIT, now - 3 * dayMs, merchant = "Employer")
+        val cash = expense(3002L, 100.0, TransactionType.WITHDRAWAL, now - 2 * dayMs, merchant = "ATM")
+        allExpenses = listOf(salary, cash)
+        allDeposits = listOf(salary)
+
+        val result = engine.computeStressForecast()
+
+        assertTrue(result.horizons.all { it.lowData })
+        assertTrue(result.isLowData)
+    }
+
+    @Test
+    fun notMinePurchasesAreNotPurchaseHistory() = runTest {
+        coEvery { accountBalanceProvider.currentBalance(any()) } returns 400.0
+        allExpenses = listOf(
+            expense(3010L, 50.0, TransactionType.PURCHASE, now - 3 * dayMs, isNotMine = true)
+        )
+        allDeposits = emptyList()
+
+        val result = engine.computeStressForecast()
+
+        assertTrue(result.horizons.all { it.lowData })
+        assertTrue(result.isLowData)
+    }
+
+    /** Purchases of 10 on each of the 59 days before today; the first transaction is 59 days back. */
+    private fun fiftyNineDayPurchases(): List<Expense> = (1..59).map { daysBack ->
+        expense(
+            3100L + daysBack,
+            10.0,
+            TransactionType.PURCHASE,
+            millis(2026, Calendar.APRIL, 20 - daysBack)
+        )
+    }
+
+    @Test
+    fun withdrawalsLowerProjectionByDailyRateTimesHorizonAndStayOutOfSimulatedSpend() = runTest {
+        coEvery { accountBalanceProvider.currentBalance(any()) } returns 400.0
+        allDeposits = emptyList()
+
+        // Baseline: identical purchase history, no withdrawals.
+        allExpenses = fiftyNineDayPurchases()
+        val baseline = engine.computeStressForecast()
+
+        // 800 withdrawn on the first transaction day, so the observed window is exactly 60 days
+        // (59 days back through today): 800 / 60 a day = 400 / 800 / 1200 over 30 / 60 / 90 days.
+        val withdrawal = expense(
+            3200L, 800.0, TransactionType.WITHDRAWAL, millis(2026, Calendar.APRIL, 20 - 59, 13), merchant = "ATM"
+        )
+        allExpenses = fiftyNineDayPurchases() + withdrawal
+        val withWithdrawal = engine.computeStressForecast()
+
+        assertNull(withWithdrawal.failure)
+        val expectedWithdrawals = mapOf(30 to 400.0, 60 to 800.0, 90 to 1_200.0)
+        expectedWithdrawals.forEach { (days, expected) ->
+            val before = baseline.horizons.single { it.daysAhead == days }
+            val after = withWithdrawal.horizons.single { it.daysAhead == days }
+            assertEquals("projectedWithdrawals ${days}d", expected, after.projectedWithdrawals, 1e-6)
+            assertEquals("baseline withdrawals ${days}d", 0.0, before.projectedWithdrawals, 0.0)
+            // The seeded simulation only sees purchases, so the whole shift is the withdrawal rate.
+            assertEquals("projected shift ${days}d", expected, before.projectedBalance - after.projectedBalance, 1e-6)
+            assertEquals("min shift ${days}d", expected, before.minProjectedBalance - after.minProjectedBalance, 1e-6)
+            // Withdrawals are not purchase history: they do not change the low-data flag.
+            assertEquals(before.lowData, after.lowData)
+        }
+    }
+
+    @Test
+    fun withdrawalsOnlyHistoryLowersNinetyDayProjectionByOneThousandTwoHundred() = runTest {
+        coEvery { accountBalanceProvider.currentBalance(any()) } returns 400.0
+        allDeposits = emptyList()
+        allExpenses = listOf(
+            expense(3201L, 800.0, TransactionType.WITHDRAWAL, millis(2026, Calendar.APRIL, 20 - 59, 13), merchant = "ATM")
+        )
+
+        val result = engine.computeStressForecast()
+
+        val h90 = result.horizons.single { it.daysAhead == 90 }
+        assertEquals(1_200.0, h90.projectedWithdrawals, 1e-6)
+        assertEquals(-800.0, h90.projectedBalance, 1e-6)
+        assertTrue(h90.lowData)
+    }
+
+    @Test
+    fun noWithdrawalsLeavesProjectionUnchangedAndNotMineWithdrawalsAreIgnored() = runTest {
+        coEvery { accountBalanceProvider.currentBalance(any()) } returns 400.0
+        allDeposits = emptyList()
+        allExpenses = fiftyNineDayPurchases()
+        val baseline = engine.computeStressForecast()
+
+        allExpenses = fiftyNineDayPurchases() + expense(
+            3300L, 800.0, TransactionType.WITHDRAWAL, millis(2026, Calendar.APRIL, 20 - 59, 13),
+            merchant = "ATM", isNotMine = true
+        )
+        val ignored = engine.computeStressForecast()
+
+        baseline.horizons.zip(ignored.horizons).forEach { (a, b) ->
+            assertEquals(0.0, a.projectedWithdrawals, 0.0)
+            assertEquals(0.0, b.projectedWithdrawals, 0.0)
+            assertEquals(a.projectedBalance, b.projectedBalance, 0.0)
+            assertEquals(a.minProjectedBalance, b.minProjectedBalance, 0.0)
+        }
     }
 
     @Before
@@ -225,6 +447,9 @@ class FinancialStressForecastEngineTest {
         databaseReadBarrier = mockk(relaxed = true)
         currencyConverter = mockk(relaxed = true)
         accountBalanceProvider = mockk(relaxed = true)
+        // The provider returns Double? (null = unavailable), so the default is stated explicitly
+        // rather than left to the relaxed mock: a known balance of 0 unless a test says otherwise.
+        coEvery { accountBalanceProvider.currentBalance(any()) } returns 0.0
         multiCurrencyRepository = mockk(relaxed = true)
         // Identity conversion is explicit so confirmed EUR obligations are not
         // silently discarded by a relaxed mock (HZ01-B: the engine converts through
@@ -320,6 +545,9 @@ class FinancialStressForecastEngineTest {
         assertEquals(StressRiskLevel.CRITICAL, classifyRiskLevelViaReflection(0.75))
     }
 
+    // P-06-4 (was: expected CRITICAL with a crunch date from the invented 20 a day fallback).
+    // With a known balance of 0, no purchases and no other outflows nothing is projected to leave
+    // the account, so the outcome is LOW with no crunch date and is flagged low-data.
     @Test
     fun `computeStressForecast empty history edge case returns valid horizons`() = runTest {
         allExpenses = emptyList()
@@ -328,8 +556,9 @@ class FinancialStressForecastEngineTest {
 
         val result = engine.computeStressForecast()
 
-        assertEquals(StressRiskLevel.CRITICAL, result.overallRiskLevel)
-        assertNotNull(result.earliestCrunchDate)
+        assertEquals(StressRiskLevel.LOW, result.overallRiskLevel)
+        assertNull(result.earliestCrunchDate)
+        assertTrue(result.isLowData)
         assertEquals(listOf(30, 60, 90), result.horizons.map { it.daysAhead })
         assertTrue(result.horizons.all { it.probabilityOfCrunch in 0.0..1.0 })
     }
@@ -1205,15 +1434,16 @@ class FinancialStressForecastEngineTest {
 
     // ── stress-forecast-actions S1 (AE-1..AE-7): structured recommendations ──
     //
-    // The fixtures below are built from the engine's own no-history fallback (20 per day spend,
-    // sigma 5) so that only kinds, order and parameters are asserted, never simulated money.
+    // P-06-4: the engine no longer invents spend for an empty history, so the fixtures below use a
+    // real steady 20 a day purchase history (60 days) and assert only kinds, order and parameters,
+    // never simulated money.
 
     private val kindsOf: (StressForecastResult) -> List<StressRecommendationKind> =
         { result -> result.recommendations.map { it.kind } }
 
     @Test
     fun `AE-2 AE-3 AE-4 INV-1 INV-2 high risk with no recurring emits R2 R3 R4 in order with no R5 or R6`() = runTest {
-        allExpenses = emptyList()
+        allExpenses = steadyDailyPurchases(20.0)
         allDeposits = emptyList()
 
         val result = engine.computeStressForecast()
@@ -1306,7 +1536,7 @@ class FinancialStressForecastEngineTest {
 
     @Test
     fun `INV-2 at most one recommendation per kind`() = runTest {
-        allExpenses = emptyList()
+        allExpenses = steadyDailyPurchases(20.0)
         allDeposits = emptyList()
 
         val kinds = kindsOf(engine.computeStressForecast())
@@ -1316,7 +1546,7 @@ class FinancialStressForecastEngineTest {
 
     @Test
     fun `AE-2 INV-8 R2 daysAhead is the worst horizon and is 90 when balances worsen with the horizon`() = runTest {
-        allExpenses = emptyList()
+        allExpenses = steadyDailyPurchases(20.0)
         allDeposits = emptyList()
 
         val result = engine.computeStressForecast()
@@ -1328,8 +1558,9 @@ class FinancialStressForecastEngineTest {
 
     @Test
     fun `AE-2 INV-8 R2 daysAhead is 30 when the 30 day horizon is the worst`() = runTest {
-        // Starting balance -1000 with income 700 a month and fallback spend of about 600 a month:
-        // every horizon is negative and improves with the horizon, so 30 days is the worst.
+        // Starting balance -1000 with income 700 a month and no purchase history (no discretionary
+        // spend is projected): the horizons are -300, 400 and 1100, so 30 days is the worst and
+        // is negative, which is enough to raise the risk and emit R2.
         coEvery { accountBalanceProvider.currentBalance(any()) } returns -1000.0
         allExpenses = emptyList()
         allDeposits = listOf(expense(900L, 700.0, TransactionType.DEPOSIT, now - dayMs, merchant = "Employer"))
@@ -1343,7 +1574,7 @@ class FinancialStressForecastEngineTest {
 
     @Test
     fun `AE-3 INV-8 R3 carries the 500 default buffer and the forecast display currency`() = runTest {
-        allExpenses = emptyList()
+        allExpenses = steadyDailyPurchases(20.0)
         allDeposits = emptyList()
 
         val result = engine.computeStressForecast()
@@ -1358,7 +1589,7 @@ class FinancialStressForecastEngineTest {
     fun `AE-3 INV-8 R3 buffer currency follows an explicit display currency and the configured buffer`() = runTest {
         every { currencySettingsRepository.emergencyBuffer() } returns flowOf(750.0)
         rates = mapOf("EUR" to (1.2 to now))
-        allExpenses = emptyList()
+        allExpenses = steadyDailyPurchases(20.0)
         allDeposits = emptyList()
 
         val result = engine.computeStressForecast("USD")
@@ -1376,7 +1607,7 @@ class FinancialStressForecastEngineTest {
         every { currencySettingsRepository.emergencyBuffer() } returns flowOf(500.0)
         // EUR -> USD conversion rate = 1.2 (so 500 EUR = 600 USD)
         rates = mapOf("EUR" to (1.2 to now))
-        allExpenses = emptyList()
+        allExpenses = steadyDailyPurchases(20.0)
         allDeposits = emptyList()
 
         val convertedResult = engine.computeStressForecast("USD")
@@ -1420,8 +1651,10 @@ class FinancialStressForecastEngineTest {
             )
         }
 
-        // 2. Negative balance case: R3 is emitted, verify bufferCurrency is "" (not "USD")
+        // 2. Negative balance case: R3 is emitted, verify bufferCurrency is "" (not "USD").
+        // P-06-4: spend must come from a real purchase history (no invented fallback spend).
         coEvery { accountBalanceProvider.currentBalance("USD") } returns 0.0
+        allExpenses = steadyDailyPurchases(20.0)
         val result = engine.computeStressForecast("USD")
         val r3 = result.recommendations.single { it.kind == StressRecommendationKind.BUILD_EMERGENCY_BUFFER }
 
@@ -1435,7 +1668,7 @@ class FinancialStressForecastEngineTest {
         every { currencySettingsRepository.emergencyBuffer() } returns kotlinx.coroutines.flow.flow {
             throw IllegalStateException("buffer down")
         }
-        allExpenses = emptyList()
+        allExpenses = steadyDailyPurchases(20.0)
         allDeposits = emptyList()
 
         val result = engine.computeStressForecast()
@@ -1483,6 +1716,21 @@ class FinancialStressForecastEngineTest {
 
     @Test
     fun `AE-5 INV-2 all low with ample balances emits exactly healthy outlook and no R6`() = runTest {
+        // P-06-4: a healthy outlook needs a real purchase history; one small purchase provides it.
+        val hugeDeposit = expense(100L, 1_000_000.0, TransactionType.DEPOSIT, now - dayMs)
+        val smallPurchase = expense(101L, 50.0, TransactionType.PURCHASE, now - 3 * dayMs)
+        allExpenses = listOf(hugeDeposit, smallPurchase)
+        allDeposits = listOf(hugeDeposit)
+
+        val result = engine.computeStressForecast()
+
+        assertEquals(StressRiskLevel.LOW, result.overallRiskLevel)
+        assertEquals(false, result.isLowData)
+        assertEquals(listOf(StressRecommendation(StressRecommendationKind.HEALTHY_OUTLOOK)), result.recommendations)
+    }
+
+    @Test
+    fun `AE-5 control all low with ample balances but no purchase history emits no healthy outlook`() = runTest {
         val hugeDeposit = expense(100L, 1_000_000.0, TransactionType.DEPOSIT, now - dayMs)
         allExpenses = listOf(hugeDeposit)
         allDeposits = listOf(hugeDeposit)
@@ -1490,14 +1738,16 @@ class FinancialStressForecastEngineTest {
         val result = engine.computeStressForecast()
 
         assertEquals(StressRiskLevel.LOW, result.overallRiskLevel)
-        assertEquals(listOf(StressRecommendation(StressRecommendationKind.HEALTHY_OUTLOOK)), result.recommendations)
+        assertTrue(result.isLowData)
+        assertTrue(result.recommendations.isEmpty())
     }
 
     @Test
     fun `AE-6 INV-2 all low but a balance at or below the buffer emits exactly R6`() = runTest {
-        // Income 620 a month against fallback spend of about 600 a month: every horizon stays LOW
-        // (projected balance 20, 40, 60) yet none exceeds the 500 buffer, so R5 is not emitted.
-        allExpenses = emptyList()
+        // Income 620 a month against a real steady 20 a day (about 600 a month) purchase history:
+        // every horizon stays LOW (spend can never exceed the available 620 / 1240 / 1860) yet the
+        // projected balances (about 20, 60, 90) never exceed the 500 buffer, so R5 is not emitted.
+        allExpenses = steadyDailyPurchases(20.0)
         allDeposits = listOf(expense(910L, 620.0, TransactionType.DEPOSIT, now - dayMs, merchant = "Employer"))
 
         val result = engine.computeStressForecast()
@@ -1512,7 +1762,7 @@ class FinancialStressForecastEngineTest {
 
     @Test
     fun `INV-2 R6 is never emitted alongside another recommendation`() = runTest {
-        allExpenses = emptyList()
+        allExpenses = steadyDailyPurchases(20.0)
         allDeposits = emptyList()
 
         val kinds = kindsOf(engine.computeStressForecast())
@@ -1547,7 +1797,7 @@ class FinancialStressForecastEngineTest {
 
     @Test
     fun `INV-8 two identical computes give equal recommendation lists`() = runTest {
-        allExpenses = emptyList()
+        allExpenses = steadyDailyPurchases(20.0)
         allDeposits = emptyList()
 
         val first = engine.computeStressForecast()
@@ -1560,7 +1810,7 @@ class FinancialStressForecastEngineTest {
     fun `INV-6 recommendations are identical under different default locales`() = runTest {
         val originalLocale = java.util.Locale.getDefault()
         try {
-            allExpenses = emptyList()
+            allExpenses = steadyDailyPurchases(20.0)
             allDeposits = emptyList()
             val perLocale = listOf(java.util.Locale.US, java.util.Locale.GERMANY, java.util.Locale("el", "GR"))
                 .map { locale ->
