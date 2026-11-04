@@ -488,7 +488,7 @@ class FinancialHealthScoreV2 @Inject constructor(
         val historicalExpenses = expenseRepository
             .getExpensesBetween(baselineStart, currentPeriodStart)
             .filter {
-                it.transactionType.toDomain() == DomainTransactionType.PURCHASE && !it.isNotMine && it.date < currentPeriodStart
+                it.transactionType.toDomain() == DomainTransactionType.PURCHASE && !it.isNotMine && !it.isSpendingNeutralised && it.date < currentPeriodStart
             }
 
         if (historicalExpenses.isEmpty()) {

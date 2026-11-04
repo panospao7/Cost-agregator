@@ -763,7 +763,7 @@ EXPECTED_EXEMPT = {
     ("ExpenseDao.kt", "countExpensesBetween", "ROW_COUNT"),
     ("ExpenseDao.kt", "getTotalCount", "ROW_COUNT"),
     ("ExpenseDao.kt", "getCountForPeriod", "ROW_COUNT"),
-    # 1.0.4 B2 S4: countLocated and countUnlocated now enforce SPENDING_PREDICATE directly (-2 ROW_COUNT exemptions, 34 -> 32)
+    # 1.0.4 B2 S4: countLocated and countUnlocated now enforce SPENDING_PREDICATE directly (-2 ROW_COUNT exemptions, 35 -> 33)
     ("ExpenseDao.kt", "getDepositTotalsBetweenByCurrency", "NON_SPENDING_INCOME"),
     ("ExpenseDao.kt", "getTotalDepositsForPeriod", "NON_SPENDING_INCOME"),
     ("ExpenseDao.kt", "getMonthlyDeposits", "NON_SPENDING_INCOME"),

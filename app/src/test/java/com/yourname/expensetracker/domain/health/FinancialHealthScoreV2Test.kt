@@ -493,6 +493,90 @@ class FinancialHealthScoreV2Test : AnalyticsEngineTestBase() {
         coVerify(exactly = 0) { healthScoreHistoryDao.update(any()) }
     }
 
+    /**
+     * Mirrors the real [AnalyticsCurrencyNormalizer] contract for spending-neutralised rows:
+     * flagged rows (spendingExclusionReason != null) are dropped from the input before
+     * normalization, so they are neither included nor counted as excluded. Rows whose id is in
+     * [unconvertibleIds] are counted in totalInputCount but absent from the output (excluded).
+     */
+    private fun stubNormalizerDroppingFlaggedRows(unconvertibleIds: Set<Long> = emptySet()) {
+        coEvery { analyticsCurrencyNormalizer.normalizeExpenses(any(), any()) } answers {
+            val exps = firstArg<List<com.yourname.expensetracker.data.database.entity.Expense>>()
+            val homeCurrency = secondArg<String>()
+            val active = exps.filter { it.spendingExclusionReason == null }
+            val converted = active.filter { it.id !in unconvertibleIds }.map { it.toExpenseSnapshot() }
+            AnalyticsNormalizationResult(
+                homeCurrency = homeCurrency,
+                normalizedExpenses = converted.map {
+                    NormalizedExpenseSnapshot(it, it.currency, it.effectiveAmount, it.effectiveAmount)
+                },
+                includedExpenses = converted,
+                warnings = emptyList(),
+                latestRateTimestamp = null,
+                totalInputCount = active.size
+            )
+        }
+    }
+
+    private fun stubBaselineFixture(historicalPurchases: List<com.yourname.expensetracker.data.database.entity.Expense>): Pair<Long, Long> {
+        val earlyNow = millis(2026, Calendar.NOVEMBER, 2)
+        every { timeProvider.now() } returns earlyNow
+        val periodStart = TimePeriodUtils.getStartOfMonth(earlyNow)
+        val periodEnd = TimePeriodUtils.getEndOfMonth(earlyNow)
+        val currentPurchases = listOf(
+            expense(100L, 50.0, TransactionType.PURCHASE, millis(2026, Calendar.NOVEMBER, 1))
+        )
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } answers {
+            val start = invocation.args[0] as Long
+            val end = invocation.args[1] as Long
+            if (start == periodStart && end == periodEnd) currentPurchases else historicalPurchases
+        }
+        coEvery { savingsGoalRepository.getSavingsGoals() } returns listOf(goal(1L, target = 5000.0, current = 900.0))
+        return periodStart to periodEnd
+    }
+
+    @Test
+    fun `flagged spending-neutralised baseline row does not make the score unavailable and is not counted`() = runTest {
+        // EUR 300 normal purchase + flagged EUR 1,200 purchase in September, viewed in November.
+        // The normalizer drops the flagged row, so the baseline must ignore it too (INV-1) rather
+        // than failing the id lookup with NORMALIZATION_FAILED.
+        val normal = expense(200L, 300.0, TransactionType.PURCHASE, millis(2026, Calendar.SEPTEMBER, 15))
+        val flagged = expense(201L, 1200.0, TransactionType.PURCHASE, millis(2026, Calendar.SEPTEMBER, 16))
+            .copy(spendingExclusionReason = "INSTALLMENT_PURCHASE")
+        stubNormalizerDroppingFlaggedRows()
+        val (periodStart, periodEnd) = stubBaselineFixture(listOf(normal, flagged))
+
+        val withFlagged = calculator.availableResult(periodStart, periodEnd)
+
+        // Control: the same history without the flagged row must score identically (baseline 300).
+        stubBaselineFixture(listOf(normal))
+        val control = calculator.availableResult(periodStart, periodEnd)
+
+        assertEquals(control.runwayScore, withFlagged.runwayScore)
+        // Baseline 300 (not 1,500) keeps runway well above the ~10 a 1,500 baseline would give.
+        assertTrue("runway=${withFlagged.runwayScore}", withFlagged.runwayScore > 30)
+    }
+
+    @Test
+    fun `unconvertible normal baseline row alongside a flagged row stays unavailable`() = runTest {
+        val normal = expense(200L, 300.0, TransactionType.PURCHASE, millis(2026, Calendar.SEPTEMBER, 15))
+        val unconvertible = expense(202L, 100.0, TransactionType.PURCHASE, millis(2026, Calendar.SEPTEMBER, 17))
+        val flagged = expense(201L, 1200.0, TransactionType.PURCHASE, millis(2026, Calendar.SEPTEMBER, 16))
+            .copy(spendingExclusionReason = "INSTALLMENT_PURCHASE")
+        stubNormalizerDroppingFlaggedRows(unconvertibleIds = setOf(202L))
+        val (periodStart, periodEnd) = stubBaselineFixture(listOf(normal, unconvertible, flagged))
+
+        val outcome = calculator.calculateHealthScore(periodStart, periodEnd)
+
+        assertTrue(outcome is HealthScoreOutcome.Unavailable)
+        assertEquals(
+            HealthScoreUnavailableReason.NORMALIZATION_FAILED,
+            (outcome as HealthScoreOutcome.Unavailable).reason
+        )
+        coVerify(exactly = 0) { healthScoreHistoryDao.insert(any()) }
+        coVerify(exactly = 0) { healthScoreHistoryDao.update(any()) }
+    }
+
     @Test
     fun `calculateHealthScore runway returns neutral with very low coverage and no baseline`() = runTest {
         val firstDayNow = millis(2026, Calendar.APRIL, 1)
