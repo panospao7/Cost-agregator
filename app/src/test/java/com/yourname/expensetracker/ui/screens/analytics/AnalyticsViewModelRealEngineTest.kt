@@ -27,9 +27,13 @@ import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -140,14 +144,23 @@ class AnalyticsViewModelRealEngineTest : ViewModelTestUtils() {
         )
     }
 
+    /** The real chain leaves the test scheduler for its IO work, so wait on the state instead of virtual time. */
+    private suspend fun awaitComputed(viewModel: AnalyticsViewModel) {
+        withContext(Dispatchers.Default) {
+            withTimeout(30_000) { viewModel.state.first { !it.isLoading } }
+        }
+    }
+
     @Test
     fun `N-08-7 real chain USD-only Travel stays listed as unavailable and Food keeps its real amount`() = runTest(testDispatcher) {
         val viewModel = viewModelFor(listOf(purchase(1, 100.0, "EUR", 1L), purchase(2, 80.0, "USD", 2L)))
 
         val job = launch { viewModel.state.collect { } }
         testDispatcher.scheduler.advanceTimeBy(400)
-        advanceUntilIdle()
+        awaitComputed(viewModel)
 
+        assertNull("state error, loading=${viewModel.state.value.isLoading}", viewModel.state.value.error)
+        assertFalse("still loading", viewModel.state.value.isLoading)
         val breakdown = viewModel.state.value.categoryBreakdown
         val food = breakdown.single { it.category.id == 1L }
         val travel = breakdown.single { it.category.id == 2L }
@@ -165,10 +178,11 @@ class AnalyticsViewModelRealEngineTest : ViewModelTestUtils() {
 
         val job = launch { viewModel.state.collect { } }
         testDispatcher.scheduler.advanceTimeBy(400)
-        advanceUntilIdle()
+        awaitComputed(viewModel)
 
         val state = viewModel.state.value
         assertNull("an uncategorized excluded row must not fail the compute", state.error)
+        assertFalse("still loading", state.isLoading)
         val food = state.categoryBreakdown.single { it.category.id == 1L }
         assertEquals(100.0, food.moneyTotal.amount, 0.001)
         assertFalse(food.isUnavailable)
