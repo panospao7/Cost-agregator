@@ -13,7 +13,8 @@ import com.yourname.expensetracker.data.database.entity.Expense
  *
  * Rule (first matching branch wins):
  *  1. `isNotMine`            → `Value(0.0)` (zero is the same in every currency).
- *  2. `currency == H`        → `Value(effectiveAmount)`; the snapshot is ignored.
+ *  2. `currency == H`        → `Value(listAmount)` (the ownership-adjusted amount without the
+ *     spending-exclusion zero; see below); the snapshot is ignored.
  *  3. valid snapshot for H   (`baseAmount > 0`, `baseCurrency == H`, `exchangeRateUsed > 0`)
  *     → shared with `myShareAmount`: `myShareAmount * exchangeRateUsed`;
  *       shared with `mySharePercentage`: `baseAmount * mySharePercentage / 100.0`;
@@ -109,8 +110,9 @@ object ComparableHomeValue {
      * Branch-2 amount: ownership-adjusted like [Expense.effectiveAmount] but WITHOUT the
      * spending-exclusion zero (owner decision 131: the Transactions list compares and sorts a
      * flagged row on its full amount). SQL mirror: `EFFECTIVE_AMOUNT_E_SQL`. Not for totals.
+     * Also the amount a list row prints, so a row reads what it was filtered and sorted on.
      */
-    private fun listAmount(e: Expense): Double = when {
+    fun listAmount(e: Expense): Double = when {
         e.isNotMine -> 0.0
         e.isSharedExpense && e.myShareAmount != null -> e.myShareAmount
         e.isSharedExpense && e.mySharePercentage != null -> e.amount * e.mySharePercentage / 100.0

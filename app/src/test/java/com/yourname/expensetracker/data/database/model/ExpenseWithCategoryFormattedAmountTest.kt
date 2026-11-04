@@ -5,6 +5,7 @@ import com.google.common.truth.Truth.assertWithMessage
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.core.money.ComparableHomeValue
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import java.util.Locale
@@ -103,6 +104,40 @@ class ExpenseWithCategoryFormattedAmountTest {
         }
     }
 
+    // ---- Flagged (spending-excluded) rows print the full list amount ----
+
+    private fun digits(s: String) = s.replace(Regex("[^0-9]"), "")
+
+    @Test
+    fun `flagged purchase prints its full amount not zero`() {
+        val ewc = makeEwc(amount = 1200.0, exclusion = "INSTALLMENT_PURCHASE")
+        assertThat(ewc.expense.effectiveAmount).isEqualTo(0.0)
+        assertThat(ewc.formattedAmount).startsWith("-EUR")
+        assertThat(digits(ewc.formattedAmount)).isEqualTo("120000")
+    }
+
+    @Test
+    fun `flagged shared row prints the ownership adjusted share`() {
+        val ewc = makeEwc(
+            amount = 1200.0, isSharedExpense = true, myShareAmount = 300.0,
+            exclusion = "INSTALLMENT_PURCHASE"
+        )
+        assertThat(digits(ewc.formattedAmount)).isEqualTo("30000")
+    }
+
+    @Test
+    fun `flagged not mine row still prints zero`() {
+        val ewc = makeEwc(amount = 1200.0, isNotMine = true, exclusion = "INSTALLMENT_PURCHASE")
+        assertThat(digits(ewc.formattedAmount)).isEqualTo("000")
+    }
+
+    @Test
+    fun `unflagged row prints the same amount as the list filter value`() {
+        val ewc = makeEwc(amount = 1200.0)
+        assertThat(digits(ewc.formattedAmount)).isEqualTo("120000")
+        assertThat(ComparableHomeValue.listAmount(ewc.expense)).isEqualTo(ewc.expense.effectiveAmount)
+    }
+
     // ---- Helpers ----
 
     private fun makeEwc(
@@ -112,7 +147,8 @@ class ExpenseWithCategoryFormattedAmountTest {
         isNotMine: Boolean = false,
         isSharedExpense: Boolean = false,
         myShareAmount: Double? = null,
-        mySharePercentage: Int? = null
+        mySharePercentage: Int? = null,
+        exclusion: String? = null
     ): ExpenseWithCategory {
         val expense = Expense(
             amount = amount,
@@ -123,7 +159,8 @@ class ExpenseWithCategoryFormattedAmountTest {
             isNotMine = isNotMine,
             isSharedExpense = isSharedExpense,
             myShareAmount = myShareAmount,
-            mySharePercentage = mySharePercentage
+            mySharePercentage = mySharePercentage,
+            spendingExclusionReason = exclusion
         )
         return ExpenseWithCategory(
             expense = expense,

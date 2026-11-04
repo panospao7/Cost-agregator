@@ -4,6 +4,7 @@ import androidx.room.Embedded
 import androidx.room.Relation
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.domain.core.money.ComparableHomeValue
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -46,6 +47,10 @@ data class ExpenseWithCategory(
      * Includes a polarity prefix (+/−) based on [Expense.transactionType] and places the
      * currency code before the numeric value for consistent presentation across all surfaces.
      * Raw posted amount is available via [expense.amount] when explicitly needed for reference.
+     *
+     * A spending-neutralised (flagged) row prints its full ownership-adjusted amount
+     * ([ComparableHomeValue.listAmount], the amount the list filters and sorts on) next to its
+     * "Not counted" mark; it still adds 0 to every total. A not-mine row prints 0 as before.
      */
     val formattedAmount: String by lazy {
         val prefix = when (expense.transactionType) {
@@ -53,7 +58,7 @@ data class ExpenseWithCategory(
             TransactionType.DEPOSIT -> "+"
             else -> ""
         }
-        "$prefix${expense.currency}${String.format(java.util.Locale.getDefault(), "%.2f", expense.effectiveAmount)}"
+        "$prefix${expense.currency}${String.format(java.util.Locale.getDefault(), "%.2f", ComparableHomeValue.listAmount(expense))}"
     }
 
     val categoryColor: Long by lazy {
