@@ -171,7 +171,7 @@ object AppConfig {
         const val PROMPT_VERSION_REVIEW    = "v1"
         const val PROMPT_VERSION_QUERY     = "v1"
         const val PROMPT_VERSION_RECEIPT   = "v1"
-        const val PROMPT_VERSION_RECEIPT_ITEMS = "v1" // NEW: Receipt item categorization
+        const val PROMPT_VERSION_RECEIPT_ITEMS = "v2" // Receipt item categorization (shortened prompt, sent-count replies)
         const val PROMPT_VERSION_CATEGORIZATION = "v1"
         const val PROMPT_VERSION_DEDUPE    = "v1"
         const val DASHBOARD_BRIEFING_CLOUD_PROVIDER = "google-ai-studio"
@@ -204,7 +204,17 @@ object AppConfig {
         const val RECEIPT_ASSIST_MAX_OUTPUT_TOKENS = 384
         const val CATEGORIZATION_ASSIST_MAX_OUTPUT_TOKENS = 220
         const val DEDUPE_JUDGE_MAX_OUTPUT_TOKENS = 220
-        const val CLOUD_RECEIPT_ITEM_MAX_TOKENS = 300
+        /**
+         * Reply budget of one cloud receipt item call: a base plus a share per item, for the most
+         * items one call can carry. A fixed ceiling, not a per-call figure: the payload guard can
+         * prove only constants here, and the limit caps the reply, it does not extend it. The
+         * share per item (about 89 tokens, 28 per alternative) leaves room for the rationale.
+         */
+        const val CLOUD_RECEIPT_ITEM_MAX_ITEMS_PER_CALL = 25
+        const val CLOUD_RECEIPT_ITEM_BASE_TOKENS = 256
+        const val CLOUD_RECEIPT_ITEM_TOKENS_PER_ITEM = 160
+        const val CLOUD_RECEIPT_ITEM_MAX_OUTPUT_TOKENS =
+            CLOUD_RECEIPT_ITEM_BASE_TOKENS + CLOUD_RECEIPT_ITEM_TOKENS_PER_ITEM * CLOUD_RECEIPT_ITEM_MAX_ITEMS_PER_CALL
 
         // On-device (Gemini Nano) constants
         const val ON_DEVICE_CATEGORIZATION_TEMPERATURE = 0.1f

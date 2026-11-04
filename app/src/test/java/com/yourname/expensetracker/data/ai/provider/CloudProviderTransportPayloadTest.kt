@@ -41,7 +41,7 @@ class CloudProviderTransportPayloadTest(private val entry: Entry) {
         DEDUPE(CloudPayloadPurpose.DEDUPE_JUDGE, PrivacyCapability.CLOUD_AI_GENERAL),
         QUERY(CloudPayloadPurpose.QUERY_INTERPRETATION, PrivacyCapability.CLOUD_AI_GENERAL),
         RECEIPT(CloudPayloadPurpose.RECEIPT_ASSIST, PrivacyCapability.RECEIPT_IMAGE_CLOUD_UPLOAD),
-        RECEIPT_ITEMS(CloudPayloadPurpose.ITEM_CATEGORIZATION, PrivacyCapability.CLOUD_AI_ITEM_CATEGORIZATION),
+        RECEIPT_ITEMS(CloudPayloadPurpose.RECEIPT_ITEM_CATEGORIZATION, PrivacyCapability.CLOUD_AI_ITEM_CATEGORIZATION),
         REVIEW(CloudPayloadPurpose.REVIEW_EXPLANATION, PrivacyCapability.CLOUD_AI_GENERAL),
         WARRANTY(CloudPayloadPurpose.WARRANTY_EXTRACTION, PrivacyCapability.CLOUD_AI_WARRANTY_EXTRACTION),
         BANK_STATEMENT(CloudPayloadPurpose.BANK_STATEMENT_VALIDATION, PrivacyCapability.CLOUD_AI_BANK_STATEMENT)
