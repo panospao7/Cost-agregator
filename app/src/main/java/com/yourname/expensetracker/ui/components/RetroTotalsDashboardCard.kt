@@ -801,7 +801,7 @@ private fun RetroStageDialog(
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
-                            text = stringResource(R.string.retro_percentage_format, percentageOfAvg),
+                            text = percentageOfAvg?.let { stringResource(R.string.retro_percentage_format, it) } ?: "--",
                             style = MaterialTheme.typography.labelSmall.copy(
                                 fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
                             ),
