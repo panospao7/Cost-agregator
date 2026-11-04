@@ -250,14 +250,23 @@ class ComputeDashboardWidgetsSafeToSpendQualityTest {
             assertTrue(incompleteResult.hasBudget)
         }
 
-        // 3. Partial spend input (unconvertible USD row) -> unavailable
+        // 3. Partial dashboard spend input (unconvertible USD row) with a COMPLETE budget snapshot.
+        // FL-06 changed the source of the hero number: it is the snapshot's own remainingAmount
+        // (the budget's spend is converted by the budget pipeline, whose partiality is carried by
+        // snapshot.isPartial, covered in step 2). A partial calendar-month dashboard aggregate no
+        // longer feeds the amount, so the amount stays the snapshot's 700, and the partial state is
+        // surfaced through isPartial and the currency-quality warning instead of nulling the amount.
         val partialInputResult = computeSafeToSpend(
             listOf(eurExpense, createExpense(50.0, monthStart + 86_400_000L, "USD")),
             listOf(validBudget)
         )
-        assertTrue("Partial spend input must keep SafeToSpend unavailable", partialInputResult.isUnavailable)
+        assertFalse("Complete snapshot stays available", partialInputResult.isUnavailable)
         assertTrue("Partial spend input must mark SafeToSpend partial", partialInputResult.isPartial)
-        assertNull(partialInputResult.amount)
+        assertTrue(
+            "Partial spend input must surface a partial currency-quality warning",
+            partialInputResult.currencyQuality!!.isPartial
+        )
+        org.junit.Assert.assertEquals(700.0, requireNotNull(partialInputResult.amount), 0.001)
     }
 
     @Test

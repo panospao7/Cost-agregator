@@ -240,8 +240,8 @@ class DashboardWidgetConsistencyTest {
             remainingAmount = 500.0,
             percentUsed = 50.0,
             healthStatus = BudgetHealthStatus.ON_TRACK,
-            periodStart = 0,
-            periodEnd = 0,
+            periodStart = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfMonth(timeProvider.now()),
+            periodEnd = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfMonth(timeProvider.now()) + 30 * 86400000L,
             currency = "EUR", currencyAssumption = "EXPLICIT"
         )
 
@@ -254,9 +254,10 @@ class DashboardWidgetConsistencyTest {
         val result = computeUseCase.compute(processedData)
 
         val safeToSpend = result.allWidgets.filterIsInstance<DashboardWidget.SafeToSpend>().single()
-        // Budget is normalized (EUR, EXPLICIT), so SafeToSpend is computed as budget (1000.0) minus month spend (0.0)
+        // FL-06: the hero amount is the budget snapshot's remainingAmount (1000 limit - 500 spent in the
+        // budget period), not the limit minus calendar-month spend (which is 1000 here: no expenses).
         assertFalse("SafeToSpend should be available when budget is normalized", safeToSpend.isUnavailable)
-        assertEquals("SafeToSpend amount should be budget minus month spend", 1000.0, safeToSpend.amount!!, 0.001)
+        assertEquals("SafeToSpend amount should be the snapshot remainingAmount", 500.0, safeToSpend.amount!!, 0.001)
     }
 
     @Test

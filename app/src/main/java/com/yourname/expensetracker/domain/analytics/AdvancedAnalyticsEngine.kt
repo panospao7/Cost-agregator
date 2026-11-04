@@ -312,8 +312,11 @@ class AdvancedAnalyticsEngine @Inject constructor(
             val previousScopedContext = previousContext?.forCategory(categoryId)
             
             val totalResult = aggregateMoney(expenses, displayCurrency, categoryScopedContext)
+            // N-08-7: one category that cannot be converted must not fail the whole category
+            // section. It gets no enhanced card here; the Analytics screen lists it as
+            // unavailable from the category breakdown, so it never disappears silently.
             if (totalResult is MoneyAggregateResult.Unavailable) {
-                throwUnavailable(totalResult)
+                return@mapNotNull null
             }
             val total = availableAmount(totalResult)
             val amounts = expenses.map { normalizedValue(it, displayCurrency, categoryScopedContext) }
@@ -1391,7 +1394,9 @@ class AdvancedAnalyticsEngine @Inject constructor(
 
         fun forCategory(categoryId: Long?): MoneySliceContext {
             val scoped = scopedInput()
-            if (scoped.excludedExpenses.any { it.categoryId == null }) return this
+            // Exclusions are attributed by their own categoryId; a null id means the row is
+            // genuinely uncategorized and belongs only to the uncategorized group, so it must
+            // not poison every categorized slice.
             val categoryExcluded = scoped.excludedExpenses.filter { it.categoryId == categoryId }
             return copy(
                 input = scoped.copy(

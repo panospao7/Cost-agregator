@@ -1013,7 +1013,7 @@
     <string name="retro_year_label_format">[%1$s]</string>
     <string name="retro_return_button">← RETURN</string>
     <string name="retro_stage_label_format">► STAGE: %1$s</string>
-    <string name="retro_score_label_format">SCORE: €%1$.2f</string>
+    <string name="retro_score_label_format">SCORE: %1$s</string>
     <string name="retro_stage_completion">◄ STAGE COMPLETION ►</string>
     <string name="retro_percentage_format">%1$.0f%% OF AVG</string>
     <string name="retro_enter_stage_button">▶ ENTER STAGE</string>
@@ -2106,7 +2106,7 @@
     <string name="recurring_empty_recurring_title">No recurring expenses found.</string>
     <string name="recurring_empty_planned_cd">No planned expenses found</string>
     <string name="recurring_empty_planned_title">No planned expenses found.</string>
-    <string name="recurring_planned_item_cd_format">%1$s, €%2$.2f, %3$s priority</string>
+    <string name="recurring_planned_item_cd_format">%1$s, %2$s, %3$s priority</string>
     <string name="recurring_date_label">Date: %1$s</string>
     <string name="recurring_delete_planned_cd_format">Delete planned expense %1$s</string>
     <string name="recurring_item_confirmed_cd">Confirmed recurring expense</string>
@@ -2357,7 +2357,7 @@
     <string name="budget_set_first_cd">Set your first budget</string>
     <string name="budget_dialog_create_title">Create Budget</string>
     <string name="budget_dialog_edit_title">Edit Budget</string>
-    <string name="budget_amount_label">Budget Amount (€)</string>
+    <string name="budget_amount_label">Budget Amount</string>
     <string name="budget_error_invalid_amount">Enter a valid amount greater than 0</string>
     <string name="budget_category_label">Category</string>
     <string name="budget_period_label">Period</string>

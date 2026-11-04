@@ -748,7 +748,7 @@ class ExportOptionsViewModel @Inject constructor(
                         append(escapeCsv(tx.sourceAccountName)).append(',')
                         append(escapeCsv(tx.originalCurrency)).append(',')
                         append(tx.originalAmount?.let { formatCsvNumber(it) } ?: "").append(',')
-                        val isNoRateSentinel = tx.exchangeRateUsed <= 0.0 || tx.baseCurrency.isBlank()
+                        val isNoRateSentinel = tx.hasNoRateConversion
                         append(escapeCsv(tx.homeCurrency)).append(',')
                         append(if (isNoRateSentinel) "" else tx.baseAmount).append(',')
                         append(if (isNoRateSentinel) "" else escapeCsv(tx.baseCurrency)).append(',')
@@ -814,7 +814,7 @@ class ExportOptionsViewModel @Inject constructor(
                 append("\"sourceAccountName\":\"").append(escapeJson(tx.sourceAccountName)).append("\",")
                 append("\"originalCurrency\":\"").append(escapeJson(tx.originalCurrency)).append("\",")
                 append("\"originalAmount\":").append(tx.originalAmount?.let { formatJsonNumber(it) } ?: "null").append(',')
-                val isNoRateSentinel = tx.exchangeRateUsed <= 0.0 || tx.baseCurrency.isBlank()
+                val isNoRateSentinel = tx.hasNoRateConversion
                 append("\"homeCurrency\":\"").append(escapeJson(tx.homeCurrency)).append("\",")
                 append("\"baseAmount\":").append(if (isNoRateSentinel) "null" else formatJsonNumber(tx.baseAmount)).append(',')
                 append("\"baseCurrency\":")

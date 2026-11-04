@@ -30,6 +30,20 @@ import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.model.PeriodType
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
 
+private const val RETRO_UNRANKED_MEDAL = "❔"
+
+/**
+ * N-08-5: spending as a percentage of the average, or null when the period's total is
+ * unavailable. A null result means "no rank / no medal"; it must never be treated as 0%,
+ * which would award gold to a period whose spend could not be converted.
+ */
+private fun retroPercentageOfAverage(period: PeriodTotal, averageAmount: Double): Double? =
+    when {
+        period.isUnavailable -> null
+        averageAmount > 0 -> (period.totalAmount / averageAmount) * 100
+        else -> 100.0
+    }
+
 /**
  * Retro Arcade Stage Select style Totals Dashboard.
  * 
@@ -140,7 +154,8 @@ fun RetroTotalsDashboardCard(
                     Spacer(modifier = Modifier.height(12.dp))
                     RetroSelectedStageIndicator(
                         period = period,
-                        averageAmount = averageAmount
+                        averageAmount = averageAmount,
+                        currency = currency
                     )
                 }
                 
@@ -373,16 +388,19 @@ private fun RetroStageCard(
     /** Placeholder default. Production callers should pass explicit currency. */
     currency: String = "EUR"
 ) {
-    // Calculate medal based on spending vs average
-    val percentageOfAvg = if (averageAmount > 0) (period.totalAmount / averageAmount) * 100 else 100.0
+    // Calculate medal based on spending vs average. N-08-5: an unavailable period has no
+    // spend figure, so it earns no medal (a 0.0 placeholder must never read as "gold").
+    val percentageOfAvg = retroPercentageOfAverage(period, averageAmount)
     val medal = when {
+        percentageOfAvg == null -> RETRO_UNRANKED_MEDAL
         percentageOfAvg < 80 -> "🥇"  // Gold - under budget
         percentageOfAvg < 120 -> "🥈" // Silver - on target
         percentageOfAvg < 150 -> "🥉" // Bronze - over budget
         else -> "👾"                   // Invader - danger!
     }
-    
+
     val medalColor = when {
+        percentageOfAvg == null -> RetroColorsTotals.NeonWhite
         percentageOfAvg < 80 -> RetroColorsTotals.Gold
         percentageOfAvg < 120 -> RetroColorsTotals.Silver
         percentageOfAvg < 150 -> RetroColorsTotals.Bronze
@@ -488,16 +506,20 @@ private fun RetroStageCard(
 @Composable
 private fun RetroSelectedStageIndicator(
     period: PeriodTotal,
-    averageAmount: Double
+    averageAmount: Double,
+    /** Placeholder default. Production callers should pass explicit currency. */
+    currency: String = "EUR"
 ) {
-    val percentageOfAvg = if (averageAmount > 0) (period.totalAmount / averageAmount) * 100 else 100.0
+    val percentageOfAvg = retroPercentageOfAverage(period, averageAmount)
     val rankText = when {
+        percentageOfAvg == null -> "UNRANKED"
         percentageOfAvg < 80 -> "GOLD RANK"
         percentageOfAvg < 120 -> "SILVER RANK"
         percentageOfAvg < 150 -> "BRONZE RANK"
         else -> "BOSS LEVEL"
     }
     val rankColor = when {
+        percentageOfAvg == null -> RetroColorsTotals.NeonWhite
         percentageOfAvg < 80 -> RetroColorsTotals.Gold
         percentageOfAvg < 120 -> RetroColorsTotals.Silver
         percentageOfAvg < 150 -> RetroColorsTotals.Bronze
@@ -542,7 +564,10 @@ private fun RetroSelectedStageIndicator(
                     text = if (period.isUnavailable) {
                         stringResource(R.string.groups_total_unavailable)
                     } else {
-                        stringResource(R.string.retro_score_label_format, period.totalAmount)
+                        stringResource(
+                            R.string.retro_score_label_format,
+                            CurrencyFormatter.formatMoney(period.totalAmount, currency)
+                        )
                     },
                     style = MaterialTheme.typography.bodyMedium.copy(
                         fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
@@ -619,24 +644,27 @@ private fun RetroStageDialog(
     /** Placeholder default. Production callers should pass explicit currency. */
     currency: String = "EUR"
 ) {
-    val percentageOfAvg = if (averageAmount > 0) (period.totalAmount / averageAmount) * 100 else 100.0
+    val percentageOfAvg = retroPercentageOfAverage(period, averageAmount)
     val percentage = period.totalAmount / if (averageAmount > 0) averageAmount else 1.0
     val filledBlocks = (percentage.coerceIn(0.0, 2.0) * 10).toInt()
-    
+
     val rankText = when {
+        percentageOfAvg == null -> "UNRANKED"
         percentageOfAvg < 80 -> "GOLD"
         percentageOfAvg < 120 -> "SILVER"
         percentageOfAvg < 150 -> "BRONZE"
         else -> "BOSS"
     }
     val rankColor = when {
+        percentageOfAvg == null -> RetroColorsTotals.NeonWhite
         percentageOfAvg < 80 -> RetroColorsTotals.Gold
         percentageOfAvg < 120 -> RetroColorsTotals.Silver
         percentageOfAvg < 150 -> RetroColorsTotals.Bronze
         else -> RetroColorsTotals.NeonRed
     }
-    
+
     val medal = when {
+        percentageOfAvg == null -> RETRO_UNRANKED_MEDAL
         percentageOfAvg < 80 -> "🥇"
         percentageOfAvg < 120 -> "🥈"
         percentageOfAvg < 150 -> "🥉"
@@ -698,7 +726,10 @@ private fun RetroStageDialog(
                             text = if (period.isUnavailable) {
                                 stringResource(R.string.groups_total_unavailable)
                             } else {
-                                stringResource(R.string.retro_score_label_format, period.totalAmount)
+                                stringResource(
+                                    R.string.retro_score_label_format,
+                                    CurrencyFormatter.formatMoney(period.totalAmount, currency)
+                                )
                             },
                             style = MaterialTheme.typography.bodyMedium.copy(
                                 fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,

@@ -118,9 +118,24 @@ class BudgetCardDisplayTest {
         assertEquals(55.0, display.spend!!, 0.0)
         assertEquals(45.0, display.remaining!!, 0.0)
         assertNull(display.overBudgetAmount)
-        assertEquals(0.8f, display.percentUsed!!, 0.0f)
-        assertEquals(BudgetHealthStatus.WARNING, display.healthStatus)
+        assertEquals(0.55f, display.percentUsed!!, 0.0001f)
+        assertEquals(BudgetHealthStatus.ON_TRACK, display.healthStatus)
         assertEquals(BudgetCardRemainingSlot.REMAINING, display.remainingSlot)
+    }
+
+    @Test
+    fun `J-08-1 summary counts follow the card not the gross repository health`() {
+        val counts = budgetSummaryCounts(
+            listOf(
+                status(spentAmount = 120.0, percentUsed = 1.2f, health = BudgetHealthStatus.EXCEEDED, adjusted = breakdown(effectiveSpend = 40.0)),
+                status(spentAmount = 130.0, percentUsed = 1.3f, health = BudgetHealthStatus.EXCEEDED, adjusted = breakdown(effectiveSpend = 130.0)),
+                status(spentAmount = 130.0, percentUsed = 1.3f, health = BudgetHealthStatus.EXCEEDED, adjusted = null)
+            )
+        )
+
+        assertEquals(1, counts.onTrack)
+        assertEquals(1, counts.exceeded)
+        assertEquals(0, counts.warning)
     }
 
     @Test
@@ -163,6 +178,122 @@ class BudgetCardDisplayTest {
         assertTrue(display.effectiveSpendAvailable)
         assertEquals(0.0, display.spend!!, 0.0)
         assertEquals(100.0, display.remaining!!, 0.0)
+    }
+
+    // ---- J-08-1: over-budget STATE and AMOUNT both come from effective spend ----
+
+    @Test
+    fun `J-08-1 gross 120 effective 90 limit 100 is REMAINING 10 and never a negative over amount`() {
+        val display = BudgetCardDisplay.from(
+            status(
+                spentAmount = 120.0,
+                effectiveLimit = 100.0,
+                percentUsed = 1.2f,
+                health = BudgetHealthStatus.EXCEEDED,
+                adjusted = breakdown(effectiveSpend = 90.0)
+            )
+        )
+
+        assertEquals(BudgetCardRemainingSlot.REMAINING, display.remainingSlot)
+        assertEquals(10.0, display.remaining!!, 0.0001)
+        assertNull("no over-budget amount may be produced (it would be -10)", display.overBudgetAmount)
+        assertEquals(90.0, display.spend!!, 0.0)
+    }
+
+    @Test
+    fun `J-08-1 gross 90 effective 120 limit 100 is OVER_BUDGET by 20`() {
+        val display = BudgetCardDisplay.from(
+            status(
+                spentAmount = 90.0,
+                effectiveLimit = 100.0,
+                percentUsed = 0.9f,
+                health = BudgetHealthStatus.CRITICAL,
+                adjusted = breakdown(effectiveSpend = 120.0)
+            )
+        )
+
+        assertEquals(BudgetCardRemainingSlot.OVER_BUDGET, display.remainingSlot)
+        assertEquals(20.0, display.overBudgetAmount!!, 0.0001)
+    }
+
+    @Test
+    fun `J-08-1 excess below half a cent is not over budget`() {
+        val display = BudgetCardDisplay.from(
+            status(
+                spentAmount = 100.004,
+                effectiveLimit = 100.0,
+                percentUsed = 1.00004f,
+                health = BudgetHealthStatus.EXCEEDED,
+                adjusted = breakdown(effectiveSpend = 100.004)
+            )
+        )
+
+        assertEquals(BudgetCardRemainingSlot.REMAINING, display.remainingSlot)
+        assertNull(display.overBudgetAmount)
+    }
+
+    @Test
+    fun `J-08-1 excess of one cent is over budget by 0_01`() {
+        val display = BudgetCardDisplay.from(
+            status(
+                spentAmount = 100.01,
+                effectiveLimit = 100.0,
+                percentUsed = 1.0001f,
+                health = BudgetHealthStatus.EXCEEDED,
+                adjusted = breakdown(effectiveSpend = 100.01)
+            )
+        )
+
+        assertEquals(BudgetCardRemainingSlot.OVER_BUDGET, display.remainingSlot)
+        assertEquals(0.01, display.overBudgetAmount!!, 0.0001)
+    }
+
+    @Test
+    fun `J-08-1 effective spend exactly at the limit is REMAINING zero not over`() {
+        val display = BudgetCardDisplay.from(
+            status(
+                spentAmount = 100.0,
+                effectiveLimit = 100.0,
+                percentUsed = 1.0f,
+                health = BudgetHealthStatus.CRITICAL,
+                adjusted = breakdown(effectiveSpend = 100.0)
+            )
+        )
+
+        assertEquals(BudgetCardRemainingSlot.REMAINING, display.remainingSlot)
+        assertEquals(0.0, display.remaining!!, 0.0001)
+        assertNull(display.overBudgetAmount)
+    }
+
+    /**
+     * Card-level consistency for the J-08-1 case. The card renders its progress bar, colour and
+     * content description from [BudgetCardDisplay.percentUsed] / [BudgetCardDisplay.healthStatus]
+     * (BudgetScreen.kt: progressColor, cardDescription, LinearProgressIndicator). If those still
+     * carry the GROSS 120% / EXCEEDED while the text slot says "10 remaining", the card contradicts
+     * itself. This test pins the consistent behaviour; a failure here is a production defect, not a
+     * test problem.
+     */
+    @Test
+    fun `J-08-1 gross 120 effective 90 card percent and health do not contradict the REMAINING state`() {
+        val display = BudgetCardDisplay.from(
+            status(
+                spentAmount = 120.0,
+                effectiveLimit = 100.0,
+                percentUsed = 1.2f,
+                health = BudgetHealthStatus.EXCEEDED,
+                adjusted = breakdown(effectiveSpend = 90.0)
+            )
+        )
+
+        assertEquals(BudgetCardRemainingSlot.REMAINING, display.remainingSlot)
+        assertTrue(
+            "health must not be EXCEEDED while the card says 10 remaining, was ${display.healthStatus}",
+            display.healthStatus != BudgetHealthStatus.EXCEEDED
+        )
+        assertTrue(
+            "percent must not exceed 100% while the card says 10 remaining, was ${display.percentUsed}",
+            display.percentUsed!! <= 1.0f
+        )
     }
 
     // ---- AE-17: visible text and content description carry no amount or percent ----

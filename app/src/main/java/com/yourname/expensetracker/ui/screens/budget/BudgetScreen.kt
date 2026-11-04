@@ -413,10 +413,8 @@ fun ErrorBanner(
 @Composable
 fun BudgetSummaryCard(budgets: List<BudgetStatus>) {
     // S8-011: Partial budgets are not counted as confidently on-track
-    val onTrack = budgets.count { it.healthStatus == BudgetHealthStatus.ON_TRACK && !it.isPartial }
-    val warning = budgets.count { it.healthStatus == BudgetHealthStatus.WARNING || it.healthStatus == BudgetHealthStatus.CRITICAL }
-    val exceeded = budgets.count { it.healthStatus == BudgetHealthStatus.EXCEEDED }
-    val partial = budgets.count { it.isPartial }
+    // J-08-1: the summary counts what the cards show, so it cannot say "exceeded" beside a card with money left.
+    val (onTrack, warning, exceeded, partial) = budgetSummaryCounts(budgets)
 
     Card(
         modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),

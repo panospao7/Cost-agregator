@@ -259,6 +259,14 @@ fun AnalyticsScreen(
                             }
                         )
                     }
+                    // N-08-7: a category whose spend cannot be converted (e.g. USD-only with no
+                    // rate) has no enhanced card. It must stay visible as unavailable rather
+                    // than disappearing next to the categories that did convert.
+                    val enhancedCategoryIds = state.enhancedCategories.mapTo(mutableSetOf()) { it.category.id }
+                    val unavailableCategories = state.categoryBreakdown.filter {
+                        it.isUnavailable && it.category.id !in enhancedCategoryIds
+                    }
+                    items(unavailableCategories) { CategoryItem(it, homeCurrency = currency) }
                 } else if (state.categoryBreakdown.isNotEmpty()) {
                     item { SectionHeader(stringResource(R.string.analytics_section_breakdown_category)) }
                     item {

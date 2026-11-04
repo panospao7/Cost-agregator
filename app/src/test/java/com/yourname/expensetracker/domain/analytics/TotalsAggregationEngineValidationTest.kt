@@ -507,11 +507,20 @@ class TotalsAggregationEngineValidationTest {
             PeriodRow(
                 "unavailable home currency degrades to a zero current year without crashing", apr15of2026,
                 {
-                    coEvery { multiCurrencyRepo.getHomeCurrencyPurchaseTotalHistoricalResult(any(), any()) } returns
-                        MoneyAggregateResult.Unavailable(
-                            reason = "Home currency unavailable",
-                            requestedRateBasis = RateBasis.TRANSACTION_DATE
-                        )
+                    // Only the current year is unavailable. N-08-5 keeps PAST years whose total is
+                    // unavailable listed (pinned in TotalsAggregationEngineUnavailableYearsTest), so
+                    // past years here are genuinely empty to keep this row about the current year.
+                    coEvery { multiCurrencyRepo.getHomeCurrencyPurchaseTotalHistoricalResult(any(), any()) } answers {
+                        val calendarYear = Instant.ofEpochMilli(firstArg<Long>()).atZone(ZoneId.systemDefault()).year
+                        if (calendarYear == 2026) {
+                            MoneyAggregateResult.Unavailable(
+                                reason = "Home currency unavailable",
+                                requestedRateBasis = RateBasis.TRANSACTION_DATE
+                            )
+                        } else {
+                            MoneyAggregateResult.Available(MoneyAggregate.empty(eur))
+                        }
+                    }
                 },
                 { engine.getYearlyTotals() },
                 listOf(year(2026, 0.0, 0, PeriodStatus.NO_DATA))

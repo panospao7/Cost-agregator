@@ -306,7 +306,9 @@ class TotalsAggregationEngine @Inject constructor(
                 warningMessage = aggregate?.warningMessage,
                 moneyResult = result
             )
-        }.filter { it.totalAmount > 0 || it.periodKey == currentYear.toString() }
+        // N-08-5: a past year whose conversion is Unavailable carries a 0.0 placeholder amount;
+        // it must stay listed as unavailable instead of being dropped as "no spend".
+        }.filter { it.totalAmount > 0 || it.isUnavailable || it.periodKey == currentYear.toString() }
     }
 
     /**

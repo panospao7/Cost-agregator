@@ -1324,14 +1324,24 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
                         // user sees a "could not be converted" warning with fully converted data.
                         val inputQuality = normalized.input.dataQuality
                         val conversionPartial = inputQuality.isPartial || inputQuality.excludedTransactionCount > 0
-                        val validBudget = ctx.overallBudget?.takeIf { it.hasCompleteAmountIn(normalized.input.homeCurrency.code) }?.budgetAmount
-                        val safeAmount = if (validBudget != null && !conversionPartial) {
-                            (validBudget - normalized.input.monthAggregate.displayAmount).coerceAtLeast(0.0)
-                        } else null
+                        // FL-06: the hero number comes from the SAME budget snapshot the Budget
+                        // screen renders (remainingAmount/periodEnd already honour the budget
+                        // period, rollover and rolling windows). It is never recomputed from
+                        // calendar-month spend. A snapshot that is not complete in the home
+                        // currency, or whose limit is not strictly positive, is Unavailable.
+                        val budgetSnapshot = ctx.overallBudget?.takeIf {
+                            it.hasCompleteAmountIn(normalized.input.homeCurrency.code) && it.budgetAmount > 0.0
+                        }
+                        val validBudget = budgetSnapshot?.budgetAmount
+                        val safeAmount = budgetSnapshot?.remainingAmount?.coerceAtLeast(0.0)
+                        // Days left in the BUDGET period (periodEnd is exclusive), not the calendar month.
+                        val budgetDaysRemaining = budgetSnapshot
+                            ?.let { (TimePeriodUtils.daysBetween(ctx.now, it.periodEnd) - 1).coerceAtLeast(0) }
+                            ?: ctx.daysRemaining
                         DashboardWidget.SafeToSpend(
                             amount = safeAmount,
                             totalBudget = validBudget,
-                            daysRemaining = ctx.daysRemaining,
+                            daysRemaining = budgetDaysRemaining,
                             isPartial = inputQuality.isPartial,
                             isUnavailable = safeAmount == null,
                             currencyQuality = CurrencyQualityUi(

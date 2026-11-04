@@ -380,7 +380,7 @@ fun PlannedExpenseItem(
     val cardDesc = stringResource(
         R.string.recurring_planned_item_cd_format,
         expense.description,
-        expense.amount,
+        CurrencyFormatter.formatMoney(expense.amount, expense.currency),
         priorityText
     )
     Card(

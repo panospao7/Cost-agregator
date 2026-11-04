@@ -104,7 +104,9 @@ internal fun buildMerchantBreakdown(
             name = resolveMerchantDisplayName(expenses),
             totalSpent = totalAmount,
             transactionCount = expenses.size,
-            averageTransaction = totalAmount / expenses.size,
+            // The sum covers only rows that converted ([normalized]); rows excluded for a
+            // missing rate contributed nothing, so they must not dilute the average.
+            averageTransaction = totalAmount / normalized.size.coerceAtLeast(1),
             categoryId = expenses.firstOrNull()?.categoryId,
             displayCurrency = displayCurrency
         )

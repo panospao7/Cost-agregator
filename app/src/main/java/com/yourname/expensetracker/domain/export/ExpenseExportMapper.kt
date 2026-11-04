@@ -19,9 +19,7 @@ import com.yourname.expensetracker.data.database.entity.PaymentMethod
  */
 object ExpenseExportMapper {
     fun map(expense: Expense): ExportTransaction {
-        val isNoRateSentinel = !expense.exchangeRateUsed.isFinite() ||
-            expense.exchangeRateUsed <= 0.0 ||
-            expense.baseCurrency.isBlank()
+        val isNoRateSentinel = isNoRateConversionSentinel(expense.exchangeRateUsed, expense.baseCurrency)
         return ExportTransaction(
             id = expense.id,
             date = expense.date,

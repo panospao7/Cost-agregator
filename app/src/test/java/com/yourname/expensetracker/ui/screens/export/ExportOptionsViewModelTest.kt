@@ -757,6 +757,96 @@ class ExportOptionsViewModelTest {
         assertEquals(0.85, convertedObj.getDouble("exchangeRateUsed"), 0.0001)
     }
 
+    private fun noConversionRows(): List<Expense> = listOf(
+        Triple(30L, "RowNotFinite", Double.NaN),
+        Triple(31L, "RowPosInf", Double.POSITIVE_INFINITY),
+        Triple(32L, "RowNegInf", Double.NEGATIVE_INFINITY),
+        Triple(33L, "RowNegative", -0.5)
+    ).map { (id, merchant, rate) ->
+        createExpense(id = id, merchant = merchant, currency = "USD").copy(
+            amount = 50.0,
+            baseAmount = 42.5,
+            baseCurrency = "EUR",
+            exchangeRateUsed = rate
+        )
+    } + createExpense(id = 34L, merchant = "RowBlankBase", currency = "USD").copy(
+        amount = 50.0,
+        baseAmount = 42.5,
+        baseCurrency = "",
+        exchangeRateUsed = 0.85
+    ) + createExpense(id = 35L, merchant = "RowConverted", currency = "USD").copy(
+        amount = 50.0,
+        baseAmount = 42.5,
+        baseCurrency = "EUR",
+        exchangeRateUsed = 0.85
+    )
+
+    @Test
+    fun `no-conversion rows with non-finite negative or blank-base values export blank csv cells never 0`() = runBlocking {
+        val expenses = noConversionRows()
+        coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns expenses.size
+        coEvery { exportDataRepository.getExpensesBetween(any(), any()) } returns expenses
+        stubPagedExpenses(expenses, emptyList())
+        val csvOut = createTempFile(prefix = "export_noconv_csv_", suffix = ".csv")
+        every { exportDataRepository.createExportFile(any(), any()) } returns csvOut
+
+        viewModel.selectFormat("csv")
+        viewModel.generateExport()
+        val csvText = csvOut.readText()
+        val lines = csvText.lines()
+        val headerCells = lines.single { it.startsWith("ID,Date") }.split(",")
+        val baseAmountIdx = headerCells.indexOf("BaseAmount")
+        val baseCurrencyIdx = headerCells.indexOf("BaseCurrency")
+        val exchangeRateIdx = headerCells.indexOf("ExchangeRateUsed")
+        assertTrue(baseAmountIdx >= 0 && baseCurrencyIdx >= 0 && exchangeRateIdx >= 0)
+
+        for (merchant in listOf("RowNotFinite", "RowPosInf", "RowNegInf", "RowNegative", "RowBlankBase")) {
+            val cells = lines.single { it.contains(merchant) }.split(",")
+            assertEquals("$merchant column count", headerCells.size, cells.size)
+            assertEquals("$merchant baseAmount must be blank, not 0 or the stored 42.5", "", cells[baseAmountIdx])
+            assertEquals("$merchant baseCurrency must be blank", "", cells[baseCurrencyIdx])
+            assertEquals("$merchant exchangeRateUsed must be blank", "", cells[exchangeRateIdx])
+        }
+        assertFalse("no NaN may reach the file", csvText.contains("NaN"))
+        assertFalse("no Infinity may reach the file", csvText.contains("Infinity"))
+
+        val converted = lines.single { it.contains("RowConverted") }.split(",")
+        assertEquals("42.5", converted[baseAmountIdx])
+        assertEquals("EUR", converted[baseCurrencyIdx])
+        assertEquals("0.85", converted[exchangeRateIdx])
+    }
+
+    @Test
+    fun `no-conversion rows with non-finite negative or blank-base values export null json fields never 0`() = runBlocking {
+        val expenses = noConversionRows()
+        coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns expenses.size
+        coEvery { exportDataRepository.getExpensesBetween(any(), any()) } returns expenses
+        stubPagedExpenses(expenses, emptyList())
+        val jsonOut = createTempFile(prefix = "export_noconv_json_", suffix = ".json")
+        every { exportDataRepository.createExportFile(any(), any()) } returns jsonOut
+
+        viewModel.selectFormat("json")
+        viewModel.generateExport()
+        val jsonText = jsonOut.readText()
+        assertFalse("no NaN may reach the file", jsonText.contains("NaN"))
+        assertFalse("no Infinity may reach the file", jsonText.contains("Infinity"))
+
+        val rows = org.json.JSONObject(jsonText).getJSONArray("rows")
+        assertEquals(expenses.size, rows.length())
+        val byMerchant = (0 until rows.length()).map { rows.getJSONObject(it) }.associateBy { it.getString("merchant") }
+
+        for (merchant in listOf("RowNotFinite", "RowPosInf", "RowNegInf", "RowNegative", "RowBlankBase")) {
+            val row = byMerchant.getValue(merchant)
+            assertTrue("$merchant baseAmount must be JSON null, not 0", row.isNull("baseAmount"))
+            assertTrue("$merchant baseCurrency must be JSON null", row.isNull("baseCurrency"))
+            assertTrue("$merchant exchangeRateUsed must be JSON null", row.isNull("exchangeRateUsed"))
+        }
+        val converted = byMerchant.getValue("RowConverted")
+        assertEquals(42.5, converted.getDouble("baseAmount"), 0.0001)
+        assertEquals("EUR", converted.getString("baseCurrency"))
+        assertEquals(0.85, converted.getDouble("exchangeRateUsed"), 0.0001)
+    }
+
     @Test
     fun `generate export reports repository file creation failure`() = runBlocking {
         val failure = IllegalStateException("cache dir unavailable")
