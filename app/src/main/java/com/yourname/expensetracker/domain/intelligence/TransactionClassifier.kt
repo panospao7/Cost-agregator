@@ -126,11 +126,22 @@ open class TransactionClassifier @Inject constructor(
     private val isLoaded = AtomicBoolean(false)
     private var lastTrainingCount = 0
 
+    /** J-03-1: set by [purgeModelState]; blocks model persistence until STORE_RAW training resumes. */
+    @Volatile private var persistenceBlocked = false
+
     /** Set to true when a legacy plaintext model file was loaded and needs re-saving (encrypted). */
     private var legacyFileMigrated = false
 
     suspend fun initialize() {
         if (isLoaded.get()) return
+        // J-03-1: a definite non-STORE_RAW mode purges instead of loading the stored model.
+        // Read failure does not purge; loading proceeds (training stays gated separately).
+        // The read and purge happen before taking the mutex (purge takes it itself).
+        val initMode = readRawStorageMode()
+        if (initMode != null && initMode != RawStorageMode.STORE_RAW) {
+            purgeModelState()
+            return
+        }
         mutex.withLock {
             if (!isLoaded.get()) {
 
@@ -156,6 +167,17 @@ open class TransactionClassifier @Inject constructor(
     }
 
     open suspend fun predict(text: String): Float {
+        // J-03-1: mode is read per call via the settings repository (DataStore snapshot, no
+        // extra cached state; predict runs once per notification). Read failure -> 0.5 with no
+        // purge; definite non-STORE_RAW -> purge, then 0.5 (same as an unready model).
+        when (readRawStorageMode()) {
+            null -> return 0.5f
+            RawStorageMode.STORE_RAW -> Unit
+            else -> {
+                purgeModelState()
+                return 0.5f
+            }
+        }
         if (!isLoaded.get()) initialize()
 
         if (totalPositive + totalNegative < MIN_TRAINING_SAMPLES) {
@@ -175,14 +197,7 @@ open class TransactionClassifier @Inject constructor(
      * so callers behave exactly as before. Cancellation is always rethrown.
      */
     private suspend fun isTrainingAllowed(): Boolean {
-        val mode = try {
-            privacySettingsRepository.getSettings().rawNotificationStorageMode
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            Timber.w("Classifier training skipped: reason=settings_read_failed")
-            return false
-        }
+        val mode = readRawStorageMode() ?: return false
         if (mode != RawStorageMode.STORE_RAW) {
             Timber.d("Classifier training skipped: reason=raw_storage_not_store_raw")
             return false
@@ -190,8 +205,71 @@ open class TransactionClassifier @Inject constructor(
         return true
     }
 
+    /**
+     * Current raw notification storage mode, or null when the read failed (callers must
+     * fail closed without purging). Takes no classifier lock. Cancellation is rethrown.
+     */
+    private suspend fun readRawStorageMode(): RawStorageMode? = try {
+        privacySettingsRepository.getSettings().rawNotificationStorageMode
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        Timber.w("Classifier training skipped: reason=settings_read_failed")
+        null
+    }
+
+    /**
+     * J-03-1: a definite non-STORE_RAW mode must leave no learned notification-text model
+     * behind. Clears all in-memory state and stats, cancels the pending save and deletes the
+     * model file, all under the mutex (never call while already holding it). Idempotent: once
+     * purged, [persistenceBlocked] short-circuits repeated calls until STORE_RAW training resumes.
+     */
+    private suspend fun purgeModelState() {
+        // A failed delete must retry: the flag alone does not prove the file is gone.
+        if (persistenceBlocked && !File(context.filesDir, MODEL_FILE).exists()) return
+        val newStats: ClassifierStats
+        mutex.withLock {
+            positiveWordCounts.clear()
+            negativeWordCounts.clear()
+            positiveBigramCounts.clear()
+            negativeBigramCounts.clear()
+            vocabulary.clear()
+            totalPositive = 0
+            totalNegative = 0
+            vocabularySize = 0
+            lastTrainingCount = 0
+            legacyFileMigrated = false
+            persistenceBlocked = true
+            isLoaded.set(true)
+            synchronized(jobLock) {
+                saveJob?.cancel()
+                saveJob = null
+            }
+            try {
+                withContext(Dispatchers.IO) {
+                    val modelFile = File(context.filesDir, MODEL_FILE)
+                    if (modelFile.exists() && !modelFile.delete()) {
+                        Timber.w("Classifier model purge incomplete: reason=file_delete_returned_false")
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Timber.w("Classifier model purge incomplete: reason=file_delete_failed")
+            }
+            newStats = getStatsInternal()
+        }
+        _stats.value = newStats
+        Timber.d("Classifier model purged: reason=raw_storage_not_store_raw")
+    }
+
     suspend fun train(text: String, isTransaction: Boolean) {
-        if (!isTrainingAllowed()) return
+        val mode = readRawStorageMode() ?: return
+        if (mode != RawStorageMode.STORE_RAW) {
+            Timber.d("Classifier training skipped: reason=raw_storage_not_store_raw")
+            purgeModelState()
+            return
+        }
         val newStats: ClassifierStats
         mutex.withLock {
             val features = extractFeatures(text)
@@ -304,6 +382,8 @@ open class TransactionClassifier @Inject constructor(
     }
 
     private fun addTrainingSample(features: FeatureSet, isTransaction: Boolean) {
+        // Training under STORE_RAW starts a fresh model after any purge; persistence is allowed again.
+        persistenceBlocked = false
         if (isTransaction) {
             totalPositive++
             features.words.forEach {
@@ -427,32 +507,39 @@ open class TransactionClassifier @Inject constructor(
     private suspend fun saveToDisk() {
         withContext(Dispatchers.IO) {
             try {
-                val json = JSONObject().apply {
-                    put("version", MODEL_VERSION)
-                    mutex.withLock {
-                        put("totalPositive", totalPositive)
-                        put("totalNegative", totalNegative)
-                        put("vocabularySize", vocabularySize)
-                        put("lastTrainingCount", lastTrainingCount)
+                // J-03-1: snapshot, encrypt and write under the mutex so a concurrent
+                // purge (which deletes the file under the same mutex) can never be
+                // followed by a stale write. A purged model is never persisted.
+                mutex.withLock {
+                    if (!persistenceBlocked) {
+                        val json = JSONObject().apply {
+                            put("version", MODEL_VERSION)
+                            put("totalPositive", totalPositive)
+                            put("totalNegative", totalNegative)
+                            put("vocabularySize", vocabularySize)
+                            put("lastTrainingCount", lastTrainingCount)
 
-                        put("positiveWords", JSONObject().apply {
-                            positiveWordCounts.forEach { (k, v) -> put(k, v) }
-                        })
-                        put("negativeWords", JSONObject().apply {
-                            negativeWordCounts.forEach { (k, v) -> put(k, v) }
-                        })
-                        put("positiveBigrams", JSONObject().apply {
-                            positiveBigramCounts.forEach { (k, v) -> put(k, v) }
-                        })
-                        put("negativeBigrams", JSONObject().apply {
-                            negativeBigramCounts.forEach { (k, v) -> put(k, v) }
-                        })
+                            put("positiveWords", JSONObject().apply {
+                                positiveWordCounts.forEach { (k, v) -> put(k, v) }
+                            })
+                            put("negativeWords", JSONObject().apply {
+                                negativeWordCounts.forEach { (k, v) -> put(k, v) }
+                            })
+                            put("positiveBigrams", JSONObject().apply {
+                                positiveBigramCounts.forEach { (k, v) -> put(k, v) }
+                            })
+                            put("negativeBigrams", JSONObject().apply {
+                                negativeBigramCounts.forEach { (k, v) -> put(k, v) }
+                            })
+                        }
+
+                        // AIML-16: At-rest encryption for ML model
+                        val encrypted = atRestEncryptionService.encrypt(json.toString().toByteArray(Charsets.UTF_8))
+                        File(context.filesDir, MODEL_FILE).writeBytes(encrypted)
                     }
                 }
-
-                // AIML-16: At-rest encryption for ML model
-                val encrypted = atRestEncryptionService.encrypt(json.toString().toByteArray(Charsets.UTF_8))
-                File(context.filesDir, MODEL_FILE).writeBytes(encrypted)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Timber.e("Failed to save ML model")
             }

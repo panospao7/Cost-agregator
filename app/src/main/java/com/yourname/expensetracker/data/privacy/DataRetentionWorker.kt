@@ -29,6 +29,7 @@ import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
 import com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
+import com.yourname.expensetracker.domain.privacy.RawStorageMode
 import com.yourname.expensetracker.domain.privacy.RetentionPurgeFailure
 import com.yourname.expensetracker.domain.privacy.RetentionPurgeResult
 import com.yourname.expensetracker.domain.privacy.RetentionRegistry
@@ -156,7 +157,11 @@ class DataRetentionWorker @AssistedInject constructor(
                 "50_privacy_audit_events" ->
                     now - TimeUnit.DAYS.toMillis(PRIVACY_AUDIT_RETENTION_DAYS)
                 "pending_reviews.notificationText" -> notificationTextCutoff
-                "user_corrections.notificationText" -> notificationTextCutoff
+                // P-08-1: correction text is only learnable under STORE_RAW; in any
+                // other mode existing rows are blanked at the next run (cutoff = now).
+                "user_corrections.notificationText" ->
+                    if (settings.rawNotificationStorageMode != RawStorageMode.STORE_RAW) now
+                    else notificationTextCutoff
                 "background_job_runs.errorMessage" -> textRedactionCutoff
                 "bank_statement_import_items.merchant" -> textRedactionCutoff
                 else -> now - TimeUnit.DAYS.toMillis(30)
