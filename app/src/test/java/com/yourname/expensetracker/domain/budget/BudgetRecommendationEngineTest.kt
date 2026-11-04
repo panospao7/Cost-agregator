@@ -52,7 +52,8 @@ class BudgetRecommendationEngineTest {
                 predictedRemaining = 400.0,
                 confidenceScore = 0.50,
                 riskLevel = BudgetRecommendationRiskLevel.MEDIUM,
-                overspendProbability = 0.40
+                overspendProbability = 0.40,
+                predictedPeriodTotal = 600.0
             ),
             currentSpending = 100.0
         )
@@ -127,7 +128,8 @@ class BudgetRecommendationEngineTest {
                 predictedRemaining = -10.0,
                 confidenceScore = 0.9,
                 riskLevel = BudgetRecommendationRiskLevel.HIGH,
-                overspendProbability = 0.9
+                overspendProbability = 0.9,
+                predictedPeriodTotal = 50.0
             ),
             currentSpending = 950.0
         )
@@ -182,7 +184,8 @@ class BudgetRecommendationEngineTest {
                 predictedRemaining = -10.0,
                 confidenceScore = 0.90,
                 riskLevel = BudgetRecommendationRiskLevel.CRITICAL,
-                overspendProbability = 0.95
+                overspendProbability = 0.95,
+                predictedPeriodTotal = 200.0
             ),
             currentSpending = 660.0,
             currency = "USD"

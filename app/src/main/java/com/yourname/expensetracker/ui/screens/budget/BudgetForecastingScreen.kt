@@ -456,7 +456,7 @@ internal fun shouldShowPartialForecastNotice(forecast: BudgetForecast): Boolean 
 
 internal fun shouldShowOverspendProbability(forecast: BudgetForecast): Boolean =
     forecast.riskLevel != ForecastRiskLevel.UNKNOWN &&
-        forecast.confidenceScore >= FORECAST_LOW_CONFIDENCE_THRESHOLD &&
+        forecast.confidenceScore > FORECAST_LOW_CONFIDENCE_THRESHOLD &&
         forecast.overspendProbability > 0
 
 /**

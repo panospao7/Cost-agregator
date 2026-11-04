@@ -148,13 +148,13 @@ class BudgetForecastProjectionTest {
         )
 
     @Test
-    fun `overspend probability is shown at confidence 0_6 with known risk and positive probability`() {
-        assertTrue(shouldShowOverspendProbability(riskForecast(confidence = 0.6)))
+    fun `overspend probability is shown above confidence 0_6 with known risk and positive probability`() {
+        assertTrue(shouldShowOverspendProbability(riskForecast(confidence = 0.61)))
     }
 
     @Test
     fun `overspend probability is hidden at confidence 0_59`() {
-        assertFalse(shouldShowOverspendProbability(riskForecast(confidence = 0.59)))
+        assertFalse(shouldShowOverspendProbability(riskForecast(confidence = 0.6)))
     }
 
     @Test
