@@ -26,7 +26,12 @@ class MoneyDisplayFormatStringsTest {
     private val moneyWrapperKeys = listOf(
         "recurring_planned_item_cd_format",
         "retro_score_label_format",
-        "budget_amount_label"
+        "budget_amount_label",
+        "forecast_range_format",
+        "a11y_category_spending_format",
+        "a11y_expense_item_format",
+        "dialog_plan_expense_amount_label",
+        "calendar_label_starting_balance"
     )
 
     private fun parse(folder: String): Document {

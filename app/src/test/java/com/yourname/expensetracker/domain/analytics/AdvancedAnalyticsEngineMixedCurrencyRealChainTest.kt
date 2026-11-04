@@ -10,6 +10,7 @@ import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.core.money.MoneyAggregateResult
 import com.yourname.expensetracker.domain.core.time.PeriodKind
 import com.yourname.expensetracker.domain.core.time.PeriodRange
+import com.yourname.expensetracker.domain.model.BudgetSnapshot
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.testAnalyticsCurrencyNormalizer
 import io.mockk.coEvery
@@ -19,6 +20,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -157,5 +159,78 @@ class AdvancedAnalyticsEngineMixedCurrencyRealChainTest {
         val food = enhanced.single { it.category.id == 1L }
         assertEquals(100.0, food.totalSpent, 0.001)
         assertFalse((food.totalMoneyResult as MoneyAggregateResult.Available).aggregate.isPartial)
+    }
+
+    private val previousPeriod = PeriodRange(
+        kind = PeriodKind.CUSTOM,
+        startInclusiveMillis = period.startInclusiveMillis - 10 * dayMs,
+        endExclusiveMillis = period.startInclusiveMillis,
+        label = "PREV"
+    )
+
+    private fun previousPurchase(id: Long, amount: Double, currency: String, categoryId: Long?) =
+        purchase(id, amount, currency, categoryId).copy(date = previousPeriod.startInclusiveMillis + dayMs)
+
+    private suspend fun categoryAnalyticsWithPreviousAndBudget(
+        current: List<Expense>,
+        previous: List<Expense>?,
+        budgets: List<BudgetSnapshot> = emptyList()
+    ): List<EnhancedCategoryAnalytics> {
+        val currentInput = assembler.build(current, "EUR", period)
+        val previousInput = previous?.let { assembler.build(it, "EUR", previousPeriod) }
+        return engine.getCategoryAnalytics(currentInput, previousInput, categories, budgets).first
+    }
+
+    @Test
+    fun `F-partial control complete previous and current rows give an exact change percent`() = runTest {
+        val food = categoryAnalyticsWithPreviousAndBudget(
+            current = listOf(purchase(1, 150.0, "EUR", 1L)),
+            previous = listOf(previousPurchase(10, 100.0, "EUR", 1L))
+        ).single { it.category.id == 1L }
+
+        assertEquals(150.0, food.totalSpent, 0.001)
+        assertNotNull(food.changePercent)
+        assertEquals(50.0f, food.changePercent!!, 0.01f)
+    }
+
+    @Test
+    fun `F-partial previous period with an unrated USD row has no change percent`() = runTest {
+        val food = categoryAnalyticsWithPreviousAndBudget(
+            current = listOf(purchase(1, 150.0, "EUR", 1L)),
+            previous = listOf(
+                previousPurchase(10, 100.0, "EUR", 1L),
+                previousPurchase(11, 100.0, "USD", 1L)
+            )
+        ).single { it.category.id == 1L }
+
+        assertEquals(150.0, food.totalSpent, 0.001)
+        assertNull("a partial previous total must not yield a fabricated percent", food.changePercent)
+    }
+
+    @Test
+    fun `F-partial control complete current total against a 200 budget gives 75 percent and 50 remaining`() = runTest {
+        val food = categoryAnalyticsWithPreviousAndBudget(
+            current = listOf(purchase(1, 150.0, "EUR", 1L)),
+            previous = null,
+            budgets = listOf(BudgetSnapshot(categoryId = 1L, amount = 200.0, currency = "EUR"))
+        ).single { it.category.id == 1L }
+
+        assertEquals(75.0f, food.budgetUtilizationPercent!!, 0.01f)
+        assertEquals(50.0, food.budgetRemaining!!, 0.001)
+        assertNotNull(food.budgetStatus)
+    }
+
+    @Test
+    fun `F-partial current total with an unrated USD row has no budget utilization status or remaining`() = runTest {
+        val food = categoryAnalyticsWithPreviousAndBudget(
+            current = listOf(purchase(1, 150.0, "EUR", 1L), purchase(2, 100.0, "USD", 1L)),
+            previous = null,
+            budgets = listOf(BudgetSnapshot(categoryId = 1L, amount = 200.0, currency = "EUR"))
+        ).single { it.category.id == 1L }
+
+        assertEquals("only the converted 150 EUR is summed", 150.0, food.totalSpent, 0.001)
+        assertNull(food.budgetUtilizationPercent)
+        assertNull(food.budgetStatus)
+        assertNull(food.budgetRemaining)
     }
 }
