@@ -9,7 +9,13 @@ data class BudgetRecommendationForecast(
     val predictedRemaining: Double,
     val confidenceScore: Double,
     val riskLevel: BudgetRecommendationRiskLevel,
-    val overspendProbability: Double
+    val overspendProbability: Double,
+    /**
+     * BL-06: full-period projection (spent so far + remaining-period [predictedSpending]),
+     * supplied by the forecast model's predictedPeriodTotal(). Defaults to [predictedSpending]
+     * (nothing spent yet) so callers without spend data keep their old meaning.
+     */
+    val predictedPeriodTotal: Double = predictedSpending
 )
 
 enum class BudgetRecommendationRiskLevel {

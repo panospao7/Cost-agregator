@@ -107,7 +107,8 @@ class BudgetForecastingViewModel @Inject constructor(
                             ForecastRiskLevel.CRITICAL -> BudgetRecommendationRiskLevel.CRITICAL
                             ForecastRiskLevel.UNKNOWN -> BudgetRecommendationRiskLevel.HIGH
                         },
-                        overspendProbability = forecast.overspendProbability
+                        overspendProbability = forecast.overspendProbability,
+                        predictedPeriodTotal = forecast.predictedPeriodTotal()
                     ),
                     currentSpending
                 )
