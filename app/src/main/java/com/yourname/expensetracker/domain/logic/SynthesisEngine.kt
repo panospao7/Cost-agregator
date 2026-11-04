@@ -8,6 +8,7 @@ import com.yourname.expensetracker.domain.analytics.PaceStatus
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
 import com.yourname.expensetracker.domain.analytics.SpendingPace
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
+import com.yourname.expensetracker.domain.budget.BudgetPeriodRemaining
 import com.yourname.expensetracker.domain.forecasting.ForecastInputAssembler
 import com.yourname.expensetracker.domain.model.*
 import com.yourname.expensetracker.domain.model.ConfirmedOccurrence
@@ -505,40 +506,55 @@ class SynthesisEngine @Inject constructor(
         }
         
         // 5. Calculate Discretionary (Available)
-        // F1: the discretionary pool compares the limit with calendar-month spend and obligations,
-        // so a budget whose period is clearly not month-scale (yearly, weekly) is skipped: the
-        // existing "no budget" path (limit 0, NO_BUDGET risk, confidence penalty) applies instead.
-        // A degenerate period (end <= start) is unknown and keeps the legacy behaviour. Only the
-        // limit read changes; no payload field is added.
-        val monthScaleBudgets = budgetStatuses.filter { it.periodEnd <= it.periodStart || it.isMonthScalePeriod }
-        val overallBudget = monthScaleBudgets.find { it.budgetCategoryId == null }?.budgetAmount ?: 0.0
-        val budgetLimit = resolveBudgetLimit(monthScaleBudgets)
+        // FL-06: with a positive OVERALL budget the pool is the shared BudgetPeriodRemaining (the same
+        // figure as the Home headline and Runway: effective limit minus effective spend in the budget
+        // period, whatever its length) minus the upcoming obligations and goal reserves. An overall
+        // budget that is Unavailable (conversion incomplete or no effective spend) takes the
+        // existing "no budget" path (limit 0, risk from pace only, confidence penalty).
+        // Only with no positive overall limit do category budgets give a month-scale fallback limit
+        // (category budgets are partial limits, so non-month-scale ones are skipped there).
+        val overallSnapshot = budgetStatuses.find { it.budgetCategoryId == null }
+        val overallBudgetRemaining = overallSnapshot?.periodRemaining(now, displayCurrency)
+        val overallAvailable = overallBudgetRemaining as? BudgetPeriodRemaining.Available
+        val overallHasPositiveLimit = (overallSnapshot?.budgetAmount ?: 0.0) > 0.0
+        val budgetLimit = when {
+            overallAvailable != null -> overallAvailable.limit
+            overallHasPositiveLimit -> 0.0
+            else -> resolveBudgetLimit(
+                budgetStatuses.filter { it.periodEnd <= it.periodStart || it.isMonthScalePeriod }
+            )
+        }
 
         val spentSoFar = spendingPace.currentMonthSpent
             ?: throw com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableException(
                 com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableReasonCode.DISPLAY_CONVERSION_UNAVAILABLE
             )
-        
-        // Revised Formula: Limit - (Spent + Future Committed + Future Likely + Goal Reserves)
-        // If budgetLimit is 0, we use a fallback or express "Unknown" state
+
+        // Formula: Remaining(budget period) - (Future Committed + Future Likely + Goal Reserves).
+        // Category-only fallback keeps: Limit - (Spent + obligations + Goal Reserves).
+        // If budgetLimit is 0, we express the "Unknown" state.
         val projectedObligations = committedUpcomingBills + committedPlanned + likelyUpcomingBills + likelyPlanned
-        
-        val discretionaryBudget = if (budgetLimit > 0) {
-            (budgetLimit - (spentSoFar + projectedObligations + goalReserves)).coerceAtLeast(0.0)
-        } else {
-            // If no budget is set, the discretionary "pool" isn't 0 (which looks like "No money left"),
-            // it's effectively unlimited/unknown vs a goal. 
-            // We'll return 0.0 for now but the RiskLevel will signal NO_BUDGET
-            0.0
+
+        val discretionaryBudget = when {
+            overallAvailable != null ->
+                (overallAvailable.remaining - (projectedObligations + goalReserves)).coerceAtLeast(0.0)
+            budgetLimit > 0 ->
+                (budgetLimit - (spentSoFar + projectedObligations + goalReserves)).coerceAtLeast(0.0)
+            else -> {
+                // If no budget is set, the discretionary "pool" isn't 0 (which looks like "No money left"),
+                // it's effectively unlimited/unknown vs a goal.
+                // We'll return 0.0 for now but the RiskLevel will signal NO_BUDGET
+                0.0
+            }
         }
 
         // 6. Determine Risk Level
-        // FORE-05: discretionaryBudget is clamped to 0, which hides how far the month is over
-        // the limit. Read the un-clamped sum so over-committed months are CRITICAL even on pace.
+        // FORE-05: discretionaryBudget is clamped to 0, which hides how far the budget is over.
+        // Read the un-clamped figures so an over-committed budget is CRITICAL even on pace.
         // Only against an explicit OVERALL budget: the category-budget-sum fallback compares ALL
         // spending with a partial limit, so it must not escalate (previous behaviour kept).
-        val obligationsExceedLimit = overallBudget > 0 && budgetLimit > 0 &&
-            (spentSoFar + projectedObligations + goalReserves) > budgetLimit
+        val obligationsExceedLimit = overallAvailable != null &&
+            (overallAvailable.overBy > 0.0 || (projectedObligations + goalReserves) > overallAvailable.remaining)
         val riskLevel = determineRiskLevel(
             spendingPace,
             budgetStatuses,
@@ -1105,7 +1121,10 @@ class SynthesisEngine @Inject constructor(
         limit: Double,
         obligationsExceedLimit: Boolean
     ): RiskLevel {
-        val criticalBudgets = budgets.count { it.healthStatus == BudgetHealthStatus.CRITICAL || it.healthStatus == BudgetHealthStatus.EXCEEDED }
+        // FL-06: the effective health (what the Budget card shows); null (unavailable) is not counted.
+        val criticalBudgets = budgets.count {
+            it.effectiveHealthStatus == BudgetHealthStatus.CRITICAL || it.effectiveHealthStatus == BudgetHealthStatus.EXCEEDED
+        }
         val overPace = pace.paceStatus == PaceStatus.OVER_PACE
         
         // Ratio of discretionary to total budget
@@ -1149,7 +1168,7 @@ class SynthesisEngine @Inject constructor(
         if (pace.paceStatus == PaceStatus.OVER_PACE) {
             insights.add(UiText.fromKey(DomainTextKeys.SYNTHESIS_SPENDING_PACE_HIGHER))
         }
-        val exceeded = budgets.count { it.healthStatus == BudgetHealthStatus.EXCEEDED }
+        val exceeded = budgets.count { it.effectiveHealthStatus == BudgetHealthStatus.EXCEEDED }
         if (exceeded > 0) {
             insights.add(UiText.fromKey(DomainTextKeys.SYNTHESIS_BUDGETS_EXCEEDED_FORMAT, exceeded))
         }

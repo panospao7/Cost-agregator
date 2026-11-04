@@ -35,8 +35,11 @@ data class BudgetStatus(
      * controlled [conversionWarning] explains the conversion failure.
      *
      * When only some spend rows were excluded (partial conversion) but the limit
-     * is known, this stays `true` while [isPartial] is `true` and threshold
-     * checks remain allowed.
+     * is known, this stays `true` while [isPartial] is `true`. The gross
+     * [percentUsed] and [healthStatus] stay computed, but an alert threshold
+     * comparison additionally needs an effective-spend [adjustedSpendBreakdown]
+     * (INV-18): with a null breakdown no alert fires. A partial status shows no
+     * remaining-money figure on Home, Runway or Weather (see [BudgetPeriodRemaining]).
      */
     val percentKnown: Boolean = true
 ) {

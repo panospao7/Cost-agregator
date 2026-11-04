@@ -39,7 +39,8 @@ internal data class BudgetCardDisplay(
     val overBudgetAmount: Double?,
     /**
      * Effective spend / effective limit when the percent is known and the limit is positive;
-     * otherwise the repository's value. Null iff effective spend is unavailable.
+     * 1f when the limit is not positive and spend is over it; otherwise the repository's value.
+     * Null iff effective spend is unavailable.
      */
     val percentUsed: Float?,
     /**
@@ -83,7 +84,9 @@ internal data class BudgetCardDisplay(
                 spend = spend,
                 remaining = status.effectiveLimit - spend,
                 overBudgetAmount = if (over) spend - status.effectiveLimit else null,
-                percentUsed = effectivePercent ?: status.percentUsed,
+                // A zero or negative limit with spend over it (F6) has no ratio: the bar is full (1f)
+                // so it agrees with the "over" text and the EXCEEDED health, not the 0f placeholder.
+                percentUsed = effectivePercent ?: if (over) 1f else status.percentUsed,
                 // Same derivation the Home path uses (domain effectiveBudgetHealth).
                 healthStatus = effectiveBudgetHealth(
                     effectiveSpend = spend,

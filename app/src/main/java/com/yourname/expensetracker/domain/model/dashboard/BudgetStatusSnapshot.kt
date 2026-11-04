@@ -1,6 +1,10 @@
 package com.yourname.expensetracker.domain.model.dashboard
 
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
+import com.yourname.expensetracker.domain.budget.BudgetPeriodRemaining
+import com.yourname.expensetracker.domain.budget.BudgetStatus
+import com.yourname.expensetracker.domain.budget.budgetPeriodRemaining
+import com.yourname.expensetracker.domain.budget.effectiveHealthOrNull
 
 data class BudgetStatusSnapshot(
     val budgetCategoryId: Long?,
@@ -49,4 +53,42 @@ data class BudgetStatusSnapshot(
             !isPartial && conversionWarning == null && percentKnown &&
             budgetAmount.isFinite() && budgetAmount >= 0.0 && remainingAmount.isFinite()
     }
+
+    /**
+     * FL-06: the one shared "money left in the budget period" figure for this snapshot, read by the
+     * Home headline, Runway and Financial Weather. See [BudgetPeriodRemaining].
+     */
+    fun periodRemaining(nowMs: Long, homeCurrency: String): BudgetPeriodRemaining =
+        budgetPeriodRemaining(
+            limit = budgetAmount,
+            effectiveSpend = effectiveSpend,
+            complete = hasCompleteAmountIn(homeCurrency),
+            percentKnown = percentKnown,
+            periodEnd = periodEnd,
+            nowMs = nowMs
+        )
 }
+
+/**
+ * The single [BudgetStatus] to [BudgetStatusSnapshot] mapping, effective fields included. Used by
+ * the dashboard adapter and the forecast input assembler so no surface drops the effective spend.
+ */
+fun BudgetStatus.toBudgetStatusSnapshot(): BudgetStatusSnapshot =
+    BudgetStatusSnapshot(
+        budgetCategoryId = budget.categoryId,
+        budgetAmount = effectiveLimit,
+        categoryName = category?.name,
+        spentAmount = spentAmount,
+        remainingAmount = remainingAmount,
+        percentUsed = percentUsed.toDouble(),
+        healthStatus = healthStatus,
+        periodStart = periodStart,
+        periodEnd = periodEnd,
+        isPartial = isPartial,
+        conversionWarning = conversionWarning,
+        currency = currency,
+        currencyAssumption = currencyAssumption,
+        percentKnown = percentKnown,
+        effectiveSpend = adjustedSpendBreakdown?.effectiveSpend,
+        effectiveHealthStatus = effectiveHealthOrNull()
+    )

@@ -390,7 +390,9 @@ class BudgetRepository @Inject constructor(
                 categoryId = budget.categoryId
             )
             // INV-16: a partial breakdown dropped rows with no usable rate, so its effective
-            // spend understates the truth. Unavailable (null) is the single fail-closed signal.
+            // spend understates the truth. Unavailable (null) is the single fail-closed signal;
+            // this repository is the only producer, and no consumer (budget card, Home, Runway,
+            // Weather) recomputes or substitutes gross spend for it.
             if (breakdown.isPartial) return null
             AdjustedSpendBreakdown(
                 personalSpend = breakdown.totalPersonalSpend,
@@ -402,7 +404,7 @@ class BudgetRepository @Inject constructor(
             )
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
-            Timber.w(e, "Failed to compute adjusted spend for budget ${budget.id}; monitor/UI fall back to gross spend")
+            Timber.w(e, "Failed to compute adjusted spend for budget ${budget.id}; effective spend is unavailable")
             null
         }
     }

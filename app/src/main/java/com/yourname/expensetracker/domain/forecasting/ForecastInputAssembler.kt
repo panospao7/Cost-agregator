@@ -29,6 +29,7 @@ import com.yourname.expensetracker.domain.model.RecurringPattern
 import com.yourname.expensetracker.domain.model.SavingsGoal
 import com.yourname.expensetracker.domain.logic.RecurrenceCalculator
 import com.yourname.expensetracker.domain.model.dashboard.BudgetStatusSnapshot
+import com.yourname.expensetracker.domain.model.dashboard.toBudgetStatusSnapshot
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.core.money.BucketDatePolicy
@@ -202,24 +203,7 @@ class ForecastInputAssembler @Inject constructor(
         }
 
     fun mapBudgetSnapshots(budgetStatuses: List<BudgetStatus>): List<BudgetStatusSnapshot> =
-        budgetStatuses.map { status ->
-            BudgetStatusSnapshot(
-                budgetCategoryId = status.budget.categoryId,
-                budgetAmount = status.effectiveLimit,
-                categoryName = status.category?.name,
-                spentAmount = status.spentAmount,
-                remainingAmount = status.remainingAmount,
-                percentUsed = status.percentUsed.toDouble(),
-                healthStatus = status.healthStatus,
-                periodStart = status.periodStart,
-                periodEnd = status.periodEnd,
-                isPartial = status.isPartial,
-                conversionWarning = status.conversionWarning,
-                currency = status.currency,
-                currencyAssumption = status.currencyAssumption,
-                percentKnown = status.percentKnown
-            )
-        }
+        budgetStatuses.map { status -> status.toBudgetStatusSnapshot() }
 
     fun mapSavingsGoals(goals: List<SavingsGoal>): List<SavingsGoal> = goals
 

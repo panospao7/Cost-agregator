@@ -2,7 +2,6 @@ package com.yourname.expensetracker.data.repository
 
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.analytics.PeriodComparisonWindows
-import com.yourname.expensetracker.domain.budget.effectiveHealthOrNull
 import com.yourname.expensetracker.domain.model.PlannedExpense
 import com.yourname.expensetracker.domain.model.PlannedExpensePriority
 import com.yourname.expensetracker.domain.model.RecurringPattern
@@ -14,6 +13,7 @@ import com.yourname.expensetracker.domain.model.dashboard.DashboardExpense
 import com.yourname.expensetracker.domain.model.dashboard.DashboardTransactionType
 import com.yourname.expensetracker.domain.model.dashboard.FinancialWeather
 import com.yourname.expensetracker.domain.model.dashboard.SpendingSummary
+import com.yourname.expensetracker.domain.model.dashboard.toBudgetStatusSnapshot
 import com.yourname.expensetracker.domain.util.TimeBoundaryTicker
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardAnalyticsRepository
@@ -82,26 +82,7 @@ class DashboardContractsAdapter @Inject constructor(
     //  dashboard snapshot so the UI can surface an "unreliable" state instead of a silent number.
     override fun observeBudgetStatuses(): Flow<List<BudgetStatusSnapshot>> =
         budgetRepository.getBudgetStatuses().map { statuses ->
-            statuses.map { status ->
-                BudgetStatusSnapshot(
-                    budgetCategoryId = status.budget.categoryId,
-                    budgetAmount = status.effectiveLimit,
-                    categoryName = status.category?.name,
-                    spentAmount = status.spentAmount,
-                    remainingAmount = status.remainingAmount,
-                    percentUsed = status.percentUsed.toDouble(),
-                    healthStatus = status.healthStatus,
-                    periodStart = status.periodStart,
-                    periodEnd = status.periodEnd,
-                    isPartial = status.isPartial,
-                    conversionWarning = status.conversionWarning,
-                    currency = status.currency,
-                    currencyAssumption = status.currencyAssumption,
-                    percentKnown = status.percentKnown,
-                    effectiveSpend = status.adjustedSpendBreakdown?.effectiveSpend,
-                    effectiveHealthStatus = status.effectiveHealthOrNull()
-                )
-            }
+            statuses.map { status -> status.toBudgetStatusSnapshot() }
         }
 
     override fun observePendingReviewCount(): Flow<Int> =
