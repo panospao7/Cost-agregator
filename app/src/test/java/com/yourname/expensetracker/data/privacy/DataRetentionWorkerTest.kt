@@ -15,6 +15,7 @@ import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
 import com.yourname.expensetracker.domain.diagnostics.EventOutcome
 import com.yourname.expensetracker.domain.privacy.PrivacySettings
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
+import com.yourname.expensetracker.domain.privacy.RawStorageMode
 import com.yourname.expensetracker.domain.privacy.RetentionPurgeFailure
 import com.yourname.expensetracker.domain.privacy.RetentionPurgeResult
 import com.yourname.expensetracker.domain.privacy.RetentionRegistry
@@ -471,6 +472,78 @@ class DataRetentionWorkerTest {
             timeProvider.now() - 30 * dayMs,
             cutoffs["pending_reviews.notificationText"]
         )
+    }
+
+    // ── P-08-1: correction text is blanked immediately outside STORE_RAW ─────
+
+    private fun correctionTextTargets(): Set<RetentionTarget> = setOf(
+        target("user_corrections.notificationText", 0),
+        target("pending_reviews.notificationText", 0)
+    )
+
+    private fun resetCheckpoints() {
+        purgeCalls.clear()
+        context.getSharedPreferences(DataRetentionWorker.PREFS_NAME, Context.MODE_PRIVATE)
+            .edit().clear().commit()
+    }
+
+    @Test
+    fun `P-08-1 user corrections notification text cutoff equals now in every non-raw mode`() = runTest {
+        val dayMs = 24L * 60 * 60 * 1000
+        every { retentionRegistry.allTargets() } returns correctionTextTargets()
+
+        for (mode in listOf(
+            RawStorageMode.STORE_REDACTED,
+            RawStorageMode.STORE_METADATA_ONLY,
+            RawStorageMode.DO_NOT_STORE
+        )) {
+            for ((days, pendingDays) in listOf(0 to 0, 7 to 7, 30 to 30, 90 to 30)) {
+                resetCheckpoints()
+                coEvery { privacySettingsRepository.getSettings() } returns PrivacySettings(
+                    rawNotificationStorageMode = mode,
+                    rawNotificationRetentionDays = days
+                )
+
+                assertEquals(Result.success(), buildWorker().doWork())
+
+                val cutoffs = purgeCalls.toMap()
+                assertEquals(
+                    "[mode=$mode, days=$days] corrections are blanked immediately",
+                    timeProvider.now(),
+                    cutoffs["user_corrections.notificationText"]
+                )
+                // Control: the pending-review route is unaffected by the storage mode.
+                assertEquals(
+                    "[mode=$mode, days=$days] pending reviews keep the retention cutoff",
+                    timeProvider.now() - pendingDays * dayMs,
+                    cutoffs["pending_reviews.notificationText"]
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `P-08-1 user corrections notification text cutoff under STORE_RAW is the min of retention days and 30`() = runTest {
+        val dayMs = 24L * 60 * 60 * 1000
+        every { retentionRegistry.allTargets() } returns correctionTextTargets()
+
+        // 0 days: boundary where the retention cutoff itself equals now.
+        // 90 days: boundary where the 30-day cap wins over the user window.
+        for ((days, effectiveDays) in listOf(0 to 0, 7 to 7, 30 to 30, 31 to 30, 90 to 30)) {
+            resetCheckpoints()
+            coEvery { privacySettingsRepository.getSettings() } returns PrivacySettings(
+                rawNotificationStorageMode = RawStorageMode.STORE_RAW,
+                rawNotificationRetentionDays = days
+            )
+
+            assertEquals(Result.success(), buildWorker().doWork())
+
+            assertEquals(
+                "[STORE_RAW, days=$days] normal retention cutoff",
+                timeProvider.now() - effectiveDays * dayMs,
+                purgeCalls.toMap()["user_corrections.notificationText"]
+            )
+        }
     }
 
     @Test

@@ -19,6 +19,9 @@ import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
 import com.yourname.expensetracker.domain.model.Result as ReviewResult
+import com.yourname.expensetracker.domain.privacy.PrivacySettings
+import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
+import com.yourname.expensetracker.domain.privacy.RawStorageMode
 import com.yourname.expensetracker.domain.provenance.PendingReviewPromotionResult
 import com.yourname.expensetracker.domain.provenance.PendingReviewSourceLinkPromoter
 import com.yourname.expensetracker.domain.provenance.SourceLinkPayload
@@ -337,7 +340,12 @@ class ReviewQueueRepositoryNestedRollbackTest {
             pendingReviewSourceLinkPromoter = promoter,
             transactionRunner = transactionRunner,
             transactionLifecycleEventWriter = lifecycleWriter,
-            postCommitActionRunner = postCommitRunner
+            postCommitActionRunner = postCommitRunner,
+            privacySettingsRepository = mockk<PrivacySettingsRepository>().also {
+                coEvery { it.getSettings() } returns PrivacySettings(
+                    rawNotificationStorageMode = RawStorageMode.STORE_RAW
+                )
+            }
         )
 
         receiptCoordinator = ReceiptLifecycleCoordinator(
