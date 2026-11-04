@@ -389,6 +389,9 @@ class BudgetRepository @Inject constructor(
                 periodEnd = periodEnd,
                 categoryId = budget.categoryId
             )
+            // INV-16: a partial breakdown dropped rows with no usable rate, so its effective
+            // spend understates the truth. Unavailable (null) is the single fail-closed signal.
+            if (breakdown.isPartial) return null
             AdjustedSpendBreakdown(
                 personalSpend = breakdown.totalPersonalSpend,
                 sharedSpend = breakdown.totalSharedSpend,

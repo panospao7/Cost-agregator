@@ -2,7 +2,8 @@ package com.yourname.expensetracker.ui.screens.budget
 
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.budget.BudgetStatus
-import com.yourname.expensetracker.domain.budget.budgetHealthForPercent
+import com.yourname.expensetracker.domain.budget.effectiveBudgetHealth
+import com.yourname.expensetracker.domain.budget.isEffectivelyOverBudget
 
 /**
  * Which text the remaining / over-budget slot of a budget card shows.
@@ -50,9 +51,6 @@ internal data class BudgetCardDisplay(
     val remainingSlot: BudgetCardRemainingSlot
 ) {
     companion object {
-        /** Half a minor unit (0.005): the smallest excess that still displays as a non-zero amount. */
-        private const val OVER_BUDGET_MIN_EXCESS = 0.005
-
         fun from(status: BudgetStatus): BudgetCardDisplay {
             val breakdown = status.adjustedSpendBreakdown
                 ?: return BudgetCardDisplay(
@@ -69,9 +67,8 @@ internal data class BudgetCardDisplay(
             // repository percent is gross-based, so gross 120 / effective 90 / limit 100 must
             // not read "over budget" next to a negative amount. Over means at least half a
             // minor unit above the limit, so the amount never rounds to "0.00 over".
-            val over = status.percentKnown &&
-                status.effectiveLimit > 0.0 &&
-                spend - status.effectiveLimit >= OVER_BUDGET_MIN_EXCESS
+            // F6: a zero or negative (rollover deficit) limit with spend above it is over budget too.
+            val over = isEffectivelyOverBudget(spend, status.effectiveLimit, status.percentKnown)
             // The bar and colour must agree with the text slot, so when the percent is known
             // and the limit positive they come from effective spend over the effective limit,
             // using the one shared threshold rule and this budget's own alert thresholds.
@@ -87,15 +84,15 @@ internal data class BudgetCardDisplay(
                 remaining = status.effectiveLimit - spend,
                 overBudgetAmount = if (over) spend - status.effectiveLimit else null,
                 percentUsed = effectivePercent ?: status.percentUsed,
-                healthStatus = if (effectivePercent != null) {
-                    budgetHealthForPercent(
-                        effectivePercent,
-                        status.budget.notifyAtWarning,
-                        status.budget.notifyAtCritical
-                    )
-                } else {
-                    status.healthStatus
-                },
+                // Same derivation the Home path uses (domain effectiveBudgetHealth).
+                healthStatus = effectiveBudgetHealth(
+                    effectiveSpend = spend,
+                    effectiveLimit = status.effectiveLimit,
+                    percentKnown = status.percentKnown,
+                    notifyAtWarning = status.budget.notifyAtWarning,
+                    notifyAtCritical = status.budget.notifyAtCritical,
+                    fallback = status.healthStatus
+                ),
                 remainingSlot = when {
                     !status.percentKnown -> BudgetCardRemainingSlot.HIDDEN
                     over -> BudgetCardRemainingSlot.OVER_BUDGET

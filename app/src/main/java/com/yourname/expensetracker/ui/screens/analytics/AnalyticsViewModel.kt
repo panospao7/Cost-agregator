@@ -628,7 +628,8 @@ class AnalyticsViewModel @Inject constructor(
             .sortedWith(compareBy<AnalyticsCategoryBreakdown> { it.isUnavailable }.thenByDescending { it.moneyTotal.amount })
 
         // Merchant breakdown (Still manual for now, or move to Repo later)
-        val purchaseSnapshots = purchases.filter { !it.isNotMine }.map { it.toExpenseSnapshot() }
+        // F3: neutralised (flagged) rows must not re-enter the merchant union as "0.00, 1 transaction".
+        val purchaseSnapshots = purchases.filter { !it.isNotMine && it.countsAsSpending }.map { it.toExpenseSnapshot() }
         val merchantSnapshots = (currentExpenseSnapshots + purchaseSnapshots.filter { p -> currentExpenseSnapshots.none { it.id == p.id } })
         val merchantBreakdown = buildMerchantBreakdown(
             merchantSnapshots,

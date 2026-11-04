@@ -79,6 +79,52 @@ fun budgetHealthForPercent(
     else -> BudgetHealthStatus.ON_TRACK
 }
 
+/** Half a minor unit (0.005): the smallest excess over a limit that still displays as a non-zero amount. */
+const val BUDGET_OVER_MIN_EXCESS: Double = 0.005
+
+/**
+ * True when [effectiveSpend] is at least half a minor unit above [effectiveLimit] and the limit is
+ * known. Also covers a zero or negative (rollover deficit) limit, where any spend is over budget.
+ */
+fun isEffectivelyOverBudget(
+    effectiveSpend: Double,
+    effectiveLimit: Double,
+    percentKnown: Boolean
+): Boolean = percentKnown && effectiveSpend - effectiveLimit >= BUDGET_OVER_MIN_EXCESS
+
+/**
+ * The single effective-spend health derivation shared by the budget card and the Home path.
+ * Positive limit: [budgetHealthForPercent] on effective spend / effective limit. Limit at or below
+ * zero: [BudgetHealthStatus.EXCEEDED] when spend is over it (see [isEffectivelyOverBudget]).
+ * Otherwise (percent unknown, or zero limit without spend) [fallback] is returned.
+ */
+fun effectiveBudgetHealth(
+    effectiveSpend: Double,
+    effectiveLimit: Double,
+    percentKnown: Boolean,
+    notifyAtWarning: Float,
+    notifyAtCritical: Float,
+    fallback: BudgetHealthStatus
+): BudgetHealthStatus = when {
+    percentKnown && effectiveLimit > 0.0 ->
+        budgetHealthForPercent((effectiveSpend / effectiveLimit).toFloat(), notifyAtWarning, notifyAtCritical)
+    isEffectivelyOverBudget(effectiveSpend, effectiveLimit, percentKnown) -> BudgetHealthStatus.EXCEEDED
+    else -> fallback
+}
+
+/** Effective-spend health of this status; null iff effective spend is unavailable (INV-16). */
+fun BudgetStatus.effectiveHealthOrNull(): BudgetHealthStatus? =
+    adjustedSpendBreakdown?.let {
+        effectiveBudgetHealth(
+            effectiveSpend = it.effectiveSpend,
+            effectiveLimit = effectiveLimit,
+            percentKnown = percentKnown,
+            notifyAtWarning = budget.notifyAtWarning,
+            notifyAtCritical = budget.notifyAtCritical,
+            fallback = healthStatus
+        )
+    }
+
 data class BudgetSuggestion(
     val categoryId: Long?,
     val categoryName: String,
