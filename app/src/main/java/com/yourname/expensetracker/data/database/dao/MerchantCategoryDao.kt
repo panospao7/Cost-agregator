@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Upsert
 import com.yourname.expensetracker.data.database.entity.MerchantCategory
 
 // NEXT STEPS (ARCH-E13): Categorization migration — DAO-level changes
@@ -72,6 +73,15 @@ interface MerchantCategoryDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertAll(merchantCategories: List<MerchantCategory>): List<Long>
     
+    /**
+     * DR-04: genuine user category correction. Replaces the row with the same
+     * merchantPattern (primary key) so a seeded or auto-learned mapping cannot
+     * keep overriding what the user chose. Only the repository-level
+     * upsertUserCorrection may call this; seeding and auto-learning stay IGNORE.
+     */
+    @Upsert
+    suspend fun upsertUserCorrection(merchantCategory: MerchantCategory)
+
     @Query("SELECT * FROM merchant_categories")
     suspend fun getAll(): List<MerchantCategory>
 

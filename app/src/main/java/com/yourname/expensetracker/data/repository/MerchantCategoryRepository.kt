@@ -34,6 +34,16 @@ class MerchantCategoryRepository @Inject constructor(
     }
 
     /**
+     * DR-04: records a genuine user category correction. Unlike [insert] (IGNORE) this
+     * replaces an existing seeded or auto-learned row with the same merchantPattern.
+     */
+    suspend fun upsertUserCorrection(mapping: MerchantCategory) {
+        writeBarrier.checkWritesAllowed("MerchantCategoryRepository.upsertUserCorrection")
+        dao.upsertUserCorrection(mapping)
+        categorizationEngineProvider.get().invalidateAllCaches()
+    }
+
+    /**
      * Learns a merchant -> category mapping.
      * Uses Provider to break circular dependency with CategorizationEngine.
      */
@@ -41,6 +51,11 @@ class MerchantCategoryRepository @Inject constructor(
         categorizationEngineProvider.get().learnMerchantCategory(merchantName, categoryId)
     }
     
+    /** DR-04: user category correction (replaces an existing mapping); see CategorizationEngine. */
+    suspend fun correctPattern(merchantName: String, categoryId: Long) {
+        categorizationEngineProvider.get().correctMerchantCategory(merchantName, categoryId)
+    }
+
     suspend fun getCategoryForMerchant(merchantName: String): MerchantCategory? {
         val pattern = categorizationEngineProvider.get().normalize(merchantName)
         return dao.getCategoryForMerchant(pattern)

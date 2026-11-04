@@ -121,6 +121,63 @@ class MerchantCategoryDaoTest {
         assertEquals(catId1, result!!.categoryId) // "a_pattern" < "z_pattern" alphabetically
     }
 
+    // ---- DR-04: user correction replaces; seeding and auto-learning never overwrite ----
+
+    private suspend fun twoCategories(): Pair<Long, Long> {
+        val groceries = database.categoryDao().insert(Category(id = 0, name = "Groceries", icon = "G", color = "#43A047"))
+        val dining = database.categoryDao().insert(Category(id = 0, name = "Dining", icon = "D", color = "#E53935"))
+        return groceries to dining
+    }
+
+    @Suppress("DEPRECATION")
+    @Test
+    fun DR04_upsertUserCorrection_replacesSeededRow_andDictionaryReturnsCorrection() = runTest {
+        val (groceries, dining) = twoCategories()
+        dao.insert(MerchantCategory(merchantPattern = "lidl", categoryId = groceries, normalizedCanonicalName = "lidl"))
+
+        dao.upsertUserCorrection(MerchantCategory(merchantPattern = "lidl", categoryId = dining, normalizedCanonicalName = "lidl"))
+
+        assertEquals(dining, dao.getCategoryForMerchant("lidl")!!.categoryId)
+        assertEquals(dining, dao.getCategoryByNormalizedCanonical("lidl")!!.categoryId)
+        assertEquals(1, dao.getCount())
+    }
+
+    @Suppress("DEPRECATION")
+    @Test
+    fun DR04_nonVacuity_autoLearnInsertOnSameKey_leavesSeededRow() = runTest {
+        val (groceries, dining) = twoCategories()
+        dao.insert(MerchantCategory(merchantPattern = "lidl", categoryId = groceries, normalizedCanonicalName = "lidl"))
+
+        val ignored = dao.insert(MerchantCategory(merchantPattern = "lidl", categoryId = dining, normalizedCanonicalName = "lidl"))
+
+        assertEquals(-1L, ignored)
+        assertEquals(groceries, dao.getCategoryForMerchant("lidl")!!.categoryId)
+    }
+
+    @Suppress("DEPRECATION")
+    @Test
+    fun DR04_correctionThenInsertOrInsertAll_ofOtherCategory_leavesCorrection() = runTest {
+        val (groceries, dining) = twoCategories()
+        dao.upsertUserCorrection(MerchantCategory(merchantPattern = "lidl", categoryId = dining, normalizedCanonicalName = "lidl"))
+
+        dao.insert(MerchantCategory(merchantPattern = "lidl", categoryId = groceries, normalizedCanonicalName = "lidl"))
+        dao.insertAll(listOf(MerchantCategory(merchantPattern = "lidl", categoryId = groceries, normalizedCanonicalName = "lidl")))
+
+        assertEquals(dining, dao.getCategoryForMerchant("lidl")!!.categoryId)
+        assertEquals(1, dao.getCount())
+    }
+
+    @Test
+    fun DR04_upsertUserCorrection_noExistingRow_insertsAndLeavesOtherKeysUntouched() = runTest {
+        val (groceries, dining) = twoCategories()
+        dao.upsertUserCorrection(MerchantCategory(merchantPattern = "sklavenitis", categoryId = groceries, normalizedCanonicalName = "sklavenitis"))
+        dao.upsertUserCorrection(MerchantCategory(merchantPattern = "lidl", categoryId = dining, normalizedCanonicalName = "lidl"))
+
+        assertEquals(groceries, dao.getCategoryForMerchant("sklavenitis")!!.categoryId)
+        assertEquals(dining, dao.getCategoryForMerchant("lidl")!!.categoryId)
+        assertEquals(2, dao.getCount())
+    }
+
     @Test
     fun getCategoryByNormalizedCanonical_noMatch_returnsNull() = runTest {
         val result = dao.getCategoryByNormalizedCanonical("nonexistent")

@@ -631,7 +631,8 @@ class ExpenseRepository @Inject constructor(
         )
         // The merchant learning and user correction logic can remain here (non-lifecycle side effects)
         if (newCategoryId != null) {
-            merchantCategoryRepository.learnPattern(expense.merchant, newCategoryId)
+            // DR-04: genuine user correction replaces any seeded/auto-learned mapping.
+            merchantCategoryRepository.correctPattern(expense.merchant, newCategoryId)
         }
     }
 
@@ -659,7 +660,8 @@ class ExpenseRepository @Inject constructor(
                 merchant = merchant, newCategoryId = newCategoryId, source = "USER_EDIT"
             )
             // Side effects (non-lifecycle)
-            merchantCategoryRepository.learnPattern(merchant, newCategoryId)
+            // DR-04: one correction for the merchant key (not per row); replaces any seeded/auto-learned mapping.
+            merchantCategoryRepository.correctPattern(merchant, newCategoryId)
 
             // Record as a bulk correction for learning
             val correction = UserCorrection(

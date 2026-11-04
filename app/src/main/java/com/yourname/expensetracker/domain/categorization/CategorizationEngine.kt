@@ -84,6 +84,9 @@ class CategorizationEngine @Inject constructor(
     private val traceMutex = Mutex()
 
     companion object {
+        /** DR-04: ranking value for user-corrected rows; far above any seeded or learned timesUsed. */
+        const val USER_CORRECTION_TIMES_USED = 1_000_000
+
         private val STOP_WORDS = setOf("the", "and", "for", "inc", "ltd", "com")
         
         const val CONFIDENCE_EXACT = 0.98
@@ -444,7 +447,13 @@ class CategorizationEngine @Inject constructor(
             val now = timeProvider.now()
             if (cachedMappings == null || now - lastCacheTime > CACHE_EXPIRY_MS) {
                 val all = merchantCategoryRepository.getAll()
-                cachedMappings = all.sortedByDescending { it.merchantPattern.length }
+                // Longest pattern first; on equal length the highest confidence, then timesUsed,
+                // so a user correction beats a same-name row that differs only by case.
+                cachedMappings = all.sortedWith(
+                    compareByDescending<MerchantCategory> { it.merchantPattern.length }
+                        .thenByDescending { it.confidence }
+                        .thenByDescending { it.timesUsed }
+                )
                 cachedPatternsSet = all.map { it.merchantPattern.lowercase() }.toSet()
                 
                 // Build category ID -> name map from CategoryRepository
@@ -500,6 +509,34 @@ class CategorizationEngine @Inject constructor(
                 )
             }
         }
+    }
+
+    /**
+     * DR-04: genuine user category correction. Same key derivation as
+     * [learnMerchantCategory] (merchantNormalizer canonical name), but the mapping
+     * REPLACES an existing seeded or auto-learned row instead of being ignored.
+     * Only the user edit paths in ExpenseRepository may call this.
+     */
+    suspend fun correctMerchantCategory(merchantName: String, categoryId: Long) {
+        val base = createMerchantCategoryMapping(merchantName, categoryId)
+        // merchantPattern is a case-sensitive key, so a differently cased seeded row (for
+        // example "Lidl") can share the canonical name and sort ahead of this correction.
+        // Store the correction with maximum confidence and a timesUsed that is above every
+        // other row of the same canonical name, so it wins every lookup. Nothing displays
+        // timesUsed; it is only a ranking tie-breaker.
+        val canonical = base.normalizedCanonicalName
+        val rival = if (canonical.isNullOrBlank()) null else merchantCategoryRepository.getCategoryByNormalizedCanonical(canonical)
+        val timesUsed = if (rival != null && rival.merchantPattern != base.merchantPattern) {
+            maxOf(USER_CORRECTION_TIMES_USED.toLong(), rival.timesUsed.toLong() + 1L)
+                .coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+        } else {
+            USER_CORRECTION_TIMES_USED
+        }
+        val mapping = base.copy(confidence = 1.0f, timesUsed = timesUsed)
+        merchantCategoryRepository.upsertUserCorrection(mapping)
+        val categoryName = getCategoryMap()[categoryId] ?: "unknown"
+        traceDecision(merchantName, categoryName, "correctMerchantCategory")
+        Timber.d("Recorded user merchant category correction")
     }
 
     suspend fun createMerchantCategoryMapping(merchantName: String, categoryId: Long): MerchantCategory {
