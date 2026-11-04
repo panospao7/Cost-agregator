@@ -792,6 +792,76 @@ class MonthlySavingsSweepUseCaseTest {
         }
     }
 
+    private fun sweepSnapshot(
+        id: Long,
+        amount: Double,
+        type: com.yourname.expensetracker.domain.model.DomainTransactionType
+    ) = com.yourname.expensetracker.domain.model.ExpenseSnapshot(
+        id = id,
+        amount = amount,
+        effectiveAmount = amount,
+        currency = "EUR",
+        merchant = "Synthetic",
+        merchantKey = null,
+        transactionType = type,
+        date = withinWindowNow - dayMs,
+        categoryId = null,
+        isNotMine = false,
+        transferDirection = null,
+        notes = null
+    )
+
+    private fun stubNormalizedRows(rows: List<com.yourname.expensetracker.domain.model.ExpenseSnapshot>) {
+        coEvery { analyticsCurrencyNormalizer.normalizeSnapshots(any(), any()) } returns AnalyticsNormalizationResult(
+            homeCurrency = "EUR",
+            normalizedExpenses = rows.map {
+                com.yourname.expensetracker.domain.analytics.NormalizedExpenseSnapshot(
+                    it, it.currency, it.effectiveAmount, it.effectiveAmount
+                )
+            },
+            includedExpenses = rows,
+            warnings = emptyList(),
+            latestRateTimestamp = null,
+            totalInputCount = rows.size
+        )
+    }
+
+    @Test
+    fun `withdrawal is excluded from sweep spent to date while purchases count`() = runTest {
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(budgetStatus(1L, null, 1000.0, 400.0)))
+        val spentSlot = io.mockk.slot<Double>()
+        coEvery { monteCarloSimulator.simulate(capture(spentSlot), any(), any(), any(), any()) } returns
+            monteCarlo(p50 = 100.0, p75 = 120.0, confidence = 0.9)
+        val purchase = com.yourname.expensetracker.domain.model.DomainTransactionType.PURCHASE
+        val withdrawal = com.yourname.expensetracker.domain.model.DomainTransactionType.WITHDRAWAL
+        stubNormalizedRows(
+            listOf(
+                sweepSnapshot(1L, 150.0, purchase),
+                sweepSnapshot(2L, 250.0, purchase),
+                sweepSnapshot(3L, 100.0, withdrawal)
+            )
+        )
+
+        useCase.computeSweepRecommendationResult()
+
+        assertApproxEquals(400.0, spentSlot.captured, 0.001)
+    }
+
+    @Test
+    fun `withdrawal alone yields zero sweep spent to date not the withdrawn amount`() = runTest {
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(budgetStatus(1L, null, 1000.0, 0.0)))
+        val spentSlot = io.mockk.slot<Double>()
+        coEvery { monteCarloSimulator.simulate(capture(spentSlot), any(), any(), any(), any()) } returns
+            monteCarlo(p50 = 100.0, p75 = 120.0, confidence = 0.9)
+        stubNormalizedRows(
+            listOf(sweepSnapshot(1L, 100.0, com.yourname.expensetracker.domain.model.DomainTransactionType.WITHDRAWAL))
+        )
+
+        useCase.computeSweepRecommendationResult()
+
+        assertApproxEquals(0.0, spentSlot.captured, 0.001)
+    }
+
     private fun budgetStatus(
         budgetId: Long,
         categoryId: Long?,
