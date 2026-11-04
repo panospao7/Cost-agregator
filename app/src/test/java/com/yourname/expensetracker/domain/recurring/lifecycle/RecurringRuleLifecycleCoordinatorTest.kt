@@ -131,7 +131,8 @@ class RecurringRuleLifecycleCoordinatorTest {
             plannedExpenseDao = plannedDao,
             transactionRunner = NoopDomainTransactionRunner,
             eventWriter = eventWriter,
-            installmentEligibility = installmentEligibility
+            installmentEligibility = installmentEligibility,
+            ruleCoordinator = dagger.Lazy { coordinator }
         )
 
         val projectionService = com.yourname.expensetracker.domain.recurring.RecurringPlanProjectionService(

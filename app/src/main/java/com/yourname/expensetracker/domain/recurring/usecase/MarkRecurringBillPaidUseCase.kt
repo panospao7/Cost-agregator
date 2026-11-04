@@ -5,8 +5,8 @@ import com.yourname.expensetracker.data.database.entity.RecurringOccurrence
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.ManualRecurringExpenseRepository
 import com.yourname.expensetracker.domain.logic.RecurrenceCalculator
+import com.yourname.expensetracker.domain.recurring.RecurringNextDatePolicy
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
-import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringOccurrenceStatus
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringRuleLifecycleCoordinator
 import com.yourname.expensetracker.domain.recurring.lifecycle.SpecificLinkResult
 import com.yourname.expensetracker.domain.sideeffect.PostCommitActionRunner
@@ -241,7 +241,7 @@ class MarkRecurringBillPaidUseCase @Inject constructor(
     }
 
     private fun isOpen(occurrence: RecurringOccurrence): Boolean =
-        occurrence.status == RecurringOccurrenceStatus.PLANNED.dbValue && occurrence.linkedExpenseId == null
+        RecurringNextDatePolicy.isOpen(occurrence)
 
     private val occurrenceOrder = compareBy<RecurringOccurrence>({ it.dueDate }, { it.id })
 
@@ -276,21 +276,18 @@ class MarkRecurringBillPaidUseCase @Inject constructor(
      * `nextDate` is strictly increasing or unchanged. Returns true when it actually moved.
      */
     private suspend fun advanceNextDate(rule: ManualRecurringExpense): Boolean {
-        val threshold = TimePeriodUtils.getEndOfDay(rule.nextDate) // exclusive end of the handled day
+        val threshold = RecurringNextDatePolicy.threshold(rule.nextDate) // exclusive end of the handled day
         suspend fun nextOpen(): RecurringOccurrence? =
-            occurrenceCoordinator.getOccurrences(rule.id)
-                .filter { isOpen(it) && it.dueDate >= threshold }
-                .minWithOrNull(occurrenceOrder)
+            RecurringNextDatePolicy.earliestOpenFrom(occurrenceCoordinator.getOccurrences(rule.id), threshold)
 
         var next = nextOpen()
         if (next == null) {
             ruleCoordinator.topUpHorizon(rule.id, timeProvider.now())
             next = nextOpen()
         }
-        val candidate = next?.dueDate ?: RecurrenceCalculator
-            .calculateNextDate(rule.nextDate, rule.frequency)
-            .takeIf { it >= threshold }
-        if (candidate == null || candidate <= rule.nextDate) return false
+        // The shared policy already refuses a candidate at or before the current nextDate.
+        val candidate = RecurringNextDatePolicy.candidate(next, rule.nextDate, rule.frequency)
+            ?: return false
         ruleCoordinator.advanceNextDate(rule.id, candidate)
         return true
     }

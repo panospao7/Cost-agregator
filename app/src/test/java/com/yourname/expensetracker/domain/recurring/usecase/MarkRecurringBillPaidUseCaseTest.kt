@@ -447,6 +447,37 @@ class MarkRecurringBillPaidUseCaseTest {
         assertEquals(2, createRequests.size)
     }
 
+    // The two tests below pin only the use case's seen-nextDate guard (mocked state). The end-to-end
+    // proof that a real auto-link advances the rule so mark-paid is then AlreadyHandled lives in
+    // RecurringHorizonAndLinkR21Test.
+    @Test
+    fun `mark paid with a seen next date that changed after a concurrent advance is AlreadyHandled and creates nothing`() =
+        runTest {
+            // The automatic link paid the occurrence due on the seen day and moved the rule on.
+            replace(1L) { it.copy(status = "PAID", linkedExpenseId = 900L) }
+            ruleNextDate = d2
+
+            val result = useCase.invoke(RULE_ID, d1)
+
+            assertEquals(MarkPaidResult.AlreadyHandled, result)
+            assertTrue(createRequests.isEmpty())
+            assertTrue(advanceCalls.isEmpty())
+            assertEquals(d2, ruleNextDate)
+            assertEquals("PAID", store.first { it.id == 1L }.status)
+            assertEquals(900L, store.first { it.id == 1L }.linkedExpenseId)
+        }
+
+    @Test
+    fun `skip with a seen next date that changed after a concurrent advance is AlreadyHandled`() = runTest {
+        replace(1L) { it.copy(status = "PAID", linkedExpenseId = 900L) }
+        ruleNextDate = d2
+
+        assertEquals(MarkPaidResult.AlreadyHandled, useCase.skip(RULE_ID, d1))
+
+        assertTrue(advanceCalls.isEmpty())
+        assertEquals("PAID", store.first { it.id == 1L }.status)
+    }
+
     @Test
     fun `created expense runs the planned post commit batch once after the link`() = runTest {
         val result = useCase.invoke(RULE_ID, d1)

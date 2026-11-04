@@ -72,6 +72,7 @@ class RecurringPaymentMatchE2ETest : GoldenTestBase() {
     val utcZone = PinnedUtcTimeZoneRule()
 
     private lateinit var recurringCoordinator: RecurringLifecycleCoordinator
+    private lateinit var ruleCoordinator: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringRuleLifecycleCoordinator
     private lateinit var multiCurrencyRepository: MultiCurrencyRepository
 
     private val verifier = GoldenScenarioVerifier(
@@ -126,7 +127,36 @@ class RecurringPaymentMatchE2ETest : GoldenTestBase() {
             transactionRunner = RoomDomainTransactionRunner(database, timeProvider),
             // Relaxed mock: link lifecycle events are NOT asserted by this test.
             eventWriter = mockk(relaxed = true),
-            installmentEligibility = installmentEligibility
+            installmentEligibility = installmentEligibility,
+            // DR-03: the real rule coordinator, so the auto-link advance is exercised end to end.
+            ruleCoordinator = dagger.Lazy { ruleCoordinator }
+        )
+        val ruleEventWriter = RoomRecurringLifecycleEventWriter(
+            dao = database.recurringLifecycleEventDao(),
+            timeProvider = timeProvider,
+            writeBarrier = writeBarrier
+        )
+        val projectionService = com.yourname.expensetracker.domain.recurring.RecurringPlanProjectionService(
+            plannedExpenseDao = database.plannedExpenseDao(),
+            occurrenceDao = database.recurringOccurrenceDao(),
+            writeBarrier = writeBarrier
+        )
+        ruleCoordinator = com.yourname.expensetracker.domain.recurring.lifecycle.RecurringRuleLifecycleCoordinator(
+            database = database,
+            writeBarrier = writeBarrier,
+            timeProvider = timeProvider,
+            manualRecurringExpenseDao = database.manualRecurringExpenseDao(),
+            occurrenceDao = database.recurringOccurrenceDao(),
+            reminderDeliveryDao = database.recurringReminderDeliveryDao(),
+            plannedExpenseDao = database.plannedExpenseDao(),
+            lifecycleEventDao = database.recurringLifecycleEventDao(),
+            lifecycleCoordinator = dagger.Lazy { recurringCoordinator },
+            expander = RecurringOccurrenceExpander(),
+            resolver = OccurrenceConflictResolver(installmentEligibility),
+            materializer = materializer,
+            expenseDao = database.expenseDao(),
+            eventWriter = ruleEventWriter,
+            planProjectionService = dagger.Lazy { projectionService }
         )
 
         // Multi-currency repository for dashboard verification
@@ -242,6 +272,18 @@ class RecurringPaymentMatchE2ETest : GoldenTestBase() {
         assertEquals("CANCELLED", aprilDeliveries.single().status)
         assertEquals("expense_linked:$actualExpenseId", aprilDeliveries.single().failureReason)
         assertEquals(listOf("CANCELLED", "SCHEDULED", "SCHEDULED"), deliveriesAfter.map { it.status })
+
+        // DR-03: the claimed auto-link moved the rule on to the next open occurrence (May 16),
+        // writing exactly one NEXT_DATE_ADVANCED event.
+        val mayOccurrence = occurrencesAfter.sortedBy { it.dueDate }[1]
+        assertEquals(
+            mayOccurrence.dueDate,
+            database.manualRecurringExpenseDao().getById(ruleId)!!.nextDate
+        )
+        assertEquals(
+            1,
+            database.recurringLifecycleEventDao().getEventsByType("NEXT_DATE_ADVANCED").size
+        )
 
         // ── Dashboard total (should count actual payment once) ──
         val periodStart = fixedNow - 86400000L
