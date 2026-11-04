@@ -143,8 +143,7 @@ class AdvancedAnalyticsDashboard @Inject constructor(
         
         for (expense in expenses) {
             when (expense.transactionType) {
-                DomainTransactionType.PURCHASE,
-                DomainTransactionType.WITHDRAWAL -> totalSpent += expense.effectiveAmount
+                DomainTransactionType.PURCHASE -> totalSpent += expense.effectiveAmount
                 DomainTransactionType.DEPOSIT -> totalIncome += expense.effectiveAmount
                 else -> Unit
             }
@@ -268,8 +267,7 @@ class AdvancedAnalyticsDashboard @Inject constructor(
 
             for (expense in expenses) {
                 when (expense.transactionType) {
-                    DomainTransactionType.PURCHASE,
-                    DomainTransactionType.WITHDRAWAL -> spending += expense.effectiveAmount
+                    DomainTransactionType.PURCHASE -> spending += expense.effectiveAmount
                     DomainTransactionType.DEPOSIT -> income += expense.effectiveAmount
                     else -> Unit
                 }

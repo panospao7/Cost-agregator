@@ -16,7 +16,6 @@ import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
 import com.yourname.expensetracker.domain.core.money.MoneyAggregateBuilder
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
-import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.CoroutineDispatcher
@@ -489,9 +488,7 @@ class BudgetForecastingEngine @Inject constructor(
         }
 
         val spendingExpenses = filtered.filter {
-            (it.transactionType == DomainTransactionType.PURCHASE ||
-             it.transactionType == DomainTransactionType.WITHDRAWAL) &&
-            !it.isNotMine
+            it.transactionType.isSpending && !it.isNotMine
         }
 
         val monthlyTotals: List<MonthlySpendingTotal> = spendingExpenses
@@ -668,8 +665,9 @@ class BudgetForecastingEngine @Inject constructor(
             else -> 0.05 // Very comfortable
         }
         
-        // Adjust by confidence
-        return probability * confidence
+        // BL-07: low confidence pulls the estimate toward the uninformative 0.5 prior
+        // instead of toward zero (low confidence must never read as "safe").
+        return 0.5 + (probability - 0.5) * confidence
     }
     
     // RP-09 (P6-007): the previous getSpentAmount() (AnalyticsCurrencyNormalizer at

@@ -16,7 +16,6 @@ import com.yourname.expensetracker.domain.core.money.MoneyAggregateBuilder
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.forecasting.MonteCarloSpendingSimulator
-import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.SavingsGoal
 import com.yourname.expensetracker.domain.savings.SavingsGoalRepository
 import com.yourname.expensetracker.domain.savings.SavingsGoalCurrencyPolicy
@@ -311,7 +310,7 @@ class MonthlySavingsSweepUseCase @Inject constructor(
         quality.requireComplete(SavingsInputStage.CURRENT_SPENDING, normalized)
         // SAFE: normalized via AnalyticsCurrencyNormalizer at line 220
         return normalized.includedExpenses
-            .filter { it.transactionType.isSpendingType() && !it.isNotMine }
+            .filter { it.transactionType.isSpending && !it.isNotMine }
             .let { spending ->
                 normalized.completeMoneyAggregateForRows(spending, homeCurrency).displayAmount
             }
@@ -647,21 +646,6 @@ data class GoalAllocation(
     fun getRemainingAfterAllocation(): Double {
         return (targetAmount - currentProgress - suggestedAllocation).coerceAtLeast(0.0)
     }
-}
-
-/**
- * Extension to check if transaction type is a spending type (data-layer TransactionType).
- */
-private fun com.yourname.expensetracker.data.database.entity.TransactionType.isSpendingType(): Boolean {
-    return this == com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE ||
-           this == com.yourname.expensetracker.data.database.entity.TransactionType.WITHDRAWAL
-}
-
-/**
- * Extension to check if transaction type is a spending type (domain-layer DomainTransactionType).
- */
-private fun DomainTransactionType.isSpendingType(): Boolean {
-    return this == DomainTransactionType.PURCHASE || this == DomainTransactionType.WITHDRAWAL
 }
 
 /**
