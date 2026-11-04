@@ -20,6 +20,11 @@ import com.yourname.expensetracker.data.database.entity.RecurringOccurrence
 import com.yourname.expensetracker.data.database.entity.RecurringReminderDelivery
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.InstallmentEntryLinkReaderImpl
+import com.yourname.expensetracker.data.repository.ManualRecurringExpenseRepository
+import com.yourname.expensetracker.domain.recurring.usecase.MarkPaidResult
+import com.yourname.expensetracker.domain.recurring.usecase.MarkRecurringBillPaidUseCase
+import com.yourname.expensetracker.domain.sideeffect.PostCommitActionRunner
+import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.recurring.OccurrenceConflictResolver
 import com.yourname.expensetracker.domain.recurring.RecurringInstallmentEligibility
@@ -881,14 +886,100 @@ class RecurringHorizonAndLinkR21Test {
         }
 
     @Test
-    fun autoLinkWithNoLaterOccurrenceFallsBackToTheRecurrenceCalculatorNextMonth() =
+    fun autoLinkWithNoLaterOccurrenceTopsUpTheHorizonAndAdvancesToTheGeneratedNextMonth() =
         runTest(timeout = 60.seconds) {
+            // Clock is Sep 19 2026, so the 12-month horizon covers the slots after Nov 5.
             seedRule(nextDate = nov5)
             seedOccurrence(due = nov5)
             val expenseId = seedExpense(nov5 + HALF_DAY / 2)
 
             assertTrue(lifecycle.linkExpenseToOccurrence(expenseId))
 
+            // The top-up created the Dec 5 occurrence; the advance used it, not the calculator.
+            val decOccurrence = occurrencesOf().single { it.dueDate == dec5 }
+            assertEquals("PLANNED", decOccurrence.status)
+            assertNull(decOccurrence.linkedExpenseId)
+            assertEquals(dec5, ruleDao.getById(1L)!!.nextDate)
+            assertEquals(1, advancedEvents().size)
+        }
+
+    @Test
+    fun autoLinkWhenTheTopUpCreatesNothingFallsBackToTheRecurrenceCalculatorNextMonth() =
+        runTest(timeout = 60.seconds) {
+            // The next slot (Oct 5 2027) is beyond the horizon end (Sep 19 2027), so the top-up
+            // inserts nothing and only the calculator can supply the next date.
+            val sep5 = dayOf(2027, 9, 5)
+            val oct5 = dayOf(2027, 10, 5)
+            seedRule(nextDate = sep5)
+            val sepId = seedOccurrence(due = sep5)
+            val expenseId = seedExpense(sep5 + HALF_DAY / 2)
+
+            assertTrue(lifecycle.linkExpenseToOccurrence(expenseId))
+
+            assertEquals("PAID", occurrenceDao.getById(sepId)!!.status)
+            assertEquals(listOf(sepId), occurrencesOf().map { it.id })
+            assertEquals(oct5, ruleDao.getById(1L)!!.nextDate)
+            assertEquals(1, advancedEvents().size)
+        }
+
+    @Test
+    fun autoLinkOfAMonthEndOccurrenceKeepsTheAnchorDayAcrossAClampedFebruary() =
+        runTest(timeout = 60.seconds) {
+            // 2027 is not a leap year. Jan 31 -> Feb 28 -> Mar 31 (the calculator alone would say Mar 28).
+            val jan31 = dayOf(2027, 1, 31)
+            val feb28 = dayOf(2027, 2, 28)
+            val mar31 = dayOf(2027, 3, 31)
+            clockNow = jan31 + HALF_DAY
+            seedRule(nextDate = jan31)
+            val janId = seedOccurrence(due = jan31)
+            val janExpense = seedExpense(jan31 + HALF_DAY / 2)
+
+            assertTrue(lifecycle.linkExpenseToOccurrence(janExpense))
+
+            assertEquals("PAID", occurrenceDao.getById(janId)!!.status)
+            assertEquals(feb28, ruleDao.getById(1L)!!.nextDate)
+            val febOccurrence = occurrencesOf().single { it.dueDate == feb28 }
+            assertEquals("PLANNED", febOccurrence.status)
+
+            val febExpense = seedExpense(feb28 + HALF_DAY / 2)
+            assertTrue(lifecycle.linkExpenseToOccurrence(febExpense))
+
+            assertEquals("PAID", occurrenceDao.getById(febOccurrence.id)!!.status)
+            assertEquals(mar31, ruleDao.getById(1L)!!.nextDate)
+            assertTrue("must not drift to Mar 28", occurrencesOf().none { it.dueDate == dayOf(2027, 3, 28) })
+            assertEquals(2, advancedEvents().size)
+        }
+
+    @Test
+    fun markPaidSeenOnTheOldNextDateAfterARealAutoLinkIsAlreadyHandledAndCreatesNothing() =
+        runTest(timeout = 60.seconds) {
+            seedRule(nextDate = nov5)
+            val novId = seedOccurrence(due = nov5)
+            seedOccurrence(due = dec5)
+            val expenseId = seedExpense(nov5 + HALF_DAY / 2)
+            assertTrue(lifecycle.linkExpenseToOccurrence(expenseId))
+            assertEquals(dec5, ruleDao.getById(1L)!!.nextDate)
+
+            val ruleRepository = io.mockk.mockk<ManualRecurringExpenseRepository>()
+            io.mockk.coEvery { ruleRepository.getById(any()) } coAnswers { ruleDao.getById(firstArg<Long>()) }
+            val transactionCoordinator = io.mockk.mockk<TransactionLifecycleCoordinator>()
+            val useCase = MarkRecurringBillPaidUseCase(
+                ruleRepository = ruleRepository,
+                occurrenceCoordinator = lifecycle,
+                ruleCoordinator = ruleCoordinator,
+                transactionCoordinator = transactionCoordinator,
+                postCommitActionRunner = io.mockk.mockk<PostCommitActionRunner>(),
+                timeProvider = timeProvider
+            )
+
+            // The UI still shows the stale Nov 5 row.
+            assertEquals(MarkPaidResult.AlreadyHandled, useCase.invoke(1L, nov5))
+            assertEquals(MarkPaidResult.AlreadyHandled, useCase.skip(1L, nov5))
+
+            io.mockk.coVerify(exactly = 0) { transactionCoordinator.createExpenseDbOnlyV2(any()) }
+            assertEquals("PAID", occurrenceDao.getById(novId)!!.status)
+            assertEquals(expenseId, occurrenceDao.getById(novId)!!.linkedExpenseId)
+            assertEquals(1, occurrencesOf().count { it.linkedExpenseId != null })
             assertEquals(dec5, ruleDao.getById(1L)!!.nextDate)
             assertEquals(1, advancedEvents().size)
         }
@@ -1025,6 +1116,64 @@ class RecurringHorizonAndLinkR21Test {
             assertTrue(logged.any { it.contains("AUTO_LINK_ADVANCE_FAILED") })
             assertTrue("raw failure detail must not be logged", logged.none { it.contains("SECRET-RAW-DETAIL") })
         }
+
+    @Test
+    fun topUpFailureAfterAutoLinkKeepsTheLinkAndLogsOnlyTheBoundedCode() =
+        runTest(timeout = 60.seconds) {
+            // No later occurrence exists, so the advance has to call topUpHorizon, and it throws.
+            seedRule(nextDate = nov5)
+            val novId = seedOccurrence(due = nov5)
+            val expenseId = seedExpense(nov5 + HALF_DAY / 2)
+            val throwingCoordinator = io.mockk.mockk<RecurringRuleLifecycleCoordinator>()
+            io.mockk.coEvery { throwingCoordinator.topUpHorizon(any(), any()) } throws
+                IllegalStateException("SECRET-RAW-DETAIL")
+            ruleCoordinatorSupplier = { throwingCoordinator }
+            val logged = mutableListOf<String>()
+            val tree = object : Timber.Tree() {
+                override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
+                    logged += message
+                    if (t != null) logged += t.toString()
+                }
+            }
+            Timber.plant(tree)
+            try {
+                assertTrue(lifecycle.linkExpenseToOccurrence(expenseId))
+            } finally {
+                Timber.uproot(tree)
+            }
+
+            val linked = occurrenceDao.getById(novId)!!
+            assertEquals("PAID", linked.status)
+            assertEquals(expenseId, linked.linkedExpenseId)
+            assertEquals(nov5, ruleDao.getById(1L)!!.nextDate)
+            assertTrue(advancedEvents().isEmpty())
+            io.mockk.coVerify(exactly = 0) { throwingCoordinator.advanceNextDate(any(), any()) }
+            assertTrue(logged.any { it.contains("AUTO_LINK_ADVANCE_FAILED") })
+            assertTrue("raw failure detail must not be logged", logged.none { it.contains("SECRET-RAW-DETAIL") })
+        }
+
+    @Test
+    fun cancellationDuringTheTopUpAfterAutoLinkIsNotSwallowed() = runTest(timeout = 60.seconds) {
+        seedRule(nextDate = nov5)
+        val novId = seedOccurrence(due = nov5)
+        val expenseId = seedExpense(nov5 + HALF_DAY / 2)
+        val cancellingCoordinator = io.mockk.mockk<RecurringRuleLifecycleCoordinator>()
+        io.mockk.coEvery { cancellingCoordinator.topUpHorizon(any(), any()) } throws
+            kotlinx.coroutines.CancellationException("cancelled")
+        ruleCoordinatorSupplier = { cancellingCoordinator }
+
+        var thrown: Throwable? = null
+        try {
+            lifecycle.linkExpenseToOccurrence(expenseId)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            thrown = e
+        }
+
+        assertTrue("CancellationException must propagate", thrown != null)
+        assertEquals("PAID", occurrenceDao.getById(novId)!!.status)
+        assertEquals(expenseId, occurrenceDao.getById(novId)!!.linkedExpenseId)
+        assertEquals(nov5, ruleDao.getById(1L)!!.nextDate)
+    }
 
     @Test
     fun cancellationDuringTheAdvanceAfterAutoLinkIsNotSwallowed() = runTest(timeout = 60.seconds) {

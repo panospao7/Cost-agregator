@@ -423,10 +423,17 @@ class RecurringLifecycleCoordinator @Inject constructor(
             if (TimePeriodUtils.getStartOfDay(occurrence.dueDate) != TimePeriodUtils.getStartOfDay(rule.nextDate)) return
 
             val threshold = RecurringNextDatePolicy.threshold(rule.nextDate)
-            val earliestOpen = RecurringNextDatePolicy.earliestOpenFrom(
+            suspend fun nextOpen() = RecurringNextDatePolicy.earliestOpenFrom(
                 occurrenceDao.getBySource(SOURCE_TYPE_RECURRING_RULE, rule.id),
                 threshold
             )
+            var earliestOpen = nextOpen()
+            if (earliestOpen == null) {
+                // Mirror mark-paid: top up the horizon so the next occurrence exists and keeps the
+                // anchor day (otherwise the calculator fallback clamps Jan 31 to Feb 28).
+                ruleCoordinator.get().topUpHorizon(rule.id, timeProvider.now())
+                earliestOpen = nextOpen()
+            }
             val candidate = RecurringNextDatePolicy.candidate(earliestOpen, rule.nextDate, rule.frequency)
                 ?: return
             ruleCoordinator.get().advanceNextDate(rule.id, candidate)

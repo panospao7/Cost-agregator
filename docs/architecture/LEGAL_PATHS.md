@@ -478,6 +478,9 @@ LINK expense to occurrence:
   → Atomic conditional claim (WHERE status=PLANNED AND linkedExpenseId IS NULL)
   → Fulfills planned + suppresses reminders
 
+  → A CLAIMED automatic link advances the rule's next date through RecurringRuleLifecycleCoordinator.advanceNextDate() (best effort, after the claim transaction; it only moves forward; one horizon top-up first when no open occurrence exists, as in mark-paid).
+  Known limitation: after relinking or deleting the expense the original occurrence returns to PLANNED and the rule's next date stays advanced, the same as mark-paid.
+
 LINK expense to a SPECIFIC occurrence (R21 S1):
   → RecurringLifecycleCoordinator.linkExpenseToSpecificOccurrence(occurrenceId, expenseId, source) -> SpecificLinkResult (shares claimLinkSuppressInWrite with the automatic link; bounded `source` code, one occurrence per expense)
 

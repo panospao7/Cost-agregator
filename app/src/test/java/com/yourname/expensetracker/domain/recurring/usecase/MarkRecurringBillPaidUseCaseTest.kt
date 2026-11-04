@@ -447,8 +447,11 @@ class MarkRecurringBillPaidUseCaseTest {
         assertEquals(2, createRequests.size)
     }
 
+    // The two tests below pin only the use case's seen-nextDate guard (mocked state). The end-to-end
+    // proof that a real auto-link advances the rule so mark-paid is then AlreadyHandled lives in
+    // RecurringHorizonAndLinkR21Test.
     @Test
-    fun `DR-03 mark paid after an auto-link already advanced the rule is AlreadyHandled and creates nothing`() =
+    fun `mark paid with a seen next date that changed after a concurrent advance is AlreadyHandled and creates nothing`() =
         runTest {
             // The automatic link paid the occurrence due on the seen day and moved the rule on.
             replace(1L) { it.copy(status = "PAID", linkedExpenseId = 900L) }
@@ -465,7 +468,7 @@ class MarkRecurringBillPaidUseCaseTest {
         }
 
     @Test
-    fun `DR-03 skip after an auto-link already advanced the rule is AlreadyHandled`() = runTest {
+    fun `skip with a seen next date that changed after a concurrent advance is AlreadyHandled`() = runTest {
         replace(1L) { it.copy(status = "PAID", linkedExpenseId = 900L) }
         ruleNextDate = d2
 
