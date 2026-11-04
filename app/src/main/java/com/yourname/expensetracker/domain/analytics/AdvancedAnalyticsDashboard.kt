@@ -140,11 +140,13 @@ class AdvancedAnalyticsDashboard @Inject constructor(
         // Calculate totals
         var totalSpent = 0.0
         var totalIncome = 0.0
-        
+        var totalWithdrawn = 0.0
+
         for (expense in expenses) {
             when (expense.transactionType) {
                 DomainTransactionType.PURCHASE -> totalSpent += expense.effectiveAmount
                 DomainTransactionType.DEPOSIT -> totalIncome += expense.effectiveAmount
+                DomainTransactionType.WITHDRAWAL -> totalWithdrawn += expense.effectiveAmount
                 else -> Unit
             }
         }
@@ -158,7 +160,9 @@ class AdvancedAnalyticsDashboard @Inject constructor(
         AnalyticsDashboardData(
             totalSpent = totalSpent,
             totalIncome = totalIncome,
-            netCashflow = totalIncome - totalSpent,
+            // Cash that left the account counts toward net cashflow (matches CashFlowCalculator),
+            // while totalSpent stays purchases-only.
+            netCashflow = totalIncome - totalSpent - totalWithdrawn,
             displayCurrency = displayCurrency,
             topCategories = getTopCategories(expenses, comparisonNormalization.includedExpenses, categoryNamesById, displayCurrency),
             topMerchants = getTopMerchants(expenses, displayCurrency),

@@ -69,7 +69,8 @@ class AdvancedAnalyticsDashboardTest : AnalyticsEngineTestBase() {
         // Purchases only (100 + 200 + 100); the 50.0 ATM withdrawal is not spending.
         assertApproxEquals(400.0, result.totalSpent)
         assertApproxEquals(800.0, result.totalIncome)
-        assertApproxEquals(400.0, result.netCashflow)
+        // 800 income - 400 purchases - 50 withdrawn: cash that left the account counts in Net.
+        assertApproxEquals(350.0, result.netCashflow)
 
         assertEquals(2, result.topCategories.size)
         val categoryAmounts = result.topCategories.associate { it.categoryId to it.amount }
@@ -109,7 +110,8 @@ class AdvancedAnalyticsDashboardTest : AnalyticsEngineTestBase() {
 
         assertApproxEquals(100.0, result.totalSpent)
         assertApproxEquals(100.0, result.monthlyTrend.single().spending)
-        assertApproxEquals(-100.0, result.netCashflow)
+        // 0 income - 100 purchases - 200 withdrawn.
+        assertApproxEquals(-300.0, result.netCashflow)
 
         // Boundary: a withdrawal alone yields zero spending, not the withdrawn amount.
         val onlyWithdrawal = listOf(exp("2026-03-05", 200.0, TransactionType.WITHDRAWAL, merchant = "ATM"))
@@ -118,6 +120,24 @@ class AdvancedAnalyticsDashboardTest : AnalyticsEngineTestBase() {
         val withdrawalOnly = dashboard.generateDashboardData(start, end)
         assertApproxEquals(0.0, withdrawalOnly.totalSpent)
         assertApproxEquals(0.0, withdrawalOnly.monthlyTrend.single().spending)
+    }
+
+    @Test
+    fun `net cashflow deducts withdrawals while spent stays purchases only`() = runTest {
+        val start = ms("2026-03-01")
+        val end = ms("2026-04-01")
+        val data = listOf(
+            exp("2026-03-01", 2000.0, TransactionType.DEPOSIT, merchant = "Salary"),
+            exp("2026-03-02", 1700.0, TransactionType.WITHDRAWAL, merchant = "ATM"),
+            exp("2026-03-03", 200.0, TransactionType.PURCHASE, merchant = "Shop")
+        )
+        coEvery { expenseRepository.getExpenseSnapshotsBetween(any(), any()) } returns data.toExpenseSnapshots()
+
+        val result = dashboard.generateDashboardData(start, end)
+
+        assertApproxEquals(200.0, result.totalSpent)
+        assertApproxEquals(2000.0, result.totalIncome)
+        assertApproxEquals(100.0, result.netCashflow)
     }
 
     @Test

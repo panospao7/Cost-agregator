@@ -31,7 +31,7 @@ import kotlin.math.sqrt
  *
  * Design decisions (agreed with user):
  * - **Sampling unit**: Weekly totals (not daily — too sparse with ~200-500 txns over ~18 months)
- * - **Filtering**: Only PURCHASE + WITHDRAWAL with isNotMine=false
+ * - **Filtering**: Only spending (PURCHASE; withdrawals are not spending) with isNotMine=false
  * - **Quality filter**: Weeks with < 3 distinct transaction-days are excluded (likely incomplete data)
  * - **Outlier trimming**: Middle 80% of weekly totals (trim top/bottom 10%)
  * - **Distribution**: Log-normal (always positive, right-skewed — matches spending behaviour)
@@ -136,9 +136,7 @@ class HistoricalSpendingDistribution @Inject constructor(
         )
 
         val spendingExpenses = normalizedExpenses.filter { expense ->
-            (expense.transactionType == DomainTransactionType.PURCHASE ||
-                expense.transactionType == DomainTransactionType.WITHDRAWAL) &&
-                !expense.isNotMine
+            expense.transactionType.isSpending && !expense.isNotMine
         }
 
         if (spendingExpenses.isEmpty()) {

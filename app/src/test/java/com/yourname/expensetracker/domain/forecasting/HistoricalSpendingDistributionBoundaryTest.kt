@@ -462,7 +462,7 @@ class HistoricalSpendingDistributionBoundaryTest {
     }
 
     // ========================================================================
-    // Filtering: only PURCHASE + WITHDRAWAL, not isNotMine
+    // Filtering: only PURCHASE (isSpending), not WITHDRAWAL and not isNotMine
     // ========================================================================
 
     @Test
@@ -482,6 +482,8 @@ class HistoricalSpendingDistributionBoundaryTest {
                 expenses.add(expense(id++, date, 100.0, TransactionType.PURCHASE))
                 // DEPOSIT — should NOT count
                 expenses.add(expense(id++, date, 500.0, TransactionType.DEPOSIT))
+                // WITHDRAWAL (ATM cash) — should NOT count: Budget and Home must both read purchases only
+                expenses.add(expense(id++, date, 1000.0, TransactionType.WITHDRAWAL))
                 // Someone else's PURCHASE — should NOT count
                 expenses.add(expense(id++, date, 700.0, TransactionType.PURCHASE, isNotMine = true))
             }

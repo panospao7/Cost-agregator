@@ -16,6 +16,7 @@ import com.yourname.expensetracker.domain.core.money.MoneyAggregateBuilder
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.forecasting.MonteCarloSpendingSimulator
+import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.SavingsGoal
 import com.yourname.expensetracker.domain.savings.SavingsGoalRepository
 import com.yourname.expensetracker.domain.savings.SavingsGoalCurrencyPolicy
@@ -51,7 +52,7 @@ import javax.inject.Singleton
  * safeSweep = max(0, underspend - riskBuffer)
  * where:
  * - underspend = overall remaining (if overall budget exists) OR sum of category remaining
- * - riskBuffer = upcomingBills + uncertaintyBuffer
+ * - riskBuffer = upcomingBills + uncertaintyBuffer + monthToDateWithdrawals
  *   - upcomingBills = known recurring + MUST planned obligations due before month end
  *   - uncertaintyBuffer = MC uncertainty buffer (p75 - p50, or the deterministic fallback)
  * ```
@@ -194,7 +195,7 @@ class MonthlySavingsSweepUseCase @Inject constructor(
         }
 
         // Calculate spent to date for Monte Carlo (normalized to home currency)
-        val spentToDate = calculateSpentToDate(monthStart, now, homeCurrency, quality)
+        val (spentToDate, withdrawnToDate) = calculateSpentAndWithdrawnToDate(monthStart, now, homeCurrency, quality)
         val knownUpcoming = calculateKnownUpcomingObligations(now, nextMonthStart, homeCurrency, quality)
 
         // Run Monte Carlo simulation
@@ -219,7 +220,9 @@ class MonthlySavingsSweepUseCase @Inject constructor(
         // not safe to sweep. They are part of the displayed "Buffer" so that
         // "Underspend X - Buffer Y" adds up to the sweep amount (and the acceptance
         // coordinator invariant safeSweep <= underspend - riskBuffer holds).
-        val riskBuffer = knownUpcoming + uncertaintyBuffer
+        // Month-to-date withdrawals are not budget spending, but that cash has already left
+        // the account: they must never make the sweep larger than when they counted as spend.
+        val riskBuffer = knownUpcoming + uncertaintyBuffer + withdrawnToDate
 
         // Calculate safe sweep amount
         val safeSweepAmount = (underspend - riskBuffer).coerceAtLeast(0.0)
@@ -302,18 +305,31 @@ class MonthlySavingsSweepUseCase @Inject constructor(
     }
 
     /**
-     * Calculate total spending from month start to current time (normalized to home currency).
+     * Calculate total spending (purchases only) and total withdrawals from month start to
+     * current time (normalized to home currency). Returns (spent, withdrawn).
      */
-    private suspend fun calculateSpentToDate(monthStart: Long, now: Long, homeCurrency: String, quality: SavingsDecisionQuality): Double {
+    private suspend fun calculateSpentAndWithdrawnToDate(
+        monthStart: Long,
+        now: Long,
+        homeCurrency: String,
+        quality: SavingsDecisionQuality
+    ): Pair<Double, Double> {
         val rawExpenses = expenseRepository.getExpenseSnapshotsBetween(monthStart, now)
         val normalized = analyticsCurrencyNormalizer.normalizeSnapshots(rawExpenses, homeCurrency)
         quality.requireComplete(SavingsInputStage.CURRENT_SPENDING, normalized)
-        // SAFE: normalized via AnalyticsCurrencyNormalizer at line 220
-        return normalized.includedExpenses
+        // SAFE: normalized via AnalyticsCurrencyNormalizer
+        val spent = normalized.includedExpenses
             .filter { it.transactionType.isSpending && !it.isNotMine }
             .let { spending ->
                 normalized.completeMoneyAggregateForRows(spending, homeCurrency).displayAmount
             }
+        val withdrawn = normalized.includedExpenses
+            .filter { it.transactionType == DomainTransactionType.WITHDRAWAL && !it.isNotMine }
+            .let { withdrawals ->
+                if (withdrawals.isEmpty()) 0.0
+                else normalized.completeMoneyAggregateForRows(withdrawals, homeCurrency).displayAmount
+            }
+        return spent to withdrawn
     }
 
     private suspend fun calculateKnownUpcomingObligations(now: Long, monthEndExclusive: Long, homeCurrency: String, quality: SavingsDecisionQuality): Double {
