@@ -83,7 +83,10 @@ CurrencyConverter.convert() / convertAsOf()
   │     (non-payer rows leave cash flow; payer rows count at the full paid amount) and
   │     GroupSettlementDao.getCurrentUserSettlementsBetween (settlement paid = outflow, received = income,
   │     converted at TRANSACTION_DATE); a failed probe or conversion marks the day partial)
-  ├── FinancialStressForecastEngine (starting balance)
+  ├── FinancialStressForecastEngine (starting balance; P-06-4: NetCashflowBalanceProvider 90-day home-currency
+  │     deposits - purchases - withdrawals, null = BALANCE_UNAVAILABLE when currency != home, any read/conversion
+  │     failure, a negative net, or no cashflow rows; lowData when the discretionary baseline has < 5 purchases or
+  │     < 14 observed days, which suppresses HEALTHY_OUTLOOK/NO_IMMEDIATE_CONCERNS and neutralises the card's LOW badge)
   ├── BudgetForecastingEngine (limit conversion)
   ├── ExpenseExportMapper (conversion audit fields; DR-08: effectiveAmount is the user's share, non-finite
   │     maps to 0.0, and zero-bearing rows are skipped by the accounting exporters)

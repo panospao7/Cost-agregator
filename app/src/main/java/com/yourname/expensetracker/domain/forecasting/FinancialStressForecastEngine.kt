@@ -93,6 +93,12 @@ class FinancialStressForecastEngine @Inject constructor(
         // Minimum number of days in the Monte Carlo daily-spend sample window.
         private const val MIN_SAMPLE_DAYS = 14
 
+        // P-06-4: the discretionary baseline is flagged low-data (outlook not reassuring, no
+        // "healthy" rows) when it rests on fewer than this many purchases ...
+        private const val LOW_DATA_MIN_PURCHASES = 5
+        // ... or fewer than this many observed days (first purchase in the 60-day window to today).
+        private const val LOW_DATA_MIN_OBSERVED_DAYS = 14
+
         // NEW-P6-010: Risk classification thresholds — extracted from hardcoded magic numbers.
         // TODO: Migrate these to AppConfig so they can be tuned without a code deployment.
         private const val RISK_THRESHOLD_LOW = 0.10
@@ -117,7 +123,19 @@ class FinancialStressForecastEngine @Inject constructor(
 
             // Reuse the resolved forecast currency for the existing balance
             // provider; an explicit currency must not re-read home settings.
+            // P-06-4: no trustworthy balance means no forecast; never substitute 0.
             val currentBalance = resolveStartingBalanceBaseline(resolvedDisplayCurrency)
+                ?: return StressForecastResult(
+                    horizons = emptyList(),
+                    overallRiskLevel = null,
+                    earliestCrunchDate = null,
+                    recommendations = emptyList(),
+                    displayCurrency = resolvedDisplayCurrency,
+                    mode = StressForecastMode.ESTIMATED_INDEX,
+                    isPartial = true,
+                    qualityWarnings = listOf("STRESS_FORECAST_BALANCE_UNAVAILABLE"),
+                    failure = StressForecastFailure.BALANCE_UNAVAILABLE
+                )
             val patterns = recurringPatternsProvider.getConfirmedPatterns()
 
             // Normalize purchases and deposits to display currency
@@ -206,7 +224,8 @@ class FinancialStressForecastEngine @Inject constructor(
             val earliestCrunchDate = findEarliestCrunchDate(horizons, now)
             
             // Generate recommendations
-            val recommendations = generateRecommendations(horizons, patterns, resolvedDisplayCurrency)
+            val isLowData = horizons.any { it.lowData }
+            val recommendations = generateRecommendations(horizons, patterns, resolvedDisplayCurrency, isLowData)
             
             val duration = timeProvider.now() - startTime
             Timber.d("$TAG: Stress forecast computed in ${duration}ms - Risk: $overallRiskLevel")
@@ -225,7 +244,8 @@ class FinancialStressForecastEngine @Inject constructor(
                     horizons.any { it.recurringObligationsPartial },
                 qualityWarnings = (normExpenses.warnings + normDeposits.warnings).map { it.message },
                 excludedCount = normExpenses.excludedCount + normDeposits.excludedCount +
-                    (horizons.maxOfOrNull { it.recurringExcludedConversionCount } ?: 0)
+                    (horizons.maxOfOrNull { it.recurringExcludedConversionCount } ?: 0),
+                isLowData = isLowData
             )
             
         } catch (e: Exception) {
@@ -277,14 +297,17 @@ class FinancialStressForecastEngine @Inject constructor(
         )
         
         // 4. Calculate projected balance
-        val projectedBalance = currentBalance + expectedIncome - recurringOutflows - mcResult.percentile50
-        val minProjectedBalance = currentBalance + expectedIncome - recurringOutflows - mcResult.percentile90
+        // P-06-4: expected withdrawals are cash leaving, not discretionary spending.
+        val withdrawalOutflows = estimateWithdrawals(daysAhead, now, normalizedExpenses)
+        val projectedBalance = currentBalance + expectedIncome - recurringOutflows - withdrawalOutflows - mcResult.percentile50
+        val minProjectedBalance = currentBalance + expectedIncome - recurringOutflows - withdrawalOutflows - mcResult.percentile90
         
         // 5. Calculate probability of crunch (balance < 0)
         val crunchProbability = calculateCrunchProbability(
             currentBalance = currentBalance,
             expectedIncome = expectedIncome,
             recurringOutflows = recurringOutflows,
+            withdrawalOutflows = withdrawalOutflows,
             simulatedTotals = mcResult.simulatedTotals
         )
         
@@ -315,7 +338,9 @@ class FinancialStressForecastEngine @Inject constructor(
             // to the display currency (it is excluded from the total, never added raw).
             recurringObligationsPartial = recurringOutflowResult.materializedReadBlocked ||
                 recurringOutflowResult.excludedConversionCount > 0,
-            recurringExcludedConversionCount = recurringOutflowResult.excludedConversionCount
+            recurringExcludedConversionCount = recurringOutflowResult.excludedConversionCount,
+            projectedWithdrawals = withdrawalOutflows,
+            lowData = mcResult.noPurchaseHistory
         )
     }
 
@@ -621,6 +646,38 @@ class FinancialStressForecastEngine @Inject constructor(
     }
 
     /**
+     * P-06-4: expected cash withdrawals (ATM) over the horizon, in [daysAhead] days.
+     *
+     * Withdrawals are cash leaving the account, so they reduce the projected balance, but they
+     * are not discretionary spending and are not part of the Monte Carlo. The daily rate is the
+     * withdrawn total in the 60-day window divided by the observed window days: the window starts
+     * at the later of (now - 60 days) and the first transaction of any type, with a
+     * [MIN_SAMPLE_DAYS] floor, matching the purchase sampling window. No withdrawals gives 0.
+     * Rounding: none (Double), consistent with the other horizon components.
+     */
+    private fun estimateWithdrawals(
+        daysAhead: Int,
+        now: Long,
+        normalizedExpenses: List<ExpenseSnapshot>
+    ): Double {
+        val withdrawalTotal = normalizedExpenses
+            .filter { it.transactionType == DomainTransactionType.WITHDRAWAL && !it.isNotMine }
+            .sumOf { it.effectiveAmount }
+        if (withdrawalTotal <= 0.0) return 0.0
+
+        val sampleEndDay = TimePeriodUtils.getStartOfDay(now)
+        val lookbackStartDay = TimePeriodUtils.getStartOfDay(TimePeriodUtils.addDays(now, -60))
+        val firstTransactionDay = TimePeriodUtils.getStartOfDay(normalizedExpenses.minOf { it.date })
+        val windowStartDay = maxOf(lookbackStartDay, firstTransactionDay)
+        val observedDays = java.time.temporal.ChronoUnit.DAYS.between(
+            java.time.Instant.ofEpochMilli(windowStartDay).atZone(java.time.ZoneId.systemDefault()).toLocalDate(),
+            java.time.Instant.ofEpochMilli(sampleEndDay).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+        ).toInt() + 1
+        val windowDays = maxOf(MIN_SAMPLE_DAYS, observedDays)
+        return withdrawalTotal / windowDays * daysAhead
+    }
+
+    /**
      * Run Monte Carlo simulation for discretionary spending.
      */
     private suspend fun runMonteCarloSimulation(
@@ -658,22 +715,20 @@ class FinancialStressForecastEngine @Inject constructor(
             }
         }
         
-        // If there is no recent purchase history at all, return conservative estimates.
+        // P-06-4: with no purchase history there is nothing to learn discretionary spend from, so
+        // it is projected as zero and flagged low-data (the previous invented 20/day plus noise
+        // swung the outcome from -200 to +400 on a single 5 purchase). Recurring, installment and
+        // withdrawal outflows are separate inputs and still count.
         if (purchases.isEmpty()) {
-            val random = Random(SEED)
-            val fallbackTotals = DoubleArray(NUM_SIMULATIONS) {
-                (daysAhead * 20.0 + random.nextGaussian() * 5.0).coerceAtLeast(0.0)
-            }
-            fallbackTotals.sort()
-
             return MonteCarloHorizonResult(
-                percentile10 = percentile(fallbackTotals, 0.10),
-                percentile25 = percentile(fallbackTotals, 0.25),
-                percentile50 = percentile(fallbackTotals, 0.50),
-                percentile75 = percentile(fallbackTotals, 0.75),
-                percentile90 = percentile(fallbackTotals, 0.90),
-                simulatedTotals = fallbackTotals.toList(),
-                displayCurrency = displayCurrency
+                percentile10 = 0.0,
+                percentile25 = 0.0,
+                percentile50 = 0.0,
+                percentile75 = 0.0,
+                percentile90 = 0.0,
+                simulatedTotals = List(NUM_SIMULATIONS) { 0.0 },
+                displayCurrency = displayCurrency,
+                noPurchaseHistory = true
             )
         }
 
@@ -703,6 +758,19 @@ class FinancialStressForecastEngine @Inject constructor(
         )
         val floorStartDay = TimePeriodUtils.addDays(sampleEndDay, -(MIN_SAMPLE_DAYS - 1))
         val sampleStartDay = minOf(maxOf(lookbackStartDay, firstPurchaseDay), floorStartDay)
+        // P-06-4: thin baseline flag. Counts discretionary purchases inside the sampling lookback
+        // and the real observed span (not the MIN_SAMPLE_DAYS-floored sampling window).
+        val baselinePurchaseCount = discretionaryPurchases.count {
+            TimePeriodUtils.getStartOfDay(it.date) >= lookbackStartDay
+        }
+        val observedDays = java.time.temporal.ChronoUnit.DAYS.between(
+            java.time.Instant.ofEpochMilli(maxOf(lookbackStartDay, firstPurchaseDay))
+                .atZone(java.time.ZoneId.systemDefault()).toLocalDate(),
+            java.time.Instant.ofEpochMilli(sampleEndDay)
+                .atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+        ).toInt() + 1
+        val thinBaseline = baselinePurchaseCount < LOW_DATA_MIN_PURCHASES ||
+            observedDays < LOW_DATA_MIN_OBSERVED_DAYS
         val dailyTotals = mutableListOf<Double>()
         var cursorDay = sampleStartDay
 
@@ -738,7 +806,8 @@ class FinancialStressForecastEngine @Inject constructor(
             percentile75 = percentile(simulatedTotals, 0.75),
             percentile90 = percentile(simulatedTotals, 0.90),
             simulatedTotals = simulatedTotals.toList(),
-            displayCurrency = displayCurrency
+            displayCurrency = displayCurrency,
+            noPurchaseHistory = thinBaseline
         )
     }
 
@@ -749,9 +818,10 @@ class FinancialStressForecastEngine @Inject constructor(
         currentBalance: Double,
         expectedIncome: Double,
         recurringOutflows: Double,
+        withdrawalOutflows: Double,
         simulatedTotals: List<Double>
     ): Double {
-        val availableForDiscretionary = currentBalance + expectedIncome - recurringOutflows
+        val availableForDiscretionary = currentBalance + expectedIncome - recurringOutflows - withdrawalOutflows
         
         val crunchCount = simulatedTotals.count { discretionarySpending ->
             (availableForDiscretionary - discretionarySpending) < 0
@@ -799,7 +869,8 @@ class FinancialStressForecastEngine @Inject constructor(
     private suspend fun generateRecommendations(
         horizons: List<StressHorizon>,
         patterns: List<com.yourname.expensetracker.domain.model.RecurringPattern>,
-        displayCurrency: String
+        displayCurrency: String,
+        isLowData: Boolean = false
     ): List<StressRecommendation> {
         val recommendations = mutableListOf<StressRecommendation>()
 
@@ -851,10 +922,14 @@ class FinancialStressForecastEngine @Inject constructor(
         
         // Add positive reinforcement when healthy
         val (emergencyBuffer, bufferCurrency) = getEmergencyBuffer(displayCurrency)
-        if (!anyRisk && bufferCurrency.equals(displayCurrency, ignoreCase = true) &&
+        // P-06-4: with no purchase history the outlook is not a confident read, so neither the
+        // healthy nor the "no concerns" row is produced; the card shows the low-data notice instead.
+        if (!isLowData && !anyRisk && bufferCurrency.equals(displayCurrency, ignoreCase = true) &&
             horizons.all { it.projectedBalance > emergencyBuffer }) {
             recommendations.add(StressRecommendation(StressRecommendationKind.HEALTHY_OUTLOOK))
         }
+
+        if (isLowData) return recommendations
 
         return recommendations.ifEmpty {
             listOf(StressRecommendation(StressRecommendationKind.NO_IMMEDIATE_CONCERNS))
@@ -865,31 +940,21 @@ class FinancialStressForecastEngine @Inject constructor(
      * Resolve a starting balance baseline for the forecast.
      *
      * P6-P1-13: Delegates to [AccountBalanceProvider] (currently [NetCashflowBalanceProvider]).
-     * Falls back to inline 90-day net cashflow estimate if the provider fails.
+     *
+     * P-06-4: returns null (balance unavailable) when the provider has no value (non-home
+     * currency, failed read, unconverted amounts) or fails. There is no inline fallback and a
+     * failure is never turned into 0; the caller reports [StressForecastFailure.BALANCE_UNAVAILABLE].
      *
      * Future implementations can swap in BankConnectionBalanceProvider or
      * ManualBalanceProvider via DI without changing this engine.
      */
-    private suspend fun resolveStartingBalanceBaseline(displayCurrency: String): Double {
+    private suspend fun resolveStartingBalanceBaseline(displayCurrency: String): Double? {
         // P6-P1-13: Delegate to AccountBalanceProvider (currently NetCashflowBalanceProvider)
         val balance = CancellationSafe.runCatchingCancellable { accountBalanceProvider.currentBalance(displayCurrency) }.getOrNull()
-        if (balance != null) {
-            Timber.d("FCST-9: resolveStartingBalanceBaseline via AccountBalanceProvider = %.2f", balance)
-            return balance
+        if (balance == null) {
+            Timber.w("$TAG: STRESS_FORECAST_BALANCE_UNAVAILABLE")
         }
-
-        // Inline fallback if provider fails
-        val now = timeProvider.now()
-        val ninetyDaysAgo = TimePeriodUtils.addDays(now, -90)
-        val recentDeposits = CancellationSafe.runCatchingCancellable {
-            multiCurrencyRepository.getHomeCurrencyDepositTotal(ninetyDaysAgo, now).displayAmount
-        }.getOrDefault(0.0)
-        val recentExpenses = CancellationSafe.runCatchingCancellable {
-            multiCurrencyRepository.getHomeCurrencyPurchaseTotal(ninetyDaysAgo, now).displayAmount
-        }.getOrDefault(0.0)
-        val netCashflow = recentDeposits - recentExpenses
-        Timber.d("FCST-9: resolveStartingBalanceBaseline fallback — deposits=%.2f, expenses=%.2f, net=%.2f", recentDeposits, recentExpenses, netCashflow)
-        return netCashflow.coerceAtLeast(0.0)
+        return balance
     }
 
     /**
@@ -963,7 +1028,15 @@ enum class StressForecastMode {
     NET_CASHFLOW_ESTIMATE
 }
 
-enum class StressForecastFailure { CALCULATION_UNAVAILABLE }
+enum class StressForecastFailure {
+    CALCULATION_UNAVAILABLE,
+
+    /**
+     * P-06-4: no trustworthy starting balance (non-home display currency, failed read or
+     * unconverted amounts). The forecast is withheld; consumers must not show a balance-based value.
+     */
+    BALANCE_UNAVAILABLE
+}
 
 data class StressForecastResult(
     val horizons: List<StressHorizon>,
@@ -975,7 +1048,13 @@ data class StressForecastResult(
     val isPartial: Boolean = false,
     val qualityWarnings: List<String> = emptyList(),
     val excludedCount: Int = 0,
-    val failure: StressForecastFailure? = null
+    val failure: StressForecastFailure? = null,
+    /**
+     * P-06-4: true when there is no purchase history to learn spending from. Discretionary
+     * spend is then projected as zero (recurring, installment and withdrawal outflows still
+     * count), so the outcome is not a confident risk read and the UI must say so.
+     */
+    val isLowData: Boolean = false
 )
 
 /**
@@ -1004,7 +1083,17 @@ data class StressHorizon(
      * excluded from [recurringObligations] because they could not be converted to
      * [displayCurrency]. Non-zero implies [recurringObligationsPartial].
      */
-    val recurringExcludedConversionCount: Int = 0
+    val recurringExcludedConversionCount: Int = 0,
+    /**
+     * P-06-4: expected cash withdrawals over the horizon, subtracted from the projected balance
+     * as cash leaving. Withdrawals are not discretionary spending and are not in the Monte Carlo.
+     */
+    val projectedWithdrawals: Double = 0.0,
+    /**
+     * P-06-4: thin discretionary baseline (no purchases, fewer than 5 purchases, or fewer than
+     * 14 observed days); with no purchases discretionary spend was projected as zero.
+     */
+    val lowData: Boolean = false
 ) {
     val moneyProjectedBalance: MoneyAmount get() = MoneyAmount(projectedBalance, CurrencyCode(displayCurrency))
     val moneyMinProjectedBalance: MoneyAmount get() = MoneyAmount(minProjectedBalance, CurrencyCode(displayCurrency))
@@ -1034,7 +1123,13 @@ private data class MonteCarloHorizonResult(
     val percentile75: Double,
     val percentile90: Double,
     val simulatedTotals: List<Double>,
-    val displayCurrency: String = ""
+    val displayCurrency: String = "",
+    /**
+     * P-06-4: the discretionary baseline is too thin to trust: no purchases at all (totals are
+     * zero by construction), fewer than [FinancialStressForecastEngine] LOW_DATA_MIN_PURCHASES
+     * purchases, or fewer than LOW_DATA_MIN_OBSERVED_DAYS observed days.
+     */
+    val noPurchaseHistory: Boolean = false
 ) {
     val moneyPercentile10: MoneyAmount get() = MoneyAmount(percentile10, CurrencyCode(displayCurrency))
     val moneyPercentile25: MoneyAmount get() = MoneyAmount(percentile25, CurrencyCode(displayCurrency))
