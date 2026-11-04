@@ -814,7 +814,7 @@ fun BudgetCard(
 @Composable
 fun AdjustedSpendBreakdownRow(
     breakdown: com.yourname.expensetracker.domain.budget.AdjustedSpendBreakdown,
-    currency: String = "EUR"
+    currency: String
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),

@@ -695,6 +695,19 @@ class WarrantyTrackerViewModelTest : ViewModelTestUtils() {
         assertFalse(exceptionState.isProtectedValuePartial)
     }
 
+    @Test
+    fun `E-05-1 loadStats unavailable state when lookup fails has empty protectedValueCurrency and zero value`() = runTest(testDispatcher) {
+        coEvery { warrantyRepository.getTotalProtectedValueAggregate() } throws IllegalStateException("rate table missing")
+
+        viewModel = WarrantyTrackerViewModel(warrantyRepository, timeProvider = mockk(relaxed = true))
+        advanceUntilIdle()
+
+        val state = viewModel.state.value
+        assertFalse(state.isProtectedValueAvailable)
+        assertEquals("unavailable must not claim a currency", "", state.protectedValueCurrency)
+        assertEquals(0.0, state.totalProtectedValue, 0.0)
+    }
+
     private fun warranty(
         id: Long,
         product: String,

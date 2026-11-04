@@ -321,6 +321,54 @@ class DashboardContractsAdapterTest {
         assertEquals(status.percentKnown, result[0].percentKnown)
     }
 
+    private fun effectiveSpendStatus(
+        breakdown: com.yourname.expensetracker.domain.budget.AdjustedSpendBreakdown?
+    ) = com.yourname.expensetracker.domain.budget.BudgetStatus(
+        budget = com.yourname.expensetracker.data.database.entity.Budget(
+            id = 1L,
+            categoryId = null,
+            amount = 100.0,
+            currency = "EUR",
+            period = com.yourname.expensetracker.data.database.entity.BudgetPeriod.MONTHLY,
+            startDate = 1_700_000_000_000L,
+            isActive = true
+        ),
+        category = null,
+        spentAmount = 120.0,
+        remainingAmount = -20.0,
+        percentUsed = 120f,
+        healthStatus = com.yourname.expensetracker.domain.budget.BudgetHealthStatus.EXCEEDED,
+        periodStart = 1_700_000_000_000L,
+        periodEnd = 1_702_000_000_000L,
+        effectiveLimit = 100.0,
+        adjustedSpendBreakdown = breakdown
+    )
+
+    @Test
+    fun `observeBudgetStatuses effectiveSpend follows the adjusted breakdown not gross spend`() = runTest {
+        val breakdown = com.yourname.expensetracker.domain.budget.AdjustedSpendBreakdown(
+            personalSpend = 90.0, sharedSpend = 30.0, reimbursedAmount = 0.0,
+            netSharedLiability = 0.0, effectiveSpend = 90.0, pendingReimbursements = 0.0
+        )
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(effectiveSpendStatus(breakdown)))
+
+        val result = adapter.observeBudgetStatuses().first()
+
+        assertEquals(1, result.size)
+        assertEquals(90.0, requireNotNull(result[0].effectiveSpend), 0.0)
+        assertEquals("gross spend stays the gross figure", 120.0, result[0].spentAmount, 0.0)
+    }
+
+    @Test
+    fun `observeBudgetStatuses effectiveSpend is null when the adjusted breakdown is null`() = runTest {
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(effectiveSpendStatus(null)))
+
+        val result = adapter.observeBudgetStatuses().first()
+
+        assertEquals(1, result.size)
+        org.junit.Assert.assertNull("must not default to spentAmount", result[0].effectiveSpend)
+    }
+
     @Test
     fun `observeDashboardExpenses carries shared-expense identity across the boundary`() = runTest {
         // P5-004 (RP-05): the isSharedExpense flag must survive the adapter

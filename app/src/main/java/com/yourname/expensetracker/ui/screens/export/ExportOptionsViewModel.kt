@@ -815,7 +815,9 @@ class ExportOptionsViewModel @Inject constructor(
                 append("\"originalCurrency\":\"").append(escapeJson(tx.originalCurrency)).append("\",")
                 append("\"originalAmount\":").append(tx.originalAmount?.let { formatJsonNumber(it) } ?: "null").append(',')
                 val isNoRateSentinel = tx.hasNoRateConversion
-                append("\"homeCurrency\":\"").append(escapeJson(tx.homeCurrency)).append("\",")
+                append("\"homeCurrency\":")
+                if (isNoRateSentinel) append("null,")
+                else append("\"").append(escapeJson(tx.homeCurrency)).append("\",")
                 append("\"baseAmount\":").append(if (isNoRateSentinel) "null" else formatJsonNumber(tx.baseAmount)).append(',')
                 append("\"baseCurrency\":")
                 if (isNoRateSentinel) append("null,")

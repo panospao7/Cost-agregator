@@ -201,7 +201,8 @@ class DashboardWidgetConsistencyTest {
             healthStatus = BudgetHealthStatus.ON_TRACK,
             periodStart = monthStart,
             periodEnd = monthStart + 30 * 86400000L,
-            currency = "EUR", currencyAssumption = "EXPLICIT"
+            currency = "EUR", currencyAssumption = "EXPLICIT",
+            effectiveSpend = 100.0
         )
 
         val processedData = createProcessedData(
@@ -242,7 +243,8 @@ class DashboardWidgetConsistencyTest {
             healthStatus = BudgetHealthStatus.ON_TRACK,
             periodStart = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfMonth(timeProvider.now()),
             periodEnd = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfMonth(timeProvider.now()) + 30 * 86400000L,
-            currency = "EUR", currencyAssumption = "EXPLICIT"
+            currency = "EUR", currencyAssumption = "EXPLICIT",
+            effectiveSpend = 500.0
         )
 
         val processedData = createProcessedData(
@@ -254,10 +256,10 @@ class DashboardWidgetConsistencyTest {
         val result = computeUseCase.compute(processedData)
 
         val safeToSpend = result.allWidgets.filterIsInstance<DashboardWidget.SafeToSpend>().single()
-        // FL-06: the hero amount is the budget snapshot's remainingAmount (1000 limit - 500 spent in the
+        // FL-06: the hero amount is the snapshot's limit minus effectiveSpend (1000 limit - 500 spent in the
         // budget period), not the limit minus calendar-month spend (which is 1000 here: no expenses).
         assertFalse("SafeToSpend should be available when budget is normalized", safeToSpend.isUnavailable)
-        assertEquals("SafeToSpend amount should be the snapshot remainingAmount", 500.0, safeToSpend.amount!!, 0.001)
+        assertEquals("SafeToSpend amount should be limit minus the snapshot effectiveSpend", 500.0, safeToSpend.amount!!, 0.001)
     }
 
     @Test

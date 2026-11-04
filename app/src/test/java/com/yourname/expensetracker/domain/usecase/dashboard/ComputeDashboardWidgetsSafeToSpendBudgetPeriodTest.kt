@@ -138,7 +138,8 @@ class ComputeDashboardWidgetsSafeToSpendBudgetPeriodTest {
         spent: Double,
         remaining: Double,
         periodStart: Long,
-        periodEnd: Long
+        periodEnd: Long,
+        effectiveSpend: Double? = spent
     ) = BudgetStatusSnapshot(
         budgetCategoryId = null,
         budgetAmount = limit,
@@ -150,7 +151,8 @@ class ComputeDashboardWidgetsSafeToSpendBudgetPeriodTest {
         periodStart = periodStart,
         periodEnd = periodEnd,
         currency = "EUR",
-        currencyAssumption = "USER_CONFIRMED"
+        currencyAssumption = "USER_CONFIRMED",
+        effectiveSpend = effectiveSpend
     )
 
     private val thisMonthEur300 get() = listOf(expense(300.0, ts(2026, 4, 2, 12)))
@@ -199,6 +201,65 @@ class ComputeDashboardWidgetsSafeToSpendBudgetPeriodTest {
 
         assertFalse(widget.isUnavailable)
         assertEquals(0.0, requireNotNull(widget.amount), 0.0)
+    }
+
+    @Test
+    fun `FL-06 amount uses effective spend not gross spend so limit 100 gross 120 effective 90 shows 10`() = runTest {
+        val sharedOffset = budget(
+            limit = 100.0, spent = 120.0, remaining = -20.0,
+            periodStart = ts(2026, 4, 1), periodEnd = ts(2026, 5, 1),
+            effectiveSpend = 90.0
+        )
+
+        val widget = safeToSpend(thisMonthEur300, listOf(sharedOffset))
+
+        assertFalse(widget.isUnavailable)
+        assertEquals(10.0, requireNotNull(widget.amount), 0.001)
+        assertEquals(100.0, requireNotNull(widget.totalBudget), 0.001)
+    }
+
+    @Test
+    fun `FL-06 effective spend above limit clamps amount to zero and stays available`() = runTest {
+        val over = budget(
+            limit = 100.0, spent = 130.0, remaining = -30.0,
+            periodStart = ts(2026, 4, 1), periodEnd = ts(2026, 5, 1),
+            effectiveSpend = 130.0
+        )
+
+        val widget = safeToSpend(thisMonthEur300, listOf(over))
+
+        assertFalse("overspent is a real zero, not unavailable", widget.isUnavailable)
+        assertEquals(0.0, requireNotNull(widget.amount), 0.0)
+    }
+
+    @Test
+    fun `FL-06 null effective spend is unavailable even when gross remaining is positive`() = runTest {
+        val noEffective = budget(
+            limit = 100.0, spent = 20.0, remaining = 80.0,
+            periodStart = ts(2026, 4, 1), periodEnd = ts(2026, 5, 1),
+            effectiveSpend = null
+        )
+
+        val widget = safeToSpend(thisMonthEur300, listOf(noEffective))
+
+        assertTrue("null effectiveSpend must never fall back to gross remaining 80", widget.isUnavailable)
+        assertNull(widget.amount)
+    }
+
+    @Test
+    fun `FL-06 non finite effective spend is unavailable`() = runTest {
+        for (bad in listOf(Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY)) {
+            val snapshot = budget(
+                limit = 100.0, spent = 20.0, remaining = 80.0,
+                periodStart = ts(2026, 4, 1), periodEnd = ts(2026, 5, 1),
+                effectiveSpend = bad
+            )
+
+            val widget = safeToSpend(thisMonthEur300, listOf(snapshot))
+
+            assertTrue("effectiveSpend=$bad must be unavailable", widget.isUnavailable)
+            assertNull(widget.amount)
+        }
     }
 
     @Test

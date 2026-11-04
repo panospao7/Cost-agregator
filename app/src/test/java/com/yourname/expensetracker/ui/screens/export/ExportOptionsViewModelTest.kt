@@ -649,7 +649,8 @@ class ExportOptionsViewModelTest {
         viewModel.selectFormat("json")
         viewModel.generateExport()
         val jsonText = jsonOut.readText()
-        assertTrue(jsonText.contains("\"homeCurrency\":\"\""))
+        assertTrue("no-rate row writes homeCurrency as JSON null", jsonText.contains("\"homeCurrency\":null"))
+        assertFalse("no-rate row must not write an empty-string homeCurrency", jsonText.contains("\"homeCurrency\":\"\""))
         assertTrue(jsonText.contains("\"baseCurrency\":null"))
         assertFalse(jsonText.contains("\"EUR\""))
     }

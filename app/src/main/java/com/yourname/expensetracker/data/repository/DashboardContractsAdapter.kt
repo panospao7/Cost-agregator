@@ -96,7 +96,8 @@ class DashboardContractsAdapter @Inject constructor(
                     conversionWarning = status.conversionWarning,
                     currency = status.currency,
                     currencyAssumption = status.currencyAssumption,
-                    percentKnown = status.percentKnown
+                    percentKnown = status.percentKnown,
+                    effectiveSpend = status.adjustedSpendBreakdown?.effectiveSpend
                 )
             }
         }

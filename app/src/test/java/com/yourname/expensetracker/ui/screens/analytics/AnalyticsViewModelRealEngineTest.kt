@@ -9,6 +9,7 @@ import com.yourname.expensetracker.domain.analytics.AnalyticsInputAssembler
 import com.yourname.expensetracker.domain.analytics.BudgetVsActualEngine
 import com.yourname.expensetracker.domain.analytics.DailyBucketEngine
 import com.yourname.expensetracker.domain.analytics.InsightsEngine
+import com.yourname.expensetracker.domain.analytics.MerchantBreakdown
 import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
 import com.yourname.expensetracker.domain.analytics.SpendingPersonalityClassifier
 import com.yourname.expensetracker.domain.analytics.SpendingPersonalityProfile
@@ -164,7 +165,7 @@ class AnalyticsViewModelRealEngineTest : ViewModelTestUtils() {
         val assembler = AnalyticsInputAssembler(
             mockk(), testAnalyticsCurrencyNormalizer(), TestCurrencySettingsRepository(), timeProvider, categoryRepository
         )
-        val period = PeriodRange(PeriodKind.CUSTOM, txDate - 86_400_000L, txDate + 86_400_000L, "TEST")
+        val period = PeriodRange(PeriodKind.CUSTOM, txDate - 86_400_000L, txDate + 86_400_000L, label = "TEST")
         val input = assembler.build(expenses, "EUR", period)
         return buildMerchantBreakdown(expenses.toExpenseSnapshots(), input, "EUR")
     }

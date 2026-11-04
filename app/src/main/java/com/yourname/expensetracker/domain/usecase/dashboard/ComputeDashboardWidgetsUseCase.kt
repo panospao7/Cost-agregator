@@ -1325,15 +1325,21 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
                         val inputQuality = normalized.input.dataQuality
                         val conversionPartial = inputQuality.isPartial || inputQuality.excludedTransactionCount > 0
                         // FL-06: the hero number comes from the SAME budget snapshot the Budget
-                        // screen renders (remainingAmount/periodEnd already honour the budget
-                        // period, rollover and rolling windows). It is never recomputed from
-                        // calendar-month spend. A snapshot that is not complete in the home
-                        // currency, or whose limit is not strictly positive, is Unavailable.
+                        // screen renders (effective limit, effective spend and periodEnd already
+                        // honour the budget period, rollover and rolling windows). It is never
+                        // recomputed from calendar-month spend and never uses gross remaining.
+                        // A snapshot that is not complete in the home currency, whose limit is
+                        // not strictly positive, or whose effective spend is unavailable, is
+                        // Unavailable (matches the Budget card's remaining slot).
                         val budgetSnapshot = ctx.overallBudget?.takeIf {
                             it.hasCompleteAmountIn(normalized.input.homeCurrency.code) && it.budgetAmount > 0.0
                         }
                         val validBudget = budgetSnapshot?.budgetAmount
-                        val safeAmount = budgetSnapshot?.remainingAmount?.coerceAtLeast(0.0)
+                        val safeAmount = budgetSnapshot?.let { snapshot ->
+                            snapshot.effectiveSpend
+                                ?.takeIf { it.isFinite() }
+                                ?.let { (snapshot.budgetAmount - it).coerceAtLeast(0.0) }
+                        }
                         // Days left in the BUDGET period (periodEnd is exclusive), not the calendar month.
                         val budgetDaysRemaining = budgetSnapshot
                             ?.let { (TimePeriodUtils.daysBetween(ctx.now, it.periodEnd) - 1).coerceAtLeast(0) }

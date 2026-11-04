@@ -157,7 +157,8 @@ class ComputeDashboardWidgetsSafeToSpendQualityTest {
         val budget = BudgetStatusSnapshot(
             null, 1234.5, null, 0.0, 1234.5, 0.0,
             BudgetHealthStatus.ON_TRACK,
-            now, now + 86_400_000L, currency = "EUR", currencyAssumption = "USER_CONFIRMED"
+            now, now + 86_400_000L, currency = "EUR", currencyAssumption = "USER_CONFIRMED",
+            effectiveSpend = 0.0
         )
         val safeToSpend = computeSafeToSpend(emptyList(), listOf(budget))
 
@@ -207,7 +208,8 @@ class ComputeDashboardWidgetsSafeToSpendQualityTest {
         val budget = BudgetStatusSnapshot(
             null, 1000.0, null, 300.0, 700.0, 30.0,
             BudgetHealthStatus.ON_TRACK,
-            now, now + 86_400_000L, currency = "EUR", currencyAssumption = "USER_CONFIRMED"
+            now, now + 86_400_000L, currency = "EUR", currencyAssumption = "USER_CONFIRMED",
+            effectiveSpend = 300.0
         )
         val safeToSpend = computeSafeToSpend(
             listOf(createExpense(300.0, monthStart + 86_400_000L, "EUR")),
@@ -229,7 +231,8 @@ class ComputeDashboardWidgetsSafeToSpendQualityTest {
         val validBudget = BudgetStatusSnapshot(
             null, 1000.0, null, 300.0, 700.0, 30.0,
             BudgetHealthStatus.ON_TRACK,
-            now, now + 86_400_000L, currency = "EUR", currencyAssumption = "USER_CONFIRMED"
+            now, now + 86_400_000L, currency = "EUR", currencyAssumption = "USER_CONFIRMED",
+            effectiveSpend = 300.0
         )
 
         // 1. Missing budget -> unavailable
@@ -251,10 +254,10 @@ class ComputeDashboardWidgetsSafeToSpendQualityTest {
         }
 
         // 3. Partial dashboard spend input (unconvertible USD row) with a COMPLETE budget snapshot.
-        // FL-06 changed the source of the hero number: it is the snapshot's own remainingAmount
-        // (the budget's spend is converted by the budget pipeline, whose partiality is carried by
-        // snapshot.isPartial, covered in step 2). A partial calendar-month dashboard aggregate no
-        // longer feeds the amount, so the amount stays the snapshot's 700, and the partial state is
+        // FL-06 changed the source of the hero number: it is the snapshot's own limit minus its
+        // effectiveSpend (the budget's spend is converted by the budget pipeline, whose partiality
+        // is carried by snapshot.isPartial, covered in step 2). A partial calendar-month dashboard
+        // aggregate no longer feeds the amount, so the amount stays 1000 - 300 = 700, and the partial state is
         // surfaced through isPartial and the currency-quality warning instead of nulling the amount.
         val partialInputResult = computeSafeToSpend(
             listOf(eurExpense, createExpense(50.0, monthStart + 86_400_000L, "USD")),
@@ -276,7 +279,8 @@ class ComputeDashboardWidgetsSafeToSpendQualityTest {
         val budget = BudgetStatusSnapshot(
             null, 1000.0, null, 1250.0, 0.0, 125.0,
             BudgetHealthStatus.EXCEEDED,
-            now, now + 86_400_000L, currency = "EUR", currencyAssumption = "USER_CONFIRMED"
+            now, now + 86_400_000L, currency = "EUR", currencyAssumption = "USER_CONFIRMED",
+            effectiveSpend = 1250.0
         )
         val safeToSpend = computeSafeToSpend(
             listOf(createExpense(1250.0, monthStart + 86_400_000L, "EUR")),

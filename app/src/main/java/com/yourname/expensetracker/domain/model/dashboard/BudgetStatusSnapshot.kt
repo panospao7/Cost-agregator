@@ -19,7 +19,12 @@ data class BudgetStatusSnapshot(
     /** Denomination of effectiveLimit/remainingAmount, not a guessed home currency. */
     val currency: String? = null,
     val currencyAssumption: String = "UNKNOWN",
-    val percentKnown: Boolean = true
+    val percentKnown: Boolean = true,
+    /**
+     * FL-06: shared-expense-adjusted spend in [currency] (the Budget card's effective spend),
+     * or null when the adjusted breakdown is unavailable. Never defaults to [spentAmount].
+     */
+    val effectiveSpend: Double? = null
 ) {
     fun hasCompleteAmountIn(homeCurrency: String): Boolean {
         val target = com.yourname.expensetracker.domain.core.money.CurrencyCode.parse(homeCurrency)

@@ -507,8 +507,7 @@ private fun RetroStageCard(
 private fun RetroSelectedStageIndicator(
     period: PeriodTotal,
     averageAmount: Double,
-    /** Placeholder default. Production callers should pass explicit currency. */
-    currency: String = "EUR"
+    currency: String
 ) {
     val percentageOfAvg = retroPercentageOfAverage(period, averageAmount)
     val rankText = when {

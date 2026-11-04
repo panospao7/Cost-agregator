@@ -35,7 +35,7 @@ data class WarrantyTrackerState(
     val activeCount: Int = 0,
     val expiringSoonCount: Int = 0,
     val totalProtectedValue: Double = 0.0,
-    val protectedValueCurrency: String = "EUR",
+    val protectedValueCurrency: String = "",
     val isProtectedValuePartial: Boolean = false,
     val isProtectedValueAvailable: Boolean = false,
     val selectedFilter: WarrantyStatus? = null,
@@ -166,7 +166,7 @@ class WarrantyTrackerViewModel @Inject constructor(
                 null
             }
             val protectedValue = protectedValueAggregate?.displayAmount ?: 0.0
-            val protectedValueCurrency = protectedValueAggregate?.displayCurrency?.code ?: "EUR"
+            val protectedValueCurrency = protectedValueAggregate?.displayCurrency?.code ?: ""
             val isProtectedValueAvailable = protectedValueAggregate != null &&
                 protectedValueAggregate.conversionQuality != ConversionQuality.UNAVAILABLE
             val isProtectedValuePartial = isProtectedValueAvailable && protectedValueAggregate?.isPartial == true
