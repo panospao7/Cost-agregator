@@ -834,7 +834,9 @@ private fun RetroAnalyticsSection(
             else -> RetroColorsCategories.NeonWhite.copy(alpha = 0.7f)
         }
         
-        RetroStatRowCategories("TREND", trendText, trendColor, isBold = true)
+        if (trendInfo?.changePercent != null) {
+            RetroStatRowCategories("TREND", trendText, trendColor, isBold = true)
+        }
     }
 }
 

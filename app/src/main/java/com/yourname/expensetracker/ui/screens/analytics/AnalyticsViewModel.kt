@@ -881,7 +881,12 @@ class AnalyticsViewModel @Inject constructor(
  return AnalyticsState(
   selectedPeriod = period,
   currentTotal = currentTotal,
-  previousTotal = AnalyticsComparisonWindows.previousTotalOrNull(period, previousAvailableAmount),
+  // A partial previous aggregate understates that side, so no previous figure is shown.
+  previousTotal = if (previousTotalResult.aggregateOrNull()?.isPartial == true) {
+   null
+  } else {
+   AnalyticsComparisonWindows.previousTotalOrNull(period, previousAvailableAmount)
+  },
   currentTotalMoneyResult = currentTotalResult,
   previousTotalMoneyResult = previousTotalResult,
   error = currentMoneyError,

@@ -1221,8 +1221,10 @@ fun SmartFAB(
             icon = { 
                 Icon(
                     if (isExpanded && selectedTab != 2) Icons.Rounded.Close else icon, 
-                    contentDescription = if (isExpanded && selectedTab != 2) stringResource(R.string.label_close) else stringResource(labelRes)
-                ) 
+                    contentDescription = if (isExpanded && selectedTab != 2) stringResource(R.string.label_close)
+                    else if (labelRes == R.string.label_add_amount_format && clipboardAmount != null) stringResource(labelRes, clipboardAmount!!)
+                    else stringResource(labelRes)
+                )
             },
             text = { 
                 val amount = clipboardAmount

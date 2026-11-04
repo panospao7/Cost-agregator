@@ -234,6 +234,24 @@ class AnalyticsViewModelRealEngineTest : ViewModelTestUtils() {
     }
 
     @Test
+    fun `previous total is null when the previous period has an unrated row`() = runTest(testDispatcher) {
+        val viewModel = viewModelFor(
+            listOf(
+                purchase(1, 250.0, "EUR", 1L),
+                purchase(2, 100.0, "EUR", 1L).copy(date = prevDate),
+                purchase(3, 50_000.0, "JPY", 1L).copy(date = prevDate)
+            )
+        )
+
+        val job = launch { viewModel.state.collect { } }
+        testDispatcher.scheduler.advanceTimeBy(400)
+        awaitComputed(viewModel)
+
+        assertNull("a partial previous aggregate must not show a previous figure", viewModel.state.value.previousTotal)
+        job.cancel()
+    }
+
+    @Test
     fun `hero percent is null when the current period has an unrated row`() = runTest(testDispatcher) {
         val viewModel = viewModelFor(
             listOf(
