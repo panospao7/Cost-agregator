@@ -1764,6 +1764,50 @@ class CurrencyRatesRepositoryImplTest {
         """.trimIndent()
     }
 
+    @Test
+    fun `daily refresh cancelled mid-build stores nothing and rethrows CancellationException`() = runTest {
+        val fixture = fixture(now = fetchedNextDayMillis)
+        var jobRef: Job? = null
+        var thrown: Throwable? = null
+        var returned: Int? = null
+        val payload = ecbXml().toByteArray(Charsets.UTF_8)
+        // The job is cancelled while the payload is being read, i.e. before the rate build loop starts.
+        val cancelling = object : InputStream() {
+            private val delegate = ByteArrayInputStream(payload)
+            private var cancelled = false
+            private fun cancelOnce() {
+                if (!cancelled) {
+                    cancelled = true
+                    jobRef?.cancel()
+                }
+            }
+            override fun read(): Int {
+                cancelOnce()
+                return delegate.read()
+            }
+            override fun read(b: ByteArray, off: Int, len: Int): Int {
+                cancelOnce()
+                return delegate.read(b, off, len)
+            }
+        }
+
+        val job = launch(Dispatchers.Unconfined) {
+            jobRef = coroutineContext[Job]
+            try {
+                returned = fixture.repository.refreshFromStream("USD", cancelling)
+            } catch (e: CancellationException) {
+                thrown = e
+                throw e
+            }
+        }
+        job.join()
+
+        assertTrue("CancellationException must propagate", thrown is CancellationException)
+        assertNull(returned)
+        assertTrue(fixture.store.rates.isEmpty())
+        assertTrue(fixture.settings.lastRateUpdates.isEmpty())
+    }
+
     private fun conflictingDatesXml(): String = """
         <?xml version='1.0' encoding='UTF-8'?>
         <gesmes:Envelope
