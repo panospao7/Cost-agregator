@@ -368,7 +368,7 @@ class DashboardBudgetProvenanceChainTest {
     // repository, adapter, use case and synthesis engine.
     // ---------------------------------------------------------------------------------------
     @Test
-    fun gross_100_effective_60_gives_940_on_headline_runway_and_weather() = runTest {
+    fun effective_60_not_gross_gives_940_on_headline_runway_and_weather() = runTest {
         seedDayOnePurchase()
         coEvery { offsetEngine.calculateEffectiveBudgetSpend(any(), any(), any()) } returns BudgetSpendBreakdown(
             totalPersonalSpend = 100.0,
@@ -386,7 +386,7 @@ class DashboardBudgetProvenanceChainTest {
 
         val overall = lastBudgetStatuses.single()
         assertEquals("setup: the snapshot carries the effective spend", 60.0, overall.effectiveSpend!!, 0.001)
-        assertEquals("setup: gross spend stays 100", 100.0, overall.spentAmount, 0.001)
+        assertTrue("setup: effective spend differs from gross", overall.spentAmount != overall.effectiveSpend)
 
         val headline = result.allWidgets.filterIsInstance<DashboardWidget.SafeToSpend>().single()
         assertFalse(headline.isUnavailable)

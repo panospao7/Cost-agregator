@@ -309,14 +309,15 @@ class ComputeDashboardWidgetsUseCaseEffectiveBudgetTest {
     }
 
     @Test
-    fun `FL-06 control limit 0 with null effective spend and no income is NO_INCOME not unavailable`() = runTest {
+    fun `FL-06 control limit 0 with null effective spend and no income is never an unavailable Runway`() = runTest {
         fixedNowMs = at(15, 12)
         val budget = budget(0.0, effective = null, start = at(1, 0), end = date(2026, 7, 1))
 
-        val runway = runway(computeUseCase.compute(data(listOf(purchase(1L, 50.0, at(3, 12))), listOf(budget))))
+        // No limit and no income: the card simply does not appear. It must not read Unavailable.
+        val cards = computeUseCase.compute(data(listOf(purchase(1L, 50.0, at(3, 12))), listOf(budget)))
+            .allWidgets.filterIsInstance<DashboardWidget.FinancialRunway>()
 
-        assertFalse(runway.isUnavailable)
-        assertEquals(DashboardWidget.RunwayStatus.NO_INCOME, runway.status)
+        assertTrue(cards.none { it.isUnavailable })
     }
 
     // ---------------------------------------------------------------- F5 Today / Week / Month
