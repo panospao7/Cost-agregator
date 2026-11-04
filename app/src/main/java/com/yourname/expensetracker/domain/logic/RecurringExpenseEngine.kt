@@ -12,6 +12,7 @@ import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.model.RecurringPattern
 import com.yourname.expensetracker.domain.recurring.RecurringInstallmentEligibility
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
+import com.yourname.expensetracker.domain.util.IntervalModeSelector
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import javax.inject.Inject
@@ -234,6 +235,11 @@ class RecurringExpenseEngine @Inject constructor(
         return rolledDate
     }
 
+    private fun toleranceForMode(mode: Int): Double = when {
+        mode in 28..31 -> 3.0  // Month-length variation (28-31 days)
+        else -> (mode * 0.2).coerceAtLeast(1.0)
+    }
+
     private fun determineFrequency(intervalsMs: List<Long>, dates: List<Long>): Triple<RecurrenceFrequency, Double, Int> {
         if (intervalsMs.isEmpty()) return Triple(RecurrenceFrequency.IRREGULAR, 0.0, 0)
         
@@ -246,12 +252,10 @@ class RecurringExpenseEngine @Inject constructor(
         }
         
         // Find Mode (most common interval)
-        val frequencyMap = intervalsDays.groupingBy { it }.eachCount()
-        val modeEntry = frequencyMap.maxByOrNull { it.value } 
+        // BL-08: ties resolved by IntervalModeSelector (most in-tolerance, then closest to median).
+        val mode = IntervalModeSelector.selectMode(intervalsDays, ::toleranceForMode)
             ?: return Triple(RecurrenceFrequency.IRREGULAR, 0.0, 0)
-            
-        val mode = modeEntry.key
-        
+
         // NOTE: Frequency detection uses approximate day ranges as a heuristic.
         // Detected frequencies should be advanced using RecurrenceCalculator
         // (calendar-aware), not raw day multiplication, for correct behavior
@@ -274,10 +278,7 @@ class RecurringExpenseEngine @Inject constructor(
         }
 
         // Calculate Confidence: intervals "close" to mode. For monthly (28-31), use ±3 days (LOW: date boundary fix)
-        val tolerance = when {
-            mode in 28..31 -> 3.0  // Month-length variation (28-31 days)
-            else -> (mode * 0.2).coerceAtLeast(1.0)
-        }
+        val tolerance = toleranceForMode(mode)
         val matchingIntervals = intervalsDays.count { abs(it - mode) <= tolerance }
         val consistencyScore = matchingIntervals.toDouble() / intervalsDays.size
 

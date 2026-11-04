@@ -5,6 +5,7 @@ import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.domain.recurring.RecurringInstallmentEligibility
 import com.yourname.expensetracker.domain.util.StatisticsUtils
+import com.yourname.expensetracker.domain.util.IntervalModeSelector
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import timber.log.Timber
@@ -227,6 +228,25 @@ class NotificationSubscriptionDetector @Inject constructor(
      * 2. The consistency score (0-1, higher = more regular)
      * 3. Days since the last transaction
      */
+    private fun intervalTypeForMode(mode: Int): String? = when (mode) {
+        in 5..11 -> "weekly"          // ~7 days
+        in 12..18 -> "biweekly"      // ~14 days
+        in 23..45 -> "monthly"       // ~30 days
+        in 46..75 -> "bimonthly"     // ~60 days
+        in 76..105 -> "quarterly"    // ~90 days
+        in 136..220 -> "semiannual"  // ~180 days (widened for calendar year-boundary alignment)
+        in 315..425 -> "annual"      // ~365 days (widened for year-boundary + leap year)
+        else -> null
+    }
+
+    private fun toleranceForInterval(intervalType: String?, mode: Int): Int = when (intervalType) {
+        "monthly" -> 3  // ±3 days for monthly
+        "weekly", "biweekly" -> 2  // ±2 days for weekly patterns
+        "quarterly" -> 7  // ±7 days for quarterly
+        "semiannual", "annual" -> 14  // ±14 days for longer intervals
+        else -> (mode * 0.1).toInt().coerceAtLeast(1)
+    }
+
     private fun analyzeIntervals(
         dates: List<Long>,
         now: Long
@@ -243,35 +263,21 @@ class NotificationSubscriptionDetector @Inject constructor(
         if (intervalsDays.isEmpty()) return null
 
         // Determine the most common interval (mode)
-        val frequencyMap = intervalsDays.groupingBy { it }.eachCount()
-        val modeEntry = frequencyMap.maxByOrNull { it.value } ?: return null
-        val mode = modeEntry.key
-        val modeCount = modeEntry.value
+        // BL-08: ties resolved by IntervalModeSelector (most in-tolerance, then closest to median).
+        val mode = IntervalModeSelector.selectMode(intervalsDays) { candidate ->
+            toleranceForInterval(intervalTypeForMode(candidate), candidate).toDouble()
+        } ?: return null
 
         // REC-10: Calendar-aware year boundary detection.
         // Annual patterns can span 315..400 days due to month-boundary alignment
         // (e.g. Jan 15 → Jan 15 of next year = 365 days, but Jan 31 → Feb 28 = 334 days
         // or Dec 1 → Dec 1 = 365 days). Similarly semiannual spans 155..200 days.
-        val intervalType = when (mode) {
-            in 5..11 -> "weekly"          // ~7 days
-            in 12..18 -> "biweekly"      // ~14 days
-            in 23..45 -> "monthly"       // ~30 days
-            in 46..75 -> "bimonthly"     // ~60 days
-            in 76..105 -> "quarterly"    // ~90 days
-            in 136..220 -> "semiannual"  // ~180 days (widened for calendar year-boundary alignment)
-            in 315..425 -> "annual"      // ~365 days (widened for year-boundary + leap year)
-            else -> return null // Irregular interval, not a subscription
-        }
+        val intervalType = intervalTypeForMode(mode)
+            ?: return null // Irregular interval, not a subscription
 
         // Calculate interval consistency
         // How many intervals are within tolerance of the mode
-        val tolerance = when (intervalType) {
-            "monthly" -> 3  // ±3 days for monthly
-            "weekly", "biweekly" -> 2  // ±2 days for weekly patterns
-            "quarterly" -> 7  // ±7 days for quarterly
-            "semiannual", "annual" -> 14  // ±14 days for longer intervals
-            else -> (mode * 0.1).toInt().coerceAtLeast(1)
-        }
+        val tolerance = toleranceForInterval(intervalType, mode)
 
         val matchingIntervals = intervalsDays.count { kotlin.math.abs(it - mode) <= tolerance }
         val intervalConsistency = matchingIntervals.toDouble() / intervalsDays.size
