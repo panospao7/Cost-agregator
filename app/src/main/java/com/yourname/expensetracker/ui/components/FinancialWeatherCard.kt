@@ -168,7 +168,14 @@ fun FinancialWeatherCard(
             ) {
             ForecastMetric("COMMITTED", totalCommitted, SemanticColors.TextSecondary, currency = currency)
             ForecastMetric("LIKELY", totalLikely, SemanticColors.TextSecondary, currency = currency)
-            ForecastMetric("AVAILABLE", discretionaryBudget, textColor, currency = currency)
+            // The UNKNOWN weather state means no honest pool exists: never render it as 0.
+            ForecastMetric(
+                "AVAILABLE",
+                discretionaryBudget,
+                textColor,
+                currency = currency,
+                unavailable = state == WeatherState.UNKNOWN
+            )
             }
 
             // R9 (RG16A-2): AVAILABLE excludes STRICT goal reserves with unknown/unconvertible currency.
@@ -321,7 +328,13 @@ fun FinancialWeatherCard(
 }
 
 @Composable
-fun ForecastMetric(label: String, amount: Double, color: Color, currency: String) {
+fun ForecastMetric(
+    label: String,
+    amount: Double,
+    color: Color,
+    currency: String,
+    unavailable: Boolean = false
+) {
     Column {
         Text(
             text = label,
@@ -331,7 +344,11 @@ fun ForecastMetric(label: String, amount: Double, color: Color, currency: String
             letterSpacing = 0.5.sp
         )
         Text(
-            text = CurrencyFormatter.formatMoney(amount, currency, showCents = false),
+            text = if (unavailable) {
+                stringResource(R.string.installments_unavailable)
+            } else {
+                CurrencyFormatter.formatMoney(amount, currency, showCents = false)
+            },
             style = MaterialTheme.typography.titleSmall,
             fontWeight = FontWeight.Bold,
             color = color

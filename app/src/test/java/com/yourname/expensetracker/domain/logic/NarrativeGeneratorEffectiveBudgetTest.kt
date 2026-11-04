@@ -177,6 +177,78 @@ class NarrativeGeneratorEffectiveBudgetTest {
         )
     }
 
+    private suspend fun narrative(budgets: List<BudgetStatusSnapshot>) =
+        generator.generate(
+            forecast = engine.synthesize(
+                pastSumDaily = emptyList(),
+                recurringPatterns = emptyList(),
+                plannedExpenses = emptyList(),
+                savingsGoals = emptyList(),
+                budgetStatuses = budgets,
+                spendingPace = pace,
+                displayCurrency = "EUR"
+            ),
+            budgetStatuses = budgets,
+            homeCurrency = "EUR"
+        )
+
+    private val unavailableHeadline = UiText.fromKey(DomainTextKeys.WEATHER_HEADLINE_UNAVAILABLE)
+    private val unavailableSummary = UiText.fromKey(DomainTextKeys.WEATHER_SUMMARY_UNAVAILABLE)
+
+    @Test
+    fun `overall budget with effective spend unavailable gives UNKNOWN weather and the unavailable text`() = runTest {
+        val result = narrative(
+            listOf(snapshot(gross = 110.0, effective = null, effectiveHealth = null, limit = 100.0))
+        )
+
+        assertEquals(com.yourname.expensetracker.domain.model.dashboard.WeatherState.UNKNOWN, result.state)
+        assertEquals(unavailableHeadline, result.headline)
+        assertEquals(unavailableSummary, result.summary)
+        assertFalse(result.summary.toString().contains("on track", ignoreCase = true))
+        assertFalse(result.summary.toString().contains("buffer", ignoreCase = true))
+    }
+
+    @Test
+    fun `unstamped legacy default row gives UNKNOWN weather even with an effective spend`() = runTest {
+        val legacy = snapshot(
+            gross = 110.0, effective = 120.0, effectiveHealth = BudgetHealthStatus.EXCEEDED, limit = 100.0
+        ).copy(currencyAssumption = "LEGACY_DEFAULT")
+
+        val result = narrative(listOf(legacy))
+
+        assertEquals(com.yourname.expensetracker.domain.model.dashboard.WeatherState.UNKNOWN, result.state)
+        assertEquals(unavailableHeadline, result.headline)
+        assertEquals(unavailableSummary, result.summary)
+        assertFalse(result.summary.toString().contains("on track", ignoreCase = true))
+    }
+
+    @Test
+    fun `no budgets keeps the existing weather path`() = runTest {
+        val result = narrative(emptyList())
+
+        assertFalse(result.summary == unavailableSummary)
+        assertFalse(result.headline == unavailableHeadline)
+    }
+
+    @Test
+    fun `non positive overall limit keeps the existing weather path`() = runTest {
+        val result = narrative(
+            listOf(snapshot(gross = 0.0, effective = 0.0, effectiveHealth = BudgetHealthStatus.ON_TRACK, limit = 0.0))
+        )
+
+        assertFalse(result.summary == unavailableSummary)
+        assertFalse(result.headline == unavailableHeadline)
+    }
+
+    @Test
+    fun `UNKNOWN effective health never prints all on track`() = runTest {
+        val sections = details(
+            listOf(snapshot(gross = 40.0, effective = 40.0, effectiveHealth = BudgetHealthStatus.UNKNOWN))
+        )
+
+        assertTrue(sections.none { allOnTrack in it.items })
+    }
+
     @Test
     fun `gross 90 and effective 120 prints the exceeded line with 120`() = runTest {
         val sections = details(

@@ -9,6 +9,8 @@ import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.text.DomainTextKeys
 import com.yourname.expensetracker.domain.text.UiTextArg
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
+import com.yourname.expensetracker.domain.budget.BudgetPeriodRemaining
+import com.yourname.expensetracker.domain.budget.BudgetPeriodRemainingUnavailableReason
 import com.yourname.expensetracker.domain.model.dashboard.BudgetStatusSnapshot
 import com.yourname.expensetracker.domain.model.dashboard.WeatherState
 import javax.inject.Inject
@@ -25,6 +27,25 @@ class NarrativeGenerator @Inject constructor() {
         val components = forecast.components
         val risk = components.riskLevel
         val discretionary = components.discretionaryBudget
+
+        // FIN-WEATHER: an overall budget with a positive limit whose remainder is unavailable
+        // (conversion incomplete, or no effective spend) has no honest pool. Say so instead of
+        // reading the pace-only risk and a zero pool as a weather state. NO_POSITIVE_LIMIT and
+        // "no budget at all" keep the existing path.
+        val overallRemaining = budgetStatuses
+            .find { it.budgetCategoryId == null }
+            ?.periodRemaining(forecast.generatedAt.toEpochMilli(), homeCurrency)
+        if (overallRemaining is BudgetPeriodRemaining.Unavailable &&
+            overallRemaining.reason != BudgetPeriodRemainingUnavailableReason.NO_POSITIVE_LIMIT
+        ) {
+            return WeatherNarrative(
+                state = WeatherState.UNKNOWN,
+                icon = "❓",
+                headline = UiText.fromKey(DomainTextKeys.WEATHER_HEADLINE_UNAVAILABLE),
+                summary = UiText.fromKey(DomainTextKeys.WEATHER_SUMMARY_UNAVAILABLE),
+                details = buildDetails(forecast, budgetStatuses, homeCurrency)
+            )
+        }
 
         val basic = when {
             risk == RiskLevel.CRITICAL -> WeatherNarrative(
@@ -134,7 +155,9 @@ class NarrativeGenerator @Inject constructor() {
                     }
                 )
             )
-        } else if (budgetStatuses.isNotEmpty() && budgetStatuses.all { it.effectiveHealthStatus != null }) {
+        } else if (budgetStatuses.isNotEmpty() && budgetStatuses.all {
+                it.effectiveHealthStatus != null && it.effectiveHealthStatus != BudgetHealthStatus.UNKNOWN
+            }) {
             sections.add(
                 NarrativeSection(
                     title = UiText.fromKey(DomainTextKeys.NARRATIVE_BUDGET_HEALTH),

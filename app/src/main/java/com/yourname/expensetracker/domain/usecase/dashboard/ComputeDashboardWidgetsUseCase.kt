@@ -1180,7 +1180,10 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         if (exceeded > 0) return UiText.fromKey(DashboardTextKeys.WIDGET_BUDGET_EXCEEDED_FORMAT, exceeded)
         // FL-06: "all on track" needs a known effective health for every budget. Otherwise the summary
         // is null, which the Home widget renders as unavailable (never as green).
-        return if (budgetStatuses.all { it.effectiveHealthStatus != null }) {
+        // An UNKNOWN effective health (percent not known) is non-null but is not "on track".
+        return if (budgetStatuses.all {
+                it.effectiveHealthStatus != null && it.effectiveHealthStatus != BudgetHealthStatus.UNKNOWN
+            }) {
             UiText.fromKey(DashboardTextKeys.WIDGET_ALL_BUDGETS_ON_TRACK)
         } else {
             null

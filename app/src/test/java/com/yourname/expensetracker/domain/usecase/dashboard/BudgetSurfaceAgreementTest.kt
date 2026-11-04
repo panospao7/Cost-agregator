@@ -86,7 +86,10 @@ class BudgetSurfaceAgreementTest {
         val weatherState: WeatherState,
         val monteCarloBudget: Double?,
         val monteCarloCalls: Int,
-        val blockPartyShown: Boolean
+        val blockPartyShown: Boolean,
+        val weatherSummary: UiText,
+        val homeBudgetSummary: UiText?,
+        val hasBudgetHealthWidget: Boolean
     )
 
     // ---------------------------------------------------------------- truth table rows
@@ -159,6 +162,39 @@ class BudgetSurfaceAgreementTest {
         }
     }
 
+    /**
+     * Unavailable rows: limit 1,000, gross 1,100, no usable effective figure. Every surface says
+     * unavailable; none shows a zero pool or a green "on track".
+     */
+    @Test
+    fun `unavailable effective spend gives an unavailable headline runway weather and Home summary`() = runTest {
+        val base = snapshot(
+            1_000.0, effective = 1_100.0, start = date(2026, 6, 10), end = date(2026, 7, 10), gross = 1_100.0
+        )
+        val rows = mapOf(
+            "effective spend null" to base.copy(effectiveSpend = null, effectiveHealthStatus = null),
+            "percent unknown" to base.copy(
+                percentKnown = false,
+                effectiveHealthStatus = BudgetHealthStatus.UNKNOWN
+            )
+        )
+
+        rows.forEach { (name, snapshot) ->
+            val s = surfaces(snapshot)
+            assertTrue("$name: headline unavailable", s.headline.isUnavailable)
+            assertNull("$name: headline amount", s.headline.amount)
+            assertTrue("$name: runway unavailable", s.runway.isUnavailable)
+            assertEquals("$name: weather", WeatherState.UNKNOWN, s.weatherState)
+            assertEquals(
+                "$name: weather summary",
+                UiText.fromKey(com.yourname.expensetracker.domain.text.DomainTextKeys.WEATHER_SUMMARY_UNAVAILABLE),
+                s.weatherSummary
+            )
+            assertTrue("$name: budget widget still shown", s.hasBudgetHealthWidget)
+            assertNull("$name: Home budget summary is never green", s.homeBudgetSummary)
+        }
+    }
+
     // ---------------------------------------------------------------- failing boundaries
 
     /** Boundary: effective spend one cent under the limit still leaves a positive remainder everywhere. */
@@ -225,7 +261,11 @@ class BudgetSurfaceAgreementTest {
             weatherState = narrative.state,
             monteCarloBudget = simulatedBudgetAmounts.lastOrNull(),
             monteCarloCalls = simulatedBudgetAmounts.size,
-            blockPartyShown = result.allWidgets.any { it is DashboardWidget.BudgetBlockParty }
+            blockPartyShown = result.allWidgets.any { it is DashboardWidget.BudgetBlockParty },
+            weatherSummary = narrative.summary,
+            homeBudgetSummary = result.allWidgets.filterIsInstance<DashboardWidget.BudgetHealthWidget>()
+                .singleOrNull()?.summary,
+            hasBudgetHealthWidget = result.allWidgets.any { it is DashboardWidget.BudgetHealthWidget }
         )
     }
 

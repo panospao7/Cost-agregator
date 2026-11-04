@@ -287,8 +287,6 @@ class BudgetViewModelCurrencyProvenanceTest : ViewModelTestUtils() {
         assertEquals(1, state.budgets.size)
         assertNull(state.budgets.single().adjustedSpendBreakdown)
         assertNull(state.error)
-        // The offset engine is no longer a VM dependency, so it can never be consulted for a null breakdown.
-        coVerify(exactly = 0) { offsetEngine.calculateEffectiveBudgetSpend(any(), any(), any()) }
     }
 
     @Test
@@ -307,7 +305,6 @@ class BudgetViewModelCurrencyProvenanceTest : ViewModelTestUtils() {
             val state = vm.uiState.first { it.budgets.isNotEmpty() }
 
             assertEquals(10.0, state.budgets.single().adjustedSpendBreakdown!!.effectiveSpend, 0.0001)
-            coVerify(exactly = 0) { offsetEngine.calculateEffectiveBudgetSpend(any(), any(), any()) }
         }
 
     private fun viewModelEmitting(statuses: List<BudgetStatus>): BudgetViewModel {
