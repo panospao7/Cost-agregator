@@ -987,4 +987,6 @@
     <string name="savings_goal_delete_history_unavailable_message">No se pudo comprobar el historial de aportaciones, por lo que el objetivo no se eliminó. Inténtalo de nuevo más tarde.</string>
     <string name="savings_goal_deleting_cd">Eliminando objetivo</string>
     <string name="transactions_refund_likelihood_notice">Esto parece un reembolso. Los reembolsos se registran como depósitos, por lo que el total de la categoría de la compra original no se reduce. Para corregirlo, edite o elimine la compra original. Elimine también este depósito para que no se cuente como ingreso.</string>
+    <!-- fix-1.0.4 B1 split: DRAFT: owner native sign-off pending -->
+    <string name="calendar_label_starting_balance_no_currency">Saldo inicial</string>
 </resources>
