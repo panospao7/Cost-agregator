@@ -7,11 +7,11 @@ enum class BudgetPeriodRemainingUnavailableReason {
     /** The snapshot is not complete in the home currency, or its percent is unknown. */
     CONVERSION_INCOMPLETE,
 
-    /** No finite shared-expense-adjusted (effective) spend exists for the budget. */
-    EFFECTIVE_SPEND_UNAVAILABLE,
-
     /** The budget limit is not strictly positive, so no remainder is defined. */
-    NO_POSITIVE_LIMIT
+    NO_POSITIVE_LIMIT,
+
+    /** No finite shared-expense-adjusted (effective) spend exists for the budget. */
+    EFFECTIVE_SPEND_UNAVAILABLE
 }
 
 /**
@@ -40,8 +40,8 @@ sealed interface BudgetPeriodRemaining {
 
 /**
  * Pure derivation of [BudgetPeriodRemaining]. Reason check order: conversion
- * ([complete] or [percentKnown] false), effective spend (null or non-finite), then limit
- * (not strictly positive).
+ * ([complete] or [percentKnown] false), limit (not strictly positive), then effective spend
+ * (null or non-finite).
  */
 fun budgetPeriodRemaining(
     limit: Double,

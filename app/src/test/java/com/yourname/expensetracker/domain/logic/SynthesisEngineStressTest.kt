@@ -162,7 +162,11 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
         percentUsed = if (limit > 0) (spent / limit * 100) else 0.0,
         healthStatus = health,
         periodStart = 0,
-        periodEnd = 0
+        periodEnd = 0,
+        currency = "EUR",
+        currencyAssumption = "USER_CONFIRMED",
+        effectiveSpend = spent,
+        effectiveHealthStatus = health
     )
 
     private fun createPace(

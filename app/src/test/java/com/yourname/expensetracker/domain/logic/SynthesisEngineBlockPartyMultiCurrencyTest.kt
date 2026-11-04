@@ -81,7 +81,11 @@ class SynthesisEngineBlockPartyMultiCurrencyTest {
         percentUsed = 0.0,
         healthStatus = BudgetHealthStatus.ON_TRACK,
         periodStart = 0L,
-        periodEnd = 0L
+        periodEnd = 0L,
+        currency = "EUR",
+        currencyAssumption = "USER_CONFIRMED",
+        effectiveSpend = 0.0,
+        effectiveHealthStatus = BudgetHealthStatus.ON_TRACK
     )
 
     /** 空 forecast：无 recurring / planned，displayCurrency 可指定。 */

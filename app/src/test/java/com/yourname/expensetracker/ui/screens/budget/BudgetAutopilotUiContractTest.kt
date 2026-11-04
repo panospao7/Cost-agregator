@@ -84,7 +84,6 @@ class BudgetAutopilotUiContractTest {
         viewModel = BudgetViewModel(
             budgetRepository = budgetRepository,
             categoryRepository = categoryRepository,
-            offsetEngine = offsetEngine,
             autopilotEngine = autopilotEngine,
             timeProvider = timeProvider,
             currencySettingsRepository = currencyRepo,

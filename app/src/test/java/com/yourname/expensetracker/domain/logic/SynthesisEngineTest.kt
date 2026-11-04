@@ -225,7 +225,7 @@ class SynthesisEngineTest : AnalyticsEngineTestBase() {
     fun `determineRiskLevel returns CRITICAL when budgets are exceeded`() = runTest {
         // Arrange
         val budgets = listOf(
-            createBudgetStatus(health = BudgetHealthStatus.EXCEEDED)
+            createBudgetStatus(health = BudgetHealthStatus.EXCEEDED, spent = 500.0)
         )
         val pace = SpendingPace(
             currentMonthSpent = 500.0,
@@ -246,7 +246,8 @@ class SynthesisEngineTest : AnalyticsEngineTestBase() {
             plannedExpenses = emptyList(),
             savingsGoals = emptyList(),
             budgetStatuses = budgets,
-            spendingPace = pace
+            spendingPace = pace,
+            displayCurrency = "EUR"
         )
 
         // Assert
@@ -257,7 +258,7 @@ class SynthesisEngineTest : AnalyticsEngineTestBase() {
     fun `discretionaryBudget calculation factors in all obligations`() = runTest {
         // Arrange
         val budgets = listOf(
-            createBudgetStatus(limit = 2000.0, categoryId = null) // Overall budget
+            createBudgetStatus(limit = 2000.0, categoryId = null, spent = 500.0) // Overall budget
         )
         
         val recurring = listOf(createRecurringPattern(100.0, 0.95f, 1705392000000L), createRecurringPattern(50.0, 0.85f, 1705392000000L))
@@ -282,7 +283,8 @@ class SynthesisEngineTest : AnalyticsEngineTestBase() {
             plannedExpenses = planned,
             savingsGoals = goals,
             budgetStatuses = budgets,
-            spendingPace = pace
+            spendingPace = pace,
+            displayCurrency = "EUR"
         )
 
         // Assert
@@ -668,8 +670,9 @@ class SynthesisEngineTest : AnalyticsEngineTestBase() {
             pastSumDaily = emptyList(),
             recurringPatterns = listOf(createRecurringPattern(600.0, 0.95f, millis(2024, Calendar.JANUARY, 20))),
             plannedExpenses = emptyList(), savingsGoals = emptyList(),
-            budgetStatuses = listOf(createBudgetStatus(limit = 1000.0)),
-            spendingPace = onPaceSpending(500.0)
+            budgetStatuses = listOf(createBudgetStatus(limit = 1000.0, spent = 500.0)),
+            spendingPace = onPaceSpending(500.0),
+            displayCurrency = "EUR"
         )
 
         assertEquals(0.0, forecast.components.discretionaryBudget, 0.0)
@@ -684,10 +687,11 @@ class SynthesisEngineTest : AnalyticsEngineTestBase() {
             recurringPatterns = listOf(createRecurringPattern(600.0, 0.95f, millis(2024, Calendar.JANUARY, 20))),
             plannedExpenses = emptyList(), savingsGoals = emptyList(),
             budgetStatuses = listOf(
-                createBudgetStatus(limit = 1000.0),
+                createBudgetStatus(limit = 1000.0, spent = 500.0),
                 createBudgetStatus(limit = 300.0, categoryId = 1L)
             ),
-            spendingPace = onPaceSpending(500.0)
+            spendingPace = onPaceSpending(500.0),
+            displayCurrency = "EUR"
         )
 
         assertEquals(RiskLevel.CRITICAL, forecast.components.riskLevel)
@@ -719,8 +723,9 @@ class SynthesisEngineTest : AnalyticsEngineTestBase() {
             pastSumDaily = emptyList(), recurringPatterns = emptyList(),
             plannedExpenses = emptyList(),
             savingsGoals = listOf(createSavingsGoal(1000.0, 300.0, GoalProtectionLevel.STRICT, null)),
-            budgetStatuses = listOf(createBudgetStatus(limit = 1000.0)),
-            spendingPace = onPaceSpending(500.0)
+            budgetStatuses = listOf(createBudgetStatus(limit = 1000.0, spent = 500.0)),
+            spendingPace = onPaceSpending(500.0),
+            displayCurrency = "EUR"
         )
 
         assertEquals(RiskLevel.CRITICAL, forecast.components.riskLevel)
@@ -733,8 +738,9 @@ class SynthesisEngineTest : AnalyticsEngineTestBase() {
             pastSumDaily = emptyList(),
             recurringPatterns = listOf(createRecurringPattern(100.0, 0.95f, millis(2024, Calendar.JANUARY, 20))),
             plannedExpenses = emptyList(), savingsGoals = emptyList(),
-            budgetStatuses = listOf(createBudgetStatus(limit = 1000.0)),
-            spendingPace = onPaceSpending(500.0)
+            budgetStatuses = listOf(createBudgetStatus(limit = 1000.0, spent = 500.0)),
+            spendingPace = onPaceSpending(500.0),
+            displayCurrency = "EUR"
         )
         assertEquals(RiskLevel.LOW, under.components.riskLevel)
 
@@ -743,8 +749,9 @@ class SynthesisEngineTest : AnalyticsEngineTestBase() {
             pastSumDaily = emptyList(),
             recurringPatterns = listOf(createRecurringPattern(500.0, 0.95f, millis(2024, Calendar.JANUARY, 20))),
             plannedExpenses = emptyList(), savingsGoals = emptyList(),
-            budgetStatuses = listOf(createBudgetStatus(limit = 1000.0)),
-            spendingPace = onPaceSpending(500.0)
+            budgetStatuses = listOf(createBudgetStatus(limit = 1000.0, spent = 500.0)),
+            spendingPace = onPaceSpending(500.0),
+            displayCurrency = "EUR"
         )
         assertEquals(RiskLevel.HIGH, exact.components.riskLevel)
     }
@@ -893,15 +900,28 @@ class SynthesisEngineTest : AnalyticsEngineTestBase() {
         createdAt = 0L,
     )
 
-    private fun createBudgetStatus(health: BudgetHealthStatus = BudgetHealthStatus.ON_TRACK, limit: Double = 1000.0, categoryId: Long? = null) = BudgetStatusSnapshot(
+    /**
+     * FL-06 fixture: a snapshot with a known EUR currency provenance whose effective spend equals
+     * the gross [spent] (no shared-expense adjustment) and whose effective health is [health].
+     */
+    private fun createBudgetStatus(
+        health: BudgetHealthStatus = BudgetHealthStatus.ON_TRACK,
+        limit: Double = 1000.0,
+        categoryId: Long? = null,
+        spent: Double = 0.0
+    ) = BudgetStatusSnapshot(
         budgetCategoryId = categoryId,
         budgetAmount = limit,
         categoryName = null,
-        spentAmount = 0.0,
-        remainingAmount = limit,
+        spentAmount = spent,
+        remainingAmount = limit - spent,
         percentUsed = 0.0,
         healthStatus = health,
         periodStart = 0,
-        periodEnd = 0
+        periodEnd = 0,
+        currency = "EUR",
+        currencyAssumption = "USER_CONFIRMED",
+        effectiveSpend = spent,
+        effectiveHealthStatus = health
     )
 }

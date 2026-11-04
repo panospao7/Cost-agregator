@@ -117,7 +117,9 @@ class SynthesisEngineBlockPartyCashBasisTest {
     private fun overallBudget(limit: Double) = BudgetStatusSnapshot(
         budgetCategoryId = null, budgetAmount = limit, categoryName = null,
         spentAmount = 0.0, remainingAmount = limit, percentUsed = 0.0,
-        healthStatus = BudgetHealthStatus.ON_TRACK, periodStart = 0, periodEnd = 0
+        healthStatus = BudgetHealthStatus.ON_TRACK, periodStart = 0, periodEnd = 0,
+        currency = "EUR", currencyAssumption = "USER_CONFIRMED",
+        effectiveSpend = 0.0, effectiveHealthStatus = BudgetHealthStatus.ON_TRACK
     )
 
     private fun categoryBudget(categoryId: Long?, amount: Double) = BudgetStatusSnapshot(

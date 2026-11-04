@@ -331,7 +331,6 @@ class BudgetViewModelInstallmentLineTest : ViewModelTestUtils() {
         val vm = BudgetViewModel(
             budgetRepository = budgetRepository,
             categoryRepository = categoryRepository,
-            offsetEngine = offsetEngine,
             autopilotEngine = autopilotEngine,
             timeProvider = timeProvider,
             currencySettingsRepository = currencySettingsRepository,
