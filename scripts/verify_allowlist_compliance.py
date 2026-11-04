@@ -58,7 +58,7 @@ YAML_ALLOWLISTS = [
     os.path.join(SCRIPT_DIR, "allowlists", "di_release_allowlist.yml"),
 ]
 
-# Plain-text allowlist files to validate (simpler format: filename # reason)
+# Plain-text allowlist files to validate (simpler format: <rule> <relpath> # reason)
 TEXT_ALLOWLISTS = [
     os.path.join(SCRIPT_DIR, "event_writer_allowlist.txt"),
 ]
@@ -326,7 +326,7 @@ def _try_parse_date(value: str) -> Optional[datetime.date]:
 
 def check_text_allowlist(path: str, project_root: str = None) -> List[str]:
     """
-    Validate a plain-text allowlist file (format: filename # reason).
+    Validate a plain-text allowlist file (format: <rule> <relpath> # reason).
     Each non-empty, non-comment line must have a '# reason' comment.
 
     Args:
