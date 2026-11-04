@@ -226,7 +226,7 @@ private fun RiskLevelCard(forecast: BudgetForecast) {
                 textAlign = TextAlign.Center
             )
             
-            if (forecast.overspendProbability > 0) {
+            if (shouldShowOverspendProbability(forecast)) {
                 Spacer(modifier = Modifier.height(12.dp))
                 
                 Text(
@@ -284,7 +284,7 @@ private fun ForecastDetailsCard(budget: Budget, forecast: BudgetForecast, homeCu
             // Predicted Spending
             DetailRow(
                 label = stringResource(R.string.budget_forecast_predicted_spending),
-                value = CurrencyFormatter.formatMoney(forecast.predictedSpending, homeCurrency ?: ""),
+                value = CurrencyFormatter.formatMoney(projectedPeriodTotal(forecast), homeCurrency ?: ""),
                 icon = Icons.Default.TrendingUp,
                 valueColor = if (projectedPeriodTotal(forecast) > (normalizedBudgetAmount ?: budget.amount))
                     SemanticColors.DangerRed else SemanticColors.TextPrimary
@@ -315,6 +315,26 @@ private fun ForecastDetailsCard(budget: Budget, forecast: BudgetForecast, homeCu
                 confidenceScore = forecast.confidenceScore,
                 homeCurrency = homeCurrency ?: ""
             )
+
+            // BL-06: a forecast that left rows out must say so.
+            if (shouldShowPartialForecastNotice(forecast)) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = stringResource(R.string.dashboard_partial_currency_warning),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = SemanticColors.StatusYellow
+                )
+                if (forecast.excludedExpenseCount > 0) {
+                    Text(
+                        text = stringResource(
+                            R.string.analytics_conversion_warning_count_format,
+                            forecast.excludedExpenseCount
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = SemanticColors.StatusYellow
+                    )
+                }
+            }
         }
     }
 }
@@ -420,7 +440,24 @@ private fun RangeRow(
 
 /** Full-period projection: spent so far plus predicted remaining-period spend (home currency). */
 internal fun projectedPeriodTotal(forecast: BudgetForecast): Double =
-    forecast.spentToDate + forecast.predictedSpending
+    forecast.predictedPeriodTotal()
+
+/** Existing low-confidence threshold (ConfidenceCard / recommendation engine use 0.6). */
+internal const val FORECAST_LOW_CONFIDENCE_THRESHOLD = 0.6
+
+/**
+ * BL-06: a confident overspend percent is shown only for a real, known-risk forecast with
+ * confidence at or above [FORECAST_LOW_CONFIDENCE_THRESHOLD]. Below it the probability is
+ * a near-50% prior, not a measurement, so nothing is rendered.
+ */
+/** A forecast that left rows out must say so. */
+internal fun shouldShowPartialForecastNotice(forecast: BudgetForecast): Boolean =
+    forecast.isPartial || forecast.excludedExpenseCount > 0
+
+internal fun shouldShowOverspendProbability(forecast: BudgetForecast): Boolean =
+    forecast.riskLevel != ForecastRiskLevel.UNKNOWN &&
+        forecast.confidenceScore > FORECAST_LOW_CONFIDENCE_THRESHOLD &&
+        forecast.overspendProbability > 0
 
 /**
  * predictedSpending is remaining-period spend, so every bound is shifted by spentToDate.

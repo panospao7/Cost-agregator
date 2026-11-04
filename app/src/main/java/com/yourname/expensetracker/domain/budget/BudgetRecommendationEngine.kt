@@ -50,8 +50,6 @@ class BudgetRecommendationEngine @Inject constructor() {
     ): List<BudgetRecommendation> {
         val recommendations = mutableListOf<BudgetRecommendation>()
         
-        // Calculate remaining budget
-        val remaining = budget.amount - currentSpending
         val percentUsed = if (budget.amount > 0) (currentSpending / budget.amount) * 100 else 0.0
         
         // High risk recommendations
@@ -64,7 +62,8 @@ class BudgetRecommendationEngine @Inject constructor() {
                     description = "You're at risk of exceeding your budget. Consider cutting non-essential expenses for the remainder of the period.",
                     priority = if (forecast.overspendProbability > 0.8) RecommendationPriority.CRITICAL 
                              else RecommendationPriority.HIGH,
-                    potentialSavings = (forecast.predictedSpending - remaining).coerceAtLeast(0.0)
+                    // BL-06: compare the full-period projection against the full-period limit.
+                    potentialSavings = (forecast.predictedPeriodTotal - budget.amount).coerceAtLeast(0.0)
                 )
             )
             
@@ -160,7 +159,7 @@ class BudgetRecommendationEngine @Inject constructor() {
             append("Spent: ${CurrencyFormatter.formatMoney(currentSpending, currency)} (${String.format("%.1f", percentUsed)}%)\n")
             append("Remaining: ${CurrencyFormatter.formatMoney(remaining, currency)}\n\n")
             append("AI Forecast:\n")
-            append("- Predicted spending: ${CurrencyFormatter.formatMoney(forecast.predictedSpending, currency)}\n")
+            append("- Predicted period total: ${CurrencyFormatter.formatMoney(forecast.predictedPeriodTotal, currency)}\n")
             append("- Predicted remaining: ${CurrencyFormatter.formatMoney(forecast.predictedRemaining, currency)}\n")
             append("- Risk level: ${forecast.riskLevel.name}\n")
             append("- Confidence: ${String.format("%.0f", forecast.confidenceScore * 100)}%\n")

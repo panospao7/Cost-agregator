@@ -113,4 +113,67 @@ class BudgetForecastProjectionTest {
 
         assertEquals(90.0, bounds.first, 1e-9)
     }
+
+    @Test
+    fun `predictedPeriodTotal is spent plus remaining-period prediction for limit 1000 spent 700 predicted 200`() {
+        val f = forecast(spent = 700.0, predicted = 200.0)
+
+        assertEquals(900.0, f.predictedPeriodTotal(), delta)
+        assertFalse(f.predictedPeriodTotal() > 1_000.0)
+    }
+
+    @Test
+    fun `predictedPeriodTotal for spent 700 predicted 500 is 1200 and exceeds limit 1000`() {
+        val f = forecast(spent = 700.0, predicted = 500.0)
+
+        assertEquals(1_200.0, f.predictedPeriodTotal(), delta)
+        assertTrue(f.predictedPeriodTotal() > 1_000.0)
+    }
+
+    private fun riskForecast(
+        confidence: Double,
+        risk: ForecastRiskLevel = ForecastRiskLevel.HIGH,
+        probability: Double = 0.7,
+    ): BudgetForecast =
+        BudgetForecast(
+            budgetId = 1L,
+            forecastDate = 1_700_000_000_000L,
+            targetPeriodStart = 1_699_000_000_000L,
+            targetPeriodEnd = 1_701_000_000_000L,
+            predictedSpending = 100.0,
+            predictedRemaining = 0.0,
+            confidenceScore = confidence,
+            riskLevel = risk,
+            overspendProbability = probability,
+        )
+
+    @Test
+    fun `overspend probability is shown above confidence 0_6 with known risk and positive probability`() {
+        assertTrue(shouldShowOverspendProbability(riskForecast(confidence = 0.61)))
+    }
+
+    @Test
+    fun `overspend probability is hidden at confidence 0_59`() {
+        assertFalse(shouldShowOverspendProbability(riskForecast(confidence = 0.6)))
+    }
+
+    @Test
+    fun `overspend probability is hidden for UNKNOWN risk even at high confidence`() {
+        assertFalse(
+            shouldShowOverspendProbability(riskForecast(confidence = 0.95, risk = ForecastRiskLevel.UNKNOWN))
+        )
+    }
+
+    @Test
+    fun `overspend probability is hidden when probability is zero even at high confidence`() {
+        assertFalse(shouldShowOverspendProbability(riskForecast(confidence = 0.95, probability = 0.0)))
+    }
+
+    @Test
+    fun partialNotice_showsForPartialOrExcludedRows_andHidesWhenClear() {
+        val clear = forecast(spent = 10.0, predicted = 20.0).copy(isPartial = false, excludedExpenseCount = 0)
+        assertFalse(shouldShowPartialForecastNotice(clear))
+        assertTrue(shouldShowPartialForecastNotice(clear.copy(isPartial = true)))
+        assertTrue(shouldShowPartialForecastNotice(clear.copy(excludedExpenseCount = 3)))
+    }
 }

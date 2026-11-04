@@ -26,7 +26,9 @@ class BudgetRecommendationEngineTest {
                 predictedRemaining = -150.0,
                 confidenceScore = 0.90,
                 riskLevel = BudgetRecommendationRiskLevel.CRITICAL,
-                overspendProbability = 0.95
+                overspendProbability = 0.95,
+                // spent 850 + remaining-period predicted 300; limit 1000 -> 150 over.
+                predictedPeriodTotal = 1150.0
             ),
             currentSpending = 850.0
         )
@@ -50,7 +52,8 @@ class BudgetRecommendationEngineTest {
                 predictedRemaining = 400.0,
                 confidenceScore = 0.50,
                 riskLevel = BudgetRecommendationRiskLevel.MEDIUM,
-                overspendProbability = 0.40
+                overspendProbability = 0.40,
+                predictedPeriodTotal = 600.0
             ),
             currentSpending = 100.0
         )
@@ -80,11 +83,13 @@ class BudgetRecommendationEngineTest {
             val summary = engine.getBudgetHealthSummary(
                 budget = BudgetRecommendationBudget(amount = 1000.0),
                 forecast = BudgetRecommendationForecast(
-                    predictedSpending = 1120.45,
+                    // spent 700 + remaining-period predicted 420.45 = 1120.45 full-period total.
+                    predictedSpending = 420.45,
                     predictedRemaining = -120.45,
                     confidenceScore = 0.82,
                     riskLevel = BudgetRecommendationRiskLevel.HIGH,
-                    overspendProbability = 0.67
+                    overspendProbability = 0.67,
+                    predictedPeriodTotal = 1120.45
                 ),
                 currentSpending = 700.0
             )
@@ -94,7 +99,7 @@ class BudgetRecommendationEngineTest {
             assertTrue(Regex("Budget: €1,000\\.00").containsMatchIn(summary))
             assertTrue(Regex("Spent: €700\\.00 \\(70\\.0%\\)").containsMatchIn(summary))
             assertTrue(Regex("Remaining: €300\\.00").containsMatchIn(summary))
-            assertTrue(Regex("- Predicted spending: €1,120\\.45").containsMatchIn(summary))
+            assertTrue(Regex("- Predicted period total: €1,120\\.45").containsMatchIn(summary))
             assertTrue(Regex("- Predicted remaining: -€120\\.45").containsMatchIn(summary))
             assertTrue(summary.contains("- Risk level: HIGH"))
             assertTrue(summary.contains("- Confidence: 82%"))
@@ -123,12 +128,51 @@ class BudgetRecommendationEngineTest {
                 predictedRemaining = -10.0,
                 confidenceScore = 0.9,
                 riskLevel = BudgetRecommendationRiskLevel.HIGH,
-                overspendProbability = 0.9
+                overspendProbability = 0.9,
+                predictedPeriodTotal = 50.0
             ),
             currentSpending = 950.0
         )
 
         assertEquals(0.0, recommendations.first { it.type == RecommendationType.REDUCE_SPENDING }.potentialSavings ?: 0.0, 0.0)
+    }
+
+    @Test
+    fun `BL-06 potential savings is zero when full-period projection 900 stays under limit 1000`() {
+        // limit 1000, spent 700, predicted remaining-period 200 -> total 900 (not over).
+        val recommendations = engine.generateRecommendations(
+            budget = BudgetRecommendationBudget(amount = 1000.0),
+            forecast = BudgetRecommendationForecast(
+                predictedSpending = 200.0,
+                predictedRemaining = 100.0,
+                confidenceScore = 0.9,
+                riskLevel = BudgetRecommendationRiskLevel.HIGH,
+                overspendProbability = 0.5,
+                predictedPeriodTotal = 900.0
+            ),
+            currentSpending = 700.0
+        )
+
+        assertEquals(0.0, recommendations.first { it.type == RecommendationType.REDUCE_SPENDING }.potentialSavings!!, 0.0)
+    }
+
+    @Test
+    fun `BL-06 potential savings is 200 when full-period projection 1200 exceeds limit 1000`() {
+        // limit 1000, spent 700, predicted remaining-period 500 -> total 1200 -> 200 over.
+        val recommendations = engine.generateRecommendations(
+            budget = BudgetRecommendationBudget(amount = 1000.0),
+            forecast = BudgetRecommendationForecast(
+                predictedSpending = 500.0,
+                predictedRemaining = -200.0,
+                confidenceScore = 0.9,
+                riskLevel = BudgetRecommendationRiskLevel.HIGH,
+                overspendProbability = 0.5,
+                predictedPeriodTotal = 1200.0
+            ),
+            currentSpending = 700.0
+        )
+
+        assertEquals(200.0, recommendations.first { it.type == RecommendationType.REDUCE_SPENDING }.potentialSavings!!, 0.01)
     }
 
     @Test
@@ -140,7 +184,8 @@ class BudgetRecommendationEngineTest {
                 predictedRemaining = -10.0,
                 confidenceScore = 0.90,
                 riskLevel = BudgetRecommendationRiskLevel.CRITICAL,
-                overspendProbability = 0.95
+                overspendProbability = 0.95,
+                predictedPeriodTotal = 200.0
             ),
             currentSpending = 660.0,
             currency = "USD"

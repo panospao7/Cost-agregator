@@ -171,6 +171,13 @@ data class BudgetForecast(
     /** S8-003: Not persisted — set by engine after generation for ViewModel use. */
     @androidx.room.Ignore var spentToDate: Double = 0.0
     @androidx.room.Ignore var normalizedBudgetAmount: Double = 0.0
+
+    /**
+     * BL-06: [predictedSpending] is the REMAINING-period prediction. The full-period
+     * projection (comparable with the full-period limit) is spent-so-far plus that.
+     * Single owner of this arithmetic; [spentToDate] is 0.0 when not set by the engine.
+     */
+    fun predictedPeriodTotal(): Double = spentToDate + predictedSpending
 }
 
 enum class ForecastRiskLevel {
