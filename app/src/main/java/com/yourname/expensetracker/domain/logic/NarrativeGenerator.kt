@@ -114,6 +114,12 @@ class NarrativeGenerator @Inject constructor() {
     ): List<NarrativeSection> {
         val sections = mutableListOf<NarrativeSection>()
         val components = forecast.components
+        // DSH-N3: green also needs the overall budget's periodRemaining Available (category-only
+        // users have no overall budget and are unchanged).
+        val overallBudgetComplete = budgetStatuses
+            .find { it.budgetCategoryId == null }
+            ?.periodRemaining(forecast.generatedAt.toEpochMilli(), homeCurrency)
+            .let { it == null || it is BudgetPeriodRemaining.Available }
 
         // 1. Budget Health Section (Momentum Engine)
         // FL-06: health and printed spend are the effective ones (what the Budget card shows). A
@@ -155,7 +161,7 @@ class NarrativeGenerator @Inject constructor() {
                     }
                 )
             )
-        } else if (budgetStatuses.isNotEmpty() && budgetStatuses.all {
+        } else if (budgetStatuses.isNotEmpty() && overallBudgetComplete && budgetStatuses.all {
                 it.effectiveHealthStatus != null && it.effectiveHealthStatus != BudgetHealthStatus.UNKNOWN
             }) {
             sections.add(

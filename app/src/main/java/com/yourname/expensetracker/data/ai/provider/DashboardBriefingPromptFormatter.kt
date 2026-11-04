@@ -9,6 +9,7 @@ import com.yourname.expensetracker.domain.ai.model.DashboardUpcomingItemInput
 import com.yourname.expensetracker.domain.ai.model.TransactionInsightAmountBucket
 import com.yourname.expensetracker.domain.ai.model.TransactionInsightPromptInput
 import com.yourname.expensetracker.domain.model.UiText
+import com.yourname.expensetracker.domain.text.DomainTextKeys
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.ui.components.asString
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -72,7 +73,14 @@ class DashboardBriefingPromptFormatter private constructor(
             appendLine("Date: ${input.dateKey}")
             appendLine("Weather headline: ${resolve(input.weatherHeadline)}")
             appendLine("Weather summary: ${resolve(input.weatherSummary)}")
-            appendLine("Discretionary budget: ${input.discretionaryBudget}")
+            // DSH-N1: an unavailable weather has no honest pool; never print it as 0.0.
+            val discretionaryLabel =
+                if (input.weatherHeadline == UiText.fromKey(DomainTextKeys.WEATHER_HEADLINE_UNAVAILABLE)) {
+                    "unavailable"
+                } else {
+                    input.discretionaryBudget.toString()
+                }
+            appendLine("Discretionary budget: $discretionaryLabel")
             appendLine("Total committed: ${input.totalCommitted}")
             appendLine("Total likely: ${input.totalLikely}")
             appendLine("Pending reviews: ${input.pendingReviewCount}")

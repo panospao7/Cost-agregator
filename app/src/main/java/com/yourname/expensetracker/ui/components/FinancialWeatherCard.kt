@@ -190,7 +190,9 @@ fun FinancialWeatherCard(
             ForecastTimeline(
                 pastPoints = pastSpendingPoints,
                 projectedPoints = projectedSpendingPoints,
-                budgetLimit = totalCommitted + totalLikely + discretionaryBudget,
+                // DSH-N2: UNKNOWN has no honest pool, so no limit line (0.0) and no TalkBack limit.
+                budgetLimit = if (state == WeatherState.UNKNOWN) 0.0
+                else totalCommitted + totalLikely + discretionaryBudget,
                 modifier = Modifier.fillMaxWidth()
             )
 

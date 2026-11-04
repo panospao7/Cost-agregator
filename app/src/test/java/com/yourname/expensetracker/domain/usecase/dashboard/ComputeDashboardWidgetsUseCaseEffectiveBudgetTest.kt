@@ -282,6 +282,45 @@ class ComputeDashboardWidgetsUseCaseEffectiveBudgetTest {
         assertEquals(null, summary)
     }
 
+    @Test
+    fun `DSH-N3 limit 100 effective 50 with an unstamped overall row gives a null summary not green`() = runTest {
+        fixedNowMs = at(15, 12)
+        val unstamped = budget(
+            100.0, effective = 50.0, start = at(1, 0), end = date(2026, 7, 1),
+            gross = 50.0, effectiveHealth = BudgetHealthStatus.ON_TRACK
+        ).copy(currencyAssumption = "LEGACY_DEFAULT")
+
+        val summary = budgetSummary(computeUseCase.compute(data(emptyList(), listOf(unstamped))))
+
+        assertEquals("overall periodRemaining is Unavailable, never the on-track text", null, summary)
+    }
+
+    @Test
+    fun `DSH-N3 limit 100 effective 50 with a partial overall budget gives a null summary not green`() = runTest {
+        fixedNowMs = at(15, 12)
+        val partial = budget(
+            100.0, effective = 50.0, start = at(1, 0), end = date(2026, 7, 1),
+            gross = 50.0, effectiveHealth = BudgetHealthStatus.ON_TRACK
+        ).copy(isPartial = true)
+
+        val summary = budgetSummary(computeUseCase.compute(data(emptyList(), listOf(partial))))
+
+        assertEquals(null, summary)
+    }
+
+    @Test
+    fun `DSH-N3 control category-only budget still gives on track`() = runTest {
+        fixedNowMs = at(15, 12)
+        val food = budget(
+            100.0, effective = 50.0, start = at(1, 0), end = date(2026, 7, 1),
+            gross = 50.0, effectiveHealth = BudgetHealthStatus.ON_TRACK
+        ).copy(budgetCategoryId = 5L, categoryName = "Food")
+
+        val summary = budgetSummary(computeUseCase.compute(data(emptyList(), listOf(food))))
+
+        assertEquals(UiText.fromKey(DashboardTextKeys.WIDGET_ALL_BUDGETS_ON_TRACK), summary)
+    }
+
     // ---------------------------------------------------------------- FL-06 Runway income fallback
 
     @Test

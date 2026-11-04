@@ -204,8 +204,6 @@ class NarrativeGeneratorEffectiveBudgetTest {
         assertEquals(com.yourname.expensetracker.domain.model.dashboard.WeatherState.UNKNOWN, result.state)
         assertEquals(unavailableHeadline, result.headline)
         assertEquals(unavailableSummary, result.summary)
-        assertFalse(result.summary.toString().contains("on track", ignoreCase = true))
-        assertFalse(result.summary.toString().contains("buffer", ignoreCase = true))
     }
 
     @Test
@@ -219,7 +217,41 @@ class NarrativeGeneratorEffectiveBudgetTest {
         assertEquals(com.yourname.expensetracker.domain.model.dashboard.WeatherState.UNKNOWN, result.state)
         assertEquals(unavailableHeadline, result.headline)
         assertEquals(unavailableSummary, result.summary)
-        assertFalse(result.summary.toString().contains("on track", ignoreCase = true))
+    }
+
+    @Test
+    fun `DSH-N3 effective 50 with an unstamped overall row prints no all on track section`() = runTest {
+        val legacy = snapshot(
+            gross = 50.0, effective = 50.0, effectiveHealth = BudgetHealthStatus.ON_TRACK, limit = 100.0
+        ).copy(currencyAssumption = "LEGACY_DEFAULT")
+
+        val result = narrative(listOf(legacy))
+
+        assertEquals(unavailableHeadline, result.headline)
+        assertTrue(result.details.none { allOnTrack in it.items })
+    }
+
+    @Test
+    fun `DSH-N3 effective 50 with partial overall budget prints no all on track section`() = runTest {
+        val partial = snapshot(
+            gross = 50.0, effective = 50.0, effectiveHealth = BudgetHealthStatus.ON_TRACK, limit = 100.0
+        ).copy(isPartial = true)
+
+        val result = narrative(listOf(partial))
+
+        assertTrue(result.details.none { allOnTrack in it.items })
+    }
+
+    @Test
+    fun `DSH-N3 control category-only budgets still print all on track`() = runTest {
+        val food = snapshot(
+            gross = 30.0, effective = 30.0, effectiveHealth = BudgetHealthStatus.ON_TRACK,
+            categoryId = 5L, categoryName = "Food"
+        )
+
+        val result = narrative(listOf(food))
+
+        assertTrue(result.details.any { allOnTrack in it.items })
     }
 
     @Test

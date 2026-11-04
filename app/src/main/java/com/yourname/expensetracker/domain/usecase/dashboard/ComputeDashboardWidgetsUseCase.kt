@@ -1181,7 +1181,18 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         // FL-06: "all on track" needs a known effective health for every budget. Otherwise the summary
         // is null, which the Home widget renders as unavailable (never as green).
         // An UNKNOWN effective health (percent not known) is non-null but is not "on track".
-        return if (budgetStatuses.all {
+        // DSH-N3: the overall budget is green only when its shared periodRemaining is Available (the
+        // same completeness the Home headline and Weather use); partial rollover history or an
+        // unstamped row is unavailable, never green. Category-only users are unchanged. With no
+        // normalized home currency, an overall budget cannot be proven complete.
+        val overallBudget = ctx.overallBudget
+        val overallComplete = overallBudget == null || run {
+            val home = (ctx.normalizedInputResult as? DashboardNormalizedInputResult.Available)
+                ?.input?.homeCurrency?.code
+            home != null &&
+                overallBudget.periodRemaining(ctx.now, home) is BudgetPeriodRemaining.Available
+        }
+        return if (overallComplete && budgetStatuses.all {
                 it.effectiveHealthStatus != null && it.effectiveHealthStatus != BudgetHealthStatus.UNKNOWN
             }) {
             UiText.fromKey(DashboardTextKeys.WIDGET_ALL_BUDGETS_ON_TRACK)
