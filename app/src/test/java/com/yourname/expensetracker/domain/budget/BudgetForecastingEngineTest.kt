@@ -105,7 +105,7 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
         // P-06-2: default known effective limit of 1000 for the id-0 test budgets; tests that
         // need another limit (or an unavailable one) re-stub via stubEffectiveLimit().
         coEvery { budgetRepository.getBudgetStatusesAt(any()) } returns
-            listOf(statusFor(Budget(amount = 1000.0, period = BudgetPeriod.MONTHLY, startDate = now), 1000.0))
+            listOf(statusFor(Budget(categoryId = 1L, amount = 1000.0, period = BudgetPeriod.MONTHLY, startDate = now), 1000.0))
 
         // Default: return empty snapshots (tests override this per-scenario)
         coEvery { mockExpenseRepo.getExpenseSnapshotsBetween(any(), any()) } returns emptyList()
