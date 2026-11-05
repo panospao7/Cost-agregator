@@ -426,7 +426,11 @@ class SubscriptionManagerEngine @Inject constructor(
             val oldestUsage = allUsage.minByOrNull { it.usedAt }?.usedAt ?: now
             // Use calendar-aware month counting (DST-safe, handles varying month lengths)
             // W05: Prevent divide-by-zero when monthsActive rounds to 0 (< 30 days)
-            val monthsActive = (TimePeriodUtils.daysBetween(oldestUsage, now).coerceAtLeast(1) / 30).coerceAtLeast(1)
+            // BL-16: the subscription's lifetime starts at createdAt (when set, > 0), not at
+            // the first logged use; fall back to the oldest usage when createdAt is unset.
+            // Usage backfilled before creation anchors earlier so it does not inflate the average.
+            val activeSince = if (subscription.createdAt > 0L) minOf(subscription.createdAt, oldestUsage) else oldestUsage
+            val monthsActive = (TimePeriodUtils.daysBetween(activeSince, now).coerceAtLeast(1) / 30).coerceAtLeast(1)
             averageUsesPerMonth = totalUses.toDouble() / monthsActive
         }
         

@@ -1069,17 +1069,21 @@ class AdvancedAnalyticsEngine @Inject constructor(
     ): MoneyAggregateResult {
         val totalResult = aggregateMoney(expenses, displayCurrency, moneyContext)
         if (totalResult !is MoneyAggregateResult.Available) return totalResult
-        val sorted = expenses.sortedBy { it.date }
-        val midpoint = sorted.size / 2
-        val firstHalf = sorted.subList(0, midpoint)
-        val secondHalf = sorted.subList(midpoint, sorted.size)
-        val velocity = if (expenses.size < 2) 0.0 else {
-            val splitDate = secondHalf.first().date
+        // BL-15: split at the time midpoint (min + max) / 2, not the row-count
+        // midpoint. Rows with date <= midpoint form the first half, later rows
+        // the second half. When every row shares one date there is no time
+        // trend, so velocity is 0.
+        val minDate = expenses.minOfOrNull { it.date }
+        val maxDate = expenses.maxOfOrNull { it.date }
+        val velocity = if (expenses.size < 2 || minDate == null || maxDate == null || minDate == maxDate) 0.0 else {
+            val splitDate = minDate + (maxDate - minDate) / 2
+            val firstHalf = expenses.filter { it.date <= splitDate }
+            val secondHalf = expenses.filter { it.date > splitDate }
             val secondResult = aggregateMoney(secondHalf, displayCurrency, moneyContext) {
-                it.date == null || it.date >= splitDate
+                it.date == null || it.date > splitDate
             }
             val firstResult = aggregateMoney(firstHalf, displayCurrency, moneyContext) {
-                it.date == null || it.date < splitDate
+                it.date == null || it.date <= splitDate
             }
             if (secondResult is MoneyAggregateResult.Unavailable) return secondResult
             if (firstResult is MoneyAggregateResult.Unavailable) return firstResult

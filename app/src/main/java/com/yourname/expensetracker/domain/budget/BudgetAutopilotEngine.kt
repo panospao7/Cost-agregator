@@ -613,8 +613,10 @@ class BudgetAutopilotEngine @Inject constructor(
 
         var confidence = 0.5 // Base confidence
         
-        // More data = higher confidence
-        confidence += (historicalSpend.size / 100.0).coerceAtMost(0.2)
+        // More data = higher confidence. BL-14: bonus scales with observed
+        // history months (0.05 at MIN_HISTORY_MONTHS, capped at 0.2 from 12
+        // months), not with the raw value count.
+        confidence += (0.2 * observedHistoryMonths / (MIN_HISTORY_MONTHS * 4.0)).coerceAtMost(0.2)
         
         // Lower volatility = higher confidence
         confidence += when {
