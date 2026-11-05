@@ -219,6 +219,99 @@ class FinancialWeatherRepositoryTest {
         assertEquals(2, result.upcomingItems.size)
     }
 
+    // ----- Display-only de-dup: Planned row linked to rule R vs Recurring item for R -----
+
+    private fun dedupRecurring(ruleId: Long?, dueMs: Long) = RecurringPattern(
+        merchantName = "Synthetic dedup rule",
+        averageAmount = 40.0,
+        currency = "EUR",
+        frequency = RecurrenceFrequency.MONTHLY,
+        periodVarianceDays = 0,
+        amountVariancePercent = 0.0,
+        nextExpectedDate = dueMs,
+        confidence = 0.95f,
+        previousDates = emptyList(),
+        id = ruleId
+    )
+
+    private fun dedupPlanned(id: Long, dateMs: Long, ruleId: Long?) = PlannedExpense(
+        id = id,
+        description = "Synthetic dedup planned",
+        amount = 40.0,
+        date = dateMs,
+        categoryId = null,
+        isRecurring = false,
+        priority = PlannedExpensePriority.LIKELY,
+        sourceRecurringRuleId = ruleId
+    )
+
+    private suspend fun upcomingFor(
+        recurring: List<RecurringPattern>,
+        planned: List<PlannedExpense>
+    ): List<UpcomingItem> {
+        stubEmptyWeatherInputs()
+        coEvery { mergedRecurringPatternsProvider.getPatternsFromSnapshots(any(), any()) } returns recurring
+        val base = createMockForecast()
+        coEvery {
+            synthesisEngine.synthesize(any<ForecastInputAssembler.ForecastInput>())
+        } returns base.copy(
+            components = base.components.copy(
+                recurringExpenses = recurring,
+                plannedExpenses = planned
+            )
+        )
+        return repository.getFinancialWeather().first().upcomingItems
+    }
+
+    private val dedupDay = 1705320000000L + 5 * 24 * 60 * 60 * 1000L
+    private val dedupOtherDay = 1705320000000L + 7 * 24 * 60 * 60 * 1000L
+
+    @Test
+    fun `dedup planned row for rule 7 on the same day as its Recurring item is dropped`() = runTest {
+        val items = upcomingFor(
+            recurring = listOf(dedupRecurring(7L, dedupDay)),
+            planned = listOf(dedupPlanned(1L, dedupDay, 7L))
+        )
+
+        assertEquals(1, items.size)
+        assertTrue(items.single() is UpcomingItem.Recurring)
+    }
+
+    @Test
+    fun `dedup planned row without a rule id stays next to a Recurring item`() = runTest {
+        val items = upcomingFor(
+            recurring = listOf(dedupRecurring(7L, dedupDay)),
+            planned = listOf(dedupPlanned(1L, dedupDay, null))
+        )
+
+        assertEquals(2, items.size)
+        assertEquals(1, items.count { it is UpcomingItem.Recurring })
+        assertEquals(1, items.count { it is UpcomingItem.Planned })
+    }
+
+    @Test
+    fun `dedup planned row for rule 8 stays next to a rule 7 Recurring item`() = runTest {
+        val items = upcomingFor(
+            recurring = listOf(dedupRecurring(7L, dedupDay)),
+            planned = listOf(dedupPlanned(1L, dedupDay, 8L))
+        )
+
+        assertEquals(2, items.size)
+        assertEquals(1, items.count { it is UpcomingItem.Planned })
+    }
+
+    @Test
+    fun `dedup planned row for rule 7 on a different day stays`() = runTest {
+        val items = upcomingFor(
+            recurring = listOf(dedupRecurring(7L, dedupDay)),
+            planned = listOf(dedupPlanned(1L, dedupOtherDay, 7L))
+        )
+
+        assertEquals(2, items.size)
+        assertEquals(1, items.count { it is UpcomingItem.Recurring })
+        assertEquals(1, items.count { it is UpcomingItem.Planned })
+    }
+
     @Test
     fun `no recurring patterns and no budget still returns sane defaults`() = runTest {
         val now = 1705320000000L

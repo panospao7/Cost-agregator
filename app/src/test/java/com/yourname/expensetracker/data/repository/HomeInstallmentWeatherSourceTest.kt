@@ -636,6 +636,26 @@ class HomeInstallmentWeatherSourceTest {
         assertEquals(base.totalCommitted + 50.0, aware.totalCommitted, 0.001)
     }
 
+    @Test
+    fun `dedup planned row for rule 7 on the same day as its Recurring item is dropped in the aware list`() = runTest {
+        patternsFor = { listOf(monthlyPattern("Synthetic rule seven", 600.0, jan(25)).copy(id = 7L)) }
+        val linkedPlanned = com.yourname.expensetracker.data.database.entity.PlannedExpense(
+            id = 9L,
+            description = "Synthetic rule seven planned",
+            amount = 600.0,
+            date = ms(jan(25)),
+            priority = com.yourname.expensetracker.data.database.entity.PlannedExpensePriority.LIKELY,
+            sourceRecurringRuleId = 7L
+        )
+        every { plannedExpenseRepository.getAllPlannedExpenses() } returns flowOf(listOf(linkedPlanned))
+        val p = plan(1L, listOf(entry(11L, jan(20))))
+
+        val aware = source(portOf(p)).observe().first()!!.weather
+
+        assertTrue(aware.upcomingItems.any { it is UpcomingItem.Recurring })
+        assertTrue(aware.upcomingItems.none { it is UpcomingItem.Planned && it.expense.id == 9L })
+    }
+
     // ── Invalidation and failure ─────────────────────────────────────────────
 
     @Test
