@@ -250,6 +250,24 @@ class RecurringExpensesViewModelWriteBlockedTest : ViewModelTestUtils() {
         }
 
     @Test
+    fun `P-04-2 deleting a FULFILLED row calls skipOrDeletePlanned and shows no error`() =
+        runTest(testDispatcher) {
+            val fulfilledKey = "RECURRING_RULE|1|1710000000000|MONTHLY"
+            every { plannedRepository.getAllPlannedExpenses() } returns
+                flowOf(listOf(plannedEntity(34L, "FULFILLED", fulfilledKey)))
+            val vm = newViewModel()
+            val item = loadSinglePlanned(vm)
+
+            vm.writeBlockedMessages.test {
+                vm.deletePlannedExpense(item)
+                advanceUntilIdle()
+                expectNoEvents()
+            }
+
+            coVerify(exactly = 1) { plannedRepository.skipOrDeletePlanned(34L, fulfilledKey) }
+        }
+
+    @Test
     fun `P-04-2 blocked skipOrDeletePlanned emits the maintenance message`() = runTest(testDispatcher) {
         coEvery { plannedRepository.skipOrDeletePlanned(any(), any()) } throws blockedWriteException()
         every { plannedRepository.getAllPlannedExpenses() } returns
@@ -265,7 +283,7 @@ class RecurringExpensesViewModelWriteBlockedTest : ViewModelTestUtils() {
     }
 
     @Test
-    fun `P-04-2 refused skip of a PAID or MISSED occurrence emits the generic recurring error`() =
+    fun `P-04-2 transition failure thrown by skipOrDeletePlanned emits the generic recurring error`() =
         runTest(testDispatcher) {
             coEvery { plannedRepository.skipOrDeletePlanned(any(), any()) } throws
                 IllegalArgumentException("Invalid recurring occurrence transition")

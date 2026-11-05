@@ -150,11 +150,10 @@ class PlannedExpenseRepository @Inject constructor(
      * P-04-2: user "delete" of a planned row. A row projected from a recurring occurrence
      * (non-null [sourceOccurrenceKey] that resolves to an occurrence) is SKIPPED through the
      * recurring lifecycle coordinator, which atomically cancels the planned row and suppresses
-     * open reminders (R21), so the materializer cannot re-create it. A row without a key, or
-     * whose key resolves to no occurrence, falls back to [deletePlannedExpenseById].
-     *
-     * @throws IllegalArgumentException when the occurrence is not skippable (for example
-     *   already PAID or MISSED); nothing is written in that case.
+     * open reminders (R21), so the materializer cannot re-create it. A row without a key, whose
+     * key resolves to no occurrence, or whose occurrence is not PLANNED/SKIPPED (for example PAID,
+     * CANCELLED, MISSED, IGNORED) falls back to [deletePlannedExpenseById]; the projection service
+     * only re-creates rows for PLANNED occurrences, so a plain delete is safe for those.
      */
     suspend fun skipOrDeletePlanned(id: Long, sourceOccurrenceKey: String?) {
         if (sourceOccurrenceKey != null) {
