@@ -9,6 +9,7 @@ import com.yourname.expensetracker.data.database.dao.SubscriptionUsageDao
 import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
 import com.yourname.expensetracker.data.database.entity.SubscriptionCandidate
 import com.yourname.expensetracker.data.database.entity.SubscriptionPriceHistory
+import com.yourname.expensetracker.data.database.entity.SubscriptionUsage
 import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
@@ -76,6 +77,65 @@ class SubscriptionManagerEngineTest {
     @After
     fun tearDown() {
         unmockkStatic("androidx.room.RoomDatabaseKt")
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // BL-16 — average uses per month is measured over the subscription's lifetime
+    // ──────────────────────────────────────────────────────────────────────────
+
+    private fun usageRows(count: Int, oldestUsedAt: Long): List<SubscriptionUsage> =
+        (0 until count).map { SubscriptionUsage(id = it + 1L, subscriptionId = 1L, usedAt = oldestUsedAt + it * 1_000L) }
+
+    private fun subscriptionCreatedAt(createdAt: Long) = ManualRecurringExpense(
+        id = 1L,
+        merchant = "Streamer",
+        amount = 10.0,
+        frequency = RecurrenceFrequency.MONTHLY,
+        nextDate = timeProvider.now() + 86_400_000L,
+        createdAt = createdAt,
+        isSubscription = true
+    )
+
+    @Test
+    fun `BL-16 average uses per month counts months since createdAt not since first use`() = runTest {
+        val dayMs = 86_400_000L
+        val now = timeProvider.now()
+        // 12 uses, the oldest 65 days ago; the subscription was created 195 days ago.
+        // monthsActive = 195 / 30 = 6 -> 12 / 6 = 2.0. The old oldest-usage basis gave
+        // 65 / 30 = 2 months -> 12 / 2 = 6.0.
+        coEvery { usageDao.getUsageSince(1L, 0L) } returns usageRows(12, now - 65 * dayMs)
+
+        val stats = createEngine().analyzeSubscription(subscriptionCreatedAt(now - 195 * dayMs)).usageStats
+
+        assertEquals(12, stats.totalUses)
+        assertEquals(2.0, stats.averageUsesPerMonth, 0.000001)
+    }
+
+    @Test
+    fun `BL-16 average uses per month falls back to the oldest use when createdAt is unset`() = runTest {
+        val dayMs = 86_400_000L
+        val now = timeProvider.now()
+        // createdAt = 0 (unset sentinel): monthsActive = 65 / 30 = 2 -> 12 / 2 = 6.0.
+        coEvery { usageDao.getUsageSince(1L, 0L) } returns usageRows(12, now - 65 * dayMs)
+
+        val stats = createEngine().analyzeSubscription(subscriptionCreatedAt(0L)).usageStats
+
+        assertEquals(6.0, stats.averageUsesPerMonth, 0.000001)
+    }
+
+    @Test
+    fun `BL-16 average uses per month anchors at the oldest use when usage was backfilled before createdAt`() = runTest {
+        val dayMs = 86_400_000L
+        val now = timeProvider.now()
+        // 8 uses, the oldest 120 days ago; createdAt is only 30 days ago. The anchor is the
+        // earlier of the two (120 days): monthsActive = 120 / 30 = 4 -> 8 / 4 = 2.0.
+        // Anchoring at createdAt would give 30 / 30 = 1 month -> 8.0.
+        coEvery { usageDao.getUsageSince(1L, 0L) } returns usageRows(8, now - 120 * dayMs)
+
+        val stats = createEngine().analyzeSubscription(subscriptionCreatedAt(now - 30 * dayMs)).usageStats
+
+        assertEquals(8, stats.totalUses)
+        assertEquals(2.0, stats.averageUsesPerMonth, 0.000001)
     }
 
     // ──────────────────────────────────────────────────────────────────────────

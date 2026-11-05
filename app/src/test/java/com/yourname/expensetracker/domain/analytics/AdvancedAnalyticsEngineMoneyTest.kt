@@ -61,6 +61,94 @@ class AdvancedAnalyticsEngineMoneyTest {
     }
 
     @Test
+    fun `BL-15 velocity is zero when every row falls on the same day`() = runTest {
+        // Same-day rows have no time trend. The old row-count split gave
+        // sum(30 + 20) - sum(10) = 40 for this data.
+        val current = input(listOf(
+            expense(1L, 10.0, "EUR", "2026-03-05"),
+            expense(2L, 30.0, "EUR", "2026-03-05"),
+            expense(3L, 20.0, "EUR", "2026-03-05")
+        ))
+        val previous = input(
+            listOf(expense(4L, 20.0, "EUR", "2026-02-02")),
+            start = "2026-02-01", end = "2026-03-01"
+        )
+
+        val result = engine.getCategoryAnalytics(current, previous, categories, emptyList()).first.single()
+        val velocity = (result.velocityMoneyResult as MoneyAggregateResult.Available).aggregate
+
+        assertThat(velocity.displayAmount).isEqualTo(0.0)
+    }
+
+    @Test
+    fun `BL-15 velocity splits rows at the time midpoint not the row-count midpoint`() = runTest {
+        // Dates 03-02, 03-03, 03-30: time midpoint is 03-16, so first half = 10 + 10 = 20 and
+        // second half = 100, velocity = 100 - 20 = 80. The old row-count split put the 03-03
+        // row in the second half: (10 + 100) - 10 = 100.
+        val current = input(listOf(
+            expense(1L, 10.0, "EUR", "2026-03-02"),
+            expense(2L, 10.0, "EUR", "2026-03-03"),
+            expense(3L, 100.0, "EUR", "2026-03-30")
+        ))
+        val previous = input(
+            listOf(expense(4L, 20.0, "EUR", "2026-02-02")),
+            start = "2026-02-01", end = "2026-03-01"
+        )
+
+        val result = engine.getCategoryAnalytics(current, previous, categories, emptyList()).first.single()
+        val velocity = (result.velocityMoneyResult as MoneyAggregateResult.Available).aggregate
+
+        assertThat(velocity.displayAmount).isEqualTo(80.0)
+    }
+
+    @Test
+    fun `BL-15 a row exactly at the time midpoint lands in the first half`() = runTest {
+        // Dates 01-10, 01-20, 01-30: midpoint = 01-10 + 10 days = 01-20 exactly (date <= mid is first
+        // half). First half = 10 + 5 = 15, second half = 50, velocity = 50 - 15 = 35.
+        // If the midpoint row were in the second half: (5 + 50) - 10 = 45.
+        val current = input(
+            listOf(
+                expense(1L, 10.0, "EUR", "2026-01-10"),
+                expense(2L, 5.0, "EUR", "2026-01-20"),
+                expense(3L, 50.0, "EUR", "2026-01-30")
+            ),
+            start = "2026-01-01", end = "2026-02-01"
+        )
+        val previous = input(
+            listOf(expense(4L, 20.0, "EUR", "2025-12-02")),
+            start = "2025-12-01", end = "2026-01-01"
+        )
+
+        val result = engine.getCategoryAnalytics(current, previous, categories, emptyList()).first.single()
+        val velocity = (result.velocityMoneyResult as MoneyAggregateResult.Available).aggregate
+
+        assertThat(velocity.displayAmount).isEqualTo(35.0)
+    }
+
+    @Test
+    fun `BL-15 a refund row with a negative amount is summed with its sign`() = runTest {
+        // Dates 01-10, 01-12, 01-30: midpoint = 01-20. First half = 40 + 10 = 50, second half =
+        // -15 (refund), velocity = -15 - 50 = -65.
+        val current = input(
+            listOf(
+                expense(1L, 40.0, "EUR", "2026-01-10"),
+                expense(2L, 10.0, "EUR", "2026-01-12"),
+                expense(3L, -15.0, "EUR", "2026-01-30")
+            ),
+            start = "2026-01-01", end = "2026-02-01"
+        )
+        val previous = input(
+            listOf(expense(4L, 20.0, "EUR", "2025-12-02")),
+            start = "2025-12-01", end = "2026-01-01"
+        )
+
+        val result = engine.getCategoryAnalytics(current, previous, categories, emptyList()).first.single()
+        val velocity = (result.velocityMoneyResult as MoneyAggregateResult.Available).aggregate
+
+        assertThat(velocity.displayAmount).isEqualTo(-65.0)
+    }
+
+    @Test
     fun `category change percent ignores current rows after the comparison cutoff but total keeps them`() = runTest {
         val current = input(listOf(
             expense(1L, 10.0, "EUR", "2026-03-02"),

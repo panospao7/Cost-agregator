@@ -552,10 +552,17 @@ class FinancialHealthScoreV2 @Inject constructor(
             return 50 // Neutral when no budgets set
         }
         
+        // BL-12: category budgets are a subset of the overall budget's spend, so
+        // mixing both double counts. When any overall budget (categoryId == null)
+        // exists, score adherence on overall budgets only; otherwise use the
+        // category budgets.
+        val overallStatuses = budgetStatuses.filter { it.budget.categoryId == null }
+        val scoredStatuses = if (overallStatuses.isNotEmpty()) overallStatuses else budgetStatuses
+
         var totalBudget = 0.0
         var totalOverspend = 0.0
-        
-        for (status in budgetStatuses) {
+
+        for (status in scoredStatuses) {
             totalBudget += status.effectiveLimit
             if (status.spentAmount > status.effectiveLimit) {
                 totalOverspend += (status.spentAmount - status.effectiveLimit)

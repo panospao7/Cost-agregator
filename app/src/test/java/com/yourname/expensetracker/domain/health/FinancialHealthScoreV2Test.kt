@@ -726,6 +726,35 @@ class FinancialHealthScoreV2Test : AnalyticsEngineTestBase() {
         coVerify(exactly = 0) { budgetRepository.getBudgetStatusesAt(now) }
     }
 
+    @Test
+    fun `BL-12 adherence scores the overall budget only when an overall budget exists`() = runTest {
+        // Overall 1000 spent 1200 (overspend 200); groceries 200 spent 300 (a subset of the
+        // overall spend). Overall only: 1 - 200/1000 = 0.8 -> 80. The old mixed sum gave
+        // 1 - (200 + 100) / 1200 = 0.75 -> 75.
+        coEvery { budgetRepository.getBudgetStatusesAt(any()) } returns listOf(
+            budgetStatus(amount = 1000.0, spent = 1200.0),
+            budgetStatus(amount = 200.0, spent = 300.0, categoryId = 7L)
+        )
+
+        val result = calculator.availableResult()
+
+        assertEquals(80, result.budgetAdherenceScore)
+    }
+
+    @Test
+    fun `BL-12 adherence scores the category budgets when no overall budget exists`() = runTest {
+        // groceries 200 spent 300 (overspend 100), dining 100 spent 100 (none).
+        // 1 - 100/300 = 0.6667 -> 66 (toInt truncates).
+        coEvery { budgetRepository.getBudgetStatusesAt(any()) } returns listOf(
+            budgetStatus(amount = 200.0, spent = 300.0, categoryId = 7L),
+            budgetStatus(amount = 100.0, spent = 100.0, categoryId = 8L)
+        )
+
+        val result = calculator.availableResult()
+
+        assertEquals(66, result.budgetAdherenceScore)
+    }
+
     // ── P5-008: typed Unavailable outcomes ────────────────────────────────
 
     @Test
@@ -956,10 +985,10 @@ class FinancialHealthScoreV2Test : AnalyticsEngineTestBase() {
         )
     }
 
-    private fun budgetStatus(amount: Double, spent: Double): BudgetStatus {
+    private fun budgetStatus(amount: Double, spent: Double, categoryId: Long? = null): BudgetStatus {
         val budget = Budget(
-            id = 1L,
-            categoryId = null,
+            id = categoryId ?: 1L,
+            categoryId = categoryId,
             amount = amount,
             period = BudgetPeriod.MONTHLY,
             startDate = now - 20 * dayMs

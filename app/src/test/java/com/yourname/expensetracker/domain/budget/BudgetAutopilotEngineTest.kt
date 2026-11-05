@@ -450,6 +450,37 @@ class BudgetAutopilotEngineTest {
         assertFalse(rec.isActionable)
     }
 
+    // ── BL-14: history-months confidence bonus ──────────────────────────────
+
+    @Test
+    fun `BL-14 confidence bonus scales with three observed months`() = runTest {
+        // A month-boundary "now" makes the 3-month window [Jan 1, Apr 1) cover three
+        // complete months, so observedMonthCount = 3 reaches the bonus branch.
+        val boundaryNow = TimePeriodUtils.getStartOfMonth(now)
+        every { timeProvider.now() } returns boundaryNow
+        coEvery { budgetRepository.getActiveBudgets() } returns listOf(
+            budget(id = 1L, categoryId = 1L, amount = 100.0)
+        )
+        val janKey = TimePeriodUtils.formatMonthKey(TimePeriodUtils.addMonths(boundaryNow, -3))
+        val febKey = TimePeriodUtils.formatMonthKey(TimePeriodUtils.addMonths(boundaryNow, -2))
+        val marKey = TimePeriodUtils.formatMonthKey(TimePeriodUtils.addMonths(boundaryNow, -1))
+        stubHistory(
+            SpendScope.Category(1L),
+            listOf(
+                janKey to completeAggregate(100.0),
+                febKey to completeAggregate(100.0),
+                marKey to completeAggregate(100.0)
+            )
+        )
+
+        val rec = engine.generateRecommendations().categoryRecommendations.single()
+
+        // Equal months: volatility 0 -> +0.2. Base 0.5. Bonus = 0.2 * 3 / (3 * 4) = 0.05.
+        // Total 0.75. The old values-count bonus (3 / 100 = 0.03) gave 0.73.
+        assertEquals(BudgetRecommendationQuality.COMPLETE, rec.quality)
+        assertApproxEquals(0.75, rec.confidence, 0.000001)
+    }
+
     // ── typed failure propagation (P6-002) ──────────────────────────────────
 
     @Test
