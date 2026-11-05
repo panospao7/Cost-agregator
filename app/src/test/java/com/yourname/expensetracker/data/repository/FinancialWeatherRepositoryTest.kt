@@ -726,6 +726,46 @@ class FinancialWeatherRepositoryTest {
         assertEquals("EUR", plannedEurItem.currency)
     }
 
+    @Test
+    fun `FC-PAID-UNLINKED a SETTLED occurrence is not an upcoming item while a PLANNED one is`() = runTest {
+        val now = 1705320000000L
+        stubEmptyWeatherInputs()
+
+        val settled = ConfirmedOccurrence(
+            dueDate = now + 2 * 86_400_000L,
+            expectedAmount = 700.0,
+            expectedCurrency = "EUR",
+            merchant = "Settled Rent",
+            categoryId = null,
+            status = ConfirmedOccurrence.STATUS_SETTLED
+        )
+        val planned = ConfirmedOccurrence(
+            dueDate = now + 3 * 86_400_000L,
+            expectedAmount = 30.0,
+            expectedCurrency = "EUR",
+            merchant = "Planned Gym",
+            categoryId = null,
+            status = "PLANNED"
+        )
+
+        val base = createMockForecast()
+        coEvery {
+            synthesisEngine.synthesize(any<ForecastInputAssembler.ForecastInput>())
+        } returns base.copy(
+            components = base.components.copy(
+                recurringExpenses = emptyList(),
+                confirmedOccurrences = listOf(settled, planned),
+                plannedExpenses = emptyList()
+            )
+        )
+
+        val result = repository.getFinancialWeather().first()
+
+        val descriptions = result.upcomingItems.map { it.description }
+        assertTrue(descriptions.contains("Planned Gym"))
+        assertTrue(!descriptions.contains("Settled Rent"))
+    }
+
     private fun createExpense(amount: Double, date: Long, type: TransactionType): Expense {
         return Expense(
             amount = amount,

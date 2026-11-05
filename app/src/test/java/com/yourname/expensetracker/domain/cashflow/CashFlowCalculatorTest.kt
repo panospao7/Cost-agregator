@@ -868,6 +868,32 @@ class CashFlowCalculatorTest : AnalyticsEngineTestBase() {
         verify(atLeast = 1) { databaseReadBarrier.checkReadAllowed(any<String>()) }
     }
 
+    @Test
+    fun `FC-PAID-UNLINKED a bill dropped by dropSettled has no line on its due date while the kept one does`() = runTest {
+        val d1 = ms("2026-04-01")
+        val d2 = ms("2026-04-02")
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns emptyList()
+        coEvery { recurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+            manualPattern(id = 1L, merchant = "Rent", amount = 800.0, nextDate = d1),
+            manualPattern(id = 2L, merchant = "Gym", amount = 20.0, nextDate = d2)
+        )
+        val settledRent = occurrence(ruleId = 1L, dueDate = d1, amount = 800.0, merchant = "Rent")
+        val keptGym = occurrence(ruleId = 2L, dueDate = d2, amount = 20.0, merchant = "Gym")
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(1L, any(), any()) } returns listOf(settledRent)
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(2L, any(), any()) } returns listOf(keptGym)
+        coEvery { recurringOccurrenceDao.getByDateRange(any(), any()) } returns emptyList()
+        // Only for this test: the coordinator reports Rent as settled and drops it.
+        coEvery { recurringLifecycleCoordinator.dropSettled(any()) } answers {
+            firstArg<List<RecurringOccurrence>>().filter { it.merchant != "Rent" }
+        }
+
+        val result = calculator.calculateDailyCashFlow(Date(d1), Date(ms("2026-04-03")), startingBalance = MoneyAmount(0.0, CurrencyCode("EUR")))
+
+        assertEquals(2, result.size)
+        assertTrue(result[0].predictedRecurring.isEmpty())
+        assertEquals(listOf("Gym"), result[1].predictedRecurring.map { it.merchantName })
+    }
+
     // ============================================================================
     // P6-CURRENT-018 – occurrence-generation failure fallback + partial flag
     // ============================================================================

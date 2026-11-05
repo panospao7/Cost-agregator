@@ -787,6 +787,45 @@ class FinancialStressForecastEngineTest {
         assertApproxEquals(800.0, result.horizons.first { it.daysAhead == 30 }.recurringObligations, 0.0001)
     }
 
+    @Test
+    fun `FC-PAID-UNLINKED a bill dropped by dropSettled is not subtracted while the kept one is`() = runTest {
+        allExpenses = emptyList()
+        allDeposits = emptyList()
+        val due = now + dayMs
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+            recurringPattern(
+                merchant = "Settled Rent",
+                amount = 800.0,
+                nextDate = due,
+                frequency = RecurrenceFrequency.MONTHLY,
+                confidence = 1.0f,
+                id = 2L
+            ),
+            recurringPattern(
+                merchant = "Kept Gym",
+                amount = 15.0,
+                nextDate = due,
+                frequency = RecurrenceFrequency.MONTHLY,
+                confidence = 1.0f,
+                id = 1L
+            )
+        )
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(2L, any(), any()) } returns listOf(
+            occurrenceRow(ruleId = 2L, dueDate = due, amount = 800.0, merchant = "Settled Rent")
+        )
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(1L, any(), any()) } returns listOf(
+            occurrenceRow(ruleId = 1L, dueDate = due, amount = 15.0, merchant = "Kept Gym")
+        )
+        // Only for this test: the coordinator reports the rent as settled and drops it.
+        coEvery { recurringLifecycleCoordinator.dropSettled(any()) } answers {
+            firstArg<List<RecurringOccurrence>>().filter { it.merchant != "Settled Rent" }
+        }
+
+        val result = engine.computeStressForecast()
+
+        assertApproxEquals(15.0, result.horizons.first { it.daysAhead == 30 }.recurringObligations, 0.0001)
+    }
+
     // ── P6-CURRENT-024: read path projects, never materializes ─────────────
 
     @Test
