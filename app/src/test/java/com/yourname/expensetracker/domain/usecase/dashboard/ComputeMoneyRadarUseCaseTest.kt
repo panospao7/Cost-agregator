@@ -148,15 +148,31 @@ class ComputeMoneyRadarUseCaseTest {
     }
 
     @Test
-    fun `unresolved budget currency is unavailable rather than no budget risk`() = runTest {
+    fun `unresolved budget currency gives no budget risk but keeps bills and anomalies`() = runTest {
         stubHealthyRadarSignals()
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+            recurring("Bill A", 10.0, now + dayMs),
+            recurring("Bill B", 20.0, now + 2 * dayMs)
+        )
+        coEvery { anomalyAlertRepository.getActiveAlerts() } returns listOf(
+            anomaly("Odd Charge", 40.0, now - dayMs)
+        )
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
+            expense(1000.0, TransactionType.DEPOSIT, now - dayMs)
+        )
         val status = overallBudgetStatus(1000.0)
         every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(
             // The snapshot reads BudgetStatus.currency, so the status field is changed with the budget.
             status.copy(budget = status.budget.copy(currency = "UNKNOWN"), currency = "UNKNOWN")
         ))
 
-        assertRadarUnavailable(useCase.compute())
+        val result = useCase.compute()
+
+        assertTrue(result.urgencyLevel != UrgencyLevel.UNAVAILABLE)
+        assertNotNull(result.urgencyScore)
+        assertEquals(2, result.dueBills.size)
+        assertEquals(1, result.anomalyAlerts.size)
+        assertNull(result.budgetRisk)
         coVerify(exactly = 0) { monteCarloSimulator.simulate(any(), any(), any(), any()) }
     }
 
@@ -785,7 +801,7 @@ class ComputeMoneyRadarUseCaseTest {
     }
 
     @Test
-    fun `P-05-5 a budget status that is not Available makes the radar UNAVAILABLE without simulating`() = runTest {
+    fun `P-05-5 a budget status that is not Available keeps bills and anomalies and has no budget risk`() = runTest {
         val base = overallBudgetStatus(500.0)
         val rows = mapOf(
             "percent unknown" to base.copy(percentKnown = false, healthStatus = BudgetHealthStatus.UNKNOWN),
@@ -795,12 +811,25 @@ class ComputeMoneyRadarUseCaseTest {
         )
         rows.forEach { (name, status) ->
             stubHealthyRadarSignals()
+            coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+                recurring("Bill A", 10.0, now + dayMs),
+                recurring("Bill B", 20.0, now + 2 * dayMs)
+            )
+            coEvery { anomalyAlertRepository.getActiveAlerts() } returns listOf(
+                anomaly("Odd Charge", 40.0, now - dayMs)
+            )
+            coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
+                expense(1000.0, TransactionType.DEPOSIT, now - dayMs)
+            )
             every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(status))
             coEvery { expenseRepository.getExpensesSince(any()) } returns emptyList()
 
             val result = useCase.compute()
 
-            assertEquals(name, UrgencyLevel.UNAVAILABLE, result.urgencyLevel)
+            assertTrue(name, result.urgencyLevel != UrgencyLevel.UNAVAILABLE)
+            assertNotNull(name, result.urgencyScore)
+            assertEquals(name, listOf("Bill A", "Bill B"), result.dueBills.map { it.merchant })
+            assertEquals(name, listOf("Odd Charge"), result.anomalyAlerts.map { it.merchant })
             assertNull(name, result.budgetRisk)
         }
         coVerify(exactly = 0) { monteCarloSimulator.simulate(any(), any(), any(), any()) }

@@ -22,6 +22,7 @@ import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
@@ -100,7 +101,7 @@ class SpendingThresholdCalculatorTest {
     }
 
     @Test
-    fun `E-02-4 missing JPY rate throws and is not cached so a later read with the rate succeeds`() = runTest(testDispatcher) {
+    fun `E-02-4 missing JPY rate throws and no value is cached so a read after the failure window with the rate succeeds`() = runTest(testDispatcher) {
         coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returns listOf(
             purchase(1, 50.0), purchase(2, 50.0), purchase(3, 5000.0, currency = "JPY")
         )
@@ -109,13 +110,113 @@ class SpendingThresholdCalculatorTest {
             calculator.calculatePercentiles("u")
             fail("Expected MoneyDisplayUnavailableException for the missing JPY rate")
         } catch (expected: MoneyDisplayUnavailableException) {
-            // fail closed; nothing may be cached
+            // fail closed; no percentile value may be cached
         }
 
+        // The failure itself is remembered for FAILURE_WINDOW_MS, so read again after the window.
         rateStore.putRate("JPY", "EUR", 0.0062)
+        setClock(NOW + FAILURE_WINDOW_MS)
         val percentiles = calculator.calculatePercentiles("u")
 
         assertEquals(50.0, percentiles.p90, 0.001)
+        coVerify(exactly = 2) { expenseDao.getExpensesBetweenUncapped(any(), any()) }
+    }
+
+    @Test
+    fun `negative cache two failing calls within 5 minutes read the DAO once and give the same reason`() = runTest(testDispatcher) {
+        coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returns missingRateRows()
+
+        val first = unavailable()
+        setClock(NOW + FAILURE_WINDOW_MS - 1)
+        val second = unavailable()
+
+        assertEquals(first.reasonCode, second.reasonCode)
+        coVerify(exactly = 1) { expenseDao.getExpensesBetweenUncapped(any(), any()) }
+    }
+
+    @Test
+    fun `negative cache a call at 5 minutes reads the DAO again`() = runTest(testDispatcher) {
+        coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returns missingRateRows()
+
+        unavailable()
+        setClock(NOW + FAILURE_WINDOW_MS)
+        unavailable()
+
+        coVerify(exactly = 2) { expenseDao.getExpensesBetweenUncapped(any(), any()) }
+    }
+
+    @Test
+    fun `negative cache a clock that moved backwards does not reuse the failure`() = runTest(testDispatcher) {
+        coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returns missingRateRows()
+
+        unavailable()
+        setClock(NOW - 1_000L)
+        unavailable()
+
+        coVerify(exactly = 2) { expenseDao.getExpensesBetweenUncapped(any(), any()) }
+    }
+
+    @Test
+    fun `negative cache a home currency change bypasses the cached failure`() = runTest(testDispatcher) {
+        coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returns missingRateRows()
+        unavailable()
+
+        rateStore.putRate("JPY", "USD", 0.01)
+        rateStore.putRate("EUR", "USD", 2.0)
+        homeCurrency.value = "USD"
+        setClock(NOW + 1_000L)
+        val percentiles = calculator.calculatePercentiles("u")
+
+        assertEquals(2, percentiles.sampleSize)
+        coVerify(exactly = 2) { expenseDao.getExpensesBetweenUncapped(any(), any()) }
+    }
+
+    @Test
+    fun `negative cache refreshThresholds clears the failure inside the window`() = runTest(testDispatcher) {
+        coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returns missingRateRows()
+        unavailable()
+
+        rateStore.putRate("JPY", "EUR", 0.0062)
+        calculator.refreshThresholds("u")
+        setClock(NOW + 1_000L)
+        val percentiles = calculator.calculatePercentiles("u")
+
+        assertEquals(2, percentiles.sampleSize)
+        coVerify(exactly = 2) { expenseDao.getExpensesBetweenUncapped(any(), any()) }
+    }
+
+    @Test
+    fun `negative cache a later success for another home currency clears the failure entry`() = runTest(testDispatcher) {
+        coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returns missingRateRows()
+        unavailable() // EUR failure at NOW, read 1
+
+        rateStore.putRate("JPY", "USD", 0.01)
+        rateStore.putRate("EUR", "USD", 2.0)
+        homeCurrency.value = "USD"
+        setClock(NOW + 60_000L)
+        calculator.calculatePercentiles("u") // USD success, read 2, must drop the EUR failure entry
+
+        homeCurrency.value = "EUR"
+        setClock(NOW + 120_000L)
+        unavailable() // still no JPY->EUR rate; reads again (read 3) instead of replaying the old entry
+
+        coVerify(exactly = 3) { expenseDao.getExpensesBetweenUncapped(any(), any()) }
+    }
+
+    @Test
+    fun `negative cache cancellation is never cached`() = runTest(testDispatcher) {
+        coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } throws
+            CancellationException("cancelled") andThen listOf(purchase(1, 100.0))
+
+        try {
+            calculator.calculatePercentiles("u")
+            fail("CancellationException must propagate")
+        } catch (expected: CancellationException) {
+            // propagated
+        }
+        val percentiles = calculator.calculatePercentiles("u")
+
+        assertEquals(1, percentiles.sampleSize)
         coVerify(exactly = 2) { expenseDao.getExpensesBetweenUncapped(any(), any()) }
     }
 
@@ -223,6 +324,20 @@ class SpendingThresholdCalculatorTest {
         assertEquals(910.0, calculator.calculateHighAmountThresholdFromNormalizedAmounts(amounts), 0.01)
     }
 
+    /** Reuses the class's mocked clock: later calls see the new time. */
+    private fun setClock(now: Long) {
+        every { timeProvider.now() } returns now
+    }
+
+    /** A EUR row plus a JPY row; with no JPY->EUR rate the home-currency read fails. */
+    private fun missingRateRows() = listOf(purchase(1, 50.0), purchase(2, 5000.0, currency = "JPY"))
+
+    private suspend fun unavailable(): MoneyDisplayUnavailableException {
+        val failure = runCatching { calculator.calculatePercentiles("u") }.exceptionOrNull()
+        assertTrue("expected MoneyDisplayUnavailableException but was $failure", failure is MoneyDisplayUnavailableException)
+        return failure as MoneyDisplayUnavailableException
+    }
+
     private fun purchase(
         id: Long,
         amount: Double,
@@ -268,5 +383,6 @@ class SpendingThresholdCalculatorTest {
 
     private companion object {
         const val NOW = 1_700_000_000_000L
+        const val FAILURE_WINDOW_MS = 5 * 60 * 1000L
     }
 }

@@ -118,6 +118,25 @@ class LifestyleAnalysisTest : AnalyticsEngineTestBase() {
     }
 
     @Test
+    fun `BL-05 a stale but present exchange rate still gives a report with the converted value`() = runTest {
+        // validDate two months before the spend: more than 7 days apart, so the normalizer
+        // raises exactly one STALE_EXCHANGE_RATE warning and nothing severe.
+        rateStore.putRate("JPY", "EUR", rate = 0.0062, validDate = millis("2026-01-10"))
+        every { expenseDao.getExpensesBetweenFlowUncapped(any(), any()) } returns flowOf(
+            listOf(
+                incomeId(1, "2026-03-05", 1000.0),
+                spendId(2, "2026-03-10", 100.0),
+                spendId(3, "2026-03-11", 10_000.0, currency = "JPY")
+            )
+        )
+
+        val report = detector.analyzeLifestyleInflation(monthsToAnalyze = 3)
+
+        val march = report.monthlyData.single { it.month == "2026-03" }
+        assertApproxEquals(162.0, march.totalSpending, 0.0001)
+    }
+
+    @Test
     fun `BL-05 CancellationException from the home currency source propagates`() = runTest {
         every { expenseDao.getExpensesBetweenFlowUncapped(any(), any()) } returns flowOf(emptyList())
         every { homeCurrencyRepo.homeCurrency() } returns flow { throw CancellationException("cancelled") }
@@ -152,9 +171,9 @@ class LifestyleAnalysisTest : AnalyticsEngineTestBase() {
     private class LifestyleFakeRateStore : ExchangeRateStore {
         private val rates = mutableMapOf<Pair<String, String>, DomainExchangeRate>()
 
-        fun putRate(from: String, to: String, rate: Double) {
+        fun putRate(from: String, to: String, rate: Double, validDate: Long = 0L) {
             rates[from to to] = DomainExchangeRate(
-                fromCurrency = from, toCurrency = to, rate = rate, lastUpdated = 1234L, validDate = 0L
+                fromCurrency = from, toCurrency = to, rate = rate, lastUpdated = 1234L, validDate = validDate
             )
         }
 

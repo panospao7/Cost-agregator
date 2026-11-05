@@ -1,7 +1,7 @@
 package com.yourname.expensetracker.domain.lifestyle
 
 import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
-import com.yourname.expensetracker.domain.analytics.requireCompleteMoneyInput
+import com.yourname.expensetracker.domain.analytics.requireNoLostMoneyInput
 import com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableException
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.model.DomainTransactionType
@@ -46,8 +46,9 @@ class LifestyleInflationDetector @Inject constructor(
     /**
      * BL-05: amounts are normalized to the home currency before any monthly sum.
      * Throws [MoneyDisplayUnavailableException] when any row cannot be converted
-     * (missing/stale rate, invalid currency, invalid home currency); there is no
-     * partial or raw mixed-currency report. Callers must treat it as "unavailable".
+     * (missing rate, invalid currency, invalid home currency); there is no
+     * partial or raw mixed-currency report. A stale-but-present rate still converts
+     * and does not fail the report. Callers must treat the throw as "unavailable".
      */
     suspend fun analyzeLifestyleInflation(
         monthsToAnalyze: Int = 12
@@ -59,7 +60,7 @@ class LifestyleInflationDetector @Inject constructor(
         val rawExpenses = expenseDao.getExpensesBetweenFlowUncapped(startDate, endDate).first()
         val homeCurrency = currencySettingsRepository.homeCurrency().first()
         val normalized = analyticsCurrencyNormalizer.normalizeExpenses(rawExpenses, homeCurrency)
-        normalized.requireCompleteMoneyInput(homeCurrency)
+        normalized.requireNoLostMoneyInput(homeCurrency)
         val expenses = normalized.includedExpenses
 
         // Separate income and spending

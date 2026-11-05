@@ -300,11 +300,12 @@ class ComputeMoneyRadarUseCase @Inject constructor(
             val budgetAmount = when (val remaining = budgetSnapshot.periodRemaining(now, homeCurrency)) {
                 is com.yourname.expensetracker.domain.budget.BudgetPeriodRemaining.Available -> remaining.limit
                 is com.yourname.expensetracker.domain.budget.BudgetPeriodRemaining.Unavailable -> {
-                    // No budget to compare against (a limit of 0, or a rollover deficit that
-                    // consumed it): no comparison, as the widget does. Unknown spend or an
-                    // incomplete conversion is not "no budget", so Radar fails closed.
-                    if (remaining.reason == com.yourname.expensetracker.domain.budget.BudgetPeriodRemainingUnavailableReason.NO_POSITIVE_LIMIT) return null
-                    error("RADAR_BUDGET_UNAVAILABLE")
+                    // Any unavailable reason (no positive limit, legacy/unconvertible budget
+                    // currency, unknown spend) leaves only the budget part without a
+                    // comparison. Bills and anomalies are independent signals and stay.
+                    // MoneyRadarData has no partial/unknown flag, so the budget part is
+                    // simply absent (budgetRisk = null) and contributes no score.
+                    return null
                 }
             }
 
