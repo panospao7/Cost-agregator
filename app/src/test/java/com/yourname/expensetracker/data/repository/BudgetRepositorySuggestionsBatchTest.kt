@@ -119,6 +119,25 @@ class BudgetRepositorySuggestionsBatchTest {
         coVerify(exactly = 0) { expenseDao.getCategorySpentInPeriod(any(), any(), any()) }
     }
 
+    @Test
+    fun `getSuggestions complete 300 over about one month suggests 360`() = runTest {
+        val now = utcMs(2026, Calendar.MARCH, 15)
+        every { timeProvider.now() } returns now
+        every { categoryDao.getAllFlow() } returns flowOf(
+            listOf(Category(id = 1L, name = "Food", icon = "F", color = "#FF0000", isDefault = false))
+        )
+        coEvery { budgetDao.getActiveBudgets() } returns emptyList()
+        coEvery { expenseDao.getOldestExpenseDate() } returns utcMs(2026, Calendar.FEBRUARY, 12)
+        coEvery { expenseDao.getCategoryTotalsBetweenByCurrency(startDate = any(), endDate = any()) } returns listOf(
+            CategoryCurrencyTotal(categoryId = 1L, currency = "EUR", total = 300.0, txCount = 1)
+        )
+
+        val suggestions = repository.getSuggestions()
+
+        assertThat(suggestions).hasSize(1)
+        assertThat(suggestions.single().suggestedAmount).isWithin(0.01).of(360.0)
+    }
+
     private fun activeBudget(categoryId: Long) = Budget(
         id = 10L,
         categoryId = categoryId,

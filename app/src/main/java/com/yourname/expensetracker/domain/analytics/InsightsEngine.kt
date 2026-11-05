@@ -798,9 +798,7 @@ class InsightsEngine @Inject constructor(
                 it.transactionType == DomainTransactionType.PURCHASE &&
                     !it.isNotMine &&
                     !it.merchantKey.isNullOrBlank() &&
-                    it.date < currentMonth.startMs &&
-                    // P-04-3: scheduled installment rows never feed the merchant baseline.
-                    it.id !in installmentExcludedIds
+                    it.date < currentMonth.startMs
             }
             .groupBy { it.merchantKey!!.trim() }
 
