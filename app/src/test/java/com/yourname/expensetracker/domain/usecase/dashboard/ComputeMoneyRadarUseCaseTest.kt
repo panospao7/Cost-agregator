@@ -751,6 +751,64 @@ class ComputeMoneyRadarUseCaseTest {
         )
     }
 
+    // ---------------------------------------------------------------- fix-1.0.4 null probability
+
+    @Test
+    fun `null probabilityUnderBudget gives no budget risk, no impact call, keeps bills and anomalies`() = runTest {
+        stubHealthyRadarSignals()
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+            recurring("Bill A", 10.0, now + dayMs),
+            recurring("Bill B", 20.0, now + 2 * dayMs)
+        )
+        coEvery { anomalyAlertRepository.getActiveAlerts() } returns listOf(
+            anomaly("Odd Charge", 40.0, now - dayMs)
+        )
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
+            expense(1000.0, TransactionType.DEPOSIT, now - dayMs)
+        )
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(overallBudgetStatus(500.0)))
+        coEvery { expenseRepository.getExpensesSince(any()) } returns listOf(
+            expense(180.0, TransactionType.PURCHASE, now - 2 * dayMs)
+        )
+        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any()) } returns
+            monteCarloResult(probabilityUnderBudget = null)
+
+        val result = useCase.compute()
+
+        assertTrue(result.urgencyLevel != UrgencyLevel.UNAVAILABLE)
+        assertNotNull(result.urgencyScore)
+        assertNull(result.budgetRisk)
+        assertEquals(listOf("Bill A", "Bill B"), result.dueBills.map { it.merchant })
+        assertEquals(listOf("Odd Charge"), result.anomalyAlerts.map { it.merchant })
+        io.mockk.verify(exactly = 0) { getMonteCarloBudgetImpact(any(), any()) }
+    }
+
+    @Test
+    fun `null simulate result with a budget is still unavailable even when a null probability is tolerated`() = runTest {
+        stubHealthyRadarSignals()
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(overallBudgetStatus(500.0)))
+        coEvery { expenseRepository.getExpensesSince(any()) } returns listOf(
+            expense(180.0, TransactionType.PURCHASE, now - 2 * dayMs)
+        )
+        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any()) } returns null
+
+        assertRadarUnavailable(useCase.compute())
+    }
+
+    @Test
+    fun `impact Error with a non-null probability is still unavailable`() = runTest {
+        stubHealthyRadarSignals()
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(overallBudgetStatus(500.0)))
+        coEvery { expenseRepository.getExpensesSince(any()) } returns listOf(
+            expense(180.0, TransactionType.PURCHASE, now - 2 * dayMs)
+        )
+        val simulation = monteCarloResult(probabilityUnderBudget = 0.5)
+        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any()) } returns simulation
+        every { getMonteCarloBudgetImpact(500.0, simulation) } returns Result.Error(message = "SECRET payload")
+
+        assertRadarUnavailable(useCase.compute())
+    }
+
     // ---------------------------------------------------------------- P-05-5 limit derivation
 
     private fun stubSimulationCapturingLimit(captured: MutableList<Double>, limitForImpact: Double): MonteCarloResult {

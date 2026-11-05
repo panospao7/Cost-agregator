@@ -205,6 +205,14 @@ class HomeViewModel @Inject constructor(
     /** S4-003: Serializes widget config read-modify-write operations */
     private val widgetConfigMutex = kotlinx.coroutines.sync.Mutex()
 
+    /**
+     * The live year-view collection. Cancelled before a new year collection starts and
+     * before any drill-down/drill-up so a stale collection never overwrites other levels.
+     * Declared before init: init starts the first collection.
+     */
+    private var yearTotalsJob: kotlinx.coroutines.Job? = null
+    private var drillJob: kotlinx.coroutines.Job? = null
+
     init {
         viewModelScope.launch {
             try {
@@ -506,8 +514,13 @@ class HomeViewModel @Inject constructor(
             loadCategoryTrends()
             // Trigger a totals reload if we have drill-down state
             if (_totalsDrillDownState.value.periodTotals.isNotEmpty()) {
-                val currentYear = TimePeriodUtils.getYear(timeProvider.now())
-                loadTotalsForYear(currentYear)
+                // A month list of a past year keeps that year, so rows match the summary above them.
+                val state = _totalsDrillDownState.value
+                val year = state.selectedPeriod
+                    ?.takeIf { state.currentLevel == PeriodType.MONTH }
+                    ?.let { parseYear(it.periodKey) }
+                    ?: TimePeriodUtils.getYear(timeProvider.now())
+                loadTotalsForYear(year)
             }
         }
     }
@@ -685,37 +698,64 @@ class HomeViewModel @Inject constructor(
         null -> null
     }
 
+    // Year last handed to startYearTotalsCollection; Retry must restart this year, not the current one.
+    private var collectedTotalsYear: Int? = null
+
     fun reloadCurrentTotalsLevel() {
-        val state = _totalsDrillDownState.value
-        val year = com.yourname.expensetracker.ui.util.UiTimeUtils.getYear(timeProvider.now())
+        val year = collectedTotalsYear
+            ?: com.yourname.expensetracker.ui.util.UiTimeUtils.getYear(timeProvider.now())
         loadTotalsForYear(year)
     }
 
     fun loadTotalsForYear(year: Int) {
-        viewModelScope.launch {
+        // An explicit (re)load supersedes any in-flight drill so a late drill result
+        // cannot overwrite it and a later emission cannot overwrite a drilled level.
+        drillJob?.cancel()
+        startYearTotalsCollection(year)
+    }
+
+    private fun startYearTotalsCollection(year: Int) {
+        collectedTotalsYear = year
+        yearTotalsJob?.cancel()
+        yearTotalsJob = viewModelScope.launch {
             _totalsDrillDownState.update { it.copy(isLoading = true) }
             try {
                 Timber.d("Loading totals for year $year")
-                val totals = totalsAggregationEngine.getMonthlyTotals(year).first()
-                Timber.d("Got ${totals.size} monthly totals for year $year")
-                // P5-014 (RP-07): month status labels compare against COMPLETED-month
-                // history — the partial current month stays out of the baseline.
-                val average = totalsAggregationEngine.getAverageForPeriodType(PeriodType.MONTH, excludeCurrent = true)
-                Timber.d("Average for month: $average")
-                
-                val updatedTotals = totals.map { period ->
-                    period.copy(status = totalsAggregationEngine.getPeriodStatus(statusAggregate(period), average))
+                // Collected (not .first()) so the year view follows expense changes.
+                totalsAggregationEngine.getMonthlyTotals(year).collect { totals ->
+                    // The engine maps a read failure to an empty list; a success always
+                    // carries 12 rows. Keep the last good rows and surface Retry.
+                    if (totals.isEmpty()) {
+                        _totalsDrillDownState.update {
+                            it.copy(
+                                isLoading = false,
+                                error = UiText.StringResource(R.string.home_error_unable_to_load_totals)
+                            )
+                        }
+                        return@collect
+                    }
+                    Timber.d("Got ${totals.size} monthly totals for year $year")
+                    // P5-014 (RP-07): month status labels compare against COMPLETED-month
+                    // history — the partial current month stays out of the baseline.
+                    val average = totalsAggregationEngine.getAverageForPeriodType(PeriodType.MONTH, excludeCurrent = true)
+                    Timber.d("Average for month: $average")
+
+                    val updatedTotals = totals.map { period ->
+                        period.copy(status = totalsAggregationEngine.getPeriodStatus(statusAggregate(period), average))
+                    }
+
+                    _totalsDrillDownState.update { state ->
+                        state.copy(
+                            currentLevel = PeriodType.MONTH,
+                            periodTotals = updatedTotals,
+                            isLoading = false,
+                            error = null
+                        )
+                    }
+                    Timber.d("Totals loaded successfully")
                 }
-                
-                _totalsDrillDownState.update { state ->
-                    state.copy(
-                        currentLevel = PeriodType.MONTH,
-                        periodTotals = updatedTotals,
-                        isLoading = false,
-                        error = null
-                    )
-                }
-                Timber.d("Totals loaded successfully")
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Timber.e(e, "Error loading totals for year $year")
                 _totalsDrillDownState.update { it.copy(isLoading = false, error = UiText.StringResource(R.string.home_error_unable_to_load_totals)) }
@@ -724,7 +764,9 @@ class HomeViewModel @Inject constructor(
     }
 
     fun drillDownToPeriod(period: PeriodTotal) {
-        viewModelScope.launch {
+        yearTotalsJob?.cancel()
+        drillJob?.cancel()
+        drillJob = viewModelScope.launch {
             _totalsDrillDownState.update { it.copy(isLoading = true) }
             try {
                 @Suppress("UNCHECKED_CAST")
@@ -782,9 +824,17 @@ class HomeViewModel @Inject constructor(
                         breadcrumb = state.breadcrumb + listOfNotNull(state.selectedPeriod),
                         periodTotals = updatedTotals,
                         categoryBreakdown = categories,
-                        isLoading = false
+                        isLoading = false,
+                        error = null
                     )
                 }
+                // Month list reached by drill-down: follow expense changes live.
+                // breadcrumb/selectedPeriod are set above and untouched by the collector.
+                if (newLevel == PeriodType.MONTH) {
+                    startYearTotalsCollection(parseYear(period.periodKey))
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _totalsDrillDownState.update { it.copy(isLoading = false, error = UiText.StringResource(R.string.home_error_unable_to_load_breakdown)) }
             }
@@ -802,9 +852,13 @@ class HomeViewModel @Inject constructor(
             PeriodType.YEAR -> return // Already at top, can't go up
         }
 
-        viewModelScope.launch {
+        yearTotalsJob?.cancel()
+        drillJob?.cancel()
+        drillJob = viewModelScope.launch {
             _totalsDrillDownState.update { it.copy(isLoading = true) }
             try {
+                // Year whose month list is shown when landing on MONTH (live collection).
+                var monthListYear: Int? = null
                 // Load data for the new level
                 val (newTotals, newSelectedPeriod, newParentPeriod) = when (newLevel) {
                     PeriodType.YEAR -> {
@@ -819,6 +873,7 @@ class HomeViewModel @Inject constructor(
                         val parent = state.parentPeriod
                         if (parent != null) {
                             val year = parseYear(parent.periodKey)
+                            monthListYear = year
                             val months = totalsAggregationEngine.getMonthlyTotals(year).first()
                             // P5-014 (RP-07): completed-history comparison baseline.
                             val avg = totalsAggregationEngine.getAverageForPeriodType(PeriodType.MONTH, excludeCurrent = true)
@@ -830,6 +885,7 @@ class HomeViewModel @Inject constructor(
                         } else {
                             // Fallback: show all months of current year
                             val currentYear = TimePeriodUtils.getYear(timeProvider.now())
+                            monthListYear = currentYear
                             val months = totalsAggregationEngine.getMonthlyTotals(currentYear).first()
                             // P5-014 (RP-07): completed-history comparison baseline.
                             val avg = totalsAggregationEngine.getAverageForPeriodType(PeriodType.MONTH, excludeCurrent = true)
@@ -868,6 +924,11 @@ class HomeViewModel @Inject constructor(
                         error = null
                     )
                 }
+                // Landed on a month list: restart live collection so it follows expense
+                // changes. breadcrumb/selectedPeriod are set above and untouched by it.
+                monthListYear?.let { startYearTotalsCollection(it) }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Timber.e(e, "Error drilling up from ${state.currentLevel} to $newLevel")
                 _totalsDrillDownState.update { it.copy(isLoading = false, error = UiText.StringResource(R.string.home_error_unable_to_go_back)) }
