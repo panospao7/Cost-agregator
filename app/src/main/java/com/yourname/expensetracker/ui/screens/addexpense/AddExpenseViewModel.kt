@@ -2040,16 +2040,25 @@ class AddExpenseViewModel @Inject constructor(
         val keptSetting = _state.value.ratesSetting
         // F-B2-A11Y-1: the announce key stays monotonic across a reset (a drop would look like a change).
         val keptAnnounceKey = _state.value.previewAnnounceKey
+        // N-01-3: a failed/timed-out home read stays failed across reset (the read job is not restarted
+        // on reopen); a later valid home value clears it in the observer.
+        val keptHomeReadFailed = _state.value.homeReadFailed && loadedCurrency == null
         _state.value = applyHomeAndSelection(
             AddExpenseState(
                 date = timeProvider.now(),
                 homeCurrency = loadedCurrency,
+                homeReadFailed = keptHomeReadFailed,
                 ratesSetting = keptSetting,
                 previewAnnounceKey = keptAnnounceKey
             )
         ).let { fresh ->
             fresh.copy(
-                currencyRegion = if (fresh.homeCurrency == null) CurrencyRegionUi.Loading else CurrencyRegionUi.Home,
+                currencyRegion = when {
+                    fresh.homeCurrency != null -> CurrencyRegionUi.Home
+                    fresh.homeReadFailed ->
+                        CurrencyRegionUi.Blocked(CurrencyBlockVariant.HOME_UNRESOLVED, null, CurrencyBlockOrigin.PREVIEW)
+                    else -> CurrencyRegionUi.Loading
+                },
                 ratesToday = todayFor(java.time.ZoneId.systemDefault())
             )
         }
