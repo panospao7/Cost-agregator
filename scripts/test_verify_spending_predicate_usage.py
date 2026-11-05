@@ -817,6 +817,9 @@ EXPECTED_EXEMPT = {
     ("ExpenseDao.kt", "getTotalDeposits", "NON_SPENDING_INCOME"),
     ("ExpenseDao.kt", "getOldestExpenseDate", "NON_MONEY"),
     ("ExpenseDao.kt", "getMerchantLocationClusters", "NON_MONEY"),
+    # FIX-104 AJ: id-only DR-01 probes in GroupExpenseDao (33 -> 35).
+    ("GroupExpenseDao.kt", "getNonPayerLinkedExpenseIdsBetween", "NON_MONEY"),
+    ("GroupExpenseDao.kt", "getPayerLinkedExpenseIdsBetween", "NON_MONEY"),
     ("ExpenseDao.kt", "searchMerchants", "SUGGESTION"),
     # 1.0.4 S7b: +2 merchant-context readers classified as SUGGESTION-exempt.
     ("ExpenseDao.kt", "getRecentExpensesForMerchant", "SUGGESTION"),
@@ -830,7 +833,7 @@ EXPECTED_REASON_COUNTS = {
     "DEDUPE_RESOLVER": 7,
     "ROW_COUNT": 5,
     "NON_SPENDING_INCOME": 4,
-    "NON_MONEY": 2,
+    "NON_MONEY": 4,
     # 1.0.4 S7b: +2 merchant-context readers in ExpenseDao marked as SUGGESTION-exempt (1 -> 3).
     # 1.0.4 closure: getRecentExpensesWithCategoryForMerchant now applies the predicate (36 -> 35)
     "SUGGESTION": 2,
@@ -884,7 +887,8 @@ def test_real_tree_report_exemption_set_equals_recorded_a12_6_set(real_tree_repo
     # 1.0.4 S7b: +2 merchant-context readers in ExpenseDao marked as SUGGESTION-exempt (34 -> 36).
     # 1.0.4 closure: getRecentExpensesWithCategoryForMerchant now applies the predicate (36 -> 35)
     # 1.0.4 N-02 neutralisation (other session's B2, item 129): two exemptions removed (35 -> 33).
-    assert len(exempt) == len(set(exempt)) == 33
+    # FIX-104 AJ: +2 NON_MONEY id-only probes in GroupExpenseDao (33 -> 35).
+    assert len(exempt) == len(set(exempt)) == 35
     assert set(exempt) == EXPECTED_EXEMPT
 
 
@@ -900,7 +904,8 @@ def test_real_tree_report_reason_counts_and_no_unclassified(real_tree_report):
     # 1.0.4 S7b: +2 merchant-context readers in ExpenseDao marked as SUGGESTION-exempt (34 -> 36).
     # 1.0.4 closure: getRecentExpensesWithCategoryForMerchant now applies the predicate (36 -> 35)
     # 1.0.4 N-02 neutralisation (other session's B2, item 129): two exemptions removed (35 -> 33).
-    assert "SUMMARY: exempt=33 " in proc.stdout and "unclassified=0" in proc.stdout
+    # FIX-104 AJ: +2 NON_MONEY id-only probes in GroupExpenseDao (33 -> 35).
+    assert "SUMMARY: exempt=35 " in proc.stdout and "unclassified=0" in proc.stdout
 
 
 def test_real_tree_converted_samples_are_classified_as_predicate(real_tree_report):
