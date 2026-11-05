@@ -61,9 +61,10 @@ class MainActivityRestoreNoticeSourceScanTest {
         val assigned = Regex("""val\s+(\w+)\s*=\s*stringResource\s*\(\s*R\.string\.backup_restore_notification_unreadable_notice""")
             .find(source)?.groupValues?.get(1)
         assertTrue("notice string must be bound to a val", assigned != null)
-        val flag = Regex("""val\s+(\w+)\s*=\s*\w+\.consumeNotificationUnreadable\s*\(""")
+        // PIN CHANGED: the consumed flag is now held in a saveable pending value, set inside this if.
+        val flag = Regex("""if\s*\(\s*\w+\.consumeNotificationUnreadable\s*\(\s*\)\s*\)\s*\{?\s*(\w+)\s*=\s*true""")
             .find(source)?.groupValues?.get(1)
-        assertTrue("consumed flag must be bound to a val", flag != null)
+        assertTrue("consumed flag must set a pending value", flag != null)
         val gatedShow = Regex(
             """if\s*\(\s*${Regex.escape(flag!!)}\s*\)\s*\{\s*\w+\.showSnackbar\s*\(\s*${Regex.escape(assigned!!)}\s*\)"""
         )

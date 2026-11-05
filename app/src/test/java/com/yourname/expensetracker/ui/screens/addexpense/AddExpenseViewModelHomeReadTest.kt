@@ -49,6 +49,9 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import com.yourname.expensetracker.ui.components.currency.CurrencyBlockOrigin
+import com.yourname.expensetracker.ui.components.currency.CurrencyBlockVariant
+import com.yourname.expensetracker.ui.components.currency.CurrencyRegionUi
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test

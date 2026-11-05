@@ -2040,7 +2040,7 @@ class AddExpenseViewModel @Inject constructor(
         val keptSetting = _state.value.ratesSetting
         // F-B2-A11Y-1: the announce key stays monotonic across a reset (a drop would look like a change).
         val keptAnnounceKey = _state.value.previewAnnounceKey
-        // N-01-3: a failed/timed-out home read stays failed across reset (the read job is not restarted
+        // N-01-3: a failed/timed-out home read stays failed across reset (a live read job is not restarted
         // on reopen); a later valid home value clears it in the observer.
         val keptHomeReadFailed = _state.value.homeReadFailed && loadedCurrency == null
         _state.value = applyHomeAndSelection(
