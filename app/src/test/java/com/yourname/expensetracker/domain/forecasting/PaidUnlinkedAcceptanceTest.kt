@@ -221,7 +221,84 @@ class PaidUnlinkedAcceptanceTest {
         assertEquals(400.0, forecast.components.totalCommitted, 0.001)
     }
 
+    // f. Two same-merchant patterns (A=rule 7, 400; B=rule 8, 420), both due the 25th, one 400 payment
+    // that both are projected PAID against (same linkedExpenseId): one payment advances one pattern.
+    // The assembler sorts by dueDate then occurrenceKey; the keys differ only in the rule id, so
+    // rule 7 (A) is chosen and advances, and B's 420 stays committed. Driven by stubbed projections
+    // (the assembler's coordinator is a mock here), not by the real expander.
+    @Test
+    fun onePaymentProjectedPaidForTwoBillsAdvancesOnlyTheFirstByDateThenKeyAndCommitsTheOther() = runTest {
+        every { timeProvider.now() } returns ms(2026, Calendar.JUNE, 20, 12)
+        val due25 = ms(2026, Calendar.JUNE, 25, 0)
+        stubProjection(7L, occurrence(due25, 400.0, "Rent", "MONTHLY", ruleId = 7L).paidBy(1L))
+        stubProjection(8L, occurrence(due25, 420.0, "Rent", "MONTHLY", ruleId = 8L).paidBy(1L))
+        stubNoRowsAndPayments(purchase(1L, ms(2026, Calendar.JUNE, 18, 9), 400.0, "Rent"))
+
+        val input = assembler.assembleNormalized(
+            normalizedInput(rentPattern(7L, 400.0, 25), rentPattern(8L, 420.0, 25))
+        )
+
+        assertEquals(ms(2026, Calendar.JULY, 25, 0), input.recurringPatterns.single { it.id == 7L }.nextExpectedDate)
+        assertEquals(ms(2026, Calendar.JUNE, 25, 0), input.recurringPatterns.single { it.id == 8L }.nextExpectedDate)
+        val forecast = engine.synthesize(input.withRentCase())
+        assertEquals(420.0, forecast.components.totalCommitted, 0.001)
+    }
+
+    // f, control: two separate payments, one linked id per bill: both advance, nothing committed.
+    @Test
+    fun twoPaymentsProjectedPaidForTwoBillsAdvanceBothPatternsAndCommitZero() = runTest {
+        every { timeProvider.now() } returns ms(2026, Calendar.JUNE, 20, 12)
+        val due25 = ms(2026, Calendar.JUNE, 25, 0)
+        stubProjection(7L, occurrence(due25, 400.0, "Rent", "MONTHLY", ruleId = 7L).paidBy(1L))
+        stubProjection(8L, occurrence(due25, 420.0, "Rent", "MONTHLY", ruleId = 8L).paidBy(2L))
+        stubNoRowsAndPayments(
+            purchase(1L, ms(2026, Calendar.JUNE, 18, 9), 400.0, "Rent"),
+            purchase(2L, ms(2026, Calendar.JUNE, 19, 9), 420.0, "Rent")
+        )
+
+        val input = assembler.assembleNormalized(
+            normalizedInput(rentPattern(7L, 400.0, 25), rentPattern(8L, 420.0, 25))
+        )
+
+        assertEquals(ms(2026, Calendar.JULY, 25, 0), input.recurringPatterns.single { it.id == 7L }.nextExpectedDate)
+        assertEquals(ms(2026, Calendar.JULY, 25, 0), input.recurringPatterns.single { it.id == 8L }.nextExpectedDate)
+        val forecast = engine.synthesize(input.withRentCase())
+        assertEquals(0.0, forecast.components.totalCommitted, 0.001)
+    }
+
+    // f, second control: A due the 20th, B due the 25th, one 400 payment on the 18th, both rows open.
+    // The real resolver (inside the real coordinator's dropSettled) gives the payment to the earlier
+    // bill A; B stays on the 25th and is committed. Stubbed open projections, real resolver.
+    @Test
+    fun onePaymentForTwoBillsAtDifferentDatesSettlesTheEarlierAndCommitsTheLater() = runTest {
+        every { timeProvider.now() } returns ms(2026, Calendar.JUNE, 18, 12)
+        stubProjection(7L, occurrence(ms(2026, Calendar.JUNE, 20, 0), 400.0, "Rent", "MONTHLY", ruleId = 7L))
+        stubProjection(8L, occurrence(ms(2026, Calendar.JUNE, 25, 0), 400.0, "Rent", "MONTHLY", ruleId = 8L))
+        stubNoRowsAndPayments(purchase(1L, ms(2026, Calendar.JUNE, 18, 9), 400.0, "Rent"))
+
+        val input = assembler.assembleNormalized(
+            normalizedInput(rentPattern(7L, 400.0, 20), rentPattern(8L, 400.0, 25))
+        )
+
+        assertEquals(ms(2026, Calendar.JULY, 20, 0), input.recurringPatterns.single { it.id == 7L }.nextExpectedDate)
+        assertEquals(ms(2026, Calendar.JUNE, 25, 0), input.recurringPatterns.single { it.id == 8L }.nextExpectedDate)
+        val forecast = engine.synthesize(input.withRentCase())
+        assertEquals(400.0, forecast.components.totalCommitted, 0.001)
+    }
+
     // ── fixtures ─────────────────────────────────────────────────────────────
+
+    private fun stubProjection(ruleId: Long, vararg rows: RecurringOccurrence) {
+        coEvery { assemblerCoordinator.projectOccurrences(ruleId, any(), any()) } returns rows.toList()
+    }
+
+    private fun stubNoRowsAndPayments(vararg payments: Expense) {
+        coEvery { occurrenceDao.getByDateRange(any(), any()) } returns emptyList()
+        coEvery { occurrenceDao.getLinkedExpenseIds(any()) } returns emptyList()
+        coEvery { expenseDao.getExpensesBetween(any(), any()) } returns payments.toList()
+    }
+
+    private fun RecurringOccurrence.paidBy(expenseId: Long) = copy(status = "PAID", linkedExpenseId = expenseId)
 
     private fun stubMonthlyRentWithPurchase(purchaseAmount: Double) {
         coEvery { occurrenceDao.getByDateRange(any(), any()) } returns listOf(
@@ -284,11 +361,11 @@ class PaidUnlinkedAcceptanceTest {
         effectiveHealthStatus = BudgetHealthStatus.ON_TRACK
     )
 
-    private fun normalizedInput(patterns: List<RecurringPattern>) = NormalizedForecastInput(
+    private fun normalizedInput(vararg patterns: RecurringPattern) = NormalizedForecastInput(
         homeCurrency = CurrencyCode("EUR"),
         normalizedExpenses = emptyList(),
         pastSumDaily = emptyList(),
-        recurringPatterns = patterns,
+        recurringPatterns = patterns.toList(),
         plannedExpenses = emptyList(),
         savingsGoals = emptyList(),
         budgetStatuses = emptyList(),
@@ -296,15 +373,19 @@ class PaidUnlinkedAcceptanceTest {
         dataQuality = ForecastDataQuality()
     )
 
-    private fun rentPattern(ruleId: Long) = RecurringPattern(
+    private fun rentPattern(
+        ruleId: Long,
+        amount: Double = 400.0,
+        dueDay: Int = 27
+    ) = RecurringPattern(
         id = ruleId,
         merchantName = "Rent",
-        averageAmount = 400.0,
+        averageAmount = amount,
         currency = "EUR",
         frequency = RecurrenceFrequency.MONTHLY,
         periodVarianceDays = 0,
         amountVariancePercent = 0.0,
-        nextExpectedDate = ms(2026, Calendar.JUNE, 27, 0),
+        nextExpectedDate = ms(2026, Calendar.JUNE, dueDay, 0),
         confidence = 1.0f,
         previousDates = emptyList()
     )

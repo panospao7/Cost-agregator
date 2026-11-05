@@ -348,4 +348,56 @@ class RecurringLifecycleCoordinatorDropSettledTest {
             assertEquals("synthetic cancel", expected.message)
         }
     }
+
+    // ---- SKIPPED ("already recorded", no link) rows compete for a payment but are never dropped ----
+
+    @Test
+    fun anUnlinkedSkippedEarlierBillTakesThePaymentSoTheLaterPlannedBillStays() = runTest(timeout = 60.seconds) {
+        val due20 = startOfDay(2026, 6, 20)
+        val due25 = startOfDay(2026, 6, 25)
+        val real = realProjection(rule(1L, due20), rule(2L, due25))
+        val skippedA = open(1L, due20).copy(status = "SKIPPED", linkedExpenseId = null)
+        coEvery { occurrenceDao.getByDateRange(any(), any()) } returns listOf(skippedA)
+        coEvery { expenseDao.getExpensesBetween(any(), any()) } returns listOf(purchase(1L, noonOf(2026, 6, 18)))
+        coEvery { occurrenceDao.getLinkedExpenseIds(any()) } returns emptyList()
+        val callerList = listOf(open(2L, due25))
+
+        val result = real.dropSettled(callerList)
+
+        assertEquals(listOf(open(2L, due25).occurrenceKey), result.map { it.occurrenceKey })
+    }
+
+    @Test
+    fun aSkippedRowInTheCallersListIsNeverDroppedEvenWhenAPurchaseWouldMatchIt() = runTest(timeout = 60.seconds) {
+        val due20 = startOfDay(2026, 6, 20)
+        val due25 = startOfDay(2026, 6, 25)
+        val real = realProjection(rule(1L, due20), rule(2L, due25))
+        val skippedA = open(1L, due20).copy(status = "SKIPPED", linkedExpenseId = null)
+        coEvery { occurrenceDao.getByDateRange(any(), any()) } returns listOf(skippedA)
+        coEvery { expenseDao.getExpensesBetween(any(), any()) } returns listOf(purchase(1L, noonOf(2026, 6, 18)))
+        coEvery { occurrenceDao.getLinkedExpenseIds(any()) } returns emptyList()
+        val callerList = listOf(skippedA, open(2L, due25))
+
+        val result = real.dropSettled(callerList)
+
+        assertEquals(
+            listOf(skippedA.occurrenceKey, open(2L, due25).occurrenceKey),
+            result.map { it.occurrenceKey }
+        )
+    }
+
+    @Test
+    fun controlAPlannedEarlierBillTakesTheSamePaymentAndTheLaterBillStays() = runTest(timeout = 60.seconds) {
+        val due20 = startOfDay(2026, 6, 20)
+        val due25 = startOfDay(2026, 6, 25)
+        val real = realProjection(rule(1L, due20), rule(2L, due25))
+        coEvery { occurrenceDao.getByDateRange(any(), any()) } returns emptyList()
+        coEvery { expenseDao.getExpensesBetween(any(), any()) } returns listOf(purchase(1L, noonOf(2026, 6, 18)))
+        coEvery { occurrenceDao.getLinkedExpenseIds(any()) } returns emptyList()
+        val callerList = listOf(open(1L, due20), open(2L, due25))
+
+        val result = real.dropSettled(callerList)
+
+        assertEquals(listOf(open(2L, due25).occurrenceKey), result.map { it.occurrenceKey })
+    }
 }
