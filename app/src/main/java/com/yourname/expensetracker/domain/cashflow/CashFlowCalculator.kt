@@ -278,6 +278,11 @@ class CashFlowCalculator @Inject constructor(
         for (occ in projectedOccurrences) mergedOccurrencesByKey[occ.occurrenceKey] = occ
         for (occ in materializedOccurrences) mergedOccurrencesByKey[occ.occurrenceKey] = occ
         val plannedOccurrences = mergedOccurrencesByKey.values.filter { it.status == "PLANNED" }
+        // Expense ids linked by a merged PAID occurrence (already attributed to one bill).
+        val paidLinkedExpenseIds: Set<Long> = mergedOccurrencesByKey.values
+            .filter { it.status == "PAID" }
+            .mapNotNull { it.linkedExpenseId }
+            .toSet()
 
         // Build a day-indexed map from occurrences (yyyy-MM-dd → patterns)
         val occurrencePatternsByDay = mutableMapOf<String, MutableList<RecurringPattern>>()
@@ -434,7 +439,11 @@ class CashFlowCalculator @Inject constructor(
             //   • predicted-vs-predicted: duplicate projections collapse to one
             // It does NOT merge legitimately distinct same-merchant bills (e.g. a
             // €15 and a €70 Netflix charge), because amount/currency are part of the key.
-            val actualSignatures = (incomeList + expenseList).map { exp ->
+            // A payment already linked by a merged PAID occurrence has paid that bill; it must not
+            // also absorb another same-merchant predicted bill, so it is left out of the signatures.
+            val actualSignatures = (incomeList + expenseList).filter { exp ->
+                exp.id !in paidLinkedExpenseIds
+            }.map { exp ->
                 ContentSignature(
                     merchantKey = merchantKeyOf(exp.merchant),
                     currency = exp.currency.uppercase(Locale.US),
