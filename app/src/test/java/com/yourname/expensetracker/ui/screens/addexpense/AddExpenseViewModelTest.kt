@@ -727,12 +727,16 @@ class AddExpenseViewModelTest : ViewModelTestUtils() {
         val loadingCurrencyRepo = mockk<CurrencySettingsRepository>(relaxed = true)
         every { loadingCurrencyRepo.homeCurrency() } returns emptyFlow()
         val loadingViewModel = createViewModel(loadingCurrencyRepo)
-        testDispatcher.scheduler.advanceUntilIdle()
+        // N-01-3: advancing past the 5s read timeout would count the read as failed; this test is about a
+        // read that is still pending, so stay under the timeout (1s + 1s of virtual time).
+        testDispatcher.scheduler.advanceTimeBy(1_000)
+        testDispatcher.scheduler.runCurrent()
         loadingViewModel.updateMerchant("Shop")
         loadingViewModel.updateAmount("10.00")
 
         loadingViewModel.save()
-        testDispatcher.scheduler.advanceUntilIdle()
+        testDispatcher.scheduler.advanceTimeBy(1_000)
+        testDispatcher.scheduler.runCurrent()
 
         assertNull(loadingViewModel.state.value.homeCurrency)
         assertEquals(
@@ -2186,8 +2190,10 @@ class AddExpenseViewModelTest : ViewModelTestUtils() {
 
         typeAndSave("10.00")
 
+        // PIN CHANGED: N-01-3 follow-up - a stored value that is invalid from the start is a failed
+        // read, not a still-loading one, so the save error is the home-unresolved block message.
         assertEquals(
-            SaveResult.Error(UiText.StringResource(R.string.add_expense_error_currency_loading)),
+            SaveResult.Error(UiText.StringResource(R.string.mec_block_home_unresolved)),
             viewModel.state.value.saveResult
         )
         coVerify(exactly = 0) {
@@ -2465,7 +2471,8 @@ class AddExpenseViewModelTest : ViewModelTestUtils() {
         val repo = mockk<CurrencySettingsRepository>(relaxed = true)
         every { repo.homeCurrency() } returns emptyFlow()
         viewModel = createViewModel(repo)
-        settle()
+        // N-01-3: stay under the 5s read timeout (settle() would pass it and the read would count as failed).
+        advance(1_000)
 
         assertNull(st.homeCurrency)
         assertNull(st.selectedCurrency)
@@ -2473,7 +2480,7 @@ class AddExpenseViewModelTest : ViewModelTestUtils() {
         assertEquals(CurrencyRegionUi.Loading, region)
 
         viewModel.selectCurrency("USD")
-        settle()
+        advance(1_000)
 
         assertNull(st.selectedCurrency)
         assertEquals(CurrencyRegionUi.Loading, region)

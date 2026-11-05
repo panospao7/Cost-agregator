@@ -129,6 +129,11 @@ data class AddExpenseState(
   */
  val homeCurrency: String? = null,
  /**
+  * N-01-3: true when the home currency read ended without a usable value (read error, invalid code or
+  * timeout), so [homeCurrency] stays null for a failure, not for loading. Save stays blocked either way.
+  */
+ val homeReadFailed: Boolean = false,
+ /**
   * nl-quick-add fill bookkeeping (spec 2.9, G2-11, G2-13). Enums only: no String, so the typed
   * line (INV-12) and any raw text can never be held here. All cleared by [AddExpenseViewModel.reset].
   */
@@ -430,7 +435,7 @@ class AddExpenseViewModel @Inject constructor(
   ((currencyOverride == null &&
     (before.selectedCurrency == oldHome || (before.homeCurrency == null && before.selectedCurrency == null))) ||
    currencyOverride?.code?.code == hc)
- _state.update { applyHomeAndSelection(it.copy(homeCurrency = hc, previewAnnounceKey = it.previewAnnounceKey + 1)) }
+ _state.update { applyHomeAndSelection(it.copy(homeCurrency = hc, homeReadFailed = hc == null, previewAnnounceKey = it.previewAnnounceKey + 1)) }
  reevaluateRegion(invalidate = true)
  if (homeDraftAtRisk) {
   if (before.isSaving) {
@@ -731,7 +736,10 @@ class AddExpenseViewModel @Inject constructor(
         // Real EUR users (homeCurrency == "EUR") are allowed through once loaded
         val homeCurrency = currentState.homeCurrency
         if (homeCurrency == null) {
-            _state.update { it.withSaveError(UiText.StringResource(R.string.add_expense_error_currency_loading)) }
+            // N-01-3: a failed or timed-out read is not "loading"; say so. Still fail-closed (no save).
+            val blockedText = if (currentState.homeReadFailed) R.string.mec_block_home_unresolved
+            else R.string.add_expense_error_currency_loading
+            _state.update { it.withSaveError(UiText.StringResource(blockedText)) }
             return
         }
         // MEC INV-11: the currency the user selected (home by default), captured at save-tap. The
@@ -1109,42 +1117,11 @@ class AddExpenseViewModel @Inject constructor(
      * (Double overload). Returns the inline error, or null when the amount may be saved. Never
      * rounds. An unparsable currency code skips the precision check and uses the default cap.
      */
-    private fun checkAmountForCurrency(amount: Double, currency: String): UiText? {
-        val code = com.yourname.expensetracker.domain.core.money.CurrencyCode.parse(currency)
-        if (code == null) {
-            return if (amount > com.yourname.expensetracker.domain.currency.CurrencyAmountPolicy.DEFAULT_CAP.toDouble()) {
-                amountTooLargeText(com.yourname.expensetracker.domain.currency.CurrencyAmountPolicy.DEFAULT_CAP)
-            } else {
-                null
-            }
-        }
-        return when (val check = com.yourname.expensetracker.domain.currency.CurrencyAmountPolicy.check(amount, code)) {
-            com.yourname.expensetracker.domain.currency.AmountCheck.Ok -> null
-            // Not reachable after the positive check; fail closed with the generic invalid-amount error.
-            com.yourname.expensetracker.domain.currency.AmountCheck.NotPositive ->
-                UiText.StringResource(R.string.add_expense_error_amount_invalid)
-            // OD-6: digits unknown. Never assume 2 digits or "no limit".
-            com.yourname.expensetracker.domain.currency.AmountCheck.DigitsUnavailable ->
-                UiText.StringResource(R.string.add_expense_error_amount_invalid)
-            is com.yourname.expensetracker.domain.currency.AmountCheck.PrecisionExceeded ->
-                precisionText(code.code, check.allowedDigits)
-            is com.yourname.expensetracker.domain.currency.AmountCheck.AboveCap ->
-                amountTooLargeText(check.cap)
-        }
-    }
+    private fun checkAmountForCurrency(amount: Double, currency: String): UiText? =
+        com.yourname.expensetracker.ui.util.AmountCurrencyCheck.check(amount, currency)
 
     private fun precisionText(currencyCode: String, allowedDigits: Int): UiText =
-        if (allowedDigits == 0) {
-            UiText.StringResource(R.string.mec_amount_no_decimals, listOf(currencyCode))
-        } else {
-            UiText.StringResource(R.string.mec_amount_max_decimals, listOf(currencyCode, allowedDigits))
-        }
-
-    private fun amountTooLargeText(cap: java.math.BigDecimal): UiText =
-        UiText.StringResource(
-            R.string.mec_amount_too_large,
-            listOf(java.text.NumberFormat.getIntegerInstance().format(cap.toLong()))
-        )
+        com.yourname.expensetracker.ui.util.AmountCurrencyCheck.precisionText(currencyCode, allowedDigits)
 
     /**
      * Maps a repository error to a bounded, localised message. The repository message and
@@ -1460,6 +1437,16 @@ class AddExpenseViewModel @Inject constructor(
             // control shows Unset and Save stays blocked until a pick (no preview, no evaluation).
             _state.update {
                 it.copy(currencyRegion = CurrencyRegionUi.Unset(s.installments.currencyUnset), ratesToday = today)
+            }
+            return
+        }
+        if (home == null && s.homeReadFailed) {
+            // N-01-3: the home read failed or timed out; show the existing unresolved card, not Loading.
+            _state.update {
+                it.copy(
+                    currencyRegion = CurrencyRegionUi.Blocked(CurrencyBlockVariant.HOME_UNRESOLVED, null, origin),
+                    ratesToday = today
+                )
             }
             return
         }
@@ -2053,16 +2040,25 @@ class AddExpenseViewModel @Inject constructor(
         val keptSetting = _state.value.ratesSetting
         // F-B2-A11Y-1: the announce key stays monotonic across a reset (a drop would look like a change).
         val keptAnnounceKey = _state.value.previewAnnounceKey
+        // N-01-3: a failed/timed-out home read stays failed across reset (a live read job is not restarted
+        // on reopen); a later valid home value clears it in the observer.
+        val keptHomeReadFailed = _state.value.homeReadFailed && loadedCurrency == null
         _state.value = applyHomeAndSelection(
             AddExpenseState(
                 date = timeProvider.now(),
                 homeCurrency = loadedCurrency,
+                homeReadFailed = keptHomeReadFailed,
                 ratesSetting = keptSetting,
                 previewAnnounceKey = keptAnnounceKey
             )
         ).let { fresh ->
             fresh.copy(
-                currencyRegion = if (fresh.homeCurrency == null) CurrencyRegionUi.Loading else CurrencyRegionUi.Home,
+                currencyRegion = when {
+                    fresh.homeCurrency != null -> CurrencyRegionUi.Home
+                    fresh.homeReadFailed ->
+                        CurrencyRegionUi.Blocked(CurrencyBlockVariant.HOME_UNRESOLVED, null, CurrencyBlockOrigin.PREVIEW)
+                    else -> CurrencyRegionUi.Loading
+                },
                 ratesToday = todayFor(java.time.ZoneId.systemDefault())
             )
         }

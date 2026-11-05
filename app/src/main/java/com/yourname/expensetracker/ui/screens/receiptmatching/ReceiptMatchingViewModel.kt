@@ -337,7 +337,7 @@ class ReceiptMatchingViewModel @Inject constructor(
                     receiptLinkService.unlinkReceiptFromExpense(
                         receiptId = receipt.id,
                         expenseId = currentExpenseId
-                    )
+                    ).getOrThrow() // failed unlink aborts the rerun via the catch below
                 } else {
                     // No existing link — just clear suggestion fields via repository
                     matchService.clearMatchForReceipt(receipt.id)

@@ -849,6 +849,16 @@ class TransactionsViewModel @Inject constructor(
         val percentageText = mySharePercentage.trim()
         val parsedSharePercentage = percentageText.takeIf { it.isNotEmpty() }?.toIntOrNull()
 
+        // N-01-2: a changed share amount is money in the expense's currency; same precision and cap
+        // rule as Add Expense (AmountCurrencyCheck). An unchanged share keeps today's behaviour.
+        if (isSharedExpense && !isNotMine && !shareUnchanged && percentageText.isEmpty() && enteredShare != null) {
+            val shareCheckError = com.yourname.expensetracker.ui.util.AmountCurrencyCheck.check(enteredShare, expense.currency)
+            if (shareCheckError != null) {
+                viewModelScope.launch { _error.emit(shareCheckError) }
+                return
+            }
+        }
+
         viewModelScope.launch {
             beginRowMutation(expense.id) // S5-034
             try {

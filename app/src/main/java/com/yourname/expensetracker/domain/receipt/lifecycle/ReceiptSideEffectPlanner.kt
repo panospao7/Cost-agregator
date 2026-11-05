@@ -417,8 +417,8 @@ class ReceiptSideEffectPlanner @Inject constructor(
                         Timber.d("Auto-match skipped for receipt %d: already claimed by a concurrent matching run", receipt.id)
                         SideEffectOutcome.Skipped(SideEffectSkipReason.ALREADY_PROCESSED)
                     } else {
-                        Timber.w("Auto-match link failed for receipt %d: %s",
-                            receipt.id, linkError?.message)
+                        Timber.w("Auto-match link failed for receipt %d: class=%s",
+                            receipt.id, linkError?.let { it::class.simpleName })
                         writeMatchEvent(receipt, "MATCH_FAILED",
                             "Auto-match link failed",
                             expenseId = matchResult.transaction.id, score = matchResult.score.toFloat(),

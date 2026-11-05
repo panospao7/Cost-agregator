@@ -500,6 +500,59 @@ class ReceiptMatchingViewModelTest : ViewModelTestUtils() {
     }
 
     @Test
+    fun `INV_P032 failed unlink sets the error and does not run the rematch`() = runTest(testDispatcher) {
+        val receipt = scannedReceipt(40L, "Shell", 45.0)
+        val linked = receipt.copy(expenseId = 77L)
+        coEvery { receiptRepository.getReceiptById(40L) } returns linked
+        coEvery { receiptLinkService.unlinkReceiptFromExpense(40L, 77L) } returns Result.failure(IllegalStateException(rawSentinel))
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        viewModel.rerunForReceipt(receipt)
+        advanceUntilIdle()
+
+        assertEquals("Rerun failed. Please try again.", viewModel.state.value.error)
+        coVerify(exactly = 0) { matcher.findBestMatch(any()) }
+        coVerify(exactly = 1) { receiptRepository.getUnmatchedReceipts() }
+        assertTrue(viewModel.state.value.mutatingReceiptIds.isEmpty())
+    }
+
+    @Test
+    fun `INV_P032 successful unlink proceeds to the rematch and reloads`() = runTest(testDispatcher) {
+        val receipt = scannedReceipt(40L, "Shell", 45.0)
+        val linked = receipt.copy(expenseId = 77L)
+        coEvery { receiptRepository.getReceiptById(40L) } returns linked
+        coEvery { receiptLinkService.unlinkReceiptFromExpense(40L, 77L) } returns Result.success(Unit)
+        coEvery { matcher.findBestMatch(receipt) } returns MatchResult.NoMatch
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        viewModel.rerunForReceipt(receipt)
+        advanceUntilIdle()
+
+        assertNull(viewModel.state.value.error)
+        coVerify(exactly = 1) { matcher.findBestMatch(receipt) }
+        coVerify(exactly = 2) { receiptRepository.getUnmatchedReceipts() }
+    }
+
+    @Test
+    fun `INV_P032 unlink rethrows cancellation instead of mapping it to an error`() = runTest(testDispatcher) {
+        val receipt = scannedReceipt(40L, "Shell", 45.0)
+        val linked = receipt.copy(expenseId = 77L)
+        coEvery { receiptRepository.getReceiptById(40L) } returns linked
+        coEvery { receiptLinkService.unlinkReceiptFromExpense(40L, 77L) } throws kotlinx.coroutines.CancellationException(rawSentinel)
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        viewModel.rerunForReceipt(receipt)
+        advanceUntilIdle()
+
+        assertNull("cancellation must not become a user-visible error", viewModel.state.value.error)
+        coVerify(exactly = 0) { matcher.findBestMatch(any()) }
+        assertTrue(viewModel.state.value.mutatingReceiptIds.isEmpty())
+    }
+
+    @Test
     fun `INV_P032 an earlier rerun error does not block the reload of a later successful rerun`() = runTest(testDispatcher) {
         val receipt = scannedReceipt(40L, "Shell", 45.0)
         val tx = expense(940L, "SHELL", 45.0)

@@ -312,7 +312,7 @@ class AdvancedAnalyticsDashboard @Inject constructor(
     private fun buildMonthKey(expense: ExpenseSnapshot): String {
         val year = TimePeriodUtils.getYear(expense.date)
         val month = TimePeriodUtils.getMonth(expense.date) + 1
-        return String.format("%04d-%02d", year, month)
+        return TimePeriodUtils.formatMonthKey(year, month)
     }
     
     private fun getWeeklyPattern(expenses: List<ExpenseSnapshot>, displayCurrency: String): List<DayOfWeekSpending> {

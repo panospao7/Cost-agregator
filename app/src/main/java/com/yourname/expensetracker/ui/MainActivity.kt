@@ -486,9 +486,25 @@ fun MainScreen(
     // NOT_VERIFIABLE outcome is shown once here, after the relaunch, and only in a normal state
     // (never on the restart-required / critical-recovery lock screens). Boolean only; consumed once.
     val restoreNotVerifiableNotice = stringResource(R.string.backup_restore_not_verifiable_notice)
+    // J-11-2: the cross-device notification notice uses the same one-shot store. Both flags are
+    // consumed from the store once and held in rememberSaveable; each is cleared only after its
+    // snackbar finishes, so a recreation (rotation) mid-snackbar re-shows it rather than losing it,
+    // and a consumed flag is shown exactly once. `if (consume()) pending = true` is idempotent.
+    val restoreNotificationUnreadableNotice = stringResource(R.string.backup_restore_notification_unreadable_notice)
+    var pendingNotVerifiableNotice by rememberSaveable { mutableStateOf(false) }
+    var pendingNotificationUnreadableNotice by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(Unit) {
-        if (restoreVerificationNoticeStore.consume()) {
+        if (restoreVerificationNoticeStore.consume()) pendingNotVerifiableNotice = true
+        if (restoreVerificationNoticeStore.consumeNotificationUnreadable()) {
+            pendingNotificationUnreadableNotice = true
+        }
+        if (pendingNotificationUnreadableNotice) {
+            snackbarHostState.showSnackbar(restoreNotificationUnreadableNotice)
+            pendingNotificationUnreadableNotice = false
+        }
+        if (pendingNotVerifiableNotice) {
             snackbarHostState.showSnackbar(restoreNotVerifiableNotice)
+            pendingNotVerifiableNotice = false
         }
     }
 
