@@ -66,7 +66,8 @@ class ReviewQueueRepository @Inject constructor(
     private val transactionRunner: DomainTransactionRunner,
     private val transactionLifecycleEventWriter: TransactionLifecycleEventWriter,
     private val postCommitActionRunner: PostCommitActionRunner,
-    private val privacySettingsRepository: PrivacySettingsRepository
+    private val privacySettingsRepository: PrivacySettingsRepository,
+    private val merchantCategoryRepository: MerchantCategoryRepository
 ) {
     /**
      * P-08-1: notification title/text may be copied into `user_corrections` only under
@@ -157,8 +158,12 @@ class ReviewQueueRepository @Inject constructor(
         val type: ReviewApprovalTxType,
         val expenseId: Long? = null,
         val transactionActions: PostCommitActionBatch = PostCommitActionBatch.empty(""),
-        val categorySideEffectExpenseId: Long? = null
+        val categorySideEffectExpenseId: Long? = null,
+        /** Set only when the user changed a non-null suggested category; drives a post-commit DR-04 correction. */
+        val merchantCategoryCorrection: MerchantCategoryCorrection? = null
     )
+
+    private data class MerchantCategoryCorrection(val merchant: String, val categoryId: Long)
 
     private enum class ReviewApprovalTxType { CREATED, DUPLICATE, ALREADY_PROCESSED }
 
@@ -410,7 +415,14 @@ class ReviewQueueRepository @Inject constructor(
                             type = ReviewApprovalTxType.CREATED,
                             expenseId = id,
                             transactionActions = mutation.postCommitActions,
-                            categorySideEffectExpenseId = categorySideEffectExpenseId
+                            categorySideEffectExpenseId = categorySideEffectExpenseId,
+                            // DR-04: only a user change of a non-null suggestion is a correction.
+                            // A null or unchanged suggestion stays on the IGNORE learn path.
+                            merchantCategoryCorrection = if (
+                                finalCategoryId != null &&
+                                review.suggestedCategoryId != null &&
+                                finalCategoryId != review.suggestedCategoryId
+                            ) MerchantCategoryCorrection(merchant, finalCategoryId) else null
                         )
                     }
                     is CreateExpenseResult.DuplicateSkipped -> {
@@ -488,6 +500,23 @@ class ReviewQueueRepository @Inject constructor(
                         receiptLinkService.dispatchAssignedCategorySideEffectsAfterCommit(
                             expenseId = expenseId,
                             source = "RECEIPT_ITEM_MAJORITY"
+                        )
+                    }
+                }
+
+                // DR-04: user-changed suggested category replaces the learned mapping.
+                // Best effort after commit; a failure never fails the approval. No merchant text logged.
+                txOutcome.merchantCategoryCorrection?.let { correction ->
+                    try {
+                        merchantCategoryRepository.correctPattern(correction.merchant, correction.categoryId)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        // Bounded: class name and review id only.
+                        Timber.w(
+                            "Merchant category correction failed after approval class=%s reviewId=%d",
+                            e::class.java.simpleName,
+                            reviewId
                         )
                     }
                 }

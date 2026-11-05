@@ -342,6 +342,7 @@ class ReviewQueueRepositoryNestedRollbackTest {
             transactionRunner = transactionRunner,
             transactionLifecycleEventWriter = lifecycleWriter,
             postCommitActionRunner = postCommitRunner,
+            merchantCategoryRepository = mockk(relaxed = true),
             privacySettingsRepository = mockk<PrivacySettingsRepository>().also {
                 coEvery { it.getSettings() } returns PrivacySettings(
                     rawNotificationStorageMode = RawStorageMode.STORE_RAW

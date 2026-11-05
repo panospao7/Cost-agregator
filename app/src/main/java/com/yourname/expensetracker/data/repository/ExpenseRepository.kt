@@ -630,7 +630,8 @@ class ExpenseRepository @Inject constructor(
             source = "USER_EDIT"
         )
         // The merchant learning and user correction logic can remain here (non-lifecycle side effects)
-        if (newCategoryId != null) {
+        // A same-category edit is not a correction, so it must not rewrite the learned mapping.
+        if (newCategoryId != null && expense.categoryId != newCategoryId) {
             // DR-04: genuine user correction replaces any seeded/auto-learned mapping.
             merchantCategoryRepository.correctPattern(expense.merchant, newCategoryId)
         }

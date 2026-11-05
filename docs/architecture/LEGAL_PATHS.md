@@ -1482,7 +1482,9 @@ LEARN merchant category (user feedback):
   → Auto-learning, seeding and Debug stay OnConflictStrategy.IGNORE (an existing row is never changed)
 
 CORRECT merchant category (DR-04, genuine user category edit only):
-  → ExpenseRepository.updateExpenseCategory / updateExpenseCategoryBulk
+  → ExpenseRepository.updateExpenseCategory (only when the category actually changes) / updateExpenseCategoryBulk,
+    or ReviewQueueRepository.approveReview (user changed a non-null suggested category; post-commit, best effort,
+    failure never fails the approval, cancellation rethrown; null/unchanged suggestion, auto-accept and parser do not correct)
   → MerchantCategoryRepository.correctPattern → CategorizationEngine.correctMerchantCategory(merchantName, categoryId)
   → Same merchantPattern key as learnMerchantCategory (merchantNormalizer canonical name)
   → MerchantCategoryRepository.upsertUserCorrection (DatabaseWriteBarrier check, MerchantCategoryDao @Upsert,
