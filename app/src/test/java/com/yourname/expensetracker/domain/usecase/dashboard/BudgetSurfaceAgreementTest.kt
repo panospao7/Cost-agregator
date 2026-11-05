@@ -85,6 +85,9 @@ class BudgetSurfaceAgreementTest {
     /** Budget argument of every Monte Carlo simulate() call, in call order. */
     private val simulatedBudgetAmounts = mutableListOf<Double?>()
 
+    /** spentToDate argument of every Monte Carlo simulate() call, in call order. */
+    private val simulatedSpentToDate = mutableListOf<Double>()
+
     /** Argument of every Money Radar compute() call, in call order. */
     private val radarInputs = mutableListOf<RadarBudgetInput>()
 
@@ -377,6 +380,28 @@ class BudgetSurfaceAgreementTest {
         assertEquals(1, s.monteCarloCalls)
     }
 
+    /**
+     * Restored from ComputeMoneyRadarUseCaseTest "compute excludes future dated purchases from spent to
+     * date": Radar no longer reads spend, so the rule is pinned where spend enters the single simulation.
+     * Now is 2026-06-15 12:00; the base purchase (300, June 2) counts, the June 20 purchase (70) is future.
+     */
+    @Test
+    fun `compute excludes future dated purchases from spent to date`() = runTest {
+        simulatorReturnsResult = true
+        val rolling = snapshot(1_000.0, 300.0, date(2026, 6, 10), date(2026, 7, 10), gross = 300.0)
+        val future = purchaseRow(id = 2L, amount = 70.0, currency = "EUR", day = 20)
+
+        val s = surfaces(rolling, extraExpenses = listOf(future))
+
+        assertEquals(1, s.monteCarloCalls)
+        assertEquals(
+            "spentToDate counts the June 2 purchase only; the future-dated 70 is excluded",
+            300.0,
+            simulatedSpentToDate.single(),
+            1e-6
+        )
+    }
+
     private fun purchaseRow(id: Long, amount: Double, currency: String, day: Int) = DashboardExpense(
         id = id, amount = amount, effectiveAmount = amount, currency = currency, merchant = "M$id",
         transactionType = DashboardTransactionType.PURCHASE, date = at(day, 12),
@@ -411,6 +436,7 @@ class BudgetSurfaceAgreementTest {
     ): Surfaces {
         fixedNowMs = at(15, 12)
         simulatedBudgetAmounts.clear()
+        simulatedSpentToDate.clear()
         radarInputs.clear()
         val purchase = DashboardExpense(
             id = 1L, amount = 300.0, effectiveAmount = 300.0, currency = "EUR", merchant = "M1",
@@ -559,6 +585,7 @@ class BudgetSurfaceAgreementTest {
         coEvery { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) } answers {
             val budget = arg<Double?>(2)
             simulatedBudgetAmounts.add(budget)
+            simulatedSpentToDate.add(arg<Double>(0))
             if (simulatorReturnsResult) simulationFixture(budget, arg<String>(3)) else null
         }
         val healthScoreV2 = mockk<FinancialHealthScoreV2>(relaxed = true)

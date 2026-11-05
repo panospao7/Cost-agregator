@@ -473,7 +473,6 @@ class ComputeMoneyRadarUseCaseTest {
             recurring("AlreadyPast", 50.0, now - dayMs)
         )
         coEvery { anomalyAlertRepository.getActiveAlerts() } returns emptyList()
-        every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
         coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
             expense(5000.0, TransactionType.DEPOSIT, now - dayMs)
         )
@@ -493,7 +492,6 @@ class ComputeMoneyRadarUseCaseTest {
             recurring("Morning Bill", 20.0, earlierToday)
         )
         coEvery { anomalyAlertRepository.getActiveAlerts() } returns emptyList()
-        every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
         coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
             expense(5000.0, TransactionType.DEPOSIT, now - dayMs)
         )
@@ -512,7 +510,6 @@ class ComputeMoneyRadarUseCaseTest {
             anomaly("OlderButValid", 25.0, now - 10 * dayMs),
             anomaly("TooOld", 99.0, now - 40 * dayMs)
         )
-        every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
 
         val result = useCase.compute()
 
@@ -532,7 +529,6 @@ class ComputeMoneyRadarUseCaseTest {
     fun `compute ignores unconfirmed detected recurring suggestions`() = runTest {
         coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns emptyList()
         coEvery { anomalyAlertRepository.getActiveAlerts() } returns emptyList()
-        every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
 
         val result = useCase.compute()
 
@@ -547,7 +543,6 @@ class ComputeMoneyRadarUseCaseTest {
             recurring("Confirmed Rent", 700.0, now + dayMs)
         )
         coEvery { anomalyAlertRepository.getActiveAlerts() } returns emptyList()
-        every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
         coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
             expense(2_000.0, TransactionType.DEPOSIT, now - dayMs)
         )
@@ -595,7 +590,6 @@ class ComputeMoneyRadarUseCaseTest {
     fun `compute returns GREEN with healthy message when no bills alerts or budget`() = runTest {
         coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns emptyList()
         coEvery { anomalyAlertRepository.getActiveAlerts() } returns emptyList()
-        every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
 
         val result = useCase.compute()
 
@@ -639,7 +633,6 @@ class ComputeMoneyRadarUseCaseTest {
             recurring("Netflix", 19.99, now + dayMs)
         )
         coEvery { anomalyAlertRepository.getActiveAlerts() } returns emptyList()
-        every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
         coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
             expense(5000.0, TransactionType.DEPOSIT, now - dayMs)
         )
@@ -658,7 +651,6 @@ class ComputeMoneyRadarUseCaseTest {
             recurring("Netflix", 15.0, now + dayMs)
         )
         coEvery { anomalyAlertRepository.getActiveAlerts() } returns emptyList()
-        every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
         coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
             expense(5000.0, TransactionType.DEPOSIT, now - dayMs)
         )
@@ -716,191 +708,129 @@ class ComputeMoneyRadarUseCaseTest {
         )
     }
 
-    // ---------------------------------------------------------------- P-05-5 limit derivation
+    // ---------------------------------------------------------------- Round 2: budget input handling
+    // DELETED (subject moved to the dashboard's single simulation; knownUpcoming is no longer Radar's):
+    //  - "P-05-5 radar known upcoming covers confirmed patterns through month end"
+    //  - "round2 a confirmed bill due in 12 days inside the month reaches known upcoming but not dueBills"
+    //  - "round2 known upcoming excludes next month and counts start of today and the last millisecond of the month"
+    //  - "P-05-5 a budget status that is not Available keeps bills and anomalies and has no budget risk"
+    //    (covered by `unresolved budget currency gives no budget risk but keeps bills and anomalies`)
 
-    private fun stubSimulationCapturingLimit(captured: MutableList<Double>, limitForImpact: Double): MonteCarloResult {
-        val simulation = monteCarloResult(probabilityUnderBudget = 0.5)
-        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any()) } answers {
-            captured.add(thirdArg())
-            simulation
-        }
-        every { getMonteCarloBudgetImpact(any(), any()) } returns Result.Success(
-            MonteCarloBudgetImpact(limitForImpact, limitForImpact, 0.0, 0.5, RiskTier.MEDIUM)
-        )
-        return simulation
-    }
-
-    @Test
-    fun `P-05-5 budget 500 with rollover surplus 100 simulates against 600 equal to the shared period remaining limit`() = runTest {
-        stubHealthyRadarSignals()
-        val status = overallBudgetStatus(500.0, effectiveLimit = 600.0)
-        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(status))
-        coEvery { expenseRepository.getExpensesSince(any()) } returns emptyList()
-        val limits = mutableListOf<Double>()
-        val simulation = stubSimulationCapturingLimit(limits, limitForImpact = 600.0)
-
-        val result = useCase.compute()
-
-        assertNotNull(result.budgetRisk)
-        assertEquals(listOf(600.0), limits)
-        val sharedLimit = (status.toBudgetStatusSnapshot().periodRemaining(now, "EUR")
-            as com.yourname.expensetracker.domain.budget.BudgetPeriodRemaining.Available).limit
-        assertEquals(sharedLimit, limits.single(), 0.0)
-        io.mockk.verify(exactly = 1) { getMonteCarloBudgetImpact(600.0, simulation) }
-    }
-
-    @Test
-    fun `P-05-5 weekly overall budget gives no budget comparison`() = runTest {
-        stubHealthyRadarSignals()
-        // Period spans 7 days: not month-scale, so a calendar-month total must not be compared.
-        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(
-            overallBudgetStatus(500.0, periodStart = now - 3 * dayMs, periodEnd = now + 4 * dayMs)
-        ))
-        coEvery { expenseRepository.getExpensesSince(any()) } returns emptyList()
-
-        val result = useCase.compute()
-
-        assertTrue("a missing comparison is not an unavailable radar", result.urgencyLevel != UrgencyLevel.UNAVAILABLE)
-        assertNull(result.budgetRisk)
-        coVerify(exactly = 0) { monteCarloSimulator.simulate(any(), any(), any(), any()) }
-    }
-
-    @Test
-    fun `P-05-5 a budget status that is not Available keeps bills and anomalies and has no budget risk`() = runTest {
-        val base = overallBudgetStatus(500.0)
-        val rows = mapOf(
-            "percent unknown" to base.copy(percentKnown = false, healthStatus = BudgetHealthStatus.UNKNOWN),
-            "effective spend unavailable" to base.copy(adjustedSpendBreakdown = null),
-            "currency provenance unknown" to base.copy(currencyAssumption = "UNKNOWN"),
-            "currency differs from home" to base.copy(currency = "USD")
-        )
-        rows.forEach { (name, status) ->
-            stubHealthyRadarSignals()
-            coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(
-                recurring("Bill A", 10.0, now + dayMs),
-                recurring("Bill B", 20.0, now + 2 * dayMs)
-            )
-            coEvery { anomalyAlertRepository.getActiveAlerts() } returns listOf(
-                anomaly("Odd Charge", 40.0, now - dayMs)
-            )
-            coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
-                expense(1000.0, TransactionType.DEPOSIT, now - dayMs)
-            )
-            every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(status))
-            coEvery { expenseRepository.getExpensesSince(any()) } returns emptyList()
-
-            val result = useCase.compute()
-
-            assertTrue(name, result.urgencyLevel != UrgencyLevel.UNAVAILABLE)
-            assertNotNull(name, result.urgencyScore)
-            assertEquals(name, listOf("Bill A", "Bill B"), result.dueBills.map { it.merchant })
-            assertEquals(name, listOf("Odd Charge"), result.anomalyAlerts.map { it.merchant })
-            assertNull(name, result.budgetRisk)
-        }
-        coVerify(exactly = 0) { monteCarloSimulator.simulate(any(), any(), any(), any()) }
-    }
-
-    @Test
-    fun `P-05-5 limit of zero or below gives no comparison and does not make Radar unavailable`() = runTest {
-        // NO_POSITIVE_LIMIT means there is no budget to compare against, as the widget treats it.
-        for (effectiveLimit in listOf(0.0, -50.0)) {
-            stubHealthyRadarSignals()
-            every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(
-                overallBudgetStatus(500.0, effectiveLimit = effectiveLimit)
-            ))
-            coEvery { expenseRepository.getExpensesSince(any()) } returns emptyList()
-
-            val result = useCase.compute()
-
-            assertNull("limit $effectiveLimit", result.budgetRisk)
-            org.junit.Assert.assertNotEquals("limit $effectiveLimit", UrgencyLevel.UNAVAILABLE, result.urgencyLevel)
-        }
-        coVerify(exactly = 0) { monteCarloSimulator.simulate(any(), any(), any(), any()) }
-    }
-
-    /**
-     * P-05-5: the radar's known upcoming is the confirmed recurring patterns due from the start
-     * of today through the end of the current calendar month. The bills list and score keep the
-     * 7-day window; only the overrun input covers the month.
-     */
-    @Test
-    fun `P-05-5 radar known upcoming covers confirmed patterns through month end`() = runTest {
-        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(
-            recurring("Rent", 100.0, now + dayMs),
-            recurring("Insurance", 50.0, now + 5 * dayMs),
-            recurring("LaterInMonth", 200.0, now + 12 * dayMs)
-        )
-        coEvery { anomalyAlertRepository.getActiveAlerts() } returns emptyList()
-        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(overallBudgetStatus(1000.0)))
-        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
-            expense(1000.0, TransactionType.DEPOSIT, now - dayMs)
-        )
-        coEvery { expenseRepository.getExpensesSince(any()) } returns emptyList()
-        var knownUpcoming = -1.0
-        val simulation = monteCarloResult(probabilityUnderBudget = 0.5)
-        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any()) } answers {
-            knownUpcoming = secondArg()
-            simulation
-        }
-        every { getMonteCarloBudgetImpact(any(), any()) } returns Result.Success(
-            MonteCarloBudgetImpact(1000.0, 1000.0, 0.0, 0.5, RiskTier.MEDIUM)
-        )
-
-        useCase.compute()
-
-        // PIN CHANGED: the recorded 7-day difference is resolved by round 2. knownUpcoming now covers
-        // confirmed recurring from start of today to month end, so the day-12 bill (2024-03-21, same
-        // month as now = 2024-03-09) is included: 100 + 50 + 200 = 350 (was 150).
-        assertEquals("all three bills fall inside the current month; the day-12 bill is included", 350.0, knownUpcoming, 0.0001)
-    }
-
-    // ---------------------------------------------------------------- round 2: month-end known upcoming, budgetUnknown
-
-    private fun stubAvailableBudgetSimulation() {
-        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(overallBudgetStatus(1000.0)))
-        coEvery { expenseRepository.getExpensesSince(any()) } returns emptyList()
+    private fun stubDeposit() {
         coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
             expense(5000.0, TransactionType.DEPOSIT, now - dayMs)
         )
-        val simulation = monteCarloResult(probabilityUnderBudget = 0.9)
-        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any()) } returns simulation
-        every { getMonteCarloBudgetImpact(any(), any()) } returns Result.Success(
-            MonteCarloBudgetImpact(1000.0, 500.0, 0.0, 0.1, RiskTier.LOW)
-        )
     }
 
+    private val budgetUncheckedReason get() = UiText.fromKey(DomainTextKeys.COMPUTE_MONEY_RADAR_REASON_BUDGET_UNCHECKED)
+    private val financesHealthyReason get() = UiText.fromKey(DomainTextKeys.COMPUTE_MONEY_RADAR_REASON_FINANCES_HEALTHY)
+
     @Test
-    fun `round2 a confirmed bill due in 12 days inside the month reaches known upcoming but not dueBills`() = runTest {
+    fun `P-05-5 a rollover limit of 600 is the limit the budget impact is assessed against`() = runTest {
         stubHealthyRadarSignals()
-        stubAvailableBudgetSimulation()
-        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(
-            recurring("Rent", 400.0, now + 12 * dayMs)
+        val simulation = monteCarloResult(probabilityUnderBudget = 0.5).copy(budgetAmount = 600.0)
+        every { getMonteCarloBudgetImpact(600.0, simulation) } returns Result.Success(
+            MonteCarloBudgetImpact(600.0, 600.0, 0.0, 0.5, RiskTier.MEDIUM)
         )
 
-        val result = useCase.compute()
+        val result = useCase.compute(RadarBudgetInput.Simulated(simulation))
 
-        assertTrue(result.dueBills.isEmpty())
         assertNotNull(result.budgetRisk)
-        coVerify(exactly = 1) { monteCarloSimulator.simulate(0.0, 400.0, 1000.0, "EUR") }
+        assertEquals(600.0, result.budgetRisk!!.budgetLimit!!, 0.0)
+        io.mockk.verify(exactly = 1) { getMonteCarloBudgetImpact(600.0, simulation) }
+    }
+
+    // Weekly/yearly budgets and non-positive limits arrive as NotComparable; that mapping is pinned in
+    // BudgetSurfaceAgreementTest ("P-05-5 a weekly or yearly budget ...", "round2 limit zero gives NotComparable").
+    @Test
+    fun `round2 NotComparable keeps the healthy reason and budgetUnknown false`() = runTest {
+        stubHealthyRadarSignals()
+
+        val result = useCase.compute(RadarBudgetInput.NotComparable)
+
+        assertTrue("a missing comparison is not an unavailable radar", result.urgencyLevel != UrgencyLevel.UNAVAILABLE)
+        assertNull(result.budgetRisk)
+        assertTrue(!result.budgetUnknown)
+        assertEquals(listOf<UiText>(financesHealthyReason), result.topReasons)
+        io.mockk.verify(exactly = 0) { getMonteCarloBudgetImpact(any(), any()) }
     }
 
     @Test
-    fun `round2 known upcoming excludes next month and counts start of today and the last millisecond of the month`() = runTest {
+    fun `round2 Unknown with no bills says budget unchecked and not healthy`() = runTest {
         stubHealthyRadarSignals()
-        stubAvailableBudgetSimulation()
-        val startOfToday = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfDay(now)
-        val (_, monthEndExclusive) = com.yourname.expensetracker.domain.util.TimePeriodUtils.getMonthRange(now)
+
+        val result = useCase.compute(RadarBudgetInput.Unknown)
+
+        assertEquals(listOf<UiText>(budgetUncheckedReason), result.topReasons)
+        assertTrue(result.topReasons.none { it == financesHealthyReason })
+    }
+
+    @Test
+    fun `round2 Unknown with one bill says budget unchecked and not healthy`() = runTest {
+        stubHealthyRadarSignals()
+        stubDeposit()
         coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(
-            recurring("YesterdayBill", 5.0, startOfToday - 1),            // before today: excluded
-            recurring("TodayStart", 10.0, startOfToday),                  // earlier today: counts
-            recurring("LastMsOfMonth", 20.0, monthEndExclusive - 1),      // counts
-            recurring("ExactlyNextMonth", 60.0, monthEndExclusive),       // exclusive bound: excluded
-            recurring("NextMonth", 70.0, monthEndExclusive + dayMs)       // excluded
+            recurring("Bill A", 10.0, now + dayMs)
         )
 
-        useCase.compute()
+        val result = useCase.compute(RadarBudgetInput.Unknown)
 
-        coVerify(exactly = 1) { monteCarloSimulator.simulate(0.0, 30.0, 1000.0, "EUR") }
+        assertEquals(2, result.topReasons.size)
+        assertEquals(budgetUncheckedReason, result.topReasons.last())
+        assertTrue(result.topReasons.none { it == financesHealthyReason })
+    }
+
+    @Test
+    fun `round2 the budget unchecked reason survives the three reason cap with three bills and an anomaly`() = runTest {
+        stubHealthyRadarSignals()
+        stubDeposit()
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+            recurring("A", 10.0, now + dayMs),
+            recurring("B", 10.0, now + 2 * dayMs),
+            recurring("C", 10.0, now + 3 * dayMs)
+        )
+        coEvery { anomalyAlertRepository.getActiveAlerts() } returns listOf(anomaly("X", 8.0, now - dayMs))
+
+        val result = useCase.compute(RadarBudgetInput.Unknown)
+
+        assertEquals(3, result.topReasons.size)
+        assertEquals(budgetUncheckedReason, result.topReasons.last())
+    }
+
+    @Test
+    fun `round2 budgetUnknown is true for Unknown and for a Simulated result that cannot be assessed and radar is not blank`() = runTest {
+        val rows = mapOf(
+            "Unknown" to RadarBudgetInput.Unknown,
+            "Simulated without probability" to
+                RadarBudgetInput.Simulated(monteCarloResult(probabilityUnderBudget = null)),
+            "Simulated without limit" to
+                RadarBudgetInput.Simulated(monteCarloResult(probabilityUnderBudget = 0.5).copy(budgetAmount = null))
+        )
+        rows.forEach { (name, input) ->
+            stubHealthyRadarSignals()
+
+            val result = useCase.compute(input)
+
+            assertTrue(name, result.budgetUnknown)
+            assertNull(name, result.budgetRisk)
+            assertTrue(name, result.urgencyLevel != UrgencyLevel.UNAVAILABLE)
+            assertNotNull(name, result.urgencyScore)
+            assertEquals(name, listOf<UiText>(budgetUncheckedReason), result.topReasons)
+        }
+        io.mockk.verify(exactly = 0) { getMonteCarloBudgetImpact(any(), any()) }
+    }
+
+    @Test
+    fun `round2 budgetUnknown is false for NotComparable and for an assessable Simulated result`() = runTest {
+        val rows = mapOf(
+            "NotComparable" to RadarBudgetInput.NotComparable,
+            "Simulated low risk" to simulatedInput(0.1, 0.0, RiskTier.LOW),
+            "Simulated high risk" to simulatedInput(0.9, 500.0, RiskTier.HIGH)
+        )
+        rows.forEach { (name, input) ->
+            stubHealthyRadarSignals()
+            assertTrue(name, !useCase.compute(input).budgetUnknown)
+        }
     }
 
     private fun usdOutcomeMissingRate() {
@@ -916,29 +846,28 @@ class ComputeMoneyRadarUseCaseTest {
     }
 
     @Test
-    fun `round2 a bill 12 days out with no rate makes only the budget part unknown`() = runTest {
+    fun `round2 a bill 12 days out with no rate is ignored by the 7 day window and does not make radar unavailable`() = runTest {
         stubHealthyRadarSignals()
-        stubAvailableBudgetSimulation()
+        stubDeposit()
         usdOutcomeMissingRate()
         coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(
             recurring("Near", 10.0, now + 2 * dayMs),
             recurring("Far Foreign", 400.0, now + 12 * dayMs).copy(currency = "USD")
         )
 
-        val result = useCase.compute()
+        val result = useCase.compute(simulatedInput(0.1, 0.0, RiskTier.LOW))
 
-        assertNull(result.budgetRisk)
-        assertTrue(result.budgetUnknown)
         assertTrue(result.urgencyLevel != UrgencyLevel.UNAVAILABLE)
         assertNotNull(result.urgencyScore)
         assertEquals(listOf("Near"), result.dueBills.map { it.merchant })
-        coVerify(exactly = 0) { monteCarloSimulator.simulate(any(), any(), any(), any()) }
+        assertNotNull(result.budgetRisk)
+        assertTrue(!result.budgetUnknown)
+        coVerify(exactly = 0) { currencyConverter.convertOutcome(any(), any(), any(), any(), any(), any()) }
     }
 
     @Test
     fun `round2 a bill 3 days out with no rate keeps the existing whole radar unavailable behaviour`() = runTest {
         stubHealthyRadarSignals()
-        stubAvailableBudgetSimulation()
         usdOutcomeMissingRate()
         coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(
             recurring("Near Foreign", 400.0, now + 3 * dayMs).copy(currency = "USD")
@@ -948,53 +877,12 @@ class ComputeMoneyRadarUseCaseTest {
     }
 
     @Test
-    fun `round2 budgetUnknown is true for every unavailable reason except no positive limit`() = runTest {
-        val base = overallBudgetStatus(500.0)
-        val unknownRows = mapOf(
-            "CONVERSION_INCOMPLETE percent unknown" to base.copy(percentKnown = false, healthStatus = BudgetHealthStatus.UNKNOWN),
-            "CONVERSION_INCOMPLETE currency differs" to base.copy(currency = "USD"),
-            "CONVERSION_INCOMPLETE provenance unknown" to base.copy(currencyAssumption = "UNKNOWN"),
-            "EFFECTIVE_SPEND_UNAVAILABLE" to base.copy(adjustedSpendBreakdown = null)
-        )
-        unknownRows.forEach { (name, status) ->
-            stubHealthyRadarSignals()
-            every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(status))
-            coEvery { expenseRepository.getExpensesSince(any()) } returns emptyList()
-            val result = useCase.compute()
-            assertTrue(name, result.budgetUnknown)
-            assertNull(name, result.budgetRisk)
-            assertTrue(name, result.urgencyLevel != UrgencyLevel.UNAVAILABLE)
-        }
-    }
-
-    @Test
-    fun `round2 budgetUnknown is false for no positive limit no overall budget non month scale and available`() = runTest {
-        val base = overallBudgetStatus(500.0)
-        val falseRows = mapOf(
-            "NO_POSITIVE_LIMIT" to overallBudgetStatus(500.0, effectiveLimit = 0.0),
-            "category budget only" to base.copy(budget = base.budget.copy(categoryId = 3L)),
-            // Non-month-scale is decided before the remaining check, even for an otherwise unknown status.
-            "weekly budget" to overallBudgetStatus(500.0, periodStart = now - 3 * dayMs, periodEnd = now + 4 * dayMs)
-                .copy(percentKnown = false, healthStatus = BudgetHealthStatus.UNKNOWN),
-            "Available" to base
-        )
-        falseRows.forEach { (name, status) ->
-            stubHealthyRadarSignals()
-            stubAvailableBudgetSimulation()
-            every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(status))
-            assertTrue(name, !useCase.compute().budgetUnknown)
-        }
-        stubHealthyRadarSignals()
-        assertTrue("no budget at all", !useCase.compute().budgetUnknown)
-    }
-
-    @Test
     fun `round2 budgetUnknown changes neither score nor level`() = runTest {
         // Derived from the score code: 3 bills -> 60 * 0.4 = 24, 2 anomalies -> 60 * 0.3 = 18,
         // budget part 0 in both cases (LOW risk p=0.1, overrun 0, or no risk info) => 42 => YELLOW (31..60).
         fun stubBusy() {
             stubHealthyRadarSignals()
-            stubAvailableBudgetSimulation()
+            stubDeposit()
             coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(
                 recurring("A", 10.0, now + dayMs),
                 recurring("B", 10.0, now + 2 * dayMs),
@@ -1007,13 +895,9 @@ class ComputeMoneyRadarUseCaseTest {
         }
 
         stubBusy()
-        val available = useCase.compute()
-
+        val available = useCase.compute(simulatedInput(0.1, 0.0, RiskTier.LOW))
         stubBusy()
-        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(
-            overallBudgetStatus(1000.0).copy(adjustedSpendBreakdown = null)
-        ))
-        val unknown = useCase.compute()
+        val unknown = useCase.compute(RadarBudgetInput.Unknown)
 
         assertTrue(!available.budgetUnknown)
         assertNotNull(available.budgetRisk)
@@ -1026,61 +910,13 @@ class ComputeMoneyRadarUseCaseTest {
 
         // Nothing else on the books: both are score 0 and GREEN.
         stubHealthyRadarSignals()
-        stubAvailableBudgetSimulation()
-        val quietAvailable = useCase.compute()
-        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(
-            overallBudgetStatus(1000.0).copy(adjustedSpendBreakdown = null)
-        ))
-        val quietUnknown = useCase.compute()
+        val quietAvailable = useCase.compute(simulatedInput(0.1, 0.0, RiskTier.LOW))
+        val quietUnknown = useCase.compute(RadarBudgetInput.Unknown)
         assertEquals(0, quietAvailable.urgencyScore)
         assertEquals(0, quietUnknown.urgencyScore)
         assertEquals(UrgencyLevel.GREEN, quietAvailable.urgencyLevel)
         assertEquals(UrgencyLevel.GREEN, quietUnknown.urgencyLevel)
         assertTrue(quietUnknown.budgetUnknown)
-    }
-
-    /**
-     * Overall budget fixture as production maps it for a complete EUR budget: confirmed currency
-     * provenance and a finite effective-spend breakdown, so [BudgetStatusSnapshot.periodRemaining]
-     * is Available. [effectiveLimit] is the limit incl. rollover, as the repository computes it;
-     * it is what the radar must simulate against, so it defaults to [amount] and tests that need a
-     * different value pass it explicitly (a stated budget never relies on an implicit 0.0).
-     */
-    private fun overallBudgetStatus(
-        amount: Double,
-        effectiveLimit: Double = amount,
-        periodStart: Long = now - 20 * dayMs,
-        periodEnd: Long = now + 10 * dayMs
-    ): BudgetStatus {
-        val budget = Budget(
-            id = 10L,
-            categoryId = null,
-            amount = amount,
-            period = BudgetPeriod.MONTHLY,
-            startDate = periodStart,
-            isActive = true,
-            currency = "EUR",
-            currencyAssumption = "USER_CONFIRMED"
-        )
-        return BudgetStatus(
-            budget = budget,
-            category = null,
-            spentAmount = 0.0,
-            remainingAmount = amount,
-            percentUsed = 0f,
-            healthStatus = BudgetHealthStatus.ON_TRACK,
-            periodStart = periodStart,
-            periodEnd = periodEnd,
-            effectiveLimit = effectiveLimit,
-            adjustedSpendBreakdown = com.yourname.expensetracker.domain.budget.AdjustedSpendBreakdown(
-                personalSpend = 0.0,
-                sharedSpend = 0.0,
-                reimbursedAmount = 0.0,
-                netSharedLiability = 0.0,
-                effectiveSpend = 0.0,
-                pendingReimbursements = 0.0
-            )
-        )
     }
 
     private fun expense(
