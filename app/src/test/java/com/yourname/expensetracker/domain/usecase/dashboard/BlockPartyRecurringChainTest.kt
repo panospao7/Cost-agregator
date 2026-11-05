@@ -954,7 +954,7 @@ class BlockPartyRecurringChainTest {
         coEvery { monthlySavingsSweepUseCase.computeSweepRecommendationResult() } returns
             SavingsSweepComputationResult.NoRecommendation()
         val computeMoneyRadarUseCase = mockk<ComputeMoneyRadarUseCase>(relaxed = true)
-        coEvery { computeMoneyRadarUseCase.compute() } returns MoneyRadarData(
+        coEvery { computeMoneyRadarUseCase.compute(any()) } returns MoneyRadarData(
             urgencyScore = 0,
             urgencyLevel = UrgencyLevel.GREEN,
             dueBills = emptyList(),
