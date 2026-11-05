@@ -86,7 +86,7 @@ class GroupCashFlowRuleTest {
         val shared = row(1L).copy(
             isNotMine = true,
             isSharedExpense = true,
-            mySharePercentage = 20.0,
+            mySharePercentage = 20,
             myShareAmount = 600.0
         )
 
