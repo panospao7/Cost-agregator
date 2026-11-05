@@ -14,6 +14,7 @@ import com.yourname.expensetracker.domain.model.*
 import com.yourname.expensetracker.domain.model.ConfirmedOccurrence
 import com.yourname.expensetracker.domain.model.dashboard.BudgetStatusSnapshot
 import com.yourname.expensetracker.domain.text.DomainTextKeys
+import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.core.money.ConversionOutcome
 import com.yourname.expensetracker.domain.core.money.MoneyAggregateBuilder
@@ -259,6 +260,12 @@ class SynthesisEngine @Inject constructor(
             Timber.d("$TAG: Filtered out ${plannedExpenses.size - filteredPlannedExpenses.size} non-PLANNED planned expenses")
         }
         
+        // FC-HIGH-CONF-UNDERCOUNT follow-up: a detected-only pattern (id == null) that shares merchant
+        // key and frequency with a rule-backed pattern (id != null) is already represented by that
+        // rule's confirmed occurrences, even when the amounts differ (15.49 vs 15.00). Drop it once,
+        // up front, so committed, likely and the baseline subtraction all agree.
+        val effectiveRecurringPatterns = dropDetectedShadowedByRules(recurringPatterns)
+
         // G-TIME-01: derive calendar fields from the injected TimeProvider instant
         // (java.time, system default timezone — same field values the Calendar read).
         val today = Instant.ofEpochMilli(now).atZone(ZoneId.systemDefault()).toLocalDate()
@@ -280,7 +287,7 @@ class SynthesisEngine @Inject constructor(
         var recurringConversionFailures = 0
 
         val committedRecurringByDay = if (confirmedOccurrences.isNotEmpty()) {
-            confirmedOccurrences
+            val confirmedByDay = confirmedOccurrences
                 .filter { it.dueDate >= startOfToday && it.dueDate < endOfMonthExclusive }
                 .groupBy { occurrence ->
                     Instant.ofEpochMilli(occurrence.dueDate).atZone(ZoneId.systemDefault()).dayOfMonth
@@ -292,20 +299,25 @@ class SynthesisEngine @Inject constructor(
                             ?: run { recurringConversionFailures++; null }
                     }.sum()
                 }
-        } else {
-            // FORE-02: WEEKLY/BIWEEKLY patterns project every occurrence left in the window
-            // (the baseline subtracts them at 4.33x / 2.17x), converted once per pattern.
-            val byDay = mutableMapOf<Int, Double>()
-            for (p in recurringPatterns.filter { it.confidence >= 0.90f }) {
-                val dueDays = remainingOccurrenceDays(p, startOfToday, endOfMonthExclusive)
-                if (dueDays.isEmpty()) continue
-                val amount = if (displayCurrency.isBlank()) p.averageAmount
-                else convertAmount(p.averageAmount, p.currency, displayCurrency)
-                    ?: run { recurringConversionFailures++; null }
-                for (day in dueDays) {
-                    byDay[day] = (byDay[day] ?: 0.0) + (amount ?: 0.0)
-                }
+            // FC-HIGH-CONF-UNDERCOUNT: detected-only patterns (id == null) at >= 0.90 confidence
+            // are committed too; they are not covered by any confirmed occurrence, and the
+            // likely bucket only takes [0.70, 0.90), so there is no double count.
+            val detectedHighConfidence = effectiveRecurringPatterns.filter { it.id == null && it.confidence >= 0.90f }
+            val (detectedByDay, detectedFailures) = detectedCommittedByDay(
+                detectedHighConfidence, startOfToday, endOfMonthExclusive, displayCurrency
+            )
+            recurringConversionFailures += detectedFailures
+            val merged = confirmedByDay.toMutableMap()
+            for ((day, amount) in detectedByDay) {
+                merged[day] = (merged[day] ?: 0.0) + amount
             }
+            merged
+        } else {
+            val (byDay, failures) = detectedCommittedByDay(
+                effectiveRecurringPatterns.filter { it.confidence >= 0.90f },
+                startOfToday, endOfMonthExclusive, displayCurrency
+            )
+            recurringConversionFailures += failures
             byDay
         }
 
@@ -327,7 +339,7 @@ class SynthesisEngine @Inject constructor(
         // I1: Detected-only patterns (id == null) do not have confirmed
         // occurrences. Fall back to estimating from nextExpectedDate; WEEKLY/BIWEEKLY
         // repeat inside the window (FORE-02, see remainingOccurrenceDays).
-        val detectedPatterns = recurringPatterns.filter { it.id == null }
+        val detectedPatterns = effectiveRecurringPatterns.filter { it.id == null }
         val likelyUpcomingBills = if (confirmedOccurrences.isNotEmpty()) {
             // FORE-02: WEEKLY/BIWEEKLY detected patterns count every occurrence left in the window.
             detectedPatterns.filter {
@@ -341,7 +353,7 @@ class SynthesisEngine @Inject constructor(
                 amount?.let { it * occurrences }
             }.sum()
         } else {
-            recurringPatterns.filter {
+            effectiveRecurringPatterns.filter {
                 it.confidence >= 0.70f && it.confidence < 0.90f
             }.mapNotNull { p ->
                 val occurrences = remainingOccurrenceDays(p, startOfToday, endOfMonthExclusive).size
@@ -368,7 +380,7 @@ class SynthesisEngine @Inject constructor(
         // FORE-02: patterns below the 0.70 projection confidence floor (see likelyUpcomingBills)
         // are not treated as real recurring spend, so they are not subtracted from the baseline.
         // (Weekly/biweekly monthly-amount handling intentionally unchanged.)
-        val monthlyRecurringTotal = recurringPatterns.filter { it.confidence >= 0.70f }.mapNotNull { pattern ->
+        val monthlyRecurringTotal = effectiveRecurringPatterns.filter { it.confidence >= 0.70f }.mapNotNull { pattern ->
             when (pattern.frequency) {
                 RecurrenceFrequency.IRREGULAR -> null
                 else -> {
@@ -1082,6 +1094,55 @@ class SynthesisEngine @Inject constructor(
             }
         }
         return result
+    }
+
+    /**
+     * Drops detected-only patterns (id == null) whose merchant key and frequency match any
+     * rule-backed pattern (id != null) in [patterns]. The merchant key mirrors
+     * ForecastInputAssembler.recurringRuleSignature (MerchantKeyGenerator, lowercase-trim fallback),
+     * but amount and currency are deliberately ignored: a re-priced rule (15.00 vs detected 15.49)
+     * is still the same obligation. Rule-backed patterns are never dropped.
+     */
+    private fun dropDetectedShadowedByRules(patterns: List<RecurringPattern>): List<RecurringPattern> {
+        val ruleKeys = patterns
+            .filter { it.id != null }
+            .mapTo(mutableSetOf()) { recurringMerchantKey(it.merchantName) to it.frequency }
+        if (ruleKeys.isEmpty()) return patterns
+        return patterns.filterNot {
+            it.id == null && (recurringMerchantKey(it.merchantName) to it.frequency) in ruleKeys
+        }
+    }
+
+    private fun recurringMerchantKey(merchantName: String): String =
+        MerchantKeyGenerator.generate(merchantName)
+            .takeIf { it.isNotBlank() }
+            ?: merchantName.lowercase().trim()
+
+    /**
+     * Per-day committed amounts for [patterns] (already filtered by the caller), converted once
+     * per pattern at the forecast's rate basis (see [convertAmount]). A pattern whose conversion
+     * fails contributes 0 and is counted in the returned failure count (never a raw-currency
+     * fallback). FORE-02: WEEKLY/BIWEEKLY patterns project every occurrence left in the window.
+     */
+    private suspend fun detectedCommittedByDay(
+        patterns: List<RecurringPattern>,
+        windowStart: Long,
+        windowEndExclusive: Long,
+        displayCurrency: String
+    ): Pair<Map<Int, Double>, Int> {
+        var failures = 0
+        val byDay = mutableMapOf<Int, Double>()
+        for (p in patterns) {
+            val dueDays = remainingOccurrenceDays(p, windowStart, windowEndExclusive)
+            if (dueDays.isEmpty()) continue
+            val amount = if (displayCurrency.isBlank()) p.averageAmount
+            else convertAmount(p.averageAmount, p.currency, displayCurrency)
+                ?: run { failures++; null }
+            for (day in dueDays) {
+                byDay[day] = (byDay[day] ?: 0.0) + (amount ?: 0.0)
+            }
+        }
+        return byDay to failures
     }
 
     /**

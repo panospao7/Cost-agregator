@@ -298,7 +298,7 @@ class FinancialStressForecastEngine @Inject constructor(
         
         // 4. Calculate projected balance
         // P-06-4: expected withdrawals are cash leaving, not discretionary spending.
-        val withdrawalOutflows = estimateWithdrawals(daysAhead, now, normalizedExpenses, displayCurrency)
+        val withdrawalOutflows = estimateWithdrawals(daysAhead, now, normalizedExpenses, displayCurrency, installmentLinkedIds)
         val projectedBalance = currentBalance + expectedIncome - recurringOutflows - withdrawalOutflows - mcResult.percentile50
         val minProjectedBalance = currentBalance + expectedIncome - recurringOutflows - withdrawalOutflows - mcResult.percentile90
         
@@ -656,15 +656,17 @@ class FinancialStressForecastEngine @Inject constructor(
      * Withdrawals are cash leaving the account, so they reduce the projected balance, but they
      * are not discretionary spending and are not part of the Monte Carlo. The daily rate is the
      * withdrawn total in the 60-day window divided by the observed window days: the window starts
-     * at the later of (now - 60 days) and the first transaction of any type, with a
-     * [MIN_SAMPLE_DAYS] floor, matching the purchase sampling window. No withdrawals gives 0.
+     * at the later of (now - 60 days) and the first non-installment outflow (purchase or
+     * withdrawal), with a [MIN_SAMPLE_DAYS] floor, identical to the purchase sampling window
+     * (see [sharedSampleWindow]). No withdrawals gives 0.
      * Rounding: none (Double), consistent with the other horizon components.
      */
     private fun estimateWithdrawals(
         daysAhead: Int,
         now: Long,
         normalizedExpenses: List<ExpenseSnapshot>,
-        displayCurrency: String
+        displayCurrency: String,
+        installmentLinkedIds: Set<Long>
     ): Double {
         val withdrawalRows = normalizedExpenses
             .filter { it.transactionType == DomainTransactionType.WITHDRAWAL && !it.isNotMine }
@@ -676,17 +678,56 @@ class FinancialStressForecastEngine @Inject constructor(
         ).displayAmount
         if (withdrawalTotal <= 0.0) return 0.0
 
+        // BL-09: same window as the purchase sampling in runMonteCarloSimulation.
+        val window = sharedSampleWindow(now, normalizedExpenses, installmentLinkedIds)
+        val windowDays = maxOf(MIN_SAMPLE_DAYS, window.observedDays)
+        return withdrawalTotal / windowDays * daysAhead
+    }
+
+    /**
+     * BL-09: one observed-window definition shared by the purchase Monte Carlo sampling and the
+     * withdrawal rate. The window starts at the later of (now - 60 days) and the earliest outflow
+     * (PURCHASE or WITHDRAWAL, not isNotMine) outside [installmentLinkedIds]; deposits and other
+     * types never stretch it. If every outflow is installment-linked the earliest outflow is used
+     * (matches the pre-existing purchase fallback). Callers apply the [MIN_SAMPLE_DAYS] floor.
+     */
+    private fun sharedSampleWindow(
+        now: Long,
+        normalizedExpenses: List<ExpenseSnapshot>,
+        installmentLinkedIds: Set<Long>
+    ): SharedSampleWindow {
         val sampleEndDay = TimePeriodUtils.getStartOfDay(now)
         val lookbackStartDay = TimePeriodUtils.getStartOfDay(TimePeriodUtils.addDays(now, -60))
-        val firstTransactionDay = TimePeriodUtils.getStartOfDay(normalizedExpenses.minOf { it.date })
-        val windowStartDay = maxOf(lookbackStartDay, firstTransactionDay)
+        val outflows = normalizedExpenses.filter {
+            (it.transactionType == DomainTransactionType.PURCHASE ||
+                it.transactionType == DomainTransactionType.WITHDRAWAL) && !it.isNotMine
+        }
+        val windowOutflows = if (installmentLinkedIds.isEmpty()) {
+            outflows
+        } else {
+            outflows.filterNot { it.id in installmentLinkedIds }
+        }
+        val firstOutflowMs = windowOutflows.minOfOrNull { it.date } ?: outflows.minOfOrNull { it.date }
+        val firstOutflowDay = firstOutflowMs?.let { TimePeriodUtils.getStartOfDay(it) } ?: lookbackStartDay
+        val windowStartDay = maxOf(lookbackStartDay, firstOutflowDay)
         val observedDays = java.time.temporal.ChronoUnit.DAYS.between(
             java.time.Instant.ofEpochMilli(windowStartDay).atZone(java.time.ZoneId.systemDefault()).toLocalDate(),
             java.time.Instant.ofEpochMilli(sampleEndDay).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
         ).toInt() + 1
-        val windowDays = maxOf(MIN_SAMPLE_DAYS, observedDays)
-        return withdrawalTotal / windowDays * daysAhead
+        return SharedSampleWindow(
+            sampleEndDay = sampleEndDay,
+            lookbackStartDay = lookbackStartDay,
+            windowStartDay = windowStartDay,
+            observedDays = observedDays
+        )
     }
+
+    private data class SharedSampleWindow(
+        val sampleEndDay: Long,
+        val lookbackStartDay: Long,
+        val windowStartDay: Long,
+        val observedDays: Int
+    )
 
     /**
      * Run Monte Carlo simulation for discretionary spending.
@@ -755,32 +796,24 @@ class FinancialStressForecastEngine @Inject constructor(
                 ).displayAmount
             }
 
-        // Anchor sampling at the later of (now - 60 days) and the earliest purchase in the fetched
-        // 60-day window (not the first purchase ever), so days before the user had any history in
-        // that window are not counted as quiet days. A
+        // Anchor sampling at the later of (now - 60 days) and the earliest outflow (purchase or
+        // withdrawal, BL-09) in the fetched 60-day window (not the first outflow ever), so days
+        // before the user had any history in that window are not counted as quiet days. A
         // MIN_SAMPLE_DAYS floor keeps a very new history from being dominated by one purchase.
-        val now = timeProvider.now()
-        val sixtyDaysAgo = TimePeriodUtils.addDays(now, -60)
-        val sampleEndDay = TimePeriodUtils.getStartOfDay(now)
-        val lookbackStartDay = TimePeriodUtils.getStartOfDay(sixtyDaysAgo)
         // Installment-linked rows do not stretch the window; recurring merchants do, because they
         // show the user has history even though they leave the discretionary baseline.
-        val firstPurchaseDay = TimePeriodUtils.getStartOfDay(
-            purchasesWithoutInstallments.minOfOrNull { it.date } ?: purchases.minOf { it.date }
-        )
+        val now = timeProvider.now()
+        val window = sharedSampleWindow(now, normalizedExpenses, installmentLinkedIds)
+        val sampleEndDay = window.sampleEndDay
+        val lookbackStartDay = window.lookbackStartDay
         val floorStartDay = TimePeriodUtils.addDays(sampleEndDay, -(MIN_SAMPLE_DAYS - 1))
-        val sampleStartDay = minOf(maxOf(lookbackStartDay, firstPurchaseDay), floorStartDay)
+        val sampleStartDay = minOf(window.windowStartDay, floorStartDay)
         // P-06-4: thin baseline flag. Counts discretionary purchases inside the sampling lookback
         // and the real observed span (not the MIN_SAMPLE_DAYS-floored sampling window).
         val baselinePurchaseCount = discretionaryPurchases.count {
             TimePeriodUtils.getStartOfDay(it.date) >= lookbackStartDay
         }
-        val observedDays = java.time.temporal.ChronoUnit.DAYS.between(
-            java.time.Instant.ofEpochMilli(maxOf(lookbackStartDay, firstPurchaseDay))
-                .atZone(java.time.ZoneId.systemDefault()).toLocalDate(),
-            java.time.Instant.ofEpochMilli(sampleEndDay)
-                .atZone(java.time.ZoneId.systemDefault()).toLocalDate()
-        ).toInt() + 1
+        val observedDays = window.observedDays
         val thinBaseline = baselinePurchaseCount < LOW_DATA_MIN_PURCHASES ||
             observedDays < LOW_DATA_MIN_OBSERVED_DAYS
         val dailyTotals = mutableListOf<Double>()

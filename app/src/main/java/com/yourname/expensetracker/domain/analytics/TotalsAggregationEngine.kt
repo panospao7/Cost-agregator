@@ -120,7 +120,21 @@ class TotalsAggregationEngine @Inject constructor(
                 isPartial = (aggregate?.isPartial ?: false) && !isUnavailable,
                 isUnavailable = isUnavailable,
                 warningMessage = aggregate?.warningMessage,
-                moneyResult = aggregate?.let(MoneyAggregateResult::Available)
+                // N-08-5: an UNAVAILABLE-quality month is Unavailable (as in the yearly path), never
+                // an Available aggregate whose 0.0 amount would render as zero spend. A null
+                // aggregate means the month has no rows, so 0 stays correct there.
+                moneyResult = when {
+                    aggregate == null -> null
+                    isUnavailable -> MoneyAggregateResult.Unavailable(
+                        reason = com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableReasonCode
+                            .DISPLAY_CONVERSION_UNAVAILABLE.name,
+                        requestedRateBasis = aggregate.requestedRateBasis,
+                        warningMessage = aggregate.warningMessage
+                            ?: com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableReasonCode
+                                .DISPLAY_CONVERSION_UNAVAILABLE.name
+                    )
+                    else -> MoneyAggregateResult.Available(aggregate)
+                }
             )
         }
     }
