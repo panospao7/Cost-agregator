@@ -693,9 +693,12 @@ class HomeViewModel @Inject constructor(
         null -> null
     }
 
+    // Year last handed to startYearTotalsCollection; Retry must restart this year, not the current one.
+    private var collectedTotalsYear: Int? = null
+
     fun reloadCurrentTotalsLevel() {
-        val state = _totalsDrillDownState.value
-        val year = com.yourname.expensetracker.ui.util.UiTimeUtils.getYear(timeProvider.now())
+        val year = collectedTotalsYear
+            ?: com.yourname.expensetracker.ui.util.UiTimeUtils.getYear(timeProvider.now())
         loadTotalsForYear(year)
     }
 
@@ -707,6 +710,7 @@ class HomeViewModel @Inject constructor(
     }
 
     private fun startYearTotalsCollection(year: Int) {
+        collectedTotalsYear = year
         yearTotalsJob?.cancel()
         yearTotalsJob = viewModelScope.launch {
             _totalsDrillDownState.update { it.copy(isLoading = true) }
@@ -815,7 +819,8 @@ class HomeViewModel @Inject constructor(
                         breadcrumb = state.breadcrumb + listOfNotNull(state.selectedPeriod),
                         periodTotals = updatedTotals,
                         categoryBreakdown = categories,
-                        isLoading = false
+                        isLoading = false,
+                        error = null
                     )
                 }
                 // Month list reached by drill-down: follow expense changes live.

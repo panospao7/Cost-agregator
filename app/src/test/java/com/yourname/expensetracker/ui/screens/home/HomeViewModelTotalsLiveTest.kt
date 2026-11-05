@@ -33,6 +33,7 @@ import com.yourname.expensetracker.service.RecommendationStateManager
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.verify
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.cancel
@@ -193,6 +194,37 @@ class HomeViewModelTotalsLiveTest {
         assertEquals(listOf(200.0), vm.totalsDrillDownState.value.periodTotals.map { it.totalAmount })
         assertNull(vm.totalsDrillDownState.value.error)
         assertFalse(vm.totalsDrillDownState.value.isLoading)
+    }
+
+    @Test
+    fun `retry after a failed read reloads the viewed year and not the current year`() {
+        val vm = checkNotNull(viewModel)
+        val year2023Flow = MutableStateFlow(listOf(month(2023, 11, 5.0)))
+        every { engine.getMonthlyTotals(2023) } returns year2023Flow
+        vm.loadTotalsForYear(2023)
+
+        year2023Flow.value = emptyList()
+        assertNotNull(vm.totalsDrillDownState.value.error)
+
+        year2023Flow.value = listOf(month(2023, 11, 9.0))
+        vm.reloadCurrentTotalsLevel()
+
+        assertEquals(listOf("2023-11"), vm.totalsDrillDownState.value.periodTotals.map { it.periodKey })
+        assertEquals(listOf(9.0), vm.totalsDrillDownState.value.periodTotals.map { it.totalAmount })
+        assertNull(vm.totalsDrillDownState.value.error)
+        verify(exactly = 1) { engine.getMonthlyTotals(1970) } // init load only; Retry did not use the current year
+    }
+
+    @Test
+    fun `a successful drill down clears an existing error`() {
+        val vm = checkNotNull(viewModel)
+        initialYearFlow.value = emptyList()
+        assertNotNull(vm.totalsDrillDownState.value.error)
+
+        vm.drillDownToPeriod(month(2025, 11, 0.0))
+
+        assertEquals(PeriodType.WEEK, vm.totalsDrillDownState.value.currentLevel)
+        assertNull(vm.totalsDrillDownState.value.error)
     }
 
     @Test
