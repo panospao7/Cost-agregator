@@ -919,6 +919,7 @@ class BlockPartyRecurringChainTest {
         }
         val coordinator = mockk<RecurringLifecycleCoordinator>(relaxed = true)
         coEvery { coordinator.projectOccurrences(any(), any(), any()) } returns emptyList()
+        coEvery { coordinator.dropSettled(any()) } answers { firstArg() }
         analyticsCurrencyNormalizer = mockk(relaxed = true)
 
         // Real assembler (assembleNormalized and assemble) and real engine, as in production.

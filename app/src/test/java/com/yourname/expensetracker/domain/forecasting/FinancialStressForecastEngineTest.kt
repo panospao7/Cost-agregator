@@ -548,6 +548,7 @@ class FinancialStressForecastEngineTest {
         }
 
         recurringLifecycleCoordinator = mockk(relaxed = true)
+        io.mockk.coEvery { recurringLifecycleCoordinator.dropSettled(any()) } answers { firstArg() }
         recurringOccurrenceDao = mockk(relaxed = true)
         databaseReadBarrier = mockk(relaxed = true)
         currencyConverter = mockk(relaxed = true)

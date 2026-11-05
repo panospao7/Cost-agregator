@@ -237,7 +237,7 @@ class HomeInstallmentWeatherSourceTest {
             analyticsCurrencyNormalizer = normalizer,
             currencySettingsRepository = currencySettingsRepository,
             currencyConverter = currencyConverter,
-            recurringLifecycleCoordinator = mockk<RecurringLifecycleCoordinator>(relaxed = true),
+            recurringLifecycleCoordinator = mockk<RecurringLifecycleCoordinator>(relaxed = true).also { c -> io.mockk.coEvery { c.dropSettled(any()) } answers { firstArg() } },
             recurringOccurrenceDao = mockk<RecurringOccurrenceDao>(relaxed = true),
             databaseReadBarrier = mockk(relaxed = true)
         )

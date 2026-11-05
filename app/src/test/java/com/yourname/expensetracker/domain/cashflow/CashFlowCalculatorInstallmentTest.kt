@@ -129,7 +129,7 @@ class CashFlowCalculatorInstallmentTest : AnalyticsEngineTestBase() {
         expenseRepository = expenseRepository,
         recurringPatternsProvider = patternsProvider,
         timeProvider = timeProvider,
-        recurringLifecycleCoordinator = mockk<RecurringLifecycleCoordinator>(relaxed = true),
+        recurringLifecycleCoordinator = mockk<RecurringLifecycleCoordinator>(relaxed = true).also { c -> io.mockk.coEvery { c.dropSettled(any()) } answers { firstArg() } },
         recurringOccurrenceDao = mockk<RecurringOccurrenceDao>(relaxed = true),
         analyticsCurrencyNormalizer = mockk(relaxed = true),
         currencySettingsRepository = currencySettingsRepository,

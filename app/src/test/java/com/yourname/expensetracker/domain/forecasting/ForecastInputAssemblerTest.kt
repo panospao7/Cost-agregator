@@ -57,6 +57,7 @@ class ForecastInputAssemblerTest {
         currencySettingsRepository = mockk()
         currencyConverter = mockk(relaxed = true)
         recurringLifecycleCoordinator = mockk(relaxed = true)
+        coEvery { recurringLifecycleCoordinator.dropSettled(any()) } answers { firstArg() }
         recurringOccurrenceDao = mockk(relaxed = true)
         databaseReadBarrier = mockk(relaxed = true)
         assembler = ForecastInputAssembler(
