@@ -1116,6 +1116,37 @@ class ForecastInputAssemblerTest {
         assertThat(result.recurringPatterns.single().nextExpectedDate).isEqualTo(jan20)
     }
 
+    @Test
+    fun `FC-PAID-UNLINKED a weekly pattern whose due occurrence is projected PAID advances once to the next week`() = runTest {
+        every { timeProvider.now() } returns ms(2026, Calendar.JUNE, 10, 12)
+        val jun8 = ms(2026, Calendar.JUNE, 8, 0)
+        val jun15 = ms(2026, Calendar.JUNE, 15, 0)
+        val weekly = RecurrenceFrequency.WEEKLY
+        // Paid on the due day with no row yet: the projection reports it PAID; later weeks are open.
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(7L, any(), any()) } returns listOf(
+            occurrence(7L, jun8, 100.0, "Rent", status = "PAID", frequency = weekly),
+            occurrence(7L, jun15, 100.0, "Rent", frequency = weekly),
+            occurrence(7L, ms(2026, Calendar.JUNE, 22, 0), 100.0, "Rent", frequency = weekly)
+        )
+        coEvery { recurringOccurrenceDao.getByDateRange(any(), any()) } returns emptyList()
+        val pattern = recurring("Rent", 100.0, jun8, 1.0f, frequency = weekly).copy(id = 7L)
+
+        val result = assembler.assembleNormalized(normalizedInput(listOf(pattern)))
+
+        assertThat(result.recurringPatterns.single().nextExpectedDate).isEqualTo(jun15)
+    }
+
+    @Test
+    fun `FC-PAID-UNLINKED a pattern due next month is not projected and stays unchanged`() = runTest {
+        every { timeProvider.now() } returns ms(2026, Calendar.JUNE, 10, 12)
+        val jul10 = ms(2026, Calendar.JULY, 10, 0)
+
+        val result = assembler.assembleNormalized(normalizedInput(listOf(manualPattern(7L, jul10))))
+
+        assertThat(result.recurringPatterns.single().nextExpectedDate).isEqualTo(jul10)
+        coVerify(exactly = 0) { recurringLifecycleCoordinator.projectOccurrences(any(), any(), any()) }
+    }
+
     private fun occurrence(
         ruleId: Long,
         dueDate: Long,

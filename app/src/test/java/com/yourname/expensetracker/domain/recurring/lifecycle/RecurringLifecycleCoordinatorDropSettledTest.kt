@@ -10,8 +10,10 @@ import com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao
 import com.yourname.expensetracker.data.database.dao.RecurringOccurrenceDao
 import com.yourname.expensetracker.data.database.dao.RecurringReminderDeliveryDao
 import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
 import com.yourname.expensetracker.data.database.entity.RecurringOccurrence
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentEntryLinkReader
 import com.yourname.expensetracker.domain.recurring.OccurrenceConflictResolver
 import com.yourname.expensetracker.domain.recurring.RecurringInstallmentEligibility
@@ -76,9 +78,23 @@ class RecurringLifecycleCoordinatorDropSettledTest {
             override suspend fun planPurchaseExpenseIds(): Set<Long> = emptySet()
         }
         val eligibility = RecurringInstallmentEligibility(dagger.Lazy { reader })
-        coordinator = RecurringLifecycleCoordinator(
+        sharedTimeProvider = timeProvider
+        sharedRestoreMode = restoreMaintenanceMode
+        sharedEligibility = eligibility
+        coordinator = buildCoordinator(mockk<RecurringOccurrenceExpander>(relaxed = true))
+    }
+
+    private lateinit var sharedTimeProvider: TimeProvider
+    private lateinit var sharedRestoreMode: RestoreMaintenanceMode
+    private lateinit var sharedEligibility: RecurringInstallmentEligibility
+
+    private fun buildCoordinator(expander: RecurringOccurrenceExpander): RecurringLifecycleCoordinator {
+        val timeProvider = sharedTimeProvider
+        val restoreMaintenanceMode = sharedRestoreMode
+        val eligibility = sharedEligibility
+        return RecurringLifecycleCoordinator(
             database = mockk<AppDatabase>(relaxed = true),
-            expander = mockk<RecurringOccurrenceExpander>(relaxed = true),
+            expander = expander,
             resolver = OccurrenceConflictResolver(eligibility),
             materializer = mockk<RecurringOccurrenceMaterializer>(relaxed = true),
             occurrenceDao = occurrenceDao,
@@ -213,6 +229,11 @@ class RecurringLifecycleCoordinatorDropSettledTest {
 
         coVerify(exactly = 1) { expenseDao.getExpensesBetween(any(), any()) }
         coVerify(exactly = 1) { occurrenceDao.getLinkedExpenseIds(any()) }
+        // PIN CHANGED: dropSettled now also reads the active rules and the materialized rows of the
+        // month, so those two reads are verified here; confirmVerified still proves no other call
+        // (in particular no write) happened.
+        coVerify(exactly = 1) { manualRecurringExpenseDao.getAllActive() }
+        coVerify(exactly = 1) { occurrenceDao.getByDateRange(any(), any()) }
         confirmVerified(
             expenseDao,
             occurrenceDao,
@@ -221,5 +242,110 @@ class RecurringLifecycleCoordinatorDropSettledTest {
             lifecycleEventDao,
             reminderDeliveryDao
         )
+    }
+
+    // ---- Real projection path (the expander is real; rules come from getAllActive) ----
+
+    private fun rule(id: Long, nextDate: Long) = ManualRecurringExpense(
+        id = id,
+        merchant = "Landlord",
+        amount = 400.0,
+        currency = "EUR",
+        frequency = RecurrenceFrequency.MONTHLY,
+        nextDate = nextDate,
+        createdAt = nextDate
+    )
+
+    /** Coordinator whose projection runs the real expander over the given active rules. */
+    private fun realProjection(vararg rules: ManualRecurringExpense): RecurringLifecycleCoordinator {
+        coEvery { manualRecurringExpenseDao.getAllActive() } returns rules.toList()
+        for (r in rules) coEvery { manualRecurringExpenseDao.getById(r.id) } returns r
+        return buildCoordinator(RecurringOccurrenceExpander())
+    }
+
+    /** The caller's open occurrence for rule [ruleId], keyed exactly as the real expander keys it. */
+    private fun open(ruleId: Long, due: Long) = occurrence(
+        key = "RECURRING_RULE|$ruleId|$due|MONTHLY",
+        due = due
+    ).copy(sourceId = ruleId)
+
+    @Test
+    fun anEarlierRuleTakesThePaymentSoTheLaterSameMerchantBillStaysCounted() = runTest(timeout = 60.seconds) {
+        val due20 = startOfDay(2026, 6, 20)
+        val due25 = startOfDay(2026, 6, 25)
+        val real = realProjection(rule(1L, due20), rule(2L, due25))
+        coEvery { expenseDao.getExpensesBetween(any(), any()) } returns listOf(purchase(1L, noonOf(2026, 6, 18)))
+        coEvery { occurrenceDao.getLinkedExpenseIds(any()) } returns emptyList()
+        val callerList = listOf(open(2L, due25))
+
+        val result = real.dropSettled(callerList)
+
+        assertEquals(listOf(open(2L, due25).occurrenceKey), result.map { it.occurrenceKey })
+    }
+
+    @Test
+    fun aProjectedPaidLinkCountsAsLinkedSoTheLaterBillStaysCounted() = runTest(timeout = 60.seconds) {
+        val due25 = startOfDay(2026, 6, 25)
+        val due27 = startOfDay(2026, 6, 27)
+        val real = realProjection(rule(1L, due25), rule(2L, due27))
+        coEvery { expenseDao.getExpensesBetween(any(), any()) } returns listOf(purchase(1L, noonOf(2026, 6, 25)))
+        coEvery { occurrenceDao.getLinkedExpenseIds(any()) } returns emptyList()
+
+        val projectedA = real.projectOccurrences(1L, startOfDay(2026, 6, 1), startOfDay(2026, 7, 1))
+        val result = real.dropSettled(listOf(open(2L, due27)))
+
+        assertEquals(listOf("PAID"), projectedA.map { it.status })
+        assertEquals(listOf(1L), projectedA.map { it.linkedExpenseId })
+        assertEquals(listOf(open(2L, due27).occurrenceKey), result.map { it.occurrenceKey })
+    }
+
+    @Test
+    fun twoPaymentsSettleTwoBillsAcrossTheWholeMonthSoTheCallersBillIsDropped() = runTest(timeout = 60.seconds) {
+        val due20 = startOfDay(2026, 6, 20)
+        val due25 = startOfDay(2026, 6, 25)
+        val real = realProjection(rule(1L, due20), rule(2L, due25))
+        coEvery { expenseDao.getExpensesBetween(any(), any()) } returns listOf(
+            purchase(1L, noonOf(2026, 6, 18)),
+            purchase(2L, noonOf(2026, 6, 24))
+        )
+        coEvery { occurrenceDao.getLinkedExpenseIds(any()) } returns emptyList()
+
+        val result = real.dropSettled(listOf(open(2L, due25)))
+
+        assertTrue(result.isEmpty())
+    }
+
+    @Test
+    fun aSingleRuleBillPaidTwoDaysEarlyIsDroppedOnTheRealPath() = runTest(timeout = 60.seconds) {
+        val real = realProjection(rule(1L, due27))
+        coEvery { expenseDao.getExpensesBetween(any(), any()) } returns listOf(purchase(1L, noonOf(2026, 6, 25)))
+        coEvery { occurrenceDao.getLinkedExpenseIds(any()) } returns emptyList()
+
+        val result = real.dropSettled(listOf(open(1L, due27)))
+
+        assertTrue(result.isEmpty())
+    }
+
+    @Test
+    fun anActiveRulesReadFailureReturnsTheInputUnchanged() = runTest(timeout = 60.seconds) {
+        coEvery { manualRecurringExpenseDao.getAllActive() } throws IllegalStateException("synthetic read failure")
+        coEvery { expenseDao.getExpensesBetween(any(), any()) } returns listOf(purchase(1L, noonOf(2026, 6, 25)))
+        val callerList = listOf(open(1L, due27))
+
+        val result = buildCoordinator(RecurringOccurrenceExpander()).dropSettled(callerList)
+
+        assertSame(callerList, result)
+    }
+
+    @Test
+    fun cancellationFromTheActiveRulesReadIsRethrown() = runTest(timeout = 60.seconds) {
+        coEvery { manualRecurringExpenseDao.getAllActive() } throws CancellationException("synthetic cancel")
+
+        try {
+            buildCoordinator(RecurringOccurrenceExpander()).dropSettled(listOf(open(1L, due27)))
+            fail("CancellationException must propagate")
+        } catch (expected: CancellationException) {
+            assertEquals("synthetic cancel", expected.message)
+        }
     }
 }

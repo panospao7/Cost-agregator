@@ -1127,6 +1127,30 @@ class CashFlowCalculatorTest : AnalyticsEngineTestBase() {
         }
     }
 
+    @Test
+    fun `FC-PAID-UNLINKED getUpcomingBills does not call dropSettled when the occurrence read is blocked`() = runTest {
+        every { timeProvider.now() } returns ms("2026-04-01")
+        coEvery { recurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+            manualPattern(id = 1L, merchant = "Rent", amount = 800.0, nextDate = ms("2026-04-03"))
+        )
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(1L, any(), any()) } returns listOf(
+            occurrence(ruleId = 1L, dueDate = ms("2026-04-03"), amount = 800.0, merchant = "Rent")
+        )
+        every {
+            databaseReadBarrier.checkReadAllowed("CashFlowCalculator.getUpcomingBills.readOccurrences")
+        } throws DatabaseAccessBlockedException(
+            accessType = DatabaseAccessType.READ,
+            operation = DatabaseAccessOperation("CashFlowCalculator.getUpcomingBills.readOccurrences"),
+            mode = RestoreMaintenanceMode.Mode.RESTORE_STAGING
+        )
+
+        val upcoming = calculator.getUpcomingBills(daysAhead = 10)
+
+        // Fail towards counting: the bill is still listed and the settled-bill drop never ran.
+        assertTrue(upcoming.any { it.merchantName == "Rent" })
+        coVerify(exactly = 0) { recurringLifecycleCoordinator.dropSettled(any()) }
+    }
+
     // ============================================================================
     // T4 Tier 3 – day-key boundary tests (formatDayKey via TimePeriodUtils)
     // ============================================================================
