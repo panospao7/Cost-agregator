@@ -13,5 +13,6 @@ import io.mockk.mockk
 fun noLinkedReceiptsLinkService(): Lazy<ReceiptLinkService> {
     val service = mockk<ReceiptLinkService>(relaxed = true)
     coEvery { service.getLinksForExpense(any()) } returns emptyList()
+    coEvery { service.unlinkAllReceiptsForExpense(any()) } returns Result.success(Unit)
     return Lazy { service }
 }

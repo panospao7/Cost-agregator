@@ -657,6 +657,19 @@ class ReceiptLinkService @Inject constructor(
     }
 
     /**
+     * P-03-1: unlink every receipt from an expense that is being deleted. Stops at the first
+     * failure and returns it, so the caller's transaction rolls the whole delete back.
+     * Cancellation propagates, from the unlink itself as well as from the read.
+     */
+    suspend fun unlinkAllReceiptsForExpense(expenseId: Long): Result<Unit> {
+        for (link in getLinksForExpense(expenseId)) {
+            val unlinked = unlinkReceiptFromExpense(receiptId = link.receiptId, expenseId = expenseId)
+            if (unlinked.isFailure) return unlinked
+        }
+        return Result.success(Unit)
+    }
+
+    /**
      * Returns all links associated with the given expense.
      *
      * @param expenseId The ID of the expense.
