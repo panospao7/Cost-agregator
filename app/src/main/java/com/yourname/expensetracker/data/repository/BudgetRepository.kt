@@ -974,7 +974,8 @@ class BudgetRepository @Inject constructor(
         val categorySpentById: Map<Long, Double> = multiCurrencyRepository
             .getHomeCurrencyPurchaseCategoryTotals(effectiveStart, endExclusive)
             .entries
-            .filter { it.key != null }
+            // N-08-6: a partial aggregate understates spend; no suggestion for that category.
+            .filter { it.key != null && !it.value.isPartial }
             .associate { it.key!! to it.value.displayAmount }
             .filterKeys { it in categoriesWithoutBudget.map { cat -> cat.id } }
 
