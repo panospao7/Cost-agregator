@@ -633,7 +633,10 @@ class NetCashflowBalanceProviderTest {
     }
 
     @Test
-    fun `DR-01 foreign currency received settlement converts at its own date`() = runTest {
+    fun `DR-01 foreign currency received settlement converts at the latest rate like the totals`() = runTest {
+        // PIN CHANGED: the settlement used to convert at its own date (TRANSACTION_DATE). The plain
+        // totals convert at the LATEST rate, so the settlement joins that basis (atMillis = null).
+        // The numeric concern (a converted settlement is added to the net) is unchanged.
         val converted = mockk<ConversionOutcome.Converted> { every { convertedAmount } returns 90.0 }
         coEvery { currencyConverter.convertOutcome(any(), any(), any(), any(), any(), any()) } returns converted
         val usd = settlement(100.0, paidByCurrentUser = false, currency = "USD")
@@ -645,11 +648,76 @@ class NetCashflowBalanceProviderTest {
                 amount = 100.0,
                 fromCurrency = "USD",
                 toCurrency = "EUR",
-                rateBasis = RateBasis.TRANSACTION_DATE,
-                atMillis = usd.createdAt,
+                rateBasis = RateBasis.LATEST_AVAILABLE,
+                atMillis = null,
                 stalePolicy = any()
             )
         }
+        coVerify(exactly = 0) {
+            currencyConverter.convertOutcome(any(), any(), any(), RateBasis.TRANSACTION_DATE, any(), any())
+        }
+    }
+
+    private fun usdShare(id: Long, share: Double): Expense =
+        entity(id, TransactionType.PURCHASE, "USD", amount = share)
+            .copy(isSharedExpense = true, myShareAmount = share)
+
+    @Test
+    fun `DR-01 non-payer USD share 1000 adds back EUR 1000 at the latest rate with no phantom EUR 100`() = runTest {
+        // Latest rate 1.00, transaction-date rate 0.90: the totals hold the share at EUR 1000, so the
+        // add-back must also be EUR 1000 (a date-rate add-back of 900 would leave a phantom -100).
+        val latest = mockk<ConversionOutcome.Converted> { every { convertedAmount } returns 1000.0 }
+        val dated = mockk<ConversionOutcome.Converted> { every { convertedAmount } returns 900.0 }
+        coEvery {
+            currencyConverter.convertOutcome(any(), any(), any(), RateBasis.LATEST_AVAILABLE, any(), any())
+        } returns latest
+        coEvery {
+            currencyConverter.convertOutcome(any(), any(), any(), RateBasis.TRANSACTION_DATE, any(), any())
+        } returns dated
+        givenTotals(deposits = 3000.0, purchaseShare = 1000.0)
+
+        val balance = balanceFor(listOf(usdShare(12L, 1000.0)), snapshot(nonPayer = setOf(12L)))
+
+        // 3000 - 1000 + 1000 = 3000 (not 2900).
+        assertEquals(3000.0, balance!!, 0.0001)
+    }
+
+    @Test
+    fun `DR-01 a lone non-payer row of EUR 50 with no deposits is unavailable not a zero balance`() = runTest {
+        coEvery { multiCurrencyRepository.getHomeCurrencyDepositTotal(ninetyDaysAgo, now) } returns
+            aggregate(0.0, rows = 0)
+        coEvery { multiCurrencyRepository.getHomeCurrencyPurchaseTotal(ninetyDaysAgo, now) } returns
+            aggregate(50.0, rows = 1)
+
+        val row = entity(13L, TransactionType.PURCHASE, "EUR", amount = 50.0)
+
+        assertNull(balanceFor(listOf(row), snapshot(nonPayer = setOf(13L))))
+    }
+
+    @Test
+    fun `DR-01 the same lone non-payer row of EUR 50 with a deposit of 100 returns a value`() = runTest {
+        coEvery { multiCurrencyRepository.getHomeCurrencyDepositTotal(ninetyDaysAgo, now) } returns
+            aggregate(100.0, rows = 1)
+        coEvery { multiCurrencyRepository.getHomeCurrencyPurchaseTotal(ninetyDaysAgo, now) } returns
+            aggregate(50.0, rows = 1)
+
+        val row = entity(13L, TransactionType.PURCHASE, "EUR", amount = 50.0)
+
+        // 100 - 50 + 50 = 100
+        assertEquals(100.0, balanceFor(listOf(row), snapshot(nonPayer = setOf(13L)))!!, 0.0001)
+    }
+
+    @Test
+    fun `DR-01 a not-mine non-payer row is not a cash row so alone it is unavailable`() = runTest {
+        // The totals never counted a not-mine row, so removing it must not hide the empty cashflow.
+        coEvery { multiCurrencyRepository.getHomeCurrencyDepositTotal(ninetyDaysAgo, now) } returns
+            aggregate(0.0, rows = 0)
+        coEvery { multiCurrencyRepository.getHomeCurrencyPurchaseTotal(ninetyDaysAgo, now) } returns
+            aggregate(0.0, rows = 0)
+
+        val row = entity(14L, TransactionType.PURCHASE, "EUR", amount = 50.0, isNotMine = true)
+
+        assertNull(balanceFor(listOf(row), snapshot(nonPayer = setOf(14L))))
     }
 
     @Test

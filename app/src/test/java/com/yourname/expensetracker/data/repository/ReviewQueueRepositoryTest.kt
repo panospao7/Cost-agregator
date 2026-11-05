@@ -196,7 +196,9 @@ class ReviewQueueRepositoryTest {
     fun `DR-04 approval that changes the suggested category corrects the merchant mapping once`() = runTest {
         givenApprovalCreates(41L, approvablePendingReview(41L)) // suggests category 1
 
-        val result = repository.approveReview(41L, finalCategoryId = 2L)
+        // PIN CHANGED: the user's explicit choice is now signalled with categoryChosenByUser = true;
+        // a bare finalCategoryId is a quick approve and is no longer a correction.
+        val result = repository.approveReview(41L, finalCategoryId = 2L, categoryChosenByUser = true)
 
         assertTrue(result is Result.Success)
         coVerify(exactly = 1) { merchantCategoryRepository.correctPattern("Test Merchant", 2L) }
@@ -207,7 +209,7 @@ class ReviewQueueRepositoryTest {
         givenApprovalCreates(42L, approvablePendingReview(42L))
 
         assertTrue(repository.approveReview(42L) is Result.Success)
-        assertTrue(repository.approveReview(42L, finalCategoryId = 1L) is Result.Success)
+        assertTrue(repository.approveReview(42L, finalCategoryId = 1L, categoryChosenByUser = true) is Result.Success)
 
         coVerify(exactly = 0) { merchantCategoryRepository.correctPattern(any(), any()) }
     }
@@ -216,8 +218,64 @@ class ReviewQueueRepositoryTest {
     fun `DR-04 approval of a review with no suggested category makes no correction`() = runTest {
         givenApprovalCreates(43L, approvablePendingReview(43L).copy(suggestedCategoryId = null))
 
-        assertTrue(repository.approveReview(43L, finalCategoryId = 5L) is Result.Success)
+        assertTrue(
+            repository.approveReview(43L, finalCategoryId = 5L, categoryChosenByUser = true) is Result.Success
+        )
 
+        coVerify(exactly = 0) { merchantCategoryRepository.correctPattern(any(), any()) }
+    }
+
+    @Test
+    fun `DR-04 quick approve with a different category makes no merchant correction and no category correction row`() = runTest {
+        givenApprovalCreates(46L, approvablePendingReview(46L)) // suggests category 1
+        val rows = mutableListOf<UserCorrection>()
+        coEvery { userCorrectionDao.insert(capture(rows)) } returns 1L
+
+        val result = repository.approveReview(46L, finalCategoryId = 2L, categoryChosenByUser = false)
+
+        assertTrue(result is Result.Success)
+        coVerify(exactly = 0) { merchantCategoryRepository.correctPattern(any(), any()) }
+        assertEquals(1, rows.size)
+        assertNull("quick approve is not a user category correction", rows.single().correctedCategoryId)
+        assertEquals(1L, rows.single().originalCategoryId)
+    }
+
+    @Test
+    fun `DR-04 quick approve with the same category as the suggestion makes no correction`() = runTest {
+        givenApprovalCreates(47L, approvablePendingReview(47L))
+        val rows = mutableListOf<UserCorrection>()
+        coEvery { userCorrectionDao.insert(capture(rows)) } returns 1L
+
+        val result = repository.approveReview(47L, finalCategoryId = 1L, categoryChosenByUser = false)
+
+        assertTrue(result is Result.Success)
+        coVerify(exactly = 0) { merchantCategoryRepository.correctPattern(any(), any()) }
+        assertNull(rows.single().correctedCategoryId)
+    }
+
+    @Test
+    fun `DR-04 user chosen category Y over suggested X records the correction row and merchant mapping`() = runTest {
+        givenApprovalCreates(48L, approvablePendingReview(48L)) // X = 1
+        val rows = mutableListOf<UserCorrection>()
+        coEvery { userCorrectionDao.insert(capture(rows)) } returns 1L
+
+        val result = repository.approveReview(48L, finalCategoryId = 2L, categoryChosenByUser = true)
+
+        assertTrue(result is Result.Success)
+        assertEquals(2L, rows.single().correctedCategoryId)
+        coVerify(exactly = 1) { merchantCategoryRepository.correctPattern("Test Merchant", 2L) }
+    }
+
+    @Test
+    fun `DR-04 user chosen category equal to the suggestion records no correction row`() = runTest {
+        givenApprovalCreates(49L, approvablePendingReview(49L))
+        val rows = mutableListOf<UserCorrection>()
+        coEvery { userCorrectionDao.insert(capture(rows)) } returns 1L
+
+        val result = repository.approveReview(49L, finalCategoryId = 1L, categoryChosenByUser = true)
+
+        assertTrue(result is Result.Success)
+        assertNull(rows.single().correctedCategoryId)
         coVerify(exactly = 0) { merchantCategoryRepository.correctPattern(any(), any()) }
     }
 
@@ -234,7 +292,7 @@ class ReviewQueueRepositoryTest {
         }
         timber.log.Timber.plant(tree)
         try {
-            val result = repository.approveReview(44L, finalCategoryId = 2L)
+            val result = repository.approveReview(44L, finalCategoryId = 2L, categoryChosenByUser = true)
 
             assertTrue(result is Result.Success)
         } finally {
@@ -251,7 +309,9 @@ class ReviewQueueRepositoryTest {
         val cancellation = kotlinx.coroutines.CancellationException("cancelled")
         coEvery { merchantCategoryRepository.correctPattern(any(), any()) } throws cancellation
 
-        val thrown = runCatching { repository.approveReview(45L, finalCategoryId = 2L) }.exceptionOrNull()
+        val thrown = runCatching {
+            repository.approveReview(45L, finalCategoryId = 2L, categoryChosenByUser = true)
+        }.exceptionOrNull()
 
         assertSame(cancellation, thrown)
     }

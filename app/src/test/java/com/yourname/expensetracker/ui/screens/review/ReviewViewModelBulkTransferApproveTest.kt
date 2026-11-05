@@ -100,6 +100,7 @@ class ReviewViewModelBulkTransferApproveTest {
         coEvery {
             reviewQueueRepository.approveReview(
                 reviewId = any(), finalAmount = any(), finalCurrency = any(), finalMerchant = any(),
+                categoryChosenByUser = any(),
                 finalCategoryId = any(), finalDate = any(), finalType = any(),
                 finalTransferDirection = any(), finalTransferAccountName = any(),
                 locationCleared = any(), finalLatitude = any(), finalLongitude = any(),
@@ -173,6 +174,7 @@ class ReviewViewModelBulkTransferApproveTest {
         coVerify(exactly = 1) {
             reviewQueueRepository.approveReview(
                 reviewId = rowId, finalAmount = any(), finalCurrency = any(), finalMerchant = any(),
+                categoryChosenByUser = any(),
                 finalCategoryId = any(), finalDate = any(), finalType = any(),
                 finalTransferDirection = direction, finalTransferAccountName = account,
                 locationCleared = any(), finalLatitude = any(), finalLongitude = any(),
@@ -214,6 +216,7 @@ class ReviewViewModelBulkTransferApproveTest {
         coVerify(exactly = 1) {
             reviewQueueRepository.approveReview(
                 reviewId = rowBId, finalAmount = null, finalCurrency = any(), finalMerchant = any(),
+                categoryChosenByUser = any(),
                 finalCategoryId = any(), finalDate = any(), finalType = any(),
                 finalTransferDirection = null, finalTransferAccountName = null,
                 locationCleared = any(), finalLatitude = any(), finalLongitude = any(),
@@ -224,6 +227,7 @@ class ReviewViewModelBulkTransferApproveTest {
         coVerify(exactly = 1) {
             reviewQueueRepository.approveReview(
                 reviewId = rowAId, finalAmount = any(), finalCurrency = any(), finalMerchant = any(),
+                categoryChosenByUser = any(),
                 finalCategoryId = any(), finalDate = any(), finalType = any(),
                 finalTransferDirection = null, finalTransferAccountName = null,
                 locationCleared = any(), finalLatitude = any(), finalLongitude = any(),
@@ -240,6 +244,7 @@ class ReviewViewModelBulkTransferApproveTest {
         coVerify(exactly = 0) {
             reviewQueueRepository.approveReview(
                 reviewId = rowBId, finalAmount = any(), finalCurrency = any(), finalMerchant = any(),
+                categoryChosenByUser = any(),
                 finalCategoryId = any(), finalDate = any(), finalType = any(),
                 finalTransferDirection = TransferDirection.OUTGOING, finalTransferAccountName = any(),
                 locationCleared = any(), finalLatitude = any(), finalLongitude = any(),
@@ -249,6 +254,7 @@ class ReviewViewModelBulkTransferApproveTest {
         coVerify(exactly = 0) {
             reviewQueueRepository.approveReview(
                 reviewId = rowBId, finalAmount = any(), finalCurrency = any(), finalMerchant = any(),
+                categoryChosenByUser = any(),
                 finalCategoryId = any(), finalDate = any(), finalType = any(),
                 finalTransferDirection = any(), finalTransferAccountName = "Synthetic Savings",
                 locationCleared = any(), finalLatitude = any(), finalLongitude = any(),
@@ -267,6 +273,7 @@ class ReviewViewModelBulkTransferApproveTest {
         coVerify(exactly = 1) {
             reviewQueueRepository.approveReview(
                 reviewId = rowBId, finalAmount = null, finalCurrency = any(), finalMerchant = any(),
+                categoryChosenByUser = any(),
                 finalCategoryId = any(), finalDate = any(), finalType = any(),
                 finalTransferDirection = TransferDirection.INCOMING, finalTransferAccountName = null,
                 locationCleared = any(), finalLatitude = any(), finalLongitude = any(),
@@ -285,6 +292,7 @@ class ReviewViewModelBulkTransferApproveTest {
         coVerify(exactly = 1) {
             reviewQueueRepository.approveReview(
                 reviewId = rowBId, finalAmount = null, finalCurrency = any(), finalMerchant = any(),
+                categoryChosenByUser = any(),
                 finalCategoryId = any(), finalDate = any(), finalType = any(),
                 finalTransferDirection = null, finalTransferAccountName = "Synthetic Edited Account",
                 locationCleared = any(), finalLatitude = any(), finalLongitude = any(),

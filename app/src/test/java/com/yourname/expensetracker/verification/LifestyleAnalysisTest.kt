@@ -98,6 +98,54 @@ class LifestyleAnalysisTest : AnalyticsEngineTestBase() {
         }
     }
 
+    private fun typedUsd(id: Long, type: TransactionType): Expense = Expense(
+        id = id,
+        amount = 200.0,
+        currency = "USD",
+        merchant = "Synthetic $type",
+        transactionType = type,
+        date = millis("2026-03-10"),
+        createdAt = 1L
+    )
+
+    @Test
+    fun `BL-05 a 200 USD TRANSFER with no rate does not throw and the report is produced`() = runTest {
+        every { expenseDao.getExpensesBetweenFlowUncapped(any(), any()) } returns flowOf(
+            listOf(incomeId(1, "2026-03-05", 1000.0), spendId(2, "2026-03-08", 100.0), typedUsd(3, TransactionType.TRANSFER))
+        )
+
+        val report = detector.analyzeLifestyleInflation(monthsToAnalyze = 3)
+
+        // The neutral transfer never reaches conversion; the EUR spend stays the March spending.
+        val march = report.monthlyData.single { it.month == "2026-03" }
+        assertApproxEquals(100.0, march.totalSpending, 0.0001)
+    }
+
+    @Test
+    fun `BL-05 a 200 USD WITHDRAWAL with no rate does not throw and the report is produced`() = runTest {
+        every { expenseDao.getExpensesBetweenFlowUncapped(any(), any()) } returns flowOf(
+            listOf(incomeId(1, "2026-03-05", 1000.0), spendId(2, "2026-03-08", 100.0), typedUsd(3, TransactionType.WITHDRAWAL))
+        )
+
+        val report = detector.analyzeLifestyleInflation(monthsToAnalyze = 3)
+
+        assertTrue("a report is produced for the month", report.monthlyData.any { it.month == "2026-03" })
+    }
+
+    @Test
+    fun `BL-05 a 200 USD PURCHASE with no rate still throws MoneyDisplayUnavailableException`() = runTest {
+        every { expenseDao.getExpensesBetweenFlowUncapped(any(), any()) } returns flowOf(
+            listOf(incomeId(1, "2026-03-05", 1000.0), typedUsd(2, TransactionType.PURCHASE))
+        )
+
+        try {
+            detector.analyzeLifestyleInflation(monthsToAnalyze = 3)
+            fail("Expected MoneyDisplayUnavailableException for an unconvertible PURCHASE")
+        } catch (expected: MoneyDisplayUnavailableException) {
+            // fail closed
+        }
+    }
+
     @Test
     fun `BL-05 EUR plus JPY at a known rate sums to the converted home-currency value`() = runTest {
         rateStore.putRate("JPY", "EUR", rate = 0.0062)

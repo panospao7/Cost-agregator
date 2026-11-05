@@ -164,7 +164,9 @@ class DashboardFollowThroughEngineTest {
 
     @Test
     fun `high amount fallback text uses the transaction currency not a hardcoded euro for USD`() = runTest {
-        val transaction = createExpense(amount = 250.0, merchant = "Amazon", categoryId = 5L, currency = "USD")
+        val transaction = createExpense(amount = 250.0, merchant = "Amazon", categoryId = 5L, currency = "USD",
+            baseAmount = 230.0, baseCurrency = "EUR"
+        )
 
         val recommendations = engine.generateRecommendations(transaction, null, "user123")
 
@@ -181,7 +183,9 @@ class DashboardFollowThroughEngineTest {
 
     @Test
     fun `high amount fallback text for zero-decimal JPY has no euro sign and no fraction digits`() = runTest {
-        val transaction = createExpense(amount = 250.0, merchant = "Amazon", categoryId = 5L, currency = "JPY")
+        val transaction = createExpense(amount = 250.0, merchant = "Amazon", categoryId = 5L, currency = "JPY",
+            baseAmount = 230.0, baseCurrency = "EUR"
+        )
 
         val recommendations = engine.generateRecommendations(transaction, null, "user123")
 
@@ -563,12 +567,16 @@ class DashboardFollowThroughEngineTest {
         transactionType: TransactionType = TransactionType.PURCHASE,
         categoryId: Long? = null,
         date: Long = FIXED_NOW,
-        currency: String = "EUR"
+        currency: String = "EUR",
+        baseAmount: Double? = null,
+        baseCurrency: String? = null
     ): Expense {
         return Expense(
             id = id,
             amount = amount,
             currency = currency,
+            baseAmount = baseAmount ?: if (baseCurrency != null) amount else 0.0,
+            baseCurrency = baseCurrency ?: "EUR",
             merchant = merchant,
             transactionType = transactionType,
             categoryId = categoryId,

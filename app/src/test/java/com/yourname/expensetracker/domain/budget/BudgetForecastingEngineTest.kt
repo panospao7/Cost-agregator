@@ -877,7 +877,9 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
     private fun statusFor(
         forBudget: Budget,
         effectiveLimit: Double,
-        percentKnown: Boolean = true
+        percentKnown: Boolean = true,
+        isPartial: Boolean = false,
+        conversionWarning: String? = null
     ): BudgetStatus = BudgetStatus(
         budget = forBudget,
         category = null,
@@ -888,12 +890,20 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
         periodStart = now,
         periodEnd = now,
         effectiveLimit = effectiveLimit,
-        percentKnown = percentKnown
+        percentKnown = percentKnown,
+        isPartial = isPartial,
+        conversionWarning = conversionWarning
     )
 
-    private fun stubEffectiveLimit(forBudget: Budget, effectiveLimit: Double, percentKnown: Boolean = true) {
+    private fun stubEffectiveLimit(
+        forBudget: Budget,
+        effectiveLimit: Double,
+        percentKnown: Boolean = true,
+        isPartial: Boolean = false,
+        conversionWarning: String? = null
+    ) {
         coEvery { budgetRepository.getBudgetStatusAt(forBudget, any()) } returns
-            statusFor(forBudget, effectiveLimit, percentKnown)
+            statusFor(forBudget, effectiveLimit, percentKnown, isPartial, conversionWarning)
     }
 
     @Test
@@ -1361,6 +1371,37 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
         val result = engine.generateForecastResult(budget)
 
         assertTrue(result is BudgetForecastResult.Available)
+    }
+
+    @Test
+    fun `P06-2 partial status with rollover 500 and limit 1000 is unavailable not 300 left`() = runTest {
+        // Rollover EUR 500 with an unconvertible period spend: the status is partial, so the
+        // effective limit (1000) cannot be trusted and no "300 left" style figure may appear.
+        val budget = arrangeStable450History(baseAmount = 500.0)
+        stubEffectiveLimit(budget, 1000.0, isPartial = true)
+        stubPeriodSpend(MoneyAggregate.singleCurrency(200.0, CurrencyCode("EUR")))
+
+        assertLimitUnavailable(engine.generateForecastResult(budget), ForecastUnavailableReason.LIMIT_CONVERSION_FAILED)
+    }
+
+    @Test
+    fun `P06-2 non null conversion warning on status is unavailable even when not flagged partial`() = runTest {
+        val budget = arrangeStable450History(baseAmount = 500.0)
+        stubEffectiveLimit(budget, 1000.0, isPartial = false, conversionWarning = "SYNTHETIC_CONVERSION_WARNING")
+
+        assertLimitUnavailable(engine.generateForecastResult(budget), ForecastUnavailableReason.LIMIT_CONVERSION_FAILED)
+    }
+
+    @Test
+    fun `P06-2 complete status with no warning and rollover limit 1000 forecasts normally control`() = runTest {
+        val budget = arrangeStable450History(baseAmount = 500.0)
+        stubEffectiveLimit(budget, 1000.0, isPartial = false, conversionWarning = null)
+
+        val forecast = (engine.generateForecastResult(budget) as BudgetForecastResult.Available).forecast
+
+        assertApproxEquals(1000.0, forecast.normalizedBudgetAmount, 0.0001)
+        assertApproxEquals(450.0, forecast.predictedSpending, 0.01)
+        assertApproxEquals(550.0, forecast.predictedRemaining, 0.01)
     }
 
     @Test

@@ -166,6 +166,7 @@ class ReviewViewModelAiAssistTest {
                 finalAmount = 12.0,
                 finalMerchant = "Edited",
                 finalCategoryId = 5L,
+                categoryChosenByUser = true,
                 finalDate = 1000L,
                 finalType = null,
                 finalLatitude = null,
@@ -203,6 +204,7 @@ class ReviewViewModelAiAssistTest {
                 finalAmount = 20.0,
                 finalMerchant = "Merchant",
                 finalCategoryId = 2L,
+                categoryChosenByUser = true,
                 finalDate = 2000L,
                 finalType = null,
                 finalLatitude = 37.98,
@@ -233,12 +235,65 @@ class ReviewViewModelAiAssistTest {
                 finalAmount = 20.0,
                 finalMerchant = "Merchant",
                 finalCategoryId = 2L,
+                categoryChosenByUser = true,
                 finalDate = 2000L,
                 finalType = null,
                 finalLatitude = 37.98,
                 finalLongitude = 23.72,
                 finalAddress = "Athens",
                 finalPlaceId = "N123"
+            )
+        }
+    }
+
+    @Test
+    fun `quick approveReview passes no user category choice flag`() = runTest {
+        coEvery { reviewQueueRepository.approveReview(reviewId = 92L) } returns Result.Success(92L)
+
+        viewModel.approveReview(92L)
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) {
+            reviewQueueRepository.approveReview(reviewId = 92L, categoryChosenByUser = false)
+        }
+        coVerify(exactly = 0) {
+            reviewQueueRepository.approveReview(reviewId = 92L, categoryChosenByUser = true)
+        }
+    }
+
+    @Test
+    fun `approveReviewWithEdits passes the user category choice flag true even for the suggested category`() = runTest {
+        coEvery {
+            reviewQueueRepository.approveReview(
+                reviewId = 93L,
+                finalCategoryId = 3L,
+                categoryChosenByUser = true,
+                finalAmount = null,
+                finalMerchant = null,
+                finalDate = null,
+                finalType = null
+            )
+        } returns Result.Success(93L)
+
+        viewModel.approveReviewWithEdits(
+            reviewId = 93L,
+            finalAmount = null,
+            finalMerchant = null,
+            finalCategoryId = 3L,
+            finalDate = null,
+            finalType = null
+        )
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) {
+            reviewQueueRepository.approveReview(
+                reviewId = 93L,
+                finalCategoryId = 3L,
+                categoryChosenByUser = true,
+                finalAmount = null,
+                finalMerchant = null,
+                finalDate = null,
+                finalType = null
             )
         }
     }
@@ -812,6 +867,7 @@ class ReviewViewModelAiAssistTest {
                 reviewId = any(),
                 finalAmount = any(),
                 finalMerchant = any(),
+                categoryChosenByUser = any(),
                 finalCategoryId = any(),
                 finalDate = any(),
                 finalType = any(),
@@ -843,6 +899,7 @@ class ReviewViewModelAiAssistTest {
             reviewId = reviewId,
             finalAmount = null,
             finalMerchant = null,
+            categoryChosenByUser = any(),
             finalCategoryId = 4L,
             finalDate = null,
             finalType = null,
@@ -884,6 +941,7 @@ class ReviewViewModelAiAssistTest {
                 reviewId = 72L,
                 finalAmount = null,
                 finalMerchant = null,
+                categoryChosenByUser = any(),
                 finalCategoryId = 4L,
                 finalDate = null,
                 finalType = null,
@@ -977,6 +1035,7 @@ class ReviewViewModelAiAssistTest {
                 reviewId = any(),
                 finalAmount = any(),
                 finalMerchant = any(),
+                categoryChosenByUser = any(),
                 finalCategoryId = any(),
                 finalDate = any(),
                 finalType = any(),
