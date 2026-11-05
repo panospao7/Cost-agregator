@@ -7,6 +7,10 @@ import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.dao.NotificationIntakeDao
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.worker.NotificationIntakeWorker
+import com.yourname.expensetracker.di.IoDispatcher
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import timber.log.Timber
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
@@ -17,7 +21,8 @@ class NotificationIntakeRecoveryScheduler @Inject constructor(
     private val intakeDao: NotificationIntakeDao,
     private val workManager: WorkManager,
     private val timeProvider: TimeProvider,
-    private val writeBarrier: DatabaseWriteBarrier
+    private val writeBarrier: DatabaseWriteBarrier,
+    @IoDispatcher private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
 ) {
     companion object {
         private const val STALE_PROCESSING_MS = 10 * 60 * 1000L // 10 minutes
@@ -36,6 +41,12 @@ class NotificationIntakeRecoveryScheduler @Inject constructor(
      * scheduling path.
      */
     suspend fun recoverPending(limit: Int = 100) {
+        // Callers (e.g. startup) may run on Main; paging and WorkRequest building stay off Main.
+        // Cancellation propagates through withContext; the caller still awaits completion.
+        withContext(ioDispatcher) { recoverPendingOnIo(limit) }
+    }
+
+    private suspend fun recoverPendingOnIo(limit: Int) {
         try {
             writeBarrier.checkWritesAllowed("NotificationIntakeRecoveryScheduler.recoverPending")
         } catch (blocked: DatabaseAccessBlockedException) {
@@ -69,6 +80,7 @@ class NotificationIntakeRecoveryScheduler @Inject constructor(
         var afterId = Long.MIN_VALUE
         var enqueued = 0
         var pages = 0
+        var capReachedWithFullPage = false
         while (pages < MAX_RECOVERY_PAGES) {
             val ready = intakeDao.getReadyForProcessingPage(now, afterCapturedAt, afterId, pageSize)
             pages++
@@ -94,8 +106,10 @@ class NotificationIntakeRecoveryScheduler @Inject constructor(
             if (ready.size < pageSize) break
             afterCapturedAt = last.capturedAt
             afterId = last.id
+            // Reaching here means this page was full; warn only if it was the last allowed page.
+            if (pages >= MAX_RECOVERY_PAGES) capReachedWithFullPage = true
         }
-        if (pages >= MAX_RECOVERY_PAGES) {
+        if (capReachedWithFullPage) {
             Timber.w("Intake recovery reached page cap; remaining rows deferred to next run")
         }
         if (enqueued > 0) {

@@ -824,6 +824,14 @@ class TransactionsViewModel @Inject constructor(
         mySharePercentage: String,
         myShareAmount: String
     ) {
+        // Run the total check only when the share actually changed. The dialog prefills the stored
+        // share with "%.2f" (Locale.US), so compare at that precision: an untouched prefill counts as
+        // unchanged, which keeps legacy shares above the total editable (e.g. name-only edits).
+        val storedShare = expense.myShareAmount
+        val enteredShare = com.yourname.expensetracker.ui.util.AmountInputSanitizer.parseOrNull(myShareAmount.trim())
+        val shareUnchanged = storedShare != null && enteredShare != null &&
+            java.lang.String.format(java.util.Locale.US, "%.2f", enteredShare) ==
+            java.lang.String.format(java.util.Locale.US, "%.2f", storedShare)
         // S5-012: Use shared OwnershipValidator — same rules as Add Expense
         val validationResult = com.yourname.expensetracker.ui.util.OwnershipValidator.validate(
             isNotMine = isNotMine,
@@ -831,7 +839,7 @@ class TransactionsViewModel @Inject constructor(
             sharedWithName = sharedWithName,
             sharePercentageText = mySharePercentage.trim(),
             shareAmountText = myShareAmount.trim(),
-            totalAmount = expense.amount
+            totalAmount = if (shareUnchanged) null else expense.amount
         )
         if (validationResult is com.yourname.expensetracker.ui.util.OwnershipValidator.ValidationResult.Invalid) {
             viewModelScope.launch { _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString(validationResult.message)) }
@@ -851,7 +859,9 @@ class TransactionsViewModel @Inject constructor(
                     isSharedExpense = isSharedExpense,
                     sharedWithName = sharedWithName.takeIf { it.isNotBlank() },
                     mySharePercentage = parsedSharePercentage,
-                    myShareAmount = com.yourname.expensetracker.ui.util.AmountInputSanitizer.parseOrNull(myShareAmount.trim())
+                    // Untouched prefill: keep the exact stored value so the coordinator's exact-compare
+                    // sees no share change (12.345 stored, 12.35 displayed) and skips the total check.
+                    myShareAmount = if (shareUnchanged) storedShare else enteredShare
                 )
                 val message = when {
                     isNotMine -> "Marked as not mine"
