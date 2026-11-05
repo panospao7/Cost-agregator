@@ -950,8 +950,61 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
 
         assertApproxEquals(800.0, forecast.spentToDate, 0.01)
         // spentToDate 800 < limit 1000 → not the CRITICAL the raw sum would force.
-        assertEquals(ForecastRiskLevel.LOW, forecast.riskLevel)
+        // PIN CHANGED: BL-07 no-history rule (spent/limit >= 0.75 is MEDIUM) now makes 800/1000
+        // MEDIUM instead of LOW; the point of this test (not CRITICAL) is kept.
+        assertEquals(ForecastRiskLevel.MEDIUM, forecast.riskLevel)
+        assertTrue(forecast.riskLevel != ForecastRiskLevel.CRITICAL)
         assertEquals("PERIOD_END", forecast.rateBasis)
+    }
+
+    // BL-07: with no observed history the risk level follows spent/limit (limit 1000 by default).
+    private suspend fun noHistoryRiskFor(spent: Double): ForecastRiskLevel {
+        val budget = Budget(categoryId = 1L, amount = 1000.0, period = BudgetPeriod.MONTHLY, startDate = now)
+        stubPeriodSpend(MoneyAggregate.singleCurrency(spent, CurrencyCode("EUR")))
+        val result = engine.generateForecastResult(budget)
+        return (result as BudgetForecastResult.Available).forecast.riskLevel
+    }
+
+    @Test
+    fun `BL-07 no history spent 950 of 1000 is HIGH`() = runTest {
+        assertEquals(ForecastRiskLevel.HIGH, noHistoryRiskFor(950.0))
+    }
+
+    @Test
+    fun `BL-07 no history spent exactly 900 of 1000 is HIGH boundary`() = runTest {
+        assertEquals(ForecastRiskLevel.HIGH, noHistoryRiskFor(900.0))
+    }
+
+    @Test
+    fun `BL-07 no history spent 800 of 1000 is MEDIUM`() = runTest {
+        assertEquals(ForecastRiskLevel.MEDIUM, noHistoryRiskFor(800.0))
+    }
+
+    @Test
+    fun `BL-07 no history spent exactly 750 of 1000 is MEDIUM boundary`() = runTest {
+        assertEquals(ForecastRiskLevel.MEDIUM, noHistoryRiskFor(750.0))
+    }
+
+    @Test
+    fun `BL-07 no history spent 700 of 1000 is LOW`() = runTest {
+        assertEquals(ForecastRiskLevel.LOW, noHistoryRiskFor(700.0))
+    }
+
+    @Test
+    fun `BL-07 with three months of history the spent ratio rule does not apply`() = runTest {
+        val budget = Budget(categoryId = 1L, amount = 1000.0, period = BudgetPeriod.MONTHLY, startDate = now)
+        coEvery { mockExpenseRepo.getExpenseSnapshotsBetween(any(), any()) } returns listOf(
+            snapshot("2026-01", 50.0, 1L),
+            snapshot("2026-02", 50.0, 1L),
+            snapshot("2026-03", 50.0, 1L)
+        )
+        // 800 spent would be MEDIUM with no history; with history the usage-ratio path decides:
+        // remaining 200, predicted 50 -> ratio 0.25 -> LOW.
+        stubPeriodSpend(MoneyAggregate.singleCurrency(800.0, CurrencyCode("EUR")))
+
+        val forecast = (engine.generateForecastResult(budget) as BudgetForecastResult.Available).forecast
+
+        assertEquals(ForecastRiskLevel.LOW, forecast.riskLevel)
     }
 
     @Test

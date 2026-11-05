@@ -32,6 +32,7 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.slot
 import io.mockk.verify
 import kotlinx.coroutines.flow.flowOf
 import org.junit.Assert.assertEquals
@@ -1151,6 +1152,35 @@ class CashFlowCalculatorTest : AnalyticsEngineTestBase() {
         assertEquals(listOf("Rent"), result[0].predictedRecurring.map { it.merchantName })
         assertEquals(ms("2026-01-01"), result[1].date.time)
         assertEquals(listOf("Gym"), result[1].predictedRecurring.map { it.merchantName })
+    }
+
+    @Test
+    fun `second rule projection receives the first rules linked expense id as claimed`() = runTest {
+        val day = ms("2026-01-10")
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns emptyList()
+        coEvery { recurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+            manualPattern(id = 1L, merchant = "Rent", amount = 400.0, nextDate = day),
+            manualPattern(id = 2L, merchant = "Rent", amount = 420.0, nextDate = day)
+        )
+        val firstClaimed = slot<Set<Long>>()
+        val secondClaimed = slot<Set<Long>>()
+        coEvery {
+            recurringLifecycleCoordinator.projectOccurrences(1L, any(), any(), capture(firstClaimed))
+        } returns listOf(
+            occurrence(ruleId = 1L, dueDate = day, amount = 400.0, merchant = "Rent", status = "PAID")
+                .copy(linkedExpenseId = 77L)
+        )
+        coEvery {
+            recurringLifecycleCoordinator.projectOccurrences(2L, any(), any(), capture(secondClaimed))
+        } returns listOf(occurrence(ruleId = 2L, dueDate = day, amount = 420.0, merchant = "Rent"))
+        coEvery { recurringOccurrenceDao.getByDateRange(any(), any()) } returns emptyList()
+
+        calculator.calculateDailyCashFlow(
+            Date(day), Date(ms("2026-01-12")), startingBalance = MoneyAmount(0.0, CurrencyCode("EUR"))
+        )
+
+        assertEquals(emptySet<Long>(), firstClaimed.captured)
+        assertEquals(setOf(77L), secondClaimed.captured)
     }
 
     @Test

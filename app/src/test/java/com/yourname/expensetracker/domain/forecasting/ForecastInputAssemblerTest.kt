@@ -30,6 +30,7 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.slot
 import io.mockk.verify
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -137,6 +138,55 @@ class ForecastInputAssemblerTest {
         }
         // Reading already-materialized occurrences is guarded by the read barrier.
         verify(atLeast = 1) { databaseReadBarrier.checkReadAllowed(any<String>()) }
+    }
+
+    @Test
+    fun `assemble passes the first rules linked expense id as claimed to the second rule`() = runTest {
+        coEvery { currencySettingsRepository.resolveHomeCurrency() } returns
+            HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
+        coEvery { analyticsCurrencyNormalizer.normalizeSnapshots(any(), any()) } returns
+            AnalyticsNormalizationResult(
+                homeCurrency = "EUR",
+                normalizedExpenses = emptyList(),
+                includedExpenses = emptyList(),
+                warnings = emptyList(),
+                latestRateTimestamp = null,
+                totalInputCount = 0
+            )
+        coEvery { recurringOccurrenceDao.getByDateRange(any(), any()) } returns emptyList()
+        val dueDate = ms(2026, Calendar.JANUARY, 20, 0)
+        val firstClaimed = slot<Set<Long>>()
+        val secondClaimed = slot<Set<Long>>()
+        coEvery {
+            recurringLifecycleCoordinator.projectOccurrences(1L, any(), any(), capture(firstClaimed))
+        } returns listOf(
+            occurrence(ruleId = 1L, dueDate = dueDate, amount = 400.0, merchant = "Netflix", status = "PAID")
+                .copy(linkedExpenseId = 77L)
+        )
+        coEvery {
+            recurringLifecycleCoordinator.projectOccurrences(2L, any(), any(), capture(secondClaimed))
+        } returns listOf(occurrence(ruleId = 2L, dueDate = dueDate, amount = 420.0, merchant = "Netflix"))
+
+        assembler.assemble(
+            expenses = emptyList(),
+            manualRecurringEntities = listOf(
+                ManualRecurringExpense(
+                    id = 1, merchant = "Netflix", amount = 400.0,
+                    frequency = RecurrenceFrequency.MONTHLY, nextDate = dueDate
+                ),
+                ManualRecurringExpense(
+                    id = 2, merchant = "Netflix", amount = 420.0,
+                    frequency = RecurrenceFrequency.MONTHLY, nextDate = dueDate
+                )
+            ),
+            detectedRecurringPatterns = emptyList(),
+            plannedExpenses = emptyList(),
+            savingsGoals = emptyList(),
+            budgetStatuses = emptyList()
+        )
+
+        assertEquals(emptySet<Long>(), firstClaimed.captured)
+        assertEquals(setOf(77L), secondClaimed.captured)
     }
 
     @Test
