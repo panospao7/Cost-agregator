@@ -69,7 +69,7 @@ fun ReceiptItemBreakdownCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = stringResource(R.string.receipt_ai_breakdown_format, items.size),
+                    text = stringResource(R.string.receipt_ai_breakdown_format, items.count { !ReceiptItemPlaceholder.isPlaceholder(it) }),
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.Bold
                 )

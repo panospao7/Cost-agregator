@@ -160,7 +160,8 @@ sealed class DashboardWidget {
          * Not a calculated runway; must never be used in threshold comparisons.
          */
         val zeroBurnHorizonDays: Int?,
-        val totalBudget: Double,
+        /** P-05-3: normalized home-currency effective limit; null when unavailable (never a raw amount). */
+        val totalBudget: Double?,
         val discretionaryRemaining: Double,
         val averageDailyDiscretionarySpend: Double,
         val monthlyIncome: Double,
@@ -328,7 +329,6 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         /** S4-006R: true when today/week aggregates had conversion failures */
         val periodIsPartial: Boolean,
         val overallBudget: BudgetStatusSnapshot?,
-        val totalBudgetAmount: Double,
         /** CURR-587-04: Canonical normalized input result for all money widgets */
         val normalizedInputResult: DashboardNormalizedInputResult
     )
@@ -607,7 +607,6 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             weekSpent = weekSpent,
             periodIsPartial = periodIsPartial,
             overallBudget = overallBudget,
-            totalBudgetAmount = overallBudget?.budgetAmount ?: 0.0, // G-MONEY-ALLOW[CURR-587-05][G-MONEY-15]: legacy budget path until budget normalization is implemented
             normalizedInputResult = normalizedInputResult
         )
     }
@@ -866,7 +865,9 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             financialRunway = DashboardWidget.FinancialRunway(
                 daysRemaining = runwayDays,
                 zeroBurnHorizonDays = zeroBurnHorizonDays,
-                totalBudget = ctx.totalBudgetAmount, // G-MONEY-ALLOW[CURR-587-05][G-MONEY-15]: legacy budget path until budget normalization
+                // P-05-3: the displayed budget is the normalized home-currency effective limit
+                // (shared BudgetPeriodRemaining); null (unavailable) when it is not Available.
+                totalBudget = budgetAvailable?.limit,
                 discretionaryRemaining = totalRemaining,
                 averageDailyDiscretionarySpend = averageDailyBurn,
                 monthlyIncome = monthlyIncome,
@@ -1430,13 +1431,15 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             )
             when (runwayResult) {
                 is RunwayResult.Available -> {
-                    if (runwayResult.totalRemaining > 0 || ctx.totalBudgetAmount > 0) add(runwayResult.financialRunway) // G-MONEY-ALLOW[CURR-587-05][G-MONEY-15]: legacy budget check until budget normalization
+                    // P-05-3: boolean gate - a normalized, available budget basis exists.
+                    val hasAvailableBudgetBasis = runwayResult.financialRunway.totalBudget != null
+                    if (runwayResult.totalRemaining > 0 || hasAvailableBudgetBasis) add(runwayResult.financialRunway)
                 }
                 is RunwayResult.Unavailable -> {
                     add(DashboardWidget.FinancialRunway(
                         daysRemaining = null,
                         zeroBurnHorizonDays = null,
-                        totalBudget = 0.0,
+                        totalBudget = null,
                         discretionaryRemaining = 0.0,
                         averageDailyDiscretionarySpend = 0.0,
                         monthlyIncome = 0.0,

@@ -82,7 +82,7 @@ class ComputeDashboardWidgetsUseCaseEffectiveBudgetTest {
 
         assertFalse(runway.isUnavailable)
         assertEquals(2_700.0, runway.discretionaryRemaining, 1e-6)
-        assertEquals(12_000.0, runway.totalBudget, 1e-6)
+        assertEquals(12_000.0, requireNotNull(runway.totalBudget), 1e-6)
         // Daily burn 300 / 15 = 20 per day; 2700 / 20 = 135 days.
         assertEquals(135, runway.daysRemaining)
     }

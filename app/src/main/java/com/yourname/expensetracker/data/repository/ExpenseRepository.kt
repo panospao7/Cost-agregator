@@ -677,7 +677,7 @@ class ExpenseRepository @Inject constructor(
                 wasRejected = false,
                 wasApproved = true,
                 notificationTitle = "Bulk category update",
-                notificationText = "Applied to all transactions for $merchant",
+                notificationText = "Applied to all matching transactions",
                 createdAt = timeProvider.now()
             )
             userCorrectionDao.insert(correction)

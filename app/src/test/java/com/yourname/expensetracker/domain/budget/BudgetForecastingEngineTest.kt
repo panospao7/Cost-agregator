@@ -102,6 +102,11 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
         mockConverter = mockk<CurrencyConverter>(relaxed = true)
         mockWriteBarrier = mockk(relaxed = true)
 
+        // P-06-2: default known effective limit of 1000 for the id-0 test budgets; tests that
+        // need another limit (or an unavailable one) re-stub via stubEffectiveLimit().
+        coEvery { budgetRepository.getBudgetStatusesAt(any()) } returns
+            listOf(statusFor(Budget(amount = 1000.0, period = BudgetPeriod.MONTHLY, startDate = now), 1000.0))
+
         // Default: return empty snapshots (tests override this per-scenario)
         coEvery { mockExpenseRepo.getExpenseSnapshotsBetween(any(), any()) } returns emptyList()
 
@@ -172,6 +177,11 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
             snapshot("2026-03", 300.0, 1L)
         )
 
+        // P-06-2: effective limit 1000 with 1000 already spent (period-end aggregate), so
+        // spentToDate >= limit deterministically forces CRITICAL. (Previously this relied on
+        // the relaxed converter mock returning a 0.0 limit, which is now typed unavailable.)
+        stubPeriodSpend(MoneyAggregate.singleCurrency(1000.0, CurrencyCode("EUR")))
+
         val forecast = engine.generateForecast(budget, forecastPeriodDays = 30)
 
         // RP-08 (P6-004): the mid-month April window edge is excluded and the
@@ -180,9 +190,6 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
         assertApproxEquals(275.0, forecast.predictedSpending, 0.01)
         // Confidence: observed=2 → 2/3*0.8 = 0.5333; CV([200,300])≈0.283 < 0.3 → +0.1
         assertApproxEquals(0.6333333333333333, forecast.confidenceScore, 0.001)
-        // Risk: the relaxed converter mock normalizes the budget limit to 0.0,
-        // so spentToDate >= normalizedBudgetAmount forces CRITICAL (pre-existing
-        // mock artifact in this suite, unchanged by RP-08).
         assertEquals(ForecastRiskLevel.CRITICAL, forecast.riskLevel)
         assertApproxEquals(1.0, forecast.overspendProbability, 0.01)
     }
@@ -193,6 +200,9 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
         coEvery { mockExpenseRepo.getExpenseSnapshotsBetween(any(), any()) } returns listOf(
             snapshot("2026-03", 120.0, 1L)
         )
+        // P-06-2: limit 500 fully spent => CRITICAL (replaces the former 0.0-limit mock artifact).
+        stubEffectiveLimit(budget, 500.0)
+        stubPeriodSpend(MoneyAggregate.singleCurrency(500.0, CurrencyCode("EUR")))
 
         val forecast = engine.generateForecast(budget)
 
@@ -210,6 +220,9 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
             snapshot("2026-02", 100.0, 1L),
             snapshot("2026-03", 100.0, 1L)
         )
+        // P-06-2: limit 400 fully spent => CRITICAL (replaces the former 0.0-limit mock artifact).
+        stubEffectiveLimit(budget, 400.0)
+        stubPeriodSpend(MoneyAggregate.singleCurrency(400.0, CurrencyCode("EUR")))
 
         val forecast = engine.generateForecast(budget)
 
@@ -221,8 +234,11 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `budget zero still forecasts history and is critical risk`() = runTest {
+    fun `budget with a tiny effective limit still forecasts history and is critical risk`() = runTest {
+        // P-06-2: a zero limit is now typed unavailable (see the effective-limit tests below);
+        // the former zero-limit CRITICAL path is exercised with a tiny positive limit instead.
         val budget = Budget(categoryId = 1L, amount = 0.0, period = BudgetPeriod.MONTHLY, startDate = now)
+        stubEffectiveLimit(budget, 10.0)
         coEvery { mockExpenseRepo.getExpenseSnapshotsBetween(any(), any()) } returns listOf(
             snapshot("2026-01", 100.0, 1L),
             snapshot("2026-02", 100.0, 1L),
@@ -373,6 +389,10 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
             snapshot("2026-03", 200.0, null),
             aprilSnapshot
         )
+        // P-06-2: limit 100 with 50 spent (period-end aggregate); predicted 73.33 pushes the
+        // projected total over the limit (previously forced by the 0.0-limit mock artifact).
+        stubEffectiveLimit(budget, 100.0)
+        stubPeriodSpend(MoneyAggregate.singleCurrency(50.0, CurrencyCode("EUR")))
 
         val forecast = engine.generateForecast(budget)
 
@@ -852,18 +872,29 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
         )
     }
 
-    private fun convertedLimit(amount: Double): ConversionOutcome.Converted = ConversionOutcome.Converted(
-        originalAmount = amount,
-        originalCurrency = CurrencyCode("EUR"),
-        convertedAmount = amount,
-        targetCurrency = CurrencyCode("EUR"),
-        rateUsed = 1.0,
-        rateBasis = RateBasis.PERIOD_END,
-        rateValidDate = now,
-        rateLastUpdated = now,
-        rateSource = "test",
-        conversionPath = ConversionPath.DIRECT
+    // P-06-2: the forecast limit is the repository status snapshot's effectiveLimit
+    // (home currency, rollover applied), matched on budget.id. All test budgets use id 0.
+    private fun statusFor(
+        forBudget: Budget,
+        effectiveLimit: Double,
+        percentKnown: Boolean = true
+    ): BudgetStatus = BudgetStatus(
+        budget = forBudget,
+        category = null,
+        spentAmount = 0.0,
+        remainingAmount = effectiveLimit,
+        percentUsed = 0f,
+        healthStatus = BudgetHealthStatus.ON_TRACK,
+        periodStart = now,
+        periodEnd = now,
+        effectiveLimit = effectiveLimit,
+        percentKnown = percentKnown
     )
+
+    private fun stubEffectiveLimit(forBudget: Budget, effectiveLimit: Double, percentKnown: Boolean = true) {
+        coEvery { budgetRepository.getBudgetStatusesAt(any()) } returns
+            listOf(statusFor(forBudget, effectiveLimit, percentKnown))
+    }
 
     @Test
     fun `single currency parity - period risk math uses repository period-end aggregate`() = runTest {
@@ -872,7 +903,6 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
             snapshot("2026-02", 300.0, 1L),
             snapshot("2026-03", 300.0, 1L)
         )
-        coEvery { mockConverter.convertOutcome(any(), any(), any(), any(), any(), any()) } returns convertedLimit(1000.0)
         stubPeriodSpend(MoneyAggregate.singleCurrency(400.0, CurrencyCode("EUR")))
 
         val result = engine.generateForecastResult(budget)
@@ -900,7 +930,6 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
                 .toEpochMilli()
         )
         coEvery { mockExpenseRepo.getExpenseSnapshotsBetween(any(), any()) } returns listOf(currentPeriodSnapshot)
-        coEvery { mockConverter.convertOutcome(any(), any(), any(), any(), any(), any()) } returns convertedLimit(1000.0)
         // PERIOD_END basis: rates moved after the purchases, so the same period
         // spend aggregates to 800 at period-end rates. Risk math must use 800 —
         // the raw transaction-date sum must NOT leak into the risk ratio.
@@ -918,7 +947,6 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
     @Test
     fun `mixed currency period spend is risk-mathed post-conversion at one basis`() = runTest {
         val budget = Budget(categoryId = null, amount = 1000.0, period = BudgetPeriod.MONTHLY, startDate = now)
-        coEvery { mockConverter.convertOutcome(any(), any(), any(), any(), any(), any()) } returns convertedLimit(1000.0)
         // Mixed buckets already converted at the single PERIOD_END basis:
         // 400 EUR (home) + 300 USD-converted = 700, no failures.
         stubPeriodSpend(
@@ -945,7 +973,6 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
     @Test
     fun `unconvertible period spend returns typed unavailable and persists nothing`() = runTest {
         val budget = Budget(categoryId = 1L, amount = 1000.0, period = BudgetPeriod.MONTHLY, startDate = now)
-        coEvery { mockConverter.convertOutcome(any(), any(), any(), any(), any(), any()) } returns convertedLimit(1000.0)
         // Total conversion failure for the period spend — no fabricated fallback value.
         stubPeriodSpend(
             MoneyAggregate(
@@ -981,7 +1008,6 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
             snapshot("2026-02", 300.0, 1L),
             snapshot("2026-03", 300.0, 1L)
         )
-        coEvery { mockConverter.convertOutcome(any(), any(), any(), any(), any(), any()) } returns convertedLimit(1000.0)
         // Baseline: same history, complete spend aggregate (default setUp stub).
         val baseline = engine.generateForecast(budget, forecastPeriodDays = 30)
 
@@ -1025,7 +1051,6 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
         val periodEnd = LocalDate.of(2026, 5, 1)
             .atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
         val budget = Budget(categoryId = 1L, amount = 1000.0, period = BudgetPeriod.MONTHLY, startDate = periodStart)
-        coEvery { mockConverter.convertOutcome(any(), any(), any(), any(), any(), any()) } returns convertedLimit(1000.0)
 
         val capturedStarts = mutableListOf<Long>()
         val capturedEnds = mutableListOf<Long>()
@@ -1105,7 +1130,6 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
     @Test
     fun `overspend probability with confidence 0_2 and base 0_05 is 0_41`() = runTest {
         val budget = Budget(categoryId = 1L, amount = 1000.0, period = BudgetPeriod.MONTHLY, startDate = now)
-        coEvery { mockConverter.convertOutcome(any(), any(), any(), any(), any(), any()) } returns convertedLimit(1000.0)
         // No history => zero observed months and zero spend: confidence 0.2, buffer == limit => base 0.05.
         coEvery { mockExpenseRepo.getExpenseSnapshotsBetween(any(), any()) } returns emptyList()
 
@@ -1118,7 +1142,6 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
     @Test
     fun `overspend probability with confidence 0_2 and base 0_8 is 0_56`() = runTest {
         val budget = Budget(categoryId = 1L, amount = 1000.0, period = BudgetPeriod.MONTHLY, startDate = now)
-        coEvery { mockConverter.convertOutcome(any(), any(), any(), any(), any(), any()) } returns convertedLimit(1000.0)
         coEvery { mockExpenseRepo.getExpenseSnapshotsBetween(any(), any()) } returns emptyList()
         // 950 spent of 1000, nothing predicted: buffer 50 < 10% of limit => base 0.8.
         stubPeriodSpend(MoneyAggregate.singleCurrency(950.0, CurrencyCode("EUR")))
@@ -1135,7 +1158,6 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
             .atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
         every { timeProvider.now() } returns mayFirst
         val budget = Budget(categoryId = 1L, amount = 1000.0, period = BudgetPeriod.MONTHLY, startDate = mayFirst)
-        coEvery { mockConverter.convertOutcome(any(), any(), any(), any(), any(), any()) } returns convertedLimit(1000.0)
         // Three complete months with identical totals: 3/3 * 0.8 + 0.2 => confidence 1.0.
         coEvery { mockExpenseRepo.getExpenseSnapshotsBetween(any(), any()) } returns listOf(
             snapshot("2026-02", 100.0, 1L),
@@ -1168,6 +1190,195 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
 
         assertApproxEquals(0.5, lowBase, 0.0001)
         assertApproxEquals(0.5, highBase, 0.0001)
+    }
+
+    // =========================================================================
+    // P-06-2: the forecast limit is BudgetRepository.getBudgetStatusesAt(now)'s
+    // effectiveLimit (rollover/carried deficit applied), matched on budget.id.
+    // The raw budget.amount is never used; unknown limits are typed unavailable.
+    // =========================================================================
+
+    /** now = Apr 1 00:00 so the period has 30 days left; Jan-Mar are three complete 450 months. */
+    private fun arrangeStable450History(id: Long = 0L, baseAmount: Double = 500.0): Budget {
+        val aprilFirst = LocalDate.of(2026, 4, 1)
+            .atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+        every { timeProvider.now() } returns aprilFirst
+        coEvery { mockExpenseRepo.getExpenseSnapshotsBetween(any(), any()) } returns listOf(
+            snapshot("2026-01", 450.0, 1L),
+            snapshot("2026-02", 450.0, 1L),
+            snapshot("2026-03", 450.0, 1L)
+        )
+        return Budget(
+            id = id,
+            categoryId = 1L,
+            amount = baseAmount,
+            period = BudgetPeriod.MONTHLY,
+            startDate = aprilFirst
+        )
+    }
+
+    @Test
+    fun `P06-2 carried deficit lowers effective limit so predicted 450 against 400 is critical`() = runTest {
+        // Base 500, carried -100 => effective 400. Spent 0, predicted 450 (30 days left, stable).
+        val budget = arrangeStable450History(baseAmount = 500.0)
+        stubEffectiveLimit(budget, 400.0)
+
+        val forecast = (engine.generateForecastResult(budget) as BudgetForecastResult.Available).forecast
+
+        assertApproxEquals(450.0, forecast.predictedSpending, 0.01)
+        assertApproxEquals(400.0, forecast.normalizedBudgetAmount, 0.0001)
+        assertApproxEquals(-50.0, forecast.predictedRemaining, 0.01)
+        assertEquals(ForecastRiskLevel.CRITICAL, forecast.riskLevel)
+        assertApproxEquals(1.0, forecast.overspendProbability, 0.0001)
+    }
+
+    @Test
+    fun `P06-2 same inputs without rollover use effective 500 and are not over`() = runTest {
+        val budget = arrangeStable450History(baseAmount = 500.0)
+        stubEffectiveLimit(budget, 500.0)
+
+        val forecast = (engine.generateForecastResult(budget) as BudgetForecastResult.Available).forecast
+
+        assertApproxEquals(450.0, forecast.predictedSpending, 0.01)
+        assertApproxEquals(500.0, forecast.normalizedBudgetAmount, 0.0001)
+        assertApproxEquals(50.0, forecast.predictedRemaining, 0.01)
+        assertTrue("must not be CRITICAL", forecast.riskLevel != ForecastRiskLevel.CRITICAL)
+        assertTrue("must not be a certain overspend", forecast.overspendProbability < 1.0)
+    }
+
+    @Test
+    fun `P06-2 effective limit not budget amount drives the forecast`() = runTest {
+        // Raw amount is huge; the status snapshot says 400. The raw amount must be ignored.
+        val budget = arrangeStable450History(baseAmount = 1_000_000.0)
+        stubEffectiveLimit(budget, 400.0)
+
+        val forecast = (engine.generateForecastResult(budget) as BudgetForecastResult.Available).forecast
+
+        assertApproxEquals(400.0, forecast.normalizedBudgetAmount, 0.0001)
+        assertEquals(ForecastRiskLevel.CRITICAL, forecast.riskLevel)
+    }
+
+    @Test
+    fun `P06-2 status is matched on budget id`() = runTest {
+        val budget = arrangeStable450History(id = 9L)
+        val other = budget.copy(id = 7L)
+        coEvery { budgetRepository.getBudgetStatusesAt(any()) } returns listOf(
+            statusFor(other, 100.0),
+            statusFor(budget, 400.0)
+        )
+
+        val forecast = (engine.generateForecastResult(budget) as BudgetForecastResult.Available).forecast
+
+        assertApproxEquals(400.0, forecast.normalizedBudgetAmount, 0.0001)
+    }
+
+    @Test
+    fun `P06-2 status read at the injected now`() = runTest {
+        val budget = arrangeStable450History()
+        stubEffectiveLimit(budget, 500.0)
+
+        engine.generateForecastResult(budget)
+
+        val aprilFirst = LocalDate.of(2026, 4, 1)
+            .atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+        coVerify(exactly = 1) { budgetRepository.getBudgetStatusesAt(aprilFirst) }
+    }
+
+    private suspend fun assertLimitUnavailable(result: BudgetForecastResult, budgetId: Long = 0L) {
+        val unavailable = result as? BudgetForecastResult.Unavailable
+        assertTrue("expected Unavailable, got $result", unavailable != null)
+        assertEquals(ForecastUnavailableReason.LIMIT_CONVERSION_FAILED, unavailable!!.reasonCode)
+        assertEquals(budgetId, unavailable.budgetId)
+        coVerify(exactly = 0) { budgetForecastDao.insertWithDeactivation(any()) }
+    }
+
+    @Test
+    fun `P06-2 status not found is unavailable LIMIT_CONVERSION_FAILED`() = runTest {
+        val budget = arrangeStable450History(id = 9L)
+        coEvery { budgetRepository.getBudgetStatusesAt(any()) } returns listOf(statusFor(budget.copy(id = 7L), 500.0))
+
+        assertLimitUnavailable(engine.generateForecastResult(budget), budgetId = 9L)
+    }
+
+    @Test
+    fun `P06-2 empty status list is unavailable`() = runTest {
+        val budget = arrangeStable450History()
+        coEvery { budgetRepository.getBudgetStatusesAt(any()) } returns emptyList()
+
+        assertLimitUnavailable(engine.generateForecastResult(budget))
+    }
+
+    @Test
+    fun `P06-2 percentKnown false is unavailable even with a positive effective limit`() = runTest {
+        val budget = arrangeStable450History()
+        stubEffectiveLimit(budget, 500.0, percentKnown = false)
+
+        assertLimitUnavailable(engine.generateForecastResult(budget))
+    }
+
+    @Test
+    fun `P06-2 zero effective limit is unavailable`() = runTest {
+        val budget = arrangeStable450History()
+        stubEffectiveLimit(budget, 0.0)
+
+        assertLimitUnavailable(engine.generateForecastResult(budget))
+    }
+
+    @Test
+    fun `P06-2 negative effective limit is unavailable`() = runTest {
+        val budget = arrangeStable450History()
+        stubEffectiveLimit(budget, -50.0)
+
+        assertLimitUnavailable(engine.generateForecastResult(budget))
+    }
+
+    @Test
+    fun `P06-2 non finite effective limit is unavailable`() = runTest {
+        val budget = arrangeStable450History()
+        stubEffectiveLimit(budget, Double.NaN)
+        assertLimitUnavailable(engine.generateForecastResult(budget))
+
+        stubEffectiveLimit(budget, Double.POSITIVE_INFINITY)
+        assertLimitUnavailable(engine.generateForecastResult(budget))
+    }
+
+    @Test
+    fun `P06-2 smallest positive effective limit is accepted boundary control`() = runTest {
+        val budget = arrangeStable450History()
+        stubEffectiveLimit(budget, 0.01)
+
+        val result = engine.generateForecastResult(budget)
+
+        assertTrue(result is BudgetForecastResult.Available)
+    }
+
+    @Test
+    fun `P06-2 throwing repository is unavailable with no raw amount fallback`() = runTest {
+        val budget = arrangeStable450History(baseAmount = 500.0)
+        coEvery { budgetRepository.getBudgetStatusesAt(any()) } throws IllegalStateException("boom")
+
+        assertLimitUnavailable(engine.generateForecastResult(budget))
+        // The raw budget.amount must not stand in for the unreadable limit.
+        coVerify(exactly = 0) {
+            budgetRepository.getCurrentPeriodPurchaseSpendAtPeriodEnd(any(), any(), any(), any())
+        }
+    }
+
+    @Test
+    fun `P06-2 cancellation while reading statuses propagates and persists nothing`() = runTest {
+        val budget = arrangeStable450History()
+        coEvery { budgetRepository.getBudgetStatusesAt(any()) } throws
+            kotlinx.coroutines.CancellationException("cancelled")
+
+        var propagated = false
+        try {
+            engine.generateForecastResult(budget)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            propagated = true
+        }
+
+        assertTrue("CancellationException must not be swallowed into Unavailable", propagated)
+        coVerify(exactly = 0) { budgetForecastDao.insertWithDeactivation(any()) }
     }
 }
 
