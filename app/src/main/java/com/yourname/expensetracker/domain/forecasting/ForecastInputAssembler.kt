@@ -780,7 +780,8 @@ class ForecastInputAssembler @Inject constructor(
                 }
             }
             val manualRuleIds = manual.mapNotNull { it.id }.toSet()
-            for (occ in recurringOccurrenceDao.getByDateRange(windowStart, windowEnd)) {
+            val windowRows = recurringOccurrenceDao.getByDateRange(windowStart, windowEnd)
+            for (occ in windowRows) {
                 if (occ.sourceType == RecurringLifecycleCoordinator.SOURCE_TYPE_RECURRING_RULE &&
                     occ.sourceId in manualRuleIds
                 ) {
@@ -792,7 +793,11 @@ class ForecastInputAssembler @Inject constructor(
             val settled = all.filter { it.occurrenceKey !in remainingKeys }
             // An occurrence due on the pattern's day that is projected PAID (an expense matched it
             // but no row is linked yet) also moves the pattern; each pattern advances once only.
+            // One payment advances one pattern: which bill keeps counting is chosen by date then
+            // key, so the other bill stays counted.
             val paid = all.filter { it.status == "PAID" }
+                .sortedWith(compareBy({ it.dueDate }, { it.occurrenceKey }))
+                .distinctBy { it.linkedExpenseId ?: it.occurrenceKey }
             if (settled.isEmpty() && paid.isEmpty()) return patterns
 
             patterns.map { pattern ->

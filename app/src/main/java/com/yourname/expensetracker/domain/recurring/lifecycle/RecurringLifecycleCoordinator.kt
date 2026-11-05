@@ -345,14 +345,24 @@ class RecurringLifecycleCoordinator @Inject constructor(
                     fullByKey[occ.occurrenceKey] = occ
                 }
             }
-            for (occ in occurrenceDao.getByDateRange(windowStart, windowEnd)) {
+            val windowRows = occurrenceDao.getByDateRange(windowStart, windowEnd)
+            for (occ in windowRows) {
                 if (occ.sourceType == SOURCE_TYPE_RECURRING_RULE && occ.sourceId in activeRuleIds) {
                     fullByKey[occ.occurrenceKey] = occ
                 }
             }
             for (occ in merged) fullByKey[occ.occurrenceKey] = occ
             val fullSet = fullByKey.values.toList()
-            val open = fullSet.filter { it.status == "PLANNED" && it.linkedExpenseId == null }
+            // An unlinked SKIPPED row ("already recorded") also takes a payment, so it competes as a
+            // PLANNED copy; it is never dropped from [merged] (only real PLANNED rows are).
+            val open = fullSet.mapNotNull {
+                when {
+                    it.linkedExpenseId != null -> null
+                    it.status == "PLANNED" -> it
+                    it.status == "SKIPPED" -> it.copy(status = "PLANNED")
+                    else -> null
+                }
+            }
 
             val rangeExpenses = expenseDao.getExpensesBetween(windowStart, windowEnd)
             val persistedLinkedIds = rangeExpenses.map { it.id }
@@ -361,7 +371,11 @@ class RecurringLifecycleCoordinator @Inject constructor(
             val linkedIds = persistedLinkedIds.toSet() + fullSet.mapNotNull { it.linkedExpenseId }
             val unlinked = rangeExpenses.filter { it.id !in linkedIds }
             val settledKeys = resolver.findSettlingExpenses(open, unlinked).keys
-            if (settledKeys.isEmpty()) merged else merged.filter { it.occurrenceKey !in settledKeys }
+            if (settledKeys.isEmpty()) {
+                merged
+            } else {
+                merged.filter { !(it.status == "PLANNED" && it.occurrenceKey in settledKeys) }
+            }
         } catch (e: Exception) {
             CancellationSafe.rethrowIfCancellation(e)
             Timber.w("Recurring: settled-occurrence read failed (code=SETTLED_READ_FAILED), bills stay counted")
