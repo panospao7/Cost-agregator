@@ -1124,6 +1124,7 @@ entries:
   parameterTypes:
   - String
   - Long
+  - Boolean
   daoAccessor: userCorrectionDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.UserCorrectionDao
   operation: insert
