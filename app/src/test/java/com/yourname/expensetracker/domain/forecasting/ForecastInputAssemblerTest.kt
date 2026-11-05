@@ -976,6 +976,145 @@ class ForecastInputAssemblerTest {
         )
     }
 
+    // ── FC-PAID-UNLINKED (fix-1.0.4): settled bills ─────────────────────────
+
+    private fun normalizedInput(patterns: List<RecurringPattern>) = NormalizedForecastInput(
+        homeCurrency = CurrencyCode("EUR"),
+        normalizedExpenses = emptyList(),
+        pastSumDaily = emptyList(),
+        recurringPatterns = patterns,
+        plannedExpenses = emptyList(),
+        savingsGoals = emptyList(),
+        budgetStatuses = emptyList(),
+        spendingPace = mockk(relaxed = true),
+        dataQuality = ForecastDataQuality()
+    )
+
+    private fun manualPattern(ruleId: Long?, next: Long) =
+        recurring("Rent", 400.0, next, 1.0f).copy(id = ruleId)
+
+    @Test
+    fun `FC-PAID-UNLINKED settled occurrence stays in confirmedOccurrences marked SETTLED`() = runTest {
+        coEvery { analyticsCurrencyNormalizer.normalizeSnapshots(any(), any()) } returns
+            AnalyticsNormalizationResult(
+                homeCurrency = "EUR",
+                normalizedExpenses = emptyList(),
+                includedExpenses = emptyList(),
+                warnings = emptyList(),
+                latestRateTimestamp = null,
+                totalInputCount = 0
+            )
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(any(), any(), any()) } returns emptyList()
+        val due = ms(2026, Calendar.JANUARY, 20, 0)
+        coEvery { recurringOccurrenceDao.getByDateRange(any(), any()) } returns listOf(
+            occurrence(ruleId = 1L, dueDate = due, amount = 400.0, merchant = "Rent")
+        )
+        // Everything is settled: the coordinator drops the only open occurrence.
+        coEvery { recurringLifecycleCoordinator.dropSettled(any()) } returns emptyList()
+
+        val rule = ManualRecurringExpense(
+            id = 1L, merchant = "Rent", amount = 400.0,
+            frequency = RecurrenceFrequency.MONTHLY, nextDate = due, isActive = true
+        )
+        val result = assembler.assemble(
+            expenses = emptyList(),
+            manualRecurringEntities = listOf(rule),
+            detectedRecurringPatterns = emptyList(),
+            plannedExpenses = emptyList(),
+            savingsGoals = emptyList(),
+            budgetStatuses = emptyList(),
+            homeCurrency = "EUR"
+        )
+
+        // Never empty: an empty list would make SynthesisEngine recount the bill from the patterns.
+        assertThat(result.confirmedOccurrences).hasSize(1)
+        assertThat(result.confirmedOccurrences.single().status)
+            .isEqualTo(com.yourname.expensetracker.domain.model.ConfirmedOccurrence.STATUS_SETTLED)
+    }
+
+    @Test
+    fun `FC-PAID-UNLINKED unsettled occurrence keeps its PLANNED status in confirmedOccurrences`() = runTest {
+        coEvery { analyticsCurrencyNormalizer.normalizeSnapshots(any(), any()) } returns
+            AnalyticsNormalizationResult(
+                homeCurrency = "EUR",
+                normalizedExpenses = emptyList(),
+                includedExpenses = emptyList(),
+                warnings = emptyList(),
+                latestRateTimestamp = null,
+                totalInputCount = 0
+            )
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(any(), any(), any()) } returns emptyList()
+        val due = ms(2026, Calendar.JANUARY, 20, 0)
+        val open = occurrence(ruleId = 1L, dueDate = due, amount = 400.0, merchant = "Rent")
+        coEvery { recurringOccurrenceDao.getByDateRange(any(), any()) } returns listOf(open)
+        coEvery { recurringLifecycleCoordinator.dropSettled(any()) } returns listOf(open)
+
+        val rule = ManualRecurringExpense(
+            id = 1L, merchant = "Rent", amount = 400.0,
+            frequency = RecurrenceFrequency.MONTHLY, nextDate = due, isActive = true
+        )
+        val result = assembler.assemble(
+            expenses = emptyList(),
+            manualRecurringEntities = listOf(rule),
+            detectedRecurringPatterns = emptyList(),
+            plannedExpenses = emptyList(),
+            savingsGoals = emptyList(),
+            budgetStatuses = emptyList(),
+            homeCurrency = "EUR"
+        )
+
+        assertThat(result.confirmedOccurrences.single().status).isEqualTo("PLANNED")
+    }
+
+    @Test
+    fun `FC-PAID-UNLINKED assembleNormalized advances a settled manual pattern exactly once`() = runTest {
+        val jan20 = ms(2026, Calendar.JANUARY, 20, 0)
+        val settled = occurrence(ruleId = 7L, dueDate = jan20, amount = 400.0, merchant = "Rent")
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(7L, any(), any()) } returns listOf(settled)
+        coEvery { recurringOccurrenceDao.getByDateRange(any(), any()) } returns emptyList()
+        coEvery { recurringLifecycleCoordinator.dropSettled(any()) } returns emptyList()
+
+        val result = assembler.assembleNormalized(normalizedInput(listOf(manualPattern(7L, jan20))))
+
+        assertThat(result.recurringPatterns.single().nextExpectedDate)
+            .isEqualTo(ms(2026, Calendar.FEBRUARY, 20, 0))
+    }
+
+    @Test
+    fun `FC-PAID-UNLINKED assembleNormalized leaves an unsettled manual pattern unchanged`() = runTest {
+        val jan20 = ms(2026, Calendar.JANUARY, 20, 0)
+        val open = occurrence(ruleId = 7L, dueDate = jan20, amount = 400.0, merchant = "Rent")
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(7L, any(), any()) } returns listOf(open)
+        coEvery { recurringOccurrenceDao.getByDateRange(any(), any()) } returns emptyList()
+        coEvery { recurringLifecycleCoordinator.dropSettled(any()) } returns listOf(open)
+
+        val result = assembler.assembleNormalized(normalizedInput(listOf(manualPattern(7L, jan20))))
+
+        assertThat(result.recurringPatterns.single().nextExpectedDate).isEqualTo(jan20)
+    }
+
+    @Test
+    fun `FC-PAID-UNLINKED assembleNormalized never advances a detected pattern with a null id`() = runTest {
+        val jan20 = ms(2026, Calendar.JANUARY, 20, 0)
+        coEvery { recurringLifecycleCoordinator.dropSettled(any()) } returns emptyList()
+
+        val result = assembler.assembleNormalized(normalizedInput(listOf(manualPattern(null, jan20))))
+
+        assertThat(result.recurringPatterns.single().nextExpectedDate).isEqualTo(jan20)
+        coVerify(exactly = 0) { recurringLifecycleCoordinator.projectOccurrences(any(), any(), any()) }
+    }
+
+    @Test
+    fun `FC-PAID-UNLINKED assembleNormalized keeps the pattern when the settled read fails`() = runTest {
+        val jan20 = ms(2026, Calendar.JANUARY, 20, 0)
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(7L, any(), any()) } throws
+            IllegalStateException("synthetic read failure")
+
+        val result = assembler.assembleNormalized(normalizedInput(listOf(manualPattern(7L, jan20))))
+
+        assertThat(result.recurringPatterns.single().nextExpectedDate).isEqualTo(jan20)
+    }
+
     private fun occurrence(
         ruleId: Long,
         dueDate: Long,
