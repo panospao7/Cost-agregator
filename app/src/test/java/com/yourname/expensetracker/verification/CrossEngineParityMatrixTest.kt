@@ -1224,7 +1224,12 @@ class CrossEngineParityMatrixTest : AnalyticsEngineTestBase() {
         val rig = rigFor(Scenario("lifestyle", groupCategories(), lifestyleData, utcMs(2026, 4, 1)))
         every { expenseDao.getExpensesBetweenFlowUncapped(any(), any()) } returns flowOf(lifestyleData)
 
-        val report = LifestyleInflationDetector(expenseDao, timeProvider).analyzeLifestyleInflation(monthsToAnalyze = 6)
+        val report = LifestyleInflationDetector(
+            expenseDao,
+            timeProvider,
+            rig.analyticsCurrencyNormalizer,
+            rig.currencySettingsRepository
+        ).analyzeLifestyleInflation(monthsToAnalyze = 6)
 
         every { timeProvider.now() } returns utcMs(2026, 3, 20)
         val pace = rig.pace.calculate(
@@ -1254,7 +1259,12 @@ class CrossEngineParityMatrixTest : AnalyticsEngineTestBase() {
         val dailyTotals = rig.totals.getDailyTotalsForRange(march1, april1)
         val carbon = CarbonFootprintCalculator(expenseDao, timeProvider, analyticsCurrencyNormalizer = mockk(), currencySettingsRepository = mockk())
             .calculateCarbonFootprint(march1, april1)
-        val lifestyle = LifestyleInflationDetector(expenseDao, timeProvider).analyzeLifestyleInflation(6)
+        val lifestyle = LifestyleInflationDetector(
+            expenseDao,
+            timeProvider,
+            rig.analyticsCurrencyNormalizer,
+            rig.currencySettingsRepository
+        ).analyzeLifestyleInflation(6)
         val sharedManager = SharedExpenseManager(
             sharedExpenseDataPort = mockk {
                 coEvery { getGroupMembersOnce(any()) } returns emptyList<SharedExpenseMember>()

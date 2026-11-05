@@ -5,6 +5,9 @@ import com.yourname.expensetracker.domain.lifestyle.LifestyleInflationDetector
 import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.util.ViewModelTestUtils
+import com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableException
+import com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableReasonCode
+import kotlinx.coroutines.CancellationException
 import io.mockk.coEvery
 import io.mockk.mockk
 import kotlinx.coroutines.CompletableDeferred
@@ -198,6 +201,36 @@ class LifestyleInflationViewModelTest : ViewModelTestUtils() {
 
         assertEquals(successReport, viewModel.report.value)
         assertEquals("Failed to load data", viewModel.error.value)
+        assertFalse(viewModel.isLoading.value)
+    }
+
+    @Test
+    fun `BL-05 unavailable money clears the previous report and shows the load error with no figures`() = runTest(testDispatcher) {
+        val earlier = lifestyleReport(lifestyleInflationRate = 0.04)
+        coEvery { lifestyleDetector.analyzeLifestyleInflation(12) } returns earlier
+        viewModel.analyze(12)
+        advanceUntilIdle()
+        assertEquals(earlier, viewModel.report.value)
+
+        coEvery { lifestyleDetector.analyzeLifestyleInflation(12) } throws
+            MoneyDisplayUnavailableException(MoneyDisplayUnavailableReasonCode.DISPLAY_CONVERSION_UNAVAILABLE)
+        viewModel.analyze(12)
+        advanceUntilIdle()
+
+        assertNull(viewModel.report.value)
+        assertEquals("Failed to load data", viewModel.error.value)
+        assertFalse(viewModel.isLoading.value)
+    }
+
+    @Test
+    fun `BL-05 CancellationException from the detector is not turned into an error state`() = runTest(testDispatcher) {
+        coEvery { lifestyleDetector.analyzeLifestyleInflation(12) } throws CancellationException("cancelled")
+
+        viewModel.analyze(12)
+        advanceUntilIdle()
+
+        assertNull(viewModel.report.value)
+        assertNull(viewModel.error.value)
         assertFalse(viewModel.isLoading.value)
     }
 

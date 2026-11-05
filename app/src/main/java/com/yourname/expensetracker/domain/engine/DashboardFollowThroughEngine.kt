@@ -68,10 +68,23 @@ class DashboardFollowThroughEngine @Inject constructor(
             val recommendations = mutableListOf<DashboardFollowThroughRecommendation>()
             
             // Calculate adaptive threshold (P90 of last 90 days, minimum €50)
-            val highAmountThreshold = thresholdCalculator.getThreshold()
-            
+            // E-02-4: when the home-currency threshold is unavailable (unconvertible history),
+            // Rule 1 is skipped rather than compared against a raw mixed-currency value.
+            // Rules 2-4 do not depend on the threshold and are unaffected.
+            val highAmountThreshold: Double? = try {
+                thresholdCalculator.getThreshold()
+            } catch (e: com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableException) {
+                null
+            }
+
             // Rule 1: High-amount transaction recommendation (adaptive threshold)
-            if (transaction.amount > highAmountThreshold) {
+            // Compare in home currency only; non-convertible foreign amounts skip Rule 1.
+            val homeAmount: Double? = if (highAmountThreshold != null) {
+                thresholdCalculator.homeCurrencyAmountOrNull(transaction)
+            } else {
+                null
+            }
+            if (highAmountThreshold != null && homeAmount != null && homeAmount > highAmountThreshold) {
                 recommendations.add(
                     createHighAmountRecommendation(transaction, aiArtifact, userId)
                 )

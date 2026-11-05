@@ -1,10 +1,17 @@
 package com.yourname.expensetracker.domain.analytics
 
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
+import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.di.IoDispatcher
+import com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableException
+import com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableReasonCode
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -30,7 +37,9 @@ import kotlin.math.min
 class SpendingThresholdCalculator @Inject constructor(
     private val expenseDao: ExpenseDao,
     private val timeProvider: TimeProvider,
-    @IoDispatcher private val ioDispatcher: CoroutineDispatcher
+    @IoDispatcher private val ioDispatcher: CoroutineDispatcher,
+    private val analyticsCurrencyNormalizer: AnalyticsCurrencyNormalizer,
+    private val currencySettingsRepository: CurrencySettingsRepository
 ) {
     
     companion object {
@@ -103,15 +112,36 @@ class SpendingThresholdCalculator @Inject constructor(
                 Pair(cache[userId], cacheGenerations.getOrDefault(userId, 0L))
             }
             val now = timeProvider.now()
+            // E-02-4: percentiles are home-currency values; a cache entry from another
+            // home currency is never reused.
+            val homeCurrency = try {
+                currencySettingsRepository.homeCurrency().first()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                throw MoneyDisplayUnavailableException(
+                    MoneyDisplayUnavailableReasonCode.HOME_CURRENCY_UNAVAILABLE
+                )
+            }
 
-            if (cached != null && (now - cached.percentiles.calculatedAt) < CACHE_TTL_MS) {
+            if (cached != null && cached.homeCurrency == homeCurrency &&
+                (now - cached.percentiles.calculatedAt) < CACHE_TTL_MS
+            ) {
                 Timber.d("SpendingThresholdCalculator: Using cached percentiles for $userId")
                 return@withContext cached.percentiles
             }
 
             // Calculate from scratch (expensive I/O outside the lock)
             val (startDate, endDate) = TimePeriodUtils.getLastNCalendarDaysRange(now, ANALYSIS_WINDOW_DAYS)
-            val amounts = expenseDao.getAmountsForPercentileCalc(startDate, endDate)
+            // E-02-4: amounts must be converted to the home currency before ranking.
+            // Any unconvertible row throws MoneyDisplayUnavailableException (never cached,
+            // never a raw mixed-currency percentile). Owner filter isNotMine = 0 is in the query;
+            // spendingExclusionReason rows are dropped by the normalizer.
+            val purchases = expenseDao.getExpensesBetweenUncapped(startDate, endDate)
+                .filter { it.transactionType == TransactionType.PURCHASE }
+            val normalized = analyticsCurrencyNormalizer.normalizeExpenses(purchases, homeCurrency)
+            normalized.requireCompleteMoneyInput(homeCurrency)
+            val amounts = normalized.includedExpenses.map { it.effectiveAmount }
 
             if (amounts.isEmpty()) {
                 Timber.d("SpendingThresholdCalculator: No transactions for $userId in last $ANALYSIS_WINDOW_DAYS days")
@@ -139,7 +169,7 @@ class SpendingThresholdCalculator @Inject constructor(
             // replaced as expected.
             cacheMutex.withLock {
                 if (cacheGenerations.getOrDefault(userId, 0L) == generationAtStart) {
-                    cache[userId] = CachedPercentiles(percentiles, now)
+                    cache[userId] = CachedPercentiles(percentiles, now, homeCurrency)
                 }
             }
 
@@ -176,6 +206,29 @@ class SpendingThresholdCalculator @Inject constructor(
      */
     suspend fun getThreshold(): Double {
         return calculateHighAmountThreshold(DEFAULT_USER_ID)
+    }
+
+    /**
+     * Full transaction amount expressed in the home currency, for comparison against
+     * [getThreshold]. Returns [Expense.amount] when the expense is already in the home
+     * currency, [Expense.baseAmount] when its snapshot [Expense.baseCurrency] is the home
+     * currency and usable (> 0), otherwise null (not comparable; never a raw foreign amount).
+     * Home currency unavailable also yields null. No rounding is applied.
+     */
+    suspend fun homeCurrencyAmountOrNull(expense: Expense): Double? {
+        val homeCurrency = try {
+            currencySettingsRepository.homeCurrency().first()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            return null
+        }
+        return when {
+            expense.currency.equals(homeCurrency, ignoreCase = true) -> expense.amount
+            expense.baseCurrency.equals(homeCurrency, ignoreCase = true) &&
+                expense.baseAmount > 0.0 -> expense.baseAmount
+            else -> null
+        }
     }
 
     /**
@@ -221,7 +274,8 @@ class SpendingThresholdCalculator @Inject constructor(
     
     private data class CachedPercentiles(
         val percentiles: SpendingPercentiles,
-        val cachedAt: Long
+        val cachedAt: Long,
+        val homeCurrency: String
     )
 }
 

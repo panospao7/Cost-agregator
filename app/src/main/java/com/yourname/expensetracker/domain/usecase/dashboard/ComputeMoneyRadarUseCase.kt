@@ -15,6 +15,7 @@ import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.forecasting.MergedRecurringPatternsProvider
 import com.yourname.expensetracker.domain.forecasting.MonteCarloSpendingSimulator
 import com.yourname.expensetracker.domain.model.budget.MonteCarloBudgetImpact.RiskTier
+import com.yourname.expensetracker.domain.model.dashboard.toBudgetStatusSnapshot
 import com.yourname.expensetracker.domain.text.DomainTextKeys
 import com.yourname.expensetracker.domain.usecase.budget.GetMonteCarloBudgetImpactUseCase
 import com.yourname.expensetracker.domain.usecase.dashboard.AnomalyAlertRepository
@@ -289,18 +290,20 @@ class ComputeMoneyRadarUseCase @Inject constructor(
 
             // Get monthly budget
             val budgetStatuses = budgetRepository.getBudgetStatuses().first()
-            val overallBudget = budgetStatuses.find { it.budget.categoryId == null }
-            val budget = overallBudget?.budget ?: return null
-            val budgetAmount = convertForRadar(
-                amount = budget.amount,
-                sourceCurrency = budget.currency,
-                targetCurrency = homeCurrency,
-                atMillis = TimePeriodUtils.getEndOfMonth(now),
-                rateBasis = RateBasis.PERIOD_END
-            ) ?: error("RADAR_BUDGET_UNAVAILABLE")
-            
+            val overallBudget = budgetStatuses.find { it.budget.categoryId == null } ?: return null
+            // P-05-5: take the limit from the same derivation as the dashboard widget
+            // (BudgetStatusSnapshot.periodRemaining: effective limit incl. rollover, home
+            // currency). The simulation compares a calendar-month total, so only a
+            // month-scale overall budget is compared; any other period gives no comparison.
+            val budgetSnapshot = overallBudget.toBudgetStatusSnapshot()
+            if (!budgetSnapshot.isMonthScalePeriod) return null
+            val budgetAmount = (budgetSnapshot.periodRemaining(now, homeCurrency)
+                as? com.yourname.expensetracker.domain.budget.BudgetPeriodRemaining.Available)
+                ?.limit
+                ?: error("RADAR_BUDGET_UNAVAILABLE")
+
             if (budgetAmount <= 0) {
-                return null // No budget set
+                return null // No budget set, or rollover deficit consumed the whole limit
             }
             
             // Get current month spending

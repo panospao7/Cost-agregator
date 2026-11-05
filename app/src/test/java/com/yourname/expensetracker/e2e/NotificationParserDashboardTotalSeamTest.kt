@@ -427,7 +427,12 @@ class NotificationParserDashboardTotalSeamTest : AnalyticsEngineTestBase() {
         val promptStateRepository = PromptStateRepository(mockk(relaxed = true), promptStateDao, timeProvider)
 
         val lifestyleSavingsPromptUseCase = LifestyleSavingsPromptUseCase(
-            lifestyleInflationDetector = LifestyleInflationDetector(expenseDao, timeProvider = mockk()),
+            lifestyleInflationDetector = LifestyleInflationDetector(
+                expenseDao,
+                timeProvider = mockk(),
+                analyticsCurrencyNormalizer = analyticsCurrencyNormalizer,
+                currencySettingsRepository = currencySettingsRepository
+            ),
             savingsGoalRepository = savingsGoalRepository,
             promptStateRepository = promptStateRepository,
             timeProvider = timeProvider,

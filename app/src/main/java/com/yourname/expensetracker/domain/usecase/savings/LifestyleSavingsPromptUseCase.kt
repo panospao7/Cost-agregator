@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.usecase.savings
 
 import com.yourname.expensetracker.data.repository.PromptStateRepository
+import com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableException
 import com.yourname.expensetracker.domain.lifestyle.LifestyleInflationDetector
 import com.yourname.expensetracker.domain.model.SavingsGoal
 import com.yourname.expensetracker.domain.savings.SavingsGoalRepository
@@ -50,8 +51,14 @@ class LifestyleSavingsPromptUseCase @Inject constructor(
         }
         
         // Analyze lifestyle inflation
-        val report = lifestyleInflationDetector.analyzeLifestyleInflation(12)
-        
+        // BL-05: partial/unconvertible money means no figures, so no prompt and no
+        // cooldown consumed (recordPrompt is never reached).
+        val report = try {
+            lifestyleInflationDetector.analyzeLifestyleInflation(12)
+        } catch (e: MoneyDisplayUnavailableException) {
+            return null
+        }
+
         // Check if inflation is significant enough
         if (report.lifestyleInflationRate < INFLATION_THRESHOLD) {
             return null
