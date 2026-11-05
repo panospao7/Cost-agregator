@@ -36,6 +36,7 @@ import io.mockk.mockk
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -43,6 +44,9 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Before
 import org.junit.Test
 
@@ -58,6 +62,7 @@ class HomeViewModelTotalsLiveTest {
     // timeProvider.now() == 0 -> the init load targets 1970.
     private val initialYearFlow = MutableStateFlow(listOf(month(1970, 11, 0.0)))
     private val year2025Flow = MutableStateFlow(listOf(month(2025, 11, 0.0)))
+    private val engine = mockk<TotalsAggregationEngine>(relaxed = true)
     private var viewModel: HomeViewModel? = null
 
     @Before
@@ -72,7 +77,7 @@ class HomeViewModelTotalsLiveTest {
         val aiEngagementRepository = mockk<AiEngagementRepository>(relaxed = true)
         val widgetStyleRepository = mockk<WidgetStyleRepository>(relaxed = true)
         val timeProvider = mockk<TimeProvider>(relaxed = true)
-        val totalsAggregationEngine = mockk<TotalsAggregationEngine>(relaxed = true)
+        val totalsAggregationEngine = engine
 
         every { aiSettingsRepository.settings() } returns flowOf(AiSettings())
         every { aiEngagementRepository.engagementState() } returns flowOf(AiEngagementState())
@@ -84,6 +89,7 @@ class HomeViewModelTotalsLiveTest {
         every { totalsAggregationEngine.getMonthlyTotals(2025) } returns year2025Flow
         every { totalsAggregationEngine.getWeeklyTotals(any(), any()) } returns
             flowOf(listOf(week("2025-W45", 7.0)))
+        every { totalsAggregationEngine.getYearlyTotals() } returns flowOf(emptyList())
         coEvery { totalsAggregationEngine.getAverageForPeriodType(any(), any()) } returns null
         every { totalsAggregationEngine.getPeriodStatus(any(), any()) } returns PeriodStatus.NO_DATA
 
@@ -170,7 +176,115 @@ class HomeViewModelTotalsLiveTest {
         assertEquals(listOf("2025-W45"), vm.totalsDrillDownState.value.periodTotals.map { it.periodKey })
     }
 
+    @Test
+    fun `empty emission keeps the last good rows sets the error and a good emission clears it`() {
+        val vm = checkNotNull(viewModel)
+        initialYearFlow.value = listOf(month(1970, 11, 180.0))
+        assertEquals(listOf(180.0), vm.totalsDrillDownState.value.periodTotals.map { it.totalAmount })
+
+        initialYearFlow.value = emptyList()
+
+        assertEquals(listOf(180.0), vm.totalsDrillDownState.value.periodTotals.map { it.totalAmount })
+        assertNotNull(vm.totalsDrillDownState.value.error)
+        assertFalse(vm.totalsDrillDownState.value.isLoading)
+
+        initialYearFlow.value = listOf(month(1970, 11, 200.0))
+
+        assertEquals(listOf(200.0), vm.totalsDrillDownState.value.periodTotals.map { it.totalAmount })
+        assertNull(vm.totalsDrillDownState.value.error)
+        assertFalse(vm.totalsDrillDownState.value.isLoading)
+    }
+
+    @Test
+    fun `drilling up from week to the month list resumes live year updates`() {
+        val vm = checkNotNull(viewModel)
+        vm.loadTotalsForYear(2025)
+        vm.drillDownToPeriod(year(2025))
+        vm.drillDownToPeriod(month(2025, 11, 0.0))
+        assertEquals(PeriodType.WEEK, vm.totalsDrillDownState.value.currentLevel)
+
+        vm.drillUp()
+        assertEquals(PeriodType.MONTH, vm.totalsDrillDownState.value.currentLevel)
+
+        year2025Flow.value = listOf(month(2025, 11, 321.0))
+
+        assertEquals(PeriodType.MONTH, vm.totalsDrillDownState.value.currentLevel)
+        assertEquals(listOf(321.0), vm.totalsDrillDownState.value.periodTotals.map { it.totalAmount })
+    }
+
+    @Test
+    fun `drilling from year to month resumes live updates for that year`() {
+        val vm = checkNotNull(viewModel)
+
+        vm.drillDownToPeriod(year(2025))
+        assertEquals(PeriodType.MONTH, vm.totalsDrillDownState.value.currentLevel)
+
+        year2025Flow.value = listOf(month(2025, 11, 64.0))
+
+        assertEquals(PeriodType.MONTH, vm.totalsDrillDownState.value.currentLevel)
+        assertEquals(listOf(64.0), vm.totalsDrillDownState.value.periodTotals.map { it.totalAmount })
+    }
+
+    @Test
+    fun `an in-flight drill that finishes late does not overwrite a newer year load`() {
+        val vm = checkNotNull(viewModel)
+        val weeklyGate = MutableSharedFlow<List<PeriodTotal>>()
+        every { engine.getWeeklyTotals(2025, 11) } returns weeklyGate
+        vm.loadTotalsForYear(2025)
+
+        vm.drillDownToPeriod(month(2025, 11, 0.0))
+        assertEquals(1, weeklyGate.subscriptionCount.value) // drill is suspended, not finished
+
+        vm.loadTotalsForYear(2025)
+        weeklyGate.tryEmit(listOf(week("2025-W45-late", 99.0))) // late drill result
+
+        assertEquals(PeriodType.MONTH, vm.totalsDrillDownState.value.currentLevel)
+        assertEquals(listOf("2025-11"), vm.totalsDrillDownState.value.periodTotals.map { it.periodKey })
+        assertEquals(0, weeklyGate.subscriptionCount.value)
+    }
+
+    @Test
+    fun `drilling up to a non-month level does not resume year flow updates`() {
+        val vm = checkNotNull(viewModel)
+        every { engine.getDailyTotalsForRange(any(), any()) } returns flowOf(listOf(day("2025-11-03", 3.0)))
+        vm.drillDownToPeriod(year(2025))
+        vm.drillDownToPeriod(month(2025, 11, 0.0))
+        vm.drillDownToPeriod(week("2025-W45", 7.0))
+        assertEquals(PeriodType.DAY, vm.totalsDrillDownState.value.currentLevel)
+
+        vm.drillUp()
+        assertEquals(PeriodType.WEEK, vm.totalsDrillDownState.value.currentLevel)
+        assertEquals(listOf("2025-W45"), vm.totalsDrillDownState.value.periodTotals.map { it.periodKey })
+
+        year2025Flow.value = listOf(month(2025, 11, 888.0))
+
+        assertEquals(PeriodType.WEEK, vm.totalsDrillDownState.value.currentLevel)
+        assertEquals(listOf("2025-W45"), vm.totalsDrillDownState.value.periodTotals.map { it.periodKey })
+    }
+
     private companion object {
+        fun year(year: Int) = PeriodTotal(
+            periodLabel = "$year",
+            periodKey = "$year",
+            totalAmount = 0.0,
+            transactionCount = 0,
+            periodType = PeriodType.YEAR,
+            startDateMs = 0L,
+            endDateMs = 1L,
+            status = PeriodStatus.NO_DATA
+        )
+
+        fun day(key: String, amount: Double) = PeriodTotal(
+            periodLabel = key,
+            periodKey = key,
+            totalAmount = amount,
+            transactionCount = 1,
+            periodType = PeriodType.DAY,
+            startDateMs = 0L,
+            endDateMs = 1L,
+            status = PeriodStatus.NO_DATA
+        )
+
         fun month(year: Int, month: Int, amount: Double) = PeriodTotal(
             periodLabel = "M$month",
             periodKey = "%d-%02d".format(year, month),
