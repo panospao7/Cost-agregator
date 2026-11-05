@@ -136,14 +136,6 @@ object CounterpartyLabel {
     fun scrubAccountNumbers(text: String): String =
         maskDigitRuns(text, ACCOUNT_NUMBER_MIN) { isAccountJoiner(it) }
 
-    /**
-     * [scrubLongDigitRuns], plus any UNBROKEN run of 9 or more digits. No joiners for the shorter
-     * runs: a date beside an amount ("2026-11-05 45,50") and grouped amounts ("12.345.678,90") must
-     * stay readable. For the opt-in statement AI prompt text only; output is "****<last4>".
-     */
-    fun scrubNineDigitRuns(text: String): String =
-        maskDigitRuns(scrubLongDigitRuns(text), ACCOUNT_NUMBER_MIN) { false }
-
     /** Merchant/account labels for a counterparty known by [name]. */
     fun fromName(name: String, direction: ParsedTransferDirection): Label? {
         val clean = scrubAccountNumbers(maskIbans(name)).replace(WHITESPACE_RUN, " ").trim().take(MAX_NAME_LENGTH).trim()

@@ -21,31 +21,6 @@ class CounterpartyLabelTest {
     }
 
     @Test
-    fun `scrubNineDigitRuns masks the account number and keeps the amount`() {
-        assertEquals("Acc ****6789 paid 45,50", CounterpartyLabel.scrubNineDigitRuns("Acc 123456789 paid 45,50"))
-    }
-
-    @Test
-    fun `scrubNineDigitRuns boundary is nine digits`() {
-        assertEquals("12345678", CounterpartyLabel.scrubNineDigitRuns("12345678"))
-        assertEquals("****6789", CounterpartyLabel.scrubNineDigitRuns("123456789"))
-        assertEquals("****7890", CounterpartyLabel.scrubNineDigitRuns("1234567890"))
-        assertEquals("****8901", CounterpartyLabel.scrubNineDigitRuns("12345678901"))
-    }
-
-    @Test
-    fun `scrubNineDigitRuns keeps grouped amounts and masks spaced numbers`() {
-        assertEquals("1.234,56", CounterpartyLabel.scrubNineDigitRuns("1.234,56"))
-        assertEquals("12.345.678,90", CounterpartyLabel.scrubNineDigitRuns("12.345.678,90"))
-        assertEquals("****9012", CounterpartyLabel.scrubNineDigitRuns("1234 5678 9012"))
-    }
-
-    @Test
-    fun `scrubNineDigitRuns leaves a bare ISO date unchanged`() {
-        assertEquals("2026-11-05", CounterpartyLabel.scrubNineDigitRuns("2026-11-05"))
-    }
-
-    @Test
     fun `name without letters is not a name`() {
         assertNull(CounterpartyLabel.fromName("*9999", ParsedTransferDirection.INCOMING))
         assertNull(CounterpartyLabel.fromName("   ", ParsedTransferDirection.OUTGOING))
@@ -288,11 +263,6 @@ class CounterpartyLabelTest {
     @Test
     fun `scrubLongDigitRuns alone keeps a store number below twelve digits`() {
         assertEquals("SOME SHOP 12345678901", CounterpartyLabel.scrubLongDigitRuns("SOME SHOP 12345678901"))
-    }
-
-    @Test
-    fun `scrubNineDigitRuns keeps a date beside an amount readable`() {
-        assertEquals("2026-11-05 45,50", CounterpartyLabel.scrubNineDigitRuns("2026-11-05 45,50"))
     }
 
     @Test

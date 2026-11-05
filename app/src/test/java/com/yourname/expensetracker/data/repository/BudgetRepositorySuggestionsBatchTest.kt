@@ -121,7 +121,7 @@ class BudgetRepositorySuggestionsBatchTest {
     }
 
     @Test
-    fun `getSuggestions complete 300 over about one month suggests 360`() = runTest {
+    fun `getSuggestions complete 300 over about one month suggests 348_75`() = runTest {
         val now = utcMs(2026, Calendar.MARCH, 15)
         every { timeProvider.now() } returns now
         every { categoryDao.getAllFlow() } returns flowOf(

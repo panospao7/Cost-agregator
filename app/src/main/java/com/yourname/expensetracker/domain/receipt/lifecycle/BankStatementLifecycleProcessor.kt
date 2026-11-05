@@ -129,7 +129,7 @@ internal fun statementTextForAi(fullText: String): String {
     // boundary only when the character right after it is the collapsed space.
     val headEndsOnBoundary = collapsed.length <= STATEMENT_AI_TEXT_SLICE ||
         collapsed[STATEMENT_AI_TEXT_SLICE] == ' '
-    val scrubbed = CounterpartyLabel.scrubNineDigitRuns(
+    val scrubbed = CounterpartyLabel.scrubLongDigitRuns(
         CounterpartyLabel.maskIbans(collapsed.substring(0, minOf(collapsed.length, STATEMENT_AI_TEXT_SLICE)))
     )
     val window: String

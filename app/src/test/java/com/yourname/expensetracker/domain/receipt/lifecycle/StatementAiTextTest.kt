@@ -51,23 +51,6 @@ class StatementAiTextTest {
     }
 
     @Test
-    fun nineToElevenDigitNumbersAreMaskedAndAmountsAndDatesSurvive() {
-        assertEquals(
-            "Acc ****6789 paid 45,50 on 2026-11-05",
-            statementTextForAi("Acc 123456789 paid 45,50 on 2026-11-05")
-        )
-        assertEquals("Ref 12345678 total 12.345.678,90", statementTextForAi("Ref 12345678 total 12.345.678,90"))
-    }
-
-    @Test
-    fun ibanIsStillMaskedAlongsideTheNineDigitScrub() {
-        assertEquals(
-            "PAY ****0123 REF ****6789",
-            statementTextForAi("PAY GR96 0000 0000 0000 0000 0000 123 REF 123456789")
-        )
-    }
-
-    @Test
     fun shortTextIsReturnedWhole() {
         assertEquals("SHOP -12.50 EUR", statementTextForAi("SHOP   -12.50\nEUR"))
         assertEquals("", statementTextForAi("   \n   "))
