@@ -207,7 +207,77 @@ class TransactionsViewModelTest : ViewModelTestUtils() {
         collection.cancel()
     }
 
-    @Test fun `provenance failure is bounded`() = runTest(testDispatcher) {
+    @Test fun `N-01-2 JPY share with a fraction is rejected with the no-decimals message and writes nothing`() = runTest(testDispatcher) {
+        java.util.Locale.setDefault(java.util.Locale.US)
+        val expense = mockk<Expense>(relaxed = true)
+        every { expense.amount } returns 1500.0
+        every { expense.currency } returns "JPY"
+        every { expense.myShareAmount } returns 1000.0
+        val received = mutableListOf<UiText>()
+        val collection = backgroundScope.launch { model.error.collect { received += it } }
+        runCurrent()
+        model.updateOwnership(expense, false, "", true, "Anna", "", "750.5")
+        advanceUntilIdle()
+        assertEquals(
+            UiText.StringResource(com.yourname.expensetracker.R.string.mec_amount_no_decimals, listOf("JPY")),
+            received.single()
+        )
+        io.mockk.coVerify(exactly = 0) {
+            expenses.updateOwnership(any(), any(), any(), any(), any(), any(), any())
+        }
+        collection.cancel()
+    }
+
+    @Test fun `N-01-2 JPY whole share is saved`() = runTest(testDispatcher) {
+        java.util.Locale.setDefault(java.util.Locale.US)
+        val expense = mockk<Expense>(relaxed = true)
+        every { expense.amount } returns 1500.0
+        every { expense.currency } returns "JPY"
+        every { expense.myShareAmount } returns 1000.0
+        model.updateOwnership(expense, false, "", true, "Anna", "", "750")
+        advanceUntilIdle()
+        io.mockk.coVerify(exactly = 1) {
+            expenses.updateOwnership(expense, false, null, true, "Anna", null, 750.0)
+        }
+    }
+
+    @Test fun `N-01-2 unchanged JPY legacy fractional share with a name-only edit still saves`() = runTest(testDispatcher) {
+        java.util.Locale.setDefault(java.util.Locale.US)
+        val expense = mockk<Expense>(relaxed = true)
+        every { expense.amount } returns 1500.0
+        every { expense.currency } returns "JPY"
+        every { expense.myShareAmount } returns 750.5
+        val received = mutableListOf<UiText>()
+        val collection = backgroundScope.launch { model.error.collect { received += it } }
+        runCurrent()
+        model.updateOwnership(expense, false, "", true, "Bob", "", "750.50")
+        advanceUntilIdle()
+        assertTrue(received.isEmpty())
+        io.mockk.coVerify(exactly = 1) {
+            expenses.updateOwnership(expense, false, null, true, "Bob", null, 750.5)
+        }
+        collection.cancel()
+    }
+
+    @Test fun `N-01-2 percentage share skips the currency amount check`() = runTest(testDispatcher) {
+        java.util.Locale.setDefault(java.util.Locale.US)
+        val expense = mockk<Expense>(relaxed = true)
+        every { expense.amount } returns 1500.0
+        every { expense.currency } returns "JPY"
+        every { expense.myShareAmount } returns null
+        val received = mutableListOf<UiText>()
+        val collection = backgroundScope.launch { model.error.collect { received += it } }
+        runCurrent()
+        model.updateOwnership(expense, false, "", true, "Anna", "33", "")
+        advanceUntilIdle()
+        assertTrue(received.isEmpty())
+        io.mockk.coVerify(exactly = 1) {
+            expenses.updateOwnership(expense, false, null, true, "Anna", 33, null)
+        }
+        collection.cancel()
+    }
+
+    @Test fun `provenance failure is bounded`()= runTest(testDispatcher) {
         coEvery { sourceLinks.getLinksForExpense(any()) } throws hostile
         model.loadProvenanceForExpense(1)
         advanceUntilIdle()
