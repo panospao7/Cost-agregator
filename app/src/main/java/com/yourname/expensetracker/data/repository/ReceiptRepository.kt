@@ -245,7 +245,10 @@ class ReceiptRepository @Inject constructor(
             // rather than being misclassified as PARSE_FAILED.
             val homeCur = homeCurrency()
             val parsed = try {
-                receiptParser.parse(ocrResult.fullText, homeCurrency = homeCur)
+                // DR-09: the discount becomes a negative adjustment item (itemized allocation
+                // input) only when items - discount reconciles to the total within 0.01;
+                // total, tax and the stored amount are untouched.
+                receiptParser.parse(ocrResult.fullText, homeCurrency = homeCur).withDiscountAdjustment()
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 // Parsing Logic Failed, but we HAVE the OCR text!

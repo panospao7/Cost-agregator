@@ -1,9 +1,12 @@
 package com.yourname.expensetracker.domain.receipt
 
 import com.yourname.expensetracker.data.repository.MerchantRulesRepository
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyAmount
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -164,6 +167,173 @@ class ReceiptParserTest {
         assertEquals(1, result.lineItems.size)
         assertEquals("ΚΡΑΣΙ ΧΥΜΑ", result.lineItems.single().description)
         assertEquals(2.0, result.lineItems.single().quantity ?: 0.0, 0.0)
+    }
+
+    // ---- DR-09: receipt discounts -------------------------------------------------------
+
+    private val eur = CurrencyCode("EUR")
+
+    private fun eurReceipt(
+        items: List<ReceiptParser.LineItem>,
+        total: Double?,
+        discount: Double?,
+        tax: Double? = null
+    ) = ReceiptParser.ParsedReceipt(
+        merchantName = "STORE",
+        total = total?.let { MoneyAmount(it, eur) },
+        subtotal = null,
+        tax = tax?.let { MoneyAmount(it, eur) },
+        date = null,
+        currency = "EUR",
+        lineItems = items,
+        confidence = 0.9f,
+        discount = discount?.let { MoneyAmount(it, eur) }
+    )
+
+    private fun item(description: String, price: Double, index: Int) =
+        ReceiptParser.LineItem(description, null, null, price, index)
+
+    private val tenAndFive = listOf(item("COFFEE", 10.0, 0), item("BREAD", 5.0, 1))
+
+    @Test
+    fun `DR-09 Greek discount keyword line parses as a positive discount in the receipt currency`() {
+        val parsed = parser.parse("ΜΑΡΚΕΤ\nΣΥΝΟΛΟ 12,00 €\nΕΚΠΤΩΣΗ 3,00")
+
+        assertEquals(MoneyAmount(3.0, eur), parsed.discount)
+    }
+
+    @Test
+    fun `DR-09 English DISCOUNT line with a minus sign parses as a positive magnitude`() {
+        val parsed = parser.parse("MARKET\nTOTAL 12.00 €\nDISCOUNT -3.00")
+
+        assertEquals(MoneyAmount(3.0, eur), parsed.discount)
+    }
+
+    @Test
+    fun `DR-09 Unicode minus and en dash signs are ignored and the magnitude stays positive`() {
+        val minus = parser.parse("MARKET\nTOTAL 12.00 €\nDISCOUNT −3.00")
+        val enDash = parser.parse("MARKET\nTOTAL 12.00 €\nDISCOUNT –3.00")
+
+        assertEquals(MoneyAmount(3.0, eur), minus.discount)
+        assertEquals(MoneyAmount(3.0, eur), enDash.discount)
+    }
+
+    @Test
+    fun `DR-09 two discount lines are summed`() {
+        val parsed = parser.parse("MARKET\nTOTAL 12.00 €\nDISCOUNT 1.25\nDISCOUNT 0.75")
+
+        assertEquals(MoneyAmount(2.0, eur), parsed.discount)
+    }
+
+    @Test
+    fun `DR-09 percentage discount line is ignored`() {
+        val onlyPercent = parser.parse("MARKET\nTOTAL 12.00 €\nDISCOUNT 10,00%")
+        val percentAndAmount = parser.parse("MARKET\nTOTAL 12.00 €\nDISCOUNT 10,00%\nDISCOUNT 3.00")
+
+        assertNull(onlyPercent.discount)
+        assertEquals(MoneyAmount(3.0, eur), percentAndAmount.discount)
+    }
+
+    @Test
+    fun `DR-09 receipt without a discount line has null discount`() {
+        val parsed = parser.parse("MARKET\nCOFFEE    10,00\nTOTAL 10,00 €")
+
+        assertNull(parsed.discount)
+    }
+
+    @Test
+    fun `DR-09 discount is unavailable when the receipt currency is unresolved`() {
+        val parsed = parser.parse("MARKET\nTOTAL 12.00\nDISCOUNT 3.00")
+
+        assertNull(parsed.discount)
+    }
+
+    @Test
+    fun `DR-09 parsed receipt with discount line reconciles to one negative adjustment item`() {
+        val parsed = parser.parse(
+            "MARKET\nCOFFEE    10,00\nBREAD    5,00\nDISCOUNT    3,00\nTOTAL 12,00 €"
+        )
+
+        assertEquals(12.0, requireNotNull(parsed.total).amount, 0.0)
+        assertEquals(MoneyAmount(3.0, eur), parsed.discount)
+        assertEquals(listOf(10.0, 5.0), parsed.lineItems.map { it.totalPrice })
+        val adjusted = parsed.withDiscountAdjustment()
+        assertEquals(listOf(10.0, 5.0, -3.0), adjusted.lineItems.map { it.totalPrice })
+        assertEquals(listOf(false, false, true), adjusted.lineItems.map { it.isAdjustment })
+        assertEquals(parsed.total, adjusted.total)
+    }
+
+    @Test
+    fun `DR-09 reconciling discount adds exactly one negative adjustment and changes nothing else`() {
+        val receipt = eurReceipt(tenAndFive, total = 12.0, discount = 3.0, tax = 1.2)
+
+        val adjusted = receipt.withDiscountAdjustment()
+
+        assertEquals(3, adjusted.lineItems.size)
+        assertEquals(tenAndFive, adjusted.lineItems.take(2))
+        val adjustment = adjusted.lineItems.last()
+        assertTrue(adjustment.isAdjustment)
+        assertEquals(-3.0, adjustment.totalPrice, 0.0)
+        assertEquals(1, adjusted.lineItems.count { it.isAdjustment })
+        assertEquals(3, adjusted.lineItems.map { it.itemIndex }.toSet().size)
+        assertEquals(MoneyAmount(12.0, eur), adjusted.total)
+        assertEquals(MoneyAmount(1.2, eur), adjusted.tax)
+        assertEquals(receipt, adjusted.copy(lineItems = tenAndFive))
+    }
+
+    @Test
+    fun `DR-09 applying the adjustment twice does not double-apply the discount`() {
+        val adjusted = eurReceipt(tenAndFive, total = 12.0, discount = 3.0).withDiscountAdjustment()
+
+        assertEquals(adjusted, adjusted.withDiscountAdjustment())
+    }
+
+    @Test
+    fun `DR-09 discount that does not reconcile with the total is ignored`() {
+        val receipt = eurReceipt(tenAndFive, total = 14.0, discount = 3.0)
+
+        assertEquals(receipt, receipt.withDiscountAdjustment())
+        assertEquals(2, receipt.withDiscountAdjustment().lineItems.size)
+    }
+
+    @Test
+    fun `DR-09 reconciliation tolerance is one cent inclusive`() {
+        // items 15 - discount 3 = 12.00; totals within 0.01 reconcile, beyond do not.
+        for (total in listOf(12.0, 12.005, 12.01, 11.99)) {
+            val adjusted = eurReceipt(tenAndFive, total = total, discount = 3.0).withDiscountAdjustment()
+            assertEquals("total $total should reconcile", 3, adjusted.lineItems.size)
+        }
+        for (total in listOf(12.02, 11.98, 12.5)) {
+            val receipt = eurReceipt(tenAndFive, total = total, discount = 3.0)
+            assertEquals("total $total should not reconcile", receipt, receipt.withDiscountAdjustment())
+        }
+    }
+
+    @Test
+    fun `DR-09 missing total or empty items or null or non-positive discount leave the receipt unchanged`() {
+        val noTotal = eurReceipt(tenAndFive, total = null, discount = 3.0)
+        val noItems = eurReceipt(emptyList(), total = 12.0, discount = 3.0)
+        val noDiscount = eurReceipt(tenAndFive, total = 15.0, discount = null)
+        val zeroDiscount = eurReceipt(tenAndFive, total = 15.0, discount = 0.0)
+        val negativeDiscount = eurReceipt(tenAndFive, total = 18.0, discount = -3.0)
+
+        for (receipt in listOf(noTotal, noItems, noDiscount, zeroDiscount, negativeDiscount)) {
+            assertEquals(receipt, receipt.withDiscountAdjustment())
+        }
+    }
+
+    @Test
+    fun `DR-09 discount in a different currency than the receipt is rejected`() {
+        try {
+            ReceiptParser.ParsedReceipt(
+                merchantName = null, total = null, subtotal = null, tax = null, date = null,
+                currency = "EUR", lineItems = emptyList(), confidence = 0f,
+                discount = MoneyAmount(3.0, CurrencyCode("USD"))
+            )
+            org.junit.Assert.fail("expected currency mismatch")
+        } catch (expected: IllegalArgumentException) {
+            assertEquals("RECEIPT_MONEY_CURRENCY_MISMATCH", expected.message)
+        }
     }
 
 }

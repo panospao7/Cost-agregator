@@ -47,6 +47,11 @@ class ReceiptParser @Inject constructor(
     private val timeProvider: TimeProvider
 ) {
     companion object {
+        /** DR-09: one-cent tolerance for reconciling items minus discount against the total. */
+        private val DISCOUNT_RECONCILE_TOLERANCE = java.math.BigDecimal("0.01")
+        /** DR-09: parser-side label of the synthesized discount adjustment item (not UI copy). */
+        private const val DISCOUNT_ADJUSTMENT_DESCRIPTION = "DISCOUNT"
+
         // Pre-compiled regex patterns for performance (Issue 2.13)
         private val GEO_STRIP_REGEX = Regex("""[><\}|▶]""")
         private val NUMBER_SPACE_FIX = Regex("""(?<=\d)[ \t\u00A0]+(?=[.,\d])""")
@@ -159,12 +164,19 @@ class ReceiptParser @Inject constructor(
          */
         val totalSource: TotalSource? = null,
         /** True when numeric total/line-item evidence existed but its source currency was unresolved. */
-        val hasUnresolvedTotalEvidence: Boolean = false
+        val hasUnresolvedTotalEvidence: Boolean = false,
+        /**
+         * DR-09: Sum of the receipt's discount lines as a positive magnitude, in the
+         * receipt's source currency; `null` when no discount line was parsed. Transient
+         * parse output: it is never persisted. Consumers apply it only through
+         * [withDiscountAdjustment], which reconciles it against [total].
+         */
+        val discount: MoneyAmount? = null
     ) {
         init {
             val sourceCurrency = CurrencyCode.parse(currency)
                 ?.takeIf { it in CurrencyCode.ALL_SUPPORTED }
-            listOfNotNull(total, subtotal, tax).forEach { amount ->
+            listOfNotNull(total, subtotal, tax, discount).forEach { amount ->
                 require(sourceCurrency == amount.currency) {
                     "RECEIPT_MONEY_CURRENCY_MISMATCH"
                 }
@@ -200,6 +212,42 @@ class ReceiptParser @Inject constructor(
                 }
                 return sourceValue(total)
             }
+
+        /**
+         * DR-09: Returns a copy whose [lineItems] carry one negative adjustment item for
+         * [discount], so the itemized allocation (ReceiptTaxAllocator) sees the net basis.
+         *
+         * Reconciliation rule (all in BigDecimal, source currency): the discount is applied
+         * only when it is positive, [total] is present, and
+         * `sum(lineItems) - discount` equals `total` within 0.01. Otherwise the receipt is
+         * returned unchanged and the discount is ignored. [total], [subtotal], [tax] and
+         * [discount] are never altered; the stored expense amount is unaffected.
+         */
+        fun withDiscountAdjustment(): ParsedReceipt {
+            val discountValue = discount ?: return this
+            val totalValue = total ?: return this
+            if (lineItems.isEmpty()) return this
+            if (!discountValue.amount.isFinite() || discountValue.amount <= 0.0 ||
+                !totalValue.amount.isFinite() || lineItems.any { !it.totalPrice.isFinite() }
+            ) {
+                return this
+            }
+            val itemsSum = lineItems.fold(java.math.BigDecimal.ZERO) { acc, item ->
+                acc.add(java.math.BigDecimal.valueOf(item.totalPrice))
+            }
+            val net = itemsSum.subtract(java.math.BigDecimal.valueOf(discountValue.amount))
+            val difference = net.subtract(java.math.BigDecimal.valueOf(totalValue.amount)).abs()
+            if (difference.compareTo(DISCOUNT_RECONCILE_TOLERANCE) > 0) return this
+            val adjustment = LineItem(
+                description = DISCOUNT_ADJUSTMENT_DESCRIPTION,
+                quantity = null,
+                unitPrice = null,
+                totalPrice = -discountValue.amount,
+                itemIndex = (lineItems.maxOfOrNull { it.itemIndex } ?: -1) + 1,
+                isAdjustment = true
+            )
+            return copy(lineItems = lineItems + adjustment)
+        }
     }
 
     /**
@@ -273,7 +321,7 @@ class ReceiptParser @Inject constructor(
     // Discount patterns
     private val discountPatterns = listOf(
         Pattern.compile(
-            """(?:DISCOUNT|ΕΚΠΤΩΣΗ|SAVINGS?|ΜΕΙΟΝ|ΕΚΠΤ)\s*[:\s]*-?\s*€?\s*(\d+[\s.,]\s*\d{2})""",
+            """(?:DISCOUNT|ΕΚΠΤΩΣΗ|SAVINGS?|ΜΕΙΟΝ|ΕΚΠΤ)\s*[:\s]*[-−–]?\s*€?\s*(\d+[\s.,]\s*\d{2})""",
             Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
         )
     )
@@ -309,6 +357,11 @@ class ReceiptParser @Inject constructor(
         val sourceCurrency = CurrencyCode.parse(detectCurrency(cleanedText).orEmpty())
             ?.takeIf { it in CurrencyCode.ALL_SUPPORTED }
         val currency = sourceCurrency?.code.orEmpty()
+        // DR-09: transient discount magnitude (never persisted); applied by the consumer
+        // only after reconciliation against the total.
+        val discount = sourceCurrency?.let { code ->
+            extractDiscount(cleanedText)?.let { MoneyAmount(it, code) }
+        }
         val lineItemsAggregate = MoneyAggregateBuilder.fromSourceCurrencyAmounts(
             lineItems.asSequence().map { it.totalPrice }.asIterable(), currency
         )
@@ -381,8 +434,33 @@ class ReceiptParser @Inject constructor(
             taxInclusive = taxInclusive,
             totalSource = resolvedTotalSource,
             hasUnresolvedTotalEvidence = sourceCurrency == null &&
-                (total?.isFinite() == true || lineItems.any { it.totalPrice.isFinite() })
+                (total?.isFinite() == true || lineItems.any { it.totalPrice.isFinite() }),
+            discount = discount
         )
+    }
+
+    /**
+     * DR-09: Sums every discount line (line-local match, so a keyword never pairs with the
+     * next line's number) into one positive magnitude. A sign on the OCR amount is ignored;
+     * percentage values ("DISCOUNT 10,00%") are skipped. Returns `null` when none parsed.
+     */
+    private fun extractDiscount(text: String): Double? {
+        var sum = java.math.BigDecimal.ZERO
+        var found = false
+        for (line in text.lineSequence()) {
+            for (pattern in discountPatterns) {
+                val matcher = pattern.matcher(line)
+                if (!matcher.find()) continue
+                if (line.substring(matcher.end(1)).trimStart().startsWith("%")) continue
+                val value = matcher.group(1)?.let { AmountUtils.parseAmount(it) }
+                    ?.takeIf { it.isFinite() && it != 0.0 }
+                    ?: continue
+                sum = sum.add(java.math.BigDecimal.valueOf(Math.abs(value)))
+                found = true
+                break
+            }
+        }
+        return if (found) sum.toDouble() else null
     }
 
     private fun normalizeGreekOcr(text: String): String {

@@ -458,7 +458,8 @@ class CategorizeReceiptItemsUseCase @Inject constructor(
                 confidence = 0.5f,
                 rationale = "Default categorization (AI unavailable)",
                 alternatives = emptyList(),
-                needsReview = true
+                needsReview = true,
+                isAdjustment = item.isAdjustment
             )
         }
 
@@ -621,8 +622,9 @@ class CategorizeReceiptItemsUseCase @Inject constructor(
                 return "Item $index has invalid confidence: ${item.confidence}"
             }
 
-            // Amount must be positive and finite
-            if (item.amount <= 0 || !item.amount.isFinite()) {
+            // Amount must be finite and positive; a reconciled discount adjustment is the
+            // only item allowed to be non-positive (negative).
+            if (!(item.amount.isFinite() && (item.amount > 0 || item.isAdjustment))) {
                 return "Item $index has invalid amount: ${item.amount}"
             }
 
