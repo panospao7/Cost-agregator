@@ -66,15 +66,21 @@ fun MoneyRadarWidget(
     }
     val context = LocalContext.current
     val budgetImpactMapper = remember(context) { MonteCarloBudgetImpactUiMapper(context) }
+    // Budget part could not be checked: an all-clear GREEN is only "partly checked", not healthy.
+    val partlyChecked = data.budgetUnknown && data.urgencyLevel == UrgencyLevel.GREEN
     val urgencyColor = when (data.urgencyLevel) {
-        UrgencyLevel.GREEN -> SemanticColors.SuccessGreen
+        UrgencyLevel.GREEN -> if (partlyChecked) SemanticColors.TextMuted else SemanticColors.SuccessGreen
         UrgencyLevel.YELLOW -> SemanticColors.WarningOrange
         UrgencyLevel.RED -> SemanticColors.DangerRed
         UrgencyLevel.UNAVAILABLE -> SemanticColors.TextMuted
     }
-    
+
     val urgencyLabel = when (data.urgencyLevel) {
-        UrgencyLevel.GREEN -> "All Clear"
+        UrgencyLevel.GREEN -> if (partlyChecked) {
+            androidx.compose.ui.res.stringResource(com.yourname.expensetracker.R.string.money_radar_level_partial)
+        } else {
+            "All Clear"
+        }
         UrgencyLevel.YELLOW -> "Attention Needed"
         UrgencyLevel.RED -> "Action Required"
         UrgencyLevel.UNAVAILABLE -> "Unavailable"
@@ -102,21 +108,7 @@ fun MoneyRadarWidget(
         ).title
     }
 
-    // Budget unknown + all clear: the only reason is the generic "healthy" text, which would
-    // overstate certainty, so show the budget-unavailable text instead.
-    val budgetUnknownOverride = data.budgetUnknown &&
-        data.urgencyLevel == UrgencyLevel.GREEN &&
-        data.dueBills.isEmpty() &&
-        data.anomalyAlerts.isEmpty()
-    val reasonTexts: List<String> = if (budgetUnknownOverride) {
-        listOf(
-            androidx.compose.ui.res.stringResource(
-                com.yourname.expensetracker.R.string.budget_usage_unavailable
-            )
-        )
-    } else {
-        data.topReasons.map { it.asString() }
-    }
+    val reasonTexts: List<String> = data.topReasons.map { it.asString() }
 
     val topConcernText = budgetImpactTitle ?: reasonTexts.firstOrNull()
     
@@ -129,7 +121,11 @@ fun MoneyRadarWidget(
     BentoCard(
         modifier = modifier.semantics { contentDescription = widgetDesc },
         containerColor = when (data.urgencyLevel) {
-            UrgencyLevel.GREEN -> SemanticColors.SuccessGreen.copy(alpha = 0.05f)
+            UrgencyLevel.GREEN -> if (partlyChecked) {
+                MaterialTheme.colorScheme.surface
+            } else {
+                SemanticColors.SuccessGreen.copy(alpha = 0.05f)
+            }
             UrgencyLevel.YELLOW -> SemanticColors.WarningOrange.copy(alpha = 0.05f)
             UrgencyLevel.RED -> SemanticColors.DangerRed.copy(alpha = 0.05f)
             UrgencyLevel.UNAVAILABLE -> MaterialTheme.colorScheme.surface
@@ -137,7 +133,11 @@ fun MoneyRadarWidget(
         border = BorderStroke(
             1.dp,
             when (data.urgencyLevel) {
-                UrgencyLevel.GREEN -> SemanticColors.SuccessGreen.copy(alpha = 0.3f)
+                UrgencyLevel.GREEN -> if (partlyChecked) {
+                    MaterialTheme.colorScheme.outlineVariant
+                } else {
+                    SemanticColors.SuccessGreen.copy(alpha = 0.3f)
+                }
                 UrgencyLevel.YELLOW -> SemanticColors.WarningOrange.copy(alpha = 0.3f)
                 UrgencyLevel.RED -> SemanticColors.DangerRed.copy(alpha = 0.3f)
                 UrgencyLevel.UNAVAILABLE -> MaterialTheme.colorScheme.outlineVariant

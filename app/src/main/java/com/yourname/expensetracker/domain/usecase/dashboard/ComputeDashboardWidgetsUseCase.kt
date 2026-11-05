@@ -365,7 +365,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         val healthScoreV2Result = computeHealthScoreV2(ctx)
         val lifestyleWidget = computeLifestyleWidget()
         val savingsSweepWidget = computeSavingsSweepWidget()
-        val moneyRadarData = computeMoneyRadarUseCase.compute()
+        val moneyRadarData = computeMoneyRadarUseCase.compute(radarBudgetInput(ctx, monteCarloWidget))
         val stressForecastResult = computeStressForecast()
 
         val widgets = assembleWidgets(
@@ -1000,6 +1000,32 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
                     )
                 }
             )
+        }
+    }
+
+    /**
+     * Money Radar's budget input from the dashboard's single Monte Carlo run. An unavailable run
+     * is marked by [MonteCarloResult.unavailable] with a null displayCurrency (or no widget at all).
+     */
+    private fun radarBudgetInput(
+        ctx: ComputeContext,
+        monteCarloWidget: DashboardWidget.MonteCarloForecast?
+    ): RadarBudgetInput {
+        val budget = ctx.overallBudget?.takeIf { it.isMonthScalePeriod }
+            ?: return RadarBudgetInput.NotComparable
+        val home = (ctx.normalizedInputResult as? DashboardNormalizedInputResult.Available)
+            ?.input?.homeCurrency?.code
+        val remaining = home?.let { budget.periodRemaining(ctx.now, it) }
+        if (remaining is BudgetPeriodRemaining.Unavailable &&
+            remaining.reason == BudgetPeriodRemainingUnavailableReason.NO_POSITIVE_LIMIT
+        ) {
+            return RadarBudgetInput.NotComparable
+        }
+        val result = monteCarloWidget?.result
+        return if (result != null && result.displayCurrency != null && result.budgetAmount != null) {
+            RadarBudgetInput.Simulated(result)
+        } else {
+            RadarBudgetInput.Unknown
         }
     }
 

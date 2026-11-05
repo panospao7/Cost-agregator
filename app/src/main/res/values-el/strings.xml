@@ -78,6 +78,10 @@
     <string name="notification_access_restricted_hint">Αν ο διακόπτης είναι γκρίζος, ανοίξτε πρώτα Πληροφορίες εφαρμογής &gt; ⋮ &gt; Να επιτρέπονται οι περιορισμένες ρυθμίσεις.</string>
     <string name="notification_access_open_failed">Δεν ήταν δυνατό το άνοιγμα των ρυθμίσεων. Ανοίξτε τις Ρυθμίσεις και αναζητήστε \"Πρόσβαση ειδοποιήσεων\".</string>
     <string name="money_radar_unavailable">Το Money Radar δεν είναι προσωρινά διαθέσιμο. Δεν ήταν δυνατό να αξιολογηθούν ορισμένες οικονομικές ενδείξεις.</string>
+    <!-- money_radar_level_partial: DRAFT: owner native sign-off pending -->
+    <string name="money_radar_level_partial">Μερικός έλεγχος</string>
+    <!-- money_radar_budget_unchecked: DRAFT: owner native sign-off pending -->
+    <string name="money_radar_budget_unchecked">Η πρόβλεψη προϋπολογισμού δεν είναι διαθέσιμη· ο κίνδυνος προϋπολογισμού δεν ελέγχθηκε</string>
     <string name="stress_forecast_unavailable">Η πρόβλεψη οικονομικής πίεσης δεν είναι προσωρινά διαθέσιμη. Δεν υπάρχει διαθέσιμη εκτίμηση κινδύνου.</string>
     <!-- stress_forecast_balance_unavailable: DRAFT: owner native sign-off pending -->
     <string name="stress_forecast_balance_unavailable">Η πρόβλεψη οικονομικής πίεσης χρειάζεται ένα υπόλοιπο λογαριασμού που η εφαρμογή μπορεί να υπολογίσει στο βασικό σας νόμισμα, και αυτό δεν είναι δυνατό αυτή τη στιγμή. Δεν εμφανίζεται εκτίμηση κινδύνου.</string>

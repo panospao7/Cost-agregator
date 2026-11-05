@@ -1054,6 +1054,8 @@
     <string name="money_radar_budget_impact_critical_overrun_format">Very likely to exceed budget by %1$s</string>
     <string name="money_radar_budget_impact_probability_warning">High probability of exceeding budget</string>
     <string name="money_radar_budget_impact_probability_critical">Very high probability of budget overrun</string>
+    <string name="money_radar_level_partial">Partly checked</string>
+    <string name="money_radar_budget_unchecked">Budget forecast unavailable, so budget risk was not checked</string>
 
     <!-- Budget Analytics -->
     <string name="budget_block_party_title">BUDGET BLOCK PARTY</string>

@@ -118,6 +118,7 @@ private fun String.toResourceIdOrNull(): Int? {
         DomainTextKeys.COMPUTE_MONEY_RADAR_REASON_BUDGET_RISK_MEDIUM_FORMAT -> R.string.money_radar_reason_budget_risk_medium_format
         DomainTextKeys.COMPUTE_MONEY_RADAR_REASON_FINANCES_HEALTHY -> R.string.money_radar_reason_finances_healthy
         DomainTextKeys.COMPUTE_MONEY_RADAR_REASON_MONITOR_SPENDING -> R.string.money_radar_reason_monitor_spending
+        DomainTextKeys.COMPUTE_MONEY_RADAR_REASON_BUDGET_UNCHECKED -> R.string.money_radar_budget_unchecked
         DomainTextKeys.BUDGET_REDUCE_URGENT -> R.string.domain_budget_reduce_urgent
         DomainTextKeys.BUDGET_PAUSE_NON_ESSENTIAL -> R.string.domain_budget_pause_non_essential
         DomainTextKeys.BUDGET_REVIEW_SUBSCRIPTIONS -> R.string.domain_budget_review_subscriptions

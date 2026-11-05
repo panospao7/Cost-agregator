@@ -349,6 +349,10 @@
     <string name="notification_access_restricted_hint">Si el interruptor aparece en gris, abre primero Información de la aplicación &gt; ⋮ &gt; Permitir ajustes restringidos.</string>
     <string name="notification_access_open_failed">No se pudo abrir la pantalla de ajustes. Abre Ajustes y busca \"Acceso a notificaciones\".</string>
     <string name="money_radar_unavailable">Money Radar no está disponible temporalmente. No se pudieron evaluar algunas señales financieras.</string>
+    <!-- money_radar_level_partial: DRAFT: owner native sign-off pending -->
+    <string name="money_radar_level_partial">Revisión parcial</string>
+    <!-- money_radar_budget_unchecked: DRAFT: owner native sign-off pending -->
+    <string name="money_radar_budget_unchecked">Previsión del presupuesto no disponible; no se comprobó el riesgo del presupuesto</string>
     <string name="stress_forecast_unavailable">La previsión de estrés financiero no está disponible temporalmente. No hay ninguna estimación de riesgo disponible.</string>
     <!-- stress_forecast_balance_unavailable: DRAFT: owner native sign-off pending -->
     <string name="stress_forecast_balance_unavailable">La previsión de estrés financiero necesita un saldo de cuenta que la app pueda calcular en tu moneda principal, y ahora mismo no puede hacerlo. No se muestra ninguna estimación de riesgo.</string>

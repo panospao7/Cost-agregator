@@ -1490,8 +1490,10 @@ CORRECT merchant category (DR-04, genuine user category edit only):
   → Same merchantPattern key as learnMerchantCategory (merchantNormalizer canonical name)
   → MerchantCategoryRepository.upsertUserCorrection (DatabaseWriteBarrier check, MerchantCategoryDao @Insert(onConflict = REPLACE),
     invalidates all caches) REPLACES a seeded or auto-learned row for that key
-  → A bulk category edit corrects the one merchant key once; approve-all-identical corrects once per approved review,
-    all on the same key with the same category, so the result is the same
+  → A bulk category edit corrects the one merchant key once, except the Review queue save where the category is an
+    untouched AI prefill (`recordCorrection = false`), which updates the rows but records no correction;
+    approve-all-identical corrects once per approved review, all on the same key with the same category, so the
+    result is the same
   → NOT called from TransactionSideEffectPlanner (fires on any trusted edit even if the category is unchanged)
 
 DEBUG categorize:

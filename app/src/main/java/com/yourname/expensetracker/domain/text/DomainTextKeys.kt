@@ -39,6 +39,7 @@ object DomainTextKeys {
     const val COMPUTE_MONEY_RADAR_REASON_BUDGET_RISK_MEDIUM_FORMAT = "money_radar.reason.budget_risk.medium.format"
     const val COMPUTE_MONEY_RADAR_REASON_FINANCES_HEALTHY = "money_radar.reason.finances_healthy"
     const val COMPUTE_MONEY_RADAR_REASON_MONITOR_SPENDING = "money_radar.reason.monitor_spending"
+    const val COMPUTE_MONEY_RADAR_REASON_BUDGET_UNCHECKED = "money_radar.reason.budget_unchecked"
 
     const val DASHBOARD_BRIEFING_OVERALL = "dashboard_briefing.overall"
 
