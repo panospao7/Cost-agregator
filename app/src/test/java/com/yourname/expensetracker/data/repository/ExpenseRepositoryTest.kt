@@ -481,4 +481,17 @@ class ExpenseRepositoryTest {
         assertTrue(correctionSlot.captured.createdAt > 0L)
         assertEquals(fixedTime, correctionSlot.captured.createdAt)
     }
+
+    @Suppress("DEPRECATION")
+    @Test
+    fun `bulk category correction notificationText is the constant and carries no merchant`() = runTest {
+        val merchant = "Synthetic Merchant XYZ"
+
+        repository.updateExpenseCategoryBulk(merchant, 9L)
+
+        val correctionSlot = slot<UserCorrection>()
+        coVerify(exactly = 1) { userCorrectionDao.insert(capture(correctionSlot)) }
+        assertEquals("Applied to all matching transactions", correctionSlot.captured.notificationText)
+        assertFalse(correctionSlot.captured.notificationText.orEmpty().contains(merchant))
+    }
 }
