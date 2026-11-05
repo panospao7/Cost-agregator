@@ -24,6 +24,7 @@ import com.yourname.expensetracker.domain.logic.NarrativeGenerator
 import com.yourname.expensetracker.domain.logic.SynthesisEngine
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.model.RecurringPattern
+import com.yourname.expensetracker.domain.model.Result
 import com.yourname.expensetracker.domain.model.budget.MonteCarloBudgetImpact.RiskTier
 import com.yourname.expensetracker.domain.model.dashboard.WeatherState
 import com.yourname.expensetracker.domain.model.dashboard.toBudgetStatusSnapshot
@@ -132,14 +133,19 @@ class RadarWeatherAgreementTest {
         assertEquals("obligations (400) exceed what is left (300): nothing available", 0.0, forecast.components.discretionaryBudget, 1e-6)
         assertEquals(WeatherState.STORMY, weather.state)
 
-        // ---- Radar: real use case, simulator and impact; the simulator is spied to read its input.
+        // ---- The Monte Carlo card: the dashboard runs ONE simulation (spent 700, known upcoming 400,
+        // limit 1,000) and hands that same result to Radar. Real simulator on the deterministic
+        // no-fit path; Radar never simulates.
         val distribution = mockk<HistoricalSpendingDistribution>()
         coEvery { distribution.computeDistributionResult(homeCurrency = any()) } returns HistoricalDistributionResult.NoFit()
-        val simulator = spyk(MonteCarloSpendingSimulator(distribution, DataQualityAssessor(), timeProvider))
-        val budgetRepository = mockk<BudgetRepository>()
-        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(budgetStatus))
+        val simulator = MonteCarloSpendingSimulator(distribution, DataQualityAssessor(), timeProvider)
+        val card = requireNotNull(simulator.simulate(700.0, 400.0, 1_000.0, "EUR"))
+        assertEquals(1_000.0, card.budgetAmount!!, 0.0)
+        assertEquals("700 + 400 can never fit under 1,000", 0.0, card.probabilityUnderBudget!!, 1e-9)
+        val cardImpact = (GetMonteCarloBudgetImpactUseCase()(budgetAmount = 1_000.0, monteCarloResult = card)
+            as Result.Success<com.yourname.expensetracker.domain.model.budget.MonteCarloBudgetImpact>).data
+
         val expenseRepository = mockk<ExpenseRepository>()
-        coEvery { expenseRepository.getExpensesSince(any()) } returns listOf(purchase700())
         coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns emptyList()
         val recurringProvider = mockk<MergedRecurringPatternsProvider>()
         coEvery { recurringProvider.getConfirmedPatterns() } returns listOf(rent)
@@ -152,19 +158,21 @@ class RadarWeatherAgreementTest {
             recurringPatternsProvider = recurringProvider,
             anomalyAlertRepository = anomalies,
             getMonteCarloBudgetImpact = GetMonteCarloBudgetImpactUseCase(),
-            monteCarloSimulator = simulator,
             expenseRepository = expenseRepository,
-            budgetRepository = budgetRepository,
             analyticsCurrencyNormalizer = AnalyticsCurrencyNormalizer(currencyConverter),
             currencySettingsRepository = settings,
             currencyConverter = currencyConverter,
             timeProvider = timeProvider
-        ).compute()
+        ).compute(RadarBudgetInput.Simulated(card))
 
-        // The rent is outside the 7-day bills window but is in Radar's overrun input.
+        // PIN CHANGED: Radar reads the card's own result, so its figures equal the card's by
+        // construction instead of coming from a second run with a month-end window.
+        // The rent is outside the 7-day bills window but is in the shared overrun input.
         assertTrue(radar.dueBills.isEmpty())
-        coVerify(exactly = 1) { simulator.simulate(700.0, 400.0, 1_000.0, "EUR") }
-        val risk = assertNotNull(radar.budgetRisk).let { radar.budgetRisk!! }
+        val risk = radar.budgetRisk!!
+        assertEquals(cardImpact.expectedOverrun, risk.expectedOverrun, 0.0)
+        assertEquals(cardImpact.probabilityOfOverrun, risk.probabilityOfOverrun, 0.0)
+        assertEquals(card.budgetAmount!!, risk.budgetLimit!!, 0.0)
         assertTrue("Radar's overrun figure is above 0", risk.expectedOverrun > 0.0)
         assertEquals(100.0, risk.expectedOverrun, 1e-6) // 700 + 400 - 1,000
         assertEquals(1.0, risk.probabilityOfOverrun, 1e-9)
@@ -172,10 +180,43 @@ class RadarWeatherAgreementTest {
         assertTrue(!radar.budgetUnknown)
 
         // PIN CHANGED: the weighted score is 30 (budget part 80 + 10 + 20 capped at 100, weighted 0.3;
-        // no bills, no anomalies), but the CRITICAL tier now sets a score floor of 61, so the Radar
-        // level is RED and agrees with the weather surface, which also warns.
+        // no bills, no anomalies), but the CRITICAL tier sets a score floor of 61 because the overrun
+        // 100 is at least 5% of the 1,000 limit, so the Radar level is RED and agrees with the
+        // weather surface, which also warns (STORMY above).
+        // FC-PAID-UNLINKED (see fix-1.0.4-round2-home-verdicts-plan.md) is a shared, recorded
+        // limitation: if the 400 rent was already paid inside the 700 but not linked to its rule, the
+        // card, the weather and Radar all count it twice. They still agree with each other.
         assertEquals(61, radar.urgencyScore)
         assertEquals(UrgencyLevel.RED, radar.urgencyLevel)
         assertTrue(radar.primaryCta is MoneyRadarAction.AdjustBudget)
+    }
+
+    /**
+     * Characterization of a KNOWN DEFECT, not desired behavior (FC-PAID-UNLINKED, recorded in
+     * fix-1.0.4-round2-home-verdicts-plan.md, pre-existing). Spent 700 already includes a paid
+     * rent of 400, but the rule is still PLANNED and due later this month: the forecast's committed
+     * total is still 400, so the true month total of 700 reads as 1,100. When the defect is fixed
+     * this test must change to expect 0.
+     */
+    @Test
+    fun `KNOWN DEFECT FC-PAID-UNLINKED pins a paid but unlinked rent still counted as committed upcoming`() = runTest {
+        val forecast = SynthesisEngine(timeProvider, currencyConverter = currencyConverter).synthesize(
+            pastSumDaily = emptyList(),
+            recurringPatterns = listOf(rent),
+            plannedExpenses = emptyList(),
+            savingsGoals = emptyList(),
+            budgetStatuses = listOf(budgetStatus.toBudgetStatusSnapshot()),
+            spendingPace = SpendingPace(
+                currentMonthSpent = 700.0, daysElapsed = 15, daysInMonth = 30, projectedTotal = 1_400.0,
+                previousMonthTotal = null, averageMonthlyTotal = null, pacePercentage = 100.0f,
+                paceStatus = PaceStatus.ON_PACE, displayCurrency = "EUR"
+            ),
+            displayCurrency = "EUR"
+        )
+
+        assertEquals(
+            "known defect: the 400 rent is counted although it is already inside the 700 spent",
+            400.0, forecast.components.totalCommitted, 1e-6
+        )
     }
 }

@@ -15,7 +15,14 @@ import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
 import com.yourname.expensetracker.domain.forecasting.FinancialStressForecastEngine
 import com.yourname.expensetracker.domain.forecasting.ForecastInputAssembler
+import com.yourname.expensetracker.domain.core.money.ConversionFailureType
+import com.yourname.expensetracker.domain.core.money.ConversionOutcome
+import com.yourname.expensetracker.domain.core.money.RateBasis
+import com.yourname.expensetracker.domain.forecasting.ConfidenceLevel
+import com.yourname.expensetracker.domain.forecasting.MonteCarloResult
 import com.yourname.expensetracker.domain.forecasting.MonteCarloSpendingSimulator
+import com.yourname.expensetracker.domain.forecasting.SimulationConfidence
+import com.yourname.expensetracker.domain.forecasting.SimulationMetadata
 import com.yourname.expensetracker.domain.forecasting.NormalizedForecastInput
 import com.yourname.expensetracker.domain.forecasting.StressForecastResult
 import com.yourname.expensetracker.domain.forecasting.StressHorizon
@@ -78,6 +85,12 @@ class BudgetSurfaceAgreementTest {
     /** Budget argument of every Monte Carlo simulate() call, in call order. */
     private val simulatedBudgetAmounts = mutableListOf<Double?>()
 
+    /** Argument of every Money Radar compute() call, in call order. */
+    private val radarInputs = mutableListOf<RadarBudgetInput>()
+
+    /** When true the mocked simulator returns a result echoing the budget it was given; otherwise null. */
+    private var simulatorReturnsResult = false
+
     private class Surfaces(
         val headline: DashboardWidget.SafeToSpend,
         val runway: DashboardWidget.FinancialRunway,
@@ -89,7 +102,10 @@ class BudgetSurfaceAgreementTest {
         val blockPartyShown: Boolean,
         val weatherSummary: UiText,
         val homeBudgetSummary: UiText?,
-        val hasBudgetHealthWidget: Boolean
+        val hasBudgetHealthWidget: Boolean,
+        val monteCarloWidget: DashboardWidget.MonteCarloForecast?,
+        /** The argument the dashboard passed to Money Radar. */
+        val radarInput: RadarBudgetInput
     )
 
     // ---------------------------------------------------------------- truth table rows
@@ -229,13 +245,19 @@ class BudgetSurfaceAgreementTest {
         assertTrue(inside.blockPartyShown)
     }
 
+    // ---------------------------------------------------------------- Round 2: Radar budget input mapping
+    // The dashboard runs ONE Monte Carlo simulation and passes the card's result to Radar as a
+    // RadarBudgetInput. The real ComputeDashboardWidgetsUseCase is used; the Radar use case is a
+    // mock that captures its argument.
+
     /**
-     * P-05-5: the Money Radar and the dashboard widget read the budget limit from the same
-     * derivation, so one budget gives the same Monte Carlo limit on both; a non-month-scale period
-     * gives no comparison on either.
+     * PIN CHANGED (was: Radar and widget each derived the limit and Radar's own simulator received
+     * it): Radar no longer simulates, so the shared limit is read from the one simulation result
+     * Radar receives. One budget still gives the same limit on both surfaces.
      */
     @Test
     fun `P-05-5 the same budget gives the same Radar limit and widget Monte Carlo limit`() = runTest {
+        simulatorReturnsResult = true
         val rows = listOf(
             "plain 1000" to status(1_000.0, 300.0, date(2026, 6, 10), date(2026, 7, 10), 300.0),
             "rollover surplus 1000 plus 100" to
@@ -243,70 +265,159 @@ class BudgetSurfaceAgreementTest {
         )
 
         rows.forEach { (name, budgetStatus) ->
-            val widgetLimit = surfaces(budgetStatus.toBudgetStatusSnapshot()).monteCarloBudget
-            val radarLimits = radarSimulatedLimits(budgetStatus)
+            val s = surfaces(budgetStatus.toBudgetStatusSnapshot())
+            val radarInput = s.radarInput as RadarBudgetInput.Simulated
 
-            assertEquals("$name: widget limit", budgetStatus.effectiveLimit, widgetLimit!!, 0.0)
-            assertEquals("$name: radar limit", listOf(widgetLimit), radarLimits)
+            assertEquals("$name: widget limit", budgetStatus.effectiveLimit, s.monteCarloBudget!!, 0.0)
+            assertEquals("$name: radar limit", s.monteCarloBudget, radarInput.result.budgetAmount)
         }
+    }
+
+    /** The central pin: both cards read one simulation, so Radar's input IS the Monte Carlo card's result object. */
+    @Test
+    fun `round2 a month-scale Available budget gives Simulated with the same result object as the Monte Carlo card`() = runTest {
+        simulatorReturnsResult = true
+
+        val s = surfaces(snapshot(1_000.0, 300.0, date(2026, 6, 10), date(2026, 7, 10), gross = 300.0))
+
+        val input = s.radarInput as RadarBudgetInput.Simulated
+        org.junit.Assert.assertSame(s.monteCarloWidget!!.result, input.result)
+        assertEquals("one simulation per dashboard compute", 1, s.monteCarloCalls)
+        assertEquals(1_000.0, input.result.budgetAmount!!, 0.0)
     }
 
     @Test
-    fun `P-05-5 a weekly budget gives no Monte Carlo limit on the Radar or the widget`() = runTest {
-        val weekly = status(100.0, 50.0, at(15, 0), at(22, 0), 50.0)
+    fun `round2 no overall budget gives NotComparable`() = runTest {
+        simulatorReturnsResult = true
+        val rolling = snapshot(1_000.0, 300.0, date(2026, 6, 10), date(2026, 7, 10), gross = 300.0)
 
-        assertNull(surfaces(weekly.toBudgetStatusSnapshot()).monteCarloBudget)
-        assertEquals(emptyList<Double>(), radarSimulatedLimits(weekly))
+        assertEquals(
+            "category budget only",
+            RadarBudgetInput.NotComparable,
+            surfaces(rolling.copy(budgetCategoryId = 3L)).radarInput
+        )
+        assertEquals("no budgets at all", RadarBudgetInput.NotComparable, surfacesFor(emptyList()).radarInput)
     }
 
-    /** Runs the real Radar use case on [budgetStatus] and returns the limits it passed to the simulator. */
-    private suspend fun radarSimulatedLimits(budgetStatus: BudgetStatus): List<Double> {
-        val limits = mutableListOf<Double>()
-        val radarSimulator = mockk<MonteCarloSpendingSimulator>()
-        coEvery { radarSimulator.simulate(any(), any(), any(), any()) } answers {
-            limits.add(thirdArg())
-            null // the limit is captured at the call; no simulation result is needed
+    /** Converted from the weekly P-05-5 test (was: no simulator limit on Radar or widget). */
+    @Test
+    fun `P-05-5 a weekly or yearly budget gives no Monte Carlo limit and a NotComparable Radar input`() = runTest {
+        simulatorReturnsResult = true
+        val weekly = status(100.0, 50.0, at(15, 0), at(22, 0), 50.0).toBudgetStatusSnapshot()
+        val yearly = snapshot(12_000.0, 9_300.0, date(2026, 1, 1), date(2027, 1, 1), gross = 9_300.0)
+
+        listOf("weekly" to weekly, "yearly" to yearly).forEach { (name, budget) ->
+            val s = surfaces(budget)
+            assertNull("$name: no Monte Carlo limit", s.monteCarloBudget)
+            assertEquals("$name: Radar input", RadarBudgetInput.NotComparable, s.radarInput)
         }
-        val budgetRepository = mockk<com.yourname.expensetracker.data.repository.BudgetRepository>()
-        io.mockk.every { budgetRepository.getBudgetStatuses() } returns
-            kotlinx.coroutines.flow.flowOf(listOf(budgetStatus))
-        val expenseRepository = mockk<com.yourname.expensetracker.data.repository.ExpenseRepository>()
-        coEvery { expenseRepository.getExpensesSince(any()) } returns emptyList()
-        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns emptyList()
-        val recurring = mockk<com.yourname.expensetracker.domain.forecasting.MergedRecurringPatternsProvider>()
-        coEvery { recurring.getConfirmedPatterns() } returns emptyList()
-        val anomalies = mockk<AnomalyAlertRepository>()
-        coEvery { anomalies.getActiveAlerts() } returns emptyList()
-        val settings = mockk<CurrencySettingsRepository>()
-        io.mockk.every { settings.homeCurrency() } returns kotlinx.coroutines.flow.flowOf("EUR")
-
-        ComputeMoneyRadarUseCase(
-            recurringPatternsProvider = recurring,
-            anomalyAlertRepository = anomalies,
-            getMonteCarloBudgetImpact = mockk(),
-            monteCarloSimulator = radarSimulator,
-            expenseRepository = expenseRepository,
-            budgetRepository = budgetRepository,
-            analyticsCurrencyNormalizer =
-                com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer(currencyConverter),
-            currencySettingsRepository = settings,
-            currencyConverter = currencyConverter,
-            timeProvider = timeProvider
-        ).compute()
-        return limits
     }
+
+    /** Converted from "limit of zero or below ... does not make Radar unavailable": NO_POSITIVE_LIMIT is no budget to compare. */
+    @Test
+    fun `round2 limit zero gives NotComparable not Unknown`() = runTest {
+        simulatorReturnsResult = true
+        val zeroLimit = status(500.0, 300.0, date(2026, 6, 10), date(2026, 7, 10), 300.0, effectiveLimit = 0.0)
+
+        assertEquals(RadarBudgetInput.NotComparable, surfaces(zeroLimit.toBudgetStatusSnapshot()).radarInput)
+    }
+
+    @Test
+    fun `round2 unavailable effective spend or unknown percent gives Unknown`() = runTest {
+        simulatorReturnsResult = true
+        val base = snapshot(1_000.0, 300.0, date(2026, 6, 10), date(2026, 7, 10), gross = 300.0)
+        val rows = mapOf(
+            "effective spend null" to base.copy(effectiveSpend = null, effectiveHealthStatus = null),
+            "percent unknown" to base.copy(percentKnown = false, effectiveHealthStatus = BudgetHealthStatus.UNKNOWN)
+        )
+
+        rows.forEach { (name, budget) ->
+            assertEquals(name, RadarBudgetInput.Unknown, surfaces(budget).radarInput)
+        }
+    }
+
+    /**
+     * Converted from "excluded source money cannot produce a healthy budget forecast" and
+     * "non-neutralised foreign row with missing exchange rate still makes radar unavailable": the
+     * card gate withholds the simulation when a counted row cannot be normalized, so Radar gets
+     * Unknown (and is not blanked) instead of a healthy forecast.
+     */
+    @Test
+    fun `round2 partial data gives Unknown`() = runTest {
+        simulatorReturnsResult = true
+        val rolling = snapshot(1_000.0, 300.0, date(2026, 6, 10), date(2026, 7, 10), gross = 300.0)
+        val unratedRow = purchaseRow(id = 2L, amount = 100.0, currency = "UNKNOWN", day = 3)
+
+        val s = surfaces(rolling, extraExpenses = listOf(unratedRow))
+
+        assertEquals(RadarBudgetInput.Unknown, s.radarInput)
+        assertEquals("the simulator is not run on partial data", 0, s.monteCarloCalls)
+    }
+
+    /** Converted from "neutralised foreign row with no exchange rate does not make radar unavailable". */
+    @Test
+    fun `round2 a neutralised foreign row with no exchange rate still gives Simulated`() = runTest {
+        simulatorReturnsResult = true
+        coEvery { currencyConverter.convertOutcome(any(), "USD", "EUR", any(), any(), any()) } returns
+            ConversionOutcome.Failed(
+                originalAmount = 400.0,
+                originalCurrency = "USD",
+                targetCurrency = "EUR",
+                rateBasis = RateBasis.TRANSACTION_DATE,
+                failureType = ConversionFailureType.MISSING_RATE,
+                message = "No USD->EUR rate available"
+            )
+        val rolling = snapshot(1_000.0, 300.0, date(2026, 6, 10), date(2026, 7, 10), gross = 300.0)
+        val neutralised = purchaseRow(id = 2L, amount = 400.0, currency = "USD", day = 4)
+            .copy(spendingExclusionReason = "INSTALLMENT_PURCHASE")
+
+        val s = surfaces(rolling, extraExpenses = listOf(neutralised))
+
+        assertTrue(s.radarInput is RadarBudgetInput.Simulated)
+        assertEquals(1, s.monteCarloCalls)
+    }
+
+    private fun purchaseRow(id: Long, amount: Double, currency: String, day: Int) = DashboardExpense(
+        id = id, amount = amount, effectiveAmount = amount, currency = currency, merchant = "M$id",
+        transactionType = DashboardTransactionType.PURCHASE, date = at(day, 12),
+        categoryId = 7L, isNotMine = false, isManualEntry = false
+    )
+
+    private fun simulationFixture(budget: Double?, currency: String) = MonteCarloResult(
+        percentile10 = 900.0, percentile25 = 950.0, percentile50 = 1000.0, percentile75 = 1100.0,
+        percentile90 = 1200.0,
+        probabilityUnderBudget = budget?.let { 0.5 },
+        budgetAmount = budget,
+        spentToDate = 300.0,
+        knownUpcoming = 0.0,
+        confidence = SimulationConfidence(score = 0.7, level = ConfidenceLevel.HIGH, reason = "sufficient history"),
+        metadata = SimulationMetadata(
+            qualifyingWeeks = 10, totalWeeksExamined = 12, iterations = 1000, logNormalMu = 0.0,
+            logNormalSigma = 1.0, daysRemaining = 15, computedAt = 0L
+        ),
+        displayCurrency = currency
+    )
 
     // ---------------------------------------------------------------- harness
 
-    private suspend fun surfaces(snapshot: BudgetStatusSnapshot): Surfaces {
+    private suspend fun surfaces(
+        snapshot: BudgetStatusSnapshot,
+        extraExpenses: List<DashboardExpense> = emptyList()
+    ): Surfaces = surfacesFor(listOf(snapshot), extraExpenses)
+
+    private suspend fun surfacesFor(
+        snapshots: List<BudgetStatusSnapshot>,
+        extraExpenses: List<DashboardExpense> = emptyList()
+    ): Surfaces {
         fixedNowMs = at(15, 12)
         simulatedBudgetAmounts.clear()
+        radarInputs.clear()
         val purchase = DashboardExpense(
             id = 1L, amount = 300.0, effectiveAmount = 300.0, currency = "EUR", merchant = "M1",
             transactionType = DashboardTransactionType.PURCHASE, date = at(2, 12),
             categoryId = 7L, isNotMine = false, isManualEntry = false
         )
-        val result = computeUseCase.compute(data(listOf(purchase), listOf(snapshot)))
+        val result = computeUseCase.compute(data(listOf(purchase) + extraExpenses, snapshots))
 
         // Weather the way the weather repository builds it: synthesize, then narrate.
         val forecast = synthesisEngine.synthesize(
@@ -314,11 +425,11 @@ class BudgetSurfaceAgreementTest {
             recurringPatterns = emptyList(),
             plannedExpenses = emptyList(),
             savingsGoals = emptyList(),
-            budgetStatuses = listOf(snapshot),
+            budgetStatuses = snapshots,
             spendingPace = pace(),
             displayCurrency = "EUR"
         )
-        val narrative = narrativeGenerator.generate(forecast, listOf(snapshot), "EUR")
+        val narrative = narrativeGenerator.generate(forecast, snapshots, "EUR")
 
         return Surfaces(
             headline = result.allWidgets.filterIsInstance<DashboardWidget.SafeToSpend>().single(),
@@ -332,7 +443,10 @@ class BudgetSurfaceAgreementTest {
             weatherSummary = narrative.summary,
             homeBudgetSummary = result.allWidgets.filterIsInstance<DashboardWidget.BudgetHealthWidget>()
                 .singleOrNull()?.summary,
-            hasBudgetHealthWidget = result.allWidgets.any { it is DashboardWidget.BudgetHealthWidget }
+            hasBudgetHealthWidget = result.allWidgets.any { it is DashboardWidget.BudgetHealthWidget },
+            monteCarloWidget = result.allWidgets.filterIsInstance<DashboardWidget.MonteCarloForecast>()
+                .singleOrNull(),
+            radarInput = radarInputs.single()
         )
     }
 
@@ -443,8 +557,9 @@ class BudgetSurfaceAgreementTest {
         synthesisEngine = SynthesisEngine(timeProvider, currencyConverter = currencyConverter)
         val monteCarloSimulator = mockk<MonteCarloSpendingSimulator>(relaxed = true)
         coEvery { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) } answers {
-            simulatedBudgetAmounts.add(arg<Double?>(2))
-            null
+            val budget = arg<Double?>(2)
+            simulatedBudgetAmounts.add(budget)
+            if (simulatorReturnsResult) simulationFixture(budget, arg<String>(3)) else null
         }
         val healthScoreV2 = mockk<FinancialHealthScoreV2>(relaxed = true)
         coEvery { healthScoreV2.calculateHealthScore(any(), any()) } returns HealthScoreOutcome.Available(
@@ -465,15 +580,18 @@ class BudgetSurfaceAgreementTest {
         coEvery { monthlySavingsSweepUseCase.computeSweepRecommendationResult() } returns
             SavingsSweepComputationResult.NoRecommendation()
         val computeMoneyRadarUseCase = mockk<ComputeMoneyRadarUseCase>(relaxed = true)
-        coEvery { computeMoneyRadarUseCase.compute(any()) } returns MoneyRadarData(
-            urgencyScore = 0,
-            urgencyLevel = UrgencyLevel.GREEN,
-            dueBills = emptyList(),
-            anomalyAlerts = emptyList(),
-            budgetRisk = null,
-            topReasons = emptyList(),
-            primaryCta = null
-        )
+        coEvery { computeMoneyRadarUseCase.compute(any()) } answers {
+            radarInputs.add(firstArg())
+            MoneyRadarData(
+                urgencyScore = 0,
+                urgencyLevel = UrgencyLevel.GREEN,
+                dueBills = emptyList(),
+                anomalyAlerts = emptyList(),
+                budgetRisk = null,
+                topReasons = emptyList(),
+                primaryCta = null
+            )
+        }
         val stressForecastEngine = mockk<FinancialStressForecastEngine>(relaxed = true)
         coEvery { stressForecastEngine.computeStressForecast() } returns StressForecastResult(
             horizons = listOf(StressHorizon(30, 0.0, 0.0, 0.0, StressRiskLevel.LOW, 0.0, 0.0, 0.0)),

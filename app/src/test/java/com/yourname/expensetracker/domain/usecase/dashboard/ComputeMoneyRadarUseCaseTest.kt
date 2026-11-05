@@ -60,9 +60,7 @@ class ComputeMoneyRadarUseCaseTest {
     private lateinit var context: Context
     private lateinit var anomalyAlertRepository: AnomalyAlertRepository
     private lateinit var getMonteCarloBudgetImpact: GetMonteCarloBudgetImpactUseCase
-    private lateinit var monteCarloSimulator: MonteCarloSpendingSimulator
     private lateinit var expenseRepository: ExpenseRepository
-    private lateinit var budgetRepository: BudgetRepository
     private lateinit var currencyConverter: CurrencyConverter
     private lateinit var currencySettingsRepository: CurrencySettingsRepository
     private lateinit var timeProvider: TimeProvider
@@ -76,12 +74,15 @@ class ComputeMoneyRadarUseCaseTest {
         for (source in 0..2) {
             stubHealthyRadarSignals()
             val failure = IllegalStateException("SECRET financial payload")
+            val input = simulatedInput(probabilityOfOverrun = 0.5, expectedOverrun = 10.0, tier = RiskTier.MEDIUM)
             when (source) {
                 0 -> coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } throws failure
                 1 -> coEvery { anomalyAlertRepository.getActiveAlerts() } throws failure
-                2 -> every { budgetRepository.getBudgetStatuses() } returns kotlinx.coroutines.flow.flow { throw failure }
+                // PIN CHANGED: the third required signal was the budget read. Radar no longer reads
+                // budgets, so it is now the impact derivation from the dashboard's simulation result.
+                2 -> every { getMonteCarloBudgetImpact(any(), any()) } throws failure
             }
-            assertRadarUnavailable(useCase.compute())
+            assertRadarUnavailable(useCase.compute(input))
         }
     }
 
@@ -90,35 +91,47 @@ class ComputeMoneyRadarUseCaseTest {
         for (source in 0..2) {
             stubHealthyRadarSignals()
             val cancellation = kotlinx.coroutines.CancellationException("test cancellation")
+            val input = simulatedInput(probabilityOfOverrun = 0.5, expectedOverrun = 10.0, tier = RiskTier.MEDIUM)
             when (source) {
                 0 -> coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } throws cancellation
                 1 -> coEvery { anomalyAlertRepository.getActiveAlerts() } throws cancellation
-                2 -> every { budgetRepository.getBudgetStatuses() } returns kotlinx.coroutines.flow.flow { throw cancellation }
+                // PIN CHANGED: budget read replaced by the impact derivation (see the test above).
+                2 -> every { getMonteCarloBudgetImpact(any(), any()) } throws cancellation
             }
-            val failure = runCatching { useCase.compute() }.exceptionOrNull()
+            val failure = runCatching { useCase.compute(input) }.exceptionOrNull()
             assertTrue(failure is kotlinx.coroutines.CancellationException)
         }
     }
 
+    // PIN CHANGED (was missingSimulationForExistingBudgetIsUnavailableNotNoRisk): a budget whose
+    // forecast is missing no longer blanks Radar; it is "not checked", never "no risk".
     @Test
-    fun missingSimulationForExistingBudgetIsUnavailableNotNoRisk() = runTest {
+    fun missingSimulationForExistingBudgetIsUnknownNotNoRisk() = runTest {
         stubHealthyRadarSignals()
-        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(overallBudgetStatus(1000.0)))
-        coEvery { expenseRepository.getExpensesSince(any()) } returns emptyList()
-        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any()) } returns null
-        assertRadarUnavailable(useCase.compute())
+
+        val result = useCase.compute(RadarBudgetInput.Unknown)
+
+        assertTrue(result.urgencyLevel != UrgencyLevel.UNAVAILABLE)
+        assertNotNull(result.urgencyScore)
+        assertTrue(result.budgetUnknown)
+        assertNull(result.budgetRisk)
     }
 
+    // PIN CHANGED (was unsuccessfulBudgetImpactIsUnavailableNotNoRisk): a non-Success impact makes
+    // only the budget part unknown; Radar keeps its other signals instead of going UNAVAILABLE.
     @Test
-    fun unsuccessfulBudgetImpactIsUnavailableNotNoRisk() = runTest {
+    fun unsuccessfulBudgetImpactIsUnknownNotNoRisk() = runTest {
         stubHealthyRadarSignals()
-        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(overallBudgetStatus(1000.0)))
-        coEvery { expenseRepository.getExpensesSince(any()) } returns emptyList()
         val simulation = monteCarloResult(probabilityUnderBudget = 0.5)
-        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any()) } returns simulation
         for (outcome in listOf(Result.Loading, Result.Duplicate, Result.Error(message = "SECRET payload"))) {
             every { getMonteCarloBudgetImpact(1000.0, simulation) } returns outcome
-            assertRadarUnavailable(useCase.compute())
+
+            val result = useCase.compute(RadarBudgetInput.Simulated(simulation))
+
+            assertTrue(result.urgencyLevel != UrgencyLevel.UNAVAILABLE)
+            assertNotNull(result.urgencyScore)
+            assertTrue(result.budgetUnknown)
+            assertNull(result.budgetRisk)
         }
     }
 
@@ -134,19 +147,46 @@ class ComputeMoneyRadarUseCaseTest {
     private fun stubHealthyRadarSignals() {
         coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns emptyList()
         coEvery { anomalyAlertRepository.getActiveAlerts() } returns emptyList()
-        every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
+    }
+
+    /** Bills and anomaly tests carry no budget comparison. */
+    private suspend fun ComputeMoneyRadarUseCase.compute(): MoneyRadarData = compute(RadarBudgetInput.NotComparable)
+
+    /**
+     * A [RadarBudgetInput.Simulated] whose simulation result carries [limit] and whose budget impact
+     * (the stubbed use case Radar calls with the result's own limit) has the given figures.
+     */
+    private fun simulatedInput(
+        probabilityOfOverrun: Double,
+        expectedOverrun: Double,
+        tier: RiskTier,
+        limit: Double = 1000.0
+    ): RadarBudgetInput.Simulated {
+        val simulation = monteCarloResult(probabilityUnderBudget = 1.0 - probabilityOfOverrun).copy(budgetAmount = limit)
+        every { getMonteCarloBudgetImpact(limit, simulation) } returns Result.Success(
+            MonteCarloBudgetImpact(
+                budgetAmount = limit,
+                p50Forecast = limit + expectedOverrun,
+                expectedOverrun = expectedOverrun,
+                probabilityOfOverrun = probabilityOfOverrun,
+                riskTier = tier
+            )
+        )
+        return RadarBudgetInput.Simulated(simulation)
     }
 
     @Test
     fun `invalid home currency cannot make an existing budget look healthy`() = runTest {
         stubHealthyRadarSignals()
         every { currencySettingsRepository.homeCurrency() } returns flowOf("")
-        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(overallBudgetStatus(1000.0)))
 
-        assertRadarUnavailable(useCase.compute())
-        coVerify(exactly = 0) { monteCarloSimulator.simulate(any(), any(), any(), any()) }
+        assertRadarUnavailable(useCase.compute(simulatedInput(0.5, 10.0, RiskTier.MEDIUM)))
+        io.mockk.verify(exactly = 0) { getMonteCarloBudgetImpact(any(), any()) }
     }
 
+    // PIN CHANGED: Radar no longer reads budgets or currencies of budgets. The dashboard maps a budget
+    // with unresolved currency to Unknown (BudgetSurfaceAgreementTest, "unavailable effective spend
+    // or unknown percent gives Unknown"); Radar keeps bills and anomalies and says "not checked".
     @Test
     fun `unresolved budget currency gives no budget risk but keeps bills and anomalies`() = runTest {
         stubHealthyRadarSignals()
@@ -160,121 +200,79 @@ class ComputeMoneyRadarUseCaseTest {
         coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
             expense(1000.0, TransactionType.DEPOSIT, now - dayMs)
         )
-        val status = overallBudgetStatus(1000.0)
-        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(
-            // The snapshot reads BudgetStatus.currency, so the status field is changed with the budget.
-            status.copy(budget = status.budget.copy(currency = "UNKNOWN"), currency = "UNKNOWN")
-        ))
 
-        val result = useCase.compute()
+        val result = useCase.compute(RadarBudgetInput.Unknown)
 
         assertTrue(result.urgencyLevel != UrgencyLevel.UNAVAILABLE)
         assertNotNull(result.urgencyScore)
         assertEquals(2, result.dueBills.size)
         assertEquals(1, result.anomalyAlerts.size)
         assertNull(result.budgetRisk)
-        coVerify(exactly = 0) { monteCarloSimulator.simulate(any(), any(), any(), any()) }
+        assertTrue(result.budgetUnknown)
     }
 
+    // PIN CHANGED (was: excluded source money made Radar UNAVAILABLE): the card gate in the dashboard
+    // withholds the simulation for excluded money (BudgetSurfaceAgreementTest "round2 partial data
+    // gives Unknown"), so Radar receives Unknown. It must never read as a healthy forecast.
     @Test
     fun `excluded source money cannot produce a healthy budget forecast`() = runTest {
         stubHealthyRadarSignals()
-        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(overallBudgetStatus(1000.0)))
-        coEvery { expenseRepository.getExpensesSince(any()) } returns listOf(
-            expense(100.0, TransactionType.PURCHASE, now - dayMs).copy(currency = "UNKNOWN")
-        )
 
-        assertRadarUnavailable(useCase.compute())
-        coVerify(exactly = 0) { monteCarloSimulator.simulate(any(), any(), any(), any()) }
+        val result = useCase.compute(RadarBudgetInput.Unknown)
+
+        assertNull(result.budgetRisk)
+        assertTrue(result.budgetUnknown)
+        assertTrue(result.topReasons.none {
+            it == UiText.MessageKey(DomainTextKeys.COMPUTE_MONEY_RADAR_REASON_FINANCES_HEALTHY)
+        })
     }
 
+    // PIN CHANGED: Radar no longer normalizes spending or picks the simulation currency. The
+    // simulation arrives with its own currency and limit (USD, 1000); Radar derives risk from that
+    // limit. Dashboard-side spend normalization stays covered by the dashboard widget tests.
     @Test
-    fun `mixed source spending uses normalized values and explicit non EUR simulation currency`() = runTest {
+    fun `mixed source spending uses the simulation's own limit and non EUR currency`() = runTest {
         stubHealthyRadarSignals()
         every { currencySettingsRepository.homeCurrency() } returns flowOf("USD")
-        val status = overallBudgetStatus(1000.0)
-        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(
-            status.copy(budget = status.budget.copy(currency = "USD"), currency = "USD")
-        ))
-        coEvery { expenseRepository.getExpensesSince(any()) } returns listOf(
-            expense(200.0, TransactionType.PURCHASE, now - dayMs).copy(currency = "USD"),
-            expense(50.0, TransactionType.PURCHASE, now - 2 * dayMs)
-        )
-        coEvery { currencyConverter.convertOutcome(50.0, "EUR", "USD", RateBasis.TRANSACTION_DATE, any(), any()) } returns
-            ConversionOutcome.Converted(
-                originalAmount = 50.0, originalCurrency = CurrencyCode.EUR,
-                convertedAmount = 100.0, targetCurrency = CurrencyCode.USD,
-                rateUsed = 2.0, rateBasis = RateBasis.TRANSACTION_DATE,
-                rateValidDate = now - 2 * dayMs, rateLastUpdated = now,
-                rateSource = "test", conversionPath = ConversionPath.DIRECT
-            )
-        val simulation = monteCarloResult(probabilityUnderBudget = 0.5)
-        coEvery { monteCarloSimulator.simulate(300.0, 0.0, 1000.0, "USD") } returns simulation
+        val simulation = monteCarloResult(probabilityUnderBudget = 0.5).copy(displayCurrency = "USD")
         every { getMonteCarloBudgetImpact(1000.0, simulation) } returns Result.Success(
             MonteCarloBudgetImpact(1000.0, 1000.0, 0.0, 0.5, RiskTier.MEDIUM)
         )
 
-        assertNotNull(useCase.compute().budgetRisk)
-        coVerify(exactly = 1) { monteCarloSimulator.simulate(300.0, 0.0, 1000.0, "USD") }
+        val result = useCase.compute(RadarBudgetInput.Simulated(simulation))
+
+        assertNotNull(result.budgetRisk)
+        assertEquals(1000.0, result.budgetRisk!!.budgetLimit!!, 0.0)
+        io.mockk.verify(exactly = 1) { getMonteCarloBudgetImpact(1000.0, simulation) }
     }
 
+    // PIN CHANGED: the neutralised foreign row is filtered by the dashboard before the simulation
+    // (BudgetSurfaceAgreementTest "round2 a neutralised foreign row with no exchange rate still gives
+    // Simulated"). Radar given that Simulated result is available with a budget risk.
     @Test
     fun `neutralised foreign row with no exchange rate does not make radar unavailable`() = runTest {
         stubHealthyRadarSignals()
-        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(overallBudgetStatus(1000.0)))
-        coEvery { expenseRepository.getExpensesSince(any()) } returns listOf(
-            expense(150.0, TransactionType.PURCHASE, now - dayMs),
-            expense(400.0, TransactionType.PURCHASE, now - 2 * dayMs).copy(
-                currency = "USD",
-                spendingExclusionReason = "INSTALLMENT_PURCHASE"
-            )
-        )
-        coEvery { currencyConverter.convertOutcome(any(), "USD", "EUR", any(), any(), any()) } returns
-            ConversionOutcome.Failed(
-                originalAmount = 0.0,
-                originalCurrency = "USD",
-                targetCurrency = "EUR",
-                rateBasis = RateBasis.TRANSACTION_DATE,
-                failureType = ConversionFailureType.MISSING_RATE,
-                message = "No USD->EUR rate available"
-            )
-        val simulation = monteCarloResult(probabilityUnderBudget = 0.7)
-        coEvery { monteCarloSimulator.simulate(150.0, 0.0, 1000.0, "EUR") } returns simulation
-        every { getMonteCarloBudgetImpact(1000.0, simulation) } returns Result.Success(
-            MonteCarloBudgetImpact(1000.0, 950.0, 0.0, 0.3, RiskTier.MEDIUM)
-        )
 
-        val result = useCase.compute()
+        val result = useCase.compute(simulatedInput(0.3, 0.0, RiskTier.MEDIUM))
 
         assertTrue(result.urgencyLevel != UrgencyLevel.UNAVAILABLE)
         assertNotNull(result.urgencyScore)
         assertNotNull(result.budgetRisk)
-        coVerify(exactly = 1) { monteCarloSimulator.simulate(150.0, 0.0, 1000.0, "EUR") }
     }
 
+    // PIN CHANGED (was: a counted foreign row with a missing rate made Radar UNAVAILABLE): the card
+    // gate gives Unknown (BudgetSurfaceAgreementTest "round2 partial data gives Unknown"); Radar keeps
+    // its other signals and flags the budget as not checked.
     @Test
-    fun `non-neutralised foreign row with missing exchange rate still makes radar unavailable`() = runTest {
+    fun `non-neutralised foreign row with missing exchange rate leaves radar available with budget unknown`() = runTest {
         stubHealthyRadarSignals()
-        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(overallBudgetStatus(1000.0)))
-        coEvery { expenseRepository.getExpensesSince(any()) } returns listOf(
-            expense(150.0, TransactionType.PURCHASE, now - dayMs),
-            expense(400.0, TransactionType.PURCHASE, now - 2 * dayMs).copy(
-                currency = "USD",
-                spendingExclusionReason = null
-            )
-        )
-        coEvery { currencyConverter.convertOutcome(any(), "USD", "EUR", any(), any(), any()) } returns
-            ConversionOutcome.Failed(
-                originalAmount = 400.0,
-                originalCurrency = "USD",
-                targetCurrency = "EUR",
-                rateBasis = RateBasis.TRANSACTION_DATE,
-                failureType = ConversionFailureType.MISSING_RATE,
-                message = "No USD->EUR rate available"
-            )
+        coEvery { anomalyAlertRepository.getActiveAlerts() } returns listOf(anomaly("Odd Charge", 40.0, now - dayMs))
 
-        assertRadarUnavailable(useCase.compute())
-        coVerify(exactly = 0) { monteCarloSimulator.simulate(any(), any(), any(), any()) }
+        val result = useCase.compute(RadarBudgetInput.Unknown)
+
+        assertTrue(result.urgencyLevel != UrgencyLevel.UNAVAILABLE)
+        assertEquals(1, result.anomalyAlerts.size)
+        assertTrue(result.budgetUnknown)
     }
 
     private fun assertRadarUnavailable(result: MoneyRadarData) {
@@ -291,9 +289,7 @@ class ComputeMoneyRadarUseCaseTest {
         mergedRecurringPatternsProvider = mockk()
         anomalyAlertRepository = mockk()
         getMonteCarloBudgetImpact = mockk()
-        monteCarloSimulator = mockk()
         expenseRepository = mockk()
-        budgetRepository = mockk()
         currencyConverter = mockk()
         currencySettingsRepository = mockk()
         timeProvider = mockk()
@@ -303,9 +299,7 @@ class ComputeMoneyRadarUseCaseTest {
             recurringPatternsProvider = mergedRecurringPatternsProvider,
             anomalyAlertRepository = anomalyAlertRepository,
             getMonteCarloBudgetImpact = getMonteCarloBudgetImpact,
-            monteCarloSimulator = monteCarloSimulator,
             expenseRepository = expenseRepository,
-            budgetRepository = budgetRepository,
             analyticsCurrencyNormalizer = AnalyticsCurrencyNormalizer(currencyConverter),
             currencySettingsRepository = currencySettingsRepository,
             currencyConverter = currencyConverter,
@@ -327,27 +321,13 @@ class ComputeMoneyRadarUseCaseTest {
             anomaly("Odd Coffee", 8.0, now - dayMs),
             anomaly("Unknown Charge", 120.0, now - 2 * dayMs)
         )
-        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(overallBudgetStatus(1000.0)))
-        coEvery { expenseRepository.getExpensesSince(any()) } returns listOf(
-            expense(300.0, TransactionType.PURCHASE, now - 5 * dayMs)
-        )
         coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
             expense(1000.0, TransactionType.DEPOSIT, now - dayMs)
         )
 
-        val mcResult = monteCarloResult(probabilityUnderBudget = 0.20)
-        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any()) } returns mcResult
-
-        val impact = MonteCarloBudgetImpact(
-            budgetAmount = 1000.0,
-            p50Forecast = 1150.0,
-            expectedOverrun = 150.0,
-            probabilityOfOverrun = 0.80,
-            riskTier = RiskTier.CRITICAL
+        val result = useCase.compute(
+            simulatedInput(probabilityOfOverrun = 0.80, expectedOverrun = 150.0, tier = RiskTier.CRITICAL)
         )
-        every { getMonteCarloBudgetImpact(1000.0, mcResult) } returns Result.Success(impact)
-
-        val result = useCase.compute()
 
         // Due bills: 3 with large-bill bonus => 80, anomalies: 2 => 60,
         // budget risk: probability 80 + magnitude 10 + critical 20 => capped at 100.
@@ -375,32 +355,24 @@ class ComputeMoneyRadarUseCaseTest {
         assertTrue(result.primaryCta is MoneyRadarAction.AdjustBudget)
     }
 
-    private fun stubBudgetRiskOnly(probabilityOfOverrun: Double, expectedOverrun: Double, tier: RiskTier) {
+    private fun stubBudgetRiskOnly(
+        probabilityOfOverrun: Double,
+        expectedOverrun: Double,
+        tier: RiskTier,
+        limit: Double = 1000.0
+    ): RadarBudgetInput.Simulated {
         coEvery { anomalyAlertRepository.getActiveAlerts() } returns emptyList()
-        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(overallBudgetStatus(1000.0)))
-        coEvery { expenseRepository.getExpensesSince(any()) } returns listOf(
-            expense(300.0, TransactionType.PURCHASE, now - 5 * dayMs)
-        )
-        val mcResult = monteCarloResult(probabilityUnderBudget = 1.0 - probabilityOfOverrun)
-        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any()) } returns mcResult
-        every { getMonteCarloBudgetImpact(1000.0, mcResult) } returns Result.Success(
-            MonteCarloBudgetImpact(
-                budgetAmount = 1000.0,
-                p50Forecast = 1000.0 + expectedOverrun,
-                expectedOverrun = expectedOverrun,
-                probabilityOfOverrun = probabilityOfOverrun,
-                riskTier = tier
-            )
-        )
+        return simulatedInput(probabilityOfOverrun, expectedOverrun, tier, limit)
     }
 
     @Test
     fun `P-05-5 CRITICAL budget tier alone floors the score at 61 and level RED`() = runTest {
         // Budget part = 80 (p >= 0.75) + 10 (overrun >= 100) + 20 (CRITICAL) = 110, capped at 100,
-        // weighted 0.3 => 30 (GREEN without the floor). No bills, no anomalies. Floor => 61.
-        stubBudgetRiskOnly(probabilityOfOverrun = 0.80, expectedOverrun = 150.0, tier = RiskTier.CRITICAL)
+        // weighted 0.3 => 30 (GREEN without the floor). No bills, no anomalies. The overrun 150 is
+        // 15% of the 1,000 limit (>= 5%), so the floor applies => 61.
+        val input = stubBudgetRiskOnly(probabilityOfOverrun = 0.80, expectedOverrun = 150.0, tier = RiskTier.CRITICAL)
 
-        val result = useCase.compute()
+        val result = useCase.compute(input)
 
         assertTrue(result.dueBills.isEmpty())
         assertTrue(result.anomalyAlerts.isEmpty())
@@ -409,13 +381,66 @@ class ComputeMoneyRadarUseCaseTest {
         assertEquals(UrgencyLevel.RED, result.urgencyLevel)
     }
 
+    // PIN CHANGED (round 2 floor): CRITICAL floors the score only when the expected overrun is at
+    // least 5% of the limit. Weighted score: p 0.80 -> 80, overrun 0.01 (> 0) -> +5, CRITICAL -> +20
+    // = 105 capped at 100, weighted 0.3 => 30 (GREEN). No floor, so one cent over is not RED.
+    @Test
+    fun `round2 CRITICAL with overrun 0_01 on limit 1000 stays at its weighted score and is not RED`() = runTest {
+        val input = stubBudgetRiskOnly(probabilityOfOverrun = 0.80, expectedOverrun = 0.01, tier = RiskTier.CRITICAL)
+
+        val result = useCase.compute(input)
+
+        assertEquals(RiskTier.CRITICAL, result.budgetRisk?.riskTier)
+        assertEquals(30, result.urgencyScore)
+        assertEquals(UrgencyLevel.GREEN, result.urgencyLevel)
+    }
+
+    // Boundary: overrun exactly 5% of the limit (50 of 1,000) gets the floor (>=). Weighted: 80 + 5 + 20
+    // = 105 -> 100 -> 30; the floor lifts it to 61.
+    @Test
+    fun `round2 CRITICAL with overrun exactly 5 percent of the limit gets the floor`() = runTest {
+        val input = stubBudgetRiskOnly(probabilityOfOverrun = 0.80, expectedOverrun = 50.0, tier = RiskTier.CRITICAL)
+
+        val result = useCase.compute(input)
+
+        assertEquals(61, result.urgencyScore)
+        assertEquals(UrgencyLevel.RED, result.urgencyLevel)
+    }
+
+    // Just under 5% (49.99 of 1,000) is below the boundary: weighted 30, no floor.
+    @Test
+    fun `round2 CRITICAL with overrun just under 5 percent of the limit has no floor`() = runTest {
+        val input = stubBudgetRiskOnly(probabilityOfOverrun = 0.80, expectedOverrun = 49.99, tier = RiskTier.CRITICAL)
+
+        val result = useCase.compute(input)
+
+        assertEquals(30, result.urgencyScore)
+        assertEquals(UrgencyLevel.GREEN, result.urgencyLevel)
+    }
+
+    // A CRITICAL tier without a known limit cannot show materiality, so it gets no floor. The
+    // tier is built straight into the result because Radar always carries the result's limit; a null
+    // limit is only reachable through Unknown (budgetRisk null), which has no tier at all.
+    @Test
+    fun `round2 a missing limit gives no budget risk and therefore no CRITICAL floor`() = runTest {
+        stubHealthyRadarSignals()
+        val noLimit = monteCarloResult(probabilityUnderBudget = 0.2).copy(budgetAmount = null)
+
+        val result = useCase.compute(RadarBudgetInput.Simulated(noLimit))
+
+        assertNull(result.budgetRisk)
+        assertTrue(result.budgetUnknown)
+        assertEquals(0, result.urgencyScore)
+        assertEquals(UrgencyLevel.GREEN, result.urgencyLevel)
+    }
+
     @Test
     fun `P-05-5 HIGH budget tier alone floors the score at 31 and level YELLOW`() = runTest {
         // Budget part = 60 (p >= 0.50) + 10 (overrun >= 100) + 10 (HIGH) = 80, weighted 0.3 => 24
         // (23 under float truncation). Either is below the floor, so the floor of 31 applies.
-        stubBudgetRiskOnly(probabilityOfOverrun = 0.60, expectedOverrun = 120.0, tier = RiskTier.HIGH)
+        val input = stubBudgetRiskOnly(probabilityOfOverrun = 0.60, expectedOverrun = 120.0, tier = RiskTier.HIGH)
 
-        val result = useCase.compute()
+        val result = useCase.compute(input)
 
         assertTrue(result.dueBills.isEmpty())
         assertTrue(result.anomalyAlerts.isEmpty())
@@ -428,9 +453,9 @@ class ComputeMoneyRadarUseCaseTest {
     fun `P-05-5 MEDIUM budget tier alone has no floor and stays GREEN`() = runTest {
         // Budget part = 30 (p in 0.25..0.50) + 0 (no overrun) + 5 (MEDIUM) = 35, weighted 0.3 => 10.5,
         // truncated to 10. No floor for MEDIUM.
-        stubBudgetRiskOnly(probabilityOfOverrun = 0.40, expectedOverrun = 0.0, tier = RiskTier.MEDIUM)
+        val input = stubBudgetRiskOnly(probabilityOfOverrun = 0.40, expectedOverrun = 0.0, tier = RiskTier.MEDIUM)
 
-        val result = useCase.compute()
+        val result = useCase.compute(input)
 
         assertTrue(result.dueBills.isEmpty())
         assertTrue(result.anomalyAlerts.isEmpty())
@@ -496,54 +521,12 @@ class ComputeMoneyRadarUseCaseTest {
         assertEquals(listOf(1, 10), result.anomalyAlerts.map { it.daysAgo })
     }
 
-    @Test
-    fun `compute passes recurring obligations into Monte Carlo knownUpcoming`() = runTest {
-        val r1 = recurring("Rent", 100.0, now + dayMs)
-        val r2 = recurring("Insurance", 50.0, now + 5 * dayMs)
-        val outside = recurring("LateBill", 200.0, now + 12 * dayMs)
-        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(r1, r2, outside)
-        coEvery { anomalyAlertRepository.getActiveAlerts() } returns emptyList()
-        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(overallBudgetStatus(1000.0)))
-        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
-            expense(1000.0, TransactionType.DEPOSIT, now - dayMs)
-        )
-        coEvery { expenseRepository.getExpensesSince(any()) } returns listOf(
-            expense(300.0, TransactionType.PURCHASE, now - 4 * dayMs),
-            expense(100.0, TransactionType.PURCHASE, now - 2 * dayMs, isNotMine = true),
-            expense(999.0, TransactionType.DEPOSIT, now - 2 * dayMs)
-        )
-
-        val mcResult = monteCarloResult(probabilityUnderBudget = 0.6)
-        var capturedSpentToDate = -1.0
-        var capturedKnownUpcoming = -1.0
-        var capturedBudgetAmount: Double? = null
-        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any()) } answers {
-            capturedSpentToDate = firstArg()
-            capturedKnownUpcoming = secondArg()
-            capturedBudgetAmount = thirdArg()
-            mcResult
-        }
-
-        every { getMonteCarloBudgetImpact(any(), any()) } returns Result.Success(
-            MonteCarloBudgetImpact(
-                budgetAmount = 1000.0,
-                p50Forecast = 980.0,
-                expectedOverrun = 0.0,
-                probabilityOfOverrun = 0.4,
-                riskTier = RiskTier.MEDIUM
-            )
-        )
-
-        val result = useCase.compute()
-
-        assertNotNull(result.budgetRisk)
-        assertApproxEquals(300.0, capturedSpentToDate, 0.0001)
-        // PIN CHANGED: knownUpcoming now covers confirmed recurring due from start of today to month
-        // end (round 2, P-05-5), not 7 days. now = 2024-03-09, so the day-12 LateBill (200) on
-        // 2024-03-21 is inside the month: 100 + 50 + 200 = 350 (was 150).
-        assertApproxEquals(350.0, capturedKnownUpcoming, 0.0001)
-        assertApproxEquals(1000.0, capturedBudgetAmount ?: 0.0, 0.0001)
-    }
+    // MOVED: "compute passes recurring obligations into Monte Carlo knownUpcoming" tested the
+    // simulator arguments Radar built itself. Radar has no simulator now; the simulation is run once
+    // by the dashboard (knownUpcoming = forecast committed + likely) and shared. Shared-result
+    // identity: BudgetSurfaceAgreementTest "a month-scale Available budget gives Simulated with the
+    // same result object as the Monte Carlo card"; the card's own knownUpcoming:
+    // RadarWeatherAgreementTest (rent 400 -> simulate(700, 400, 1000)).
 
     @Test
     fun `compute ignores unconfirmed detected recurring suggestions`() = runTest {
@@ -584,34 +567,17 @@ class ComputeMoneyRadarUseCaseTest {
             recurring("Morning Bill", 120.0, earlierToday)
         )
         coEvery { anomalyAlertRepository.getActiveAlerts() } returns emptyList()
-        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(overallBudgetStatus(1000.0)))
-        coEvery { expenseRepository.getExpensesSince(any()) } returns listOf(
-            expense(300.0, TransactionType.PURCHASE, earlierToday - dayMs)
-        )
         coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
             expense(1000.0, TransactionType.DEPOSIT, now - dayMs)
         )
 
-        val mcResult = monteCarloResult(probabilityUnderBudget = 0.4)
-        var capturedKnownUpcoming = -1.0
-        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any()) } answers {
-            capturedKnownUpcoming = secondArg()
-            mcResult
-        }
-        every { getMonteCarloBudgetImpact(1000.0, mcResult) } returns Result.Success(
-            MonteCarloBudgetImpact(
-                budgetAmount = 1000.0,
-                p50Forecast = 1120.0,
-                expectedOverrun = 120.0,
-                probabilityOfOverrun = 0.6,
-                riskTier = RiskTier.HIGH
-            )
+        // PIN CHANGED: the knownUpcoming simulator argument (120) is no longer built by Radar; the
+        // dashboard owns it. The bill-due-today and score/level assertions below are unchanged.
+        val result = useCase.compute(
+            simulatedInput(probabilityOfOverrun = 0.6, expectedOverrun = 120.0, tier = RiskTier.HIGH)
         )
 
-        val result = useCase.compute()
-
         assertEquals(listOf("Morning Bill"), result.dueBills.map { it.merchant })
-        assertApproxEquals(120.0, capturedKnownUpcoming, 0.0001)
         assertNotNull(result.budgetRisk)
         // €120 is below the large-bill threshold (50% of €1,000 income), so
         // the due-bills large-bill bonus (27d85092a) does not apply.
@@ -644,77 +610,24 @@ class ComputeMoneyRadarUseCaseTest {
         )
         assertNull(result.primaryCta)
 
-        coVerify(exactly = 0) { monteCarloSimulator.simulate(any(), any(), any(), any()) }
+        io.mockk.verify(exactly = 0) { getMonteCarloBudgetImpact(any(), any()) }
     }
 
-    @Test
-    fun `compute excludes future dated purchases from spent to date`() = runTest {
-        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns emptyList()
-        coEvery { anomalyAlertRepository.getActiveAlerts() } returns emptyList()
-        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(overallBudgetStatus(1000.0)))
-        coEvery { expenseRepository.getExpensesSince(any()) } returns listOf(
-            expense(300.0, TransactionType.PURCHASE, now - dayMs),
-            expense(999.0, TransactionType.PURCHASE, now + dayMs)
-        )
-        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
-            expense(1000.0, TransactionType.DEPOSIT, now - dayMs)
-        )
-
-        var capturedSpentToDate = -1.0
-        val mcResult = monteCarloResult(probabilityUnderBudget = 0.5)
-        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any()) } answers {
-            capturedSpentToDate = firstArg()
-            mcResult
-        }
-        every { getMonteCarloBudgetImpact(any(), any()) } returns Result.Success(
-            MonteCarloBudgetImpact(
-                budgetAmount = 1000.0,
-                p50Forecast = 980.0,
-                expectedOverrun = 10.0,
-                probabilityOfOverrun = 0.4,
-                riskTier = RiskTier.MEDIUM
-            )
-        )
-
-        useCase.compute()
-
-        assertApproxEquals(300.0, capturedSpentToDate, 0.0001)
-    }
+    // MOVED: "compute excludes future dated purchases from spent to date" tested the spentToDate Radar
+    // passed to its own simulator. Radar no longer reads purchases; the dashboard builds spentToDate
+    // from its period-scoped normalized aggregate ([periodStart, now)). No Radar-level subject remains
+    // and no dashboard test pins future-dated exclusion in this slice (listed in the report).
 
     @Test
     fun `compute budget urgency changes with magnitude and risk tier`() = runTest {
         coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns emptyList()
         coEvery { anomalyAlertRepository.getActiveAlerts() } returns emptyList()
-        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(overallBudgetStatus(1000.0)))
-        coEvery { expenseRepository.getExpensesSince(any()) } returns listOf(
-            expense(300.0, TransactionType.PURCHASE, now - dayMs)
-        )
         coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
             expense(1000.0, TransactionType.DEPOSIT, now - dayMs)
         )
-        val mcResult = monteCarloResult(probabilityUnderBudget = 0.6)
-        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any()) } returns mcResult
 
-        every { getMonteCarloBudgetImpact(1000.0, mcResult) } returns Result.Success(
-            MonteCarloBudgetImpact(
-                budgetAmount = 1000.0,
-                p50Forecast = 1000.0,
-                expectedOverrun = 5.0,
-                probabilityOfOverrun = 0.4,
-                riskTier = RiskTier.LOW
-            )
-        ) andThen Result.Success(
-            MonteCarloBudgetImpact(
-                budgetAmount = 1000.0,
-                p50Forecast = 1300.0,
-                expectedOverrun = 250.0,
-                probabilityOfOverrun = 0.4,
-                riskTier = RiskTier.CRITICAL
-            )
-        )
-
-        val lowRisk = useCase.compute()
-        val highRisk = useCase.compute()
+        val lowRisk = useCase.compute(simulatedInput(0.4, 5.0, RiskTier.LOW))
+        val highRisk = useCase.compute(simulatedInput(0.4, 250.0, RiskTier.CRITICAL))
 
         assertTrue(requireNotNull(highRisk.urgencyScore) > requireNotNull(lowRisk.urgencyScore))
         assertTrue(highRisk.urgencyLevel >= lowRisk.urgencyLevel)
@@ -767,27 +680,12 @@ class ComputeMoneyRadarUseCaseTest {
             anomaly("Coffee Shop", 8.0, now - dayMs),
             anomaly("Gas Station", 60.0, now - 2 * dayMs)
         )
-        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(overallBudgetStatus(1000.0)))
-        coEvery { expenseRepository.getExpensesSince(any()) } returns listOf(
-            expense(300.0, TransactionType.PURCHASE, now - 5 * dayMs)
-        )
         coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
             expense(1000.0, TransactionType.DEPOSIT, now - dayMs)
         )
 
-        val mcResult = monteCarloResult(probabilityUnderBudget = 0.4)
-        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any()) } returns mcResult
-        every { getMonteCarloBudgetImpact(1000.0, mcResult) } returns Result.Success(
-            MonteCarloBudgetImpact(
-                budgetAmount = 1000.0,
-                p50Forecast = 1100.0,
-                expectedOverrun = 100.0,
-                probabilityOfOverrun = 0.65,
-                riskTier = RiskTier.HIGH
-            )
-        )
-
-        val formattedReasons = useCase.compute().topReasons.map { it.asString(context) }
+        val input = simulatedInput(probabilityOfOverrun = 0.65, expectedOverrun = 100.0, tier = RiskTier.HIGH)
+        val formattedReasons = useCase.compute(input).topReasons.map { it.asString(context) }
 
         assertTrue(formattedReasons.contains("2 unusual charges need review"))
         assertTrue(formattedReasons.contains("High risk of exceeding budget (65%)"))
