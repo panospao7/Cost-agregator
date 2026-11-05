@@ -1,6 +1,9 @@
 package com.yourname.expensetracker.domain.ai.model
 
 import com.google.common.truth.Truth.assertThat
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyAmount
+import com.yourname.expensetracker.domain.receipt.ReceiptParser
 import org.junit.Test
 import java.math.BigDecimal
 import java.math.RoundingMode
@@ -57,6 +60,39 @@ class ReceiptTaxAllocatorTest {
 
         assertThat((result as ReceiptTaxAllocation.Unavailable).failure.reason)
             .isEqualTo("RECEIPT_ITEM_TOTAL_NON_POSITIVE")
+    }
+
+    @Test
+    fun `DR-09 discount adjustment item makes the net basis 12 for lines 10 and 5 with discount 3`() {
+        val receipt = ReceiptParser.ParsedReceipt(
+            merchantName = "STORE",
+            total = MoneyAmount(12.0, CurrencyCode("EUR")),
+            subtotal = null,
+            tax = null,
+            date = null,
+            currency = "EUR",
+            lineItems = listOf(
+                ReceiptParser.LineItem("COFFEE", null, null, 10.0, 0),
+                ReceiptParser.LineItem("BREAD", null, null, 5.0, 1)
+            ),
+            confidence = 0.9f,
+            discount = MoneyAmount(3.0, CurrencyCode("EUR"))
+        )
+
+        val adjusted = receipt.withDiscountAdjustment()
+        val items = adjusted.lineItems.map { line ->
+            item(line.totalPrice, 1L).copy(isAdjustment = line.isAdjustment)
+        }
+        val result = ReceiptTaxAllocator.allocate(1.2, items, "EUR") as ReceiptTaxAllocation.Available
+
+        assertThat(result.itemAggregate.displayAmount).isWithin(1e-9).of(12.0)
+        assertThat(result.categoryAggregates.getValue(1L).displayAmount).isWithin(1e-9).of(12.0)
+        val shares = result.itemAmounts.map { it.amount }
+        assertThat(shares).hasSize(3)
+        assertThat(shares[0]).isWithin(1e-9).of(1.0)
+        assertThat(shares[1]).isWithin(1e-9).of(0.5)
+        assertThat(shares[2]).isWithin(1e-9).of(-0.3)
+        assertThat(result.categoryAmounts.getValue(1L).amount).isWithin(1e-9).of(1.2)
     }
 
     private fun item(amount: Double, categoryId: Long?) = CategorizedReceiptItem(

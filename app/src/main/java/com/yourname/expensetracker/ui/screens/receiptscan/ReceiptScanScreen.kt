@@ -1228,7 +1228,7 @@ private fun ReviewStep(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        stringResource(R.string.receipt_detected_items_format, parsed.lineItems.size),
+                        stringResource(R.string.receipt_detected_items_format, parsed.lineItems.count { !it.isAdjustment }),
                         fontWeight = FontWeight.Bold,
                         style = MaterialTheme.typography.labelLarge
                     )
