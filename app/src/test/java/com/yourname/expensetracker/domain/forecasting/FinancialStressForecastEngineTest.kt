@@ -742,7 +742,7 @@ class FinancialStressForecastEngineTest {
                 id = 1L
             )
         )
-        coEvery { recurringLifecycleCoordinator.projectOccurrences(1L, any(), any()) } returns listOf(
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(1L, any(), any(), any()) } returns listOf(
             occurrenceRow(ruleId = 1L, dueDate = due, amount = 15.0, merchant = "Netflix")
         )
 
@@ -777,7 +777,7 @@ class FinancialStressForecastEngineTest {
                 id = 2L
             )
         )
-        coEvery { recurringLifecycleCoordinator.projectOccurrences(2L, any(), any()) } returns listOf(
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(2L, any(), any(), any()) } returns listOf(
             occurrenceRow(ruleId = 2L, dueDate = due, amount = 800.0, merchant = "Confirmed Rent")
         )
 
@@ -807,12 +807,12 @@ class FinancialStressForecastEngineTest {
                 previousDates = emptyList()
             )
         )
-        coEvery { recurringLifecycleCoordinator.projectOccurrences(7L, any(), any()) } returns emptyList()
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(7L, any(), any(), any()) } returns emptyList()
         coEvery { recurringOccurrenceDao.getByDateRange(any(), any()) } returns emptyList()
 
         engine.computeStressForecast()
 
-        coVerify(atLeast = 1) { recurringLifecycleCoordinator.projectOccurrences(7L, any(), any()) }
+        coVerify(atLeast = 1) { recurringLifecycleCoordinator.projectOccurrences(7L, any(), any(), any()) }
         coVerify(exactly = 0) {
             recurringLifecycleCoordinator.generateOccurrences(any(), any(), any(), any())
         }
@@ -838,7 +838,7 @@ class FinancialStressForecastEngineTest {
             )
         )
         // Projection empty; materialized row must still be counted (read-only).
-        coEvery { recurringLifecycleCoordinator.projectOccurrences(7L, any(), any()) } returns emptyList()
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(7L, any(), any(), any()) } returns emptyList()
         coEvery { recurringOccurrenceDao.getByDateRange(any(), any()) } answers {
             val start = firstArg<Long>()
             val end = secondArg<Long>()
@@ -886,7 +886,7 @@ class FinancialStressForecastEngineTest {
                 id = 3L
             )
         )
-        coEvery { recurringLifecycleCoordinator.projectOccurrences(3L, any(), any()) } returns listOf(
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(3L, any(), any(), any()) } returns listOf(
             occurrenceRow(ruleId = 3L, dueDate = earlierToday, amount = 25.0, merchant = "Morning Bill"),
             occurrenceRow(ruleId = 3L, dueDate = nextMonth, amount = 25.0, merchant = "Morning Bill")
         )
@@ -1015,7 +1015,7 @@ class FinancialStressForecastEngineTest {
                 previousDates = emptyList()
             )
         )
-        coEvery { recurringLifecycleCoordinator.projectOccurrences(7L, any(), any()) } returns emptyList()
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(7L, any(), any(), any()) } returns emptyList()
         // DAO holds previously-materialized PLANNED rows for BOTH the active rule (id=7)
         // and a PAUSED rule (id=8). Only id=7 must be counted.
         coEvery { recurringOccurrenceDao.getByDateRange(any(), any()) } answers {
@@ -1060,7 +1060,7 @@ class FinancialStressForecastEngineTest {
                 previousDates = emptyList()
             )
         )
-        coEvery { recurringLifecycleCoordinator.projectOccurrences(7L, any(), any()) } returns emptyList()
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(7L, any(), any(), any()) } returns emptyList()
         // Restore barrier blocks the materialized read inside calculateRecurringOutflows.
         // It is caught locally (does NOT trip the engine's outer degraded fallback).
         every { databaseReadBarrier.checkReadAllowed(any<String>()) } throws DatabaseAccessBlockedException(
@@ -1105,7 +1105,7 @@ class FinancialStressForecastEngineTest {
             "MISSED" to 25.0,
             "NOT_A_KNOWN_STATUS" to 11.0
         )
-        coEvery { recurringLifecycleCoordinator.projectOccurrences(7L, any(), any()) } returns
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(7L, any(), any(), any()) } returns
             amountsByStatus.mapIndexed { index, (status, amount) ->
                 occurrenceRow(
                     ruleId = 7L,
@@ -1169,10 +1169,10 @@ class FinancialStressForecastEngineTest {
             recurringPattern("Rent", 800.0, due, RecurrenceFrequency.MONTHLY, 1.0f, id = 2L),
             recurringPattern("US Streaming", 15.0, due, RecurrenceFrequency.MONTHLY, 1.0f, id = 3L)
         )
-        coEvery { recurringLifecycleCoordinator.projectOccurrences(2L, any(), any()) } returns listOf(
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(2L, any(), any(), any()) } returns listOf(
             occurrenceRow(ruleId = 2L, dueDate = due, amount = 800.0, merchant = "Rent")
         )
-        coEvery { recurringLifecycleCoordinator.projectOccurrences(3L, any(), any()) } returns listOf(
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(3L, any(), any(), any()) } returns listOf(
             occurrenceRow(ruleId = 3L, dueDate = due, amount = 15.0, merchant = "US Streaming", currency = "USD")
         )
         // No USD rate configured (default rate table is empty).
@@ -1203,7 +1203,7 @@ class FinancialStressForecastEngineTest {
         }
         // Honor the requested window so each horizon sees only its own occurrences:
         // 30d -> 1, 60d -> 2, 90d -> 3 (no USD rate configured, so all are excluded).
-        coEvery { recurringLifecycleCoordinator.projectOccurrences(3L, any(), any()) } answers {
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(3L, any(), any(), any()) } answers {
             val start = secondArg<Long>()
             val end = thirdArg<Long>()
             usdRows.filter { it.dueDate >= start && it.dueDate < end }
@@ -1291,7 +1291,7 @@ class FinancialStressForecastEngineTest {
         coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(
             recurringPattern("US Streaming", 20.0, due, RecurrenceFrequency.MONTHLY, 1.0f, id = 3L)
         )
-        coEvery { recurringLifecycleCoordinator.projectOccurrences(3L, any(), any()) } returns listOf(
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(3L, any(), any(), any()) } returns listOf(
             occurrenceRow(ruleId = 3L, dueDate = due, amount = 20.0, merchant = "US Streaming", currency = "USD")
         )
 
@@ -1319,7 +1319,7 @@ class FinancialStressForecastEngineTest {
         coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(
             recurringPattern("US Streaming", 20.0, due, RecurrenceFrequency.MONTHLY, 1.0f, id = 3L)
         )
-        coEvery { recurringLifecycleCoordinator.projectOccurrences(3L, any(), any()) } returns listOf(
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(3L, any(), any(), any()) } returns listOf(
             occurrenceRow(ruleId = 3L, dueDate = due, amount = 20.0, merchant = "US Streaming", currency = "USD")
         )
 
@@ -1340,7 +1340,7 @@ class FinancialStressForecastEngineTest {
         coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(
             recurringPattern("Rent", 800.0, due, RecurrenceFrequency.MONTHLY, 1.0f, id = 2L)
         )
-        coEvery { recurringLifecycleCoordinator.projectOccurrences(2L, any(), any()) } returns listOf(
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(2L, any(), any(), any()) } returns listOf(
             occurrenceRow(ruleId = 2L, dueDate = due, amount = 800.0, merchant = "Rent")
         )
         coEvery {

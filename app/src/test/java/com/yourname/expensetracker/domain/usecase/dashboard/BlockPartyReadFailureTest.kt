@@ -476,7 +476,7 @@ class BlockPartyReadFailureTest {
 
     private fun realAssembler(dao: RecurringOccurrenceDao, barrier: DatabaseReadBarrier): ForecastInputAssembler {
         val coordinator = mockk<RecurringLifecycleCoordinator>(relaxed = true)
-        coEvery { coordinator.projectOccurrences(any(), any(), any()) } returns emptyList()
+        coEvery { coordinator.projectOccurrences(any(), any(), any(), any()) } returns emptyList()
         return ForecastInputAssembler(
             timeProvider,
             analyticsCurrencyNormalizer = mockk<AnalyticsCurrencyNormalizer>(relaxed = true),

@@ -179,7 +179,7 @@ class P6BudgetCleanupTest : AnalyticsEngineTestBase() {
         coEvery { expenseRepo.getExpensesBetween(any(), any()) } returns tx
 
         val lifecycleCoordinator = mockk<com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator>(relaxed = true)
-        coEvery { lifecycleCoordinator.projectOccurrences(1L, any(), any()) } returns listOf(
+        coEvery { lifecycleCoordinator.projectOccurrences(1L, any(), any(), any()) } returns listOf(
             com.yourname.expensetracker.data.database.entity.RecurringOccurrence(
                 sourceType = com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator.SOURCE_TYPE_RECURRING_RULE,
                 sourceId = 1L,

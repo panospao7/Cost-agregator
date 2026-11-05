@@ -111,7 +111,7 @@ class ForecastInputAssemblerTest {
                 latestRateTimestamp = null,
                 totalInputCount = 0
             )
-        coEvery { recurringLifecycleCoordinator.projectOccurrences(any(), any(), any()) } returns emptyList()
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(any(), any(), any(), any()) } returns emptyList()
         coEvery { recurringOccurrenceDao.getByDateRange(any(), any()) } returns emptyList()
 
         val rule = ManualRecurringExpense(
@@ -131,7 +131,7 @@ class ForecastInputAssemblerTest {
             budgetStatuses = emptyList()
         )
 
-        coVerify(exactly = 1) { recurringLifecycleCoordinator.projectOccurrences(1L, any(), any()) }
+        coVerify(exactly = 1) { recurringLifecycleCoordinator.projectOccurrences(1L, any(), any(), any()) }
         coVerify(exactly = 0) {
             recurringLifecycleCoordinator.generateOccurrences(any(), any(), any(), any())
         }
@@ -439,7 +439,7 @@ class ForecastInputAssemblerTest {
                 latestRateTimestamp = null,
                 totalInputCount = 0
             )
-        coEvery { recurringLifecycleCoordinator.projectOccurrences(any(), any(), any()) } returns emptyList()
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(any(), any(), any(), any()) } returns emptyList()
 
         val due = ms(2026, Calendar.JANUARY, 20, 0)
         // DAO holds previously-materialized PLANNED rows for BOTH an active rule (id=1)
@@ -488,7 +488,7 @@ class ForecastInputAssemblerTest {
                 latestRateTimestamp = null,
                 totalInputCount = 0
             )
-        coEvery { recurringLifecycleCoordinator.projectOccurrences(any(), any(), any()) } returns emptyList()
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(any(), any(), any(), any()) } returns emptyList()
         coEvery { recurringOccurrenceDao.getByDateRange(any(), any()) } returns emptyList()
 
         val planned = listOf(
@@ -538,7 +538,7 @@ class ForecastInputAssemblerTest {
                 latestRateTimestamp = null,
                 totalInputCount = 0
             )
-        coEvery { recurringLifecycleCoordinator.projectOccurrences(any(), any(), any()) } returns emptyList()
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(any(), any(), any(), any()) } returns emptyList()
         coEvery { recurringOccurrenceDao.getByDateRange(any(), any()) } returns emptyList()
 
         // The default MoneyNormalizationEngine uses currencyConverter internally.
@@ -604,7 +604,7 @@ class ForecastInputAssemblerTest {
                 latestRateTimestamp = null,
                 totalInputCount = 0
             )
-        coEvery { recurringLifecycleCoordinator.projectOccurrences(any(), any(), any()) } returns emptyList()
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(any(), any(), any(), any()) } returns emptyList()
         coEvery { recurringOccurrenceDao.getByDateRange(any(), any()) } returns emptyList()
 
         // Conversion fails for USD → EUR
@@ -664,7 +664,7 @@ class ForecastInputAssemblerTest {
                 latestRateTimestamp = null,
                 totalInputCount = 0
             )
-        coEvery { recurringLifecycleCoordinator.projectOccurrences(any(), any(), any()) } returns emptyList()
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(any(), any(), any(), any()) } returns emptyList()
         coEvery { recurringOccurrenceDao.getByDateRange(any(), any()) } returns emptyList()
 
         // USD → EUR at 0.85
@@ -944,7 +944,7 @@ class ForecastInputAssemblerTest {
                 latestRateTimestamp = null,
                 totalInputCount = 0
             )
-        coEvery { recurringLifecycleCoordinator.projectOccurrences(any(), any(), any()) } returns emptyList()
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(any(), any(), any(), any()) } returns emptyList()
         // Restore barrier blocks the materialized read. Projections bypass the barrier and
         // would otherwise surface PLANNED bills WITHOUT SKIPPED/CANCELLED overrides.
         every { databaseReadBarrier.checkReadAllowed(any<String>()) } throws DatabaseAccessBlockedException(

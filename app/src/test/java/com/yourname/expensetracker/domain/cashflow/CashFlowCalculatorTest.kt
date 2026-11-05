@@ -833,14 +833,14 @@ class CashFlowCalculatorTest : AnalyticsEngineTestBase() {
         coEvery { recurringPatternsProvider.getConfirmedPatterns() } returns listOf(
             manualPattern(id = 1L, merchant = "Rent", amount = 800.0, nextDate = d1)
         )
-        coEvery { recurringLifecycleCoordinator.projectOccurrences(1L, any(), any()) } returns listOf(
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(1L, any(), any(), any()) } returns listOf(
             occurrence(ruleId = 1L, dueDate = d1, amount = 800.0, merchant = "Rent")
         )
         coEvery { recurringOccurrenceDao.getByDateRange(any(), any()) } returns emptyList()
 
         calculator.calculateDailyCashFlow(Date(d1), Date(ms("2026-04-02")), startingBalance = MoneyAmount(0.0, CurrencyCode("EUR")))
 
-        coVerify(exactly = 1) { recurringLifecycleCoordinator.projectOccurrences(1L, any(), any()) }
+        coVerify(exactly = 1) { recurringLifecycleCoordinator.projectOccurrences(1L, any(), any(), any()) }
         coVerify(exactly = 0) {
             recurringLifecycleCoordinator.generateOccurrences(any(), any(), any(), any())
         }
@@ -855,7 +855,7 @@ class CashFlowCalculatorTest : AnalyticsEngineTestBase() {
             manualPattern(id = 1L, merchant = "Rent", amount = 800.0, nextDate = d1)
         )
         // Projection yields nothing; the already-materialized row must still surface.
-        coEvery { recurringLifecycleCoordinator.projectOccurrences(1L, any(), any()) } returns emptyList()
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(1L, any(), any(), any()) } returns emptyList()
         coEvery { recurringOccurrenceDao.getByDateRange(any(), any()) } returns listOf(
             occurrence(ruleId = 1L, dueDate = d1, amount = 800.0, merchant = "Rent")
         )
@@ -878,7 +878,7 @@ class CashFlowCalculatorTest : AnalyticsEngineTestBase() {
         coEvery { recurringPatternsProvider.getConfirmedPatterns() } returns listOf(
             manualPattern(id = 1L, merchant = "Rent", amount = 800.0, nextDate = d1)
         )
-        coEvery { recurringLifecycleCoordinator.projectOccurrences(1L, any(), any()) } throws
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(1L, any(), any(), any()) } throws
             RuntimeException("projection boom")
         coEvery { recurringOccurrenceDao.getByDateRange(any(), any()) } returns emptyList()
 
@@ -901,7 +901,7 @@ class CashFlowCalculatorTest : AnalyticsEngineTestBase() {
         coEvery { recurringPatternsProvider.getConfirmedPatterns() } returns listOf(
             manualPattern(id = 1L, merchant = "Rent", amount = 800.0, nextDate = d1)
         )
-        coEvery { recurringLifecycleCoordinator.projectOccurrences(1L, any(), any()) } returns listOf(
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(1L, any(), any(), any()) } returns listOf(
             occurrence(ruleId = 1L, dueDate = d1, amount = 800.0, merchant = "Rent")
         )
         coEvery { recurringOccurrenceDao.getByDateRange(any(), any()) } returns emptyList()
@@ -1008,7 +1008,7 @@ class CashFlowCalculatorTest : AnalyticsEngineTestBase() {
         coEvery { recurringPatternsProvider.getConfirmedPatterns() } returns listOf(
             manualPattern(id = 1L, merchant = "Rent", amount = 800.0, nextDate = d1)
         )
-        coEvery { recurringLifecycleCoordinator.projectOccurrences(1L, any(), any()) } returns listOf(
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(1L, any(), any(), any()) } returns listOf(
             occurrence(ruleId = 1L, dueDate = d1, amount = 800.0, merchant = "Rent")
         )
         // The DAO still holds a previously-materialized PLANNED row for the paused rule (id=2).
@@ -1039,7 +1039,7 @@ class CashFlowCalculatorTest : AnalyticsEngineTestBase() {
             manualPattern(id = 1L, merchant = "Rent", amount = 800.0, nextDate = d1)
         )
         // Projection succeeds (bypasses the barrier) and yields a PLANNED bill.
-        coEvery { recurringLifecycleCoordinator.projectOccurrences(1L, any(), any()) } returns listOf(
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(1L, any(), any(), any()) } returns listOf(
             occurrence(ruleId = 1L, dueDate = d1, amount = 800.0, merchant = "Rent")
         )
         // The materialized read (which would carry a CANCELLED override) is blocked by restore.
@@ -1074,7 +1074,7 @@ class CashFlowCalculatorTest : AnalyticsEngineTestBase() {
             manualPattern(id = 1L, merchant = "Rent", amount = 800.0, nextDate = ms("2026-04-03"))
         )
         // Projection bypasses the barrier and yields a PLANNED bill in range.
-        coEvery { recurringLifecycleCoordinator.projectOccurrences(1L, any(), any()) } returns listOf(
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(1L, any(), any(), any()) } returns listOf(
             occurrence(ruleId = 1L, dueDate = ms("2026-04-03"), amount = 800.0, merchant = "Rent")
         )
         // The materialized read at getUpcomingBills.readOccurrences is blocked by restore.
@@ -1111,7 +1111,7 @@ class CashFlowCalculatorTest : AnalyticsEngineTestBase() {
         coEvery { recurringPatternsProvider.getConfirmedPatterns() } returns listOf(
             manualPattern(id = 1L, merchant = "Rent", amount = 800.0, nextDate = leapDay)
         )
-        coEvery { recurringLifecycleCoordinator.projectOccurrences(1L, any(), any()) } returns listOf(
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(1L, any(), any(), any()) } returns listOf(
             occurrence(ruleId = 1L, dueDate = leapDay, amount = 800.0, merchant = "Rent")
         )
         coEvery { recurringOccurrenceDao.getByDateRange(any(), any()) } returns emptyList()
@@ -1134,10 +1134,10 @@ class CashFlowCalculatorTest : AnalyticsEngineTestBase() {
             manualPattern(id = 1L, merchant = "Rent", amount = 800.0, nextDate = dec31),
             manualPattern(id = 2L, merchant = "Gym", amount = 20.0, nextDate = jan1)
         )
-        coEvery { recurringLifecycleCoordinator.projectOccurrences(1L, any(), any()) } returns listOf(
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(1L, any(), any(), any()) } returns listOf(
             occurrence(ruleId = 1L, dueDate = dec31, amount = 800.0, merchant = "Rent")
         )
-        coEvery { recurringLifecycleCoordinator.projectOccurrences(2L, any(), any()) } returns listOf(
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(2L, any(), any(), any()) } returns listOf(
             occurrence(ruleId = 2L, dueDate = jan1, amount = 20.0, merchant = "Gym")
         )
         coEvery { recurringOccurrenceDao.getByDateRange(any(), any()) } returns emptyList()
