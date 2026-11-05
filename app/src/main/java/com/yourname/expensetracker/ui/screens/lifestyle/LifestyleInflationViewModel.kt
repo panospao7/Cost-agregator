@@ -2,6 +2,7 @@ package com.yourname.expensetracker.ui.screens.lifestyle
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableException
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.lifestyle.LifestyleInflationDetector
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -53,6 +54,13 @@ class LifestyleInflationViewModel @Inject constructor(
                 }
             } catch (e: CancellationException) {
                 throw e
+            } catch (e: MoneyDisplayUnavailableException) {
+                // BL-05: fail closed; never keep a stale report from before the failure.
+                Timber.w("Lifestyle inflation unavailable: ${e.reasonCode.name}")
+                if (requestId == latestAnalysisRequestId) {
+                    _report.value = null
+                    _error.value = LOAD_ERROR_MESSAGE
+                }
             } catch (e: Exception) {
                 Timber.e(e, "Failed to analyze lifestyle inflation")
                 if (requestId == latestAnalysisRequestId) {

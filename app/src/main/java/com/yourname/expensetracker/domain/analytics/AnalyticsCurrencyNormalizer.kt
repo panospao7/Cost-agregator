@@ -303,6 +303,26 @@ fun AnalyticsNormalizationResult.requireCompleteMoneyInput(targetCurrency: Strin
     }
 }
 
+/**
+ * Report-level input check: fails only when a row is lost (excluded) or a rate is missing or a
+ * currency is invalid ([AnalyticsNormalizationResult.severeWarnings]), or the result is not in the
+ * target currency. A stale-but-present rate still converts and does not fail (same split as
+ * NetCashflowBalanceProvider). Do not use for decision inputs; use [requireCompleteMoneyInput].
+ */
+fun AnalyticsNormalizationResult.requireNoLostMoneyInput(targetCurrency: String) {
+    val target = CurrencyCode.parse(targetCurrency)?.takeIf { it in CurrencyCode.ALL_SUPPORTED }
+        ?: throw com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableException(
+            com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableReasonCode.INVALID_TARGET_CURRENCY
+        )
+    if (CurrencyCode.parse(homeCurrency) != target || excludedCount > 0 || severeWarnings.isNotEmpty() ||
+        includedExpenses.any { CurrencyCode.parse(it.currency) != target }
+    ) {
+        throw com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableException(
+            com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableReasonCode.DISPLAY_CONVERSION_UNAVAILABLE
+        )
+    }
+}
+
 /** Decision inputs fail closed on any lost/uncertain row, while retaining rate provenance. */
 fun AnalyticsNormalizationResult.completeMoneyAggregateForRows(
     rows: Iterable<ExpenseSnapshot>,

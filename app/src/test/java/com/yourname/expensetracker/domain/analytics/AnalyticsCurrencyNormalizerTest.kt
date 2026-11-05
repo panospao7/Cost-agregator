@@ -382,6 +382,116 @@ class AnalyticsCurrencyNormalizerTest {
         assertThat(aggregate.metadata.missingRateCount).isEqualTo(2)
     }
 
+    @Test
+    fun `requireNoLostMoneyInput passes for complete same-currency input`() = runTest {
+        val result = normalizer.normalizeExpenses(
+            expenses = listOf(expense(id = 20L, amount = 10.0, currency = "EUR")),
+            homeCurrencyCode = "EUR"
+        )
+        result.requireNoLostMoneyInput("EUR")
+    }
+
+    @Test
+    fun `requireNoLostMoneyInput passes with only a stale rate warning while requireCompleteMoneyInput still fails`() = runTest {
+        val expenseDate = 1_700_000_000_000L
+        exchangeRateStore.putRate(
+            "USD", "EUR", rate = 2.0, updatedAt = expenseDate,
+            validDate = expenseDate - 30L * 24 * 60 * 60 * 1000
+        )
+        val result = normalizer.normalizeExpenses(
+            expenses = listOf(expense(id = 21L, amount = 10.0, currency = "USD")),
+            homeCurrencyCode = "EUR"
+        )
+        assertThat(result.warnings.map { it.type })
+            .containsExactly(AnalyticsConversionWarningType.STALE_EXCHANGE_RATE)
+        assertThat(result.excludedCount).isEqualTo(0)
+
+        result.requireNoLostMoneyInput("EUR")
+        org.junit.Assert.assertThrows(MoneyDisplayUnavailableException::class.java) {
+            result.requireCompleteMoneyInput("EUR")
+        }
+    }
+
+    @Test
+    fun `requireNoLostMoneyInput fails when a row is excluded`() = runTest {
+        val result = normalizer.normalizeExpenses(
+            expenses = listOf(expense(id = 22L, amount = 10.0, currency = "USD")),
+            homeCurrencyCode = "EUR"
+        )
+        assertThat(result.excludedCount).isEqualTo(1)
+
+        val thrown = org.junit.Assert.assertThrows(MoneyDisplayUnavailableException::class.java) {
+            result.requireNoLostMoneyInput("EUR")
+        }
+        assertThat(thrown.reasonCode).isEqualTo(MoneyDisplayUnavailableReasonCode.DISPLAY_CONVERSION_UNAVAILABLE)
+    }
+
+    @Test
+    fun `requireNoLostMoneyInput fails on excludedCount above zero even without any warning`() {
+        val result = AnalyticsNormalizationResult(
+            homeCurrency = "EUR",
+            normalizedExpenses = emptyList(),
+            includedExpenses = emptyList(),
+            warnings = emptyList(),
+            latestRateTimestamp = null,
+            totalInputCount = 1
+        )
+        assertThat(result.excludedCount).isEqualTo(1)
+        org.junit.Assert.assertThrows(MoneyDisplayUnavailableException::class.java) {
+            result.requireNoLostMoneyInput("EUR")
+        }
+    }
+
+    @Test
+    fun `requireNoLostMoneyInput fails on a severe warning even with no excluded rows`() {
+        for (type in listOf(
+            AnalyticsConversionWarningType.MISSING_EXCHANGE_RATE,
+            AnalyticsConversionWarningType.INVALID_TRANSACTION_CURRENCY
+        )) {
+            val result = AnalyticsNormalizationResult(
+                homeCurrency = "EUR",
+                normalizedExpenses = emptyList(),
+                includedExpenses = emptyList(),
+                warnings = listOf(
+                    AnalyticsConversionWarning(type = type, message = "synthetic", affectedTransactionCount = 1)
+                ),
+                latestRateTimestamp = null,
+                totalInputCount = 0
+            )
+            assertThat(result.excludedCount).isEqualTo(0)
+            assertThat(result.severeWarnings).isNotEmpty()
+            org.junit.Assert.assertThrows(type.name, MoneyDisplayUnavailableException::class.java) {
+                result.requireNoLostMoneyInput("EUR")
+            }
+        }
+    }
+
+    @Test
+    fun `requireNoLostMoneyInput fails when the result is not in the target currency`() = runTest {
+        val usdResult = normalizer.normalizeExpenses(
+            expenses = listOf(expense(id = 23L, amount = 10.0, currency = "USD")),
+            homeCurrencyCode = "USD"
+        )
+        usdResult.requireNoLostMoneyInput("USD")
+
+        val thrown = org.junit.Assert.assertThrows(MoneyDisplayUnavailableException::class.java) {
+            usdResult.requireNoLostMoneyInput("EUR")
+        }
+        assertThat(thrown.reasonCode).isEqualTo(MoneyDisplayUnavailableReasonCode.DISPLAY_CONVERSION_UNAVAILABLE)
+    }
+
+    @Test
+    fun `requireNoLostMoneyInput rejects an invalid target currency`() = runTest {
+        val result = normalizer.normalizeExpenses(
+            expenses = listOf(expense(id = 24L, amount = 10.0, currency = "EUR")),
+            homeCurrencyCode = "EUR"
+        )
+        val thrown = org.junit.Assert.assertThrows(MoneyDisplayUnavailableException::class.java) {
+            result.requireNoLostMoneyInput("bad-target")
+        }
+        assertThat(thrown.reasonCode).isEqualTo(MoneyDisplayUnavailableReasonCode.INVALID_TARGET_CURRENCY)
+    }
+
     private fun expense(
         id: Long,
         amount: Double,

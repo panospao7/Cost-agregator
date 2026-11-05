@@ -62,7 +62,7 @@ class DashboardFollowThroughEngineTest {
         Locale.setDefault(Locale.US)
         serializer = TransactionFilterSerializer()
         every { timeProvider.now() } returns FIXED_NOW
-        thresholdCalculator = SpendingThresholdCalculator(expenseDao, timeProvider, testDispatcher)
+        thresholdCalculator = newCalculator()
         engine = DashboardFollowThroughEngine(serializer, thresholdCalculator, timeProvider, testDispatcher)
     }
 
@@ -75,10 +75,25 @@ class DashboardFollowThroughEngineTest {
     /** Fresh engine + fresh threshold calculator (its 24h cache is per instance). */
     private fun newEngine(): DashboardFollowThroughEngine = DashboardFollowThroughEngine(
         serializer,
-        SpendingThresholdCalculator(expenseDao, timeProvider, testDispatcher),
+        newCalculator(),
         timeProvider,
         testDispatcher
     )
+
+    /** Real calculator, home EUR; the DAO is stubbed per test (all fixtures are EUR). */
+    private fun newCalculator(): SpendingThresholdCalculator {
+        val settings = mockk<com.yourname.expensetracker.domain.currency.CurrencySettingsRepository>()
+        every { settings.homeCurrency() } returns kotlinx.coroutines.flow.flowOf("EUR")
+        return SpendingThresholdCalculator(
+            expenseDao,
+            timeProvider,
+            testDispatcher,
+            com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer(
+                com.yourname.expensetracker.domain.currency.CurrencyConverter(mockk(relaxed = true), timeProvider = mockk())
+            ),
+            settings
+        )
+    }
 
     // ── Text: AI artifact vs fallback ─────────────────────────────────────────
 
@@ -200,7 +215,7 @@ class DashboardFollowThroughEngineTest {
         assertEquals(4, rows.size, "threshold table size guard")
 
         for (row in rows) {
-            coEvery { expenseDao.getAmountsForPercentileCalc(any(), any()) } returns emptyList()
+            coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returns emptyList()
 
             val recommendations = newEngine().generateRecommendations(createExpense(amount = row.amount), null, "u1")
 
@@ -219,7 +234,8 @@ class DashboardFollowThroughEngineTest {
     @Test
     fun `very large transaction is detected as high amount with transaction list navigation`() = runTest {
         // 5 samples < 10 minimum sample size -> threshold stays at the 50.0 minimum.
-        coEvery { expenseDao.getAmountsForPercentileCalc(any(), any()) } returns listOf(10.0, 20.0, 30.0, 40.0, 50.0)
+        coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returns
+            listOf(10.0, 20.0, 30.0, 40.0, 50.0).mapIndexed { i, a -> createExpense(id = i + 1L, amount = a) }
 
         val recommendations = engine.generateRecommendations(createExpense(amount = 5000.0, categoryId = 2L), null, "u1")
 

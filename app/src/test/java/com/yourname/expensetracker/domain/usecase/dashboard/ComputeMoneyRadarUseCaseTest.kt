@@ -32,6 +32,7 @@ import com.yourname.expensetracker.domain.model.RecurringPattern
 import com.yourname.expensetracker.domain.model.Result
 import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.model.budget.MonteCarloBudgetImpact
+import com.yourname.expensetracker.domain.model.dashboard.toBudgetStatusSnapshot
 import com.yourname.expensetracker.domain.model.budget.MonteCarloBudgetImpact.RiskTier
 import com.yourname.expensetracker.domain.text.DomainTextKeys
 import com.yourname.expensetracker.domain.usecase.budget.GetMonteCarloBudgetImpactUseCase
@@ -147,14 +148,31 @@ class ComputeMoneyRadarUseCaseTest {
     }
 
     @Test
-    fun `unresolved budget currency is unavailable rather than no budget risk`() = runTest {
+    fun `unresolved budget currency gives no budget risk but keeps bills and anomalies`() = runTest {
         stubHealthyRadarSignals()
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+            recurring("Bill A", 10.0, now + dayMs),
+            recurring("Bill B", 20.0, now + 2 * dayMs)
+        )
+        coEvery { anomalyAlertRepository.getActiveAlerts() } returns listOf(
+            anomaly("Odd Charge", 40.0, now - dayMs)
+        )
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
+            expense(1000.0, TransactionType.DEPOSIT, now - dayMs)
+        )
         val status = overallBudgetStatus(1000.0)
         every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(
-            status.copy(budget = status.budget.copy(currency = "UNKNOWN"))
+            // The snapshot reads BudgetStatus.currency, so the status field is changed with the budget.
+            status.copy(budget = status.budget.copy(currency = "UNKNOWN"), currency = "UNKNOWN")
         ))
 
-        assertRadarUnavailable(useCase.compute())
+        val result = useCase.compute()
+
+        assertTrue(result.urgencyLevel != UrgencyLevel.UNAVAILABLE)
+        assertNotNull(result.urgencyScore)
+        assertEquals(2, result.dueBills.size)
+        assertEquals(1, result.anomalyAlerts.size)
+        assertNull(result.budgetRisk)
         coVerify(exactly = 0) { monteCarloSimulator.simulate(any(), any(), any(), any()) }
     }
 
@@ -176,7 +194,7 @@ class ComputeMoneyRadarUseCaseTest {
         every { currencySettingsRepository.homeCurrency() } returns flowOf("USD")
         val status = overallBudgetStatus(1000.0)
         every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(
-            status.copy(budget = status.budget.copy(currency = "USD"))
+            status.copy(budget = status.budget.copy(currency = "USD"), currency = "USD")
         ))
         coEvery { expenseRepository.getExpensesSince(any()) } returns listOf(
             expense(200.0, TransactionType.PURCHASE, now - dayMs).copy(currency = "USD"),
@@ -733,14 +751,164 @@ class ComputeMoneyRadarUseCaseTest {
         )
     }
 
-    private fun overallBudgetStatus(amount: Double): BudgetStatus {
+    // ---------------------------------------------------------------- P-05-5 limit derivation
+
+    private fun stubSimulationCapturingLimit(captured: MutableList<Double>, limitForImpact: Double): MonteCarloResult {
+        val simulation = monteCarloResult(probabilityUnderBudget = 0.5)
+        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any()) } answers {
+            captured.add(thirdArg())
+            simulation
+        }
+        every { getMonteCarloBudgetImpact(any(), any()) } returns Result.Success(
+            MonteCarloBudgetImpact(limitForImpact, limitForImpact, 0.0, 0.5, RiskTier.MEDIUM)
+        )
+        return simulation
+    }
+
+    @Test
+    fun `P-05-5 budget 500 with rollover surplus 100 simulates against 600 equal to the shared period remaining limit`() = runTest {
+        stubHealthyRadarSignals()
+        val status = overallBudgetStatus(500.0, effectiveLimit = 600.0)
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(status))
+        coEvery { expenseRepository.getExpensesSince(any()) } returns emptyList()
+        val limits = mutableListOf<Double>()
+        val simulation = stubSimulationCapturingLimit(limits, limitForImpact = 600.0)
+
+        val result = useCase.compute()
+
+        assertNotNull(result.budgetRisk)
+        assertEquals(listOf(600.0), limits)
+        val sharedLimit = (status.toBudgetStatusSnapshot().periodRemaining(now, "EUR")
+            as com.yourname.expensetracker.domain.budget.BudgetPeriodRemaining.Available).limit
+        assertEquals(sharedLimit, limits.single(), 0.0)
+        io.mockk.verify(exactly = 1) { getMonteCarloBudgetImpact(600.0, simulation) }
+    }
+
+    @Test
+    fun `P-05-5 weekly overall budget gives no budget comparison`() = runTest {
+        stubHealthyRadarSignals()
+        // Period spans 7 days: not month-scale, so a calendar-month total must not be compared.
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(
+            overallBudgetStatus(500.0, periodStart = now - 3 * dayMs, periodEnd = now + 4 * dayMs)
+        ))
+        coEvery { expenseRepository.getExpensesSince(any()) } returns emptyList()
+
+        val result = useCase.compute()
+
+        assertTrue("a missing comparison is not an unavailable radar", result.urgencyLevel != UrgencyLevel.UNAVAILABLE)
+        assertNull(result.budgetRisk)
+        coVerify(exactly = 0) { monteCarloSimulator.simulate(any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `P-05-5 a budget status that is not Available keeps bills and anomalies and has no budget risk`() = runTest {
+        val base = overallBudgetStatus(500.0)
+        val rows = mapOf(
+            "percent unknown" to base.copy(percentKnown = false, healthStatus = BudgetHealthStatus.UNKNOWN),
+            "effective spend unavailable" to base.copy(adjustedSpendBreakdown = null),
+            "currency provenance unknown" to base.copy(currencyAssumption = "UNKNOWN"),
+            "currency differs from home" to base.copy(currency = "USD")
+        )
+        rows.forEach { (name, status) ->
+            stubHealthyRadarSignals()
+            coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+                recurring("Bill A", 10.0, now + dayMs),
+                recurring("Bill B", 20.0, now + 2 * dayMs)
+            )
+            coEvery { anomalyAlertRepository.getActiveAlerts() } returns listOf(
+                anomaly("Odd Charge", 40.0, now - dayMs)
+            )
+            coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
+                expense(1000.0, TransactionType.DEPOSIT, now - dayMs)
+            )
+            every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(status))
+            coEvery { expenseRepository.getExpensesSince(any()) } returns emptyList()
+
+            val result = useCase.compute()
+
+            assertTrue(name, result.urgencyLevel != UrgencyLevel.UNAVAILABLE)
+            assertNotNull(name, result.urgencyScore)
+            assertEquals(name, listOf("Bill A", "Bill B"), result.dueBills.map { it.merchant })
+            assertEquals(name, listOf("Odd Charge"), result.anomalyAlerts.map { it.merchant })
+            assertNull(name, result.budgetRisk)
+        }
+        coVerify(exactly = 0) { monteCarloSimulator.simulate(any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `P-05-5 limit of zero or below gives no comparison and does not make Radar unavailable`() = runTest {
+        // NO_POSITIVE_LIMIT means there is no budget to compare against, as the widget treats it.
+        for (effectiveLimit in listOf(0.0, -50.0)) {
+            stubHealthyRadarSignals()
+            every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(
+                overallBudgetStatus(500.0, effectiveLimit = effectiveLimit)
+            ))
+            coEvery { expenseRepository.getExpensesSince(any()) } returns emptyList()
+
+            val result = useCase.compute()
+
+            assertNull("limit $effectiveLimit", result.budgetRisk)
+            org.junit.Assert.assertNotEquals("limit $effectiveLimit", UrgencyLevel.UNAVAILABLE, result.urgencyLevel)
+        }
+        coVerify(exactly = 0) { monteCarloSimulator.simulate(any(), any(), any(), any()) }
+    }
+
+    /**
+     * KNOWN, RECORDED DIFFERENCE (P-05-5): the radar's known upcoming is the confirmed recurring
+     * patterns due within the next 7 days only. It does not match any longer horizon used by other
+     * surfaces; only the budget LIMIT is unified by P-05-5. This pins the current behaviour so the
+     * difference stays visible until it is resolved deliberately.
+     */
+    @Test
+    fun `P-05-5 recorded difference radar known upcoming is 7 day confirmed patterns only`() = runTest {
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+            recurring("Rent", 100.0, now + dayMs),
+            recurring("Insurance", 50.0, now + 5 * dayMs),
+            recurring("LaterInMonth", 200.0, now + 12 * dayMs)
+        )
+        coEvery { anomalyAlertRepository.getActiveAlerts() } returns emptyList()
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(overallBudgetStatus(1000.0)))
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
+            expense(1000.0, TransactionType.DEPOSIT, now - dayMs)
+        )
+        coEvery { expenseRepository.getExpensesSince(any()) } returns emptyList()
+        var knownUpcoming = -1.0
+        val simulation = monteCarloResult(probabilityUnderBudget = 0.5)
+        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any()) } answers {
+            knownUpcoming = secondArg()
+            simulation
+        }
+        every { getMonteCarloBudgetImpact(any(), any()) } returns Result.Success(
+            MonteCarloBudgetImpact(1000.0, 1000.0, 0.0, 0.5, RiskTier.MEDIUM)
+        )
+
+        useCase.compute()
+
+        assertEquals("only the two bills inside 7 days; the day-12 bill is excluded", 150.0, knownUpcoming, 0.0001)
+    }
+
+    /**
+     * Overall budget fixture as production maps it for a complete EUR budget: confirmed currency
+     * provenance and a finite effective-spend breakdown, so [BudgetStatusSnapshot.periodRemaining]
+     * is Available. [effectiveLimit] is the limit incl. rollover, as the repository computes it;
+     * it is what the radar must simulate against, so it defaults to [amount] and tests that need a
+     * different value pass it explicitly (a stated budget never relies on an implicit 0.0).
+     */
+    private fun overallBudgetStatus(
+        amount: Double,
+        effectiveLimit: Double = amount,
+        periodStart: Long = now - 20 * dayMs,
+        periodEnd: Long = now + 10 * dayMs
+    ): BudgetStatus {
         val budget = Budget(
             id = 10L,
             categoryId = null,
             amount = amount,
             period = BudgetPeriod.MONTHLY,
-            startDate = now - 20 * dayMs,
-            isActive = true
+            startDate = periodStart,
+            isActive = true,
+            currency = "EUR",
+            currencyAssumption = "USER_CONFIRMED"
         )
         return BudgetStatus(
             budget = budget,
@@ -749,9 +917,17 @@ class ComputeMoneyRadarUseCaseTest {
             remainingAmount = amount,
             percentUsed = 0f,
             healthStatus = BudgetHealthStatus.ON_TRACK,
-            periodStart = now - 20 * dayMs,
-            periodEnd = now + 10 * dayMs,
-            effectiveLimit = 0.0,
+            periodStart = periodStart,
+            periodEnd = periodEnd,
+            effectiveLimit = effectiveLimit,
+            adjustedSpendBreakdown = com.yourname.expensetracker.domain.budget.AdjustedSpendBreakdown(
+                personalSpend = 0.0,
+                sharedSpend = 0.0,
+                reimbursedAmount = 0.0,
+                netSharedLiability = 0.0,
+                effectiveSpend = 0.0,
+                pendingReimbursements = 0.0
+            )
         )
     }
 

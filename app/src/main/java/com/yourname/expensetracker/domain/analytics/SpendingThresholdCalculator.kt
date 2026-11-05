@@ -1,10 +1,17 @@
 package com.yourname.expensetracker.domain.analytics
 
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
+import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.di.IoDispatcher
+import com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableException
+import com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableReasonCode
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -30,7 +37,9 @@ import kotlin.math.min
 class SpendingThresholdCalculator @Inject constructor(
     private val expenseDao: ExpenseDao,
     private val timeProvider: TimeProvider,
-    @IoDispatcher private val ioDispatcher: CoroutineDispatcher
+    @IoDispatcher private val ioDispatcher: CoroutineDispatcher,
+    private val analyticsCurrencyNormalizer: AnalyticsCurrencyNormalizer,
+    private val currencySettingsRepository: CurrencySettingsRepository
 ) {
     
     companion object {
@@ -39,6 +48,7 @@ class SpendingThresholdCalculator @Inject constructor(
         private const val MIN_THRESHOLD = 50.0
         private const val MIN_SAMPLE_SIZE = 10
         private const val CACHE_TTL_MS = 24 * 60 * 60 * 1000L // 24 hours
+        private const val FAILURE_CACHE_TTL_MS = 5 * 60 * 1000L // 5 minutes (negative cache)
     }
     
     // Single synchronization owner for the entire cache — Mutex serialises
@@ -57,7 +67,9 @@ class SpendingThresholdCalculator @Inject constructor(
     private val cacheMutex = Mutex()
     private val cache = HashMap<String, CachedPercentiles>()
     private val cacheGenerations = HashMap<String, Long>()
-    
+    // Short negative cache (same mutex and generation owner as the positive cache).
+    private val failureCache = HashMap<String, CachedFailure>()
+
     /**
      * Calculate the "high amount" threshold for a user.
      * 
@@ -102,16 +114,58 @@ class SpendingThresholdCalculator @Inject constructor(
             val (cached, generationAtStart) = cacheMutex.withLock {
                 Pair(cache[userId], cacheGenerations.getOrDefault(userId, 0L))
             }
+            val cachedFailure = cacheMutex.withLock { failureCache[userId] }
             val now = timeProvider.now()
+            // E-02-4: percentiles are home-currency values; a cache entry from another
+            // home currency is never reused.
+            val homeCurrency = try {
+                currencySettingsRepository.homeCurrency().first()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                throw MoneyDisplayUnavailableException(
+                    MoneyDisplayUnavailableReasonCode.HOME_CURRENCY_UNAVAILABLE
+                )
+            }
 
-            if (cached != null && (now - cached.percentiles.calculatedAt) < CACHE_TTL_MS) {
+            if (cached != null && cached.homeCurrency == homeCurrency &&
+                (now - cached.percentiles.calculatedAt) < CACHE_TTL_MS
+            ) {
                 Timber.d("SpendingThresholdCalculator: Using cached percentiles for $userId")
                 return@withContext cached.percentiles
             }
 
+            // Negative cache: a repeat inside the window rethrows the same unavailable reason
+            // without re-reading 90 days of rows. Keyed like the positive cache (userId plus
+            // home currency); a home currency change bypasses it.
+            if (cachedFailure != null && cachedFailure.homeCurrency == homeCurrency &&
+                now >= cachedFailure.failedAt && (now - cachedFailure.failedAt) < FAILURE_CACHE_TTL_MS
+            ) {
+                throw MoneyDisplayUnavailableException(cachedFailure.reasonCode)
+            }
+
             // Calculate from scratch (expensive I/O outside the lock)
             val (startDate, endDate) = TimePeriodUtils.getLastNCalendarDaysRange(now, ANALYSIS_WINDOW_DAYS)
-            val amounts = expenseDao.getAmountsForPercentileCalc(startDate, endDate)
+            // E-02-4: amounts must be converted to the home currency before ranking.
+            // Any unconvertible row throws MoneyDisplayUnavailableException (never cached,
+            // never a raw mixed-currency percentile). Owner filter isNotMine = 0 is in the query;
+            // spendingExclusionReason rows are dropped by the normalizer.
+            val purchases = expenseDao.getExpensesBetweenUncapped(startDate, endDate)
+                .filter { it.transactionType == TransactionType.PURCHASE }
+            val normalized = analyticsCurrencyNormalizer.normalizeExpenses(purchases, homeCurrency)
+            try {
+                // A stale-but-present rate still converts; only a lost row or missing rate fails.
+                normalized.requireNoLostMoneyInput(homeCurrency)
+            } catch (e: MoneyDisplayUnavailableException) {
+                // Only this bounded reason code is cached; CancellationException never reaches here.
+                cacheMutex.withLock {
+                    if (cacheGenerations.getOrDefault(userId, 0L) == generationAtStart) {
+                        failureCache[userId] = CachedFailure(e.reasonCode, now, homeCurrency)
+                    }
+                }
+                throw e
+            }
+            val amounts = normalized.includedExpenses.map { it.effectiveAmount }
 
             if (amounts.isEmpty()) {
                 Timber.d("SpendingThresholdCalculator: No transactions for $userId in last $ANALYSIS_WINDOW_DAYS days")
@@ -139,7 +193,8 @@ class SpendingThresholdCalculator @Inject constructor(
             // replaced as expected.
             cacheMutex.withLock {
                 if (cacheGenerations.getOrDefault(userId, 0L) == generationAtStart) {
-                    cache[userId] = CachedPercentiles(percentiles, now)
+                    cache[userId] = CachedPercentiles(percentiles, now, homeCurrency)
+                    failureCache.remove(userId)
                 }
             }
 
@@ -160,6 +215,7 @@ class SpendingThresholdCalculator @Inject constructor(
         withContext(ioDispatcher) {
             cacheMutex.withLock {
                 cache.remove(userId)
+                failureCache.remove(userId)
                 // Bump the generation so any in-flight recompute that started
                 // before this invalidation sees a generation mismatch and
                 // refuses to write its stale result back.
@@ -176,6 +232,29 @@ class SpendingThresholdCalculator @Inject constructor(
      */
     suspend fun getThreshold(): Double {
         return calculateHighAmountThreshold(DEFAULT_USER_ID)
+    }
+
+    /**
+     * Full transaction amount expressed in the home currency, for comparison against
+     * [getThreshold]. Returns [Expense.amount] when the expense is already in the home
+     * currency, [Expense.baseAmount] when its snapshot [Expense.baseCurrency] is the home
+     * currency and usable (> 0), otherwise null (not comparable; never a raw foreign amount).
+     * Home currency unavailable also yields null. No rounding is applied.
+     */
+    suspend fun homeCurrencyAmountOrNull(expense: Expense): Double? {
+        val homeCurrency = try {
+            currencySettingsRepository.homeCurrency().first()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            return null
+        }
+        return when {
+            expense.currency.equals(homeCurrency, ignoreCase = true) -> expense.amount
+            expense.baseCurrency.equals(homeCurrency, ignoreCase = true) &&
+                expense.baseAmount > 0.0 -> expense.baseAmount
+            else -> null
+        }
     }
 
     /**
@@ -219,9 +298,16 @@ class SpendingThresholdCalculator @Inject constructor(
         return sortedData[lower] + fraction * (sortedData[upper] - sortedData[lower])
     }
     
+    private data class CachedFailure(
+        val reasonCode: MoneyDisplayUnavailableReasonCode,
+        val failedAt: Long,
+        val homeCurrency: String
+    )
+
     private data class CachedPercentiles(
         val percentiles: SpendingPercentiles,
-        val cachedAt: Long
+        val cachedAt: Long,
+        val homeCurrency: String
     )
 }
 

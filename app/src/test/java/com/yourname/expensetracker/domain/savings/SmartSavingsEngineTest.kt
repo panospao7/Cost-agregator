@@ -876,7 +876,15 @@ class SmartSavingsEngineTest : AnalyticsEngineTestBase() {
     private fun realCapEngine(converter: CurrencyConverter, dao: ExpenseDao) = SmartSavingsEngine(
         expenseRepository, categoryRepository, budgetRepository, budgetCalculator, monteCarloSimulator,
         timeProvider, AnalyticsCurrencyNormalizer(converter), cashFlowCalculator,
-        SpendingThresholdCalculator(dao, timeProvider, testDispatcher)
+        SpendingThresholdCalculator(
+            dao,
+            timeProvider,
+            testDispatcher,
+            AnalyticsCurrencyNormalizer(converter),
+            mockk<com.yourname.expensetracker.domain.currency.CurrencySettingsRepository> {
+                every { homeCurrency() } returns flowOf("EUR")
+            }
+        )
     )
 
     private fun budgetStatus(remaining: Double, categoryId: Long? = null): BudgetStatus {

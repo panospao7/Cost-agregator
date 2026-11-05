@@ -1,6 +1,11 @@
 package com.yourname.expensetracker.domain.lifestyle
 
+import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
+import com.yourname.expensetracker.domain.analytics.requireNoLostMoneyInput
+import com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableException
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.model.DomainTransactionType
+import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.domain.model.UiText
@@ -33,18 +38,31 @@ import kotlin.math.pow
 @Singleton
 class LifestyleInflationDetector @Inject constructor(
     private val expenseDao: ExpenseDao,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val analyticsCurrencyNormalizer: AnalyticsCurrencyNormalizer,
+    private val currencySettingsRepository: CurrencySettingsRepository
 ) {
-    
+
+    /**
+     * BL-05: amounts are normalized to the home currency before any monthly sum.
+     * Throws [MoneyDisplayUnavailableException] when any row cannot be converted
+     * (missing rate, invalid currency, invalid home currency); there is no
+     * partial or raw mixed-currency report. A stale-but-present rate still converts
+     * and does not fail the report. Callers must treat the throw as "unavailable".
+     */
     suspend fun analyzeLifestyleInflation(
         monthsToAnalyze: Int = 12
     ): LifestyleInflationReport {
         val endDate = timeProvider.now()
         val startDate = endDate - (monthsToAnalyze * 30L * 24 * 60 * 60 * 1000)
-        
+
         // Get all expenses in the period
-        val expenses = expenseDao.getExpensesBetweenFlowUncapped(startDate, endDate).first()
-        
+        val rawExpenses = expenseDao.getExpensesBetweenFlowUncapped(startDate, endDate).first()
+        val homeCurrency = currencySettingsRepository.homeCurrency().first()
+        val normalized = analyticsCurrencyNormalizer.normalizeExpenses(rawExpenses, homeCurrency)
+        normalized.requireNoLostMoneyInput(homeCurrency)
+        val expenses = normalized.includedExpenses
+
         // Separate income and spending
         val incomeByMonth = mutableMapOf<YearMonth, Double>()
         val spendingByMonth = mutableMapOf<YearMonth, Double>()
@@ -56,7 +74,7 @@ class LifestyleInflationDetector @Inject constructor(
                 .toLocalDate()
             val month = YearMonth.from(date)
             
-            when (expense.transactionType.toDomain()) {
+            when (expense.transactionType) {
                 DomainTransactionType.DEPOSIT -> {
                     incomeByMonth[month] = (incomeByMonth[month] ?: 0.0) + expense.effectiveAmount
                 }
@@ -73,9 +91,11 @@ class LifestyleInflationDetector @Inject constructor(
         }
         
         // Calculate correlation between income and spending
+        // BL-05: pair only months present in both series, in chronological order.
+        val commonMonths = incomeByMonth.keys.intersect(spendingByMonth.keys).sorted()
         val incomeSpendingCorrelation = calculateCorrelation(
-            incomeByMonth.map { it.value },
-            spendingByMonth.map { it.value }
+            commonMonths.map { incomeByMonth.getValue(it) },
+            commonMonths.map { spendingByMonth.getValue(it) }
         )
         
         // Calculate income elasticity of spending
@@ -112,7 +132,7 @@ class LifestyleInflationDetector @Inject constructor(
         )
     }
     
-    private fun isDiscretionaryExpense(expense: Expense): Boolean {
+    private fun isDiscretionaryExpense(expense: ExpenseSnapshot): Boolean {
         // These are typically non-essential categories
         val discretionaryKeywords = listOf(
             "dining", "restaurant", "entertainment", "hobbies", 

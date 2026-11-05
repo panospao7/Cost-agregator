@@ -2,7 +2,11 @@ package com.yourname.expensetracker.domain.usecase.savings
 
 import com.yourname.expensetracker.assertApproxEquals
 import com.yourname.expensetracker.data.repository.PromptStateRepository
+import com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableException
+import com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableReasonCode
 import com.yourname.expensetracker.domain.lifestyle.LifestyleInflationDetector
+import kotlinx.coroutines.CancellationException
+import org.junit.Assert.fail
 import com.yourname.expensetracker.domain.model.GoalProtectionLevel
 import com.yourname.expensetracker.domain.model.SavingsGoal
 import com.yourname.expensetracker.domain.savings.SavingsGoalRepository
@@ -225,6 +229,56 @@ class LifestyleSavingsPromptUseCaseTest {
         // previous income is zero => income growth delta is forced to 0 => uplift min floor applies (1pp).
         assertApproxEquals(1.0, result.suggestedMonthlyUplift, 0.0001)
         coVerify(exactly = 1) { promptStateRepository.recordPrompt(LifestyleSavingsPromptUseCase.PROMPT_TYPE) }
+    }
+
+    @Test
+    fun `BL-05 evaluateAndPrompt returns null and consumes no cooldown when money is unavailable`() = runTest {
+        coEvery { promptStateRepository.hasPromptedRecently(any(), any()) } returns false
+        coEvery { promptStateRepository.hasUserTakenAction(any(), any(), any()) } returns false
+        coEvery { lifestyleInflationDetector.analyzeLifestyleInflation(12) } throws
+            MoneyDisplayUnavailableException(MoneyDisplayUnavailableReasonCode.DISPLAY_CONVERSION_UNAVAILABLE)
+        every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(emptyList())
+
+        val result = useCase.evaluateAndPrompt()
+
+        assertNull(result)
+        coVerify(exactly = 1) { lifestyleInflationDetector.analyzeLifestyleInflation(12) }
+        coVerify(exactly = 0) { promptStateRepository.recordPrompt(any()) }
+        coVerify(exactly = 0) { promptStateRepository.recordAcknowledgment(any(), any(), any()) }
+    }
+
+    @Test
+    fun `BL-05 evaluateAndPrompt after an unavailable run still prompts once money is available`() = runTest {
+        coEvery { promptStateRepository.hasPromptedRecently(any(), any()) } returns false
+        coEvery { promptStateRepository.hasUserTakenAction(any(), any(), any()) } returns false
+        coEvery { promptStateRepository.recordPrompt(LifestyleSavingsPromptUseCase.PROMPT_TYPE) } returns 1L
+        every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(emptyList())
+        coEvery { lifestyleInflationDetector.analyzeLifestyleInflation(12) } throws
+            MoneyDisplayUnavailableException(MoneyDisplayUnavailableReasonCode.DISPLAY_CONVERSION_UNAVAILABLE)
+        assertNull(useCase.evaluateAndPrompt())
+
+        coEvery { lifestyleInflationDetector.analyzeLifestyleInflation(12) } returns report()
+        val second = useCase.evaluateAndPrompt()
+
+        assertNotNull(second)
+        coVerify(exactly = 1) { promptStateRepository.recordPrompt(LifestyleSavingsPromptUseCase.PROMPT_TYPE) }
+    }
+
+    @Test
+    fun `BL-05 evaluateAndPrompt propagates CancellationException and records nothing`() = runTest {
+        coEvery { promptStateRepository.hasPromptedRecently(any(), any()) } returns false
+        coEvery { promptStateRepository.hasUserTakenAction(any(), any(), any()) } returns false
+        coEvery { lifestyleInflationDetector.analyzeLifestyleInflation(12) } throws
+            CancellationException("cancelled")
+
+        try {
+            useCase.evaluateAndPrompt()
+            fail("CancellationException must propagate")
+        } catch (expected: CancellationException) {
+            // propagated, not swallowed into a null result
+        }
+
+        coVerify(exactly = 0) { promptStateRepository.recordPrompt(any()) }
     }
 
     private fun report(
