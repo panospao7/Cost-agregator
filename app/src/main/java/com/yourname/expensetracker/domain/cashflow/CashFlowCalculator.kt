@@ -690,6 +690,7 @@ class CashFlowCalculator @Inject constructor(
                     Timber.w(e, "$TAG: projectOccurrences failed for ruleId=%d, skipping rule", ruleId)
                 }
             }
+            var occurrenceReadBlocked = false
             val materialized = try {
                 databaseReadBarrier.checkReadAllowed("CashFlowCalculator.getUpcomingBills.readOccurrences")
                 recurringOccurrenceDao.getByDateRange(startOfToday, endDate)
@@ -699,6 +700,8 @@ class CashFlowCalculator @Inject constructor(
                     }
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
+                // Fail towards counting: a blocked/failed read skips the settled-bill drop below.
+                occurrenceReadBlocked = true
                 Timber.w(e, "$TAG: reading materialized occurrences failed in getUpcomingBills")
                 emptyList()
             }
@@ -706,7 +709,9 @@ class CashFlowCalculator @Inject constructor(
             for (occ in projected) mergedByKey[occ.occurrenceKey] = occ
             for (occ in materialized) mergedByKey[occ.occurrenceKey] = occ
             // FC-PAID-UNLINKED: drop bills already settled by an unlinked purchase (read only).
-            recurringLifecycleCoordinator.dropSettled(mergedByKey.values.toList())
+            // Skipped when the occurrence read was blocked (the bills stay counted).
+            val mergedUpcoming = mergedByKey.values.toList()
+            (if (occurrenceReadBlocked) mergedUpcoming else recurringLifecycleCoordinator.dropSettled(mergedUpcoming))
                 .filter { it.status == "PLANNED" }
                 .map { it.toRecurringPattern() }
         } else {

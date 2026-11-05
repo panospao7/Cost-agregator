@@ -137,6 +137,9 @@ class OccurrenceConflictResolver @Inject constructor(
      * The caller passes only purchases that are linked to no occurrence ([expenses]); linkage lives
      * in `recurring_occurrences.linkedExpenseId` and is read by the coordinator.
      *
+     * Known limits: a same-merchant purchase within tolerance can settle a bill, and a late payment
+     * from the prior cycle can settle the next due bill; bills stay counted when unsure.
+     *
      * @param open Occurrences that are PLANNED and unlinked; other statuses are ignored.
      * @return occurrenceKey to the id of the settling expense.
      */

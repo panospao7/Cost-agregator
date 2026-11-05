@@ -1001,6 +1001,7 @@ class SynthesisEngine @Inject constructor(
                     continue
                 }
                 if (occ.status != "PLANNED" || occ.sourceId !in manualIds) continue
+                // FC-PAID-UNLINKED: block-party counts rows itself, so a settled bill can lower its pool (the safe direction).
                 // G-TIME-01: java.time day-of-month derivation (was Calendar scratch instance).
                 val day = Instant.ofEpochMilli(occ.dueDate).atZone(ZoneId.systemDefault()).dayOfMonth
                 if (day in 1..daysInMonth) {

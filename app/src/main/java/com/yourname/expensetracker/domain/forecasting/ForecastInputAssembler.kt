@@ -761,13 +761,18 @@ class ForecastInputAssembler @Inject constructor(
      * keeps every pattern as given: fail towards counting.
      */
     private suspend fun withSettledPatternsAdvanced(patterns: List<RecurringPattern>): List<RecurringPattern> {
-        val manual = patterns.filter { it.id != null && !it.frequency.isIrregular }
+        val now = timeProvider.now()
+        val windowStart = TimePeriodUtils.getStartOfMonth(now)
+        val windowEnd = TimePeriodUtils.getEndOfMonth(now)
+        // Only a pattern due in the current month is projected (fewer per-rule reads); any other
+        // pattern is not touched.
+        val manual = patterns.filter {
+            it.id != null && !it.frequency.isIrregular &&
+                it.nextExpectedDate >= windowStart && it.nextExpectedDate <= windowEnd
+        }
         if (manual.isEmpty()) return patterns
         return try {
             databaseReadBarrier.checkReadAllowed("ForecastInputAssembler.assembleNormalized.readSettledOccurrences")
-            val now = timeProvider.now()
-            val windowStart = TimePeriodUtils.getStartOfMonth(now)
-            val windowEnd = TimePeriodUtils.getEndOfMonth(now)
             val merged = LinkedHashMap<String, RecurringOccurrence>()
             for (ruleId in manual.mapNotNull { it.id }.toSet()) {
                 for (occ in recurringLifecycleCoordinator.projectOccurrences(ruleId, windowStart, windowEnd)) {
@@ -785,13 +790,18 @@ class ForecastInputAssembler @Inject constructor(
             val all = merged.values.toList()
             val remainingKeys = recurringLifecycleCoordinator.dropSettled(all).map { it.occurrenceKey }.toSet()
             val settled = all.filter { it.occurrenceKey !in remainingKeys }
-            if (settled.isEmpty()) return patterns
+            // An occurrence due on the pattern's day that is projected PAID (an expense matched it
+            // but no row is linked yet) also moves the pattern; each pattern advances once only.
+            val paid = all.filter { it.status == "PAID" }
+            if (settled.isEmpty() && paid.isEmpty()) return patterns
 
             patterns.map { pattern ->
                 val ruleId = pattern.id
                 if (ruleId == null || pattern.frequency.isIrregular) return@map pattern
                 val dueDay = TimePeriodUtils.getStartOfDay(pattern.nextExpectedDate)
                 val isSettled = settled.any {
+                    it.sourceId == ruleId && TimePeriodUtils.getStartOfDay(it.dueDate) == dueDay
+                } || paid.any {
                     it.sourceId == ruleId && TimePeriodUtils.getStartOfDay(it.dueDate) == dueDay
                 }
                 if (!isSettled) return@map pattern

@@ -316,6 +316,13 @@ class RecurringLifecycleCoordinator @Inject constructor(
      * purchase already settles, so forecasts do not count the same bill twice. Nothing is written
      * and no state changes; the matching is [OccurrenceConflictResolver.findSettlingExpenses].
      *
+     * One payment settles at most one bill across the whole month, not only the rows the caller
+     * passed: the matcher runs over the full month set (projected rows of every active rule through
+     * [projectOccurrences], overridden by materialized rows and then by [merged]; so occurrences
+     * earlier than the caller's start date compete for the payment too), and only rows that are in
+     * [merged] and were settled are dropped. Every `linkedExpenseId` in that set, including an
+     * in-memory projected PAID link, counts as linked, besides the persisted links.
+     *
      * Purchases come from the existing [ExpenseDao.getExpensesBetween] call form, limited to the
      * months of the open occurrences, minus every expense already linked to any occurrence.
      * When the read fails (cancellation is rethrown) the input is returned unchanged with a bounded
@@ -323,16 +330,35 @@ class RecurringLifecycleCoordinator @Inject constructor(
      * what was dropped compare the result with [merged] by `occurrenceKey`.
      */
     suspend fun dropSettled(merged: List<RecurringOccurrence>): List<RecurringOccurrence> {
-        val open = merged.filter { it.status == "PLANNED" && it.linkedExpenseId == null }
-        if (open.isEmpty()) return merged
+        val mergedOpen = merged.filter { it.status == "PLANNED" && it.linkedExpenseId == null }
+        if (mergedOpen.isEmpty()) return merged
         return try {
-            val windowStart = TimePeriodUtils.getStartOfMonth(open.minOf { it.dueDate })
-            val windowEnd = TimePeriodUtils.getEndOfMonth(open.maxOf { it.dueDate })
+            val windowStart = TimePeriodUtils.getStartOfMonth(mergedOpen.minOf { it.dueDate })
+            val windowEnd = TimePeriodUtils.getEndOfMonth(mergedOpen.maxOf { it.dueDate })
+
+            // Full month set by occurrenceKey: projections fill, materialized rows (user overrides,
+            // links) override them, and the caller's rows win last.
+            val activeRuleIds = manualRecurringExpenseDao.getAllActive().map { it.id }.toSet()
+            val fullByKey = LinkedHashMap<String, RecurringOccurrence>()
+            for (ruleId in activeRuleIds) {
+                for (occ in projectOccurrences(ruleId, windowStart, windowEnd)) {
+                    fullByKey[occ.occurrenceKey] = occ
+                }
+            }
+            for (occ in occurrenceDao.getByDateRange(windowStart, windowEnd)) {
+                if (occ.sourceType == SOURCE_TYPE_RECURRING_RULE && occ.sourceId in activeRuleIds) {
+                    fullByKey[occ.occurrenceKey] = occ
+                }
+            }
+            for (occ in merged) fullByKey[occ.occurrenceKey] = occ
+            val fullSet = fullByKey.values.toList()
+            val open = fullSet.filter { it.status == "PLANNED" && it.linkedExpenseId == null }
+
             val rangeExpenses = expenseDao.getExpensesBetween(windowStart, windowEnd)
-            val linkedIds = rangeExpenses.map { it.id }
+            val persistedLinkedIds = rangeExpenses.map { it.id }
                 .chunked(LINKED_EXPENSE_ID_CHUNK)
                 .flatMap { occurrenceDao.getLinkedExpenseIds(it) }
-                .toSet()
+            val linkedIds = persistedLinkedIds.toSet() + fullSet.mapNotNull { it.linkedExpenseId }
             val unlinked = rangeExpenses.filter { it.id !in linkedIds }
             val settledKeys = resolver.findSettlingExpenses(open, unlinked).keys
             if (settledKeys.isEmpty()) merged else merged.filter { it.occurrenceKey !in settledKeys }
