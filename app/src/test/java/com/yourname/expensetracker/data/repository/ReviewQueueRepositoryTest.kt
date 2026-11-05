@@ -57,6 +57,7 @@ class ReviewQueueRepositoryTest {
     private val transactionLifecycleCoordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true)
     private val writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true)
     private val privacySettingsRepository = mockk<PrivacySettingsRepository>()
+    private val merchantCategoryRepository = mockk<MerchantCategoryRepository>(relaxed = true)
     private lateinit var repository: ReviewQueueRepository
 
     @Before
@@ -124,6 +125,7 @@ class ReviewQueueRepositoryTest {
             transactionLifecycleEventWriter = mockk(relaxed = true),
             postCommitActionRunner = mockk(relaxed = true),
             privacySettingsRepository = privacySettingsRepository,
+            merchantCategoryRepository = merchantCategoryRepository,
         )
     }
 
@@ -178,6 +180,81 @@ class ReviewQueueRepositoryTest {
         notificationTitle = "Test",
         notificationText = "Spent 50"
     )
+
+    private fun givenApprovalCreates(reviewId: Long, review: PendingReview) {
+        coEvery { pendingReviewDao.getById(reviewId) } returns review
+        coEvery {
+            pendingReviewDao.transitionStatus(
+                reviewId, PendingReviewStatus.PENDING, PendingReviewStatus.PROCESSING
+            )
+        } returns 1
+        coEvery { transactionLifecycleCoordinator.createExpenseDbOnlyV2(any()) } returns
+            MutationResult(CreateExpenseResult.Created(901L), PostCommitActionBatch.empty(""))
+    }
+
+    @Test
+    fun `DR-04 approval that changes the suggested category corrects the merchant mapping once`() = runTest {
+        givenApprovalCreates(41L, approvablePendingReview(41L)) // suggests category 1
+
+        val result = repository.approveReview(41L, finalCategoryId = 2L)
+
+        assertTrue(result is Result.Success)
+        coVerify(exactly = 1) { merchantCategoryRepository.correctPattern("Test Merchant", 2L) }
+    }
+
+    @Test
+    fun `DR-04 approval with the suggested category unchanged makes no correction`() = runTest {
+        givenApprovalCreates(42L, approvablePendingReview(42L))
+
+        assertTrue(repository.approveReview(42L) is Result.Success)
+        assertTrue(repository.approveReview(42L, finalCategoryId = 1L) is Result.Success)
+
+        coVerify(exactly = 0) { merchantCategoryRepository.correctPattern(any(), any()) }
+    }
+
+    @Test
+    fun `DR-04 approval of a review with no suggested category makes no correction`() = runTest {
+        givenApprovalCreates(43L, approvablePendingReview(43L).copy(suggestedCategoryId = null))
+
+        assertTrue(repository.approveReview(43L, finalCategoryId = 5L) is Result.Success)
+
+        coVerify(exactly = 0) { merchantCategoryRepository.correctPattern(any(), any()) }
+    }
+
+    @Test
+    fun `DR-04 correction failure keeps the approval successful and logs no raw text`() = runTest {
+        givenApprovalCreates(44L, approvablePendingReview(44L))
+        coEvery { merchantCategoryRepository.correctPattern(any(), any()) } throws
+            IllegalStateException("SECRET-RAW-Test Merchant")
+        val messages = mutableListOf<String>()
+        val tree = object : timber.log.Timber.Tree() {
+            override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
+                messages += message + (t?.message ?: "")
+            }
+        }
+        timber.log.Timber.plant(tree)
+        try {
+            val result = repository.approveReview(44L, finalCategoryId = 2L)
+
+            assertTrue(result is Result.Success)
+        } finally {
+            timber.log.Timber.uproot(tree)
+        }
+
+        assertTrue(messages.any { it.contains("IllegalStateException") })
+        assertTrue(messages.none { it.contains("SECRET-RAW") })
+    }
+
+    @Test
+    fun `DR-04 correction cancellation propagates out of approval`() = runTest {
+        givenApprovalCreates(45L, approvablePendingReview(45L))
+        val cancellation = kotlinx.coroutines.CancellationException("cancelled")
+        coEvery { merchantCategoryRepository.correctPattern(any(), any()) } throws cancellation
+
+        val thrown = runCatching { repository.approveReview(45L, finalCategoryId = 2L) }.exceptionOrNull()
+
+        assertSame(cancellation, thrown)
+    }
 
     @Test
     fun `approveReview validation failure returns bounded code without joined errors`() = runTest {
@@ -948,6 +1025,7 @@ class ReviewQueueRepositoryTest {
             transactionLifecycleEventWriter = mockk(relaxed = true),
             postCommitActionRunner = mockk(relaxed = true),
             privacySettingsRepository = privacySettingsRepository,
+            merchantCategoryRepository = merchantCategoryRepository,
         )
 
     @Test

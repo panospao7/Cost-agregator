@@ -121,6 +121,39 @@ class ExpenseRepositoryTest {
     }
 
     @Test
+    fun `DR-04 updateExpenseCategory to the same category does not rewrite the learned mapping`() = runTest {
+        val expense = Expense(
+            id = 106L,
+            amount = 5.0,
+            merchant = "Test Merchant",
+            categoryId = 2L,
+            transactionType = TransactionType.PURCHASE,
+            date = 1_700_000_000_000L
+        )
+
+        repository.updateExpenseCategory(expense, 2L)
+
+        coVerify(exactly = 0) { merchantCategoryRepository.correctPattern(any(), any()) }
+        coVerify(exactly = 0) { merchantCategoryRepository.learnPattern(any(), any()) }
+    }
+
+    @Test
+    fun `DR-04 updateExpenseCategory from uncategorized to a category is a real change`() = runTest {
+        val expense = Expense(
+            id = 107L,
+            amount = 5.0,
+            merchant = "Test Merchant",
+            categoryId = null,
+            transactionType = TransactionType.PURCHASE,
+            date = 1_700_000_000_000L
+        )
+
+        repository.updateExpenseCategory(expense, 2L)
+
+        coVerify(exactly = 1) { merchantCategoryRepository.correctPattern("Test Merchant", 2L) }
+    }
+
+    @Test
     fun `DR-04 updateExpenseCategoryBulk records exactly one correction for the merchant key`() = runTest {
         repository.updateExpenseCategoryBulk("LIDL #123 ATHENS", 7L)
 

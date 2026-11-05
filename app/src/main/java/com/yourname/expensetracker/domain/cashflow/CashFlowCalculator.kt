@@ -118,7 +118,10 @@ class CashFlowCalculator @Inject constructor(
     /** DR-01: read-only payer lookup for group-linked expenses (never written from here). */
     private val groupExpenseDao: GroupExpenseDao,
     /** DR-01: read-only lookup of the current user's group settlements (never written from here). */
-    private val groupSettlementDao: GroupSettlementDao
+    private val groupSettlementDao: GroupSettlementDao,
+    /** DR-01: shared group read wrapper (barrier + typed failure flags); defaults to the two DAOs above. */
+    private val groupCashFlowReader: com.yourname.expensetracker.data.repository.GroupCashFlowReader =
+        com.yourname.expensetracker.data.repository.GroupCashFlowReader(groupExpenseDao, groupSettlementDao, databaseReadBarrier)
 ) {
 
     /**
@@ -310,31 +313,20 @@ class CashFlowCalculator @Inject constructor(
         // barrier-guarded, same half-open range as the expense read). If the lookup fails the rows
         // cannot be classified: they are kept (never dropped silently) and every day is flagged
         // partial so the UI does not present the result as exact.
-        var groupPayerLookupFailed = false
-        val nonPayerGroupExpenseIds: Set<Long> = try {
-            databaseReadBarrier.checkReadAllowed("CashFlowCalculator.calculateDailyCashFlow.readGroupPayers")
-            groupExpenseDao.getNonPayerLinkedExpenseIdsBetween(startTime, endTime).toSet()
-        } catch (e: Exception) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
-            Timber.w("$TAG: group payer lookup failed (%s) — marking partial", e.javaClass.simpleName)
-            groupPayerLookupFailed = true
-            emptySet()
-        }
+        // The three group reads (non-payer links, payer links, settlements) go through the shared
+        // GroupCashFlowReader; the classify and settlement-dedupe rule is GroupCashFlowRule.
+        val groupSnapshot = groupCashFlowReader.read(
+            startTime, endTime, "CashFlowCalculator.calculateDailyCashFlow"
+        )
+        val groupPayerLookupFailed = groupSnapshot.nonPayerReadFailed || groupSnapshot.payerReadFailed
+        val nonPayerGroupExpenseIds: Set<Long> = groupSnapshot.nonPayerExpenseIds
 
         // DR-01: ids of personal rows linked to a group expense the current user PAID. The cash
         // that left is the full paid amount (the share owed back arrives later as a received
         // settlement), so these rows are counted at their full amount below. Same read-only,
         // barrier-guarded, half-open range. On failure the rows are kept at their share amount and
         // every day is flagged partial, exactly like the non-payer probe.
-        val payerGroupExpenseIds: Set<Long> = try {
-            databaseReadBarrier.checkReadAllowed("CashFlowCalculator.calculateDailyCashFlow.readGroupPayerRows")
-            groupExpenseDao.getPayerLinkedExpenseIdsBetween(startTime, endTime).toSet()
-        } catch (e: Exception) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
-            Timber.w("$TAG: group payer-row lookup failed (%s) — marking partial", e.javaClass.simpleName)
-            groupPayerLookupFailed = true
-            emptySet()
-        }
+        val payerGroupExpenseIds: Set<Long> = groupSnapshot.payerExpenseIds
 
         // DR-01: settling up is the cash event for group expenses someone else paid. Read the
         // current user's settlements (read-only, barrier-guarded, same half-open range). A paid
@@ -342,35 +334,16 @@ class CashFlowCalculator @Inject constructor(
         // linked to an expense that this window already counts is skipped (no double count). If
         // the lookup fails the result cannot be exact: every day is flagged partial, nothing is
         // invented.
-        var groupSettlementLookupFailed = false
-        val groupSettlements: List<CurrentUserSettlementRow> = try {
-            databaseReadBarrier.checkReadAllowed("CashFlowCalculator.calculateDailyCashFlow.readGroupSettlements")
-            groupSettlementDao.getCurrentUserSettlementsBetween(startTime, endTime)
-        } catch (e: Exception) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
-            Timber.w("$TAG: group settlement lookup failed (%s) — marking partial", e.javaClass.simpleName)
-            groupSettlementLookupFailed = true
-            emptyList()
-        }
+        val groupSettlementLookupFailed = groupSnapshot.settlementReadFailed
+        val groupSettlements: List<CurrentUserSettlementRow> = groupSnapshot.settlements
         // Defensive dedupe only: the current write path (SettlementCalculator.recordSettlement)
         // never sets GroupSettlementEntity.linkedExpenseId, so it is null for every settlement
         // created today. If a future path links a settlement to an expense that is counted here
         // (a payer row at its full amount, or an unlinked row), the settlement is skipped so the
         // same cash is not counted twice. Non-payer rows are not counted, so their settlement stays.
-        val countedExpenseIds: Set<Long> = historicalExpenses
-            .filter { it.id !in nonPayerGroupExpenseIds }
-            .filter {
-                when (it.transactionType.toDomain()) {
-                    DomainTransactionType.DEPOSIT,
-                    DomainTransactionType.PURCHASE,
-                    DomainTransactionType.WITHDRAWAL -> true
-                    else -> false
-                }
-            }
-            .map { it.id }
-            .toSet()
-        val settlementsByDay = groupSettlements
-            .filter { it.linkedExpenseId == null || it.linkedExpenseId !in countedExpenseIds }
+        val countedExpenseIds: Set<Long> =
+            GroupCashFlowRule.countedExpenseIds(historicalExpenses, nonPayerGroupExpenseIds)
+        val settlementsByDay = GroupCashFlowRule.dedupeSettlements(groupSettlements, countedExpenseIds)
             .groupBy { formatDayKey(it.createdAt) }
 
         // Group historical expenses by day key (yyyy-MM-dd) to avoid cross-year collisions.
@@ -414,16 +387,12 @@ class CashFlowCalculator @Inject constructor(
             val incomeList = mutableListOf<Expense>()
             val expenseList = mutableListOf<Expense>()
             for (storedExpense in dayExpenses) {
-                if (storedExpense.id in nonPayerGroupExpenseIds) continue
-                val expense = if (storedExpense.id in payerGroupExpenseIds) {
-                    storedExpense.copy(
-                        isNotMine = false,
-                        isSharedExpense = false,
-                        mySharePercentage = null,
-                        myShareAmount = null
-                    )
-                } else {
-                    storedExpense
+                val expense = when (
+                    GroupCashFlowRule.classify(storedExpense.id, nonPayerGroupExpenseIds, payerGroupExpenseIds)
+                ) {
+                    GroupCashFlowRule.RowClass.NON_PAYER -> continue
+                    GroupCashFlowRule.RowClass.PAYER -> GroupCashFlowRule.asFullAmountCopy(storedExpense)
+                    GroupCashFlowRule.RowClass.REGULAR -> storedExpense
                 }
                 when (expense.transactionType.toDomain()) {
                     DomainTransactionType.DEPOSIT -> incomeList.add(expense)

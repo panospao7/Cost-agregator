@@ -525,11 +525,16 @@ class CategorizationEngine @Inject constructor(
         // other row of the same canonical name, so it wins every lookup. Nothing displays
         // timesUsed; it is only a ranking tie-breaker.
         val rival = bestMappingForCanonical(base.normalizedCanonicalName)
-        val timesUsed = if (rival != null && rival.merchantPattern != base.merchantPattern) {
-            maxOf(USER_CORRECTION_TIMES_USED.toLong(), rival.timesUsed.toLong() + 1L)
-                .coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
-        } else {
-            USER_CORRECTION_TIMES_USED
+        val timesUsed = when {
+            // The row being corrected is already the best match: it is already above every
+            // other row, so keep its value (resetting could tie with a rival, for example
+            // "LIDL" 1,000,000 vs "Lidl" 1,000,001, and merchantPattern ASC would pick "LIDL").
+            rival != null && rival.merchantPattern == base.merchantPattern ->
+                maxOf(USER_CORRECTION_TIMES_USED, rival.timesUsed)
+            rival != null ->
+                maxOf(USER_CORRECTION_TIMES_USED.toLong(), rival.timesUsed.toLong() + 1L)
+                    .coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+            else -> USER_CORRECTION_TIMES_USED
         }
         val mapping = base.copy(confidence = 1.0f, timesUsed = timesUsed)
         merchantCategoryRepository.upsertUserCorrection(mapping)

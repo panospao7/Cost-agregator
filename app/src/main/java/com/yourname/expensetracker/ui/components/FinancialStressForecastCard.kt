@@ -364,6 +364,14 @@ private fun HorizonDetailView(
                 value = "+${CurrencyFormatter.formatMoney(horizon.expectedIncome, currency, showCents = false)}",
                 color = SemanticColors.SuccessGreen
             )
+            // Withdrawals lower Projected and Buffer, so show them when there are any.
+            if (horizon.projectedWithdrawals > 0.0) {
+                BreakdownItem(
+                    label = stringResource(R.string.stress_forecast_withdrawals_label, horizon.daysAhead),
+                    value = "-${CurrencyFormatter.formatMoney(horizon.projectedWithdrawals, currency, showCents = false)}",
+                    color = SemanticColors.WarningOrange
+                )
+            }
             BreakdownItem(
                 label = "Buffer",
                 value = CurrencyFormatter.formatMoney(horizon.discretionaryBuffer, currency, showCents = false),

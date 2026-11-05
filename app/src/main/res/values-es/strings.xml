@@ -354,6 +354,8 @@
     <string name="stress_forecast_balance_unavailable">La previsión de estrés financiero necesita un saldo de cuenta que la app pueda calcular en tu moneda principal, y ahora mismo no puede hacerlo. No se muestra ninguna estimación de riesgo.</string>
     <!-- fix-1.0.4 B1-11: DRAFT: owner native sign-off pending -->
     <string name="stress_forecast_risk_percent_format">%1$s%% de riesgo</string>
+    <!-- fix-1.0.4 L8: DRAFT: owner native sign-off pending -->
+    <string name="stress_forecast_withdrawals_label">Retiradas (%1$d d en total)</string>
     <!-- fix-1.0.4 P-06-4: DRAFT: owner native sign-off pending -->
     <string name="stress_forecast_low_data_notice">Todavía no hay suficiente historial de compras para estimar los gastos, así que este panorama no es una previsión fiable.</string>
     <!-- stress-forecast-actions: localized stress forecast recommendations (es draft, sign-off at release gate) -->
