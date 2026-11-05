@@ -214,13 +214,18 @@ class CashFlowCalculator @Inject constructor(
         // to ad-hoc expansion (bills are NOT silently dropped) and surface a flag.
         val failedRuleIds = mutableListOf<Long>()
         val projectedOccurrences = mutableListOf<RecurringOccurrence>()
+        // Expense ids already claimed by an earlier rule in this loop (one expense pays one bill).
+        val claimedExpenseIds = mutableSetOf<Long>()
         for (ruleId in ruleIds) {
             try {
-                projectedOccurrences += recurringLifecycleCoordinator.projectOccurrences(
+                val ruleOccurrences = recurringLifecycleCoordinator.projectOccurrences(
                     ruleId = ruleId,
                     startDate = startTime,
-                    endDate = endTime
+                    endDate = endTime,
+                    alreadyClaimedExpenseIds = claimedExpenseIds.toSet()
                 )
+                projectedOccurrences += ruleOccurrences
+                ruleOccurrences.forEach { occurrence -> occurrence.linkedExpenseId?.let { claimedExpenseIds.add(it) } }
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 Timber.w(e, "$TAG: projectOccurrences failed for ruleId=%d — falling back to ad-hoc expansion", ruleId)
@@ -672,13 +677,18 @@ class CashFlowCalculator @Inject constructor(
         // user overrides win and there is no double-count.
         val manualUpcoming = if (ruleIds.isNotEmpty()) {
             val projected = mutableListOf<RecurringOccurrence>()
+            // Expense ids already claimed by an earlier rule in this loop (one expense pays one bill).
+            val claimedExpenseIds = mutableSetOf<Long>()
             for (ruleId in ruleIds) {
                 try {
-                    projected += recurringLifecycleCoordinator.projectOccurrences(
+                    val ruleOccurrences = recurringLifecycleCoordinator.projectOccurrences(
                         ruleId = ruleId,
                         startDate = startOfToday,
-                        endDate = endDate
+                        endDate = endDate,
+                        alreadyClaimedExpenseIds = claimedExpenseIds.toSet()
                     )
+                    projected += ruleOccurrences
+                    ruleOccurrences.forEach { occurrence -> occurrence.linkedExpenseId?.let { claimedExpenseIds.add(it) } }
                 } catch (e: Exception) {
                     if (e is kotlinx.coroutines.CancellationException) throw e
                     Timber.w(e, "$TAG: projectOccurrences failed for ruleId=%d, skipping rule", ruleId)

@@ -257,7 +257,8 @@ class RecurringLifecycleCoordinator @Inject constructor(
     suspend fun projectOccurrences(
         ruleId: Long,
         startDate: Long,
-        endDate: Long
+        endDate: Long,
+        alreadyClaimedExpenseIds: Set<Long> = emptySet()
     ): List<RecurringOccurrence> {
         // NOTE: deliberately NO writeBarrier.checkWritesAllowed — this is a
         // read-only projection and must succeed even when writes are blocked.
@@ -302,7 +303,7 @@ class RecurringLifecycleCoordinator @Inject constructor(
         val candidates = expander.expand(request)
         // Read-only: resolver needs actual expenses to mark PAID vs PLANNED.
         val actualExpenses = expenseDao.getExpensesBetween(startDate, endDate)
-        val resolved = resolver.resolve(candidates, actualExpenses)
+        val resolved = resolver.resolve(candidates, actualExpenses, alreadyClaimedExpenseIds)
 
         val now = timeProvider.now()
         return resolved.map { r -> buildTransientOccurrence(r, now) }

@@ -424,6 +424,8 @@ class ForecastInputAssembler @Inject constructor(
         val forecastStart = TimePeriodUtils.getStartOfMonth(now)
         val forecastEnd = TimePeriodUtils.getEndOfMonth(now)
 
+        // Expense ids already claimed by an earlier rule in this loop (one expense pays one bill).
+        val claimedExpenseIds = mutableSetOf<Long>()
         val projectedOccurrences: List<RecurringOccurrence> = manualRecurringEntities
             .filter { it.isActive }
             .flatMap { rule ->
@@ -431,8 +433,13 @@ class ForecastInputAssembler @Inject constructor(
                     recurringLifecycleCoordinator.projectOccurrences(
                         ruleId = rule.id,
                         startDate = forecastStart,
-                        endDate = forecastEnd
-                    )
+                        endDate = forecastEnd,
+                        alreadyClaimedExpenseIds = claimedExpenseIds.toSet()
+                    ).also { ruleOccurrences ->
+                        ruleOccurrences.forEach { occurrence ->
+                            occurrence.linkedExpenseId?.let { claimedExpenseIds.add(it) }
+                        }
+                    }
                 } catch (e: Exception) {
                     if (e is kotlinx.coroutines.CancellationException) throw e
                     // Non-fatal: if one rule fails to project, continue with the rest

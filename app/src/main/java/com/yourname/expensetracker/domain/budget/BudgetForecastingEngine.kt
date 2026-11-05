@@ -71,6 +71,8 @@ class BudgetForecastingEngine @Inject constructor(
     companion object {
         const val CONFIDENCE_THRESHOLD_HIGH = 0.8
         const val CONFIDENCE_THRESHOLD_MEDIUM = 0.6
+        private const val NO_HISTORY_HIGH_SPENT_RATIO = 0.9
+        private const val NO_HISTORY_MEDIUM_SPENT_RATIO = 0.75
         private const val TREND_THRESHOLD = 0.10
         private const val MILLIS_PER_DAY = 24 * 60 * 60 * 1000.0
         private const val DESIRED_HISTORY_MONTHS = 3.0
@@ -239,7 +241,14 @@ class BudgetForecastingEngine @Inject constructor(
         } else 0.0
         val spendRetentionFactor = 1.0 - (spendExclusionRatio * EXCLUSION_CONFIDENCE_PENALTY_WEIGHT)
         val confidence = (baseConfidence * retentionFactor * spendRetentionFactor).coerceIn(0.0, 1.0)
-        val riskLevel = determineRiskLevel(budget, predictedSpending, confidence, spentToDate, normalizedBudgetAmount)
+        val riskLevel = determineRiskLevel(
+            budget,
+            predictedSpending,
+            confidence,
+            spentToDate,
+            normalizedBudgetAmount,
+            hasNoObservedHistory = historicalData.observedMonthCount == 0
+        )
         val overspendProbability = calculateOverspendProbability(normalizedBudgetAmount, predictedSpending, spentToDate, confidence)
         val predictedRemaining = normalizedBudgetAmount - spentToDate - predictedSpending
 
@@ -638,12 +647,25 @@ class BudgetForecastingEngine @Inject constructor(
         predictedSpending: Double,
         confidence: Double,
         spentToDate: Double,
-        normalizedBudgetAmount: Double
+        normalizedBudgetAmount: Double,
+        hasNoObservedHistory: Boolean = false
     ): ForecastRiskLevel {
         if (spentToDate >= normalizedBudgetAmount) return ForecastRiskLevel.CRITICAL
 
+        // BL-07: with no observed history the prediction is a zero placeholder, so judge by the
+        // share of the limit already spent. A non-positive limit is already CRITICAL above; the
+        // guard keeps the division safe regardless.
+        if (hasNoObservedHistory) {
+            val spentRatio = if (normalizedBudgetAmount > 0.0) spentToDate / normalizedBudgetAmount else 1.0
+            return when {
+                spentRatio >= NO_HISTORY_HIGH_SPENT_RATIO -> ForecastRiskLevel.HIGH
+                spentRatio >= NO_HISTORY_MEDIUM_SPENT_RATIO -> ForecastRiskLevel.MEDIUM
+                else -> ForecastRiskLevel.LOW
+            }
+        }
+
         val remaining = normalizedBudgetAmount - spentToDate
-        
+
         // Calculate percentage of remaining budget that will be used
         val usageRatio = if (remaining > 0) predictedSpending / remaining else 1.0
         

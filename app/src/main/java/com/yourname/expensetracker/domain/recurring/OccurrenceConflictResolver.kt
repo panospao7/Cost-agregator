@@ -66,18 +66,21 @@ class OccurrenceConflictResolver @Inject constructor(
      *
      * @param candidates The occurrence candidates produced by [RecurringOccurrenceExpander].
      * @param actualExpenses Actual expenses from the same date range (e.g. from an Expense DAO query).
+     * @param alreadyClaimedExpenseIds Expense ids already claimed by an earlier rule in the same
+     *   read-only projection loop; they are never matched again (seeds the matched set).
      * @return A list of [ResolvedOccurrence] in the same order as [candidates].
      */
     suspend fun resolve(
         candidates: List<OccurrenceCandidate>,
-        actualExpenses: List<Expense>
+        actualExpenses: List<Expense>,
+        alreadyClaimedExpenseIds: Set<Long> = emptySet()
     ): List<ResolvedOccurrence> {
         if (candidates.isEmpty()) return emptyList()
 
         // One batch read per call (never per expense). The read joins the caller's Room
         // transaction when resolve runs inside one.
         val installmentExcludedIds = installmentEligibility.excludedExpenseIds(actualExpenses)
-        val matchedExpenseIds = mutableSetOf<Long>()
+        val matchedExpenseIds = alreadyClaimedExpenseIds.toMutableSet()
 
         return candidates.map { candidate ->
             val match = actualExpenses.firstOrNull { expense ->

@@ -395,13 +395,18 @@ class FinancialStressForecastEngine @Inject constructor(
             // projection throws fall back to ad-hoc expansion (bills not dropped).
             val failedRuleIds = mutableListOf<Long>()
             val projected = mutableListOf<RecurringOccurrence>()
+            // Expense ids already claimed by an earlier rule in this loop (one expense pays one bill).
+            val claimedExpenseIds = mutableSetOf<Long>()
             for (ruleId in ruleIds) {
                 try {
-                    projected += recurringLifecycleCoordinator.projectOccurrences(
+                    val ruleOccurrences = recurringLifecycleCoordinator.projectOccurrences(
                         ruleId = ruleId,
                         startDate = startDate,
-                        endDate = endDate
+                        endDate = endDate,
+                        alreadyClaimedExpenseIds = claimedExpenseIds.toSet()
                     )
+                    projected += ruleOccurrences
+                    ruleOccurrences.forEach { occurrence -> occurrence.linkedExpenseId?.let { claimedExpenseIds.add(it) } }
                 } catch (e: Exception) {
                     if (e is kotlinx.coroutines.CancellationException) throw e
                     Timber.w(e, "$TAG: projectOccurrences failed for ruleId=%d", ruleId)
