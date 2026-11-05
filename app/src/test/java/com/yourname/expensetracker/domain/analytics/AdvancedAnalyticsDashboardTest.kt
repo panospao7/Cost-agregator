@@ -93,6 +93,31 @@ class AdvancedAnalyticsDashboardTest : AnalyticsEngineTestBase() {
     }
 
     @Test
+    fun `E-01-4 month key stays ASCII and monthly trend is not zero under an Arabic locale`() = runTest {
+        val originalLocale = java.util.Locale.getDefault()
+        try {
+            java.util.Locale.setDefault(java.util.Locale.forLanguageTag("ar-EG"))
+            val data = listOf(
+                exp("2026-04-02", 200.0, TransactionType.PURCHASE, merchant = "B"),
+                exp("2026-04-10", 100.0, TransactionType.PURCHASE, merchant = "A")
+            )
+            coEvery { expenseRepository.getExpenseSnapshotsBetween(any(), any()) } answers {
+                val rangeStart = firstArg<Long>()
+                val rangeEnd = secondArg<Long>()
+                data.filter { it.date >= rangeStart && it.date < rangeEnd }.toExpenseSnapshots()
+            }
+
+            val result = dashboard.generateDashboardData(ms("2026-04-01"), ms("2026-05-01"))
+
+            assertEquals(1, result.monthlyTrend.size)
+            assertEquals("2026-04", result.monthlyTrend[0].month)
+            assertApproxEquals(300.0, result.monthlyTrend[0].spending)
+        } finally {
+            java.util.Locale.setDefault(originalLocale)
+        }
+    }
+
+    @Test
     fun `withdrawal is excluded from totalSpent and monthly spending while purchase control counts`() = runTest {
         val start = ms("2026-03-01")
         val end = ms("2026-04-01")

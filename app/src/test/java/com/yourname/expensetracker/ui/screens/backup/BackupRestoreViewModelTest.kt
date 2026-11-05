@@ -401,6 +401,61 @@ class BackupRestoreViewModelTest : ViewModelTestUtils() {
     }
 
     @Test
+    fun `J-11-2 notification unreadable flag is recorded before the restart is requested`() = runTest(testDispatcher) {
+        val uri = destinationUri()
+        var restartRequestedWhenRecorded: Boolean? = null
+        coEvery { noticeStore.recordNotificationUnreadable(true) } coAnswers {
+            restartRequestedWhenRecorded = restoreRestartSignal.isRequested()
+        }
+        coEvery { databaseBackupRepository.restoreCostBackup(any(), any()) } returns
+            Result.success(DatabaseImportResult.SuccessNeedsRestart(
+                com.yourname.expensetracker.domain.backup.DatabaseImportSummary(
+                    transactionCount = 1,
+                    categoryCount = 0,
+                    merchantCount = 0,
+                    pendingReviewCount = 0,
+                    budgetCount = 0,
+                    allTableCounts = emptyMap()
+                )
+            ))
+        every { context.contentResolver.openInputStream(uri) } returns bundleInputStream()
+
+        val vm = createViewModel()
+        advanceUntilIdle()
+        vm.restoreBackup(uri, "test-password")
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { noticeStore.recordNotificationUnreadable(true) }
+        assertEquals(
+            "the flag must be persisted while the restart is still not requested",
+            false,
+            restartRequestedWhenRecorded
+        )
+        assertTrue(restoreRestartSignal.isRequested())
+    }
+
+    @Test
+    fun `J-11-2 notification unreadable flag is not recorded when the restore fails`() = runTest(testDispatcher) {
+        val uri = destinationUri()
+        val vm = createViewModel()
+        advanceUntilIdle()
+
+        coEvery { databaseBackupRepository.restoreCostBackup(any(), any()) } returns
+            Result.failure(RuntimeException("boom"))
+        every { context.contentResolver.openInputStream(uri) } returns bundleInputStream()
+        vm.restoreBackup(uri, "test-password")
+        advanceUntilIdle()
+
+        coEvery { databaseBackupRepository.restoreCostBackup(any(), any()) } returns
+            Result.success(DatabaseImportResult.Error("restore aborted"))
+        every { context.contentResolver.openInputStream(uri) } returns bundleInputStream()
+        vm.restoreBackup(uri, "test-password")
+        advanceUntilIdle()
+
+        coVerify(exactly = 0) { noticeStore.recordNotificationUnreadable(any()) }
+    }
+
+    @Test
     fun `view model created under persisted restart-required mode does not mark the restart signal`() = runTest(testDispatcher) {
         // Persisted NORMAL + worker_resume_pending reads back as RESTORE_COMPLETE_RESTART_REQUIRED;
         // emitting a restart from that state would relaunch-loop forever.
