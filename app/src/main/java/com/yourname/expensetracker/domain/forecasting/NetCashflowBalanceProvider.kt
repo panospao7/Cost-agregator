@@ -4,6 +4,7 @@ import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.MultiCurrencyRepository
 import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
+import com.yourname.expensetracker.domain.core.money.MoneyAggregateBuilder
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.util.CancellationSafe
@@ -104,6 +105,12 @@ class NetCashflowBalanceProvider @Inject constructor(
         if (normalized.severeWarnings.isNotEmpty() || normalized.excludedCount > 0) return null
         val rows = normalized.includedExpenses
             .filter { it.transactionType == DomainTransactionType.WITHDRAWAL && !it.isNotMine }
-        return rows.sumOf { it.effectiveAmount } to rows.size
+        if (rows.isEmpty()) return 0.0 to 0
+        // Rows are already normalized to homeCurrency; aggregated via MoneyAggregateBuilder.
+        val total = MoneyAggregateBuilder.fromHomeCurrencyAmounts(
+            amounts = rows.map { it.effectiveAmount },
+            homeCurrency = homeCurrency
+        ).displayAmount
+        return total to rows.size
     }
 }

@@ -47,6 +47,7 @@ interface GroupExpenseDao {
      * outflow for the user (settling up is the cash event). Payer-is-current-user links and
      * unlinked expenses are never returned.
      */
+    // spending-exempt: NON_MONEY
     @Query(
         """
         SELECT ge.expenseId FROM group_expenses ge
@@ -67,6 +68,7 @@ interface GroupExpenseDao {
      * these rows at their full amount instead of the user's share. Non-payer links and unlinked
      * expenses are never returned.
      */
+    // spending-exempt: NON_MONEY
     @Query(
         """
         SELECT ge.expenseId FROM group_expenses ge

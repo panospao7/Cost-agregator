@@ -3064,7 +3064,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
                 // so receipt match state, warranty / return window / item expenseId are
                 // cleared with the delete. A failed unlink aborts and rolls back the delete.
                 // Failure text is a bounded code only (no cause, no SQL text).
-                val linkService = receiptLinkService.get()
+                val linkService: ReceiptLinkService = receiptLinkService.get()
                 for (link in linkService.getLinksForExpense(fresh.id)) {
                     val unlinked = linkService.unlinkReceiptFromExpense(
                         receiptId = link.receiptId,

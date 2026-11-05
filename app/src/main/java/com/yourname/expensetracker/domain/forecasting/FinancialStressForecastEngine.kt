@@ -298,7 +298,7 @@ class FinancialStressForecastEngine @Inject constructor(
         
         // 4. Calculate projected balance
         // P-06-4: expected withdrawals are cash leaving, not discretionary spending.
-        val withdrawalOutflows = estimateWithdrawals(daysAhead, now, normalizedExpenses)
+        val withdrawalOutflows = estimateWithdrawals(daysAhead, now, normalizedExpenses, displayCurrency)
         val projectedBalance = currentBalance + expectedIncome - recurringOutflows - withdrawalOutflows - mcResult.percentile50
         val minProjectedBalance = currentBalance + expectedIncome - recurringOutflows - withdrawalOutflows - mcResult.percentile90
         
@@ -658,11 +658,17 @@ class FinancialStressForecastEngine @Inject constructor(
     private fun estimateWithdrawals(
         daysAhead: Int,
         now: Long,
-        normalizedExpenses: List<ExpenseSnapshot>
+        normalizedExpenses: List<ExpenseSnapshot>,
+        displayCurrency: String
     ): Double {
-        val withdrawalTotal = normalizedExpenses
+        val withdrawalRows = normalizedExpenses
             .filter { it.transactionType == DomainTransactionType.WITHDRAWAL && !it.isNotMine }
-            .sumOf { it.effectiveAmount }
+        if (withdrawalRows.isEmpty()) return 0.0
+        // Rows are already normalized to displayCurrency; aggregated via MoneyAggregateBuilder.
+        val withdrawalTotal = MoneyAggregateBuilder.fromHomeCurrencyAmounts(
+            amounts = withdrawalRows.map { it.effectiveAmount },
+            homeCurrency = displayCurrency
+        ).displayAmount
         if (withdrawalTotal <= 0.0) return 0.0
 
         val sampleEndDay = TimePeriodUtils.getStartOfDay(now)
