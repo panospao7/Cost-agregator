@@ -71,6 +71,32 @@ class MainActivityRestoreNoticeSourceScanTest {
     }
 
     @Test
+    fun j112_pendingFlagsAreRememberSavedAndClearedOnlyAfterTheSnackbarReturns() {
+        val source = mainActivityWithoutComments()
+        for (name in listOf("pendingNotVerifiableNotice", "pendingNotificationUnreadableNotice")) {
+            val saved = Regex("""var\s+$name\s+by\s+rememberSaveable\s*\{\s*mutableStateOf\s*\(\s*false\s*\)\s*\}""")
+            assertTrue("$name must be a rememberSaveable flag defaulting to false", saved.containsMatchIn(source))
+            // The snackbar call is suspending, so a write that follows it only runs once it has returned.
+            val clearedAfterShow = Regex(
+                """if\s*\(\s*$name\s*\)\s*\{\s*\w+\.showSnackbar\s*\([^)]*\)\s*$name\s*=\s*false"""
+            )
+            assertTrue("$name must be cleared only after showSnackbar returns", clearedAfterShow.containsMatchIn(source))
+            val clears = Regex("""$name\s*=\s*false""").findAll(source).count()
+            assertTrue("$name must be cleared exactly once", clears == 1)
+        }
+    }
+
+    @Test
+    fun j112_selfCheck_clearingBeforeTheSnackbarDoesNotSatisfyThePendingPin() {
+        val planted = "if (pendingNotVerifiableNotice) { pendingNotVerifiableNotice = false; " +
+            "snackbarHostState.showSnackbar(notice) }"
+        val clearedAfterShow = Regex(
+            """if\s*\(\s*pendingNotVerifiableNotice\s*\)\s*\{\s*\w+\.showSnackbar\s*\([^)]*\)\s*pendingNotVerifiableNotice\s*=\s*false"""
+        )
+        assertTrue(!clearedAfterShow.containsMatchIn(planted))
+    }
+
+    @Test
     fun j112_selfCheck_commentedOutCallDoesNotSatisfyThePin() {
         val planted = "// restoreVerificationNoticeStore.consumeNotificationUnreadable()\n" +
             "/* stringResource(R.string.backup_restore_notification_unreadable_notice) */\n"

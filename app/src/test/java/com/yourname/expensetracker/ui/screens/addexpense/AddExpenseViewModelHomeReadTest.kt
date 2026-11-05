@@ -1,6 +1,8 @@
 package com.yourname.expensetracker.ui.screens.addexpense
 
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.repository.CategoryRepository
+import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.ManualExpenseRepository
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
@@ -488,6 +490,101 @@ class AddExpenseViewModelHomeReadTest : ViewModelTestUtils() {
         assertEquals("", st.amount)
         assertEquals("USD", st.homeCurrency)
         assertTrue(st.homeChangeClearedNote)
+    }
+
+    // ---- N-01-3 follow-up: a failed or timed-out read is a Blocked HOME_UNRESOLVED region ----
+
+    private val blockedHomeUnresolved: CurrencyRegionUi =
+        CurrencyRegionUi.Blocked(CurrencyBlockVariant.HOME_UNRESOLVED, null, CurrencyBlockOrigin.PREVIEW)
+
+    private fun assertSaveShowsHomeUnresolved() {
+        viewModel.updateAmount("5")
+        saveWithMerchant()
+        coVerify(exactly = 0) { anySave() }
+        assertEquals(
+            SaveResult.Error(UiText.StringResource(R.string.mec_block_home_unresolved)),
+            st.saveResult
+        )
+    }
+
+    @Test
+    fun `N-01-3 a read that failed puts the region in Blocked HOME_UNRESOLVED and save shows the unresolved message`() {
+        newViewModel(flowOf(ReadHomeCurrencyState.Unavailable(ReadHomeFailure.READ_ERROR)))
+        settle()
+
+        assertNull(st.homeCurrency)
+        assertEquals(blockedHomeUnresolved, st.currencyRegion)
+        assertSaveShowsHomeUnresolved()
+        assertEquals("the region stays blocked after the save attempt", blockedHomeUnresolved, st.currencyRegion)
+    }
+
+    @Test
+    fun `N-01-3 a read that timed out at 5s puts the region in Blocked HOME_UNRESOLVED and save stays blocked`() {
+        newViewModel(flow<ReadHomeCurrencyState> {
+            emit(ReadHomeCurrencyState.Loading)
+            awaitCancellation()
+        })
+        runNow()
+        advance(5_000)
+
+        assertNull(st.homeCurrency)
+        assertEquals(blockedHomeUnresolved, st.currencyRegion)
+        assertSaveShowsHomeUnresolved()
+    }
+
+    @Test
+    fun `N-01-3 a slow read that is still pending before 5s stays Loading, not Blocked`() {
+        newViewModel(flow<ReadHomeCurrencyState> {
+            emit(ReadHomeCurrencyState.Loading)
+            awaitCancellation()
+        })
+        runNow()
+        advance(4_999)
+
+        assertNull(st.homeCurrency)
+        assertEquals(CurrencyRegionUi.Loading, st.currencyRegion)
+    }
+
+    @Test
+    fun `N-01-3 late recovery - a valid value after a failed read clears Blocked and save works`() {
+        newViewModelWithHome("EUR")
+        readFails()
+        assertEquals(blockedHomeUnresolved, st.currencyRegion)
+
+        emitHome(avail("EUR"))
+
+        assertEquals("EUR", st.homeCurrency)
+        assertEquals(CurrencyRegionUi.Home, st.currencyRegion)
+        viewModel.updateAmount("5")
+        saveWithMerchant()
+        coVerify(exactly = 1) { anySave() }
+        assertEquals(SaveResult.Success, st.saveResult)
+    }
+
+    @Test
+    fun `N-01-3 reset while the read is failed keeps Blocked and does not return to Loading`() {
+        newViewModel(flowOf(ReadHomeCurrencyState.Unavailable(ReadHomeFailure.READ_ERROR)))
+        settle()
+        assertEquals(blockedHomeUnresolved, st.currencyRegion)
+
+        viewModel.reset()
+        settle()
+
+        assertNull(st.homeCurrency)
+        assertEquals(blockedHomeUnresolved, st.currencyRegion)
+    }
+
+    @Test
+    fun `N-01-3 control - reset with a known home returns the region to Home`() {
+        newViewModelWithHome("EUR")
+        viewModel.selectCurrency("USD")
+        settle()
+
+        viewModel.reset()
+        settle()
+
+        assertEquals("EUR", st.homeCurrency)
+        assertEquals(CurrencyRegionUi.Home, st.currencyRegion)
     }
 
     // ---- F-entry restart: onSheetOpened restarts a dead home collection once ----
