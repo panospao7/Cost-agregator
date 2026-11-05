@@ -48,7 +48,10 @@ data class MoneyRadarData(
     val anomalyAlerts: List<AnomalyAlertSummary>,
     val budgetRisk: BudgetRiskInfo?,
     val topReasons: List<UiText>,
-    val primaryCta: MoneyRadarAction?
+    val primaryCta: MoneyRadarAction?,
+    // True when a month-scale overall budget exists but its remaining amount is unknown
+    // (not merely a non-positive limit); the budget part is then not "healthy".
+    val budgetUnknown: Boolean = false
 )
 
 /**
@@ -178,8 +181,9 @@ class ComputeMoneyRadarUseCase @Inject constructor(
 
         val dueBills = dueBillsDeferred.await()
         val anomalyAlerts = anomalyAlertsDeferred.await()
-        val budgetRisk = budgetRiskDeferred.await()
-        
+        val budgetRiskOutcome = budgetRiskDeferred.await()
+        val budgetRisk = budgetRiskOutcome.info
+
         // Calculate urgency score using weighted factors
         val dueBillsScore = calculateDueBillsScore(dueBills, now, homeCurrency)
         val anomalyScore = calculateAnomalyScore(anomalyAlerts)
@@ -215,10 +219,18 @@ class ComputeMoneyRadarUseCase @Inject constructor(
             anomalyAlerts = anomalyAlerts,
             budgetRisk = budgetRisk,
             topReasons = topReasons,
-            primaryCta = primaryCta
+            primaryCta = primaryCta,
+            budgetUnknown = budgetRiskOutcome.budgetUnknown
         )
     }
-    
+
+    /**
+     * Budget part result. [info] null keeps its "no comparison" meaning; [budgetUnknown] is true
+     * only for a month-scale overall budget whose remaining amount is unavailable for a reason
+     * other than a non-positive limit.
+     */
+    private class BudgetRiskOutcome(val info: BudgetRiskInfo?, val budgetUnknown: Boolean)
+
     /**
      * Get bills due within the next 7 days from recurring patterns.
      */
@@ -284,28 +296,36 @@ class ComputeMoneyRadarUseCase @Inject constructor(
     /**
      * Get budget risk information using Monte Carlo simulation.
      */
-    private suspend fun getBudgetRisk(now: Long, homeCurrency: String): BudgetRiskInfo? {
+    private suspend fun getBudgetRisk(now: Long, homeCurrency: String): BudgetRiskOutcome {
         return try {
             val startOfToday = TimePeriodUtils.getStartOfDay(now)
 
             // Get monthly budget
             val budgetStatuses = budgetRepository.getBudgetStatuses().first()
-            val overallBudget = budgetStatuses.find { it.budget.categoryId == null } ?: return null
+            val overallBudget = budgetStatuses.find { it.budget.categoryId == null }
+                ?: return BudgetRiskOutcome(info = null, budgetUnknown = false)
             // P-05-5: take the limit from the same derivation as the dashboard widget
             // (BudgetStatusSnapshot.periodRemaining: effective limit incl. rollover, home
             // currency). The simulation compares a calendar-month total, so only a
             // month-scale overall budget is compared; any other period gives no comparison.
             val budgetSnapshot = overallBudget.toBudgetStatusSnapshot()
-            if (!budgetSnapshot.isMonthScalePeriod) return null
+            if (!budgetSnapshot.isMonthScalePeriod) {
+                return BudgetRiskOutcome(info = null, budgetUnknown = false)
+            }
             val budgetAmount = when (val remaining = budgetSnapshot.periodRemaining(now, homeCurrency)) {
                 is com.yourname.expensetracker.domain.budget.BudgetPeriodRemaining.Available -> remaining.limit
                 is com.yourname.expensetracker.domain.budget.BudgetPeriodRemaining.Unavailable -> {
                     // Any unavailable reason (no positive limit, legacy/unconvertible budget
                     // currency, unknown spend) leaves only the budget part without a
                     // comparison. Bills and anomalies are independent signals and stay.
-                    // MoneyRadarData has no partial/unknown flag, so the budget part is
-                    // simply absent (budgetRisk = null) and contributes no score.
-                    return null
+                    // The budget part contributes no score (info = null). Except for a
+                    // non-positive limit (nothing to compare against), the outcome is flagged
+                    // budgetUnknown so the widget does not present "all clear" as healthy.
+                    return BudgetRiskOutcome(
+                        info = null,
+                        budgetUnknown = remaining.reason !=
+                            com.yourname.expensetracker.domain.budget.BudgetPeriodRemainingUnavailableReason.NO_POSITIVE_LIMIT
+                    )
                 }
             }
 
@@ -329,10 +349,15 @@ class ComputeMoneyRadarUseCase @Inject constructor(
                 homeCurrency = homeCurrency
             ).displayAmount
             
-            // Include known upcoming recurring obligations in next 7 days
-            val windowEnd = now + (BILL_WINDOW_DAYS * ONE_DAY_MS)
+            // Radar is a confirmed-recurring view: knownUpcoming covers confirmed recurring
+            // bills due from the start of today through the end of the current calendar
+            // month (no planned items or goal reserves), and its spent figure is the
+            // calendar month's, by design. The bills list/score keep the 7-day window.
+            // A bill in this window that cannot be converted makes only the budget part unknown,
+            // never zero. (One inside the 7-day bills window already fails the bills read.)
+            val (_, monthEndExclusive) = TimePeriodUtils.getMonthRange(now)
             val upcomingRecurringPatterns = recurringPatternsProvider.getConfirmedPatterns()
-                .filter { it.nextExpectedDate in startOfToday..windowEnd }
+                .filter { it.nextExpectedDate >= startOfToday && it.nextExpectedDate < monthEndExclusive }
             val recurringAmounts = upcomingRecurringPatterns.map { pattern ->
                 convertForRadar(
                     amount = pattern.averageAmount,
@@ -340,10 +365,13 @@ class ComputeMoneyRadarUseCase @Inject constructor(
                     targetCurrency = homeCurrency,
                     atMillis = pattern.nextExpectedDate,
                     rateBasis = RateBasis.FORECAST_DATE
-                ) ?: error("RADAR_RECURRING_UNAVAILABLE")
+                )
+            }
+            if (recurringAmounts.any { it == null }) {
+                return BudgetRiskOutcome(info = null, budgetUnknown = true)
             }
             val upcomingRecurring = MoneyAggregateBuilder.fromHomeCurrencyAmounts(
-                amounts = recurringAmounts,
+                amounts = recurringAmounts.filterNotNull(),
                 homeCurrency = homeCurrency
             ).displayAmount
 
@@ -359,10 +387,13 @@ class ComputeMoneyRadarUseCase @Inject constructor(
                 // Use GetMonteCarloBudgetImpactUseCase to get proper risk assessment
                 when (val impact = getMonteCarloBudgetImpact(budgetAmount, result)) {
                     is com.yourname.expensetracker.domain.model.Result.Success -> {
-                        BudgetRiskInfo(
-                            expectedOverrun = impact.data.expectedOverrun,
-                            probabilityOfOverrun = impact.data.probabilityOfOverrun,
-                            riskTier = impact.data.riskTier
+                        BudgetRiskOutcome(
+                            info = BudgetRiskInfo(
+                                expectedOverrun = impact.data.expectedOverrun,
+                                probabilityOfOverrun = impact.data.probabilityOfOverrun,
+                                riskTier = impact.data.riskTier
+                            ),
+                            budgetUnknown = false
                         )
                     }
                     is com.yourname.expensetracker.domain.model.Result.Error -> {

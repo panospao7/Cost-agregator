@@ -654,12 +654,19 @@ class ExpenseRepository @Inject constructor(
      * before the correction insert could leave inconsistent state.
      */
     @Deprecated("Routes directly to ExpenseDao without writing TransactionEvent.BULK_UPDATED. Use TransactionLifecycleCoordinator.updateExpense() for each affected expense instead.")
-    suspend fun updateExpenseCategoryBulk(merchant: String, newCategoryId: Long) {
+    suspend fun updateExpenseCategoryBulk(
+        merchant: String,
+        newCategoryId: Long,
+        recordCorrection: Boolean = true
+    ) {
         writeBarrier.checkWritesAllowed("ExpenseRepository.updateExpenseCategoryBulk")
         categoryUpdateMutex.withLock {
             transactionLifecycleCoordinator.bulkUpdateCategory(
                 merchant = merchant, newCategoryId = newCategoryId, source = "USER_EDIT"
             )
+            // When the category was not chosen by the user (e.g. accepted AI prefill),
+            // the rows are updated but no learning correction is recorded.
+            if (!recordCorrection) return@withLock
             // Side effects (non-lifecycle)
             // DR-04: one correction for the merchant key (not per row); replaces any seeded/auto-learned mapping.
             merchantCategoryRepository.correctPattern(merchant, newCategoryId)

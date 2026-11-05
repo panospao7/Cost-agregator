@@ -102,7 +102,23 @@ fun MoneyRadarWidget(
         ).title
     }
 
-    val topConcernText = budgetImpactTitle ?: data.topReasons.firstOrNull()?.asString()
+    // Budget unknown + all clear: the only reason is the generic "healthy" text, which would
+    // overstate certainty, so show the budget-unavailable text instead.
+    val budgetUnknownOverride = data.budgetUnknown &&
+        data.urgencyLevel == UrgencyLevel.GREEN &&
+        data.dueBills.isEmpty() &&
+        data.anomalyAlerts.isEmpty()
+    val reasonTexts: List<String> = if (budgetUnknownOverride) {
+        listOf(
+            androidx.compose.ui.res.stringResource(
+                com.yourname.expensetracker.R.string.budget_usage_unavailable
+            )
+        )
+    } else {
+        data.topReasons.map { it.asString() }
+    }
+
+    val topConcernText = budgetImpactTitle ?: reasonTexts.firstOrNull()
     
     val widgetDesc = buildString {
         append("Money Radar: $urgencyLabel. Score ${data.urgencyScore} out of 100. ")
@@ -211,7 +227,7 @@ fun MoneyRadarWidget(
                 
                 // Top reasons list
                 Column(modifier = Modifier.weight(1f)) {
-                    data.topReasons.forEachIndexed { index, reason ->
+                    reasonTexts.forEachIndexed { index, reasonText ->
                         if (index > 0) Spacer(modifier = Modifier.height(4.dp))
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             val bulletColor = when (index) {
@@ -226,7 +242,7 @@ fun MoneyRadarWidget(
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = reason.asString(),
+                                text = reasonText,
                                 style = MaterialTheme.typography.bodySmall,
                                 color = if (index == 0) SemanticColors.TextPrimary else SemanticColors.TextSecondary,
                                 fontWeight = if (index == 0) FontWeight.Medium else FontWeight.Normal
