@@ -479,10 +479,10 @@ class NetCashflowBalanceProviderTest {
     ).copy(isSharedExpense = true, myShareAmount = 500.0)
 
     /** The plain purchase total holds only the 500 share; deposits are [deposits]. */
-    private fun givenTotals(deposits: Double, purchaseShare: Double = 500.0) {
+    private fun givenTotals(deposits: Double, purchaseShare: Double = 500.0, purchaseRows: Int = 1) {
         coEvery { multiCurrencyRepository.getHomeCurrencyDepositTotal(ninetyDaysAgo, now) } returns aggregate(deposits)
         coEvery { multiCurrencyRepository.getHomeCurrencyPurchaseTotal(ninetyDaysAgo, now) } returns
-            aggregate(purchaseShare)
+            aggregate(purchaseShare, rows = purchaseRows)
     }
 
     private suspend fun balanceFor(rows: List<Expense>, snapshot: GroupCashFlowSnapshot): Double? {
@@ -896,7 +896,8 @@ class NetCashflowBalanceProviderTest {
     fun `DR-01 two non-payer USD purchase rows convert as one bucket exactly once`() = runTest {
         val converted = mockk<ConversionOutcome.Converted> { every { convertedAmount } returns 900.0 }
         coEvery { currencyConverter.convertOutcome(any(), any(), any(), any(), any(), any()) } returns converted
-        givenTotals(deposits = 3000.0, purchaseShare = 900.0)
+        // The plain purchase total counted both rows, as the real total would.
+        givenTotals(deposits = 3000.0, purchaseShare = 900.0, purchaseRows = 2)
 
         val balance = balanceFor(
             listOf(usdShare(30L, 300.0), usdShare(31L, 700.0)),
