@@ -558,7 +558,7 @@ class CategorizationEngine @Inject constructor(
     }
 
     fun normalizedCanonicalNameForMerchant(merchantName: String): String {
-        val canonicalResult = canonicalizer.canonicalize(merchantName.lowercase())
+        val canonicalResult = canonicalizer.canonicalize(merchantName.lowercase(java.util.Locale.ROOT))
         return greeklishNormalizer.normalize(canonicalResult.canonicalName)
     }
 
