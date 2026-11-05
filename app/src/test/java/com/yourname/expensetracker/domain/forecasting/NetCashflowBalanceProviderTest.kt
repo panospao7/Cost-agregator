@@ -34,7 +34,9 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
@@ -736,6 +738,195 @@ class NetCashflowBalanceProviderTest {
             snapshot(settlements = listOf(settlement(100.0, false, currency = "USD")))
 
         assertSame(cancellation, runCatching { provider.currentBalance("EUR") }.exceptionOrNull())
+    }
+
+    // ── Group WITHDRAWAL rule and purchase adjustment (normalizer input is captured) ──
+
+    /** Mocked normalizer that records every input list and returns it unchanged as included rows. */
+    private fun captureNormalizerInput(): MutableList<List<Expense>> {
+        val captured = mutableListOf<List<Expense>>()
+        coEvery { normalizer.normalizeExpenses(any(), "EUR") } answers {
+            val rows = firstArg<List<Expense>>()
+            captured += rows
+            cleanNormalization(rows.map { it.toExpenseSnapshot() })
+        }
+        return captured
+    }
+
+    private fun givenRows(rows: List<Expense>, snapshot: GroupCashFlowSnapshot) {
+        coEvery { expenseRepository.getExpensesBetween(ninetyDaysAgo, now) } returns rows
+        coEvery { groupCashFlowReader.read(any(), any(), any()) } returns snapshot
+    }
+
+    private fun noPlainRows(deposits: Double) {
+        coEvery { multiCurrencyRepository.getHomeCurrencyDepositTotal(ninetyDaysAgo, now) } returns
+            aggregate(deposits)
+        coEvery { multiCurrencyRepository.getHomeCurrencyPurchaseTotal(ninetyDaysAgo, now) } returns
+            aggregate(0.0, rows = 0)
+    }
+
+    @Test
+    fun `DR-01 non-payer USD 1000 withdrawal never reaches the normalizer and leaves deposits 2000 as 2000`() = runTest {
+        // Latest rate 1.00 vs date rate 0.90 must not matter: the converter is unstubbed (strict),
+        // so any rate lookup would turn into a null balance. No phantom 100.
+        noPlainRows(deposits = 2000.0)
+        val captured = captureNormalizerInput()
+        givenRows(
+            listOf(entity(20L, TransactionType.WITHDRAWAL, "USD", amount = 1000.0)),
+            snapshot(nonPayer = setOf(20L))
+        )
+
+        val balance = provider.currentBalance("EUR")
+
+        assertEquals(2000.0, balance!!, 0.0)
+        assertEquals(1, captured.size)
+        assertTrue(captured.single().none { it.id == 20L })
+        coVerify(exactly = 0) { currencyConverter.convertOutcome(any(), any(), any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `DR-01 non-payer withdrawal with no rate does not withhold the balance`() = runTest {
+        givenTotals(deposits = 1000.0, purchaseShare = 250.0)
+        val captured = captureNormalizerInput()
+        val jpyRow = entity(21L, TransactionType.WITHDRAWAL, "JPY", amount = 5000.0)
+        givenRows(listOf(jpyRow), snapshot(nonPayer = setOf(21L)))
+
+        assertEquals(750.0, provider.currentBalance("EUR")!!, 0.0)
+        assertTrue(captured.single().none { it.id == 21L })
+
+        // Control: the same JPY withdrawal as a REGULAR row stays unconvertible and withholds.
+        assertNull(balanceFor(listOf(jpyRow), snapshot()))
+    }
+
+    @Test
+    fun `DR-01 payer withdrawal reaches the normalizer at the full amount and the net uses it`() = runTest {
+        noPlainRows(deposits = 200.0)
+        val captured = captureNormalizerInput()
+        val payerRow = entity(22L, TransactionType.WITHDRAWAL, "EUR", amount = 90.0)
+            .copy(isSharedExpense = true, myShareAmount = 30.0)
+        givenRows(listOf(payerRow), snapshot(payer = setOf(22L)))
+
+        val balance = provider.currentBalance("EUR")
+
+        val seen = captured.single().single { it.id == 22L }
+        assertEquals(90.0, seen.effectiveAmount, 0.0)
+        assertFalse(seen.isSharedExpense)
+        assertNull(seen.myShareAmount)
+        assertNull(seen.mySharePercentage)
+        assertFalse(seen.isNotMine)
+        // 200 - 90 = 110 (not 200 - 30).
+        assertEquals(110.0, balance!!, 0.0001)
+    }
+
+    @Test
+    fun `DR-01 payer not-mine withdrawal reaches the normalizer as mine at the full amount`() = runTest {
+        noPlainRows(deposits = 200.0)
+        val captured = captureNormalizerInput()
+        val payerRow = entity(23L, TransactionType.WITHDRAWAL, "EUR", amount = 90.0, isNotMine = true)
+        givenRows(listOf(payerRow), snapshot(payer = setOf(23L)))
+
+        val balance = provider.currentBalance("EUR")
+
+        val seen = captured.single().single { it.id == 23L }
+        assertFalse(seen.isNotMine)
+        assertEquals(90.0, seen.effectiveAmount, 0.0)
+        assertEquals(110.0, balance!!, 0.0001)
+    }
+
+    @Test
+    fun `DR-01 plain not-mine withdrawal still does not reach the normalizer`() = runTest {
+        noPlainRows(deposits = 200.0)
+        val captured = captureNormalizerInput()
+        givenRows(
+            listOf(entity(24L, TransactionType.WITHDRAWAL, "EUR", amount = 90.0, isNotMine = true)),
+            snapshot()
+        )
+
+        val balance = provider.currentBalance("EUR")
+
+        assertTrue(captured.single().none { it.id == 24L })
+        assertEquals(200.0, balance!!, 0.0)
+    }
+
+    @Test
+    fun `DR-01 snapshot read failure is unavailable and the withdrawal path is not asked to normalize`() = runTest {
+        givenRows(
+            listOf(entity(27L, TransactionType.WITHDRAWAL, "EUR", amount = 90.0)),
+            snapshot(payerFailed = true)
+        )
+
+        assertNull(provider.currentBalance("EUR"))
+        coVerify(exactly = 0) { normalizer.normalizeExpenses(any(), any()) }
+        coVerify(exactly = 0) { expenseRepository.getExpensesBetween(any(), any()) }
+    }
+
+    @Test
+    fun `DR-01 a lone non-payer withdrawal with no deposits or purchases is unavailable not zero`() = runTest {
+        coEvery { multiCurrencyRepository.getHomeCurrencyDepositTotal(ninetyDaysAgo, now) } returns
+            aggregate(0.0, rows = 0)
+        coEvery { multiCurrencyRepository.getHomeCurrencyPurchaseTotal(ninetyDaysAgo, now) } returns
+            aggregate(0.0, rows = 0)
+        captureNormalizerInput()
+        givenRows(
+            listOf(entity(25L, TransactionType.WITHDRAWAL, "EUR", amount = 100.0)),
+            snapshot(nonPayer = setOf(25L))
+        )
+
+        assertNull(provider.currentBalance("EUR"))
+    }
+
+    @Test
+    fun `DR-01 non-payer not-mine purchase row adds nothing so deposits 100 stay 100`() = runTest {
+        noPlainRows(deposits = 100.0)
+        val row = entity(26L, TransactionType.PURCHASE, "EUR", amount = 50.0, isNotMine = true)
+
+        assertEquals(100.0, balanceFor(listOf(row), snapshot(nonPayer = setOf(26L)))!!, 0.0)
+    }
+
+    @Test
+    fun `DR-01 non-payer spending-excluded purchase row adds nothing so deposits 100 stay 100`() = runTest {
+        noPlainRows(deposits = 100.0)
+        val row = entity(26L, TransactionType.PURCHASE, "EUR", amount = 50.0)
+            .copy(spendingExclusionReason = "SYNTHETIC_EXCLUSION")
+
+        assertEquals(100.0, balanceFor(listOf(row), snapshot(nonPayer = setOf(26L)))!!, 0.0)
+    }
+
+    @Test
+    fun `DR-01 two non-payer USD purchase rows convert as one bucket exactly once`() = runTest {
+        val converted = mockk<ConversionOutcome.Converted> { every { convertedAmount } returns 900.0 }
+        coEvery { currencyConverter.convertOutcome(any(), any(), any(), any(), any(), any()) } returns converted
+        givenTotals(deposits = 3000.0, purchaseShare = 900.0)
+
+        val balance = balanceFor(
+            listOf(usdShare(30L, 300.0), usdShare(31L, 700.0)),
+            snapshot(nonPayer = setOf(30L, 31L))
+        )
+
+        // 3000 - 900 + 900 = 3000
+        assertEquals(3000.0, balance!!, 0.0001)
+        coVerify(exactly = 1) {
+            currencyConverter.convertOutcome(
+                amount = 1000.0,
+                fromCurrency = "USD",
+                toCurrency = "EUR",
+                rateBasis = RateBasis.LATEST_AVAILABLE,
+                atMillis = null,
+                stalePolicy = any()
+            )
+        }
+        coVerify(exactly = 1) { currencyConverter.convertOutcome(any(), any(), any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `DR-01 unsupported currency in the non-payer purchase bucket is unavailable not an exception`() = runTest {
+        givenTotals(deposits = 3000.0, purchaseShare = 900.0)
+        val unsupported = entity(32L, TransactionType.PURCHASE, "ZZZ", amount = 100.0)
+            .copy(isSharedExpense = true, myShareAmount = 100.0)
+
+        assertNull(
+            balanceFor(listOf(unsupported, usdShare(33L, 50.0)), snapshot(nonPayer = setOf(32L, 33L)))
+        )
     }
 
     @Test

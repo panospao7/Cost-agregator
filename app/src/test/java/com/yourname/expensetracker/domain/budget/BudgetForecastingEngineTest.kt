@@ -1381,7 +1381,14 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
         stubEffectiveLimit(budget, 1000.0, isPartial = true)
         stubPeriodSpend(MoneyAggregate.singleCurrency(200.0, CurrencyCode("EUR")))
 
-        assertLimitUnavailable(engine.generateForecastResult(budget), ForecastUnavailableReason.LIMIT_CONVERSION_FAILED)
+        // PIN CHANGED: the limit (1000) is known, so a partial status is incomplete details
+        // (BUDGET_STATUS_UNAVAILABLE), not a limit conversion failure (LIMIT_CONVERSION_FAILED).
+        val result = engine.generateForecastResult(budget)
+        assertLimitUnavailable(result, ForecastUnavailableReason.BUDGET_STATUS_UNAVAILABLE)
+        assertTrue(
+            (result as BudgetForecastResult.Unavailable).reasonCode !=
+                ForecastUnavailableReason.LIMIT_CONVERSION_FAILED
+        )
     }
 
     @Test
@@ -1389,7 +1396,14 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
         val budget = arrangeStable450History(baseAmount = 500.0)
         stubEffectiveLimit(budget, 1000.0, isPartial = false, conversionWarning = "SYNTHETIC_CONVERSION_WARNING")
 
-        assertLimitUnavailable(engine.generateForecastResult(budget), ForecastUnavailableReason.LIMIT_CONVERSION_FAILED)
+        // PIN CHANGED: a known limit with a conversion warning is incomplete details
+        // (BUDGET_STATUS_UNAVAILABLE), not LIMIT_CONVERSION_FAILED.
+        val result = engine.generateForecastResult(budget)
+        assertLimitUnavailable(result, ForecastUnavailableReason.BUDGET_STATUS_UNAVAILABLE)
+        assertTrue(
+            (result as BudgetForecastResult.Unavailable).reasonCode !=
+                ForecastUnavailableReason.LIMIT_CONVERSION_FAILED
+        )
     }
 
     @Test

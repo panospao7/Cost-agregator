@@ -302,6 +302,126 @@ class ReviewViewModelAiAssistTest {
     // AI EXPLANATION
     // ============================================================================
 
+    // ---- aiPrefilledCategoryId -> categoryChosenByUser flag (edit path) ----
+
+    private fun stubEditApprove(reviewId: Long, finalCategoryId: Long?, merchant: String? = null) =
+        coEvery {
+            reviewQueueRepository.approveReview(
+                reviewId = reviewId,
+                finalAmount = null,
+                finalMerchant = merchant,
+                finalCategoryId = finalCategoryId,
+                categoryChosenByUser = any(),
+                finalDate = null,
+                finalType = null
+            )
+        } returns Result.Success(reviewId)
+
+    private fun verifyEditApprove(
+        reviewId: Long,
+        finalCategoryId: Long?,
+        expectedChosenByUser: Boolean,
+        merchant: String? = null
+    ) {
+        coVerify(exactly = 1) {
+            reviewQueueRepository.approveReview(
+                reviewId = reviewId,
+                finalAmount = null,
+                finalMerchant = merchant,
+                finalCategoryId = finalCategoryId,
+                categoryChosenByUser = expectedChosenByUser,
+                finalDate = null,
+                finalType = null
+            )
+        }
+        coVerify(exactly = 0) {
+            reviewQueueRepository.approveReview(
+                reviewId = reviewId,
+                finalAmount = null,
+                finalMerchant = merchant,
+                finalCategoryId = finalCategoryId,
+                categoryChosenByUser = !expectedChosenByUser,
+                finalDate = null,
+                finalType = null
+            )
+        }
+    }
+
+    private fun approveEditWithPrefill(reviewId: Long, finalCategoryId: Long?, prefill: Long?) =
+        viewModel.approveReviewWithEdits(
+            reviewId = reviewId,
+            finalAmount = null,
+            finalMerchant = null,
+            finalCategoryId = finalCategoryId,
+            finalDate = null,
+            finalType = null,
+            aiPrefilledCategoryId = prefill
+        )
+
+    @Test
+    fun `approveReviewWithEdits null prefill and final 5 is a user category choice`() = runTest {
+        stubEditApprove(101L, 5L)
+        approveEditWithPrefill(101L, finalCategoryId = 5L, prefill = null)
+        advanceUntilIdle()
+        verifyEditApprove(101L, 5L, expectedChosenByUser = true)
+    }
+
+    @Test
+    fun `approveReviewWithEdits prefill 5 and final 5 is not a user category choice`() = runTest {
+        stubEditApprove(102L, 5L)
+        approveEditWithPrefill(102L, finalCategoryId = 5L, prefill = 5L)
+        advanceUntilIdle()
+        verifyEditApprove(102L, 5L, expectedChosenByUser = false)
+    }
+
+    @Test
+    fun `approveReviewWithEdits prefill 5 and final 7 is a user category choice`() = runTest {
+        stubEditApprove(103L, 7L)
+        approveEditWithPrefill(103L, finalCategoryId = 7L, prefill = 5L)
+        advanceUntilIdle()
+        verifyEditApprove(103L, 7L, expectedChosenByUser = true)
+    }
+
+    @Test
+    fun `approveReviewWithEdits prefill 5 and final null flag is a user category choice`() = runTest {
+        // The repository needs a non-null final category, so no correction results; only the flag
+        // passed through is asserted here.
+        stubEditApprove(104L, null)
+        approveEditWithPrefill(104L, finalCategoryId = null, prefill = 5L)
+        advanceUntilIdle()
+        verifyEditApprove(104L, null, expectedChosenByUser = true)
+    }
+
+    @Test
+    fun `approveReviewWithEdits approve all pending threads the not-chosen flag to every identical row`() = runTest {
+        coEvery { reviewQueueRepository.getReviewById(105L) } returns null
+        stubEditApprove(105L, 5L, merchant = "Lidl")
+        stubEditApprove(106L, 5L, merchant = "Lidl")
+        coEvery { reviewQueueRepository.getPendingReviewsByMerchant("Lidl") } returns listOf(
+            mockk<com.yourname.expensetracker.data.database.entity.PendingReview>(relaxed = true) {
+                every { id } returns 105L
+            },
+            mockk<com.yourname.expensetracker.data.database.entity.PendingReview>(relaxed = true) {
+                every { id } returns 106L
+            }
+        )
+
+        viewModel.approveReviewWithEdits(
+            reviewId = 105L,
+            finalAmount = null,
+            finalMerchant = "Lidl",
+            finalCategoryId = 5L,
+            finalDate = null,
+            finalType = null,
+            approveAllPending = true,
+            aiPrefilledCategoryId = 5L
+        )
+        advanceUntilIdle()
+
+        verifyEditApprove(105L, 5L, expectedChosenByUser = false, merchant = "Lidl")
+        verifyEditApprove(106L, 5L, expectedChosenByUser = false, merchant = "Lidl")
+    }
+
     @Test
     fun `loadAiExplanation sets Disabled when AI is off`() = runTest {
         // AI disabled by default (AiSettings() has aiEnabled=false)
@@ -941,7 +1061,8 @@ class ReviewViewModelAiAssistTest {
                 reviewId = 72L,
                 finalAmount = null,
                 finalMerchant = null,
-                categoryChosenByUser = any(),
+                // Quick approve accepts the AI category unchanged: not a user correction.
+                categoryChosenByUser = false,
                 finalCategoryId = 4L,
                 finalDate = null,
                 finalType = null,
