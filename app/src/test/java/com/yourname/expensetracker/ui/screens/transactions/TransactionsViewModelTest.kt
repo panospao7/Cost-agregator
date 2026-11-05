@@ -152,6 +152,61 @@ class TransactionsViewModelTest : ViewModelTestUtils() {
         }
     }
 
+    @Test fun `R1 legacy share 150 of total 100 with name-only edit is accepted and sends the stored exact value`() = runTest(testDispatcher) {
+        java.util.Locale.setDefault(java.util.Locale.US)
+        val expense = mockk<Expense>(relaxed = true)
+        every { expense.amount } returns 100.0
+        every { expense.myShareAmount } returns 150.0
+        val received = mutableListOf<UiText>()
+        val collection = backgroundScope.launch { model.error.collect { received += it } }
+        runCurrent()
+        // Dialog prefills the stored share as "150.00"; only the shared-with name changed.
+        model.updateOwnership(expense, false, "", true, "Bob", "", "150.00")
+        advanceUntilIdle()
+        assertTrue(received.isEmpty())
+        io.mockk.coVerify(exactly = 1) {
+            expenses.updateOwnership(expense, false, null, true, "Bob", null, 150.0)
+        }
+        collection.cancel()
+    }
+
+    @Test fun `R1 stored share 12_345 with prefill 12_35 is accepted and sends the exact stored value`() = runTest(testDispatcher) {
+        java.util.Locale.setDefault(java.util.Locale.US)
+        val expense = mockk<Expense>(relaxed = true)
+        every { expense.amount } returns 12.345
+        every { expense.myShareAmount } returns 12.345
+        val received = mutableListOf<UiText>()
+        val collection = backgroundScope.launch { model.error.collect { received += it } }
+        runCurrent()
+        model.updateOwnership(expense, false, "", true, "Anna", "", "12.35")
+        advanceUntilIdle()
+        assertTrue(received.isEmpty())
+        io.mockk.coVerify(exactly = 1) {
+            expenses.updateOwnership(expense, false, null, true, "Anna", null, 12.345)
+        }
+        collection.cancel()
+    }
+
+    @Test fun `R1 typed share 150 over a smaller stored share of a 100 total is rejected`() = runTest(testDispatcher) {
+        java.util.Locale.setDefault(java.util.Locale.US)
+        val expense = mockk<Expense>(relaxed = true)
+        every { expense.amount } returns 100.0
+        every { expense.myShareAmount } returns 40.0
+        val received = mutableListOf<UiText>()
+        val collection = backgroundScope.launch { model.error.collect { received += it } }
+        runCurrent()
+        model.updateOwnership(expense, false, "", true, "Anna", "", "150")
+        advanceUntilIdle()
+        assertEquals(
+            "Share amount cannot exceed the transaction total",
+            (received.single() as UiText.DynamicString).value
+        )
+        io.mockk.coVerify(exactly = 0) {
+            expenses.updateOwnership(any(), any(), any(), any(), any(), any(), any())
+        }
+        collection.cancel()
+    }
+
     @Test fun `provenance failure is bounded`() = runTest(testDispatcher) {
         coEvery { sourceLinks.getLinksForExpense(any()) } throws hostile
         model.loadProvenanceForExpense(1)
