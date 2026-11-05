@@ -19,6 +19,7 @@ import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.BudgetForecastDao
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyAggregate
 import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
 import io.mockk.*
 import kotlinx.coroutines.flow.flowOf
@@ -135,7 +136,50 @@ class BudgetRepositorySuggestionsBatchTest {
         val suggestions = repository.getSuggestions()
 
         assertThat(suggestions).hasSize(1)
-        assertThat(suggestions.single().suggestedAmount).isWithin(0.01).of(360.0)
+        // Span: Feb 12 -> end-exclusive Mar 16 = 32 days; March has 31 days.
+        // monthly avg = 300 / (32/31) = 290.625; x1.2 buffer = 348.75.
+        assertThat(suggestions.single().suggestedAmount).isWithin(0.01).of(348.75)
+    }
+
+    @Test
+    fun `getSuggestions N-08-6 partial 300 gives no suggestion while complete category still does`() = runTest {
+        val now = utcMs(2026, Calendar.MARCH, 15)
+        every { timeProvider.now() } returns now
+        every { categoryDao.getAllFlow() } returns flowOf(
+            listOf(
+                Category(id = 1L, name = "Food", icon = "F", color = "#FF0000", isDefault = false),
+                Category(id = 2L, name = "Transport", icon = "T", color = "#00FF00", isDefault = false)
+            )
+        )
+        coEvery { budgetDao.getActiveBudgets() } returns emptyList()
+        coEvery { expenseDao.getOldestExpenseDate() } returns utcMs(2026, Calendar.FEBRUARY, 12)
+
+        val eur = CurrencyCode("EUR")
+        val partialFood = MoneyAggregate.singleCurrency(300.0, eur, 1).copy(isPartial = true)
+        val completeTransport = MoneyAggregate.singleCurrency(300.0, eur, 1)
+        val stubbedMultiCurrency = mockk<MultiCurrencyRepository>(relaxed = true)
+        coEvery { stubbedMultiCurrency.getHomeCurrencyPurchaseCategoryTotals(any(), any()) } returns
+            mapOf(1L to partialFood, 2L to completeTransport)
+        val repositoryWithStub = BudgetRepository(
+            budgetDao = budgetDao,
+            categoryDao = categoryDao,
+            expenseDao = expenseDao,
+            budgetCalculator = budgetCalculator,
+            timeProvider = timeProvider,
+            offsetEngine = offsetEngine,
+            timeBoundaryTicker = TimeBoundaryTicker(timeProvider),
+            currencyConverter = currencyConverter,
+            currencySettingsRepository = currencySettingsRepository,
+            multiCurrencyRepository = stubbedMultiCurrency,
+            writeBarrier = writeBarrier,
+            database = database,
+            budgetForecastDao = budgetForecastDao,
+        )
+
+        val suggestions = repositoryWithStub.getSuggestions()
+
+        assertThat(suggestions.map { it.categoryId }).containsExactly(2L)
+        assertThat(suggestions.single().suggestedAmount).isGreaterThan(20.0)
     }
 
     private fun activeBudget(categoryId: Long) = Budget(
