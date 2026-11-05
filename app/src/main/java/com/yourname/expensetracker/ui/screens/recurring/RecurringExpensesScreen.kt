@@ -132,7 +132,8 @@ class RecurringExpensesViewModel @Inject constructor(
 
     val plannedExpenses = plannedExpenseRepository.getAllPlannedExpenses()
         .map { list ->
-            list.map { entity ->
+            // P-04-2: a skipped occurrence leaves a CANCELLED planned row (R21); hide it here.
+            list.filter { it.status != "CANCELLED" }.map { entity ->
                 com.yourname.expensetracker.domain.model.PlannedExpense(
                     id = entity.id,
                     description = entity.description,
@@ -212,9 +213,18 @@ class RecurringExpensesViewModel @Inject constructor(
 
     fun deletePlannedExpense(planned: com.yourname.expensetracker.domain.model.PlannedExpense) {
         viewModelScope.launch {
-            guardedWrite(::emitWriteBlocked) {
-                plannedExpenseRepository.deletePlannedExpenseById(planned.id)
-            } ?: return@launch
+            try {
+                guardedWrite(::emitWriteBlocked) {
+                    plannedExpenseRepository.skipOrDeletePlanned(planned.id, planned.sourceOccurrenceKey)
+                } ?: return@launch
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: IllegalArgumentException) {
+                // P-04-2: occurrence already PAID/MISSED (transition refused); bounded code only.
+                Timber.w("Planned skip rejected class=%s", e::class.java.simpleName)
+                emitWriteBlocked(UiText.from(R.string.recurring_error_generic))
+                return@launch
+            }
             refreshTrigger.value += 1
         }
     }

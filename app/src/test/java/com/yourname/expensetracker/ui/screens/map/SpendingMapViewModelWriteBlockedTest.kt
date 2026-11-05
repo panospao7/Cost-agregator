@@ -23,6 +23,8 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
@@ -189,5 +191,102 @@ class SpendingMapViewModelWriteBlockedTest : ViewModelTestUtils() {
 
             assertNull(viewModel.state.value.snackbarUiText)
             assertNotNull("plain message must survive ui-text dismissal", viewModel.state.value.snackbarMessage)
+        }
+
+    // ── S19-3: onSaveCorrection under a raised write barrier ─────────────────
+
+    @Test
+    fun `S19-3 control - successful correction saves both writes and clears the saving flag`() =
+        runTest(testDispatcher) {
+            coEvery { merchantLocationRepository.saveCorrection(any()) } returns 5L
+
+            viewModel.onSaveCorrection("Cafe", 48.2, 16.3, null, null, marker)
+            val state = awaitState { it.snackbarMessage != null }
+
+            assertEquals("Correction saved for Cafe", state.snackbarMessage)
+            assertFalse(state.isSavingCorrection)
+            assertNull(state.correctionSaveError)
+            assertNull("no blocked message on success", state.snackbarUiText)
+            coVerify(exactly = 1) { merchantLocationRepository.saveCorrection(any()) }
+            coVerify(exactly = 1) {
+                expenseRepository.updateExpenseLocation(any(), any(), any(), any(), any(), any())
+            }
+        }
+
+    @Test
+    fun `S19-3 blocked saveCorrection skips the expense write, resets saving flag and shows the blocked message`() =
+        runTest(testDispatcher) {
+            coEvery { merchantLocationRepository.saveCorrection(any()) } throws blockedWriteException()
+
+            viewModel.onSaveCorrection("Cafe", 48.2, 16.3, null, null, marker)
+            val state = awaitState { it.snackbarUiText != null && !it.isSavingCorrection }
+
+            assertEquals(blockedMessage, state.snackbarUiText)
+            assertFalse("saving flag must not stay on after a blocked write", state.isSavingCorrection)
+            assertNull("blocked write is not the generic failure text", state.correctionSaveError)
+            assertNull("no success message after a blocked write", state.snackbarMessage)
+            coVerify(exactly = 1) { merchantLocationRepository.saveCorrection(any()) }
+            coVerify(exactly = 0) {
+                expenseRepository.updateExpenseLocation(any(), any(), any(), any(), any(), any())
+            }
+        }
+
+    @Test
+    fun `S19-3 blocked expense location write after the correction saved shows the blocked message without the partial-failure text`() =
+        runTest(testDispatcher) {
+            coEvery { merchantLocationRepository.saveCorrection(any()) } returns 5L
+            coEvery {
+                expenseRepository.updateExpenseLocation(any(), any(), any(), any(), any(), any())
+            } throws blockedWriteException()
+
+            viewModel.onSaveCorrection("Cafe", 48.2, 16.3, null, null, marker)
+            val state = awaitState { it.snackbarUiText != null && !it.isSavingCorrection }
+
+            assertEquals(blockedMessage, state.snackbarUiText)
+            assertFalse(state.isSavingCorrection)
+            assertNull("blocked write is not the partial-failure text", state.correctionSaveError)
+            assertNull("no success message after a blocked write", state.snackbarMessage)
+        }
+
+    @Test
+    fun `S19-3 cancellation during saveCorrection is rethrown, never reported as a save error`() =
+        runTest(testDispatcher) {
+            val started = CompletableDeferred<Unit>()
+            coEvery { merchantLocationRepository.saveCorrection(any()) } coAnswers {
+                started.complete(Unit)
+                throw CancellationException("test cancellation")
+            }
+
+            viewModel.onSaveCorrection("Cafe", 48.2, 16.3, null, null, marker)
+            withContext(Dispatchers.Default) { withTimeout(5_000L) { started.await() } }
+            val state = awaitState { !it.isSavingCorrection }
+
+            assertNull("cancellation must not surface as a save error", state.correctionSaveError)
+            assertNull(state.snackbarMessage)
+            assertNull(state.snackbarUiText)
+            coVerify(exactly = 0) {
+                expenseRepository.updateExpenseLocation(any(), any(), any(), any(), any(), any())
+            }
+        }
+
+    @Test
+    fun `S19-3 cancellation during the expense location write is rethrown, never reported as a partial failure`() =
+        runTest(testDispatcher) {
+            val started = CompletableDeferred<Unit>()
+            coEvery { merchantLocationRepository.saveCorrection(any()) } returns 5L
+            coEvery {
+                expenseRepository.updateExpenseLocation(any(), any(), any(), any(), any(), any())
+            } coAnswers {
+                started.complete(Unit)
+                throw CancellationException("test cancellation")
+            }
+
+            viewModel.onSaveCorrection("Cafe", 48.2, 16.3, null, null, marker)
+            withContext(Dispatchers.Default) { withTimeout(5_000L) { started.await() } }
+            val state = awaitState { !it.isSavingCorrection }
+
+            assertNull("cancellation must not surface as a partial-failure error", state.correctionSaveError)
+            assertNull(state.snackbarMessage)
+            assertNull(state.snackbarUiText)
         }
 }

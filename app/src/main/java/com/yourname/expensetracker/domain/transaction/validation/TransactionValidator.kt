@@ -87,6 +87,33 @@ class TransactionValidator @Inject constructor(
         return emptyList()
     }
 
+    /**
+     * P-02-4: merchant-only validation (blank and placeholder checks) shared by
+     * [validateFields] and the lifecycle merchant-rename paths. Pure; returns an
+     * empty list when the merchant is acceptable for a real expense.
+     */
+    fun validateMerchant(merchant: String): List<TransactionValidationError> {
+        val errors = mutableListOf<TransactionValidationError>()
+
+        if (merchant.isBlank()) {
+            errors += TransactionValidationError(
+                code = "MERCHANT_BLANK",
+                field = "merchant",
+                message = "Merchant cannot be blank"
+            )
+        }
+
+        if (merchant == "Unknown" || merchant == "Parsing Failed") {
+            errors += TransactionValidationError(
+                code = "MERCHANT_PLACEHOLDER",
+                field = "merchant",
+                message = "Merchant placeholder not allowed for real expenses"
+            )
+        }
+
+        return errors
+    }
+
     private fun validateFields(
         amount: Double,
         merchant: String,
@@ -146,21 +173,7 @@ class TransactionValidator @Inject constructor(
             }
         }
 
-        if (merchant.isBlank()) {
-            errors += TransactionValidationError(
-                code = "MERCHANT_BLANK",
-                field = "merchant",
-                message = "Merchant cannot be blank"
-            )
-        }
-
-        if (merchant == "Unknown" || merchant == "Parsing Failed") {
-            errors += TransactionValidationError(
-                code = "MERCHANT_PLACEHOLDER",
-                field = "merchant",
-                message = "Merchant placeholder not allowed for real expenses"
-            )
-        }
+        errors += validateMerchant(merchant)
 
         if (currency.isBlank()) {
             errors += TransactionValidationError(

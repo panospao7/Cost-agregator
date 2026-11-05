@@ -18,6 +18,7 @@ import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.ui.util.blockedWriteException
 import com.yourname.expensetracker.util.ViewModelTestUtils
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -161,4 +162,122 @@ class RecurringExpensesViewModelWriteBlockedTest : ViewModelTestUtils() {
             cancelAndIgnoreRemainingEvents()
         }
     }
+
+    // ── P-04-2: planned-row "delete" skips the occurrence instead of deleting the row ──
+
+    private fun newViewModel() = RecurringExpensesViewModel(
+        repository = mockk<FinancialWeatherRepository>(relaxed = true),
+        recurringExpenseRepository = recurringRepository,
+        plannedExpenseRepository = plannedRepository,
+        recurringExpenseEngine = mockk<RecurringExpenseEngine>(relaxed = true),
+        expenseRepository = mockk<ExpenseRepository>(relaxed = true),
+        currencySettingsRepository = currencyRepository,
+        timeProvider = mockk<TimeProvider>(relaxed = true)
+    )
+
+    private fun plannedEntity(id: Long, status: String, key: String?) = PlannedExpenseEntity(
+        id = id,
+        description = "Synthetic Planned $id",
+        amount = 15.0,
+        currency = "EUR",
+        date = 1_710_000_000_000L,
+        priority = EntityPriority.MUST,
+        sourceOccurrenceKey = key,
+        status = status
+    )
+
+    private suspend fun loadSinglePlanned(
+        vm: RecurringExpensesViewModel
+    ): com.yourname.expensetracker.domain.model.PlannedExpense {
+        var item: com.yourname.expensetracker.domain.model.PlannedExpense? = null
+        vm.plannedExpenses.test {
+            var items = awaitItem()
+            if (items.isEmpty()) items = awaitItem()
+            item = items.single()
+            cancelAndIgnoreRemainingEvents()
+        }
+        return item!!
+    }
+
+    @Test
+    fun `P-04-2 deletePlannedExpense routes through skipOrDeletePlanned with the id and occurrence key`() =
+        runTest(testDispatcher) {
+            every { plannedRepository.getAllPlannedExpenses() } returns
+                flowOf(listOf(plannedEntity(30L, "PLANNED", "RECURRING_RULE|1|1710000000000|MONTHLY")))
+            val vm = newViewModel()
+
+            vm.deletePlannedExpense(loadSinglePlanned(vm))
+            advanceUntilIdle()
+
+            coVerify(exactly = 1) {
+                plannedRepository.skipOrDeletePlanned(30L, "RECURRING_RULE|1|1710000000000|MONTHLY")
+            }
+            coVerify(exactly = 0) { plannedRepository.deletePlannedExpenseById(any()) }
+            coVerify(exactly = 0) { plannedRepository.deletePlannedExpense(any()) }
+        }
+
+    @Test
+    fun `P-04-2 deletePlannedExpense for a manual row without a key still goes through skipOrDeletePlanned`() =
+        runTest(testDispatcher) {
+            every { plannedRepository.getAllPlannedExpenses() } returns
+                flowOf(listOf(plannedEntity(31L, "PLANNED", null)))
+            val vm = newViewModel()
+
+            vm.deletePlannedExpense(loadSinglePlanned(vm))
+            advanceUntilIdle()
+
+            coVerify(exactly = 1) { plannedRepository.skipOrDeletePlanned(31L, null) }
+        }
+
+    @Test
+    fun `P-04-2 plannedExpenses hides CANCELLED rows and keeps PLANNED and FULFILLED rows`() =
+        runTest(testDispatcher) {
+            every { plannedRepository.getAllPlannedExpenses() } returns flowOf(
+                listOf(
+                    plannedEntity(40L, "PLANNED", "k40"),
+                    plannedEntity(41L, "CANCELLED", "k41"),
+                    plannedEntity(42L, "FULFILLED", "k42")
+                )
+            )
+            val vm = newViewModel()
+
+            vm.plannedExpenses.test {
+                var items = awaitItem()
+                if (items.isEmpty()) items = awaitItem()
+                assertEquals(setOf(40L, 42L), items.map { it.id }.toSet())
+                cancelAndIgnoreRemainingEvents()
+            }
+        }
+
+    @Test
+    fun `P-04-2 blocked skipOrDeletePlanned emits the maintenance message`() = runTest(testDispatcher) {
+        coEvery { plannedRepository.skipOrDeletePlanned(any(), any()) } throws blockedWriteException()
+        every { plannedRepository.getAllPlannedExpenses() } returns
+            flowOf(listOf(plannedEntity(32L, "PLANNED", "k32")))
+        val vm = newViewModel()
+        val item = loadSinglePlanned(vm)
+
+        vm.writeBlockedMessages.test {
+            vm.deletePlannedExpense(item)
+            advanceUntilIdle()
+            assertEquals(blockedMessage, awaitItem())
+        }
+    }
+
+    @Test
+    fun `P-04-2 refused skip of a PAID or MISSED occurrence emits the generic recurring error`() =
+        runTest(testDispatcher) {
+            coEvery { plannedRepository.skipOrDeletePlanned(any(), any()) } throws
+                IllegalArgumentException("Invalid recurring occurrence transition")
+            every { plannedRepository.getAllPlannedExpenses() } returns
+                flowOf(listOf(plannedEntity(33L, "PLANNED", "k33")))
+            val vm = newViewModel()
+            val item = loadSinglePlanned(vm)
+
+            vm.writeBlockedMessages.test {
+                vm.deletePlannedExpense(item)
+                advanceUntilIdle()
+                assertEquals(UiText.from(R.string.recurring_error_generic), awaitItem())
+            }
+        }
 }

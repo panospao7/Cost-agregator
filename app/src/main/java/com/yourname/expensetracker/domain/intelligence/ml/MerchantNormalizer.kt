@@ -17,6 +17,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -156,7 +157,8 @@ class MerchantNormalizer @Inject constructor(
         // 3. Link the original POS name to this brand ID (just in case it wasn't a canonical)
         linkAliasToCanonical(rawName, brandId, isUserDefined = true)
         
-        Timber.i("Learned alias: $rawName -> $brandName")
+        // E-03-8: no merchant text in logs.
+        Timber.i("Learned alias")
         invalidateTreeCache()
     }
 
@@ -229,7 +231,7 @@ class MerchantNormalizer @Inject constructor(
                 .thenByDescending { it.similarity }
                 .thenByDescending { it.canonical.totalOccurrences }
                 .thenByDescending { it.canonical.isVerified }
-                .thenBy { it.canonical.normalizedName.lowercase() }
+                .thenBy { it.canonical.normalizedName.lowercase(Locale.ROOT) }
                 .thenBy { it.canonical.id }
         )
 
@@ -282,8 +284,8 @@ class MerchantNormalizer @Inject constructor(
 
     private fun formatDisplayName(name: String): String {
         return name.split(" ").joinToString(" ") { word ->
-            if (word.uppercase() in COMMON_IGNORE_WORDS) word.lowercase()
-            else word.lowercase().replaceFirstChar { it.uppercase() }
+            if (word.uppercase() in COMMON_IGNORE_WORDS) word.lowercase(Locale.ROOT)
+            else word.lowercase(Locale.ROOT).replaceFirstChar { it.uppercase() }
         }
     }
 

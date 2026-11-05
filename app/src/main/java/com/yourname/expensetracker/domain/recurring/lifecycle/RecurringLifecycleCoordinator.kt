@@ -1238,6 +1238,28 @@ class RecurringLifecycleCoordinator @Inject constructor(
         updateOccurrenceStatus(occurrenceId, RecurringOccurrenceStatus.SKIPPED, RecurringOccurrenceTransitionReason.USER_SKIPPED)
     }
 
+    /**
+     * P-04-2: skip the occurrence identified by [occurrenceKey] (the planned row's
+     * `sourceOccurrenceKey`). Resolves the id with a read and delegates to the existing
+     * atomic [updateOccurrenceStatus] path, which cancels the open planned row and
+     * suppresses open reminders in one transaction.
+     *
+     * @return `true` when an occurrence with the key exists and the skip was applied;
+     *   `false` when no occurrence has this key (nothing written).
+     * @throws IllegalArgumentException (transition policy, via `require`) when the occurrence is not skippable
+     *   (for example already PAID or MISSED).
+     */
+    suspend fun skipOccurrenceByKey(occurrenceKey: String): Boolean {
+        writeBarrier.checkWritesAllowed("RecurringLifecycleCoordinator.skipOccurrenceByKey")
+        val occurrence = occurrenceDao.getByKey(occurrenceKey) ?: return false
+        updateOccurrenceStatus(
+            occurrence.id,
+            RecurringOccurrenceStatus.SKIPPED,
+            RecurringOccurrenceTransitionReason.USER_SKIPPED
+        )
+        return true
+    }
+
     /** Convenience: cancel an occurrence. */
     suspend fun cancelOccurrence(occurrenceId: Long) {
         writeBarrier.checkWritesAllowed("RecurringLifecycleCoordinator.cancelOccurrence")

@@ -32,7 +32,14 @@ class PlannedExpenseRepository @Inject constructor(
      * production via the existing DiagnosticsModule binding. Emission is always best-effort.
      */
     private val diagnosticEventWriter: com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter? = null,
-    private val diagnosticSink: com.yourname.expensetracker.data.backup.MaintenanceSafeDiagnosticSink? = null
+    private val diagnosticSink: com.yourname.expensetracker.data.backup.MaintenanceSafeDiagnosticSink? = null,
+    /**
+     * P-04-2: lazy handle to the recurring lifecycle coordinator (owner of the atomic
+     * skip-occurrence path). Lazy to avoid a construction cycle; required (non-null, no default)
+     * so a keyed row can never silently fall back to a plain delete.
+     */
+    private val recurringLifecycleCoordinator:
+        dagger.Lazy<com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator>
 ) {
     private companion object {
         val VALID_STATUSES = setOf("PLANNED", "FULFILLED", "SKIPPED", "CANCELLED")
@@ -137,6 +144,23 @@ class PlannedExpenseRepository @Inject constructor(
             outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.DELETED,
             entityId = id.takeIf { it != 0L }
         )
+    }
+
+    /**
+     * P-04-2: user "delete" of a planned row. A row projected from a recurring occurrence
+     * (non-null [sourceOccurrenceKey] that resolves to an occurrence) is SKIPPED through the
+     * recurring lifecycle coordinator, which atomically cancels the planned row and suppresses
+     * open reminders (R21), so the materializer cannot re-create it. A row without a key, or
+     * whose key resolves to no occurrence, falls back to [deletePlannedExpenseById].
+     *
+     * @throws IllegalArgumentException when the occurrence is not skippable (for example
+     *   already PAID or MISSED); nothing is written in that case.
+     */
+    suspend fun skipOrDeletePlanned(id: Long, sourceOccurrenceKey: String?) {
+        if (sourceOccurrenceKey != null) {
+            if (recurringLifecycleCoordinator.get().skipOccurrenceByKey(sourceOccurrenceKey)) return
+        }
+        deletePlannedExpenseById(id)
     }
 
     /**

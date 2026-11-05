@@ -51,7 +51,10 @@ class PlannedExpenseRepositoryDiagnosticsTest {
             plannedExpenseDao = plannedExpenseDao,
             timeProvider = timeProvider,
             diagnosticEventWriter = diagnosticEventWriter,
-            diagnosticSink = diagnosticSink
+            diagnosticSink = diagnosticSink,
+            recurringLifecycleCoordinator = dagger.Lazy {
+                mockk<com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator>(relaxed = true)
+            }
         )
     }
 

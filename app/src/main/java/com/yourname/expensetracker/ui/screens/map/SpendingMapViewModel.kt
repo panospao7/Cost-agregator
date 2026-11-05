@@ -29,6 +29,7 @@ import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.hilt.android.lifecycle.HiltViewModel
 import com.yourname.expensetracker.ui.util.guardedWrite
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -361,33 +362,55 @@ class SpendingMapViewModel @Inject constructor(
         viewModelScope.launch(Dispatchers.IO) {
             _state.update { it.copy(isSavingCorrection = true, correctionSaveError = null) }
             try {
-                val correctionId = merchantLocationRepository.saveCorrection(
-                    MerchantLocationCorrection(
-                        normalizedMerchantName = merchantLocationRepository.normalizeKey(merchantName),
-                        correctedLatitude = correctedLat,
-                        correctedLongitude = correctedLon,
-                        areaLatitude = correctedLat,
-                        areaLongitude = correctedLon,
-                        osmId = osmId,
-                        displayAddress = displayAddress
+                // S19-3: a raised write barrier surfaces the bounded blocked message and
+                // resets the saving flag instead of the generic failure text.
+                val correctionId = guardedWrite(::showWriteBlocked) {
+                    merchantLocationRepository.saveCorrection(
+                        MerchantLocationCorrection(
+                            normalizedMerchantName = merchantLocationRepository.normalizeKey(merchantName),
+                            correctedLatitude = correctedLat,
+                            correctedLongitude = correctedLon,
+                            areaLatitude = correctedLat,
+                            areaLongitude = correctedLon,
+                            osmId = osmId,
+                            displayAddress = displayAddress
+                        )
                     )
-                )
+                }
+                if (correctionId == null) {
+                    _state.update { it.copy(isSavingCorrection = false) }
+                    return@launch
+                }
                 if (correctionId <= 0L) {
                     // S10-010: Conflict — keep sheet open with error
                     _state.update { it.copy(isSavingCorrection = false, correctionSaveError = "Location correction could not be saved (duplicate entry)") }
                     return@launch
                 }
                 // S10-010: Catch expense update failure separately
-                val expenseUpdateOk = runCatching {
-                    expenseRepository.updateExpenseLocation(
-                        expenseId = forMarker.expenseId,
-                        latitude = correctedLat,
-                        longitude = correctedLon,
-                        source = com.yourname.expensetracker.domain.config.AppConfig.Location.SOURCE_USER_MANUAL,
-                        placeId = osmId,
-                        address = displayAddress
-                    )
-                }.isSuccess
+                var expenseUpdateBlocked = false
+                val expenseUpdateOk = try {
+                    val updated = guardedWrite(::showWriteBlocked) {
+                        expenseRepository.updateExpenseLocation(
+                            expenseId = forMarker.expenseId,
+                            latitude = correctedLat,
+                            longitude = correctedLon,
+                            source = com.yourname.expensetracker.domain.config.AppConfig.Location.SOURCE_USER_MANUAL,
+                            placeId = osmId,
+                            address = displayAddress
+                        )
+                    }
+                    expenseUpdateBlocked = updated == null
+                    updated != null
+                } catch (e: CancellationException) {
+                    _state.update { it.copy(isSavingCorrection = false) }
+                    throw e
+                } catch (e: Exception) {
+                    false
+                }
+                if (expenseUpdateBlocked) {
+                    _state.update { it.copy(isSavingCorrection = false) }
+                    return@launch
+                }
                 if (!expenseUpdateOk) {
                     // S10-010: Partial failure — correction saved but expense not updated
                     _state.update { it.copy(isSavingCorrection = false, correctionSaveError = "Correction saved but expense location could not be updated. Retry to apply.") }
@@ -402,6 +425,9 @@ class SpendingMapViewModel @Inject constructor(
                     snackbarMessage = "Correction saved for $merchantName"
                 ) }
                 refreshStats()
+            } catch (e: CancellationException) {
+                _state.update { it.copy(isSavingCorrection = false) }
+                throw e
             } catch (e: Exception) {
                 _state.update { it.copy(isSavingCorrection = false, correctionSaveError = "Could not save the correction. Please try again.") }
             }

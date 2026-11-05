@@ -1945,6 +1945,12 @@ class TransactionLifecycleCoordinator @Inject constructor(
     ) {
         writeBarrier.checkWritesAllowed("TransactionLifecycleCoordinator.updateMerchant")
 
+        // P-02-4: reject blank / placeholder merchants before any DAO access or event.
+        val merchantErrors = transactionValidator.validateMerchant(newMerchant)
+        if (merchantErrors.isNotEmpty()) {
+            throw TransactionValidationException(merchantErrors)
+        }
+
         val now = timeProvider.now()
         val newMerchantKey = MerchantKeyGenerator.generate(newMerchant)
 
@@ -2767,7 +2773,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
                     dedupeKey = null, duplicateExpenseId = null,
                     beforeSnapshot = null, afterSnapshot = null,
                     metadata = JSONObject().apply {
-                        put("merchant", merchant)
+                        // P-02-5: merchant name is not persisted in event metadata.
                         put("merchantKey", merchantKey)
                         put("newCategoryId", newCategoryId)
                         put("affectedCount", affectedCount)
@@ -2893,6 +2899,11 @@ class TransactionLifecycleCoordinator @Inject constructor(
     ): Result<Unit> {
         writeBarrier.checkWritesAllowed("TransactionLifecycleCoordinator.bulkUpdateMerchant")
         if (oldMerchant == newMerchant) return Result.success(Unit)
+        // P-02-4: reject blank / placeholder target merchants before any DAO access or event.
+        val merchantErrors = transactionValidator.validateMerchant(newMerchant)
+        if (merchantErrors.isNotEmpty()) {
+            return Result.failure(TransactionValidationException(merchantErrors))
+        }
         val oldMerchantKey = MerchantKeyGenerator.generate(oldMerchant)
         val newMerchantKey = MerchantKeyGenerator.generate(newMerchant)
         val now = timeProvider.now()
@@ -2946,8 +2957,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
                 expenseDao.updateMerchantAndKey(expense.id, newMerchant, newMerchantKey, newDedupeKey)
             }
             val metadata = JSONObject().apply {
-                put("oldMerchant", oldMerchant)
-                put("newMerchant", newMerchant)
+                // P-02-5: merchant names are not persisted in event metadata (keys + count only).
                 put("oldMerchantKey", oldMerchantKey)
                 put("newMerchantKey", newMerchantKey)
                 put("affectedCount", affectedCount)
