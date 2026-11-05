@@ -641,9 +641,9 @@ class NotificationIntakeEnqueueFailureRoomTest {
             assertEquals(3, threads.size)
             assertTrue(
                 "work must run on the injected dispatcher, saw $threads",
-                threads.all { it == "intake-recovery-injected-io" }
+                threads.all { it.startsWith("intake-recovery-injected-io") } // coroutine debug appends @coroutine#N
             )
-            assertTrue(callerThread != "intake-recovery-injected-io")
+            assertTrue(!callerThread.startsWith("intake-recovery-injected-io"))
         } finally {
             executor.shutdownNow()
         }
