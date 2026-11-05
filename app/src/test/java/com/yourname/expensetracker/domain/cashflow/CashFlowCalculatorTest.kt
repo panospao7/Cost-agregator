@@ -1184,6 +1184,107 @@ class CashFlowCalculatorTest : AnalyticsEngineTestBase() {
     }
 
     @Test
+    fun `paid bill linked to the only 400 payment does not absorb the second same merchant 420 bill so day outflow is 820`() = runTest {
+        val day = ms("2026-01-10")
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
+            expense(day, 400.0, TransactionType.PURCHASE, merchant = "Rent").copy(id = 77L)
+        )
+        coEvery { recurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+            manualPattern(id = 1L, merchant = "Rent", amount = 400.0, nextDate = day),
+            manualPattern(id = 2L, merchant = "Rent", amount = 420.0, nextDate = day)
+        )
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(1L, any(), any(), any()) } returns listOf(
+            occurrence(ruleId = 1L, dueDate = day, amount = 400.0, merchant = "Rent", status = "PAID")
+                .copy(linkedExpenseId = 77L)
+        )
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(2L, any(), any(), any()) } returns listOf(
+            occurrence(ruleId = 2L, dueDate = day, amount = 420.0, merchant = "Rent")
+        )
+        coEvery { recurringOccurrenceDao.getByDateRange(any(), any()) } returns emptyList()
+
+        val result = calculator.calculateDailyCashFlow(
+            Date(day), Date(ms("2026-01-12")), startingBalance = MoneyAmount(0.0, CurrencyCode("EUR"))
+        )
+
+        // Paid 400 from the actual expense plus predicted 420 for the still-planned bill.
+        assertEquals(listOf(420.0), result[0].predictedRecurring.map { it.averageAmount })
+        assertEquals(-820.0, result[0].endingBalance, 0.0001)
+    }
+
+    @Test
+    fun `control unlinked 400 payment dedupes the single planned 400 bill so day outflow stays 400`() = runTest {
+        val day = ms("2026-01-10")
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
+            expense(day, 400.0, TransactionType.PURCHASE, merchant = "Rent").copy(id = 77L)
+        )
+        coEvery { recurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+            manualPattern(id = 1L, merchant = "Rent", amount = 400.0, nextDate = day)
+        )
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(1L, any(), any(), any()) } returns listOf(
+            occurrence(ruleId = 1L, dueDate = day, amount = 400.0, merchant = "Rent")
+        )
+        coEvery { recurringOccurrenceDao.getByDateRange(any(), any()) } returns emptyList()
+
+        val result = calculator.calculateDailyCashFlow(
+            Date(day), Date(ms("2026-01-12")), startingBalance = MoneyAmount(0.0, CurrencyCode("EUR"))
+        )
+
+        assertEquals(emptyList<Double>(), result[0].predictedRecurring.map { it.averageAmount })
+        assertEquals(-400.0, result[0].endingBalance, 0.0001)
+    }
+
+    @Test
+    fun `DBG-05 control unlinked 410 payment dedupes a planned 400 bill within the tolerance band`() = runTest {
+        val day = ms("2026-01-10")
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
+            expense(day, 410.0, TransactionType.PURCHASE, merchant = "Rent").copy(id = 78L)
+        )
+        coEvery { recurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+            manualPattern(id = 1L, merchant = "Rent", amount = 400.0, nextDate = day)
+        )
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(1L, any(), any(), any()) } returns listOf(
+            occurrence(ruleId = 1L, dueDate = day, amount = 400.0, merchant = "Rent")
+        )
+        coEvery { recurringOccurrenceDao.getByDateRange(any(), any()) } returns emptyList()
+
+        val result = calculator.calculateDailyCashFlow(
+            Date(day), Date(ms("2026-01-12")), startingBalance = MoneyAmount(0.0, CurrencyCode("EUR"))
+        )
+
+        assertEquals(emptyList<Double>(), result[0].predictedRecurring.map { it.averageAmount })
+        assertEquals(-410.0, result[0].endingBalance, 0.0001)
+    }
+
+    @Test
+    fun `getUpcomingBills passes the first rules linked expense id to the second rules projection`() = runTest {
+        val now = ms("2026-04-01")
+        val due = ms("2026-04-05")
+        every { timeProvider.now() } returns now
+        coEvery { recurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+            manualPattern(id = 1L, merchant = "Rent", amount = 400.0, nextDate = due),
+            manualPattern(id = 2L, merchant = "Rent", amount = 420.0, nextDate = due)
+        )
+        val firstClaimed = slot<Set<Long>>()
+        val secondClaimed = slot<Set<Long>>()
+        coEvery {
+            recurringLifecycleCoordinator.projectOccurrences(1L, any(), any(), capture(firstClaimed))
+        } returns listOf(
+            occurrence(ruleId = 1L, dueDate = due, amount = 400.0, merchant = "Rent", status = "PAID")
+                .copy(linkedExpenseId = 77L)
+        )
+        coEvery {
+            recurringLifecycleCoordinator.projectOccurrences(2L, any(), any(), capture(secondClaimed))
+        } returns listOf(occurrence(ruleId = 2L, dueDate = due, amount = 420.0, merchant = "Rent"))
+        coEvery { recurringOccurrenceDao.getByDateRange(any(), any()) } returns emptyList()
+
+        val upcoming = calculator.getUpcomingBills(daysAhead = 10)
+
+        assertEquals(emptySet<Long>(), firstClaimed.captured)
+        assertEquals(setOf(77L), secondClaimed.captured)
+        assertEquals(listOf(420.0), upcoming.map { it.averageAmount })
+    }
+
+    @Test
     fun `T4T3 formatDayKey emits zero padded yyyy-MM-dd for leap and boundary dates`() {
         assertEquals("2024-02-29", calculator.formatDayKey(ms("2024-02-29")))
         assertEquals("2025-12-31", calculator.formatDayKey(ms("2025-12-31")))

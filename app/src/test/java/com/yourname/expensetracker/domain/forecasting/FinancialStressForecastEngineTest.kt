@@ -786,6 +786,34 @@ class FinancialStressForecastEngineTest {
         assertApproxEquals(800.0, result.horizons.first { it.daysAhead == 30 }.recurringObligations, 0.0001)
     }
 
+    @Test
+    fun `computeStressForecast passes first rule linked expense id to second rule and counts 420 once not the paid 400`() = runTest {
+        allExpenses = emptyList()
+        allDeposits = emptyList()
+        val due = now + dayMs
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+            recurringPattern(merchant = "Rent", amount = 400.0, nextDate = due, frequency = RecurrenceFrequency.MONTHLY, confidence = 1.0f, id = 1L),
+            recurringPattern(merchant = "Rent", amount = 420.0, nextDate = due, frequency = RecurrenceFrequency.MONTHLY, confidence = 1.0f, id = 2L)
+        )
+        val firstClaimed = io.mockk.slot<Set<Long>>()
+        val secondClaimed = io.mockk.slot<Set<Long>>()
+        coEvery {
+            recurringLifecycleCoordinator.projectOccurrences(1L, any(), any(), capture(firstClaimed))
+        } returns listOf(
+            occurrenceRow(ruleId = 1L, dueDate = due, amount = 400.0, merchant = "Rent", status = "PAID")
+                .copy(linkedExpenseId = 77L)
+        )
+        coEvery {
+            recurringLifecycleCoordinator.projectOccurrences(2L, any(), any(), capture(secondClaimed))
+        } returns listOf(occurrenceRow(ruleId = 2L, dueDate = due, amount = 420.0, merchant = "Rent"))
+
+        val result = engine.computeStressForecast()
+
+        assertEquals(emptySet<Long>(), firstClaimed.captured)
+        assertEquals(setOf(77L), secondClaimed.captured)
+        assertApproxEquals(420.0, result.horizons.first { it.daysAhead == 30 }.recurringObligations, 0.0001)
+    }
+
     // ── P6-CURRENT-024: read path projects, never materializes ─────────────
 
     @Test
