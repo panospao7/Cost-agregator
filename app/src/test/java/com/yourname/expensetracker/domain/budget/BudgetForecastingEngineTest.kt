@@ -104,8 +104,8 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
 
         // P-06-2: default known effective limit of 1000 for the id-0 test budgets; tests that
         // need another limit (or an unavailable one) re-stub via stubEffectiveLimit().
-        coEvery { budgetRepository.getBudgetStatusesAt(any()) } returns
-            listOf(statusFor(Budget(categoryId = 1L, amount = 1000.0, period = BudgetPeriod.MONTHLY, startDate = now), 1000.0))
+        coEvery { budgetRepository.getBudgetStatusAt(any(), any()) } returns
+            statusFor(Budget(categoryId = 1L, amount = 1000.0, period = BudgetPeriod.MONTHLY, startDate = now), 1000.0)
 
         // Default: return empty snapshots (tests override this per-scenario)
         coEvery { mockExpenseRepo.getExpenseSnapshotsBetween(any(), any()) } returns emptyList()
@@ -892,8 +892,8 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
     )
 
     private fun stubEffectiveLimit(forBudget: Budget, effectiveLimit: Double, percentKnown: Boolean = true) {
-        coEvery { budgetRepository.getBudgetStatusesAt(any()) } returns
-            listOf(statusFor(forBudget, effectiveLimit, percentKnown))
+        coEvery { budgetRepository.getBudgetStatusAt(forBudget, any()) } returns
+            statusFor(forBudget, effectiveLimit, percentKnown)
     }
 
     @Test
@@ -1259,17 +1259,16 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `P06-2 status is matched on budget id`() = runTest {
+    fun `P06-2 status is requested for the forecast budget id`() = runTest {
         val budget = arrangeStable450History(id = 9L)
         val other = budget.copy(id = 7L)
-        coEvery { budgetRepository.getBudgetStatusesAt(any()) } returns listOf(
-            statusFor(other, 100.0),
-            statusFor(budget, 400.0)
-        )
+        coEvery { budgetRepository.getBudgetStatusAt(other, any()) } returns statusFor(other, 100.0)
+        coEvery { budgetRepository.getBudgetStatusAt(budget, any()) } returns statusFor(budget, 400.0)
 
         val forecast = (engine.generateForecastResult(budget) as BudgetForecastResult.Available).forecast
 
         assertApproxEquals(400.0, forecast.normalizedBudgetAmount, 0.0001)
+        coVerify(exactly = 0) { budgetRepository.getBudgetStatusAt(other, any()) }
     }
 
     @Test
@@ -1281,31 +1280,32 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
 
         val aprilFirst = LocalDate.of(2026, 4, 1)
             .atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
-        coVerify(exactly = 1) { budgetRepository.getBudgetStatusesAt(aprilFirst) }
+        coVerify(exactly = 1) { budgetRepository.getBudgetStatusAt(budget, aprilFirst) }
+        coVerify(exactly = 0) { budgetRepository.getBudgetStatusesAt(any()) }
     }
 
-    private suspend fun assertLimitUnavailable(result: BudgetForecastResult, budgetId: Long = 0L) {
+    private suspend fun assertLimitUnavailable(
+        result: BudgetForecastResult,
+        reason: ForecastUnavailableReason,
+        budgetId: Long = 0L
+    ) {
         val unavailable = result as? BudgetForecastResult.Unavailable
         assertTrue("expected Unavailable, got $result", unavailable != null)
-        assertEquals(ForecastUnavailableReason.LIMIT_CONVERSION_FAILED, unavailable!!.reasonCode)
+        assertEquals(reason, unavailable!!.reasonCode)
         assertEquals(budgetId, unavailable.budgetId)
         coVerify(exactly = 0) { budgetForecastDao.insertWithDeactivation(any()) }
     }
 
     @Test
-    fun `P06-2 status not found is unavailable LIMIT_CONVERSION_FAILED`() = runTest {
+    fun `P06-2 status not found is unavailable BUDGET_STATUS_UNAVAILABLE`() = runTest {
         val budget = arrangeStable450History(id = 9L)
-        coEvery { budgetRepository.getBudgetStatusesAt(any()) } returns listOf(statusFor(budget.copy(id = 7L), 500.0))
+        coEvery { budgetRepository.getBudgetStatusAt(budget, any()) } returns null
 
-        assertLimitUnavailable(engine.generateForecastResult(budget), budgetId = 9L)
-    }
-
-    @Test
-    fun `P06-2 empty status list is unavailable`() = runTest {
-        val budget = arrangeStable450History()
-        coEvery { budgetRepository.getBudgetStatusesAt(any()) } returns emptyList()
-
-        assertLimitUnavailable(engine.generateForecastResult(budget))
+        assertLimitUnavailable(
+            engine.generateForecastResult(budget),
+            ForecastUnavailableReason.BUDGET_STATUS_UNAVAILABLE,
+            budgetId = 9L
+        )
     }
 
     @Test
@@ -1313,33 +1313,44 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
         val budget = arrangeStable450History()
         stubEffectiveLimit(budget, 500.0, percentKnown = false)
 
-        assertLimitUnavailable(engine.generateForecastResult(budget))
+        assertLimitUnavailable(engine.generateForecastResult(budget), ForecastUnavailableReason.LIMIT_CONVERSION_FAILED)
     }
 
     @Test
-    fun `P06-2 zero effective limit is unavailable`() = runTest {
+    fun `P06-2 percentKnown false takes precedence over a non positive effective limit`() = runTest {
+        val budget = arrangeStable450History()
+        stubEffectiveLimit(budget, 0.0, percentKnown = false)
+
+        assertLimitUnavailable(engine.generateForecastResult(budget), ForecastUnavailableReason.LIMIT_CONVERSION_FAILED)
+    }
+
+    @Test
+    fun `P06-2 zero effective limit is unavailable NO_LIMIT_LEFT`() = runTest {
         val budget = arrangeStable450History()
         stubEffectiveLimit(budget, 0.0)
 
-        assertLimitUnavailable(engine.generateForecastResult(budget))
+        assertLimitUnavailable(engine.generateForecastResult(budget), ForecastUnavailableReason.NO_LIMIT_LEFT)
     }
 
     @Test
-    fun `P06-2 negative effective limit is unavailable`() = runTest {
-        val budget = arrangeStable450History()
+    fun `P06-2 limit 100 with carried deficit 150 gives effective minus 50 and is NO_LIMIT_LEFT`() = runTest {
+        val budget = arrangeStable450History(baseAmount = 100.0)
         stubEffectiveLimit(budget, -50.0)
 
-        assertLimitUnavailable(engine.generateForecastResult(budget))
+        assertLimitUnavailable(engine.generateForecastResult(budget), ForecastUnavailableReason.NO_LIMIT_LEFT)
     }
 
     @Test
-    fun `P06-2 non finite effective limit is unavailable`() = runTest {
+    fun `P06-2 non finite effective limit is unavailable LIMIT_CONVERSION_FAILED`() = runTest {
         val budget = arrangeStable450History()
         stubEffectiveLimit(budget, Double.NaN)
-        assertLimitUnavailable(engine.generateForecastResult(budget))
+        assertLimitUnavailable(engine.generateForecastResult(budget), ForecastUnavailableReason.LIMIT_CONVERSION_FAILED)
 
         stubEffectiveLimit(budget, Double.POSITIVE_INFINITY)
-        assertLimitUnavailable(engine.generateForecastResult(budget))
+        assertLimitUnavailable(engine.generateForecastResult(budget), ForecastUnavailableReason.LIMIT_CONVERSION_FAILED)
+
+        stubEffectiveLimit(budget, Double.NEGATIVE_INFINITY)
+        assertLimitUnavailable(engine.generateForecastResult(budget), ForecastUnavailableReason.LIMIT_CONVERSION_FAILED)
     }
 
     @Test
@@ -1355,9 +1366,12 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
     @Test
     fun `P06-2 throwing repository is unavailable with no raw amount fallback`() = runTest {
         val budget = arrangeStable450History(baseAmount = 500.0)
-        coEvery { budgetRepository.getBudgetStatusesAt(any()) } throws IllegalStateException("boom")
+        coEvery { budgetRepository.getBudgetStatusAt(any(), any()) } throws IllegalStateException("boom")
 
-        assertLimitUnavailable(engine.generateForecastResult(budget))
+        assertLimitUnavailable(
+            engine.generateForecastResult(budget),
+            ForecastUnavailableReason.BUDGET_STATUS_UNAVAILABLE
+        )
         // The raw budget.amount must not stand in for the unreadable limit.
         coVerify(exactly = 0) {
             budgetRepository.getCurrentPeriodPurchaseSpendAtPeriodEnd(any(), any(), any(), any())
@@ -1367,7 +1381,7 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
     @Test
     fun `P06-2 cancellation while reading statuses propagates and persists nothing`() = runTest {
         val budget = arrangeStable450History()
-        coEvery { budgetRepository.getBudgetStatusesAt(any()) } throws
+        coEvery { budgetRepository.getBudgetStatusAt(any(), any()) } throws
             kotlinx.coroutines.CancellationException("cancelled")
 
         var propagated = false

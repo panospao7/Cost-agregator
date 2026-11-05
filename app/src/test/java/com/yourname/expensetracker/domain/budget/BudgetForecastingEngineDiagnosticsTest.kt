@@ -106,7 +106,7 @@ class BudgetForecastingEngineDiagnosticsTest : AnalyticsEngineTestBase() {
 
         // P-06-2: the limit comes from the repository status snapshot (effectiveLimit),
         // not from converting budget.amount. Default: a known 1_000 EUR effective limit.
-        coEvery { budgetRepository.getBudgetStatusesAt(any()) } returns listOf(statusFor(budget, 1_000.0))
+        coEvery { budgetRepository.getBudgetStatusAt(any(), any()) } returns statusFor(budget, 1_000.0)
 
         mockExpenseRepo = mockk(relaxed = true)
         mockCurrencyNormalizer = mockk(relaxed = true)
@@ -268,8 +268,8 @@ class BudgetForecastingEngineDiagnosticsTest : AnalyticsEngineTestBase() {
     @Test
     fun `generateForecastResult emits FORECAST_UNAVAILABLE when limit conversion fails`() = runTest {
         // The status snapshot reports no known home-currency limit (limit conversion failed upstream).
-        coEvery { budgetRepository.getBudgetStatusesAt(any()) } returns
-            listOf(statusFor(budget.copy(currency = "USD"), 0.0, percentKnown = false))
+        coEvery { budgetRepository.getBudgetStatusAt(any(), any()) } returns
+            statusFor(budget.copy(currency = "USD"), 0.0, percentKnown = false)
 
         val result = engine.generateForecastResult(budget.copy(currency = "USD"))
 

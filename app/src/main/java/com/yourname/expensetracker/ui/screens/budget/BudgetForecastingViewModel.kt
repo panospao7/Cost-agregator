@@ -80,6 +80,8 @@ class BudgetForecastingViewModel @Inject constructor(
                         val safeReason = when (result.reasonCode) {
                             com.yourname.expensetracker.domain.budget.ForecastUnavailableReason.HOME_CURRENCY_UNAVAILABLE -> "Home currency unavailable"
                             com.yourname.expensetracker.domain.budget.ForecastUnavailableReason.LIMIT_CONVERSION_FAILED -> "Budget limit conversion unavailable"
+                            com.yourname.expensetracker.domain.budget.ForecastUnavailableReason.NO_LIMIT_LEFT -> "No budget left in this period after carried-over overspending"
+                            com.yourname.expensetracker.domain.budget.ForecastUnavailableReason.BUDGET_STATUS_UNAVAILABLE -> "Budget details unavailable"
                             com.yourname.expensetracker.domain.budget.ForecastUnavailableReason.MISSING_RATE -> "Current-period spend unavailable"
                             else -> "Forecast unavailable"
                         }

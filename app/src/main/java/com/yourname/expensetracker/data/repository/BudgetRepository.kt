@@ -164,6 +164,21 @@ class BudgetRepository @Inject constructor(
         )
     }
 
+    /**
+     * Status of ONE budget at [evaluationTime], equal to the matching entry of
+     * [getBudgetStatusesAt] but deriving only that budget (no spend queries for the other
+     * active budgets). Returns null when the budget is not currently active.
+     */
+    suspend fun getBudgetStatusAt(budget: Budget, evaluationTime: Long): BudgetStatus? {
+        val activeBudget = budgetDao.getActiveBudgets().firstOrNull { it.id == budget.id }
+            ?: return null
+        return deriveBudgetStatuses(
+            budgets = listOf(activeBudget),
+            categories = categoryDao.getAll(),
+            evaluationTime = evaluationTime
+        ).firstOrNull()
+    }
+
     private suspend fun deriveBudgetStatuses(
         budgets: List<Budget>,
         categories: List<Category>,

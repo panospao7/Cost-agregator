@@ -170,6 +170,40 @@ class BudgetRepositoryHistoricalStatusTest {
 
     @Suppress("DEPRECATION_ERROR")
     @Test
+    fun `getBudgetStatusAt returns null for an inactive budget`() = runTest(UnconfinedTestDispatcher()) {
+        val requested = budget(amount = 400.0, categoryId = null).copy(id = 5L)
+        val otherActive = budget(amount = 900.0, categoryId = null).copy(id = 6L)
+        val evaluationTime = utcMs(2026, Calendar.JANUARY, 20)
+        coEvery { budgetDao.getActiveBudgets() } returns listOf(otherActive)
+        every { budgetCalculator.calculatePeriodRange(any(), evaluationTime) } returns
+            (utcMs(2026, Calendar.JANUARY, 10) to utcMs(2026, Calendar.FEBRUARY, 10))
+
+        assertThat(repository.getBudgetStatusAt(requested, evaluationTime)).isNull()
+    }
+
+    @Suppress("DEPRECATION_ERROR")
+    @Test
+    fun `getBudgetStatusAt equals the matching getBudgetStatusesAt entry for an active budget`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val target = budget(amount = 400.0, categoryId = null).copy(id = 5L)
+            val other = budget(amount = 900.0, categoryId = null).copy(id = 6L)
+            val evaluationTime = utcMs(2026, Calendar.JANUARY, 20)
+            val start = utcMs(2026, Calendar.JANUARY, 10)
+            val end = utcMs(2026, Calendar.FEBRUARY, 10)
+            coEvery { budgetDao.getActiveBudgets() } returns listOf(other, target)
+            every { budgetCalculator.calculatePeriodRange(any(), evaluationTime) } returns (start to end)
+            coEvery { expenseDao.getTotalSpentBetweenByCurrency(start, end) } returns
+                listOf(CurrencyTotal("EUR", 125.0, 2))
+
+            val single = repository.getBudgetStatusAt(target, evaluationTime)
+            val fromAll = repository.getBudgetStatusesAt(evaluationTime).single { it.budget.id == target.id }
+
+            assertThat(single).isNotNull()
+            assertThat(single).isEqualTo(fromAll)
+        }
+
+    @Suppress("DEPRECATION_ERROR")
+    @Test
     fun `createBudgetStatus populates adjustedSpendBreakdown from offset engine`() = runTest(UnconfinedTestDispatcher()) {
         val budget = budget(amount = 1_000.0, categoryId = null)
         val evaluationTime = utcMs(2026, Calendar.MARCH, 15)

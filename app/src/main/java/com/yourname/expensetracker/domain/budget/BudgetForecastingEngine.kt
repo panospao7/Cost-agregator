@@ -125,36 +125,41 @@ class BudgetForecastingEngine @Inject constructor(
         // snapshot at `now`. The raw budget.amount is never used. A status that cannot be read,
         // has no known home-currency limit (percentKnown == false), or whose effective limit is
         // not finite and strictly positive yields the existing typed unavailable result.
-        val effectiveLimit: Double? = try {
-            budgetRepository.getBudgetStatusesAt(now)
-                .firstOrNull { it.budget.id == budget.id }
-                ?.takeIf { it.percentKnown }
-                ?.effectiveLimit
-                ?.takeIf { it.isFinite() && it > 0.0 }
+        val status: BudgetStatus? = try {
+            budgetRepository.getBudgetStatusAt(budget, now)
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
             null
         }
-        if (effectiveLimit == null) {
+        val limitFailure: Pair<ForecastUnavailableReason, String>? = when {
+            status == null ->
+                ForecastUnavailableReason.BUDGET_STATUS_UNAVAILABLE to "Budget details unavailable"
+            !status.percentKnown || !status.effectiveLimit.isFinite() ->
+                ForecastUnavailableReason.LIMIT_CONVERSION_FAILED to "Budget effective limit unavailable"
+            status.effectiveLimit <= 0.0 ->
+                ForecastUnavailableReason.NO_LIMIT_LEFT to "No budget left in this period after carried-over overspending"
+            else -> null
+        }
+        if (limitFailure != null) {
             emitForecastDiagnostic(
                 stage = "FORECAST_UNAVAILABLE",
                 outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.SKIPPED,
                 budgetId = budget.id,
                 severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.WARNING,
                 metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
-                    .put("reason", ForecastUnavailableReason.LIMIT_CONVERSION_FAILED)
+                    .put("reason", limitFailure.first)
                     .put("currency", budget.currency)
                     .build()
             )
             return@withContext BudgetForecastResult.Unavailable(
                 budgetId = budget.id,
-                reasonCode = ForecastUnavailableReason.LIMIT_CONVERSION_FAILED,
-                reason = "Budget effective limit unavailable",
+                reasonCode = limitFailure.first,
+                reason = limitFailure.second,
                 createdAt = now
             )
         }
-        val normalizedBudgetAmount: Double = effectiveLimit
+        val normalizedBudgetAmount: Double = status!!.effectiveLimit
 
         val elapsedEnd = now.coerceAtMost(periodEnd)
         // RP-09 (P6-007): current-period spend comes from the repository-owned bounded

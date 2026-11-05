@@ -297,6 +297,9 @@ class BudgetForecastingViewModelTest : ViewModelTestUtils() {
         val budget = createBudget(id = 42L, amount = 120.0)
         for ((code, expected) in listOf(
             ForecastUnavailableReason.LIMIT_CONVERSION_FAILED to "Budget limit conversion unavailable",
+            ForecastUnavailableReason.NO_LIMIT_LEFT to
+                "No budget left in this period after carried-over overspending",
+            ForecastUnavailableReason.BUDGET_STATUS_UNAVAILABLE to "Budget details unavailable",
             ForecastUnavailableReason.MISSING_RATE to "Current-period spend unavailable"
         )) {
             coEvery { forecastingEngine.generateForecastResult(budget, 30) } returns
