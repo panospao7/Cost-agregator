@@ -297,15 +297,17 @@ class ComputeMoneyRadarUseCase @Inject constructor(
             // month-scale overall budget is compared; any other period gives no comparison.
             val budgetSnapshot = overallBudget.toBudgetStatusSnapshot()
             if (!budgetSnapshot.isMonthScalePeriod) return null
-            val budgetAmount = (budgetSnapshot.periodRemaining(now, homeCurrency)
-                as? com.yourname.expensetracker.domain.budget.BudgetPeriodRemaining.Available)
-                ?.limit
-                ?: error("RADAR_BUDGET_UNAVAILABLE")
-
-            if (budgetAmount <= 0) {
-                return null // No budget set, or rollover deficit consumed the whole limit
+            val budgetAmount = when (val remaining = budgetSnapshot.periodRemaining(now, homeCurrency)) {
+                is com.yourname.expensetracker.domain.budget.BudgetPeriodRemaining.Available -> remaining.limit
+                is com.yourname.expensetracker.domain.budget.BudgetPeriodRemaining.Unavailable -> {
+                    // No budget to compare against (a limit of 0, or a rollover deficit that
+                    // consumed it): no comparison, as the widget does. Unknown spend or an
+                    // incomplete conversion is not "no budget", so Radar fails closed.
+                    if (remaining.reason == com.yourname.expensetracker.domain.budget.BudgetPeriodRemainingUnavailableReason.NO_POSITIVE_LIMIT) return null
+                    error("RADAR_BUDGET_UNAVAILABLE")
+                }
             }
-            
+
             // Get current month spending
             val (monthStart, _) = TimePeriodUtils.getMonthRange(now)
             val expenses = expenseRepository.getExpensesSince(monthStart)

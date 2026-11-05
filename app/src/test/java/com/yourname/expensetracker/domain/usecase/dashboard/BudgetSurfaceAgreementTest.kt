@@ -229,6 +229,73 @@ class BudgetSurfaceAgreementTest {
         assertTrue(inside.blockPartyShown)
     }
 
+    /**
+     * P-05-5: the Money Radar and the dashboard widget read the budget limit from the same
+     * derivation, so one budget gives the same Monte Carlo limit on both; a non-month-scale period
+     * gives no comparison on either.
+     */
+    @Test
+    fun `P-05-5 the same budget gives the same Radar limit and widget Monte Carlo limit`() = runTest {
+        val rows = listOf(
+            "plain 1000" to status(1_000.0, 300.0, date(2026, 6, 10), date(2026, 7, 10), 300.0),
+            "rollover surplus 1000 plus 100" to
+                status(1_000.0, 300.0, date(2026, 6, 10), date(2026, 7, 10), 300.0, effectiveLimit = 1_100.0)
+        )
+
+        rows.forEach { (name, budgetStatus) ->
+            val widgetLimit = surfaces(budgetStatus.toBudgetStatusSnapshot()).monteCarloBudget
+            val radarLimits = radarSimulatedLimits(budgetStatus)
+
+            assertEquals("$name: widget limit", budgetStatus.effectiveLimit, widgetLimit!!, 0.0)
+            assertEquals("$name: radar limit", listOf(widgetLimit), radarLimits)
+        }
+    }
+
+    @Test
+    fun `P-05-5 a weekly budget gives no Monte Carlo limit on the Radar or the widget`() = runTest {
+        val weekly = status(100.0, 50.0, at(15, 0), at(22, 0), 50.0)
+
+        assertNull(surfaces(weekly.toBudgetStatusSnapshot()).monteCarloBudget)
+        assertEquals(emptyList<Double>(), radarSimulatedLimits(weekly))
+    }
+
+    /** Runs the real Radar use case on [budgetStatus] and returns the limits it passed to the simulator. */
+    private suspend fun radarSimulatedLimits(budgetStatus: BudgetStatus): List<Double> {
+        val limits = mutableListOf<Double>()
+        val radarSimulator = mockk<MonteCarloSpendingSimulator>()
+        coEvery { radarSimulator.simulate(any(), any(), any(), any()) } answers {
+            limits.add(thirdArg())
+            null // the limit is captured at the call; no simulation result is needed
+        }
+        val budgetRepository = mockk<com.yourname.expensetracker.data.repository.BudgetRepository>()
+        io.mockk.every { budgetRepository.getBudgetStatuses() } returns
+            kotlinx.coroutines.flow.flowOf(listOf(budgetStatus))
+        val expenseRepository = mockk<com.yourname.expensetracker.data.repository.ExpenseRepository>()
+        coEvery { expenseRepository.getExpensesSince(any()) } returns emptyList()
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns emptyList()
+        val recurring = mockk<com.yourname.expensetracker.domain.forecasting.MergedRecurringPatternsProvider>()
+        coEvery { recurring.getConfirmedPatterns() } returns emptyList()
+        val anomalies = mockk<AnomalyAlertRepository>()
+        coEvery { anomalies.getActiveAlerts() } returns emptyList()
+        val settings = mockk<CurrencySettingsRepository>()
+        io.mockk.every { settings.homeCurrency() } returns kotlinx.coroutines.flow.flowOf("EUR")
+
+        ComputeMoneyRadarUseCase(
+            recurringPatternsProvider = recurring,
+            anomalyAlertRepository = anomalies,
+            getMonteCarloBudgetImpact = mockk(),
+            monteCarloSimulator = radarSimulator,
+            expenseRepository = expenseRepository,
+            budgetRepository = budgetRepository,
+            analyticsCurrencyNormalizer =
+                com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer(currencyConverter),
+            currencySettingsRepository = settings,
+            currencyConverter = currencyConverter,
+            timeProvider = timeProvider
+        ).compute()
+        return limits
+    }
+
     // ---------------------------------------------------------------- harness
 
     private suspend fun surfaces(snapshot: BudgetStatusSnapshot): Surfaces {
@@ -288,7 +355,17 @@ class BudgetSurfaceAgreementTest {
         start: Long,
         end: Long,
         gross: Double
-    ): BudgetStatusSnapshot = BudgetStatus(
+    ): BudgetStatusSnapshot = status(limit, effective, start, end, gross).toBudgetStatusSnapshot()
+
+    /** [effectiveLimit] is the limit incl. rollover; it defaults to [limit]. */
+    private fun status(
+        limit: Double,
+        effective: Double,
+        start: Long,
+        end: Long,
+        gross: Double,
+        effectiveLimit: Double = limit
+    ): BudgetStatus = BudgetStatus(
         budget = Budget(
             id = 1L,
             categoryId = null,
@@ -307,7 +384,7 @@ class BudgetSurfaceAgreementTest {
         healthStatus = if (gross >= limit) BudgetHealthStatus.EXCEEDED else BudgetHealthStatus.WARNING,
         periodStart = start,
         periodEnd = end,
-        effectiveLimit = limit,
+        effectiveLimit = effectiveLimit,
         adjustedSpendBreakdown = AdjustedSpendBreakdown(
             personalSpend = effective,
             sharedSpend = 0.0,
@@ -316,7 +393,7 @@ class BudgetSurfaceAgreementTest {
             effectiveSpend = effective,
             pendingReimbursements = 0.0
         )
-    ).toBudgetStatusSnapshot()
+    )
 
     private fun data(expenses: List<DashboardExpense>, budgets: List<BudgetStatusSnapshot>): ProcessedDashboardData {
         val dashboardData = DashboardData(
