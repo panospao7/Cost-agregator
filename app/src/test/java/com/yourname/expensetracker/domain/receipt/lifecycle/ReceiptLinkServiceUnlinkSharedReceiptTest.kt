@@ -306,7 +306,7 @@ class ReceiptLinkServiceUnlinkSharedReceiptTest {
 
         assertTrue(linkService.unlinkReceiptFromExpense(r, x).isSuccess)
 
-        val message = unlinkedEvents().single().message
+        val message = unlinkedEvents().single().message!!
         assertTrue(message, message.contains("Warranty expenseId repointed to expense $y"))
         assertTrue(message, message.contains("return window expenseId repointed to expense $y"))
         assertTrue(message, !message.contains("cleared"))
@@ -322,7 +322,7 @@ class ReceiptLinkServiceUnlinkSharedReceiptTest {
 
         assertTrue(linkService.unlinkReceiptFromExpense(r, x).isSuccess)
 
-        val message = unlinkedEvents().single().message
+        val message = unlinkedEvents().single().message!!
         assertTrue(message, message.contains("Warranty expenseId cleared"))
         assertTrue(message, message.contains("return window expenseId cleared"))
         assertTrue(message, !message.contains("repointed"))
@@ -354,7 +354,7 @@ class ReceiptLinkServiceUnlinkSharedReceiptTest {
 
         assertTrue(linkService.unlinkReceiptFromExpense(r, x).isSuccess)
 
-        val message = unlinkedEvents().single().message
+        val message = unlinkedEvents().single().message!!
         assertTrue(message, message.contains("Warranty expenseId repointed to expense $y"))
         assertTrue(message, message.contains("return window expenseId cleared"))
         assertNoRawText(message)

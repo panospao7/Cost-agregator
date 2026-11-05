@@ -14,6 +14,9 @@ import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
@@ -245,14 +248,201 @@ class SpendingThresholdCalculatorTest {
     }
 
     @Test
-    fun `E-02-4 refreshThreshold forces recalculation`() = runTest(testDispatcher) {
+    fun `refreshThreshold clears cache for default user`() = runTest(testDispatcher) {
+        coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returnsMany listOf(
+            tenPurchases(100.0), // P90 = 910
+            tenPurchases(200.0) // P90 = 1820
+        )
+
+        val threshold1 = calculator.getThreshold()
+        val cachedAgain = calculator.getThreshold()
+        calculator.refreshThreshold()
+        val threshold2 = calculator.getThreshold()
+
+        assertEquals(910.0, threshold1, 0.001)
+        assertEquals("inside the TTL and before refresh the cached value is reused", 910.0, cachedAgain, 0.001)
+        assertEquals("after refresh the threshold is recalculated from fresh rows", 1820.0, threshold2, 0.001)
+        coVerify(exactly = 2) { expenseDao.getExpensesBetweenUncapped(any(), any()) }
+    }
+
+    @Test
+    fun `calculateHighAmountThreshold returns minimum threshold when insufficient data`() = runTest(testDispatcher) {
+        coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returns emptyList()
+
+        val threshold = calculator.calculateHighAmountThreshold("test-user")
+
+        assertEquals("Should return minimum threshold when no data", 50.0, threshold, 0.01)
+    }
+
+    @Test
+    fun `calculateHighAmountThreshold returns minimum threshold below the ten sample floor even for large amounts`() =
+        runTest(testDispatcher) {
+            coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returns
+                (1..9).map { purchase(it.toLong(), 1000.0) }
+
+            assertEquals(50.0, calculator.calculateHighAmountThreshold("test-user"), 0.01)
+        }
+
+    @Test
+    fun `calculateHighAmountThreshold returns P90 for typical spending`() = runTest(testDispatcher) {
+        // 10, 20, ..., 100: index 0.9 * 9 = 8.1 -> 90 + 0.1 * 10 = 91
+        coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returns
+            (1..10).map { purchase(it.toLong(), it * 10.0) }
+
+        val threshold = calculator.calculateHighAmountThreshold("test-user")
+
+        assertEquals("P90 of 10..100 is 91 and above the 50 minimum", 91.0, threshold, 0.01)
+    }
+
+    @Test
+    fun `calculateHighAmountThreshold enforces minimum threshold`() = runTest(testDispatcher) {
+        // 5, 10, ..., 50: ten samples, P90 = 45 + 0.1 * 5 = 45.5, which is below the 50 minimum
+        coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returns
+            (1..10).map { purchase(it.toLong(), it * 5.0) }
+
+        val threshold = calculator.calculateHighAmountThreshold("test-user")
+
+        assertEquals("Should return minimum threshold (50) when P90 is below minimum", 50.0, threshold, 0.01)
+    }
+
+    @Test
+    fun `calculateHighAmountThreshold uses correct user ID for caching`() = runTest(testDispatcher) {
+        coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returnsMany listOf(
+            tenPurchases(100.0), // first read, user-1: P90 = 910
+            tenPurchases(200.0) // second read, user-2: P90 = 1820
+        )
+
+        val user1First = calculator.calculateHighAmountThreshold("user-1")
+        val user1Second = calculator.calculateHighAmountThreshold("user-1")
+        val user2 = calculator.calculateHighAmountThreshold("user-2")
+
+        assertEquals(910.0, user1First, 0.001)
+        assertEquals("Same user gets the cached threshold", 910.0, user1Second, 0.001)
+        assertEquals("A different user is not served user-1's cache entry", 1820.0, user2, 0.001)
+        coVerify(exactly = 2) { expenseDao.getExpensesBetweenUncapped(any(), any()) }
+    }
+
+    @Test
+    fun `getThreshold convenience method works for single-user`() = runTest(testDispatcher) {
+        coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returns tenPurchases(100.0)
+
+        val threshold = calculator.getThreshold()
+
+        assertEquals("Should return the calculated P90 threshold", 910.0, threshold, 0.001)
+        assertEquals("getThreshold shares the cache entry of the default user", 910.0, calculator.getThreshold(), 0.001)
+        coVerify(exactly = 1) { expenseDao.getExpensesBetweenUncapped(any(), any()) }
+    }
+
+    @Test
+    fun `calculatePercentiles computes correct P50 P75 P90`() = runTest(testDispatcher) {
+        coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returns
+            (1..10).map { purchase(it.toLong(), it * 10.0) }
+
+        val percentiles = calculator.calculatePercentiles("test-user")
+
+        assertEquals(10, percentiles.sampleSize)
+        assertEquals("P50 of 10..100", 55.0, percentiles.p50, 0.001)
+        assertEquals("P75 of 10..100", 77.5, percentiles.p75, 0.001)
+        assertEquals("P90 of 10..100", 91.0, percentiles.p90, 0.001)
+    }
+
+    @Test
+    fun `calculatePercentiles handles single transaction`() = runTest(testDispatcher) {
         coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returns listOf(purchase(1, 100.0))
 
-        calculator.getThreshold()
-        calculator.refreshThreshold()
-        calculator.getThreshold()
+        val percentiles = calculator.calculatePercentiles("test-user")
+
+        assertEquals(1, percentiles.sampleSize)
+        assertEquals("P50 should be 100 for single transaction", 100.0, percentiles.p50, 0.01)
+        assertEquals("P90 should be 100 for single transaction", 100.0, percentiles.p90, 0.01)
+    }
+
+    @Test
+    fun `calculatePercentiles reads normalized rows and not the aggregate percentile DAO path`() = runTest(testDispatcher) {
+        coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returns
+            (1..5).map { purchase(it.toLong(), it * 20.0) }
+
+        calculator.calculatePercentiles("aggregate-check")
+
+        coVerify(exactly = 1) { expenseDao.getExpensesBetweenUncapped(any(), any()) }
+        coVerify(exactly = 0) { expenseDao.getAmountsForPercentileCalc(any(), any()) }
+    }
+
+    @Test
+    fun `refreshThresholds prevents stale in-flight recompute from overwriting cache`() = runTest(testDispatcher) {
+        // Regression for ISSUE-2: a compute that started before refreshThresholds() must not
+        // write its result back after the invalidation (generation check on write-back).
+        val gate = CompletableDeferred<Unit>()
+        var reads = 0
+        coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } coAnswers {
+            reads++
+            if (reads == 1) {
+                gate.await()
+                (1..5).map { purchase(it.toLong(), it * 100.0) } // stale snapshot, 5 samples
+            } else {
+                (1..3).map { purchase(it.toLong(), it * 10.0) } // post-refresh snapshot, 3 samples
+            }
+        }
+
+        val inFlight = async { calculator.calculatePercentiles("user-a") }
+        runCurrent() // in-flight compute is now suspended inside the DAO read, generation captured
+        calculator.refreshThresholds("user-a")
+        gate.complete(Unit)
+        val staleResult = inFlight.await()
+
+        assertEquals("the in-flight caller still receives its own result", 5, staleResult.sampleSize)
+
+        val afterRefresh = calculator.calculatePercentiles("user-a")
+
+        assertEquals("the stale in-flight result must not have been cached", 3, afterRefresh.sampleSize)
+        coVerify(exactly = 2) { expenseDao.getExpensesBetweenUncapped(any(), any()) }
+    }
+
+    @Test
+    fun `refreshThresholds does not block caching of a compute that starts after the refresh`() = runTest(testDispatcher) {
+        coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returns listOf(purchase(1, 100.0))
+
+        calculator.calculatePercentiles("user-a")
+        calculator.refreshThresholds("user-a")
+        calculator.calculatePercentiles("user-a") // recompute after refresh: write-back is allowed
+        calculator.calculatePercentiles("user-a") // served from the cache
 
         coVerify(exactly = 2) { expenseDao.getExpensesBetweenUncapped(any(), any()) }
+    }
+
+    @Test
+    fun `expired cache entry is replaced by fresh recompute — TTL semantics preserved`() = runTest(testDispatcher) {
+        // Regression for ISSUE-5: an expired (but still present) cache entry must be
+        // replaced by the next recompute; the old containsKey guard broke this.
+        val stale = run {
+            coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returns
+                (1..10).map { purchase(it.toLong(), it * 10.0) }
+            calculator.calculatePercentiles("user-b")
+        }
+
+        setClock(NOW + 25 * 60 * 60 * 1000L) // older than the 24 h TTL
+        coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returns
+            (1..10).map { purchase(it.toLong(), 400.0 + it * 100.0) }
+        val fresh = calculator.calculatePercentiles("user-b")
+
+        assertEquals(91.0, stale.p90, 0.001)
+        assertEquals("Fresh compute must replace the expired entry", 1310.0, fresh.p90, 0.001) // 500..1400: 1300 + 0.1 * 100
+        coVerify(exactly = 2) { expenseDao.getExpensesBetweenUncapped(any(), any()) }
+
+        // The replacement is itself cached for the new TTL window.
+        calculator.calculatePercentiles("user-b")
+        coVerify(exactly = 2) { expenseDao.getExpensesBetweenUncapped(any(), any()) }
+    }
+
+    @Test
+    fun `cache entry just under the 24 hour TTL is still reused`() = runTest(testDispatcher) {
+        coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returns listOf(purchase(1, 100.0))
+
+        calculator.calculatePercentiles("user-b")
+        setClock(NOW + 24 * 60 * 60 * 1000L - 1)
+        calculator.calculatePercentiles("user-b")
+
+        coVerify(exactly = 1) { expenseDao.getExpensesBetweenUncapped(any(), any()) }
     }
 
     @Test
@@ -313,16 +503,21 @@ class SpendingThresholdCalculatorTest {
         }
 
     @Test
-    fun `normalized threshold uses minimum for sparse input`() {
+    fun normalizedThresholdUsesMinimumForSparseInput() {
         assertEquals(50.0, calculator.calculateHighAmountThresholdFromNormalizedAmounts(listOf(10.0, 20.0, 30.0)), 0.01)
     }
 
     @Test
-    fun `normalized threshold computes P90 without touching the DAO`() {
+    fun normalizedThresholdComputesP90WithoutRawDao() {
         val amounts = (1..10).map { it.toDouble() * 100.0 }
 
         assertEquals(910.0, calculator.calculateHighAmountThresholdFromNormalizedAmounts(amounts), 0.01)
+        coVerify(exactly = 0) { expenseDao.getExpensesBetweenUncapped(any(), any()) }
+        coVerify(exactly = 0) { expenseDao.getAmountsForPercentileCalc(any(), any()) }
     }
+
+    /** Ten EUR purchases of base, 2*base, ..., 10*base. */
+    private fun tenPurchases(base: Double) = (1..10).map { purchase(it.toLong(), it * base) }
 
     /** Reuses the class's mocked clock: later calls see the new time. */
     private fun setClock(now: Long) {
