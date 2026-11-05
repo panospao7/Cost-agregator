@@ -46,7 +46,8 @@ class RecurringLifecycleCoordinatorClaimedProjectionTest {
     private lateinit var coordinator: RecurringLifecycleCoordinator
 
     private val now = 1_712_000_000_000L
-    private val startDate = now
+    // Occurrences sit at the start of the day, so the window opens there too.
+    private val startDate = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfDay(now)
     private val endDate = now + 7L * 24L * 60L * 60L * 1000L
 
     private val ruleA = ManualRecurringExpense(
