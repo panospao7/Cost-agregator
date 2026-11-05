@@ -288,8 +288,13 @@ class BackupRestoreViewModel @Inject constructor(
                             // process can show it; false clears a stale flag. record() is
                             // best-effort and rethrows only cancellation; the finally keeps the
                             // restart request independent of that cancellation.
+                            //
+                            // J-11-2: the static "notifications from another phone may not be
+                            // readable" flag is persisted the same way, so it shows once after the
+                            // relaunch (the in-screen card cannot render under the lock screen).
                             try {
                                 restoreVerificationNoticeStore.record(importResult.summary.isSemanticNotVerifiable())
+                                restoreVerificationNoticeStore.recordNotificationUnreadable(true)
                             } finally {
                                 restoreRestartSignal.markRequested()
                             }

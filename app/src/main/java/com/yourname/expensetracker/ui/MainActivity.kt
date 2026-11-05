@@ -486,8 +486,16 @@ fun MainScreen(
     // NOT_VERIFIABLE outcome is shown once here, after the relaunch, and only in a normal state
     // (never on the restart-required / critical-recovery lock screens). Boolean only; consumed once.
     val restoreNotVerifiableNotice = stringResource(R.string.backup_restore_not_verifiable_notice)
+    // J-11-2: the cross-device notification notice uses the same one-shot store. Both flags are
+    // consumed before either snackbar is shown so neither is lost if the effect is cancelled.
+    val restoreNotificationUnreadableNotice = stringResource(R.string.backup_restore_notification_unreadable_notice)
     LaunchedEffect(Unit) {
-        if (restoreVerificationNoticeStore.consume()) {
+        val notVerifiable = restoreVerificationNoticeStore.consume()
+        val notificationUnreadable = restoreVerificationNoticeStore.consumeNotificationUnreadable()
+        if (notificationUnreadable) {
+            snackbarHostState.showSnackbar(restoreNotificationUnreadableNotice)
+        }
+        if (notVerifiable) {
             snackbarHostState.showSnackbar(restoreNotVerifiableNotice)
         }
     }

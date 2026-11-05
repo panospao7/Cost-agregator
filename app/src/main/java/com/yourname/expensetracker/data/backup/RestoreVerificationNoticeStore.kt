@@ -67,8 +67,46 @@ class RestoreVerificationNoticeStore @Inject constructor(
         false
     }
 
+    /**
+     * J-11-2: persists the one-shot "notifications captured on another phone may not be readable"
+     * flag (a single boolean, no content) before the post-restore restart is requested, so the
+     * relaunched process can show it once. Same durability and failure contract as [record].
+     */
+    suspend fun recordNotificationUnreadable(pending: Boolean) {
+        try {
+            withContext(ioDispatcher) {
+                val committed = prefs.edit().putBoolean(KEY_NOTIFICATION_UNREADABLE_PENDING, pending).commit()
+                if (!committed) {
+                    Timber.w("RESTORE_NOTICE_RECORD_FAILED reason=commit_false")
+                }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Timber.w("RESTORE_NOTICE_RECORD_FAILED class=%s", e.javaClass.simpleName)
+        }
+    }
+
+    /** Returns the recorded notification-unreadable flag and removes it (one-shot); false when none. */
+    suspend fun consumeNotificationUnreadable(): Boolean = try {
+        withContext(ioDispatcher) {
+            val preferences = prefs
+            val pending = preferences.getBoolean(KEY_NOTIFICATION_UNREADABLE_PENDING, false)
+            if (preferences.contains(KEY_NOTIFICATION_UNREADABLE_PENDING)) {
+                preferences.edit().remove(KEY_NOTIFICATION_UNREADABLE_PENDING).commit()
+            }
+            pending
+        }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        Timber.w("RESTORE_NOTICE_CONSUME_FAILED class=%s", e.javaClass.simpleName)
+        false
+    }
+
     companion object {
         const val PREFS_NAME = "restore_verification_notice"
         const val KEY_PENDING = "restore_not_verifiable_pending"
+        const val KEY_NOTIFICATION_UNREADABLE_PENDING = "restore_notification_unreadable_pending"
     }
 }
