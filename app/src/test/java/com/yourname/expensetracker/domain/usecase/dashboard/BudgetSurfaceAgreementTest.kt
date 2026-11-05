@@ -297,9 +297,16 @@ class BudgetSurfaceAgreementTest {
         assertEquals(
             "category budget only",
             RadarBudgetInput.NotComparable,
-            surfaces(rolling.copy(budgetCategoryId = 3L)).radarInput
+            radarInputFor(listOf(rolling.copy(budgetCategoryId = 3L)))
         )
-        assertEquals("no budgets at all", RadarBudgetInput.NotComparable, surfacesFor(emptyList()).radarInput)
+        assertEquals("no budgets at all", RadarBudgetInput.NotComparable, radarInputFor(emptyList()))
+    }
+
+    /** The Radar input alone: with no comparable budget the headline widgets do not exist. */
+    private suspend fun radarInputFor(snapshots: List<BudgetStatusSnapshot>): RadarBudgetInput {
+        radarInputs.clear()
+        computeUseCase.compute(data(emptyList(), snapshots))
+        return radarInputs.single()
     }
 
     /** Converted from the weekly P-05-5 test (was: no simulator limit on Radar or widget). */
@@ -322,7 +329,7 @@ class BudgetSurfaceAgreementTest {
         simulatorReturnsResult = true
         val zeroLimit = status(500.0, 300.0, date(2026, 6, 10), date(2026, 7, 10), 300.0, effectiveLimit = 0.0)
 
-        assertEquals(RadarBudgetInput.NotComparable, surfaces(zeroLimit.toBudgetStatusSnapshot()).radarInput)
+        assertEquals(RadarBudgetInput.NotComparable, radarInputFor(listOf(zeroLimit.toBudgetStatusSnapshot())))
     }
 
     @Test
