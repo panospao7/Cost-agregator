@@ -481,6 +481,7 @@ class ReviewViewModel @Inject constructor(
                     finalAmount = finalAmount,
                     finalMerchant = finalMerchant,
                     finalCategoryId = finalCategoryId,
+                    categoryChosenByUser = true,
                     finalDate = finalDate,
                     finalType = finalType,
                     finalCurrency = finalCurrency,
@@ -552,6 +553,7 @@ class ReviewViewModel @Inject constructor(
                                      finalAmount = null, // Keep original amounts for identical transactions
                                      finalMerchant = finalMerchant,
                                      finalCategoryId = finalCategoryId,
+                                     categoryChosenByUser = true,
                                      finalDate = finalDate,
                                      finalType = finalType,
                                      // S6-D5-005: Pass transfer metadata and location-clear to bulk approvals

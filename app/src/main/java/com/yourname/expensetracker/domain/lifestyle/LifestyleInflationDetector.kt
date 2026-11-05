@@ -57,7 +57,13 @@ class LifestyleInflationDetector @Inject constructor(
         val startDate = endDate - (monthsToAnalyze * 30L * 24 * 60 * 60 * 1000)
 
         // Get all expenses in the period
+        // Only DEPOSIT and PURCHASE rows are used below. Filter before normalizing so an
+        // unconvertible row of an ignored type (e.g. a TRANSFER with no rate) cannot fail the report.
         val rawExpenses = expenseDao.getExpensesBetweenFlowUncapped(startDate, endDate).first()
+            .filter {
+                it.transactionType == com.yourname.expensetracker.data.database.entity.TransactionType.DEPOSIT ||
+                    it.transactionType == com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE
+            }
         val homeCurrency = currencySettingsRepository.homeCurrency().first()
         val normalized = analyticsCurrencyNormalizer.normalizeExpenses(rawExpenses, homeCurrency)
         normalized.requireNoLostMoneyInput(homeCurrency)

@@ -2,7 +2,7 @@ package com.yourname.expensetracker.domain.cashflow
 
 import com.yourname.expensetracker.data.database.dao.CurrentUserSettlementRow
 import com.yourname.expensetracker.data.database.entity.Expense
-import com.yourname.expensetracker.domain.model.DomainTransactionType
+import com.yourname.expensetracker.data.database.entity.TransactionType
 
 /**
  * DR-01: the single pure rule for how group-linked personal rows and group settlements
@@ -45,10 +45,10 @@ object GroupCashFlowRule {
         expenses
             .filter { it.id !in nonPayerIds }
             .filter {
-                when (it.transactionType.toDomain()) {
-                    DomainTransactionType.DEPOSIT,
-                    DomainTransactionType.PURCHASE,
-                    DomainTransactionType.WITHDRAWAL -> true
+                when (it.transactionType) {
+                    TransactionType.DEPOSIT,
+                    TransactionType.PURCHASE,
+                    TransactionType.WITHDRAWAL -> true
                     else -> false
                 }
             }

@@ -76,12 +76,6 @@ class NetCashflowBalanceProvider @Inject constructor(
             return null
         }
 
-        // P-06-4: with no deposit, purchase or withdrawal row in the window there is no cashflow
-        // to read, so the net is not a balance.
-        if (deposits.totalTransactionCount + purchases.totalTransactionCount + withdrawals.second == 0) {
-            Timber.w("NET_CASHFLOW_BALANCE_UNAVAILABLE reason=NO_CASHFLOW_ROWS")
-            return null
-        }
         // DR-01: agree with CashFlowCalculator's group rule. The totals above count a non-payer
         // row at its share and a payer row at its share; cash flow drops the former and counts the
         // latter at the full paid amount, and settlements are the cash event. Any failure is null.
@@ -90,7 +84,17 @@ class NetCashflowBalanceProvider @Inject constructor(
             Timber.w("NET_CASHFLOW_BALANCE_UNAVAILABLE reason=GROUP_ADJUSTMENT_UNAVAILABLE")
             return null
         }
-        val net = deposits.displayAmount - purchases.displayAmount - withdrawals.first + groupAdjustment
+        // P-06-4: with no deposit, purchase or withdrawal row in the window there is no cashflow
+        // to read, so the net is not a balance. Non-payer rows are removed from cash flow by the
+        // adjustment, so they do not count as cash rows (one non-payer row of 50 and nothing else
+        // would otherwise read as a real 0.0: 0 - 50 + 50).
+        val cashRowCount = deposits.totalTransactionCount + purchases.totalTransactionCount +
+            withdrawals.second - groupAdjustment.removedCashRowCount
+        if (cashRowCount <= 0) {
+            Timber.w("NET_CASHFLOW_BALANCE_UNAVAILABLE reason=NO_CASHFLOW_ROWS")
+            return null
+        }
+        val net = deposits.displayAmount - purchases.displayAmount - withdrawals.first + groupAdjustment.amount
         // P-06-4: a negative net is spending that exceeds the deposits seen, not a balance of 0;
         // a clamped 0.0 would read as a real zero balance and show a crunch at every horizon.
         if (net < 0.0) {
@@ -141,14 +145,20 @@ class NetCashflowBalanceProvider @Inject constructor(
      * WITHDRAWAL rows are in the totals, so only those are adjusted. Same half-open window as the
      * totals and the group reads. Null when any read fails or any row or settlement cannot be
      * converted (never treated as zero).
+     *
+     * Rate basis: the plain totals (getHomeCurrencyPurchaseTotal / DepositTotal) convert every
+     * per-currency bucket at the LATEST available rate. The add-back MUST use that same basis, or a
+     * non-payer share of $1000 (latest 1.00, date rate 0.90) is included at EUR 1000 but removed at
+     * EUR 900, leaving a phantom EUR 100 outflow. So payer and non-payer rows, and settlements
+     * (added to a net made of latest-rate totals), are all converted at LATEST_AVAILABLE here.
      */
-    private suspend fun groupAdjustmentOrNull(startDate: Long, endDate: Long, homeCurrency: String): Double? {
+    private suspend fun groupAdjustmentOrNull(startDate: Long, endDate: Long, homeCurrency: String): GroupAdjustment? {
         val snapshot = groupCashFlowReader.read(startDate, endDate, "NetCashflowBalanceProvider.currentBalance")
         if (snapshot.anyReadFailed) return null
         if (snapshot.nonPayerExpenseIds.isEmpty() && snapshot.payerExpenseIds.isEmpty() &&
             snapshot.settlements.isEmpty()
         ) {
-            return 0.0
+            return GroupAdjustment(amount = 0.0, removedCashRowCount = 0)
         }
         val rows = CancellationSafe.runCatchingCancellable {
             expenseRepository.getExpensesBetween(startDate, endDate)
@@ -157,13 +167,17 @@ class NetCashflowBalanceProvider @Inject constructor(
         val inTotals = rows.filter {
             it.transactionType == TransactionType.PURCHASE || it.transactionType == TransactionType.WITHDRAWAL
         }
-        val nonPayerShare = convertedEffectiveTotalOrNull(
-            inTotals.filter {
-                GroupCashFlowRule.classify(it.id, snapshot.nonPayerExpenseIds, snapshot.payerExpenseIds) ==
-                    GroupCashFlowRule.RowClass.NON_PAYER
-            },
-            homeCurrency
-        ) ?: return null
+        val nonPayerRows = inTotals.filter {
+            GroupCashFlowRule.classify(it.id, snapshot.nonPayerExpenseIds, snapshot.payerExpenseIds) ==
+                GroupCashFlowRule.RowClass.NON_PAYER
+        }
+        val nonPayerShare = convertedEffectiveTotalOrNull(nonPayerRows, homeCurrency) ?: return null
+        // Non-payer rows that the plain totals counted as cash rows (same predicate as the totals:
+        // not-mine rows are never counted, and a spending-excluded PURCHASE is never counted).
+        val removedCashRowCount = nonPayerRows.count {
+            !it.isNotMine &&
+                (it.transactionType != TransactionType.PURCHASE || it.spendingExclusionReason == null)
+        }
         val payerRows = inTotals.filter {
             GroupCashFlowRule.classify(it.id, snapshot.nonPayerExpenseIds, snapshot.payerExpenseIds) ==
                 GroupCashFlowRule.RowClass.PAYER
@@ -180,41 +194,57 @@ class NetCashflowBalanceProvider @Inject constructor(
             val converted = settlementHomeAmountOrNull(settlement, homeCurrency) ?: return null
             settlementNet += if (settlement.paidByCurrentUser) -converted else converted
         }
-        return nonPayerShare - (payerFull - payerShare) + settlementNet
+        return GroupAdjustment(
+            amount = nonPayerShare - (payerFull - payerShare) + settlementNet,
+            removedCashRowCount = removedCashRowCount
+        )
     }
 
-    /** Sum of home-currency effective amounts, or null when normalization fails or drops a row. */
+    /** Net group adjustment to the plain totals plus the non-payer rows that left the cash rows. */
+    private data class GroupAdjustment(val amount: Double, val removedCashRowCount: Int)
+
+    /**
+     * Sum of home-currency effective amounts at the LATEST available rate (the totals' basis), or
+     * null when any currency cannot be converted. Amounts are summed per currency first and each
+     * currency bucket is converted once, as the plain totals do. Never raw-sums across currencies.
+     */
     private suspend fun convertedEffectiveTotalOrNull(
         rows: List<com.yourname.expensetracker.data.database.entity.Expense>,
         homeCurrency: String
     ): Double? {
         if (rows.isEmpty()) return 0.0
-        val normalized = CancellationSafe.runCatchingCancellable {
-            analyticsCurrencyNormalizer.normalizeExpenses(rows, homeCurrency)
-        }.getOrNull() ?: return null
-        if (normalized.severeWarnings.isNotEmpty() || normalized.excludedCount > 0) return null
-        return normalized.includedExpenses.sumOf { it.effectiveAmount }
+        val byCurrency = rows.groupBy { it.currency.uppercase() }
+            .mapValues { (_, group) -> group.sumOf { it.effectiveAmount } }
+        var total = 0.0
+        for ((currency, amount) in byCurrency) {
+            total += latestHomeAmountOrNull(amount, currency, homeCurrency) ?: return null
+        }
+        return total
     }
 
-    /** Settlement amount in the home currency at its date (TRANSACTION_DATE), or null on failure. */
-    private suspend fun settlementHomeAmountOrNull(
-        settlement: CurrentUserSettlementRow,
-        homeCurrency: String
-    ): Double? {
-        if (settlement.currency.equals(homeCurrency, ignoreCase = true)) return settlement.amount
+    private suspend fun latestHomeAmountOrNull(amount: Double, currency: String, homeCurrency: String): Double? {
+        if (currency.equals(homeCurrency, ignoreCase = true)) return amount
         val outcome = CancellationSafe.runCatchingCancellable {
             currencyConverter.convertOutcome(
-                amount = settlement.amount,
-                fromCurrency = settlement.currency,
+                amount = amount,
+                fromCurrency = currency,
                 toCurrency = homeCurrency,
-                rateBasis = RateBasis.TRANSACTION_DATE,
-                atMillis = settlement.createdAt,
-                stalePolicy = StaleRatePolicy.forBasis(RateBasis.TRANSACTION_DATE)
+                rateBasis = RateBasis.LATEST_AVAILABLE,
+                atMillis = null,
+                stalePolicy = StaleRatePolicy.forBasis(RateBasis.LATEST_AVAILABLE)
             )
         }.getOrNull() ?: return null
         return when (outcome) {
             is ConversionOutcome.Converted -> outcome.convertedAmount
             is ConversionOutcome.Failed -> null
         }
+    }
+
+    /** Settlement amount in the home currency at the LATEST rate (same basis as the totals), or null on failure. */
+    private suspend fun settlementHomeAmountOrNull(
+        settlement: CurrentUserSettlementRow,
+        homeCurrency: String
+    ): Double? {
+        return latestHomeAmountOrNull(settlement.amount, settlement.currency.uppercase(), homeCurrency)
     }
 }

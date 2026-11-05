@@ -1487,7 +1487,7 @@ CORRECT merchant category (DR-04, genuine user category edit only):
     failure never fails the approval, cancellation rethrown; null/unchanged suggestion, auto-accept and parser do not correct)
   → MerchantCategoryRepository.correctPattern → CategorizationEngine.correctMerchantCategory(merchantName, categoryId)
   → Same merchantPattern key as learnMerchantCategory (merchantNormalizer canonical name)
-  → MerchantCategoryRepository.upsertUserCorrection (DatabaseWriteBarrier check, MerchantCategoryDao @Upsert,
+  → MerchantCategoryRepository.upsertUserCorrection (DatabaseWriteBarrier check, MerchantCategoryDao @Insert(onConflict = REPLACE),
     invalidates all caches) REPLACES a seeded or auto-learned row for that key
   → Bulk edit corrects the one merchant key once, not once per row
   → NOT called from TransactionSideEffectPlanner (fires on any trusted edit even if the category is unchanged)

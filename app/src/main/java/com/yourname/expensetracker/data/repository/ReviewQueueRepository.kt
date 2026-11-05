@@ -181,7 +181,11 @@ class ReviewQueueRepository @Inject constructor(
         finalLatitude: Double? = null,
         finalLongitude: Double? = null,
         finalAddress: String? = null,
-        finalPlaceId: String? = null
+        finalPlaceId: String? = null,
+        // True only when the user genuinely picked [finalCategoryId] (edit dialog). A quick approve
+        // passes the AI's own category as finalCategoryId and must stay false: one tap on an AI
+        // choice is not a user category correction (no correction row category, no learning).
+        categoryChosenByUser: Boolean = false
     ): Result<Long> {
         writeBarrier.checkWritesAllowed("ReviewQueueRepository.approveReview")
         val review = pendingReviewDao.getById(reviewId)
@@ -399,7 +403,7 @@ class ReviewQueueRepository @Inject constructor(
                             correctedAmount = if (finalAmount != null && finalAmount != (review.suggestedAmount ?: 0.0))
                                 finalAmount else null,
                             originalCategoryId = review.suggestedCategoryId,
-                            correctedCategoryId = if (finalCategoryId != null && finalCategoryId != review.suggestedCategoryId)
+                            correctedCategoryId = if (categoryChosenByUser && finalCategoryId != null && finalCategoryId != review.suggestedCategoryId)
                                 finalCategoryId else null,
                             originalType = review.suggestedType,
                             correctedType = if (finalType != null && finalType.name != review.suggestedType)
@@ -419,6 +423,7 @@ class ReviewQueueRepository @Inject constructor(
                             // DR-04: only a user change of a non-null suggestion is a correction.
                             // A null or unchanged suggestion stays on the IGNORE learn path.
                             merchantCategoryCorrection = if (
+                                categoryChosenByUser &&
                                 finalCategoryId != null &&
                                 review.suggestedCategoryId != null &&
                                 finalCategoryId != review.suggestedCategoryId

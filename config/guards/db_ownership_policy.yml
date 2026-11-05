@@ -1225,7 +1225,8 @@ entries:
     correction -- @Insert(onConflict = REPLACE) replaces the existing merchantPattern row so a seeded or
     auto-learned mapping cannot override the user''s choice, then invalidates the
     categorization caches; reached only via CategorizationEngine.correctMerchantCategory
-    from the ExpenseRepository user category edit paths (seeding and auto-learning
+    from the ExpenseRepository user category edit paths and the ReviewQueueRepository
+    review approval where the user chose the category (seeding and auto-learning
     stay OnConflictStrategy.IGNORE)'
   owner: '@panospao7'
   linkedIssue: MIT-DB-08O

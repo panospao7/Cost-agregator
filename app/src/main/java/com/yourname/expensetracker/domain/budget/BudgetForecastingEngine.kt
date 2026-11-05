@@ -135,7 +135,12 @@ class BudgetForecastingEngine @Inject constructor(
         val limitFailure: Pair<ForecastUnavailableReason, String>? = when {
             status == null ->
                 ForecastUnavailableReason.BUDGET_STATUS_UNAVAILABLE to "Budget details unavailable"
-            !status.percentKnown || !status.effectiveLimit.isFinite() ->
+            // Same completeness rule as Radar/Runway (hasCompleteAmountIn): a partial status or a
+            // conversion warning means the carried-over spend/limit is incomplete, so the effective
+            // limit cannot be trusted (e.g. rollover EUR 500 with an unconvertible $600 period
+            // would read as EUR 1000).
+            !status.percentKnown || status.isPartial || status.conversionWarning != null ||
+                !status.effectiveLimit.isFinite() ->
                 ForecastUnavailableReason.LIMIT_CONVERSION_FAILED to "Budget effective limit unavailable"
             status.effectiveLimit <= 0.0 ->
                 ForecastUnavailableReason.NO_LIMIT_LEFT to "No budget left in this period after carried-over overspending"
