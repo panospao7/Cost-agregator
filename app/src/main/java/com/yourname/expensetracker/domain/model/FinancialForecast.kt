@@ -101,7 +101,17 @@ data class ConfirmedOccurrence(
     val merchant: String?,
     val categoryId: Long?,
     val status: String = "PLANNED"
-)
+) {
+    companion object {
+        /**
+         * An occurrence already settled by an unlinked purchase (FC-PAID-UNLINKED). It is kept in the
+         * list so a window whose bills are all settled stays occurrence-driven (an empty list would
+         * switch the synthesis to the pattern fallback and count the bill again), but it adds no
+         * committed amount and is not an upcoming item.
+         */
+        const val STATUS_SETTLED = "SETTLED"
+    }
+}
 
 data class ForecastComponents(
     val recurringExpenses: List<RecurringPattern>,

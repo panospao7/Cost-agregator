@@ -45,6 +45,7 @@ import com.yourname.expensetracker.domain.util.TimeProvider
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.roundToLong
+import timber.log.Timber
 
 /**
  * Single source of truth for forecast-input assembly used by weather/dashboard forecast paths.
@@ -490,12 +491,22 @@ class ForecastInputAssembler @Inject constructor(
         for (occ in materializedOccurrences) mergedOccurrencesByKey[occ.occurrenceKey] = occ
         val mergedOccurrences = mergedOccurrencesByKey.values.toList()
 
+        // FC-PAID-UNLINKED: a bill paid by a purchase that is not linked yet must not count again.
+        // Skipped while the restore barrier blocked the occurrence read (the bills stay counted).
+        val unsettledOccurrences = if (materializedReadBlocked) mergedOccurrences
+        else recurringLifecycleCoordinator.dropSettled(mergedOccurrences)
+        val unsettledKeys = unsettledOccurrences.map { it.occurrenceKey }.toSet()
+
         // PLANNED keys serve two purposes:
         // 1) Cross-dedup planned expenses linked via sourceOccurrenceKey
         // 2) Provide confirmed occurrences for downstream occurrence-driven forecasting
+        // Settled keys stay in the dedup set: their planned rows are the same bill.
         val plannedOccurrenceKeys = mergedOccurrences
             .filter { it.status == "PLANNED" }
             .map { it.occurrenceKey }.toSet()
+        // A settled occurrence stays in the list with STATUS_SETTLED (no committed amount, not shown
+        // as upcoming): an empty list would make SynthesisEngine fall back to the patterns and count
+        // the settled bill again.
         val confirmedOccurrences = mergedOccurrences
             .filter { it.status == "PLANNED" }
             .map { occ ->
@@ -505,7 +516,7 @@ class ForecastInputAssembler @Inject constructor(
                     expectedCurrency = occ.expectedCurrency,
                     merchant = occ.merchant,
                     categoryId = occ.categoryId,
-                    status = occ.status
+                    status = if (occ.occurrenceKey in unsettledKeys) occ.status else ConfirmedOccurrence.STATUS_SETTLED
                 )
             }
 
@@ -740,6 +751,64 @@ class ForecastInputAssembler @Inject constructor(
         return PlacedRowsFilterResult(rows, readUnavailable)
     }
 
+    /**
+     * FC-PAID-UNLINKED ([assembleNormalized] only, read only): a manual (rule-backed) pattern whose
+     * occurrence due on its `nextExpectedDate` day is already settled by an unlinked purchase moves
+     * to its next date through [RecurrenceCalculator.addFrequencyInterval] (the same step
+     * [rollNextExpectedDateForward] uses), so the bill is not counted again. Detected patterns
+     * (null id) have no rule or occurrence behind them and stay counted, as does any pattern with
+     * no matching occurrence. A failed read (cancellation is rethrown) or a restore-barrier block
+     * keeps every pattern as given: fail towards counting.
+     */
+    private suspend fun withSettledPatternsAdvanced(patterns: List<RecurringPattern>): List<RecurringPattern> {
+        val manual = patterns.filter { it.id != null && !it.frequency.isIrregular }
+        if (manual.isEmpty()) return patterns
+        return try {
+            databaseReadBarrier.checkReadAllowed("ForecastInputAssembler.assembleNormalized.readSettledOccurrences")
+            val now = timeProvider.now()
+            val windowStart = TimePeriodUtils.getStartOfMonth(now)
+            val windowEnd = TimePeriodUtils.getEndOfMonth(now)
+            val merged = LinkedHashMap<String, RecurringOccurrence>()
+            for (ruleId in manual.mapNotNull { it.id }.toSet()) {
+                for (occ in recurringLifecycleCoordinator.projectOccurrences(ruleId, windowStart, windowEnd)) {
+                    merged[occ.occurrenceKey] = occ
+                }
+            }
+            val manualRuleIds = manual.mapNotNull { it.id }.toSet()
+            for (occ in recurringOccurrenceDao.getByDateRange(windowStart, windowEnd)) {
+                if (occ.sourceType == RecurringLifecycleCoordinator.SOURCE_TYPE_RECURRING_RULE &&
+                    occ.sourceId in manualRuleIds
+                ) {
+                    merged[occ.occurrenceKey] = occ
+                }
+            }
+            val all = merged.values.toList()
+            val remainingKeys = recurringLifecycleCoordinator.dropSettled(all).map { it.occurrenceKey }.toSet()
+            val settled = all.filter { it.occurrenceKey !in remainingKeys }
+            if (settled.isEmpty()) return patterns
+
+            patterns.map { pattern ->
+                val ruleId = pattern.id
+                if (ruleId == null || pattern.frequency.isIrregular) return@map pattern
+                val dueDay = TimePeriodUtils.getStartOfDay(pattern.nextExpectedDate)
+                val isSettled = settled.any {
+                    it.sourceId == ruleId && TimePeriodUtils.getStartOfDay(it.dueDate) == dueDay
+                }
+                if (!isSettled) return@map pattern
+                val advanced = RecurrenceCalculator.addFrequencyInterval(
+                    pattern.nextExpectedDate,
+                    pattern.frequency,
+                    anchorDayOfMonth = TimePeriodUtils.getDayOfMonth(dueDay)
+                )
+                if (advanced <= pattern.nextExpectedDate) pattern else pattern.copy(nextExpectedDate = advanced)
+            }
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            Timber.w("ForecastInputAssembler: settled-pattern read failed (code=SETTLED_READ_FAILED), bills stay counted")
+            patterns
+        }
+    }
+
     /** m4: rows kept by [withoutRowsPlacedByPatterns] plus whether its occurrence read failed. */
     private class PlacedRowsFilterResult(
         val rows: List<PlannedExpense>,
@@ -835,7 +904,7 @@ class ForecastInputAssembler @Inject constructor(
 
         return ForecastInput(
             pastSumDaily = input.pastSumDaily,
-            recurringPatterns = input.recurringPatterns,
+            recurringPatterns = withSettledPatternsAdvanced(input.recurringPatterns),
             plannedExpenses = normalizedPlannedExpenses,
             savingsGoals = input.savingsGoals,
             budgetStatuses = input.budgetStatuses,

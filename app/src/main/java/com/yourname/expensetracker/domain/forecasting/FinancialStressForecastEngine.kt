@@ -436,7 +436,11 @@ class FinancialStressForecastEngine @Inject constructor(
             val mergedByKey = LinkedHashMap<String, RecurringOccurrence>()
             for (occ in projected) mergedByKey[occ.occurrenceKey] = occ
             for (occ in materialized) mergedByKey[occ.occurrenceKey] = occ
-            val allOccurrences = mergedByKey.values
+            // FC-PAID-UNLINKED: drop bills already settled by an unlinked purchase (read only).
+            // Skipped while the restore barrier blocked the read, so those bills stay counted.
+            val mergedList = mergedByKey.values.toList()
+            val allOccurrences = if (materializedReadBlocked) mergedList
+            else recurringLifecycleCoordinator.dropSettled(mergedList)
 
             for (occ in allOccurrences) {
                 // P6-P1-14: Filter by status — only count PLANNED, OVERDUE, DUE.

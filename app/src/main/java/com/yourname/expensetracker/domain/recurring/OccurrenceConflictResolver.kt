@@ -1,6 +1,8 @@
 package com.yourname.expensetracker.domain.recurring
 
 import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.data.database.entity.RecurringOccurrence
+import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.recurring.RecurringOccurrenceExpander.OccurrenceCandidate
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
@@ -29,6 +31,16 @@ import javax.inject.Inject
 class OccurrenceConflictResolver @Inject constructor(
     private val installmentEligibility: RecurringInstallmentEligibility
 ) {
+
+    companion object {
+        /** Days before the due day a purchase may fall and still settle the occurrence. */
+        const val SETTLE_LOOKBACK_DAYS = 7
+
+        /** The same window for WEEKLY and BIWEEKLY occurrences, so one purchase cannot cover the next cycle. */
+        const val SETTLE_LOOKBACK_DAYS_SHORT_CYCLE = 3
+
+        private const val STATUS_PLANNED = "PLANNED"
+    }
 
     /**
      * The resolved status of an occurrence candidate after matching against
@@ -82,17 +94,12 @@ class OccurrenceConflictResolver @Inject constructor(
         return candidates.map { candidate ->
             val match = actualExpenses.firstOrNull { expense ->
                 if (matchedExpenseIds.contains(expense.id)) return@firstOrNull false
-                if (installmentExcludedIds.contains(expense.id)) return@firstOrNull false
-
-                // Layer 1 (owner item 37(b)): the single type/ownership rule for NEW links.
-                if (!RecurringLinkTypeEligibility.mayCreateLink(expense.transactionType, expense.isNotMine)) {
-                    return@firstOrNull false
-                }
+                if (!isLinkEligible(expense, installmentExcludedIds)) return@firstOrNull false
 
                 if (!isSameCalendarDay(candidate.dueDate, expense.date)) return@firstOrNull false
-                if (!merchantsMatch(candidate.merchant, expense)) return@firstOrNull false
-                if (!amountMatches(candidate.expectedAmount, expense.amount)) return@firstOrNull false
-                if (!candidate.expectedCurrency.equals(expense.currency, ignoreCase = true)) return@firstOrNull false
+                if (!valuesMatch(candidate.merchant, candidate.expectedAmount, candidate.expectedCurrency, expense)) {
+                    return@firstOrNull false
+                }
 
                 true
             }
@@ -113,6 +120,88 @@ class OccurrenceConflictResolver @Inject constructor(
                 )
             }
         }
+    }
+
+    /**
+     * FC-PAID-UNLINKED (read time only): finds which OPEN occurrences are already settled by an
+     * unlinked purchase, so a forecast does not count the same bill twice. Nothing is written.
+     *
+     * A purchase settles an occurrence when the existing link checks pass (type/ownership through
+     * [RecurringLinkTypeEligibility.mayCreateLink], installment exclusion, merchant key, same
+     * currency with no conversion, amount within 10%, all shared with [resolve]) and the purchase
+     * day is inside [SETTLE_LOOKBACK_DAYS] days before the due day, or [SETTLE_LOOKBACK_DAYS_SHORT_CYCLE]
+     * for WEEKLY and BIWEEKLY, and in the same calendar month as the due date. The stored `amount`
+     * is compared, never an effective share. One purchase settles at most one occurrence: pairs are
+     * taken nearest date first, a tie goes to the earlier due date.
+     *
+     * The caller passes only purchases that are linked to no occurrence ([expenses]); linkage lives
+     * in `recurring_occurrences.linkedExpenseId` and is read by the coordinator.
+     *
+     * @param open Occurrences that are PLANNED and unlinked; other statuses are ignored.
+     * @return occurrenceKey to the id of the settling expense.
+     */
+    suspend fun findSettlingExpenses(
+        open: List<RecurringOccurrence>,
+        expenses: List<Expense>
+    ): Map<String, Long> {
+        val openOccurrences = open.filter { it.status == STATUS_PLANNED && it.linkedExpenseId == null }
+        if (openOccurrences.isEmpty() || expenses.isEmpty()) return emptyMap()
+
+        val installmentExcludedIds = installmentEligibility.excludedExpenseIds(expenses)
+        val eligible = expenses.filter { isLinkEligible(it, installmentExcludedIds) }
+        if (eligible.isEmpty()) return emptyMap()
+
+        class Match(val occurrence: RecurringOccurrence, val expense: Expense, val distanceMs: Long)
+
+        val pairs = mutableListOf<Match>()
+        for (occurrence in openOccurrences) {
+            val dueDay = TimePeriodUtils.getStartOfDay(occurrence.dueDate)
+            val lookbackDays = if (occurrence.frequency == RecurrenceFrequency.WEEKLY.name ||
+                occurrence.frequency == RecurrenceFrequency.BIWEEKLY.name
+            ) SETTLE_LOOKBACK_DAYS_SHORT_CYCLE else SETTLE_LOOKBACK_DAYS
+            val earliestDay = TimePeriodUtils.addDays(dueDay, -lookbackDays)
+            val monthStart = TimePeriodUtils.getStartOfMonth(occurrence.dueDate)
+            for (expense in eligible) {
+                val purchaseDay = TimePeriodUtils.getStartOfDay(expense.date)
+                if (purchaseDay < earliestDay || purchaseDay > dueDay) continue
+                if (TimePeriodUtils.getStartOfMonth(expense.date) != monthStart) continue
+                if (!valuesMatch(occurrence.merchant, occurrence.expectedAmount, occurrence.expectedCurrency, expense)) {
+                    continue
+                }
+                pairs += Match(occurrence, expense, dueDay - purchaseDay)
+            }
+        }
+
+        val settled = LinkedHashMap<String, Long>()
+        val usedExpenseIds = HashSet<Long>()
+        val ordered = pairs.sortedWith(
+            compareBy<Match>({ it.distanceMs }, { it.occurrence.dueDate }, { it.occurrence.occurrenceKey }, { it.expense.id })
+        )
+        for (pair in ordered) {
+            if (pair.occurrence.occurrenceKey in settled) continue
+            if (!usedExpenseIds.add(pair.expense.id)) continue
+            settled[pair.occurrence.occurrenceKey] = pair.expense.id
+        }
+        return settled
+    }
+
+    /** Layers shared by [resolve] and [findSettlingExpenses]: installment exclusion and type/ownership. */
+    private fun isLinkEligible(expense: Expense, installmentExcludedIds: Set<Long>): Boolean {
+        if (installmentExcludedIds.contains(expense.id)) return false
+        // Layer 1 (owner item 37(b)): the single type/ownership rule for NEW links.
+        return RecurringLinkTypeEligibility.mayCreateLink(expense.transactionType, expense.isNotMine)
+    }
+
+    /** Merchant key, amount within 10% and same currency (no conversion); shared by both entry points. */
+    private fun valuesMatch(
+        merchant: String?,
+        expectedAmount: Double,
+        expectedCurrency: String,
+        expense: Expense
+    ): Boolean {
+        if (!merchantsMatch(merchant, expense)) return false
+        if (!amountMatches(expectedAmount, expense.amount)) return false
+        return expectedCurrency.equals(expense.currency, ignoreCase = true)
     }
 
     /**

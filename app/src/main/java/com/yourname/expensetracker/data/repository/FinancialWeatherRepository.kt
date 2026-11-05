@@ -144,6 +144,7 @@ class FinancialWeatherRepository @Inject constructor(
         // I1: Use materialised occurrences for manual rules (captures all WEEKLY/BIWEEKLY
         // repetitions instead of just the first nextExpectedDate).
         confirmedOccurrences
+            .filter { it.status != ConfirmedOccurrence.STATUS_SETTLED }
             .filter { it.dueDate >= startOfToday && it.dueDate < horizon }
             .forEach { items.add(UpcomingItem.Occurrence(it)) }
 

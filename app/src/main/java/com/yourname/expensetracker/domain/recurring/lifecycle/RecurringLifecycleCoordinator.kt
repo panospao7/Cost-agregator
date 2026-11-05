@@ -122,6 +122,9 @@ class RecurringLifecycleCoordinator @Inject constructor(
         /** Max ids per IN (...) binding (SQLite variable limit headroom). */
         private const val DELIVERY_ID_CHUNK = 900
 
+        /** Max expense ids per linked-id lookup (same SQLite variable headroom). */
+        private const val LINKED_EXPENSE_ID_CHUNK = 900
+
         /** R21 S1: fixed fallback written when a provenance source code is not a bounded code. */
         const val SOURCE_UNKNOWN = "unknown_source"
 
@@ -306,6 +309,38 @@ class RecurringLifecycleCoordinator @Inject constructor(
 
         val now = timeProvider.now()
         return resolved.map { r -> buildTransientOccurrence(r, now) }
+    }
+
+    /**
+     * FC-PAID-UNLINKED, READ-ONLY: returns [merged] without the open occurrences that an unlinked
+     * purchase already settles, so forecasts do not count the same bill twice. Nothing is written
+     * and no state changes; the matching is [OccurrenceConflictResolver.findSettlingExpenses].
+     *
+     * Purchases come from the existing [ExpenseDao.getExpensesBetween] call form, limited to the
+     * months of the open occurrences, minus every expense already linked to any occurrence.
+     * When the read fails (cancellation is rethrown) the input is returned unchanged with a bounded
+     * code logged: failing towards counting the bill is the safer error. Callers that need to know
+     * what was dropped compare the result with [merged] by `occurrenceKey`.
+     */
+    suspend fun dropSettled(merged: List<RecurringOccurrence>): List<RecurringOccurrence> {
+        val open = merged.filter { it.status == "PLANNED" && it.linkedExpenseId == null }
+        if (open.isEmpty()) return merged
+        return try {
+            val windowStart = TimePeriodUtils.getStartOfMonth(open.minOf { it.dueDate })
+            val windowEnd = TimePeriodUtils.getEndOfMonth(open.maxOf { it.dueDate })
+            val rangeExpenses = expenseDao.getExpensesBetween(windowStart, windowEnd)
+            val linkedIds = rangeExpenses.map { it.id }
+                .chunked(LINKED_EXPENSE_ID_CHUNK)
+                .flatMap { occurrenceDao.getLinkedExpenseIds(it) }
+                .toSet()
+            val unlinked = rangeExpenses.filter { it.id !in linkedIds }
+            val settledKeys = resolver.findSettlingExpenses(open, unlinked).keys
+            if (settledKeys.isEmpty()) merged else merged.filter { it.occurrenceKey !in settledKeys }
+        } catch (e: Exception) {
+            CancellationSafe.rethrowIfCancellation(e)
+            Timber.w("Recurring: settled-occurrence read failed (code=SETTLED_READ_FAILED), bills stay counted")
+            merged
+        }
     }
 
     /**

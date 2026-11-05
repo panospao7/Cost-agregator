@@ -272,7 +272,13 @@ class CashFlowCalculator @Inject constructor(
         val mergedOccurrencesByKey = LinkedHashMap<String, RecurringOccurrence>()
         for (occ in projectedOccurrences) mergedOccurrencesByKey[occ.occurrenceKey] = occ
         for (occ in materializedOccurrences) mergedOccurrencesByKey[occ.occurrenceKey] = occ
-        val plannedOccurrences = mergedOccurrencesByKey.values.filter { it.status == "PLANNED" }
+        // FC-PAID-UNLINKED: drop bills already settled by an unlinked purchase (read only). Skipped
+        // while the restore barrier blocked the occurrence read, so those bills stay counted.
+        val mergedOccurrenceList = mergedOccurrencesByKey.values.toList()
+        val plannedOccurrences = (
+            if (materializedReadBlocked) mergedOccurrenceList
+            else recurringLifecycleCoordinator.dropSettled(mergedOccurrenceList)
+        ).filter { it.status == "PLANNED" }
 
         // Build a day-indexed map from occurrences (yyyy-MM-dd → patterns)
         val occurrencePatternsByDay = mutableMapOf<String, MutableList<RecurringPattern>>()
@@ -699,7 +705,8 @@ class CashFlowCalculator @Inject constructor(
             val mergedByKey = LinkedHashMap<String, RecurringOccurrence>()
             for (occ in projected) mergedByKey[occ.occurrenceKey] = occ
             for (occ in materialized) mergedByKey[occ.occurrenceKey] = occ
-            mergedByKey.values
+            // FC-PAID-UNLINKED: drop bills already settled by an unlinked purchase (read only).
+            recurringLifecycleCoordinator.dropSettled(mergedByKey.values.toList())
                 .filter { it.status == "PLANNED" }
                 .map { it.toRecurringPattern() }
         } else {

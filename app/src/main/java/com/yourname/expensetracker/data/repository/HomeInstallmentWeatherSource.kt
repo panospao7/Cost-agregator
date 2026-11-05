@@ -266,6 +266,7 @@ class HomeInstallmentWeatherSource @Inject constructor(
         val items = mutableListOf<UpcomingItem>()
 
         confirmedOccurrences
+            .filter { it.status != ConfirmedOccurrence.STATUS_SETTLED }
             .filter { it.dueDate >= startOfToday && it.dueDate < horizon }
             .forEach { items.add(UpcomingItem.Occurrence(it)) }
 

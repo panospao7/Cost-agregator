@@ -281,6 +281,7 @@ class SynthesisEngine @Inject constructor(
 
         val committedRecurringByDay = if (confirmedOccurrences.isNotEmpty()) {
             confirmedOccurrences
+                .filter { it.status != ConfirmedOccurrence.STATUS_SETTLED }
                 .filter { it.dueDate >= startOfToday && it.dueDate < endOfMonthExclusive }
                 .groupBy { occurrence ->
                     Instant.ofEpochMilli(occurrence.dueDate).atZone(ZoneId.systemDefault()).dayOfMonth
