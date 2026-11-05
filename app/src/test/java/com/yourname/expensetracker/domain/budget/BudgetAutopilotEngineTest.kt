@@ -647,6 +647,9 @@ class BudgetAutopilotEngineTest {
             snapshot(febKey, 100.0, 1L),
             snapshot(marKey, 100.0, 1L)
         )
+        coEvery { budgetRepository.getBudgetStatusAt(any(), any()) } answers {
+            com.yourname.expensetracker.testfixtures.completeBudgetStatus(firstArg())
+        }
         val forecastingEngine = BudgetForecastingEngine(
             expenseDao = expenseDao,
             budgetRepository = budgetRepository,

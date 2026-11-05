@@ -115,6 +115,9 @@ class BudgetTrendBoundaryTest {
             writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true),
         )
 
+        coEvery { budgetRepository.getBudgetStatusAt(any(), any()) } answers {
+            com.yourname.expensetracker.testfixtures.completeBudgetStatus(firstArg())
+        }
         val budget = Budget(categoryId = 1L, amount = 10_000.0, period = BudgetPeriod.MONTHLY, startDate = now)
 
         // RP-08 (P6-004): the window [Jan 15, Apr 15) trims to [Feb 1, Apr 1) —

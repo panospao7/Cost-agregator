@@ -1048,6 +1048,9 @@ class CrossEngineParityMatrixTest : AnalyticsEngineTestBase() {
         val linearProjection = requireNotNull(
             goldenRig.insights.generateInsights(golden.categories, golden.expenses, "EUR").spendingPace.projectedTotal
         )
+        coEvery { goldenRig.budgetRepository.getBudgetStatusAt(any(), any()) } answers {
+            com.yourname.expensetracker.testfixtures.completeBudgetStatus(firstArg())
+        }
         val trendProjection = forecastEngineFor(goldenRig).generateForecast(
             budget = Budget(categoryId = null, amount = 5000.0, period = BudgetPeriod.MONTHLY, startDate = march1),
             forecastPeriodDays = 30
